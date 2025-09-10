@@ -2,6 +2,7 @@
 import copy
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
+import itertools
 import dace
 from dace import data, properties, subsets, symbolic, transformation
 from dace.sdfg import SDFG, SDFGState, graph, nodes, propagation
@@ -515,6 +516,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             if len(producer_edges) > 1:
                 return None
 
+            # Maps a producer subset to the reduced intermediate shape. This is needed
+            #  to avoid it to recompute it again later.
+            reduced_intermediate_shape_cache: Dict[subsets.Subset, Tuple[int, ...]] = {}
+
             # Now check the constraints we have on the producers.
             #   - The source of the producer can not be a view (we do not handle this)
             #   - The edge shall also not be a reduction edge.
@@ -525,6 +530,8 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             #  Since we do not allow for WCR, we do not check if the producer subsets intersects.
             producer_subsets: List[subsets.Subset] = []
             for producer_edge in producer_edges:
+                if producer_edge.data.is_empty():
+                    continue
                 if isinstance(producer_edge.src, nodes.AccessNode) and self.is_view(producer_edge.src, sdfg):
                     return None
                 if producer_edge.data.dynamic:
@@ -534,7 +541,31 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     return None
                 if producer_edge.data.dst_subset is None:
                     return None
+
+                _, reduced_inter_shape, _ = self.compute_reduced_intermediate(
+                    producer_subset=producer_edge.data.dst_subset, inter_desc=intermediate_desc)
+
+                # If we reduce the intermediate node then we also change the underlying
+                #  memory layout, i.e. the strides. This change is not captured by the
+                #  data dependency checks. Thus we have to check them separately here.
+                for final_producer_edge in state.memlet_tree(producer_edge).leaves():
+                    assert not final_producer_edge.data.is_empty()
+                    final_producer = final_producer_edge.dst
+                    if isinstance(final_producer, nodes.NestedSDFG):
+                        if not self._check_if_nested_sdfg_can_be_handled(
+                                state=state,
+                                sdfg=sdfg,
+                                nsdfg=final_producer,
+                                intermediate=intermediate_node,
+                                reduced_intermediate_shape=reduced_inter_shape,
+                                outer_edge=final_producer_edge,
+                        ):
+                            return None
+
+                # Now issues found with that edge.
                 producer_subsets.append(producer_edge.data.dst_subset)
+                assert producer_subsets[-1] not in reduced_intermediate_shape_cache
+                reduced_intermediate_shape_cache[producer_subsets[-1]] = reduced_inter_shape
 
             # Check if the producer do not intersect
             if len(producer_subsets) == 1:
@@ -556,7 +587,6 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             #  For the covering test we only need their subsets, but we will perform
             #  some scan and filtering on them.
             found_second_map = False
-            consumer_subsets: List[subsets.Subset] = []
             for intermediate_node_out_edge in state.out_edges(intermediate_node):
                 # If the second MapEntry is not immediately reachable from the intermediate
                 #  node, then ensure that there is not path that goes to it.
@@ -586,28 +616,50 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 #   This is different compared to the producer Memlet. The reason is
                 #   because in a consumer the data is conditionally read, so the data
                 #   has to exists anyway.
+                has_found_a_consumer = False
                 for inner_consumer_edge in state.out_edges_by_connector(
                         second_map_entry, "OUT_" + intermediate_node_out_edge.dst_conn[3:]):
-                    if inner_consumer_edge.data.src_subset is None:
+                    assert not inner_consumer_edge.data.is_empty()
+                    consumer_subset = inner_consumer_edge.data.src_subset
+                    if consumer_subset is None:
                         return None
-                    consumer_subsets.append(inner_consumer_edge.data.src_subset)
+
+                    # The consumer still uses the original symbols of the second Map, so we must rename them.
+                    if param_repl:
+                        consumer_subset = copy.deepcopy(consumer_subset)
+                        symbolic.safe_replace(mapping=param_repl, replace_callback=consumer_subset.replace)
+
+                    # Now we are checking if a single iteration of the first (top) Map
+                    #  can satisfy all data requirements of the second (bottom) Map.
+                    #  For this we look if the producer covers the consumer. A consumer must
+                    #  be covered by exactly one producer.
+                    prospective_producers = [
+                        producer_subset for producer_subset in producer_subsets
+                        if producer_subset.covers(consumer_subset)
+                    ]
+                    if len(prospective_producers) != 1:
+                        return None
+                    prospective_producer = prospective_producers[0]
+                    reduced_inter_shape = reduced_intermediate_shape_cache[prospective_producer]
+
+                    # As for the producer we have to check if the reduction of the memory
+                    #  layout of the intermediate can be handled.
+                    for final_consumer_edge in state.memlet_tree(inner_consumer_edge).leaves():
+                        final_consumer = final_consumer_edge.dst
+                        if isinstance(final_consumer, nodes.NestedSDFG):
+                            if not self._check_if_nested_sdfg_can_be_handled(
+                                    state=state,
+                                    sdfg=sdfg,
+                                    nsdfg=final_consumer,
+                                    intermediate=intermediate_node,
+                                    reduced_intermediate_shape=reduced_inter_shape,
+                                    outer_edge=final_consumer_edge,
+                            ):
+                                return None
+
+                    has_found_a_consumer = True
             assert found_second_map, (f"Found '{intermediate_node}' which looked like a pure node, but is not one.")
-            assert len(consumer_subsets) != 0
-
-            # The consumer still uses the original symbols of the second Map, so we must rename them.
-            if param_repl:
-                consumer_subsets = copy.deepcopy(consumer_subsets)
-                for consumer_subset in consumer_subsets:
-                    symbolic.safe_replace(mapping=param_repl, replace_callback=consumer_subset.replace)
-
-            # Now we are checking if a single iteration of the first (top) Map
-            #  can satisfy all data requirements of the second (bottom) Map.
-            #  For this we look if the producer covers the consumer. A consumer must
-            #  be covered by exactly one producer.
-            for consumer_subset in consumer_subsets:
-                nb_coverings = sum(producer_subset.covers(consumer_subset) for producer_subset in producer_subsets)
-                if nb_coverings != 1:
-                    return None
+            assert has_found_a_consumer
 
             # After we have ensured coverage, we have to decide if the intermediate
             #  node can be removed (`\mathbb{E}`) or has to be restored (`\mathbb{S}`).
@@ -715,7 +767,6 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 )
 
             else:
-                assert (pre_exit_edge.data.subset.num_elements() > 1) or all(x == 1 for x in new_inter_shape)
                 is_scalar = False
                 new_inter_name, new_inter_desc = sdfg.add_transient(
                     new_inter_name,
@@ -725,6 +776,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 )
             # We reuse the old debug information.
             new_inter_node: nodes.AccessNode = state.add_access(new_inter_name, copy.copy(inter_node.debuginfo))
+            new_inter_desc: data.Data = sdfg.arrays[new_inter_name]
 
             # Get the subset that defined into which part of the old intermediate
             #  the old output edge wrote to. We need that to adjust the producer
@@ -760,10 +812,23 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             new_pre_exit_edge.data.src_subset = new_pre_exit_memlet_src_subset
             new_pre_exit_edge.data.dst_subset = new_pre_exit_memlet_dst_subset
 
+            # Modify the strides of the mapped data of the nested SDFG.
+            if isinstance(new_pre_exit_edge.src, nodes.NestedSDFG):
+                self._updated_inner_strides_of_nested_sdfg(
+                    nsdfg=new_pre_exit_edge.src,
+                    reduced_intermediate_desc=new_inter_desc,
+                    inner_data=new_pre_exit_edge.src_conn,
+                    outer_edge=new_pre_exit_edge,
+                )
+
             # We now handle the MemletTree defined by this edge.
             #  The newly created edge, only handled the last collection step.
             for producer_tree in state.memlet_tree(new_pre_exit_edge).traverse_children(include_self=False):
                 producer_edge = producer_tree.edge
+
+                # Ignore empty edges
+                if producer_edge.data.is_empty():
+                    continue
 
                 # In order to preserve the intrinsic direction of Memlets we only have to change
                 #  the `.data` attribute of the producer Memlet if it refers to the old intermediate.
@@ -782,6 +847,15 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     #  originally had begun.
                     producer_edge.data.dst_subset.offset(producer_offset, negative=True)
                     producer_edge.data.dst_subset.pop(squeezed_dims)
+
+                # Modify the strides of the mapped data of the nested SDFG.
+                if isinstance(producer_edge.src, nodes.NestedSDFG):
+                    self._updated_inner_strides_of_nested_sdfg(
+                        nsdfg=producer_edge.src,
+                        reduced_intermediate_desc=new_inter_desc,
+                        inner_data=producer_edge.src_conn,
+                        outer_edge=producer_edge,
+                    )
 
             # Now after we have handled the input of the new intermediate node,
             #  we must handle its output. For this we have to "inject" the newly
@@ -848,9 +922,22 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                         new_inner_memlet.src_subset.offset(consumer_offset, negative=True)
                         new_inner_memlet.src_subset.pop(squeezed_dims)
 
+                    # Modify the strides of the mapped data of the nested SDFG.
+                    if isinstance(new_inner_edge.dst, nodes.NestedSDFG):
+                        self._updated_inner_strides_of_nested_sdfg(
+                            nsdfg=new_inner_edge.dst,
+                            reduced_intermediate_desc=new_inter_desc,
+                            inner_data=new_inner_edge.dst_conn,
+                            outer_edge=new_inner_edge,
+                        )
+
                     # Now we have to make sure that all consumers are properly updated.
                     for consumer_tree in state.memlet_tree(new_inner_edge).traverse_children(include_self=False):
                         consumer_edge = consumer_tree.edge
+
+                        # Ignore empty edges.
+                        if consumer_edge.data.is_empty():
+                            continue
 
                         # We only modify the data if the Memlet refers to the old intermediate data.
                         #  We can not do this unconditionally, because it might change the intrinsic
@@ -866,6 +953,15 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                             # TODO(phimuell): Figuring out if `src_subset` is None is an error.
                             consumer_edge.data.src_subset.offset(consumer_offset, negative=True)
                             consumer_edge.data.src_subset.pop(squeezed_dims)
+
+                        # Modify the strides of the mapped data of the nested SDFG.
+                        if isinstance(consumer_edge.dst, nodes.NestedSDFG):
+                            self._updated_inner_strides_of_nested_sdfg(
+                                nsdfg=consumer_edge.dst,
+                                reduced_intermediate_desc=new_inter_desc,
+                                inner_data=consumer_edge.dst_conn,
+                                outer_edge=consumer_edge,
+                            )
 
                 # The edge that leaves the second MapEntry was already deleted. We now delete
                 #  the edges that connected the intermediate node with the second MapEntry.
@@ -1582,3 +1678,197 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         assert isinstance(defining_node, nodes.AccessNode)
         assert not self.is_view(defining_node, sdfg)
         return defining_node
+
+    def _check_if_nested_sdfg_can_be_handled(
+        self,
+        state: dace.SDFGState,
+        sdfg: dace.SDFG,
+        nsdfg: nodes.NestedSDFG,
+        intermediate: nodes.AccessNode,
+        reduced_intermediate_shape: Tuple[int, ...],
+        outer_edge: graph.MultiConnectorEdge[dace.Memlet],
+    ) -> bool:
+        """Check if the nested SDFG can be handled.
+
+        If the intermediate is consumed by the nested SDFG, then it might be needed,
+        to modify the strides of the inner data. This function is called to check
+        if `_modify_mapped_data_descriptor_in_nested_sdfg()` can handle this.
+
+        :param state: The state in which we operate.
+        :param sdfg: The SDFG on which we operate.
+        :param nsdfg: The nested SDFG object that we should examine.
+        :param intermediate: The intermediate node.
+        :param reduced_intermediate_shape: Shape of the intermediate when it is reduced.
+        :param outer_edge: The (final) edge that connects the intermediate with the nested SDFG.
+        """
+        is_incomming_edge = outer_edge.dst is nsdfg
+        assert (is_incomming_edge) or (outer_edge.src is nsdfg)
+
+        intermediate_data_outside: str = intermediate.data
+        inner_sdfg = nsdfg.sdfg
+        inner_data = outer_edge.dst_conn if is_incomming_edge else outer_edge.src_conn
+        assert inner_data in inner_sdfg.arrays
+        inner_desc = inner_sdfg.arrays[inner_data]
+
+        # We do not allow that the data is used as input and output.
+        # TODO(phimuell): In this situation it should be enough.
+        if intermediate_data_outside in nsdfg.in_connectors and intermediate_data_outside in nsdfg.out_connectors:
+            return False
+
+        # The inner data is an array or a scalar.
+        if not isinstance(inner_desc, (data.Array, data.Scalar)):
+            return False
+
+        # If the inner data is a scalar, then there is no issue with mapping of strides
+        #  thus it is naturally handled. The same holds if the inner array has shape `(1,)`.
+        if isinstance(inner_desc, data.Scalar):
+            return True
+        if len(inner_desc.shape) == 1 and inner_desc.shape[0] == 1:
+            return True
+
+        # We do not allow nested handling, i.e. the data can not be passed to another
+        #  nested SDFG. Otherwise it would become too complicated. Thus we now check
+        #  if the data is passed further down, by inspecting all nested SDFG.
+        # TODO(phimuell): Implement recursive handling.
+        for inner_state in inner_sdfg.states():
+            for inner_node in inner_state.nodes():
+                if isinstance(inner_node, nodes.AccessNode) and inner_node.data == inner_data:
+                    # Test if the data is only used in the way indicated by the outer usage.
+                    if is_incomming_edge and inner_state.in_degree(inner_node) != 0:
+                        return False
+                    elif (not is_incomming_edge) and inner_state.out_degree(inner_node) != 0:
+                        return False
+
+                    # Test if the data is not used by views, because we also would have to modify them.
+                    edges_to_inspect = itertools.chain(inner_state.in_edges(inner_node),
+                                                       inner_state.out_edges(inner_node))
+                    for inner_edge in edges_to_inspect:
+                        other_node = inner_edge.dst if inner_edge.src is inner_node else inner_edge.src
+                        assert other_node is not inner_node
+                        if isinstance(other_node, nodes.AccessNode) and isinstance(other_node.desc(inner_sdfg),
+                                                                                   data.View):
+                            return False
+
+                elif isinstance(inner_node, nodes.NestedSDFG):
+                    # Test if the data is not passed further into nested SDFG.
+                    # TODO(phimuell): Probably only one kind of edge needs to be tests, this is
+                    #   implied by the AccessNode test above.
+                    edges_to_inspect = itertools.chain(inner_state.in_edges(inner_node),
+                                                       inner_state.out_edges(inner_node))
+                    for inner_edge in edges_to_inspect:
+                        if inner_edge.data.data == inner_data:
+                            return False
+
+        # In certain cases we actually allow an adjustment of the inner descriptor, this adjustment
+        #  is done by `_updated_inner_strides_of_nested_sdfg()`.
+
+        # A case that we allow is that that whole reduced intermediate is passed into the nested
+        #  SDFG. This sounds simple to check but it is not.
+        if len(inner_desc.shape) != len(reduced_intermediate_shape):
+            pass
+        elif len(nsdfg.symbol_mapping) == 0:
+            # If there is no symbol mapping involved we require that the shapes of the inner and
+            #  the outer descriptor matches exactly and that the inner shape does not have any
+            #  symbols. This is to avoid issues with symbol aliasing.
+            if not all(str(s).isdigit() for s in inner_desc.shape):
+                return False
+            if reduced_intermediate_shape == inner_desc.shape:
+                return True
+        else:
+            # In case there is a symbol mapping, we can not simply compare, but must consider
+            #  symbol remapping. Furthermore, all symbols in the shape must come from the mapping,
+            #  this is also to avoid aliasing.  For simplicity we do the check by rewriting the
+            #  shape of the inner data descriptor in terms of outer symbols. This is for simplicity only.
+            free_symb_inner_shape = set()
+            for s in inner_desc.shape:
+                if isinstance(s, symbolic.sympy.Basic):
+                    free_symb_inner_shape |= set(map(str, s.free_symbols))
+
+            # Symbols not supplied by the outside are used.
+            if not free_symb_inner_shape.issubset(map(str, nsdfg.symbol_mapping.keys())):
+                return False
+
+            inner_replaced_shape = list(inner_desc.shape)
+
+            def replfunc(mapping):
+                for i, s in enumerate(inner_replaced_shape):
+                    if not str(s).isdigit():
+                        inner_replaced_shape[i] = s.subs(mapping)
+
+            symbolic.safe_replace(nsdfg.symbol_mapping, replfunc)
+
+            if list(reduced_intermediate_shape) == inner_replaced_shape:
+                return True
+
+        # There is no reason for us to allow it.
+        return False
+
+    def _updated_inner_strides_of_nested_sdfg(
+        self,
+        nsdfg: nodes.NestedSDFG,
+        reduced_intermediate_desc: data.Data,
+        inner_data: str,
+        outer_edge: graph.MultiConnectorEdge[dace.Memlet],
+    ) -> None:
+        inner_sdfg: dace.SDFG = nsdfg.sdfg
+        inner_desc = inner_sdfg.arrays[inner_data]
+        outer_sdfg: dace.SDFG = nsdfg.sdfg.parent_sdfg
+
+        # NOTE: The current implementation of this function assumes that there is no
+        #   recursive propagation of the change in strides needed.
+
+        # Check if we have the simple cases, i.e. there is nothing to do.
+        if isinstance(inner_desc, data.Scalar):
+            return
+        elif isinstance(inner_desc, data.Array) and inner_desc.shape == (1, ):
+            return
+
+        # We now compute the new strides and shape of the inner data descriptor. Since we already
+        #  know that the inner data and what is passed from the outside is the same, we use this
+        #  information. We will simply set strides/shape to what it is on the outside. To avoid
+        #  side effects we will create new unique symbols such that there is no clash.
+        #  This function will return the new strides/shape but it will update the symbol mapping
+        #  and the symbol registry of the mapped SDFG.
+        def compute_new_shape_or_stride(inner_values, outer_values, pattern):
+            new_inner_values: List[int] = []
+            for i, (inner_value, outer_value) in enumerate(zip(inner_values, outer_values)):
+                if str(outer_value).isdigit():
+                    new_inner_values.append(outer_value)
+                else:
+                    new_inner_value_sym = f"map_fusion_nsdfg_{pattern}_mapping_{inner_data}_{outer_edge.data.data}_{i}"
+                    assert new_inner_value_sym not in nsdfg.symbol_mapping
+                    assert new_inner_value_sym not in outer_sdfg.symbols
+                    nsdfg.symbol_mapping[new_inner_value_sym] = outer_value
+                    new_inner_values.append(symbolic.pystr_to_symbolic(new_inner_value_sym))
+
+                    # Now we need the type of the new symbol.
+                    if str(outer_value) in outer_sdfg.symbols:
+                        # The symbol is known in the parent SDFG, so use that type.
+                        new_inner_value_type = outer_sdfg.symbols[str(outer_value)]
+                    else:
+                        # NOTE: This code is copied from `SDFGState.add_nested_sdfg()`, according
+                        #   to the description this is not a very good implementation.
+                        from dace.codegen.tools.type_inference import infer_expr_type
+                        new_inner_value_type = infer_expr_type(outer_value, outer_sdfg.symbols) or dtypes.typeclass(int)
+                    inner_sdfg.add_symbol(new_inner_value_sym, new_inner_value_type)
+            return new_inner_values
+
+        assert len(reduced_intermediate_desc.shape) == len(inner_desc.shape)
+        new_inner_strides = compute_new_shape_or_stride(
+            inner_values=inner_desc.strides,
+            outer_values=reduced_intermediate_desc.strides,
+            pattern="strides",
+        )
+        new_inner_shape = compute_new_shape_or_stride(
+            inner_values=inner_desc.shape,
+            outer_values=reduced_intermediate_desc.shape,
+            pattern="shape",
+        )
+
+        # NOTE: This will also update dependent quantities such as the total size. However,
+        #   because the inner data is not allocated (since it is passed from the outside),
+        #   this should not be a problem.
+        inner_desc.set_shape(
+            new_shape=tuple(new_inner_shape),
+            strides=tuple(new_inner_strides),
+        )

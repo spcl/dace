@@ -60,7 +60,7 @@ def _fft_core(pv: 'ProgramVisitor',
         raise TypeError(f'Inverse FFT only accepts complex inputs, got {desc.dtype}')
     dtype = _real_to_complex(desc.dtype)
 
-    name, odesc = sdfg.add_temp_transient_like(desc, dtype)
+    name, odesc = sdfg.add_temp_transient_like(desc, dtype, name=pv.get_target_name())
     r = state.add_read(a)
     w = state.add_write(name)
     state.add_edge(r, None, libnode, '_inp', Memlet.from_array(a, desc))
