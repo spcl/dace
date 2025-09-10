@@ -2948,6 +2948,8 @@ def create_internal_ast(cfg: ParseConfig) -> Tuple[ast_components.InternalFortra
         cfg.set_all_possible_entry_points_from(ast)
 
     ast = run_fparser_transformations(ast, cfg)
+    ast = Program(get_reader(ast.tofortran()))
+    ast = correct_for_function_calls(ast)
     assert isinstance(ast, Program)
 
     iast = ast_components.InternalFortranAst()
