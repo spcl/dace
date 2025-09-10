@@ -60,7 +60,7 @@ def test_memset_pure_gpu():
     exe = sdfg.compile()
 
     B = cp.zeros((200, ), dtype=cp.float64)
-    exe(B=B)
+    exe(gpuB=B)
 
     cp.testing.assert_array_equal(B[50:100], 0)
     assert cp.all(B[:50] == 0)
