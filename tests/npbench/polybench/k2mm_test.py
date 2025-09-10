@@ -10,6 +10,9 @@ from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory, StreamingComposition
 from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
 from dace.config import set_temporary
+from dace.autodiff import add_backward_pass
+import jax
+import jax.numpy as jnp
 
 # Data set sizes
 # NI, NJ, NK, NL
@@ -30,6 +33,9 @@ def k2mm_kernel(alpha: dc.float64, beta: dc.float64, A: dc.float64[NI, NK], B: d
 
     D[:] = alpha * A @ B @ C + beta * D
 
+def k2mm_jax(alpha, beta, A, B, C, D):
+    D = alpha * A @ B @ C + beta * D
+    return jnp.sum(D)
 
 def initialize(NI, NJ, NK, NL, datatype=np.float64):
     alpha = datatype(1.5)
@@ -76,6 +82,36 @@ def run_k2mm(device_type: dace.dtypes.DeviceType):
     assert np.allclose(D, D_ref)
     return sdfg
 
+def run_k2mm_autodiff():
+    # Initialize forward data
+    NI, NJ, NK, NL = sizes["small"]
+    alpha, beta, A, B, C, D = initialize(NI, NJ, NK, NL)
+    D_ref = np.copy(D)
+    
+    # Intiialize gradient computation data
+    S = np.zeros((1,), dtype=np.float64)
+    gradient_A = np.zeros_like(A)
+    gradient_S = np.ones_like(S)
+    
+    # Define sum reduction for the output
+    @dc.program
+    def autodiff_kernel(alpha: dc.float64, beta: dc.float64, A: dc.float64[NI, NK], B: dc.float64[NK, NJ],
+                C: dc.float64[NJ, NL], D: dc.float64[NI, NL], S: dc.float64[1]):
+        k2mm_kernel(alpha, beta, A, B, C, D)
+        S[0] = np.sum(D)
+
+    # Add the backward pass to the SDFG
+    sdfg = autodiff_kernel.to_sdfg()
+    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["S"], autooptimize=True)
+    sdfg(alpha, beta, A, B, C, D, S, NI=NI, NJ=NJ, NK=NK, NL=NL, gradient_A=gradient_A, gradient_S=gradient_S)
+    
+    # Enable float64 support
+    jax.config.update("jax_enable_x64", True)
+
+    # Numerically validate vs JAX
+    jax_grad = jax.jit(jax.grad(k2mm_jax, argnums=2))
+    jax_grad_A = jax_grad(alpha, beta, A, B, C, D)
+    np.testing.assert_allclose(gradient_A, jax_grad_A)
 
 def test_cpu():
     run_k2mm(dace.dtypes.DeviceType.CPU)
@@ -86,6 +122,10 @@ def test_gpu():
     run_k2mm(dace.dtypes.DeviceType.GPU)
 
 
+@pytest.mark.daceml
+def test_autodiff():
+    run_k2mm_autodiff()
+    
 @fpga_test(assert_ii_1=False, xilinx=False)
 def test_fpga():
     return run_k2mm(dace.dtypes.DeviceType.FPGA)
