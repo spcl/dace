@@ -63,7 +63,7 @@ class ExpandCUDA(ExpandTransformation):
             inputs={},
             outputs={"_out"},
             code=
-            f"cudaMemsetAsync(_out, 0, {sym2cpp(memset_size)} * sizeof({out.dtype.ctype}), cudaMemcpyDeviceToDevice, __dace_current_stream);",
+            f"cudaMemsetAsync(_out, 0, {sym2cpp(memset_size)} * sizeof({out.dtype.ctype}), __dace_current_stream);",
             language=dace.Language.CPP,
             code_global=f"#include <cuda_runtime.h>\n")
 
