@@ -396,9 +396,9 @@ required:
                         type: bool
                         title: Synchronous Debugging
                         description: >
-                            Enables Synchronous Debugging mode, where each library call
-                            is followed by full-device synchronization and error checking.
-                        default: false
+                            Enables debugging mode where each asynchronous GPU call is followed by
+                            device-wide synchronization and error checking.
+                        default: False
 
                     libs:
                         type: str

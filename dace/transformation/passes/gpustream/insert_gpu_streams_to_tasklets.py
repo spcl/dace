@@ -10,6 +10,8 @@ from dace.transformation.passes.gpustream.gpustream_scheduling import NaiveGPUSt
 from dace.transformation.passes.gpustream.insert_gpu_streams_to_sdfgs import InsertGPUStreamsToSDFGs
 from dace.transformation.passes.gpustream.insert_gpu_streams_to_kernels import InsertGPUStreamsToKernels
 
+# Placeholder for the GPU stream variable used in tasklet code
+STREAM_PLACEHOLDER = "__dace_current_stream"
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
@@ -38,26 +40,15 @@ class InsertGPUStreamsToTasklets(ppl.Pass):
         return False
     
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]):
-
-        # Placeholder for the GPU stream variable used in tasklet code
-        STREAM_PLACEHOLDER = "__dace_current_stream"
-
         # Retrieve the GPU stream's array name
         stream_array_name = Config.get('compiler', 'cuda', 'gpu_stream_name').split(',')[0]
 
         # Retrieve GPU stream assignments for nodes
         stream_assignments: Dict[nodes.Node, Union[int, str]] = pipeline_results['NaiveGPUStreamScheduler']
 
-        # Determine the number of assigned GPU streams, needed for creating the GPU stream Array
-        num_assigned_streams = max(stream_assignments.values(), default=0) + 1
-
         # Find all tasklets which use the GPU stream variable (STREAM_PLACEHOLDER) in the code
         # and provide them the needed GPU stream explicitly
         for sub_sdfg in sdfg.all_sdfgs_recursive():
-
-            # Track whether the GPU stream array is in tge
-            # sub_sdfg's data descriptor store
-            gpustream_array_added: bool = stream_array_name in sub_sdfg.arrays
 
             for state in sub_sdfg.states():
                 for node in state.nodes():

@@ -1,51 +1,89 @@
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 from typing import Dict, Union
 from dace import SDFG, nodes
 
 
 class GPUStreamManager:
     """
-    Manages GPU backend streams (e.g., CUDA or HIP streams) for nodes in an SDFG.
-    Assumes that the initialization inputs come from the NaiveGPUScheduler pass.
+    Manage GPU backend streams (e.g., CUDA or HIP) for nodes in an SDFG.
 
-    NOTE: "Stream" here refers to backend GPU streams, not DaCe data streams.
+    Nodes are assigned stream IDs by the NaiveGPUStreamScheduler Pass, and 
+    this class provides their access expressions and tracks the number of streams 
+    in use. GPU events are not (yet) supported.
+
+    Note
+    ----
+    "Stream" refers to backend GPU streams, not DaCe data streams.
     """
 
-    def __init__(self, sdfg: SDFG, assigned_streams: Dict[nodes.Node, Union[int, str]], stream_access_template: str):
+    def __init__(self, sdfg: SDFG, gpustream_assignments: Dict[nodes.Node, int]):
         self.sdfg = sdfg
-        self.assigned_streams = assigned_streams
-        self.stream_access_template = stream_access_template
+        self._stream_access_template = "__state->gpu_context->streams[{gpu_stream}]"
+        self._gpustream_assignments = gpustream_assignments
+        self._num_gpu_streams = max(gpustream_assignments.values()) + 1 if gpustream_assignments else 0
+        self._num_gpu_events = 0
+        
 
-        # Placeholder for future support of backend events (e.g., CUDA events)
-        self.num_gpu_events = 0
-
-        # Determine the number of streams used (stream IDs start from 0)
-        # Only count integer stream IDs (ignore string values like "nullptr")
-        int_stream_ids = [v for v in assigned_streams.values() if isinstance(v, int)]
-        self.num_gpu_streams = max(int_stream_ids, default=0) + 1
 
     def get_stream_node(self, node: nodes.Node) -> str:
         """
-        Returns the GPU stream access expression for a given node.
+        Return the access expression for the GPU stream assigned to a node.
 
-        If the node has an assigned stream not equal the default "nullptr", returns
-        the formatted stream expression. Otherwise, returns "nullptr".
+        Parameters
+        ----------
+        node : nodes.Node
+            The node for which to return the access expression of its assigned CUDA stream.
+
+        Returns
+        -------
+        str
+            The GPU stream access expression, e.g.,
+            "__state->gpu_context->streams[0]".
+
+        Raises
+        ------
+        ValueError
+            If the given node does not have an assigned stream.
         """
-        if node in self.assigned_streams and self.assigned_streams[node] != "nullptr":
-            return self.stream_access_template.format(gpu_stream=self.assigned_streams[node])
-        return "nullptr"
-
+        if node in self.gpustream_assignments:
+            return self._stream_access_template.format(
+                gpu_stream=self.gpustream_assignments[node]
+            )
+        else:
+            raise ValueError(
+                f"No GPU stream assigned to node {node}. "
+                "Check whether the node is relevant for GPU stream assignment and, if it is, "
+                "inspect the GPU stream pipeline to see why no stream was assigned."
+            )
+        
     def get_stream_edge(self, src_node: nodes.Node, dst_node: nodes.Node) -> str:
         """
-        Returns the stream access expression for an edge based on either the
-        source or destination node. If one of the nodes has an assigned stream not equal
-        to the default 'nullptr', that stream is returned (should be symmetric
-        when using the NaiveGPUStreamScheduler pass). Otherwise, returns 'nullptr'.
+        Returns the GPU stream access expression for an edge.
+
+        Currently unused: edge-level streams were only needed for asynchronous
+        memory-copy operations (e.g., cudaMemcpyAsync). These copies are now
+        modeled via tasklets in the SDFG, so edges do not carry stream info.
+        Implement this if the design changes and edges need streams again.
         """
-        if src_node in self.assigned_streams and self.assigned_streams[src_node] != "nullptr":
-            stream_id = self.assigned_streams[src_node]
-            return self.stream_access_template.format(gpu_stream=stream_id)
-        elif dst_node in self.assigned_streams and self.assigned_streams[dst_node] != "nullptr":
-            stream_id = self.assigned_streams[dst_node]
-            return self.stream_access_template.format(gpu_stream=stream_id)
-        else:
-            return "nullptr"
+        raise NotImplementedError(
+            "Edge-level GPU streams are not supported. "
+            "They were previously used for asynchronous memory copies (e.g., cudaMemcpyAsync), "
+            "but these are now modeled via tasklets in the SDFG. "
+            "Implement this if the design changes and edges must carry GPU stream information."
+        )
+
+    @property
+    def num_gpu_events(self) -> int:
+        """Number of GPU events (currently always 0, left here for potential future support)."""
+        return 0
+
+    @property
+    def num_gpu_streams(self) -> int:
+        """Number of GPU streams in use (stream IDs start at 0)."""
+        return self._num_gpu_streams
+    
+    @property
+    def gpustream_assignments(self) -> Dict[nodes.Node, int]:
+        """Mapping of nodes to assigned GPU stream IDs (not all nodes necessarily have a GPU stream ID)."""
+        return self._gpustream_assignments
+    

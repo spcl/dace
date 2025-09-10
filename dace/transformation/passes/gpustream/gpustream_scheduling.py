@@ -8,6 +8,9 @@ from dace.sdfg import nodes
 from dace.sdfg.graph import Graph, NodeT
 from dace.transformation import pass_pipeline as ppl, transformation
 
+# Placeholder for the GPU stream variable used in tasklet code
+STREAM_PLACEHOLDER = "__dace_current_stream"
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class NaiveGPUStreamScheduler(ppl.Pass):
@@ -109,6 +112,10 @@ class NaiveGPUStreamScheduler(ppl.Pass):
         components = self._get_weakly_connected_nodes(state)
 
         for component in components:
+
+            if not self._requires_gpu_stream(state, component):
+                continue
+
             nodes_assigned_before = len(stream_assignments)
 
             for node in component:
@@ -193,3 +200,52 @@ class NaiveGPUStreamScheduler(ppl.Pass):
             return 0
         else:
             return (gpu_stream + 1) % self._max_concurrent_streams
+        
+    def _requires_gpu_stream(self, state: SDFGState, component: Set[NodeT]) -> bool:
+        """
+        Check whether a connected component in an SDFG state should be assigned
+        a GPU stream.
+
+        A component requires a GPU stream if it contains at least one of:
+        - An AccessNode with GPU global memory storage,
+        - A MapEntry scheduled on a GPU device,
+        - A Tasklet whose code includes the stream placeholder.
+
+        Parameters
+        ----------
+        state : SDFGState
+            The state containing the component.
+        component : Set[NodeT]
+            The set of nodes that form the connected component.
+
+        Returns
+        -------
+        bool
+            True if the component requires a GPU stream, False otherwise.
+        """
+        def gpu_relevant(node, parent) -> bool:
+            if (isinstance(node, nodes.AccessNode)
+                and node.desc(parent).storage == dace.dtypes.StorageType.GPU_Global):
+                    return True
+            
+            elif (isinstance(node, nodes.MapEntry)
+                    and node.map.schedule == dace.dtypes.ScheduleType.GPU_Device):
+                    return True
+            
+            elif (isinstance(node, nodes.Tasklet)
+                    and STREAM_PLACEHOLDER in node.code.as_string):
+                    return True 
+            
+            return False
+            
+
+        for node in component:
+            if isinstance(node, nodes.NestedSDFG):
+                if any(gpu_relevant(node, parent) for node, parent in node.sdfg.all_nodes_recursive()):
+                    return True
+            
+            else:
+                if gpu_relevant(node, state):
+                    return True
+            
+        return False

@@ -68,7 +68,6 @@ class InsertGPUCopyTasklets(ppl.Pass):
         """
         # Prepare GPU stream
         gpustream_assignments: Dict[nodes.Node, Union[int, str]] = pipeline_results['NaiveGPUStreamScheduler']
-        num_assigned_streams = max(gpustream_assignments.values(), default=0) + 1
         gpustream_array_name, gpustream_var_name_prefix = Config.get('compiler', 'cuda', 'gpu_stream_name').split(',')
 
         # Initialize the strategy for copies that occur outside of kernel execution
@@ -110,7 +109,7 @@ class InsertGPUCopyTasklets(ppl.Pass):
             dst_node_pred, dst_node_conn, _, dst_conn, memlet = edge
             state.add_edge(dst_node_pred, dst_node_conn, tasklet, None, copy.deepcopy(memlet))
             state.add_edge(tasklet, None, dst_node, dst_conn, copy.deepcopy(memlet))
-            state.remove_edge(edge)   
+            state.remove_edge(edge)  
 
         return {}
     
@@ -161,21 +160,5 @@ class InsertGPUCopyTasklets(ppl.Pass):
 
                     # Add copy to the worklist
                     copy_worklist.append((sub_sdfg, state, src_node, dst_node, first_edge))
-
-                    """
-                    # NOTE: This is closer to what the cpu.py file does. Some copies could be missed
-                    # in case someone wants to extend this pass with other copy tasklets- in this case,
-                    # I would suggest to take a closer look into cpu.py how copies are dispatched.
-
-                    if (isinstance(dst_node, nodes.AccessNode) and scope_dict[src_node] != scope_dict[dst_node] 
-                        and scope_contains_scope(scope_dict, src_node, dst_node)):
-                        copy_worklist.append((sub_sdfg, state, src_node, dst_node, last_edge))
-
-                    elif (isinstance(src_node, nodes.AccessNode) and not isinstance(dst_node, nodes.Tasklet)):
-                        copy_worklist.append((sub_sdfg, state, src_node, dst_node, first_edge))
-
-                    elif (not isinstance(src_node, nodes.CodeNode) and isinstance(dst_node, nodes.Tasklet)):
-                        copy_worklist.append((sub_sdfg, state, src_node, dst_node, last_edge))  
-                    """
 
         return copy_worklist

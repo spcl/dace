@@ -36,9 +36,8 @@ class InsertGPUStreamSyncTasklets(ppl.Pass):
     
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]):
         """
-        Inserts GPU stream synchronization tasklets at required locations:
-        - At the end of a state, for streams used in the state.
-        - After specific nodes, if synchronizeation is required before continuing.
+        Inserts GPU stream synchronization tasklets at required locations
+        at the end of a state, for GPU streams used in the state.
         """
         stream_assignments: Dict[nodes.Node, int] = pipeline_results['NaiveGPUStreamScheduler']
 
@@ -47,20 +46,14 @@ class InsertGPUStreamSyncTasklets(ppl.Pass):
 
         # Synchronize all used streams at the end of a state
         self._insert_gpu_stream_sync_at_state_end(sdfg, sync_state, stream_assignments)
-
-        # Synchronize after specific nodes if required (e.g. After GPU->Non-GPU copies might be a case)
-        self._insert_gpu_stream_sync_after_node(sdfg, sync_node, stream_assignments)
-
         return {}
 
     def _identify_sync_locations(self, sdfg: SDFG, stream_assignments: Dict[nodes.Node, int]
                                  ) -> Tuple[Dict[SDFGState, Set[int]], Dict[nodes.Node, SDFGState]]:
         """
         Heuristically identifies GPU stream synchronization points in an SDFG.
-
-        Synchronization is inserted in the following cases:
-        - **End of a state**: When copying to or from GPU AccessNodes.
-        - **After a specific node**: When data leaves GPU memory and is used afterwards.
+        Synchronization is inserted  at the end of a state when it is required.
+                                    
 
         Parameters
         ----------
@@ -119,7 +112,6 @@ class InsertGPUStreamSyncTasklets(ppl.Pass):
             elif (is_gpu_accessnode(src, state) and is_nongpu_accessnode(dst, state) and
                 not is_sink_node(dst, state) and not edge_within_kernel(state, src, dst)):
                 sync_state[state].add(stream_assignments[dst])
-                sync_node[dst] = state
 
             elif (is_nongpu_accessnode(src, state) and is_gpu_accessnode(dst, state) and
                 not edge_within_kernel(state, src, dst)):
@@ -171,7 +163,6 @@ class InsertGPUStreamSyncTasklets(ppl.Pass):
             Mapping of nodes to their assigned GPU stream IDs.
         """
         # Prepare GPU stream info and backend
-        num_assigned_streams = max(stream_assignments.values(), default=0) + 1
         stream_array_name, stream_var_name_prefix = Config.get('compiler', 'cuda', 'gpu_stream_name').split(',')
         backend: str = common.get_gpu_backend()
 
@@ -229,56 +220,4 @@ class InsertGPUStreamSyncTasklets(ppl.Pass):
                 tasklet.add_out_connector(conn, dtypes.gpuStream_t, force=True)
                 state.add_edge(combined_stream_node, None, tasklet, conn, dace.Memlet(accessed_gpu_stream))
                 state.add_edge(tasklet, conn, output_stream_node, None, dace.Memlet(accessed_gpu_stream))
-
-    def _insert_gpu_stream_sync_after_node(self, sdfg: SDFG, sync_node: Dict[nodes.Node, SDFGState], 
-                                           stream_assignments: Dict[nodes.Node, int]) -> None:
-        """
-        Insert a GPU stream synchronization tasklet immediately after specified nodes.
-
-        Parameters
-        ----------
-        sdfg : SDFG
-            The top level SDFG.
-        sync_node : Dict[nodes.Node, SDFGState]
-            Mapping of nodes to their parent state. After after the node a GPU stream synchronization should occur.
-        stream_assignments : Dict[nodes.Node, int]
-            Mapping of nodes to their assigned GPU stream IDs.
-        """
-        # Prepare GPU stream info and backend
-        num_assigned_streams = max(stream_assignments.values(), default=0) + 1
-        stream_array_name, stream_var_name_prefix = Config.get('compiler', 'cuda', 'gpu_stream_name').split(',')
-        backend: str = common.get_gpu_backend()
-
-        for node, state in sync_node.items():
-
-            #----------------- Generate GPU stream synchronization Tasklet -----------------
-
-            # Get assigned GPU stream 
-            stream = stream_assignments.get(node, "nullptr")
-            if stream == "nullptr":
-                raise NotImplementedError("Using the default 'nullptr' gpu stream is not supported yet.")
-
-            # Create the tasklet
-            stream_var_name = f"{stream_var_name_prefix}{stream}"
-            sync_call = f"DACE_GPU_CHECK({backend}StreamSynchronize({stream_var_name}));\n"
-            tasklet = state.add_tasklet( name=f"gpu_stream_{stream}_synchronization", 
-                                         inputs=set(), outputs=set(),
-                                         code=sync_call, language=dtypes.Language.CPP)
-
-
-            #----------------- Place tasklet between node and successors, link GPU streams ----------------
-
-            # 1. Put the tasklet between the node and its successors
-            for succ in state.successors(node):
-                state.add_edge(tasklet, None, succ, None, dace.Memlet())
-            state.add_edge(node, None, tasklet, None, dace.Memlet())
-            
-            # 3. Connect tasklet to GPU stream AccessNodes
-            in_stream = state.add_access(stream_array_name)
-            out_stream = state.add_access(stream_array_name)
-            accessed_stream = f"{stream_array_name}[{stream}]"
-            state.add_edge(in_stream, None, tasklet, stream_var_name, dace.Memlet(accessed_stream))
-            state.add_edge(tasklet, stream_var_name, out_stream, None, dace.Memlet(accessed_stream))
-            tasklet.add_in_connector(stream_var_name, dtypes.gpuStream_t, force=True)
-            tasklet.add_out_connector(stream_var_name, dtypes.gpuStream_t, force=True)
-            
+     

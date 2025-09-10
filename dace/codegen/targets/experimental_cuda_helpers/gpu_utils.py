@@ -6,7 +6,7 @@ from typing import Set, List, Optional
 import dace
 from dace import Config, symbolic, data as dt, dtypes
 from dace.sdfg import nodes, SDFGState
-from dace.codegen import cppunparse
+from dace.codegen import common, cppunparse
 from dace.codegen.dispatcher import DefinedType
 from dace.codegen.prettycode import CodeIOStream
 from dace.transformation.helpers import get_parent_map
@@ -79,7 +79,6 @@ def validate_block_size_limits(kernel_map_entry: nodes.MapEntry, block_size: Lis
     Raises:
         ValueError: If either limit is exceeded.
     """
-
     kernel_map_label = kernel_map_entry.map.label
 
     total_block_size = product(block_size)
@@ -100,20 +99,36 @@ def validate_block_size_limits(kernel_map_entry: nodes.MapEntry, block_size: Lis
                          'thread-block size. To increase this limit, modify the '
                          '`compiler.cuda.block_size_lastdim_limit` configuration entry.')
 
-
-def emit_sync_debug_checks(backend: str, codestream: CodeIOStream):
+def generate_sync_debug_call() -> str:
     """
-    Emit backend sync and error-check calls if synchronous debugging is enabled.
+    Generate backend sync and error-check calls as a string if 
+    synchronous debugging is enabled.
 
-    Args:
-        backend (str): Backend API prefix (e.g., 'cuda').
-        codestream (CodeIOStream): Stream to write code to.
+    Parameters
+    ----------
+    backend : str
+        Backend API prefix (e.g., 'cuda').
+
+    Returns
+    -------
+    str
+        The generated debug call code, or an empty string if debugging is disabled.
     """
+    backend: str = common.get_gpu_backend()
+    sync_call: str = ""
     if Config.get_bool('compiler', 'cuda', 'syncdebug'):
-        codestream.write(f"DACE_GPU_CHECK({backend}GetLastError());\n"
-                         f"DACE_GPU_CHECK({backend}DeviceSynchronize());\n")
+        sync_call = (
+            f"DACE_GPU_CHECK({backend}GetLastError());\n"
+            f"DACE_GPU_CHECK({backend}DeviceSynchronize());\n"
+        )
+
+    return sync_call
 
 def get_defined_type(data: dt.Data) -> DefinedType:
+    """
+    Return the DefinedType for a data descriptor.
+    Currently supports only scalars and arrays; extend if others are needed.
+    """
     if isinstance(data, dt.Scalar):
         return DefinedType.Scalar
     elif isinstance(data, dt.Array):
@@ -127,12 +142,18 @@ def is_within_schedule_types(state: SDFGState, node: nodes.Node, schedules: Set[
     Checks if the given node is enclosed within a Map whose schedule type
     matches any in the `schedules` set.
 
-    Args:
-        state (SDFGState): The State where the node resides
-        node (nodes.Node): The node to check.
-        schedules (set[dtypes.ScheduleType]): A set of schedule types to match (e.g., {dtypes.ScheduleType.GPU_Device}).
+    Parameters
+    ----------
+    state : SDFGState
+        The State where the node resides
+    node : nodes.Node 
+        The node to check.
+    schedules : set[dtypes.ScheduleType]
+        A set of schedule types to match (e.g., {dtypes.ScheduleType.GPU_Device}).
 
-    Returns:
+    Returns
+    ----------
+    bool
         True if the node is enclosed by a Map with a schedule type in `schedules`, False otherwise.
     """
     current = node

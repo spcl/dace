@@ -129,7 +129,7 @@ __state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{id}, __da
                                 'GPU_Device map scopes')
 
             idstr = 'b' + self._idstr(cfg, state, node)
-            stream = getattr(node, '_cuda_stream', -1)
+            stream = self._get_gpu_stream(state, node)
             outer_stream.write(self._record_event(idstr, stream), cfg, state_id, node)
 
     def on_scope_exit(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, node: nodes.ExitNode,
@@ -139,7 +139,7 @@ __state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{id}, __da
         s = self._get_sobj(node)
         if s.instrument == dtypes.InstrumentationType.GPU_Events:
             idstr = 'e' + self._idstr(cfg, state, entry_node)
-            stream = getattr(node, '_cuda_stream', -1)
+            stream = self._get_gpu_stream(state, node)
             outer_stream.write(self._record_event(idstr, stream), cfg, state_id, node)
             outer_stream.write(self._report('%s %s' % (type(s).__name__, s.label), cfg, state, entry_node), cfg,
                                state_id, node)
@@ -153,7 +153,7 @@ __state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{id}, __da
         if node.instrument == dtypes.InstrumentationType.GPU_Events:
             state_id = state.parent_graph.node_id(state)
             idstr = 'b' + self._idstr(cfg, state, node)
-            stream = getattr(node, '_cuda_stream', -1)
+            stream = self._get_gpu_stream(state, node)
             outer_stream.write(self._record_event(idstr, stream), cfg, state_id, node)
 
     def on_node_end(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, node: nodes.Node,
@@ -165,7 +165,47 @@ __state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{id}, __da
         if node.instrument == dtypes.InstrumentationType.GPU_Events:
             state_id = state.parent_graph.node_id(state)
             idstr = 'e' + self._idstr(cfg, state, node)
-            stream = getattr(node, '_cuda_stream', -1)
+            stream = self._get_gpu_stream(state, node)
             outer_stream.write(self._record_event(idstr, stream), cfg, state_id, node)
             outer_stream.write(self._report('%s %s' % (type(node).__name__, node.label), cfg, state, node), cfg,
                                state_id, node)
+
+    def _get_gpu_stream(self, state: SDFGState, node: nodes.Node) -> int:
+        """
+        Return the GPU stream ID assigned to a given node.
+
+        - In the CUDACodeGen, the stream ID is stored as the private attribute 
+          ``_cuda_stream`` on the node.
+        - In the ExperimentalCUDACodeGen, streams are explicitly assigned to tasklets 
+          and GPU_Device-scheduled maps (kernels) via a GPU stream AccessNode. For 
+          other node types, no reliable stream assignment is available.
+
+        Parameters
+        ----------
+        state : SDFGState
+            The state containing the node.
+        node : dace.sdfg.nodes.Node
+            The node for which to query the GPU stream.
+
+        Returns
+        -------
+        int
+            The assigned GPU stream ID, or ``-1`` if none could be determined.
+        """
+        if config.Config.get('compiler', 'cuda', 'implementation') == 'legacy':
+            stream = getattr(node, '_cuda_stream', -1)
+        
+        else:
+            stream = -1
+            for in_edge in state.in_edges(node):
+                src = in_edge.src
+                if (isinstance(src, nodes.AccessNode) and src.desc(state).dtype == dtypes.gpuStream_t):
+                    stream = int(in_edge.data.subset)
+
+            for out_edge in state.out_edges(node):
+                dst = out_edge.dst
+                if (isinstance(dst, nodes.AccessNode) and dst.desc(state).dtype == dtypes.gpuStream_t):
+                    stream = int(out_edge.data.subset)
+
+        return stream
+        

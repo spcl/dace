@@ -37,9 +37,6 @@ class InsertGPUStreamsToKernels(ppl.Pass):
         # Retrieve GPU stream assignments for nodes
         stream_assignments: Dict[nodes.Node, Union[int, str]] = pipeline_results['NaiveGPUStreamScheduler']
 
-        # Determine the number of assigned GPU streams, needed for creating the GPU stream Array
-        num_assigned_streams = max(stream_assignments.values(), default=0) + 1
-
         # Link kernels to their assigned GPU streams
         for sub_sdfg in sdfg.all_sdfgs_recursive():
 

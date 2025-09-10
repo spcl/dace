@@ -1,21 +1,14 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 from typing import Any, Dict, Set, Type, Union
 
-import copy
-
 import dace
-from dace import dtypes, properties, SDFG, SDFGState
-from dace.codegen import common
+from dace import SDFG, dtypes, properties
+from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import is_within_schedule_types
 from dace.config import Config
+from dace.sdfg import is_devicelevel_gpu
+from dace.sdfg.nodes import AccessNode, MapEntry, MapExit, Node, Tasklet
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.gpustream.gpustream_scheduling import NaiveGPUStreamScheduler
-from dace.sdfg.nodes import Node, AccessNode, MapEntry, MapExit, Tasklet
-from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, SDFGState
-
-from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import is_within_schedule_types
-
-
-from dace.sdfg import is_devicelevel_gpu
 
 STREAM_PLACEHOLDER = "__dace_current_stream"
 
@@ -23,7 +16,12 @@ STREAM_PLACEHOLDER = "__dace_current_stream"
 @transformation.explicit_cf_compatible
 class InsertGPUStreamsToSDFGs(ppl.Pass):
     """
-    TODO
+    Inserts a GPU stream array into the top-level SDFG and propagates it to all 
+    nested SDFGs that require it, including intermediate SDFGs along the hierarchy. 
+
+    This pass guarantees that every relevant SDFG has the array defined, avoiding 
+    duplication and allowing subsequent passes in the GPU stream pipeline to rely 
+    on its presence without redefining it.
     """
 
     def depends_on(self) -> Set[Union[Type[ppl.Pass], ppl.Pass]]:
@@ -36,41 +34,57 @@ class InsertGPUStreamsToSDFGs(ppl.Pass):
         return False
     
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]):
+        """
+        Ensure that a GPU stream array is available in all SDFGs that require it.
 
+        The pass creates the array once at the top-level SDFG and propagates it 
+        down the hierarchy by inserting matching arrays in child SDFGs and wiring 
+        them through nested SDFG connectors. This way, all SDFGs share a consistent 
+        reference to the same GPU stream array.
+        """
+
+        # Extract stream array name and number of streams to allocate
         stream_array_name = Config.get('compiler', 'cuda', 'gpu_stream_name').split(',')[0]
         stream_assignments: Dict[Node, Union[int, str]] = pipeline_results['NaiveGPUStreamScheduler']
         num_assigned_streams = max(stream_assignments.values(), default=0) + 1
 
-        # Add the GPU stream array as a transient to the top level SDFG
+        # Add the GPU stream array at the top level
         sdfg.add_transient(stream_array_name, (num_assigned_streams,), dtype=dace.dtypes.gpuStream_t, 
-                           storage=dace.dtypes.StorageType.CPU_Heap, lifetime=dace.dtypes.AllocationLifetime.Persistent)
+                           storage=dace.dtypes.StorageType.Register)
 
-        gpu_stream_desc = sdfg.arrays[stream_array_name]
+
+        # Ensure GPU stream array is defined where required
         for child_sdfg in self.find_child_sdfgs_requiring_gpu_stream(sdfg):
-            
-            # If GPU stream already defined (because a more inner child sdfg defined it all the way up) skip
+
+            # Skip if this child already has the array (inserted higher up in the hierarchy)
             if stream_array_name in child_sdfg.arrays:
                 continue
 
+            # Add the array to the child SDFG
             inner_sdfg = child_sdfg
-            outer_sdfg = inner_sdfg.parent_sdfg
             inner_sdfg.add_array(stream_array_name, (num_assigned_streams,), dtype=dace.dtypes.gpuStream_t, 
-                                 storage=dace.dtypes.StorageType.CPU_Heap, lifetime=dace.dtypes.AllocationLifetime.Persistent)
-
+                                 storage=dace.dtypes.StorageType.Register)
+            
+            # Walk up the hierarchy until the array is found, inserting it into each parent
+            outer_sdfg = inner_sdfg.parent_sdfg
             while stream_array_name not in outer_sdfg.arrays:
 
+                # Insert array in parent SDFG
+                outer_sdfg.add_array(stream_array_name, (num_assigned_streams,), dtype=dace.dtypes.gpuStream_t, 
+                                     storage=dace.dtypes.StorageType.Register)
+                
+                # Connect parent SDFG array to nested SDFG node
                 inner_nsdfg_node = inner_sdfg.parent_nsdfg_node
                 inner_parent_state = inner_sdfg.parent
                 inner_nsdfg_node.add_in_connector(stream_array_name, dtypes.gpuStream_t)
-
-                outer_sdfg.add_array(stream_array_name, (num_assigned_streams,), dtype=dace.dtypes.gpuStream_t, 
-                                     storage=dace.dtypes.StorageType.CPU_Heap, lifetime=dace.dtypes.AllocationLifetime.Persistent)
                 inp_gpu_stream: AccessNode = inner_parent_state.add_access(stream_array_name)
                 inner_parent_state.add_edge(inp_gpu_stream, None, inner_nsdfg_node, stream_array_name, dace.Memlet(stream_array_name))
 
+                # Continue climbing up the hierarchy
                 inner_sdfg = outer_sdfg
                 outer_sdfg = outer_sdfg.parent_sdfg
 
+            # Ensure final connection from the first parent that had the array down to this SDFG
             inner_nsdfg_node = inner_sdfg.parent_nsdfg_node
             inner_parent_state = inner_sdfg.parent
             inner_nsdfg_node.add_in_connector(stream_array_name, dtypes.gpuStream_t)
@@ -78,7 +92,7 @@ class InsertGPUStreamsToSDFGs(ppl.Pass):
             inner_parent_state.add_edge(inp_gpu_stream, None, inner_nsdfg_node, stream_array_name, dace.Memlet(f"{stream_array_name}[0:{num_assigned_streams}]"))
 
             outer_sdfg = inner_sdfg.parent_sdfg
-            
+
         return {}
 
     def find_child_sdfgs_requiring_gpu_stream(self, sdfg) -> Set[SDFG]:

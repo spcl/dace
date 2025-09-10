@@ -513,6 +513,13 @@ class CPUCodeGen(TargetCodeGenerator):
 
             return
         elif (nodedesc.storage == dtypes.StorageType.Register):
+
+            if nodedesc.dtype == dtypes.gpuStream_t:
+                ctype =  dtypes.gpuStream_t.ctype
+                allocation_stream.write(f"{ctype}* {name} = __state->gpu_context->streams;")
+                define_var(name, DefinedType.Pointer, ctype )
+                return
+            
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
             if nodedesc.start_offset != 0:
                 raise NotImplementedError('Start offset unsupported for registers')
@@ -586,6 +593,10 @@ class CPUCodeGen(TargetCodeGenerator):
             return
         elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
               or (nodedesc.storage == dtypes.StorageType.Register and symbolic.issymbolic(arrsize, sdfg.constants))):
+            
+            if nodedesc.dtype == dtypes.gpuStream_t:
+                callsite_stream.write(f"{alloc_name} = nullptr;")
+                return
             if isinstance(nodedesc, data.Array):
                 callsite_stream.write(f"delete[] {alloc_name};\n", cfg, state_id, node)
             else:

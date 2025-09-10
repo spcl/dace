@@ -1,3 +1,4 @@
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 from typing import Dict, FrozenSet, Set, Tuple, List, Optional
 import copy
 import functools
@@ -141,8 +142,8 @@ class MoveArrayOutOfKernel(Pass):
             next_map_exit = parent_state.exit_node(next_map_entry)
             if in_connector not in next_map_exit.in_connectors:
                 next_map_state = self._node_to_state_cache[next_map_exit]
-                next_map_exit.add_in_connector(in_connector)
-                next_map_exit.add_out_connector(out_connector)
+                next_map_exit.add_in_connector(in_connector, dtypes.pointer(array_desc.dtype))
+                next_map_exit.add_out_connector(out_connector, dtypes.pointer(array_desc.dtype))
 
                 next_entries, _ = self.get_maps_between(kernel_entry, previous_node)
                 memlet_subset = Range(self.get_memlet_subset(next_entries, previous_node) + old_subset)
@@ -292,10 +293,10 @@ class MoveArrayOutOfKernel(Pass):
                 # 1.1 Determine source connector name and register it based on src type
                 if isinstance(src, nodes.NestedSDFG):
                     src_conn = array_name
-                    src.add_out_connector(src_conn)
+                    src.add_out_connector(src_conn, dtypes.pointer(new_desc.dtype))
                 elif isinstance(src, nodes.MapExit):
                     src_conn = f"OUT_{array_name}"
-                    src.add_out_connector(src_conn)
+                    src.add_out_connector(src_conn, dtypes.pointer(new_desc.dtype))
                 else:
                     raise NotImplementedError(f"Unsupported source node type '{type(src).__name__}' — only NestedSDFG or MapExit are expected.")
 
@@ -304,7 +305,7 @@ class MoveArrayOutOfKernel(Pass):
                     dst_conn = None  # AccessNodes use implicit connectors
                 elif isinstance(dst, nodes.MapExit):  # Assuming dst is the entry for parent scope
                     dst_conn = f"IN_{array_name}"
-                    dst.add_in_connector(dst_conn)
+                    dst.add_in_connector(dst_conn, dtypes.pointer(new_desc.dtype))
                 else:
                     raise NotImplementedError(f"Unsupported destination node type '{type(dst).__name__}' — expected AccessNode or MapEntry.")
                 
@@ -323,10 +324,10 @@ class MoveArrayOutOfKernel(Pass):
 
             if isinstance(src, nodes.NestedSDFG):
                 src_conn = array_name
-                src.add_out_connector(src_conn)
+                src.add_out_connector(src_conn, dtypes.pointer(new_desc.dtype))
             elif isinstance(src, nodes.MapExit):
                 src_conn = f"OUT_{array_name}"
-                src.add_out_connector(src_conn)
+                src.add_out_connector(src_conn, dtypes.pointer(new_desc.dtype))
             else:
                 raise NotImplementedError(f"Unsupported source node type '{type(src).__name__}' — only NestedSDFG or MapExit are expected.")
             
@@ -523,7 +524,7 @@ class MoveArrayOutOfKernel(Pass):
                     if edge.src_conn == old_out_conn:
                         edge.src_conn = new_out_conn
                         src.remove_out_connector(old_out_conn)
-                        src.add_out_connector(new_out_conn)
+                        src.add_out_connector(new_out_conn, dtypes.pointer(array_desc.dtype))
 
                     # Update in connectors 
                     dst = edge.dst
@@ -532,7 +533,7 @@ class MoveArrayOutOfKernel(Pass):
                     if edge.dst_conn == old_in_conn:
                         edge.dst_conn = new_in_conn
                         dst.remove_in_connector(old_in_conn)
-                        dst.add_in_connector(new_in_conn)
+                        dst.add_in_connector(new_in_conn, dtypes.pointer(array_desc.dtype))
     
     def update_symbols(self, map_entry_chain: List[nodes.MapEntry], top_sdfg: SDFG) -> None:
         """

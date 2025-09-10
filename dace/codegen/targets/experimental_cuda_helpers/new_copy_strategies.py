@@ -8,7 +8,7 @@ from dace import symbolic
 from dace.codegen import common
 from dace.codegen.targets import cpp
 from dace.codegen.targets.cpp import unparse_cr
-from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import symbolic_to_cpp
+from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import symbolic_to_cpp, generate_sync_debug_call
 from dace.config import Config
 from dace.dtypes import StorageType
 from dace.frontend import operations
@@ -17,7 +17,12 @@ from dace.sdfg.graph import MultiConnectorEdge
 from dace.transformation import helpers
 
 class CopyContext:
-
+    """
+    Encapsulates inputs required for copy operations and exposes helper
+    methods to derive additional information. This keeps copy strategies
+    lightweight by letting them focus only on the relevant logic.
+    """
+    
     def __init__(self, sdfg: SDFG, state: SDFGState, src_node: nodes.Node, dst_node: nodes.Node, 
                  edge: MultiConnectorEdge[mm.Memlet], gpustream_assignments: Dict[nodes.Node, Union[int, str]]):
         
@@ -45,6 +50,13 @@ class CopyContext:
         self.dst_expr = dst_expr
 
     def get_storage_type(self, node: nodes.Node):
+        """
+        Return the storage type associated with a given SDFG node.
+
+        Tasklets are assumed to use register storage, while AccessNodes
+        return the storage type from their data descriptor. Raises
+        NotImplementedError for unsupported node types.
+        """
         if isinstance(node, nodes.Tasklet):
             storage_type = StorageType.Register
 
@@ -60,6 +72,17 @@ class CopyContext:
         return storage_type
 
     def get_assigned_gpustream(self) -> str:
+        """
+        Return the GPU stream expression assigned to both source and destination nodes.
+
+        Ensures that both nodes have a matching stream ID, then constructs the
+        variable name from the configured prefix and stream ID. Raises ValueError
+        if assignments are missing or inconsistent.
+
+        Example:
+            If the configured prefix is 'gpu_stream' and the assigned stream ID is 0,
+            this method returns 'gpu_stream0'.
+        """
         src_stream = self.gpustream_assignments.get(self.src_node)
         dst_stream = self.gpustream_assignments.get(self.dst_node)
 
@@ -74,17 +97,26 @@ class CopyContext:
             )
         
         # 2. Generate GPU stream expression
-        
         gpustream = src_stream
-        if gpustream == 'nullptr':
-            raise NotImplementedError("nullptr GPU stream not supported yet.")
-
         gpustream_var_name_prefix = Config.get('compiler', 'cuda', 'gpu_stream_name').split(',')[1]
         gpustream_expr = f"{gpustream_var_name_prefix}{gpustream}" 
 
         return gpustream_expr
 
     def get_memory_location(self) -> Tuple[str, str]:
+        """
+        Determine whether the source and destination nodes reside in device or host memory.
+
+        Uses the storage type of each node to classify it as either 'Device' 
+        (GPU global memory) or 'Host' (all other storage types).
+        Used for GPU related copies outside the kernel (e.g. to construct 
+        cudaMemcpyHostToDevice for example).
+
+        Returns
+        -------
+        Tuple[str, str]
+            (src_location, dst_location) where each is either 'Device' or 'Host'.
+        """
         src_storage = self.get_storage_type(self.src_node)
         dst_storage = self.get_storage_type(self.dst_node)
         src_location = 'Device' if src_storage == dtypes.StorageType.GPU_Global else 'Host'
@@ -93,6 +125,23 @@ class CopyContext:
         return src_location, dst_location
 
     def get_ctype(self) -> Any:
+        """
+        Determine the C data type (ctype) of the source or destination node.
+
+        The ctype is resolved from the data descriptor of the first node 
+        (source or destination) that is an AccessNode (assumed to be the same
+        if both are AccessNodes).
+
+        Returns
+        -------
+        Any
+            The C type string (e.g., "float*", "int32") associated with the node.
+
+        Raises
+        ------
+        NotImplementedError
+            If neither the source nor the destination node is an AccessNode.
+        """
         sdfg = self.sdfg
         src_node, dst_node = self.src_node, self.dst_node
 
@@ -109,22 +158,79 @@ class CopyContext:
         )
 
     def get_accessnode_to_accessnode_copy_info(self):
-        src_node, dst_node = self.src_node, self.dst_node
-        sdfg = self.sdfg
-        edge = self.edge
-        memlet = self.edge.data
-        state = self.state
-        copy_shape = self.copy_shape
+        """
+        Compute copy shape, absolute strides, and pointer expressions for a copy
+        between two AccessNodes. Tries to mimic
+        cpp.memlet_copy_to_absolute_strides without requiring a dispatcher.
 
+        Returns
+        -------
+        (copy_shape, src_strides, dst_strides, src_expr, dst_expr)
+
+        Raises
+        ------
+        TypeError
+            If either endpoint is not an AccessNode.
+        NotImplementedError
+            If a descriptor is not Scalar or Array.
+        """
+
+        # ---------------------------- helpers ----------------------------
+        def _collapse_strides(strides, subset):
+            """Remove size-1 dims; keep tile strides; default to [1] if none remain."""
+            n = len(subset)
+            collapsed = [st for st, sz in zip(strides, subset.size()) if sz != 1]
+            collapsed.extend(strides[n:])  # include tiles
+            if len(collapsed) == 0:
+                return [1]
+            return collapsed
+
+        def _ptr_name(desc, name):
+            if desc.transient and desc.lifetime in (
+                dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External
+            ):
+                return f'__state->__{sdfg.cfg_id}_{name}'
+            return name
+
+        def _expr_for(desc, name, subset):
+            ptr = _ptr_name(desc, name)
+
+            if isinstance(desc, data.Scalar):
+                # GPU scalar special-case
+                if desc.storage in dtypes.GPU_MEMORY_STORAGES_EXPERIMENTAL_CUDACODEGEN:
+                    parent = state.sdfg.parent_nsdfg_node
+                    if parent is not None and name in parent.in_connectors:
+                        return f"&{ptr}"
+                    return ptr
+                # CPU (or other) scalars
+                return f"&{ptr}"
+
+            if isinstance(desc, data.Array):
+                offset = cpp.cpp_offset_expr(desc, subset)
+                return f"{ptr} + {offset}" if offset != "0" else ptr
+
+            raise NotImplementedError(
+                f"Expected {name} to be either data.Scalar or data.Array, but got {type(desc).__name__}."
+            )
+        
+        # ---------------------------- Get copy info ----------------------------
+        # Get needed information
+        src_node, dst_node = self.src_node, self.dst_node
+        sdfg, edge, state = self.sdfg, self.edge, self.state
+        memlet, copy_shape = self.edge.data, self.copy_shape
+
+        # Guard - only applicable if src and dst are AccessNodes
         if not (isinstance(src_node, nodes.AccessNode) and isinstance(dst_node, nodes.AccessNode)):
             raise TypeError(
                 f"get_accessnode_to_accessnode_copy_info requires both source and destination "
                 f"to be AccessNode instances, but got {type(src_node).__name__} and {type(dst_node).__name__}."
             )
         
+        # Get node descriptors
         src_nodedesc = src_node.desc(sdfg)
         dst_nodedesc = dst_node.desc(sdfg)
 
+        # Resolve subsets (fallback to full range)
         src_subset = memlet.get_src_subset(edge, state)
         dst_subset = memlet.get_dst_subset(edge, state)
         
@@ -134,10 +240,11 @@ class CopyContext:
         if dst_subset is None:
             dst_subset = subsets.Range.from_array(dst_nodedesc)
 
+        # Get strides
         src_strides = src_subset.absolute_strides(src_nodedesc.strides)
         dst_strides = dst_subset.absolute_strides(dst_nodedesc.strides)
 
-        # Try to turn into degenerate/strided ND copies
+        # Try to convert to a degenerate/strided ND copy first
         result = cpp.ndcopy_to_strided_copy(
             copy_shape,
             src_nodedesc.shape,
@@ -148,25 +255,13 @@ class CopyContext:
             src_subset,
             dst_subset,
         )
+
         if result is not None:
             copy_shape, src_strides, dst_strides = result
         else:
-            # If other_subset is defined, reduce its dimensionality by
-            # removing the "empty" dimensions (size = 1) and filter the
-            # corresponding strides out
-            src_strides = ([stride
-                            for stride, s in zip(src_strides, src_subset.size()) if s != 1] + src_strides[len(src_subset):]
-                        )  # Include tiles
-            if not src_strides:
-                src_strides = [1]
-            dst_strides = ([stride
-                            for stride, s in zip(dst_strides, dst_subset.size()) if s != 1] + dst_strides[len(dst_subset):]
-                        )  # Include tiles
-            if not dst_strides:
-                dst_strides = [1]
-            copy_shape = [s for s in copy_shape if s != 1]
-            if not copy_shape:
-                copy_shape = [1]
+            src_strides = _collapse_strides(src_strides, src_subset)
+            dst_strides = _collapse_strides(dst_strides, dst_subset)
+            copy_shape = [s for s in copy_shape if s != 1] or [1]
 
         # Extend copy shape to the largest among the data dimensions,
         # and extend other array with the appropriate strides
@@ -176,58 +271,9 @@ class CopyContext:
             elif memlet.data == dst_node.data:
                 copy_shape, src_strides = cpp.reshape_strides(dst_subset, dst_strides, src_strides, copy_shape)
 
-
-        src_name = src_node.data
-        if (src_nodedesc.transient and src_nodedesc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External)):
-            ptr_name = f'__state->__{sdfg.cfg_id}_{src_name}'
-        else:
-            ptr_name = src_name
-
-        if isinstance(src_nodedesc, data.Scalar) and src_nodedesc.storage in dtypes.GPU_MEMORY_STORAGES_EXPERIMENTAL_CUDACODEGEN:
-            parent_nsdfg_node = state.sdfg.parent_nsdfg_node
-            if parent_nsdfg_node is not None and src_name in parent_nsdfg_node.in_connectors:
-                src_expr = f"&{ptr_name}"
-            else:
-                src_expr = ptr_name
-
-        elif isinstance(src_nodedesc, data.Scalar):
-            src_expr = f"&{ptr_name}"
-
-        elif isinstance(src_nodedesc, data.Array):
-            src_offset = cpp.cpp_offset_expr(src_nodedesc, src_subset)
-            src_expr = f"{ptr_name} + {src_offset}" if src_offset != "0" else ptr_name
-
-        else:
-            raise NotImplementedError(
-                f"Expected {src_name} to be either data.Scalar or data.Array, "
-                f"but got {type(src_nodedesc).__name__}."
-            )
-            
-        dst_name = dst_node.data
-        if (dst_nodedesc.transient and dst_nodedesc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External)):
-            ptr_name = f'__state->__{sdfg.cfg_id}_{dst_name}'
-        else:
-            ptr_name = dst_name
-
-        if isinstance(dst_nodedesc, data.Scalar) and dst_nodedesc.storage in dtypes.GPU_MEMORY_STORAGES_EXPERIMENTAL_CUDACODEGEN:
-            parent_nsdfg_node = state.sdfg.parent_nsdfg_node
-            if parent_nsdfg_node is not None and dst_name in parent_nsdfg_node.in_connectors:
-                dst_expr = f"&{ptr_name}"
-            else:
-                dst_expr = ptr_name
-
-        elif isinstance(dst_nodedesc, data.Scalar):
-            dst_expr = f"&{ptr_name}"
-
-        elif isinstance(dst_nodedesc, data.Array):
-            dst_offset = cpp.cpp_offset_expr(dst_nodedesc, dst_subset)
-            dst_expr = f"{ptr_name} + {dst_offset}" if dst_offset != "0" else ptr_name
-
-        else:
-            raise NotImplementedError(
-                f"Expected {dst_name} to be either data.Scalar or data.Array, "
-                f"but got {type(dst_nodedesc).__name__}."
-            )
+        # Build final expressions
+        src_expr = _expr_for(src_nodedesc, src_node.data, src_subset)
+        dst_expr = _expr_for(dst_nodedesc, dst_node.data, dst_subset)
 
         return copy_shape, src_strides, dst_strides, src_expr, dst_expr
 
@@ -370,6 +416,8 @@ class OutOfKernelCopyStrategy(CopyStrategy):
 
             call = f'DACE_GPU_CHECK({backend}Memcpy2DAsync({dst_expr}, {dpitch}, {src_expr}, {spitch}, {width}, {height}, {kind}, {gpustream}));\n'
 
+        # Potentially snychronization required if syncdebug is set to true in configurations
+        call = call + generate_sync_debug_call()
         return call
     
     def _generate_2d_copy(self, copy_context: CopyContext) -> None:

@@ -268,31 +268,3 @@ class GPUStreamTopologySimplification(ppl.Pass):
                 state.remove_node(sink_stream)
 
             state.remove_node(passthrough_gpu_node)
-
-    def _remove_passthrough_gpu_stream_access_node(self, sdfg: SDFG) -> None:
-        """
-        Unused: This will need adaption at the codegen level.
-        It is mainly unused because I don't think it makes the final SDFG
-        visually nicer, which is the whole purpose of this Pass.
-        """
-
-        for node, state in sdfg.all_nodes_recursive():
-            # remove only GPU Stream AccessNodes who have exactly one incoming and outgoing edge
-            if not (isinstance(node, nodes.AccessNode) and node.desc(state).dtype == dtypes.gpuStream_t):
-                continue
-
-            if not (state.in_degree(node) == 1 and state.out_degree(node) == 1):
-                continue
-
-            in_edge = state.in_edges(node)[0]
-            out_edge = state.out_edges(node)[0]
-
-            # Unknown case: in and out edge carry different data. Skip
-            if in_edge.data.data != out_edge.data.data:
-                continue
-
-            # Remove the passthrough GPU stream AccessNode and replace it by a single edge
-            state.add_edge(in_edge.src, in_edge.src_conn, out_edge.dst, out_edge.dst_conn, in_edge.data)
-            state.remove_edge(in_edge)
-            state.remove_edge(out_edge)
-            state.remove_node(node)
