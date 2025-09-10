@@ -33,8 +33,9 @@ def _cuda_helper():
     """
 
     if Config.get('compiler', 'cuda', 'implementation') == 'experimental':
-        program = codeobject.CodeObject("cuda_helper", helper_code, "cpp",targets.cpu.CPUCodeGen, "CudaHelper")
-        dummy_cuda_target = codeobject.CodeObject("dummy", "", "cu", targets.experimental_cuda.ExperimentalCUDACodeGen, "CudaDummy")
+        program = codeobject.CodeObject("cuda_helper", helper_code, "cpp", targets.cpu.CPUCodeGen, "CudaHelper")
+        dummy_cuda_target = codeobject.CodeObject("dummy", "", "cu", targets.experimental_cuda.ExperimentalCUDACodeGen,
+                                                  "CudaDummy")
     else:
         program = codeobject.CodeObject("cuda_helper", helper_code, "cpp", targets.cpu.CPUCodeGen, "CudaHelper")
         dummy_cuda_target = codeobject.CodeObject("dummy", "", "cu", targets.cuda.CUDACodeGen, "CudaDummy")

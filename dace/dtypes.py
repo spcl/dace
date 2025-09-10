@@ -1275,6 +1275,7 @@ string = stringtype()
 MPI_Request = opaque('MPI_Request')
 gpuStream_t = opaque('gpuStream_t')
 
+
 @undefined_safe_enum
 @extensible_enum
 class Typeclasses(aenum.AutoNumberEnum):

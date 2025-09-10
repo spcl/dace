@@ -1,68 +1,47 @@
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 from abc import ABC, abstractmethod
-from typing import Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
+from dace import SDFG, SDFGState, data, dtypes, subsets
+from dace import memlet as mm
 from dace import symbolic
-from dace import Memlet, dtypes
+from dace.codegen import common
+from dace.codegen.targets import cpp
+from dace.codegen.targets.cpp import sym2cpp, unparse_cr
+from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import generate_sync_debug_call
+from dace.config import Config
 from dace.dtypes import StorageType
-from dace.codegen.targets.experimental_cuda import ExperimentalCUDACodeGen, GPUStreamManager, KernelSpec
-from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import product, symbolic_to_cpp, emit_sync_debug_checks
-
-from dace.codegen.prettycode import CodeIOStream
-from dace.sdfg import SDFG, nodes
-from dace.sdfg.nodes import Node
-from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
-
-from dace.codegen.targets.cpp import memlet_copy_to_absolute_strides, unparse_cr
+from dace.frontend import operations
+from dace.sdfg import nodes, scope_contains_scope
+from dace.sdfg.graph import MultiConnectorEdge
+from dace.transformation import helpers
 
 
-# TODO: Review Documentation once done here. And also, take care of the other
-# two strategies below.
 class CopyContext:
     """
-    Stores and derives all information required for memory copy operations on GPUs.
-
-    This class exists because memory copy logic often requires a large amount of context,
-    including node references, expressions, layout, and backend details. Handling all this
-    ad hoc makes the code harder to follow and maintain.
-
-    CopyContext centralizes this information and provides helper functions to clarify
-    what values are needed for code generation and why. This improves readability,
-    simplifies copy emission logic, and makes future extensions easier.
+    Encapsulates inputs required for copy operations and exposes helper
+    methods to derive additional information. This keeps copy strategies
+    lightweight by letting them focus only on the relevant logic.
     """
 
-    def __init__(self, codegen: ExperimentalCUDACodeGen, gpu_stream_manager: GPUStreamManager, state_id: int,
-                 src_node: Node, dst_node: Node, edge: Tuple[Node, str, Node, str, Memlet], sdfg: SDFG,
-                 cfg: ControlFlowRegion, dfg: StateSubgraphView, callsite_stream: CodeIOStream):
+    def __init__(self, sdfg: SDFG, state: SDFGState, src_node: nodes.Node, dst_node: nodes.Node,
+                 edge: MultiConnectorEdge[mm.Memlet], gpustream_assignments: Dict[nodes.Node, Union[int, str]]):
 
-        # Store general context information for the copy operation, such as:
-        # - which code generator is responsible,
-        # - which edge and SDFG/state context related to the copy,
-        # - and where the generated code is written (callsite stream).
-        self.codegen = codegen
-        self.state_id = state_id
+        # Store the basic context as attributes
+        self.sdfg = sdfg
+        self.state = state
         self.src_node = src_node
         self.dst_node = dst_node
         self.edge = edge
-        self.sdfg = sdfg
-        self.cfg = cfg
-        self.dfg = dfg
-        self.callsite_stream = callsite_stream
+        self.gpustream_assignments = gpustream_assignments
 
-        # Additional information frequently needed
-        self.backend = codegen.backend
-        self.state_dfg = cfg.state(state_id)
-        self.cudastream = gpu_stream_manager.get_stream_edge(src_node, dst_node)
-        self.src_storage = self.get_storage_type(src_node)
-        self.dst_storage = self.get_storage_type(dst_node)
+        memlet = edge.data
 
+        self.copy_shape = memlet.subset.size_exact()
         if isinstance(src_node, nodes.AccessNode) and isinstance(dst_node, nodes.AccessNode):
-            copy_shape, src_strides, dst_strides, src_expr, dst_expr = memlet_copy_to_absolute_strides(
-                codegen._dispatcher, sdfg, self.state_dfg, edge, src_node, dst_node, codegen._cpu_codegen._packed_types)
+            copy_shape, src_strides, dst_strides, src_expr, dst_expr = self.get_accessnode_to_accessnode_copy_info()
         else:
-            _, _, _, _, memlet = edge
-            copy_shape = [symbolic.overapproximate(s) for s in memlet.subset.bounding_box_size()]
-
-            # if src and dst node are not AccessNodes, these are undefined
+            copy_shape = memlet.subset.size_exact()
             src_strides = dst_strides = src_expr = dst_expr = None
 
         self.copy_shape = copy_shape
@@ -71,103 +50,229 @@ class CopyContext:
         self.src_expr = src_expr
         self.dst_expr = dst_expr
 
-        self.num_dims = len(copy_shape)
+    def get_storage_type(self, node: nodes.Node):
+        """
+        Return the storage type associated with a given SDFG node.
 
-    def get_storage_type(self, node: Node):
-
+        Tasklets are assumed to use register storage, while AccessNodes
+        return the storage type from their data descriptor. Raises
+        NotImplementedError for unsupported node types.
+        """
         if isinstance(node, nodes.Tasklet):
             storage_type = StorageType.Register
-        else:
+
+        elif isinstance(node, nodes.AccessNode):
             storage_type = node.desc(self.sdfg).storage
+
+        else:
+            raise NotImplementedError(f"Unsupported node type {type(node)} for storage type retrieval; "
+                                      "expected AccessNode or Tasklet. Please extend this method accordingly.")
 
         return storage_type
 
-    def get_copy_call_parameters(self) -> Tuple[str, str, str, str, str, str, any]:
+    def get_assigned_gpustream(self) -> str:
         """
-        Returns all essential parameters required to emit a backend memory copy call.
+        Return the GPU stream expression assigned to both source and destination nodes.
 
-        This method determines both structural and backend-specific information
-        needed to perform a memory copy, including memory locations, pointer
-        expressions, and data types. In cases where either the source or
-        destination is not a data access node, pointer expressions may be unavailable.
+        Ensures that both nodes have a matching stream ID, then constructs the
+        variable name from the configured prefix and stream ID. Raises ValueError
+        if assignments are missing or inconsistent.
 
-        Returns
-        -------
-        Tuple[str, Optional[str], Optional[str], str, str, str, any]
-            A tuple containing:
-            - backend (str): Name of the backend used (e.g., 'cuda', 'hip').
-            - src_expr (Optional[str]): Source pointer expression, or None if unavailable.
-            - dst_expr (Optional[str]): Destination pointer expression, or None if unavailable.
-            - src_location (str): Memory location of the source ('Host' or 'Device').
-            - dst_location (str): Memory location of the destination ('Host' or 'Device').
-            - cudastream (str): Backend-specific stream identifier.
-            - ctype (any): The C type of the data being copied.
+        Example:
+            If the configured prefix is 'gpu_stream' and the assigned stream ID is 0,
+            this method returns 'gpu_stream0'.
         """
-        src_location = 'Device' if self.src_storage == dtypes.StorageType.GPU_Global else 'Host'
-        dst_location = 'Device' if self.dst_storage == dtypes.StorageType.GPU_Global else 'Host'
+        src_stream = self.gpustream_assignments.get(self.src_node)
+        dst_stream = self.gpustream_assignments.get(self.dst_node)
 
-        # Should be symmetric
-        ctype_src = self.src_node.desc(self.sdfg).dtype.ctype
-        ctype_dst = self.dst_node.desc(self.sdfg).dtype.ctype
-        ctype = ctype_dst
-        assert ctype_src == ctype_dst, (f"Source and destination data types must match for the memory copy: "
-                                        f"{ctype_src} != {ctype_dst}")
+        # 1. Catch unsupported cases
+        if src_stream is None or dst_stream is None:
+            raise ValueError("GPU stream assignment missing for source or destination node.")
 
-        return self.backend, self.src_expr, self.dst_expr, src_location, dst_location, self.cudastream, ctype
+        if src_stream != dst_stream:
+            raise ValueError(f"Mismatch in assigned GPU streams: src_node has '{src_stream}', "
+                             f"dst_node has '{dst_stream}'. They must be the same.")
 
-    def get_transfer_layout(self) -> Tuple[list, list, list]:
-        """
-        Returns layout information required for emitting a memory copy.
+        # 2. Generate GPU stream expression
+        gpustream = src_stream
+        gpustream_var_name_prefix = Config.get('compiler', 'cuda', 'gpu_stream_name').split(',')[1]
+        gpustream_expr = f"{gpustream_var_name_prefix}{gpustream}"
 
-        Returns
-        -------
-        copy_shape : List
-            The size (extent) of each dimension to be copied.
-            Singleton dimensions (i.e., dimensions of size 1) are omitted.
-            Example: [J, K, 1] becomes [J, K]
-        src_strides : List or None
-            Stride values of the source expression, per dimension if
-            source and destination are of type AccessNode, else None.
-        dst_strides : List or None
-            Stride values of the destination expression, per dimension if
-            source and destination are of type AccessNode, else None.
-        """
-        return self.copy_shape, self.src_strides, self.dst_strides
-
-    def get_write_context(self) -> Tuple[CodeIOStream, ControlFlowRegion, int, Node, Node]:
-        """
-        Returns all context required to emit code into the callsite stream with proper SDFG annotations.
-
-        Returns
-        -------
-        callsite_stream : CodeIOStream
-            The output stream where backend code is written.
-        cfg : ControlFlowRegion
-            The control flow region containing the current state.
-        state_id : int
-            The ID of the SDFG state being generated.
-        src_node : Node
-            The source node involved in the copy.
-        dst_node : Node
-            The destination node involved in the copy.
-        """
-        return self.callsite_stream, self.cfg, self.state_id, self.src_node, self.dst_node
-
-    def is_contiguous_copy(self) -> bool:
-        """
-        Returns True if the memory copy is contiguous in the last dimension
-        for both source and destination.
-        """
-        return (self.src_strides[-1] == 1) and (self.dst_strides[-1] == 1)
+        return gpustream_expr
 
     def get_memory_location(self) -> Tuple[str, str]:
-        src_location = 'Device' if self.src_storage == dtypes.StorageType.GPU_Global else 'Host'
-        dst_location = 'Device' if self.dst_storage == dtypes.StorageType.GPU_Global else 'Host'
+        """
+        Determine whether the source and destination nodes reside in device or host memory.
+
+        Uses the storage type of each node to classify it as either 'Device'
+        (GPU global memory) or 'Host' (all other storage types).
+        Used for GPU related copies outside the kernel (e.g. to construct
+        cudaMemcpyHostToDevice for example).
+
+        Returns
+        -------
+        Tuple[str, str]
+            (src_location, dst_location) where each is either 'Device' or 'Host'.
+        """
+        src_storage = self.get_storage_type(self.src_node)
+        dst_storage = self.get_storage_type(self.dst_node)
+        src_location = 'Device' if src_storage == dtypes.StorageType.GPU_Global else 'Host'
+        dst_location = 'Device' if dst_storage == dtypes.StorageType.GPU_Global else 'Host'
 
         return src_location, dst_location
 
+    def get_ctype(self) -> Any:
+        """
+        Determine the C data type (ctype) of the source or destination node.
+
+        The ctype is resolved from the data descriptor of the first node
+        (source or destination) that is an AccessNode (assumed to be the same
+        if both are AccessNodes).
+
+        Returns
+        -------
+        Any
+            The C type string (e.g., "float*", "int32") associated with the node.
+
+        Raises
+        ------
+        NotImplementedError
+            If neither the source nor the destination node is an AccessNode.
+        """
+        sdfg = self.sdfg
+        src_node, dst_node = self.src_node, self.dst_node
+
+        if isinstance(src_node, nodes.AccessNode):
+            return src_node.desc(sdfg).ctype
+
+        if isinstance(dst_node, nodes.AccessNode):
+            return dst_node.desc(sdfg).ctype
+
+        raise NotImplementedError(
+            f"Cannot determine ctype: neither src nor dst node is an AccessNode. "
+            f"Got src_node type: {type(src_node).__name__}, dst_node type: {type(dst_node).__name__}. "
+            "Please extend this case or fix the issue.")
+
+    def get_accessnode_to_accessnode_copy_info(self):
+        """
+        Compute copy shape, absolute strides, and pointer expressions for a copy
+        between two AccessNodes. Tries to mimic
+        cpp.memlet_copy_to_absolute_strides without requiring a dispatcher.
+
+        Returns
+        -------
+        (copy_shape, src_strides, dst_strides, src_expr, dst_expr)
+
+        Raises
+        ------
+        TypeError
+            If either endpoint is not an AccessNode.
+        NotImplementedError
+            If a descriptor is not Scalar or Array.
+        """
+
+        # ---------------------------- helpers ----------------------------
+        def _collapse_strides(strides, subset):
+            """Remove size-1 dims; keep tile strides; default to [1] if none remain."""
+            n = len(subset)
+            collapsed = [st for st, sz in zip(strides, subset.size()) if sz != 1]
+            collapsed.extend(strides[n:])  # include tiles
+            if len(collapsed) == 0:
+                return [1]
+            return collapsed
+
+        def _ptr_name(desc, name):
+            if desc.transient and desc.lifetime in (dtypes.AllocationLifetime.Persistent,
+                                                    dtypes.AllocationLifetime.External):
+                return f'__state->__{sdfg.cfg_id}_{name}'
+            return name
+
+        def _expr_for(desc, name, subset):
+            ptr = _ptr_name(desc, name)
+
+            if isinstance(desc, data.Scalar):
+                # GPU scalar special-case
+                if desc.storage in dtypes.GPU_MEMORY_STORAGES_EXPERIMENTAL_CUDACODEGEN:
+                    parent = state.sdfg.parent_nsdfg_node
+                    if parent is not None and name in parent.in_connectors:
+                        return f"&{ptr}"
+                    return ptr
+                # CPU (or other) scalars
+                return f"&{ptr}"
+
+            if isinstance(desc, data.Array):
+                offset = cpp.cpp_offset_expr(desc, subset)
+                return f"{ptr} + {offset}" if offset != "0" else ptr
+
+            raise NotImplementedError(
+                f"Expected {name} to be either data.Scalar or data.Array, but got {type(desc).__name__}.")
+
+        # ---------------------------- Get copy info ----------------------------
+        # Get needed information
+        src_node, dst_node = self.src_node, self.dst_node
+        sdfg, edge, state = self.sdfg, self.edge, self.state
+        memlet, copy_shape = self.edge.data, self.copy_shape
+
+        # Guard - only applicable if src and dst are AccessNodes
+        if not (isinstance(src_node, nodes.AccessNode) and isinstance(dst_node, nodes.AccessNode)):
+            raise TypeError(
+                f"get_accessnode_to_accessnode_copy_info requires both source and destination "
+                f"to be AccessNode instances, but got {type(src_node).__name__} and {type(dst_node).__name__}.")
+
+        # Get node descriptors
+        src_nodedesc = src_node.desc(sdfg)
+        dst_nodedesc = dst_node.desc(sdfg)
+
+        # Resolve subsets (fallback to full range)
+        src_subset = memlet.get_src_subset(edge, state)
+        dst_subset = memlet.get_dst_subset(edge, state)
+
+        if src_subset is None:
+            src_subset = subsets.Range.from_array(src_nodedesc)
+
+        if dst_subset is None:
+            dst_subset = subsets.Range.from_array(dst_nodedesc)
+
+        # Get strides
+        src_strides = src_subset.absolute_strides(src_nodedesc.strides)
+        dst_strides = dst_subset.absolute_strides(dst_nodedesc.strides)
+
+        # Try to convert to a degenerate/strided ND copy first
+        result = cpp.ndcopy_to_strided_copy(
+            copy_shape,
+            src_nodedesc.shape,
+            src_strides,
+            dst_nodedesc.shape,
+            dst_strides,
+            memlet.subset,
+            src_subset,
+            dst_subset,
+        )
+
+        if result is not None:
+            copy_shape, src_strides, dst_strides = result
+        else:
+            src_strides = _collapse_strides(src_strides, src_subset)
+            dst_strides = _collapse_strides(dst_strides, dst_subset)
+            copy_shape = [s for s in copy_shape if s != 1] or [1]
+
+        # Extend copy shape to the largest among the data dimensions,
+        # and extend other array with the appropriate strides
+        if len(dst_strides) != len(copy_shape) or len(src_strides) != len(copy_shape):
+            if memlet.data == src_node.data:
+                copy_shape, dst_strides = cpp.reshape_strides(src_subset, src_strides, dst_strides, copy_shape)
+            elif memlet.data == dst_node.data:
+                copy_shape, src_strides = cpp.reshape_strides(dst_subset, dst_strides, src_strides, copy_shape)
+
+        # Build final expressions
+        src_expr = _expr_for(src_nodedesc, src_node.data, src_subset)
+        dst_expr = _expr_for(dst_nodedesc, dst_node.data, dst_subset)
+
+        return copy_shape, src_strides, dst_strides, src_expr, dst_expr
+
 
 class CopyStrategy(ABC):
+    """Abstract base class for memory copy strategies."""
 
     @abstractmethod
     def applicable(self, copy_context: CopyContext) -> bool:
@@ -177,14 +282,21 @@ class CopyStrategy(ABC):
         raise NotImplementedError('Abstract class')
 
     @abstractmethod
-    def generate_copy(self, copy_context: CopyContext) -> None:
+    def generate_copy(self, copy_context: CopyContext) -> str:
         """
-        Generates the copy code for the supported pattern.
+        Generates and returns the copy code for the supported pattern.
         """
         raise NotImplementedError('Abstract class')
 
 
 class OutOfKernelCopyStrategy(CopyStrategy):
+    """
+    Copy strategy for memory transfers that occur outside of kernel execution.
+
+    This pattern often occurs when generating host-to-device copies for kernel inputs
+    (since kernels cannot access host memory directly), and device-to-host copies
+    to retrieve results for further processing.
+    """
 
     def applicable(self, copy_context: CopyContext) -> bool:
         """
@@ -193,316 +305,412 @@ class OutOfKernelCopyStrategy(CopyStrategy):
         This function returns True if:
         - We are not currently generating kernel code
         - The copy occurs between two AccessNodes
-        - 
-
-        This check is used to detect and handle transfers between host and device memory spaces.
+        - The data descriptors of source and destination are not views.
+        - The storage types of either src or dst is CPU_Pinned or GPU_Device
+        - We do not have a CPU-to-CPU copy
         """
+        # Retrieve needed information
+        state = copy_context.state
+        src_node, dst_node = copy_context.src_node, copy_context.dst_node
 
-        # TODO: I don't understand why all of these conditions are needed, look into it
+        # 1. Ensure copy is not occuring within a kernel
+        scope_dict = state.scope_dict()
+        deeper_node = dst_node if scope_contains_scope(scope_dict, src_node, dst_node) else src_node
 
+        parent_map_tuple = helpers.get_parent_map(state, deeper_node)
+        while parent_map_tuple is not None:
+            parent_map, parent_state = parent_map_tuple
+            if parent_map.map.schedule in dtypes.GPU_SCHEDULES_EXPERIMENTAL_CUDACODEGEN:
+                return False
+            else:
+                parent_map_tuple = helpers.get_parent_map(parent_state, parent_map)
+
+        # 2. Check whether copy is between two AccessNodes
+        if not (isinstance(src_node, nodes.AccessNode) and isinstance(dst_node, nodes.AccessNode)):
+            return False
+
+        # 3. The data descriptors of source and destination are not views
+        if isinstance(src_node.desc(state), data.View) or isinstance(dst_node.desc(state), data.View):
+            return False
+
+        # 4. Check that one StorageType of either src or dst is CPU_Pinned or GPU_Device
+        src_storage = copy_context.get_storage_type(src_node)
+        dst_storage = copy_context.get_storage_type(dst_node)
+        if not (src_storage in (StorageType.GPU_Global, StorageType.CPU_Pinned)
+                or dst_storage in (StorageType.GPU_Global, StorageType.CPU_Pinned)):
+            return False
+
+        # 5. Check that this is not a CPU to CPU copy
         cpu_storage_types = [StorageType.CPU_Heap, StorageType.CPU_ThreadLocal, StorageType.CPU_Pinned]
-        not_in_device_code = not copy_context.codegen._in_device_code
+        if src_storage in cpu_storage_types and dst_storage in cpu_storage_types:
+            return False
 
-        is_between_access_nodes = (isinstance(copy_context.src_node, nodes.AccessNode)
-                                   and isinstance(copy_context.dst_node, nodes.AccessNode))
+        return True
 
-        involves_gpu_or_pinned = (copy_context.src_storage in (StorageType.GPU_Global, StorageType.CPU_Pinned)
-                                  or copy_context.dst_storage in (StorageType.GPU_Global, StorageType.CPU_Pinned))
-
-        is_not_cpu_to_cpu = not (copy_context.src_storage in cpu_storage_types
-                                 and copy_context.dst_storage in cpu_storage_types)
-
-        is_gpu_host_copy = (not_in_device_code and is_between_access_nodes and involves_gpu_or_pinned
-                            and is_not_cpu_to_cpu)
-
-        return is_gpu_host_copy
-
-    def generate_copy(self, copy_context: CopyContext) -> None:
+    def generate_copy(self, copy_context: CopyContext) -> str:
         """Execute host-device copy with CUDA memory operations"""
 
-        return
-        # guard
-        _, _, _, _, memlet = copy_context.edge
+        # Guard
+        memlet = copy_context.edge.data
         if memlet.wcr is not None:
             src_location, dst_location = copy_context.get_memory_location()
             raise NotImplementedError(f'Accumulate {src_location} to {dst_location} not implemented')
 
-        # call corresponding helper function
-        num_dims = copy_context.num_dims
+        # Based on the copy dimension, call appropiate helper function
+        num_dims = len(copy_context.copy_shape)
         if num_dims == 1:
-            self._generate_1d_copy(copy_context)
+            copy_call = self._generate_1d_copy(copy_context)
+
         elif num_dims == 2:
-            self._generate_2d_copy(copy_context)
+            copy_call = self._generate_2d_copy(copy_context)
+
         else:
             # sanity check
             assert num_dims > 2, f"Expected copy shape with more than 2 dimensions, but got {num_dims}."
-            self._generate_nd_copy(copy_context)
+            copy_call = self._generate_nd_copy(copy_context)
 
-        # We use library calls thus for debugging we provide sync option
-        emit_sync_debug_checks(copy_context.backend, copy_context.callsite_stream)
+        return copy_call
 
-    def _generate_1d_copy(self, copy_context: CopyContext) -> None:
+    def _generate_1d_copy(self, copy_context: CopyContext) -> str:
         """
-        Emits code for a 1D memory copy between host and device using GPU backend.
-        Uses {backend}MemcpyAsync for contiguous memory and uses {backend}Memcpy2DAsync
-        for strided memory copies.
+        Generates a 1D memory copy between host and device using the GPU backend.
+
+        Uses {backend}MemcpyAsync for contiguous memory. For strided memory,
+        {backend}Memcpy2DAsync is leveraged to efficiently handle the stride along one dimension.
         """
+        # ----------- Retrieve relevant copy parameters --------------
+        backend: str = common.get_gpu_backend()
 
-        # ----------- Extract relevant copy parameters --------------
-        copy_shape, src_strides, dst_strides = copy_context.get_transfer_layout()
+        # Due to applicable(), src and dst node must be AccessNodes
+        copy_shape, src_strides, dst_strides, src_expr, dst_expr = copy_context.get_accessnode_to_accessnode_copy_info()
 
-        backend, src_expr, dst_expr, src_location, dst_location, cudastream, ctype = \
-                copy_context.get_copy_call_parameters()
+        src_location, dst_location = copy_context.get_memory_location()
+        is_contiguous_copy = (src_strides[-1] == 1) and (dst_strides[-1] == 1)
+        ctype = copy_context.get_ctype()
+        gpustream = copy_context.get_assigned_gpustream()
 
         # ----------------- Generate backend call --------------------
-        if copy_context.is_contiguous_copy():
+
+        if is_contiguous_copy:
             # Memory is linear: can use {backend}MemcpyAsync
-            copysize = ' * '.join(symbolic_to_cpp(copy_shape))
+            copysize = ' * '.join(sym2cpp(copy_shape))
             copysize += f' * sizeof({ctype})'
             kind = f'{backend}Memcpy{src_location}To{dst_location}'
-            call = f'DACE_GPU_CHECK({backend}MemcpyAsync({dst_expr}, {src_expr}, {copysize}, {kind}, {cudastream}));\n'
+            call = f'DACE_GPU_CHECK({backend}MemcpyAsync({dst_expr}, {src_expr}, {copysize}, {kind}, {gpustream}));\n'
 
         else:
             # Memory is strided: use {backend}Memcpy2DAsync with dpitch/spitch
             # This allows copying a strided 1D region
-            dpitch = f'{dst_strides[0]} * sizeof({ctype})'
-            spitch = f'{src_strides[0]} * sizeof({ctype})'
+            dpitch = f'{sym2cpp(dst_strides[0])} * sizeof({ctype})'
+            spitch = f'{sym2cpp(src_strides[0])} * sizeof({ctype})'
             width = f'sizeof({ctype})'
-            height = copy_shape[0]
+            height = sym2cpp(copy_shape[0])
             kind = f'{backend}Memcpy{src_location}To{dst_location}'
 
-            call = f'DACE_GPU_CHECK({backend}Memcpy2DAsync({dst_expr}, {dpitch}, {src_expr}, {spitch}, {width}, {height}, {kind}, {cudastream}));\n'
+            call = f'DACE_GPU_CHECK({backend}Memcpy2DAsync({dst_expr}, {dpitch}, {src_expr}, {spitch}, {width}, {height}, {kind}, {gpustream}));\n'
 
-        # ----------------- Write copy call to code stream --------------------
-        callsite_stream, cfg, state_id, src_node, dst_node = copy_context.get_write_context()
-        callsite_stream.write(call, cfg, state_id, [src_node, dst_node])
+        # Potentially snychronization required if syncdebug is set to true in configurations
+        call = call + generate_sync_debug_call()
+        return call
 
     def _generate_2d_copy(self, copy_context: CopyContext) -> None:
-        """Generates code for a 2D copy, falling back to 1D flattening if applicable."""
+        """
+        Generates a 2D memory copy using {backend}Memcpy2DAsync.
+
+        Three main cases are handled:
+        - Copy between row-major stored arrays with contiguous rows.
+        - Copy between column-major stored arrays with contiguous columns.
+        - A special case where a 2D copy can still be represented.
+
+        Raises:
+            NotImplementedError: Raised if the source and destination strides do not match any of the handled patterns.
+            Such cases indicate an unsupported 2D copy and should be examined separately.
+            They can be implemented if valid, or a more descriptive error should be raised if the path should not occur.
+
+        Note:
+            {backend}Memcpy2DAsync supports strided copies along only one dimension (row or column),
+            but not both simultaneously.
+        """
 
         # ----------- Extract relevant copy parameters --------------
-        copy_shape, src_strides, dst_strides = copy_context.get_transfer_layout()
+        backend: str = common.get_gpu_backend()
 
-        backend, src_expr, dst_expr, src_location, dst_location, cudastream, ctype = \
-                copy_context.get_copy_call_parameters()
+        # Due to applicable(), src and dst node must be AccessNodes
+        copy_shape, src_strides, dst_strides, src_expr, dst_expr = copy_context.get_accessnode_to_accessnode_copy_info()
+        src_location, dst_location = copy_context.get_memory_location()
+        ctype = copy_context.get_ctype()
+        gpustream = copy_context.get_assigned_gpustream()
 
         # ----------------- Generate backend call if supported --------------------
 
-        if copy_context.is_contiguous_copy():
-            dpitch = f'{dst_strides[0]} * sizeof({ctype})'
-            spitch = f'{src_strides[0]} * sizeof({ctype})'
-            width = f'{copy_shape[1]} * sizeof({ctype})'
-            height = f'{copy_shape[0]}'
+        # Case: Row-major layout, rows are not strided.
+        if (src_strides[1] == 1) and (dst_strides[1] == 1):
+            dpitch = f'{sym2cpp(dst_strides[0])} * sizeof({ctype})'
+            spitch = f'{sym2cpp(src_strides[0])} * sizeof({ctype})'
+            width = f'{sym2cpp(copy_shape[1])} * sizeof({ctype})'
+            height = f'{sym2cpp(copy_shape[0])}'
             kind = f'{backend}Memcpy{src_location}To{dst_location}'
 
-            call = f'DACE_GPU_CHECK({backend}Memcpy2DAsync({dst_expr}, {dpitch}, {src_expr}, {spitch}, {width}, {height}, {kind}, {cudastream}));\n'
+            call = f'DACE_GPU_CHECK({backend}Memcpy2DAsync({dst_expr}, {dpitch}, {src_expr}, {spitch}, {width}, {height}, {kind}, {gpustream}));\n'
 
-        elif src_strides[-1] != 1 or dst_strides[-1] != 1:
-            # TODO: Checks this, I am not sure but the old code and its description
-            # seems to be more complicated here than necessary..
-            # But worth to mention: we essentiall flatten
+        # Case: Column-major layout, no columns are strided.
+        elif (src_strides[0] == 1) and (dst_strides[0] == 1):
+            dpitch = f'{sym2cpp(dst_strides[1])} * sizeof({ctype})'
+            spitch = f'{sym2cpp(src_strides[1])} * sizeof({ctype})'
+            width = f'{sym2cpp(copy_shape[0])} * sizeof({ctype})'
+            height = f'{sym2cpp(copy_shape[1])}'
+            kind = f'{backend}Memcpy{src_location}To{dst_location}'
 
-            # NOTE: Special case of continuous copy
-            # Example: dcol[0:I, 0:J, k] -> datacol[0:I, 0:J]
-            # with copy shape [I, J] and strides [J*K, K], [J, 1]
+            call = f'DACE_GPU_CHECK({backend}Memcpy2DAsync({dst_expr}, {dpitch}, {src_expr}, {spitch}, {width}, {height}, {kind}, {gpustream}));\n'
 
-            dpitch = f'{dst_strides[1]} * sizeof({ctype})'
-            spitch = f'{src_strides[1]} * sizeof({ctype})'
+        # Special case
+        elif (src_strides[0] / src_strides[1] == copy_shape[1] and dst_strides[0] / dst_strides[1] == copy_shape[1]):
+            # Consider as an example this copy: A[0:I, 0:J, K] -> B[0:I, 0:J] with
+            # copy shape [I, J], src_strides[J*K, K], dst_strides[J, 1]. This can be represented with a
+            # {backend}Memcpy2DAsync call!
+
+            dpitch = f'{sym2cpp(dst_strides[1])} * sizeof({ctype})'
+            spitch = f'{sym2cpp(src_strides[1])} * sizeof({ctype})'
             width = f'sizeof({ctype})'
-            height = copy_shape[0] * copy_shape[1]
+            height = sym2cpp(copy_shape[0] * copy_shape[1])
             kind = f'{backend}Memcpy{src_location}To{dst_location}'
 
-            call = f'DACE_GPU_CHECK({backend}Memcpy2DAsync({dst_expr}, {dpitch}, {src_expr}, {spitch}, {width}, {height}, {kind}, {cudastream}));\n'
+            call = f'DACE_GPU_CHECK({backend}Memcpy2DAsync({dst_expr}, {dpitch}, {src_expr}, {spitch}, {width}, {height}, {kind}, {gpustream}));\n'
 
         else:
             raise NotImplementedError(
                 f"Unsupported 2D memory copy: shape={copy_shape}, src_strides={src_strides}, dst_strides={dst_strides}."
-                " Please implement this case if it is valid, or raise a more descriptive error if this path should not be taken."
+                "Please implement this case if it is valid, or raise a more descriptive error if this path should not be taken."
             )
 
-        # ----------------- Write copy call to code stream --------------------
-        callsite_stream, cfg, state_id, src_node, dst_node = copy_context.get_write_context()
-        callsite_stream.write(call, cfg, state_id, [src_node, dst_node])
+        return call
 
     def _generate_nd_copy(self, copy_context: CopyContext) -> None:
+        """
+        Generates GPU code for copying N-dimensional arrays using 2D memory copies.
+
+        Uses {backend}Memcpy2DAsync for the last two dimensions, with nested loops
+        for any outer dimensions. Expects the copy to be contiguous and between
+        row-major storage locations.
+        """
+        # ----------- Extract relevant copy parameters --------------
+        backend: str = common.get_gpu_backend()
+
+        # Due to applicable(), src and dst node must be AccessNodes
+        copy_shape, src_strides, dst_strides, src_expr, dst_expr = copy_context.get_accessnode_to_accessnode_copy_info()
+
+        src_location, dst_location = copy_context.get_memory_location()
+        ctype = copy_context.get_ctype()
+        gpustream = copy_context.get_assigned_gpustream()
+        num_dims = len(copy_shape)
 
         # ----------- Guard for unsupported Pattern --------------
-        if not copy_context.is_contiguous_copy():
+        if not (src_strides[-1] == 1) and (dst_strides[-1] == 1):
+            src_node, dst_node = copy_context.src_node, copy_context.dst_node
+            src_storage = copy_context.get_storage_type(src_node)
+            dst_storage = copy_context.get_storage_type(dst_node)
             raise NotImplementedError(
-                "Strided GPU memory copies for N-dimensional arrays are not currently supported.\n"
-                f"  Source node: {copy_context.src_node} (storage: {copy_context.src_storage})\n"
-                f"  Destination node: {copy_context.dst_node} (storage: {copy_context.dst_storage})\n"
-                f"  Source strides: {copy_context.src_strides}\n"
-                f"  Destination strides: {copy_context.dst_strides}\n")
+                "N-dimensional GPU memory copies, that are strided or contain column-major arrays, are currently not supported.\n"
+                f"  Source node: {src_node} (storage: {src_storage})\n"
+                f"  Destination node: {copy_context.dst_node} (storage: {dst_storage})\n"
+                f"  Source strides: {src_strides}\n"
+                f"  Destination strides: {dst_strides}\n"
+                f"  copy shape: {copy_shape}\n")
 
-        # ----------- Extract relevant copy parameters --------------
-        copy_shape, src_strides, dst_strides = copy_context.get_transfer_layout()
-
-        backend, src_expr, dst_expr, src_location, dst_location, cudastream, ctype = \
-                copy_context.get_copy_call_parameters()
-
-        num_dims = copy_context.num_dims
         # ----------------- Generate and write backend call(s) --------------------
 
-        callsite_stream, cfg, state_id, src_node, dst_node = copy_context.get_write_context()
-
+        call = ""
         # Write for-loop headers
         for dim in range(num_dims - 2):
-            callsite_stream.write(
-                f"for (int __copyidx{dim} = 0; __copyidx{dim} < {copy_shape[dim]}; ++__copyidx{dim}) {{")
+            call += f"for (int __copyidx{dim} = 0; __copyidx{dim} < {copy_shape[dim]}; ++__copyidx{dim}) {{\n"
 
         # Write Memcopy2DAsync
-        offset_src = ' + '.join(f'(__copyidx{d} * ({s}))' for d, s in enumerate(src_strides[:-2]))
-        offset_dst = ' + '.join(f'(__copyidx{d} * ({s}))' for d, s in enumerate(dst_strides[:-2]))
+        offset_src = ' + '.join(f'(__copyidx{d} * ({sym2cpp(s)}))' for d, s in enumerate(src_strides[:-2]))
+        offset_dst = ' + '.join(f'(__copyidx{d} * ({sym2cpp(s)}))' for d, s in enumerate(dst_strides[:-2]))
 
         src = f'{src_expr} + {offset_src}'
         dst = f'{dst_expr} + {offset_dst}'
 
-        dpitch = f'{dst_strides[-2]} * sizeof({ctype})'
-        spitch = f'{src_strides[-2]} * sizeof({ctype})'
-        width = f'{copy_shape[-1]} * sizeof({ctype})'
-        height = copy_shape[-2]
+        dpitch = f'{sym2cpp(dst_strides[-2])} * sizeof({ctype})'
+        spitch = f'{sym2cpp(src_strides[-2])} * sizeof({ctype})'
+        width = f'{sym2cpp(copy_shape[-1])} * sizeof({ctype})'
+        height = sym2cpp(copy_shape[-2])
         kind = f'{backend}Memcpy{src_location}To{dst_location}'
 
         # Generate call and write it
-        call = f'DACE_GPU_CHECK({backend}Memcpy2DAsync({dst}, {dpitch}, {src}, {spitch}, {width}, {height}, {kind}, {cudastream}));\n'
-        callsite_stream.write(call, cfg, state_id, [src_node, dst_node])
+        call += f'DACE_GPU_CHECK({backend}Memcpy2DAsync({dst}, {dpitch}, {src}, {spitch}, {width}, {height}, {kind}, {gpustream}));\n'
 
         # Write for-loop footers
         for dim in range(num_dims - 2):
-            callsite_stream.write("}")
+            call += "\n}"
+
+        # Return the code
+        return call
 
 
-################ TODO, Might need to modified further #############
-
-
-# Below: Does collaborative copy
 class SyncCollaboritveGPUCopyStrategy(CopyStrategy):
+    """
+    Implements (synchronous) collaborative GPU copy operations.
+
+    This strategy generates the appropriate code for copies performed
+    inside GPU kernels, where multiple threads cooperate to move data
+    between gpu memory spaces (e.g., global to shared memory).
+    """
 
     def applicable(self, copy_context: CopyContext) -> bool:
         """
         Checks if the copy is eligible for a collaborative GPU-to-GPU copy.
 
         Conditions:
-        1. The copy is between GPU memory types (shared or global).
-        2. The innermost non-sequential map is scheduled on GPU_Device.
+        1. The copy is between two AccessNodes
+        2. The copy is between GPU memory StorageTypes (shared or global).
+        3. The innermost non-sequential map is a GPU_Device-scheduled map i.e.
+           the copy occurs within a kernel but is not within a GPU_ThreadBlock map.
         """
-        from dace.sdfg import scope_contains_scope
-        from dace.transformation import helpers
+        # --- Condition 1: src and dst are AccessNodes ---
+        src_node, dst_node = copy_context.src_node, copy_context.dst_node
+        if not (isinstance(src_node, nodes.AccessNode) and isinstance(dst_node, nodes.AccessNode)):
+            return False
 
-        # --- Condition 1: GPU to GPU memory transfer ---
+        # --- Condition 2: GPU to GPU memory transfer ---
+        src_storage, dst_storage = copy_context.get_storage_type(src_node), copy_context.get_storage_type(dst_node)
         gpu_storages = {dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared}
-        if not (copy_context.src_storage in gpu_storages and copy_context.dst_storage in gpu_storages):
+
+        if not (src_storage in gpu_storages and dst_storage in gpu_storages):
             return False
 
-        dst_node = copy_context.dst_node
-        if isinstance(dst_node, nodes.AccessNode) and dst_node.async_copy:
+        # --- Condition 3: Next non-sequential Map is a GPU_Device Map ---
+        next_nonseq_parent_map = self._next_non_seq_parent_map(copy_context)
+        if next_nonseq_parent_map is None:
             return False
-
-        # --- Condition 2: Inside a GPU_Device map scope ---
-        state = copy_context.state_dfg
-        scope_dict = state.scope_dict()
-
-        # Determine which node (src or dst) is in the deeper scope
-        src, dst = copy_context.src_node, copy_context.dst_node
-        deeper_scope_node = dst if scope_contains_scope(scope_dict, src, dst) else src
-
-        # Determine the schedule type of the innermost non-sequential map.
-        # If no such map exists, use the default schedule.
-        current_node = deeper_scope_node
-        while (current_node is None or not isinstance(current_node, nodes.MapEntry)
-               or current_node.map.schedule == dtypes.ScheduleType.Sequential):
-
-            parent = helpers.get_parent_map(state, current_node)
-            if parent is None:
-                current_node = None
-                break
-            current_node, state = parent
-
-        if current_node is None:
-            schedule_type = dtypes.SCOPEDEFAULT_SCHEDULE[None]
         else:
-            schedule_type = current_node.map.schedule
+            return next_nonseq_parent_map.map.schedule == dtypes.ScheduleType.GPU_Device
 
-        return schedule_type == dtypes.ScheduleType.GPU_Device
+    def generate_copy(self, copy_context: CopyContext, kernel_dimensions_maps: Dict[nodes.MapEntry,
+                                                                                    Tuple[List, List]]) -> str:
+        """
+        Generates a GPU copy call as a string using DaCe's runtime CUDA copy functions.
 
-    def generate_copy(self, copy_context: CopyContext) -> None:
+        The function determines the appropriate templated copy function from
+        `dace/libraries/runtime/include/dace/cuda/copy.cuh` and constructs
+        the call string with the necessary arguments, including kernel block
+        dimensions and optional accumulation/reduction information.
 
-        from dace.frontend import operations
+        Parameters
+        ----------
+        copy_context : CopyContext
+            Helper object containing information about the copy.
 
-        # Get required copy information
-        copy_shape, src_strides, dst_strides = copy_context.get_transfer_layout()
-        src_expr, dst_expr = copy_context.src_expr, copy_context.dst_expr
+        kernel_dimensions_maps : Dict[nodes.MapEntry, Tuple[List, List]]
+            Kernel map (GPU_Devie scheduled map) entry nodes to (grid_dims, block_dims);
+            block_dims needed in templating.
 
+        Returns
+        -------
+        str
+            The GPU copy call in C++ as a string.
+
+        Notes
+        -----
+        - The kernel block size could be derived, but since this function is typically called
+          from `ExperimentalCUDACodeGen`, it is provided as input to avoid recomputation.
+        - The template functions use a parameter called 'is_async', which is set to True here
+          because `ExperimentalCUDACodeGen` inserts "__syncthreads()" explicitly in tasklets.
+        """
+        # ----------- Retrieve relevant copy information --------------
+
+        # Due to applicable(), src and dst node must be AccessNodes
+        copy_shape, src_strides, dst_strides, src_expr, dst_expr = copy_context.get_accessnode_to_accessnode_copy_info()
         sdfg = copy_context.sdfg
         dtype = copy_context.src_node.desc(sdfg).dtype
         ctype = dtype.ctype
 
         # Get copy function name (defined in runtime library)
-        num_dims = copy_context.num_dims
-        src_storage_name = self._get_storagename(copy_context.src_storage)
-        dst_storage_name = self._get_storagename(copy_context.dst_storage)
-
+        num_dims = len(copy_shape)
+        src_node, dst_node = copy_context.src_node, copy_context.dst_node
+        src_storage, dst_storage = copy_context.get_storage_type(src_node), copy_context.get_storage_type(dst_node)
+        src_storage_name = self._get_storagename(src_storage)
+        dst_storage_name = self._get_storagename(dst_storage)
         function_name = f"dace::{src_storage_name}To{dst_storage_name}{num_dims}D"
 
-        # Check for write-conflict resolution (WCR), it affects function call
-        accum = ''
-        custom_reduction = []
-        _, _, _, _, memlet = copy_context.edge
-        wcr = memlet.wcr
+        # Extract WCR info (accumulation template + optional custom reduction)
+        accum, custom_reduction = self._get_accumulation_info(copy_context)
+        custom_reduction = [custom_reduction] if custom_reduction else []
 
-        if wcr is not None:
-            reduction_type = operations.detect_reduction_type(wcr)
+        # Get parent kernel block dimensions (guaranteed GPU_Device) and sync flag
+        parent_kernel = self._next_non_seq_parent_map(copy_context)
+        block_dims = ", ".join(sym2cpp(kernel_dimensions_maps[parent_kernel][1]))
+        synchronized = "true"  # Legacy 'is_async'; sync barriers handled by passes (see docstring)
 
-            if reduction_type != dtypes.ReductionType.Custom:
-                # Use predefined reduction
-                reduction_type_str = str(reduction_type).split('.')[-1]  # e.g., "Sum"
-                reduction_template = f"<dace::ReductionType::{reduction_type_str}>"
-            else:
-                custom_reduction = [unparse_cr(sdfg, wcr, dtype)]
-                reduction_template = ""
-
-            accum = f"::template Accum{reduction_template}"
-
-        # Dispatch to the correct backend copy template based on copy characteristics
-
-        # get always used stuff
-        callsite_stream, cfg, state_id, src_node, dst_node = copy_context.get_write_context()
-
-        # Retrieve kernel specs from the ExperimentalCUDACodegen instance (held in a dedicated class)
-        # Only there block_dims is stored, which is needed in this case
-        kernel_specifications: KernelSpec = copy_context.codegen._current_kernel_spec
-        block_dims = ', '.join(symbolic_to_cpp(kernel_specifications.block_dims))
-
-        # was called "is_async" previously. It determines whether a "__syncthreads()" is called at the
-        # end of the copy. In ExperimentalCUDACodegen, a pass is responsible to insert such sync barriers,
-        # so it is synchronized and we do not need "implicit" synchronization
-        synchronized = "true"
+        # ------------------------- Generate copy call ----------------------------
 
         if any(symbolic.issymbolic(s, copy_context.sdfg.constants) for s in copy_shape):
             args_list = ([src_expr] + src_strides + [dst_expr] + custom_reduction + dst_strides + copy_shape)
-            args = ", ".join(symbolic_to_cpp(args_list))
-            callsite_stream.write(f"{function_name}Dynamic<{ctype}, {block_dims}, {synchronized}>{accum}({args});", cfg,
-                                  state_id, [src_node, dst_node])
+            args = ", ".join(sym2cpp(args_list))
+            call = f"{function_name}Dynamic<{ctype}, {block_dims}, {synchronized}>{accum}({args});"
 
         elif function_name == "dace::SharedToGlobal1D":
-            # special case: use a new template struct that provides functions for copy and reduction
-            copy_size = ', '.join(symbolic_to_cpp(copy_shape))
+            copy_size = ', '.join(sym2cpp(copy_shape))
             accum = accum or '::Copy'
             args_list = ([src_expr] + src_strides + [dst_expr] + dst_strides + custom_reduction)
-            args = ", ".join(symbolic_to_cpp(args_list))
-            callsite_stream.write(
-                f"{function_name}<{ctype}, {block_dims}, {copy_size}, {synchronized}>{accum}({args});", cfg, state_id,
-                [src_node, dst_node])
+            args = ", ".join(sym2cpp(args_list))
+            call = f"{function_name}<{ctype}, {block_dims}, {copy_size}, {synchronized}>{accum}({args});"
 
         else:
-            copy_size = ', '.join(symbolic_to_cpp(copy_shape))
+            copy_size = ', '.join(sym2cpp(copy_shape))
             args_list = ([src_expr] + src_strides + [dst_expr] + custom_reduction)
-            args = ", ".join(symbolic_to_cpp(args_list))
-            dst_strides_unpacked = ", ".join(symbolic_to_cpp(dst_strides))
-            callsite_stream.write(
-                f"{function_name}<{ctype}, {block_dims}, {copy_size}, {dst_strides_unpacked}, {synchronized}>{accum}({args});",
-                cfg, state_id, [src_node, dst_node])
+            args = ", ".join(sym2cpp(args_list))
+            dst_strides_unpacked = ", ".join(sym2cpp(dst_strides))
+            call = f"{function_name}<{ctype}, {block_dims}, {copy_size}, {dst_strides_unpacked}, {synchronized}>{accum}({args});"
+
+        return call
+
+    def _get_accumulation_info(self, copy_context: CopyContext) -> Tuple[str, str]:
+        """
+        Extracts write-conflict resolution (WCR) information from the copy context
+        and returns the accumulation/reduction template components needed for the
+        final templated function call in `generate_copy()`.
+
+        This method processes WCR information from the memlet and generates the
+        appropriate C++ template strings for both predefined and custom reductions.
+
+        Parameters
+        ----------
+        copy_context : CopyContext
+            Copy context containing the copy operation details, including
+            the memlet with WCR information.
+
+        Returns
+        -------
+        Tuple[str, str]
+            A tuple containing:
+            - accum : str
+            Template accumulation string for the function call. Empty string if no WCR,
+            `"::template Accum<ReductionType>"` for predefined reductions, or `"::template Accum"` for custom reductions.
+            - custom_reduction : str
+            C++ formatted custom reduction code string. Empty string for no WCR or predefined reductions,
+            unparsed custom reduction code for custom reductions.
+        """
+        sdfg = copy_context.sdfg
+        dtype = copy_context.src_node.desc(sdfg).dtype
+        memlet = copy_context.edge.data
+        wcr = memlet.wcr
+        reduction_type = operations.detect_reduction_type(wcr)
+
+        if wcr is None:
+            accum, custom_reduction = "", ""
+
+        elif reduction_type != dtypes.ReductionType.Custom:
+            # Use predefined reduction
+            reduction_type_str = str(reduction_type).split(".")[-1]  # e.g., "Sum"
+            accum = f"::template Accum<dace::ReductionType::{reduction_type_str}>"
+            custom_reduction = ""
+
+        else:
+            accum = "::template Accum"
+            custom_reduction = unparse_cr(sdfg, wcr, dtype)
+
+        return accum, custom_reduction
 
     def _get_storagename(self, storage: dtypes.StorageType):
         """
@@ -513,117 +721,36 @@ class SyncCollaboritveGPUCopyStrategy(CopyStrategy):
         storage_name = str(storage)
         return storage_name[storage_name.rindex('_') + 1:]
 
+    def _next_non_seq_parent_map(self, copy_context: CopyContext) -> Optional[nodes.MapEntry]:
+        """
+        Traverse up the parent map chain from the deeper of src_node or dst_node
+        in `copy_context` and return the first parent MapEntry whose schedule
+        is not sequential.
 
-class AsyncCollaboritveGPUCopyStrategy(CopyStrategy):
+        Parameters
+        ----------
+        copy_context : CopyContext
+            Context information about the memory copy.
 
-    def applicable(self, copy_context: CopyContext) -> bool:
-
-        from dace.sdfg import scope_contains_scope
-        from dace.transformation import helpers
-
-        # --- Condition 1: GPU to GPU memory transfer ---
-        gpu_storages = {dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared}
-        if not (copy_context.src_storage in gpu_storages and copy_context.dst_storage in gpu_storages):
-            return False
-
-        dst_node = copy_context.dst_node
-        if not (isinstance(dst_node, nodes.AccessNode) and dst_node.async_copy):
-            return False
-
-        # --- Condition 2: Inside a GPU_Device map scope ---
-        state = copy_context.state_dfg
+        Returns
+        -------
+        Optional[nodes.MapEntry]
+            The first non-sequential parent MapEntry encountered, or None if no
+            such parent exists.
+        """
+        src_node, dst_node = copy_context.src_node, copy_context.dst_node
+        state = copy_context.state
         scope_dict = state.scope_dict()
 
         # Determine which node (src or dst) is in the deeper scope
-        src, dst = copy_context.src_node, copy_context.dst_node
-        deeper_scope_node = dst if scope_contains_scope(scope_dict, src, dst) else src
-
-        # Determine the schedule type of the innermost non-sequential map.
-        # If no such map exists, use the default schedule.
-        current_node = deeper_scope_node
+        deeper_node = dst_node if scope_contains_scope(scope_dict, src_node, dst_node) else src_node
+        current_node = deeper_node
         while (current_node is None or not isinstance(current_node, nodes.MapEntry)
                or current_node.map.schedule == dtypes.ScheduleType.Sequential):
-
             parent = helpers.get_parent_map(state, current_node)
             if parent is None:
                 current_node = None
                 break
             current_node, state = parent
 
-        if current_node is None:
-            schedule_type = dtypes.SCOPEDEFAULT_SCHEDULE[None]
-        else:
-            schedule_type = current_node.map.schedule
-
-        return schedule_type == dtypes.ScheduleType.GPU_Device
-
-    def generate_copy(self, copy_context: CopyContext):
-
-        # Show Yakup:
-        # Asynchronous memory copies are only allowed if they are contiguous
-        if not copy_context.is_contiguous_copy():
-            raise NotImplementedError("Asynchronous memory copies are not supported for not contigous memory copies")
-
-        # Get required copy information
-        copy_shape, src_strides, dst_strides = copy_context.get_transfer_layout()
-        src_expr, dst_expr = copy_context.src_expr, copy_context.dst_expr
-
-        sdfg = copy_context.sdfg
-        dtype = copy_context.src_node.desc(sdfg).dtype
-        ctype = dtype.ctype
-
-        # Get write context:
-        callsite_stream, cfg, state_id, src_node, dst_node = copy_context.get_write_context()
-        # copy dimension
-        num_dims = len(copy_shape)
-
-        if num_dims == 1:
-            pipeline = dst_node.async_pipeline
-            size = f'{product(copy_shape)} *sizeof({ctype})'
-            callsite_stream.write(f"cuda::memcpy_async(block, {dst_expr}, {src_expr}, {size}, {pipeline});\n", cfg,
-                                  state_id, [src_node, dst_node])
-
-        elif num_dims > 1:
-
-            # No built-in functionality for higher dimension copies-
-            # But solvable looping and doing 1D copies
-
-            # write for-loop header:
-            for dim in range(num_dims - 1):
-                callsite_stream.write(
-                    f"for (int __copyidx{dim} = 0; __copyidx{dim} < {copy_shape[dim]}; ++__copyidx{dim}) {{")
-
-            offset_src = ' + '.join(f'(__copyidx{d} * ({s}))' for d, s in enumerate(src_strides[:-1]))
-            offset_dst = ' + '.join(f'(__copyidx{d} * ({s}))' for d, s in enumerate(dst_strides[:-1]))
-
-            size = f'{copy_shape[-1]} *sizeof({ctype})'
-            src = f'{src_expr} + {offset_src}'
-            dst = f'{dst_expr} + {offset_dst}'
-
-            callsite_stream.write(f"cuda::memcpy_async(block, {dst}, {src}, {size}, {pipeline});\n", cfg, state_id,
-                                  [src_node, dst_node])
-
-            # Write for-loop footers
-            for dim in range(num_dims - 2):
-                callsite_stream.write("}")
-
-        else:
-            # Should not be possible- otherwise, doing nothing is also okay
-            # because a empty copy shape means we don't copy anything
-            pass
-
-        emit_sync_debug_checks(copy_context.backend, copy_context.callsite_stream)
-
-
-class FallBackGPUCopyStrategy(CopyStrategy):
-
-    def applicable(self, copy_context: CopyContext) -> bool:
-        return True
-
-    def generate_copy(self, copy_context: CopyContext):
-        callsite_stream, cfg, state_id, src_node, dst_node = copy_context.get_write_context()
-        sdfg = copy_context.sdfg
-        dfg = copy_context.dfg
-        edge = copy_context.edge
-        cpu_codegen = copy_context.codegen._cpu_codegen
-        cpu_codegen.copy_memory(sdfg, cfg, dfg, state_id, src_node, dst_node, edge, None, callsite_stream)
+        return current_node

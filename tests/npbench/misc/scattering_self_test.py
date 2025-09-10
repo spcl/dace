@@ -115,6 +115,7 @@ def run_scattering_self_test(device_type: dace.dtypes.DeviceType):
 def test_cpu():
     run_scattering_self_test(dace.dtypes.DeviceType.CPU)
 
+
 @pytest.mark.gpu
 def test_gpu():
     run_scattering_self_test(dace.dtypes.DeviceType.GPU)

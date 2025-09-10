@@ -618,7 +618,6 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                 for devicename, hostname in mapping.items():
                     block.replace_meta_accesses({devicename: hostname})
 
-
         # Step 9: Simplify
         if self.simplify:
             sdfg.simplify()
@@ -629,7 +628,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         from dace.config import Config
         if not Config.get('compiler', 'cuda', 'implementation') == 'experimental':
             return
-        
+
         # import needed modules
         from dace.transformation import helpers
         from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel
@@ -657,12 +656,11 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
             parent_map_info = helpers.get_parent_map(state=parent, node=node)
             while parent_map_info is not None:
                 map_entry, map_state = parent_map_info
-                if (isinstance(map_entry, nodes.MapEntry) and 
-                    map_entry.map.schedule == dtypes.ScheduleType.GPU_Device):
+                if (isinstance(map_entry, nodes.MapEntry) and map_entry.map.schedule == dtypes.ScheduleType.GPU_Device):
                     in_kernel = True
                     break
                 parent_map_info = helpers.get_parent_map(map_state, map_entry)
-            
+
             if in_kernel:
                 transients_in_kernels.add((node.data, desc, map_entry))
             else:
@@ -686,6 +684,5 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                 "As a best-effort fix, the array will be lifted outside the kernel as a non-transient GPU_Global array. "
                 "Any naming conflicts are resolved automatically. "
                 "Please avoid this pattern, as it is strongly discouraged and may lead to undefined behavior. "
-                "Note that this fix provides no guarantees, especially for unusual or complex use cases."
-            )
+                "Note that this fix provides no guarantees, especially for unusual or complex use cases.")
             MoveArrayOutOfKernel().apply_pass(sdfg, kernel_entry, data_name)

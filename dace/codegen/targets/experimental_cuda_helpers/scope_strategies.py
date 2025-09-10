@@ -1,28 +1,17 @@
-# Standard library imports
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Dict, Type
 
-# DaCe core imports
 import dace
 from dace import dtypes, subsets, symbolic
-
-from dace.config import Config
-
-# DaCe SDFG imports
 from dace.sdfg import SDFG, ScopeSubgraphView, nodes, SDFGState
 from dace.sdfg.state import ControlFlowRegion
-
-# DaCe codegen imports
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.framecode import DaCeCodeGenerator
 from dace.codegen.dispatcher import DefinedType, TargetDispatcher
-
-# DaCe transformation imports
 from dace.transformation import helpers
-
-# Experimental CUDA imports
+from dace.codegen.targets.cpp import sym2cpp
 from dace.codegen.targets.experimental_cuda import ExperimentalCUDACodeGen, KernelSpec
-from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import (symbolic_to_cpp, get_cuda_dim, product)
+from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import (get_cuda_dim, product)
 
 #----------------------------------------------------------------------------------
 # GPU Scope Generation Strategies
@@ -80,10 +69,6 @@ class KernelScopeGenerator(ScopeGenerationStrategy):
                           callsite_stream=callsite_stream,
                           comment="Kernel scope") as scope_manager:
 
-            # ----------------- Initialize Kernel Scope Constructs -----------------------
-
-            self._generate_kernel_initialization(sdfg, cfg, dfg_scope, state_id, function_stream, callsite_stream)
-
             # ----------------- Retrieve kernel configuration -----------------------
 
             kernel_spec = self._current_kernel_spec
@@ -120,17 +105,15 @@ class KernelScopeGenerator(ScopeGenerationStrategy):
                     # Delinearize third dimension if more than 3D (used in 3D+ mapping)
                     if dim == 2 and kernel_dimensions > 3:
                         tail_prod = product(kernel_dim_sizes[3:])
-                        index_expr = f"({index_expr} / ({symbolic_to_cpp(tail_prod)}))"
+                        index_expr = f"({index_expr} / ({sym2cpp(tail_prod)}))"
 
                 else:  # Handle dimensions beyond the third (delinearize and modulo)
                     index_expr = f'blockIdx.z'
                     tail_prod = product(kernel_dim_sizes[dim + 1:])
-                    index_expr = (
-                        f"(({index_expr} / ({symbolic_to_cpp(tail_prod)})) % ({symbolic_to_cpp(kernel_dim_sizes[dim])}))"
-                    )
+                    index_expr = (f"(({index_expr} / ({sym2cpp(tail_prod)})) % ({sym2cpp(kernel_dim_sizes[dim])}))")
 
                 # Define thread/Block index
-                var_def = symbolic_to_cpp(symbolic_coordinates[dim]).replace(f'__SYM_IDX{dim}', index_expr)
+                var_def = sym2cpp(symbolic_coordinates[dim]).replace(f'__SYM_IDX{dim}', index_expr)
                 callsite_stream.write(f'{thread_id_ctype} {var_name} = {var_def};', cfg, state_id, kernel_entry_node)
                 self._dispatcher.defined_vars.add(var_name, DefinedType.Scalar, thread_id_ctype)
 
@@ -145,8 +128,9 @@ class KernelScopeGenerator(ScopeGenerationStrategy):
                                                function_stream,
                                                callsite_stream,
                                                skip_entry_node=True)
-            
-            self.codegen._frame.deallocate_arrays_in_scope(sdfg, cfg, kernel_entry_node, function_stream, callsite_stream)
+
+            self.codegen._frame.deallocate_arrays_in_scope(sdfg, cfg, kernel_entry_node, function_stream,
+                                                           callsite_stream)
 
     def _generate_kernel_signature(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView,
                                    state_id: int, function_stream: CodeIOStream, callsite_stream: CodeIOStream):
@@ -168,60 +152,6 @@ class KernelScopeGenerator(ScopeGenerationStrategy):
         # Emit kernel function signature
         callsite_stream.write(f'__global__ void {launch_bounds} {kernel_name}({", ".join(kernel_args)}) ', cfg,
                               state_id, node)
-
-    def _generate_kernel_initialization(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView,
-                                        state_id: int, function_stream: CodeIOStream, callsite_stream: CodeIOStream):
-        """
-        NOTE: Under construction
-        Tell yakup:
-        1. This is as far as I know really cuda specific- maybe I should raise an error if wrong backend (HIP) is used
-        2. What about the shared state allocation? Is it correct to tell about this allocation? generally, did I
-           tell the dispatcher everything correctly?
-        """
-
-        # Skip this if there are no metada, nothing to initialize
-        metadata = sdfg.metadata
-        if metadata == None:
-            return
-
-        node = dfg_scope.source_nodes()[0]
-
-        callsite_stream.write(f"\n", cfg, state_id, node)
-        # initialize block group using coopertive groups
-        tblock_obj_name = Config.get('compiler', 'cuda', 'current_thread_block_name')
-        tblock_obj_ctype = "auto"
-        callsite_stream.write(f"{tblock_obj_ctype} {tblock_obj_name} = cg::this_thread_block();\n", cfg, state_id, node)
-        self._dispatcher.defined_vars.add(tblock_obj_name, DefinedType.Object, tblock_obj_ctype)
-
-        # initialize pipeline
-        pipelines = dict()
-        for node_guid, node_meta in metadata.items():
-            pipelines = node_meta.get("pipelines", {})
-            for pipeline_name, pipeline_info in pipelines.items():
-                pipelines[pipeline_name] = pipeline_info["pipeline_depth"]
-
-        for pipeline_name, pipeline_depth in pipelines.items():
-            callsite_stream.write(f"\n", cfg, state_id, node)
-            # initialize pipeline depth scalar
-            depth_name = f"pipeline_depth_{pipeline_name}"
-            depth_ctype = "const uint"
-            callsite_stream.write(f"{depth_ctype} {depth_name} = {pipeline_depth};\n", cfg, state_id, node)
-            self._dispatcher.defined_vars.add(depth_name, DefinedType.Scalar, depth_ctype)
-
-            # allocate shared pipeline state
-            shared_state_name = f"shared_state_{pipeline_name}"
-            shared_state_ctype = f"cuda::pipeline_shared_state<cuda::thread_scope::thread_scope_block, {depth_name}>"
-            callsite_stream.write(f" __shared__ {shared_state_ctype} {shared_state_name};\n")
-            self._dispatcher.declared_arrays.add(shared_state_name, DefinedType.Pointer, shared_state_ctype)
-
-            # intialize the pipeline
-            pipeline_ctype = "auto"
-            callsite_stream.write(
-                f"{pipeline_ctype} {pipeline_name} = cuda::make_pipeline({tblock_obj_name}, &{shared_state_name});\n",
-                cfg, state_id, node)
-            self._dispatcher.defined_vars.add(pipeline_name, DefinedType.Object, pipeline_ctype)
-
-        callsite_stream.write(f"\n", cfg, state_id, node)
 
 
 class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
@@ -286,16 +216,15 @@ class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
                     # First three dimensions: direct mapping or partial delinearization
                     if dim == 2 and map_dimensions > 3:
                         tail_prod = product(map_dim_sizes[3:])
-                        base_expr = f"(threadIdx.z / ({symbolic_to_cpp(tail_prod)}))"
+                        base_expr = f"(threadIdx.z / ({sym2cpp(tail_prod)}))"
                     else:
                         base_expr = f"threadIdx.{get_cuda_dim(dim)}"
                 else:
                     # Dimensions beyond the third: full delinearization
                     tail_prod = product(map_dim_sizes[dim + 1:])
-                    base_expr = (
-                        f"((threadIdx.z / ({symbolic_to_cpp(tail_prod)})) % ({symbolic_to_cpp(map_dim_sizes[dim])}))")
+                    base_expr = (f"((threadIdx.z / ({sym2cpp(tail_prod)})) % ({sym2cpp(map_dim_sizes[dim])}))")
 
-                var_def = symbolic_to_cpp(symbolic_coordinates[dim]).replace(f'__SYM_IDX{dim}', base_expr)
+                var_def = sym2cpp(symbolic_coordinates[dim]).replace(f'__SYM_IDX{dim}', base_expr)
                 callsite_stream.write(f'{block_id_ctype} {var_name} = {var_def};', cfg, state_id, node)
                 self._dispatcher.defined_vars.add(var_name, DefinedType.Scalar, block_id_ctype)
 
@@ -316,7 +245,7 @@ class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
 
                 # Block range start
                 if dim >= 3 or (symbolic_indices[dim] >= start) != True:
-                    condition += f'{var_name} >= {symbolic_to_cpp(start)}'
+                    condition += f'{var_name} >= {sym2cpp(start)}'
 
                 # Special case: block size is exactly the range of the map (0:b)
                 if dim >= 3:
@@ -328,7 +257,7 @@ class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
                 if dim >= 3 or (not skipcond and (symbolic_index_bounds[dim] < end) != True):
                     if len(condition) > 0:
                         condition += ' && '
-                    condition += f'{var_name} < {symbolic_to_cpp(end + 1)}'
+                    condition += f'{var_name} < {sym2cpp(end + 1)}'
 
                 # Emit condition in code if any
                 if len(condition) > 0:
@@ -343,7 +272,7 @@ class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
                                                function_stream,
                                                callsite_stream,
                                                skip_entry_node=True)
-            
+
             self.codegen._frame.deallocate_arrays_in_scope(sdfg, cfg, node, function_stream, callsite_stream)
 
 
@@ -436,8 +365,7 @@ class WarpScopeGenerator(ScopeGenerationStrategy):
 
                 callsite_stream.write(f"{ids_ctype} {var_name} = {expr};", cfg, state_id, node)
                 self._dispatcher.defined_vars.add(var_name, DefinedType.Scalar, ids_ctype)
-            
-            
+
             self.codegen._frame.allocate_arrays_in_scope(sdfg, cfg, node, function_stream, callsite_stream)
 
             # ----------------- Guard Conditions for Warp Execution -----------------------
@@ -472,7 +400,7 @@ class WarpScopeGenerator(ScopeGenerationStrategy):
                                                function_stream,
                                                callsite_stream,
                                                skip_entry_node=True)
-            
+
             self.codegen._frame.deallocate_arrays_in_scope(sdfg, cfg, node, function_stream, callsite_stream)
 
     def _handle_GPU_Warp_scope_guards(self, state_dfg: SDFGState, node: nodes.MapEntry, map_range: subsets.Range,

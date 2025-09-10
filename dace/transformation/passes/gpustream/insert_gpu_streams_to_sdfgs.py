@@ -12,15 +12,16 @@ from dace.transformation.passes.gpustream.gpustream_scheduling import NaiveGPUSt
 
 STREAM_PLACEHOLDER = "__dace_current_stream"
 
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class InsertGPUStreamsToSDFGs(ppl.Pass):
     """
-    Inserts a GPU stream array into the top-level SDFG and propagates it to all 
-    nested SDFGs that require it, including intermediate SDFGs along the hierarchy. 
+    Inserts a GPU stream array into the top-level SDFG and propagates it to all
+    nested SDFGs that require it, including intermediate SDFGs along the hierarchy.
 
-    This pass guarantees that every relevant SDFG has the array defined, avoiding 
-    duplication and allowing subsequent passes in the GPU stream pipeline to rely 
+    This pass guarantees that every relevant SDFG has the array defined, avoiding
+    duplication and allowing subsequent passes in the GPU stream pipeline to rely
     on its presence without redefining it.
     """
 
@@ -32,14 +33,14 @@ class InsertGPUStreamsToSDFGs(ppl.Pass):
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
-    
+
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]):
         """
         Ensure that a GPU stream array is available in all SDFGs that require it.
 
-        The pass creates the array once at the top-level SDFG and propagates it 
-        down the hierarchy by inserting matching arrays in child SDFGs and wiring 
-        them through nested SDFG connectors. This way, all SDFGs share a consistent 
+        The pass creates the array once at the top-level SDFG and propagates it
+        down the hierarchy by inserting matching arrays in child SDFGs and wiring
+        them through nested SDFG connectors. This way, all SDFGs share a consistent
         reference to the same GPU stream array.
         """
 
@@ -49,9 +50,9 @@ class InsertGPUStreamsToSDFGs(ppl.Pass):
         num_assigned_streams = max(stream_assignments.values(), default=0) + 1
 
         # Add the GPU stream array at the top level
-        sdfg.add_transient(stream_array_name, (num_assigned_streams,), dtype=dace.dtypes.gpuStream_t, 
+        sdfg.add_transient(stream_array_name, (num_assigned_streams, ),
+                           dtype=dace.dtypes.gpuStream_t,
                            storage=dace.dtypes.StorageType.Register)
-
 
         # Ensure GPU stream array is defined where required
         for child_sdfg in self.find_child_sdfgs_requiring_gpu_stream(sdfg):
@@ -62,23 +63,26 @@ class InsertGPUStreamsToSDFGs(ppl.Pass):
 
             # Add the array to the child SDFG
             inner_sdfg = child_sdfg
-            inner_sdfg.add_array(stream_array_name, (num_assigned_streams,), dtype=dace.dtypes.gpuStream_t, 
+            inner_sdfg.add_array(stream_array_name, (num_assigned_streams, ),
+                                 dtype=dace.dtypes.gpuStream_t,
                                  storage=dace.dtypes.StorageType.Register)
-            
+
             # Walk up the hierarchy until the array is found, inserting it into each parent
             outer_sdfg = inner_sdfg.parent_sdfg
             while stream_array_name not in outer_sdfg.arrays:
 
                 # Insert array in parent SDFG
-                outer_sdfg.add_array(stream_array_name, (num_assigned_streams,), dtype=dace.dtypes.gpuStream_t, 
+                outer_sdfg.add_array(stream_array_name, (num_assigned_streams, ),
+                                     dtype=dace.dtypes.gpuStream_t,
                                      storage=dace.dtypes.StorageType.Register)
-                
+
                 # Connect parent SDFG array to nested SDFG node
                 inner_nsdfg_node = inner_sdfg.parent_nsdfg_node
                 inner_parent_state = inner_sdfg.parent
                 inner_nsdfg_node.add_in_connector(stream_array_name, dtypes.gpuStream_t)
                 inp_gpu_stream: AccessNode = inner_parent_state.add_access(stream_array_name)
-                inner_parent_state.add_edge(inp_gpu_stream, None, inner_nsdfg_node, stream_array_name, dace.Memlet(stream_array_name))
+                inner_parent_state.add_edge(inp_gpu_stream, None, inner_nsdfg_node, stream_array_name,
+                                            dace.Memlet(stream_array_name))
 
                 # Continue climbing up the hierarchy
                 inner_sdfg = outer_sdfg
@@ -89,7 +93,8 @@ class InsertGPUStreamsToSDFGs(ppl.Pass):
             inner_parent_state = inner_sdfg.parent
             inner_nsdfg_node.add_in_connector(stream_array_name, dtypes.gpuStream_t)
             inp_gpu_stream: AccessNode = inner_parent_state.add_access(stream_array_name)
-            inner_parent_state.add_edge(inp_gpu_stream, None, inner_nsdfg_node, stream_array_name, dace.Memlet(f"{stream_array_name}[0:{num_assigned_streams}]"))
+            inner_parent_state.add_edge(inp_gpu_stream, None, inner_nsdfg_node, stream_array_name,
+                                        dace.Memlet(f"{stream_array_name}[0:{num_assigned_streams}]"))
 
             outer_sdfg = inner_sdfg.parent_sdfg
 
@@ -101,9 +106,9 @@ class InsertGPUStreamsToSDFGs(ppl.Pass):
         array descriptor store. A child SDFG requires a GPU stream if:
 
         - It launches GPU kernels (MapEntry/MapExit with GPU_Device schedule).
-        - It contains special Tasklets (e.g., from library node expansion) that 
+        - It contains special Tasklets (e.g., from library node expansion) that
           use the GPU stream they are assigned to in the code.
-        - It accesses GPU global memory outside device-level GPU scopes, which 
+        - It accesses GPU global memory outside device-level GPU scopes, which
           implies memory copies or kernel data feeds.
 
         Parameters
@@ -122,7 +127,7 @@ class InsertGPUStreamsToSDFGs(ppl.Pass):
 
             # Skip the root SDFG itself
             if child_sdfg is sdfg:
-                continue 
+                continue
 
             for state in child_sdfg.states():
                 for node in state.nodes():
@@ -138,11 +143,8 @@ class InsertGPUStreamsToSDFGs(ppl.Pass):
                         break
 
                     # Case 3: Accessing GPU global memory outside device-level scopes
-                    if (
-                        isinstance(node, AccessNode)
-                        and node.desc(state).storage == dtypes.StorageType.GPU_Global
-                        and not is_devicelevel_gpu(state.sdfg, state, node)
-                    ):
+                    if (isinstance(node, AccessNode) and node.desc(state).storage == dtypes.StorageType.GPU_Global
+                            and not is_devicelevel_gpu(state.sdfg, state, node)):
                         requiring_gpu_stream.add(child_sdfg)
                         break
 
@@ -151,6 +153,3 @@ class InsertGPUStreamsToSDFGs(ppl.Pass):
                     break
 
         return requiring_gpu_stream
-                    
-
-

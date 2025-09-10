@@ -13,6 +13,7 @@ from dace.transformation.passes.gpustream.insert_gpu_streams_to_kernels import I
 # Placeholder for the GPU stream variable used in tasklet code
 STREAM_PLACEHOLDER = "__dace_current_stream"
 
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class InsertGPUStreamsToTasklets(ppl.Pass):
@@ -20,8 +21,8 @@ class InsertGPUStreamsToTasklets(ppl.Pass):
     This pass ensures that tasklets which require access to their assigned GPU stream
     are provided with it explicitly.
 
-    Such tasklets typically originate from expanded LibraryNodes targeting GPUs. 
-    These nodes may reference the special placeholder variable `__dace_current_stream`, 
+    Such tasklets typically originate from expanded LibraryNodes targeting GPUs.
+    These nodes may reference the special placeholder variable `__dace_current_stream`,
     which is expected to be defined during unparsing in `cpp.py`.
 
     To avoid relying on this "hidden" mechanism, the pass rewrites tasklets to use
@@ -38,7 +39,7 @@ class InsertGPUStreamsToTasklets(ppl.Pass):
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
-    
+
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]):
         # Retrieve the GPU stream's array name
         stream_array_name = Config.get('compiler', 'cuda', 'gpu_stream_name').split(',')[0]

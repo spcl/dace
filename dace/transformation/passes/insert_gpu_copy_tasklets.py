@@ -5,7 +5,7 @@ import copy
 import dace
 from dace import SDFG, SDFGState, dtypes, properties
 from dace import memlet as mm
-from dace.codegen.targets.experimental_cuda_helpers.new_copy_strategies import CopyContext, OutOfKernelCopyStrategy
+from dace.codegen.targets.experimental_cuda_helpers.copy_strategies import CopyContext, OutOfKernelCopyStrategy
 from dace.config import Config
 from dace.sdfg import nodes, scope_contains_scope
 from dace.sdfg.graph import MultiConnectorEdge
@@ -15,6 +15,7 @@ from dace.transformation.passes.gpustream.insert_gpu_streams_to_kernels import I
 from dace.transformation.passes.gpustream.insert_gpu_streams_to_tasklets import InsertGPUStreamsToTasklets
 from dace.transformation.passes.gpustream.insert_gpu_stream_sync_tasklets import InsertGPUStreamSyncTasklets
 from dace.transformation.passes.gpustream.insert_gpu_streams_to_sdfgs import InsertGPUStreamsToSDFGs
+
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
@@ -34,12 +35,12 @@ class InsertGPUCopyTasklets(ppl.Pass):
     from connectors and describing in memlets how data will be moved, since currently
     tasklets only support value inputs.
     """
-    
+
     def depends_on(self) -> Set[Union[Type[ppl.Pass], ppl.Pass]]:
         depending_passes = {
-            NaiveGPUStreamScheduler, InsertGPUStreamsToSDFGs, InsertGPUStreamsToKernels, 
-            InsertGPUStreamsToTasklets, InsertGPUStreamSyncTasklets
-            }
+            NaiveGPUStreamScheduler, InsertGPUStreamsToSDFGs, InsertGPUStreamsToKernels, InsertGPUStreamsToTasklets,
+            InsertGPUStreamSyncTasklets
+        }
         return depending_passes
 
     def modifies(self) -> ppl.Modifies:
@@ -87,7 +88,7 @@ class InsertGPUCopyTasklets(ppl.Pass):
 
             # Generatae the copy call
             code = out_of_kernel_copy.generate_copy(copy_context)
-                
+
             # Prepare GPU ustream connectors and the stream to be accessed from the
             # GPU stream array
             gpustream_id = gpustream_assignments[dst_node]
@@ -99,9 +100,9 @@ class InsertGPUCopyTasklets(ppl.Pass):
             tasklet.add_in_connector(gpustream_var_name, dtypes.gpuStream_t, True)
             tasklet.add_out_connector(gpustream_var_name, dtypes.gpuStream_t, True)
 
-            # Add incoming and outgoing GPU stream accessNodes to the tasklet 
+            # Add incoming and outgoing GPU stream accessNodes to the tasklet
             in_gpustream = state.add_access(gpustream_array_name)
-            out_gpustream= state.add_access(gpustream_array_name)
+            out_gpustream = state.add_access(gpustream_array_name)
             state.add_edge(in_gpustream, None, tasklet, gpustream_var_name, dace.Memlet(accessed_gpustream))
             state.add_edge(tasklet, gpustream_var_name, out_gpustream, None, dace.Memlet(accessed_gpustream))
 
@@ -109,13 +110,14 @@ class InsertGPUCopyTasklets(ppl.Pass):
             dst_node_pred, dst_node_conn, _, dst_conn, memlet = edge
             state.add_edge(dst_node_pred, dst_node_conn, tasklet, None, copy.deepcopy(memlet))
             state.add_edge(tasklet, None, dst_node, dst_conn, copy.deepcopy(memlet))
-            state.remove_edge(edge)  
+            state.remove_edge(edge)
 
         return {}
-    
-    def find_all_data_copies(self, sdfg: SDFG) -> List[Tuple[SDFG, SDFGState, nodes.Node, nodes.Node, MultiConnectorEdge[mm.Memlet]]]:
+
+    def find_all_data_copies(
+            self, sdfg: SDFG) -> List[Tuple[SDFG, SDFGState, nodes.Node, nodes.Node, MultiConnectorEdge[mm.Memlet]]]:
         """
-        Finds and returns all data copies in the SDFG as tuples containing the SDFG, state, source node, 
+        Finds and returns all data copies in the SDFG as tuples containing the SDFG, state, source node,
         destination node, and the first memlet edge of in the memlet path between source and destination node.
 
         Parameters
@@ -139,7 +141,7 @@ class InsertGPUCopyTasklets(ppl.Pass):
         for sub_sdfg in sdfg.all_sdfgs_recursive():
             for state in sub_sdfg.states():
                 for edge in state.edges():
-                    
+
                     # Skip edges that were already processed
                     if edge in visited_edges:
                         continue

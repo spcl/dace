@@ -1,22 +1,15 @@
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import functools
 
 import sympy
-from typing import Set, List, Optional
+from typing import Set, List
 
 import dace
-from dace import Config, symbolic, data as dt, dtypes
+from dace import Config, data as dt, dtypes
 from dace.sdfg import nodes, SDFGState
-from dace.codegen import common, cppunparse
+from dace.codegen import common
 from dace.codegen.dispatcher import DefinedType
-from dace.codegen.prettycode import CodeIOStream
 from dace.transformation.helpers import get_parent_map
-
-
-def symbolic_to_cpp(arr):
-    """ Converts an array of symbolic variables (or one) to C++ strings. """
-    if not isinstance(arr, list):
-        return cppunparse.pyexpr2cpp(symbolic.symstr(arr, cpp_mode=True))
-    return [cppunparse.pyexpr2cpp(symbolic.symstr(d, cpp_mode=True)) for d in arr]
 
 
 def get_cuda_dim(idx):
@@ -99,9 +92,10 @@ def validate_block_size_limits(kernel_map_entry: nodes.MapEntry, block_size: Lis
                          'thread-block size. To increase this limit, modify the '
                          '`compiler.cuda.block_size_lastdim_limit` configuration entry.')
 
+
 def generate_sync_debug_call() -> str:
     """
-    Generate backend sync and error-check calls as a string if 
+    Generate backend sync and error-check calls as a string if
     synchronous debugging is enabled.
 
     Parameters
@@ -117,12 +111,11 @@ def generate_sync_debug_call() -> str:
     backend: str = common.get_gpu_backend()
     sync_call: str = ""
     if Config.get_bool('compiler', 'cuda', 'syncdebug'):
-        sync_call = (
-            f"DACE_GPU_CHECK({backend}GetLastError());\n"
-            f"DACE_GPU_CHECK({backend}DeviceSynchronize());\n"
-        )
+        sync_call = (f"DACE_GPU_CHECK({backend}GetLastError());\n"
+                     f"DACE_GPU_CHECK({backend}DeviceSynchronize());\n")
 
     return sync_call
+
 
 def get_defined_type(data: dt.Data) -> DefinedType:
     """
@@ -136,7 +129,8 @@ def get_defined_type(data: dt.Data) -> DefinedType:
     else:
         raise NotImplementedError(f"Data type '{type(data).__name__}' is not supported for defined type inference."
                                   "Only Scalars and Arrays are expected for Kernels.")
-    
+
+
 def is_within_schedule_types(state: SDFGState, node: nodes.Node, schedules: Set[dtypes.ScheduleType]) -> bool:
     """
     Checks if the given node is enclosed within a Map whose schedule type
@@ -146,7 +140,7 @@ def is_within_schedule_types(state: SDFGState, node: nodes.Node, schedules: Set[
     ----------
     state : SDFGState
         The State where the node resides
-    node : nodes.Node 
+    node : nodes.Node
         The node to check.
     schedules : set[dtypes.ScheduleType]
         A set of schedule types to match (e.g., {dtypes.ScheduleType.GPU_Device}).

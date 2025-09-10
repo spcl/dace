@@ -174,10 +174,10 @@ __state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{id}, __da
         """
         Return the GPU stream ID assigned to a given node.
 
-        - In the CUDACodeGen, the stream ID is stored as the private attribute 
+        - In the CUDACodeGen, the stream ID is stored as the private attribute
           ``_cuda_stream`` on the node.
-        - In the ExperimentalCUDACodeGen, streams are explicitly assigned to tasklets 
-          and GPU_Device-scheduled maps (kernels) via a GPU stream AccessNode. For 
+        - In the ExperimentalCUDACodeGen, streams are explicitly assigned to tasklets
+          and GPU_Device-scheduled maps (kernels) via a GPU stream AccessNode. For
           other node types, no reliable stream assignment is available.
 
         Parameters
@@ -194,7 +194,7 @@ __state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{id}, __da
         """
         if config.Config.get('compiler', 'cuda', 'implementation') == 'legacy':
             stream = getattr(node, '_cuda_stream', -1)
-        
+
         else:
             stream = -1
             for in_edge in state.in_edges(node):
@@ -208,4 +208,3 @@ __state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{id}, __da
                     stream = int(out_edge.data.subset)
 
         return stream
-        

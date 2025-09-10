@@ -404,12 +404,12 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         # If empty memlet, return itself as the path
         if (edge.src_conn is None and edge.dst_conn is None and edge.data.is_empty()):
             return result
-        
+
         # For the (new) gpu stream handling we can have dynamic out connectors, e.g.
         # KernelExit: stream ->  None: AccessNode, where AccessNode accesses a Stream array
         # Memlets are used but its not about seing how data flows
         if (isinstance(edge.src, nd.MapExit) and edge.src.map.schedule == dtypes.ScheduleType.GPU_Device
-            and isinstance(edge.dst, nd.AccessNode) and edge.dst.desc(state).dtype == dtypes.gpuStream_t):
+                and isinstance(edge.dst, nd.AccessNode) and edge.dst.desc(state).dtype == dtypes.gpuStream_t):
             return result
 
         # Prepend incoming edges until reaching the source node
@@ -983,7 +983,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         defined_syms = defined_syms or self.defined_symbols()
         scalar_args.update({
             k: dt.Scalar(defined_syms[k]) if k in defined_syms else sdfg.arrays[k]
-            for k in self.used_symbols(all_symbols=False) 
+            for k in self.used_symbols(all_symbols=False)
             if not k.startswith('__dace') and k not in sdfg.constants and (k in defined_syms or k in sdfg.arrays)
         })
 

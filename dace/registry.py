@@ -46,10 +46,8 @@ def autoregister(cls: Type, **kwargs):
 
     valid_impls = {'legacy', 'experimental'}
     if impl not in valid_impls:
-        raise ValueError(
-            f"Invalid CUDA implementation: {impl}. "
-            f"Please select one of {valid_impls} under compiler.cuda.implementation in the configs."
-        )
+        raise ValueError(f"Invalid CUDA implementation: {impl}. "
+                         f"Please select one of {valid_impls} under compiler.cuda.implementation in the configs.")
 
     # Only the CUDA implementation selected in Config is registered
     if name in {'cuda', 'experimental_cuda'}:

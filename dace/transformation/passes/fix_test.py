@@ -13,8 +13,8 @@ from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.gpustream.gpustream_scheduling import NaiveGPUStreamScheduler
 from dace.transformation.passes.gpustream.insert_gpu_streams_to_sdfgs import InsertGPUStreamsToSDFGs
 
-
 from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import is_within_schedule_types
+
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
@@ -26,21 +26,20 @@ class Fix(ppl.Pass):
         return {NaiveGPUStreamScheduler, InsertGPUStreamsToSDFGs}
 
     def modifies(self) -> ppl.Modifies:
-        return ppl.Modifies.Descriptors | ppl.Modifies.Nodes | ppl.Modifies.Memlets 
+        return ppl.Modifies.Descriptors | ppl.Modifies.Nodes | ppl.Modifies.Memlets
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
-    
+
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Dict[str, dace.data.Data]:
-    
+
         from dace.transformation.helpers import get_parent_map
 
-        names: Dict =  dict()
+        names: Dict = dict()
         for node, parent_state in sdfg.all_nodes_recursive():
             if not isinstance(node, nodes.AccessNode):
                 continue
 
-            
             map_parent = None
             state = parent_state
             current = node
@@ -68,9 +67,9 @@ class Fix(ppl.Pass):
             # Try to evaluate the inequality
             cmp = sp.simplify(size_expr > 64)
 
-            if cmp is sp.true:           # definitely larger
+            if cmp is sp.true:  # definitely larger
                 move_out = True
-            elif cmp is sp.false:        # definitely safe
+            elif cmp is sp.false:  # definitely safe
                 move_out = False
             else:
                 # undecidable case (symbolic expression)

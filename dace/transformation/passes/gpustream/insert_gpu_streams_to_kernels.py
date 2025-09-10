@@ -10,13 +10,14 @@ from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.gpustream.gpustream_scheduling import NaiveGPUStreamScheduler
 from dace.transformation.passes.gpustream.insert_gpu_streams_to_sdfgs import InsertGPUStreamsToSDFGs
 
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class InsertGPUStreamsToKernels(ppl.Pass):
     """
     This Pass attaches GPU streams to kernels (i.e., dtypes.ScheduleType.GPU_Device scheduled maps).
 
-    Adds GPU stream AccessNodes and connects them to kernel entry and exit nodes, 
+    Adds GPU stream AccessNodes and connects them to kernel entry and exit nodes,
     indicating which GPU stream each kernel is assigned to. These assignments are e.g.
     used when launching the kernels.
     """
@@ -29,7 +30,7 @@ class InsertGPUStreamsToKernels(ppl.Pass):
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
-    
+
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]):
         # Retrieve the GPU stream array name and the prefix for individual stream variables
         stream_array_name, stream_var_name_prefix = Config.get('compiler', 'cuda', 'gpu_stream_name').split(',')
@@ -56,12 +57,14 @@ class InsertGPUStreamsToKernels(ppl.Pass):
                     kernel_entry = node
                     kernel_entry.add_in_connector(gpu_stream_var_name, dtypes.gpuStream_t)
                     stream_array_in = state.add_access(stream_array_name)
-                    state.add_edge(stream_array_in, None, kernel_entry, gpu_stream_var_name, dace.Memlet(accessed_gpu_stream))
+                    state.add_edge(stream_array_in, None, kernel_entry, gpu_stream_var_name,
+                                   dace.Memlet(accessed_gpu_stream))
 
                     # Assign the GPU stream to the kernel exit
                     kernel_exit = state.exit_node(kernel_entry)
                     kernel_exit.add_out_connector(gpu_stream_var_name, dtypes.gpuStream_t)
                     stream_array_out = state.add_access(stream_array_name)
-                    state.add_edge(kernel_exit, gpu_stream_var_name, stream_array_out, None, dace.Memlet(accessed_gpu_stream))
-          
+                    state.add_edge(kernel_exit, gpu_stream_var_name, stream_array_out, None,
+                                   dace.Memlet(accessed_gpu_stream))
+
         return {}
