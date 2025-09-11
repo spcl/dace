@@ -4,8 +4,11 @@ set(SHCC_COMPILER_NAMES riscv32-unknown-elf-gcc)
 # Find the SHCC compiler
 find_program(SHCC_COMPILER 
     NAMES ${SHCC_COMPILER_NAMES} 
-    PATHS
+    PATHS 
+        ${GVSOC_PATH}/third_party/toolchain/install/bin
+        ${GVSOC_DIR}/third_party/toolchain/install/bin
         $ENV{PATH}
+    NO_DEFAULT_PATH
     DOC "SHCC Compiler"
 )
 
