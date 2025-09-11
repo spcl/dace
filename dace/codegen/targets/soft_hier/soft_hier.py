@@ -439,6 +439,12 @@ class SoftHierCodeGen(TargetCodeGenerator):
 int __dace_init_cuda(struct {sdfg_state_name} *__state{params});
 int __dace_exit_cuda(struct {sdfg_state_name} *__state);
 
+typedef struct DacePlacementInfo
+{{
+    uint32_t channel_id;
+    uint32_t tile_offset;
+}} DacePlacementInfo;
+
 {other_globalcode}
 
 int __dace_init_cuda(struct {sdfg_state_name} *__state{params}) {{
@@ -1668,7 +1674,7 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
         for aname, arg in kernel_args.items():  # `list` wrapper is used to modify kernel_args within the loop
             def _generate_placement_info(aname, placement_scheme, split_scheme):
                             num_tiles = split_scheme[0] * split_scheme[1]
-                            define_str = f"const PlacementInfo {aname}_placement_info[{num_tiles}] = \n"
+                            define_str = f"const DacePlacementInfo {aname}_placement_info[{num_tiles}] = \n"
                             define_str += "{\n"
                             assign_str = ""
                             tiling_offset_dic = {}
@@ -1676,11 +1682,12 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                                 if placement_scheme[i] not in tiling_offset_dic.keys():
                                     tiling_offset_dic[placement_scheme[i]] = 0
                                 assign_str += "{"
-                                assign_str += f".channel_id = {placement_scheme[i]},"
-                                assign_str += f".tile_offset = {tiling_offset_dic[placement_scheme[i]]},"
+                                assign_str += f" .channel_id = {placement_scheme[i]}," # .channel_id = (no need for this)
+                                assign_str += f" .tile_offset = {tiling_offset_dic[placement_scheme[i]]} " # .tile_offset =  (no need for this)
                                 assign_str += "},\n"
                                 tiling_offset_dic[placement_scheme[i]] += 1
-                            return define_str + assign_str + "};\n"
+                            # [:-2] to avoid last comma
+                            return define_str + assign_str[:-2] + "\n" + "};\n"
             if aname in const_params:
                 defined_type, ctype = None, None
                 if aname in sdfg.arrays:
