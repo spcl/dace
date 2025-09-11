@@ -175,16 +175,16 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                         CopyToMap.apply_to(nsdfg, save=False, annotate=False, a=e.src, b=e.dst)
                     except ValueError:  # If transformation doesn't match, continue normally
                         continue
-        """
+
         from dace.transformation.passes.fix_test import Fix
         from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel
-        sdfg.save("before.sdfg")
+        #sdfg.save("before.sdfg")
         names = Fix().apply_pass(sdfg, {})
         for name, map_parent in names.items():
             MoveArrayOutOfKernel().apply_pass(sdfg, map_parent, name)
 
-        sdfg.save("after.sdfg")
-        """
+        #sdfg.save("after.sdfg")
+
 
         #----------------- Add ThreadBlock Maps & Infer Kernel Grid & Block Sizes --------------------
 
