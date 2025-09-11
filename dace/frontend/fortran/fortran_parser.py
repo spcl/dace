@@ -2807,9 +2807,9 @@ class AST_translator:
 
             for s in free_symbols:
                 if sdfg.symbols.get(s.name) is not None:
-                    pass
+                    continue
                 if sdfg.symbols.get("sym_" + s.name) is not None:
-                    pass
+                    continue
                 if sdfg.arrays.get(s.name) is not None:
                     if not sdfg.arrays[s.name].transient:
                         changed = True
