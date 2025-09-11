@@ -4,8 +4,6 @@ import pytest
 import dace
 import dace.libraries.onnx as donnx
 
-
-@pytest.mark.ort
 def test_sum(gpu, sdfg_name):
     sdfg = dace.SDFG(sdfg_name)
 

@@ -523,6 +523,7 @@ class BackwardPassGenerator:
     def _remove_unnecessary_conditional_regions(self):
         """
         """
+        # TODO: remove this is not necessary anymore after inlining
         for region in self.sdfg.all_control_flow_regions():
             if isinstance(region, SDFG) or isinstance(region, LoopRegion):
                 continue

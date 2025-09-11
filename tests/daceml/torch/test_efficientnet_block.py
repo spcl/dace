@@ -64,8 +64,6 @@ def test_mbconv(bn_impl, use_cpp_dispatcher):
                 continue
             torch_tensors_close(dace_name, value, dace_value)
 
-
-@pytest.mark.ort
 @pytest.mark.gpu
 def test_fast_mb(use_cpp_dispatcher):
     with change_default(donnx.ONNXConv, "cuDNN"), \

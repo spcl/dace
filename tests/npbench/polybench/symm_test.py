@@ -10,6 +10,10 @@ from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory, StreamingComposition
 from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
 from dace.config import set_temporary
+from dace.autodiff import add_backward_pass
+import jax
+import jax.numpy as jnp
+import jax.lax as lax
 
 # Data set sizes
 # M, N
@@ -41,6 +45,42 @@ def initialize(M, N, datatype=np.float64):
         A[i, i + 1:] = -999
 
     return alpha, beta, C, A, B
+
+
+def symm_jax_kernel(alpha, beta, C, A, B, S):
+    # Allocate temporary storage of shape (C.shape[1],)
+    temp2 = jnp.empty((C.shape[1],), dtype=C.dtype)
+    # Scale C by beta.
+    C = C * beta
+
+    # Outer scan: loop over row index i.
+    def row_update_body(carry, i):
+        C, temp2 = carry
+
+        # Inner scan: loop over column index j.
+        def col_update_body(carry_inner, j):
+            C, temp2 = carry_inner
+
+            # For row i, compute A_slice and B_slice using a mask.
+            A_slice = jnp.where(jnp.arange(A.shape[1]) < i, A[i, :], 0.0)
+            B_slice = jnp.where(jnp.arange(B.shape[0]) < i, B[:, j], 0.0)
+
+            # Update column j of C:
+            updated_col = C[:, j] + (alpha * B[i, j] * A_slice)
+            C = lax.dynamic_update_slice(C, updated_col[:, None], (0, j))
+            # Update temp2 at index j as the dot product of B_slice and A_slice.
+            temp2 = temp2.at[j].set(B_slice @ A_slice)
+            return (C, temp2), jnp.array(0)  # dummy output
+
+        # Run inner scan over j in 0 ... C.shape[1]-1.
+        (C, temp2), _ = lax.scan(col_update_body, (C, temp2), jnp.arange(C.shape[1]))
+        # After scanning all columns, update row i of C.
+        C = C.at[i, :].add(alpha * B[i, :] * A[i, i] + alpha * temp2)
+        return (C, temp2), jnp.array(0)  # dummy output for the outer scan
+
+    # Run outer scan over i in 0 ... C.shape[0]-1.
+    (C, temp2), _ = lax.scan(row_update_body, (C, temp2), jnp.arange(C.shape[0]))
+    return jnp.sum(C)
 
 
 def ground_truth(alpha, beta, C, A, B):
@@ -90,6 +130,40 @@ def run_symm(device_type: dace.dtypes.DeviceType):
     return sdfg
 
 
+def run_symm_autodiff():
+    # Initialize data (polybench mini size)
+    M, N = sizes["mini"]
+    alpha, beta, C, A, B = initialize(M, N)
+    
+    # Initialize gradient computation data
+    S = np.zeros((1,), dtype=np.float64)
+    gradient_A = np.zeros_like(A)
+    gradient___return = np.ones_like(S)
+    
+    # Define sum reduction for the output
+    @dc.program
+    def autodiff_kernel(alpha: dc.float64, beta: dc.float64, C: dc.float64[M, N], A: dc.float64[M, M], B: dc.float64[M, N]):
+        symm_kernel(alpha, beta, C, A, B)
+        return np.sum(C)
+
+    # Add the backward pass to the SDFG
+    sdfg = autodiff_kernel.to_sdfg()
+    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"], autooptimize=False)
+    sdfg(alpha, beta, C, A, B, M=M, N=N, gradient_A=gradient_A, gradient___return=gradient___return)
+    
+    # Enable float64 support
+    jax.config.update("jax_enable_x64", True)
+
+    # Numerically validate vs JAX
+    jax_grad = jax.jit(jax.grad(symm_jax_kernel, argnums=3), static_argnums=(0,1))
+    A_jax = A.astype(np.float64)
+    C_jax = np.copy(initialize(M, N)[2]).astype(np.float64)  # Fresh copy of C
+    B_jax = B.astype(np.float64)
+    S_jax = S.astype(np.float64)
+    jax_grad_A = jax_grad(alpha, beta, C_jax, A_jax, B_jax, S_jax)
+    np.testing.assert_allclose(gradient_A, jax_grad_A, rtol=1e-5, atol=1e-8)
+
+
 def test_cpu():
     run_symm(dace.dtypes.DeviceType.CPU)
 
@@ -97,6 +171,11 @@ def test_cpu():
 @pytest.mark.gpu
 def test_gpu():
     run_symm(dace.dtypes.DeviceType.GPU)
+
+
+@pytest.mark.daceml
+def test_autodiff():
+    run_symm_autodiff()
 
 
 @fpga_test(assert_ii_1=False)

@@ -322,11 +322,11 @@ def test_simple_broadcasted_mul(sdfg_name, gpu):
 if __name__ == "__main__":
     gpu = False
     sdfg_name = "test_pytorch_module"
-    test_simple(sdfg_name, gpu)
-    test_repeated(sdfg_name, gpu)
-    test_softmax(sdfg_name, gpu)
-    test_reshape_on_memlet_path(sdfg_name, gpu)
-    test_weights_ln(sdfg_name, gpu)
-    test_layernorm(sdfg_name, gpu)
-    test_weights(sdfg_name, gpu)
-    test_nested_gradient_summation(sdfg_name, gpu)
+    test_simple_broadcasted_mul(sdfg_name, gpu)
+    # test_repeated(sdfg_name, gpu)
+    # test_softmax(sdfg_name, gpu)
+    # test_reshape_on_memlet_path(sdfg_name, gpu)
+    # test_weights_ln(sdfg_name, gpu)
+    # test_layernorm(sdfg_name, gpu)
+    # test_weights(sdfg_name, gpu)
+    # test_nested_gradient_summation(sdfg_name, gpu)

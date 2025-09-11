@@ -5,7 +5,6 @@ import dace
 import dace.libraries.onnx as donnx
 
 
-@pytest.mark.ort
 def test_shadowing(sdfg_name):
     new_shape = [8, 10]
     sdfg = dace.SDFG(sdfg_name)

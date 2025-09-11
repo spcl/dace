@@ -8,6 +8,10 @@ import argparse
 from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
 from dace.fpga_testing import fpga_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
+from dace.autodiff import add_backward_pass
+import jax
+import jax.numpy as jnp
+import jax.lax as lax
 
 # Dataset sizes
 # TSTEPS, N
@@ -43,7 +47,7 @@ def numpy_kernel(TSTEPS, N, u):
     e = 1.0 + mul2
     f = d
 
-    for t in range(1, TSTEPS + 1):
+    for t in range(0, TSTEPS):
         v[0, 1:N - 1] = 1.0
         p[1:N - 1, 0] = 0.0
         q[1:N - 1, 0] = v[0, 1:N - 1]
@@ -89,7 +93,7 @@ def adi_kernel(TSTEPS: dace.int64, u: dace.float64[N, N]):
     e = 1.0 + mul2
     f = d
 
-    for t in range(1, TSTEPS + 1):
+    for t in range(0, TSTEPS):
         v[0, 1:N - 1] = 1.0
         p[1:N - 1, 0] = 0.0
         q[1:N - 1, 0] = v[0, 1:N - 1]
@@ -116,6 +120,98 @@ def adi_kernel(TSTEPS: dace.int64, u: dace.float64[N, N]):
 def initialize(N, datatype=np.float64):
     u = np.fromfunction(lambda i, j: (i + N - j) / N, (N, N), dtype=datatype)
     return u
+
+
+def adi_jax_kernel(TSTEPS, u, S):
+    N = u.shape[0]
+    # Initialize arrays: u is provided; v, p, q are zero arrays of same shape.
+    v = jnp.zeros_like(u)
+    p = jnp.zeros_like(u)
+    q = jnp.zeros_like(u)
+
+    DX = 1.0 / N
+    DY = 1.0 / N
+    DT = 1.0 / TSTEPS
+    B1 = 2.0
+    B2 = 1.0
+    mul1 = B1 * DT / (DX * DX)
+    mul2 = B2 * DT / (DY * DY)
+    a = -mul1 / 2.0
+    b = 1.0 + mul2
+    c = a
+    d = -mul2 / 2.0
+    e = 1.0 + mul2
+    f = d
+
+    # --- First inner loop: Thomas forward along j (for fixed row i) ---
+    def first_j_scan(carry, j):
+        p, q, u = carry
+        # Update p[1:N-1, j] using the value from the previous column j-1.
+        p = p.at[1:N-1, j].set(-c / (a * p[1:N-1, j-1] + b))
+        q = q.at[1:N-1, j].set(
+            (-d * u[j, 0:N-2] +
+             (1.0 + 2.0 * d) * u[j, 1:N-1] -
+             f * u[j, 2:N] -
+             a * q[1:N-1, j-1]) /
+            (a * p[1:N-1, j-1] + b)
+        )
+        return (p, q, u), None
+
+    # --- First backward inner loop: solve backward along j (for fixed row) ---
+    def first_backward_j_scan(carry, j):
+        v, p, q = carry
+        idx = N - 2 - j  # reverse order index: when j=0, idx = N-2; when j=N-2, idx = 0.
+        v = v.at[idx, 1:N-1].set(p[1:N-1, idx] * v[idx+1, 1:N-1] + q[1:N-1, idx])
+        return (v, p, q), None
+
+    # --- Second inner loop: Thomas forward along j for second sweep ---
+    def second_j_scan(carry, j):
+        p, q, v = carry
+        p = p.at[1:N-1, j].set(-f / (d * p[1:N-1, j-1] + e))
+        q = q.at[1:N-1, j].set(
+            (-a * v[0:N-2, j] +
+             (1.0 + 2.0 * a) * v[1:N-1, j] -
+             c * v[2:N, j] -
+             d * q[1:N-1, j-1]) /
+            (d * p[1:N-1, j-1] + e)
+        )
+        return (p, q, v), None
+
+    # --- Second backward inner loop: solve backward along j for second sweep ---
+    def second_backward_j_scan(carry, j):
+        u, p, q = carry
+        idx = N - 2 - j
+        u = u.at[1:N-1, idx].set(p[1:N-1, idx] * u[1:N-1, idx+1] + q[1:N-1, idx])
+        return (u, p, q), None
+
+    # --- Time-step loop body ---
+    def time_step_body(carry, t):
+        u, v, p, q = carry
+
+        # First stage: forward solve in j-direction on u & v.
+        v = v.at[0, 1:N-1].set(1.0)
+        p = p.at[1:N-1, 0].set(0.0)
+        q = q.at[1:N-1, 0].set(v[0, 1:N-1])
+        # Run Thomas forward scan for j = 1 to N-2.
+        (p, q, u), _ = lax.scan(first_j_scan, (p, q, u), jnp.arange(1, N-1))
+        # Set boundary for v on the bottom.
+        v = v.at[N-1, 1:N-1].set(1.0)
+        # Run backward sweep for j from 0 to N-2.
+        (v, p, q), _ = lax.scan(first_backward_j_scan, (v, p, q), jnp.arange(0, N-2))
+        
+        # Second stage: forward solve in j-direction on v & update u.
+        u = u.at[1:N-1, 0].set(1.0)
+        p = p.at[1:N-1, 0].set(0.0)
+        q = q.at[1:N-1, 0].set(u[1:N-1, 0])
+        (p, q, v), _ = lax.scan(second_j_scan, (p, q, v), jnp.arange(1, N-1))
+        u = u.at[1:N-1, N-1].set(1.0)
+        (u, p, q), _ = lax.scan(second_backward_j_scan, (u, p, q), jnp.arange(0, N-2))
+        
+        return (u, v, p, q), None
+
+    # Outer time-step loop: run from 0 to TSTEPS.
+    (u, v, p, q), _ = lax.scan(time_step_body, (u, v, p, q), jnp.arange(0, TSTEPS))
+    return jnp.sum(u)
 
 
 def run_adi(device_type: dace.dtypes.DeviceType):
@@ -156,6 +252,38 @@ def run_adi(device_type: dace.dtypes.DeviceType):
     return sdfg
 
 
+def run_adi_autodiff():
+    # Initialize data (polybench mini size for smaller problem)
+    TSTEPS, N = sizes["mini"]
+    u = initialize(N)
+    
+    # Initialize gradient computation data
+    S = np.zeros((1,), dtype=np.float64)
+    gradient_u = np.zeros_like(u)
+    gradient_S = np.ones_like(S)
+    
+    # Define sum reduction for the output
+    @dace.program
+    def autodiff_kernel(TSTEPS: dace.int64, u: dace.float64[N, N], S: dace.float64[1]):
+        adi_kernel(TSTEPS, u)
+        S[0] = np.sum(u)
+
+    # Add the backward pass to the SDFG
+    sdfg = autodiff_kernel.to_sdfg()
+    add_backward_pass(sdfg=sdfg, inputs=["u"], outputs=["S"], autooptimize=False)
+    sdfg(TSTEPS, u, S, N=N, gradient_u=gradient_u, gradient_S=gradient_S)
+    
+    # Enable float64 support
+    jax.config.update("jax_enable_x64", True)
+
+    # Numerically validate vs JAX
+    jax_grad = jax.jit(jax.grad(adi_jax_kernel, argnums=1), static_argnums=0)
+    u_jax = np.copy(initialize(N))
+    S_jax = S.astype(np.float64)
+    jax_grad_u = jax_grad(TSTEPS, u_jax, S_jax)
+    np.testing.assert_allclose(gradient_u, jax_grad_u, rtol=1e-5, atol=1e-8)
+
+
 def test_cpu():
     run_adi(dace.dtypes.DeviceType.CPU)
 
@@ -163,6 +291,11 @@ def test_cpu():
 @pytest.mark.gpu
 def test_gpu():
     run_adi(dace.dtypes.DeviceType.GPU)
+
+
+@pytest.mark.daceml
+def test_autodiff():
+    run_adi_autodiff()
 
 
 @pytest.mark.skip(reason="Intel FPGA argument overflow")

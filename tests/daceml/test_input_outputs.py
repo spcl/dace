@@ -38,7 +38,6 @@ class BreakOpChecker:
         ExecutableKernelContext.try_create_kernel = self.old_try_create
 
 
-@pytest.mark.ort
 @pytest.mark.parametrize("break_opchecker", [True, False])
 @pytest.mark.parametrize("simplify", [True, False])
 def test_squeeze(gpu, simplify, break_opchecker, sdfg_name):
@@ -90,14 +89,14 @@ def test_squeeze(gpu, simplify, break_opchecker, sdfg_name):
         if simplify:
             sdfg.expand_library_nodes()
             sdfg.simplify()
-
+            
+        sdfg.expand_library_nodes()
         result = sdfg(X_arr=X)
 
         assert result.shape == (1, )
         assert result[0] == X
 
 
-@pytest.mark.ort
 @pytest.mark.parametrize("simplify", [True, False])
 @pytest.mark.parametrize("break_opchecker", [True, False])
 def test_shape(gpu, simplify, break_opchecker, sdfg_name):
@@ -135,7 +134,6 @@ def test_shape(gpu, simplify, break_opchecker, sdfg_name):
         assert np.all(result == (2, 4))
 
 
-@pytest.mark.ort
 @pytest.mark.parametrize("simplify", [True, False])
 @pytest.mark.parametrize("break_opchecker", [True, False])
 def test_unsqueeze(gpu, simplify, break_opchecker, sdfg_name):
@@ -183,8 +181,6 @@ def test_unsqueeze(gpu, simplify, break_opchecker, sdfg_name):
         assert result.shape == (1, )
         assert X == result[0]
 
-
-@pytest.mark.ort
 @pytest.mark.parametrize("scalars", [True, False])
 @pytest.mark.parametrize("simplify", [True, False])
 @pytest.mark.parametrize("break_opchecker", [True, False])
@@ -266,6 +262,5 @@ def test_add(gpu, scalars, simplify, break_opchecker, sdfg_name):
 
 
 if __name__ == "__main__":
-    donnx.default_implementation = "onnxruntime"
-    test_squeeze(False, True, True, "test_squeeze")
-    
+    test_squeeze(False, False, True, "test_squeeze")
+    # test_unsqueeze(False, True, True, "test_unsqueeze")

@@ -9,7 +9,7 @@ from dace.transformation.dataflow import RedundantSecondArray
 from dace.testing import copy_to_gpu, torch_tensors_close
 
 
-def test_attn(gpu, sdfg_name, use_cpp_dispatcher, default_implementation):
+def test_attn(gpu, sdfg_name, use_cpp_dispatcher):
     B = 2
     H = 16
     P = 64
@@ -32,3 +32,7 @@ def test_attn(gpu, sdfg_name, use_cpp_dispatcher, default_implementation):
 
     torch_tensors_close("outputs_0", pt_outputs[0], dace_outputs[0])
     torch_tensors_close("outputs_1", pt_outputs[1], dace_outputs[1])
+
+
+if __name__ == "__main__":
+    test_attn(False, "ewfw", True)

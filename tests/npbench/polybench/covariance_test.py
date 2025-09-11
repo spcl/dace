@@ -12,6 +12,9 @@ from dace.transformation.dataflow import StreamingMemory, MapFusionVertical, Str
 from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
 from dace.libraries.standard import Reduce
 from dace.libraries.blas import Gemv
+from dace.autodiff import add_backward_pass
+import jax
+import jax.numpy as jnp
 
 # Data set sizes
 # M, N
@@ -34,6 +37,17 @@ def covariance_kernel(float_n: dc.float32, data: dc.float32[N, M]):
     #     cov[i, i:M] = data[:, i] @ data[:, i:M]
 
     return cov
+
+
+def covariance_jax_kernel(float_n, data):
+    mean = jnp.mean(data, axis=0)
+    M = data.shape[1]
+    data -= mean
+    cov = jnp.zeros((M, M), dtype=data.dtype)
+    for i in range(M):
+        cov = cov.at[i:M, i].set(data[:, i] @ data[:, i:M] / (float_n - 1.0))
+        cov = cov.at[i, i:M].set(data[:, i] @ data[:, i:M] / (float_n - 1.0))
+    return jnp.sum(cov)
 
 
 def ground_truth(M, N, float_n, data):
@@ -123,6 +137,39 @@ def run_covariance(device_type: dace.dtypes.DeviceType):
     return sdfg
 
 
+def run_covariance_autodiff():
+    # Initialize data (polybench mini size)
+    M, N = sizes["mini"]
+    float_n, data = init_data(M, N)
+    
+    # Initialize gradient computation data
+    S = np.zeros((1,), dtype=np.float32)
+    gradient_data = np.zeros_like(data)
+    gradient___return = np.ones_like(S)
+    
+    # Define sum reduction for the output
+    @dc.program
+    def autodiff_kernel(float_n: dc.float32, data: dc.float32[N, M]):
+        cov = covariance_kernel(float_n, data)
+        return np.sum(cov)
+
+    # Add the backward pass to the SDFG
+    sdfg = autodiff_kernel.to_sdfg()
+    add_backward_pass(sdfg=sdfg, inputs=["data"], outputs=["__return"], autooptimize=False)
+    sdfg(float_n, data, M=M, N=N, gradient_data=gradient_data, gradient___return=gradient___return)
+    
+    # Enable float64 support
+    jax.config.update("jax_enable_x64", True)
+
+    # Numerically validate vs JAX
+    jax_grad = jax.jit(jax.grad(covariance_jax_kernel, argnums=1), static_argnums=(0,))
+    float_n_jax = float(float_n)
+    data_jax = np.copy(init_data(M, N)[1]).astype(np.float64)  # Fresh copy of data
+    S_jax = S.astype(np.float64)
+    jax_grad_data = jax_grad(float_n_jax, data_jax)
+    np.testing.assert_allclose(gradient_data, jax_grad_data, rtol=1e-5, atol=1e-8)
+
+
 def test_cpu(monkeypatch):
     # Serialization causes issues, we temporarily disable it
     monkeypatch.setenv("DACE_testing_serialization", 0)
@@ -132,6 +179,11 @@ def test_cpu(monkeypatch):
 @pytest.mark.gpu
 def test_gpu():
     run_covariance(dace.dtypes.DeviceType.GPU)
+
+
+@pytest.mark.daceml
+def test_autodiff():
+    run_covariance_autodiff()
 
 
 @fpga_test(assert_ii_1=False)

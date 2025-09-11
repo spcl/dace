@@ -10,6 +10,10 @@ from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory, StreamingComposition
 from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
 from dace.config import set_temporary
+from dace.autodiff import add_backward_pass
+import jax
+import jax.numpy as jnp
+import jax.lax as lax
 
 # Data set sizes
 # N
@@ -63,6 +67,78 @@ def ground_truth(r):
     return y
 
 
+def durbin_jax_kernel(r):
+    # Initialize y, alpha, and beta.
+    y = jnp.empty_like(r)
+    alpha = -r[0]
+    beta = 1.0
+    y = y.at[0].set(-r[0])
+    
+    # Define the scan body. The loop index k will run from 1 to r.shape[0]-1.
+    def scan_body(carry, k):
+        alpha, beta, y, r = carry
+        
+        # Update beta.
+        beta = beta * (1.0 - alpha * alpha)
+        
+        # Create a mask for indices less than k.
+        mask = jnp.arange(r.shape[0]) < k
+        
+        # Compute the dot product between y and a shifted version of r.
+        # Note: jnp.roll(jnp.flip(r), [k], 0) is equivalent to shifting along axis 0.
+        products = jnp.where(mask, y * jnp.roll(jnp.flip(r), k, axis=0), 0.0)
+        dot_prod = jnp.sum(products)
+        
+        # Update alpha based on the k-th element of r and the dot product.
+        alpha = -(r[k] + dot_prod) / beta
+        
+        # Compute an update slice from a shifted version of y.
+        y_update_slice = jnp.where(mask, jnp.roll(jnp.flip(y), k, axis=0) * alpha, 0.0)
+        
+        # Update y by adding the computed slice and setting the k-th element to alpha.
+        y = y + y_update_slice
+        y = y.at[k].set(alpha)
+        
+        return (alpha, beta, y, r), None
+
+    # Run the scan from k = 1 to r.shape[0]-1.
+    (alpha, beta, y, r), _ = lax.scan(scan_body, (alpha, beta, y, r), jnp.arange(1, r.shape[0]))
+    
+    return jnp.sum(y)
+
+
+def run_durbin_autodiff():
+    # Initialize data (polybench small size)
+    N = sizes["small"]
+    r = initialize(N)
+    
+    # Initialize gradient computation data
+    S = np.zeros((1,), dtype=np.float64)
+    gradient_r = np.zeros_like(r)
+    gradient___return = np.ones_like(S)
+    
+    # Define sum reduction for the output
+    @dc.program
+    def autodiff_kernel(r: dc.float64[N]):
+        y = durbin_kernel(r)
+        return np.sum(y)
+
+    # Add the backward pass to the SDFG
+    sdfg = autodiff_kernel.to_sdfg()
+    add_backward_pass(sdfg=sdfg, inputs=["r"], outputs=["__return"], autooptimize=False)
+    sdfg(r, N=N, gradient_r=gradient_r, gradient___return=gradient___return)
+    
+    # Enable float64 support
+    jax.config.update("jax_enable_x64", True)
+
+    # Numerically validate vs JAX
+    jax_grad = jax.jit(jax.grad(durbin_jax_kernel))
+    r_jax = np.copy(initialize(N)).astype(np.float64)  # Fresh copy of r
+    S_jax = S.astype(np.float64)
+    jax_grad_r = jax_grad(r_jax)
+    np.testing.assert_allclose(gradient_r, jax_grad_r, rtol=1e-5, atol=1e-8)
+
+
 def run_durbin(device_type: dace.dtypes.DeviceType):
     '''
     Runs Durbin for the given device
@@ -105,6 +181,11 @@ def test_cpu():
 @pytest.mark.gpu
 def test_gpu():
     run_durbin(dace.dtypes.DeviceType.GPU)
+
+
+@pytest.mark.daceml
+def test_autodiff():
+    run_durbin_autodiff()
 
 
 @fpga_test(assert_ii_1=False)

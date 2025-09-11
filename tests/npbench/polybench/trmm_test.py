@@ -10,6 +10,10 @@ from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory, StreamingComposition
 from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
 from dace.config import set_temporary
+from dace.autodiff import add_backward_pass
+import jax
+import jax.numpy as jnp
+import jax.lax as lax
 
 # Data set sizes
 # M, N
@@ -35,6 +39,28 @@ def initialize(M, N, datatype=np.float64):
     B = np.fromfunction(lambda i, j: ((N + i - j) % N) / N, (M, N), dtype=datatype)
 
     return alpha, A, B
+
+
+def trmm_jax_kernel(alpha, A, B, S):
+    # Outer scan: iterate over row index i.
+    def outer_body(carry, i):
+        B = carry
+        # Inner scan: iterate over column index j.
+        def inner_body(B, j):
+            # Instead of using A[i+1:, i] and B[i+1:, j],
+            # compute a mask that selects entries with indices > i.
+            mask = (jnp.arange(A.shape[0]) > i).astype(A.dtype)
+            # Compute dot product over the entire column using the mask.
+            dot_val = jnp.sum(A[:, i] * B[:, j] * mask)
+            new_val = B[i, j] + dot_val
+            B = B.at[i, j].set(new_val)
+            return B, jnp.array(0)  # dummy output
+        B, _ = lax.scan(inner_body, B, jnp.arange(B.shape[1]))
+        return B, jnp.array(0)  # dummy output
+
+    B, _ = lax.scan(outer_body, B, jnp.arange(B.shape[0]))
+    B = B * alpha
+    return jnp.sum(B)
 
 
 def ground_truth(alpha, A, B):
@@ -80,6 +106,39 @@ def run_trmm(device_type: dace.dtypes.DeviceType):
     return sdfg
 
 
+def run_trmm_autodiff():
+    # Initialize data (polybench mini size)
+    M, N = sizes["mini"]
+    alpha, A, B = initialize(M, N)
+    
+    # Initialize gradient computation data
+    S = np.zeros((1,), dtype=np.float64)
+    gradient_A = np.zeros_like(A)
+    gradient___return = np.ones_like(S)
+    
+    # Define sum reduction for the output
+    @dc.program
+    def autodiff_kernel(alpha: dc.float64, A: dc.float64[M, M], B: dc.float64[M, N]):
+        trmm_kernel(alpha, A, B)
+        return np.sum(B)
+
+    # Add the backward pass to the SDFG
+    sdfg = autodiff_kernel.to_sdfg()
+    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"], autooptimize=False)
+    sdfg(alpha, A, B, M=M, N=N, gradient_A=gradient_A, gradient___return=gradient___return)
+    
+    # Enable float64 support
+    jax.config.update("jax_enable_x64", True)
+
+    # Numerically validate vs JAX
+    jax_grad = jax.jit(jax.grad(trmm_jax_kernel, argnums=1), static_argnums=(0,))
+    A_jax = A.astype(np.float64)
+    B_jax = np.copy(initialize(M, N)[2]).astype(np.float64)  # Fresh copy of B
+    S_jax = S.astype(np.float64)
+    jax_grad_A = jax_grad(alpha, A_jax, B_jax, S_jax)
+    np.testing.assert_allclose(gradient_A, jax_grad_A, rtol=1e-5, atol=1e-8)
+
+
 def test_cpu():
     run_trmm(dace.dtypes.DeviceType.CPU)
 
@@ -87,6 +146,11 @@ def test_cpu():
 @pytest.mark.gpu
 def test_gpu():
     run_trmm(dace.dtypes.DeviceType.GPU)
+
+
+@pytest.mark.daceml
+def test_autodiff():
+    run_trmm_autodiff()
 
 
 @fpga_test(assert_ii_1=False)

@@ -48,7 +48,6 @@ def _create_session(api: ORTCAPIInterface, env, session_opts, model_bytes: bytes
     return session
 
 
-@pytest.mark.ort
 def test_basic():
     model_bytes = _minimal_onnx_model_bytes(opset=12)
 
@@ -66,8 +65,6 @@ def test_basic():
         api.ReleaseSessionOptions(session_opts)
         api.ReleaseEnv(env)
 
-
-@pytest.mark.ort
 @pytest.mark.gpu
 def test_basic_gpu():
     model_bytes = _minimal_onnx_model_bytes(opset=12)

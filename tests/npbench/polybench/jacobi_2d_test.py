@@ -9,6 +9,10 @@ from dace.fpga_testing import fpga_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory, MapFusionVertical
 from dace.transformation.auto.auto_optimize import auto_optimize
+from dace.autodiff import add_backward_pass
+import jax
+import jax.numpy as jnp
+import jax.lax as lax
 
 N = dc.symbol('N', dtype=dc.int32)
 
@@ -19,6 +23,20 @@ def kernel(TSTEPS: dc.int32, A: dc.float32[N, N], B: dc.float32[N, N]):
     for t in range(1, TSTEPS):
         B[1:-1, 1:-1] = 0.2 * (A[1:-1, 1:-1] + A[1:-1, :-2] + A[1:-1, 2:] + A[2:, 1:-1] + A[:-2, 1:-1])
         A[1:-1, 1:-1] = 0.2 * (B[1:-1, 1:-1] + B[1:-1, :-2] + B[1:-1, 2:] + B[2:, 1:-1] + B[:-2, 1:-1])
+
+
+def kernel_jax(TSTEPS: int, A: jax.Array, B: jax.Array):
+
+    def body_fn(carry, t):
+        A, B = carry
+
+        B = B.at[1:-1, 1:-1].set(0.2 * (A[1:-1, 1:-1] + A[1:-1, :-2] + A[1:-1, 2:] + A[2:, 1:-1] + A[:-2, 1:-1]))
+
+        A = A.at[1:-1, 1:-1].set(0.2 * (B[1:-1, 1:-1] + B[1:-1, :-2] + B[1:-1, 2:] + B[2:, 1:-1] + B[:-2, 1:-1]))
+        return (A, B), None
+
+    (A, B), _ = lax.scan(body_fn, (A, B), jnp.arange(1, TSTEPS))
+    return jnp.sum(A)
 
 
 def init_data(N):
@@ -81,6 +99,34 @@ def run_jacobi_2d(device_type: dace.dtypes.DeviceType):
     return sdfg
 
 
+def run_jacobi_2d_autodiff():
+    # Initialize data (polybench mini size)
+    TSTEPS, N = (20, 30)
+    A, B = init_data(N)
+    jax_A, jax_B = np.copy(A), np.copy(B)
+
+    # Intiialize gradient computation data
+    S = np.zeros((1, ), dtype=np.float32)
+    gradient_A = np.zeros_like(A)
+    gradient___return = np.ones_like(S)
+
+    # Define sum reduction for the output
+    @dc.program
+    def autodiff_kernel(TSTEPS: dc.int32, A: dc.float32[N, N], B: dc.float32[N, N]):
+        kernel(TSTEPS, A, B, S)
+        return np.sum(A)
+
+    # Add the backward pass to the SDFG
+    sdfg = autodiff_kernel.to_sdfg()
+    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"], autooptimize=True)
+    sdfg(TSTEPS, A, B, gradient_A=gradient_A, gradient___return=gradient___return)
+
+    # Numerically validate vs JAX
+    jax_grad = jax.jit(jax.grad(kernel_jax, argnums=1), static_argnums=0)
+    jax_grad_A = jax_grad(TSTEPS, jax_A, jax_B)
+    np.testing.assert_allclose(gradient_A, jax_grad_A)
+
+
 def test_cpu():
     run_jacobi_2d(dace.dtypes.DeviceType.CPU)
 
@@ -88,6 +134,11 @@ def test_cpu():
 @pytest.mark.gpu
 def test_gpu():
     run_jacobi_2d(dace.dtypes.DeviceType.GPU)
+
+
+@pytest.mark.daceml
+def test_autodiff():
+    run_jacobi_2d_autodiff()
 
 
 @fpga_test(assert_ii_1=False)

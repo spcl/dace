@@ -15,7 +15,6 @@ from dace.frontend.python.module import DaceModule
 from dace.testing.utils import torch_tensors_close
 
 
-@pytest.mark.ort
 def test_bn_standalone():
     @dace.program
     def test_bn_standalone(X: dace.float32[8, 3, 32, 32],
@@ -42,7 +41,6 @@ def test_bn_standalone():
     torch_tensors_close("output", pt_result, torch.from_numpy(dace_result))
 
 
-@pytest.mark.ort
 def test_bn_in_import():
     class Module(torch.nn.Module):
         def __init__(self):

@@ -20,9 +20,6 @@ def pytest_addoption(parser):
     parser.addoption("--gpu-only",
                      action="store_true",
                      help="Run tests using gpu, and skip CPU tests.")
-    parser.addoption("--skip-ort",
-                     action="store_true",
-                     help="Disable all tests that use ONNX Runtime.")
 
 
 def pytest_runtest_setup(item):
@@ -48,11 +45,6 @@ def pytest_runtest_setup(item):
         if (item.config.getoption("--skip-cpu-blas")
                 and "cpublas" in (m.name for m in item.iter_markers())):
             pytest.skip('Skipping test since --skip-cpu-blas was passed')
-
-    # if @pytest.mark.ort is applied skip the test if --skip-ort is passed
-    if "ort" in map(getname, item.iter_markers()):
-        if item.config.getoption("--skip-ort"):
-            pytest.skip('Skipping test since --skip-ort was passed')
 
 
 def pytest_generate_tests(metafunc):
@@ -89,9 +81,6 @@ def pytest_generate_tests(metafunc):
         implementations = [
             pytest.param("pure", marks=pytest.mark.pure),
         ]
-        if not metafunc.config.getoption("--skip-ort"):
-            implementations.append(
-                pytest.param("onnxruntime", marks=pytest.mark.ort))
         metafunc.parametrize("default_implementation", implementations)
 
     if "use_cpp_dispatcher" in metafunc.fixturenames:
@@ -114,17 +103,12 @@ def setup_default_implementation(request):
     old_default = donnx.default_implementation
 
     pure_marker = request.node.get_closest_marker("pure")
-    ort_marker = request.node.get_closest_marker("ort")
 
     if pure_marker is not None:
         donnx.default_implementation = "pure"
         yield
 
-    if ort_marker is not None:
-        donnx.default_implementation = "onnxruntime"
-        yield
-
-    if ort_marker is None and pure_marker is None:
+    if pure_marker is None:
         yield
 
     donnx.default_implementation = old_default

@@ -8,6 +8,9 @@ import argparse
 from dace.fpga_testing import fpga_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.auto.auto_optimize import auto_optimize
+from dace.autodiff import add_backward_pass
+import jax
+import jax.numpy as jnp
 
 # Data set sizes
 # NQ, NR, NP
@@ -36,6 +39,15 @@ def initialize(NR, NQ, NP, datatype=np.float64):
     C4 = np.fromfunction(lambda i, j: (i * j % NP) / NP, (NP, NP), dtype=datatype)
 
     return A, C4
+
+
+def doitgen_jax_kernel(A, C4):
+    NR = A.shape[0]
+    NQ = A.shape[1]
+    NP = A.shape[2]
+    for r in range(NR):
+        A = A.at[r, :, :].set(jnp.reshape(jnp.reshape(A[r], (NQ, NP)) @ C4, (NQ, NP)))
+    return jnp.sum(A)
 
 
 def ground_truth(NR, NQ, NP, A, C4):
@@ -83,6 +95,39 @@ def run_doitgen(device_type: dace.dtypes.DeviceType):
     return sdfg
 
 
+def run_doitgen_autodiff():
+    # Initialize data (polybench mini size)
+    NQ, NR, NP = sizes["mini"]
+    A, C4 = initialize(NR, NQ, NP)
+    
+    # Initialize gradient computation data
+    S = np.zeros((1,), dtype=np.float64)
+    gradient_A = np.zeros_like(A)
+    gradient___return = np.ones_like(S)
+    
+    # Define sum reduction for the output
+    @dc.program
+    def autodiff_kernel(A: dc.float64[NR, NQ, NP], C4: dc.float64[NP, NP]):
+        doitgen_kernel(A, C4)
+        return np.sum(A)
+
+    # Add the backward pass to the SDFG
+    sdfg = autodiff_kernel.to_sdfg()
+    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"], autooptimize=False)
+    sdfg(A, C4, NR=NR, NQ=NQ, NP=NP, gradient_A=gradient_A, gradient___return=gradient___return)
+    
+    # Enable float64 support
+    jax.config.update("jax_enable_x64", True)
+
+    # Numerically validate vs JAX
+    jax_grad = jax.jit(jax.grad(doitgen_jax_kernel, argnums=0))
+    A_jax = np.copy(initialize(NR, NQ, NP)[0]).astype(np.float64)  # Fresh copy of A
+    C4_jax = C4.astype(np.float64)
+    S_jax = S.astype(np.float64)
+    jax_grad_A = jax_grad(A_jax, C4_jax)
+    np.testing.assert_allclose(gradient_A, jax_grad_A, rtol=1e-5, atol=1e-8)
+
+
 def test_cpu():
     run_doitgen(dace.dtypes.DeviceType.CPU)
 
@@ -90,6 +135,11 @@ def test_cpu():
 @pytest.mark.gpu
 def test_gpu():
     run_doitgen(dace.dtypes.DeviceType.GPU)
+
+
+@pytest.mark.daceml
+def test_autodiff():
+    run_doitgen_autodiff()
 
 
 @pytest.mark.skip(reason="long long support for IntelFPGA")

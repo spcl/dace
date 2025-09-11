@@ -11,7 +11,6 @@ from dace.libraries.onnx import ONNXModel
 from dace.testing import get_data_file
 
 
-@pytest.mark.ort
 def test_efficientnet(sdfg_name):
     data_directory = os.path.join(os.path.dirname(__file__), "data")
 

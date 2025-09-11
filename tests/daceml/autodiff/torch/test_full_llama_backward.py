@@ -87,11 +87,14 @@ def test_llama_model_backward(gpu, sdfg_name):
 
     wrapped_model(export_input.clone()).sum().backward()
     dace_model(export_input.clone()).sum().backward()
-    
+
     # Check gradients of the parameters
     for i, (name, param) in enumerate(wrapped_model.named_parameters()):
         if param.requires_grad:
-            torch_tensors_close(f"grad_{name}", list(wrapped_model.parameters())[i].grad, list(dace_model.model.parameters())[i].grad)
-                
+            torch_tensors_close(f"grad_{name}",
+                                list(wrapped_model.parameters())[i].grad,
+                                list(dace_model.model.parameters())[i].grad)
+
+
 if __name__ == "__main__":
     test_llama_model_backward(gpu=False, sdfg_name="llama_model_test")

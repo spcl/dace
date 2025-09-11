@@ -10,6 +10,9 @@ from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory, StreamingComposition
 from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
 from dace.config import set_temporary
+from dace.autodiff import add_backward_pass
+import jax
+import jax.numpy as jnp
 
 # Data set sizes
 # M, N
@@ -40,6 +43,11 @@ def init_data(M, N):
         for j in range(N):
             A[i, j] = ((i + j) % N) / (5 * M)
     return A, x, y
+
+
+def atax_jax_kernel(A, x, B, S):
+    B = (A @ x) @ A
+    return jnp.sum(B)
 
 
 def run_atax(device_type: dace.dtypes.DeviceType):
@@ -91,6 +99,41 @@ def run_atax(device_type: dace.dtypes.DeviceType):
     return sdfg
 
 
+def run_atax_autodiff():
+    # Initialize data (polybench mini size)
+    M, N = sizes["mini"]
+    A, x, y = init_data(M, N)
+    
+    # Initialize gradient computation data
+    S = np.zeros((1,), dtype=np.float32)
+    B = np.zeros((N,), dtype=np.float32)
+    gradient_A = np.zeros_like(A)
+    gradient___return = np.ones_like(S)
+    
+    # Define sum reduction for the output
+    @dc.program
+    def autodiff_kernel(A: dc.float32[M, N], x: dc.float32[N]):
+        y = (A @ x) @ A
+        return np.sum(y)
+
+    # Add the backward pass to the SDFG
+    sdfg = autodiff_kernel.to_sdfg()
+    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"], autooptimize=False)
+    sdfg(A, x, M=M, N=N, gradient_A=gradient_A, gradient___return=gradient___return)
+    
+    # Enable float32 support (matching the original test data type)
+    jax.config.update("jax_enable_x64", False)
+
+    # Numerically validate vs JAX
+    jax_grad = jax.jit(jax.grad(atax_jax_kernel, argnums=0))
+    A_jax = A.astype(np.float32)
+    x_jax = x.astype(np.float32) 
+    B_jax = B.astype(np.float32)
+    S_jax = S.astype(np.float32)
+    jax_grad_A = jax_grad(A_jax, x_jax, B_jax, S_jax)
+    np.testing.assert_allclose(gradient_A, jax_grad_A, rtol=1e-5, atol=1e-6)
+
+
 def test_cpu():
     run_atax(dace.dtypes.DeviceType.CPU)
 
@@ -98,6 +141,11 @@ def test_cpu():
 @pytest.mark.gpu
 def test_gpu():
     run_atax(dace.dtypes.DeviceType.GPU)
+
+
+@pytest.mark.daceml
+def test_autodiff():
+    run_atax_autodiff()
 
 
 @fpga_test(assert_ii_1=False)

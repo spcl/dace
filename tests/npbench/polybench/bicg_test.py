@@ -9,6 +9,9 @@ from dace.fpga_testing import fpga_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory
 from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
+from dace.autodiff import add_backward_pass
+import jax
+import jax.numpy as jnp
 
 # Data set sizes
 # M, N
@@ -29,6 +32,11 @@ def initialize(M, N, datatype=np.float64):
     r = np.fromfunction(lambda i: (i % N) / N, (N, ), dtype=datatype)
 
     return A, p, r
+
+
+def bicg_jax_kernel(A, B, D, p, r):
+    B, D = r @ A, A @ p
+    return jnp.sum(D)
 
 
 @dc.program
@@ -87,6 +95,44 @@ def run_bicg(device_type: dace.dtypes.DeviceType):
     return sdfg
 
 
+def run_bicg_autodiff():
+    # Initialize data (polybench mini size)
+    M, N = sizes["mini"]
+    A, p, r = initialize(M, N)
+    
+    # Initialize gradient computation data
+    S = np.zeros((1,), dtype=np.float64)
+    B = np.zeros((M,), dtype=np.float64)
+    D = np.zeros((N,), dtype=np.float64)
+    gradient_A = np.zeros_like(A)
+    gradient___return = np.ones_like(S)
+    
+    # Define sum reduction for the output
+    @dc.program
+    def autodiff_kernel(A: dc.float64[N, M], p: dc.float64[M], r: dc.float64[N]):
+        s, q = bicg_kernel(A, p, r)
+        return np.sum(q)
+
+    # Add the backward pass to the SDFG
+    sdfg = autodiff_kernel.to_sdfg()
+    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"], autooptimize=False)
+    sdfg(A, p, r, M=M, N=N, gradient_A=gradient_A, gradient___return=gradient___return)
+    
+    # Enable float64 support
+    jax.config.update("jax_enable_x64", True)
+
+    # Numerically validate vs JAX
+    jax_grad = jax.jit(jax.grad(bicg_jax_kernel, argnums=0))
+    A_jax = A.astype(np.float64)
+    B_jax = B.astype(np.float64)
+    D_jax = D.astype(np.float64)
+    p_jax = p.astype(np.float64) 
+    r_jax = r.astype(np.float64)
+    S_jax = S.astype(np.float64)
+    jax_grad_A = jax_grad(A_jax, B_jax, D_jax, p_jax, r_jax)
+    np.testing.assert_allclose(gradient_A, jax_grad_A, rtol=1e-5, atol=1e-8)
+
+
 def test_cpu():
     run_bicg(dace.dtypes.DeviceType.CPU)
 
@@ -94,6 +140,11 @@ def test_cpu():
 @pytest.mark.gpu
 def test_gpu():
     run_bicg(dace.dtypes.DeviceType.GPU)
+
+
+@pytest.mark.daceml
+def test_autodiff():
+    run_bicg_autodiff()
 
 
 @fpga_test(assert_ii_1=False)
