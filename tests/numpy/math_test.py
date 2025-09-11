@@ -165,6 +165,20 @@ def test_scalarret_cond_3():
     assert res == 0.0
 
 
+def test_mean_reshape():
+
+    @dace.program
+    def tester(A: dace.float64[1, 20, 8, 1], B: dace.float64[1, 20, 1]):
+        B[:] = np.mean(A, axis=2)
+
+    a = np.random.rand(1, 20, 8, 1)
+    expected = np.mean(a, axis=2).reshape(1, 20, 1)
+    b = np.random.rand(1, 20, 1)
+
+    tester(a, b)
+    assert np.allclose(b, expected)
+
+
 if __name__ == '__main__':
     test_exponent()
     test_sine()
@@ -184,3 +198,4 @@ if __name__ == '__main__':
     test_scalarret_cond_1()
     test_scalarret_cond_2()
     test_scalarret_cond_3()
+    test_mean_reshape()
