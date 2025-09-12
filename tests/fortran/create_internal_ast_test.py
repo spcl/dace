@@ -24,7 +24,7 @@ subroutine fun(d)
 end subroutine fun
 """).check_with_gfortran().get()
     # Construct
-    cfg = ParseConfig(sources=sources)
+    cfg = ParseConfig(sources=sources, rename_uniquely=False)
     iast, prog = create_internal_ast(cfg)
 
     # Verify
@@ -61,7 +61,7 @@ subroutine not_fun(d, val)
 end subroutine not_fun
 """).check_with_gfortran().get()
     # Construct
-    cfg = ParseConfig(sources=sources)
+    cfg = ParseConfig(sources=sources, rename_uniquely=False)
     iast, prog = create_internal_ast(cfg)
 
     # Verify
@@ -113,7 +113,7 @@ program main
 end program main
 """).check_with_gfortran().get()
     # Construct
-    cfg = ParseConfig(sources=sources)
+    cfg = ParseConfig(sources=sources, rename_uniquely=False)
     iast, prog = create_internal_ast(cfg)
 
     # Verify
@@ -152,7 +152,7 @@ subroutine fun(d)
 end subroutine fun
 """).check_with_gfortran().get()
     # Construct
-    cfg = ParseConfig(sources=sources)
+    cfg = ParseConfig(sources=sources, rename_uniquely=False)
     iast, prog = create_internal_ast(cfg)
 
     # Verify
@@ -199,7 +199,7 @@ program main
 end program main
 """).check_with_gfortran().get()
     # Construct
-    cfg = ParseConfig(sources=sources)
+    cfg = ParseConfig(sources=sources, rename_uniquely=False)
     iast, prog = create_internal_ast(cfg)
 
     # Verify
@@ -257,7 +257,7 @@ subroutine fun(d)
 end subroutine fun
 """).check_with_gfortran().get()
     # Construct
-    cfg = ParseConfig(sources=sources)
+    cfg = ParseConfig(sources=sources, rename_uniquely=False)
     iast, prog = create_internal_ast(cfg)
 
     # Verify
