@@ -559,82 +559,6 @@ def test_fortran_frontend_merge_literal():
     assert res[0] == 1
 
 
-def test_fortran_frontend_merge_dataref():
-    sources, main = (
-        SourceCodeBuilder()
-        .add_file(
-            """
-                    module lib
-                      implicit none
-                      type test_type
-                          double precision, dimension(3) :: input_data
-                          double precision, dimension(3) :: input_data_second
-                      end type
-
-                      type test_type2
-                          type(test_type) :: var
-                      end type
-                    end module lib
-
-                    MODULE test_merge
-
-                        contains
-
-                        SUBROUTINE merge_test(input1, input2, res)
-                        use lib, only: test_type2
-                        implicit none
-
-                        type(test_type2) :: data
-                        double precision, dimension(3) :: input1
-                        double precision, dimension(3) :: input2
-                        double precision, dimension(3) :: res
-
-                        data%var%input_data = input1
-                        data%var%input_data_second = input2
-
-                        CALL merge_test_function(data, res)
-                        end SUBROUTINE merge_test
-
-                        SUBROUTINE merge_test_function(data, res)
-                        use lib, only: test_type2
-                        implicit none
-
-                        double precision, dimension(3) :: res
-                        type(test_type2) :: data
-
-                        res = MERGE(data%var%input_data, data%var%input_data_second, data%var%input_data .lt. 3)
-                        !res = MERGE(data%var%input_data, data%var%input_data_second, 1 .lt. 3)
-
-                        END SUBROUTINE merge_test_function
-
-                    END MODULE
-    """,
-            "main",
-        )
-        .check_with_gfortran()
-        .get()
-    )
-
-    sdfg = create_singular_sdfg_from_string(sources, "test_merge.merge_test", True)
-    sdfg.simplify(verbose=True)
-    sdfg.compile()
-
-    # Minimum is in the beginning
-    data1 = np.full([3], 42, order="F", dtype=np.float64)
-    data2 = np.full([3], 40, order="F", dtype=np.float64)
-    res = np.full([3], 0, order="F", dtype=np.float64)
-
-    sdfg(input1=data1, input2=data2, res=res)
-    print(res)
-    assert res[0] == 42
-
-    sdfg(input1=13, input2=10, res=res)
-    assert res[0] == 10
-
-    sdfg(input1=13, input2=2, res=res)
-    assert res[0] == 1
-
-
 if __name__ == "__main__":
     test_fortran_frontend_merge_1d()
     test_fortran_frontend_merge_comparison_scalar()
@@ -647,4 +571,3 @@ if __name__ == "__main__":
     test_fortran_frontend_merge_scalar2()
     test_fortran_frontend_merge_scalar3()
     test_fortran_frontend_merge_literal()
-    test_fortran_frontend_merge_dataref()

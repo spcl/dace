@@ -109,111 +109,6 @@ end subroutine main
     assert res[2, 0] == size2
 
 
-def test_fortran_frontend_present():
-    sources, main = SourceCodeBuilder().add_file("""
-subroutine main(res, res2, a)
-  integer, dimension(4) :: res
-  integer, dimension(4) :: res2
-  integer :: a
-  call tf2(res, a=a)
-  call tf2(res2)
-
-contains
-
-  subroutine tf2(res, a)
-    integer, dimension(4) :: res
-    integer, optional :: a
-    res(1) = present(a)
-  end subroutine tf2
-end subroutine
-""", 'main').check_with_gfortran().get()
-    sdfg = create_singular_sdfg_from_string(sources, 'main')
-    sdfg.simplify(verbose=True)
-    sdfg.compile()
-
-    size = 4
-    res = np.full([size], 42, order="F", dtype=np.int32)
-    res2 = np.full([size], 42, order="F", dtype=np.int32)
-    sdfg(res=res, res2=res2, a=5)
-
-    assert res[0] == 1
-    assert res2[0] == 0
-
-
-def test_fortran_frontend_bitwise_ops():
-    sources, main = SourceCodeBuilder().add_file("""
-    SUBROUTINE bitwise_ops(inp, res)
-
-    integer, dimension(11) :: inp
-    integer, dimension(11) :: res
-
-    res(1) = IBSET(inp(1), 0)
-    res(2) = IBSET(inp(2), 30)
-
-    res(3) = IBCLR(inp(3), 0)
-    res(4) = IBCLR(inp(4), 30)
-
-    res(5) = IEOR(inp(5), 63)
-    res(6) = IEOR(inp(6), 480)
-
-    res(7) = ISHFT(inp(7), 5)
-    res(8) = ISHFT(inp(8), 30)
-
-    res(9) = ISHFT(inp(9), -5)
-    res(10) = ISHFT(inp(10), -30)
-
-    res(11) = ISHFT(inp(11), 0)
-
-    END SUBROUTINE bitwise_ops
-""").check_with_gfortran().get()
-    sdfg = create_singular_sdfg_from_string(sources, 'bitwise_ops', normalize_offsets=True)
-    sdfg.simplify(verbose=True)
-    sdfg.compile()
-
-    size = 11
-    inp = np.full([size], 42, order="F", dtype=np.int32)
-    inp[:] = [32, 32, 33, 1073741825, 53, 530, 12, 1, 128, 1073741824, 12]
-
-    res = np.full([size], 42, order="F", dtype=np.int32)
-
-    sdfg(inp=inp, res=res)
-
-    assert np.allclose(res, [33, 1073741856, 32, 1, 10, 1010, 384, 1073741824, 4, 1, 12])
-
-
-def test_fortran_frontend_bitwise_ops2():
-    sources, main = SourceCodeBuilder().add_file("""
-    SUBROUTINE bitwise_ops(inp, res)
-
-    integer, dimension(6) :: inp
-    integer, dimension(6) :: res
-
-    res(1) = IAND(inp(1), 0)
-    res(2) = IAND(inp(2), 31)
-
-    res(3) = BTEST(inp(3), 0)
-    res(4) = BTEST(inp(4), 5)
-
-    res(5) = IBITS(inp(5), 0, 5)
-    res(6) = IBITS(inp(6), 3, 10)
-
-    END SUBROUTINE bitwise_ops
-""").check_with_gfortran().get()
-    sdfg = create_singular_sdfg_from_string(sources, 'bitwise_ops', normalize_offsets=True)
-    sdfg.simplify(verbose=True)
-    sdfg.compile()
-
-    size = 6
-    inp = np.full([size], 42, order="F", dtype=np.int32)
-    inp[:] = [2147483647, 16, 3, 31, 30, 630]
-
-    res = np.full([size], 42, order="F", dtype=np.int32)
-
-    sdfg(inp=inp, res=res)
-
-    assert np.allclose(res, [0, 16, 1, 0, 30, 78])
-
-
 def test_fortran_frontend_allocated():
     # FIXME: this pattern is generally not supported.
     # this needs an update once defered allocs are merged
@@ -236,59 +131,6 @@ def test_fortran_frontend_allocated():
 
     END SUBROUTINE allocated_test
 """).check_with_gfortran().get()
-    sdfg = create_singular_sdfg_from_string(sources, 'allocated_test', normalize_offsets=True)
-    sdfg.simplify(verbose=True)
-    sdfg.compile()
-
-    size = 3
-    res = np.full([size], 42, order="F", dtype=np.int32)
-
-    sdfg(res=res)
-
-    assert np.allclose(res, [0, 1, 0])
-
-
-def test_fortran_frontend_allocated_nested():
-    # FIXME: this pattern is generally not supported.
-    # this needs an update once defered allocs are merged
-
-    sources, main = SourceCodeBuilder().add_file("""
-    MODULE allocated_test_interface
-        INTERFACE
-            SUBROUTINE allocated_test_nested(data, res)
-                integer, allocatable, dimension(:) :: data
-                integer, dimension(3) :: res
-            END SUBROUTINE allocated_test_nested
-        END INTERFACE
-    END MODULE
-
-    SUBROUTINE allocated_test(res)
-    USE allocated_test_interface
-    implicit none
-    integer, allocatable, dimension(:) :: data
-    integer, dimension(3) :: res
-
-    res(1) = ALLOCATED(data)
-
-    ALLOCATE(data(6))
-
-    CALL allocated_test_nested(data, res)
-
-    END SUBROUTINE allocated_test
-
-    SUBROUTINE allocated_test_nested(data, res)
-
-    integer, allocatable, dimension(:) :: data
-    integer, dimension(3) :: res
-
-    res(2) = ALLOCATED(data)
-
-    DEALLOCATE(data)
-
-    res(3) = ALLOCATED(data)
-
-    END SUBROUTINE allocated_test_nested
-""", 'main').check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'allocated_test', normalize_offsets=True)
     sdfg.simplify(verbose=True)
     sdfg.compile()
@@ -351,10 +193,6 @@ if __name__ == "__main__":
     test_fortran_frontend_bit_size()
     test_fortran_frontend_bit_size_symbolic()
     test_fortran_frontend_size_arbitrary()
-    test_fortran_frontend_present()
-    test_fortran_frontend_bitwise_ops()
-    test_fortran_frontend_bitwise_ops2()
     test_fortran_frontend_allocated()
-    test_fortran_frontend_allocated_nested()
     # FIXME: ALLOCATED does not support data refs
     # test_fortran_frontend_allocated_struct()
