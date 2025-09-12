@@ -109,7 +109,12 @@ def gen_base_type_serializer(typ: str, kind: Optional[int] = None) -> Subroutine
     if typ == 'logical':
         op = '\n'.join(['y = merge(1, 0, x)', "write (io, '(g0)', advance='no') y"])
     elif typ == 'real':
-        op = "write (buf, '(e28.20)') x; write (io, '(A)', advance='no') trim(adjustl(buf))"
+        # The Fortran scientific notation exponent field is two digits large by default.
+        # If the exponent is three digits large, the 'E' character gets overwritten to
+        # avoid losing digits. If the exponent is even larger, it gets replaced by **.
+        # If the 'E' character is missing, Serde interpretes the exponent as a new
+        # number. Expand the exponent field to three digits to avoid this problem.
+        op = "write (buf, '(e28.20e3)') x; write (io, '(A)', advance='no') trim(adjustl(buf))"
     else:
         op = "write (io, '(g0)', advance='no') x"
 
@@ -991,7 +996,20 @@ struct {name} {{
 #include <string_view>
 #include <numeric>
 
+#include <cxxabi.h>
+
 namespace {mod_name} {{
+    template<typename T>
+    std::string type_name() {{
+        int status = 0;
+        std::unique_ptr<char, void(*)(void*)> res {{
+            abi::__cxa_demangle(typeid(T).name(), NULL, NULL, &status),
+            std::free
+        }};
+        if (status != 0) throw status; // stub
+        return res.get();
+    }}
+
     std::vector<std::string_view> split(std::string_view s, char delim) {{
         std::vector<std::string_view> parts;
         for (int start_pos = 0, next_pos; start_pos < s.length(); start_pos = next_pos + 1) {{
@@ -1015,7 +1033,10 @@ namespace {mod_name} {{
     }}
 
     std::string read_line(std::istream& s, const std::optional<std::string>& should_contain = {{}}) {{
-        if (s.eof()) return "<eof>";
+        if (s.eof()) {{
+            std::cerr << "Got unexpected EOF" << std::endl;
+            exit(EXIT_FAILURE);
+        }}
         scroll_space(s);
         char bin[101];
         s.getline(bin, 100);
@@ -1028,6 +1049,19 @@ namespace {mod_name} {{
             }}
         }}
         return {{bin}};
+    }}
+
+    std::string read_until(std::istream& s, const std::string& should_contain) {{
+        while (!s.eof()) {{
+            scroll_space(s);
+            char bin[101];
+            s.getline(bin, 100);
+            assert(s.good());
+            bool ok = (std::string(bin).find(should_contain) != std::string::npos);
+            if (ok) return {{bin}};
+        }}
+        std::cerr << "Expected: '" << should_contain << "'; got EOF" << std::endl;
+        exit(EXIT_FAILURE);
     }}
 
     struct array_meta;
@@ -1049,21 +1083,25 @@ namespace {mod_name} {{
     }}
     template <typename T>
     const array_meta& ARRAY_META_DICT_AT(T* a) {{
-        if constexpr (std::is_pointer_v<T>) {{
-            return ARRAY_META_DICT_AT(*a);
-        }} else {{
-            auto [M, lock] = ARRAY_META_DICT();
-            return M->at(a);
+        auto [M, lock] = ARRAY_META_DICT();
+        if (M->find(a) == M->end()) {{
+          std::cerr << "Array meta not found for: " << type_name<T>() << std::endl;
+          exit(EXIT_FAILURE);
         }}
+        return M->at(a);
     }}
 
     void read_scalar(long double& x, std::istream& s) {{
-        if (s.eof()) return;
+        if (s.eof()) {{
+            std::cerr << "Got unexpected EOF" << std::endl;
+            exit(EXIT_FAILURE);
+        }}
         scroll_space(s);
 
         std::string line;
         assert(std::getline(s, line));
         assert(!line.empty());
+        if (line == "NaN") return;
 
         // Find the position to insert 'E' if needed (looking for exponent sign from
         // right)
@@ -1087,7 +1125,10 @@ namespace {mod_name} {{
         // Parse the (potentially modified) string
         std::istringstream iss(line);
         iss >> x;
-        if(iss.fail()) x = 0;
+        if(iss.fail()) {{
+            std::cerr << "Could not read long double: " << line << std::endl;
+            exit(EXIT_FAILURE);
+        }}
     }}
 
     void read_scalar(float& x, std::istream& s) {{
@@ -1104,7 +1145,10 @@ namespace {mod_name} {{
 
     template<typename T>
     void read_scalar(T& x, std::istream& s) {{
-        if (s.eof()) return;
+        if (s.eof()) {{
+            std::cerr << "Got unexpected EOF" << std::endl;
+            exit(EXIT_FAILURE);
+        }}
         scroll_space(s);
         s >> x;
     }}

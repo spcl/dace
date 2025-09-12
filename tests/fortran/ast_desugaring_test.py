@@ -1475,15 +1475,22 @@ def test_branch_pruning():
 subroutine main
   implicit none
   integer, parameter :: k = 4
-  integer :: a = -1, b = -1
+  integer :: a = -1, b = -1, c = -1
 
+  c = 5
   if (k < 2) then
     a = k
+    c = 1  ! identical `c = 1` lines
+    b = c + 1
   else if (k < 5) then
     b = k
+    c = 1  ! identical `c = 1` lines, but this one must not be dropped.
+    b = c + 1
   else
     a = k
     b = k
+    c = 1  ! identical `c = 1` lines
+    b = c + 1
   end if
   if (k < 5) a = 70 + k
   if (k > 5) a = 70 - k
@@ -1497,8 +1504,11 @@ end subroutine main
 SUBROUTINE main
   IMPLICIT NONE
   INTEGER, PARAMETER :: k = 4
-  INTEGER :: a = - 1, b = - 1
+  INTEGER :: a = - 1, b = - 1, c = - 1
+  c = 5
   b = k
+  c = 1
+  b = c + 1
   a = 70 + k
 END SUBROUTINE main
 """.strip()
@@ -3054,6 +3064,31 @@ SUBROUTINE main
   IMPLICIT NONE
   INTEGER :: b
   CALL foo(b)
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+def test_constant_function_evaluation():
+    sources, main = SourceCodeBuilder().add_file("""
+subroutine main
+  implicit none
+  double precision :: a = sqrt(4.)
+  double precision :: b = cos(0.)
+  double precision :: c = abs(-3.)
+end subroutine main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = const_eval_nodes(ast)
+
+    got = ast.tofortran()
+    want = """
+SUBROUTINE main
+  IMPLICIT NONE
+  DOUBLE PRECISION :: a = 2.0
+  DOUBLE PRECISION :: b = 1.0
+  DOUBLE PRECISION :: c = 3.0
 END SUBROUTINE main
 """.strip()
     assert got == want

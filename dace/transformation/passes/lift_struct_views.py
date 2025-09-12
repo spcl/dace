@@ -509,14 +509,14 @@ class LiftStructViews(ppl.Pass):
                                     if isinstance(oedge.dst, nd.Tasklet):
                                         res = self._lift_tasklet(block, node, oedge.dst, oedge, cont, oedge.dst_conn,
                                                                  'in')
-                                        if len(res) > 0:
+                                        if res:
                                             result[node.data].update(res)
                                             lifted_something_this_round = True
                                 for iedge in block.in_edges(node):
                                     if isinstance(iedge.src, nd.Tasklet):
                                         res = self._lift_tasklet(block, node, iedge.src, iedge, cont, iedge.src_conn,
                                                                  'out')
-                                        if len(res) > 0:
+                                        if res:
                                             result[node.data].update(res)
                                             lifted_something_this_round = True
                 for edge in cfg.edges():

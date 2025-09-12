@@ -27,6 +27,9 @@ def main():
     argp.add_argument('-d', '--checkpoint_dir', type=str, required=False, default=None,
                       help='(Optional) If specified, the AST in various stages of preprocessing will be written as'
                            'Fortran code in there.')
+    argp.add_argument('--keep_components', action=argparse.BooleanOptionalAction,
+                      required=False, default=False,
+                      help='(Optional) If specified, will avoid pruning struct components.')
     args = argp.parse_args()
 
     input_dirs = [Path(p) for p in args.in_src]
@@ -35,6 +38,12 @@ def main():
 
     entry_point: SPEC = tuple(args.entry_point.split('.'))
     print(f"Will be using this as entry points: {entry_point}")
+
+    keep_components: bool = args.keep_components
+    if keep_components:
+        print(f"Will avoid pruning struct components")
+    else:
+        print(f"Will prune unused struct components")
 
     output_sdfg = args.output_sdfg
     print(f"Will be writing SDFG to: {output_sdfg}")
@@ -48,7 +57,8 @@ def main():
     config_injections = list(find_all_config_injections(ti_files))
 
     cfg = ParseConfig(sources=input_f90s, entry_points=[entry_point],
-                      config_injections=config_injections, ast_checkpoint_dir=checkpoint_dir)
+                      config_injections=config_injections, ast_checkpoint_dir=checkpoint_dir,
+                      do_not_prune_type_components=keep_components)
     own_ast, program = create_internal_ast(cfg)
 
     cfg = SDFGConfig({entry_point[-1]: entry_point}, config_injections=config_injections)
@@ -56,10 +66,10 @@ def main():
     assert gmap.keys() == {entry_point[-1]}
     g: SDFG = singular(v for v in gmap.values())
     # Save once simplifying, in case simplification fails.
-    g.save(output_sdfg)
+    g.save(output_sdfg, compress=output_sdfg.endswith('.sdfgz'))
     g.simplify()
     # Save once before compiling, in case compilation fails.
-    g.save(output_sdfg)
+    g.save(output_sdfg, compress=output_sdfg.endswith('.sdfgz'))
     g.compile()
 
 
