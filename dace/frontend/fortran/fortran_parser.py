@@ -2809,6 +2809,8 @@ class AST_translator:
                 if sdfg.symbols.get(s.name) is not None:
                     continue
                 if sdfg.symbols.get("sym_" + s.name) is not None:
+                    i = i.subs(s, sym.symbol("sym_" + s.name))
+                    changed = True
                     continue
                 if sdfg.arrays.get(s.name) is not None:
                     if not sdfg.arrays[s.name].transient:
