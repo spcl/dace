@@ -47,7 +47,7 @@ SUBROUTINE viewlens(aa,res)
 IMPLICIT NONE
 
 double precision  :: aa(10,11) 
-double precision :: res(1,1,2)
+double precision :: res(2,2,2)
 
 INTEGER ::  JK, JL
 
@@ -64,41 +64,7 @@ END SUBROUTINE viewlens
                     """
  
     sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name, True)
-    for state in sdfg.nodes():
-        for node in state.nodes():
-            if isinstance(node, nodes.NestedSDFG):
-                if node.path!="":
-                    print("TEST: "+node.path)
-                    tmp_sdfg = SDFG.from_file(node.path)
-                    node.sdfg = tmp_sdfg
-                    node.sdfg.parent = state
-                    node.sdfg.parent_sdfg = sdfg
-                    node.sdfg.update_sdfg_list([])
-                    node.sdfg.parent_nsdfg_node = node
-                    node.path=""
-    for sd in sdfg.all_sdfgs_recursive():  
-        for state in sd.nodes():
-          for node in state.nodes():
-            if isinstance(node, nodes.NestedSDFG):
-                if node.path!="":
-                    print("TEST: "+node.path)
-                    tmp_sdfg = SDFG.from_file(node.path)
-                    node.sdfg = tmp_sdfg     
-                    node.sdfg.parent = state
-                    node.sdfg.parent_sdfg = sd
-                    node.sdfg.update_sdfg_list([])
-                    node.sdfg.parent_nsdfg_node = node         
-                    node.path=""
-    for node, parent in sdfg.all_nodes_recursive():
-        if isinstance(node, nodes.NestedSDFG):
-            if node.sdfg is not None:
-                if 'test_function' in node.sdfg.name:
-                    sdfg = node.sdfg
-                    break
-    sdfg.parent = None
-    sdfg.parent_sdfg = None
-    sdfg.parent_nsdfg_node = None
-    sdfg.reset_sdfg_list()                
+              
                 
     sdfg.simplify(verbose=True)
     a = np.full([10, 11, 12], 42, order="F", dtype=np.float64)
