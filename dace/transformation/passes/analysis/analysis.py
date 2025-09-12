@@ -240,7 +240,8 @@ class AccessSets(ppl.Pass):
         # If access nodes were modified, reapply
         return modified & ppl.Modifies.AccessNodes
 
-    def _get_loop_region_readset(self, loop: LoopRegion, arrays: Set[str]) -> Set[str]:
+    @staticmethod
+    def _get_loop_region_readset(loop: LoopRegion, arrays: Set[str]) -> Set[str]:
         readset = set()
         exprs = { loop.loop_condition.as_string }
         update_stmt = loop_analysis.get_update_assignment(loop)
@@ -276,7 +277,7 @@ class AccessSets(ppl.Pass):
                             if state.out_degree(anode) > 0:
                                 readset.add(anode.data)
                     if isinstance(block, LoopRegion):
-                        readset |= self._get_loop_region_readset(block, arrays)
+                        readset |= AccessSets._get_loop_region_readset(block, arrays)
                     elif isinstance(block, ConditionalBlock):
                         for cond, _ in block.branches:
                             if cond is not None:
@@ -291,6 +292,70 @@ class AccessSets(ppl.Pass):
                 if fsyms:
                     result[e.src][0].update(fsyms)
                     result[e.dst][0].update(fsyms)
+        return result
+
+
+@properties.make_properties
+@transformation.explicit_cf_compatible
+class DetailedAccessSets(ppl.Pass):
+    """
+    Enhanced version of AccessSets that separately tracks state-level and interstate edge accesses.
+    Returns a dictionary mapping each control flow block to a tuple of 
+    (state_read_set, state_write_set, interstate_read_set).
+
+    The code is mostly the same, we mostly provide a different logic
+    for handling interstate edges.
+    """
+
+    CATEGORY: str = 'Analysis'
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Nothing
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        # If access nodes were modified, reapply
+        return modified & ppl.Modifies.AccessNodes
+
+    def apply_pass(self, top_sdfg: SDFG, _) -> Dict[ControlFlowBlock, Tuple[Set[str], Set[str], Set[str]]]:
+        """
+        :return: A dictionary mapping each control flow block to a tuple of its 
+                 (state_read, state_write, interstate_read) data descriptors.
+        """
+        result: Dict[ControlFlowBlock, Tuple[Set[str], Set[str], Set[str]]] = {}
+        for sdfg in top_sdfg.all_sdfgs_recursive():
+            arrays: Set[str] = set(sdfg.arrays.keys())
+            for block in sdfg.all_control_flow_blocks():
+                state_readset, state_writeset = set(), set()
+                if isinstance(block, SDFGState):
+                    for anode in block.data_nodes():
+                        if block.in_degree(anode) > 0:
+                            state_writeset.add(anode.data)
+                        if block.out_degree(anode) > 0:
+                            state_readset.add(anode.data)
+                elif isinstance(block, AbstractControlFlowRegion):
+                    for state in block.all_states():
+                        for anode in state.data_nodes():
+                            if state.in_degree(anode) > 0:
+                                state_writeset.add(anode.data)
+                            if state.out_degree(anode) > 0:
+                                state_readset.add(anode.data)
+                    if isinstance(block, LoopRegion):
+                        state_readset |= AccessSets._get_loop_region_readset(block, arrays)
+                    elif isinstance(block, ConditionalBlock):
+                        for cond, _ in block.branches:
+                            if cond is not None:
+                                state_readset |= symbolic.free_symbols_and_functions(cond.as_string) & arrays
+
+                result[block] = (state_readset, state_writeset, set())
+
+            # Separately track interstate edge reads
+            anames = sdfg.arrays.keys()
+            for e in sdfg.all_interstate_edges():
+                fsyms = e.data.free_symbols & anames
+                if fsyms:
+                    # Add to interstate read sets of both source and destination
+                    result[e.src][2].update(fsyms)
+                    result[e.dst][2].update(fsyms)
         return result
 
 

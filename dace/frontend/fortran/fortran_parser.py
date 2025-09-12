@@ -361,6 +361,79 @@ class AST_translator:
             a.update(sdfg.arrays)
         return a
 
+    def extract_dependencies_from_ast(self, ast_node: ast_internal_classes.FNode) -> Set[str]:
+        """
+        Recursively extract variable dependencies from an AST node, particularly focusing on 
+        variables used as array indices or in data references.
+
+        tested for patterns like struct[tmp_index].struct[tmp_index2].value
+
+        We want to extract tmp_index* since the entire expression depends on it.
+        """
+
+        dependencies = set()
+
+        def _visit_recursive(node, save=False):
+            if node is None:
+                return
+
+            if isinstance(node, ast_internal_classes.Name_Node):
+                if save:
+                    dependencies.add(node.name)
+
+            elif isinstance(node, ast_internal_classes.Array_Subscript_Node):
+                _visit_recursive(node.name)
+                for idx in node.indices:
+                    _visit_recursive(idx, True)
+
+            elif isinstance(node, ast_internal_classes.Data_Ref_Node):
+                _visit_recursive(node.parent_ref)
+                _visit_recursive(node.part_ref)
+
+            elif isinstance(node, ast_internal_classes.BinOp_Node):
+                _visit_recursive(node.lval)
+                _visit_recursive(node.rval)
+
+            elif isinstance(node, ast_internal_classes.UnOp_Node):
+                _visit_recursive(node.lval)
+
+            elif isinstance(node, ast_internal_classes.Call_Expr_Node):
+                _visit_recursive(node.name)
+                for arg in node.args:
+                    _visit_recursive(arg)
+
+            elif isinstance(node, ast_internal_classes.Parenthesis_Expr_Node):
+                _visit_recursive(node.expr)
+
+        _visit_recursive(ast_node)
+        return dependencies
+
+    def add_ast_dependencies_to_init(self, sdfg: SDFG, ast_node: ast_internal_classes.FNode) -> Dict[str, str]:
+        """
+        The main purpose of this function is to support situations where we move data out from
+        an SDFG to its parent for struct initialization. Sometimes the initialization can be very complex,
+        and it can potenially include other symbols, particularly in a chain of struct reviews, e.g.,
+        tmp_struct_size = struct_x[index].struct_y.size
+
+        Analyze an AST node for such dependencies, and then locate their definitions.
+        This currently does not support recursive assignments, i.e., when index from the example above
+        also depends on another symbol.
+
+        We rely on a global, per-SDFG database of tasklets created. We assume that if we process
+        expression that depends on index, then there must exist a tasklet in form "index = ...".
+        """
+        # get list of symbols that we potentially need to extract
+        dependencies = self.extract_dependencies_from_ast(ast_node)
+
+        found_assignments = {}
+        if sdfg in ast_utils.TaskletWriter.TASKLETS_CREATED:
+            sdfg_assignments = ast_utils.TaskletWriter.TASKLETS_CREATED[sdfg]
+            for dep in dependencies:
+                if dep in sdfg_assignments:
+                    found_assignments[dep] = sdfg_assignments[dep][1]
+
+        return found_assignments
+
     def get_memlet_range(self, sdfg: SDFG, variables: List[ast_internal_classes.FNode], var_name: str,
                          var_name_tasklet: str) -> str:
         """
@@ -2327,6 +2400,51 @@ class AST_translator:
         for i in node.vardecl:
             self.translate(i, sdfg, cfg)
 
+    def map_nested_to_parent_names(self, ast_node, nested_sdfg):
+        """
+        Recursively visit an AST node and map array names from nested SDFG to parent SDFG names.
+
+        This is necessary when we move expressions from nested SDFG to parent SDFG, e.g.,
+        when initializing struct sizes on an interstate edge.
+        It's necessary for Fortran because we do a lot of variable renaming.
+        """
+        if ast_node is None:
+            return ast_node
+
+        mapped_node = copy.deepcopy(ast_node)
+
+        def _map_names_recursive(node):
+
+            if isinstance(node, ast_internal_classes.Name_Node):
+                # Check if this name refers to a data container and needs mapping
+                if (nested_sdfg in self.names_of_object_in_parent_sdfg and 
+                    node.name in self.names_of_object_in_parent_sdfg[nested_sdfg]):
+                    # Map from nested name to parent name
+                    parent_name = self.names_of_object_in_parent_sdfg[nested_sdfg][node.name]
+                    node.name = parent_name
+
+            elif isinstance(node, ast_internal_classes.Data_Ref_Node):
+                _map_names_recursive(node.parent_ref)
+                _map_names_recursive(node.part_ref)
+
+            elif isinstance(node, ast_internal_classes.Array_Subscript_Node):
+                _map_names_recursive(node.name)
+                for idx in node.indices:
+                    _map_names_recursive(idx)
+
+            elif hasattr(node, '_fields'):
+                for field_name in node._fields:
+                    field_value = getattr(node, field_name, None)
+                    if field_value is not None:
+                        if isinstance(field_value, list):
+                            for item in field_value:
+                                _map_names_recursive(item)
+                        else:
+                            _map_names_recursive(field_value)
+
+        _map_names_recursive(mapped_node)
+        return mapped_node
+
     def vardecl2sdfg(self, node: ast_internal_classes.Var_Decl_Node, sdfg: SDFG, cfg: ControlFlowRegion):
         """
         This function translates a variable declaration to an access node on the sdfg
@@ -2360,6 +2478,7 @@ class AST_translator:
         #    if node.alloc:
         #        self.unallocated_arrays.append([node.name, datatype, sdfg, transient])
         #        return
+
         # get the dimensions
         # print(node.name)
         if node.sizes is not None and len(node.sizes) > 0:
@@ -2379,16 +2498,54 @@ class AST_translator:
                             "tmp_struct_symbol_" + str(count)] = "tmp_struct_symbol_" + str(count)
                         parent_state = self.temporary_link_to_parent[sdfg.name]
                         for edge in parent_state.parent_graph.in_edges(parent_state):
+
+                            """
+                                When we have a nested SDFG, then the name of the container inside it
+                                can be different from the one used in the parent SDFG.
+                                Since we are moving symbol assignments from nested to SDFG to an edge
+                                in the parent, the expression might become invalid if it relies on containers
+                                renamed in the nested SDFG.
+
+                                To that end, we recursively visit the assignment and replace names.
+                            """
+                            cleaned_i = self.map_nested_to_parent_names(i, sdfg)
+
                             assign = ast_utils.ProcessedWriter(sdfg.parent_sdfg, self.name_mapping,
                                                                placeholders=self.placeholders,
                                                                placeholders_offsets=self.placeholders_offsets,
-                                                               rename_dict=self.replace_names).write_code(i)
+                                                               rename_dict=self.replace_names).write_code(cleaned_i)
                             edge.data.assignments["tmp_struct_symbol_" + str(count)] = assign
-                            # print(edge)
                     else:
                         assign = ast_utils.ProcessedWriter(sdfg, self.name_mapping, placeholders=self.placeholders,
                                                            placeholders_offsets=self.placeholders_offsets,
                                                            rename_dict=self.replace_names).write_code(i)
+
+                        # Check if the assignment on this symbol depends on some other symbols.
+                        # We need to initialize it before we initialize the symbol that relies on it.
+                        found_assignments = self.add_ast_dependencies_to_init(sdfg, i)
+
+                        # we are moving them outside of SDFG -> mapping names between outer and inner SDFGs
+                        # is also necessary
+                        tw = ast_utils.TaskletWriter([], [], sdfg, self.name_mapping, placeholders=self.placeholders,
+                                                    placeholders_offsets=self.placeholders_offsets,
+                                                    rename_dict=self.replace_names)
+                        for var_name, dep_assignment in found_assignments.items():
+
+                            cleaned_assignment = self.map_nested_to_parent_names(dep_assignment, sdfg)
+                            assignment_text = tw.write_code(cleaned_assignment)
+
+                            found_assignments[var_name] = assignment_text
+
+                        init_code_str = ''.join(code.as_string for code in sdfg.init_code.values())
+                        for var_name, dep_assignment in found_assignments.items():
+
+                            # Add global declaration if needed
+                            if f"{var_name}=" not in init_code_str and f"{var_name} =" not in init_code_str:
+                                global_code_str = ''.join(code.as_string for code in sdfg.global_code.values())
+                                if var_name not in global_code_str:
+                                    sdfg.append_global_code(f"{dtypes.int32.ctype} {var_name};\n")
+
+                                sdfg.append_init_code(f"{var_name} = {dep_assignment.replace(".", "->")};\n")
 
                         sdfg.append_global_code(f"{dtypes.int32.ctype} {symname};\n")
                         sdfg.append_init_code(
@@ -3418,12 +3575,11 @@ def create_sdfg_from_fortran_file_with_options(
             continue
 
         sdfg.validate()
-        sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_validated_dbg22.sdfgz"), compress=True)
-        sdfg.validate()
-        sdfg.simplify(verbose=True)
-        print(f'Saving SDFG {os.path.join(sdfgs_dir, sdfg.name + "_simplified_tr.sdfgz")}')
-        sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_simplified_dbg22.sdfgz"), compress=True)
-        sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_simplified_dbg22full.sdfg"), compress=False)
+        sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_v.sdfgz"), compress=True)
+        sdfg.simplify(verbose=True, validate_all=True)
+        print(f'Saving SDFG {os.path.join(sdfgs_dir, sdfg.name + "_s.sdfgz")}')
+        sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_s.sdfgz"), compress=True)
+        sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_s.sdfg"), compress=False)
         sdfg.validate()
         print(f'Compiling SDFG {os.path.join(sdfgs_dir, sdfg.name + "_simplifiedf22.sdfgz")}')
         sdfg.compile()
