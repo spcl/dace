@@ -7,7 +7,7 @@ from fparser.two import Fortran2003 as f03
 from fparser.two import Fortran2008 as f08
 from fparser.two.Fortran2003 import Function_Subprogram, Function_Stmt, Prefix, Intrinsic_Type_Spec, \
     Assignment_Stmt, Logical_Literal_Constant, Real_Literal_Constant, Signed_Real_Literal_Constant, \
-    Int_Literal_Constant, Signed_Int_Literal_Constant, Hex_Constant, Function_Reference
+    Int_Literal_Constant, Signed_Int_Literal_Constant, Hex_Constant, Function_Reference, Length_Selector, Kind_Selector
 from fparser.two.utils import Base
 
 from dace.frontend.fortran import ast_internal_classes
@@ -739,8 +739,9 @@ class InternalFortranAst:
             if c.string.lower() in props.keys():
                 props[c.string.lower()] = True
             elif isinstance(c, Intrinsic_Type_Spec):
-                assert c.string in self.types, f"Unknown type {c.string} in prefix: {prefix}"
-                type = self.types[c.string]
+                c_type = _find_typename_of_intrinsic_type(c)
+                assert c_type in self.types, f"Unknown type {c.string}/{c_type} in prefix: {prefix}"
+                type = self.types[c_type]
         return ast_internal_classes.Prefix_Node(type=type,
                                                 elemental=props['elemental'],
                                                 recursive=props['recursive'],
@@ -2041,3 +2042,25 @@ class InternalFortranAst:
 
     def str_node(self, node: FASTNode):
         return node
+
+def _find_typename_of_intrinsic_type(typ: Intrinsic_Type_Spec) -> str:
+    ACCEPTED_TYPES = {'INTEGER', 'REAL', 'DOUBLE PRECISION', 'LOGICAL', 'CHARACTER'}
+    typ_name, kind = typ.children
+    assert typ_name in ACCEPTED_TYPES, typ_name
+
+    # TODO: How should we handle character lengths? Just treat it as an extra dimension?
+    if isinstance(kind, Length_Selector):
+        assert typ_name == 'CHARACTER'
+    elif isinstance(kind, Kind_Selector):
+        assert typ_name in {'INTEGER', 'REAL', 'LOGICAL'}
+        _, kind, _ = kind.children
+        assert isinstance(kind, Int_Literal_Constant), f"{kind} must be a integer literal constant"
+        num, kkind = kind.children
+        assert kkind is None, f"{kind} must have its 'kind' resolved already, found {kkind}"
+        typ_name = f"{typ_name}{num}"
+    elif kind is None:
+        if typ_name in {'INTEGER', 'REAL'}:
+            typ_name = f"{typ_name}4"
+        elif typ_name in {'DOUBLE PRECISION'}:
+            typ_name = f"REAL8"
+    return typ_name
