@@ -739,7 +739,8 @@ class InternalFortranAst:
             if c.string.lower() in props.keys():
                 props[c.string.lower()] = True
             elif isinstance(c, Intrinsic_Type_Spec):
-                type = c.string
+                assert c.string in self.types, f"Unknown type {c.string} in prefix: {prefix}"
+                type = self.types[c.string]
         return ast_internal_classes.Prefix_Node(type=type,
                                                 elemental=props['elemental'],
                                                 recursive=props['recursive'],
