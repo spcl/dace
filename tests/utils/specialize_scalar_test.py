@@ -117,7 +117,6 @@ def test_use_in_for_cfg():
     sdfg.compile()
 
 
-
 def test_interstate_assignment():
     sdfg = dace.SDFG("dynamic_input")
     sdfg.add_scalar("nlev", dtype=dace.int32, transient=False)
