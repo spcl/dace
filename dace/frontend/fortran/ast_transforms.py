@@ -312,6 +312,12 @@ class FindInputs(NodeVisitor):
 
         self.nodes: List[ast_internal_classes.Name_Node] = []
 
+    def visit_Subroutine_Subprogram_Node(self, node: ast_internal_classes.Subroutine_Subprogram_Node):
+        if node.specification_part is not None:
+            self.visit(node.specification_part)
+        if node.execution_part is not None:
+            self.visit(node.execution_part)
+            
     def visit_Name_Node(self, node: ast_internal_classes.Name_Node):
         self.nodes.append(node)
 
