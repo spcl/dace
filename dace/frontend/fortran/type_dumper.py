@@ -11,7 +11,7 @@ from dace.frontend.fortran.ast_desugaring import SPEC, ENTRY_POINT_OBJECT_TYPES,
     deconstruct_associations, assign_globally_unique_subprogram_names, assign_globally_unique_variable_names, \
     consolidate_uses, prune_branches, const_eval_nodes, lower_identifier_names, \
     remove_access_statements, ident_spec, NAMED_STMTS_OF_INTEREST_TYPES
-from dace.frontend.fortran.fortran_parser import  compute_dep_graph, name_and_rename_dict_creator
+from dace.frontend.fortran.fortran_parser import compute_dep_graph, name_and_rename_dict_creator
 from fparser.two.Fortran2003 import Program, Name, Subroutine_Subprogram, Module_Stmt
 from fparser.two.utils import Base, walk
 
@@ -19,7 +19,9 @@ from dace.frontend.fortran import ast_utils
 from dace.frontend.fortran import ast_transforms
 from dace.frontend.fortran import ast_internal_classes
 
+
 class FortranTypeDumper:
+
     def __init__(self, struct_list: list[ast_internal_classes.Derived_Type_Def_Node], internal_ast: InternalFortranAst):
         self.structs = struct_list
         self.internal_ast = internal_ast
@@ -31,7 +33,6 @@ class FortranTypeDumper:
             raise ValueError(f"Type '{type_name}' not found in the AST")
 
         # Generate Fortran code to dump the content of the type
-        
 
         if isinstance(type_def, Derived_Type_Def_Node):
             lines = []
@@ -48,7 +49,7 @@ class FortranTypeDumper:
             lines.append(f"  character(len=*), intent(in) :: filename")
             lines.append(f"  integer :: unit")
             lines.append(f"  open(newunit=unit, file=filename, status='replace')")
-            lines.append(self._generate_derived_type_dump_code(type_def,f"{type_def.name.name}_obj"))
+            lines.append(self._generate_derived_type_dump_code(type_def, f"{type_def.name.name}_obj"))
             lines.append(f"  close(unit)")
             lines.append(f"end subroutine dump_{type_def.name.name}")
             return "\n".join(lines)
@@ -63,7 +64,6 @@ class FortranTypeDumper:
             lines.append(f"  close(unit)")
             lines.append(f"end subroutine dump_{type_name}")
             return "\n".join(lines)
-            
 
     def _find_type_definition(self, type_name: str) -> Optional[Derived_Type_Def_Node]:
         for structure in self.structs:
@@ -71,7 +71,7 @@ class FortranTypeDumper:
                 return structure
         return None
 
-    def _generate_derived_type_dump_code(self, type_def: Derived_Type_Def_Node,prefix_name:str) -> str:
+    def _generate_derived_type_dump_code(self, type_def: Derived_Type_Def_Node, prefix_name: str) -> str:
         lines = []
 
         for component in type_def.component_part.component_def_stmts:
@@ -80,73 +80,78 @@ class FortranTypeDumper:
                 var_size = var.sizes
                 type_def = self._find_type_definition(var_type)
                 if isinstance(type_def, Derived_Type_Def_Node):
-                    self._generate_derived_type_dump_code(type_def,f"{prefix_name}%{var.name}")
+                    self._generate_derived_type_dump_code(type_def, f"{prefix_name}%{var.name}")
                 else:
                     if var.name.startswith("__f2dace_"):
                         continue
-                    if var_type.lower() not in ["integer", "real", "logical", "char","double"]:
+                    if var_type.lower() not in ["integer", "real", "logical", "char", "double"]:
                         lines.append(f"  ! {var.name} is of type {var_type} and size {var_size}")
                     if var_size is not None:
-                        if var.alloc==True:
-                            lines.append(f"  write(unit, *) '{prefix_name}.{var.name}_a = ', ALLOCATED({prefix_name}%{var.name})")
-                        
+                        if var.alloc == True:
+                            lines.append(
+                                f"  write(unit, *) '{prefix_name}.{var.name}_a = ', ALLOCATED({prefix_name}%{var.name})"
+                            )
+
                         for i in range(len(var_size)):
-                            
-                            lines.append(f"  write(unit, *) '{prefix_name}.{var.name}_d{i}_s = ', SIZE({prefix_name}%{var.name},{i+1})")
-                            lines.append(f"  write(unit, *) '{prefix_name}.{var.name}_o{i}_s = ', LBOUND({prefix_name}%{var.name},{i+1})")    
-                        lines.append(f"  !write(unit, *) '{prefix_name}.{var.name} = ', {prefix_name}%{var.name}")    
+
+                            lines.append(
+                                f"  write(unit, *) '{prefix_name}.{var.name}_d{i}_s = ', SIZE({prefix_name}%{var.name},{i+1})"
+                            )
+                            lines.append(
+                                f"  write(unit, *) '{prefix_name}.{var.name}_o{i}_s = ', LBOUND({prefix_name}%{var.name},{i+1})"
+                            )
+                        lines.append(f"  !write(unit, *) '{prefix_name}.{var.name} = ', {prefix_name}%{var.name}")
                     else:
-                        if var.name.lower()=="i_gas_model_sw" or var.name.lower()=="i_gas_model_lw":
+                        if var.name.lower() == "i_gas_model_sw" or var.name.lower() == "i_gas_model_lw":
                             lines.append(f"  write(unit, *) '{prefix_name}.{var.name} = ', {prefix_name}%i_gas_model")
                         else:
                             lines.append(f"  write(unit, *) '{prefix_name}.{var.name} = ', {prefix_name}%{var.name}")
 
-        
         return "\n".join(lines)
 
 
 # Example usage
 # Assuming `program_ast` is an instance of `Program_Node` and `internal_ast` is an instance of `InternalFortranAst`
-mini_parser=pf().create(std="f2008")
+mini_parser = pf().create(std="f2008")
 ecrad_ast = mini_parser(ffr(file_candidate=sys.argv[4]))
 ast = correct_for_function_calls(ecrad_ast)
 dep_graph = compute_dep_graph(ast, 'radiation_interface')
 parse_order = list(reversed(list(nx.topological_sort(dep_graph))))
 partial_ast = InternalFortranAst()
-partial_ast.to_parse_list={}
+partial_ast.to_parse_list = {}
 asts = {find_name_of_stmt(m).lower(): m for m in walk(ast, Module_Stmt)}
 partial_modules = {}
 functions_to_rename = {}
 name_dict, rename_dict = name_and_rename_dict_creator(parse_order, dep_graph)
 for i in parse_order:
-        partial_ast.current_ast = i
+    partial_ast.current_ast = i
 
-        partial_ast.unsupported_fortran_syntax[i] = []
-        if i in ["mtime", "ISO_C_BINDING", "iso_c_binding", "mo_cdi", "iso_fortran_env", "netcdf"]:
-            continue
+    partial_ast.unsupported_fortran_syntax[i] = []
+    if i in ["mtime", "ISO_C_BINDING", "iso_c_binding", "mo_cdi", "iso_fortran_env", "netcdf"]:
+        continue
 
-        # try:
-        partial_module = partial_ast.create_ast(asts[i.lower()])
-        partial_modules[partial_module.name.name] = partial_module
-        # except Exception as e:
-        #    print("Module " + i + " could not be parsed ", partial_ast.unsupported_fortran_syntax[i])
-        #    print(e, type(e))
-        # print(partial_ast.unsupported_fortran_syntax[i])
-        #    continue
-        tmp_rename = rename_dict[i]
-        for j in tmp_rename:
-            # print(j)
-            if partial_ast.symbols.get(j) is None:
-                # raise NameError("Symbol " + j + " not found in partial ast")
-                if functions_to_rename.get(i) is None:
-                    functions_to_rename[i] = [j]
-                else:
-                    functions_to_rename[i].append(j)
+    # try:
+    partial_module = partial_ast.create_ast(asts[i.lower()])
+    partial_modules[partial_module.name.name] = partial_module
+    # except Exception as e:
+    #    print("Module " + i + " could not be parsed ", partial_ast.unsupported_fortran_syntax[i])
+    #    print(e, type(e))
+    # print(partial_ast.unsupported_fortran_syntax[i])
+    #    continue
+    tmp_rename = rename_dict[i]
+    for j in tmp_rename:
+        # print(j)
+        if partial_ast.symbols.get(j) is None:
+            # raise NameError("Symbol " + j + " not found in partial ast")
+            if functions_to_rename.get(i) is None:
+                functions_to_rename[i] = [j]
             else:
-                partial_ast.symbols[tmp_rename[j]] = partial_ast.symbols[j]
+                functions_to_rename[i].append(j)
+        else:
+            partial_ast.symbols[tmp_rename[j]] = partial_ast.symbols[j]
 
-        print("Parsed successfully module: ", i, " ", partial_ast.unsupported_fortran_syntax[i])
-        # print(partial_ast.unsupported_fortran_syntax[i])
+    print("Parsed successfully module: ", i, " ", partial_ast.unsupported_fortran_syntax[i])
+    # print(partial_ast.unsupported_fortran_syntax[i])
 # try:
 partial_ast.current_ast = "top level"
 
@@ -168,15 +173,16 @@ for i, name in zip(structs_lister.structs, structs_lister.names):
     struct_deps_finder.visit(i)
     struct_deps = struct_deps_finder.structs_used
     # print(struct_deps)
-    for j, pointing, point_name in zip(struct_deps, struct_deps_finder.is_pointer,
-                                        struct_deps_finder.pointer_names):
+    for j, pointing, point_name in zip(struct_deps, struct_deps_finder.is_pointer, struct_deps_finder.pointer_names):
         if j not in struct_dep_graph.nodes:
             struct_dep_graph.add_node(j)
         struct_dep_graph.add_edge(name, j, pointing=pointing, point_name=point_name)
 
 dumper = FortranTypeDumper(structs_lister.structs, partial_ast)
-fortran_code=[]
-for i in ["config_type","single_level_type","thermodynamics_type","gas_type","cloud_type","aerosol_type","flux_type"]:
+fortran_code = []
+for i in [
+        "config_type", "single_level_type", "thermodynamics_type", "gas_type", "cloud_type", "aerosol_type", "flux_type"
+]:
     fortran_code.append(dumper.generate_dump_code(i))
 output_filename = "dump_all.f90"
 fortran_code_all = "\n".join(fortran_code)

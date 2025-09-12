@@ -12,23 +12,45 @@ from dace.frontend.fortran.gen_serde import find_all_f90_files
 
 def main():
     argp = argparse.ArgumentParser()
-    argp.add_argument('-i', '--in_src', type=str, required=True, action='append', default=[],
+    argp.add_argument('-i',
+                      '--in_src',
+                      type=str,
+                      required=True,
+                      action='append',
+                      default=[],
                       help='The files or directories containing self-contained AST in its Fortran source code '
-                           'representation (absolute path or relative to CWD). Can be repeated to include multiple '
-                           'files and directories.')
-    argp.add_argument('-k', '--entry_point', type=str, required=True,
+                      'representation (absolute path or relative to CWD). Can be repeated to include multiple '
+                      'files and directories.')
+    argp.add_argument('-k',
+                      '--entry_point',
+                      type=str,
+                      required=True,
                       help='The single entry point which should be kept with their dependencies (can be repeated).'
-                           'Specify the entry point as a `dot` separated path through named objects from the top.')
-    argp.add_argument('-c', '--config_inject', type=str, required=False, action='append', default=[],
+                      'Specify the entry point as a `dot` separated path through named objects from the top.')
+    argp.add_argument('-c',
+                      '--config_inject',
+                      type=str,
+                      required=False,
+                      action='append',
+                      default=[],
                       help='The files or directories containing config injection data. '
-                           'Can be repeated to include multiple files or directories.')
-    argp.add_argument('-o', '--output_sdfg', type=str, required=True,
+                      'Can be repeated to include multiple files or directories.')
+    argp.add_argument('-o',
+                      '--output_sdfg',
+                      type=str,
+                      required=True,
                       help='A file to write the SDFG into (absolute path or relative to CWD).')
-    argp.add_argument('-d', '--checkpoint_dir', type=str, required=False, default=None,
+    argp.add_argument('-d',
+                      '--checkpoint_dir',
+                      type=str,
+                      required=False,
+                      default=None,
                       help='(Optional) If specified, the AST in various stages of preprocessing will be written as'
-                           'Fortran code in there.')
-    argp.add_argument('--keep_components', action=argparse.BooleanOptionalAction,
-                      required=False, default=False,
+                      'Fortran code in there.')
+    argp.add_argument('--keep_components',
+                      action=argparse.BooleanOptionalAction,
+                      required=False,
+                      default=False,
                       help='(Optional) If specified, will avoid pruning struct components.')
     args = argp.parse_args()
 
@@ -56,8 +78,10 @@ def main():
     ti_files = [f for p in ti_dirs for f in find_all_config_injection_files(p)]
     config_injections = list(find_all_config_injections(ti_files))
 
-    cfg = ParseConfig(sources=input_f90s, entry_points=[entry_point],
-                      config_injections=config_injections, ast_checkpoint_dir=checkpoint_dir,
+    cfg = ParseConfig(sources=input_f90s,
+                      entry_points=[entry_point],
+                      config_injections=config_injections,
+                      ast_checkpoint_dir=checkpoint_dir,
                       do_not_prune_type_components=keep_components)
     own_ast, program = create_internal_ast(cfg)
 

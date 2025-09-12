@@ -110,7 +110,7 @@ subroutine internal_function(d, st)
   implicit none
   real d(5, 5)
   type(simple_type) :: st
-  
+
   integer, parameter :: n = 5
   real bob(n)
   real bob2(st%a)
@@ -404,7 +404,6 @@ end subroutine main
     a = np.full([5, 5], 1, order="F", dtype=np.float32)
     sdfg(d=a)
     assert (a[0, 0] == 625)
-
 
 
 if __name__ == "__main__":

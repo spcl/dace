@@ -2,7 +2,6 @@ import numpy as np
 
 from dace.frontend.fortran.fortran_parser import create_singular_sdfg_from_string
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
-
 """
     Tested scenarios:
     - 1D copy from array
@@ -10,7 +9,7 @@ from tests.fortran.fortran_test_helper import SourceCodeBuilder
     - 2D copy from array, both dimensions
     - 2D copy with pardecl
     - 2D copy from array, data refs in array and indices
-    - FIXME 2D copy, transpose (ECRAD example) 
+    - FIXME 2D copy, transpose (ECRAD example)
 """
 
 
@@ -201,7 +200,8 @@ def test_fortran_frontend_noncontiguous_slices_2d_data_refs():
     """
     As above, but pass the whole subset across one dimension.
     """
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = SourceCodeBuilder().add_file(
+        """
 
 module lib
     implicit none
@@ -266,7 +266,8 @@ def test_fortran_frontend_noncontiguous_nested_ecrad():
     """
     As above, but pass the whole subset across one dimension.
     """
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = SourceCodeBuilder().add_file(
+        """
 
 subroutine main(d, sizex, firstcols, secondcols, res)
 
@@ -292,7 +293,7 @@ end subroutine main
     size_x = 5
     d = np.full([1, size_x], 42, order="F", dtype=np.float64)
     for i in range(0, size_x):
-        d[0, i] = 0 + (i+1) / 10
+        d[0, i] = 0 + (i + 1) / 10
 
     firstcols = np.full([16], 1, order="F", dtype=np.int32)
 
@@ -310,6 +311,7 @@ end subroutine main
     new_res = 1.0 - np.transpose(d_new)
 
     assert (new_res == res).all()
+
 
 if __name__ == "__main__":
     test_fortran_frontend_noncontiguous_slices()

@@ -102,7 +102,7 @@ def get_name(node: ast_internal_classes.FNode):
     if isinstance(node, ast_internal_classes.Actual_Arg_Spec_Node):
         actual_node = node.arg
     else:
-        actual_node = node    
+        actual_node = node
     if isinstance(actual_node, ast_internal_classes.Name_Node):
         return actual_node.name
     elif isinstance(actual_node, ast_internal_classes.Array_Subscript_Node):
@@ -146,8 +146,7 @@ class TaskletWriter:
                  input_changes: List[str] = None,
                  placeholders={},
                  placeholders_offsets={},
-                 rename_dict=None
-                 ):
+                 rename_dict=None):
         self.outputs = outputs
         self.outputs_changes = outputs_changes
         self.sdfg = sdfg
@@ -187,7 +186,7 @@ class TaskletWriter:
 
     def actualarg2string(self, node: ast_internal_classes.Actual_Arg_Spec_Node):
         return self.write_code(node.arg)
-    
+
     def arrayconstructor2string(self, node: ast_internal_classes.Array_Constructor_Node):
         str_to_return = "[ "
         for i in node.value_list:
@@ -232,7 +231,7 @@ class TaskletWriter:
             raise NameError("Error in code generation: " + node.__class__.__name__)
 
     def dataref2string(self, node: ast_internal_classes.Data_Ref_Node):
-        part1=self.write_code(node.parent_ref)
+        part1 = self.write_code(node.parent_ref)
         if isinstance(node.parent_ref, ast_internal_classes.Name_Node):
             self.data_ref_stack.append(node.parent_ref)
         elif isinstance(node.parent_ref, ast_internal_classes.Array_Subscript_Node):
@@ -240,26 +239,26 @@ class TaskletWriter:
         else:
             raise TypeError("Error in code generation, expected Name_Node or Array_Subscript_Node in dataref parent")
 
-        ret=part1 + "." + self.write_code(node.part_ref)
+        ret = part1 + "." + self.write_code(node.part_ref)
         self.data_ref_stack.pop()
         return ret
 
     def arraysub2string(self, node: ast_internal_classes.Array_Subscript_Node):
-        local_name=node.name.name
-        local_name_node=node.name
+        local_name = node.name.name
+        local_name_node = node.name
         #special handling if the array is in a structure - we must get the view to the member
-        if len(self.data_ref_stack)>0:
-            name_prefix=""
+        if len(self.data_ref_stack) > 0:
+            name_prefix = ""
             for i in self.data_ref_stack:
-                name_prefix+=self.write_code(i)+"_"
-            local_name=name_prefix+local_name    
+                name_prefix += self.write_code(i) + "_"
+            local_name = name_prefix + local_name
         if self.mapping.get(self.sdfg).get(local_name) is not None:
             if self.sdfg.arrays.get(self.mapping.get(self.sdfg).get(local_name)) is not None:
                 arr = self.sdfg.arrays[self.mapping.get(self.sdfg).get(local_name)]
                 if arr.shape is None or (len(arr.shape) == 1 and arr.shape[0] == 1):
                     return self.write_code(local_name_node)
             else:
-                raise NameError("Variable name not found: ", node.name.name) 
+                raise NameError("Variable name not found: ", node.name.name)
         else:
             raise NameError("Variable name not found: ", node.name.name)
         str_to_return = self.write_code(node.name) + "[" + self.write_code(node.indices[0])
@@ -287,8 +286,8 @@ class TaskletWriter:
             if sdfg_name is None:
                 return name
             else:
-                if self.sdfg.arrays[sdfg_name].shape is None or (
-                        len(self.sdfg.arrays[sdfg_name].shape) == 1 and self.sdfg.arrays[sdfg_name].shape[0] == 1):
+                if self.sdfg.arrays[sdfg_name].shape is None or (len(self.sdfg.arrays[sdfg_name].shape) == 1
+                                                                 and self.sdfg.arrays[sdfg_name].shape[0] == 1):
                     return "1"
                 size = self.sdfg.arrays[sdfg_name].shape[location[1]]
                 return self.write_code(str(size))
@@ -299,8 +298,8 @@ class TaskletWriter:
             if sdfg_name is None:
                 return name
             else:
-                if self.sdfg.arrays[sdfg_name].shape is None or (
-                        len(self.sdfg.arrays[sdfg_name].shape) == 1 and self.sdfg.arrays[sdfg_name].shape[0] == 1):
+                if self.sdfg.arrays[sdfg_name].shape is None or (len(self.sdfg.arrays[sdfg_name].shape) == 1
+                                                                 and self.sdfg.arrays[sdfg_name].shape[0] == 1):
                     return "0"
                 offset = self.sdfg.arrays[sdfg_name].offset[location[1]]
                 return self.write_code(str(offset))
@@ -428,7 +427,7 @@ class TaskletWriter:
             return left + op + right
 
 
-def generate_memlet(op, top_sdfg, state, offset_normalization=False,mapped_name=None):
+def generate_memlet(op, top_sdfg, state, offset_normalization=False, mapped_name=None):
     if mapped_name is None:
         if state.name_mapping.get(top_sdfg).get(get_name(op)) is not None:
             shape = top_sdfg.arrays[state.name_mapping[top_sdfg][get_name(op)]].shape
@@ -437,9 +436,9 @@ def generate_memlet(op, top_sdfg, state, offset_normalization=False,mapped_name=
         else:
             raise NameError("Variable name not found: ", get_name(op))
     else:
-        
+
         shape = top_sdfg.arrays[state.name_mapping[top_sdfg][mapped_name]].shape
-        
+
     indices = []
     if isinstance(op, ast_internal_classes.Array_Subscript_Node):
         for idx, i in enumerate(op.indices):
@@ -447,15 +446,21 @@ def generate_memlet(op, top_sdfg, state, offset_normalization=False,mapped_name=
                 if i.type == 'ALL':
                     indices.append(None)
                 else:
-                    tw = TaskletWriter([], [], top_sdfg, state.name_mapping, placeholders=state.placeholders,
+                    tw = TaskletWriter([], [],
+                                       top_sdfg,
+                                       state.name_mapping,
+                                       placeholders=state.placeholders,
                                        placeholders_offsets=state.placeholders_offsets)
                     text_start = tw.write_code(i.range[0])
                     text_end = tw.write_code(i.range[1])
-                    symb_start = sym.pystr_to_symbolic(text_start+"-1")
-                    symb_end = sym.pystr_to_symbolic(text_end+"-1")
+                    symb_start = sym.pystr_to_symbolic(text_start + "-1")
+                    symb_end = sym.pystr_to_symbolic(text_end + "-1")
                     indices.append([symb_start, symb_end])
             else:
-                tw = TaskletWriter([], [], top_sdfg, state.name_mapping, placeholders=state.placeholders,
+                tw = TaskletWriter([], [],
+                                   top_sdfg,
+                                   state.name_mapping,
+                                   placeholders=state.placeholders,
                                    placeholders_offsets=state.placeholders_offsets)
                 text = tw.write_code(i)
                 # This might need to be replaced with the name in the context of the top/current sdfg
@@ -467,14 +472,20 @@ def generate_memlet(op, top_sdfg, state, offset_normalization=False,mapped_name=
 
     all_indices = indices + [None] * (len(shape) - len(indices))
     if offset_normalization:
-        subset = subsets.Range(
-            [(i[0], i[1], 1) if i is not None else (0, s - 1, 1) for i, s in zip(all_indices, shape)])
+        subset = subsets.Range([(i[0], i[1], 1) if i is not None else (0, s - 1, 1)
+                                for i, s in zip(all_indices, shape)])
     else:
         subset = subsets.Range([(i[0], i[1], 1) if i is not None else (1, s, 1) for i, s in zip(all_indices, shape)])
     return subset
 
 
-def generate_memlet_view(op, top_sdfg, state, offset_normalization=False,mapped_name=None,view_name=None,was_data_ref=False):
+def generate_memlet_view(op,
+                         top_sdfg,
+                         state,
+                         offset_normalization=False,
+                         mapped_name=None,
+                         view_name=None,
+                         was_data_ref=False):
     if mapped_name is None:
         if state.name_mapping.get(top_sdfg).get(get_name(op)) is not None:
             shape = top_sdfg.arrays[state.name_mapping[top_sdfg][get_name(op)]].shape
@@ -483,33 +494,38 @@ def generate_memlet_view(op, top_sdfg, state, offset_normalization=False,mapped_
         else:
             raise NameError("Variable name not found: ", get_name(op))
     else:
-        
+
         shape = top_sdfg.arrays[state.name_mapping[top_sdfg][mapped_name]].shape
-        view_shape=top_sdfg.arrays[view_name].shape
-        if len(view_shape)!=len(shape):
-            was_data_ref=False
+        view_shape = top_sdfg.arrays[view_name].shape
+        if len(view_shape) != len(shape):
+            was_data_ref = False
         else:
-            was_data_ref=True
-        
-        
+            was_data_ref = True
+
     indices = []
-    skip=[]
+    skip = []
     if isinstance(op, ast_internal_classes.Array_Subscript_Node):
         for idx, i in enumerate(op.indices):
             if isinstance(i, ast_internal_classes.ParDecl_Node):
                 if i.type == 'ALL':
                     indices.append(None)
                 else:
-                    tw = TaskletWriter([], [], top_sdfg, state.name_mapping, placeholders=state.placeholders,
+                    tw = TaskletWriter([], [],
+                                       top_sdfg,
+                                       state.name_mapping,
+                                       placeholders=state.placeholders,
                                        placeholders_offsets=state.placeholders_offsets)
                     text_start = tw.write_code(i.range[0])
                     text_end = tw.write_code(i.range[1])
-                    symb_start = sym.pystr_to_symbolic(text_start+"-1")
-                    symb_end = sym.pystr_to_symbolic(text_end+"-1")
+                    symb_start = sym.pystr_to_symbolic(text_start + "-1")
+                    symb_end = sym.pystr_to_symbolic(text_end + "-1")
                     indices.append([symb_start, symb_end])
             else:
-                tw = TaskletWriter([], [], top_sdfg, state.name_mapping, placeholders=state.placeholders,
-                                       placeholders_offsets=state.placeholders_offsets)
+                tw = TaskletWriter([], [],
+                                   top_sdfg,
+                                   state.name_mapping,
+                                   placeholders=state.placeholders,
+                                   placeholders_offsets=state.placeholders_offsets)
                 text = tw.write_code(i)
                 symb = sym.pystr_to_symbolic(text)
                 if was_data_ref:
@@ -520,26 +536,27 @@ def generate_memlet_view(op, top_sdfg, state, offset_normalization=False,mapped_
         if shape[0] == 1:
             return memlet
     tmp_shape = []
-    for idx,i in enumerate(shape):
+    for idx, i in enumerate(shape):
         if idx in skip:
             if was_data_ref:
                 tmp_shape.append(1)
         else:
             tmp_shape.append(i)
 
-
-    all_indices = indices + [None] * (len(shape) - len(indices)-len(skip))
+    all_indices = indices + [None] * (len(shape) - len(indices) - len(skip))
     if offset_normalization:
-        subset = subsets.Range(
-            [(i[0], i[1], 1) if i is not None else (0, s - 1, 1) for i, s in zip(all_indices, tmp_shape)])
+        subset = subsets.Range([(i[0], i[1], 1) if i is not None else (0, s - 1, 1)
+                                for i, s in zip(all_indices, tmp_shape)])
     else:
-        subset = subsets.Range([(i[0], i[1], 1) if i is not None else (1, s, 1) for i, s in zip(all_indices, tmp_shape)])
+        subset = subsets.Range([(i[0], i[1], 1) if i is not None else (1, s, 1)
+                                for i, s in zip(all_indices, tmp_shape)])
     return subset
+
 
 class ProcessedWriter(TaskletWriter):
     """
     This class is derived from the TaskletWriter class and is used to write the code of a tasklet that's on an interstate edge rather than a computational tasklet.
-    :note The only differences are in that the names for the sdfg mapping are used, and that the indices are considered to be one-bases rather than zero-based. 
+    :note The only differences are in that the names for the sdfg mapping are used, and that the indices are considered to be one-bases rather than zero-based.
     """
 
     def __init__(self, sdfg: SDFG, mapping, placeholders, placeholders_offsets, rename_dict):
@@ -597,6 +614,7 @@ class ProcessedWriter(TaskletWriter):
 
 
 class Context:
+
     def __init__(self, name):
         self.name = name
         self.constants = {}
@@ -607,6 +625,7 @@ class Context:
 
 
 class NameMap(dict):
+
     def __getitem__(self, k):
         assert isinstance(k, SDFG)
         if k not in self:
@@ -623,6 +642,7 @@ class NameMap(dict):
 
 
 class ModuleMap(dict):
+
     def __getitem__(self, k):
         assert isinstance(k, ast_internal_classes.Module_Node)
         if k not in self:
@@ -639,6 +659,7 @@ class ModuleMap(dict):
 
 
 class FunctionSubroutineLister:
+
     def __init__(self):
         self.list_of_functions = []
         self.names_in_functions = {}
@@ -665,7 +686,6 @@ class FunctionSubroutineLister:
                 self.names_in_types[name] = list_descendent_names(i)
                 self.names_in_types[name] += list_descendent_typenames(i)
                 self.list_of_types.append(name)
-
 
             elif isinstance(i, Function_Stmt):
                 fn_name = singular(children_of_type(i, Name)).string
@@ -706,6 +726,7 @@ class FunctionSubroutineLister:
 
 
 def list_descendent_typenames(node: Base) -> List[str]:
+
     def _list_descendent_typenames(_node: Base, _list_of_names: List[str]) -> List[str]:
         for c in _node.children:
             if isinstance(c, Type_Name):
@@ -719,6 +740,7 @@ def list_descendent_typenames(node: Base) -> List[str]:
 
 
 def list_descendent_names(node: Base) -> List[str]:
+
     def _list_descendent_names(_node: Base, _list_of_names: List[str]) -> List[str]:
         for c in _node.children:
             if isinstance(c, Name):
@@ -732,6 +754,7 @@ def list_descendent_names(node: Base) -> List[str]:
 
 
 def get_defined_modules(node: Base) -> List[str]:
+
     def _get_defined_modules(_node: Base, _defined_modules: List[str]) -> List[str]:
         for m in _node.children:
             if isinstance(m, Module_Stmt):
@@ -744,6 +767,7 @@ def get_defined_modules(node: Base) -> List[str]:
 
 
 class UseAllPruneList:
+
     def __init__(self, module: str, identifiers: List[str]):
         """
         Keeps a list of referenced identifiers to intersect with the identifiers available in the module.
@@ -818,12 +842,12 @@ def parse_module_declarations(program):
 def validate_internal_ast(prog: ast_internal_classes.Program_Node):
     # A variable should not be redeclared in the same context.
     occurences = {}
-    for fn in mywalk(prog,
-                     (ast_internal_classes.Subroutine_Subprogram_Node, ast_internal_classes.Main_Program_Node)):
+    for fn in mywalk(prog, (ast_internal_classes.Subroutine_Subprogram_Node, ast_internal_classes.Main_Program_Node)):
         # Execution-part is included in case some declaration is still there.
-        decls = [v.name for d in chain(mywalk(fn.specification_part, ast_internal_classes.Decl_Stmt_Node),
-                                       mywalk(fn.execution_part, ast_internal_classes.Decl_Stmt_Node))
-                 for v in d.vardecl]
+        decls = [
+            v.name for d in chain(mywalk(fn.specification_part, ast_internal_classes.Decl_Stmt_Node),
+                                  mywalk(fn.execution_part, ast_internal_classes.Decl_Stmt_Node)) for v in d.vardecl
+        ]
         counts = Counter(decls)
         counts = Counter({k: v for k, v in counts.items() if v > 1})
         if counts:
@@ -991,6 +1015,7 @@ class TempName(object):
         name, tmp._counter = f"{tag}_{tmp._counter}", tmp._counter + 1
         return name
 
-def is_literal(node: ast_internal_classes.FNode) -> bool:
-    return isinstance(node, (ast_internal_classes.Int_Literal_Node, ast_internal_classes.Double_Literal_Node, ast_internal_classes.Real_Literal_Node, ast_internal_classes.Bool_Literal_Node))
 
+def is_literal(node: ast_internal_classes.FNode) -> bool:
+    return isinstance(node, (ast_internal_classes.Int_Literal_Node, ast_internal_classes.Double_Literal_Node,
+                             ast_internal_classes.Real_Literal_Node, ast_internal_classes.Bool_Literal_Node))

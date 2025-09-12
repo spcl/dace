@@ -37,18 +37,16 @@ from dace.frontend.fortran.ast_utils import singular, children_of_type, atmost_o
 
 ENTRY_POINT_OBJECT_TYPES = Union[Main_Program, Subroutine_Subprogram, Function_Subprogram]
 ENTRY_POINT_OBJECT_CLASSES = (Main_Program, Subroutine_Subprogram, Function_Subprogram)
-SCOPE_OBJECT_TYPES = Union[
-    Main_Program, Module, Function_Subprogram, Subroutine_Subprogram, Derived_Type_Def, Interface_Block,
-    Subroutine_Body, Function_Body, Stmt_Function_Stmt]
-SCOPE_OBJECT_CLASSES = (
-    Main_Program, Module, Function_Subprogram, Subroutine_Subprogram, Derived_Type_Def, Interface_Block,
-    Subroutine_Body, Function_Body, Stmt_Function_Stmt)
-NAMED_STMTS_OF_INTEREST_TYPES = Union[
-    Program_Stmt, Module_Stmt, Function_Stmt, Subroutine_Stmt, Derived_Type_Stmt, Component_Decl, Entity_Decl,
-    Specific_Binding, Generic_Binding, Interface_Stmt, Stmt_Function_Stmt, Proc_Component_Def_Stmt, Proc_Decl]
-NAMED_STMTS_OF_INTEREST_CLASSES = (
-    Program_Stmt, Module_Stmt, Function_Stmt, Subroutine_Stmt, Derived_Type_Stmt, Component_Decl, Entity_Decl,
-    Specific_Binding, Generic_Binding, Interface_Stmt, Stmt_Function_Stmt, Proc_Component_Def_Stmt, Proc_Decl)
+SCOPE_OBJECT_TYPES = Union[Main_Program, Module, Function_Subprogram, Subroutine_Subprogram, Derived_Type_Def,
+                           Interface_Block, Subroutine_Body, Function_Body, Stmt_Function_Stmt]
+SCOPE_OBJECT_CLASSES = (Main_Program, Module, Function_Subprogram, Subroutine_Subprogram, Derived_Type_Def,
+                        Interface_Block, Subroutine_Body, Function_Body, Stmt_Function_Stmt)
+NAMED_STMTS_OF_INTEREST_TYPES = Union[Program_Stmt, Module_Stmt, Function_Stmt, Subroutine_Stmt, Derived_Type_Stmt,
+                                      Component_Decl, Entity_Decl, Specific_Binding, Generic_Binding, Interface_Stmt,
+                                      Stmt_Function_Stmt, Proc_Component_Def_Stmt, Proc_Decl]
+NAMED_STMTS_OF_INTEREST_CLASSES = (Program_Stmt, Module_Stmt, Function_Stmt, Subroutine_Stmt, Derived_Type_Stmt,
+                                   Component_Decl, Entity_Decl, Specific_Binding, Generic_Binding, Interface_Stmt,
+                                   Stmt_Function_Stmt, Proc_Component_Def_Stmt, Proc_Decl)
 SPEC = Tuple[str, ...]
 SPEC_TABLE = Dict[SPEC, NAMED_STMTS_OF_INTEREST_TYPES]
 
@@ -58,12 +56,9 @@ INTERFACE_NAMESPACE = '__interface__'
 class TYPE_SPEC:
     NO_ATTRS = ''
 
-    def __init__(self,
-                 spec: Union[str, SPEC],
-                 attrs: str = NO_ATTRS,
-                 is_arg: bool = False):
+    def __init__(self, spec: Union[str, SPEC], attrs: str = NO_ATTRS, is_arg: bool = False):
         if isinstance(spec, str):
-            spec = (spec,)
+            spec = (spec, )
         self.spec: SPEC = spec
         self.shape: Tuple[str, ...] = self._parse_shape(attrs)
         self.optional: bool = 'OPTIONAL' in attrs
@@ -196,13 +191,13 @@ def find_named_ancestor(node: Base) -> Optional[NAMED_STMTS_OF_INTEREST_TYPES]:
 
 def lineage(anc: Base, des: Base) -> Optional[Tuple[Base, ...]]:
     if anc is des:
-        return (anc,)
+        return (anc, )
     if not des.parent:
         return None
     lin = lineage(anc, des.parent)
     if not lin:
         return None
-    return lin + (des,)
+    return lin + (des, )
 
 
 def search_scope_spec(node: Base) -> Optional[SPEC]:
@@ -222,10 +217,8 @@ def search_scope_spec(node: Base) -> Optional[SPEC]:
 
     # TODO: How many other such cases can there be?
     par = node.parent
-    if (isinstance(scope, Derived_Type_Def)
-            and any(
-                isinstance(x, (Explicit_Shape_Spec, Component_Initialization, Kind_Selector, Char_Selector))
-                for x in lin)):
+    if (isinstance(scope, Derived_Type_Def) and any(
+            isinstance(x, (Explicit_Shape_Spec, Component_Initialization, Kind_Selector, Char_Selector)) for x in lin)):
         # We're using `node` to describe a shape, an initialization etc. inside a type def. So, `node`` must have been
         # defined earlier.
         return search_scope_spec(scope)
@@ -251,6 +244,7 @@ def find_scope_spec(node: Base) -> SPEC:
 
 
 def ident_spec(node: NAMED_STMTS_OF_INTEREST_TYPES) -> SPEC:
+
     def _ident_spec(_node: NAMED_STMTS_OF_INTEREST_TYPES) -> SPEC:
         """
         Constuct a list of identifier strings that can uniquely determine it through the entire AST.
@@ -258,7 +252,7 @@ def ident_spec(node: NAMED_STMTS_OF_INTEREST_TYPES) -> SPEC:
         if isinstance(_node, Interface_Stmt):
             ident_base = (INTERFACE_NAMESPACE, find_name_of_stmt(_node))
         else:
-            ident_base = (find_name_of_stmt(_node),)
+            ident_base = (find_name_of_stmt(_node), )
         # Find the next named ancestor.
         anc = find_named_ancestor(_node.parent)
         if not anc:
@@ -303,7 +297,7 @@ def search_local_alias_spec(node: Name) -> Optional[SPEC]:
         kw, _ = par.children
         if kw.string == node.string:
             return None
-    return scope_spec + (name,)
+    return scope_spec + (name, )
 
 
 def search_real_local_alias_spec_from_spec(loc: SPEC, alias_map: SPEC_TABLE) -> Optional[SPEC]:
@@ -312,7 +306,7 @@ def search_real_local_alias_spec_from_spec(loc: SPEC, alias_map: SPEC_TABLE) -> 
         iface_loc = loc[:-2] + (INTERFACE_NAMESPACE, loc[-1])
         if iface_loc in alias_map:
             return iface_loc
-        loc = loc[:-2] + (loc[-1],)
+        loc = loc[:-2] + (loc[-1], )
     return loc if loc in alias_map else None
 
 
@@ -351,10 +345,10 @@ def alias_specs(ast: Program):
 
     for stmt in walk(ast, Use_Stmt):
         mod_name = singular(children_of_type(stmt, Name)).string
-        mod_spec = (mod_name,)
+        mod_spec = (mod_name, )
 
         scope_spec = find_scope_spec(stmt)
-        use_spec = scope_spec + (mod_name,)
+        use_spec = scope_spec + (mod_name, )
 
         assert mod_spec in ident_map, mod_spec
         # The module's name cannot be used as an identifier in this scope anymore, so just point to the module.
@@ -385,7 +379,7 @@ def alias_specs(ast: Program):
                 elif isinstance(c, Generic_Spec):
                     src, tgt = c, c
                 src, tgt = f"{src}", f"{tgt}"
-                src_spec, tgt_spec = scope_spec + (src,), mod_spec + (tgt,)
+                src_spec, tgt_spec = scope_spec + (src, ), mod_spec + (tgt, )
                 if mod_spec + (INTERFACE_NAMESPACE, tgt) in alias_map:
                     # If there is an interface and a subroutine of the same name, the interface is selected.
                     tgt_spec = mod_spec + (INTERFACE_NAMESPACE, tgt)
@@ -416,7 +410,7 @@ def alias_specs(ast: Program):
 
 
 def search_real_ident_spec(ident: str, in_spec: SPEC, alias_map: SPEC_TABLE) -> Optional[SPEC]:
-    k = in_spec + (ident,)
+    k = in_spec + (ident, )
     if k in alias_map:
         return ident_spec(alias_map[k])
     k = in_spec + (INTERFACE_NAMESPACE, ident)
@@ -435,8 +429,7 @@ def find_real_ident_spec(ident: str, in_spec: SPEC, alias_map: SPEC_TABLE) -> SP
 
 def _find_type_decl_node(node: Entity_Decl):
     anc = node.parent
-    while anc and not atmost_one(
-            children_of_type(anc, (Intrinsic_Type_Spec, Declaration_Type_Spec))):
+    while anc and not atmost_one(children_of_type(anc, (Intrinsic_Type_Spec, Declaration_Type_Spec))):
         anc = anc.parent
     return anc
 
@@ -445,7 +438,7 @@ def _eval_selected_int_kind(p: np.int32) -> int:
     # Copied logic from `replace_int_kind()` elsewhere in the project.
     # avoid int overflow in numpy 2.0
     p = int(p)
-    kind = int(math.ceil((math.log2(10 ** p) + 1) / 8))
+    kind = int(math.ceil((math.log2(10**p) + 1) / 8))
     assert kind <= 8
     if kind <= 2:
         return kind
@@ -594,7 +587,7 @@ def _eval_int_literal(x: Union[Signed_Int_Literal_Constant, Int_Literal_Constant
     elif kind in {'1', '2', '4', '8'}:
         kind = np.int32(kind)
     else:
-        kind_spec = search_real_local_alias_spec_from_spec(find_scope_spec(x) + (kind,), alias_map)
+        kind_spec = search_real_local_alias_spec_from_spec(find_scope_spec(x) + (kind, ), alias_map)
         if kind_spec:
             kind_decl = alias_map[kind_spec]
             kind_node, _, _, _ = kind_decl.children
@@ -623,7 +616,7 @@ def _eval_real_literal(x: Union[Signed_Real_Literal_Constant, Real_Literal_Const
         else:
             kind = 4
     else:
-        kind_spec = search_real_local_alias_spec_from_spec(find_scope_spec(x) + (kind,), alias_map)
+        kind_spec = search_real_local_alias_spec_from_spec(find_scope_spec(x) + (kind, ), alias_map)
         if kind_spec:
             kind_decl = alias_map[kind_spec]
             kind_node, _, _, _ = kind_decl.children
@@ -660,19 +653,19 @@ def _const_eval_basic_type(expr: Base, alias_map: SPEC_TABLE) -> Optional[NUMPY_
             return None
         val = _const_eval_basic_type(iexpr, alias_map)
         assert val is not None
-        if typ.spec == ('INTEGER1',):
+        if typ.spec == ('INTEGER1', ):
             val = np.int8(val)
-        elif typ.spec == ('INTEGER2',):
+        elif typ.spec == ('INTEGER2', ):
             val = np.int16(val)
-        elif typ.spec == ('INTEGER4',) or typ.spec == ('INTEGER',):
+        elif typ.spec == ('INTEGER4', ) or typ.spec == ('INTEGER', ):
             val = np.int32(val)
-        elif typ.spec == ('INTEGER8',):
+        elif typ.spec == ('INTEGER8', ):
             val = np.int64(val)
-        elif typ.spec == ('REAL4',) or typ.spec == ('REAL',):
+        elif typ.spec == ('REAL4', ) or typ.spec == ('REAL', ):
             val = np.float32(val)
-        elif typ.spec == ('REAL8',):
+        elif typ.spec == ('REAL8', ):
             val = np.float64(val)
-        elif typ.spec == ('LOGICAL',):
+        elif typ.spec == ('LOGICAL', ):
             val = np.bool_(val)
         else:
             raise ValueError(f"{expr}/{typ.spec} is not a basic type")
@@ -787,7 +780,7 @@ def find_type_of_entity(node: Union[Entity_Decl, Component_Decl], alias_map: SPE
         # TODO: How should we handle character lengths? Just treat it as an extra dimension?
         if isinstance(kind, Length_Selector):
             assert typ_name == 'CHARACTER'
-            extra_dim = (':',)
+            extra_dim = (':', )
         elif isinstance(kind, Kind_Selector):
             assert typ_name in {'INTEGER', 'REAL', 'LOGICAL'}
             _, kind, _ = kind.children
@@ -798,7 +791,7 @@ def find_type_of_entity(node: Union[Entity_Decl, Component_Decl], alias_map: SPE
                 typ_name = f"{typ_name}4"
             elif typ_name in {'DOUBLE PRECISION'}:
                 typ_name = f"REAL8"
-        spec = (typ_name,)
+        spec = (typ_name, )
     elif isinstance(typ, Declaration_Type_Spec):
         _, typ_name = typ.children
         if isinstance(typ_name, Name):
@@ -954,11 +947,11 @@ def generic_specs(ast: Program) -> Dict[SPEC, Tuple[SPEC, ...]]:
             plist = []
 
         scope_spec = find_scope_spec(gb)
-        genc_spec = scope_spec + (bname.string,)
+        genc_spec = scope_spec + (bname.string, )
 
         proc_specs = []
         for pname in plist:
-            pspec = scope_spec + (pname.string,)
+            pspec = scope_spec + (pname.string, )
             proc_specs.append(pspec)
 
         # TODO: Is this assumption true?
@@ -1010,10 +1003,10 @@ def interface_specs(ast: Program, alias_map: SPEC_TABLE) -> Dict[SPEC, Tuple[SPE
             cscope = scope_spec
             fn_spec = find_real_ident_spec(fn_name, cscope, alias_map)
             # If we are resolving the interface back to itself, we need to search a level above.
-            fn_impl_spec = search_real_local_alias_spec_from_spec(scope_spec + (fn_name,), alias_map)
+            fn_impl_spec = search_real_local_alias_spec_from_spec(scope_spec + (fn_name, ), alias_map)
             # We may not have an implementation in the AST itself (e.g., C-binding declares the implementation outside).
             if fn_impl_spec:
-                iface_map[ifspec] = (fn_impl_spec,)
+                iface_map[ifspec] = (fn_impl_spec, )
             else:
                 iface_map[ifspec] = tuple()
 
@@ -1166,7 +1159,7 @@ def correct_for_function_calls(ast: Program):
         if not Intrinsic_Name.match(name):
             # There is no way this is an intrinsic call.
             continue
-        fref_spec = scope_spec + (name,)
+        fref_spec = scope_spec + (name, )
         if fref_spec in alias_map:
             # This is already an alias, so intrinsic object is shadowed.
             continue
@@ -1296,6 +1289,7 @@ def _compute_argument_signature(args, scope_spec: SPEC, alias_map: SPEC_TABLE) -
 
     args_sig = []
     for c in args.children:
+
         def _deduct_type(x) -> TYPE_SPEC:
             if isinstance(x, (Real_Literal_Constant, Signed_Real_Literal_Constant)):
                 return TYPE_SPEC('REAL')
@@ -1396,7 +1390,7 @@ def _compute_argument_signature(args, scope_spec: SPEC, alias_map: SPEC_TABLE) -
                 items = items.children
                 # TODO: We are assuming there is an element. What if there isn't?
                 t = _deduct_type(items[0])
-                t.shape += (':',)
+                t.shape += (':', )
                 return t
             else:
                 # TODO: Figure out the actual type.
@@ -1412,7 +1406,7 @@ def _compute_argument_signature(args, scope_spec: SPEC, alias_map: SPEC_TABLE) -
 def _compute_candidate_argument_signature(args, cand_spec: SPEC, alias_map: SPEC_TABLE) -> Tuple[TYPE_SPEC, ...]:
     cand_args_sig: List[TYPE_SPEC] = []
     for ca in args:
-        ca_decl = alias_map[cand_spec + (ca.string,)]
+        ca_decl = alias_map[cand_spec + (ca.string, )]
         ca_type = find_type_of_entity(ca_decl, alias_map)
         ca_type.keyword = ca.string
         assert ca_type, f"got: {ca} / {type(ca)}"
@@ -1464,8 +1458,10 @@ def deconstruct_interface_calls(ast: Program) -> Program:
             continue
         fref_spec = search_real_ident_spec(name.string, scope_spec, alias_map)
         if not fref_spec:
-            print(f"Could not resolve the function `{fref}` in scope `{scope_spec}`; "
-                  f"parts of AST is missing, but moving on", file=sys.stderr)
+            print(
+                f"Could not resolve the function `{fref}` in scope `{scope_spec}`; "
+                f"parts of AST is missing, but moving on",
+                file=sys.stderr)
             continue
         assert fref_spec in alias_map, f"cannot find: {fref_spec}"
         if fref_spec not in iface_map:
@@ -1549,7 +1545,7 @@ def deconstruct_interface_calls(ast: Program) -> Program:
     return ast
 
 
-MATCH_ALL = TYPE_SPEC(('*',), '')  # TODO: Hacky; `_does_type_signature_match()` will match anything with this.
+MATCH_ALL = TYPE_SPEC(('*', ), '')  # TODO: Hacky; `_does_type_signature_match()` will match anything with this.
 
 
 def _does_part_matches(g: TYPE_SPEC, c: TYPE_SPEC) -> bool:
@@ -1665,7 +1661,7 @@ def deconstruct_procedure_calls(ast: Program) -> Program:
         args_sig: Tuple[TYPE_SPEC, ...] = _compute_argument_signature(args, scope_spec, alias_map)
         all_cand_sigs: List[Tuple[SPEC, Tuple[TYPE_SPEC, ...]]] = []
 
-        bspec = dref_type.spec + (bname.string,)
+        bspec = dref_type.spec + (bname.string, )
         if bspec in genc_map and genc_map[bspec]:
             for cand in genc_map[bspec]:
                 cand_stmt = alias_map[proc_map[cand]]
@@ -1741,8 +1737,8 @@ def prune_coarsely(ast: Program, keepers: Iterable[SPEC]) -> Program:
             box = alias_map[k[:-2] if k[-2] == INTERFACE_NAMESPACE else k[:-1]].parent
             for nm in walk(box, Name):
                 if (nm.string != vname or isinstance(nm.parent, (Rename, Use_Stmt))
-                        or isinstance(nm.parent, (Function_Stmt, End_Function_Stmt, Subroutine_Stmt,
-                                                  End_Subroutine_Stmt))):
+                        or isinstance(nm.parent,
+                                      (Function_Stmt, End_Function_Stmt, Subroutine_Stmt, End_Subroutine_Stmt))):
                     continue
                 scope_spec = search_scope_spec(nm)
                 if scope_spec == k:
@@ -1944,7 +1940,7 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
             scope_spec = find_scope_spec(dr)
             # All the data-ref ancestors of `dr` must live too.
             for upto in range(1, len(rest) + 1):
-                anc: Tuple[Name, ...] = (root,) + rest[:upto]
+                anc: Tuple[Name, ...] = (root, ) + rest[:upto]
                 ancref = Data_Ref('%'.join([c.tofortran() for c in anc]))
                 ancspec = find_dataref_component_spec(ancref, scope_spec, alias_map)
                 survivors.add(ancspec)
@@ -1996,7 +1992,7 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
                 for eqv in eqvs:
                     eqa, eqbs = eqv.children
                     eqbs = eqbs.children if eqbs else tuple()
-                    eqz = (eqa,) + eqbs
+                    eqz = (eqa, ) + eqbs
                     assert all(isinstance(z, Part_Ref) for z in eqz)
                     assert len(eqz) == 2
                     eqz = tuple(z for z in eqz if search_real_local_alias_spec(z.children[0], alias_map) != ns)
@@ -2042,9 +2038,11 @@ def make_practically_constant_global_vars_constants(ast: Program) -> Program:
     alias_map = alias_specs(ast)
 
     # Start with everything that _could_ be a candidate.
-    never_assigned: Set[SPEC] = {k for k, v in ident_map.items()
-                                 if isinstance(v, Entity_Decl) and not find_type_of_entity(v, alias_map).const
-                                 and search_scope_spec(v) and isinstance(alias_map[search_scope_spec(v)], Module_Stmt)}
+    never_assigned: Set[SPEC] = {
+        k
+        for k, v in ident_map.items() if isinstance(v, Entity_Decl) and not find_type_of_entity(v, alias_map).const
+        and search_scope_spec(v) and isinstance(alias_map[search_scope_spec(v)], Module_Stmt)
+    }
 
     for asgn in walk(ast, Assignment_Stmt):
         lv, _, rv = asgn.children
@@ -2203,8 +2201,8 @@ def make_practically_constant_arguments_constants(ast: Program, keepers: List[SP
             replace_node(pcall, numpy_type_to_literal(np.bool_(presence)))
 
     for aspec, vals in fnargs_possible_values.items():
-        if (aspec in fnargs_undecidables or len(vals) > 1 or
-                (aspec in fnargs_optional_presence and False in fnargs_optional_presence[aspec])):
+        if (aspec in fnargs_undecidables or len(vals) > 1
+                or (aspec in fnargs_optional_presence and False in fnargs_optional_presence[aspec])):
             # There are multiple possiblities for the argument: either some undecidables or multiple literals.
             continue
         fixed_val, = vals
@@ -2228,12 +2226,10 @@ def make_practically_constant_arguments_constants(ast: Program, keepers: List[SP
     return ast
 
 
-LITERAL_TYPES = Union[
-    Real_Literal_Constant, Signed_Real_Literal_Constant, Int_Literal_Constant, Signed_Int_Literal_Constant,
-    Logical_Literal_Constant]
-LITERAL_CLASSES = (
-    Real_Literal_Constant, Signed_Real_Literal_Constant, Int_Literal_Constant, Signed_Int_Literal_Constant,
-    Logical_Literal_Constant)
+LITERAL_TYPES = Union[Real_Literal_Constant, Signed_Real_Literal_Constant, Int_Literal_Constant,
+                      Signed_Int_Literal_Constant, Logical_Literal_Constant]
+LITERAL_CLASSES = (Real_Literal_Constant, Signed_Real_Literal_Constant, Int_Literal_Constant,
+                   Signed_Int_Literal_Constant, Logical_Literal_Constant)
 
 
 def _track_local_consts(node: Union[Base, List[Base]], alias_map: SPEC_TABLE,
@@ -2489,9 +2485,10 @@ def _track_local_consts(node: Union[Base, List[Base]], alias_map: SPEC_TABLE,
                 pointers = {k: v for k, v in plus.items() if not isinstance(v, LITERAL_CLASSES)}
                 tp, tm = _track_local_consts(op, alias_map, pointers, set())
                 _integrate_subresults(tp, tm)
-            tp, tm = _track_local_consts(op, alias_map,
-                                         {k: v for k, v in plus.items() if k not in net_tpm},
-                                         net_tpm | minus)
+            tp, tm = _track_local_consts(op, alias_map, {
+                k: v
+                for k, v in plus.items() if k not in net_tpm
+            }, net_tpm | minus)
             _integrate_subresults(tp, tm)
 
         _, loop_ctl = do_stmt.children
@@ -2503,9 +2500,10 @@ def _track_local_consts(node: Union[Base, List[Base]], alias_map: SPEC_TABLE,
             assert loop_var_spec
             loop_var_spec = ident_spec(alias_map[loop_var_spec])
             _integrate_subresults({}, {loop_var_spec})
-    elif isinstance(node, (
-            Name, *LITERAL_CLASSES, Char_Literal_Constant, Data_Ref, Part_Ref, Return_Stmt, Write_Stmt, Error_Stop_Stmt,
-            Exit_Stmt, Actual_Arg_Spec, Write_Stmt, Close_Stmt, Goto_Stmt, Continue_Stmt, Format_Stmt, Cycle_Stmt)):
+    elif isinstance(
+            node,
+        (Name, *LITERAL_CLASSES, Char_Literal_Constant, Data_Ref, Part_Ref, Return_Stmt, Write_Stmt, Error_Stop_Stmt,
+         Exit_Stmt, Actual_Arg_Spec, Write_Stmt, Close_Stmt, Goto_Stmt, Continue_Stmt, Format_Stmt, Cycle_Stmt)):
         # These don't modify variables or give any new information.
         pass
     elif isinstance(node, Allocate_Stmt):
@@ -2672,7 +2670,7 @@ def assign_globally_unique_subprogram_names(ast: Program, keepers: Set[SPEC]) ->
     # PHASE 1.a: Remove all the places where any to-be-renamed function is imported.
     for use in walk(ast, Use_Stmt):
         mod_name = singular(children_of_type(use, Name)).string
-        mod_spec = (mod_name,)
+        mod_spec = (mod_name, )
         olist = atmost_one(children_of_type(use, Only_List))
         if not olist:
             continue
@@ -2706,7 +2704,7 @@ def assign_globally_unique_subprogram_names(ast: Program, keepers: Set[SPEC]) ->
         assert fspec in ident_map and fspec in uident_map
         assert isinstance(ident_map[fspec], (Function_Stmt, Subroutine_Stmt))
         uname = uident_map[fspec]
-        ufspec = fspec[:-1] + (uname,)
+        ufspec = fspec[:-1] + (uname, )
         name.string = uname
 
         # Find the nearest execution and its correpsonding specification parts.
@@ -2820,7 +2818,7 @@ def assign_globally_unique_variable_names(ast: Program, keepers: Set[Union[str, 
         args = atmost_one(children_of_type(fn, Dummy_Arg_List))
         args = args.children if args else tuple()
         for a in args:
-            entry_point_args.add(k + (a.string,))
+            entry_point_args.add(k + (a.string, ))
 
     # Make new unique names for the identifiers.
     uident_map: Dict[SPEC, str] = {}
@@ -2846,7 +2844,7 @@ def assign_globally_unique_variable_names(ast: Program, keepers: Set[Union[str, 
     # PHASE 1.a: Remove all the places where any to-be-renamed variable is imported.
     for use in walk(ast, Use_Stmt):
         mod_name = singular(children_of_type(use, Name)).string
-        mod_spec = (mod_name,)
+        mod_spec = (mod_name, )
         olist = atmost_one(children_of_type(use, Only_List))
         if not olist:
             continue
@@ -2920,7 +2918,7 @@ def assign_globally_unique_variable_names(ast: Program, keepers: Set[Union[str, 
             continue
         assert len(vspec) == 2
         mod, _ = vspec
-        if not isinstance(alias_map[(mod,)], Module_Stmt):
+        if not isinstance(alias_map[(mod, )], Module_Stmt):
             # We can only import modules.
             continue
 
@@ -2954,7 +2952,7 @@ def assign_globally_unique_variable_names(ast: Program, keepers: Set[Union[str, 
             continue
         assert len(kind_spec) == 2
         mod, _ = kind_spec
-        if not isinstance(alias_map[(mod,)], Module_Stmt):
+        if not isinstance(alias_map[(mod, )], Module_Stmt):
             # We can only import modules.
             continue
 
@@ -3102,7 +3100,7 @@ def _prune_branches_in_ifblock(ib: If_Construct, alias_map: SPEC_TABLE):
     isinstance(cut_cond, Else_If_Stmt)
     cut_cond, _ = cut_cond.children
     remove_children(ib, ib.children[1:(cut + 1)])
-    set_children(ifthen, (cut_cond,))
+    set_children(ifthen, (cut_cond, ))
     _prune_branches_in_ifblock(ib, alias_map)
 
 
@@ -3155,9 +3153,8 @@ def numpy_type_to_literal(val: NUMPY_TYPES) -> Union[LITERAL_TYPES]:
 
 
 def const_eval_nodes(ast: Program) -> Program:
-    EXPRESSION_CLASSES = (
-        LITERAL_CLASSES, Expr, Equiv_Operand, Add_Operand, Or_Operand, Mult_Operand, Level_2_Expr, Level_3_Expr,
-        Level_4_Expr, Level_5_Expr, Intrinsic_Function_Reference)
+    EXPRESSION_CLASSES = (LITERAL_CLASSES, Expr, Equiv_Operand, Add_Operand, Or_Operand, Mult_Operand, Level_2_Expr,
+                          Level_3_Expr, Level_4_Expr, Level_5_Expr, Intrinsic_Function_Reference)
 
     alias_map = alias_specs(ast)
 
@@ -3198,9 +3195,8 @@ def const_eval_nodes(ast: Program) -> Program:
         _, kind, _ = knode.children
         _const_eval_node(kind)
 
-    NON_EXPRESSION_CLASSES = (
-        Explicit_Shape_Spec, Loop_Control, Call_Stmt, Function_Reference, Initialization, Component_Initialization,
-        Section_Subscript_List, Write_Stmt, Allocate_Stmt)
+    NON_EXPRESSION_CLASSES = (Explicit_Shape_Spec, Loop_Control, Call_Stmt, Function_Reference, Initialization,
+                              Component_Initialization, Section_Subscript_List, Write_Stmt, Allocate_Stmt)
     for node in reversed(walk(ast, NON_EXPRESSION_CLASSES)):
         for nm in reversed(walk(node, Name)):
             _const_eval_node(nm)
@@ -3229,24 +3225,23 @@ ConstInjection = Union[ConstTypeInjection, ConstInstanceInjection]
 
 def _val_2_lit(val: str, type_spec: SPEC) -> LITERAL_TYPES:
     val = str(val).lower()
-    if type_spec == ('INTEGER1',):
+    if type_spec == ('INTEGER1', ):
         val = np.int8(val)
-    elif type_spec == ('INTEGER2',):
+    elif type_spec == ('INTEGER2', ):
         val = np.int16(val)
-    elif type_spec == ('INTEGER4',):
+    elif type_spec == ('INTEGER4', ):
         val = np.int32(val)
-    elif type_spec == ('INTEGER8',):
+    elif type_spec == ('INTEGER8', ):
         val = np.int64(val)
-    elif type_spec == ('REAL4',):
+    elif type_spec == ('REAL4', ):
         val = np.float32(val)
-    elif type_spec == ('REAL8',):
+    elif type_spec == ('REAL8', ):
         val = np.float64(val)
-    elif type_spec == ('LOGICAL',):
+    elif type_spec == ('LOGICAL', ):
         assert val in {'true', 'false', '0', '1'}
         val = np.bool_(val in {'true', '1'})
     else:
-        raise NotImplementedError(
-            f"{val} cannot be parsed as the target literal type: {type_spec}")
+        raise NotImplementedError(f"{val} cannot be parsed as the target literal type: {type_spec}")
     return numpy_type_to_literal(val)
 
 
@@ -3279,9 +3274,7 @@ def _item_comp_matches_actual_comp(item_comp: str, actual_comp: str) -> bool:
     return False
 
 
-def _type_injection_applies_to_instance(item: ConstTypeInjection,
-                                        defn_spec: SPEC,
-                                        comp_spec: SPEC,
+def _type_injection_applies_to_instance(item: ConstTypeInjection, defn_spec: SPEC, comp_spec: SPEC,
                                         alias_map: SPEC_TABLE) -> bool:
     # ASSUMPTION: `item.scope_spec` must have been taken care of already.
 
@@ -3347,8 +3340,8 @@ def _instance_injection_applies_to_instance(item: ConstInstanceInjection, defn_s
     return _item_comp_matches_actual_comp(item_comp, comp)
 
 
-def _find_items_applicable_to_instance(items: Iterable[ConstInjection],
-                                       inst_ref: Union[Name, Part_Ref, Data_Ref, Entity_Decl],
+def _find_items_applicable_to_instance(items: Iterable[ConstInjection], inst_ref: Union[Name, Part_Ref, Data_Ref,
+                                                                                        Entity_Decl],
                                        alias_map: SPEC_TABLE) -> Generator[ConstInjection, None, None]:
     # Find out if `inst_ref` can match any item at all.
     if isinstance(inst_ref, Entity_Decl):
@@ -3413,12 +3406,11 @@ def _find_items_applicable_to_component(items: Iterable[ConstInjection], comp_re
             yield it
 
 
-def inject_const_evals(ast: Program,
-                       inject_consts: Optional[List[ConstInjection]] = None) -> Program:
+def inject_const_evals(ast: Program, inject_consts: Optional[List[ConstInjection]] = None) -> Program:
     inject_consts = inject_consts or []
     alias_map = alias_specs(ast)
 
-    TOPLEVEL_SPEC = ('*',)
+    TOPLEVEL_SPEC = ('*', )
 
     items_by_scopes = {}
     for item in inject_consts:
@@ -3452,23 +3444,27 @@ def inject_const_evals(ast: Program,
         else:
             scope = alias_map[scope_spec].parent
 
-        drefs: List[Data_Ref] = [dr for dr in walk(scope, Data_Ref)
-                                 if find_type_dataref(dr, find_scope_spec(dr), alias_map).spec != ('CHARACTER',)]
+        drefs: List[Data_Ref] = [
+            dr for dr in walk(scope, Data_Ref)
+            if find_type_dataref(dr, find_scope_spec(dr), alias_map).spec != ('CHARACTER', )
+        ]
         names: List[Name] = walk(scope, Name)
-        allocateds: List[Intrinsic_Function_Reference] = [c for c in walk(scope, Intrinsic_Function_Reference)
-                                                          if c.children[0].string == 'ALLOCATED']
+        allocateds: List[Intrinsic_Function_Reference] = [
+            c for c in walk(scope, Intrinsic_Function_Reference) if c.children[0].string == 'ALLOCATED'
+        ]
         allocatables: List[Union[Entity_Decl, Component_Decl]] = [
-            c for c in walk(scope, (Entity_Decl, Component_Decl)) if find_type_of_entity(c, alias_map).alloc]
+            c for c in walk(scope, (Entity_Decl, Component_Decl)) if find_type_of_entity(c, alias_map).alloc
+        ]
 
         # Ignore the special variables related to array dimensions, since we don't handle them here.
-        alloc_items = list(filter(lambda it:
-                                  it.component_spec[-1].endswith('_a') if it.component_spec
-                                  else it.root_spec[-1].endswith('_a'),
-                                  items))
-        size_items = list(filter(lambda it:
-                                 it.component_spec[-1].endswith('_s') if it.component_spec
-                                 else it.root_spec[-1].endswith('_s'),
-                                 items))
+        alloc_items = list(
+            filter(
+                lambda it: it.component_spec[-1].endswith('_a')
+                if it.component_spec else it.root_spec[-1].endswith('_a'), items))
+        size_items = list(
+            filter(
+                lambda it: it.component_spec[-1].endswith('_s')
+                if it.component_spec else it.root_spec[-1].endswith('_s'), items))
         items = [it for it in items if it not in alloc_items and it not in size_items]
 
         for al in allocateds:
@@ -3478,7 +3474,7 @@ def inject_const_evals(ast: Program,
             item = atmost_one(_find_items_applicable_to_instance(alloc_items, arr, alias_map))
             if not item:
                 continue
-            replace_node(al, _val_2_lit(item.value, ('LOGICAL',)))
+            replace_node(al, _val_2_lit(item.value, ('LOGICAL', )))
 
         for al in allocatables:
             name = find_name_of_node(al)
@@ -3577,8 +3573,10 @@ def inject_const_evals(ast: Program,
             if isinstance(nm.parent, Assignment_Stmt) and nm is nm.parent.children[0]:
                 # We're violating the rule of valid injection already: If we are assigning anything to this variable, we
                 # can just ignore it, since it has to be treated as a constant anyway.
-                print(f"`{nm} = {item.value}` is supposed to be a constant injection, yet found `{nm.parent}`; "
-                      f"dropping the assignment and moving on...", file=sys.stderr)
+                print(
+                    f"`{nm} = {item.value}` is supposed to be a constant injection, yet found `{nm.parent}`; "
+                    f"dropping the assignment and moving on...",
+                    file=sys.stderr)
                 remove_self(nm.parent)
                 continue
             replace_node(nm, _val_2_lit(item.value, tspec.spec))
@@ -3606,7 +3604,7 @@ def consolidate_global_data_into_arg(ast: Program, always_add_global_data_arg: b
     """
     alias_map = alias_specs(ast)
     GLOBAL_DATA_MOD_NAME = 'global_mod'
-    if (GLOBAL_DATA_MOD_NAME,) in alias_map:
+    if (GLOBAL_DATA_MOD_NAME, ) in alias_map:
         # We already have the global initialisers.
         return ast
 
@@ -3656,8 +3654,8 @@ def consolidate_global_data_into_arg(ast: Program, always_add_global_data_arg: b
             # We cannot possibly have a module level variable declaration.
             continue
         mod, var = edecl_spec
-        assert (mod,) in alias_map
-        if not isinstance(alias_map[(mod,)], Module_Stmt):
+        assert (mod, ) in alias_map
+        if not isinstance(alias_map[(mod, )], Module_Stmt):
             continue
         if isinstance(nm.parent, Part_Ref):
             _, subsc = nm.parent.children
@@ -3680,15 +3678,14 @@ def consolidate_global_data_into_arg(ast: Program, always_add_global_data_arg: b
             if spart:
                 prepend_children(spart, Use_Stmt(use_stmt))
             else:
-                set_children(
-                    fn, fn.children[:1] + [Specification_Part(get_reader(use_stmt))] + fn.children[1:])
+                set_children(fn, fn.children[:1] + [Specification_Part(get_reader(use_stmt))] + fn.children[1:])
             spart = atmost_one(children_of_type(fn, Specification_Part))
             decl_idx = [idx for idx, v in enumerate(spart.children) if isinstance(v, Type_Declaration_Stmt)]
             decl_idx = decl_idx[0] if decl_idx else len(spart.children)
             set_children(
-                spart, spart.children[:decl_idx]
-                       + [Type_Declaration_Stmt(f"type({GLOBAL_DATA_TYPE_NAME}) :: {GLOBAL_DATA_OBJ_NAME}")]
-                       + spart.children[decl_idx:])
+                spart, spart.children[:decl_idx] +
+                [Type_Declaration_Stmt(f"type({GLOBAL_DATA_TYPE_NAME}) :: {GLOBAL_DATA_OBJ_NAME}")] +
+                spart.children[decl_idx:])
         for fcall in walk(ast, (Function_Reference, Call_Stmt)):
             fn, args = fcall.children
             fnspec = search_real_local_alias_spec(fn, alias_map)
@@ -3702,7 +3699,8 @@ def consolidate_global_data_into_arg(ast: Program, always_add_global_data_arg: b
                 set_children(fcall, (fn, Actual_Arg_Spec_List(GLOBAL_DATA_OBJ_NAME)))
         # NOTE: We do not remove the variables themselves, and let them be pruned later on.
 
-    global_mod = Module(get_reader(f"""
+    global_mod = Module(
+        get_reader(f"""
 module {GLOBAL_DATA_MOD_NAME}
   {all_derived_types}
 
@@ -3723,7 +3721,7 @@ def create_global_initializers(ast: Program, entry_points: List[SPEC]) -> Progra
 
     ident_map = identifier_specs(ast)
     GLOBAL_INIT_FN_NAME = 'global_init_fn'
-    if (GLOBAL_INIT_FN_NAME,) in ident_map:
+    if (GLOBAL_INIT_FN_NAME, ) in ident_map:
         # We already have the global initialisers.
         return ast
     alias_map = alias_specs(ast)
@@ -3808,8 +3806,8 @@ end subroutine {fn_name}
             # Not a type that's globally accessible anyway.
             continue
         mod, _ = t
-        assert (mod,) in alias_map
-        if not isinstance(alias_map[(mod,)], Module_Stmt):
+        assert (mod, ) in alias_map
+        if not isinstance(alias_map[(mod, )], Module_Stmt):
             # Not a type that's globally accessible anyway.
             continue
         init_fn_name, comps = v
@@ -3817,9 +3815,9 @@ end subroutine {fn_name}
 
     global_inited_vars: List[SPEC] = [
         k for k, v in ident_map.items()
-        if isinstance(v, Entity_Decl) and not find_type_of_entity(v, alias_map).const
-           and (find_type_of_entity(v, alias_map).spec in type_defs or atmost_one(children_of_type(v, Initialization)))
-           and search_scope_spec(v) and isinstance(alias_map[search_scope_spec(v)], Module_Stmt)
+        if isinstance(v, Entity_Decl) and not find_type_of_entity(v, alias_map).const and (
+            find_type_of_entity(v, alias_map).spec in type_defs or atmost_one(children_of_type(v, Initialization)))
+        and search_scope_spec(v) and isinstance(alias_map[search_scope_spec(v)], Module_Stmt)
     ]
     if global_inited_vars:
         _make_init_fn(GLOBAL_INIT_FN_NAME, global_inited_vars, None)
@@ -3900,7 +3898,7 @@ def convert_data_statements_into_assignments(ast: Program) -> Program:
 
 def deconstruct_statement_functions(ast: Program) -> Program:
     alias_map = alias_specs(ast)
-    all_stmt_fns: Set[SPEC] = {find_scope_spec(sf) + (sf.children[0].string,) for sf in walk(ast, Stmt_Function_Stmt)}
+    all_stmt_fns: Set[SPEC] = {find_scope_spec(sf) + (sf.children[0].string, ) for sf in walk(ast, Stmt_Function_Stmt)}
 
     for sf in walk(ast, Stmt_Function_Stmt):
         scope_spec = find_scope_spec(sf)
@@ -3909,7 +3907,7 @@ def deconstruct_statement_functions(ast: Program) -> Program:
             args = args.children
 
         def _get_typ(var: Name):
-            _spec = scope_spec + (var.string,)
+            _spec = scope_spec + (var.string, )
             _decl = alias_map[_spec]
             assert isinstance(_decl, Entity_Decl)
             _tdecl = _decl.parent.parent
@@ -3925,7 +3923,7 @@ def deconstruct_statement_functions(ast: Program) -> Program:
         for nm in walk(expr, Name):
             if nm.string in dummy_args:
                 continue
-            spec = scope_spec + (nm.string,)
+            spec = scope_spec + (nm.string, )
             if spec not in alias_map:
                 continue
             decl = alias_map[spec]
@@ -3956,7 +3954,7 @@ end function {fn}
         for fcall in walk(box, (Call_Stmt, Function_Reference, Part_Ref, Structure_Constructor)):
             tfn, targs = fcall.children
             tfnloc = search_real_local_alias_spec(tfn, alias_map)
-            if tfnloc != scope_spec + (fn.string,):
+            if tfnloc != scope_spec + (fn.string, ):
                 continue
             nufcall = Function_Reference(fcall.tofortran())
             tfn, targs = nufcall.children
@@ -3978,7 +3976,7 @@ end function {fn}
             endbox = box.children[-1]
             replace_node(endbox, (intsp, endbox))
 
-        ret_decl = alias_map[scope_spec + (fn.string,)]
+        ret_decl = alias_map[scope_spec + (fn.string, )]
         ret_declist = ret_decl.parent
         remove_children(ret_declist, ret_decl)
         if not ret_declist.children:
@@ -4041,7 +4039,7 @@ def deconstuct_goto_statements(ast: Program) -> Program:
         append_children(spec, Type_Declaration_Stmt(f"LOGICAL :: {goto_var}"))
         replace_node(goto, Assignment_Stmt(f"{goto_var} = .true."))
 
-        for else_op in ifc_par.children[ifc_pos + 1: target_pos]:
+        for else_op in ifc_par.children[ifc_pos + 1:target_pos]:
             if isinstance(else_op, Continue_Stmt):
                 # Continue statements are no-op, but they may have label attached, so we leave them be.
                 continue

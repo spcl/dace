@@ -5,11 +5,13 @@ import pytest
 
 from dace.frontend.fortran import fortran_parser
 from dace.frontend.fortran.fortran_parser import create_singular_sdfg_from_string
-from tests.fortran.fortran_test_helper import  SourceCodeBuilder
+from tests.fortran.fortran_test_helper import SourceCodeBuilder
+
 
 def test_fortran_frontend_optional():
 
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = SourceCodeBuilder().add_file(
+        """
 
     MODULE intrinsic_optional_test
         INTERFACE
@@ -52,9 +54,11 @@ def test_fortran_frontend_optional():
     assert res[0] == 5
     assert res2[0] == 0
 
+
 def test_fortran_frontend_optional_complex():
 
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = SourceCodeBuilder().add_file(
+        """
 
     MODULE intrinsic_optional_test
         INTERFACE

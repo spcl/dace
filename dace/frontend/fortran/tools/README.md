@@ -309,16 +309,16 @@ index ab4e6fdc..4f76f6c9 100644
 @@ -204,6 +204,8 @@ contains
    subroutine radiation(ncol, nlev, istartcol, iendcol, config, &
         &  single_level, thermodynamics, gas, cloud, aerosol, flux)
- 
+
 +    use serde
 +    use type_injection
      use parkind1,                 only : jprb
      use ecradhook,                  only : lhook, dr_hook, jphook
- 
+
 @@ -313,6 +315,17 @@ contains
- 
+
      if (lhook) call dr_hook('radiation_interface:radiation',0,hook_handle)
- 
+
 +    call tic()
 +    if (generation == 1) then
 +      call type_inject(at("config.ti", asis=.true.), config)

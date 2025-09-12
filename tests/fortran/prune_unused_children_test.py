@@ -759,6 +759,7 @@ END PROGRAM main
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
 
+
 if __name__ == "__main__":
     test_minimal_no_pruning()
     test_toplevel_subroutine_no_pruning()

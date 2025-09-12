@@ -7,7 +7,8 @@ from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 
 def test_fortran_frontend_parent():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = SourceCodeBuilder().add_file(
+        """
 program main
   implicit none
   double precision d(4)
@@ -46,7 +47,8 @@ end subroutine fun
 
 
 def test_fortran_frontend_module():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = SourceCodeBuilder().add_file(
+        """
 module lib
   implicit none
   ! good enough approximation

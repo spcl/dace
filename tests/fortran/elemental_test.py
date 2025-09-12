@@ -3,11 +3,13 @@
 import numpy as np
 from dace.frontend.fortran import ast_internal_classes
 
-from tests.fortran.fortran_test_helper import  SourceCodeBuilder
+from tests.fortran.fortran_test_helper import SourceCodeBuilder
 from dace.frontend.fortran.fortran_parser import create_singular_sdfg_from_string
 
+
 def test_fortran_frontend_elemental_ecrad():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = SourceCodeBuilder().add_file(
+        """
 
 MODULE test_interface
     IMPLICIT NONE
@@ -61,6 +63,7 @@ END SUBROUTINE
     assert np.allclose(arg1, res1)
     assert np.allclose(arg2, res2)
     assert np.allclose(arg3, res3)
+
 
 if __name__ == "__main__":
     test_fortran_frontend_elemental_ecrad()

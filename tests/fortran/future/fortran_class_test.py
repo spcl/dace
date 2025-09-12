@@ -65,4 +65,3 @@ end subroutine main
 
 if __name__ == "__main__":
     test_fortran_frontend_class()
-

@@ -73,7 +73,7 @@ end subroutine main
     lu = np.full([iend, m, m], 0, order="F", dtype=np.float64)
     a = np.full([iend, m, m], 42, order="F", dtype=np.float64)
 
-    sdfg(a=a, lu=lu, sym_iend=iend, m=m,iend=iend, sym_m=m)
+    sdfg(a=a, lu=lu, sym_iend=iend, m=m, iend=iend, sym_m=m)
     assert np.allclose(lu, 42)
 
 
@@ -158,7 +158,7 @@ subroutine inner_loops(INP, OUT)
   real INP(10)
   real OUT(10)
   integer J
-                                                
+
 
   do J = 1, 10
     OUT(J) = INP(J) + 1

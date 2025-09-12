@@ -6,7 +6,6 @@ import pytest
 from dace.frontend.fortran import fortran_parser
 from dace.frontend.fortran.fortran_parser import create_singular_sdfg_from_string
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
-
 """
     Test the implementation of LBOUND/UBOUND functions.
     * Standard-sized arrays.
@@ -87,7 +86,8 @@ def test_fortran_frontend_bound_offsets():
 
 @pytest.mark.skip(reason="Needs suport for allocatable + datarefs")
 def test_fortran_frontend_bound_structure_recursive_allocatable():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = SourceCodeBuilder().add_file(
+        """
 MODULE test_types
     IMPLICIT NONE
 
@@ -135,7 +135,8 @@ MODULE test_bounds
     END SUBROUTINE
 END MODULE
 """, 'main').check_with_gfortran().get()
-    sdfg = create_singular_sdfg_from_string(sources, 'test_bounds.intrinsic_bound_test_function',
+    sdfg = create_singular_sdfg_from_string(sources,
+                                            'test_bounds.intrinsic_bound_test_function',
                                             normalize_offsets=True)
     sdfg.simplify(verbose=True)
     sdfg.compile()

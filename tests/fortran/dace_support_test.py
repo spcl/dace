@@ -7,7 +7,7 @@ from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 
 def test_fortran_frontend_simplify():
-    """ 
+    """
     Test that the DaCe simplify works with the input SDFG provided by the Fortran frontend.
     """
     sources, main = SourceCodeBuilder().add_file("""

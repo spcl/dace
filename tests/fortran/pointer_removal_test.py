@@ -30,7 +30,7 @@ def test_fortran_frontend_ptr_assignment_removal():
             TYPE(simple_type) :: s
             INTEGER,POINTER :: tmp
             tmp=>s%a
-         
+
             tmp = 13
             d(2,1) = max(1.0, tmp)
         END SUBROUTINE type_in_call_test_function
@@ -68,7 +68,7 @@ def test_fortran_frontend_ptr_assignment_removal_array():
             TYPE(simple_type) :: s
             REAL,POINTER :: tmp(:,:,:)
             tmp=>s%w
-            
+
             tmp(1,1,1) = 11.0
             d(2,1) = max(1.0, tmp(1,1,1))
         END SUBROUTINE type_in_call_test_function
@@ -106,7 +106,7 @@ def test_fortran_frontend_ptr_assignment_removal_array_assumed():
             TYPE(simple_type) :: s
             REAL,POINTER :: tmp(:,:,:)
             tmp=>s%w
-            
+
             tmp(1,1,1) = 11.0
             d(2,1) = max(1.0, tmp(1,1,1))
 
@@ -117,12 +117,12 @@ def test_fortran_frontend_ptr_assignment_removal_array_assumed():
 
         SUBROUTINE type_in_call_test_function2(tmp)
             REAL,POINTER :: tmp(:,:,:)
-            
+
             tmp(2,1,1) = 1410
         END SUBROUTINE type_in_call_test_function2
     """
-    sources={}
-    sources["type_test"]=test_string
+    sources = {}
+    sources["type_test"] = test_string
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_in_call_test")
     sdfg.simplify(verbose=True)
     a = np.full([5, 5], 42, order="F", dtype=np.float32)

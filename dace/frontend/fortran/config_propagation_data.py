@@ -8,11 +8,13 @@ from dace.frontend.fortran.ast_desugaring import ConstTypeInjection, ConstInstan
 
 def serialize(x: ConstInjection) -> str:
     assert isinstance(x, (ConstTypeInjection, ConstInstanceInjection))
-    d: Dict[str, Any] = {'type': type(x).__name__,
-                         'scope': '.'.join(x.scope_spec) if x.scope_spec else None,
-                         'root': '.'.join(x.type_spec if isinstance(x, ConstTypeInjection) else x.root_spec),
-                         'component': '.'.join(x.component_spec),
-                         'value': x.value}
+    d: Dict[str, Any] = {
+        'type': type(x).__name__,
+        'scope': '.'.join(x.scope_spec) if x.scope_spec else None,
+        'root': '.'.join(x.type_spec if isinstance(x, ConstTypeInjection) else x.root_spec),
+        'component': '.'.join(x.component_spec),
+        'value': x.value
+    }
     return json.dumps(d)
 
 
@@ -58,7 +60,10 @@ def find_all_config_injections(ti_files: Iterable[Path]) -> Generator[ConstInjec
 
 
 def ecrad_config_injection_list(root: str = 'dace/frontend/fortran/conf_files') -> List[ConstInjection]:
-    ti_files = [Path(root).joinpath(f) for f in [
-        'config.ti', 'aerosol_optics.ti', 'cloud_optics.ti', 'gas_optics_lw.ti', 'gas_optics_sw.ti', 'pdf_sampler.ti',
-        'aerosol.ti', 'cloud.ti', 'flux.ti', 'gas.ti', 'single_level.ti', 'thermodynamics.ti']]
+    ti_files = [
+        Path(root).joinpath(f) for f in [
+            'config.ti', 'aerosol_optics.ti', 'cloud_optics.ti', 'gas_optics_lw.ti', 'gas_optics_sw.ti',
+            'pdf_sampler.ti', 'aerosol.ti', 'cloud.ti', 'flux.ti', 'gas.ti', 'single_level.ti', 'thermodynamics.ti'
+        ]
+    ]
     return list(find_all_config_injections(ti_files))

@@ -164,6 +164,7 @@ def test_fortran_frontend_any_array_scalar_comparison():
     sdfg(first=first, res=res)
     assert list(res) == [1, 1, 0, 1, 1, 1, 1]
 
+
 @pytest.mark.skip("Changing the order of AST transformations prevents the intrinsics from analyzing it")
 def test_fortran_frontend_any_array_comparison_wrong_subset():
     test_string = """

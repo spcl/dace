@@ -91,6 +91,7 @@ def test_fortran_frontend_sqrt():
     for f_res, p_res in zip(res, py_res):
         assert abs(f_res - p_res) < 10**-9
 
+
 @pytest.mark.skip(reason="Needs suport for sqrt + datarefs")
 def test_fortran_frontend_sqrt_structure():
     test_string = """
@@ -157,6 +158,7 @@ def test_fortran_frontend_sqrt_structure():
     for f_res, p_res in zip(res, py_res):
         assert abs(f_res - p_res) < 10**-9
 
+
 def test_fortran_frontend_abs():
     test_string = """
                     PROGRAM intrinsic_math_test_abs
@@ -189,6 +191,7 @@ def test_fortran_frontend_abs():
 
     assert res[0] == 30
     assert res[1] == 40
+
 
 def test_fortran_frontend_exp():
     test_string = """
@@ -720,6 +723,7 @@ def test_fortran_frontend_real():
     assert np.allclose(res, [7.0, 13.11, 7.0, 13.11, 7., 13.])
     assert np.allclose(res2, [7.0, 13.11, 7.0, 13.11, 7., 13.])
 
+
 def test_fortran_frontend_real_kind():
     test_string = """
                     PROGRAM intrinsic_math_test_real
@@ -748,9 +752,7 @@ def test_fortran_frontend_real_kind():
                     END SUBROUTINE intrinsic_math_test_real_function
                     """
 
-    sdfg = fortran_parser.create_sdfg_from_string(
-        test_string, "intrinsic_math_test_real", True
-    )
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_real", True)
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
@@ -881,7 +883,10 @@ subroutine main(sincos_args, tan_args, tan2_args, res)
   end do
 end subroutine main
 """).check_with_gfortran().get()
-    sdfg = create_singular_sdfg_from_string(sources, 'main',)
+    sdfg = create_singular_sdfg_from_string(
+        sources,
+        'main',
+    )
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
@@ -911,8 +916,6 @@ end subroutine main
         -0.523598790, 0.00000000, 1.57079637, 2.09439516, 1.57079637, 0.00000000, 0.00000000, 0.785398185, 1.26248074,
         0.00000000, 0.785398185, 1.57079637
     ])
-
-
 
 
 def test_fortran_frontend_exp2():
@@ -946,7 +949,7 @@ def test_fortran_frontend_exp2():
     d[1] = 4.5
     res = np.full([2], 42, order="F", dtype=np.float64)
     sdfg(d=d, res=res)
-    py_res = np.exp(-1.66*d)
+    py_res = np.exp(-1.66 * d)
 
     for f_res, p_res in zip(res, py_res):
         assert abs(f_res - p_res) < 10**-9

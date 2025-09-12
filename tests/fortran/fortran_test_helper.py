@@ -42,7 +42,7 @@ class SourceCodeBuilder:
         name, ext = name.rsplit('.', 1) if '.' in name else (name, 'f90')
         key, COUNTER = f"{name}.{ext}", 0
         while key in self.sources:
-            key, COUNTER = f"{name}_{COUNTER}.{ext}", COUNTER+1
+            key, COUNTER = f"{name}_{COUNTER}.{ext}", COUNTER + 1
         self.sources[key] = content
         return self
 
@@ -170,8 +170,7 @@ class FortranASTMatcher:
                  has_attr: Optional[Dict[str, Union["FortranASTMatcher", List["FortranASTMatcher"]]]] = None,
                  has_value: Optional[str] = None):
         # TODO: Include Set[Self] to `has_children` type?
-        assert not ((set() if has_attr is None else has_attr.keys())
-                    & {'children'})
+        assert not ((set() if has_attr is None else has_attr.keys()) & {'children'})
         self.is_type = is_type
         self.has_children = has_children
         self.has_attr = has_attr
@@ -265,7 +264,8 @@ class InternalASTMatcher:
 
     def __init__(self,
                  is_type: Optional[Type] = None,
-                 has_attr: Optional[Dict[str, Union["InternalASTMatcher", List["InternalASTMatcher"], Dict[str, "InternalASTMatcher"]]]] = None,
+                 has_attr: Optional[Dict[str, Union["InternalASTMatcher", List["InternalASTMatcher"],
+                                                    Dict[str, "InternalASTMatcher"]]]] = None,
                  has_empty_attr: Optional[Collection[str]] = None,
                  has_value: Optional[str] = None):
         # TODO: Include Set[Self] to `has_children` type?
@@ -321,7 +321,8 @@ class InternalASTMatcher:
         return cls(Name_Node, {'name': cls(has_value=name)})
 
 
-def deduce_f2dace_variables_for_array(arr: np.ndarray, arg: str, start_counting_from: int) -> Dict[str, Union[np.bool_, np.int32]]:
+def deduce_f2dace_variables_for_array(arr: np.ndarray, arg: str,
+                                      start_counting_from: int) -> Dict[str, Union[np.bool_, np.int32]]:
     """This needs to be kept in sync with the naming convention of "f2dace" variables."""
     out: Dict[str, Union[np.bool_, np.int32]] = {
         f"__f2dace_ALLOCATED_{arg}": np.bool_(arr.size > 0),

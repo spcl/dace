@@ -39,10 +39,9 @@ end subroutine main
     sdfg = create_singular_sdfg_from_string(sources, 'main')
     sdfg.validate()
     sdfg.simplify(verbose=True)
-    a = np.array([[i + j for i in range(5)] for j in range(5)],
-                 order="F", dtype=np.int32)
+    a = np.array([[i + j for i in range(5)] for j in range(5)], order="F", dtype=np.int32)
     sdfg(d=a)
-    assert(a[0, 1] == 5)
+    assert (a[0, 1] == 5)
 
 
 @pytest.mark.skip("Fails because range statements in case selectors are not supported.")
@@ -81,11 +80,10 @@ end subroutine main
     sdfg = create_singular_sdfg_from_string(sources, 'main')
     sdfg.validate()
     sdfg.simplify(verbose=True)
-    a = np.array([[i + j for i in range(5)] for j in range(5)],
-                 order="F", dtype=np.int32)
+    a = np.array([[i + j for i in range(5)] for j in range(5)], order="F", dtype=np.int32)
     sdfg(d=a)
-    assert(a[0, 2] == 6)
-    assert(a[0, 4] == 4)
+    assert (a[0, 2] == 6)
+    assert (a[0, 4] == 4)
 
 
 if __name__ == "__main__":

@@ -162,6 +162,7 @@ def test_fortran_frontend_all_array_scalar_comparison():
     sdfg(first=first, res=res)
     assert list(res) == [0, 0, 0, 0, 0, 0, 1]
 
+
 @pytest.mark.skip("Changing the order of AST transformations prevents the intrinsics from analyzing it")
 def test_fortran_frontend_all_array_comparison_wrong_subset():
     test_string = """
@@ -185,6 +186,7 @@ def test_fortran_frontend_all_array_comparison_wrong_subset():
 
     with pytest.raises(TypeError):
         fortran_parser.create_sdfg_from_string(test_string, "intrinsic_all_test")
+
 
 def test_fortran_frontend_all_array_2d():
     test_string = """

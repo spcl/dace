@@ -82,7 +82,10 @@ subroutine main(d)
   d(2, 1) = 5.5
 end subroutine main
 """).check_with_gfortran().get()
-    sdfg = create_singular_sdfg_from_string(sources, 'main', )
+    sdfg = create_singular_sdfg_from_string(
+        sources,
+        'main',
+    )
     sdfg.simplify(verbose=True)
     a = np.full([5, 5], 42, order="F", dtype=np.float32)
     sdfg(d=a)

@@ -1,25 +1,24 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 from typing import List, Optional, Tuple, Union, Dict, Any
 
-
 # The node class is the base class for all nodes in the AST. It provides attributes including the line number and fields.
 # Attributes are not used when walking the tree, but are useful for debugging and for code generation.
 # The fields attribute is a list of the names of the attributes that are children of the node.
 
 
 class FNode(object):
+
     def __init__(self,
                  line_number: Tuple[int, int] = (0, 0),
-                 parent: Union[
-                     None, 'Subroutine_Subprogram_Node', 'Function_Subprogram_Node', 'Main_Program_Node',
-                     'Module_Node'] = None,
+                 parent: Union[None, 'Subroutine_Subprogram_Node', 'Function_Subprogram_Node', 'Main_Program_Node',
+                               'Module_Node'] = None,
                  **kwargs):  # real signature unknown
         self.line_number = line_number
         self.parent = parent
         for k, v in kwargs.items():
             setattr(self, k, v)
 
-    _attributes: Tuple[str, ...] = ("line_number",)
+    _attributes: Tuple[str, ...] = ("line_number", )
     _fields: Tuple[str, ...] = ()
 
     def __eq__(self, o: object) -> bool:
@@ -52,8 +51,10 @@ class FNode(object):
         clsname = type(self).__name__.removesuffix('_Node')
         objname = self.name if hasattr(self, 'name') else (self.op if hasattr(self, 'op') else '?')
         objtype = f"/{self.type}" if hasattr(self, 'type') else ''
-        fieldstrs = {f: _fieldstr(getattr(self, f)) for f in self._fields
-                     if hasattr(self, f) and f not in {'name', 'type'}}
+        fieldstrs = {
+            f: _fieldstr(getattr(self, f))
+            for f in self._fields if hasattr(self, f) and f not in {'name', 'type'}
+        }
         fieldstrs = [f"{k}:{_indent(v)}" for k, v in fieldstrs.items()]
         if fieldstrs:
             fieldstrs = '\n'.join(fieldstrs)
@@ -63,6 +64,7 @@ class FNode(object):
 
 
 class Program_Node(FNode):
+
     def __init__(self,
                  main_program: 'Main_Program_Node',
                  function_definitions: List['Function_Subprogram_Node'],
@@ -93,6 +95,7 @@ class Program_Node(FNode):
 
 
 class BinOp_Node(FNode):
+
     def __init__(self, op: str, lval: FNode, rval: FNode, type: str = 'VOID', **kwargs):
         super().__init__(**kwargs)
         assert rval is not None
@@ -111,7 +114,7 @@ class UnOp_Node(FNode):
         'postfix',
         'type',
     )
-    _fields = ('lval',)
+    _fields = ('lval', )
 
 
 class Exit_Node(FNode):
@@ -120,6 +123,7 @@ class Exit_Node(FNode):
 
 
 class Main_Program_Node(FNode):
+
     def __init__(self, name: 'Name_Node', specification_part: 'Specification_Part_Node',
                  execution_part: 'Execution_Part_Node', **kwargs):
         super().__init__(**kwargs)
@@ -127,18 +131,15 @@ class Main_Program_Node(FNode):
         self.specification_part = specification_part
         self.execution_part = execution_part
 
-    _attributes = ('name',)
+    _attributes = ('name', )
     _fields = ('execution_part', 'specification_part')
 
 
 class Module_Node(FNode):
-    def __init__(self,
-                 name: 'Name_Node',
-                 specification_part: 'Specification_Part_Node',
+
+    def __init__(self, name: 'Name_Node', specification_part: 'Specification_Part_Node',
                  subroutine_definitions: List['Subroutine_Subprogram_Node'],
-                 function_definitions: List['Function_Subprogram_Node'],
-                 interface_blocks: Dict,
-                 **kwargs):
+                 function_definitions: List['Function_Subprogram_Node'], interface_blocks: Dict, **kwargs):
         super().__init__(**kwargs)
         self.name = name
         self.specification_part = specification_part
@@ -146,20 +147,14 @@ class Module_Node(FNode):
         self.function_definitions = function_definitions
         self.interface_blocks = interface_blocks
 
-    _attributes = ('name',)
-    _fields = (
-        'specification_part',
-        'subroutine_definitions',
-        'function_definitions',
-        'interface_blocks'
-    )
+    _attributes = ('name', )
+    _fields = ('specification_part', 'subroutine_definitions', 'function_definitions', 'interface_blocks')
 
 
 class Module_Subprogram_Part_Node(FNode):
-    def __init__(self,
-                 subroutine_definitions: List['Subroutine_Subprogram_Node'],
-                 function_definitions: List['Function_Subprogram_Node'],
-                 **kwargs):
+
+    def __init__(self, subroutine_definitions: List['Subroutine_Subprogram_Node'],
+                 function_definitions: List['Function_Subprogram_Node'], **kwargs):
         super().__init__(**kwargs)
         self.subroutine_definitions = subroutine_definitions
         self.function_definitions = function_definitions
@@ -172,10 +167,9 @@ class Module_Subprogram_Part_Node(FNode):
 
 
 class Internal_Subprogram_Part_Node(FNode):
-    def __init__(self,
-                 subroutine_definitions: List['Subroutine_Subprogram_Node'],
-                 function_definitions: List['Function_Subprogram_Node'],
-                 **kwargs):
+
+    def __init__(self, subroutine_definitions: List['Subroutine_Subprogram_Node'],
+                 function_definitions: List['Function_Subprogram_Node'], **kwargs):
         super().__init__(**kwargs)
         self.subroutine_definitions = subroutine_definitions
         self.function_definitions = function_definitions
@@ -188,6 +182,7 @@ class Internal_Subprogram_Part_Node(FNode):
 
 
 class Actual_Arg_Spec_Node(FNode):
+
     def __init__(self, arg_name: 'Name_Node', arg: FNode, **kwargs):
         super().__init__(**kwargs)
         self.arg_name = arg_name
@@ -197,15 +192,11 @@ class Actual_Arg_Spec_Node(FNode):
 
 
 class Function_Subprogram_Node(FNode):
-    def __init__(self,
-                 name: 'Name_Node',
-                 args: List,
-                 ret: 'Name_Node',
+
+    def __init__(self, name: 'Name_Node', args: List, ret: 'Name_Node',
                  specification_part: Optional['Specification_Part_Node'],
                  execution_part: Optional['Execution_Part_Node'],
-                 internal_subprogram_part: Optional[Internal_Subprogram_Part_Node],
-                 type: str,
-                 elemental: bool,
+                 internal_subprogram_part: Optional[Internal_Subprogram_Part_Node], type: str, elemental: bool,
                  **kwargs):
         super().__init__(**kwargs)
         assert type != 'VOID', f"A Fortran function must have a return type; got VOID for {name.name}"
@@ -227,6 +218,7 @@ class Function_Subprogram_Node(FNode):
 
 
 class Subroutine_Subprogram_Node(FNode):
+
     def __init__(self,
                  name: 'Name_Node',
                  args: List,
@@ -261,10 +253,8 @@ class Subroutine_Subprogram_Node(FNode):
 
 
 class Interface_Block_Node(FNode):
-    _attributes = ('name',)
-    _fields = (
-        'subroutines',
-    )
+    _attributes = ('name', )
+    _fields = ('subroutines', )
 
 
 class Interface_Stmt_Node(FNode):
@@ -274,30 +264,31 @@ class Interface_Stmt_Node(FNode):
 
 class Procedure_Name_List_Node(FNode):
     _attributes = ()
-    _fields = ('subroutines',)
+    _fields = ('subroutines', )
 
 
 class Procedure_Statement_Node(FNode):
     _attributes = ()
-    _fields = ('namelists',)
+    _fields = ('namelists', )
 
 
 class Module_Stmt_Node(FNode):
     _attributes = ()
-    _fields = ('functions',)
+    _fields = ('functions', )
 
 
 class Program_Stmt_Node(FNode):
-    _attributes = ('name',)
+    _attributes = ('name', )
     _fields = ()
 
 
 class Subroutine_Stmt_Node(FNode):
-    _attributes = ('name',)
-    _fields = ('args',)
+    _attributes = ('name', )
+    _fields = ('args', )
 
 
 class Function_Stmt_Node(FNode):
+
     def __init__(self, name: 'Name_Node', args: List[FNode], ret: Optional['Suffix_Node'], elemental: bool, type: str,
                  **kwargs):
         super().__init__(**kwargs)
@@ -308,10 +299,14 @@ class Function_Stmt_Node(FNode):
         self.type = type
 
     _attributes = ('name', 'elemental', 'type')
-    _fields = ('args', 'ret',)
+    _fields = (
+        'args',
+        'ret',
+    )
 
 
 class Prefix_Node(FNode):
+
     def __init__(self, type: str, elemental: bool, recursive: bool, pure: bool, **kwargs):
         super().__init__(**kwargs)
         self.type = type
@@ -319,17 +314,25 @@ class Prefix_Node(FNode):
         self.recursive = recursive
         self.pure = pure
 
-    _attributes = ('elemental', 'recursive', 'pure',)
+    _attributes = (
+        'elemental',
+        'recursive',
+        'pure',
+    )
     _fields = ()
 
 
 class Name_Node(FNode):
+
     def __init__(self, name: str, type: str = 'VOID', **kwargs):
         super().__init__(**kwargs)
         self.name = name
         self.type = type
 
-    _attributes = ('name', 'type',)
+    _attributes = (
+        'name',
+        'type',
+    )
     _fields = ()
 
     def __str__(self) -> str:
@@ -337,55 +340,82 @@ class Name_Node(FNode):
 
 
 class Name_Range_Node(FNode):
-    _attributes = ('name', 'type', 'arrname', 'pos',)
+    _attributes = (
+        'name',
+        'type',
+        'arrname',
+        'pos',
+    )
     _fields = ()
 
 
 class Where_Construct_Node(FNode):
     _attributes = ()
-    _fields = ('main_body', 'main_cond', 'else_body', 'elifs_body', 'elifs_cond',)
+    _fields = (
+        'main_body',
+        'main_cond',
+        'else_body',
+        'elifs_body',
+        'elifs_cond',
+    )
 
 
 class Type_Name_Node(FNode):
-    _attributes = ('name', 'type',)
+    _attributes = (
+        'name',
+        'type',
+    )
     _fields = ()
 
 
 class Generic_Binding_Node(FNode):
     _attributes = ()
-    _fields = ('name', 'binding',)
+    _fields = (
+        'name',
+        'binding',
+    )
 
 
 class Specification_Part_Node(FNode):
-    _fields = ('specifications', 'symbols', 'interface_blocks', 'typedecls', 'enums',)
+    _fields = (
+        'specifications',
+        'symbols',
+        'interface_blocks',
+        'typedecls',
+        'enums',
+    )
 
 
 class Stop_Stmt_Node(FNode):
-    _attributes = ('code',)
+    _attributes = ('code', )
 
 
 class Error_Stmt_Node(FNode):
-    _fields = ('error',)
+    _fields = ('error', )
 
 
 class Execution_Part_Node(FNode):
-    _fields = ('execution',)
+    _fields = ('execution', )
 
 
 class Statement_Node(FNode):
-    _attributes = ('col_offset',)
+    _attributes = ('col_offset', )
     _fields = ()
 
 
 class Array_Subscript_Node(FNode):
+
     def __init__(self, name: Name_Node, type: str, indices: List[FNode], **kwargs):
         super().__init__(**kwargs)
         self.name = name
         self.type = type
         self.indices = indices
 
-    _attributes = ('type',)
-    _fields = ('name', 'indices',)
+    _attributes = ('type', )
+    _fields = (
+        'name',
+        'indices',
+    )
 
 
 class Type_Decl_Node(Statement_Node):
@@ -398,22 +428,23 @@ class Type_Decl_Node(Statement_Node):
 
 class Allocate_Shape_Spec_Node(FNode):
     _attributes = ()
-    _fields = ('sizes',)
+    _fields = ('sizes', )
 
 
 class Allocate_Shape_Spec_List(FNode):
     _attributes = ()
-    _fields = ('shape_list',)
+    _fields = ('shape_list', )
 
 
 class Allocation_Node(FNode):
+
     def __init__(self, name: Name_Node, shape: Allocate_Shape_Spec_List, **kwargs):
         super().__init__(**kwargs)
         self.name = name
         self.shape = shape
 
-    _attributes = ('name',)
-    _fields = ('shape',)
+    _attributes = ('name', )
+    _fields = ('shape', )
 
 
 class Continue_Node(FNode):
@@ -422,18 +453,24 @@ class Continue_Node(FNode):
 
 
 class Allocate_Stmt_Node(FNode):
+
     def __init__(self, allocation_list: List[Allocation_Node], **kwargs):
         super().__init__(**kwargs)
         self.allocation_list = allocation_list
 
     _attributes = ()
-    _fields = ('allocation_list',)
+    _fields = ('allocation_list', )
 
 
 class Symbol_Decl_Node(Statement_Node):
-    def __init__(self, name: str, type: str,
-                 alloc: Optional[bool] = None, sizes: Optional[List] = None,
-                 init: Optional[FNode] = None, typeref: Optional[Any] = None,
+
+    def __init__(self,
+                 name: str,
+                 type: str,
+                 alloc: Optional[bool] = None,
+                 sizes: Optional[List] = None,
+                 init: Optional[FNode] = None,
+                 typeref: Optional[Any] = None,
                  **kwargs):
         super().__init__(**kwargs)
         self.name = name
@@ -457,9 +494,15 @@ class Symbol_Decl_Node(Statement_Node):
 
 
 class Symbol_Array_Decl_Node(Statement_Node):
-    def __init__(self, name: str, type: str,
-                 alloc: Optional[bool] = None, sizes: Optional[List] = None, offsets: Optional[List] = None,
-                 init: Optional[FNode] = None, typeref: Optional[Any] = None,
+
+    def __init__(self,
+                 name: str,
+                 type: str,
+                 alloc: Optional[bool] = None,
+                 sizes: Optional[List] = None,
+                 offsets: Optional[List] = None,
+                 init: Optional[FNode] = None,
+                 typeref: Optional[Any] = None,
                  **kwargs):
         super().__init__(**kwargs)
         self.name = name
@@ -484,11 +527,18 @@ class Symbol_Array_Decl_Node(Statement_Node):
 
 
 class Var_Decl_Node(Statement_Node):
-    def __init__(self, name: str, type: str,
-                 alloc: Optional[bool] = None, optional: Optional[bool] = None,
-                 sizes: Optional[List] = None, offsets: Optional[List[Union[int, Name_Node]]] = None,
-                 init: Optional[FNode] = None, actual_offsets: Optional[List] = None,
-                 typeref: Optional[Any] = None, kind: Optional[Any] = None,
+
+    def __init__(self,
+                 name: str,
+                 type: str,
+                 alloc: Optional[bool] = None,
+                 optional: Optional[bool] = None,
+                 sizes: Optional[List] = None,
+                 offsets: Optional[List[Union[int, Name_Node]]] = None,
+                 init: Optional[FNode] = None,
+                 actual_offsets: Optional[List] = None,
+                 typeref: Optional[Any] = None,
+                 kind: Optional[Any] = None,
                  **kwargs):
         super().__init__(**kwargs)
         self.name = name
@@ -507,32 +557,34 @@ class Var_Decl_Node(Statement_Node):
 
 
 class Arg_List_Node(FNode):
-    _fields = ('args',)
+    _fields = ('args', )
 
 
 class Component_Spec_List_Node(FNode):
-    _fields = ('args',)
+    _fields = ('args', )
 
 
 class Allocate_Object_List_Node(FNode):
-    _fields = ('list',)
+    _fields = ('list', )
 
 
 class Deallocate_Stmt_Node(FNode):
+
     def __init__(self, deallocation_list: List[Name_Node], **kwargs):
         super().__init__(**kwargs)
         self.deallocation_list = deallocation_list
 
-    _fields = ('deallocation_list',)
+    _fields = ('deallocation_list', )
 
 
 class Decl_Stmt_Node(Statement_Node):
+
     def __init__(self, vardecl: List[Var_Decl_Node], **kwargs):
         super().__init__(**kwargs)
         self.vardecl = vardecl
 
     _attributes = ()
-    _fields = ('vardecl',)
+    _fields = ('vardecl', )
 
 
 class VarType:
@@ -544,6 +596,7 @@ class Void(VarType):
 
 
 class Literal(FNode):
+
     def __init__(self, value: str, type: str, **kwargs):
         super().__init__(**kwargs)
         self.value = value
@@ -557,21 +610,25 @@ class Literal(FNode):
 
 
 class Int_Literal_Node(Literal):
+
     def __init__(self, value: str, type='INTEGER', **kwargs):
         super().__init__(value, type, **kwargs)
 
 
 class Real_Literal_Node(Literal):
+
     def __init__(self, value: str, type='REAL', **kwargs):
         super().__init__(value, type, **kwargs)
 
 
 class Double_Literal_Node(Literal):
+
     def __init__(self, value: str, type='DOUBLE', **kwargs):
         super().__init__(value, type, **kwargs)
 
 
 class Bool_Literal_Node(Literal):
+
     def __init__(self, value: str, type='LOGICAL', **kwargs):
         assert value in {'0', '1'},\
             f"`{value}` is not a valid respresentation: use `0` for falsey values, and `1` for truthy values."
@@ -579,20 +636,23 @@ class Bool_Literal_Node(Literal):
 
 
 class Char_Literal_Node(Literal):
+
     def __init__(self, value: str, type='CHAR', **kwargs):
         super().__init__(value, type, **kwargs)
 
 
 class Suffix_Node(FNode):
+
     def __init__(self, name: 'Name_Node', **kwargs):
         super().__init__(**kwargs)
         self.name = name
 
     _attributes = ()
-    _fields = ('name',)
+    _fields = ('name', )
 
 
 class Call_Expr_Node(FNode):
+
     def __init__(self, name: 'Name_Node', args: List[FNode], subroutine: bool, type: str, **kwargs):
         super().__init__(**kwargs)
         self.name = name
@@ -600,68 +660,80 @@ class Call_Expr_Node(FNode):
         self.subroutine = subroutine
         self.type = type
 
-    _attributes = ('type', 'subroutine',)
-    _fields = ('name', 'args',)
+    _attributes = (
+        'type',
+        'subroutine',
+    )
+    _fields = (
+        'name',
+        'args',
+    )
 
 
 class Derived_Type_Stmt_Node(FNode):
-    _attributes = ('name',)
-    _fields = ('args',)
+    _attributes = ('name', )
+    _fields = ('args', )
 
 
 class Derived_Type_Def_Node(FNode):
-    def __init__(self, name: Type_Name_Node,
-                 component_part: 'Component_Part_Node', procedure_part: 'Bound_Procedures_Node',
-                 **kwargs):
+
+    def __init__(self, name: Type_Name_Node, component_part: 'Component_Part_Node',
+                 procedure_part: 'Bound_Procedures_Node', **kwargs):
         super().__init__(**kwargs)
         self.name = name
         self.component_part = component_part
         self.procedure_part = procedure_part
 
-    _attributes = ('name',)
-    _fields = ('component_part', 'procedure_part',)
+    _attributes = ('name', )
+    _fields = (
+        'component_part',
+        'procedure_part',
+    )
 
 
 class Component_Part_Node(FNode):
     _attributes = ()
-    _fields = ('component_def_stmts',)
+    _fields = ('component_def_stmts', )
 
 
 class Data_Component_Def_Stmt_Node(FNode):
+
     def __init__(self, vars: Decl_Stmt_Node, **kwargs):
         super().__init__(**kwargs)
         self.vars = vars
 
     _attributes = ()
-    _fields = ('vars',)
+    _fields = ('vars', )
 
 
 class Data_Ref_Node(FNode):
+
     def __init__(self, parent_ref: FNode, part_ref: FNode, type: str = 'VOID', **kwargs):
         super().__init__(**kwargs)
         self.parent_ref = parent_ref
         self.part_ref = part_ref
         self.type = type
 
-    _attributes = ('type',)
+    _attributes = ('type', )
     _fields = ('parent_ref', 'part_ref')
 
 
 class Array_Constructor_Node(FNode):
     _attributes = ()
-    _fields = ('value_list',)
+    _fields = ('value_list', )
 
 
 class Ac_Value_List_Node(FNode):
     _attributes = ()
-    _fields = ('value_list',)
+    _fields = ('value_list', )
 
 
 class Section_Subscript_List_Node(FNode):
-    _fields = ('list',)
+    _fields = ('list', )
 
 
 class Pointer_Assignment_Stmt_Node(FNode):
+
     def __init__(self, name_pointer: Name_Node, name_target: FNode, **kwargs):
         super().__init__(**kwargs)
         self.name_pointer = name_pointer
@@ -697,7 +769,6 @@ class If_Stmt_Node(FNode):
         'cond',
         'body',
         'body_else',
-        
     )
 
 
@@ -708,7 +779,7 @@ class Defer_Shape_Node(FNode):
 
 class Component_Initialization_Node(FNode):
     _attributes = ()
-    _fields = ('init',)
+    _fields = ('init', )
 
 
 class Case_Cond_Node(FNode):
@@ -728,27 +799,27 @@ class Procedure_Separator_Node(FNode):
 
 class Pointer_Object_List_Node(FNode):
     _attributes = ()
-    _fields = ('list',)
+    _fields = ('list', )
 
 
 class Read_Stmt_Node(FNode):
     _attributes = ()
-    _fields = ('args',)
+    _fields = ('args', )
 
 
 class Close_Stmt_Node(FNode):
     _attributes = ()
-    _fields = ('args',)
+    _fields = ('args', )
 
 
 class Open_Stmt_Node(FNode):
     _attributes = ()
-    _fields = ('args',)
+    _fields = ('args', )
 
 
 class Associate_Stmt_Node(FNode):
     _attributes = ()
-    _fields = ('args',)
+    _fields = ('args', )
 
 
 class Associate_Construct_Node(FNode):
@@ -758,7 +829,7 @@ class Associate_Construct_Node(FNode):
 
 class Association_List_Node(FNode):
     _attributes = ()
-    _fields = ('list',)
+    _fields = ('list', )
 
 
 class Association_Node(FNode):
@@ -767,38 +838,38 @@ class Association_Node(FNode):
 
 
 class Connect_Spec_Node(FNode):
-    _attributes = ('type',)
-    _fields = ('args',)
+    _attributes = ('type', )
+    _fields = ('args', )
 
 
 class Close_Spec_Node(FNode):
-    _attributes = ('type',)
-    _fields = ('args',)
+    _attributes = ('type', )
+    _fields = ('args', )
 
 
 class Close_Spec_List_Node(FNode):
     _attributes = ()
-    _fields = ('list',)
+    _fields = ('list', )
 
 
 class IO_Control_Spec_Node(FNode):
-    _attributes = ('type',)
-    _fields = ('args',)
+    _attributes = ('type', )
+    _fields = ('args', )
 
 
 class IO_Control_Spec_List_Node(FNode):
     _attributes = ()
-    _fields = ('list',)
+    _fields = ('list', )
 
 
 class Connect_Spec_List_Node(FNode):
     _attributes = ()
-    _fields = ('list',)
+    _fields = ('list', )
 
 
 class Nullify_Stmt_Node(FNode):
     _attributes = ()
-    _fields = ('list',)
+    _fields = ('list', )
 
 
 class Namelist_Stmt_Node(FNode):
@@ -808,12 +879,12 @@ class Namelist_Stmt_Node(FNode):
 
 class Namelist_Group_Object_List_Node(FNode):
     _attributes = ()
-    _fields = ('list',)
+    _fields = ('list', )
 
 
 class Bound_Procedures_Node(FNode):
     _attributes = ()
-    _fields = ('procedures',)
+    _fields = ('procedures', )
 
 
 class Specific_Binding_Node(FNode):
@@ -822,6 +893,7 @@ class Specific_Binding_Node(FNode):
 
 
 class Parenthesis_Expr_Node(FNode):
+
     def __init__(self, expr: FNode, **kwargs):
         super().__init__(**kwargs)
         assert hasattr(expr, 'type')
@@ -843,16 +915,12 @@ class Nonlabel_Do_Stmt_Node(FNode):
 
 class While_True_Control(FNode):
     _attributes = ()
-    _fields = (
-        'name',
-    )
+    _fields = ('name', )
 
 
 class While_Control(FNode):
     _attributes = ()
-    _fields = (
-        'cond',
-    )
+    _fields = ('cond', )
 
 
 class While_Stmt_Node(FNode):
@@ -874,37 +942,43 @@ class Loop_Control_Node(FNode):
 
 class Else_If_Stmt_Node(FNode):
     _attributes = ()
-    _fields = ('cond',)
+    _fields = ('cond', )
 
 
 class Only_List_Node(FNode):
     _attributes = ()
-    _fields = ('names', 'renames',)
+    _fields = (
+        'names',
+        'renames',
+    )
 
 
 class Rename_Node(FNode):
     _attributes = ()
-    _fields = ('oldname', 'newname',)
+    _fields = (
+        'oldname',
+        'newname',
+    )
 
 
 class ParDecl_Node(FNode):
-    _attributes = ('type',)
-    _fields = ('range',)
+    _attributes = ('type', )
+    _fields = ('range', )
 
 
 class Structure_Constructor_Node(FNode):
-    _attributes = ('type',)
+    _attributes = ('type', )
     _fields = ('name', 'args')
 
 
 class Use_Stmt_Node(FNode):
     _attributes = ('name', 'list_all')
-    _fields = ('list',)
+    _fields = ('list', )
 
 
 class Write_Stmt_Node(FNode):
     _attributes = ()
-    _fields = ('args',)
+    _fields = ('args', )
 
 
 class Break_Node(FNode):

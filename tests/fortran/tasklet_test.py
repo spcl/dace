@@ -5,6 +5,7 @@ import pytest
 
 from dace.frontend.fortran import fortran_parser
 
+
 def test_fortran_frontend_tasklet():
     test_string = """
                     PROGRAM tasklet
@@ -32,9 +33,9 @@ def test_fortran_frontend_tasklet():
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "tasklet_test", normalize_offsets=True)
     sdfg.simplify(verbose=True)
-    
+
     sdfg.compile()
-    
+
     input = np.full([2], 42, order="F", dtype=np.float32)
     res = np.full([2], 42, order="F", dtype=np.float32)
     sdfg(d=input, res=res)

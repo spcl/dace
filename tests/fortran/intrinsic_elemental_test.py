@@ -2,9 +2,8 @@
 
 import numpy as np
 
-from tests.fortran.fortran_test_helper import  SourceCodeBuilder
+from tests.fortran.fortran_test_helper import SourceCodeBuilder
 from dace.frontend.fortran.fortran_parser import create_singular_sdfg_from_string
-
 """
     Handling of elemental intrinsics:
     - arr = func(arr)
@@ -13,6 +12,7 @@ from dace.frontend.fortran.fortran_parser import create_singular_sdfg_from_strin
     - struct%arr = func(struct%arr)
     - arr = arr + exp(arr)
 """
+
 
 def test_fortran_frontend_elemental_exp():
     sources, main = SourceCodeBuilder().add_file("""
@@ -39,6 +39,7 @@ end subroutine main
     for f_res, p_res in zip(res, py_res):
         assert abs(f_res - p_res) < 10**-9
 
+
 def test_fortran_frontend_elemental_exp_pardecl():
     sources, main = SourceCodeBuilder().add_file("""
 subroutine main(arg1, arg2, res1)
@@ -63,6 +64,7 @@ end subroutine main
     py_res = np.exp(arg1)
     for f_res, p_res in zip(res, py_res):
         assert abs(f_res - p_res) < 10**-9
+
 
 def test_fortran_frontend_elemental_exp_subset():
     sources, main = SourceCodeBuilder().add_file("""
@@ -92,8 +94,10 @@ end subroutine main
     for f_res, p_res in zip(res[1:4], py_res):
         assert abs(f_res - p_res) < 10**-9
 
+
 def test_fortran_frontend_elemental_exp_struct():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = SourceCodeBuilder().add_file(
+        """
 
 MODULE test_types
     IMPLICIT NONE
@@ -142,6 +146,7 @@ END MODULE
     for f_res, p_res in zip(res[1:4], py_res):
         assert abs(f_res - p_res) < 10**-9
 
+
 def test_fortran_frontend_elemental_exp_subset_hoist():
     sources, main = SourceCodeBuilder().add_file("""
 subroutine main(arg1, arg2, res1)
@@ -169,6 +174,7 @@ end subroutine main
     py_res = 1.0 - np.exp(arg1[1:4])
     for f_res, p_res in zip(res[1:4], py_res):
         assert abs(f_res - p_res) < 10**-9
+
 
 def test_fortran_frontend_elemental_exp_complex():
     sources, main = SourceCodeBuilder().add_file("""
@@ -198,6 +204,7 @@ end subroutine main
     for f_res, p_res in zip(res[1:4], py_res):
         assert abs(f_res - p_res) < 10**-9
 
+
 def test_fortran_frontend_elemental_ecrad_bug():
     sources, main = SourceCodeBuilder().add_file("""
 subroutine main(ng_var_114, od_var_115, trans_dir_dir_var_119)
@@ -225,9 +232,10 @@ end subroutine main
     for i in range(size):
         arg_in[i] = i + 1
 
-    sdfg(sym_ng_var_114 = size, ng_var_114=size, od_var_115=arg_in, trans_dir_dir_var_119=arg_out)
+    sdfg(sym_ng_var_114=size, ng_var_114=size, od_var_115=arg_in, trans_dir_dir_var_119=arg_out)
 
     assert np.allclose(arg_out, np.maximum(-np.maximum(arg_in * 1.0 / mu0, 0.0), -1000.0))
+
 
 if __name__ == "__main__":
     #test_fortran_frontend_elemental_exp()
