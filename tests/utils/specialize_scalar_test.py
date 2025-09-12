@@ -1,3 +1,4 @@
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace.codegen.control_flow import LoopRegion
 from dace.properties import CodeBlock
@@ -99,7 +100,6 @@ def test_use_in_if_block():
     sdfg.compile()
     cbs = set()
     for n in sdfg.all_control_flow_regions():
-        print(n, type(n))
         if isinstance(n, ConditionalBlock):
             cbs.add(n)
     assert len(cbs) == 1
@@ -115,6 +115,7 @@ def test_use_in_for_cfg():
     sdutil.specialize_scalar(sdfg=sdfg, scalar_name="nlev", scalar_val="90")
     sdfg.validate()
     sdfg.compile()
+
 
 
 def test_interstate_assignment():
