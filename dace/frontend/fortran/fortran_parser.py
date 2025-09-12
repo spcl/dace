@@ -1471,7 +1471,7 @@ class AST_translator:
                     while not recursive_view_check_done:
                         recursive_view_check_done = True
                         for elem2 in views:
-                            if elem != elem2 and elem[1].label == elem2[0] and elem2[3] == variables_in_call.index(i):
+                            if elem != elem2 and elem[1] is not None and elem[1].label == elem2[0] and elem2[3] == variables_in_call.index(i):
                                 recursive_view_check_done = False
                                 elem = elem2
 
