@@ -1890,6 +1890,8 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
         for k, v in prototype_kernel_args.items():
             self._localcode.write(f'{k} = ((uint32_t *)(hbm_addr({start_address})))[0];')
             start_address += 4
+            #self._localcode.write(f'{k} = hbm_addr({k});')
+            pass
 
         for k, v in hbm_interleaved_args.items():
             self._localcode.write(f'{k}_base = {k};')
@@ -1918,7 +1920,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
             if arr_name != "B":
                 continue
             dump_str += "flex_dump_open();\n"
-            dump_str += f"flex_dump_hbm({arr_name}, {arr_name}_tile_height * {arr_name}_tile_width);\n"
+            dump_str += f"flex_dump_hbm(hbm_addr(0), A_tile_width * A_tile_height);\n"
             dump_str += "flex_dump_close();\n"
         dump_str += "}"
 
