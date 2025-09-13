@@ -513,6 +513,13 @@ class CPUCodeGen(TargetCodeGenerator):
 
             return
         elif (nodedesc.storage == dtypes.StorageType.Register):
+
+            if nodedesc.dtype == dtypes.gpuStream_t:
+                ctype = dtypes.gpuStream_t.ctype
+                allocation_stream.write(f"{ctype}* {name} = __state->gpu_context->streams;")
+                define_var(name, DefinedType.Pointer, ctype)
+                return
+
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
             if nodedesc.start_offset != 0:
                 raise NotImplementedError('Start offset unsupported for registers')
@@ -587,6 +594,9 @@ class CPUCodeGen(TargetCodeGenerator):
             self._dispatcher.declared_arrays.remove(alloc_name, is_global=is_global)
 
         if isinstance(nodedesc, (data.Scalar, data.View, data.Stream, data.Reference)):
+            return
+        elif nodedesc.dtype == dtypes.gpuStream_t:
+            callsite_stream.write(f"{alloc_name} = nullptr;")
             return
         elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
               or (nodedesc.storage == dtypes.StorageType.Register and
@@ -1009,6 +1019,11 @@ class CPUCodeGen(TargetCodeGenerator):
             dst_edge = dfg.memlet_path(edge)[-1]
             dst_node = dst_edge.dst
 
+            if isinstance(dst_node, nodes.AccessNode) and dst_node.desc(state).dtype == dtypes.gpuStream_t:
+                # Special case: GPU Streams do not represent data flow - they assing GPU Streams to kernels/tasks
+                # Thus, nothing needs to be written and out memlets of this kind should be ignored.
+                continue
+
             # Target is neither a data nor a tasklet node
             if isinstance(node, nodes.AccessNode) and (not isinstance(dst_node, nodes.AccessNode)
                                                        and not isinstance(dst_node, nodes.CodeNode)):
@@ -1050,6 +1065,7 @@ class CPUCodeGen(TargetCodeGenerator):
             # Tasklet -> array with a memlet. Writing to array is emitted only if the memlet is not empty
             if isinstance(node, nodes.CodeNode) and not edge.data.is_empty():
                 if not uconn:
+                    return
                     raise SyntaxError("Cannot copy memlet without a local connector: {} to {}".format(
                         str(edge.src), str(edge.dst)))
 
@@ -1585,6 +1601,10 @@ class CPUCodeGen(TargetCodeGenerator):
                           function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         cdtype = src_node.out_connectors[edge.src_conn]
         if isinstance(sdfg.arrays[edge.data.data], data.Stream):
+            pass
+        elif isinstance(dst_node, nodes.AccessNode) and dst_node.desc(state_dfg).dtype == dtypes.gpuStream_t:
+            # Special case: GPU Streams do not represent data flow - they assing GPU Streams to kernels/tasks
+            # Thus, nothing needs to be written.
             pass
         elif isinstance(cdtype, dtypes.pointer):  # If pointer, also point to output
             desc = sdfg.arrays[edge.data.data]
