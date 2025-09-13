@@ -1,3 +1,4 @@
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Given a complete Fortran codebase (without C++ preprocessor statements, from which a fully resolveable AST can be
 produced) and an SDFG that is the final product of this codebase, this script will generate a Fortran module that can

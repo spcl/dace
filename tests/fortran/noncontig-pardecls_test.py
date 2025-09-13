@@ -1,3 +1,4 @@
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 
 from dace.frontend.fortran.fortran_parser import create_singular_sdfg_from_string

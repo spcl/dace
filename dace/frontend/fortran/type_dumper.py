@@ -1,3 +1,4 @@
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 from typing import List, Optional
 from dace.frontend.fortran.ast_internal_classes import Program_Node, Derived_Type_Def_Node, Var_Decl_Node, Name_Node
 from dace.frontend.fortran.ast_components import InternalFortranAst

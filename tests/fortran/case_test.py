@@ -1,4 +1,4 @@
-# Copyright 2025 ETH Zurich and the DaCe quthors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import numpy as np
 

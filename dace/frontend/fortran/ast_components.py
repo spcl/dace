@@ -1,4 +1,4 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 from typing import Any, List, Optional, Type, TypeVar, Union, overload, TYPE_CHECKING, Dict, Tuple
 
 import fparser

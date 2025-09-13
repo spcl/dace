@@ -1,4 +1,4 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 from typing import List, Optional, Tuple, Union, Dict, Any
 
 # The node class is the base class for all nodes in the AST. It provides attributes including the line number and fields.
