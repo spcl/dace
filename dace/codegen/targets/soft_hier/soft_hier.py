@@ -1910,9 +1910,17 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 
         # Just dump the whole HBM address space
         dump_str = "if (flex_is_dm_core() && (flex_get_cluster_id() == 0))\n{"
-        dump_str += "flex_dump_open();\n"
-        dump_str += "flex_dump_hbm(HBM_ADDRESS_BASE, HBM_ADDRESS_SPACE);\n"
-        dump_str += "flex_dump_close();\n }\n"
+        for arr_name, arr in sdfg.arrays.items():
+            if arr.transient is True:
+                continue
+            if arr.storage != dace.dtypes.StorageType.SoftHier_HBM:
+                continue
+            if arr_name != "B":
+                continue
+            dump_str += "flex_dump_open();\n"
+            dump_str += f"flex_dump_hbm({arr_name}, {arr_name}_tile_height * {arr_name}_tile_width);\n"
+            dump_str += "flex_dump_close();\n"
+        dump_str += "}"
 
         # Prepare an empty-grid check for runtime grids
         dimcheck = True
