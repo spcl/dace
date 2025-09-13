@@ -406,3 +406,22 @@ Explanation:
          -o ~/velocity_tendencies.sdfg \
          -c ~/dace/dace/frontend/fortran/conf_files
   ```
+
+## 6. What are the source dependencies when processing from scratch?
+
+- `solve_nh` (and `velocity_tendencies`) dependencies:
+  ```shell
+  -i .../icon-dace/src \
+  -i .../icon-dace/externals/fortran-support/src \
+  -i .../icon-dace/externals/cdi/src \
+  -i .../icon-dace/externals/mtime/src \
+  -i .../icon-dace/support \
+  -i .../icon-dace/externals/math-support/src \
+  -i .../icon-dace/externals/math-interpolation/src \
+  -i .../icon-dace/externals/ecrad/utilities \  # <- For the NetCDF stub.
+  ```
+
+- `radiation` dependencies:
+  ```shell
+  -i .../icon-dace/externals/ecrad \
+  ```

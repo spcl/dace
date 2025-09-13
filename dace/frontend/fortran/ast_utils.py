@@ -1,7 +1,7 @@
 # Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
 from collections import Counter, defaultdict
 from itertools import chain
-from typing import List, Set, Iterator, Type, TypeVar, Dict, Tuple, Iterable, Union, Optional
+from typing import List, Set, Iterator, Type, TypeVar, Dict, Tuple, Iterable, Union, Optional, Any
 
 import networkx as nx
 from fparser.two.Fortran2003 import Module_Stmt, Name, Interface_Block, Subroutine_Stmt, Specification_Part, Module, \
@@ -21,6 +21,7 @@ from dace import dtypes
 from dace import subsets
 from dace import symbolic as sym
 from dace.frontend.fortran import ast_internal_classes
+from dace.frontend.fortran.ast_internal_classes import FNode
 from dace.sdfg import SDFG, SDFGState, InterstateEdge
 from dace.sdfg.nodes import Tasklet
 
@@ -98,7 +99,7 @@ def finish_add_state_to_sdfg(state: SDFGState, top_sdfg: SDFG, substate: SDFGSta
     state.last_sdfg_states[top_sdfg] = substate
 
 
-def get_name(node: ast_internal_classes.FNode):
+def get_name(node: ast_internal_classes.FNode) -> str:
     if isinstance(node, ast_internal_classes.Actual_Arg_Spec_Node):
         actual_node = node.arg
     else:
@@ -994,3 +995,20 @@ class TempName(object):
 def is_literal(node: ast_internal_classes.FNode) -> bool:
     return isinstance(node, (ast_internal_classes.Int_Literal_Node, ast_internal_classes.Double_Literal_Node, ast_internal_classes.Real_Literal_Node, ast_internal_classes.Bool_Literal_Node))
 
+
+def duplicate_ast_element(x: Any, **kwargs) -> Any:
+    return x
+    if isinstance(x, tuple):
+        return (duplicate_ast_element(v) for v in x)
+    elif isinstance(x, list):
+        return [duplicate_ast_element(v) for v in x]
+    elif isinstance(x, FNode):
+        if 'parent' not in kwargs and hasattr(x, 'parent'):
+            kwargs['parent'] = x.parent
+        kvs = {k: duplicate_ast_element(getattr(x, k), **kwargs)
+               for k in chain(x._fields, x._attributes)
+               if hasattr(x, k)}
+        xT = type(x)
+        return xT(**kvs)
+    else:
+        return x

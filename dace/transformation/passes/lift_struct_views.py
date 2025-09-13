@@ -223,7 +223,8 @@ class InterstateEdgeRecoder(ast.NodeTransformer):
 
     def _handle_simple_name_access(self, node: ast.Attribute) -> Any:
         struct: dt.Structure = self.data
-        if not node.attr in struct.members:
+        if node.attr not in struct.members:
+            breakpoint()
             raise RuntimeError(
                 f'Structure attribute {node.attr} is not a member of the structure {struct.name} type definition'
             )

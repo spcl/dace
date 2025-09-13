@@ -1,9 +1,9 @@
 # Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
 
-import copy
 import re
 import warnings
 from collections import namedtuple
+from copy import copy
 from typing import Dict, List, Optional, Tuple, Set, Union, Type
 
 import sympy as sp
@@ -12,9 +12,9 @@ from dace import symbolic as sym
 from dace.frontend.fortran import ast_internal_classes, ast_utils
 from dace.frontend.fortran.ast_desugaring import ConstTypeInjection
 from dace.frontend.fortran.ast_internal_classes import Var_Decl_Node, Name_Node, Int_Literal_Node, Data_Ref_Node, \
-    Execution_Part_Node, Array_Subscript_Node, Bool_Literal_Node
+    Execution_Part_Node, Array_Subscript_Node, Bool_Literal_Node, Literal
 from dace.frontend.fortran.ast_utils import mywalk, iter_fields, iter_attributes, TempName, singular, atmost_one, \
-    match_callsite_args_to_function_args
+    match_callsite_args_to_function_args, duplicate_ast_element
 
 
 class NeedsTypeInferenceException(BaseException):
@@ -69,6 +69,8 @@ class Structures:
         while isinstance(top_ref.parent_ref, ast_internal_classes.Data_Ref_Node):
             top_ref = top_ref.parent_ref
 
+        if not node.parent:
+            breakpoint()
         struct_type = scope_vars.get_var(node.parent, ast_utils.get_name(top_ref.parent_ref)).type
         struct_def = self.structures[struct_type]
 
@@ -1195,7 +1197,7 @@ class ScopeVarsDeclarations(NodeVisitor):
             return self.module_declarations[variable_name]
         else:
             raise RuntimeError(
-                f"Couldn't find the declaration of variable {variable_name} in function {self._scope_name(scope)}!")
+                f"Couldn't find the declaration of variable {variable_name} in function {self._scope_name(scope) if scope else scope}!")
 
     def contains_var(self, scope: ast_internal_classes.FNode, variable_name: str) -> bool:
         return (self._scope_name(scope), variable_name) in self.scope_vars
@@ -1214,7 +1216,7 @@ class ScopeVarsDeclarations(NodeVisitor):
 
     def _scope_name(self, scope: ast_internal_classes.FNode) -> str:
         if isinstance(scope, ast_internal_classes.Main_Program_Node):
-            return scope.name.name.name
+            return scope.name.name
         elif isinstance(scope, str):
             return scope
         else:
@@ -1512,26 +1514,26 @@ class SignToIf(NodeTransformer):
             abs_name = self.ast.intrinsic_handler.replace_function_name(ast_internal_classes.Name_Node(name="ABS"))
 
             body_if = ast_internal_classes.Execution_Part_Node(execution=[
-                ast_internal_classes.BinOp_Node(lval=copy.deepcopy(lval),
+                ast_internal_classes.BinOp_Node(lval=duplicate_ast_element(lval),
                                                 op="=",
                                                 rval=ast_internal_classes.Call_Expr_Node(
                                                     name=abs_name,
                                                     type="DOUBLE",
-                                                    args=[copy.deepcopy(args[0])],
+                                                    args=[duplicate_ast_element(args[0])],
                                                     line_number=node.line_number, parent=node.parent,
                                                     subroutine=False),
 
                                                 line_number=node.line_number, parent=node.parent)
             ])
             body_else = ast_internal_classes.Execution_Part_Node(execution=[
-                ast_internal_classes.BinOp_Node(lval=copy.deepcopy(lval),
+                ast_internal_classes.BinOp_Node(lval=duplicate_ast_element(lval),
                                                 op="=",
                                                 rval=ast_internal_classes.UnOp_Node(
                                                     op="-",
                                                     type="VOID",
                                                     lval=ast_internal_classes.Call_Expr_Node(
                                                         name=abs_name,
-                                                        args=[copy.deepcopy(args[0])],
+                                                        args=[duplicate_ast_element(args[0])],
                                                         type="DOUBLE",
                                                         subroutine=False,
                                                         line_number=node.line_number, parent=node.parent),
@@ -2134,7 +2136,7 @@ class WhileConditionExtractor(NodeTransformer):
                 newbody.append(ast_internal_classes.BinOp_Node(
                     lval=ast_internal_classes.Name_Node(name="_while_cond_" + str(self.count)),
                     op="=",
-                    rval=copy.deepcopy(old_cond),
+                    rval=duplicate_ast_element(old_cond),
                     line_number=child.line_number,
                     parent=child.parent))
                 newcond = ast_internal_classes.BinOp_Node(
@@ -2149,7 +2151,7 @@ class WhileConditionExtractor(NodeTransformer):
                 newwhilebody.execution.append(ast_internal_classes.BinOp_Node(
                     lval=ast_internal_classes.Name_Node(name="_while_cond_" + str(old_count)),
                     op="=",
-                    rval=copy.deepcopy(old_cond),
+                    rval=duplicate_ast_element(old_cond),
                     line_number=child.line_number,
                     parent=child.parent))
 
@@ -3226,7 +3228,7 @@ class ParDeclOffsetNormalizer(NodeTransformer):
         # if not isinstance(last_var.part_ref, ast_internal_classes.Array_Subscript_Node):
         #    return node
 
-        self.data_ref_stack.append(copy.deepcopy(node))
+        self.data_ref_stack.append(duplicate_ast_element(node))
         node.part_ref = self.visit(node.part_ref)
         self.data_ref_stack.pop()
 
@@ -3861,7 +3863,7 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
                     ])
                 )
 
-                dest_indices = copy.deepcopy(tmp_array.indices)
+                dest_indices = duplicate_ast_element(tmp_array.indices)
                 for idx, _, _ in tmp_array.noncontig_dims:
                     iter_var = ast_internal_classes.Name_Node(name=f"tmp_parfor_{tmp_array.counter}_{idx}")
                     dest_indices[idx] = iter_var
@@ -3873,7 +3875,7 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
                     line_numbe=child.line_number
                 )
 
-                source_indices = copy.deepcopy(tmp_array.indices)
+                source_indices = duplicate_ast_element(tmp_array.indices)
                 for idx, main_var, var in tmp_array.noncontig_dims:
                     iter_var = ast_internal_classes.Name_Node(name=f"tmp_parfor_{tmp_array.counter}_{idx}")
 
@@ -3981,7 +3983,7 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
         if not isinstance(last_var.part_ref, ast_internal_classes.Array_Subscript_Node):
             return node
 
-        self.data_ref_stack.append(copy.deepcopy(node))
+        self.data_ref_stack.append(duplicate_ast_element(node))
         node.part_ref = self.visit(node.part_ref)
         self.data_ref_stack.pop()
 
