@@ -1,21 +1,24 @@
 import numpy as np
 from math import sqrt
+from typing import Union
 
 class InterleaveHandler:
-    array = None
-    block_shape:tuple = None
-    cluster_dims:tuple = None
-    cluster_dims_dace:tuple = None
-    split_scheme:tuple = None
-    placement_scheme:tuple = None
-    def __init__(self, array:np.array, cluster_dims:tuple, block_shape:tuple):
+    def __init__(self, array:np.array, cluster_dims:tuple, block_shape:tuple, name: Union[str, None] = None):
+        self.name = name
         self.array = array
         self.block_shape = block_shape
         self.cluster_dims_dace = cluster_dims
         (dim_x, dim_y) = cluster_dims
         num_clusters = dim_x * dim_y
         self.cluster_dims = (int(sqrt(num_clusters)), int(sqrt(num_clusters)))
-        
+
+    def get_tiling_shape(self):
+        return (self.array.shape[0] // self.split_scheme[0], self.array.shape[1] // self.split_scheme[1])
+
+    @property
+    def tiling_shape(self):
+        return self.get_tiling_shape()
+
     def get_tile_num(self):
         if self.split_scheme is None:
             raise ValueError("Split scheme is not set")
@@ -29,7 +32,7 @@ class InterleaveHandler:
         print("Cluster dimensions (DACE): ", self.cluster_dims_dace)
         print("Split scheme: ", self.split_scheme)
         if self.split_scheme is not None:
-            print("Tiling shape: ", (self.array.shape[0] // self.split_scheme[0], self.array.shape[1] // self.split_scheme[1]))
+            print("Tiling shape: ", self.get_tiling_shape())
         print("Placement scheme: ", self.placement_scheme)
         
     def split_horizental(self):
@@ -51,6 +54,7 @@ class InterleaveHandler:
             raise ValueError("Range must be a tuple of 3 elements")
         (start, end, step) = place_range
         num_channels = (end - start + 1) // step
+        self.num_channels = num_channels
         total_channels = int(sqrt(self.cluster_dims[0] * self.cluster_dims[1])) * 4
         num_tiles = self.split_scheme[0] * self.split_scheme[1]
         if num_tiles % num_channels != 0:

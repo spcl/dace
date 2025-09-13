@@ -432,9 +432,13 @@ class SoftHierCodeGen(TargetCodeGenerator):
 #include "flex_printf.h"
 #include "flex_cluster_arch.h"
 #include "flex_dma_pattern.h"
+#include "flex_dump.h"
 #define floor(x) ((x))
 #define Mod(x, y) ((x) % (y))
 {file_header}
+
+static uint64_t HBM_ADDRESS_SPACE = {hbm_address_space};
+static uint64_t HBM_ADDRESS_BASE = {hbm_address_base};
 
 int __dace_init_cuda(struct {sdfg_state_name} *__state{params});
 int __dace_exit_cuda(struct {sdfg_state_name} *__state);
@@ -479,7 +483,9 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
            backend=self.backend,
            backend_header=backend_header,
            pool_header=pool_header,
-           sdfg=self._global_sdfg)
+           sdfg=self._global_sdfg,
+           hbm_address_space=dace.config.Config.get("backend", "softhier", "HBM_ADDRESS_SPACE"),
+           hbm_address_base=dace.config.Config.get("backend", "softhier", "HBM_ADDRESS_BASE"))
 
         return [self._codeobject]
 
@@ -1902,6 +1908,12 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                     self._localcode.write(f'{aname}_tile_width = {hbm_width}/{width_split};')
 
 
+        # Just dump the whole HBM address space
+        dump_str = "if (flex_is_dm_core() && (flex_get_cluster_id() == 0))\n{"
+        dump_str += "flex_dump_open();\n"
+        dump_str += "flex_dump_hbm(HBM_ADDRESS_BASE, HBM_ADDRESS_SPACE);\n"
+        dump_str += "flex_dump_close();\n }\n"
+
         # Prepare an empty-grid check for runtime grids
         dimcheck = True
         if dimcheck:
@@ -1935,6 +1947,8 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
             flex_timer_end();
             flex_intra_cluster_sync();
             flex_global_barrier_xy();
+            {dump_str}
+            flex_global_barrier_xy();
             flex_eoc(eoc_val);
             return;'''
             .format(kname=kernel_name,
@@ -1943,7 +1957,8 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                     bdims=bdims,
                     dynsmem=_topy(dynsmem_size),
                     stream=cudastream,
-                    backend=self.backend), cfg, state_id, scope_entry)
+                    backend=self.backend,
+                    dump_str=dump_str), cfg, state_id, scope_entry)
         # Check kernel launch for errors
         # self._localcode.write(f'DACE_KERNEL_LAUNCH_CHECK(__err, "{kernel_name}", {gdims}, {bdims});')
         

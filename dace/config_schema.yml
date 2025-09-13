@@ -279,6 +279,8 @@ required:
                             generate "#pragma omp parallel sections" code around
                             them.
 
+
+
             #############################################
             # GPU (CUDA/HIP) compiler
             cuda:
@@ -837,6 +839,35 @@ required:
                     assignments that appear inside Maps to avoid using WCR when possible.
                     This feature works correctly only when there is a single augmented assignment
                     for each data dimension inside a Map.
+
+    # #############################################
+    # Backend settings
+    backend:
+        type: dict
+        title: Backend
+        description: Preferences of Backends
+        required:
+            #############################################
+            # SoftHier Configurations
+            softhier:
+                type: dict
+                title: SoftHier
+                description: SoftHier stuff
+                required:
+                    HBM_ADDRESS_SPACE:
+                        type: str
+                        default: '0x20000000'
+                        title: HBM_ADDRESS_SPACE
+                        description: >
+                            HBM address space
+
+                    HBM_ADDRESS_BASE:
+                        type: str
+                        default: '0xc0000000'
+                        title: HBM_ADDRESS_BASE
+                        description: >
+                            HBM address BASE
+
 
     #############################################
 
