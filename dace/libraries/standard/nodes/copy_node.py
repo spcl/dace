@@ -19,8 +19,8 @@ class ExpandPure(ExpandTransformation):
         map_lengths = [(e + 1 - b) // s for (b, e, s) in in_subset]
 
         sdfg = dace.SDFG(f"{node.label}_sdfg")
-        sdfg.add_array(inp_name, inp.shape, inp.dtype, inp.storage, strides=inp.strides)
-        sdfg.add_array(out_name, out.shape, out.dtype, out.storage, strides=out.strides)
+        sdfg.add_array(inp_name, map_lengths, inp.dtype, inp.storage, strides=inp.strides)
+        sdfg.add_array(out_name, map_lengths, out.dtype, out.storage, strides=out.strides)
 
         state = sdfg.add_state(f"{node.label}_state")
         sdfg.schedule = dace.dtypes.ScheduleType.Default
@@ -43,18 +43,6 @@ class ExpandPure(ExpandTransformation):
                                  schedule=schedule,
                                  external_edges=True)
 
-        # To avoid _cuda_stream is missing crush / bug
-        """
-        map_entries = []
-        for n in state.nodes():
-            if isinstance(n, dace.nodes.MapEntry):
-                map_entries.append(n)
-
-        assert len(map_entries) == 1
-        map_entry = map_entries[0]
-        map_entry._cuda_stream = 0
-        """
-
         return sdfg
 
 
@@ -69,8 +57,8 @@ class ExpandCUDA(ExpandTransformation):
         cp_size = reduce(operator.mul, map_lengths, 1)
 
         sdfg = dace.SDFG(f"{node.label}_sdfg")
-        sdfg.add_array(inp_name, inp.shape, inp.dtype, inp.storage, strides=inp.strides)
-        sdfg.add_array(out_name, out.shape, out.dtype, out.storage, strides=out.strides)
+        sdfg.add_array(inp_name, map_lengths, inp.dtype, inp.storage, strides=inp.strides)
+        sdfg.add_array(out_name, map_lengths, out.dtype, out.storage, strides=out.strides)
 
         state = sdfg.add_state(f"{node.label}_main")
 
@@ -86,11 +74,12 @@ class ExpandCUDA(ExpandTransformation):
             code_global=f"#include <cuda_runtime.h>\n")
         tasklet.schedule = dace.dtypes.ScheduleType.GPU_Device
 
-        state.add_edge(in_access, None, tasklet, "_in",
-                       dace.memlet.Memlet(data=inp_name, subset=copy.deepcopy(in_subset)))
-        state.add_edge(tasklet, "_out", out_access, None,
-                       dace.memlet.Memlet(data=out_name, subset=copy.deepcopy(out_subset)))
-
+        state.add_edge(
+            in_access, None, tasklet, "_in",
+            dace.memlet.Memlet(data=inp_name, subset=dace.subsets.Range([(0, e - 1, 1) for e in map_lengths])))
+        state.add_edge(
+            tasklet, "_out", out_access, None,
+            dace.memlet.Memlet(data=out_name, subset=dace.subsets.Range([(0, e - 1, 1) for e in map_lengths])))
         return sdfg
 
 
@@ -98,6 +87,16 @@ class ExpandCUDA(ExpandTransformation):
 class CopyLibraryNode(nodes.LibraryNode):
     implementations = {"pure": ExpandPure, "CUDA": ExpandCUDA}
     default_implementation = 'pure'
+
+    def _extend_in_out_edges(self, parent_state, parent_sdfg):
+        # Set connection from parent state to the nested to cover the complete array subset
+        oes = {oe for oe in parent_state.edges() if oe.src == self}
+        ies = {ie for ie in parent_state.edges() if ie.dst == self}
+        assert len(oes) == 1 and len(
+            ies) == 1, f"Length of in edges / out edges of the library node is not both 1: {len(ies)}, {len(oes)}"
+        # New subset covers the complete array, as the correct subset offset is done in the inner map
+        for e in {next(iter(oes)), next(iter(ies))}:
+            e.data = dace.memlet.Memlet.from_array(e.data.data, parent_sdfg.arrays[e.data.data])
 
     def __init__(self, name, *args, **kwargs):
         super().__init__(name, *args, **kwargs)

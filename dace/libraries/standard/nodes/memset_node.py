@@ -19,7 +19,7 @@ class ExpandPure(ExpandTransformation):
         map_lengths = [(e + 1 - b) // s for (b, e, s) in out_subset]
 
         sdfg = dace.SDFG(f"{node.label}_sdfg")
-        sdfg.add_array(out_name, out.shape, out.dtype, out.storage, strides=out.strides)
+        sdfg.add_array(out_name, map_lengths, out.dtype, out.storage, strides=out.strides)
 
         state = sdfg.add_state(f"{node.label}_state")
         map_params = [f"__i{i}" for i in range(len(map_lengths))]
@@ -53,7 +53,7 @@ class ExpandCUDA(ExpandTransformation):
         memset_size = reduce(operator.mul, map_lengths, 1)
 
         sdfg = dace.SDFG(f"{node.label}_sdfg")
-        sdfg.add_array(out_name, out.shape, out.dtype, out.storage, strides=out.strides)
+        sdfg.add_array(out_name, map_lengths, out.dtype, out.storage, strides=out.strides)
 
         state = sdfg.add_state(f"{node.label}_main")
 
@@ -66,8 +66,9 @@ class ExpandCUDA(ExpandTransformation):
             language=dace.Language.CPP,
             code_global=f"#include <cuda_runtime.h>\n")
 
-        state.add_edge(tasklet, "_out", out_access, None,
-                       dace.memlet.Memlet(data=out_name, subset=copy.deepcopy(out_subset)))
+        state.add_edge(
+            tasklet, "_out", out_access, None,
+            dace.memlet.Memlet(data=out_name, subset=dace.subsets.Range([(0, e - 1, 1) for e in map_lengths])))
 
         return sdfg
 
