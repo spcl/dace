@@ -2,7 +2,7 @@
 import copy
 import dace
 from dace import nodes, Memlet
-from dace.sdfg import SDFG, SDFGState, InterstateEdge
+from dace.sdfg import dealias, SDFG, SDFGState, InterstateEdge
 from dace.dtypes import StorageType, ScheduleType
 from dace.properties import Property, make_properties
 from dace.sdfg.state import AbstractControlFlowRegion, LoopRegion
@@ -306,6 +306,8 @@ class GPUPersistentKernel(SubgraphTransformation):
         p = RemoveUnusedSymbols()
         p.symbols = new_symbols
         p.apply_pass(sdfg, {})
+
+        dealias.integrate_nested_sdfg(kernel_sdfg)
 
         # Transformation is done
         if self.validate:
