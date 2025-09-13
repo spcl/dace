@@ -18,6 +18,7 @@
     #include "../../../external/cub/cub/iterator/counting_input_iterator.cuh"
     #include "../../../external/cub/cub/iterator/transform_input_iterator.cuh"
 #endif
+#include <thrust/iterator/transform_iterator.h>
 #endif
 
 #ifdef __HIPCC__
@@ -599,9 +600,9 @@ namespace dace {
     };
 
     inline auto stridedIterator(size_t stride) {
-        cub::CountingInputIterator<int> counting_iterator(0);
+        auto counting_iterator = thrust::counting_iterator<int>(0);
         StridedIteratorHelper conversion_op(stride);
-        cub::TransformInputIterator<int, decltype(conversion_op), decltype(counting_iterator)> itr(counting_iterator, conversion_op);
+        auto itr = thrust::make_transform_iterator(counting_iterator, conversion_op);
         return itr;
     }
 #endif
