@@ -163,6 +163,8 @@ class ExpandGemmOpenBLAS(ExpandTransformation):
         node.validate(sdfg, state)
         (_, adesc, _, _, _, _), (_, bdesc, _, _, _, _), _ = _get_matmul_operands(node, state, sdfg)
         dtype = adesc.dtype.base_type
+        cast = "(float *)" if dtype == dace.float32sr else ""
+
         func = to_blastype(dtype.type).lower() + 'gemm'
         alpha = f'{dtype.ctype}({node.alpha})'
         beta = f'{dtype.ctype}({node.beta})'
@@ -193,7 +195,7 @@ class ExpandGemmOpenBLAS(ExpandTransformation):
             opt['beta'] = '&__beta'
 
         code += ("cblas_{func}(CblasColMajor, {ta}, {tb}, "
-                 "{M}, {N}, {K}, {alpha}, {x}, {lda}, {y}, {ldb}, {beta}, "
+                 "{M}, {N}, {K}, {alpha},{cast} {x}, {lda}, {cast} {y}, {ldb}, {beta}, "
                  "_c, {ldc});").format_map(opt)
 
         tasklet = dace.sdfg.nodes.Tasklet(
