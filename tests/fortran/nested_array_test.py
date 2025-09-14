@@ -1,4 +1,4 @@
-# Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import numpy as np
 
@@ -61,8 +61,10 @@ end subroutine main
     test = np.full([0, 0, 0], 42, order="F", dtype=np.int32)
     indices = np.full([0, 0, 0], 42, order="F", dtype=np.int32)
     sdfg(d=d,
-         test=test, **deduce_f2dace_variables_for_array(test, 'test', 0),
-         indices=indices, **deduce_f2dace_variables_for_array(indices, 'indices', 3))
+         test=test,
+         **deduce_f2dace_variables_for_array(test, 'test', 0),
+         indices=indices,
+         **deduce_f2dace_variables_for_array(indices, 'indices', 3))
     assert np.allclose(d, [42, 5.5, 42, 42])
 
 
@@ -94,8 +96,10 @@ end subroutine main
     test = np.full([3, 4, 5], 42, order="F", dtype=np.int32)
     indices = np.full([3, 4, 5], 42, order="F", dtype=np.int32)
     sdfg(d=d,
-         test=test, **deduce_f2dace_variables_for_array(test, 'test', 0),
-         indices=indices, **deduce_f2dace_variables_for_array(indices, 'indices', 3))
+         test=test,
+         **deduce_f2dace_variables_for_array(test, 'test', 0),
+         indices=indices,
+         **deduce_f2dace_variables_for_array(indices, 'indices', 3))
     assert np.allclose(d, [42, 5.5, 42, 42])
 
 

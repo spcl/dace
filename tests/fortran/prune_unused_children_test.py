@@ -1,4 +1,4 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 from typing import Dict, List
 
 from fparser.two.Fortran2003 import Program
@@ -758,6 +758,7 @@ END PROGRAM main
 """.strip()
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
+
 
 if __name__ == "__main__":
     test_minimal_no_pruning()

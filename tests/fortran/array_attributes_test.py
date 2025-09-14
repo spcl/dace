@@ -1,4 +1,4 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import numpy as np
 
@@ -43,7 +43,7 @@ def test_fortran_frontend_array_attribute_no_offset_symbol():
 subroutine main(d, arrsize)
   integer :: arrsize,i
   double precision, dimension(arrsize) :: d
-                                                   
+
   do i = 1, arrsize
     d(i) = i*2.0
   end do
@@ -73,7 +73,7 @@ def test_fortran_frontend_array_attribute_offset():
     """
     sources, main = SourceCodeBuilder().add_file("""
 subroutine main(d)
-  integer :: i                                                                                  
+  integer :: i
   double precision, dimension(50:54) :: d
   do i = 50, 54
     d(i) = i*2.0
@@ -93,7 +93,7 @@ end subroutine main
     sdfg(d=a)
     for i in range(1, 5):
         # offset -1 is already added
-        assert a[i - 1] == (i-1+50) * 2
+        assert a[i - 1] == (i - 1 + 50) * 2
 
 
 def test_fortran_frontend_array_attribute_offset_symbol():
@@ -124,7 +124,7 @@ end subroutine main
     arrsize = 1
     for i in range(arrsize, arrsize + 4):
         # offset -1 is already added
-        assert a[i - 1] == (i-1+50) * 2
+        assert a[i - 1] == (i - 1 + 50) * 2
 
 
 def test_fortran_frontend_array_attribute_offset_symbol2():
@@ -159,7 +159,7 @@ end subroutine main
     sdfg(d=a, arrsize=arrsize, arrsize2=arrsize2)
     for i in range(1, 5):
         # offset -1 is already added
-        assert a[i - 1] == (i-1+50) * 2
+        assert a[i - 1] == (i - 1 + 50) * 2
 
 
 def test_fortran_frontend_array_offset():
@@ -188,7 +188,7 @@ end subroutine main
     sdfg(d=a)
     for i in range(1, 5):
         # offset -1 is already added
-        assert a[i - 1] == (50+i-1) * 2
+        assert a[i - 1] == (50 + i - 1) * 2
 
 
 def test_fortran_frontend_array_offset_symbol():
@@ -223,11 +223,12 @@ end subroutine main
     sdfg(d=a, arrsize=arrsize, arrsize2=arrsize2)
     for i in range(1, 5):
         # offset -1 is already added
-        assert a[i - 1] == (i+50-1) * 2
+        assert a[i - 1] == (i + 50 - 1) * 2
 
 
 def test_fortran_frontend_array_arbitrary():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = SourceCodeBuilder().add_file(
+        """
 subroutine main(d, arrsize, arrsize2)
   integer :: arrsize
   integer :: arrsize2,i
@@ -244,8 +245,7 @@ end subroutine main
     arrsize = 5
     arrsize2 = 10
     a = np.full([arrsize, arrsize2], 42, order="F", dtype=np.float64)
-    sdfg(d=a, **deduce_f2dace_variables_for_array(a, 'd', 0),
-         arrsize=arrsize, arrsize2=arrsize2)
+    sdfg(d=a, **deduce_f2dace_variables_for_array(a, 'd', 0), arrsize=arrsize, arrsize2=arrsize2)
     for i in range(arrsize):
         # offset -1 is already added
         assert a[i, 0] == (i + 1) * 2
@@ -269,8 +269,7 @@ end subroutine main
     arrsize = 5
     arrsize2 = 10
     a = np.full([arrsize, arrsize2], 42, order="F", dtype=np.float64)
-    sdfg(d=a, **deduce_f2dace_variables_for_array(a, 'd', 0),
-         arrsize=arrsize, arrsize2=arrsize2)
+    sdfg(d=a, **deduce_f2dace_variables_for_array(a, 'd', 0), arrsize=arrsize, arrsize2=arrsize2)
     for i in range(arrsize):
         # offset -1 is already added
         assert a[i, 0] == (i + 1) * 2

@@ -1,3 +1,5 @@
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+
 import re
 import subprocess
 from dataclasses import dataclass
@@ -24,7 +26,8 @@ NEW_LINE = "NEW_LINE('A')"
 
 
 def gen_f90_serde_module_skeleton(mod_name: str = 'serde') -> Module:
-    return Module(get_reader(f"""
+    return Module(
+        get_reader(f"""
 module {mod_name}
   implicit none
 
@@ -118,7 +121,8 @@ def gen_base_type_serializer(typ: str, kind: Optional[int] = None) -> Subroutine
     else:
         op = "write (io, '(g0)', advance='no') x"
 
-    return Subroutine_Subprogram(get_reader(f"""
+    return Subroutine_Subprogram(
+        get_reader(f"""
 subroutine {fn_name}(io, x, cleanup, nline)
   character(len=50) :: buf
   integer :: io
@@ -218,7 +222,8 @@ integer :: k, kmeta, {iter_vars}
     meta = '\n'.join(meta_ops)
     fn_name = f"W_{tag}_R_{rank}"
 
-    return Subroutine_Subprogram(get_reader(f"""
+    return Subroutine_Subprogram(
+        get_reader(f"""
 subroutine {fn_name}(io, x, cleanup, nline, meta)
   {use or ''}
   integer :: io
@@ -337,16 +342,16 @@ def type_injection_leaf_ops(alias_map: SPEC_TABLE,
         # Prepare array ops that go together.
         siz_ops, off_ops = [], []
         if z.rank:
-            comp = trail + (z.name,)
+            comp = trail + (z.name, )
             for dim in range(z.rank):
-                siz = trail + (f"__f2dace_SA_{z.name}_d_{dim}_s",)
+                siz = trail + (f"__f2dace_SA_{z.name}_d_{dim}_s", )
                 siz_ops.append(_make_type_injection_entry_op(root_tspec, siz, f"size(x%{'%'.join(comp)}, {dim + 1})"))
-                off = trail + (f"__f2dace_SOA_{z.name}_d_{dim}_s",)
+                off = trail + (f"__f2dace_SOA_{z.name}_d_{dim}_s", )
                 off_ops.append(_make_type_injection_entry_op(root_tspec, off, f"lbound(x%{'%'.join(comp)}, {dim + 1})"))
 
         if z.alloc:
-            comp = trail + (z.name,)
-            alloc = trail + (f"{z.name}_a",)
+            comp = trail + (z.name, )
+            alloc = trail + (f"{z.name}_a", )
             siz_ops = '\n'.join(siz_ops)
             off_ops = '\n'.join(off_ops)
             yield _make_type_injection_entry_op(root_tspec, alloc, f"merge(true, false, allocated(x%{'%'.join(comp)}))")
@@ -360,18 +365,17 @@ end if
             for op in chain(siz_ops, off_ops):
                 yield op
         elif z.ptr:
-            comp = trail + (f"__f2dace_{z.name}_POINTERTO",)
+            comp = trail + (f"__f2dace_{z.name}_POINTERTO", )
             yield _make_type_injection_entry_op(root_tspec, comp, f"'=> MISSING'")
         elif isinstance(z.type, Intrinsic_Type_Spec):
-            comp = trail + (z.name,)
+            comp = trail + (z.name, )
             yield _make_type_injection_entry_op(root_tspec, comp, f"x%{'%'.join(comp)}")
         elif isinstance(z.type, Declaration_Type_Spec):
             _, typ_name = z.type.children
-            comp_typ_alias = dt.spec[:-1] + (typ_name.string,)
+            comp_typ_alias = dt.spec[:-1] + (typ_name.string, )
             assert comp_typ_alias in alias_map
-            cdt = singular(cdt for k, cdt in all_derived_types.items()
-                           if alias_map[comp_typ_alias].parent is cdt.tdef)
-            yield from type_injection_leaf_ops(alias_map, all_derived_types, cdt, root_tspec, trail + (z.name,))
+            cdt = singular(cdt for k, cdt in all_derived_types.items() if alias_map[comp_typ_alias].parent is cdt.tdef)
+            yield from type_injection_leaf_ops(alias_map, all_derived_types, cdt, root_tspec, trail + (z.name, ))
         else:
             raise NotImplementedError(f"Do not know how to process for type-injection: {dt}/{z}")
 
@@ -410,11 +414,17 @@ def _get_global_data_serde_code(ast: Program, g: SDFG) -> SerdeCode:
     uses, ser_ops, ser_ops_cpp, des_ops, consistent_ops_cpp = [], [], [], [], []
     if GLOBAL_DATA_OBJ_NAME in g.arrays:
         sdfg_structs: Dict[str, dace.data.Structure] = {
-            v.name: v for k, v in g.arrays.items() if isinstance(v, dace.data.Structure)}
-        all_sa_vars: Dict[str, str] = {strip_last_int(z): z for z in sdfg_structs[GLOBAL_DATA_TYPE_NAME].keys()
-                                       if z.startswith("__f2dace_SA_")}
-        all_soa_vars: Dict[str, str] = {strip_last_int(z): z for z in sdfg_structs[GLOBAL_DATA_TYPE_NAME].keys()
-                                        if z.startswith("__f2dace_SOA_")}
+            v.name: v
+            for k, v in g.arrays.items() if isinstance(v, dace.data.Structure)
+        }
+        all_sa_vars: Dict[str, str] = {
+            strip_last_int(z): z
+            for z in sdfg_structs[GLOBAL_DATA_TYPE_NAME].keys() if z.startswith("__f2dace_SA_")
+        }
+        all_soa_vars: Dict[str, str] = {
+            strip_last_int(z): z
+            for z in sdfg_structs[GLOBAL_DATA_TYPE_NAME].keys() if z.startswith("__f2dace_SOA_")
+        }
         gdata = g.arrays[GLOBAL_DATA_OBJ_NAME].members
         for mod in walk(ast, Module):
             mname = find_name_of_node(mod)
@@ -459,7 +469,7 @@ add_line(serialize_array(g->{vname}), s);
                     ser_ops_cpp.append(f"""
 add_line(serialize(g->{vname}), s);
 """)
-                    if vtype.spec == ('LOGICAL',):
+                    if vtype.spec == ('LOGICAL', ):
                         vname_val = f"""(g->{vname} ? ".true." : ".false.")"""
                     else:
                         vname_val = f"""serialize(g->{vname})"""
@@ -576,47 +586,59 @@ def generate_serde_code(ast: Program, g: SDFG, mod_name: str = 'serde') -> Serde
     array_serializers: Dict[Tuple[str, int], Subroutine_Subprogram] = {}
     # Generate basic array serializers for ranks 1 to 4.
     for rank in range(1, 5):
-        typez = ['LOGICAL', 'INTEGER(KIND = 1)', 'INTEGER(KIND = 2)', 'INTEGER(KIND = 4)', 'INTEGER(KIND = 8)',
-                 'REAL(KIND = 4)', 'REAL(KIND = 8)']
+        typez = [
+            'LOGICAL', 'INTEGER(KIND = 1)', 'INTEGER(KIND = 2)', 'INTEGER(KIND = 4)', 'INTEGER(KIND = 8)',
+            'REAL(KIND = 4)', 'REAL(KIND = 8)'
+        ]
         for t in typez:
-            tag = (f"{t}"
-                   .replace('TYPE(', 'dt_')
-                   .replace('(KIND =', '_')
-                   .replace('(LEN =', '_')
-                   .replace(' ', '_')
-                   .replace(')', '')
-                   .lower())
+            tag = (f"{t}".replace('TYPE(', 'dt_').replace('(KIND =',
+                                                          '_').replace('(LEN =',
+                                                                       '_').replace(' ', '_').replace(')', '').lower())
             array_serializers[(tag, rank)] = generate_array_serializer_f90(t, rank, tag)
 
     # C++ SerDe related data structures.
     sdfg_structs: Dict[str, dace.data.Structure] = {
-        v.name: v for k, v in g.arrays.items() if isinstance(v, dace.data.Structure)}
+        v.name: v
+        for k, v in g.arrays.items() if isinstance(v, dace.data.Structure)
+    }
     sdfg_structs_from_arrays: Dict[str, dace.data.Structure] = {
-        v.stype.name: v.stype for k, v in g.arrays.items()
-        if isinstance(v, dace.data.ContainerArray) and isinstance(v.stype, dace.data.Structure)}
+        v.stype.name: v.stype
+        for k, v in g.arrays.items()
+        if isinstance(v, dace.data.ContainerArray) and isinstance(v.stype, dace.data.Structure)
+    }
     sdfg_structs.update(sdfg_structs_from_arrays)
 
     while True:
         new_sdfg_structs: Dict[str, dace.data.Structure] = {
-            m.name: m for _, v in sdfg_structs.items() for _, m in v.members.items()
-            if isinstance(m, dace.data.Structure) and m.name not in sdfg_structs}
+            m.name: m
+            for _, v in sdfg_structs.items()
+            for _, m in v.members.items() if isinstance(m, dace.data.Structure) and m.name not in sdfg_structs
+        }
         new_sdfg_structs_from_arrays: Dict[str, dace.data.Structure] = {
-            m.stype.name: m.stype for _, v in sdfg_structs.items() for _, m in v.members.items()
-            if isinstance(m, dace.data.ContainerArray) and
-               isinstance(m.stype, dace.data.Structure) and
-               m.stype.name not in sdfg_structs}
+            m.stype.name: m.stype
+            for _, v in sdfg_structs.items()
+            for _, m in v.members.items() if isinstance(m, dace.data.ContainerArray)
+            and isinstance(m.stype, dace.data.Structure) and m.stype.name not in sdfg_structs
+        }
         new_sdfg_structs.update(new_sdfg_structs_from_arrays)
         if not new_sdfg_structs:
             break
         sdfg_structs.update(new_sdfg_structs)
 
-    sdfg_structs: Dict[str, List[Tuple[str, dace.data.Data]]] = {k: [(kk, vv) for kk, vv in v.members.items()]
-                                                                 for k, v in sdfg_structs.items()}
+    sdfg_structs: Dict[str, List[Tuple[str, dace.data.Data]]] = {
+        k: [(kk, vv) for kk, vv in v.members.items()]
+        for k, v in sdfg_structs.items()
+    }
 
     sdfg_structs: Dict[str, Dict[str, str]] = {
-        k: {kk: _real_ctype(vv) for kk, vv in v}
-        for k, v in sdfg_structs.items()}
-    cpp_deserializer_fns: List[str] = [f"""
+        k: {
+            kk: _real_ctype(vv)
+            for kk, vv in v
+        }
+        for k, v in sdfg_structs.items()
+    }
+    cpp_deserializer_fns: List[str] = [
+        f"""
 void deserialize(float* x, std::istream& s) {{
     read_scalar(*x, s);
 }}
@@ -659,8 +681,10 @@ void deserialize(long long& x, std::istream& s) {{
 void deserialize(bool& x, std::istream& s) {{
     read_scalar(x, s);
 }}
-"""]
-    cpp_serializer_fns: List[str] = [f"""
+"""
+    ]
+    cpp_serializer_fns: List[str] = [
+        f"""
 template<typename T>
 void add_line(const T& x, std::ostream& s, bool trailing_newline=true) {{
     s << x;
@@ -720,7 +744,8 @@ std::string serialize(long double x) {{
 std::string serialize(bool x) {{
     return serialize(int(x));
 }}
-"""]
+"""
+    ]
 
     # Actual code generation begins here.
     ident_map = identifier_specs(ast)
@@ -736,12 +761,18 @@ std::string serialize(bool x) {{
                 continue
             array_map[(f"{z.type}", z.rank)] = (z.name, z.shape)
 
-        all_sa_vars: Dict[str, str] = {strip_last_int(z): z for z in sdfg_structs[dt.name].keys()
-                                       if z.startswith("__f2dace_SA_")}
-        all_soa_vars: Dict[str, str] = {strip_last_int(z): z for z in sdfg_structs[dt.name].keys()
-                                        if z.startswith("__f2dace_SOA_")}
-        all_cinjops: Dict[str, Tuple[str, str]] = {strip_last_int(z): ('.'.join(dt.spec), z)
-                                                   for z, t in sdfg_structs[dt.name].items() if '*' not in t}
+        all_sa_vars: Dict[str, str] = {
+            strip_last_int(z): z
+            for z in sdfg_structs[dt.name].keys() if z.startswith("__f2dace_SA_")
+        }
+        all_soa_vars: Dict[str, str] = {
+            strip_last_int(z): z
+            for z in sdfg_structs[dt.name].keys() if z.startswith("__f2dace_SOA_")
+        }
+        all_cinjops: Dict[str, Tuple[str, str]] = {
+            strip_last_int(z): ('.'.join(dt.spec), z)
+            for z, t in sdfg_structs[dt.name].items() if '*' not in t
+        }
         for z in iterate_over_public_components(dt):
             if z.alloc:
                 all_cinjops[f"{z.name}_a"] = ('.'.join(dt.spec), z.name)
@@ -770,13 +801,10 @@ std::string serialize(bool x) {{
                     else:
                         mod = singular(k[0] for k in ident_map.keys() if len(k) == 2 and k[-1] == ctyp)
                         use = f"use {mod}, only: {ctyp}"
-                tag = (f"{z.type}"
-                       .replace('TYPE(', 'dt_')
-                       .replace('(KIND =', '_')
-                       .replace('(LEN =', '_')
-                       .replace(' ', '_')
-                       .replace(')', '')
-                       .lower())
+                tag = (f"{z.type}".replace('TYPE(',
+                                           'dt_').replace('(KIND =',
+                                                          '_').replace('(LEN =',
+                                                                       '_').replace(' ', '_').replace(')', '').lower())
                 if (tag, z.rank) not in array_serializers:
                     array_serializers[(tag, z.rank)] = generate_array_serializer_f90(f"{z.type}", z.rank, tag, use)
 
@@ -791,8 +819,10 @@ call serialize(io, associated(x%{z.name}), cleanup=.false.)
 add_line("# assoc", s);
 add_line(serialize(x->{z.name} != nullptr), s);
 """)
-                candidates = {f"x%{v[0]}": v[1].children for k, v in array_map.items()
-                              if k[0] == f"{z.type}" and z.rank <= k[1]}
+                candidates = {
+                    f"x%{v[0]}": v[1].children
+                    for k, v in array_map.items() if k[0] == f"{z.type}" and z.rank <= k[1]
+                }
                 f90_ser_ops.extend(generate_pointer_meta_f90(f"x%{z.name}", z.rank, candidates))
                 cpp_ser_ops.append(f"""
 if (x->{z.name}) add_line(serialize_array(x->{z.name}), s);
@@ -867,7 +897,7 @@ m = read_array_meta(s);
 {sa_vars}
 {soa_vars}
 // TODO: THIS IS POTENTIALLY BUGGY, BECAUSE IT IS NOT REALLY TESTED.
-// We only need to allocate a volume of contiguous memory, and let DaCe interpret (assuming it follows the same protocol 
+// We only need to allocate a volume of contiguous memory, and let DaCe interpret (assuming it follows the same protocol
 // as us).
 x ->{z.name} = m.read<std::remove_pointer<decltype(x ->{z.name})>::type>(s);
 """)
@@ -876,7 +906,7 @@ x ->{z.name} = m.read<std::remove_pointer<decltype(x ->{z.name})>::type>(s);
 m = read_array_meta(s);
 {sa_vars}
 {soa_vars}
-// We only need to allocate a volume of contiguous memory, and let DaCe interpret (assuming it follows the same protocol 
+// We only need to allocate a volume of contiguous memory, and let DaCe interpret (assuming it follows the same protocol
 // as us).
 x ->{z.name} = m.read<std::remove_pointer<decltype(x ->{z.name})>::type>(s);
 """)
@@ -902,7 +932,8 @@ deserialize(&(x->{z.name}), s);
         # Conclude the F90 serializer of the type.
         f90_ser_ops: str = '\n'.join(f90_ser_ops)
         kmetas = ', '.join(f"kmeta_{k}" for k in range(10))
-        impl_fn = Subroutine_Subprogram(get_reader(f"""
+        impl_fn = Subroutine_Subprogram(
+            get_reader(f"""
 subroutine W_{dt.name}(io, x, cleanup, nline)
   use {dt.spec[0]}, only: {dt.name}
   integer :: io
@@ -959,8 +990,10 @@ void deserialize({dt.name}* x, std::istream& s) {{
 
     # Conclude the C++ serde code.
     forward_decls: str = '\n'.join(f"struct {k};" for k in sdfg_structs.keys())
-    struct_defs: Dict[str, str] = {k: '\n'.join(f"{typ} {comp} = {{}};" for comp, typ in sorted(v.items()))
-                                   for k, v in sdfg_structs.items()}
+    struct_defs: Dict[str, str] = {
+        k: '\n'.join(f"{typ} {comp} = {{}};" for comp, typ in sorted(v.items()))
+        for k, v in sdfg_structs.items()
+    }
     struct_defs: str = '\n'.join(f"""
 struct {name} {{
 {comps}
@@ -1253,7 +1286,7 @@ def _keep_only_derived_types(ast: Program) -> Program:
         use = olist.parent
         assert isinstance(use, Use_Stmt)
         mod_name = singular(children_of_type(use, Name)).string
-        mod_spec = (mod_name,)
+        mod_spec = (mod_name, )
         scope_spec = find_scope_spec(use)
         for c in olist.children:
             assert isinstance(c, (Name, Rename, Generic_Spec))
@@ -1262,7 +1295,7 @@ def _keep_only_derived_types(ast: Program) -> Program:
             elif isinstance(c, Rename):
                 _, src, tgt = c.children
             src, tgt = f"{src}", f"{tgt}"
-            src_spec, tgt_spec = scope_spec + (src,), mod_spec + (tgt,)
+            src_spec, tgt_spec = scope_spec + (src, ), mod_spec + (tgt, )
             if tgt_spec in aliases:
                 aliases.add(src_spec)
             else:
@@ -1273,7 +1306,8 @@ def _keep_only_derived_types(ast: Program) -> Program:
 def generate_type_injection_code(ast: Program, mod_name: str = 'type_injection') -> str:
     ast = _keep_only_derived_types(ast)
 
-    f90_mod = Module(get_reader(f"""
+    f90_mod = Module(
+        get_reader(f"""
 module {mod_name}
   use serde
   implicit none
@@ -1302,7 +1336,8 @@ end module {mod_name}
         # Add config injectors from this type regardless whether they are present in the final SDFG.
         ti_ops = '\n'.join(type_injection_leaf_ops(alias_map, derived_type_map, dt, dt.spec))
         ti_fn_name = f"TI_{dt.name}_{idx}"
-        type_injection_serializers[dt.spec] = Subroutine_Subprogram(get_reader(f"""
+        type_injection_serializers[dt.spec] = Subroutine_Subprogram(
+            get_reader(f"""
 subroutine {ti_fn_name}(io, x)
   use {dt.spec[0]}, only: {dt.name}
   integer :: io

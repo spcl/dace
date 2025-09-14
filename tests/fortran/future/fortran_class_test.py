@@ -1,4 +1,4 @@
-# Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 
 from dace import nodes
@@ -65,4 +65,3 @@ end subroutine main
 
 if __name__ == "__main__":
     test_fortran_frontend_class()
-

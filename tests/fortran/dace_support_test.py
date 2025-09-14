@@ -1,4 +1,4 @@
-# Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import numpy as np
 
@@ -7,7 +7,7 @@ from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 
 def test_fortran_frontend_simplify():
-    """ 
+    """
     Test that the DaCe simplify works with the input SDFG provided by the Fortran frontend.
     """
     sources, main = SourceCodeBuilder().add_file("""

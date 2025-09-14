@@ -1,4 +1,4 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import numpy as np
 
@@ -82,7 +82,10 @@ subroutine main(d)
   d(2, 1) = 5.5
 end subroutine main
 """).check_with_gfortran().get()
-    sdfg = create_singular_sdfg_from_string(sources, 'main', )
+    sdfg = create_singular_sdfg_from_string(
+        sources,
+        'main',
+    )
     sdfg.simplify(verbose=True)
     a = np.full([5, 5], 42, order="F", dtype=np.float32)
     sdfg(d=a)

@@ -1,4 +1,4 @@
-# Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import numpy as np
 
@@ -7,10 +7,11 @@ from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 
 def test_fortran_frontend_empty():
-    """ 
+    """
     Test that empty subroutines and functions are correctly parsed.
     """
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = SourceCodeBuilder().add_file(
+        """
 module module_mpi
   integer, parameter :: process_mpi_all_size = 0
 contains

@@ -1,9 +1,10 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import numpy as np
 import pytest
 
 from dace.frontend.fortran import fortran_parser
+
 
 def test_fortran_frontend_while():
     test_string = """
@@ -33,7 +34,7 @@ def test_fortran_frontend_while():
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "while_test", normalize_offsets=True)
     sdfg.simplify(verbose=True)
     sdfg.compile()
-    
+
     input = np.full([2], 42, order="F", dtype=np.float32)
     res = np.full([2], 42, order="F", dtype=np.float32)
     sdfg(d=input, res=res)

@@ -1,9 +1,10 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import numpy as np
 
-from tests.fortran.fortran_test_helper import  SourceCodeBuilder
+from tests.fortran.fortran_test_helper import SourceCodeBuilder
 from dace.frontend.fortran.fortran_parser import create_singular_sdfg_from_string
+
 
 def test_fortran_frontend_dot():
     sources, main = SourceCodeBuilder().add_file("""
@@ -59,6 +60,7 @@ end subroutine main
     sdfg(arg1=arg1, arg2=arg2, res1=res1)
     assert res1[0] == np.dot(arg1, arg2)
 
+
 def test_fortran_frontend_transpose():
     sources, main = SourceCodeBuilder().add_file("""
 subroutine main(arg1, arg2, res1)
@@ -84,6 +86,7 @@ end subroutine main
     sdfg(arg1=arg1, res1=res1)
 
     assert np.all(np.transpose(res1) == arg1)
+
 
 def test_fortran_frontend_transpose_hoist_out():
     sources, main = SourceCodeBuilder().add_file("""
@@ -112,8 +115,10 @@ end subroutine main
 
     assert np.all((1.0 - np.transpose(res1)) == arg1)
 
+
 def test_fortran_frontend_transpose_struct():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = SourceCodeBuilder().add_file(
+        """
 
 MODULE test_types
     IMPLICIT NONE
@@ -161,6 +166,7 @@ END MODULE
 
     assert np.all(np.transpose(res1) == arg1)
 
+
 def test_fortran_frontend_matmul():
     sources, main = SourceCodeBuilder().add_file("""
 subroutine main(arg1, arg2, res1)
@@ -192,6 +198,7 @@ end subroutine main
     sdfg(arg1=arg1, arg2=arg2, res1=res1)
 
     assert np.all(np.matmul(arg1, arg2) == res1)
+
 
 def test_fortran_frontend_matmul_hoist_out():
     sources, main = SourceCodeBuilder().add_file("""
@@ -225,6 +232,7 @@ end subroutine main
 
     x = np.matmul(arg1, arg2)
     assert np.all([2.0 - val for val in x] == res1)
+
 
 if __name__ == "__main__":
     # test_fortran_frontend_dot()

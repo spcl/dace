@@ -1,4 +1,4 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import numpy as np
 
@@ -7,7 +7,8 @@ from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 
 def test_fortran_frontend_if_cycle():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = SourceCodeBuilder().add_file(
+        """
 subroutine main(d)
   double precision d(4)
   integer :: i

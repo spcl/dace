@@ -1,4 +1,4 @@
-# Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 from fparser.common.readfortran import FortranStringReader
 from fparser.common.readfortran import FortranFileReader
@@ -40,7 +40,7 @@ end
      INTEGER, INTENT(in) :: n
      REAL, INTENT(in) :: lonc
      REAL, INTENT(in) :: lon(n), lat(n)
-     REAL :: pi=3.14 
+     REAL :: pi=3.14
      REAL :: lonl(n), latl(n)
 
      REAL :: area
@@ -74,7 +74,7 @@ end
      END IF
 
    END FUNCTION function_test_function
-  
+
                     """
     sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name, False)
     for node, parent in sdfg.all_nodes_recursive():
@@ -86,7 +86,7 @@ end
     sdfg.parent = None
     sdfg.parent_sdfg = None
     sdfg.parent_nsdfg_node = None
-    sdfg.reset_sdfg_list()                
+    sdfg.reset_sdfg_list()
     sdfg.simplify(verbose=True)
     sdfg.view()
 
@@ -102,14 +102,14 @@ def test_fortran_frontend_function_test2():
 implicit none
 REAL x(3)
 REAL y(3)
-REAL z 
+REAL z
 
 z=function2_test_function(x,y)
 
 end
 
 
-  
+
 PURE FUNCTION function2_test_function (p_x, p_y)  result (p_arc)
     REAL, INTENT(in) :: p_x(3), p_y(3)  ! endpoints
 
@@ -134,7 +134,7 @@ PURE FUNCTION function2_test_function (p_x, p_y)  result (p_arc)
 
   END FUNCTION function2_test_function
 
-  
+
                     """
     sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name, False)
     for node, parent in sdfg.all_nodes_recursive():
@@ -146,7 +146,7 @@ PURE FUNCTION function2_test_function (p_x, p_y)  result (p_arc)
     sdfg.parent = None
     sdfg.parent_sdfg = None
     sdfg.parent_nsdfg_node = None
-    sdfg.reset_sdfg_list()                
+    sdfg.reset_sdfg_list()
     sdfg.simplify(verbose=True)
     sdfg.view()
 
@@ -266,11 +266,10 @@ END FUNCTION function3_test_function
     sdfg.parent = None
     sdfg.parent_sdfg = None
     sdfg.parent_nsdfg_node = None
-    sdfg.reset_sdfg_list()                
+    sdfg.reset_sdfg_list()
     sdfg.simplify(verbose=True)
     sdfg.view()
     sdfg.compile()
-
 
 
 @pytest.mark.skip(reason="Interactive test (opens SDFG).")
@@ -293,13 +292,13 @@ b=function4_test_function(v,z)
 end
 
 
-  
+
    FUNCTION function4_test_function (v,z) result(length)
      REAL, INTENT(in) :: v
      REAL z(10)
      REAL :: length
 
-     
+
 REAL a(10)
 REAL b
 
@@ -314,14 +313,14 @@ length=norm(v)+a
      REAL, INTENT(in) :: v
      REAL :: length
 
-     
+
      length = v*v
 
   END FUNCTION norm
 
 
 
-  
+
                     """
     sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name, False)
     for node, parent in sdfg.all_nodes_recursive():
@@ -333,11 +332,10 @@ length=norm(v)+a
     sdfg.parent = None
     sdfg.parent_sdfg = None
     sdfg.parent_nsdfg_node = None
-    sdfg.reset_sdfg_list()                
+    sdfg.reset_sdfg_list()
     sdfg.simplify(verbose=True)
     sdfg.view()
     sdfg.compile()
-
 
 
 @pytest.mark.skip(reason="Interactive test (opens SDFG).")
@@ -363,7 +361,7 @@ CALL function5_test_function(z,y,10,1,2,proc,keyval,3,0)
 end
 
 
-  
+
   SUBROUTINE function5_test_function(in_field, out_field, n, op, loc_op, &
        proc_id, keyval, comm, root)
     INTEGER, INTENT(in) :: n, op, loc_op
@@ -381,7 +379,7 @@ end
   END SUBROUTINE function5_test_function
 
 
-  
+
                     """
     sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name, False)
     for node, parent in sdfg.all_nodes_recursive():
@@ -393,10 +391,11 @@ end
     sdfg.parent = None
     sdfg.parent_sdfg = None
     sdfg.parent_nsdfg_node = None
-    sdfg.reset_sdfg_list()                
+    sdfg.reset_sdfg_list()
     sdfg.simplify(verbose=True)
     sdfg.view()
     sdfg.compile()
+
 
 if __name__ == "__main__":
 

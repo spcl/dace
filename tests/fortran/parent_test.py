@@ -1,4 +1,4 @@
-# Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
 import dace.frontend.fortran.ast_transforms as ast_transforms
 from dace.frontend.fortran.ast_internal_classes import Program_Node
@@ -7,7 +7,8 @@ from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 
 def test_fortran_frontend_parent():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = SourceCodeBuilder().add_file(
+        """
 program main
   implicit none
   double precision d(4)
@@ -46,7 +47,8 @@ end subroutine fun
 
 
 def test_fortran_frontend_module():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = SourceCodeBuilder().add_file(
+        """
 module lib
   implicit none
   ! good enough approximation

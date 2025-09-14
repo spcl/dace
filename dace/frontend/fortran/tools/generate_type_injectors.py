@@ -1,3 +1,4 @@
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Given a complete Fortran codebase (without C++ preprocessor statements, from which a fully resolveable AST can be
 produced), this script will generate a Fortran module that can serialize "configuration injection" entries for every
@@ -20,12 +21,25 @@ from dace.frontend.fortran.gen_serde import find_all_f90_files, generate_type_in
 
 def main():
     argp = argparse.ArgumentParser()
-    argp.add_argument('-i', '--in_src', type=str, required=True, action='append', default=[],
+    argp.add_argument('-i',
+                      '--in_src',
+                      type=str,
+                      required=True,
+                      action='append',
+                      default=[],
                       help='The files or directories containing Fortran source code (absolute path or relative to CWD).'
-                           'Can be repeated to include multiple files and directories.')
-    argp.add_argument('-f', '--out_f90', type=str, required=False, default=None,
+                      'Can be repeated to include multiple files and directories.')
+    argp.add_argument('-f',
+                      '--out_f90',
+                      type=str,
+                      required=False,
+                      default=None,
                       help='A file to write the generated F90 module into (absolute path or relative to CWD).')
-    argp.add_argument('-m', '--module_name', type=str, required=False, default='type_injection',
+    argp.add_argument('-m',
+                      '--module_name',
+                      type=str,
+                      required=False,
+                      default='type_injection',
                       help="The name of the generated type injection module's name.")
     args = argp.parse_args()
 

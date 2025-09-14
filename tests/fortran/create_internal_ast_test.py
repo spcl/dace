@@ -1,4 +1,4 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 from dace.frontend.fortran.ast_internal_classes import Program_Node, Main_Program_Node, Subroutine_Subprogram_Node, \
     Module_Node, Specification_Part_Node
@@ -29,16 +29,18 @@ end subroutine fun
 
     # Verify
     assert not iast.fortran_intrinsics().transformations()
-    m = M(Program_Node, has_attr={
-        'main_program': M(Main_Program_Node),
-        'subroutine_definitions': [
-            M(Subroutine_Subprogram_Node, {
-                'name': M.NAMED('fun'),
-                'args': [M.NAMED('d')],
-            }),
-        ],
-        'structures': M(Structures, has_empty_attr={'structures'})
-    }, has_empty_attr={'function_definitions', 'modules', 'placeholders', 'placeholders_offsets'})
+    m = M(Program_Node,
+          has_attr={
+              'main_program': M(Main_Program_Node),
+              'subroutine_definitions': [
+                  M(Subroutine_Subprogram_Node, {
+                      'name': M.NAMED('fun'),
+                      'args': [M.NAMED('d')],
+                  }),
+              ],
+              'structures': M(Structures, has_empty_attr={'structures'})
+          },
+          has_empty_attr={'function_definitions', 'modules', 'placeholders', 'placeholders_offsets'})
     m.check(prog)
 
 
@@ -66,19 +68,22 @@ end subroutine not_fun
 
     # Verify
     assert not iast.fortran_intrinsics().transformations()
-    m = M(Program_Node, has_attr={
-        'subroutine_definitions': [
-            M(Subroutine_Subprogram_Node, {
-                'name': M.NAMED('fun'),
-                'args': [M.NAMED('d')],
-            }),
-            M(Subroutine_Subprogram_Node, {
-                'name': M.NAMED('not_fun'),
-                'args': [M.NAMED('d'), M.NAMED('val')],
-            }),
-        ],
-        'structures': M(Structures, has_empty_attr={'structures'})
-    }, has_empty_attr={'main_program', 'function_definitions', 'modules', 'placeholders', 'placeholders_offsets'})
+    m = M(Program_Node,
+          has_attr={
+              'subroutine_definitions': [
+                  M(Subroutine_Subprogram_Node, {
+                      'name': M.NAMED('fun'),
+                      'args': [M.NAMED('d')],
+                  }),
+                  M(Subroutine_Subprogram_Node, {
+                      'name': M.NAMED('not_fun'),
+                      'args': [M.NAMED('d'), M.NAMED('val')],
+                  }),
+              ],
+              'structures':
+              M(Structures, has_empty_attr={'structures'})
+          },
+          has_empty_attr={'main_program', 'function_definitions', 'modules', 'placeholders', 'placeholders_offsets'})
     m.check(prog)
 
 
@@ -118,22 +123,30 @@ end program main
 
     # Verify
     assert not iast.fortran_intrinsics().transformations()
-    m = M(Program_Node, has_attr={
-        'main_program': M(Main_Program_Node),
-        'modules': [M(Module_Node, has_attr={
-            'subroutine_definitions': [
-                M(Subroutine_Subprogram_Node, {
-                    'name': M.NAMED('fun'),
-                    'args': [M.NAMED('d')],
-                }),
-                M(Subroutine_Subprogram_Node, {
-                    'name': M.NAMED('not_fun'),
-                    'args': [M.NAMED('d'), M.NAMED('val')],
-                }),
-            ],
-        }, has_empty_attr={'function_definitions', 'interface_blocks'})],
-        'structures': M(Structures, has_empty_attr={'structures'})
-    }, has_empty_attr={'function_definitions', 'subroutine_definitions', 'placeholders', 'placeholders_offsets'})
+    m = M(Program_Node,
+          has_attr={
+              'main_program':
+              M(Main_Program_Node),
+              'modules': [
+                  M(Module_Node,
+                    has_attr={
+                        'subroutine_definitions': [
+                            M(Subroutine_Subprogram_Node, {
+                                'name': M.NAMED('fun'),
+                                'args': [M.NAMED('d')],
+                            }),
+                            M(Subroutine_Subprogram_Node, {
+                                'name': M.NAMED('not_fun'),
+                                'args': [M.NAMED('d'), M.NAMED('val')],
+                            }),
+                        ],
+                    },
+                    has_empty_attr={'function_definitions', 'interface_blocks'})
+              ],
+              'structures':
+              M(Structures, has_empty_attr={'structures'})
+          },
+          has_empty_attr={'function_definitions', 'subroutine_definitions', 'placeholders', 'placeholders_offsets'})
     m.check(prog)
 
 
@@ -157,15 +170,17 @@ end subroutine fun
 
     # Verify
     assert not iast.fortran_intrinsics().transformations()
-    m = M(Program_Node, has_attr={
-        'subroutine_definitions': [
-            M(Subroutine_Subprogram_Node, {
-                'name': M.NAMED('fun'),
-                'args': [M.NAMED('d')],
-            }),
-        ],
-        'structures': M(Structures, has_empty_attr={'structures'})
-    }, has_empty_attr={'main_program', 'function_definitions', 'modules', 'placeholders', 'placeholders_offsets'})
+    m = M(Program_Node,
+          has_attr={
+              'subroutine_definitions': [
+                  M(Subroutine_Subprogram_Node, {
+                      'name': M.NAMED('fun'),
+                      'args': [M.NAMED('d')],
+                  }),
+              ],
+              'structures': M(Structures, has_empty_attr={'structures'})
+          },
+          has_empty_attr={'main_program', 'function_definitions', 'modules', 'placeholders', 'placeholders_offsets'})
     m.check(prog)
 
 
@@ -204,18 +219,26 @@ end program main
 
     # Verify
     assert not iast.fortran_intrinsics().transformations()
-    m = M(Program_Node, has_attr={
-        'main_program': M(Main_Program_Node),
-        'modules': [M(Module_Node, has_attr={
-            'subroutine_definitions': [
-                M(Subroutine_Subprogram_Node, {
-                    'name': M.NAMED('fun'),
-                    'args': [M.NAMED('d')],
-                }),
-            ],
-        }, has_empty_attr={'function_definitions', 'interface_blocks'})],
-        'structures': M(Structures, has_empty_attr={'structures'})
-    }, has_empty_attr={'function_definitions', 'subroutine_definitions', 'placeholders', 'placeholders_offsets'})
+    m = M(Program_Node,
+          has_attr={
+              'main_program':
+              M(Main_Program_Node),
+              'modules': [
+                  M(Module_Node,
+                    has_attr={
+                        'subroutine_definitions': [
+                            M(Subroutine_Subprogram_Node, {
+                                'name': M.NAMED('fun'),
+                                'args': [M.NAMED('d')],
+                            }),
+                        ],
+                    },
+                    has_empty_attr={'function_definitions', 'interface_blocks'})
+              ],
+              'structures':
+              M(Structures, has_empty_attr={'structures'})
+          },
+          has_empty_attr={'function_definitions', 'subroutine_definitions', 'placeholders', 'placeholders_offsets'})
     m.check(prog)
 
     # TODO: We cannot handle during the internal AST construction (it works just fine before during parsing etc.) when a
@@ -262,19 +285,27 @@ end subroutine fun
 
     # Verify
     assert not iast.fortran_intrinsics().transformations()
-    m = M(Program_Node, has_attr={
-        'main_program': M(Main_Program_Node),
-        'modules': [M(Module_Node, has_attr={
-            'specification_part': M(Specification_Part_Node, {'typedecls': M.IGNORE(1)})
-        }, has_empty_attr={'function_definitions', 'interface_blocks'})],
-        'subroutine_definitions': [
-            M(Subroutine_Subprogram_Node, {
-                'name': M.NAMED('fun'),
-                'args': [M.NAMED('d')],
-            }),
-        ],
-        'structures': M(Structures, {
-            'structures': {'used_type': M(Structure)},
-        })
-    }, has_empty_attr={'function_definitions', 'placeholders', 'placeholders_offsets'})
+    m = M(Program_Node,
+          has_attr={
+              'main_program':
+              M(Main_Program_Node),
+              'modules': [
+                  M(Module_Node,
+                    has_attr={'specification_part': M(Specification_Part_Node, {'typedecls': M.IGNORE(1)})},
+                    has_empty_attr={'function_definitions', 'interface_blocks'})
+              ],
+              'subroutine_definitions': [
+                  M(Subroutine_Subprogram_Node, {
+                      'name': M.NAMED('fun'),
+                      'args': [M.NAMED('d')],
+                  }),
+              ],
+              'structures':
+              M(Structures, {
+                  'structures': {
+                      'used_type': M(Structure)
+                  },
+              })
+          },
+          has_empty_attr={'function_definitions', 'placeholders', 'placeholders_offsets'})
     m.check(prog)

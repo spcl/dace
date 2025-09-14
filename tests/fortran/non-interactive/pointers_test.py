@@ -1,4 +1,4 @@
-# Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 from dace import nodes
 
@@ -39,12 +39,9 @@ end subroutine main
     sdfg.parent = None
     sdfg.parent_sdfg = None
     sdfg.parent_nsdfg_node = None
-    sdfg.reset_sdfg_list()   
-    sdfg.validate()             
+    sdfg.reset_sdfg_list()
+    sdfg.validate()
     sdfg.simplify(verbose=True)
-
-
-
 
 
 if __name__ == "__main__":

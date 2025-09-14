@@ -1,4 +1,4 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import numpy as np
 
@@ -123,7 +123,16 @@ end subroutine main
     assert len(sdfg.data('d').shape) == 2
     assert evaluate(sdfg.data('d').shape[0], values) == 5
     assert evaluate(sdfg.data('d').shape[1], values) == 3
-    values = {'sym_arrsize': 50, 'sym_arrsize2': 54, 'sym_arrsize3': 7, 'sym_arrsize4': 9, 'arrsize': 50, 'arrsize2': 54, 'arrsize3': 7, 'arrsize4': 9}
+    values = {
+        'sym_arrsize': 50,
+        'sym_arrsize2': 54,
+        'sym_arrsize3': 7,
+        'sym_arrsize4': 9,
+        'arrsize': 50,
+        'arrsize2': 54,
+        'arrsize3': 7,
+        'arrsize4': 9
+    }
     a = np.full([5, 3], 42, order="F", dtype=np.float64)
     sdfg(d=a, **values)
     for i in range(0, 5):
@@ -188,7 +197,16 @@ end subroutine main
     assert evaluate(sdfg.data('d').shape[1], values) == 3
 
     a = np.full([5, 3], 42, order="F", dtype=np.float64)
-    values = {'sym_arrsize': 50, 'sym_arrsize2': 54, 'sym_arrsize3': 7, 'sym_arrsize4': 9, 'arrsize': 50, 'arrsize2': 54, 'arrsize3': 7, 'arrsize4': 9}
+    values = {
+        'sym_arrsize': 50,
+        'sym_arrsize2': 54,
+        'sym_arrsize3': 7,
+        'sym_arrsize4': 9,
+        'arrsize': 50,
+        'arrsize2': 54,
+        'arrsize3': 7,
+        'arrsize4': 9
+    }
     sdfg(d=a, **values)
     for i in range(0, 5):
         for j in range(0, 3):
@@ -224,13 +242,13 @@ subroutine main(d, arrsize, arrsize2, arrsize3, arrsize4)
   struct_data%arrsize4 = arrsize4
 
   do i=struct_data%arrsize,struct_data%arrsize2
-    do j=struct_data%arrsize3,struct_data%arrsize4          
+    do j=struct_data%arrsize3,struct_data%arrsize4
       struct_data%d(i, j) = i * 2.0 +j
       d(i, j) = struct_data%d(i, j)
-    end do          
+    end do
   end do
-              
-     
+
+
 
 end subroutine main
 """).check_with_gfortran().get()
@@ -245,11 +263,20 @@ end subroutine main
     assert evaluate(sdfg.data('d').shape[1], values) == 3
 
     a = np.full([5, 3], 42, order="F", dtype=np.float64)
-    values = {'sym_arrsize': 50, 'sym_arrsize2': 54, 'sym_arrsize3': 7, 'sym_arrsize4': 9, 'arrsize': 50, 'arrsize2': 54, 'arrsize3': 7, 'arrsize4': 9}
+    values = {
+        'sym_arrsize': 50,
+        'sym_arrsize2': 54,
+        'sym_arrsize3': 7,
+        'sym_arrsize4': 9,
+        'arrsize': 50,
+        'arrsize2': 54,
+        'arrsize3': 7,
+        'arrsize4': 9
+    }
     sdfg(d=a, **values)
     for i in range(0, 5):
         for j in range(0, 3):
-            assert a[i, j] == (i+50) * 2 +7+j
+            assert a[i, j] == (i + 50) * 2 + 7 + j
 
 
 def test_fortran_frontend_offset_pardecl():
@@ -279,7 +306,8 @@ end subroutine fun
     sdfg(d=a)
     print(a)
     for i in range(1, 3):
-        assert a[i] == ( i) * 2
+        assert a[i] == (i) * 2
+
 
 def test_fortran_frontend_offset_pardecl_struct():
     """
@@ -322,7 +350,8 @@ end subroutine fun
     sdfg(in1=a)
     print(a)
     for i in range(1, 3):
-        assert a[i] == ( i) * 2
+        assert a[i] == (i) * 2
+
 
 if __name__ == "__main__":
     test_fortran_frontend_offset_normalizer_1d()

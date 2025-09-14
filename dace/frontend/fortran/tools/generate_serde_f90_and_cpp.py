@@ -1,3 +1,4 @@
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Given a complete Fortran codebase (without C++ preprocessor statements, from which a fully resolveable AST can be
 produced) and an SDFG that is the final product of this codebase, this script will generate a Fortran module that can
@@ -27,20 +28,45 @@ from dace.frontend.fortran.gen_serde import generate_serde_code, _keep_only_deri
 
 def main():
     argp = argparse.ArgumentParser()
-    argp.add_argument('-i', '--in_src', type=str, required=True, action='append', default=[],
+    argp.add_argument('-i',
+                      '--in_src',
+                      type=str,
+                      required=True,
+                      action='append',
+                      default=[],
                       help='The files or directories containing Fortran source code (absolute path or relative to CWD).'
-                           'Can be repeated to include multiple files and directories.')
-    argp.add_argument('-g', '--in_sdfg', type=str, required=True, default=None,
+                      'Can be repeated to include multiple files and directories.')
+    argp.add_argument('-g',
+                      '--in_sdfg',
+                      type=str,
+                      required=True,
+                      default=None,
                       help='The SDFG file containing the final product of DaCe. We need this to know the structures '
-                           'and their members that are present in the end (aftre further pruning etc.)')
-    argp.add_argument('--config_inject', type=str, required=False, action='append', default=[],
+                      'and their members that are present in the end (aftre further pruning etc.)')
+    argp.add_argument('--config_inject',
+                      type=str,
+                      required=False,
+                      action='append',
+                      default=[],
                       help='The files or directories containing config injection data. '
-                           'Can be repeated to include multiple files or directories.')
-    argp.add_argument('-f', '--out_f90', type=str, required=False, default=None,
+                      'Can be repeated to include multiple files or directories.')
+    argp.add_argument('-f',
+                      '--out_f90',
+                      type=str,
+                      required=False,
+                      default=None,
                       help='A file to write the generated F90 functions into (absolute path or relative to CWD).')
-    argp.add_argument('-c', '--out_cpp', type=str, required=False, default=None,
+    argp.add_argument('-c',
+                      '--out_cpp',
+                      type=str,
+                      required=False,
+                      default=None,
                       help='A file to write the generated C++ functions into (absolute path or relative to CWD).')
-    argp.add_argument('-m', '--module_name', type=str, required=False, default='serde',
+    argp.add_argument('-m',
+                      '--module_name',
+                      type=str,
+                      required=False,
+                      default='serde',
                       help="The name of the generated serde module's name.")
     args = argp.parse_args()
 

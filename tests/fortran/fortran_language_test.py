@@ -1,4 +1,4 @@
-# Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import numpy as np
 
@@ -10,7 +10,8 @@ def test_fortran_frontend_real_kind_selector():
     """
     Tests that the size intrinsics are correctly parsed and translated to DaCe.
     """
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = SourceCodeBuilder().add_file(
+        """
 subroutine main(d)
   implicit none
   integer, parameter :: JPRB = selected_real_kind(13, 300)
@@ -35,7 +36,8 @@ def test_fortran_frontend_if1():
     """
     Tests that the if/else construct is correctly parsed and translated to DaCe.
     """
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = SourceCodeBuilder().add_file(
+        """
 subroutine main(d)
   implicit none
   double precision d(3, 4, 5), ZFAC(10)
@@ -66,7 +68,8 @@ def test_fortran_frontend_loop1():
     """
     Tests that the loop construct is correctly parsed and translated to DaCe.
     """
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = SourceCodeBuilder().add_file(
+        """
 subroutine main(d)
   logical d(3, 4, 5), ZFAC(10)
   integer :: a, JK, JL, JM
@@ -97,7 +100,8 @@ def test_fortran_frontend_function_statement():
     """
     Tests that the function statement are correctly removed recursively.
     """
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = SourceCodeBuilder().add_file(
+        """
 subroutine main(d)
   double precision d(3, 4, 5)
   double precision :: PTARE, RTT(2), FOEDELTA, FOELDCP
@@ -163,7 +167,8 @@ def test_fortran_frontend_pow1():
     """
     Tests that the power intrinsic is correctly parsed and translated to DaCe. (should become a*a)
     """
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = SourceCodeBuilder().add_file(
+        """
 subroutine main(d)
   implicit none
   double precision d(3, 4, 5)
@@ -189,7 +194,8 @@ def test_fortran_frontend_pow2():
     """
     Tests that the power intrinsic is correctly parsed and translated to DaCe (this time it's p sqrt p).
     """
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = SourceCodeBuilder().add_file(
+        """
 subroutine main(d)
   implicit none
   double precision d(3, 4, 5)
@@ -215,7 +221,8 @@ def test_fortran_frontend_sign1():
     """
     Tests that the sign intrinsic is correctly parsed and translated to DaCe.
     """
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = SourceCodeBuilder().add_file(
+        """
 subroutine main(d)
   implicit none
   double precision d(3, 4, 5)

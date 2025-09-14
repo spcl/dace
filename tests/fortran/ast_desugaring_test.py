@@ -1,3 +1,4 @@
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 from typing import Dict, Optional, Iterable
 
 from fparser.two.Fortran2003 import Program
@@ -35,10 +36,10 @@ end module lib
     ast = construct_full_ast(sources, ParserFactory().create(std="f2008"))
 
     ident_map = identifier_specs(ast)
-    assert ident_map.keys() == {('lib',), ('lib', '__interface__', 'fun')}
+    assert ident_map.keys() == {('lib', ), ('lib', '__interface__', 'fun')}
 
     alias_map = alias_specs(ast)
-    assert alias_map.keys() == {('lib',), ('lib', '__interface__', 'fun')}
+    assert alias_map.keys() == {('lib', ), ('lib', '__interface__', 'fun')}
 
 
 def test_spec_mapping_of_type_extension():
@@ -55,10 +56,10 @@ end module lib
     ast = construct_full_ast(sources, ParserFactory().create(std="f2008"))
 
     ident_map = identifier_specs(ast)
-    assert ident_map.keys() == {('lib',), ('lib', 'base'), ('lib', 'base', 'a'), ('lib', 'ext'), ('lib', 'ext', 'b')}
+    assert ident_map.keys() == {('lib', ), ('lib', 'base'), ('lib', 'base', 'a'), ('lib', 'ext'), ('lib', 'ext', 'b')}
 
     alias_map = alias_specs(ast)
-    assert alias_map.keys() == {('lib',), ('lib', 'base'), ('lib', 'base', 'a'), ('lib', 'ext'), ('lib', 'ext', 'b'),
+    assert alias_map.keys() == {('lib', ), ('lib', 'base'), ('lib', 'base', 'a'), ('lib', 'ext'), ('lib', 'ext', 'b'),
                                 ('lib', 'ext', 'base'), ('lib', 'ext', 'base', 'a')}
 
 
@@ -79,12 +80,12 @@ end module lib
     ast = construct_full_ast(sources, ParserFactory().create(std="f2008"))
 
     ident_map = identifier_specs(ast)
-    assert (ident_map.keys() ==
-            {('lib',), ('lib', 'T'), ('lib', 'T', 'fun'), ('lib', 'T', 'nofun'), ('lib', 'fun'), ('lib', 'real_fun')})
+    assert (ident_map.keys() == {('lib', ), ('lib', 'T'), ('lib', 'T', 'fun'), ('lib', 'T', 'nofun'), ('lib', 'fun'),
+                                 ('lib', 'real_fun')})
 
     alias_map = alias_specs(ast)
-    assert (alias_map.keys() ==
-            {('lib',), ('lib', 'T'), ('lib', 'T', 'fun'), ('lib', 'T', 'nofun'), ('lib', 'fun'), ('lib', 'real_fun')})
+    assert (alias_map.keys() == {('lib', ), ('lib', 'T'), ('lib', 'T', 'fun'), ('lib', 'T', 'nofun'), ('lib', 'fun'),
+                                 ('lib', 'real_fun')})
 
 
 def test_procedure_replacer():
@@ -1415,7 +1416,7 @@ subroutine main
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = assign_globally_unique_subprogram_names(ast, {('main',)})
+    ast = assign_globally_unique_subprogram_names(ast, {('main', )})
     ast = assign_globally_unique_variable_names(ast, set())
 
     got = ast.tofortran()
@@ -1553,7 +1554,7 @@ subroutine main
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = prune_unused_objects(ast, [('main',)])
+    ast = prune_unused_objects(ast, [('main', )])
 
     got = ast.tofortran()
     want = """
@@ -1602,7 +1603,7 @@ subroutine main(out)
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = prune_unused_objects(ast, [('main',)])
+    ast = prune_unused_objects(ast, [('main', )])
 
     got = ast.tofortran()
     want = """
@@ -1627,7 +1628,8 @@ END SUBROUTINE main
 
 
 def test_completely_unsed_modules_are_pruned_early():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = SourceCodeBuilder().add_file(
+        """
 module used
   implicit none
 contains
@@ -1651,7 +1653,7 @@ subroutine main(d)
   d = fun()
 end subroutine main
 """, 'main').check_with_gfortran().get()
-    ast = parse_and_improve(sources, [('main',)])
+    ast = parse_and_improve(sources, [('main', )])
 
     got = ast.tofortran()
     want = """
@@ -1721,6 +1723,7 @@ END SUBROUTINE main
 """.strip()
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
+
 
 def test_constant_expression_replacement():
     sources, main = SourceCodeBuilder().add_file("""
@@ -1853,8 +1856,8 @@ end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
     ast = inject_const_evals(ast, [
-        ConstTypeInjection(None, ('lib', 'config'), ('a',), '42'),
-        ConstTypeInjection(None, ('lib', 'config'), ('b',), '10000.0')
+        ConstTypeInjection(None, ('lib', 'config'), ('a', ), '42'),
+        ConstTypeInjection(None, ('lib', 'config'), ('b', ), '10000.0')
     ])
 
     got = ast.tofortran()
@@ -1920,7 +1923,7 @@ end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
     ast = inject_const_evals(ast, [
-        ConstInstanceInjection(None, ('lib', 'globalo'), ('a',), '42'),
+        ConstInstanceInjection(None, ('lib', 'globalo'), ('a', ), '42'),
         ConstInstanceInjection(None, ('main', 'cfg'), ('big', 'b'), '10000.0')
     ])
 
@@ -1985,7 +1988,7 @@ end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
     ast = inject_const_evals(ast, [
-        ConstTypeInjection(None, ('lib', 'config'), ('a_a',), 'true'),
+        ConstTypeInjection(None, ('lib', 'config'), ('a_a', ), 'true'),
     ])
 
     got = ast.tofortran()
@@ -2043,11 +2046,11 @@ end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
     ast = inject_const_evals(ast, [
-        ConstTypeInjection(None, ('lib', 'config'), ('a_a',), 'true'),
-        ConstTypeInjection(None, ('lib', 'config'), ('__f2dace_SA_a_d_0_s',), '3'),
-        ConstTypeInjection(None, ('lib', 'config'), ('__f2dace_SOA_a_d_0_s',), '1'),
-        ConstTypeInjection(None, ('lib', 'config'), ('__f2dace_SA_a_d_1_s',), '3'),
-        ConstTypeInjection(None, ('lib', 'config'), ('__f2dace_SOA_a_d_1_s',), '2'),
+        ConstTypeInjection(None, ('lib', 'config'), ('a_a', ), 'true'),
+        ConstTypeInjection(None, ('lib', 'config'), ('__f2dace_SA_a_d_0_s', ), '3'),
+        ConstTypeInjection(None, ('lib', 'config'), ('__f2dace_SOA_a_d_0_s', ), '1'),
+        ConstTypeInjection(None, ('lib', 'config'), ('__f2dace_SA_a_d_1_s', ), '3'),
+        ConstTypeInjection(None, ('lib', 'config'), ('__f2dace_SOA_a_d_1_s', ), '2'),
         ConstInstanceInjection(None, ('main', 'b_a'), tuple(), 'true'),
         ConstInstanceInjection(None, ('main', '__f2dace_SA_b_d_0_s'), tuple(), '4'),
         ConstInstanceInjection(None, ('main', '__f2dace_SOA_b_d_0_s'), tuple(), '1'),
@@ -2141,7 +2144,7 @@ subroutine main()
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = make_practically_constant_arguments_constants(ast, [('main',)])
+    ast = make_practically_constant_arguments_constants(ast, [('main', )])
 
     got = ast.tofortran()
     want = """
@@ -2649,7 +2652,7 @@ subroutine main
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = create_global_initializers(ast, [('main',)])
+    ast = create_global_initializers(ast, [('main', )])
 
     got = ast.tofortran()
     want = """
@@ -2870,7 +2873,8 @@ END SUBROUTINE main
 
 
 def test_operator_overloading():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = SourceCodeBuilder().add_file(
+        """
 module lib
   type cmplx
     real :: r = 1., i = 2.
@@ -2923,7 +2927,8 @@ END SUBROUTINE main
 
 
 def test_remove_binds():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = SourceCodeBuilder().add_file(
+        """
 module lib
   type, bind(C) :: cmplx
     real :: r = 1., i = 2.
@@ -2986,7 +2991,8 @@ END SUBROUTINE main
 
 def test_remove_contiguous_statements():
     # TODO: We're testing here that FParser can even parse these (it couldn't in v0.1.3). Do we want to remove these?
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = SourceCodeBuilder().add_file(
+        """
 subroutine main(a)
   implicit none
   type T

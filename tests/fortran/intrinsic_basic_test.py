@@ -1,4 +1,4 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import numpy as np
 import pytest
@@ -100,8 +100,7 @@ end subroutine main
     size = 7
     size2 = 5
     res = np.full([size, size2], 42, order="F", dtype=np.int32)
-    sdfg(res=res, **deduce_f2dace_variables_for_array(res, 'res', 0),
-         arrsize=size, arrsize2=size2)
+    sdfg(res=res, **deduce_f2dace_variables_for_array(res, 'res', 0), arrsize=size, arrsize2=size2)
     print(res)
 
     assert res[0, 0] == size * size2
@@ -148,7 +147,8 @@ def test_fortran_frontend_allocated_struct():
     # FIXME: this pattern is generally not supported.
     # this needs an update once defered allocs are merged
 
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = SourceCodeBuilder().add_file(
+        """
     MODULE allocated_test_interface
         IMPLICIT NONE
 

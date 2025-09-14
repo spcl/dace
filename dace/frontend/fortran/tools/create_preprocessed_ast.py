@@ -1,3 +1,4 @@
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import argparse
 from pathlib import Path
 
@@ -67,23 +68,51 @@ end module iso_fortran_env
 
 def main():
     argp = argparse.ArgumentParser()
-    argp.add_argument('-i', '--in_src', type=str, required=True, action='append', default=[],
+    argp.add_argument('-i',
+                      '--in_src',
+                      type=str,
+                      required=True,
+                      action='append',
+                      default=[],
                       help='The files or directories containing Fortran source code (absolute path or relative to CWD).'
-                           'Can be repeated to include multiple files and directories.')
-    argp.add_argument('-k', '--entry_point', type=str, required=True, action='append', default=[],
+                      'Can be repeated to include multiple files and directories.')
+    argp.add_argument('-k',
+                      '--entry_point',
+                      type=str,
+                      required=True,
+                      action='append',
+                      default=[],
                       help='The entry points which should be kept with their dependencies (can be repeated).'
-                           'Specify each entry point as a `dot` separated path through named objects from the top.')
-    argp.add_argument('-o', '--output_ast', type=str, required=False, default=None,
+                      'Specify each entry point as a `dot` separated path through named objects from the top.')
+    argp.add_argument('-o',
+                      '--output_ast',
+                      type=str,
+                      required=False,
+                      default=None,
                       help='(Optional) A file to write the preprocessed AST into (absolute path or relative to CWD).'
-                           'If nothing is given, then will write to STDOUT.')
-    argp.add_argument('--noop', type=str, required=False, action='append', default=[],
+                      'If nothing is given, then will write to STDOUT.')
+    argp.add_argument('--noop',
+                      type=str,
+                      required=False,
+                      action='append',
+                      default=[],
                       help='(Optional) Functions or subroutine to make no-op.')
-    argp.add_argument('-d', '--checkpoint_dir', type=str, required=False, default=None,
+    argp.add_argument('-d',
+                      '--checkpoint_dir',
+                      type=str,
+                      required=False,
+                      default=None,
                       help='(Optional) If specified, the AST in various stages of preprocessing will be written as'
-                           'Fortran code in there.')
-    argp.add_argument('--consolidate_global_data', type=bool, required=False, default=False,
+                      'Fortran code in there.')
+    argp.add_argument('--consolidate_global_data',
+                      type=bool,
+                      required=False,
+                      default=False,
                       help='Whether to consolidate the global data into one structure.')
-    argp.add_argument('--rename_uniquely', type=bool, required=False, default=False,
+    argp.add_argument('--rename_uniquely',
+                      type=bool,
+                      required=False,
+                      default=False,
                       help='Whether to rename the variables and the functions to have globally unique names.')
     args = argp.parse_args()
 

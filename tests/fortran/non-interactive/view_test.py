@@ -1,4 +1,4 @@
-# Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 from fparser.common.readfortran import FortranStringReader
 from fparser.common.readfortran import FortranFileReader
@@ -27,7 +27,7 @@ def test_fortran_frontend_view_test():
                     PROGRAM """ + test_name + """_program
 implicit none
 double precision a(10,11,12)
-double precision res(2,2,2) 
+double precision res(2,2,2)
 
 CALL """ + test_name + """_function(a,res)
 
@@ -36,7 +36,7 @@ end
 SUBROUTINE """ + test_name + """_function(aa,res)
 
 double precision aa(10,11,12)
-double precision res(2,2,2) 
+double precision res(2,2,2)
 
 call viewlens(aa(:,:,1),res)
 
@@ -46,7 +46,7 @@ SUBROUTINE viewlens(aa,res)
 
 IMPLICIT NONE
 
-double precision  :: aa(10,11) 
+double precision  :: aa(10,11)
 double precision :: res(2,2,2)
 
 INTEGER ::  JK, JL
@@ -62,10 +62,9 @@ aa(1,1)=res(1,1,1)
 
 END SUBROUTINE viewlens
                     """
- 
+
     sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name, True)
-              
-                
+
     sdfg.simplify(verbose=True)
     a = np.full([10, 11, 12], 42, order="F", dtype=np.float64)
     b = np.full([1, 1, 2], 42, order="F", dtype=np.float64)
@@ -108,7 +107,7 @@ SUBROUTINE viewlens(aaa,bbb,ccc)
 
 IMPLICIT NONE
 
-double precision  :: aaa(10,11),bbb(10,11),ccc(10,11) 
+double precision  :: aaa(10,11),bbb(10,11),ccc(10,11)
 
 INTEGER ::  JK, JL
 
@@ -161,7 +160,7 @@ SUBROUTINE viewlens(aa,bb,cc)
 
 IMPLICIT NONE
 
-double precision  :: aa(10,11),bb(10,11),cc(10,11) 
+double precision  :: aa(10,11),bb(10,11),cc(10,11)
 
 INTEGER ::  JK, JL
 

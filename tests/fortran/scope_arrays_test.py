@@ -1,4 +1,4 @@
-# Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
 import dace.frontend.fortran.ast_transforms as ast_transforms
@@ -27,7 +27,7 @@ subroutine fun(d1, arr4)
   d1(2) = 5.5
 end subroutine fun
 """).check_with_gfortran().get()
-    cfg = ParseConfig(sources=sources, entry_points=[('main',)])
+    cfg = ParseConfig(sources=sources, entry_points=[('main', )])
     _, program = create_internal_ast(cfg)
     ast_transforms.ParentScopeAssigner().visit(program)
     visitor = ast_transforms.ScopeVarsDeclarations(program)

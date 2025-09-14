@@ -1,10 +1,11 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import numpy as np
 
 from dace.frontend.fortran import ast_transforms, fortran_parser
 from dace.frontend.fortran.fortran_parser import create_singular_sdfg_from_string
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
+
 
 def test_fortran_frontend_minval_double():
     """
@@ -249,8 +250,10 @@ def test_fortran_frontend_maxval_int():
     # It should be the dace max for integer
     assert res[3] == np.iinfo(np.int32).min
 
+
 def test_fortran_frontend_minval_struct():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = SourceCodeBuilder().add_file(
+        """
 MODULE test_types
     IMPLICIT NONE
     TYPE array_container
@@ -300,6 +303,7 @@ END MODULE
     assert res[1] == inp[6]
     assert res[2] == inp[5]
     assert res[3] == inp[4]
+
 
 if __name__ == "__main__":
 

@@ -1,4 +1,4 @@
-# Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import copy
 import re
@@ -57,7 +57,9 @@ class Structures:
     def get_definition(self, type_name: str):
         return self.structures[type_name]
 
-    def find_definition(self, scope_vars, node: ast_internal_classes.Data_Ref_Node,
+    def find_definition(self,
+                        scope_vars,
+                        node: ast_internal_classes.Data_Ref_Node,
                         variable_name: Optional[ast_internal_classes.Name_Node] = None):
 
         # we assume starting from the top (left-most) data_ref_node
@@ -137,7 +139,7 @@ class NodeTransformer(NodeVisitor):
     A base node visitor that walks the abstract syntax tree and allows
     modification of nodes.
     The `NodeTransformer` will walk the AST and use the return value of the
-    visitor methods to replace old nodes. 
+    visitor methods to replace old nodes.
     """
 
     def as_list(self, x):
@@ -224,11 +226,13 @@ class Flatten_Classes(NodeTransformer):
             for j in i.procedure_part.procedures:
                 if j.name.name == node.name.name:
                     name = i.name.name + "_" + j.name.name
-                    return ast_internal_classes.Call_Expr_Node(
-                        name=ast_internal_classes.Name_Node(
-                            name=name, type=node.type, args=node.args, line_number=node.line_number),
-                        args=node.args, type=node.type, subroutine=node.subroutine,
-                        line_number=node.line_number, parent=node.parent)
+                    return ast_internal_classes.Call_Expr_Node(name=ast_internal_classes.Name_Node(
+                        name=name, type=node.type, args=node.args, line_number=node.line_number),
+                                                               args=node.args,
+                                                               type=node.type,
+                                                               subroutine=node.subroutine,
+                                                               line_number=node.line_number,
+                                                               parent=node.parent)
         return self.generic_visit(node)
 
 
@@ -280,6 +284,7 @@ class FindFunctionAndSubroutines(NodeVisitor):
 
 
 class FindNames(NodeVisitor):
+
     def __init__(self):
         self.names: List[str] = []
 
@@ -293,6 +298,7 @@ class FindNames(NodeVisitor):
 
 
 class FindDefinedNames(NodeVisitor):
+
     def __init__(self):
         self.names: List[str] = []
         self.specs: {} = {}
@@ -317,7 +323,7 @@ class FindInputs(NodeVisitor):
             self.visit(node.specification_part)
         if node.execution_part is not None:
             self.visit(node.execution_part)
-            
+
     def visit_Name_Node(self, node: ast_internal_classes.Name_Node):
         self.nodes.append(node)
 
@@ -359,7 +365,7 @@ class FindInputs(NodeVisitor):
                     self.visit(i)
             elif isinstance(node.lval, ast_internal_classes.Data_Ref_Node):
                 # if isinstance(node.lval.parent_ref, ast_internal_classes.Name_Node):
-                #    self.nodes.append(node.lval.parent_ref)    
+                #    self.nodes.append(node.lval.parent_ref)
                 if isinstance(node.lval.parent_ref, ast_internal_classes.Array_Subscript_Node):
                     # self.nodes.append(node.lval.parent_ref.name)
                     for i in node.lval.parent_ref.indices:
@@ -454,7 +460,7 @@ class StructLister(NodeVisitor):
     """
     Fortran does not differentiate between arrays and functions.
     We need to go over and convert all function calls to arrays.
-    So, we create a closure of all math and defined functions and 
+    So, we create a closure of all math and defined functions and
     create array expressions for the others.
     """
 
@@ -475,6 +481,7 @@ class StructLister(NodeVisitor):
 
 
 class StructDependencyLister(NodeVisitor):
+
     def __init__(self, names=None):
         self.names = names
         self.structs_used = []
@@ -489,6 +496,7 @@ class StructDependencyLister(NodeVisitor):
 
 
 class StructMemberLister(NodeVisitor):
+
     def __init__(self):
         self.members = []
         self.is_pointer = []
@@ -501,6 +509,7 @@ class StructMemberLister(NodeVisitor):
 
 
 class FindStructDefs(NodeVisitor):
+
     def __init__(self, name=None):
         self.name = name
         self.structs = []
@@ -511,6 +520,7 @@ class FindStructDefs(NodeVisitor):
 
 
 class FindStructUses(NodeVisitor):
+
     def __init__(self, names=None, target=None):
         self.names = names
         self.target = target
@@ -547,6 +557,7 @@ class FindStructUses(NodeVisitor):
 
 
 class StructPointerChecker(NodeVisitor):
+
     def __init__(self, parent_struct, pointed_struct, pointer_name, structs_lister, struct_dep_graph, analysis):
         self.parent_struct = [parent_struct]
         self.pointed_struct = [pointed_struct]
@@ -597,6 +608,7 @@ class StructPointerChecker(NodeVisitor):
 
 
 class StructPointerEliminator(NodeTransformer):
+
     def __init__(self, parent_struct, pointed_struct, pointer_name):
         self.parent_struct = parent_struct
         self.pointed_struct = pointed_struct
@@ -616,9 +628,10 @@ class StructPointerEliminator(NodeTransformer):
                     else:
                         vardecl.append(k)
                 if vardecl != []:
-                    component_part.component_def_stmts.append(ast_internal_classes.Data_Component_Def_Stmt_Node(
-                        vars=ast_internal_classes.Decl_Stmt_Node(vardecl=vardecl, parent=node.parent),
-                        parent=node.parent))
+                    component_part.component_def_stmts.append(
+                        ast_internal_classes.Data_Component_Def_Stmt_Node(vars=ast_internal_classes.Decl_Stmt_Node(
+                            vardecl=vardecl, parent=node.parent),
+                                                                          parent=node.parent))
             newnode.component_part = component_part
             return newnode
         else:
@@ -629,7 +642,7 @@ class CallToArray(NodeTransformer):
     """
     Fortran does not differentiate between arrays and functions.
     We need to go over and convert all function calls to arrays.
-    So, we create a closure of all math and defined functions and 
+    So, we create a closure of all math and defined functions and
     create array expressions for the others.
     """
 
@@ -639,9 +652,8 @@ class CallToArray(NodeTransformer):
 
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
         self.excepted_funcs = [
-            "malloc", "pow", "cbrt", "__dace_sign", "__dace_allocated", "tanh", "atan2",
-            "__dace_epsilon", "__dace_exit", "surrtpk", "surrtab", "surrtrf", "abor1",
-            *FortranIntrinsics.function_names()
+            "malloc", "pow", "cbrt", "__dace_sign", "__dace_allocated", "tanh", "atan2", "__dace_epsilon",
+            "__dace_exit", "surrtpk", "surrtab", "surrtrf", "abor1", *FortranIntrinsics.function_names()
         ]
         #
 
@@ -678,7 +690,8 @@ class CallToArray(NodeTransformer):
 
         # TODO Deconproc is a special case, we need to handle it differently - this is just s quick workaround
         if name.startswith(
-                "__dace_") or name in self.excepted_funcs or found_in_renames or found_in_names or name in self.funcs.iblocks:
+                "__dace_"
+        ) or name in self.excepted_funcs or found_in_renames or found_in_names or name in self.funcs.iblocks:
             processed_args = []
             for i in node.args:
                 arg = CallToArray(self.funcs, self.rename_dict).visit(i)
@@ -688,7 +701,9 @@ class CallToArray(NodeTransformer):
         indices = [CallToArray(self.funcs, self.rename_dict).visit(i) for i in node.args]
         # Array subscript cannot be empty.
         assert indices
-        return ast_internal_classes.Array_Subscript_Node(name=node.name, type=node.type, indices=indices,
+        return ast_internal_classes.Array_Subscript_Node(name=node.name,
+                                                         type=node.type,
+                                                         indices=indices,
                                                          line_number=node.line_number)
 
 
@@ -711,18 +726,21 @@ class ArgumentExtractor(NodeTransformer):
                                  ast_internal_classes.Array_Subscript_Node, ast_internal_classes.Data_Ref_Node)
 
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
-        if node.name.name in ["malloc", "pow", "cbrt", "__dace_epsilon",
-                              *FortranIntrinsics.call_extraction_exemptions()]:
+        if node.name.name in [
+                "malloc", "pow", "cbrt", "__dace_epsilon", *FortranIntrinsics.call_extraction_exemptions()
+        ]:
             return self.generic_visit(node)
-        result = ast_internal_classes.Call_Expr_Node(
-            name=node.name, args=[], line_number=node.line_number,
-            type=node.type, subroutine=node.subroutine, parent=node.parent)
+        result = ast_internal_classes.Call_Expr_Node(name=node.name,
+                                                     args=[],
+                                                     line_number=node.line_number,
+                                                     type=node.type,
+                                                     subroutine=node.subroutine,
+                                                     parent=node.parent)
 
         for i, arg in enumerate(node.args):
             # Ensure we allow to extract function calls from arguments
-            if (isinstance(arg, DIRECTLY_REFERNCEABLE)
-                    or (isinstance(arg, ast_internal_classes.Actual_Arg_Spec_Node)
-                        and isinstance(arg.arg, DIRECTLY_REFERNCEABLE))):
+            if (isinstance(arg, DIRECTLY_REFERNCEABLE) or (isinstance(arg, ast_internal_classes.Actual_Arg_Spec_Node)
+                                                           and isinstance(arg.arg, DIRECTLY_REFERNCEABLE))):
                 # If it is a node type that's allowed to be directly referenced in a (possibly keyworded) function
                 # argument, then we keep the node as is.
                 result.args.append(arg)
@@ -736,17 +754,24 @@ class ArgumentExtractor(NodeTransformer):
 
             if isinstance(arg, ast_internal_classes.Actual_Arg_Spec_Node):
                 self.generic_visit(arg.arg)
-                result.args.append(ast_internal_classes.Actual_Arg_Spec_Node(
-                    arg_name=arg.arg_name, arg=ast_internal_classes.Name_Node(name=tmpname, type=arg.arg.type)))
-                asgn = ast_internal_classes.BinOp_Node(
-                    op="=", lval=ast_internal_classes.Name_Node(name=tmpname, type=arg.arg.type),
-                    rval=arg.arg, line_number=node.line_number, parent=node.parent)
+                result.args.append(
+                    ast_internal_classes.Actual_Arg_Spec_Node(arg_name=arg.arg_name,
+                                                              arg=ast_internal_classes.Name_Node(name=tmpname,
+                                                                                                 type=arg.arg.type)))
+                asgn = ast_internal_classes.BinOp_Node(op="=",
+                                                       lval=ast_internal_classes.Name_Node(name=tmpname,
+                                                                                           type=arg.arg.type),
+                                                       rval=arg.arg,
+                                                       line_number=node.line_number,
+                                                       parent=node.parent)
             else:
                 self.generic_visit(arg)
                 result.args.append(ast_internal_classes.Name_Node(name=tmpname, type=arg.type))
-                asgn = ast_internal_classes.BinOp_Node(
-                    op="=", lval=ast_internal_classes.Name_Node(name=tmpname, type=arg.type),
-                    rval=arg, line_number=node.line_number, parent=node.parent)
+                asgn = ast_internal_classes.BinOp_Node(op="=",
+                                                       lval=ast_internal_classes.Name_Node(name=tmpname, type=arg.type),
+                                                       rval=arg,
+                                                       line_number=node.line_number,
+                                                       parent=node.parent)
 
             self.execution_preludes[-1].append(asgn)
         return result
@@ -764,6 +789,7 @@ class ArgumentExtractor(NodeTransformer):
 
 
 class FunctionCallTransformer(NodeTransformer):
+
     def visit_BinOp_Node(self, node: ast_internal_classes.BinOp_Node):
         if isinstance(node.rval, ast_internal_classes.Call_Expr_Node):
             if hasattr(node.rval, "subroutine"):
@@ -779,11 +805,13 @@ class FunctionCallTransformer(NodeTransformer):
             lval = node.lval
             args.append(lval)
             return (ast_internal_classes.Call_Expr_Node(type=node.rval.type,
-                                                        name=ast_internal_classes.Name_Node(
-                                                            name=node.rval.name.name + "_srt", type=node.rval.type),
+                                                        name=ast_internal_classes.Name_Node(name=node.rval.name.name +
+                                                                                            "_srt",
+                                                                                            type=node.rval.type),
                                                         args=args,
                                                         subroutine=True,
-                                                        line_number=node.line_number, parent=node.parent))
+                                                        line_number=node.line_number,
+                                                        parent=node.parent))
 
         else:
             return self.generic_visit(node)
@@ -806,6 +834,7 @@ class NameReplacer(NodeTransformer):
 
 
 class ArrayDimensionSymbolsMapper(NodeTransformer):
+
     def __init__(self):
         # The dictionary that maps a symbol for array dimension information to a tuple of type and component.
         # ASSUMPTION: The type name must be globally unique.
@@ -833,6 +862,7 @@ CONFIG_INJECTOR_OFFSET_PATTERN = re.compile(r"__f2dace_SOA_(?P<comp>[a-zA-Z0-9_]
 
 
 class ArrayDimensionConfigInjector(NodeTransformer):
+
     def __init__(self, array_dims_info: ArrayDimensionSymbolsMapper, cfg: List[ConstTypeInjection]):
         self.cfg: Dict[str, str] = {}  # Maps the array dimension symbols to their fixed values.
         self.in_exec_depth = 0  # Whether the visitor is in code (i.e., not declarations) and at what depth.
@@ -933,14 +963,12 @@ class FunctionToSubroutineDefiner(NodeTransformer):
             if node.specification_part is not None:
                 node.specification_part.specifications.append(stmt_node)
             else:
-                node.specification_part = ast_internal_classes.Specification_Part_Node(
-                    specifications=[stmt_node],
-                    symbols=None,
-                    interface_blocks=None,
-                    uses=None,
-                    typedecls=None,
-                    enums=None
-                )
+                node.specification_part = ast_internal_classes.Specification_Part_Node(specifications=[stmt_node],
+                                                                                       symbols=None,
+                                                                                       interface_blocks=None,
+                                                                                       uses=None,
+                                                                                       typedecls=None,
+                                                                                       enums=None)
 
         # We should always be able to tell a functions return _variable_ (i.e., not type, which we also should be able
         # to tell).
@@ -948,15 +976,15 @@ class FunctionToSubroutineDefiner(NodeTransformer):
         execution_part = NameReplacer(ret.name, ret_name).visit(node.execution_part)
         args = node.args
         args.append(ast_internal_classes.Name_Node(name=ret_name, type=node.type))
-        return ast_internal_classes.Subroutine_Subprogram_Node(
-            name=ast_internal_classes.Name_Node(name=subr_name, type=node.type),
-            args=args,
-            specification_part=node.specification_part,
-            execution_part=execution_part,
-            internal_subprogram_part=node.internal_subprogram_part,
-            subroutine=True,
-            line_number=node.line_number,
-            elemental=node.elemental)
+        return ast_internal_classes.Subroutine_Subprogram_Node(name=ast_internal_classes.Name_Node(name=subr_name,
+                                                                                                   type=node.type),
+                                                               args=args,
+                                                               specification_part=node.specification_part,
+                                                               execution_part=execution_part,
+                                                               internal_subprogram_part=node.internal_subprogram_part,
+                                                               subroutine=True,
+                                                               line_number=node.line_number,
+                                                               elemental=node.elemental)
 
 
 class CallExtractorNodeLister(NodeVisitor):
@@ -994,7 +1022,7 @@ class CallExtractorNodeLister(NodeVisitor):
 
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
         if not stop and node.name.name not in [
-            "malloc", "pow", "cbrt", "__dace_epsilon", *FortranIntrinsics.call_extraction_exemptions()
+                "malloc", "pow", "cbrt", "__dace_epsilon", *FortranIntrinsics.call_extraction_exemptions()
         ]:
             self.nodes.append(node)
         # return self.generic_visit(node)
@@ -1014,17 +1042,19 @@ class CallExtractor(NodeTransformer):
         self.count = count
 
         self.functions_by_name: Dict[str, ast_internal_classes.Subroutine_Subprogram_Node] = {
-            f.name.name: f for f in mywalk(
-                ast, (ast_internal_classes.Subroutine_Subprogram_Node,
-                      ast_internal_classes.Function_Subprogram_Node))}
+            f.name.name: f
+            for f in mywalk(ast, (ast_internal_classes.Subroutine_Subprogram_Node,
+                                  ast_internal_classes.Function_Subprogram_Node))
+        }
 
         ParentScopeAssigner().visit(ast)
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
 
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
-        if node.name.name in ["malloc", "pow", "cbrt", "__dace_epsilon",
-                              *FortranIntrinsics.call_extraction_exemptions()]:
+        if node.name.name in [
+                "malloc", "pow", "cbrt", "__dace_epsilon", *FortranIntrinsics.call_extraction_exemptions()
+        ]:
             return self.generic_visit(node)
         if hasattr(node, "subroutine"):
             if node.subroutine is True:
@@ -1067,43 +1097,46 @@ class CallExtractor(NodeTransformer):
                         node.parent.specification_part.specifications.append(
                             ast_internal_classes.Decl_Stmt_Node(vardecl=[
                                 ast_internal_classes.Var_Decl_Node(
-                                    name="tmp_call_" + str(temp),
-                                    type=res[i].type,
-                                    sizes=None,
-                                    init=None
-                                )
-                            ])
-                        )
+                                    name="tmp_call_" + str(temp), type=res[i].type, sizes=None, init=None)
+                            ]))
                         newbody.append(
                             ast_internal_classes.BinOp_Node(op="=",
-                                                            lval=ast_internal_classes.Name_Node(
-                                                                name="tmp_call_" + str(temp), type=res[i].type),
-                                                            rval=res[i], line_number=child.line_number,
+                                                            lval=ast_internal_classes.Name_Node(name="tmp_call_" +
+                                                                                                str(temp),
+                                                                                                type=res[i].type),
+                                                            rval=res[i],
+                                                            line_number=child.line_number,
                                                             parent=child.parent))
                         temp = temp - 1
                 if isinstance(child, ast_internal_classes.Call_Expr_Node):
                     new_args = []
                     for i in child.args:
                         new_args.append(self.visit(i))
-                    new_child = ast_internal_classes.Call_Expr_Node(type=child.type, subroutine=child.subroutine,
-                                                                    name=child.name, args=new_args,
-                                                                    line_number=child.line_number, parent=child.parent)
+                    new_child = ast_internal_classes.Call_Expr_Node(type=child.type,
+                                                                    subroutine=child.subroutine,
+                                                                    name=child.name,
+                                                                    args=new_args,
+                                                                    line_number=child.line_number,
+                                                                    parent=child.parent)
                     newbody.append(new_child)
                 elif isinstance(child, ast_internal_classes.BinOp_Node):
-                    if isinstance(child.lval, ast_internal_classes.Name_Node) and isinstance(child.rval,
-                                                                                             ast_internal_classes.Call_Expr_Node):
+                    if isinstance(child.lval, ast_internal_classes.Name_Node) and isinstance(
+                            child.rval, ast_internal_classes.Call_Expr_Node):
                         new_args = []
                         for i in child.rval.args:
                             new_args.append(self.visit(i))
                         new_child = ast_internal_classes.Call_Expr_Node(type=child.rval.type,
                                                                         subroutine=child.rval.subroutine,
-                                                                        name=child.rval.name, args=new_args,
+                                                                        name=child.rval.name,
+                                                                        args=new_args,
                                                                         line_number=child.rval.line_number,
                                                                         parent=child.rval.parent)
-                        newbody.append(ast_internal_classes.BinOp_Node(op=child.op,
-                                                                       lval=child.lval,
-                                                                       rval=new_child, line_number=child.line_number,
-                                                                       parent=child.parent))
+                        newbody.append(
+                            ast_internal_classes.BinOp_Node(op=child.op,
+                                                            lval=child.lval,
+                                                            rval=new_child,
+                                                            line_number=child.line_number,
+                                                            parent=child.parent))
                     else:
                         newbody.append(self.visit(child))
                 else:
@@ -1128,10 +1161,8 @@ class ParentScopeAssigner(NodeVisitor):
     def visit(self, node: ast_internal_classes.FNode, parent_node: Optional[ast_internal_classes.FNode] = None):
 
         parent_node_types = [
-            ast_internal_classes.Subroutine_Subprogram_Node,
-            ast_internal_classes.Function_Subprogram_Node,
-            ast_internal_classes.Main_Program_Node,
-            ast_internal_classes.Module_Node
+            ast_internal_classes.Subroutine_Subprogram_Node, ast_internal_classes.Function_Subprogram_Node,
+            ast_internal_classes.Main_Program_Node, ast_internal_classes.Module_Node
         ]
 
         if parent_node is not None and type(parent_node) in parent_node_types:
@@ -1292,7 +1323,6 @@ class IndexExtractor(NodeTransformer):
             self.scope_vars.visit(ast)
             self.structures = ast.structures
 
-
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
         if node.name.name in ["pow", "atan2", "tanh", *FortranIntrinsics.retained_function_names()]:
@@ -1326,11 +1356,10 @@ class IndexExtractor(NodeTransformer):
                 tmp = tmp + 1
         self.count = tmp
 
-        return ast_internal_classes.Array_Subscript_Node(name=node.name, type=node.type, indices=newer_indices,
+        return ast_internal_classes.Array_Subscript_Node(name=node.name,
+                                                         type=node.type,
+                                                         indices=newer_indices,
                                                          line_number=node.line_number)
-
-    
-        
 
     def visit_Specification_Part_Node(self, node: ast_internal_classes.Specification_Part_Node):
         newspec = []
@@ -1344,67 +1373,76 @@ class IndexExtractor(NodeTransformer):
                 for j, parent_node in res:
                     for idx, i in enumerate(j.indices):
 
-                            if isinstance(i, ast_internal_classes.ParDecl_Node):
+                        if isinstance(i, ast_internal_classes.ParDecl_Node):
+                            continue
+                        elif isinstance(i, ast_internal_classes.Name_Node):
+                            if i.name.startswith("tmp_index_"):
                                 continue
-                            elif isinstance(i, ast_internal_classes.Name_Node):
-                                if i.name.startswith("tmp_index_"):
-                                    continue
-                            
-                            tmp_name = "tmp_index_" + str(temp)
-                            temp = temp + 1
-                            if self.normalize_offsets:
-                                var_name = ""
-                                if isinstance(j, ast_internal_classes.Name_Node):
-                                    var_name = j.name
-                                    variable = self.scope_vars.get_var(child.parent, var_name)
-                                elif parent_node is not None:
-                                    struct, variable, _ = self.structures.find_definition(
-                                        self.scope_vars, parent_node, j.name
-                                    )
-                                    var_name = j.name.name
-                                else:
-                                    var_name = j.name.name
-                                    variable = self.scope_vars.get_var(child.parent, var_name)
 
-                                offset = variable.offsets[idx]
-                                if not isinstance(offset, ast_internal_classes.FNode):
-                                    # check if offset is a number
-                                    try:
-                                        offset = int(offset)
-                                    except:
-                                        raise ValueError(f"Offset {offset} is not a number")
-                                    offset = ast_internal_classes.Int_Literal_Node(value=str(offset))
-                                newspec.append(
-                                    ast_internal_classes.Decl_Stmt_Node(vardecl=[
-                                    ast_internal_classes.Var_Decl_Node(name=tmp_name,
-                                                                       type="INTEGER",
-                                                                       sizes=None,
-                                                                       init=ast_internal_classes.BinOp_Node(
-                                                                                op="-",
-                                                                                lval=self.replacements[tmp_name][0],
-                                                                                rval=offset,
-                                                                                line_number=child.line_number, parent=child.parent),
-                                                                            line_number=child.line_number)],
-                                    line_number=child.line_number))
-                           
+                        tmp_name = "tmp_index_" + str(temp)
+                        temp = temp + 1
+                        if self.normalize_offsets:
+                            var_name = ""
+                            if isinstance(j, ast_internal_classes.Name_Node):
+                                var_name = j.name
+                                variable = self.scope_vars.get_var(child.parent, var_name)
+                            elif parent_node is not None:
+                                struct, variable, _ = self.structures.find_definition(
+                                    self.scope_vars, parent_node, j.name)
+                                var_name = j.name.name
                             else:
-                                newspec.append(
-                                    ast_internal_classes.Decl_Stmt_Node(vardecl=[
+                                var_name = j.name.name
+                                variable = self.scope_vars.get_var(child.parent, var_name)
+
+                            offset = variable.offsets[idx]
+                            if not isinstance(offset, ast_internal_classes.FNode):
+                                # check if offset is a number
+                                try:
+                                    offset = int(offset)
+                                except:
+                                    raise ValueError(f"Offset {offset} is not a number")
+                                offset = ast_internal_classes.Int_Literal_Node(value=str(offset))
+                            newspec.append(
+                                ast_internal_classes.Decl_Stmt_Node(vardecl=[
                                     ast_internal_classes.Var_Decl_Node(name=tmp_name,
                                                                        type="INTEGER",
                                                                        sizes=None,
                                                                        init=ast_internal_classes.BinOp_Node(
-                                                                                op="-",
-                                                                                lval=self.replacements[tmp_name][0],
-                                                                                rval=ast_internal_classes.Int_Literal_Node(value="1"),
-                                                                                line_number=child.line_number, parent=child.parent),
-                                                                       line_number=child.line_number)],
-                                    line_number=child.line_number))
-                            self.replacements.pop(tmp_name)    
+                                                                           op="-",
+                                                                           lval=self.replacements[tmp_name][0],
+                                                                           rval=offset,
+                                                                           line_number=child.line_number,
+                                                                           parent=child.parent),
+                                                                       line_number=child.line_number)
+                                ],
+                                                                    line_number=child.line_number))
+
+                        else:
+                            newspec.append(
+                                ast_internal_classes.Decl_Stmt_Node(vardecl=[
+                                    ast_internal_classes.Var_Decl_Node(
+                                        name=tmp_name,
+                                        type="INTEGER",
+                                        sizes=None,
+                                        init=ast_internal_classes.BinOp_Node(
+                                            op="-",
+                                            lval=self.replacements[tmp_name][0],
+                                            rval=ast_internal_classes.Int_Literal_Node(value="1"),
+                                            line_number=child.line_number,
+                                            parent=child.parent),
+                                        line_number=child.line_number)
+                                ],
+                                                                    line_number=child.line_number))
+                        self.replacements.pop(tmp_name)
 
             newspec.append(tmp_child)
 
-        return ast_internal_classes.Specification_Part_Node(specifications=newspec,typedecls=node.typedecls,symbols=node.symbols,uses=node.uses,enums=node.enums,line_number=node.line_number)    
+        return ast_internal_classes.Specification_Part_Node(specifications=newspec,
+                                                            typedecls=node.typedecls,
+                                                            symbols=node.symbols,
+                                                            uses=node.uses,
+                                                            enums=node.enums,
+                                                            line_number=node.line_number)
 
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
         newbody = []
@@ -1420,72 +1458,73 @@ class IndexExtractor(NodeTransformer):
                 for j, parent_node in res:
                     for idx, i in enumerate(j.indices):
 
-                            if isinstance(i, ast_internal_classes.ParDecl_Node):
+                        if isinstance(i, ast_internal_classes.ParDecl_Node):
+                            continue
+                        elif isinstance(i, ast_internal_classes.Name_Node):
+                            if i.name.startswith("tmp_index_"):
                                 continue
-                            elif isinstance(i, ast_internal_classes.Name_Node):
-                                if i.name.startswith("tmp_index_"):
-                                    continue
-                            
-                            tmp_name = "tmp_index_" + str(temp)
-                            temp = temp + 1
-                            newbody.append(
-                                ast_internal_classes.Decl_Stmt_Node(vardecl=[
-                                    ast_internal_classes.Var_Decl_Node(name=tmp_name,
-                                                                       type="INTEGER",
-                                                                       sizes=None,
-                                                                       init=None,
-                                                                       line_number=child.line_number)
-                                ],
-                                    line_number=child.line_number))
-                            if self.normalize_offsets:
 
-                                # Find the offset of a variable to which we are assigning
-                                var_name = ""
-                                if isinstance(j, ast_internal_classes.Name_Node):
-                                    var_name = j.name
-                                    variable = self.scope_vars.get_var(child.parent, var_name)
-                                elif parent_node is not None:
-                                    struct, variable, _ = self.structures.find_definition(
-                                        self.scope_vars, parent_node, j.name
-                                    )
-                                    var_name = j.name.name
-                                else:
-                                    var_name = j.name.name
-                                    variable = self.scope_vars.get_var(child.parent, var_name)
+                        tmp_name = "tmp_index_" + str(temp)
+                        temp = temp + 1
+                        newbody.append(
+                            ast_internal_classes.Decl_Stmt_Node(vardecl=[
+                                ast_internal_classes.Var_Decl_Node(name=tmp_name,
+                                                                   type="INTEGER",
+                                                                   sizes=None,
+                                                                   init=None,
+                                                                   line_number=child.line_number)
+                            ],
+                                                                line_number=child.line_number))
+                        if self.normalize_offsets:
 
-                                offset = variable.offsets[idx]
-
-                                # it can be a symbol, an operator, or a value
-
-                                if not isinstance(offset, ast_internal_classes.FNode):
-                                    # check if offset is a number
-                                    try:
-                                        offset = int(offset)
-                                    except:
-                                        raise ValueError(f"Offset {offset} is not a number")
-                                    offset = ast_internal_classes.Int_Literal_Node(value=str(offset))
-                                newbody.append(
-                                    ast_internal_classes.BinOp_Node(
-                                        op="=",
-                                        lval=ast_internal_classes.Name_Node(name=tmp_name),
-                                        rval=ast_internal_classes.BinOp_Node(
-                                            op="-",
-                                            lval=self.replacements[tmp_name][0],
-                                            rval=offset,
-                                            line_number=child.line_number, parent=child.parent),
-                                        line_number=child.line_number))
+                            # Find the offset of a variable to which we are assigning
+                            var_name = ""
+                            if isinstance(j, ast_internal_classes.Name_Node):
+                                var_name = j.name
+                                variable = self.scope_vars.get_var(child.parent, var_name)
+                            elif parent_node is not None:
+                                struct, variable, _ = self.structures.find_definition(
+                                    self.scope_vars, parent_node, j.name)
+                                var_name = j.name.name
                             else:
-                                newbody.append(
-                                    ast_internal_classes.BinOp_Node(
-                                        op="=",
-                                        lval=ast_internal_classes.Name_Node(name=tmp_name),
-                                        rval=ast_internal_classes.BinOp_Node(
-                                            op="-",
-                                            lval=self.replacements[tmp_name][0],
-                                            rval=ast_internal_classes.Int_Literal_Node(value="1"),
-                                            line_number=child.line_number, parent=child.parent),
-                                        line_number=child.line_number, parent=child.parent))
-                            self.replacements.pop(tmp_name)    
+                                var_name = j.name.name
+                                variable = self.scope_vars.get_var(child.parent, var_name)
+
+                            offset = variable.offsets[idx]
+
+                            # it can be a symbol, an operator, or a value
+
+                            if not isinstance(offset, ast_internal_classes.FNode):
+                                # check if offset is a number
+                                try:
+                                    offset = int(offset)
+                                except:
+                                    raise ValueError(f"Offset {offset} is not a number")
+                                offset = ast_internal_classes.Int_Literal_Node(value=str(offset))
+                            newbody.append(
+                                ast_internal_classes.BinOp_Node(op="=",
+                                                                lval=ast_internal_classes.Name_Node(name=tmp_name),
+                                                                rval=ast_internal_classes.BinOp_Node(
+                                                                    op="-",
+                                                                    lval=self.replacements[tmp_name][0],
+                                                                    rval=offset,
+                                                                    line_number=child.line_number,
+                                                                    parent=child.parent),
+                                                                line_number=child.line_number))
+                        else:
+                            newbody.append(
+                                ast_internal_classes.BinOp_Node(
+                                    op="=",
+                                    lval=ast_internal_classes.Name_Node(name=tmp_name),
+                                    rval=ast_internal_classes.BinOp_Node(
+                                        op="-",
+                                        lval=self.replacements[tmp_name][0],
+                                        rval=ast_internal_classes.Int_Literal_Node(value="1"),
+                                        line_number=child.line_number,
+                                        parent=child.parent),
+                                    line_number=child.line_number,
+                                    parent=child.parent))
+                        self.replacements.pop(tmp_name)
 
             newbody.append(tmp_child)
         return ast_internal_classes.Execution_Part_Node(execution=newbody)
@@ -1507,21 +1546,22 @@ class SignToIf(NodeTransformer):
             cond = ast_internal_classes.BinOp_Node(op=">=",
                                                    rval=ast_internal_classes.Real_Literal_Node(value="0.0"),
                                                    lval=args[1],
-                                                   line_number=node.line_number, parent=node.parent)
+                                                   line_number=node.line_number,
+                                                   parent=node.parent)
 
             abs_name = self.ast.intrinsic_handler.replace_function_name(ast_internal_classes.Name_Node(name="ABS"))
 
             body_if = ast_internal_classes.Execution_Part_Node(execution=[
                 ast_internal_classes.BinOp_Node(lval=copy.deepcopy(lval),
                                                 op="=",
-                                                rval=ast_internal_classes.Call_Expr_Node(
-                                                    name=abs_name,
-                                                    type="DOUBLE",
-                                                    args=[copy.deepcopy(args[0])],
-                                                    line_number=node.line_number, parent=node.parent,
-                                                    subroutine=False),
-
-                                                line_number=node.line_number, parent=node.parent)
+                                                rval=ast_internal_classes.Call_Expr_Node(name=abs_name,
+                                                                                         type="DOUBLE",
+                                                                                         args=[copy.deepcopy(args[0])],
+                                                                                         line_number=node.line_number,
+                                                                                         parent=node.parent,
+                                                                                         subroutine=False),
+                                                line_number=node.line_number,
+                                                parent=node.parent)
             ])
             body_else = ast_internal_classes.Execution_Part_Node(execution=[
                 ast_internal_classes.BinOp_Node(lval=copy.deepcopy(lval),
@@ -1534,14 +1574,18 @@ class SignToIf(NodeTransformer):
                                                         args=[copy.deepcopy(args[0])],
                                                         type="DOUBLE",
                                                         subroutine=False,
-                                                        line_number=node.line_number, parent=node.parent),
-                                                    line_number=node.line_number, parent=node.parent),
-                                                line_number=node.line_number, parent=node.parent)
+                                                        line_number=node.line_number,
+                                                        parent=node.parent),
+                                                    line_number=node.line_number,
+                                                    parent=node.parent),
+                                                line_number=node.line_number,
+                                                parent=node.parent)
             ])
             return (ast_internal_classes.If_Stmt_Node(cond=cond,
                                                       body=body_if,
                                                       body_else=body_else,
-                                                      line_number=node.line_number, parent=node.parent))
+                                                      line_number=node.line_number,
+                                                      parent=node.parent))
 
         else:
             return self.generic_visit(node)
@@ -1566,9 +1610,16 @@ def optionalArgsHandleFunction(fn: ast_internal_classes.Subroutine_Subprogram_No
         name = f"__f2dace_OPTIONAL_{arg.name}"
         if name in args_names:
             continue
-        var = ast_internal_classes.Var_Decl_Node(
-            name=name, type='LOGICAL', alloc=False, sizes=None, offsets=None, kind=None, optional=False, init=None,
-            line_number=fn.line_number, parent=fn)
+        var = ast_internal_classes.Var_Decl_Node(name=name,
+                                                 type='LOGICAL',
+                                                 alloc=False,
+                                                 sizes=None,
+                                                 offsets=None,
+                                                 kind=None,
+                                                 optional=False,
+                                                 init=None,
+                                                 line_number=fn.line_number,
+                                                 parent=fn)
         new_args.append(ast_internal_classes.Name_Node(name=name, line_number=fn.line_number, parent=fn))
         vardecls.append(var)
 
@@ -1581,6 +1632,7 @@ def optionalArgsHandleFunction(fn: ast_internal_classes.Subroutine_Subprogram_No
 
 
 class OptionalArgsTransformer(NodeTransformer):
+
     def __init__(self, funcs_with_opt_args):
         self.funcs_with_opt_args = funcs_with_opt_args
 
@@ -1660,13 +1712,16 @@ def optionalArgsExpander(program: ast_internal_classes.Program_Node):
 
 
 class AllocatableReplacerTransformer(NodeTransformer):
+
     def __init__(self, program: ast_internal_classes.Program_Node):
         ParentScopeAssigner().visit(program)
 
         # TODO: This assumes globally unique function names. We can make it more general by keeping track of the
         #  module etc. too.
         self.functions_by_name: Dict[str, ast_internal_classes.Subroutine_Subprogram_Node] = {
-            f.name.name: f for f in mywalk(program, ast_internal_classes.Subroutine_Subprogram_Node)}
+            f.name.name: f
+            for f in mywalk(program, ast_internal_classes.Subroutine_Subprogram_Node)
+        }
 
         # For a nesting of execution parts (rare, but in case it happens), after visiting each direct child of it,
         # `self.execution_preludes[-1]` will contain all the temporary variable assignments necessary for that node.
@@ -1705,8 +1760,10 @@ class AllocatableReplacerTransformer(NodeTransformer):
                 raise NotImplementedError
             # There must be an allocated flag for it too. We may not have defined it yet, but we will by the time we are
             # done with visiting the callee definition.
-            alloc_flag = ast_internal_classes.Name_Node(
-                name=self._allocated_flag(cadecl), type='LOGICAL', line_number=call.line_number, parent=call.parent)
+            alloc_flag = ast_internal_classes.Name_Node(name=self._allocated_flag(cadecl),
+                                                        type='LOGICAL',
+                                                        line_number=call.line_number,
+                                                        parent=call.parent)
             call.args.append(alloc_flag)
         return self.generic_visit(call)
 
@@ -1719,9 +1776,11 @@ class AllocatableReplacerTransformer(NodeTransformer):
                 if not fvdecl.alloc:
                     continue
                 alloc_flag = self._allocated_flag(fvdecl)
-                decl = ast_internal_classes.Var_Decl_Node(
-                    name=alloc_flag, type='LOGICAL', init=ast_internal_classes.Bool_Literal_Node('0'),
-                    line_number=fn.line_number, parent=fn.parent)
+                decl = ast_internal_classes.Var_Decl_Node(name=alloc_flag,
+                                                          type='LOGICAL',
+                                                          init=ast_internal_classes.Bool_Literal_Node('0'),
+                                                          line_number=fn.line_number,
+                                                          parent=fn.parent)
                 fn.specification_part.specifications.append(ast_internal_classes.Decl_Stmt_Node(vardecl=[decl]))
         # Then, for each argument in order, we will add the extra argument in order. Note that we may not have updated
         # any of the call-sites yet, but this will be resolved when we visit those call expressions.
@@ -1733,8 +1792,11 @@ class AllocatableReplacerTransformer(NodeTransformer):
                 continue
             # We need to make it an argument.
             alloc_flag = self._allocated_flag(fadecl)
-            fn.args.append(ast_internal_classes.Name_Node(
-                name=alloc_flag, type='LOGICAL', line_number=fn.line_number, parent=fn.parent))
+            fn.args.append(
+                ast_internal_classes.Name_Node(name=alloc_flag,
+                                               type='LOGICAL',
+                                               line_number=fn.line_number,
+                                               parent=fn.parent))
         return self.generic_visit(fn)
 
     def visit_Allocate_Stmt_Node(self, alloc: ast_internal_classes.Allocate_Stmt_Node):
@@ -1746,9 +1808,11 @@ class AllocatableReplacerTransformer(NodeTransformer):
             # TODO: Here we are setting only the `ALLOCATED` flag for the array, but there are other operations missing,
             #  e.g., setting the sizes, offsets, and the actual memory allocation itself.
             asgn = ast_internal_classes.BinOp_Node(
-                lval=ast_internal_classes.Name_Node(name=self._allocated_flag(avdecl)), op='=',
+                lval=ast_internal_classes.Name_Node(name=self._allocated_flag(avdecl)),
+                op='=',
                 rval=ast_internal_classes.Bool_Literal_Node(value='1'),
-                line_number=alloc.line_number, parent=alloc.parent)
+                line_number=alloc.line_number,
+                parent=alloc.parent)
             self.execution_preludes[-1].append(asgn)
 
     def visit_Deallocate_Stmt_Node(self, dealloc: ast_internal_classes.Deallocate_Stmt_Node):
@@ -1760,9 +1824,11 @@ class AllocatableReplacerTransformer(NodeTransformer):
             # TODO: Here we are setting only the `ALLOCATED` flag for the array, but there are other operations missing,
             #  e.g., the actual memory deallocation itself.
             asgn = ast_internal_classes.BinOp_Node(
-                lval=ast_internal_classes.Name_Node(name=self._allocated_flag(dvdecl)), op='=',
+                lval=ast_internal_classes.Name_Node(name=self._allocated_flag(dvdecl)),
+                op='=',
                 rval=ast_internal_classes.Bool_Literal_Node(value='0'),
-                line_number=dealloc.line_number, parent=dealloc.parent)
+                line_number=dealloc.line_number,
+                parent=dealloc.parent)
             self.execution_preludes[-1].append(asgn)
 
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
@@ -1786,8 +1852,7 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                           structures: Structures,
                           declaration=True,
                           main_iterator_ranges: Optional[list] = None,
-                          allow_scalars=False
-                          ):
+                          allow_scalars=False):
     """
     Helper function for the transformation of array operations and sums to loops
     :param node: The AST to be transformed
@@ -1796,7 +1861,7 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
     :param rangepos: The positions of the ranges
     :param count: The current count of the loop
     :param newbody: The new basic block that will contain the loop
-    :param main_iterator_ranges: When parsing right-hand side of equation, use access to main loop range 
+    :param main_iterator_ranges: When parsing right-hand side of equation, use access to main loop range
     :return: Ranges, rangepos, newbody
     """
 
@@ -1840,9 +1905,10 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
 
                 dims = len(array_sizes)
                 node = ast_internal_classes.Array_Subscript_Node(
-                    name=cur_node, parent=node.parent, type=var_def.type,
-                    indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * dims
-                )
+                    name=cur_node,
+                    parent=node.parent,
+                    type=var_def.type,
+                    indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * dims)
 
                 break
 
@@ -1887,7 +1953,8 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                 upper_boundary = ast_internal_classes.Name_Range_Node(name="f2dace_MAX",
                                                                       type="INTEGER",
                                                                       arrname=ast_internal_classes.Name_Node(
-                                                                          name=array_name, type="VOID",
+                                                                          name=array_name,
+                                                                          type="VOID",
                                                                           line_number=node.line_number),
                                                                       pos=idx)
                 """
@@ -1907,16 +1974,9 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                             raise ValueError(f"Offset {offsets[idx]} is not a number")
                         offset = ast_internal_classes.Int_Literal_Node(value=str(offset_value))
 
+                    upper_boundary = ast_internal_classes.BinOp_Node(lval=upper_boundary, op="+", rval=offset)
                     upper_boundary = ast_internal_classes.BinOp_Node(
-                        lval=upper_boundary,
-                        op="+",
-                        rval=offset
-                    )
-                    upper_boundary = ast_internal_classes.BinOp_Node(
-                        lval=upper_boundary,
-                        op="-",
-                        rval=ast_internal_classes.Int_Literal_Node(value="1")
-                    )
+                        lval=upper_boundary, op="-", rval=ast_internal_classes.Int_Literal_Node(value="1"))
 
                 ranges.append([lower_boundary, upper_boundary])
                 rangeslen.append(-1)
@@ -1940,27 +2000,23 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                 if isinstance(end, int) and isinstance(start, int):
                     rangeslen.append(end - start + 1)
                 else:
-                    add = ast_internal_classes.BinOp_Node(
-                        lval=start,
-                        op="+",
-                        rval=ast_internal_classes.Int_Literal_Node(value="1")
-                    )
-                    substr = ast_internal_classes.BinOp_Node(
-                        lval=end,
-                        op="-",
-                        rval=add
-                    )
+                    add = ast_internal_classes.BinOp_Node(lval=start,
+                                                          op="+",
+                                                          rval=ast_internal_classes.Int_Literal_Node(value="1"))
+                    substr = ast_internal_classes.BinOp_Node(lval=end, op="-", rval=add)
                     rangeslen.append(substr)
 
             rangepos.append(currentindex)
             if declaration:
                 newbody.append(
                     ast_internal_classes.Decl_Stmt_Node(vardecl=[
-                        ast_internal_classes.Symbol_Decl_Node(
-                            name="tmp_parfor_" + str(count + len(rangepos) - 1), type="INTEGER", sizes=None, init=None,
-                            parent=node.parent, line_number=node.line_number)
+                        ast_internal_classes.Symbol_Decl_Node(name="tmp_parfor_" + str(count + len(rangepos) - 1),
+                                                              type="INTEGER",
+                                                              sizes=None,
+                                                              init=None,
+                                                              parent=node.parent,
+                                                              line_number=node.line_number)
                     ]))
-
             """
                 To account for ranges with different starting offsets inside the same loop,
                 we need to adapt array accesses.
@@ -1975,11 +2031,8 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                     For LHS, we don't need to adjust - we dictate the loop iterator.
                 """
 
-                indices.append(
-                    ast_internal_classes.Name_Node(name="tmp_parfor_" + str(count + len(rangepos) - 1))
-                )
+                indices.append(ast_internal_classes.Name_Node(name="tmp_parfor_" + str(count + len(rangepos) - 1)))
             else:
-
                 """
                     For RHS, we adjust starting array position by taking consideration the initial value
                     of the loop iterator.
@@ -1989,16 +2042,14 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                 current_lower_boundary = main_iterator_ranges[currentindex][0]
 
                 indices.append(
-                    ast_internal_classes.BinOp_Node(
-                        lval=ast_internal_classes.Name_Node(name="tmp_parfor_" + str(count + len(rangepos) - 1)),
-                        op="+",
-                        rval=ast_internal_classes.BinOp_Node(
-                            lval=lower_boundary,
-                            op="-",
-                            rval=current_lower_boundary, parent=node.parent
-                        ), parent=node.parent
-                    )
-                )
+                    ast_internal_classes.BinOp_Node(lval=ast_internal_classes.Name_Node(name="tmp_parfor_" +
+                                                                                        str(count + len(rangepos) - 1)),
+                                                    op="+",
+                                                    rval=ast_internal_classes.BinOp_Node(lval=lower_boundary,
+                                                                                         op="-",
+                                                                                         rval=current_lower_boundary,
+                                                                                         parent=node.parent),
+                                                    parent=node.parent))
             currentindex += 1
 
         elif allow_scalars:
@@ -2014,21 +2065,29 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
 
 
 class ReplaceArrayConstructor(NodeTransformer):
+
     def visit_BinOp_Node(self, node: ast_internal_classes.BinOp_Node):
 
         if isinstance(node.rval, ast_internal_classes.Array_Constructor_Node):
             assigns = []
             for i in range(len(node.rval.value_list)):
-                assigns.append(ast_internal_classes.BinOp_Node(
-                    lval=ast_internal_classes.Array_Subscript_Node(name=node.lval, indices=[
-                        ast_internal_classes.Int_Literal_Node(value=str(i + 1))], type=node.type, parent=node.parent),
-                    op="=", rval=node.rval.value_list[i], line_number=node.line_number, parent=node.parent,
-                    typ=node.type))
+                assigns.append(
+                    ast_internal_classes.BinOp_Node(lval=ast_internal_classes.Array_Subscript_Node(
+                        name=node.lval,
+                        indices=[ast_internal_classes.Int_Literal_Node(value=str(i + 1))],
+                        type=node.type,
+                        parent=node.parent),
+                                                    op="=",
+                                                    rval=node.rval.value_list[i],
+                                                    line_number=node.line_number,
+                                                    parent=node.parent,
+                                                    typ=node.type))
             return ast_internal_classes.Execution_Part_Node(execution=assigns)
         return self.generic_visit(node)
 
 
 class RenameVar(NodeTransformer):
+
     def __init__(self, oldname: str, newname: str):
         self.oldname = oldname
         self.newname = newname
@@ -2038,6 +2097,7 @@ class RenameVar(NodeTransformer):
 
 
 class PartialRenameVar(NodeTransformer):
+
     def __init__(self, oldname: str, newname: str):
         self.oldname = oldname
         self.newname = newname
@@ -2054,9 +2114,14 @@ class PartialRenameVar(NodeTransformer):
                                                   type="VOID") if self.oldname in node.name else node
 
     def visit_Symbol_Decl_Node(self, node: ast_internal_classes.Symbol_Decl_Node):
-        return ast_internal_classes.Symbol_Decl_Node(name=node.name.replace(self.oldname, self.newname), type=node.type,
-                                                     sizes=node.sizes, init=node.init, line_number=node.line_number,
-                                                     kind=node.kind, alloc=node.alloc, offsets=node.offsets)
+        return ast_internal_classes.Symbol_Decl_Node(name=node.name.replace(self.oldname, self.newname),
+                                                     type=node.type,
+                                                     sizes=node.sizes,
+                                                     init=node.init,
+                                                     line_number=node.line_number,
+                                                     kind=node.kind,
+                                                     alloc=node.alloc,
+                                                     offsets=node.offsets)
 
 
 class IfConditionExtractor(NodeTransformer):
@@ -2085,24 +2150,28 @@ class IfConditionExtractor(NodeTransformer):
                         ast_internal_classes.Var_Decl_Node(
                             name="_if_cond_" + str(self.count), type="INTEGER", sizes=None, init=None)
                     ]))
-                newbody.append(ast_internal_classes.BinOp_Node(
-                    lval=ast_internal_classes.Name_Node(name="_if_cond_" + str(self.count)),
-                    op="=",
-                    rval=old_cond,
-                    line_number=child.line_number,
-                    parent=child.parent))
-                newcond = ast_internal_classes.BinOp_Node(
-                    lval=ast_internal_classes.Name_Node(name="_if_cond_" + str(self.count)),
-                    op="==",
-                    rval=ast_internal_classes.Int_Literal_Node(value="1"),
-                    line_number=child.line_number, parent=old_cond.parent)
+                newbody.append(
+                    ast_internal_classes.BinOp_Node(lval=ast_internal_classes.Name_Node(name="_if_cond_" +
+                                                                                        str(self.count)),
+                                                    op="=",
+                                                    rval=old_cond,
+                                                    line_number=child.line_number,
+                                                    parent=child.parent))
+                newcond = ast_internal_classes.BinOp_Node(lval=ast_internal_classes.Name_Node(name="_if_cond_" +
+                                                                                              str(self.count)),
+                                                          op="==",
+                                                          rval=ast_internal_classes.Int_Literal_Node(value="1"),
+                                                          line_number=child.line_number,
+                                                          parent=old_cond.parent)
                 self.count += 1
                 newifbody = self.visit(child.body)
                 newelsebody = self.visit(child.body_else)
 
-                newif = ast_internal_classes.If_Stmt_Node(cond=newcond, body=newifbody, body_else=newelsebody,
-                                                          line_number=child.line_number, parent=child.parent)
-                
+                newif = ast_internal_classes.If_Stmt_Node(cond=newcond,
+                                                          body=newifbody,
+                                                          body_else=newelsebody,
+                                                          line_number=child.line_number,
+                                                          parent=child.parent)
 
                 newbody.append(newif)
 
@@ -2131,31 +2200,35 @@ class WhileConditionExtractor(NodeTransformer):
                         ast_internal_classes.Var_Decl_Node(
                             name="_while_cond_" + str(self.count), type="INTEGER", sizes=None, init=None)
                     ]))
-                newbody.append(ast_internal_classes.BinOp_Node(
-                    lval=ast_internal_classes.Name_Node(name="_while_cond_" + str(self.count)),
-                    op="=",
-                    rval=copy.deepcopy(old_cond),
-                    line_number=child.line_number,
-                    parent=child.parent))
-                newcond = ast_internal_classes.BinOp_Node(
-                    lval=ast_internal_classes.Name_Node(name="_while_cond_" + str(self.count)),
-                    op="==",
-                    rval=ast_internal_classes.Int_Literal_Node(value="1"),
-                    line_number=child.line_number, parent=old_cond.parent)
-                
-                old_count=self.count
+                newbody.append(
+                    ast_internal_classes.BinOp_Node(lval=ast_internal_classes.Name_Node(name="_while_cond_" +
+                                                                                        str(self.count)),
+                                                    op="=",
+                                                    rval=copy.deepcopy(old_cond),
+                                                    line_number=child.line_number,
+                                                    parent=child.parent))
+                newcond = ast_internal_classes.BinOp_Node(lval=ast_internal_classes.Name_Node(name="_while_cond_" +
+                                                                                              str(self.count)),
+                                                          op="==",
+                                                          rval=ast_internal_classes.Int_Literal_Node(value="1"),
+                                                          line_number=child.line_number,
+                                                          parent=old_cond.parent)
+
+                old_count = self.count
                 self.count += 1
                 newwhilebody = self.visit(child.body)
-                newwhilebody.execution.append(ast_internal_classes.BinOp_Node(
-                    lval=ast_internal_classes.Name_Node(name="_while_cond_" + str(old_count)),
-                    op="=",
-                    rval=copy.deepcopy(old_cond),
-                    line_number=child.line_number,
-                    parent=child.parent))
+                newwhilebody.execution.append(
+                    ast_internal_classes.BinOp_Node(lval=ast_internal_classes.Name_Node(name="_while_cond_" +
+                                                                                        str(old_count)),
+                                                    op="=",
+                                                    rval=copy.deepcopy(old_cond),
+                                                    line_number=child.line_number,
+                                                    parent=child.parent))
 
-                newwhile = ast_internal_classes.While_Stmt_Node(cond=newcond, body=newwhilebody,
-                                                                line_number=child.line_number, parent=child.parent)
-                
+                newwhile = ast_internal_classes.While_Stmt_Node(cond=newcond,
+                                                                body=newwhilebody,
+                                                                line_number=child.line_number,
+                                                                parent=child.parent)
 
                 newbody.append(newwhile)
 
@@ -2187,15 +2260,20 @@ class ForDeclarer(NodeTransformer):
                 final_assign = ast_internal_classes.BinOp_Node(lval=child.init.lval,
                                                                op="=",
                                                                rval=child.cond.rval,
-                                                               line_number=child.line_number, parent=child.parent)
+                                                               line_number=child.line_number,
+                                                               parent=child.parent)
                 newfbody = RenameVar(child.init.lval.name, "_for_it_" + str(self.count)).visit(child.body)
                 newcond = RenameVar(child.cond.lval.name, "_for_it_" + str(self.count)).visit(child.cond)
                 newiter = RenameVar(child.iter.lval.name, "_for_it_" + str(self.count)).visit(child.iter)
                 newinit = child.init
                 newinit.lval = RenameVar(child.init.lval.name, "_for_it_" + str(self.count)).visit(child.init.lval)
 
-                newfor = ast_internal_classes.For_Stmt_Node(init=newinit, cond=newcond, iter=newiter, body=newfbody,
-                                                            line_number=child.line_number, parent=child.parent)
+                newfor = ast_internal_classes.For_Stmt_Node(init=newinit,
+                                                            cond=newcond,
+                                                            iter=newiter,
+                                                            body=newfbody,
+                                                            line_number=child.line_number,
+                                                            parent=child.parent)
                 self.count += 1
                 newfor = self.visit(newfor)
                 newbody.append(newfor)
@@ -2233,8 +2311,9 @@ class ElementalFunctionExpander(NodeTransformer):
                                 if len(child.args) > 0:
                                     for j in child.args:
                                         if isinstance(j, ast_internal_classes.Array_Subscript_Node):
-                                            pardecls = [k for k in mywalk(j) if
-                                                        isinstance(k, ast_internal_classes.ParDecl_Node)]
+                                            pardecls = [
+                                                k for k in mywalk(j) if isinstance(k, ast_internal_classes.ParDecl_Node)
+                                            ]
                                             if len(pardecls) > 0:
                                                 arrays = True
                                                 break
@@ -2266,10 +2345,12 @@ class ElementalFunctionExpander(NodeTransformer):
                     # shape = ["10"]
                     for i in child.args:
                         if isinstance(i, ast_internal_classes.Name_Node):
-                            newargs.append(ast_internal_classes.Array_Subscript_Node(name=i, indices=[
-                                ast_internal_classes.Name_Node(name="_for_elem_it_" + str(self.count))],
-                                                                                     line_number=child.line_number,
-                                                                                     type=i.type))
+                            newargs.append(
+                                ast_internal_classes.Array_Subscript_Node(
+                                    name=i,
+                                    indices=[ast_internal_classes.Name_Node(name="_for_elem_it_" + str(self.count))],
+                                    line_number=child.line_number,
+                                    type=i.type))
                             if i.name.startswith("tmp_call_"):
                                 for j in newbody:
                                     if isinstance(j, ast_internal_classes.Decl_Stmt_Node):
@@ -2285,42 +2366,49 @@ class ElementalFunctionExpander(NodeTransformer):
                             rangesrval = []
                             par_Decl_Range_Finder(i, rangesrval, [], self.count, newbody, self.scope_vars,
                                                   self.ast.structures, False, ranges)
-                            newargs.append(ast_internal_classes.Array_Subscript_Node(name=i.name, indices=[
-                                ast_internal_classes.Name_Node(name="_for_elem_it_" + str(self.count))],
-                                                                                     line_number=child.line_number,
-                                                                                     type=i.type))
+                            newargs.append(
+                                ast_internal_classes.Array_Subscript_Node(
+                                    name=i.name,
+                                    indices=[ast_internal_classes.Name_Node(name="_for_elem_it_" + str(self.count))],
+                                    line_number=child.line_number,
+                                    type=i.type))
                         else:
                             raise NotImplementedError("Only name nodes and array subscripts are supported")
 
-                    newbody.append(ast_internal_classes.For_Stmt_Node(
-                        init=ast_internal_classes.BinOp_Node(
-                            lval=ast_internal_classes.Name_Node(name="_for_elem_it_" + str(self.count)),
-                            op="=",
-                            rval=ast_internal_classes.Int_Literal_Node(value="1"),
-                            line_number=child.line_number, parent=child.parent),
-                        cond=ast_internal_classes.BinOp_Node(
-                            lval=ast_internal_classes.Name_Node(name="_for_elem_it_" + str(self.count)),
-                            op="<=",
-                            rval=shape[0],
-                            line_number=child.line_number, parent=child.parent),
-                        body=ast_internal_classes.Execution_Part_Node(execution=[
-                            ast_internal_classes.Call_Expr_Node(type=child.type,
-                                                                name=child.name,
-                                                                args=newargs,
-                                                                line_number=child.line_number, parent=child.parent,
-                                                                subroutine=child.subroutine)
-                        ]), line_number=child.line_number,
-                        iter=ast_internal_classes.BinOp_Node(
-                            lval=ast_internal_classes.Name_Node(name="_for_elem_it_" + str(self.count)),
-                            op="=",
-                            rval=ast_internal_classes.BinOp_Node(
+                    newbody.append(
+                        ast_internal_classes.For_Stmt_Node(
+                            init=ast_internal_classes.BinOp_Node(
                                 lval=ast_internal_classes.Name_Node(name="_for_elem_it_" + str(self.count)),
-                                op="+",
-                                rval=ast_internal_classes.Int_Literal_Node(value="1"), parent=child.parent),
-                            line_number=child.line_number, parent=child.parent)
-                    ))
+                                op="=",
+                                rval=ast_internal_classes.Int_Literal_Node(value="1"),
+                                line_number=child.line_number,
+                                parent=child.parent),
+                            cond=ast_internal_classes.BinOp_Node(
+                                lval=ast_internal_classes.Name_Node(name="_for_elem_it_" + str(self.count)),
+                                op="<=",
+                                rval=shape[0],
+                                line_number=child.line_number,
+                                parent=child.parent),
+                            body=ast_internal_classes.Execution_Part_Node(execution=[
+                                ast_internal_classes.Call_Expr_Node(type=child.type,
+                                                                    name=child.name,
+                                                                    args=newargs,
+                                                                    line_number=child.line_number,
+                                                                    parent=child.parent,
+                                                                    subroutine=child.subroutine)
+                            ]),
+                            line_number=child.line_number,
+                            iter=ast_internal_classes.BinOp_Node(
+                                lval=ast_internal_classes.Name_Node(name="_for_elem_it_" + str(self.count)),
+                                op="=",
+                                rval=ast_internal_classes.BinOp_Node(
+                                    lval=ast_internal_classes.Name_Node(name="_for_elem_it_" + str(self.count)),
+                                    op="+",
+                                    rval=ast_internal_classes.Int_Literal_Node(value="1"),
+                                    parent=child.parent),
+                                line_number=child.line_number,
+                                parent=child.parent)))
                     self.count += 1
-
 
             else:
                 newbody.append(self.visit(child))
@@ -2390,15 +2478,8 @@ class TypeInference(NodeTransformer):
                             op='+',
                             rval=ast_internal_classes.Int_Literal_Node(value="1"),
                             lval=ast_internal_classes.Parenthesis_Expr_Node(
-                                expr=ast_internal_classes.BinOp_Node(
-                                    op='-',
-                                    rval=idx.range[0],
-                                    lval=idx.range[1]
-                                )
-                            ),
-                            type="INTEGER"
-                        )
-                    )
+                                expr=ast_internal_classes.BinOp_Node(op='-', rval=idx.range[0], lval=idx.range[1])),
+                            type="INTEGER"))
             else:
 
                 # we also have non-contiguous arrays here!
@@ -2440,26 +2521,17 @@ class TypeInference(NodeTransformer):
         return node
 
     def visit_BinOp_Node(self, node: ast_internal_classes.BinOp_Node):
-
         """
             Simple implementation of type promotion in binary ops.
         """
 
         node.lval = self.visit(node.lval)
         node.rval = self.visit(node.rval)
-
         """
             Handle promotion of numeric types.
         """
 
-        type_hierarchy = [
-            'VOID',
-            'LOGICAL',
-            'CHAR',
-            'INTEGER',
-            'REAL',
-            'DOUBLE'
-        ]
+        type_hierarchy = ['VOID', 'LOGICAL', 'CHAR', 'INTEGER', 'REAL', 'DOUBLE']
 
         lval_type = self._get_type(node.lval)
         rval_type = self._get_type(node.rval)
@@ -2559,9 +2631,7 @@ class TypeInference(NodeTransformer):
         node.parent_ref = self.visit(node.parent_ref)
         node.part_ref = self.visit(node.part_ref)
 
-        struct, variable, prev_part_ref = self.structures.find_definition(
-            self.scope_vars, node
-        )
+        struct, variable, prev_part_ref = self.structures.find_definition(self.scope_vars, node)
 
         if prev_part_ref.part_ref.type != 'VOID':
             node.type = prev_part_ref.part_ref.type
@@ -2681,23 +2751,18 @@ class PointerRemoval(NodeTransformer):
             original_ref_node = self.nodes[node.name.name]
 
             cur_ref_node = original_ref_node
-            new_ref_node = ast_internal_classes.Data_Ref_Node(
-                parent_ref=cur_ref_node.parent_ref,
-                part_ref=None,
-                type=cur_ref_node.type,
-                line_number=cur_ref_node.line_number
-            )
+            new_ref_node = ast_internal_classes.Data_Ref_Node(parent_ref=cur_ref_node.parent_ref,
+                                                              part_ref=None,
+                                                              type=cur_ref_node.type,
+                                                              line_number=cur_ref_node.line_number)
             newer_ref_node = new_ref_node
 
             while isinstance(cur_ref_node.part_ref, ast_internal_classes.Data_Ref_Node):
                 cur_ref_node = cur_ref_node.part_ref
-                newest_ref_node = ast_internal_classes.Data_Ref_Node(
-                    parent_ref=cur_ref_node.parent_ref,
-                    part_ref=None,
-                    type=cur_ref_node.type,
-                    line_number=cur_ref_node.line_number
-
-                )
+                newest_ref_node = ast_internal_classes.Data_Ref_Node(parent_ref=cur_ref_node.parent_ref,
+                                                                     part_ref=None,
+                                                                     type=cur_ref_node.type,
+                                                                     line_number=cur_ref_node.line_number)
                 newer_ref_node.part_ref = newest_ref_node
                 newer_ref_node = newest_ref_node
 
@@ -2757,13 +2822,11 @@ class PointerRemoval(NodeTransformer):
         else:
             new_symbols = None
 
-        return ast_internal_classes.Specification_Part_Node(
-            specifications=newspec,
-            symbols=new_symbols,
-            typedecls=node.typedecls,
-            uses=node.uses,
-            enums=node.enums
-        )
+        return ast_internal_classes.Specification_Part_Node(specifications=newspec,
+                                                            symbols=new_symbols,
+                                                            typedecls=node.typedecls,
+                                                            uses=node.uses,
+                                                            enums=node.enums)
 
 
 class ArgumentPruner(NodeVisitor):
@@ -2902,6 +2965,7 @@ class ArgumentPruner(NodeVisitor):
 
 
 class IfEvaluator(NodeTransformer):
+
     def __init__(self):
         self.replacements = 0
 
@@ -2931,6 +2995,7 @@ class IfEvaluator(NodeTransformer):
 
 
 class AssignmentLister(NodeTransformer):
+
     def __init__(self, correction=[]):
         self.simple_assignments = []
         self.correction = correction
@@ -2949,13 +3014,16 @@ class AssignmentLister(NodeTransformer):
 
 
 class AssignmentPropagator(NodeTransformer):
+
     def __init__(self, simple_assignments):
         self.simple_assignments = simple_assignments
         self.replacements = 0
 
     def visit_If_Stmt_Node(self, node):
         test = self.generic_visit(node)
-        return ast_internal_classes.If_Stmt_Node(line_number=node.line_number, cond=test.cond, body=test.body,
+        return ast_internal_classes.If_Stmt_Node(line_number=node.line_number,
+                                                 cond=test.cond,
+                                                 body=test.body,
                                                  body_else=test.body_else)
 
     def generic_visit(self, node: ast_internal_classes.FNode):
@@ -3032,9 +3100,10 @@ class ReplaceImplicitParDecls(NodeTransformer):
             return node
 
         last_data_ref_node.part_ref = ast_internal_classes.Array_Subscript_Node(
-            name=last_data_ref_node.part_ref, parent=node.parent, type=var_def.type,
-            indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * len(var_def.sizes)
-        )
+            name=last_data_ref_node.part_ref,
+            parent=node.parent,
+            type=var_def.type,
+            indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * len(var_def.sizes))
 
         return node
 
@@ -3053,13 +3122,11 @@ class ReplaceImplicitParDecls(NodeTransformer):
         if var.sizes is not None and len(var.sizes) > 0:
 
             indices = [ast_internal_classes.ParDecl_Node(type='ALL')] * len(var.sizes)
-            return ast_internal_classes.Array_Subscript_Node(
-                name=node,
-                type=var.type,
-                parent=node.parent,
-                indices=indices,
-                line_number=node.line_number
-            )
+            return ast_internal_classes.Array_Subscript_Node(name=node,
+                                                             type=var.type,
+                                                             parent=node.parent,
+                                                             indices=indices,
+                                                             line_number=node.line_number)
         else:
             return node
 
@@ -3072,10 +3139,7 @@ class ReplaceStructArgsLibraryNodesVisitor(NodeVisitor):
     def __init__(self):
         self.nodes: List[ast_internal_classes.FNode] = []
 
-        self.FUNCS_TO_REPLACE = [
-            "transpose",
-            "matmul"
-        ]
+        self.FUNCS_TO_REPLACE = ["transpose", "matmul"]
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
         name = node.name.name.split('__dace_')
@@ -3098,10 +3162,7 @@ class ReplaceStructArgsLibraryNodes(NodeTransformer):
 
         self.counter = 0
 
-        FUNCS_TO_REPLACE = [
-            "transpose",
-            "matmul"
-        ]
+        FUNCS_TO_REPLACE = ["transpose", "matmul"]
 
     # FIXME: copy-paste from intrinsics
     def _parse_struct_ref(self, node: ast_internal_classes.Data_Ref_Node) -> ast_internal_classes.FNode:
@@ -3159,38 +3220,27 @@ class ReplaceStructArgsLibraryNodes(NodeTransformer):
                         node.parent.specification_part.specifications.append(
                             ast_internal_classes.Decl_Stmt_Node(vardecl=[
                                 ast_internal_classes.Var_Decl_Node(
-                                    name=tmp_var_name,
-                                    type=var.type,
-                                    sizes=var.sizes,
-                                    offsets=var.offsets,
-                                    init=None
-                                )
-                            ])
-                        )
+                                    name=tmp_var_name, type=var.type, sizes=var.sizes, offsets=var.offsets, init=None)
+                            ]))
 
                         # No need to create array subscript node - Array2Loop will catch that.
-                        dest_node = ast_internal_classes.Name_Node(
-                            name=tmp_var_name,
-                            parent=call_node.parent,
-                            type=var.type
-                        )
+                        dest_node = ast_internal_classes.Name_Node(name=tmp_var_name,
+                                                                   parent=call_node.parent,
+                                                                   type=var.type)
 
                         if isinstance(arg.part_ref, ast_internal_classes.Name_Node):
                             arg.part_ref = ast_internal_classes.Array_Subscript_Node(
                                 name=arg.part_ref,
-                                parent=call_node.parent, type=arg.part_ref.type,
-                                indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * len(var.sizes)
-                            )
+                                parent=call_node.parent,
+                                type=arg.part_ref.type,
+                                indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * len(var.sizes))
 
                         newbody.append(
-                            ast_internal_classes.BinOp_Node(
-                                op="=",
-                                lval=dest_node,
-                                rval=arg,
-                                line_number=child.line_number,
-                                parent=child.parent
-                            )
-                        )
+                            ast_internal_classes.BinOp_Node(op="=",
+                                                            lval=dest_node,
+                                                            rval=arg,
+                                                            line_number=child.line_number,
+                                                            parent=child.parent))
 
                         self.counter += 1
 
@@ -3235,9 +3285,7 @@ class ParDeclOffsetNormalizer(NodeTransformer):
     def visit_Array_Subscript_Node(self, node: ast_internal_classes.Array_Subscript_Node):
 
         if len(self.data_ref_stack) > 0:
-            _, array_var, _ = self.structures.find_definition(
-                self.scope_vars, self.data_ref_stack[-1], node.name
-            )
+            _, array_var, _ = self.structures.find_definition(self.scope_vars, self.data_ref_stack[-1], node.name)
         else:
             array_var = self.scope_vars.get_var(node.parent, node.name.name)
 
@@ -3270,23 +3318,15 @@ class ParDeclOffsetNormalizer(NodeTransformer):
                 # lower_boundary - offset + 1
                 # we add +1 because offset normalization is applied later on
                 new_ranges.append(
-                    ast_internal_classes.BinOp_Node(
-                        op='+',
-                        lval=ast_internal_classes.Int_Literal_Node(value="0"),
-                        rval=ast_internal_classes.BinOp_Node(
-                            op='-',
-                            lval=r,
-                            rval=self.current_offset,
-                            type=r.type
-                        ),
-                        type=r.type
-                    )
-                )
+                    ast_internal_classes.BinOp_Node(op='+',
+                                                    lval=ast_internal_classes.Int_Literal_Node(value="0"),
+                                                    rval=ast_internal_classes.BinOp_Node(op='-',
+                                                                                         lval=r,
+                                                                                         rval=self.current_offset,
+                                                                                         type=r.type),
+                                                    type=r.type))
 
-        node = ast_internal_classes.ParDecl_Node(
-            type='RANGE',
-            range=new_ranges
-        )
+        node = ast_internal_classes.ParDecl_Node(type='RANGE', range=new_ranges)
 
         return node
 
@@ -3295,8 +3335,8 @@ class ArrayLoopLister(NodeVisitor):
 
     def __init__(self, scope_vars, structures):
         self.nodes: List[ast_internal_classes.Array_Subscript_Node] = []
-        self.dataref_nodes: List[
-            Tuple[ast_internal_classes.Data_Ref_Node, ast_internal_classes.Array_Subscript_Node]] = []
+        self.dataref_nodes: List[Tuple[ast_internal_classes.Data_Ref_Node,
+                                       ast_internal_classes.Array_Subscript_Node]] = []
 
         self.scopes_vars = scope_vars
         self.structures = structures
@@ -3421,8 +3461,8 @@ class ArrayLoopExpander(NodeTransformer):
                 for i in rval_lister.nodes:
                     rangesrval = []
 
-                    par_Decl_Range_Finder(i, rangesrval, [], self.count, newbody, self.scope_vars,
-                                          self.ast.structures, False, ranges)
+                    par_Decl_Range_Finder(i, rangesrval, [], self.count, newbody, self.scope_vars, self.ast.structures,
+                                          False, ranges)
                     for i, j in zip(ranges, rangesrval):
                         if i != j:
                             if isinstance(i, list) and isinstance(j, list) and len(i) == len(j):
@@ -3444,8 +3484,8 @@ class ArrayLoopExpander(NodeTransformer):
 
                     i = dataref[0]
 
-                    par_Decl_Range_Finder(i, rangesrval, [], self.count, newbody, self.scope_vars,
-                                          self.ast.structures, False, ranges)
+                    par_Decl_Range_Finder(i, rangesrval, [], self.count, newbody, self.scope_vars, self.ast.structures,
+                                          False, ranges)
                     for i, j in zip(ranges, rangesrval):
                         if i != j:
                             if isinstance(i, list) and isinstance(j, list) and len(i) == len(j):
@@ -3465,8 +3505,11 @@ class ArrayLoopExpander(NodeTransformer):
                 range_index = 0
 
                 if isinstance(child, ast_internal_classes.BinOp_Node):
-                    body = ast_internal_classes.BinOp_Node(lval=current, op="=", rval=child.rval,
-                                                           line_number=child.line_number, parent=child.parent)
+                    body = ast_internal_classes.BinOp_Node(lval=current,
+                                                           op="=",
+                                                           rval=child.rval,
+                                                           line_number=child.line_number,
+                                                           parent=child.parent)
                 elif isinstance(child, ast_internal_classes.Call_Expr_Node):
                     body = child
 
@@ -3477,26 +3520,31 @@ class ArrayLoopExpander(NodeTransformer):
                         lval=ast_internal_classes.Name_Node(name="tmp_parfor_" + str(self.count + range_index)),
                         op="=",
                         rval=initrange,
-                        line_number=child.line_number, parent=child.parent)
+                        line_number=child.line_number,
+                        parent=child.parent)
                     cond = ast_internal_classes.BinOp_Node(
                         lval=ast_internal_classes.Name_Node(name="tmp_parfor_" + str(self.count + range_index)),
                         op="<=",
                         rval=finalrange,
-                        line_number=child.line_number, parent=child.parent)
+                        line_number=child.line_number,
+                        parent=child.parent)
                     iter = ast_internal_classes.BinOp_Node(
                         lval=ast_internal_classes.Name_Node(name="tmp_parfor_" + str(self.count + range_index)),
                         op="=",
                         rval=ast_internal_classes.BinOp_Node(
                             lval=ast_internal_classes.Name_Node(name="tmp_parfor_" + str(self.count + range_index)),
                             op="+",
-                            rval=ast_internal_classes.Int_Literal_Node(value="1"), parent=child.parent),
-                        line_number=child.line_number, parent=child.parent)
+                            rval=ast_internal_classes.Int_Literal_Node(value="1"),
+                            parent=child.parent),
+                        line_number=child.line_number,
+                        parent=child.parent)
                     current_for = ast_internal_classes.Map_Stmt_Node(
                         init=init,
                         cond=cond,
                         iter=iter,
                         body=ast_internal_classes.Execution_Part_Node(execution=[body]),
-                        line_number=child.line_number, parent=child.parent)
+                        line_number=child.line_number,
+                        parent=child.parent)
                     body = current_for
                     range_index += 1
 
@@ -3544,7 +3592,7 @@ class ArrayLoopNodeLister(NodeVisitor):
             # BUT: we explicitly exclude patterns like arr = func()
             if isinstance(node.lval,
                           (ast_internal_classes.Name_Node, ast_internal_classes.Data_Ref_Node)) and not isinstance(
-                    node.rval, ast_internal_classes.Call_Expr_Node):
+                              node.rval, ast_internal_classes.Call_Expr_Node):
 
                 if isinstance(node.lval, ast_internal_classes.Name_Node):
 
@@ -3553,9 +3601,10 @@ class ArrayLoopNodeLister(NodeVisitor):
                         return
 
                     node.lval = ast_internal_classes.Array_Subscript_Node(
-                        name=node.lval, parent=node.parent, type=var.type,
-                        indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * len(var.sizes)
-                    )
+                        name=node.lval,
+                        parent=node.parent,
+                        type=var.type,
+                        indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * len(var.sizes))
 
                 else:
                     _, var_def, last_data_ref_node = self.structures.find_definition(self.scope_vars, node.lval)
@@ -3567,9 +3616,10 @@ class ArrayLoopNodeLister(NodeVisitor):
                         return
 
                     last_data_ref_node.part_ref = ast_internal_classes.Array_Subscript_Node(
-                        name=last_data_ref_node.part_ref, parent=node.parent, type=var_def.type,
-                        indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * len(var_def.sizes)
-                    )
+                        name=last_data_ref_node.part_ref,
+                        parent=node.parent,
+                        type=var_def.type,
+                        indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * len(var_def.sizes))
 
             else:
                 return
@@ -3624,9 +3674,7 @@ class ElementalIntrinsicNodeLister(NodeVisitor):
         self.scope_vars = scope_vars
         self.structures = structures
 
-        self.ELEMENTAL_INTRINSICS = set(
-            ["EXP", "MAX", "MIN"]
-        )
+        self.ELEMENTAL_INTRINSICS = set(["EXP", "MAX", "MIN"])
 
         self.ELEMENTAL_FUNCTIONS = set()
 
@@ -3639,8 +3687,8 @@ class ElementalIntrinsicNodeLister(NodeVisitor):
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
 
-        is_elemental_intrinsic = node.name.name.startswith('__dace') and node.name.name.split('__dace_')[
-            1] in self.ELEMENTAL_INTRINSICS
+        is_elemental_intrinsic = node.name.name.startswith('__dace') and node.name.name.split(
+            '__dace_')[1] in self.ELEMENTAL_INTRINSICS
 
         # for functions changed into subroutines, their name is adapted as {name}_srt
         is_elemental = node.name.name.split('_srt')[0] in self.ELEMENTAL_FUNCTIONS
@@ -3648,8 +3696,9 @@ class ElementalIntrinsicNodeLister(NodeVisitor):
         if not is_elemental_intrinsic and not is_elemental:
             return
 
-        args_pardecls = [i for arg in node.args for i in mywalk(arg) if
-                         isinstance(i, ast_internal_classes.ParDecl_Node)]
+        args_pardecls = [
+            i for arg in node.args for i in mywalk(arg) if isinstance(i, ast_internal_classes.ParDecl_Node)
+        ]
 
         if len(args_pardecls) > 0:
             self.nodes.append(node)
@@ -3672,10 +3721,10 @@ class ElementalIntrinsicNodeLister(NodeVisitor):
 
                     args.append(
                         ast_internal_classes.Array_Subscript_Node(
-                            name=arg, parent=node.parent, type=var.type,
-                            indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * len(var.sizes)
-                        )
-                    )
+                            name=arg,
+                            parent=node.parent,
+                            type=var.type,
+                            indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * len(var.sizes)))
 
                     needs_expansion = True
 
@@ -3692,9 +3741,10 @@ class ElementalIntrinsicNodeLister(NodeVisitor):
                         continue
 
                     last_data_ref_node.part_ref = ast_internal_classes.Array_Subscript_Node(
-                        name=last_data_ref_node.part_ref, parent=node.parent, type=var_def.type,
-                        indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * len(var_def.sizes)
-                    )
+                        name=last_data_ref_node.part_ref,
+                        parent=node.parent,
+                        type=var_def.type,
+                        indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * len(var_def.sizes))
 
                     args.append(arg)
 
@@ -3743,9 +3793,10 @@ class ElementalIntrinsicNodeLister(NodeVisitor):
                     return
 
                 node.lval = ast_internal_classes.Array_Subscript_Node(
-                    name=node.lval, parent=node.parent, type=var.type,
-                    indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * len(var.sizes)
-                )
+                    name=node.lval,
+                    parent=node.parent,
+                    type=var.type,
+                    indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * len(var.sizes))
                 self.nodes.append(node)
 
             elif isinstance(node.lval, ast_internal_classes.Data_Ref_Node):
@@ -3759,9 +3810,10 @@ class ElementalIntrinsicNodeLister(NodeVisitor):
                     return
 
                 last_data_ref_node.part_ref = ast_internal_classes.Array_Subscript_Node(
-                    name=last_data_ref_node.part_ref, parent=node.parent, type=var_def.type,
-                    indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * len(var_def.sizes)
-                )
+                    name=last_data_ref_node.part_ref,
+                    parent=node.parent,
+                    type=var_def.type,
+                    indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * len(var_def.sizes))
                 self.nodes.append(node)
 
 
@@ -3835,7 +3887,6 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
                     var.sizes = None
 
             for tmp_array_name, tmp_array in self.nodes_to_process.items():
-
                 """
                     For each variable with non-contiguous slices:
                     - Generate the temporary array.
@@ -3858,8 +3909,7 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
                             offsets=tmp_array.offsets,
                             init=None,
                         )
-                    ])
-                )
+                    ]))
 
                 dest_indices = copy.deepcopy(tmp_array.indices)
                 for idx, _, _ in tmp_array.noncontig_dims:
@@ -3870,8 +3920,7 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
                     name=ast_internal_classes.Name_Node(name=tmp_array.name),
                     type=tmp_array.type,
                     indices=dest_indices,
-                    line_numbe=child.line_number
-                )
+                    line_numbe=child.line_number)
 
                 source_indices = copy.deepcopy(tmp_array.indices)
                 for idx, main_var, var in tmp_array.noncontig_dims:
@@ -3883,13 +3932,11 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
                 source, main_source = tmp_array.source
                 main_source.indices = source_indices
 
-                body = ast_internal_classes.BinOp_Node(
-                    lval=dest,
-                    op="=",
-                    rval=source,
-                    line_number=child.line_number,
-                    parent=child.parent
-                )
+                body = ast_internal_classes.BinOp_Node(lval=dest,
+                                                       op="=",
+                                                       rval=source,
+                                                       line_number=child.line_number,
+                                                       parent=child.parent)
 
                 for idx, _, _ in tmp_array.noncontig_dims:
                     initrange = ast_internal_classes.Int_Literal_Node(value="1")
@@ -3900,41 +3947,35 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
                     node.parent.specification_part.specifications.append(
                         ast_internal_classes.Decl_Stmt_Node(vardecl=[
                             ast_internal_classes.Var_Decl_Node(
-                                name=iter_var.name,
-                                type='INTEGER',
-                                sizes=[],
-                                offsets=[1],
-                                init=None
-                            )
-                        ])
-                    )
+                                name=iter_var.name, type='INTEGER', sizes=[], offsets=[1], init=None)
+                        ]))
 
-                    init = ast_internal_classes.BinOp_Node(
-                        lval=iter_var,
-                        op="=",
-                        rval=initrange,
-                        line_number=child.line_number, parent=child.parent)
-                    cond = ast_internal_classes.BinOp_Node(
-                        lval=iter_var,
-                        op="<=",
-                        rval=finalrange,
-                        line_number=child.line_number, parent=child.parent)
-                    iter = ast_internal_classes.BinOp_Node(
-                        lval=iter_var,
-                        op="=",
-                        rval=ast_internal_classes.BinOp_Node(
-                            lval=iter_var,
-                            op="+",
-                            rval=ast_internal_classes.Int_Literal_Node(value="1"), parent=child.parent),
-                        line_number=child.line_number, parent=child.parent)
+                    init = ast_internal_classes.BinOp_Node(lval=iter_var,
+                                                           op="=",
+                                                           rval=initrange,
+                                                           line_number=child.line_number,
+                                                           parent=child.parent)
+                    cond = ast_internal_classes.BinOp_Node(lval=iter_var,
+                                                           op="<=",
+                                                           rval=finalrange,
+                                                           line_number=child.line_number,
+                                                           parent=child.parent)
+                    iter = ast_internal_classes.BinOp_Node(lval=iter_var,
+                                                           op="=",
+                                                           rval=ast_internal_classes.BinOp_Node(
+                                                               lval=iter_var,
+                                                               op="+",
+                                                               rval=ast_internal_classes.Int_Literal_Node(value="1"),
+                                                               parent=child.parent),
+                                                           line_number=child.line_number,
+                                                           parent=child.parent)
                     current_for = ast_internal_classes.Map_Stmt_Node(
                         init=init,
                         cond=cond,
                         iter=iter,
                         body=ast_internal_classes.Execution_Part_Node(execution=[body]),
                         line_number=child.line_number,
-                        parent=child.parent
-                    )
+                        parent=child.parent)
                     body = current_for
 
                 newbody.append(body)
@@ -3964,7 +4005,6 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
         new_offsets.append(1)
 
     def visit_Data_Ref_Node(self, node: ast_internal_classes.Data_Ref_Node):
-
         """
             When processing a data reference:
 
@@ -3974,9 +4014,7 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
             This way, we reuse the same logic without excessive specialization to datarefs.
         """
 
-        struct, variable, last_var = self.structures.find_definition(
-            self.scope_vars, node
-        )
+        struct, variable, last_var = self.structures.find_definition(self.scope_vars, node)
 
         if not isinstance(last_var.part_ref, ast_internal_classes.Array_Subscript_Node):
             return node
@@ -4007,7 +4045,6 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
             self.data_ref_stack = old_data_ref_stack
 
         for idx, index in enumerate(new_indices):
-
             """
                 For structure references:
                 index -> full index var inserted in array node
@@ -4018,9 +4055,7 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
 
             if isinstance(index, ast_internal_classes.Data_Ref_Node):
 
-                struct, variable, last_var = self.structures.find_definition(
-                    self.scope_vars, index
-                )
+                struct, variable, last_var = self.structures.find_definition(self.scope_vars, index)
 
                 actual_index = last_var.part_ref
             else:
@@ -4037,7 +4072,6 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
 
                     self.needs_copy = True
                     new_sizes.append(var_sizes[0])
-
                     """
                         We will later assign actual indices when processing the loop code.
                     """
@@ -4045,8 +4079,7 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
                         name=ast_internal_classes.Name_Node(name=actual_index.name),
                         type=actual_index.type,
                         indices=None,
-                        line_number=actual_index.line_number
-                    )
+                        line_number=actual_index.line_number)
                     if isinstance(index, ast_internal_classes.Data_Ref_Node):
                         last_var.part_ref = idx_arr
                         noncont_sizes.append((idx, index, idx_arr))
@@ -4071,7 +4104,6 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
                 else:
                     var_sizes = self.scope_vars.get_var(node.parent, node.name.name).sizes
                     var_offsets = self.scope_vars.get_var(node.parent, node.name.name).offsets
-
                 """
                     For range from a:b, we do not generate the code manually.
                     Instead, we will let ArrayToLoop transformation to expand this copy.
@@ -4094,26 +4126,21 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
                         new_offsets.append(actual_index.range[0].value)
                     else:
                         new_offsets.append(actual_index.range[0])
-
                     """
                         For range-based offsets, the array size is given as:
                         high - low + 1
                     """
                     new_sizes.append(
-                        ast_internal_classes.BinOp_Node(
-                            lval=ast_internal_classes.BinOp_Node(
-                                lval=actual_index.range[1],
-                                op="-",
-                                rval=actual_index.range[0],
-                                line_number=node.line_number,
-                                parent=node.parent
-                            ),
-                            op="+",
-                            rval=ast_internal_classes.Int_Literal_Node(value="1"),
+                        ast_internal_classes.BinOp_Node(lval=ast_internal_classes.BinOp_Node(
+                            lval=actual_index.range[1],
+                            op="-",
+                            rval=actual_index.range[0],
                             line_number=node.line_number,
-                            parent=node.parent
-                        )
-                    )
+                            parent=node.parent),
+                                                        op="+",
+                                                        rval=ast_internal_classes.Int_Literal_Node(value="1"),
+                                                        line_number=node.line_number,
+                                                        parent=node.parent))
                 else:
                     raise NotImplementedError()
 
@@ -4130,7 +4157,6 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
 
             if len(node.indices) > 2:
                 raise NotImplementedError("Non-contiguous array slices are supported only for 1D/2D arrays!")
-
             """
                 We will later assign actual indices when processing the loop code.
             """
@@ -4139,24 +4165,18 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
                 type=node.type,
                 # will be fixed in further processing
                 indices=None,
-                line_number=node.line_number
-            )
+                line_number=node.line_number)
             main_source = source
             for dataref in self.data_ref_stack[::-1]:
                 dataref.part_ref = source
                 source = dataref
 
             name = f"tmp_noncontig_{self.counter}"
-            self.nodes_to_process[name] = self.NonContigArray(
-                self.counter, name, (source, main_source), node.type, new_sizes, new_offsets, indices, noncont_sizes
-            )
+            self.nodes_to_process[name] = self.NonContigArray(self.counter, name, (source, main_source), node.type,
+                                                              new_sizes, new_offsets, indices, noncont_sizes)
             self.counter += 1
 
-            return ast_internal_classes.Name_Node(
-                name=name,
-                type=node.type,
-                line_number=node.line_number
-            )
+            return ast_internal_classes.Name_Node(name=name, type=node.type, line_number=node.line_number)
         else:
             node.indices = indices
             return node

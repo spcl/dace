@@ -1,4 +1,4 @@
-# Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 from fparser.common.readfortran import FortranStringReader
 from fparser.common.readfortran import FortranFileReader
@@ -17,6 +17,7 @@ import dace.frontend.fortran.ast_components as ast_components
 import dace.frontend.fortran.ast_transforms as ast_transforms
 import dace.frontend.fortran.ast_utils as ast_utils
 import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
+
 
 def test_fortran_frontend_prune_simple():
     test_string = """
@@ -43,7 +44,7 @@ def test_fortran_frontend_prune_simple():
     a = np.full([4], 42, order="F", dtype=np.float64)
     b = np.full([4], 42, order="F", dtype=np.float64)
     print(a)
-    sdfg(d=a,dx=b)
+    sdfg(d=a, dx=b)
     print(a)
     assert (a[0] == 42)
     assert (a[1] == 42 + 3.14)

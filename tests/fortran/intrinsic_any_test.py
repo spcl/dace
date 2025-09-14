@@ -1,4 +1,4 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import numpy as np
 import pytest
@@ -163,6 +163,7 @@ def test_fortran_frontend_any_array_scalar_comparison():
     first[2] = 42
     sdfg(first=first, res=res)
     assert list(res) == [1, 1, 0, 1, 1, 1, 1]
+
 
 @pytest.mark.skip("Changing the order of AST transformations prevents the intrinsics from analyzing it")
 def test_fortran_frontend_any_array_comparison_wrong_subset():
