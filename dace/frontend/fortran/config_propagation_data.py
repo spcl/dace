@@ -58,13 +58,3 @@ def find_all_config_injections(ti_files: Iterable[Path]) -> Generator[ConstInjec
             else:
                 inj_map[key] = x
                 yield x
-
-
-def ecrad_config_injection_list(root: str = 'dace/frontend/fortran/conf_files') -> List[ConstInjection]:
-    ti_files = [
-        Path(root).joinpath(f) for f in [
-            'config.ti', 'aerosol_optics.ti', 'cloud_optics.ti', 'gas_optics_lw.ti', 'gas_optics_sw.ti',
-            'pdf_sampler.ti', 'aerosol.ti', 'cloud.ti', 'flux.ti', 'gas.ti', 'single_level.ti', 'thermodynamics.ti'
-        ]
-    ]
-    return list(find_all_config_injections(ti_files))
