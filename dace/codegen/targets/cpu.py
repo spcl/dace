@@ -41,8 +41,19 @@ class CPUCodeGen(TargetCodeGenerator):
             for k, v in struct.members.items():
                 if isinstance(v, data.Structure):
                     _visit_structure(v, args, f'{prefix}->{k}')
+                # NOTE: We should revisit this when we decide if direct access to struct members of container arrays is allowed.
                 elif isinstance(v, data.ContainerArray):
-                    _visit_structure(v.stype, args, f'{prefix}->{k}')
+
+                    cur_v = v.stype
+                    prefix_ = f'{prefix}->{k}'
+
+                    while isinstance(cur_v, data.ContainerArray):
+                        cur_v = cur_v.stype
+                        prefix_ = f'(*{prefix_})'
+
+                    if isinstance(cur_v, data.Structure):
+                        _visit_structure(cur_v, args, prefix_)
+
                 if isinstance(v, data.Data):
                     args[f'{prefix}->{k}'] = v
 
@@ -65,8 +76,28 @@ class CPUCodeGen(TargetCodeGenerator):
                 if arg_type.storage is dtypes.StorageType.GPU_Global:
                     self._dispatcher.defined_vars.add(name, DefinedType.Pointer, dtypes.pointer(arg_type.dtype).ctype)
                     continue
-
                 self._dispatcher.defined_vars.add(name, DefinedType.Scalar, arg_type.dtype.ctype)
+            elif isinstance(arg_type, data.Structure):
+                if isinstance(arg_type.dtype, dtypes.struct):
+                    self._dispatcher.defined_vars.add(name, DefinedType.Scalar, arg_type.dtype.ctype)
+                elif isinstance(arg_type.dtype, dtypes.pointer) and isinstance(arg_type.dtype.base_type, dtypes.struct):
+                    self._dispatcher.defined_vars.add(name, DefinedType.Pointer, arg_type.dtype.ctype)
+                else:
+                    raise TypeError(
+                        f"Structure argument {name} has unrecognized argument type: {type(arg_type)} (value {arg_type})"
+                    )
+            elif isinstance(arg_type, data.ContainerArray):
+                stype = arg_type.stype
+                if not isinstance(stype, data.Structure):
+                    raise TypeError(
+                        f"ContainerArray {name} has non-structure element type: {type(stype)} (value {stype})")
+                if isinstance(stype.dtype, dtypes.struct):
+                    self._dispatcher.defined_vars.add(name, DefinedType.Pointer, dtypes.pointer(stype.dtype).ctype)
+                elif isinstance(stype.dtype, dtypes.pointer) and isinstance(stype.dtype.base_type, dtypes.struct):
+                    self._dispatcher.defined_vars.add(name, DefinedType.Pointer, dtypes.pointer(stype.dtype).ctype)
+                else:
+                    raise TypeError(
+                        f"ContainerArray {name} has unrecognized structure element type: {type(stype)} (value {stype})")
             elif isinstance(arg_type, data.Array):
                 self._dispatcher.defined_vars.add(name, DefinedType.Pointer, dtypes.pointer(arg_type.dtype).ctype)
             elif isinstance(arg_type, data.Stream):
@@ -74,8 +105,6 @@ class CPUCodeGen(TargetCodeGenerator):
                     self._dispatcher.defined_vars.add(name, DefinedType.StreamArray, arg_type.as_arg(name=''))
                 else:
                     self._dispatcher.defined_vars.add(name, DefinedType.Stream, arg_type.as_arg(name=''))
-            elif isinstance(arg_type, data.Structure):
-                self._dispatcher.defined_vars.add(name, DefinedType.Pointer, arg_type.dtype.ctype)
             else:
                 raise TypeError("Unrecognized argument type: {t} (value {v})".format(t=type(arg_type).__name__,
                                                                                      v=str(arg_type)))
@@ -222,14 +251,25 @@ class CPUCodeGen(TargetCodeGenerator):
                 memlet.subset = subsets.Range.from_array(viewed_dnode.desc(sdfg))
 
         # Emit memlet as a reference and register defined variable
+        # conntype = nodedesc.dtype if isinstance(nodedesc, data.StructureView) else dtypes.pointer(nodedesc.dtype)
+        conntype = dtypes.pointer(nodedesc.dtype)
+        # atype, aname, value = cpp.emit_memlet_reference(self._dispatcher,
+        #                                                 sdfg,
+        #                                                 memlet,
+        #                                                 name,
+        #                                                 conntype,
+        #                                                 ancestor=0,
+        #                                                 is_write=is_write)
+        # NOTE: IMPORTANT!!! This is a temporary fix for Views that are used for both reading and writing
         atype, aname, value = cpp.emit_memlet_reference(self._dispatcher,
                                                         sdfg,
                                                         memlet,
-                                                        name,
-                                                        dtypes.pointer(nodedesc.dtype),
+                                                        ptrname,
+                                                        conntype,
                                                         ancestor=0,
-                                                        is_write=is_write,
-                                                        decouple_array_interfaces=decouple_array_interfaces)
+                                                        is_write=True)
+        # Should be:
+        # is_write=is_write and decouple_array_interfaces=decouple_array_interfaces)
 
         # Test for views of container arrays and structs
         if isinstance(sdfg.arrays[viewed_dnode.data], (data.Structure, data.ContainerArray, data.ContainerView)):
@@ -259,22 +299,44 @@ class CPUCodeGen(TargetCodeGenerator):
                     if isinstance(stype.members[field_name], data.Scalar):
                         value = '&' + value
 
+        def _visit_structure(struct: Union[data.Structure, data.StructureView],
+                             prefix: str = '',
+                             declare: bool = True,
+                             define: bool = True):
+            for k, v in struct.members.items():
+                if isinstance(v, data.Structure):
+                    _visit_structure(v, f'{prefix}->{k}')
+                elif isinstance(v, data.ContainerArray):
+                    _visit_structure(v.stype, f'{prefix}->{k}')
+                if isinstance(v, data.Data):
+                    ctypedef = dtypes.pointer(v.dtype).ctype if isinstance(v, data.Array) else v.dtype.ctype
+                    defined_type = DefinedType.Scalar if isinstance(v, data.Scalar) else DefinedType.Pointer
+                    if declare:
+                        self._dispatcher.declared_arrays.add(f"{prefix}->{k}", defined_type, ctypedef)
+                    if define:
+                        self._dispatcher.defined_vars.add(f"{prefix}->{k}", defined_type, ctypedef)
+                ctypedef = dtypes.pointer(nodedesc.dtype).ctype
+                if declare:
+                    self._dispatcher.declared_arrays.add(f"{prefix}", DefinedType.Pointer, ctypedef)
+                if define:
+                    self._dispatcher.defined_vars.add(f"{prefix}", DefinedType.Pointer, ctypedef)
+
+        ctypedef = (nodedesc.dtype.ctype
+                    if isinstance(nodedesc, data.StructureView) else dtypes.pointer(nodedesc.dtype).ctype)
         if not declared:
-            ctypedef = dtypes.pointer(nodedesc.dtype).ctype
-            self._dispatcher.declared_arrays.add(aname, DefinedType.Pointer, ctypedef)
             if isinstance(nodedesc, data.StructureView):
-                for k, v in nodedesc.members.items():
-                    if isinstance(v, data.Data):
-                        ctypedef = dtypes.pointer(v.dtype).ctype if isinstance(v, data.Array) else v.dtype.ctype
-                        defined_type = DefinedType.Scalar if isinstance(v, data.Scalar) else DefinedType.Pointer
-                        self._dispatcher.declared_arrays.add(f"{name}->{k}", defined_type, ctypedef)
-                        self._dispatcher.defined_vars.add(f"{name}->{k}", defined_type, ctypedef)
-                # TODO: Find a better way to do this (the issue is with pointers of pointers)
-                if atype.endswith('*'):
-                    atype = atype[:-1]
-                if value.startswith('&'):
-                    value = value[1:]
-            declaration_stream.write(f'{atype} {aname};', cfg, state_id, node)
+                _visit_structure(nodedesc, aname)
+            else:
+                self._dispatcher.declared_arrays.add(aname, DefinedType.Pointer, ctypedef)
+            if '&' in atype:
+                aname = f'{atype} {aname}'
+            else:
+                declaration_stream.write(f'{atype} {aname};', cfg, state_id, node)
+        else:
+            if isinstance(nodedesc, data.StructureView):
+                _visit_structure(nodedesc, aname, declare=False)
+            else:
+                self._dispatcher.defined_vars.add(aname, DefinedType.Pointer, ctypedef)
         allocation_stream.write(f'{aname} = {value};', cfg, state_id, node)
 
     def allocate_reference(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: SDFGState, state_id: int,
@@ -401,7 +463,8 @@ class CPUCodeGen(TargetCodeGenerator):
             arrsize_bytes = arrsize * nodedesc.dtype.bytes
 
         if isinstance(nodedesc, data.Structure) and not isinstance(nodedesc, data.StructureView):
-            declaration_stream.write(f"{nodedesc.ctype} {name} = new {nodedesc.dtype.base_type};\n")
+            if not declared:
+                declaration_stream.write(f"{nodedesc.ctype} {name} = new {nodedesc.dtype.base_type};\n")
             define_var(name, DefinedType.Pointer, nodedesc.ctype)
             if allocate_nested_data:
                 for k, v in nodedesc.members.items():
@@ -413,7 +476,7 @@ class CPUCodeGen(TargetCodeGenerator):
                             # NOTE: Scalar members are already defined in the struct definition.
                             self._dispatcher.defined_vars.add(f"{name}->{k}", defined_type, ctypedef)
                         else:
-                            self.allocate_array(sdfg, cfg, dfg, state_id, nodes.AccessNode(f"{name}.{k}"), v,
+                            self.allocate_array(sdfg, cfg, dfg, state_id, nodes.AccessNode(f"{node.data}.{k}"), v,
                                                 function_stream, declaration_stream, allocation_stream)
             return
         if isinstance(nodedesc, data.View):
@@ -423,6 +486,11 @@ class CPUCodeGen(TargetCodeGenerator):
             return self.allocate_reference(sdfg, cfg, dfg, state_id, node, function_stream, declaration_stream,
                                            allocation_stream)
         if isinstance(nodedesc, data.Scalar):
+            if top_desc is not None and isinstance(top_desc, (data.Structure, data.StructureView)):
+                # If this scalar is a field of a structure, there is no need for allocation.
+                self._dispatcher.defined_vars.add(name, DefinedType.Scalar, nodedesc.dtype.ctype)
+                return
+
             if node.setzero:
                 declaration_stream.write("%s %s = 0;\n" % (nodedesc.dtype.ctype, name), cfg, state_id, node)
             else:
@@ -479,30 +547,38 @@ class CPUCodeGen(TargetCodeGenerator):
             declaration_stream.write(definition, cfg, state_id, node)
             define_var(name, DefinedType.Stream, ctypedef)
 
-        elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
-              or (nodedesc.storage == dtypes.StorageType.Register and
+        elif (top_storage == dtypes.StorageType.CPU_Heap
+              or (top_storage == dtypes.StorageType.Register and
                   ((symbolic.issymbolic(arrsize, sdfg.constants)) or
                    (arrsize_bytes and ((arrsize_bytes > Config.get("compiler", "max_stack_array_size")) == True))))):
 
-            if nodedesc.storage == dtypes.StorageType.Register:
+            if top_storage == dtypes.StorageType.Register:
 
                 if symbolic.issymbolic(arrsize, sdfg.constants):
                     warnings.warn('Variable-length array %s with size %s '
-                                  'detected and was allocated on the heap instead of '
-                                  '%s' % (name, cpp.sym2cpp(arrsize), nodedesc.storage))
+                                  'detected and was allocated on heap instead of '
+                                  '%s' % (name, cpp.sym2cpp(arrsize), top_storage))
                 elif (arrsize_bytes > Config.get("compiler", "max_stack_array_size")) == True:
                     warnings.warn("Array {} with size {} detected and was allocated on the heap instead of "
                                   "{} since its size is greater than max_stack_array_size ({})".format(
-                                      name, cpp.sym2cpp(arrsize_bytes), nodedesc.storage,
+                                      name, cpp.sym2cpp(arrsize_bytes), top_storage,
                                       Config.get("compiler", "max_stack_array_size")))
 
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
 
             if not declared:
                 declaration_stream.write(f'{nodedesc.dtype.ctype} *{name};\n', cfg, state_id, node)
-            allocation_stream.write(
-                "%s = new %s DACE_ALIGN(64)[%s];\n" % (alloc_name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize)), cfg,
-                state_id, node)
+
+            # NOTE: Special case: double pointer
+            ctype_str = nodedesc.dtype.ctype
+            format_str = "{name} = new {ctype} DACE_ALIGN(64)[{size}];\n"
+            if (isinstance(nodedesc.dtype, dtypes.pointer) and isinstance(nodedesc.dtype.base_type,
+                                                                          (dtypes.pointer, dtypes.struct))):
+                ctype_str = nodedesc.dtype.base_type.ctype
+                format_str = "{name} = new {ctype} DACE_ALIGN(64)*[{size}];\n"
+
+            allocation_stream.write(format_str.format(name=alloc_name, ctype=ctype_str, size=cpp.sym2cpp(arrsize)), cfg,
+                                    state_id, node)
             define_var(name, DefinedType.Pointer, ctypedef)
 
             if node.setzero:
@@ -512,7 +588,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 allocation_stream.write(f'{alloc_name} += {cpp.sym2cpp(nodedesc.start_offset)};\n', cfg, state_id, node)
 
             return
-        elif (nodedesc.storage == dtypes.StorageType.Register):
+        elif (top_storage == dtypes.StorageType.Register):
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
             if nodedesc.start_offset != 0:
                 raise NotImplementedError('Start offset unsupported for registers')
@@ -533,7 +609,7 @@ class CPUCodeGen(TargetCodeGenerator):
             )
             define_var(name, DefinedType.Pointer, ctypedef)
             return
-        elif nodedesc.storage is dtypes.StorageType.CPU_ThreadLocal:
+        elif top_storage is dtypes.StorageType.CPU_ThreadLocal:
             # Define pointer once
             # NOTE: OpenMP threadprivate storage MUST be declared globally.
             if not declared:
@@ -567,7 +643,7 @@ class CPUCodeGen(TargetCodeGenerator):
             allocation_stream.write('}')
             self._dispatcher.defined_vars.add_global(name, DefinedType.Pointer, '%s *' % nodedesc.dtype.ctype)
         else:
-            raise NotImplementedError("Unimplemented storage type " + str(nodedesc.storage))
+            raise NotImplementedError("Unimplemented storage type " + str(top_storage))
 
     def deallocate_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                          node: nodes.AccessNode, nodedesc: data.Data, function_stream: CodeIOStream,
@@ -693,7 +769,8 @@ class CPUCodeGen(TargetCodeGenerator):
             # Sequential dependency edge
             return
         else:
-            raise LookupError("Memlet does not point to any of the nodes")
+            return
+            #raise LookupError("Memlet does not point to any of the nodes")
 
         if isinstance(dst_node, nodes.Tasklet):
             # Copy into tasklet
@@ -1417,6 +1494,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                           after_memlets_stream)
 
         self._dispatcher.defined_vars.enter_scope(node)
+        self._dispatcher.declared_arrays.enter_scope(node)
 
         arrays = set()
         for edge in state_dfg.in_edges(node):
@@ -1573,6 +1651,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         self._locals.clear_scope(self._ldepth + 1)
         self._dispatcher.defined_vars.exit_scope(node)
+        self._dispatcher.declared_arrays.exit_scope(node)
 
     def unparse_tasklet(self, sdfg, cfg, state_id, dfg, node, function_stream, inner_stream, locals, ldepth,
                         toplevel_schedule):
@@ -1596,7 +1675,10 @@ class CPUCodeGen(TargetCodeGenerator):
                 ptrname = cpp.ptr(edge.data.data, desc, sdfg, self._frame)
                 is_global = desc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent,
                                               dtypes.AllocationLifetime.External)
-                defined_type, _ = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
+                try:
+                    defined_type, _ = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
+                except KeyError:
+                    defined_type, _ = self._dispatcher.declared_arrays.get(ptrname, is_global=is_global)
                 base_ptr = cpp.cpp_ptr_expr(sdfg, edge.data, defined_type, codegen=self._frame)
                 callsite_stream.write(f'{cdtype.ctype} {edge.src_conn} = {base_ptr};', cfg, state_id, src_node)
             else:
@@ -1604,7 +1686,16 @@ class CPUCodeGen(TargetCodeGenerator):
         else:
             callsite_stream.write(f'{cdtype.ctype} {edge.src_conn};', cfg, state_id, src_node)
 
-    def generate_nsdfg_header(self, sdfg, cfg, state, state_id, node, memlet_references, sdfg_label, state_struct=True):
+    def generate_nsdfg_header(self,
+                              sdfg,
+                              cfg,
+                              state,
+                              state_id,
+                              node,
+                              memlet_references,
+                              sdfg_label,
+                              state_struct=True,
+                              gpu=False):
         # TODO: Use a single method for GPU kernels, FPGA modules, and NSDFGs
         arguments = []
 
@@ -1632,6 +1723,9 @@ class CPUCodeGen(TargetCodeGenerator):
             f'{atype} {restrict} {aname}' for (atype, aname, _), restrict in zip(memlet_references, restrict_args)
         ]
         fsyms = node.sdfg.used_symbols(all_symbols=False, keep_defined_in_mapping=True)
+        if not gpu:
+            fsyms = set(
+                filter(lambda x: not (str(x).startswith("__f2dace_SA") or str(x).startswith("__f2dace_SOA")), fsyms))
         arguments += [
             f'{node.sdfg.symbols[aname].as_arg(aname)}' for aname in sorted(node.symbol_mapping.keys())
             if aname in fsyms and aname not in sdfg.constants
@@ -1639,11 +1733,14 @@ class CPUCodeGen(TargetCodeGenerator):
         arguments = ', '.join(arguments)
         return f'void {sdfg_label}({arguments}) {{'
 
-    def generate_nsdfg_call(self, sdfg, cfg, state, node, memlet_references, sdfg_label, state_struct=True):
+    def generate_nsdfg_call(self, sdfg, cfg, state, node, memlet_references, sdfg_label, state_struct=True, gpu=False):
         prepend = []
         if state_struct:
             prepend = ['__state']
         fsyms = node.sdfg.used_symbols(all_symbols=False, keep_defined_in_mapping=True)
+        if not gpu:
+            fsyms = set(
+                filter(lambda x: not (str(x).startswith("__f2dace_SA") or str(x).startswith("__f2dace_SOA")), fsyms))
         args = ', '.join(prepend + [argval for _, _, argval in memlet_references] + [
             cpp.sym2cpp(symval) for symname, symval in sorted(node.symbol_mapping.items())
             if symname in fsyms and symname not in sdfg.constants
@@ -1699,6 +1796,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         fsyms = self._frame.free_symbols(node.sdfg)
         arglist = node.sdfg.arglist(scalars_only=False, free_symbols=fsyms)
+
         self._define_sdfg_arguments(node.sdfg, arglist)
 
         # Quick sanity check.
@@ -1850,6 +1948,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         self._dispatcher.declared_arrays.exit_scope(sdfg)
         self._dispatcher.defined_vars.exit_scope(sdfg)
+        self._dispatcher.declared_arrays.exit_scope(sdfg)
 
     def _generate_MapEntry(
         self,

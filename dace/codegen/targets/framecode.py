@@ -6,6 +6,7 @@ import re
 from typing import Any, DefaultDict, Dict, List, Optional, Set, Tuple, Union
 
 import numpy as np
+import warnings
 
 import dace
 from dace import config, data, dtypes
@@ -50,6 +51,11 @@ class DaCeCodeGenerator(object):
         self.fsyms: Dict[int, Set[str]] = {}
         self._symbols_and_constants: Dict[int, Set[str]] = {}
         fsyms = self.free_symbols(sdfg)
+        # TODO: Hack, remove!
+        fsyms = set(
+            filter(
+                lambda x: not (str(x).startswith('__f2dace_SA') or str(x).startswith('__f2dace_SOA') or str(x).
+                               startswith('tmp_struct_symbol')), fsyms))
         self.arglist = sdfg.arglist(scalars_only=False, free_symbols=fsyms)
 
         # resolve all symbols and constants
@@ -86,6 +92,7 @@ class DaCeCodeGenerator(object):
         if k in self.fsyms:
             return self.fsyms[k]
         if hasattr(obj, 'used_symbols'):
+            #TODO LATER: all_symbols was False but caused members in structs that are not transient to lose the last dimension
             result = obj.used_symbols(all_symbols=False)
         else:
             result = obj.free_symbols
@@ -237,8 +244,11 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
         fname = sdfg.name
         params = sdfg.signature(arglist=self.arglist)
         paramnames = sdfg.signature(False, for_call=True, arglist=self.arglist)
-        initparams = sdfg.init_signature(free_symbols=self.free_symbols(sdfg))
-        initparamnames = sdfg.init_signature(for_call=True, free_symbols=self.free_symbols(sdfg))
+        # TODO: Hack, revert!
+        initparams = sdfg.signature(arglist=self.arglist)
+        initparamnames = sdfg.signature(False, for_call=True, arglist=self.arglist)
+        #initparams = sdfg.init_signature(free_symbols=self.free_symbols(sdfg))
+        #initparamnames = sdfg.init_signature(for_call=True, free_symbols=self.free_symbols(sdfg))
 
         # Invoke all instrumentation providers
         for instr in self._dispatcher.instrumentation.values():
@@ -540,6 +550,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         reachability = StateReachability().apply_pass(top_sdfg, {})
         access_instances: Dict[int, Dict[str, List[Tuple[SDFGState, nodes.AccessNode]]]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
+            utils.add_cfg_dominator_states(sdfg)
             shared_transients[sdfg.cfg_id] = sdfg.shared_transients(check_toplevel=False, include_nested_data=True)
             fsyms[sdfg.cfg_id] = self.symbols_and_constants(sdfg)
 
@@ -767,7 +778,11 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         self.where_allocated[(sdfg, name)] = cursdfg
                         continue
 
-                    if any(inst not in reachability[sdfg.cfg_id][first_state_instance] for inst in instances):
+                    first_cfg = first_state_instance.parent_graph
+                    last_cfg = last_state_instance.parent_graph
+                    different_cfgs = first_cfg != last_cfg
+                    if (different_cfgs or any(inst not in reachability[sdfg.cfg_id][first_state_instance]
+                                              for inst, _ in instances)):
                         first_state_instance, last_state_instance = _get_dominator_and_postdominator(sdfg, instances)
                         # Declare in SDFG scope
                         # NOTE: Even if we declare the data at a common dominator, we keep the first and last node
@@ -778,10 +793,19 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         self.to_allocate[curscope].append(
                             (sdfg, first_state_instance, first_node_instance, True, False, False))
 
+                    # if not different_cfgs:
                     curscope = first_state_instance
+                    # if isinstance(first_state_instance, ControlFlowRegion):
+                    #     first_state_instance = first_state_instance.nodes()[0]
                     self.to_allocate[curscope].append(
                         (sdfg, first_state_instance, first_node_instance, False, True, False))
                     curscope = last_state_instance
+
+                    # if different_cfgs and isinstance(last_state_instance, ControlFlowRegion):
+                    #     last_state_instance = last_state_instance.nodes()[-1]
+                    #     self.to_allocate[sdfg].append(
+                    #         (sdfg, last_state_instance, last_node_instance, False, False, True))
+                    # else:
                     self.to_allocate[curscope].append(
                         (sdfg, last_state_instance, last_node_instance, False, False, True))
                 else:
@@ -1042,12 +1066,31 @@ def _get_dominator_and_postdominator(sdfg: SDFG, accesses: List[Tuple[SDFGState,
         if idom[start_state] is start_state:
             raise NotImplementedError(f'Could not find an appropriate dominator for allocation of "{data_name}"')
         start_state = idom[start_state]
+    # while isinstance(start_state, ControlFlowRegion):
+    #     start_state = start_state.parent_graph
+    assert not isinstance(start_state, ControlFlowRegion)
 
     end_state = states[-1]
     while any(end_state not in allpostdoms[n] for n in states):
         if ipostdom[end_state] is end_state:
             raise NotImplementedError(f'Could not find an appropriate post-dominator for deallocation of "{data_name}"')
         end_state = ipostdom[end_state]
+    # while isinstance(end_state, ControlFlowRegion):
+    #     end_state = end_state.parent_graph
+    assert not isinstance(end_state, ControlFlowRegion)
+
+    if start_state.parent_graph != end_state.parent_graph:
+        warnings.warn(f'Allocation and deallocation of "{data_name}" is not in the same CFG region... fixing that...')
+        cfg = start_state.parent_graph
+        sink_nodes = cfg.sink_nodes()
+        assert len(sink_nodes) > 0
+        if len(sink_nodes) > 1 or not isinstance(sink_nodes[0], SDFGState):
+            sink = cfg.add_state()
+            for snode in sink_nodes:
+                cfg.add_edge(snode, sink, dace.InterstateEdge())
+        else:
+            sink = sink_nodes[0]
+        end_state = sink
 
     # TODO(later): If any of the symbols were not yet defined, or have changed afterwards, fail
     # raise NotImplementedError

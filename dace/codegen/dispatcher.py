@@ -376,9 +376,11 @@ class TargetDispatcher(object):
         """ Dispatches a code generator for an SDFG state. """
 
         self.defined_vars.enter_scope(state)
+        self.declared_arrays.enter_scope(state)
         disp = self.get_state_dispatcher(state.sdfg, state)
         disp.generate_state(state.sdfg, state.parent_graph, state, function_stream, callsite_stream)
         self.defined_vars.exit_scope(state)
+        self.declared_arrays.exit_scope(state)
 
     def dispatch_subgraph(self,
                           sdfg: SDFG,
@@ -460,10 +462,12 @@ class TargetDispatcher(object):
 
         entry_node = sub_dfg.source_nodes()[0]
         self.defined_vars.enter_scope(entry_node)
+        self.declared_arrays.enter_scope(entry_node)
         self._used_targets.add(self._map_dispatchers[map_schedule])
         self._map_dispatchers[map_schedule].generate_scope(sdfg, cfg, sub_dfg, state_id, function_stream,
                                                            callsite_stream)
         self.defined_vars.exit_scope(entry_node)
+        self.declared_arrays.exit_scope(entry_node)
 
     def get_array_dispatcher(self, storage: dtypes.StorageType) -> target.TargetCodeGenerator:
         return self._array_dispatchers[storage]
