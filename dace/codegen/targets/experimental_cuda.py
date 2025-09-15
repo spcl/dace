@@ -120,6 +120,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         self._current_kernel_spec: Optional[KernelSpec] = None
         self._gpu_stream_manager: Optional[GPUStreamManager] = None
         self._kernel_dimensions_map: Set[nodes.MapEntry] = set()
+        self._kernel_arglists: Dict[nodes.MapEntry, Dict[str, dt.Data]] = {}
 
     def preprocess(self, sdfg: SDFG) -> None:
         """
@@ -176,6 +177,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                     except ValueError:  # If transformation doesn't match, continue normally
                         continue
 
+        """
         from dace.transformation.passes.fix_test import Fix
         from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel
         #sdfg.save("before.sdfg")
@@ -184,6 +186,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             MoveArrayOutOfKernel().apply_pass(sdfg, map_parent, name)
 
         #sdfg.save("after.sdfg")
+        """
 
 
         #----------------- Add ThreadBlock Maps & Infer Kernel Grid & Block Sizes --------------------
@@ -240,6 +243,14 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
         # Find points where memory should be released to the memory pool
         self._compute_pool_release(sdfg)
+
+        # Retrieve arguments required for the kernels subgraph
+        shared_transients = {}
+        for state, node, defined_syms in sdutil.traverse_sdfg_with_defined_symbols(sdfg, recursive=True):
+            if (isinstance(node, nodes.MapEntry)and node.map.schedule == dtypes.ScheduleType.GPU_Device):
+                if state.parent not in shared_transients:
+                    shared_transients[state.parent] = state.parent.shared_transients()
+                self._kernel_arglists[node] = state.scope_subgraph(node).arglist(defined_syms, shared_transients[state.parent])
 
     def _compute_pool_release(self, top_sdfg: SDFG):
         """
@@ -768,28 +779,35 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         dispatcher.defined_vars.enter_scope(node)
 
         # Add the const qualifier to any constants not marked as such
-
+        """
         # update const data
-        new_const_data = sdutil.get_constant_data(node, parent_state) - self._current_kernel_spec.kernel_constants
+        new_const_data = sdutil.get_constant_data(node, nsdfg) 
         for name in new_const_data:
             desc = nsdfg.arrays[name]
             ptr_name = ptr(name, desc, nsdfg, self._frame)
             try:
                 defined_type, ctype = dispatcher.defined_vars.get(ptr_name, is_global=True)
-                if not "const " in desc.ctype:
-                    ctype = f"const {desc.ctype}"
             except:
                 defined_type = get_defined_type(desc)
-                if not "const " in desc.ctype:
-                    ctype = f"const {desc.ctype}"
+                if defined_type == DefinedType.Pointer:
+                    ctype = f'{desc.ctype} *'
+                elif defined_type == DefinedType.Scalar:
+                     ctype = desc.ctype
+                else:
+                    raise NotImplementedError("Not expected Type")
+
+            if not "const " in ctype:
+                ctype = f"const {ctype}"
             dispatcher.defined_vars.add(ptr_name, defined_type, ctype, allow_shadowing=True)
 
         # update const symbols
-        new_const_symbols = sdutil.get_constant_symbols(node, parent_state) - self._current_kernel_spec.kernel_constants
+        new_const_symbols = sdutil.get_constant_symbols(node, nsdfg) 
         for name in new_const_symbols:
             defined_type = DefinedType.Scalar
             if not "const" in nsdfg.symbols[name].ctype:
                 ctype = f"const {nsdfg.symbols[name].ctype}"
+        """ 
+
 
         # Redirect rest to CPU codegen
         self._cpu_codegen._generate_NestedSDFG(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
@@ -1274,8 +1292,7 @@ class KernelSpec:
         kernel_constants = kernel_const_data | kernel_const_symbols
         self._kernel_constants: Set[str] = kernel_constants
 
-        # Retrieve arguments required for the kernels subgraph
-        arglist: Dict[str, dt.Data] = kernel_parent_state.scope_subgraph(kernel_map_entry).arglist()
+        arglist: Dict[str, dt.Data] = cudaCodeGen._kernel_arglists[kernel_map_entry]
         self._arglist = arglist
 
         # save _in_device_code value for restoring later
