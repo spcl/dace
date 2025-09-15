@@ -31,7 +31,7 @@ def test_fortran_frontend_sum2loop_1d_without_offset():
     # Now test to verify it executes correctly with no offset normalization
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_offset_test", False)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     size = 7
@@ -71,7 +71,7 @@ def test_fortran_frontend_sum2loop_1d_offset():
     # Now test to verify it executes correctly with no offset normalization
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_offset_test", True)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     size = 5
@@ -112,7 +112,7 @@ def test_fortran_frontend_arr2loop_2d():
     # Now test to verify it executes correctly with no offset normalization
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_offset_test", True)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     sizes = [5, 3]
@@ -156,7 +156,7 @@ def test_fortran_frontend_arr2loop_2d_offset():
     # Now test to verify it executes correctly with no offset normalization
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_offset_test", True)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     sizes = [5, 4]

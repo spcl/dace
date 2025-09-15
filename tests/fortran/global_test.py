@@ -57,7 +57,7 @@ subroutine main(d)
 end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'main')
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.save('test.sdfg')
     a = np.full([4], 42, order="F", dtype=np.float64)
     a2 = np.full([4, 4, 4], 42, order="F", dtype=np.float64)

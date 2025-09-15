@@ -35,7 +35,7 @@ def test_fortran_frontend_min_max():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_min_max", True)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     size = 2
@@ -77,7 +77,7 @@ def test_fortran_frontend_sqrt():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_sqrt", True)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     size = 2
@@ -144,7 +144,7 @@ def test_fortran_frontend_sqrt_structure():
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_sqrt", True)
     sdfg.validate()
-    #sdfg.simplify(verbose=True)
+    #sdfg.simplify()
     sdfg.compile()
 
     size = 2
@@ -179,7 +179,7 @@ def test_fortran_frontend_abs():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_abs", True)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     size = 2
@@ -213,7 +213,7 @@ def test_fortran_frontend_exp():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_exp", True)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     size = 2
@@ -248,7 +248,7 @@ def test_fortran_frontend_log():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_exp", True)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     size = 2
@@ -287,7 +287,7 @@ def test_fortran_frontend_mod_float():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_mod", True)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     size = 12
@@ -337,7 +337,7 @@ def test_fortran_frontend_mod_integer():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_modulo", True)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     size = 12
@@ -382,7 +382,7 @@ def test_fortran_frontend_modulo_float():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_modulo", True)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     size = 12
@@ -432,7 +432,7 @@ def test_fortran_frontend_modulo_integer():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_modulo", True)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     size = 12
@@ -476,7 +476,7 @@ def test_fortran_frontend_floor():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_modulo", True)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     size = 4
@@ -520,7 +520,7 @@ def test_fortran_frontend_scale():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_scale", True)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     size = 4
@@ -566,7 +566,7 @@ def test_fortran_frontend_exponent():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_exponent", True)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     size = 4
@@ -631,7 +631,7 @@ def test_fortran_frontend_int():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_int", True)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     size = 4
@@ -702,7 +702,7 @@ def test_fortran_frontend_real():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_real", True)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     size = 2
@@ -753,7 +753,7 @@ def test_fortran_frontend_real_kind():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_real", True)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     size = 2
@@ -799,7 +799,7 @@ def test_fortran_frontend_trig():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_trig", True)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     size = 3
@@ -844,7 +844,7 @@ def test_fortran_frontend_hyperbolic():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_hyperbolic", True)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     size = 3
@@ -887,7 +887,7 @@ end subroutine main
         sources,
         'main',
     )
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     size = 3
@@ -940,7 +940,7 @@ def test_fortran_frontend_exp2():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_exp2", True)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     size = 2

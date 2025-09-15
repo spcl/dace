@@ -21,7 +21,7 @@ subroutine main(d)
 end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     assert len(sdfg.data('d').shape) == 1
@@ -48,7 +48,7 @@ subroutine main(d, arrsize, arrsize2)
 end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     from dace.symbolic import evaluate
@@ -81,7 +81,7 @@ subroutine main(d)
 end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     assert len(sdfg.data('d').shape) == 2
@@ -115,7 +115,7 @@ subroutine main(d, arrsize, arrsize2, arrsize3, arrsize4)
 end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     from dace.symbolic import evaluate
@@ -155,7 +155,7 @@ end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
     sdfg.save('test.sdfg')
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     assert len(sdfg.data('d').shape) == 2
@@ -187,7 +187,7 @@ subroutine main(d, arrsize, arrsize2, arrsize3, arrsize4)
 end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     from dace.symbolic import evaluate
@@ -253,7 +253,7 @@ subroutine main(d, arrsize, arrsize2, arrsize3, arrsize4)
 end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     from dace.symbolic import evaluate
@@ -299,7 +299,7 @@ end subroutine fun
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
     sdfg.save('test2.sdfg')
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     a = np.full([5], 42, order="F", dtype=np.float64)
@@ -343,7 +343,7 @@ subroutine fun(d)
 end subroutine fun
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     a = np.full([5], 42, order="F", dtype=np.float64)

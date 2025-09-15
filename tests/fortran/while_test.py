@@ -32,7 +32,7 @@ def test_fortran_frontend_while():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "while_test", normalize_offsets=True)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     input = np.full([2], 42, order="F", dtype=np.float32)

@@ -65,7 +65,7 @@ END SUBROUTINE viewlens
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name, True)
 
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     a = np.full([10, 11, 12], 42, order="F", dtype=np.float64)
     b = np.full([1, 1, 2], 42, order="F", dtype=np.float64)
     b[0, 0, 0] = 1
@@ -120,7 +120,7 @@ ENDDO
 END SUBROUTINE viewlens
                     """
     sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name, True)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     a = np.full([10, 11, 12], 42, order="F", dtype=np.float64)
     b = np.full([10, 11, 12], 42, order="F", dtype=np.float64)
     c = np.full([10, 11, 12], 42, order="F", dtype=np.float64)
@@ -173,7 +173,7 @@ ENDDO
 END SUBROUTINE viewlens
                     """
     sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name, True)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     a = np.full([10, 11, 12], 42, order="F", dtype=np.float64)
     b = np.full([10, 11, 12], 42, order="F", dtype=np.float64)
 

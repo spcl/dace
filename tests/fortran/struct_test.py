@@ -37,9 +37,7 @@ subroutine fun(res, idx)
 end subroutine fun
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, entry_point='main', normalize_offsets=False)
-    sdfg.save('before.sdfg')
-    sdfg.simplify(verbose=True)
-    sdfg.save('after.sdfg')
+    sdfg.simplify()
     sdfg.compile()
 
     size = 6

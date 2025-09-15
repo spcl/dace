@@ -36,7 +36,7 @@ def test_fortran_frontend_ptr_assignment_removal():
         END SUBROUTINE type_in_call_test_function
     """
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_in_call_test")
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     a = np.full([5, 5], 42, order="F", dtype=np.float32)
     sdfg(d=a)
     assert (a[0, 0] == 42)
@@ -74,7 +74,7 @@ def test_fortran_frontend_ptr_assignment_removal_array():
         END SUBROUTINE type_in_call_test_function
     """
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_in_call_test", normalize_offsets=True)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     a = np.full([5, 5], 42, order="F", dtype=np.float32)
     sdfg(d=a)
     assert (a[0, 0] == 42)
@@ -124,7 +124,7 @@ def test_fortran_frontend_ptr_assignment_removal_array_assumed():
     sources = {}
     sources["type_test"] = test_string
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_in_call_test")
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     a = np.full([5, 5], 42, order="F", dtype=np.float32)
     sdfg(d=a)
     print(a)
@@ -177,7 +177,7 @@ def test_fortran_frontend_ptr_assignment_removal_array_nested():
         END SUBROUTINE type_in_call_test_function
     """
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_in_call_test")
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     a = np.full([5, 5], 42, order="F", dtype=np.float32)
     sdfg(d=a)
     assert (a[0, 0] == 42)

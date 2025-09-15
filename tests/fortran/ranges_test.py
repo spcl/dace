@@ -44,7 +44,7 @@ def test_fortran_frontend_multiple_ranges_all():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "multiple_ranges", True)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     size = 7
@@ -81,7 +81,7 @@ def test_fortran_frontend_multiple_ranges_selection():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "multiple_ranges_selection", True)
-    #sdfg.simplify(verbose=True)
+    #sdfg.simplify()
     sdfg.compile()
 
     size = 7
@@ -122,7 +122,7 @@ def test_fortran_frontend_multiple_ranges_selection_var():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "multiple_ranges_selection", True)
-    #sdfg.simplify(verbose=True)
+    #sdfg.simplify()
     sdfg.compile()
 
     size = 7
@@ -163,7 +163,7 @@ def test_fortran_frontend_multiple_ranges_subset():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "multiple_ranges_subset", True)
-    #sdfg.simplify(verbose=True)
+    #sdfg.simplify()
     sdfg.compile()
     sdfg.save('test.sdfg')
 
@@ -201,7 +201,7 @@ def test_fortran_frontend_multiple_ranges_subset_var():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "multiple_ranges_subset_var", True)
-    #sdfg.simplify(verbose=True)
+    #sdfg.simplify()
     sdfg.compile()
 
     size = 9
@@ -246,7 +246,7 @@ def test_fortran_frontend_multiple_ranges_ecrad_pattern():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "multiple_ranges_ecrad", True)
-    #sdfg.simplify(verbose=True)
+    #sdfg.simplify()
     sdfg.compile()
 
     size = 7
@@ -292,7 +292,7 @@ def test_fortran_frontend_multiple_ranges_ecrad_pattern_complex():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "multiple_ranges_ecrad", True)
-    #sdfg.simplify(verbose=True)
+    #sdfg.simplify()
     sdfg.compile()
 
     size = 7
@@ -346,7 +346,7 @@ def test_fortran_frontend_multiple_ranges_ecrad_pattern_complex_offsets():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "multiple_ranges_ecrad_offset", True)
-    #sdfg.simplify(verbose=True)
+    #sdfg.simplify()
     sdfg.compile()
 
     size = 7
@@ -413,7 +413,7 @@ def test_fortran_frontend_array_assignment():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "multiple_ranges_ecrad", True)
-    #sdfg.simplify(verbose=True)
+    #sdfg.simplify()
     sdfg.compile()
 
     size = 7
@@ -464,7 +464,7 @@ def test_fortran_frontend_multiple_ranges_ecrad_bug():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "multiple_ranges_ecrad_bug", True)
-    #sdfg.simplify(verbose=True)
+    #sdfg.simplify()
     sdfg.compile()
 
     size = 7
@@ -516,7 +516,7 @@ def test_fortran_frontend_ranges_array_bug():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "multiple_ranges_ecrad_bug", True)
-    #sdfg.simplify(verbose=True)
+    #sdfg.simplify()
     sdfg.compile()
 
     size = 7
@@ -550,7 +550,7 @@ def test_fortran_frontend_ranges_noarray():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "ranges_noarray", True)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     res = np.full([7, 4], 42, order="F", dtype=np.float64)
@@ -581,7 +581,7 @@ def test_fortran_frontend_ranges_noarray2():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "ranges_noarray", True)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     size_x = 7
@@ -618,7 +618,7 @@ def test_fortran_frontend_ranges_noarray3():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "ranges_noarray", True)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     size_x = 7
@@ -646,7 +646,7 @@ subroutine main(input1, input2, res)
 end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     size = 7

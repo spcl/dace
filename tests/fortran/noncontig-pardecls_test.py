@@ -41,7 +41,7 @@ subroutine fun(d, d2)
 end subroutine fun
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     size = 5
@@ -90,7 +90,7 @@ subroutine fun(d, d2)
 end subroutine fun
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     size_x, size_y = 4, 5
@@ -136,7 +136,7 @@ end subroutine fun
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
     sdfg.save('test.sdfg')
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     size_x, size_y = 4, 5
@@ -182,7 +182,7 @@ end subroutine fun
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
     sdfg.save('test.sdfg')
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     size_x, size_y = 4, 5
@@ -248,7 +248,7 @@ subroutine fun(d, d2)
 end subroutine fun
 """, 'main').check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     size_x, size_y = 4, 5
@@ -287,7 +287,7 @@ end subroutine main
     sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
     sdfg.validate()
     sdfg.save('test.sdfg')
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.save('simplify.sdfg')
     sdfg.compile()
 

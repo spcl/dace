@@ -31,7 +31,7 @@ end subroutine main
     sdfg.parent_sdfg = None
     sdfg.parent_nsdfg_node = None
     sdfg.reset_sdfg_list()
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
     d = np.full([2], 42, order="F", dtype=np.int64)
     sdfg(d=d)

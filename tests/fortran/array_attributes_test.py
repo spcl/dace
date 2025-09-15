@@ -20,7 +20,7 @@ subroutine main(d)
 end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'main', False)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     assert len(sdfg.data('d').shape) == 1
@@ -50,7 +50,7 @@ subroutine main(d, arrsize)
 end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'main', False)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     assert len(sdfg.data('d').shape) == 1
@@ -81,7 +81,7 @@ subroutine main(d)
 end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'main', False)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     assert len(sdfg.data('d').shape) == 1
@@ -110,7 +110,7 @@ subroutine main(d, arrsize)
 end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'main', False)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     assert len(sdfg.data('d').shape) == 1
@@ -143,7 +143,7 @@ subroutine main(d, arrsize, arrsize2)
 end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'main', False)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     from dace.symbolic import evaluate
@@ -176,7 +176,7 @@ subroutine main(d)
 end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'main', False)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     assert len(sdfg.data('d').shape) == 1
@@ -207,7 +207,7 @@ subroutine main(d, arrsize, arrsize2)
 end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'main', False)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     from dace.symbolic import evaluate
@@ -239,7 +239,7 @@ subroutine main(d, arrsize, arrsize2)
 end subroutine main
 """, 'main').check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'main', normalize_offsets=False)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     arrsize = 5
@@ -263,7 +263,7 @@ subroutine main(d, arrsize, arrsize2)
 end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'main', normalize_offsets=False)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     arrsize = 5

@@ -32,7 +32,7 @@ def test_fortran_frontend_tasklet():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "tasklet_test", normalize_offsets=True)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
 
     sdfg.compile()
 

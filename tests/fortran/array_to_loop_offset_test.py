@@ -30,7 +30,7 @@ def test_fortran_frontend_arr2loop_without_offset():
     # Now test to verify it executes correctly with no offset normalization
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_test", False)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     assert len(sdfg.data('d').shape) == 2
@@ -66,7 +66,7 @@ def test_fortran_frontend_arr2loop_1d_offset():
     # Now test to verify it executes correctly with no offset normalization
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_test", False)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     assert len(sdfg.data('d').shape) == 1
@@ -104,7 +104,7 @@ def test_fortran_frontend_arr2loop_2d_offset():
     # Now test to verify it executes correctly with no offset normalization
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_test", False)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     assert len(sdfg.data('d').shape) == 2
@@ -140,7 +140,7 @@ def test_fortran_frontend_arr2loop_2d_offset2():
     # Now test to verify it executes correctly with no offset normalization
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_test", False)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     assert len(sdfg.data('d').shape) == 2
@@ -154,7 +154,7 @@ def test_fortran_frontend_arr2loop_2d_offset2():
             assert a[i - 1, j - 1] == 43
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_test", True)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     a = np.full([5, 3], 42, order="F", dtype=np.float64)
@@ -186,7 +186,7 @@ def test_fortran_frontend_arr2loop_2d_offset3():
     # Now test to verify it executes correctly with no offset normalization
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_test", False)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     assert len(sdfg.data('d').shape) == 2
@@ -206,7 +206,7 @@ def test_fortran_frontend_arr2loop_2d_offset3():
             assert a[i - 1, j - 1] == 42
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_test", True)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     a = np.full([5, 3], 42, order="F", dtype=np.float64)

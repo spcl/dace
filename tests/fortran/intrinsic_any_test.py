@@ -25,7 +25,7 @@ def test_fortran_frontend_any_array():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_any_test", True)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     size = 5
@@ -92,7 +92,7 @@ def test_fortran_frontend_any_array_comparison():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_any_test")
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     size = 5
@@ -138,7 +138,7 @@ def test_fortran_frontend_any_array_scalar_comparison():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_any_test")
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     size = 5
@@ -209,7 +209,7 @@ def test_fortran_frontend_any_array_2d():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_any_test", True)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     sizes = [5, 7]
@@ -253,7 +253,7 @@ def test_fortran_frontend_any_array_comparison_2d():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_any_test")
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     sizes = [5, 4]
@@ -297,7 +297,7 @@ def test_fortran_frontend_any_array_comparison_2d_subset():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_any_test")
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     sizes = [5, 4]
@@ -340,7 +340,7 @@ def test_fortran_frontend_any_array_comparison_2d_subset_offset():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_any_test", True)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     sizes = [5, 4]

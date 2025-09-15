@@ -32,7 +32,7 @@ def test_fortran_frontend_product_array():
     # Now test to verify it executes correctly with no offset normalization
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_product_array", True)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     size = 7
@@ -95,7 +95,7 @@ def test_fortran_frontend_product_2d():
     # Now test to verify it executes correctly with no offset normalization
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_product_2d_test", True)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     sizes = [5, 3]

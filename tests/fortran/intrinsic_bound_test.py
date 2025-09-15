@@ -42,7 +42,7 @@ def test_fortran_frontend_bound():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_bound_test", True)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     size = 4
@@ -74,7 +74,7 @@ def test_fortran_frontend_bound_offsets():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_bound_test", True)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     size = 4
@@ -138,7 +138,7 @@ END MODULE
     sdfg = create_singular_sdfg_from_string(sources,
                                             'test_bounds.intrinsic_bound_test_function',
                                             normalize_offsets=True)
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     size = 4

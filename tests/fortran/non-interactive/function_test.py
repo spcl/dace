@@ -87,7 +87,7 @@ end
     sdfg.parent_sdfg = None
     sdfg.parent_nsdfg_node = None
     sdfg.reset_sdfg_list()
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.view()
 
 
@@ -147,7 +147,7 @@ PURE FUNCTION function2_test_function (p_x, p_y)  result (p_arc)
     sdfg.parent_sdfg = None
     sdfg.parent_nsdfg_node = None
     sdfg.reset_sdfg_list()
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.view()
 
 
@@ -267,7 +267,7 @@ END FUNCTION function3_test_function
     sdfg.parent_sdfg = None
     sdfg.parent_nsdfg_node = None
     sdfg.reset_sdfg_list()
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.view()
     sdfg.compile()
 
@@ -333,7 +333,7 @@ length=norm(v)+a
     sdfg.parent_sdfg = None
     sdfg.parent_nsdfg_node = None
     sdfg.reset_sdfg_list()
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.view()
     sdfg.compile()
 
@@ -392,7 +392,7 @@ end
     sdfg.parent_sdfg = None
     sdfg.parent_nsdfg_node = None
     sdfg.reset_sdfg_list()
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.view()
     sdfg.compile()
 

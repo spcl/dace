@@ -41,7 +41,7 @@ end subroutine main
     sdfg.parent_nsdfg_node = None
     sdfg.reset_sdfg_list()
     sdfg.validate()
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
 
 
 if __name__ == "__main__":

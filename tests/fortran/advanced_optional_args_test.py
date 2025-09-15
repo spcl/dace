@@ -56,7 +56,7 @@ contains
 end subroutine main
     """, 'main').check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'main')
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     sdfg.compile()
 
     size = 4

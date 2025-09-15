@@ -40,7 +40,7 @@ subroutine main(d)
 end subroutine main
 """).check_with_gfortran().get()
     g = create_singular_sdfg_from_string(sources, entry_point='main')
-    g.simplify(verbose=True)
+    g.simplify()
     d = np.full([5, 5], 42, order="F", dtype=np.float32)
     g(d=d)
     assert d[0][0] == 1

@@ -20,7 +20,7 @@ subroutine main(d)
 end subroutine main
 """, 'main').check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'main')
-    sdfg.simplify(verbose=True)
+    sdfg.simplify()
     a = np.full([4], 42, order="F", dtype=np.float64)
     sdfg(d=a)
     assert (a[0] == 5.5)
