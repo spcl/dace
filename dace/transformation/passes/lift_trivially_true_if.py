@@ -1,16 +1,13 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
-import ast
 import dace
 import copy
-from collections import defaultdict
 from typing import Any, Dict, Optional, Set, Union
-from dace import SDFG, ControlFlowRegion, InterstateEdge
+from dace import SDFG, ControlFlowRegion
+from dace import symbolic
 from dace.properties import CodeBlock
-from dace.sdfg import nodes as nd
 from dace.sdfg.sdfg import ConditionalBlock
 from dace.transformation import pass_pipeline as ppl, transformation
-from dace.transformation.passes import analysis as ap
 import dace.sdfg.utils as sdutil
 
 
@@ -30,10 +27,10 @@ class LiftTriviallyTrueIf(ppl.Pass):
         if code.language != dace.dtypes.Language.Python:
             return False
         try:
-            node = ast.parse(code.as_string, mode='eval')
-            result = eval(compile(node, '<string>', 'eval'))
+            result = symbolic.evaluate(expr=dace.symbolic.SymExpr(code.as_string), symbols=dict())
             return bool(result) is val
         except Exception as e:
+            print("Exception:", e)
             return False
 
     def _trivially_true(self, code: CodeBlock):
