@@ -155,7 +155,6 @@ class SplitTasklets(ppl.Pass):
                     t.add_out_connector(lhs_var)
                 added_tasklets.append(t)
 
-
             added_accesses = dict()
             for i, t in enumerate(added_tasklets):
                 assert isinstance(t, dace.nodes.Tasklet)
