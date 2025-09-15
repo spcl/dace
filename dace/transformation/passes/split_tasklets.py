@@ -131,7 +131,6 @@ class SplitTasklets(ppl.Pass):
         # For the case a tasklet goes to a taskelt that needs to be split
         # If we have t1 -> t2 but then split t1 to (t1.1, t1.2) -> t2
         # For each tasklet we split we need to track the new input and output maps
-        #tasklet_new_connection_map = dict()
 
         for tasklet, state, ssa_statements, input_type in tasklets_to_split:
             assert isinstance(state, dace.SDFGState)
@@ -155,7 +154,7 @@ class SplitTasklets(ppl.Pass):
                 for lhs_var in lhs_vars:
                     t.add_out_connector(lhs_var)
                 added_tasklets.append(t)
-            #tasklet_new_connection_map[t] = (added_tasklets[0], added_tasklets[-1])
+
 
             added_accesses = dict()
             for i, t in enumerate(added_tasklets):
