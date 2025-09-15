@@ -71,7 +71,11 @@ def _array_array_where(visitor: ProgramVisitor,
         raise ValueError('Both x and y cannot be scalars in numpy.where')
     storage = left_arr.storage if left_arr else right_arr.storage
 
-    out_operand, out_arr = sdfg.add_temp_transient(out_shape, result_type, storage)
+    out_operand, out_arr = sdfg.add_transient(visitor.get_target_name(),
+                                              out_shape,
+                                              result_type,
+                                              storage,
+                                              find_new_name=True)
 
     if list(out_shape) == [1]:
         tasklet = state.add_tasklet('_where_', {'__incond', '__in1', '__in2'}, {'__out'},

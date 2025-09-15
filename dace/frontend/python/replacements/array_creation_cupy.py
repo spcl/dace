@@ -18,7 +18,7 @@ def _define_cupy_local(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, shape: 
     """Defines a local array in a DaCe program."""
     if not isinstance(shape, (list, tuple)):
         shape = [shape]
-    name, _ = sdfg.add_temp_transient(shape, dtype, storage=dtypes.StorageType.GPU_Global)
+    name, _ = pv.add_temp_transient(shape, dtype, storage=dtypes.StorageType.GPU_Global)
     return name
 
 
@@ -39,7 +39,7 @@ def _cupy_full(pv: ProgramVisitor,
     else:
         raise mem_parser.DaceSyntaxError(pv, None, "Fill value {f} must be a number!".format(f=fill_value))
     dtype = dtype or vtype
-    name, _ = sdfg.add_temp_transient(shape, dtype, storage=dtypes.StorageType.GPU_Global)
+    name, _ = pv.add_temp_transient(shape, dtype, storage=dtypes.StorageType.GPU_Global)
 
     state.add_mapped_tasklet('_cupy_full_', {
         "__i{}".format(i): "0: {}".format(s)
@@ -73,7 +73,7 @@ def _cupy_empty_like(pv: ProgramVisitor,
     if prototype not in sdfg.arrays.keys():
         raise mem_parser.DaceSyntaxError(pv, None, "Prototype argument {a} is not SDFG data!".format(a=prototype))
     desc = sdfg.arrays[prototype]
-    name, newdesc = sdfg.add_temp_transient_like(desc)
+    name, newdesc = sdfg.add_temp_transient_like(desc, name=pv.get_target_name())
     if dtype is not None:
         newdesc.dtype = dtype
     if shape is not None:

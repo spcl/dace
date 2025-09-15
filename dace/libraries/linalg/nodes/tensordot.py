@@ -143,7 +143,7 @@ class ExpandTTGT(ExpandTransformation):
         else:
             left_axes = [i for i in range(len(left_arr.shape)) if i not in node.left_axes]
             left_axes.extend(node.left_axes)
-            left_tt = _transpose(None, sdfg, state, "_left_tensor", left_axes)
+            left_tt = _transpose(None, sdfg, state, "_left_tensor", left_axes, outname="ttgt_left_transposed")
             left_tt_arr = sdfg.arrays[left_tt]
 
         if transB:
@@ -152,7 +152,7 @@ class ExpandTTGT(ExpandTransformation):
         else:
             right_axes = list(node.right_axes)
             right_axes.extend([i for i in range(len(right_arr.shape)) if i not in node.right_axes])
-            right_tt = _transpose(None, sdfg, state, "_right_tensor", right_axes)
+            right_tt = _transpose(None, sdfg, state, "_right_tensor", right_axes, outname="ttgt_right_transposed")
             right_tt_arr = sdfg.arrays[right_tt]
 
         from dace.libraries.blas import Gemm

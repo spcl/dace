@@ -24,7 +24,7 @@ def _numpy_copy(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str):
         raise DaceSyntaxError(pv, None, "Prototype argument {a} is not SDFG data!".format(a=a))
     # TODO: The whole AddTransientMethod class should be move in replacements.py
     from dace.frontend.python.newast import _add_transient_data
-    name, desc = _add_transient_data(sdfg, sdfg.arrays[a])
+    name, desc = _add_transient_data(pv, sdfg, sdfg.arrays[a])
     rnode = state.add_read(a)
     wnode = state.add_write(name)
     state.add_nedge(rnode, wnode, Memlet.from_array(name, desc))
@@ -69,7 +69,8 @@ def _numpy_full(pv: ProgramVisitor,
             pv, None, f'Data-dependent shape {shape} is currently not allowed. Only constants '
             'and symbolic values can be used.')
 
-    name, _ = sdfg.add_temp_transient(shape, dtype)
+    name = pv.get_target_name()
+    name, _ = sdfg.add_transient(name, shape, dtype, find_new_name=True)
 
     if is_data:
         state.add_mapped_tasklet('_numpy_full_', {
@@ -203,7 +204,8 @@ def _numpy_zeros_like(pv: ProgramVisitor,
 @oprepo.replaces('numpy.eye')
 def eye(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, N, M=None, k=0, dtype=dtypes.float64):
     M = M or N
-    name, _ = sdfg.add_temp_transient([N, M], dtype)
+    name = pv.get_target_name()
+    name, _ = sdfg.add_transient(name, [N, M], dtype, find_new_name=True)
 
     state.add_mapped_tasklet('eye',
                              dict(__i0='0:%s' % N, __i1='0:%s' % M), {},
@@ -270,12 +272,13 @@ def _arange(pv: ProgramVisitor,
 
     # TODO: Unclear what 'like' does
     # if 'like' is not None:
-    #     outname, outarr = sdfg.add_temp_transient_like(sdfg.arrays[like])
+    #     outname, outarr = sdfg.add_temp_transient_like(sdfg.arrays[like], name=pv.get_target_name())
     #     outarr.shape = shape
 
     if not isinstance(dtype, dtypes.typeclass):
         dtype = dtypes.dtype_to_typeclass(dtype)
-    outname, outarr = sdfg.add_temp_transient(shape, dtype)
+    outname = pv.get_target_name()
+    outname, outarr = sdfg.add_transient(outname, shape, dtype, find_new_name=True)
 
     start = f'decltype(__out)({start})'
     actual_step = f'decltype(__out)({actual_step})'
@@ -357,7 +360,8 @@ def _linspace(pv: ProgramVisitor,
                      dtypes.uint64):
             dtype = dtypes.dtype_to_typeclass(float)
 
-    outname, _ = sdfg.add_temp_transient(shape_with_axis, dtype)
+    outname = pv.get_target_name()
+    outname, _ = sdfg.add_transient(outname, shape_with_axis, dtype, find_new_name=True)
 
     if endpoint == True:
         num -= 1
@@ -398,10 +402,11 @@ def _linspace(pv: ProgramVisitor,
         ranges = [('__unused', '0:1')]
     out_index = f'[{outind}]'
 
+    stepname = pv.get_target_name() + "_step"
     if len(shape) > 0:
-        stepname, _ = sdfg.add_temp_transient(shape, dtype)
+        stepname, _ = sdfg.add_transient(stepname, shape, dtype, find_new_name=True)
     else:
-        stepname, _ = sdfg.add_scalar(sdfg.temp_data_name(), dtype, transient=True)
+        stepname, _ = sdfg.add_scalar(stepname, dtype, transient=True, find_new_name=True)
         out_index = '[0]'
 
     state.add_mapped_tasklet(

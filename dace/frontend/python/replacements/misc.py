@@ -41,7 +41,7 @@ def elementwise(pv: 'ProgramVisitor',
     restype = sdfg.arrays[in_array].dtype
 
     if out_array is None:
-        out_array, outarr = sdfg.add_temp_transient(inparr.shape, restype, inparr.storage)
+        out_array, outarr = pv.add_temp_transient(inparr.shape, restype, inparr.storage)
     else:
         outarr = sdfg.arrays[out_array]
 

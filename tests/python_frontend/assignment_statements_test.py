@@ -121,6 +121,22 @@ def test_multiple_targets_unpacking_invalid():
 
 
 @dace.program
+def nested_multiple_targets(a: dace.float32[1]):
+    b, (c, d), e = a, (2 * a, 3 * a), 4 * a
+    return b, c, d, e
+
+
+def test_nested_multiple_targets():
+    a = np.zeros((1, ), dtype=np.float32)
+    a[0] = np.pi
+    b, c, d, e = nested_multiple_targets(a=a)
+    assert (b[0] == np.float32(np.pi))
+    assert (c[0] == np.float32(2) * np.float32(np.pi))
+    assert (d[0] == np.float32(3) * np.float32(np.pi))
+    assert (e[0] == np.float32(4) * np.float32(np.pi))
+
+
+@dace.program
 def starred_target(a: dace.float32[1]):
     b, *c, d, e = a, 2 * a, 3 * a, 4 * a, 5 * a, 6 * a
     return b, c, d, e
@@ -233,6 +249,7 @@ if __name__ == "__main__":
     test_multiple_targets_unpacking_multidim()
     test_multiple_targets_unpacking_func()
     test_multiple_targets_unpacking_invalid()
+    test_nested_multiple_targets()
 
     # test_starred_target()
     # test_attribute_reference()
