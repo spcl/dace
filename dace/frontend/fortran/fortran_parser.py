@@ -2769,9 +2769,9 @@ class AST_translator:
                         changed = True
                         i = i.subs(s, sym.symbol("sym_" + s.name))
                         if new_sdfg.symbols.get("sym_" + s.name) is None:
-                        
+
                             new_sdfg.add_symbol("sym_" + s.name, new_sdfg.arrays[s.name].dtype)
-                            
+
                             if self.temporary_sym_dict.get(new_sdfg.name) is None:
                                 self.temporary_sym_dict[new_sdfg.name] = {}
                             found = False
