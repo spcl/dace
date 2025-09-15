@@ -188,5 +188,5 @@ if __name__ == "__main__":
     test_fortran_frontend_bit_size_symbolic()
     test_fortran_frontend_size_arbitrary()
     test_fortran_frontend_allocated()
-    # FIXME: ALLOCATED does not support data refs
+    # TODO: ALLOCATED does not support data refs, re-enable once it does.
     # test_fortran_frontend_allocated_struct()
