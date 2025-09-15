@@ -35,6 +35,8 @@ class Fix(ppl.Pass):
 
         from dace.transformation.helpers import get_parent_map
 
+        skip = set()
+        to_be_moved = set()
         names: Dict = dict()
         for node, parent_state in sdfg.all_nodes_recursive():
             if not isinstance(node, nodes.AccessNode):
@@ -56,9 +58,27 @@ class Fix(ppl.Pass):
 
             if map_parent is None:
                 continue
+            
+            if node.data not in parent_state.sdfg.arrays:
+                continue
 
             data_desc = node.desc(parent_state)
             if not data_desc.storage == dtypes.StorageType.Register:
+                continue
+
+            if isinstance(data_desc, dace.data.View) or data_desc.lifetime == dtypes.AllocationLifetime.Persistent:
+                continue
+
+            break_cond = False
+            for edge, parent in sdfg.all_edges_recursive():
+                if not isinstance(parent, dace.SDFGState):
+                    continue
+                src = edge.src
+                if edge.dst_conn == node.data and isinstance(src, nodes.AccessNode) and src.data != node.data:
+                    break_cond = True
+                    skip.add(src.data)
+            
+            if break_cond:
                 continue
 
             shape = data_desc.shape
@@ -72,12 +92,22 @@ class Fix(ppl.Pass):
             elif cmp is sp.false:  # definitely safe
                 move_out = False
             else:
+                # TODO: explain yakup and myself
                 # undecidable case (symbolic expression)
-                move_out = True  # or warn, depending on policy
+                move_out = False  # or warn, depending on policy
 
             if move_out:
-                data_desc.storage = dtypes.StorageType.GPU_Global
-                data_desc.transient = True
-                names[node.data] = map_parent
+                to_be_moved.add((node.data, data_desc, map_parent))
+
+
+        for name, desc, map_parent in to_be_moved:
+            if name in skip:
+                continue
+
+            desc.storage = dtypes.StorageType.GPU_Global
+            desc.transient = True
+            names[name] = map_parent
+
+    
 
         return names

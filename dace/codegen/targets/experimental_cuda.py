@@ -444,6 +444,18 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
             return
 
+
+        import copy
+        from dace.transformation.passes.fix_test import Fix
+        from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel
+        from dace.sdfg import infer_types
+
+        names = Fix().apply_pass(sdfg, {})
+        for name, map_parent in names.items():
+            MoveArrayOutOfKernel().apply_pass(sdfg, map_parent, name)
+        infer_types.infer_connector_types(sdfg)
+
+
         #--------------- Nested GPU Scope --------------------
         supported_strategies: List[ScopeGenerationStrategy] = [
             ThreadBlockScopeGenerator(codegen=self),
