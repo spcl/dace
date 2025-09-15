@@ -87,7 +87,7 @@ public:
         // Threadfence and syncthreads to make sure global writes are visible before
         // thread-0 reports in with its sync counter
         __threadfence();
-        CTA_SYNC();
+        __syncthreads();
 
         int linear_tid = threadIdx.x + threadIdx.y * blockDim.x + threadIdx.z * blockDim.y * blockDim.x;
         int linear_blockid = blockIdx.x + blockIdx.y * gridDim.x + blockIdx.z * gridDim.y * gridDim.x;
@@ -102,7 +102,7 @@ public:
                 d_vol_sync[linear_blockid] = 1;
             }
 
-            CTA_SYNC();
+            __syncthreads();
 
             // Wait for everyone else to report in
             for (int peer_block = linear_tid; peer_block < grid; peer_block += block)
@@ -113,7 +113,7 @@ public:
                 }
             }
 
-            CTA_SYNC();
+            __syncthreads();
 
             // Let everyone know it's safe to proceed
             for (int peer_block = linear_tid; peer_block < grid; peer_block += block)
@@ -135,7 +135,7 @@ public:
                 }
             }
 
-            CTA_SYNC();
+            __syncthreads();
         }
     }
 };

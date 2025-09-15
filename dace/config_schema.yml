@@ -303,7 +303,7 @@ required:
                         type: str
                         title: nvcc Arguments
                         description: Compiler argument flags for CUDA
-                        default: '-Xcompiler -march=native --use_fast_math -Xcompiler -Wno-unused-parameter'
+                        default: '-Xcompiler -march=native --use_fast_math -Xcompiler -Wno-unused-parameter --expt-relaxed-constexpr'
                         default_Windows: '-O3 --use_fast_math'
 
                     hip_args:
