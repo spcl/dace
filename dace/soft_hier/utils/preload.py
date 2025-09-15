@@ -210,13 +210,13 @@ def make_preload_elf_hbm_interleaved_new(output_file_path,
             block_length = hardware_block_size[1]
             block_size = block_height * block_length * np.dtype(array.dtype).itemsize
             print(f"block_size: {block_size}")
-            channel_start = placement_scheme[0]
-            print(f"channel_start: {channel_start}")
-            channel_end = placement_scheme[1]
-            print(f"channel_end: {channel_end}")
-            channel_stride = placement_scheme[2]
-            print(f"channel_stride: {channel_stride}")
-            num_channels = (channel_end - channel_start + 1) // channel_stride
+            # channel_start = placement_scheme[0]
+            # print(f"channel_start: {channel_start}")
+            # channel_end = placement_scheme[1]
+            # print(f"channel_end: {channel_end}")
+            # channel_stride = placement_scheme[2]
+            # print(f"channel_stride: {channel_stride}")
+            num_channels = get_num_channels(placement_scheme)
             array_shape = array.shape
             print(f"array_shape: {array_shape}")
             tile_height = array_shape[0] // split_scheme[0]
@@ -229,11 +229,13 @@ def make_preload_elf_hbm_interleaved_new(output_file_path,
                 for j in range(split_scheme[1]):
                     tile_idx = i * split_scheme[1] + j
                     print(f"tile_idx: {tile_idx}")
-                    channel_offset = tile_idx % num_channels
-                    print(f"channel_offset: {channel_offset}")
-                    channel_idx = channel_start + channel_offset * channel_stride
-                    channel_idx = (channel_idx + total_channels) % total_channels
+                    # channel_offset = tile_idx % num_channels
+                    # print(f"channel_offset: {channel_offset}")
+                    channel_idx = placement_scheme[tile_idx]
                     print(f"channel_idx: {channel_idx}")
+                    # How many tiles have been assigned to this channel before this one?
+                    tile_offset = sum(1 for t in range(tile_idx) if placement_scheme[t] == channel_idx)
+                    print(f"tile_offset: {tile_offset}")
                     tile = array[i*tile_height:(i+1)*tile_height, j*tile_length:(j+1)*tile_length]
                     for bi in range(0, tile_height, block_height):
                         for bj in range(0, tile_length, block_length):
@@ -242,7 +244,7 @@ def make_preload_elf_hbm_interleaved_new(output_file_path,
                             split_arrays.append(block)
                             bi_index = bi // block_height
                             bj_index = bj // block_length
-                            block_address = hbm_node_addr_base + current_start_address + channel_idx * hbm_node_addr_space + (tile_idx // num_channels) * tile_size + (bi_index * tile_length // block_length + bj_index) * block_size
+                            block_address = hbm_node_addr_base + current_start_address + channel_idx * hbm_node_addr_space + tile_offset * tile_size + (bi_index * tile_length // block_length + bj_index) * block_size
                             print(f"block_address: {hex(block_address)}")
                             split_arrays_start_addresses.append(block_address)
 
