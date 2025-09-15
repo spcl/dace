@@ -368,11 +368,13 @@ def test_fortran_frontend_count_array_comparison_2d_subset_offset():
 
 if __name__ == "__main__":
 
+    # Disabled tests.
+    # test_fortran_frontend_count_array_comparison_wrong_subset()
+
     test_fortran_frontend_count_array()
     test_fortran_frontend_count_array_dim()
     test_fortran_frontend_count_array_comparison()
     test_fortran_frontend_count_array_scalar_comparison()
-    test_fortran_frontend_count_array_comparison_wrong_subset()
     test_fortran_frontend_count_array_2d()
     test_fortran_frontend_count_array_comparison_2d()
     test_fortran_frontend_count_array_comparison_2d_subset()

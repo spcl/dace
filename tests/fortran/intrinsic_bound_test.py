@@ -151,5 +151,5 @@ END MODULE
 if __name__ == "__main__":
     test_fortran_frontend_bound()
     test_fortran_frontend_bound_offsets()
-    # FIXME: ALLOCATBLE does not support data refs
+    # TODO: ALLOCATBLE does not support data refs, re-enable once it does.
     # test_fortran_frontend_bound_structure_recursive_allocatable()

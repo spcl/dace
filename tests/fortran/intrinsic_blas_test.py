@@ -16,9 +16,7 @@ subroutine main(arg1, arg2, res1)
 end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'main', normalize_offsets=False)
-    # TODO: We should re-enable `simplify()` once we merge it.
-    # sdfg.simplify()
-    sdfg.compile()
+    sdfg.simplify()
 
     size = 5
     arg1 = np.full([size], 42, order="F", dtype=np.float64)
@@ -44,9 +42,7 @@ subroutine main(arg1, arg2, res1)
 end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'main', normalize_offsets=False)
-    # TODO: We should re-enable `simplify()` once we merge it.
-    # sdfg.simplify()
-    sdfg.compile()
+    sdfg.simplify()
 
     size = 5
     arg1 = np.full([size], 42, order="F", dtype=np.float64)
@@ -146,7 +142,6 @@ END MODULE
 """, 'main').check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'test_transpose.test_function', normalize_offsets=True)
     sdfg.simplify()
-    sdfg.compile()
 
     size_x = 5
     size_y = 4
@@ -230,10 +225,10 @@ end subroutine main
 
 
 if __name__ == "__main__":
-    # test_fortran_frontend_dot()
-    # test_fortran_frontend_dot_range()
-    # test_fortran_frontend_transpose()
-    # test_fortran_frontend_transpose_hoist_out()
+    test_fortran_frontend_dot()
+    test_fortran_frontend_dot_range()
+    test_fortran_frontend_transpose()
+    test_fortran_frontend_transpose_hoist_out()
     test_fortran_frontend_transpose_struct()
     test_fortran_frontend_matmul()
     test_fortran_frontend_matmul_hoist_out()

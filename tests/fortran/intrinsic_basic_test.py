@@ -33,7 +33,6 @@ def test_fortran_frontend_bit_size():
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_bit_size", True)
     sdfg.simplify()
-    sdfg.compile()
 
     size = 4
     res = np.full([size], 42, order="F", dtype=np.int32)
@@ -64,7 +63,6 @@ end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'main')
     sdfg.simplify()
-    sdfg.compile()
 
     size = 24
     size2 = 5
@@ -95,7 +93,6 @@ end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'main')
     sdfg.simplify()
-    sdfg.compile()
 
     size = 7
     size2 = 5
@@ -131,7 +128,6 @@ def test_fortran_frontend_allocated():
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'allocated_test', normalize_offsets=True)
     sdfg.simplify()
-    sdfg.compile()
 
     size = 3
     res = np.full([size], 42, order="F", dtype=np.int32)
@@ -177,8 +173,7 @@ def test_fortran_frontend_allocated_struct():
     END SUBROUTINE allocated_test
 """, "main").check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'allocated_test', normalize_offsets=True)
-    # sdfg.simplify()
-    sdfg.compile()
+    sdfg.simplify()
 
     size = 3
     res = np.full([size], 42, order="F", dtype=np.int32)
