@@ -1,4 +1,4 @@
-# Copyright 2019-2025
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 import dace
 from typing import Dict, Optional, Set
