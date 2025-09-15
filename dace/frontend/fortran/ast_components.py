@@ -8,7 +8,6 @@ from fparser.two import Fortran2008 as f08
 from fparser.two.Fortran2003 import Function_Subprogram, Function_Stmt, Prefix, Intrinsic_Type_Spec, \
     Assignment_Stmt, Logical_Literal_Constant, Real_Literal_Constant, Signed_Real_Literal_Constant, \
     Int_Literal_Constant, Signed_Int_Literal_Constant, Hex_Constant, Function_Reference, Length_Selector, Kind_Selector
-    Int_Literal_Constant, Signed_Int_Literal_Constant, Hex_Constant, Function_Reference, Length_Selector, Kind_Selector
 from fparser.two.utils import Base
 
 from dace.frontend.fortran import ast_internal_classes

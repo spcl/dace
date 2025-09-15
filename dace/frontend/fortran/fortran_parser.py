@@ -2767,18 +2767,21 @@ class AST_translator:
                 elif new_sdfg.arrays.get(s.name) is not None:
                     if not new_sdfg.arrays[s.name].transient:
                         changed = True
-                        new_sdfg.add_symbol("sym_" + s.name, new_sdfg.arrays[s.name].dtype)
                         i = i.subs(s, sym.symbol("sym_" + s.name))
-                        if self.temporary_sym_dict.get(new_sdfg.name) is None:
-                            self.temporary_sym_dict[new_sdfg.name] = {}
-                        found = False
-                        for name_pair in self.temporary_ins[new_sdfg]:
-                            if s.name == name_pair[0]:
-                                name_in_parent = name_pair[1]
-                                self.temporary_sym_dict[new_sdfg.name]["sym_" + s.name] = name_in_parent
-                                found = True
-                        if not found:
-                            raise ValueError(f"Temporary symbol not found for {s.name}")
+                        if new_sdfg.symbols.get("sym_" + s.name) is None:
+                        
+                            new_sdfg.add_symbol("sym_" + s.name, new_sdfg.arrays[s.name].dtype)
+                            
+                            if self.temporary_sym_dict.get(new_sdfg.name) is None:
+                                self.temporary_sym_dict[new_sdfg.name] = {}
+                            found = False
+                            for name_pair in self.temporary_ins[new_sdfg]:
+                                if s.name == name_pair[0]:
+                                    name_in_parent = name_pair[1]
+                                    self.temporary_sym_dict[new_sdfg.name]["sym_" + s.name] = name_in_parent
+                                    found = True
+                            if not found:
+                                raise ValueError(f"Temporary symbol not found for {s.name}")
                 else:
 
                     if sdfg.symbols.get(s.name) is not None:
