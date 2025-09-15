@@ -24,7 +24,6 @@ end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'main', normalize_offsets=True)
     sdfg.simplify()
-    sdfg.compile()
 
     size = 5
     arg1 = np.full([size], 42, order="F", dtype=np.float64)
@@ -50,7 +49,6 @@ end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'main', normalize_offsets=True)
     sdfg.simplify()
-    sdfg.compile()
 
     size = 5
     arg1 = np.full([size], 42, order="F", dtype=np.float64)
@@ -76,7 +74,6 @@ end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'main', normalize_offsets=True)
     sdfg.simplify()
-    sdfg.compile()
 
     size = 5
     arg1 = np.full([size], 42, order="F", dtype=np.float64)
@@ -127,7 +124,6 @@ END MODULE
 """, 'main').check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'test_elemental.test_func', normalize_offsets=True)
     sdfg.simplify()
-    sdfg.compile()
 
     size = 5
     arg1 = np.full([size], 42, order="F", dtype=np.float64)
@@ -155,7 +151,6 @@ end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'main', normalize_offsets=True)
     sdfg.simplify()
-    sdfg.compile()
 
     size = 5
     arg1 = np.full([size], 42, order="F", dtype=np.float64)
@@ -183,7 +178,6 @@ end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'main', normalize_offsets=True)
     sdfg.simplify()
-    sdfg.compile()
 
     size = 5
     arg1 = np.full([size], 42, order="F", dtype=np.float64)
@@ -216,7 +210,6 @@ end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'main', normalize_offsets=True)
     sdfg.simplify()
-    sdfg.compile()
 
     size = 5
 
@@ -234,10 +227,10 @@ end subroutine main
 
 
 if __name__ == "__main__":
-    #test_fortran_frontend_elemental_exp()
-    #test_fortran_frontend_elemental_exp_pardecl()
-    #test_fortran_frontend_elemental_exp_subset()
-    #test_fortran_frontend_elemental_exp_struct()
-    #test_fortran_frontend_elemental_exp_subset_hoist()
-    #test_fortran_frontend_elemental_exp_complex()
+    test_fortran_frontend_elemental_exp()
+    test_fortran_frontend_elemental_exp_pardecl()
+    test_fortran_frontend_elemental_exp_subset()
+    test_fortran_frontend_elemental_exp_struct()
+    test_fortran_frontend_elemental_exp_subset_hoist()
+    test_fortran_frontend_elemental_exp_complex()
     test_fortran_frontend_elemental_ecrad_bug()
