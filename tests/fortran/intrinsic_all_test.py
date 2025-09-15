@@ -102,7 +102,6 @@ def test_fortran_frontend_all_array_comparison():
     res = np.full([7], 0, order="F", dtype=np.int32)
 
     sdfg(first=first, second=second, res=res)
-    print(res)
     assert list(res) == [0, 0, 0, 0, 0, 0, 1]
 
     second = np.full([size], 2, order="F", dtype=np.int32)

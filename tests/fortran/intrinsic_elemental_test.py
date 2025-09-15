@@ -87,7 +87,6 @@ end subroutine main
 
     sdfg(arg1=arg1, res1=res)
 
-    print(res)
     assert res[0] == 0
     assert res[4] == 0
     py_res = np.exp(arg1[1:4])
@@ -139,7 +138,6 @@ END MODULE
 
     sdfg(arg1=arg1, res1=res)
 
-    print(res)
     assert res[0] == 0
     assert res[4] == 0
     py_res = np.exp(arg1[1:4])
@@ -168,7 +166,6 @@ end subroutine main
 
     sdfg(arg1=arg1, res1=res)
 
-    print(res)
     assert res[0] == 0
     assert res[4] == 0
     py_res = 1.0 - np.exp(arg1[1:4])
@@ -197,7 +194,6 @@ end subroutine main
 
     sdfg(arg1=arg1, res1=res)
 
-    print(res)
     assert res[0] == 0
     assert res[4] == 0
     py_res = arg1[1:4] - np.exp(arg1[1:4])

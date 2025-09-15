@@ -127,7 +127,6 @@ def test_fortran_frontend_ptr_assignment_removal_array_assumed():
     sdfg.simplify()
     a = np.full([5, 5], 42, order="F", dtype=np.float32)
     sdfg(d=a)
-    print(a)
     assert (a[0, 0] == 42)
     assert (a[1, 0] == 11)
     assert (a[2, 0] == 1410)

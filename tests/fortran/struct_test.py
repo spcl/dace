@@ -44,7 +44,6 @@ end subroutine fun
     res = np.full([size], 42, order="F", dtype=np.int32)
     res[:] = 0
     sdfg(res=res, startidx=2, endidx=5)
-    print(res)
 
 
 if __name__ == "__main__":

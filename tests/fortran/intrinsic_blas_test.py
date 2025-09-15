@@ -97,7 +97,6 @@ subroutine main(arg1, arg2, res1)
 end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'main', normalize_offsets=False)
-    sdfg.save('test.sdfg')
     # TODO: We should re-enable `simplify()` once we merge it.
     # sdfg.simplify()
     sdfg.compile()
@@ -149,7 +148,6 @@ END MODULE
     # TODO: We should re-enable `simplify()` once we merge it.
     sdfg.simplify()
     sdfg.compile()
-    sdfg.save('test.sdfg')
 
     size_x = 5
     size_y = 4
@@ -161,8 +159,6 @@ END MODULE
             arg1[i, j] = i + 1
 
     sdfg(arg1=arg1, res1=res1)
-    print(arg1)
-    print(res1)
 
     assert np.all(np.transpose(res1) == arg1)
 

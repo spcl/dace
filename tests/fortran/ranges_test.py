@@ -165,7 +165,6 @@ def test_fortran_frontend_multiple_ranges_subset():
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "multiple_ranges_subset", True)
     #sdfg.simplify()
     sdfg.compile()
-    sdfg.save('test.sdfg')
 
     size = 7
     input1 = np.full([size], 0, order="F", dtype=np.float64)
@@ -741,7 +740,6 @@ END MODULE
 """, 'main').check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'test_transpose.test_function', normalize_offsets=True)
     # TODO: We should re-enable `simplify()` once we merge it.
-    sdfg.save('test.sdfg')
     sdfg.simplify()
     sdfg.compile()
 

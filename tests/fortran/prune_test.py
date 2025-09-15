@@ -39,13 +39,10 @@ def test_fortran_frontend_prune_simple():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "init_test", False)
-    print('a', flush=True)
     sdfg.simplify()
     a = np.full([4], 42, order="F", dtype=np.float64)
     b = np.full([4], 42, order="F", dtype=np.float64)
-    print(a)
     sdfg(d=a, dx=b)
-    print(a)
     assert (a[0] == 42)
     assert (a[1] == 42 + 3.14)
     assert (a[2] == 42)

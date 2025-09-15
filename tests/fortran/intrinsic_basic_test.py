@@ -101,7 +101,6 @@ end subroutine main
     size2 = 5
     res = np.full([size, size2], 42, order="F", dtype=np.int32)
     sdfg(res=res, **deduce_f2dace_variables_for_array(res, 'res', 0), arrsize=size, arrsize2=size2)
-    print(res)
 
     assert res[0, 0] == size * size2
     assert res[1, 0] == size

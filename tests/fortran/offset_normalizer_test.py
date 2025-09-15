@@ -154,7 +154,6 @@ subroutine main(d)
 end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
-    sdfg.save('test.sdfg')
     sdfg.simplify()
     sdfg.compile()
 
@@ -298,13 +297,11 @@ subroutine fun(d)
 end subroutine fun
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
-    sdfg.save('test2.sdfg')
     sdfg.simplify()
     sdfg.compile()
 
     a = np.full([5], 42, order="F", dtype=np.float64)
     sdfg(d=a)
-    print(a)
     for i in range(1, 3):
         assert a[i] == (i) * 2
 
@@ -348,7 +345,6 @@ end subroutine fun
 
     a = np.full([5], 42, order="F", dtype=np.float64)
     sdfg(in1=a)
-    print(a)
     for i in range(1, 3):
         assert a[i] == (i) * 2
 
