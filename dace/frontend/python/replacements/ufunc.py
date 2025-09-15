@@ -16,7 +16,7 @@ import copy
 import functools
 import itertools
 from numbers import Integral, Number
-from typing import Any, Dict, List, Sequence, Tuple, Union
+from typing import Any, Dict, List, Sequence, Tuple, Union, Optional
 import warnings
 
 import numpy as np
@@ -959,7 +959,8 @@ def _create_output(sdfg: SDFG,
                    output_shape: Shape,
                    output_dtype: Union[dtypes.typeclass, List[dtypes.typeclass]],
                    storage: dtypes.StorageType = None,
-                   force_scalar: bool = False) -> List[UfuncOutput]:
+                   force_scalar: bool = False,
+                   name_hint: Optional[str] = None) -> List[UfuncOutput]:
     """ Creates output data for storing the result of a NumPy ufunc call.
 
         :param sdfg: SDFG object
@@ -970,6 +971,7 @@ def _create_output(sdfg: SDFG,
         :param storage: Storage type of the output data
         :param force_scalar: If True and output shape is (1,) then output
                              becomes a ``dace.data.Scalar``, regardless of the data-type of the inputs
+        :param name_hint: Optional name hint for the output data
         :return: New outputs of the ufunc call
     """
 
@@ -1004,12 +1006,16 @@ def _create_output(sdfg: SDFG,
     # Create output data (if needed)
     for i, (arg, datatype) in enumerate(zip(outputs, datatypes)):
         if arg is None:
+            output_name = name_hint or sdfg.temp_data_name()
             if (len(output_shape) == 1 and output_shape[0] == 1 and (is_output_scalar or force_scalar)):
-                output_name = sdfg.temp_data_name()
-                sdfg.add_scalar(output_name, output_dtype, transient=True, storage=storage)
+                output_name, _ = sdfg.add_scalar(output_name,
+                                                 output_dtype,
+                                                 transient=True,
+                                                 storage=storage,
+                                                 find_new_name=True)
                 outputs[i] = output_name
             else:
-                outputs[i], _ = sdfg.add_temp_transient(output_shape, datatype)
+                outputs[i], _ = sdfg.add_transient(output_name, output_shape, datatype, find_new_name=True)
 
     return outputs
 
@@ -1087,8 +1093,8 @@ def _create_subgraph(visitor: ProgramVisitor,
                 cond_state = state
                 where_data = sdfg.arrays[where]
                 if not isinstance(where_data, data.Scalar):
-                    name = sdfg.temp_data_name()
-                    sdfg.add_scalar(name, where_data.dtype, transient=True)
+                    name = 'where_cond'
+                    name, _ = sdfg.add_scalar(name, where_data.dtype, transient=True, find_new_name=True)
                     r = cond_state.add_read(where)
                     w = cond_state.add_write(name)
                     cond_state.add_nedge(r, w, Memlet("{}[0]".format(r)))
@@ -1126,13 +1132,12 @@ def _create_subgraph(visitor: ProgramVisitor,
                 nested_sdfg = SDFG(state.label + "_where")
                 nested_sdfg_inputs = dict()
                 nested_sdfg_outputs = dict()
-                nested_sdfg._temp_transients = sdfg._temp_transients
 
                 for idx, arg in enumerate(inputs + [where]):
                     if not (isinstance(arg, str) and arg in sdfg.arrays.keys()):
                         continue
                     arg_data = sdfg.arrays[arg]
-                    conn_name = nested_sdfg.temp_data_name()
+                    conn_name = nested_sdfg._find_new_name(arg)
                     nested_sdfg_inputs[arg] = (conn_name, input_indices[idx])
                     if isinstance(arg_data, data.Scalar):
                         nested_sdfg.add_scalar(conn_name, arg_data.dtype)
@@ -1143,7 +1148,7 @@ def _create_subgraph(visitor: ProgramVisitor,
 
                 for arg in outputs:
                     arg_data = sdfg.arrays[arg]
-                    conn_name = nested_sdfg.temp_data_name()
+                    conn_name = nested_sdfg._find_new_name(arg)
                     nested_sdfg_outputs[arg] = (conn_name, output_indices)
                     if isinstance(arg_data, data.Scalar):
                         nested_sdfg.add_scalar(conn_name, arg_data.dtype)
@@ -1157,13 +1162,11 @@ def _create_subgraph(visitor: ProgramVisitor,
                 if isinstance(where_data, data.Scalar):
                     name = nested_sdfg_inputs[where]
                 elif isinstance(where_data, data.Array):
-                    name = nested_sdfg.temp_data_name()
+                    name = nested_sdfg._find_new_name(where)
                     nested_sdfg.add_scalar(name, where_data.dtype, transient=True)
                     r = cond_state.add_read(nested_sdfg_inputs[where][0])
                     w = cond_state.add_write(name)
                     cond_state.add_nedge(r, w, Memlet("{}[0]".format(r)))
-
-                sdfg._temp_transients = nested_sdfg._temp_transients
 
                 true_state = nested_sdfg.add_state(label=cond_state.label + '_where_true')
                 cond = name
@@ -1294,7 +1297,7 @@ def implement_ufunc(visitor: ProgramVisitor, ast_node: ast.Call, sdfg: SDFG, sta
             result_type = dtype
 
     # Create output data (if needed)
-    outputs = _create_output(sdfg, inputs, outputs, out_shape, result_type)
+    outputs = _create_output(sdfg, inputs, outputs, out_shape, result_type, name_hint=visitor.get_target_name())
 
     # Set tasklet parameters
     tasklet_params = _set_tasklet_params(ufunc_impl, inputs, casting=casting)
@@ -1488,13 +1491,22 @@ def implement_ufunc_reduce(visitor: ProgramVisitor, ast_node: ast.Call, sdfg: SD
         result_type = sym_type(arg)
 
     # Create output data (if needed)
-    outputs = _create_output(sdfg, inputs, outputs, out_shape, result_type, force_scalar=True)
+    outputs = _create_output(sdfg,
+                             inputs,
+                             outputs,
+                             out_shape,
+                             result_type,
+                             force_scalar=True,
+                             name_hint=visitor.get_target_name())
     if keepdims:
+        intermediate_name = visitor.get_target_name() + '_keepdims'
         if (len(intermediate_shape) == 1 and intermediate_shape[0] == 1):
-            intermediate_name = sdfg.temp_data_name()
-            sdfg.add_scalar(intermediate_name, result_type, transient=True)
+            intermediate_name, _ = sdfg.add_scalar(intermediate_name, result_type, transient=True, find_new_name=True)
         else:
-            intermediate_name, _ = sdfg.add_temp_transient(intermediate_shape, result_type)
+            intermediate_name, _ = sdfg.add_transient(intermediate_name,
+                                                      intermediate_shape,
+                                                      result_type,
+                                                      find_new_name=True)
     else:
         intermediate_name = outputs[0]
 
@@ -1641,7 +1653,7 @@ def implement_ufunc_accumulate(visitor: ProgramVisitor, ast_node: ast.Call, sdfg
         axis = normalize_axes([axis], len(out_shape))[0]
 
     # Create output data (if needed)
-    outputs = _create_output(sdfg, inputs, outputs, out_shape, result_type)
+    outputs = _create_output(sdfg, inputs, outputs, out_shape, result_type, name_hint=visitor.get_target_name())
 
     # Create subgraph
     shape = datadesc.shape
@@ -1650,9 +1662,8 @@ def implement_ufunc_accumulate(visitor: ProgramVisitor, ast_node: ast.Call, sdfg
     output_idx = ','.join(["__i{}".format(i) if i != axis else "0:{}".format(shape[i]) for i in range(len(shape))])
 
     nested_sdfg = SDFG(state.label + "_for_loop")
-    nested_sdfg._temp_transients = sdfg._temp_transients
-    inpconn = nested_sdfg.temp_data_name()
-    outconn = nested_sdfg.temp_data_name()
+    inpconn = nested_sdfg._find_new_name(arg)
+    outconn = nested_sdfg._find_new_name(outputs[0])
     shape = [datadesc.shape[axis]]
     strides = [datadesc.strides[axis]]
     nested_sdfg.add_array(inpconn, shape, result_type, strides=strides)
@@ -1682,8 +1693,6 @@ def implement_ufunc_accumulate(visitor: ProgramVisitor, ast_node: ast.Call, sdfg
     cond_expr = "__i{i} < {s}".format(i=axis, s=shape[0])
     incr_expr = "__i{} + 1".format(axis)
     nested_sdfg.add_loop(init_state, body_state, None, loop_idx, init_expr, cond_expr, incr_expr)
-
-    sdfg._temp_transients = nested_sdfg._temp_transients
 
     r = state.add_read(inputs[0])
     w = state.add_write(outputs[0])
@@ -1795,7 +1804,7 @@ def implement_ufunc_outer(visitor: ProgramVisitor, ast_node: ast.Call, sdfg: SDF
             result_type = dtype
 
     # Create output data (if needed)
-    outputs = _create_output(sdfg, inputs, outputs, out_shape, result_type)
+    outputs = _create_output(sdfg, inputs, outputs, out_shape, result_type, name_hint=visitor.get_target_name())
 
     # Set tasklet parameters
     tasklet_params = _set_tasklet_params(ufunc_impl, inputs, casting=casting)
