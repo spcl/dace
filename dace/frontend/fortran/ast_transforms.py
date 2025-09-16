@@ -1064,10 +1064,6 @@ class CallExtractor(NodeTransformer):
             self.count = self.count + 1
         tmp = self.count
 
-        # for i, arg in enumerate(node.args):
-        #    # Ensure we allow to extract function calls from arguments
-        #    node.args[i] = self.visit(arg)
-
         return ast_internal_classes.Name_Node(name="tmp_call_" + str(tmp - 1))
 
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
