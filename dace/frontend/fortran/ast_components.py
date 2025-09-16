@@ -822,9 +822,6 @@ class InternalFortranAst:
                                                    line_number=line,
                                                    type="VOID",
                                                    subroutine=False)
-        #return ast_internal_classes.Call_Expr_Node(name=ast_internal_classes.Name_Node(name="__dace_POW"),
-        #                                           args=[children[0], children[2]],
-        #                                           line_number=line, type="REAL", subroutine=False)
 
     def array_constructor(self, node: FASTNode):
         children = self.create_children(node)
@@ -990,7 +987,6 @@ class InternalFortranAst:
         return node
 
     def declaration_type_spec(self, node: FASTNode):
-        # raise NotImplementedError("Declaration type spec is not supported yet")
         return node
 
     def assumed_shape_spec_list(self, node: FASTNode):
@@ -1011,7 +1007,6 @@ class InternalFortranAst:
         elif len(dim_expr) == 2:
             # extract offets
             if isinstance(dim_expr[0], f03.Int_Literal_Constant):
-                # raise TypeError("Array offsets must be constant expressions!")
                 offset.append(int(dim_expr[0].tostr()))
             else:
                 expr = self.create_ast(dim_expr[0])
@@ -1399,8 +1394,7 @@ class InternalFortranAst:
         return node
 
     def access_spec(self, node: FASTNode):
-        print("access spec. Fix me")
-        # raise NotImplementedError("Access spec is not supported yet")
+        raise NotImplementedError("Access spec is not supported yet")
         return node
 
     def allocatable_stmt(self, node: FASTNode):
@@ -1412,8 +1406,7 @@ class InternalFortranAst:
         return node
 
     def bind_stmt(self, node: FASTNode):
-        print("bind stmt. Fix me")
-        # raise NotImplementedError("Bind stmt is not supported yet")
+        raise NotImplementedError("Bind stmt is not supported yet")
         return node
 
     def common_stmt(self, node: FASTNode):
@@ -1421,8 +1414,7 @@ class InternalFortranAst:
         return node
 
     def data_stmt(self, node: FASTNode):
-        print("data stmt! fix me!")
-        # raise NotImplementedError("Data stmt is not supported yet")
+        raise NotImplementedError("Data stmt is not supported yet")
         return node
 
     def dimension_stmt(self, node: FASTNode):
@@ -1738,8 +1730,6 @@ class InternalFortranAst:
             for i in children:
                 retlist.append([".EQ.", i])
             return retlist
-            # else:
-        #    raise ValueError("Can't parse case range list")
 
     def end_select_stmt(self, node: FASTNode):
         return node
