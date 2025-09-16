@@ -396,7 +396,6 @@ class InternalFortranAst:
             struct_deps_finder = StructDependencyLister(structs_lister.names)
             struct_deps_finder.visit(i)
             struct_deps = struct_deps_finder.structs_used
-            # print(struct_deps)
             for j, pointing, point_name in zip(struct_deps, struct_deps_finder.is_pointer,
                                                struct_deps_finder.pointer_names):
                 if j not in struct_dep_graph.nodes:
@@ -651,11 +650,6 @@ class InternalFortranAst:
         return ast_internal_classes.Component_Decl_Node(name=name)
 
     def write_stmt(self, node: FASTNode):
-        # children=[]
-        # if node.children[0] is not None:
-        #    children = self.create_children(node.children[0])
-        # if node.children[1] is not None:
-        #    children = self.create_children(node.children[1])
         line = get_line(node)
         return ast_internal_classes.Write_Stmt_Node(args=node.string, line_number=line)
 
@@ -797,7 +791,6 @@ class InternalFortranAst:
                                                        type=ret if ret else ftype)
 
     def subroutine_stmt(self, node: FASTNode):
-        # print(self.name_list)
         children = self.create_children(node)
         name = get_child(children, ast_internal_classes.Name_Node)
         args = get_child(children, ast_internal_classes.Arg_List_Node)
@@ -855,10 +848,6 @@ class InternalFortranAst:
     def allocation(self, node: FASTNode):
         children = self.create_children(node)
         name = children[0]
-        # if isinstance(children[0], ast_internal_classes.Name_Node):
-        #    print(children[0].name)
-        # if isinstance(children[0], ast_internal_classes.Data_Ref_Node):
-        #    print(children[0].parent_ref.name+"."+children[0].part_ref.name)
         shape = get_child(children, ast_internal_classes.Allocate_Shape_Spec_List)
         return ast_internal_classes.Allocation_Node(name=children[0], shape=shape)
 
@@ -1115,8 +1104,6 @@ class InternalFortranAst:
         # decide if it's an intrinsic variable type or a derived type
 
         type_of_node = get_child(node, [f03.Intrinsic_Type_Spec, f03.Declaration_Type_Spec])
-        # if node.children[2].children[0].children[0].string.lower() =="BOUNDARY_MISSVAL".lower():
-        #    print("found boundary missval")
         if isinstance(type_of_node, f03.Intrinsic_Type_Spec):
             derived_type = False
             basetype = type_of_node.items[0]
@@ -1183,9 +1170,6 @@ class InternalFortranAst:
                                         basetype = "INTEGER"
                                 else:
                                     raise TypeError("Derived type not supported")
-
-                # if derived_type:
-                #    raise TypeError("Derived type not supported")
         if not derived_type:
             testtype = self.types[basetype]
         else:
@@ -1269,8 +1253,6 @@ class InternalFortranAst:
                 attr_size = []
                 attr_offset = []
                 sizes = get_child(dimension_spec[0], ["Explicit_Shape_Spec_List"])
-                # if sizes is None:
-                #    sizes = get_child(dimension_spec[0], ["Deferred_Shape_Spec_List"])
 
                 if sizes is not None:
                     for shape_spec in get_children(sizes, [f03.Explicit_Shape_Spec]):
@@ -1287,15 +1269,12 @@ class InternalFortranAst:
         vardecls = [*assumed_vardecls]
 
         for idx, var in enumerate(names):
-            # print(self.name_list)
             # first handle dimensions
             size = None
             offset = None
             var_components = self.create_children(var)
             array_sizes = get_children(var, "Explicit_Shape_Spec_List")
             actual_name = get_child(var_components, ast_internal_classes.Name_Node)
-            # if actual_name.name not in self.name_list:
-            #    return
             if len(array_sizes) == 1:
                 array_sizes = array_sizes[0]
                 size = []
@@ -1321,8 +1300,7 @@ class InternalFortranAst:
                 if len(comp_init) == 1:
                     raw_init = comp_init[0].children[1]
                     init = self.create_ast(raw_init)
-            # if size_later:
-            #    size.append(len(init))
+
             if testtype != "INTEGER": symbol = False
             if symbol == False:
 
@@ -1848,10 +1826,6 @@ class InternalFortranAst:
         if arg_addition is not None:
             ret_args.insert(0, arg_addition)
         line_number = get_line(node)
-        # if node.item is None:
-        #    line_number = 42
-        # else:
-        #    line_number = get_line(node)
         return ast_internal_classes.Call_Expr_Node(name=name,
                                                    args=ret_args,
                                                    type="VOID",
@@ -1993,8 +1967,6 @@ class InternalFortranAst:
         for i in decls:
             if i is None:
                 continue
-            # NOTE: Assignment/named expressions (walrus operator) works with Python 3.8 and later.
-            # if vardecl_filtered := [ii for ii in i.vardecl if ii.name not in names_filtered]:
             vardecl_filtered = [ii for ii in i.vardecl if ii.name not in names_filtered]
             if vardecl_filtered:
                 decl_filtered.append(ast_internal_classes.Decl_Stmt_Node(vardecl=vardecl_filtered))
