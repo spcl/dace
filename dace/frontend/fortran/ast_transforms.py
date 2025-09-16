@@ -623,7 +623,6 @@ class StructPointerEliminator(NodeTransformer):
                 vardecl = []
                 for k in i.vars.vardecl:
                     if k.name == self.pointer_name and k.alloc == True and k.type == self.pointed_struct:
-                        # print("Eliminating pointer "+self.pointer_name+" of type "+ k.type +" in struct "+self.parent_struct)
                         continue
                     else:
                         vardecl.append(k)
