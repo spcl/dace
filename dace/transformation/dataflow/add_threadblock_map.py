@@ -160,23 +160,7 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
         gpu_block_size = self.preprocess_default_dims()
         kernel_map_entry = self.map_entry
 
-        # Reverse for map tiling to prioritize later dimensions for better memory/performance
-        reversed_block_size = gpu_block_size[::-1]
-
-        # TODO: Update this once MapTiling accounts for existing strides when applying tile sizes.
-        # The code below is a workaround that manually adjusts tile sizes to account for existing strides.
-        num_dims = len(kernel_map_entry.map.params)
-        existing_strides = kernel_map_entry.range.strides()
-
-        len_diff = num_dims - len(reversed_block_size)
-        if len_diff > 0:
-            # More dimensions than block size elements - pad with 1s
-            adjusted_block_size = [1] * len_diff + reversed_block_size
-        else:
-            # Fewer or equal dimensions - truncate from the beginning
-            adjusted_block_size = reversed_block_size[-num_dims:]
-
-        tile_sizes = [stride * block for stride, block in zip(existing_strides, adjusted_block_size)]
+        tile_sizes = kernel_map_entry.range.strides()
 
         # Apply map tiling transformation
         MapTiling.apply_to(sdfg=sdfg,
