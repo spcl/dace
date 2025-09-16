@@ -4,7 +4,7 @@ import networkx as nx
 
 import dace
 from dace import data as dt, Memlet
-from dace import dtypes, registry, symbolic
+from dace import dtypes, registry, symbolic, subsets
 from dace.config import Config
 from dace.sdfg import SDFG, ScopeSubgraphView, SDFGState, nodes
 from dace.sdfg import utils as sdutil
@@ -1272,6 +1272,77 @@ int __dace_exit_experimental_cuda({sdfg_state_name} *__state) {{
         # Call CPU implementation with this code generator as callback
         self._cpu_codegen.process_out_memlets(*args, codegen=self, **kwargs)
 
+    def _get_thread_id(self) -> str:
+        result = 'threadIdx.x'
+        if self._current_kernel_spec.block_dims[1] != 1:
+            result += f' + ({sym2cpp(self._current_kernel_spec.block_dims[0])}) * threadIdx.y'
+        if self._current_kernel_spec.block_dims[2] != 1:
+            result += f' + ({sym2cpp(self._current_kernel_spec.block_dims[0] * self._current_kernel_spec.block_dims[1])}) * threadIdx.z'
+        return result
+
+    def _get_warp_id(self) -> str:
+        return f'(({self._get_thread_id()}) / warpSize)'
+
+    def _get_block_id(self) -> str:
+        result = 'blockIdx.x'
+        if self._current_kernel_spec.block_dims[1] != 1:
+            result += f' + gridDim.x * blockIdx.y'
+        if self._current_kernel_spec.block_dims[2] != 1:
+            result += f' + gridDim.x * gridDim.y * blockIdx.z'
+        return result
+
+    def _generate_condition_from_location(self, name: str, index_expr: str, node: nodes.Tasklet,
+                                          callsite_stream: CodeIOStream) -> str:
+        if name not in node.location:
+            return 0
+
+        location: Union[int, str, subsets.Range] = node.location[name]
+        if isinstance(location, str) and ':' in location:
+            location = subsets.Range.from_string(location)
+        elif symbolic.issymbolic(location):
+            location = sym2cpp(location)
+
+        if isinstance(location, subsets.Range):
+            # Range of indices
+            if len(location) != 1:
+                raise ValueError(f'Only one-dimensional ranges are allowed for {name} specialization, {location} given')
+            begin, end, stride = location[0]
+            rb, re, rs = sym2cpp(begin), sym2cpp(end), sym2cpp(stride)
+            cond = ''
+            cond += f'(({index_expr}) >= {rb}) && (({index_expr}) <= {re})'
+            if stride != 1:
+                cond += f' && ((({index_expr}) - {rb}) % {rs} == 0)'
+
+            callsite_stream.write(f'if ({cond}) {{')
+        else:
+            # Single-element
+            callsite_stream.write(f'if (({index_expr}) == {location}) {{')
+
+        return 1
+
+    def _generate_Tasklet(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
+                          node: nodes.Tasklet, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
+        generated_preamble_scopes = 0
+        if self._in_device_code:
+            # If location dictionary prescribes that the code should run on a certain group of threads/blocks,
+            # add condition
+            generated_preamble_scopes += self._generate_condition_from_location('gpu_thread', self._get_thread_id(),
+                                                                                node, callsite_stream)
+            generated_preamble_scopes += self._generate_condition_from_location('gpu_warp', self._get_warp_id(), node,
+                                                                                callsite_stream)
+            generated_preamble_scopes += self._generate_condition_from_location('gpu_block', self._get_block_id(), node,
+                                                                                callsite_stream)
+
+        # Call standard tasklet generation
+        old_codegen = self._cpu_codegen.calling_codegen
+        self._cpu_codegen.calling_codegen = self
+        self._cpu_codegen._generate_Tasklet(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
+        self._cpu_codegen.calling_codegen = old_codegen
+
+        if generated_preamble_scopes > 0:
+            # Generate appropriate postamble
+            for i in range(generated_preamble_scopes):
+                callsite_stream.write('}', cfg, state_id, node)
 
 #########################################################################
 # helper class
@@ -1313,8 +1384,17 @@ class KernelSpec:
         # Certain args are called in the CUDA/HIP file or kernel funcion, in which the pointer name of the args are different
         cudaCodeGen._in_device_code = True
         self._args_as_input = [ptr(name, data, sdfg, cudaCodeGen._frame) for name, data in arglist.items()]
-        self._args_typed = [('const ' if name in kernel_constants else '') + data.as_arg(name=name)
-                            for name, data in arglist.items()]
+
+        args_typed = []
+        for name, data in arglist.items():
+            if data.lifetime == dtypes.AllocationLifetime.Persistent:
+                arg_name = ptr(name, data, sdfg, cudaCodeGen._frame)
+            else:
+                arg_name = name
+            args_typed.append(('const ' if name in kernel_constants else '') + data.as_arg(name=arg_name))
+
+        self._args_typed = args_typed
+
 
         # Args for the kernel wrapper function
         cudaCodeGen._in_device_code = False
@@ -1340,9 +1420,10 @@ class KernelSpec:
         self._kernel_wrapper_args_as_input = (
             ['__state'] + [ptr(name, data, sdfg, cudaCodeGen._frame)
                            for name, data in arglist.items()] + [str(gpustream_input[0].dst_conn)])
+
         self._kernel_wrapper_args_typed = ([f'{mangle_dace_state_struct_name(cudaCodeGen._global_sdfg)} *__state'] +
-                                           [('const ' if name in kernel_constants else '') + data.as_arg(name=name)
-                                            for name, data in arglist.items()] + [f"gpuStream_t {gpustream_var_name}"])
+                                            args_typed +
+                                            [f"gpuStream_t {gpustream_var_name}"])
 
         cudaCodeGen._in_device_code = restore_in_device_code
 

@@ -152,8 +152,23 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
         gpu_block_size = self.preprocess_default_dims()
         kernel_map_entry = self.map_entry
 
-        tile_sizes = kernel_map_entry.range.strides()
-        
+        # Reverse for map tiling to prioritize later dimensions for better memory/performance
+        reversed_block_size = gpu_block_size[::-1]
+
+        # Get tile size
+        num_dims = len(kernel_map_entry.map.params)
+
+        # Reverse for map tiling to prioritize later dimensions for better memory/performance
+        reversed_block_size = gpu_block_size[::-1]
+
+        len_diff = num_dims - len(reversed_block_size)
+        if len_diff > 0:
+            # More dimensions than block size elements - pad with 1s
+            tile_sizes = [1] * len_diff + reversed_block_size
+        else:
+            # Fewer or equal dimensions - truncate from the beginning
+            tile_sizes = reversed_block_size[-num_dims:]
+
         # Apply map tiling transformation
         MapTiling.apply_to(sdfg=sdfg,
                            options={
@@ -182,8 +197,6 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
                              f"({tb_size}) is not enclosed by the derived block size ({gpu_block_size}). "
                              "They are expected to be equal or the derived block size to be larger.")
 
-    def update_names():
-        pass
 
     @staticmethod
     def annotates_memlets():
