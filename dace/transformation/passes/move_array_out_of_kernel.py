@@ -17,6 +17,7 @@ from dace.sdfg.graph import MultiConnectorEdge
 from dace.memlet import Memlet
 from dace.symbolic import symbol
 
+import dace.sdfg.utils as sdutil
 
 @make_properties
 @transformation.explicit_cf_compatible
@@ -142,14 +143,13 @@ class MoveArrayOutOfKernel(Pass):
             next_map_exit = parent_state.exit_node(next_map_entry)
             if in_connector not in next_map_exit.in_connectors:
                 next_map_state = self._node_to_state_cache[next_map_exit]
-                next_map_exit.add_in_connector(in_connector, dtypes.pointer(array_desc.dtype))
-                next_map_exit.add_out_connector(out_connector, dtypes.pointer(array_desc.dtype))
+                next_map_exit.add_in_connector(in_connector)
+                next_map_exit.add_out_connector(out_connector)
 
                 next_entries, _ = self.get_maps_between(kernel_entry, previous_node)
-                memlet_subset = Range(self.get_memlet_subset(next_entries, previous_node) + old_subset)
 
                 next_map_state.add_edge(previous_node, previous_out_connector, next_map_exit, in_connector,
-                                        Memlet(data=array_name, subset=memlet_subset))
+                                        Memlet.from_array(array_name, array_desc))
 
             previous_node = next_map_exit
             previous_out_connector = out_connector
@@ -237,6 +237,7 @@ class MoveArrayOutOfKernel(Pass):
 
             self.lift_array_through_nested_sdfgs(array_name, kernel_entry, sdfg_hierarchy, old_subset)
 
+
     def lift_array_through_nested_sdfgs(self, array_name: str, kernel_entry: nodes.MapEntry, sdfg_hierarchy: List[SDFG],
                                         old_subset: List) -> None:
         """
@@ -265,6 +266,7 @@ class MoveArrayOutOfKernel(Pass):
             old_desc = inner_sdfg.arrays[array_name]
             new_desc = copy.deepcopy(old_desc)
             outer_sdfg.add_datadesc(array_name, new_desc)
+
 
             # Get all parent scopes to detect how the data needs to flow.
             # E.g. nsdfg_node -> MapExit  needs to be nsdfg_node -> MapExit -> AccessNode (new)
@@ -296,10 +298,10 @@ class MoveArrayOutOfKernel(Pass):
                 # 1.1 Determine source connector name and register it based on src type
                 if isinstance(src, nodes.NestedSDFG):
                     src_conn = array_name
-                    src.add_out_connector(src_conn, dtypes.pointer(new_desc.dtype))
+                    src.add_out_connector(src_conn)
                 elif isinstance(src, nodes.MapExit):
                     src_conn = f"OUT_{array_name}"
-                    src.add_out_connector(src_conn, dtypes.pointer(new_desc.dtype))
+                    src.add_out_connector(src_conn)
                 else:
                     raise NotImplementedError(
                         f"Unsupported source node type '{type(src).__name__}' — only NestedSDFG or MapExit are expected."
@@ -310,7 +312,7 @@ class MoveArrayOutOfKernel(Pass):
                     dst_conn = None  # AccessNodes use implicit connectors
                 elif isinstance(dst, nodes.MapExit):  # Assuming dst is the entry for parent scope
                     dst_conn = f"IN_{array_name}"
-                    dst.add_in_connector(dst_conn, dtypes.pointer(new_desc.dtype))
+                    dst.add_in_connector(dst_conn)
                 else:
                     raise NotImplementedError(
                         f"Unsupported destination node type '{type(dst).__name__}' — expected AccessNode or MapEntry.")
@@ -318,7 +320,7 @@ class MoveArrayOutOfKernel(Pass):
                 # 2. Add the edge using the connector names determined in Step 1.
                 next_entries, _ = self.get_maps_between(kernel_entry, src)
                 memlet_subset = Range(self.get_memlet_subset(next_entries, src) + old_subset)
-                nsdfg_parent_state.add_edge(src, src_conn, dst, dst_conn, Memlet(data=array_name, subset=memlet_subset))
+                nsdfg_parent_state.add_edge(src, src_conn, dst, dst_conn, Memlet.from_array(array_name, new_desc))
 
                 # Continue by setting the dst as source
                 src = dst
@@ -329,17 +331,17 @@ class MoveArrayOutOfKernel(Pass):
 
             if isinstance(src, nodes.NestedSDFG):
                 src_conn = array_name
-                src.add_out_connector(src_conn, dtypes.pointer(new_desc.dtype))
+                src.add_out_connector(src_conn)
             elif isinstance(src, nodes.MapExit):
                 src_conn = f"OUT_{array_name}"
-                src.add_out_connector(src_conn, dtypes.pointer(new_desc.dtype))
+                src.add_out_connector(src_conn)
             else:
                 raise NotImplementedError(
                     f"Unsupported source node type '{type(src).__name__}' — only NestedSDFG or MapExit are expected.")
 
             next_entries, _ = self.get_maps_between(kernel_entry, src)
             memlet_subset = Range(self.get_memlet_subset(next_entries, src) + old_subset)
-            nsdfg_parent_state.add_edge(src, src_conn, dst, None, Memlet(data=array_name, subset=memlet_subset))
+            nsdfg_parent_state.add_edge(src, src_conn, dst, None, Memlet.from_array(array_name, new_desc))
 
         # At the outermost sdfg we set the array descriptor to be transient again,
         # Since it is not needed beyond it. Furthermore, this ensures that the codegen
@@ -488,8 +490,16 @@ class MoveArrayOutOfKernel(Pass):
             min_elements = map_range.min_element()
             range_size = [max_elem + 1 - min_elem for max_elem, min_elem in zip(max_elements, min_elements)]
 
+            #TODO: check this / clean (maybe support packed C and packed Fortran layouts separately for code readability future)
+            old_total_size = array_desc.total_size
+            accumulator = old_total_size
+            new_strides.insert(0, old_total_size)
+            for cur_range_size in range_size[:-1]:
+                new_strides.insert(0, accumulator) # insert before (mult with volumes)
+                accumulator = accumulator * cur_range_size
+
             extended_size = range_size + extended_size
-            new_strides = [1 for _ in next_map.map.params] + new_strides  # add 1 per dimension
+            #new_strides = [1 for _ in next_map.map.params] + new_strides  # add 1 per dimension
             new_offsets = [0 for _ in next_map.map.params] + new_offsets  # add 0 per dimension
 
         new_shape = extended_size + list(array_desc.shape)
@@ -527,7 +537,7 @@ class MoveArrayOutOfKernel(Pass):
                     if edge.src_conn == old_out_conn:
                         edge.src_conn = new_out_conn
                         src.remove_out_connector(old_out_conn)
-                        src.add_out_connector(new_out_conn, dtypes.pointer(array_desc.dtype))
+                        src.add_out_connector(new_out_conn)
 
                     # Update in connectors
                     dst = edge.dst
@@ -536,7 +546,7 @@ class MoveArrayOutOfKernel(Pass):
                     if edge.dst_conn == old_in_conn:
                         edge.dst_conn = new_in_conn
                         dst.remove_in_connector(old_in_conn)
-                        dst.add_in_connector(new_in_conn, dtypes.pointer(array_desc.dtype))
+                        dst.add_in_connector(new_in_conn)
 
     def update_symbols(self, map_entry_chain: List[nodes.MapEntry], top_sdfg: SDFG) -> None:
         """
@@ -598,6 +608,7 @@ class MoveArrayOutOfKernel(Pass):
         """
         access_nodes_info: List[Tuple[nodes.AccessNode, SDFGState,
                                       SDFG]] = self.get_access_nodes_within_map(map_entry, array_name)
+        
         last_sdfg: SDFG = self._node_to_sdfg_cache[map_entry]
 
         result: Set[Tuple[dt.Array, SDFG, Set[SDFG], Set[nodes.AccessNode]]] = set()
@@ -813,7 +824,7 @@ class MoveArrayOutOfKernel(Pass):
                 if neighbor not in visited:
                     queue.append(neighbor)
 
-        raise RuntimeError(f"No access node found connected to the given node {node}.")
+        raise RuntimeError(f"No access node found connected to the given node {node}. ")
 
     def in_paths(self, access_node: nodes.AccessNode) -> List[List[MultiConnectorEdge[Memlet]]]:
         """
