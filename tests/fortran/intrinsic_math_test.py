@@ -144,7 +144,6 @@ def test_fortran_frontend_sqrt_structure():
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_sqrt", True)
     sdfg.validate()
-    #sdfg.simplify()
     sdfg.compile()
 
     size = 2

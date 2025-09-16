@@ -43,7 +43,6 @@ def test_fortran_frontend_optional():
     END SUBROUTINE intrinsic_optional_test_function2
 """, 'main').check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'intrinsic_optional_test_function', normalize_offsets=True)
-    #sdfg.simplify()
     sdfg.compile()
 
     size = 4
@@ -98,7 +97,6 @@ def test_fortran_frontend_optional_complex():
     END SUBROUTINE intrinsic_optional_test_function2
 """, 'main').check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'intrinsic_optional_test_function', normalize_offsets=True)
-    #sdfg.simplify()
     sdfg.compile()
 
     size = 4

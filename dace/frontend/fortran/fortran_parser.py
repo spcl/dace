@@ -608,8 +608,6 @@ class AST_translator:
 
         self.transient_mode = True
         self.translate(self.startpoint.execution_part.execution, sdfg, cfg)
-        #sdfg.simplify()
-        #sdfg.validate()
 
     def pointerassignment2sdfg(self, node: ast_internal_classes.Pointer_Assignment_Stmt_Node, sdfg: SDFG,
                                cfg: ControlFlowRegion):
