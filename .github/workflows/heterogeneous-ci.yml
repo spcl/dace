@@ -48,7 +48,7 @@ jobs:
       run: |
         source ~/.venv/bin/activate # activate venv
         export DACE_cache=unique
-        pytest --cov-report=xml --cov=dace --tb=short --timeout=300 -m "verilator or mkl or papi or datainstrument"
+        pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "verilator or mkl or papi or datainstrument"
 
     - name: Run MPI tests
       run: |
@@ -67,7 +67,7 @@ jobs:
         export DACE_testing_deserialize_exception=1
         export DACE_cache=unique
         source ~/.venv/bin/activate # activate venv
-        mpirun -n 2 coverage run --source=dace --parallel-mode -m pytest -x --with-mpi --tb=short --timeout=300 -m "mpi"
+        mpirun -n 2 coverage run --source=dace --parallel-mode -m pytest -x --with-mpi --tb=short --timeout_method thread --timeout=300 -m "mpi"
 
     - name: Test ScaLAPACK PBLAS with pytest
       run: |
@@ -79,7 +79,7 @@ jobs:
         source ~/.venv/bin/activate # activate venv
         for i in {1..4}
         do
-          mpirun -n "$i" --oversubscribe coverage run --source=dace --parallel-mode -m pytest -x --with-mpi --tb=short --timeout=300 -m "scalapack"
+          mpirun -n "$i" --oversubscribe coverage run --source=dace --parallel-mode -m pytest -x --with-mpi --tb=short --timeout_method thread --timeout=300 -m "scalapack"
         done
 
     - name: Report overall coverage
