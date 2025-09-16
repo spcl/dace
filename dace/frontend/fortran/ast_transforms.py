@@ -364,10 +364,7 @@ class FindInputs(NodeVisitor):
                 for i in node.lval.indices:
                     self.visit(i)
             elif isinstance(node.lval, ast_internal_classes.Data_Ref_Node):
-                # if isinstance(node.lval.parent_ref, ast_internal_classes.Name_Node):
-                #    self.nodes.append(node.lval.parent_ref)
                 if isinstance(node.lval.parent_ref, ast_internal_classes.Array_Subscript_Node):
-                    # self.nodes.append(node.lval.parent_ref.name)
                     for i in node.lval.parent_ref.indices:
                         self.visit(i)
                 if isinstance(node.lval.part_ref, ast_internal_classes.Data_Ref_Node):
@@ -2420,13 +2417,9 @@ class TypeInference(NodeTransformer):
         self.ast = ast
         if assign_scopes:
             ParentScopeAssigner().visit(ast)
-        # if scope_vars is None:
         # we must always recompute, things might have changed
-        if (True):
-            self.scope_vars = ScopeVarsDeclarations(ast)
-            self.scope_vars.visit(ast)
-        else:
-            self.scope_vars = scope_vars
+        self.scope_vars = ScopeVarsDeclarations(ast)
+        self.scope_vars.visit(ast)
         self.structures = ast.structures
 
     def visit_Name_Node(self, node: ast_internal_classes.Name_Node):
@@ -2619,9 +2612,6 @@ class TypeInference(NodeTransformer):
         return node
 
     def visit_Data_Ref_Node(self, node: ast_internal_classes.Data_Ref_Node):
-
-        # if node.type != 'VOID':
-        #    return node
 
         node.parent_ref = self.visit(node.parent_ref)
         node.part_ref = self.visit(node.part_ref)
@@ -3250,14 +3240,6 @@ class ParDeclOffsetNormalizer(NodeTransformer):
         self.data_ref_stack = []
 
     def visit_Data_Ref_Node(self, node: ast_internal_classes.Data_Ref_Node):
-
-        # struct, variable, last_var = self.structures.find_definition(
-        #    self.scope_vars, node
-        # )
-
-        # if not isinstance(last_var.part_ref, ast_internal_classes.Array_Subscript_Node):
-        #    return node
-
         self.data_ref_stack.append(copy.deepcopy(node))
         node.part_ref = self.visit(node.part_ref)
         self.data_ref_stack.pop()
@@ -3374,7 +3356,6 @@ class ArrayLoopExpander(NodeTransformer):
                 newbody.append(self.visit(child_))
                 continue
 
-            # if res is not None and len(res) > 0:
             for child in res:
 
                 if isinstance(child, ast_internal_classes.BinOp_Node):
@@ -3383,8 +3364,6 @@ class ArrayLoopExpander(NodeTransformer):
                     ranges = []
                     par_Decl_Range_Finder(current, ranges, [], self.count, newbody, self.scope_vars,
                                           self.ast.structures, True)
-
-                    # if res_range is not None and len(res_range) > 0:
 
                     # catch cases where an array is used as name, without range expression
                     visitor = ReplaceImplicitParDecls(self.scope_vars, self.ast.structures)
@@ -3767,9 +3746,6 @@ class ElementalIntrinsicNodeLister(NodeVisitor):
             if isinstance(node.lval, ast_internal_classes.Name_Node):
 
                 var = self.scope_vars.get_var(node.lval.parent, node.lval.name)
-
-                # if var.type == 'VOID':
-                #    raise NeedsTypeInferenceException(node.rval.name.name, node.line_number)
 
                 if var.sizes is None or len(var.sizes) == 0:
                     return
