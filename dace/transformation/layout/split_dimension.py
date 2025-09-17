@@ -5,8 +5,10 @@ from dataclasses import dataclass
 import copy
 from sympy import simplify
 
+
 @dataclass
 class SplitDimensions(ppl.Pass):
+
     def _block_maps():
         pass
 
@@ -19,13 +21,13 @@ class SplitDimensions(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def __init__(self,
-                 split_map: Dict[str, Tuple[List[int], List[int]]],
-                ):
+    def __init__(
+        self,
+        split_map: Dict[str, Tuple[List[int], List[int]]],
+    ):
         self._split_map = split_map
 
-    def _split_dimension(sefl, arr: dace.data.Data,
-                         dim_expr: dace.symbolic.SymExpr | dace.symbolic.symbol | int,
+    def _split_dimension(sefl, arr: dace.data.Data, dim_expr: dace.symbolic.SymExpr | dace.symbolic.symbol | int,
                          factor: int):
         # If we can't divide the block properly we need 1 extra block, therefore use int_ceil
         if isinstance(dim_expr, dace.symbolic.symbol):
@@ -45,13 +47,10 @@ class SplitDimensions(ppl.Pass):
                 return dace.symbolic.SymExpr(f"int_ceil({dim_expr}, {factor})")
         else:
             raise ValueError(f"Dimension in array.shape must be int, "
-                                f"symbol or symexpr {arr} ({arr.shape}) dimension "
-                                f"{dim_expr} is {type(dim_expr)}")
+                             f"symbol or symexpr {arr} ({arr.shape}) dimension "
+                             f"{dim_expr} is {type(dim_expr)}")
 
-    def _split_range_expr(self,
-                          b: dace.symbolic.SymExpr,
-                          e: dace.symbolic.SymExpr,
-                          s: dace.symbolic.SymExpr,
+    def _split_range_expr(self, b: dace.symbolic.SymExpr, e: dace.symbolic.SymExpr, s: dace.symbolic.SymExpr,
                           factor: int):
         step_expr = s / factor
         try:
@@ -62,19 +61,13 @@ class SplitDimensions(ppl.Pass):
         except Exception as exc:
             step_expr = f"max({step_expr}, 1)"
 
-        return (
-            dace.symbolic.SymExpr(f"int_floor({b}, {factor})"),
-            dace.symbolic.SymExpr(f"int_floor({e}, {factor})"),
-            dace.symbolic.SymExpr(f"{step_expr}")
-        )
+        return (dace.symbolic.SymExpr(f"int_floor({b}, {factor})"), dace.symbolic.SymExpr(f"int_floor({e}, {factor})"),
+                dace.symbolic.SymExpr(f"{step_expr}"))
 
-    def _module_range_expr(self,
-                          b: dace.symbolic.SymExpr,
-                          e: dace.symbolic.SymExpr,
-                          s: dace.symbolic.SymExpr,
-                          factor: int):
+    def _module_range_expr(self, b: dace.symbolic.SymExpr, e: dace.symbolic.SymExpr, s: dace.symbolic.SymExpr,
+                           factor: int):
         # If the previous access is a range that is not 1 then we overapproximate to full subset?
-        range_len = ((e+1)-b)//s
+        range_len = ((e + 1) - b) // s
         if range_len == 1:
             assert e == b
             assert s == 1
@@ -88,14 +81,10 @@ class SplitDimensions(ppl.Pass):
             new_b = dace.symbolic.SymExpr(f"(({b}) % {factor})")
             new_e = dace.symbolic.SymExpr(f"(({e}) % {factor})")
             new_s = dace.symbolic.SymExpr(f"{s}")
-        return (
-            new_b,
-            new_e,
-            new_s
-        )
+        return (new_b, new_e, new_s)
 
     def _split_dimensions(self, arr: dace.data.Data, masks: List[int],
-                         factors: List[bool]) -> List[dace.symbolic.symbol | int | dace.symbolic.SymExpr]:
+                          factors: List[bool]) -> List[dace.symbolic.symbol | int | dace.symbolic.SymExpr]:
         # Divide the dimensions (appending order will depend on the mode)
         # If mode is FACTOR then keep the dimensions for mask is false, replace dimension with factor, and then append the factor that has been divided
         # If mode is block divide as you iterate, and then append leater
@@ -112,7 +101,7 @@ class SplitDimensions(ppl.Pass):
         return new_shape
 
     def _split_range_expressions(self, subset: dace.subsets.Range, masks: List[int],
-                         factors: List[bool]) -> dace.subsets.Range:
+                                 factors: List[bool]) -> dace.subsets.Range:
         new_range_list = []
         # Let's say we access a array of shape [N] in [0:64:2]
         # (Division is by default floor)
@@ -130,18 +119,18 @@ class SplitDimensions(ppl.Pass):
         # Optimization 1: If the range covers the whole dimension, we can also covert the whole dimension
         # TODO
         # If not optimizations fit:
-        for ((b,e,s), mask, factor) in zip(subset, masks, factors):
+        for ((b, e, s), mask, factor) in zip(subset, masks, factors):
             if mask == False:
-                new_range_list.append((b,e,s))
+                new_range_list.append((b, e, s))
             else:
                 new_range_list.append(self._split_range_expr(b, e, s, factor))
-        for ((b,e,s), mask, factor) in zip(subset, masks, factors):
+        for ((b, e, s), mask, factor) in zip(subset, masks, factors):
             if mask == True:
                 new_b, new_e, new_s = self._module_range_expr(b, e, s, factor)
                 new_range_list.append((new_b, new_e, new_s))
 
         return dace.subsets.Range(new_range_list)
-    
+
     def _replace_array(self, sdfg: dace.SDFG, arr_name: str, new_dimensions: List):
         arr = sdfg.arrays[arr_name]
         datadesc = copy.deepcopy(arr)
@@ -164,13 +153,12 @@ class SplitDimensions(ppl.Pass):
         for state in sdfg.all_states():
             for node in state.nodes():
                 if isinstance(node, dace.nodes.NestedSDFG):
-                    in_map = {ie.data.data : ie.dst_conn for ie in state.in_edges(node)}
+                    in_map = {ie.data.data: ie.dst_conn for ie in state.in_edges(node)}
                     if arr_name in in_map:
                         self._replace_array_recursive(node.sdfg, in_map[arr_name], new_dimensions)
-                    out_map = {oe.data.data : oe.src_conn for oe in state.out_edges(node)}
+                    out_map = {oe.data.data: oe.src_conn for oe in state.out_edges(node)}
                     if arr_name in out_map:
                         self._replace_array_recursive(node.sdfg, out_map[arr_name], new_dimensions)
-
 
     def _replace_memlets_recursive(self, sdfg: dace.SDFG, arr_name: str, masks, factors):
         # if [M, N, K] becomes [M, N/16, K/32, 16, 32]
@@ -182,24 +170,27 @@ class SplitDimensions(ppl.Pass):
                     # we would have [(b,e,s)], if we have a range then:
                     # we would have [(floor(b/16), floor(e/16), s)]
                     new_range = self._split_range_expressions(edge.data.subset, masks, factors)
-                    new_memlet = dace.memlet.Memlet(data=edge.data.data, subset=new_range, other_subset=copy.deepcopy(edge.data.other_subset))
+                    new_memlet = dace.memlet.Memlet(data=edge.data.data,
+                                                    subset=new_range,
+                                                    other_subset=copy.deepcopy(edge.data.other_subset))
                     edge.data = new_memlet
                 # Other subset issue be careful
                 if isinstance(edge.dst, dace.nodes.AccessNode) and edge.dst.data == arr_name:
                     if edge.data is not None and edge.data.other_subset is not None:
                         # Update other subset
                         new_other_range = self._split_range_expressions(edge.data.other_subset, masks, factors)
-                        new_memlet = dace.memlet.Memlet(data=edge.data.data, subset=copy.deepcopy(edge.data.subset), other_subset=new_other_range)
+                        new_memlet = dace.memlet.Memlet(data=edge.data.data,
+                                                        subset=copy.deepcopy(edge.data.subset),
+                                                        other_subset=new_other_range)
                         edge.data = new_memlet
             for node in state.nodes():
                 if isinstance(node, dace.nodes.NestedSDFG):
-                    in_map = {ie.data.data : ie.dst_conn for ie in state.in_edges(node)}
+                    in_map = {ie.data.data: ie.dst_conn for ie in state.in_edges(node)}
                     if arr_name in in_map:
                         self._replace_memlets_recursive(node.sdfg, in_map[arr_name], masks, factors)
-                    out_map = {oe.data.data : oe.src_conn for oe in state.out_edges(node)}
+                    out_map = {oe.data.data: oe.src_conn for oe in state.out_edges(node)}
                     if arr_name in out_map:
                         self._replace_memlets_recursive(node.sdfg, out_map[arr_name], masks, factors)
-
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Dict[str, Any]) -> int:
         # For each array in the list:
@@ -211,7 +202,7 @@ class SplitDimensions(ppl.Pass):
 
         # This we will do on an interstate edge where we pad dimensions
         # But what if storage of the array is persistent / SDFG where it is allocated before padding?
-        # Thus we need to replace the size expression E with floor(E / 16) 
+        # Thus we need to replace the size expression E with floor(E / 16)
         # unless we can identify E % 16 = 0
 
         # 1. First pad dimensions of all arrays
@@ -227,4 +218,3 @@ class SplitDimensions(ppl.Pass):
             #self._replace_interstate_edges_recursive(sdfg, array_name, new_shape)
 
         return 0
-
