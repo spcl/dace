@@ -3092,7 +3092,8 @@ def run_ast_transformations(own_ast: ast_components.InternalFortranAst,
 
                 if prior_exception is not None:
                     if e.line_number == prior_exception.line_number and e.func_name == prior_exception.func_name:
-                        raise RuntimeError("Running additional type inference didn't help! VOID type in the same place.")
+                        raise RuntimeError(
+                            "Running additional type inference didn't help! VOID type in the same place.")
                 else:
                     prior_exception = e
                 # FIXME: optimize func
