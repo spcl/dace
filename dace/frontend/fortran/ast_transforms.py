@@ -410,26 +410,26 @@ class FindOutputs(NodeVisitor):
     :return: List of names
     """
 
-    def __init__(self, thourough=False):
-        self.thourough = thourough
+    def __init__(self, thorough=False):
+        self.thorough = thorough
         self.nodes: List[ast_internal_classes.Name_Node] = []
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
         for i in node.args:
             if isinstance(i, ast_internal_classes.Name_Node):
-                if self.thourough:
+                if self.thorough:
                     self.nodes.append(i)
             elif isinstance(i, ast_internal_classes.Array_Subscript_Node):
-                if self.thourough:
+                if self.thorough:
                     self.nodes.append(i.name)
                 for j in i.indices:
                     self.visit(j)
             elif isinstance(i, ast_internal_classes.Data_Ref_Node):
                 if isinstance(i.parent_ref, ast_internal_classes.Name_Node):
-                    if self.thourough:
+                    if self.thorough:
                         self.nodes.append(i.parent_ref)
                 elif isinstance(i.parent_ref, ast_internal_classes.Array_Subscript_Node):
-                    if self.thourough:
+                    if self.thorough:
                         self.nodes.append(i.parent_ref.name)
                     for j in i.parent_ref.indices:
                         self.visit(j)
