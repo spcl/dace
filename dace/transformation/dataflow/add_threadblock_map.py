@@ -197,7 +197,6 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
                              f"({tb_size}) is not enclosed by the derived block size ({gpu_block_size}). "
                              "They are expected to be equal or the derived block size to be larger.")
 
-
     @staticmethod
     def annotates_memlets():
         return False

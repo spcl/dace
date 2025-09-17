@@ -58,7 +58,7 @@ class Fix(ppl.Pass):
 
             if map_parent is None:
                 continue
-            
+
             if node.data not in parent_state.sdfg.arrays:
                 continue
 
@@ -77,7 +77,7 @@ class Fix(ppl.Pass):
                 if edge.dst_conn == node.data and isinstance(src, nodes.AccessNode) and src.data != node.data:
                     break_cond = True
                     skip.add(src.data)
-            
+
             if break_cond:
                 continue
 
@@ -99,7 +99,6 @@ class Fix(ppl.Pass):
             if move_out:
                 to_be_moved.add((node.data, data_desc, map_parent))
 
-
         for name, desc, map_parent in to_be_moved:
             if name in skip:
                 continue
@@ -107,7 +106,5 @@ class Fix(ppl.Pass):
             desc.storage = dtypes.StorageType.GPU_Global
             desc.transient = True
             names[name] = map_parent
-
-    
 
         return names

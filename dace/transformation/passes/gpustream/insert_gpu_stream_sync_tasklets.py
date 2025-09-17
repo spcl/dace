@@ -16,6 +16,7 @@ from dace.transformation.passes.gpustream.insert_gpu_streams_to_sdfgs import Ins
 
 STREAM_PLACEHOLDER = "__dace_current_stream"
 
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class InsertGPUStreamSyncTasklets(ppl.Pass):
@@ -95,7 +96,7 @@ class InsertGPUStreamSyncTasklets(ppl.Pass):
             src_in_kernel = is_within_schedule_types(state, src, gpu_schedules)
             dst_in_kernel = is_within_schedule_types(state, dst, gpu_schedules)
             return src_in_kernel and dst_in_kernel
-        
+
         def is_tasklet_with_stream_use(src):
             return isinstance(src, nodes.Tasklet) and STREAM_PLACEHOLDER in src.code.as_string
 

@@ -235,10 +235,11 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         # Retrieve arguments required for the kernels subgraph
         shared_transients = {}
         for state, node, defined_syms in sdutil.traverse_sdfg_with_defined_symbols(sdfg, recursive=True):
-            if (isinstance(node, nodes.MapEntry)and node.map.schedule == dtypes.ScheduleType.GPU_Device):
+            if (isinstance(node, nodes.MapEntry) and node.map.schedule == dtypes.ScheduleType.GPU_Device):
                 if state.parent not in shared_transients:
                     shared_transients[state.parent] = state.parent.shared_transients()
-                self._kernel_arglists[node] = state.scope_subgraph(node).arglist(defined_syms, shared_transients[state.parent])
+                self._kernel_arglists[node] = state.scope_subgraph(node).arglist(defined_syms,
+                                                                                 shared_transients[state.parent])
 
     def _compute_pool_release(self, top_sdfg: SDFG):
         """
@@ -432,7 +433,6 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
             return
 
-
         import copy
         from dace.transformation.passes.fix_test import Fix
         from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel
@@ -442,7 +442,6 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         for name, map_parent in names.items():
             MoveArrayOutOfKernel().apply_pass(sdfg, map_parent, name)
         infer_types.infer_connector_types(sdfg)
-
 
         #--------------- Nested GPU Scope --------------------
         supported_strategies: List[ScopeGenerationStrategy] = [
@@ -781,7 +780,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         # Add the const qualifier to any constants not marked as such
         """
         # update const data
-        new_const_data = sdutil.get_constant_data(node, nsdfg) 
+        new_const_data = sdutil.get_constant_data(node, nsdfg)
         for name in new_const_data:
             desc = nsdfg.arrays[name]
             ptr_name = ptr(name, desc, nsdfg, self._frame)
@@ -801,13 +800,12 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             dispatcher.defined_vars.add(ptr_name, defined_type, ctype, allow_shadowing=True)
 
         # update const symbols
-        new_const_symbols = sdutil.get_constant_symbols(node, nsdfg) 
+        new_const_symbols = sdutil.get_constant_symbols(node, nsdfg)
         for name in new_const_symbols:
             defined_type = DefinedType.Scalar
             if not "const" in nsdfg.symbols[name].ctype:
                 ctype = f"const {nsdfg.symbols[name].ctype}"
-        """ 
-
+        """
 
         # Redirect rest to CPU codegen
         self._cpu_codegen._generate_NestedSDFG(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
@@ -833,7 +831,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                 location: Union[int, str, subsets.Range] = tasklet.location[name]
                 cond = self._generate_condition_from_location(name, index_expr, location)
                 scope_manager.open(condition=cond)
-            
+
             if 'gpu_warp' in tasklet.location:
                 name = 'gpu_warp'
                 index_expr = self._get_warp_id()
@@ -848,22 +846,22 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                 cond = self._generate_condition_from_location(name, index_expr, location)
                 scope_manager.open(condition=cond)
 
-        # Call CPU codegen
-        self._cpu_codegen._generate_Tasklet(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
+            # Call CPU codegen
+            self._cpu_codegen._generate_Tasklet(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
 
-    def _generate_condition_from_location(self, name:str, index_expr:str, 
-                                           location: Union[int, str, subsets.Range]) -> str:
+    def _generate_condition_from_location(self, name: str, index_expr: str, location: Union[int, str,
+                                                                                            subsets.Range]) -> str:
 
         # 1. Normalize location
         if isinstance(location, str) and ':' in location:
             location = subsets.Range.from_string(location)
             if len(location) != 1:
-                raise ValueError(f'Only one-dimensional ranges are allowed for {name} specialization, {location} given')   
+                raise ValueError(f'Only one-dimensional ranges are allowed for {name} specialization, {location} given')
         elif symbolic.issymbolic(location):
             location = sym2cpp(location)
 
         # 2. Build condition
-        if isinstance(location, subsets.Range): 
+        if isinstance(location, subsets.Range):
             # Range of indices
             begin, end, stride = location[0]
             rb, re, rs = sym2cpp(begin), sym2cpp(end), sym2cpp(stride)
@@ -873,7 +871,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         else:
             # Single-element
             cond = f'({index_expr}) == {location}'
-        
+
         return cond
 
     def _get_thread_id(self) -> str:
@@ -1339,6 +1337,7 @@ int __dace_exit_experimental_cuda({sdfg_state_name} *__state) {{
         # Call CPU implementation with this code generator as callback
         self._cpu_codegen.process_out_memlets(*args, codegen=self, **kwargs)
 
+
 #########################################################################
 # helper class
 # This one is closely linked to the ExperimentalCUDACodeGen. In fact,
@@ -1391,7 +1390,6 @@ class KernelSpec:
 
         self._args_typed = args_typed
 
-
         # Args for the kernel wrapper function
         cudaCodeGen._in_device_code = False
 
@@ -1418,8 +1416,7 @@ class KernelSpec:
                            for name, data in arglist.items()] + [str(gpustream_input[0].dst_conn)])
 
         self._kernel_wrapper_args_typed = ([f'{mangle_dace_state_struct_name(cudaCodeGen._global_sdfg)} *__state'] +
-                                            args_typed +
-                                            [f"gpuStream_t {gpustream_var_name}"])
+                                           args_typed + [f"gpuStream_t {gpustream_var_name}"])
 
         cudaCodeGen._in_device_code = restore_in_device_code
 

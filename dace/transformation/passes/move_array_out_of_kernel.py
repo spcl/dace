@@ -19,6 +19,7 @@ from dace.symbolic import symbol
 
 import dace.sdfg.utils as sdutil
 
+
 @make_properties
 @transformation.explicit_cf_compatible
 class MoveArrayOutOfKernel(Pass):
@@ -237,7 +238,6 @@ class MoveArrayOutOfKernel(Pass):
 
             self.lift_array_through_nested_sdfgs(array_name, kernel_entry, sdfg_hierarchy, old_subset)
 
-
     def lift_array_through_nested_sdfgs(self, array_name: str, kernel_entry: nodes.MapEntry, sdfg_hierarchy: List[SDFG],
                                         old_subset: List) -> None:
         """
@@ -266,7 +266,6 @@ class MoveArrayOutOfKernel(Pass):
             old_desc = inner_sdfg.arrays[array_name]
             new_desc = copy.deepcopy(old_desc)
             outer_sdfg.add_datadesc(array_name, new_desc)
-
 
             # Get all parent scopes to detect how the data needs to flow.
             # E.g. nsdfg_node -> MapExit  needs to be nsdfg_node -> MapExit -> AccessNode (new)
@@ -495,7 +494,7 @@ class MoveArrayOutOfKernel(Pass):
             accumulator = old_total_size
             new_strides.insert(0, old_total_size)
             for cur_range_size in range_size[:-1]:
-                new_strides.insert(0, accumulator) # insert before (mult with volumes)
+                new_strides.insert(0, accumulator)  # insert before (mult with volumes)
                 accumulator = accumulator * cur_range_size
 
             extended_size = range_size + extended_size
@@ -608,7 +607,7 @@ class MoveArrayOutOfKernel(Pass):
         """
         access_nodes_info: List[Tuple[nodes.AccessNode, SDFGState,
                                       SDFG]] = self.get_access_nodes_within_map(map_entry, array_name)
-        
+
         last_sdfg: SDFG = self._node_to_sdfg_cache[map_entry]
 
         result: Set[Tuple[dt.Array, SDFG, Set[SDFG], Set[nodes.AccessNode]]] = set()
