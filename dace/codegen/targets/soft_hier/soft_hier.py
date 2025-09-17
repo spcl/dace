@@ -1920,7 +1920,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
             if arr_name != "B":
                 continue
             dump_str += "flex_dump_open();\n"
-            dump_str += f"flex_dump_hbm(hbm_addr(0), A_tile_width * A_tile_height);\n"
+            dump_str += f"flex_dump_hbm(A, A_tile_width * A_tile_height);\n"
             dump_str += "flex_dump_close();\n"
         dump_str += "}"
 
