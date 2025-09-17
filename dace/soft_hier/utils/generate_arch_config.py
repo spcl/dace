@@ -2,14 +2,16 @@
 
 def generate_arg_cfg(
     output_path="generated_arch.py",
-    num_cluster_x=8,
-    num_cluster_y=8,
-    num_core_per_cluster=4,
-    cluster_tcdm_bank_width=64,
-    cluster_tcdm_bank_nb=64,
+    num_cluster_x=4,
+    num_cluster_y=4,
+    num_core_per_cluster=3,
+    cluster_tcdm_bank_width=32,
+    cluster_tcdm_bank_nb=128,
     cluster_tcdm_base="0x00000000",
-    cluster_tcdm_size="0x00040000",
+    cluster_tcdm_size="0x00100000",
     cluster_tcdm_remote="0x30000000",
+    cluster_heap_base="0x00000100",
+    cluster_heap_end="0x00100000",
     cluster_stack_base="0x10000000",
     cluster_stack_size="0x00020000",
     cluster_zomem_base="0x18000000",
@@ -18,8 +20,8 @@ def generate_arg_cfg(
     cluster_reg_size="0x00000200",
     spatz_num_vlsu_port=8,
     spatz_num_function_unit=8,
-    redmule_ce_height=64,
-    redmule_ce_width=16,
+    redmule_ce_height=128,
+    redmule_ce_width=32,
     redmule_ce_pipe=3,
     redmule_elem_size=2,
     redmule_queue_depth=1,
@@ -29,25 +31,25 @@ def generate_arg_cfg(
     idma_outstand_txn=16,
     idma_outstand_burst=256,
     hbm_start_base="0xc0000000",
-    hbm_node_addr_space="0x20000000",
+    hbm_node_addr_space="0x00200000",
     num_node_per_ctrl=1,
-    hbm_placement="8,0,0,8",
-    hbm_edge_interleaving=0,
+    hbm_placement="4,0,0,0",
     noc_outstanding=64,
-    noc_link_width=1024,
+    noc_link_width=512,
     instruction_mem_base="0x80000000",
-    instruction_mem_size="0x00800000",
+    instruction_mem_size="0x00010000",
     soc_register_base="0x90000000",
     soc_register_size="0x00010000",
     soc_register_eoc="0x90000000",
     soc_register_wakeup="0x90000004",
-    sync_base="0x60000000",
+    sync_base="0x40000000",
     sync_interleave="0x00000080",
     sync_special_mem="0x00000040"
 ):
-    # Process hbm_placement from string to a list (e.g., "4,0,0,4" -> ["4", "0", "0", "4"])
+    # Process hbm_placement from string to a list
     hbm_placement_list = [p.strip() for p in hbm_placement.split(",")]
 
+    
     code = f'''"""
 Auto-generated FlexClusterArch class
 ------------------------------------
@@ -69,6 +71,9 @@ class FlexClusterArch:
         self.cluster_tcdm_base       = {cluster_tcdm_base}
         self.cluster_tcdm_size       = {cluster_tcdm_size}
         self.cluster_tcdm_remote     = {cluster_tcdm_remote}
+
+        self.cluster_heap_base       = {cluster_heap_base}
+        self.cluster_heap_end        = {cluster_heap_end}
 
         self.cluster_stack_base      = {cluster_stack_base}
         self.cluster_stack_size      = {cluster_stack_size}
@@ -94,10 +99,21 @@ class FlexClusterArch:
         self.redmule_reg_size        = {redmule_reg_size}
 
         # IDMA
-        self.multi_idma_enable       = {multi_idma_enable}
+'''
+
+    # multi_idma_enable
+    if multi_idma_enable:
+        code += f'''        self.multi_idma_enable       = {multi_idma_enable}
         self.idma_outstand_txn       = {idma_outstand_txn}
         self.idma_outstand_burst     = {idma_outstand_burst}
+'''
+    else:
+        code += f'''        self.idma_outstand_txn       = {idma_outstand_txn}
+        self.idma_outstand_burst     = {idma_outstand_burst}
+'''
 
+    # HBM、NoC、System、Sync
+    code += f'''
         # HBM
         self.hbm_start_base          = {hbm_start_base}
         self.hbm_node_addr_space     = {hbm_node_addr_space}
@@ -127,4 +143,3 @@ class FlexClusterArch:
         f.write(code)
 
     print(f"\n[INFO] The file '{output_path}' has been created.\n")
-
