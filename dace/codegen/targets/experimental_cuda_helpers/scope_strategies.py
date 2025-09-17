@@ -486,6 +486,7 @@ class ScopeManager:
                  function_stream: CodeIOStream,
                  callsite_stream: CodeIOStream,
                  comment: str = None,
+                 brackets_on_enter: bool = True,
                  debug: bool = False):
         """
         Initializes the KernelScopeManager.
@@ -498,6 +499,7 @@ class ScopeManager:
         :param function_stream: The CodeIOStream for function-level code.
         :param callsite_stream: The CodeIOStream for callsite-level code.
         :param comment: A descriptive comment explaining the purpose of the code block being opened. Default is None.
+        :param brackets_on_enter: Whether on entering (i.e. when using "with", there should be a bracket opened). Default is True. 
         :param debug: Whether to include debug comments in the output. Defaults to False.
         """
         self.frame_codegen = frame_codegen
@@ -508,6 +510,7 @@ class ScopeManager:
         self.function_stream = function_stream
         self.callsite_stream = callsite_stream
         self.comment = comment
+        self.brackets_on_enter = brackets_on_enter
         self.debug = debug
         self._opened = 0
 
@@ -516,9 +519,11 @@ class ScopeManager:
 
     def __enter__(self):
         """
-        Writes the opening bracket.
+        Writes the opening bracket in case self.brackets_on_enter
+        is set to true, which it is by default.
         """
-        self.open()
+        if self.brackets_on_enter:
+            self.open()
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):

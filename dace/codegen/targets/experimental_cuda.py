@@ -823,7 +823,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         from dace.codegen.targets.experimental_cuda_helpers.scope_strategies import ScopeManager
 
         tasklet: nodes.Tasklet = node
-        with ScopeManager(self, sdfg, cfg, dfg, state_id, function_stream, callsite_stream) as scope_manager:
+        with ScopeManager(self, sdfg, cfg, dfg, state_id, function_stream, callsite_stream, brackets_on_enter=False) as scope_manager:
 
             if 'gpu_thread' in tasklet.location:
                 name = 'gpu_thread'
