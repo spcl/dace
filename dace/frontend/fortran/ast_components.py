@@ -1,7 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 from typing import Any, List, Optional, Type, TypeVar, Union, overload, TYPE_CHECKING, Dict, Tuple
 
-import fparser
 import networkx as nx
 from fparser.two import Fortran2003 as f03
 from fparser.two import Fortran2008 as f08
@@ -973,7 +972,6 @@ class InternalFortranAst:
 
     def declaration_construct(self, node: FASTNode):
         raise NotImplementedError("Declaration constructs are not supported yet")
-        return node
 
     def declaration_type_spec(self, node: FASTNode):
         return node
@@ -1364,7 +1362,6 @@ class InternalFortranAst:
 
     def array_spec(self, node: FASTNode):
         raise NotImplementedError("Array spec is not supported yet")
-        return node
 
     def explicit_shape_spec_list(self, node: FASTNode):
         return node
@@ -1380,39 +1377,30 @@ class InternalFortranAst:
 
     def intent_spec(self, node: FASTNode):
         raise NotImplementedError("Intent spec is not supported yet")
-        return node
 
     def access_spec(self, node: FASTNode):
         raise NotImplementedError("Access spec is not supported yet")
-        return node
 
     def allocatable_stmt(self, node: FASTNode):
         raise NotImplementedError("Allocatable stmt is not supported yet")
-        return node
 
     def asynchronous_stmt(self, node: FASTNode):
         raise NotImplementedError("Asynchronous stmt is not supported yet")
-        return node
 
     def bind_stmt(self, node: FASTNode):
         raise NotImplementedError("Bind stmt is not supported yet")
-        return node
 
     def common_stmt(self, node: FASTNode):
         raise NotImplementedError("Common stmt is not supported yet")
-        return node
 
     def data_stmt(self, node: FASTNode):
         raise NotImplementedError("Data stmt is not supported yet")
-        return node
 
     def dimension_stmt(self, node: FASTNode):
         raise NotImplementedError("Dimension stmt is not supported yet")
-        return node
 
     def external_stmt(self, node: FASTNode):
         raise NotImplementedError("External stmt is not supported yet")
-        return node
 
     def intent_stmt(self, node: FASTNode):
         return node
@@ -1428,7 +1416,6 @@ class InternalFortranAst:
 
     def pointer_stmt(self, node: FASTNode):
         raise NotImplementedError("Pointer stmt is not supported yet")
-        return node
 
     def protected_stmt(self, node: FASTNode):
         return node
@@ -1551,9 +1538,6 @@ class InternalFortranAst:
         return node
 
     def forall_triplet_spec(self, node: FASTNode):
-        return node
-
-    def forall_stmt(self, node: FASTNode):
         return node
 
     def end_forall_stmt(self, node: FASTNode):
