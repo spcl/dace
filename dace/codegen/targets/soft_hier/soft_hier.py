@@ -1922,8 +1922,8 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
             dump_str += "flex_dump_open();\n"
             dump_str += f"flex_dump_hbm(A, A_tile_width * A_tile_height);\n"
             dump_str += "flex_dump_close();\n"
-        dump_str += "}"
-
+        dump_str += "}\n"
+        dump_str += "flex_intra_cluster_sync();\n"
         # Prepare an empty-grid check for runtime grids
         dimcheck = True
         if dimcheck:
