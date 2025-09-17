@@ -722,8 +722,6 @@ class InternalFortranAst:
         return ast_internal_classes.Only_List_Node(names=names, renames=renames)
 
     def prefix_stmt(self, prefix: Prefix):
-        if 'recursive' in prefix.string.lower():
-            print("recursive found")
         props: Dict[str, bool] = {
             'elemental': False,
             'recursive': False,
@@ -778,8 +776,6 @@ class InternalFortranAst:
         prefix = get_child(children, ast_internal_classes.Prefix_Node)
 
         ftype, elemental = (prefix.type.upper(), prefix.elemental) if prefix else ('VOID', False)
-        if prefix is not None and prefix.recursive:
-            print("recursive found " + name.name)
 
         ret = get_child(children, ast_internal_classes.Suffix_Node)
         ret_args = args.args if args else []
@@ -796,8 +792,6 @@ class InternalFortranAst:
         args = get_child(children, ast_internal_classes.Arg_List_Node)
         prefix = get_child(children, ast_internal_classes.Prefix_Node)
         elemental = prefix.elemental if prefix else False
-        if prefix is not None and prefix.recursive:
-            print("recursive found " + name.name)
         if args is None:
             ret_args = []
         else:
@@ -830,11 +824,6 @@ class InternalFortranAst:
 
     def allocate_stmt(self, node: FASTNode):
         children = self.create_children(node)
-        if isinstance(children[0], ast_internal_classes.Name_Node):
-            print(children[0].name)
-        if isinstance(children[0], ast_internal_classes.Data_Ref_Node):
-            print(children[0].parent_ref.name + "." + children[0].part_ref.name)
-
         line = get_line(node)
         return ast_internal_classes.Allocate_Stmt_Node(name=children[0], allocation_list=children[1], line_number=line)
 
@@ -1997,7 +1986,6 @@ class InternalFortranAst:
         if value.find("_") != -1:
             x = value.split("_")
             value = x[0]
-            print(x[1])
             # FIXME: This depends on custom type `wp` defined only for ICON.
             if x[1] == "wp":
                 return ast_internal_classes.Double_Literal_Node(value=value, type="DOUBLE")
