@@ -1618,7 +1618,7 @@ class InternalFortranAst:
         else_mode = False
         line = get_line(node)
         if line is None:
-            line = "Unknown:TODO"
+            line = "Unknown:Unknown"
         cond = ast_internal_classes.BinOp_Node(op=cond_end.op[0],
                                                lval=cond_start,
                                                rval=cond_end.cond[0],
