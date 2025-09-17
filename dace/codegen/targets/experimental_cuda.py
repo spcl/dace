@@ -177,18 +177,6 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                     except ValueError:  # If transformation doesn't match, continue normally
                         continue
 
-        """
-        from dace.transformation.passes.fix_test import Fix
-        from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel
-        #sdfg.save("before.sdfg")
-        names = Fix().apply_pass(sdfg, {})
-        for name, map_parent in names.items():
-            MoveArrayOutOfKernel().apply_pass(sdfg, map_parent, name)
-
-        #sdfg.save("after.sdfg")
-        """
-
-
         #----------------- Add ThreadBlock Maps & Infer Kernel Grid & Block Sizes --------------------
 
         # new_nodes - old_nodes gives us all Kernel Entry nodes that were created during the insertion
@@ -695,7 +683,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         return False
 
     #############################################################################
-    # Nested SDFG related, testing phase
+    # Nested SDFGs & tasklets
 
     def generate_state(self,
                        sdfg: SDFG,
@@ -829,6 +817,85 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
         self._cpu_codegen.calling_codegen = old_codegen
         self._toplevel_schedule = old_schedule
+
+    def _generate_Tasklet(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
+                          node: nodes.Tasklet, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
+        # import ScopeManager which opens and closes brackets for conditions, useful here
+        # because the location dictionary might prescribe which threads/blocks run tasklet code
+        from dace.codegen.targets.experimental_cuda_helpers.scope_strategies import ScopeManager
+
+        tasklet: nodes.Tasklet = node
+        with ScopeManager(self, sdfg, cfg, dfg, state_id, function_stream, callsite_stream) as scope_manager:
+
+            if 'gpu_thread' in tasklet.location:
+                name = 'gpu_thread'
+                index_expr = self._get_thread_id()
+                location: Union[int, str, subsets.Range] = tasklet.location[name]
+                cond = self._generate_condition_from_location(name, index_expr, location)
+                scope_manager.open(condition=cond)
+            
+            if 'gpu_warp' in tasklet.location:
+                name = 'gpu_warp'
+                index_expr = self._get_warp_id()
+                location: Union[int, str, subsets.Range] = tasklet.location[name]
+                cond = self._generate_condition_from_location(name, index_expr, location)
+                scope_manager.open(condition=cond)
+
+            if 'gpu_block' in tasklet.location:
+                name = 'gpu_block'
+                index_expr = self._get_block_id()
+                location: Union[int, str, subsets.Range] = tasklet.location[name]
+                cond = self._generate_condition_from_location(name, index_expr, location)
+                scope_manager.open(condition=cond)
+
+        # Call CPU codegen
+        self._cpu_codegen._generate_Tasklet(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
+
+    def _generate_condition_from_location(self, name:str, index_expr:str, 
+                                           location: Union[int, str, subsets.Range]) -> str:
+
+        # 1. Normalize location
+        if isinstance(location, str) and ':' in location:
+            location = subsets.Range.from_string(location)
+            if len(location) != 1:
+                raise ValueError(f'Only one-dimensional ranges are allowed for {name} specialization, {location} given')   
+        elif symbolic.issymbolic(location):
+            location = sym2cpp(location)
+
+        # 2. Build condition
+        if isinstance(location, subsets.Range): 
+            # Range of indices
+            begin, end, stride = location[0]
+            rb, re, rs = sym2cpp(begin), sym2cpp(end), sym2cpp(stride)
+            cond = f'(({index_expr}) >= {rb}) && (({index_expr}) <= {re})'
+            if stride != 1:
+                cond += f' && ((({index_expr}) - {rb}) % {rs} == 0)'
+        else:
+            # Single-element
+            cond = f'({index_expr}) == {location}'
+        
+        return cond
+
+    def _get_thread_id(self) -> str:
+        kernel_block_dims: List = self._current_kernel_spec.block_dims
+        result = 'threadIdx.x'
+        if kernel_block_dims[1] != 1:
+            result += f' + ({sym2cpp(kernel_block_dims[0])}) * threadIdx.y'
+        if kernel_block_dims[2] != 1:
+            result += f' + ({sym2cpp(kernel_block_dims[0] * kernel_block_dims[1])}) * threadIdx.z'
+        return result
+
+    def _get_warp_id(self) -> str:
+        return f'(({self._get_thread_id()}) / warpSize)'
+
+    def _get_block_id(self) -> str:
+        kernel_block_dims: List = self._current_kernel_spec.block_dims
+        result = 'blockIdx.x'
+        if kernel_block_dims[1] != 1:
+            result += f' + gridDim.x * blockIdx.y'
+        if kernel_block_dims[2] != 1:
+            result += f' + gridDim.x * gridDim.y * blockIdx.z'
+        return result
 
     #######################################################################
     # Array Declaration, Allocation and Deallocation
@@ -1272,78 +1339,6 @@ int __dace_exit_experimental_cuda({sdfg_state_name} *__state) {{
         # Call CPU implementation with this code generator as callback
         self._cpu_codegen.process_out_memlets(*args, codegen=self, **kwargs)
 
-    def _get_thread_id(self) -> str:
-        result = 'threadIdx.x'
-        if self._current_kernel_spec.block_dims[1] != 1:
-            result += f' + ({sym2cpp(self._current_kernel_spec.block_dims[0])}) * threadIdx.y'
-        if self._current_kernel_spec.block_dims[2] != 1:
-            result += f' + ({sym2cpp(self._current_kernel_spec.block_dims[0] * self._current_kernel_spec.block_dims[1])}) * threadIdx.z'
-        return result
-
-    def _get_warp_id(self) -> str:
-        return f'(({self._get_thread_id()}) / warpSize)'
-
-    def _get_block_id(self) -> str:
-        result = 'blockIdx.x'
-        if self._current_kernel_spec.block_dims[1] != 1:
-            result += f' + gridDim.x * blockIdx.y'
-        if self._current_kernel_spec.block_dims[2] != 1:
-            result += f' + gridDim.x * gridDim.y * blockIdx.z'
-        return result
-
-    def _generate_condition_from_location(self, name: str, index_expr: str, node: nodes.Tasklet,
-                                          callsite_stream: CodeIOStream) -> str:
-        if name not in node.location:
-            return 0
-
-        location: Union[int, str, subsets.Range] = node.location[name]
-        if isinstance(location, str) and ':' in location:
-            location = subsets.Range.from_string(location)
-        elif symbolic.issymbolic(location):
-            location = sym2cpp(location)
-
-        if isinstance(location, subsets.Range):
-            # Range of indices
-            if len(location) != 1:
-                raise ValueError(f'Only one-dimensional ranges are allowed for {name} specialization, {location} given')
-            begin, end, stride = location[0]
-            rb, re, rs = sym2cpp(begin), sym2cpp(end), sym2cpp(stride)
-            cond = ''
-            cond += f'(({index_expr}) >= {rb}) && (({index_expr}) <= {re})'
-            if stride != 1:
-                cond += f' && ((({index_expr}) - {rb}) % {rs} == 0)'
-
-            callsite_stream.write(f'if ({cond}) {{')
-        else:
-            # Single-element
-            callsite_stream.write(f'if (({index_expr}) == {location}) {{')
-
-        return 1
-
-    def _generate_Tasklet(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
-                          node: nodes.Tasklet, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
-        generated_preamble_scopes = 0
-        if self._in_device_code:
-            # If location dictionary prescribes that the code should run on a certain group of threads/blocks,
-            # add condition
-            generated_preamble_scopes += self._generate_condition_from_location('gpu_thread', self._get_thread_id(),
-                                                                                node, callsite_stream)
-            generated_preamble_scopes += self._generate_condition_from_location('gpu_warp', self._get_warp_id(), node,
-                                                                                callsite_stream)
-            generated_preamble_scopes += self._generate_condition_from_location('gpu_block', self._get_block_id(), node,
-                                                                                callsite_stream)
-
-        # Call standard tasklet generation
-        old_codegen = self._cpu_codegen.calling_codegen
-        self._cpu_codegen.calling_codegen = self
-        self._cpu_codegen._generate_Tasklet(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
-        self._cpu_codegen.calling_codegen = old_codegen
-
-        if generated_preamble_scopes > 0:
-            # Generate appropriate postamble
-            for i in range(generated_preamble_scopes):
-                callsite_stream.write('}', cfg, state_id, node)
-
 #########################################################################
 # helper class
 # This one is closely linked to the ExperimentalCUDACodeGen. In fact,
@@ -1385,6 +1380,7 @@ class KernelSpec:
         cudaCodeGen._in_device_code = True
         self._args_as_input = [ptr(name, data, sdfg, cudaCodeGen._frame) for name, data in arglist.items()]
 
+        # Special: Persistent arguments
         args_typed = []
         for name, data in arglist.items():
             if data.lifetime == dtypes.AllocationLifetime.Persistent:
