@@ -75,7 +75,6 @@ def find_access_in_sources(substate, substate_sources, name):
 def add_views_recursive(sdfg, name, datatype_to_add, struct_views, name_mapping, registered_types, chain,
                         actual_offsets_per_sdfg, names_of_object_in_parent_sdfg, actual_offsets_per_parent_sdfg):
     if not isinstance(datatype_to_add, dat.Structure):
-        # print("Not adding: ", str(datatype_to_add))
         if isinstance(datatype_to_add, dat.ContainerArray):
             datatype_to_add = datatype_to_add.stype
     for i in datatype_to_add.members:
@@ -86,10 +85,6 @@ def add_views_recursive(sdfg, name, datatype_to_add, struct_views, name_mapping,
                 add_views_recursive(sdfg, name, datatype_to_add.members[i], struct_views, name_mapping,
                                     registered_types, chain + [i], actual_offsets_per_sdfg,
                                     names_of_object_in_parent_sdfg, actual_offsets_per_parent_sdfg)
-                # for j in other_type_obj.members:
-                #    sdfg.add_view(name_mapping[name] + "_" + i +"_"+ j,other_type_obj.members[j].shape,other_type_obj.members[j].dtype)
-                #    name_mapping[name + "_" + i +"_"+ j] = name_mapping[name] + "_" + i +"_"+ j
-                #    struct_views[name_mapping[name] + "_" + i+"_"+ j]=[name_mapping[name],i,j]
         if len(chain) > 0:
             join_chain = "_" + "_".join(chain)
         else:
@@ -113,7 +108,6 @@ def add_views_recursive(sdfg, name, datatype_to_add, struct_views, name_mapping,
                 actual_offsets_per_sdfg[name_mapping[name] + join_chain + "_" + i] = actual_offsets_per_parent_sdfg[
                     names_of_object_in_parent_sdfg[name_mapping[name]] + join_chain + "_" + i]
             else:
-                # print("No offsets in sdfg: ",sdfg.name ," for: ",names_of_object_in_parent_sdfg[name_mapping[name]]+ join_chain + "_" + i)
                 actual_offsets_per_sdfg[name_mapping[name] + join_chain + "_" +
                                         i] = [1] * len(datatype_to_add.members[i].shape)
         name_mapping[name_mapping[name] + join_chain + "_" + i] = name_mapping[name] + join_chain + "_" + i
@@ -125,7 +119,6 @@ def add_deferred_shape_assigns_for_structs(structures: ast_transforms.Structures
                                            assign_state: SDFGState, name: str, name_: str, placeholders,
                                            placeholders_offsets, object, names_to_replace, actual_offsets_per_sdfg):
     if not structures.is_struct(decl.type):
-        # print("Not adding defferred shape assigns for: ", decl.type,decl.name)
         return
 
     if isinstance(object, dat.ContainerArray):
@@ -138,7 +131,6 @@ def add_deferred_shape_assigns_for_structs(structures: ast_transforms.Structures
     overall_ast_struct_type = structures.get_definition(decl.type)
     counter = 0
     listofmember = list(struct_type.members)
-    # print("Struct: "+decl.name +" Struct members: "+ str(len(listofmember))+ " Definition members: "+str(len(list(overall_ast_struct_type.vars.items()))))
 
     for ast_struct_type in overall_ast_struct_type.vars.items():
         ast_struct_type = ast_struct_type[1]
@@ -149,7 +141,6 @@ def add_deferred_shape_assigns_for_structs(structures: ast_transforms.Structures
         else:
             var_type = var
 
-        # print(ast_struct_type.name,var_type.__class__)
         if isinstance(struct_type.members[ast_struct_type.name], dat.Structure):
 
             add_deferred_shape_assigns_for_structs(structures, ast_struct_type, sdfg, assign_state,
@@ -162,8 +153,6 @@ def add_deferred_shape_assigns_for_structs(structures: ast_transforms.Structures
                                                    f"{name}->{ast_struct_type.name}", f"{ast_struct_type.name}_{name_}",
                                                    placeholders, placeholders_offsets, var_type, names_to_replace,
                                                    actual_offsets_per_sdfg)
-        # print(ast_struct_type)
-        # print(ast_struct_type.__class__)
 
         if ast_struct_type.sizes is None or len(ast_struct_type.sizes) == 0:
             continue
@@ -188,14 +177,11 @@ def add_deferred_shape_assigns_for_structs(structures: ast_transforms.Structures
                     offsets_to_replace.append(newoffset)
                     names_to_replace[offset.name] = newoffset
                 else:
-                    # print("not replacing",offset.name)
                     offsets_to_replace.append(offset.name)
             else:
                 sanity_count += 1
-                # print("not replacing not namenode",offset)
                 offsets_to_replace.append(offset)
         if sanity_count == len(ast_struct_type.offsets):
-            # print("adding offsets for: "+name.replace("->","_")+"_"+ast_struct_type.name)
             actual_offsets_per_sdfg[name.replace("->", "_") + "_" + ast_struct_type.name] = offsets_to_replace
 
         # for assumed shape, all vars starts with the same prefix
@@ -248,8 +234,6 @@ def add_deferred_shape_assigns_for_structs(structures: ast_transforms.Structures
                         if sdfg.arrays.get(viewname) is not None:
                             del sdfg.arrays[viewname]
                         sdfg.arrays[viewname] = tmpview
-                        # if placeholders.get(size.name) is not None:
-                        #    placeholders[newsize]=placeholders[size.name]
         sdfg.replace_dict(names_to_replace)
 
 
@@ -529,7 +513,6 @@ class AST_translator:
                 struct_deps_finder = ast_transforms.StructDependencyLister(structs_lister.names)
                 struct_deps_finder.visit(ii)
                 struct_deps = struct_deps_finder.structs_used
-                # print(struct_deps)
                 for j, pointing, point_name in zip(struct_deps, struct_deps_finder.is_pointer,
                                                    struct_deps_finder.pointer_names):
                     if j not in struct_dep_graph.nodes:
@@ -602,10 +585,6 @@ class AST_translator:
                     print(f"Changing the transient status to false of {arr_name} because it's a function argument")
                     arr.transient = False
 
-        # for i in sdfg.arrays:
-        #     if i in sdfg.symbols:
-        #         sdfg.arrays.pop(i)
-
         self.transient_mode = True
         self.translate(self.startpoint.execution_part.execution, sdfg, cfg)
 
@@ -627,19 +606,6 @@ class AST_translator:
                 sdfg.arrays[self.name_mapping[sdfg][node.name_pointer.name]].offset[i]
                 for i in range(len(sdfg.arrays[self.name_mapping[sdfg][node.name_pointer.name]].offset))
             ]
-            # for i in shapenames:
-            #    if str(i) in sdfg.symbols:
-            #        sdfg.symbols.pop(str(i))
-            # if sdfg.parent_nsdfg_node is not None:
-            # if str(i) in sdfg.parent_nsdfg_node.symbol_mapping:
-            # sdfg.parent_nsdfg_node.symbol_mapping.pop(str(i))
-
-            # for i in offsetnames:
-            # if str(i) in sdfg.symbols:
-            #    sdfg.symbols.pop(str(i))
-            # if sdfg.parent_nsdfg_node is not None:
-            # if str(i) in sdfg.parent_nsdfg_node.symbol_mapping:
-            # sdfg.parent_nsdfg_node.symbol_mapping.pop(str(i))
             sdfg.arrays.pop(self.name_mapping[sdfg][node.name_pointer.name])
         if isinstance(node.name_target, ast_internal_classes.Data_Ref_Node):
             if node.name_target.parent_ref.name not in self.name_mapping[sdfg]:
@@ -648,12 +614,9 @@ class AST_translator:
                 self.name_mapping[sdfg][node.name_pointer.name] = self.name_mapping[sdfg][
                     node.name_target.parent_ref.name + "_" + node.name_target.part_ref.parent_ref.name + "_" +
                     node.name_target.part_ref.part_ref.name]
-                # self.replace_names[node.name_pointer.name]=self.name_mapping[sdfg][node.name_target.parent_ref.name+"_"+node.name_target.part_ref.parent_ref.name+"_"+node.name_target.part_ref.part_ref.name]
                 target = sdfg.arrays[self.name_mapping[sdfg][node.name_target.parent_ref.name + "_" +
                                                              node.name_target.part_ref.parent_ref.name + "_" +
                                                              node.name_target.part_ref.part_ref.name]]
-                # for i in self.actual_offsets_per_sdfg[sdfg]:
-                #    print(i)
                 actual_offsets = self.actual_offsets_per_sdfg[sdfg][node.name_target.parent_ref.name + "_" +
                                                                     node.name_target.part_ref.parent_ref.name + "_" +
                                                                     node.name_target.part_ref.part_ref.name]
@@ -1096,10 +1059,6 @@ class AST_translator:
             print("Subroutine", node.name.name)
             print('Variables in call', len(variables_in_call))
             print('Parameters', len(parameters))
-            # for i in variables_in_call:
-            #    print("VAR CALL: ", i.name)
-            # for j in parameters:
-            #    print("LOCAL TO UPDATE: ", j.name)
             raise ValueError("number of parameters does not match the function signature")
 
         # creating new arrays for nested sdfg
@@ -1386,8 +1345,6 @@ class AST_translator:
         self.temporary_sym_dict[new_sdfg.name] = sym_dict
         self.temporary_link_to_parent[new_sdfg.name] = substate
         if self.multiple_sdfgs == False:
-            # print("Adding nested sdfg", new_sdfg.name, "to", sdfg.name)
-            # print(sym_dict)
             if node.execution_part is not None:
                 if node.specification_part is not None and node.specification_part.uses is not None:
                     for j in node.specification_part.uses:
@@ -1403,7 +1360,6 @@ class AST_translator:
                             pass
 
                     old_mode = self.transient_mode
-                    # print("For ",sdfg_name," old mode is ",old_mode)
                     self.transient_mode = True
                     for j in node.specification_part.symbols:
                         if isinstance(j, ast_internal_classes.Symbol_Decl_Node):
@@ -1442,7 +1398,6 @@ class AST_translator:
                                                      outs_in_new_sdfg,
                                                      symbol_mapping=self.temporary_sym_dict[new_sdfg.name],
                                                      name="External_nested_" + new_sdfg.name)
-            # if self.multiple_sdfgs==False:
             # Now adding memlets
 
         for i in self.libstates:
@@ -2163,16 +2118,6 @@ class AST_translator:
                                 print(
                                     "Shapes are not equal, but the same size. We hope that the symbolic sizes evaluate to the same values"
                                 )
-                                # this is not necessary, as here we use the outside sizes for some reason???
-                                # recompute_strides=False
-                                # for i,local in enumerate(local_shape):
-                                #     if local.name.startswith("__f2dace"):
-                                #         local_shape[i]=shape[i]
-                                #         print(f"replacing local shape: {local_shape[i]}")
-                                #         local_offsets[i]=offsets[i]
-                                #         recompute_strides=True
-                                # if recompute_strides:
-                                #     local_strides = [dat._prod(local_shape[:i]) for i in range(len(local_shape))]
                             else:
                                 raise NotImplementedError("Local shape not the same as outside shape")
                         shape, strides = self.fix_shapes_before_adding_nested(sdfg, new_sdfg, shape, strides)
@@ -2258,19 +2203,6 @@ class AST_translator:
         for i, j in zip(input_names, input_names_tasklet):
             memlet_range = self.get_memlet_range(sdfg, input_vars, i, j)
             src = ast_utils.add_memlet_read(substate, i, tasklet, j, memlet_range)
-            # if self.struct_views.get(sdfg) is not None:
-            #   if self.struct_views[sdfg].get(i) is not None:
-            #     chain= self.struct_views[sdfg][i]
-            #     access_parent=substate.add_access(chain[0])
-            #     name=chain[0]
-            #     for i in range(1,len(chain)):
-            #         view_name=name+"_"+chain[i]
-            #         access_child=substate.add_access(view_name)
-            #         substate.add_edge(access_parent, None,access_child, 'views',  Memlet.simple(name+"."+chain[i],subs.Range.from_array(sdfg.arrays[view_name])))
-            #         name=view_name
-            #         access_parent=access_child
-
-            #     substate.add_edge(access_parent, None,src,'views',  Memlet(data=name, subset=memlet_range))
 
         for i, j, k in zip(output_names, output_names_tasklet, output_names_changed):
             memlet_range = self.get_memlet_range(sdfg, output_vars, i, j)
@@ -2286,7 +2218,6 @@ class AST_translator:
                                      rename_dict=self.replace_names)
 
         text = tw.write_code(node)
-        # print(sdfg.name,node.line_number,output_names,output_names_changed,input_names,input_names_tasklet)
         tasklet.code = CodeBlock(text, lang.Python)
 
     def call2sdfg(self, call: ast_internal_classes.Call_Expr_Node, sdfg: SDFG, cfg: ControlFlowRegion):
@@ -2495,13 +2426,8 @@ class AST_translator:
             transient = self.transient_mode
         # find the type
         datatype = self.get_dace_type(node.type)
-        # if hasattr(node, "alloc"):
-        #    if node.alloc:
-        #        self.unallocated_arrays.append([node.name, datatype, sdfg, transient])
-        #        return
 
         # get the dimensions
-        # print(node.name)
         if node.sizes is not None and len(node.sizes) > 0:
             sizes = []
             offset = []
@@ -2589,7 +2515,6 @@ class AST_translator:
                     sizes.append(sym.pystr_to_symbolic(text))
                     actual_offset_value = node.offsets[node.sizes.index(i)]
                     if isinstance(actual_offset_value, ast_internal_classes.Array_Subscript_Node):
-                        # print(node.name,actual_offset_value.name.name)
                         raise NotImplementedError("Array subscript in offset not implemented")
                     if isinstance(actual_offset_value, int):
                         actual_offset_value = ast_internal_classes.Int_Literal_Node(value=str(actual_offset_value))
@@ -2627,9 +2552,6 @@ class AST_translator:
             # here we must replace local placeholder sizes that have already made it to tasklets via size and ubound calls
             if sizes is not None:
                 actual_sizes = sdfg.arrays[self.name_mapping[sdfg][node.name]].shape
-                # print(node.name,sdfg.name,self.names_of_object_in_parent_sdfg.get(sdfg).get(node.name))
-                # print(sdfg.parent_sdfg.name,self.actual_offsets_per_sdfg[sdfg.parent_sdfg].get(self.names_of_object_in_parent_sdfg[sdfg][node.name]))
-                # print(sdfg.parent_sdfg.arrays.get(self.name_mapping[sdfg.parent_sdfg].get(self.names_of_object_in_parent_sdfg.get(sdfg).get(node.name))))
                 if self.actual_offsets_per_sdfg[sdfg.parent_sdfg].get(
                         self.names_of_object_in_parent_sdfg[sdfg][node.name]) is not None:
                     actual_offsets = self.actual_offsets_per_sdfg[sdfg.parent_sdfg][
@@ -2655,8 +2577,6 @@ class AST_translator:
                 if isinstance(datatype, Structure):
                     datatype_to_add = copy.deepcopy(datatype)
                     datatype_to_add.transient = transient
-                    # if node.name=="p_nh":
-                    # print("Adding local struct",self.name_mapping[sdfg][node.name],datatype_to_add)
                     if self.struct_views.get(sdfg) is None:
                         self.struct_views[sdfg] = {}
                     add_views_recursive(sdfg, node.name, datatype_to_add, self.struct_views[sdfg],
@@ -2675,26 +2595,11 @@ class AST_translator:
             if isinstance(datatype, Structure):
                 datatype_to_add = copy.deepcopy(datatype)
                 datatype_to_add.transient = transient
-                # if node.name=="p_nh":
-                # print("Adding local struct",self.name_mapping[sdfg][node.name],datatype_to_add)
                 sdfg.add_datadesc(self.name_mapping[sdfg][node.name], datatype_to_add)
                 if self.struct_views.get(sdfg) is None:
                     self.struct_views[sdfg] = {}
                 add_views_recursive(sdfg, node.name, datatype_to_add, self.struct_views[sdfg], self.name_mapping[sdfg],
                                     self.registered_types, [], self.actual_offsets_per_sdfg[sdfg], {}, {})
-                # for i in datatype_to_add.members:
-                #     current_dtype=datatype_to_add.members[i].dtype
-                #     for other_type in self.registered_types:
-                #         if current_dtype.dtype==self.registered_types[other_type].dtype:
-                #             other_type_obj=self.registered_types[other_type]
-                #             for j in other_type_obj.members:
-                #                 sdfg.add_view(self.name_mapping[sdfg][node.name] + "_" + i +"_"+ j,other_type_obj.members[j].shape,other_type_obj.members[j].dtype)
-                #                 self.name_mapping[sdfg][node.name + "_" + i +"_"+ j] = self.name_mapping[sdfg][node.name] + "_" + i +"_"+ j
-                #                 self.struct_views[sdfg][self.name_mapping[sdfg][node.name] + "_" + i+"_"+ j]=[self.name_mapping[sdfg][node.name],j]
-                #     sdfg.add_view(self.name_mapping[sdfg][node.name] + "_" + i,datatype_to_add.members[i].shape,datatype_to_add.members[i].dtype)
-                #     self.name_mapping[sdfg][node.name + "_" + i] = self.name_mapping[sdfg][node.name] + "_" + i
-                #     self.struct_views[sdfg][self.name_mapping[sdfg][node.name] + "_" + i]=[self.name_mapping[sdfg][node.name],i]
-
             else:
 
                 sdfg.add_scalar(self.name_mapping[sdfg][node.name], dtype=datatype, transient=transient)
@@ -2706,18 +2611,15 @@ class AST_translator:
                 arr_dtype = datatype[sizes]
                 arr_dtype.offset = [offset_value for _ in sizes]
                 container = dat.ContainerArray(stype=datatype, shape=sizes, offset=offset, transient=transient)
-                # print("Adding local container array",self.name_mapping[sdfg][node.name],sizes,datatype,offset,strides,transient)
                 sdfg.arrays[self.name_mapping[sdfg][node.name]] = container
                 if self.struct_views.get(sdfg) is None:
                     self.struct_views[sdfg] = {}
                 add_views_recursive(sdfg, node.name, arr_dtype, self.struct_views[sdfg], self.name_mapping[sdfg],
                                     self.registered_types, [], self.actual_offsets_per_sdfg[sdfg], {}, {})
-                # sdfg.add_datadesc(self.name_mapping[sdfg][node.name], arr_dtype)
 
             else:
                 sizes, strides = self.fix_shapes_before_adding(sdfg, sizes, strides)
 
-                # print("Adding local array",self.name_mapping[sdfg][node.name],sizes,datatype,offset,strides,transient)
                 sdfg.add_array(self.name_mapping[sdfg][node.name],
                                shape=sizes,
                                dtype=datatype,
@@ -2759,8 +2661,6 @@ class AST_translator:
 
             for s in free_symbols:
                 if new_sdfg.symbols.get(s.name) is not None:
-                    # self.temporary_sym_dict[new_sdfg.name]["sym_"+s.name]=["sym_"+s.name]
-                    # new_sdfg.add_symbol("sym_"+s.name, sdfg.symbols[s.name].dtype)
                     pass
                 elif new_sdfg.arrays.get(s.name) is not None:
                     if not new_sdfg.arrays[s.name].transient:
@@ -2811,8 +2711,6 @@ class AST_translator:
 
             for s in free_symbols:
                 if sdfg.symbols.get(s.name) is not None:
-                    # self.temporary_sym_dict[new_sdfg.name]["sym_"+s.name]=["sym_"+s.name]
-                    # new_sdfg.add_symbol("sym_"+s.name, sdfg.symbols[s.name].dtype)
                     pass
                 elif sdfg.arrays.get(s.name) is not None:
                     if not sdfg.arrays[s.name].transient:
@@ -3180,23 +3078,8 @@ def run_ast_transformations(own_ast: ast_components.InternalFortranAst,
 
     program = ast_transforms.TypeInference(program, assert_voids=False).visit(program)
 
-    prior_exception: Optional[NeedsTypeInferenceException] = None
-    # while True:
-    #     try:
     program = ast_transforms.ElementalIntrinsicExpander(
         ast_transforms.FindFunctionAndSubroutines.from_node(program).names, program).visit(program)
-    #     break
-    # except NeedsTypeInferenceException as e:
-
-    #     if prior_exception is not None:
-    #         if e.line_number == prior_exception.line_number and e.func_name == prior_exception.func_name:
-    #             print("Running additional type inference didn't help! VOID type in the same place.")
-    #             #raise RuntimeError()
-    #     else:
-    #         prior_exception = e
-    #     print("Running additional type inference")
-    #     # FIXME: optimize func
-    #     program = ast_transforms.TypeInference(program, assert_voids=False).visit(program)
 
     prior_exception: Optional[NeedsTypeInferenceException] = None
     for transformation in own_ast.fortran_intrinsics().transformations():
@@ -3242,7 +3125,6 @@ def run_ast_transformations(own_ast: ast_components.InternalFortranAst,
         struct_deps_finder = ast_transforms.StructDependencyLister(structs_lister.names)
         struct_deps_finder.visit(i)
         struct_deps = struct_deps_finder.structs_used
-        # print(struct_deps)
         for j, pointing, point_name in zip(struct_deps, struct_deps_finder.is_pointer,
                                            struct_deps_finder.pointer_names):
             if j not in struct_dep_graph.nodes:
@@ -3256,12 +3138,10 @@ def run_ast_transformations(own_ast: ast_components.InternalFortranAst,
         for i in cycle:
             is_pointer = struct_dep_graph.get_edge_data(i, cycle[(cycle.index(i) + 1) % len(cycle)])["pointing"]
             point_name = struct_dep_graph.get_edge_data(i, cycle[(cycle.index(i) + 1) % len(cycle)])["point_name"]
-            # print(i,is_pointer)
             if is_pointer:
                 actually_used_pointer_node_finder = ast_transforms.StructPointerChecker(
                     i, cycle[(cycle.index(i) + 1) % len(cycle)], point_name)
                 actually_used_pointer_node_finder.visit(program)
-                # print(actually_used_pointer_node_finder.nodes)
                 if len(actually_used_pointer_node_finder.nodes) == 0:
                     print("We can ignore this cycle")
                     program = ast_transforms.StructPointerEliminator(i, cycle[(cycle.index(i) + 1) % len(cycle)],
@@ -3484,174 +3364,9 @@ def name_and_rename_dict_creator(parse_order: list, dep_graph: nx.DiGraph) \
                             if k.children[2].string not in names:
                                 names.append(k.children[2].string)
                             local_rename_dict[k.children[2].string] = k.children[1].string
-                        # print("Assumption failed: Object list contains non-name node")
                     else:
                         if k.string not in names:
                             names.append(k.string)
         rename_dict[i] = local_rename_dict
         name_dict[i] = names
     return name_dict, rename_dict
-
-
-def create_sdfg_from_fortran_file_with_options(
-    cfg: ParseConfig,
-    ast: Program,
-    sdfgs_dir,
-    normalize_offsets: bool = True,
-    already_parsed_ast=False,
-):
-    """
-    Creates an SDFG from a fortran file
-    :param source_string: The fortran file name
-    :return: The resulting SDFG
-
-    """
-    if not already_parsed_ast:
-        ast = run_fparser_transformations(ast, cfg)
-    else:
-        ast = correct_for_function_calls(ast)
-
-    dep_graph = compute_dep_graph(ast, 'radiation_interface')
-    parse_order = list(reversed(list(nx.topological_sort(dep_graph))))
-
-    what_to_parse_list = {}
-    name_dict, rename_dict = name_and_rename_dict_creator(parse_order, dep_graph)
-
-    partial_ast = ast_components.InternalFortranAst()
-    partial_modules = {}
-    partial_ast.symbols["c_int"] = ast_internal_classes.Int_Literal_Node(value=4)
-    partial_ast.symbols["c_int8_t"] = ast_internal_classes.Int_Literal_Node(value=1)
-    partial_ast.symbols["c_int64_t"] = ast_internal_classes.Int_Literal_Node(value=8)
-    partial_ast.symbols["c_int32_t"] = ast_internal_classes.Int_Literal_Node(value=4)
-    partial_ast.symbols["c_size_t"] = ast_internal_classes.Int_Literal_Node(value=4)
-    partial_ast.symbols["c_long"] = ast_internal_classes.Int_Literal_Node(value=8)
-    partial_ast.symbols["c_signed_char"] = ast_internal_classes.Int_Literal_Node(value=1)
-    partial_ast.symbols["c_char"] = ast_internal_classes.Int_Literal_Node(value=1)
-    partial_ast.symbols["c_null_char"] = ast_internal_classes.Int_Literal_Node(value=1)
-    functions_to_rename = {}
-
-    # Why would you ever name a file differently than the module? Especially just one random file out of thousands???
-    # asts["mo_restart_nml_and_att"]=asts["mo_restart_nmls_and_atts"]
-    partial_ast.to_parse_list = what_to_parse_list
-    asts = {find_name_of_stmt(m).lower(): m for m in walk(ast, Module_Stmt)}
-    for i in parse_order:
-        partial_ast.current_ast = i
-
-        partial_ast.unsupported_fortran_syntax[i] = []
-        if i in ["mtime", "ISO_C_BINDING", "iso_c_binding", "mo_cdi", "iso_fortran_env", "netcdf"]:
-            continue
-
-        # try:
-        partial_module = partial_ast.create_ast(asts[i.lower()])
-        partial_modules[partial_module.name.name] = partial_module
-        # except Exception as e:
-        #    print("Module " + i + " could not be parsed ", partial_ast.unsupported_fortran_syntax[i])
-        #    print(e, type(e))
-        # print(partial_ast.unsupported_fortran_syntax[i])
-        #    continue
-        tmp_rename = rename_dict[i]
-        for j in tmp_rename:
-            # print(j)
-            if partial_ast.symbols.get(j) is None:
-                # raise NameError("Symbol " + j + " not found in partial ast")
-                if functions_to_rename.get(i) is None:
-                    functions_to_rename[i] = [j]
-                else:
-                    functions_to_rename[i].append(j)
-            else:
-                partial_ast.symbols[tmp_rename[j]] = partial_ast.symbols[j]
-
-        print("Parsed successfully module: ", i, " ", partial_ast.unsupported_fortran_syntax[i])
-        # print(partial_ast.unsupported_fortran_syntax[i])
-    # try:
-    partial_ast.current_ast = "top level"
-
-    program = partial_ast.create_ast(ast)
-    program.module_declarations = ast_utils.parse_module_declarations(program)
-    structs_lister = ast_transforms.StructLister()
-    structs_lister.visit(program)
-    struct_dep_graph = nx.DiGraph()
-    for i, name in zip(structs_lister.structs, structs_lister.names):
-        if name not in struct_dep_graph.nodes:
-            struct_dep_graph.add_node(name)
-        struct_deps_finder = ast_transforms.StructDependencyLister(structs_lister.names)
-        struct_deps_finder.visit(i)
-        struct_deps = struct_deps_finder.structs_used
-
-        for j, pointing, point_name in zip(struct_deps, struct_deps_finder.is_pointer,
-                                           struct_deps_finder.pointer_names):
-            if j not in struct_dep_graph.nodes:
-                struct_dep_graph.add_node(j)
-            struct_dep_graph.add_edge(name, j, pointing=pointing, point_name=point_name)
-    # program = ast_transforms.PropagateEnums().visit(program)
-    # program = ast_transforms.Flatten_Classes(structs_lister.structs).visit(program)
-    program.structures = ast_transforms.Structures(structs_lister.structs)
-    program = run_ast_transformations(partial_ast, program, cfg, True)
-
-    program.structures = ast_transforms.Structures(structs_lister.structs)
-    program.tables = partial_ast.symbols
-    program.placeholders = partial_ast.placeholders
-    program.placeholders_offsets = partial_ast.placeholders_offsets
-    program.functions_and_subroutines = partial_ast.functions_and_subroutines
-    functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
-    functions_and_subroutines_builder.visit(program)
-    # arg_pruner = ast_transforms.ArgumentPruner(functions_and_subroutines_builder.nodes)
-    # arg_pruner.visit(program)
-
-    # Find the entry points in the internal AST.
-    candidates = []
-    for j in program.subroutine_definitions:
-        if j.execution_part is None:
-            continue
-        if (j.name.name, ) not in cfg.entry_points:
-            continue
-        candidates.append(j)
-    for i in program.modules:
-        for j in i.subroutine_definitions:
-            if j.execution_part is None:
-                continue
-            if (i.name.name, j.name.name) not in cfg.entry_points:
-                continue
-            candidates.append(j)
-
-    for j in candidates:
-        print(f"Building SDFG {j.name.name}")
-        ast2sdfg = AST_translator(__file__,
-                                  multiple_sdfgs=False,
-                                  startpoint=j,
-                                  sdfg_path=sdfgs_dir,
-                                  normalize_offsets=normalize_offsets,
-                                  do_not_make_internal_variables_argument=True)
-        sdfg = SDFG(j.name.name)
-        ast2sdfg.functions_and_subroutines = functions_and_subroutines_builder.names
-        ast2sdfg.structures = program.structures
-        ast2sdfg.placeholders = program.placeholders
-        ast2sdfg.placeholders_offsets = program.placeholders_offsets
-        ast2sdfg.actual_offsets_per_sdfg[sdfg] = {}
-        ast2sdfg.top_level = program
-        ast2sdfg.globalsdfg = sdfg
-        ast2sdfg.translate(program, sdfg, sdfg)
-        from dace.transformation.pass_pipeline import FixedPointPipeline
-        from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
-        FixedPointPipeline([ScalarToSymbolPromotion()]).apply_pass(sdfg, {})
-        sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_raw_before_intrinsics_full.sdfgz"), compress=True)
-        sdfg.validate()
-        sdfg.apply_transformations_repeated(IntrinsicSDFGTransformation)
-        sdfg.validate()
-        try:
-            sdfg.expand_library_nodes()
-        except:
-            print("Expansion failed for ", sdfg.name)
-            continue
-
-        sdfg.validate()
-        sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_v.sdfgz"), compress=True)
-        sdfg.simplify(verbose=True, validate_all=True)
-        print(f'Saving SDFG {os.path.join(sdfgs_dir, sdfg.name + "_s.sdfgz")}')
-        sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_s.sdfgz"), compress=True)
-        sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_s.sdfg"), compress=False)
-        sdfg.validate()
-        print(f'Compiling SDFG {os.path.join(sdfgs_dir, sdfg.name + "_s.sdfgz")}')
-        sdfg.compile()
-
-    # return sdfg
