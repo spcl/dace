@@ -4,6 +4,7 @@ import dace
 import copy
 from dace import Tuple, properties
 from dace.codegen.common import sym2cpp
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
 from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
@@ -28,6 +29,9 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
     def depends_on(self):
         return set()
 
+    def _get_edges_of_path(self, state: dace.SDFGState, path: List[dace.nodes.Node]) -> List[MultiConnectorEdge]:
+        pass
+
     def _detect_contiguous_memcpy_paths(self, state: dace.SDFGState, node: dace.nodes.MapEntry):
         paths = list()
 
@@ -45,7 +49,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
 
         assert node in state.nodes()
         assert state.exit_node(node) in state.nodes()
-        path_candidates = [e for e in state.all_simple_paths(node, state.exit_node(node), as_edges = True)]
+        path_candidates = [e for e in state.all_simple_paths(node, state.exit_node(node), as_edges = False)]
         print("F1", path_candidates)
         # AN1 -> MapEntry -> Tasklet -> MapExit -> AN2
         # Need to get AN1 and AN2
@@ -104,7 +108,6 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             paths.append([ie] + path_candidate + [oe])
 
         return paths
-
 
     def _detect_contiguous_memset_paths(self, state: dace.SDFGState, node: dace.nodes.MapEntry):
         # All tasklets within the map
@@ -198,36 +201,6 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
 
         return paths
 
-    def _rm_path(self, state: dace.SDFGState, path: List):
-        # Rm edge, collect nodes, if degree is 0, remove node, also rm in and out connectors
-        nodes = set()
-        i = 0
-
-        for e in path:
-            state.remove_edge(e)
-            nodes.add(e.src)
-            nodes.add(e.dst)
-
-            src_conn = e.src_conn
-            dst_conn = e.dst_conn
-
-            if src_conn is not None:
-                e.src.remove_out_connector(src_conn)
-            if dst_conn is not None:
-                e.dst.remove_in_connector(dst_conn)
-            state.sdfg.save(f"c{i}.sdfgz", compress=True)
-            i += 1
-
-        rmed = 1
-        while rmed > 0:
-            rmed = 0
-            for n in nodes:
-                if n in state.nodes() and state.degree(n) == 0:
-                    state.remove_node(n)
-                    rmed += 1
-                    state.sdfg.save(f"c{i}.sdfgz", compress=True)
-                    i += 1
-
     def _get_num_tasklets_within_map(self, state: dace.SDFGState, node: dace.nodes.MapEntry):
         assert node in state.nodes(), f"Map entry {node} not in state {state}"
         assert isinstance(node, dace.nodes.MapEntry), f"Node {node} is not a MapEntry"
@@ -239,7 +212,6 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
     # Need to find out if it is contiguous, this means:
     # The stride==1 dimension is the first one and strides are ascending where the storage is packed
     # or stride==1 dimension is the last one and strides are descending where the storage is packed
-
     def _get_packed_fortran_strides(self, array: dace.data.Array) -> List[int]:
         accum = 1
         strides = []
@@ -268,7 +240,6 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         if verbose:
             print(f"Checking C strides: {strides} vs {array.strides}")
         return tuple(strides) == tuple(array.strides)
-
 
     # let's say arrays strides are [1, N, M*N]
     # then the expression we have needs to cover whole first dimension X-1 if it is not 1 in dimension X
@@ -300,7 +271,6 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                 return True
 
         return True
-
 
     def _get_write_begin_and_length(self, state: dace.SDFGState, map_entry: dace.nodes.MapEntry, tasklet: dace.nodes.Tasklet, verbose=True):
         range_list = {dace.symbolic.symbol(p): (b, e, s) for (p, (b, e, s)) in zip(map_entry.map.params, map_entry.map.range)}
@@ -407,6 +377,32 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         for memcpy_path in memcpy_paths:
             print(f"\t MemPath: {memcpy_path}")
 
+        # Map entry and exit are always the same
+        map_entry = memcpy_paths[0][0].dst
+        map_exit = memcpy_paths[0][2].dst
+
+        joined_edges = set()
+        for memcpy_path in memcpy_paths:
+            for e in memcpy_path:
+                joined_edges.add(e)
+
+        for i, e in enumerate(joined_edges):
+            if e in state.edges():
+                print(True, "|", e)
+            else:
+                print(False, "|", e)
+                print("\t", e.dst in state.nodes(), "|", e.dst)
+                print("\t", e.src in state.nodes(), "|", e.src)
+                ees = {ee for ee in state.edges() if ee.src == e.src and ee.dst == e.dst}
+                print(ees)
+                print(e == ees.pop())
+
+        for i, e in enumerate(joined_edges):
+            state.sdfg.save(f"ya{i}.sdfgz")
+            assert e in state.edges(), f"{e} not in {state.edges()}"
+            state.remove_edge(e)
+            state.sdfg.save(f"xa{i}.sdfgz")
+
         for memcpy_path in memcpy_paths:
             src_access_node = memcpy_path[0].src
             map_entry = memcpy_path[0].dst
@@ -439,17 +435,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             # We can now remove the memcpy path
             dyn_inputs = {ie.dst_conn for ie in state.in_edges(map_entry) if not ie.dst_conn.startswith("IN_")}
             in_edges = state.in_edges(map_entry)
-            self._rm_path(state, memcpy_path)
 
-            if map_entry in state.nodes() and state.out_degree(map_entry) == 0:
-                state.remove_node(map_entry)
-            if map_exit in state.nodes() and state.in_degree(map_exit) == 0:
-                state.remove_node(map_exit)
-            #Remove left over nodes
-            for n in state.nodes():
-                if state.degree(n) == 0:
-                    state.remove_node(n)
-            state.validate()
 
             # If src / dst not in the graph anymore, add new ones
             if src_access_node not in state.nodes():
@@ -463,7 +449,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
 
             # Add a new memcpy tasklet
             tasklet = CopyLibraryNode(
-                name=f"memcpy_{new_src_access_node.data}_{new_dst_access_node.data}_{self.rmid}",
+                name=f"copyLib_{new_src_access_node.data}_{new_dst_access_node.data}_{self.rmid}",
             )
             state.add_node(tasklet)
             self.rmid += 1
@@ -480,6 +466,10 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                     tasklet.add_in_connector(ie.dst_conn)
             
             rmed_count += 1
+
+        for n in state.nodes():
+            if state.degree(n) == 0:
+                state.remove_node(n)
 
         return rmed_count
 
@@ -560,7 +550,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
 
             # Add a new memset tasklet
             tasklet = MemsetLibraryNode(
-                name=f"memset_0_{dst_access_node.data}_{self.rmid}",
+                name=f"memsetLib_{dst_access_node.data}_{self.rmid}",
             )
             tasklet.add_out_connector("_out")
             state.add_node(tasklet)
@@ -582,7 +572,6 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             if self.rmid == 4:
                 raise Exception("UWU")
         return rmed_count
-
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_res: Dict) -> Dict[int, Dict[dace.SDFGState, Set[dace.SDFGState]]]:
         num_rmed_memcpies = 1
