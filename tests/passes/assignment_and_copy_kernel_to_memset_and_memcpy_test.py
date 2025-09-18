@@ -202,6 +202,7 @@ def test_simple_memcpy():
     sdfg.validate()
     AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
     sdfg.validate()
+    sdfg.save("s1.sdfg")
     assert _get_num_memcpy_library_nodes(sdfg) == 1, "Expected 1 memcpy library node"
     assert _get_num_memset_library_nodes(sdfg) == 0, "Expected 0 memset library nodes"
 
@@ -211,6 +212,7 @@ def test_simple_memcpy():
     sdfg(A_IN=A_IN, A_OUT=A_OUT)
 
     assert numpy.allclose(A_IN, A_OUT), "A_OUT does not match A_IN in simple memcpy"
+    raise Exception("uwu")
 
 
 def test_simple_memset():
@@ -368,9 +370,9 @@ def _test_mixed_overapprox():
 
 if __name__ == "__main__":
     # Run tests manually without pytest
-    #test_simple_memcpy()
+    test_simple_memcpy()
     #test_simple_memset()
-    test_multi_memcpy()
+    #test_multi_memcpy()
     #test_multi_memset()
     #test_multi_mixed()
     #test_simple_with_extra_computation()
