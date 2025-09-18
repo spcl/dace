@@ -1,7 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import copy
-import os
 import sys
 import warnings
 from copy import deepcopy as dpcp
@@ -11,7 +10,7 @@ from typing import List, Optional, Set, Dict, Tuple, Union, Iterable
 import networkx as nx
 from fparser.api import get_reader
 from fparser.two.C99Preprocessor import CPP_CLASS_NAMES
-from fparser.two.Fortran2003 import Program, Module_Stmt, Include_Stmt, Subroutine_Stmt, Function_Stmt, Interface_Stmt, \
+from fparser.two.Fortran2003 import Program, Include_Stmt, Subroutine_Stmt, Function_Stmt, Interface_Stmt, \
     Execution_Part, Component_Decl
 from fparser.two.parser import ParserFactory
 from fparser.two.utils import Base, walk, FortranSyntaxError
@@ -26,8 +25,8 @@ from dace import dtypes
 from dace import symbolic as sym
 from dace.data import Scalar, Structure
 from dace.frontend.fortran import ast_utils
-from dace.frontend.fortran.ast_desugaring import ENTRY_POINT_OBJECT_CLASSES, NAMED_STMTS_OF_INTEREST_CLASSES, SPEC, \
-    find_name_of_stmt, find_name_of_node, append_children, correct_for_function_calls, keep_sorted_used_modules, \
+from dace.frontend.fortran.ast_desugaring import find_name_of_node, append_children, correct_for_function_calls, \
+    keep_sorted_used_modules, \
     deconstruct_enums, deconstruct_interface_calls, deconstruct_procedure_calls, prune_unused_objects, \
     deconstruct_associations, consolidate_uses, prune_branches, const_eval_nodes, lower_identifier_names, \
     inject_const_evals, remove_access_and_bind_statements, ident_spec, ConstTypeInjection, ConstInjection, \
@@ -35,6 +34,8 @@ from dace.frontend.fortran.ast_desugaring import ENTRY_POINT_OBJECT_CLASSES, NAM
     assign_globally_unique_subprogram_names, convert_data_statements_into_assignments, \
     deconstruct_statement_functions, assign_globally_unique_variable_names, deconstuct_goto_statements, remove_self, \
     prune_coarsely, consolidate_global_data_into_arg, identifier_specs
+from dace.frontend.fortran.ast_desugaring_v2.types import SPEC
+from dace.frontend.fortran.ast_desugaring_v2.utils import NAMED_STMTS_OF_INTEREST_CLASSES, ENTRY_POINT_OBJECT_CLASSES
 from dace.frontend.fortran.ast_internal_classes import FNode, Main_Program_Node, Name_Node, Var_Decl_Node
 from dace.frontend.fortran.ast_internal_classes import Program_Node
 from dace.frontend.fortran.ast_utils import children_of_type, mywalk, atmost_one

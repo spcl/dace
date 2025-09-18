@@ -5,8 +5,7 @@ import operator
 import re
 import sys
 from copy import copy, deepcopy
-from dataclasses import dataclass
-from typing import Union, Tuple, Dict, Optional, List, Iterable, Set, Type, Any, Generator
+from typing import Union, Tuple, Dict, Optional, List, Iterable, Set, Type, Generator
 
 import networkx as nx
 import numpy as np
@@ -23,183 +22,27 @@ from fparser.two.Fortran2003 import Program_Stmt, Module_Stmt, Function_Stmt, Su
     Associate_Construct, Subscript_Triplet, End_Function_Stmt, End_Subroutine_Stmt, Module_Subprogram_Part, \
     Enumerator_List, Actual_Arg_Spec_List, Only_List, Dummy_Arg_List, Dummy_Arg_Name_List, Data_Stmt_Object_List, \
     Data_Stmt_Value_List, Section_Subscript_List, Char_Selector, Data_Pointer_Object, Explicit_Shape_Spec, \
-    Component_Initialization, Subroutine_Body, Function_Body, If_Then_Stmt, Else_If_Stmt, Else_Stmt, If_Construct, \
+    Component_Initialization, If_Then_Stmt, Else_If_Stmt, Else_Stmt, If_Construct, \
     Level_4_Expr, Level_5_Expr, Hex_Constant, Add_Operand, Mult_Operand, Assignment_Stmt, Loop_Control, \
     Equivalence_Stmt, If_Stmt, Or_Operand, End_If_Stmt, Save_Stmt, Contains_Stmt, Implicit_Part, End_Module_Stmt, \
     Data_Stmt, Data_Stmt_Set, Data_Stmt_Value, Block_Nonlabel_Do_Construct, Block_Label_Do_Construct, Label_Do_Stmt, \
     Nonlabel_Do_Stmt, End_Do_Stmt, Return_Stmt, Write_Stmt, Data_Component_Def_Stmt, Exit_Stmt, Allocate_Stmt, \
     Deallocate_Stmt, Close_Stmt, Goto_Stmt, Continue_Stmt, Format_Stmt, Stmt_Function_Stmt, Internal_Subprogram_Part, \
-    Private_Components_Stmt, Generic_Spec, Language_Binding_Spec, Type_Attr_Spec, Suffix, Proc_Component_Def_Stmt, \
-    Proc_Decl, End_Type_Stmt, End_Interface_Stmt, Procedure_Declaration_Stmt, Pointer_Assignment_Stmt, Cycle_Stmt, \
+    Private_Components_Stmt, Generic_Spec, Language_Binding_Spec, Type_Attr_Spec, Suffix, Proc_Decl, End_Type_Stmt, \
+    End_Interface_Stmt, Procedure_Declaration_Stmt, Pointer_Assignment_Stmt, Cycle_Stmt, \
     Equiv_Operand, Case_Value_Range_List
 from fparser.two.Fortran2008 import Procedure_Stmt, Type_Declaration_Stmt, Error_Stop_Stmt
 from fparser.two.utils import Base, walk, BinaryOpBase, UnaryOpBase, NumberBase, BlockBase
 
+from dace.frontend.fortran.ast_desugaring_v2.types import NUMPY_TYPES, NUMPY_INTS_TYPES, NUMPY_REALS_TYPES, NUMPY_INTS, \
+    NUMPY_REALS, TYPE_SPEC, SPEC, SPEC_TABLE, ConstTypeInjection, ConstInjection, ConstInstanceInjection
+from dace.frontend.fortran.ast_desugaring_v2.utils import NAMED_STMTS_OF_INTEREST_TYPES, \
+    NAMED_STMTS_OF_INTEREST_CLASSES, SCOPE_OBJECT_TYPES, find_name_of_stmt, find_scope_ancestor, lineage, \
+    find_named_ancestor, find_name_of_node, append_children, remove_self, replace_node, set_children, prepend_children, \
+    remove_children, copy_fparser_node, _get_module_or_program_parts
 from dace.frontend.fortran.ast_utils import singular, children_of_type, atmost_one
 
-ENTRY_POINT_OBJECT_TYPES = Union[Main_Program, Subroutine_Subprogram, Function_Subprogram]
-ENTRY_POINT_OBJECT_CLASSES = (Main_Program, Subroutine_Subprogram, Function_Subprogram)
-SCOPE_OBJECT_TYPES = Union[Main_Program, Module, Function_Subprogram, Subroutine_Subprogram, Derived_Type_Def,
-                           Interface_Block, Subroutine_Body, Function_Body, Stmt_Function_Stmt]
-SCOPE_OBJECT_CLASSES = (Main_Program, Module, Function_Subprogram, Subroutine_Subprogram, Derived_Type_Def,
-                        Interface_Block, Subroutine_Body, Function_Body, Stmt_Function_Stmt)
-NAMED_STMTS_OF_INTEREST_TYPES = Union[Program_Stmt, Module_Stmt, Function_Stmt, Subroutine_Stmt, Derived_Type_Stmt,
-                                      Component_Decl, Entity_Decl, Specific_Binding, Generic_Binding, Interface_Stmt,
-                                      Stmt_Function_Stmt, Proc_Component_Def_Stmt, Proc_Decl]
-NAMED_STMTS_OF_INTEREST_CLASSES = (Program_Stmt, Module_Stmt, Function_Stmt, Subroutine_Stmt, Derived_Type_Stmt,
-                                   Component_Decl, Entity_Decl, Specific_Binding, Generic_Binding, Interface_Stmt,
-                                   Stmt_Function_Stmt, Proc_Component_Def_Stmt, Proc_Decl)
-SPEC = Tuple[str, ...]
-SPEC_TABLE = Dict[SPEC, NAMED_STMTS_OF_INTEREST_TYPES]
-
 INTERFACE_NAMESPACE = '__interface__'
-
-
-class TYPE_SPEC:
-    NO_ATTRS = ''
-
-    def __init__(self, spec: Union[str, SPEC], attrs: str = NO_ATTRS, is_arg: bool = False):
-        if isinstance(spec, str):
-            spec = (spec, )
-        self.spec: SPEC = spec
-        self.shape: Tuple[str, ...] = self._parse_shape(attrs)
-        self.optional: bool = 'OPTIONAL' in attrs
-        self.pointer: bool = 'POINTER' in attrs
-        self.inp: bool = 'INTENT(IN)' in attrs or 'INTENT(INOUT)' in attrs
-        self.out: bool = 'INTENT(OUT)' in attrs or 'INTENT(INOUT)' in attrs
-        self.alloc: bool = 'ALLOCATABLE' in attrs
-        self.const: bool = 'PARAMETER' in attrs
-        self.keyword: Optional[str] = None
-        if is_arg and not self.inp and not self.out:
-            self.inp, self.out = True, True
-
-    @staticmethod
-    def _parse_shape(attrs: str) -> Tuple[str, ...]:
-        if 'DIMENSION' not in attrs:
-            return tuple()
-        parts = []
-        dims = attrs.split('DIMENSION')[1]
-        assert dims[0] == '('
-        paren_count, part_start = 1, 1
-        for i in range(1, len(dims)):
-            if dims[i] == '(':
-                paren_count += 1
-            elif dims[i] == ')':
-                paren_count -= 1
-                if paren_count == 0:
-                    parts.append(dims[part_start:i])
-                    break
-            elif dims[i] == ',':
-                if paren_count == 1:
-                    parts.append(dims[part_start:i])
-                    part_start = i + 1
-        return tuple(p.strip().lower() for p in parts)
-
-    def __repr__(self):
-        attrs = []
-        if self.pointer:
-            attrs.append("*")
-        if self.shape:
-            attrs.append(f"shape={self.shape}")
-        if self.optional:
-            attrs.append("optional")
-        if not attrs:
-            return f"{self.spec}"
-        return f"{self.spec}[{' | '.join(attrs)}]"
-
-    def to_decl(self, var: str):
-        TYPE_MAP = {
-            'INTEGER1': 'INTEGER(kind=1)',
-            'INTEGER2': 'INTEGER(kind=2)',
-            'INTEGER4': 'INTEGER(kind=4)',
-            'INTEGER8': 'INTEGER(kind=8)',
-            'INTEGER': 'INTEGER(kind=4)',
-            'REAL4': 'REAL(kind=4)',
-            'REAL8': 'REAL(kind=8)',
-            'REAL': 'REAL(kind=4)',
-            'LOGICAL': 'LOGICAL',
-        }
-        typ = self.spec[-1]
-        typ = TYPE_MAP.get(typ, f"type({typ})")
-
-        bits: List[str] = [typ]
-        if self.alloc:
-            bits.append('allocatable')
-        if self.optional:
-            bits.append('optional')
-        if self.inp and self.out:
-            bits.append('intent(inout)')
-        elif self.inp:
-            bits.append('intent(in)')
-        elif self.out:
-            bits.append('intent(out)')
-        if self.const:
-            bits.append('parameter')
-        bits: str = ', '.join(bits)
-        shape: str = ', '.join(self.shape) if self.shape else ''
-        shape = f"({shape})" if shape else ''
-        return f"{bits} :: {var}{shape}"
-
-
-def find_name_of_stmt(node: NAMED_STMTS_OF_INTEREST_TYPES) -> Optional[str]:
-    """Find the name of the statement if it has one. For anonymous blocks, return `None`."""
-    if isinstance(node, Specific_Binding):
-        # Ref: https://github.com/stfc/fparser/blob/8c870f84edbf1a24dfbc886e2f7226d1b158d50b/src/fparser/two/Fortran2003.py#L2504
-        _, _, _, bname, _ = node.children
-        name = bname
-    elif isinstance(node, Generic_Binding):
-        _, bname, _ = node.children
-        name = bname
-    elif isinstance(node, Interface_Stmt):
-        name, = node.children
-        if name == 'ABSTRACT':
-            return None
-    elif isinstance(node, Proc_Component_Def_Stmt):
-        tgt, attrs, plist = node.children
-        assert len(plist.children) == 1, \
-            f"Only one procedure per statement is accepted due to Fparser bug. Break down the line: {node}"
-        name = singular(children_of_type(plist, Name))
-    else:
-        # TODO: Test out other type specific ways of finding names.
-        name = singular(children_of_type(node, Name))
-    if name:
-        name = f"{name}"
-    return name
-
-
-def find_name_of_node(node: Base) -> Optional[str]:
-    """Find the name of the general node if it has one. For anonymous blocks, return `None`."""
-    if isinstance(node, NAMED_STMTS_OF_INTEREST_CLASSES):
-        return find_name_of_stmt(node)
-    stmt = atmost_one(children_of_type(node, NAMED_STMTS_OF_INTEREST_CLASSES))
-    if not stmt:
-        return None
-    return find_name_of_stmt(stmt)
-
-
-def find_scope_ancestor(node: Base) -> Optional[SCOPE_OBJECT_TYPES]:
-    anc = node.parent
-    while anc and not isinstance(anc, SCOPE_OBJECT_CLASSES):
-        anc = anc.parent
-    return anc
-
-
-def find_named_ancestor(node: Base) -> Optional[NAMED_STMTS_OF_INTEREST_TYPES]:
-    anc = find_scope_ancestor(node)
-    if not anc:
-        return None
-    return atmost_one(children_of_type(anc, NAMED_STMTS_OF_INTEREST_CLASSES))
-
-
-def lineage(anc: Base, des: Base) -> Optional[Tuple[Base, ...]]:
-    if anc is des:
-        return (anc, )
-    if not des.parent:
-        return None
-    lin = lineage(anc, des.parent)
-    if not lin:
-        return None
-    return lin + (des, )
 
 
 def search_scope_spec(node: Base) -> Optional[SPEC]:
@@ -555,12 +398,6 @@ INTR_FNS = {
     'TANH': np.tanh,
     'XOR': np.logical_xor,
 }
-
-NUMPY_INTS_TYPES = Union[np.int8, np.int16, np.int32, np.int64]
-NUMPY_INTS = (np.int8, np.int16, np.int32, np.int64)
-NUMPY_REALS = (np.float32, np.float64)
-NUMPY_REALS_TYPES = Union[np.float32, np.float64]
-NUMPY_TYPES = Union[NUMPY_INTS_TYPES, NUMPY_REALS_TYPES, np.bool_]
 
 
 def _count_bytes(t: Type[NUMPY_TYPES]) -> int:
@@ -1013,68 +850,6 @@ def interface_specs(ast: Program, alias_map: SPEC_TABLE) -> Dict[SPEC, Tuple[SPE
                 iface_map[ifspec] = tuple()
 
     return iface_map
-
-
-def set_children(par: Base, children: Iterable[Union[Base, str]]):
-    assert hasattr(par, 'content') != hasattr(par, 'items')
-    if hasattr(par, 'items'):
-        par.items = tuple(children)
-    elif hasattr(par, 'content'):
-        if not children:
-            remove_self(par)
-        else:
-            par.content = list(children)
-    if children:
-        _reparent_children(par)
-
-
-def replace_node(node: Base, subst: Union[None, Base, Iterable[Base]]):
-    # A lot of hacky stuff to make sure that the new nodes are not just the same objects over and over.
-    par = node.parent
-    repls = []
-    for c in par.children:
-        if c is not node:
-            repls.append(c)
-            continue
-        if subst is None or isinstance(subst, Base):
-            subst = [subst]
-        repls.extend(subst)
-    if isinstance(par, Loop_Control) and isinstance(subst, Base):
-        _, cntexpr, _, _ = par.children
-        if cntexpr:
-            loopvar, looprange = cntexpr
-            for i in range(len(looprange)):
-                if looprange[i] is node:
-                    looprange[i] = subst
-                    subst.parent = par
-    set_children(par, repls)
-
-
-def append_children(par: Base, children: Union[Base, List[Base]]):
-    if isinstance(children, Base):
-        children = [children]
-    set_children(par, list(par.children) + children)
-
-
-def prepend_children(par: Base, children: Union[Base, List[Base]]):
-    if isinstance(children, Base):
-        children = [children]
-    set_children(par, children + list(par.children))
-
-
-def remove_children(par: Base, children: Union[Base, List[Base]]):
-    if isinstance(children, Base):
-        children = [children]
-    cids = {id(c) for c in children}
-    repl = [c for c in par.children if id(c) not in cids]
-    set_children(par, repl)
-
-
-def remove_self(nodes: Union[Base, List[Base]]):
-    if isinstance(nodes, Base):
-        nodes = [nodes]
-    for n in nodes:
-        remove_children(n.parent, n)
 
 
 def correct_for_function_calls(ast: Program):
@@ -1712,13 +1487,6 @@ def deconstruct_procedure_calls(ast: Program) -> Program:
     for tbp in walk(ast, Type_Bound_Procedure_Part):
         remove_self(tbp)
     return ast
-
-
-def _reparent_children(node: Base):
-    """Make `node` a parent of all its children, in case it isn't already."""
-    for c in node.children:
-        if isinstance(c, Base):
-            c.parent = node
 
 
 def prune_coarsely(ast: Program, keepers: Iterable[SPEC]) -> Program:
@@ -2987,30 +2755,6 @@ def assign_globally_unique_variable_names(ast: Program, keepers: Set[Union[str, 
     return ast
 
 
-def _get_module_or_program_parts(mod: Union[Module, Main_Program]) \
-        -> Tuple[
-            Union[Module_Stmt, Program_Stmt],
-            Optional[Specification_Part],
-            Optional[Execution_Part],
-            Optional[Module_Subprogram_Part],
-        ]:
-    # There must exist a module statment.
-    stmt = singular(children_of_type(mod, Module_Stmt if isinstance(mod, Module) else Program_Stmt))
-    # There may or may not exist a specification part.
-    spec = list(children_of_type(mod, Specification_Part))
-    assert len(spec) <= 1, f"A module/program cannot have more than one specification parts, found {spec} in {mod}"
-    spec = spec[0] if spec else None
-    # There may or may not exist an execution part.
-    expart = list(children_of_type(mod, Execution_Part))
-    assert len(expart) <= 1, f"A module/program cannot have more than one execution parts, found {spec} in {mod}"
-    expart = expart[0] if expart else None
-    # There may or may not exist a subprogram part.
-    subp = list(children_of_type(mod, Module_Subprogram_Part))
-    assert len(subp) <= 1, f"A module/program cannot have more than one subprogram parts, found {subp} in {mod}"
-    subp = subp[0] if subp else None
-    return stmt, spec, expart, subp
-
-
 def consolidate_uses(ast: Program, alias_map: Optional[SPEC_TABLE] = None) -> Program:
     alias_map = alias_map or alias_specs(ast)
     for sp in reversed(walk(ast, Specification_Part)):
@@ -3204,25 +2948,6 @@ def const_eval_nodes(ast: Program) -> Program:
             _const_eval_node(nm)
 
     return ast
-
-
-@dataclass
-class ConstTypeInjection:
-    scope_spec: Optional[SPEC]  # Only replace within this scope object.
-    type_spec: SPEC  # The root config derived type's spec (w.r.t. where it is defined)
-    component_spec: SPEC  # A tuple of strings that identifies the targeted component
-    value: Any  # Literal value to substitue with. The injected literal's type will match the type of the original.
-
-
-@dataclass
-class ConstInstanceInjection:
-    scope_spec: Optional[SPEC]  # Only replace within this scope object.
-    root_spec: SPEC  # The root config object's spec (w.r.t. where it is defined)
-    component_spec: SPEC  # A tuple of strings that identifies the targeted component
-    value: Any  # Literal value to substitue with. The injected literal's type will match the type of the original.
-
-
-ConstInjection = Union[ConstTypeInjection, ConstInstanceInjection]
 
 
 def _val_2_lit(val: str, type_spec: SPEC) -> LITERAL_TYPES:
@@ -4074,16 +3799,3 @@ def deconstuct_goto_statements(ast: Program) -> Program:
         replace_node(ifc, [Assignment_Stmt(f"{goto_var} = .false."), ifc])
 
     return ast
-
-
-def copy_fparser_node(n: Base) -> Base:
-    try:
-        nstr = n.tofortran()
-        if isinstance(n, BlockBase):
-            x = Base.__new__(type(n), get_reader(nstr))
-        else:
-            x = Base.__new__(type(n), nstr)
-        assert x is not None
-        return x
-    except (RuntimeError, AssertionError):
-        return deepcopy(n)
