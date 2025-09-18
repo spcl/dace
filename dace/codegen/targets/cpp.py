@@ -393,6 +393,7 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
             defined_type = DefinedType.Scalar
             if is_write is False and not isinstance(desc, (data.View, data.ContainerArray)):
                 typedef = make_const(typedef)
+            if not isinstance(desc, (data.View, data.ContainerArray)):
                 ref = '&'
         else:
             # constexpr arrays
@@ -449,7 +450,7 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
         ref = '&'
     else:
         # Cast as necessary
-        if ref == '&' and offset_expr:
+        if ref == '&' and offset_expr and isinstance(desc, (data.View, data.ContainerArray)):
             ref = ''
             offset_expr = ''
         # NOTE: Structures are misunderstood as pointers to scalar in `make_ptr_vecor_cast`.
