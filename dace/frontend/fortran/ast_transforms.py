@@ -10,7 +10,7 @@ import sympy as sp
 
 from dace import symbolic as sym
 from dace.frontend.fortran import ast_internal_classes, ast_utils
-from dace.frontend.fortran.ast_desugaring import ConstTypeInjection
+from dace.frontend.fortran.ast_desugaring_v2.types import ConstTypeInjection
 from dace.frontend.fortran.ast_internal_classes import Var_Decl_Node, Name_Node, Int_Literal_Node, Data_Ref_Node, \
     Execution_Part_Node, Array_Subscript_Node, Bool_Literal_Node
 from dace.frontend.fortran.ast_utils import mywalk, iter_fields, iter_attributes, TempName, singular, atmost_one, \

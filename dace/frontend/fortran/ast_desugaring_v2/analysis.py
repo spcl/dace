@@ -6,9 +6,9 @@ import sys
 from copy import copy
 from typing import Optional, Tuple, List, Dict, Union, Set
 
-import numpy as np
 import fparser.two.Fortran2003 as f03
-from fparser.two.Fortran2008 import Procedure_Stmt, Type_Declaration_Stmt, Error_Stop_Stmt
+import fparser.two.Fortran2008 as f08
+import numpy as np
 from fparser.two.utils import Base, walk, BinaryOpBase, UnaryOpBase
 
 from . import types
@@ -793,10 +793,10 @@ def interface_specs(ast: f03.Program, alias_map: types.SPEC_TABLE) -> Dict[types
         scope_spec = find_scope_spec(ib)
         ifspec = ident_spec(ifs)
         fns = []
-        for fn in walk(ib, (f03.Function_Stmt, f03.Subroutine_Stmt, Procedure_Stmt)):
+        for fn in walk(ib, (f03.Function_Stmt, f03.Subroutine_Stmt, f03.Procedure_Stmt)):
             if isinstance(fn, (f03.Function_Stmt, f03.Subroutine_Stmt)):
                 fns.append(utils.find_name_of_stmt(fn))
-            elif isinstance(fn, Procedure_Stmt):
+            elif isinstance(fn, f03.Procedure_Stmt):
                 fns.extend(nm.string for nm in walk(fn, f03.Name))
         fn_specs = tuple(find_real_ident_spec(f, scope_spec, alias_map) for f in fns)
         assert ifspec not in fn_specs
@@ -806,7 +806,7 @@ def interface_specs(ast: f03.Program, alias_map: types.SPEC_TABLE) -> Dict[types
         if utils.find_name_of_stmt(ifs): continue
         ib = ifs.parent
         scope_spec = find_scope_spec(ib)
-        assert not walk(ib, Procedure_Stmt)
+        assert not walk(ib, f03.Procedure_Stmt)
         for fn in walk(ib, (f03.Function_Stmt, f03.Subroutine_Stmt)):
             fn_name = utils.find_name_of_stmt(fn)
             ifspec = ident_spec(fn)
@@ -1151,7 +1151,7 @@ def _track_local_consts(node: Union[Base, List[Base]], alias_map: types.SPEC_TAB
         knowns: Dict[types.SPEC, types.LITERAL_TYPES] = {}
         if scpart:
             for tdcls in scpart.children:
-                if not isinstance(tdcls, Type_Declaration_Stmt):
+                if not isinstance(tdcls, f03.Type_Declaration_Stmt):
                     continue
                 _, _, edcls = tdcls.children
                 edcls = edcls.children if edcls else tuple()
@@ -1304,8 +1304,8 @@ def _track_local_consts(node: Union[Base, List[Base]], alias_map: types.SPEC_TAB
             _integrate_subresults({}, {loop_var_spec})
     elif isinstance(
             node, (f03.Name, *types.LITERAL_CLASSES, f03.Char_Literal_Constant, f03.Data_Ref, f03.Part_Ref,
-                   f03.Return_Stmt, f03.Write_Stmt, Error_Stop_Stmt, f03.Exit_Stmt, f03.Actual_Arg_Spec, f03.Write_Stmt,
-                   f03.Close_Stmt, f03.Goto_Stmt, f03.Continue_Stmt, f03.Format_Stmt, f03.Cycle_Stmt)):
+                   f03.Return_Stmt, f03.Write_Stmt, f08.Error_Stop_Stmt, f03.Exit_Stmt, f03.Actual_Arg_Spec,
+                   f03.Write_Stmt, f03.Close_Stmt, f03.Goto_Stmt, f03.Continue_Stmt, f03.Format_Stmt, f03.Cycle_Stmt)):
         # These don't modify variables or give any new information.
         pass
     elif isinstance(node, f03.Allocate_Stmt):

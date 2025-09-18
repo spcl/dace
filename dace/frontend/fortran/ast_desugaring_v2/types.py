@@ -4,8 +4,7 @@ from dataclasses import dataclass
 from typing import Union, Tuple, Dict, Optional, List, Any, Type
 
 import numpy as np
-from fparser.two.Fortran2003 import Real_Literal_Constant, Signed_Real_Literal_Constant, Int_Literal_Constant, \
-    Signed_Int_Literal_Constant, Logical_Literal_Constant
+import fparser.two.Fortran2003 as f03
 
 # Type Aliases for fparser node types are defined in other modules where they are used.
 # This file is for our own custom types.
@@ -26,10 +25,10 @@ NUMPY_REALS_TYPES = Union[np.float32, np.float64]
 NUMPY_TYPES = Union[NUMPY_INTS_TYPES, NUMPY_REALS_TYPES, np.bool_]
 
 # Type Aliases for fparser literal nodes.
-LITERAL_TYPES = Union[Real_Literal_Constant, Signed_Real_Literal_Constant, Int_Literal_Constant,
-                      Signed_Int_Literal_Constant, Logical_Literal_Constant]
-LITERAL_CLASSES = (Real_Literal_Constant, Signed_Real_Literal_Constant, Int_Literal_Constant,
-                   Signed_Int_Literal_Constant, Logical_Literal_Constant)
+LITERAL_TYPES = Union[f03.Real_Literal_Constant, f03.Signed_Real_Literal_Constant, f03.Int_Literal_Constant,
+                      f03.Signed_Int_Literal_Constant, f03.Logical_Literal_Constant]
+LITERAL_CLASSES = (f03.Real_Literal_Constant, f03.Signed_Real_Literal_Constant, f03.Int_Literal_Constant,
+                   f03.Signed_Int_Literal_Constant, f03.Logical_Literal_Constant)
 
 
 class TYPE_SPEC:
@@ -181,13 +180,13 @@ def numpy_type_to_literal(val: NUMPY_TYPES) -> LITERAL_TYPES:
     :return: An fparser node representing the literal.
     """
     if isinstance(val, np.bool_):
-        val = Logical_Literal_Constant('.true.' if val else '.false.')
+        val = f03.Logical_Literal_Constant('.true.' if val else '.false.')
     elif isinstance(val, NUMPY_INTS):
         bytez = _count_bytes(type(val))
         if val < 0:
-            val = Signed_Int_Literal_Constant(f"{val}" if bytez == 4 else f"{val}_{bytez}")
+            val = f03.Signed_Int_Literal_Constant(f"{val}" if bytez == 4 else f"{val}_{bytez}")
         else:
-            val = Int_Literal_Constant(f"{val}" if bytez == 4 else f"{val}_{bytez}")
+            val = f03.Int_Literal_Constant(f"{val}" if bytez == 4 else f"{val}_{bytez}")
     elif isinstance(val, NUMPY_REALS):
         bytez = _count_bytes(type(val))
         valstr = str(val)
@@ -197,9 +196,9 @@ def numpy_type_to_literal(val: NUMPY_TYPES) -> LITERAL_TYPES:
             else:
                 valstr = f"{valstr}D0"
         if val < 0:
-            val = Signed_Real_Literal_Constant(valstr)
+            val = f03.Signed_Real_Literal_Constant(valstr)
         else:
-            val = Real_Literal_Constant(valstr)
+            val = f03.Real_Literal_Constant(valstr)
     return val
 
 
