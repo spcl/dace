@@ -594,17 +594,10 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                 new_dst_access_node = dst_access_node
 
             # Add a new memset tasklet
-            tasklet = state.add_tasklet(
-                name=f"memset_0_{dst_access_node.data}_{self.rmid}",
-                inputs=dyn_inputs,
-                outputs={"_out"},
-                code=f"cudaMemsetAsync(_out, 0, {sym2cpp(copy_length)} * sizeof({dst_desc.dtype.ctype}), nullptr);",
-                language=dace.Language.CPP,
-                code_global=f"#include <cuda_runtime.h>\n"
-            )
             tasklet = MemsetLibraryNode(
                 name=f"memset_0_{dst_access_node.data}_{self.rmid}",
             )
+            tasklet.add_out_connector("_out")
             state.add_node(tasklet)
             self.rmid += 1
             state.add_edge(tasklet, "_out", new_dst_access_node, None,

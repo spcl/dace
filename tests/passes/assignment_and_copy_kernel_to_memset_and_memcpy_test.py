@@ -201,9 +201,6 @@ def test_simple_memcpy():
     sdfg = _get_sdfg(1, 0, False, False, False)
     sdfg.validate()
     AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
-    sdfg.save("x1.sdfg")
-    sdfg.validate()
-    sdfg.expand_library_nodes()
     sdfg.validate()
     assert _get_num_memcpy_library_nodes(sdfg) == 1, "Expected 1 memcpy library node"
     assert _get_num_memset_library_nodes(sdfg) == 0, "Expected 0 memset library nodes"
