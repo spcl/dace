@@ -5,8 +5,8 @@ from fparser.two.Fortran2003 import Program
 from fparser.two.parser import ParserFactory
 from fparser.two.utils import walk
 
-from dace.frontend.fortran.ast_desugaring import prune_unused_objects
 from dace.frontend.fortran.ast_desugaring_v2.analysis import ident_spec
+from dace.frontend.fortran.ast_desugaring_v2.pruning import prune_unused_objects
 from dace.frontend.fortran.ast_desugaring_v2.types import SPEC
 from dace.frontend.fortran.ast_desugaring_v2.utils import ENTRY_POINT_OBJECT_CLASSES, NAMED_STMTS_OF_INTEREST_CLASSES, \
     find_name_of_node

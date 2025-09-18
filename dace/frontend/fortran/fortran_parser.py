@@ -26,14 +26,15 @@ from dace import symbolic as sym
 from dace.data import Scalar, Structure
 from dace.frontend.fortran import ast_utils
 from dace.frontend.fortran.ast_desugaring import find_name_of_node, append_children, correct_for_function_calls, \
-    keep_sorted_used_modules, \
-    deconstruct_enums, deconstruct_interface_calls, deconstruct_procedure_calls, prune_unused_objects, \
-    deconstruct_associations, consolidate_uses, prune_branches, const_eval_nodes, lower_identifier_names, \
+    deconstruct_enums, deconstruct_interface_calls, deconstruct_procedure_calls, \
+    deconstruct_associations, const_eval_nodes, lower_identifier_names, \
     inject_const_evals, remove_access_and_bind_statements, ident_spec, ConstTypeInjection, ConstInjection, \
     make_practically_constant_arguments_constants, exploit_locally_constant_variables, \
     assign_globally_unique_subprogram_names, convert_data_statements_into_assignments, \
     deconstruct_statement_functions, assign_globally_unique_variable_names, deconstuct_goto_statements, remove_self, \
-    prune_coarsely, consolidate_global_data_into_arg, identifier_specs
+    consolidate_global_data_into_arg, identifier_specs
+from dace.frontend.fortran.ast_desugaring_v2.pruning import prune_branches, consolidate_uses, prune_unused_objects, \
+    prune_coarsely, keep_sorted_used_modules
 from dace.frontend.fortran.ast_desugaring_v2.types import SPEC
 from dace.frontend.fortran.ast_desugaring_v2.utils import NAMED_STMTS_OF_INTEREST_CLASSES, ENTRY_POINT_OBJECT_CLASSES
 from dace.frontend.fortran.ast_internal_classes import FNode, Main_Program_Node, Name_Node, Var_Decl_Node

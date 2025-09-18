@@ -6,12 +6,13 @@ from fparser.two.parser import ParserFactory
 
 from dace.frontend.fortran.ast_desugaring import correct_for_function_calls, deconstruct_enums, \
     deconstruct_interface_calls, deconstruct_procedure_calls, deconstruct_associations, \
-    assign_globally_unique_subprogram_names, assign_globally_unique_variable_names, prune_branches, \
-    const_eval_nodes, prune_unused_objects, inject_const_evals, ConstTypeInjection, ConstInstanceInjection, \
+    assign_globally_unique_subprogram_names, assign_globally_unique_variable_names, \
+    const_eval_nodes, inject_const_evals, ConstTypeInjection, ConstInstanceInjection, \
     make_practically_constant_arguments_constants, make_practically_constant_global_vars_constants, \
     exploit_locally_constant_variables, create_global_initializers, convert_data_statements_into_assignments, \
     deconstruct_statement_functions, deconstuct_goto_statements, SPEC, remove_access_and_bind_statements, \
     identifier_specs, alias_specs, consolidate_uses, consolidate_global_data_into_arg
+from dace.frontend.fortran.ast_desugaring_v2.pruning import prune_branches, prune_unused_objects
 from dace.frontend.fortran.fortran_parser import construct_full_ast
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
