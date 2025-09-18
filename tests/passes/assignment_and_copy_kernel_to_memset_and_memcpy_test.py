@@ -91,7 +91,7 @@ def _get_sdfg(
                 None,
                 map_entry,
                 f"IN_{in_name}",
-                dace.memlet.Memlet(f"{in_name}[0:{DIM_SIZE}, 0:{DIM_SIZE}]"),
+                dace.memlet.Memlet(f"{in_name}[2:{DIM_SIZE}, 0:{DIM_SIZE}]" if subset_in_first_dim else f"{in_name}[0:{DIM_SIZE}, 0:{DIM_SIZE}]"),
             )
             map_entry.add_in_connector(f"IN_{in_name}")
             map_entry.add_out_connector(f"OUT_{in_name}")
@@ -168,7 +168,7 @@ def _get_sdfg(
             f"OUT_{out_name}",
             state.add_access(out_name),
             None,
-            dace.memlet.Memlet(f"{out_name}[0:{DIM_SIZE}, 0:{DIM_SIZE}]"),
+            dace.memlet.Memlet(f"{out_name}[2:{DIM_SIZE}, 0:{DIM_SIZE}]" if subset_in_first_dim else f"{out_name}[0:{DIM_SIZE}, 0:{DIM_SIZE}]"),
         )
         map_exit.add_in_connector(f"IN_{out_name}")
         map_exit.add_out_connector(f"OUT_{out_name}")
@@ -212,8 +212,6 @@ def test_simple_memcpy():
     sdfg(A_IN=A_IN, A_OUT=A_OUT)
 
     assert numpy.allclose(A_IN, A_OUT), "A_OUT does not match A_IN in simple memcpy"
-    raise Exception("uwu")
-
 
 def test_simple_memset():
     """Single memset test: output should be all zeros."""
@@ -221,7 +219,7 @@ def test_simple_memset():
     AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
     sdfg.save("x2.sdfg")
     assert _get_num_memcpy_library_nodes(sdfg) == 0, "Expected 0 memcpy library nodes"
-    assert _get_num_memset_library_nodes(sdfg) == 1, "Expected 1 memset library node"
+    assert _get_num_memset_library_nodes(sdfg) == 1, "Expected 0 memset library node"
 
     A_IN = numpy.random.rand(DIM_SIZE, DIM_SIZE)
     A_OUT = numpy.zeros_like(A_IN)
@@ -339,12 +337,12 @@ def test_simple_non_zero():
     assert numpy.allclose(A_OUT, 1.0), "A_OUT is not filled with ones in non-zero memset"
 
 
-def _test_mixed_overapprox():
+def test_mixed_overapprox():
     """
     Overapproximation test (currently marked as TODO).
     Checks mixed memcpy and memset with more than one of each.
     """
-    sdfg = _get_sdfg(2, 2, False, False, False)
+    sdfg = _get_sdfg(2, 2, False, False, True)
     AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
 
     assert _get_num_memcpy_library_nodes(sdfg) == 2, "Expected 2 memcpy library nodes"
@@ -359,10 +357,10 @@ def _test_mixed_overapprox():
     D_IN = numpy.random.rand(DIM_SIZE, DIM_SIZE)
     D_OUT = numpy.zeros_like(D_IN)
 
-    sdfg(A_IN=A_OUT, A_OUT=A_OUT, B_IN=B_IN, B_OUT=B_OUT,
+    sdfg(A_IN=A_IN, A_OUT=A_OUT, B_IN=B_IN, B_OUT=B_OUT,
          C_IN=C_IN, C_OUT=C_OUT, D_IN=D_IN, D_OUT=D_OUT)
 
-    assert numpy.allclose(A_IN, A_OUT), "A_OUT does not match A_IN in mixed overapprox"
+    assert numpy.allclose(A_IN, A_OUT), f"A_OUT does not match A_IN in mixed overapprox {A_IN - A_OUT}"
     assert numpy.allclose(B_OUT, B_IN), "B_OUT does not match B_IN in mixed overapprox"
     assert numpy.allclose(C_OUT, 0.0), "C_OUT is not zero in mixed overapprox"
     assert numpy.allclose(D_OUT, 0.0), "D_OUT is not zero in mixed overapprox"
@@ -371,11 +369,10 @@ def _test_mixed_overapprox():
 if __name__ == "__main__":
     # Run tests manually without pytest
     test_simple_memcpy()
-    #test_simple_memset()
-    #test_multi_memcpy()
-    #test_multi_memset()
-    #test_multi_mixed()
-    #test_simple_with_extra_computation()
-    #test_simple_non_zero()
-    # TODO: enable overapproximation tests
-    # _test_mixed_overapprox()
+    test_simple_memset()
+    test_multi_memcpy()
+    test_multi_memset()
+    test_multi_mixed()
+    test_simple_with_extra_computation()
+    test_simple_non_zero()
+    test_mixed_overapprox()
