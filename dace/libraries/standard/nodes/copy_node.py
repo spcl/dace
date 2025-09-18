@@ -33,9 +33,9 @@ class ExpandPure(ExpandTransformation):
         map_params = [f"__i{i}" for i in range(len(map_lengths))]
         map_rng = {i: f"0:{s}" for i, s in zip(map_params, map_lengths)}
         access_expr = ','.join(map_params)
-        inputs = {"_inp": dace.memlet.Memlet(f"{inp_name}[{access_expr}]")}
-        outputs = {"_out": dace.memlet.Memlet(f"{out_name}[{access_expr}]")}
-        code = "_out = _inp"
+        inputs = {"_memcpy_inp": dace.memlet.Memlet(f"{inp_name}[{access_expr}]")}
+        outputs = {"_memcpy_out": dace.memlet.Memlet(f"{out_name}[{access_expr}]")}
+        code = "_memcpy_out = _memcpy_inp"
         if inp.storage == dace.dtypes.StorageType.GPU_Global:
             schedule = dace.dtypes.ScheduleType.GPU_Device
         else:
@@ -83,17 +83,18 @@ class ExpandCUDA(ExpandTransformation):
         out_access = state.add_access(out_name)
         tasklet = state.add_tasklet(
             name=f"memcpy_tasklet",
-            inputs={"_in"},
-            outputs={"_out"},
+            inputs={"_memcpy_in"},
+            outputs={"_memcpy_out"},
             code=
-            f"cudaMemcpyAsync(_out, _in, {sym2cpp(cp_size)} * sizeof({inp.dtype.ctype}), cudaMemcpyDeviceToDevice, __dace_current_stream);",
+            f"cudaMemcpyAsync(_memcpy_out, _in, {sym2cpp(cp_size)} * sizeof({inp.dtype.ctype}), cudaMemcpyDeviceToDevice, __dace_current_stream);",
             language=dace.Language.CPP,
             code_global=f"#include <cuda_runtime.h>\n")
+
         tasklet.schedule = dace.dtypes.ScheduleType.GPU_Device
 
-        state.add_edge(in_access, None, tasklet, "_in",
+        state.add_edge(in_access, None, tasklet, "_memcpy_in",
                               dace.memlet.Memlet(data=inp_name, subset=copy.deepcopy(in_subset)))
-        state.add_edge(tasklet, "_out", out_access, None,
+        state.add_edge(tasklet, "_memcpy_out", out_access, None,
                               dace.memlet.Memlet(data=out_name, subset=copy.deepcopy(out_subset)))
 
         return sdfg
@@ -122,11 +123,13 @@ class CopyLibraryNode(nodes.LibraryNode):
         oe = next(iter(state.out_edges(self)))
         out = sdfg.arrays[oe.data.data]
         out_subset = oe.data.subset
-        out_name = oe.data.data
+        out_name = oe.src_conn
+
         ie = next(iter(state.in_edges(self)))
         inp = sdfg.arrays[ie.data.data]
+
         in_subset = ie.data.subset
-        inp_name = ie.data.data
+        inp_name = ie.dst_conn
         print("IN-OUT-NAMES", inp_name, out_name)
         print("ARRANAMES", sdfg.arrays)
 
