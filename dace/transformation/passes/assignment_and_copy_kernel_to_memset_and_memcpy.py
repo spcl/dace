@@ -29,7 +29,6 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         return set()
 
     def _detect_contiguous_memcpy_paths(self, state: dace.SDFGState, node: dace.nodes.MapEntry):
-        in_access_edges = {e for e in state.in_edges(node) if isinstance(e.src, dace.nodes.AccessNode)}
         paths = list()
 
         # If map range is not contigous, we can't do contiguous copy detection
@@ -44,103 +43,55 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             print("Map range step is not 1, cannot detect contiguous copy")
             return paths
 
-        path_candidate = []
-        for e in in_access_edges:
-
-            # Make sure AccessNode -> MapEntry goes to a pass-through connector, and connector has 1 edge
-            path_candidate.append(e)
-            map_entry_in_conn = e.dst_conn
-            if not map_entry_in_conn.startswith("IN_"):
-                print(f"Dynamic in connection '{map_entry_in_conn}' is not a pass-through IN_, skipping")
-                path_candidate = []
+        assert node in state.nodes()
+        assert state.exit_node(node) in state.nodes()
+        path_candidates = state.all_simple_paths(node, state.exit_node(node), as_edges = True)
+        print("F1", path_candidates)
+        # AN1 -> MapEntry -> Tasklet -> MapExit -> AN2
+        # Need to get AN1 and AN2
+        for path_candidate in path_candidates:
+            if len(path_candidate) != 2:
                 continue
-
-            map_entry_out_conn = map_entry_in_conn.replace("IN_", "OUT_")
-            map_entry_out_edges = {e for e in state.out_edges_by_connector(node, map_entry_out_conn)}
-
-            if len(map_entry_out_edges) != 1:
-                print(f"MapEntry out connector '{map_entry_out_conn}' has {len(map_entry_out_edges)} edges, skipping")
-                path_candidate = []
+            # Gen AN1 by replacing the name of the OUT connector
+            if path_candidate[0].dst_conn is None or not path_candidate[0].dst_conn.startswith("OUT_"):
                 continue
+            ie = next(state.in_edges_by_connector(path_candidate[0].dst_conn.replace("OUT_", "IN_")))
+            oe = next(state.out_edges_by_connector(path_candidate[-1].src_conn.replace("IN_", "OUT_")))
+            map_entry = path_candidate[0].src
+            tasklet = path_candidate[1].src
+            map_exit = path_candidate[1].dst
+            an1 = ie.src
+            an2 = oe.dst
 
-            map_entry_out_edge = map_entry_out_edges.pop()
-            path_candidate.append(map_entry_out_edge)
-
-            tasklet = map_entry_out_edge.dst
+            # Tasklet in the middle
             if not isinstance(tasklet, dace.nodes.Tasklet):
-                print(f"Destination of MapEntry out edge is not a tasklet ({type(tasklet)}), skipping")
-                path_candidate = []
                 continue
-
             if len(tasklet.in_connectors) != 1 or len(tasklet.out_connectors) != 1:
-                print(f"Tasklet '{tasklet.name}' does not have exactly one in and one out connector, skipping")
-                path_candidate = []
+                continue
+            # Output Access Node
+            if not isinstance(oe.dst, dace.nodes.AccessNode):
+                continue
+            # Input Access Node
+            if not isinstance(ie.src, dace.nodes.AccessNode):
                 continue
 
-            out_conn = next(iter(tasklet.out_connectors))
-            tasklet_out_edges = {e for e in state.out_edges(tasklet) if e.src_conn == out_conn}
-            if len(tasklet_out_edges) != 1:
-                print(f"Tasklet out connector '{out_conn}' has {len(tasklet_out_edges)} edges, skipping")
-                path_candidate = []
-                continue
-
-            tasklet_out_edge = tasklet_out_edges.pop()
-            path_candidate.append(tasklet_out_edge)
-
-            map_exit = tasklet_out_edge.dst
-            if not isinstance(map_exit, dace.nodes.MapExit):
-                print(f"Destination of tasklet out edge is not a MapExit ({type(map_exit)}), skipping")
-                path_candidate = []
-                continue
-
-            map_exit_in_conn = tasklet_out_edge.dst_conn
-            if not map_exit_in_conn.startswith("IN_"):
-                print(f"MapExit input connector '{map_exit_in_conn}' is invalid, skipping")
-                path_candidate = []
-                continue
-
-            map_exit_out_conn = map_exit_in_conn.replace("IN_", "OUT_")
-            map_exit_out_edges = {e for e in state.out_edges_by_connector(map_exit, map_exit_out_conn)}
-
-            if len(map_exit_out_edges) != 1:
-                print(f"MapExit out connector '{map_exit_out_conn}' has {len(map_exit_out_edges)} edges, skipping")
-                path_candidate = []
-                continue
-
-            map_exit_out_edge = map_exit_out_edges.pop()
-            path_candidate.append(map_exit_out_edge)
-
-            if not isinstance(map_exit_out_edge.dst, dace.nodes.AccessNode):
-                print(f"Destination of MapExit out edge is not an AccessNode ({type(map_exit_out_edge.dst)}), skipping")
-                path_candidate = []
-                continue
-
-            # Check if the tasklet has the form of `out_conn = in_conn`
             in_conn = next(iter(tasklet.in_connectors))
-            if len(tasklet.in_connectors) != 1:
-                print(f"Tasklet '{tasklet.name}' has more than one input connector, skipping")
-                path_candidate = []
-                continue
-
+            out_conn = next(iter(tasklet.out_connectors))
             if tasklet.language == dace.Language.Python:
                 tasklet_code_str = tasklet.code.as_string
                 if f"{out_conn} = {in_conn}" != tasklet_code_str:
                     print(f"Tasklet code '{tasklet_code_str}' does not match '{out_conn} = {in_conn}', skipping")
-                    path_candidate = []
                     continue
             elif tasklet.language == dace.Language.CPP:
                 tasklet_code_str = tasklet.code.as_string
                 if f"{out_conn} = {in_conn};" != tasklet_code_str:
                     print(f"Tasklet code '{tasklet_code_str}' does not match '{out_conn} = {in_conn};', skipping")
-                    path_candidate = []
                     continue
             else:
                 print(f"Unsupported tasklet language {tasklet.language}, skipping")
-                path_candidate = []
                 continue
-
-            # We found a valid contiguous copy path
-            paths.append(path_candidate)
+            
+            paths.append([ie] + path_candidate + [oe])
 
         return paths
 
@@ -443,7 +394,9 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
     def remove_memcpy_from_kernel(self, state: dace.SDFGState, node: dace.nodes.MapEntry, verbose=True):
         memcpy_paths = self._detect_contiguous_memcpy_paths(state, node)
         rmed_count = 0
-        print(memcpy_paths)
+        for memcpy_path in memcpy_paths:
+            print(f"\t MemPath: {memcpy_path}")
+
         for memcpy_path in memcpy_paths:
             src_access_node = memcpy_path[0].src
             map_entry = memcpy_path[0].dst
@@ -522,6 +475,8 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
 
     def remove_memset_from_kernel(self, state: dace.SDFGState, node: dace.nodes.MapEntry, verbose=True):
         memset_paths = self._detect_contiguous_memset_paths(state, node)
+        for memset_path in memset_paths:
+            print(f"\t MemPath: {memset_path}")
         rmed_count = 0
         for memset_path in memset_paths:
             map_entry = memset_path[0].src

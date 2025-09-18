@@ -232,7 +232,9 @@ def test_simple_memset():
 def test_multi_memcpy():
     """Two memcpies: each output should equal its corresponding input."""
     sdfg = _get_sdfg(2, 0, False, False, False)
+    sdfg.save("x1x.sdfg")
     AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
+    sdfg.save("x3x.sdfg")
 
     assert _get_num_memcpy_library_nodes(sdfg) == 2, "Expected 2 memcpy library nodes"
     assert _get_num_memset_library_nodes(sdfg) == 0, "Expected 0 memset library nodes"
@@ -366,12 +368,12 @@ def _test_mixed_overapprox():
 
 if __name__ == "__main__":
     # Run tests manually without pytest
-    test_simple_memcpy()
-    test_simple_memset()
+    #test_simple_memcpy()
+    #test_simple_memset()
     test_multi_memcpy()
-    test_multi_memset()
-    test_multi_mixed()
-    test_simple_with_extra_computation()
-    test_simple_non_zero()
+    #test_multi_memset()
+    #test_multi_mixed()
+    #test_simple_with_extra_computation()
+    #test_simple_non_zero()
     # TODO: enable overapproximation tests
     # _test_mixed_overapprox()
