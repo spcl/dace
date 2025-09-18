@@ -73,7 +73,7 @@ def _change_fp_type_recursive(sdfg: dace.SDFG, src_fptype: dace.dtypes.typeclass
                         new_replacements.add(ie.dst_conn)
                 for oe in state.out_edges(node):
                     if oe.data is not None and oe.data.data in arrays_to_replace:
-                        new_replacements.add(oe.dsst_conn)
+                        new_replacements.add(oe.dst_conn)
                 _change_fp_type_recursive(sdfg, src_fptype, dst_fptype, new_replacements)
 
 
