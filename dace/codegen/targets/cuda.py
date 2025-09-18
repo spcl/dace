@@ -158,6 +158,9 @@ class CUDACodeGen(TargetCodeGenerator):
                                       'CUDA',
                                       target_type=target_type)
 
+        # TODO: Below implementation is a bit wasteful to iterate over all nodes.
+        # Better: Do this in a dedicated pass and do not e.g. recurse further into
+        # a GPU_Device-scheduled map.
         # Identify kernels with inserted GPU_ThreadBlock-scheduled maps
         old_nodes = set(node for node, _ in sdfg.all_nodes_recursive())
 
