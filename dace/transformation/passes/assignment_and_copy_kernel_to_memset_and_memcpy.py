@@ -45,18 +45,24 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
 
         assert node in state.nodes()
         assert state.exit_node(node) in state.nodes()
-        path_candidates = state.all_simple_paths(node, state.exit_node(node), as_edges = True)
+        path_candidates = [e for e in state.all_simple_paths(node, state.exit_node(node), as_edges = True)]
         print("F1", path_candidates)
         # AN1 -> MapEntry -> Tasklet -> MapExit -> AN2
         # Need to get AN1 and AN2
         for path_candidate in path_candidates:
+            print(path_candidate)
+            print(len(path_candidate))
             if len(path_candidate) != 2:
+                print("X0")
                 continue
             # Gen AN1 by replacing the name of the OUT connector
-            if path_candidate[0].dst_conn is None or not path_candidate[0].dst_conn.startswith("OUT_"):
+            if path_candidate[0].dst_conn is None or (not path_candidate[0].src_conn.startswith("OUT_")):
+                print("X1")
+                print(path_candidate[0].dst_conn)
+                print(not path_candidate[0].dst_conn.startswith("OUT_"))
                 continue
-            ie = next(state.in_edges_by_connector(path_candidate[0].dst_conn.replace("OUT_", "IN_")))
-            oe = next(state.out_edges_by_connector(path_candidate[-1].src_conn.replace("IN_", "OUT_")))
+            ie = next(state.in_edges_by_connector(path_candidate[0].src, path_candidate[0].src_conn.replace("OUT_", "IN_")))
+            oe = next(state.out_edges_by_connector(path_candidate[-1].dst, path_candidate[-1].dst_conn.replace("IN_", "OUT_")))
             map_entry = path_candidate[0].src
             tasklet = path_candidate[1].src
             map_exit = path_candidate[1].dst
@@ -65,14 +71,18 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
 
             # Tasklet in the middle
             if not isinstance(tasklet, dace.nodes.Tasklet):
+                print("X2")
                 continue
             if len(tasklet.in_connectors) != 1 or len(tasklet.out_connectors) != 1:
+                print("X3")
                 continue
             # Output Access Node
             if not isinstance(oe.dst, dace.nodes.AccessNode):
+                print("X4")
                 continue
             # Input Access Node
             if not isinstance(ie.src, dace.nodes.AccessNode):
+                print("X5")
                 continue
 
             in_conn = next(iter(tasklet.in_connectors))
