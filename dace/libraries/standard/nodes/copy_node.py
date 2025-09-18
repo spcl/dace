@@ -79,9 +79,9 @@ class ExpandCUDA(ExpandTransformation):
 
         state = sdfg.add_state(f"{node.label}_state")
 
-        in_access = parent_state.add_access(inp_name)
-        out_access = parent_state.add_access(out_name)
-        tasklet = parent_state.add_tasklet(
+        in_access = state.add_access(inp_name)
+        out_access = state.add_access(out_name)
+        tasklet = state.add_tasklet(
             name=f"memcpy_tasklet",
             inputs={"_in"},
             outputs={"_out"},
@@ -91,9 +91,9 @@ class ExpandCUDA(ExpandTransformation):
             code_global=f"#include <cuda_runtime.h>\n")
         tasklet.schedule = dace.dtypes.ScheduleType.GPU_Device
 
-        parent_state.add_edge(in_access, None, tasklet, "_in",
+        state.add_edge(in_access, None, tasklet, "_in",
                               dace.memlet.Memlet(data=inp_name, subset=copy.deepcopy(in_subset)))
-        parent_state.add_edge(tasklet, "_out", out_access, None,
+        state.add_edge(tasklet, "_out", out_access, None,
                               dace.memlet.Memlet(data=out_name, subset=copy.deepcopy(out_subset)))
 
         return sdfg
@@ -127,6 +127,8 @@ class CopyLibraryNode(nodes.LibraryNode):
         inp = sdfg.arrays[ie.data.data]
         in_subset = ie.data.subset
         inp_name = ie.data.data
+        print("IN-OUT-NAMES", inp_name, out_name)
+        print("ARRANAMES", sdfg.arrays)
 
         if not inp:
             raise ValueError("Missing the input tensor.")
