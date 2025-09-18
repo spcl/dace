@@ -1,7 +1,11 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-from dace import library, nodes
+import multiprocessing
+from dace import library, nodes, properties
+from dace.libraries.blas import blas_helpers
+from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
+from numbers import Number
 from .. import environments
 from functools import reduce
 import operator
@@ -15,12 +19,13 @@ class ExpandPure(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
-        inp_name, inp, in_subset, out_name, out, _ = node.validate(parent_sdfg, parent_state)
+        inp_name, inp, in_subset, out_name, out, out_subset = node.validate(parent_sdfg, parent_state)
         map_lengths = [(e + 1 - b) // s for (b, e, s) in in_subset]
+        cp_size = reduce(operator.mul, map_lengths, 1)
 
         sdfg = dace.SDFG(f"{node.label}_sdfg")
-        sdfg.add_array(inp_name, map_lengths, inp.dtype, inp.storage, strides=inp.strides)
-        sdfg.add_array(out_name, map_lengths, out.dtype, out.storage, strides=out.strides)
+        _, inp_arr = sdfg.add_array(inp_name, inp.shape, inp.dtype, inp.storage, strides=inp.strides)
+        _, out_arr = sdfg.add_array(out_name, out.shape, out.dtype, out.storage, strides=out.strides)
 
         state = sdfg.add_state(f"{node.label}_state")
         sdfg.schedule = dace.dtypes.ScheduleType.Default
@@ -28,9 +33,9 @@ class ExpandPure(ExpandTransformation):
         map_params = [f"__i{i}" for i in range(len(map_lengths))]
         map_rng = {i: f"0:{s}" for i, s in zip(map_params, map_lengths)}
         access_expr = ','.join(map_params)
-        inputs = {"_inp": dace.memlet.Memlet(f"{inp_name}[{access_expr}]")}
-        outputs = {"_out": dace.memlet.Memlet(f"{out_name}[{access_expr}]")}
-        code = "_out = _inp"
+        inputs = {"_memcpy_inp": dace.memlet.Memlet(f"{inp_name}[{access_expr}]")}
+        outputs = {"_memcpy_out": dace.memlet.Memlet(f"{out_name}[{access_expr}]")}
+        code = "_memcpy_out = _memcpy_inp"
         if inp.storage == dace.dtypes.StorageType.GPU_Global:
             schedule = dace.dtypes.ScheduleType.GPU_Device
         else:
@@ -42,6 +47,18 @@ class ExpandPure(ExpandTransformation):
                                  outputs,
                                  schedule=schedule,
                                  external_edges=True)
+
+        # To avoid _cuda_stream is missing crush / bug
+        """
+        map_entries = []
+        for n in state.nodes():
+            if isinstance(n, dace.nodes.MapEntry):
+                map_entries.append(n)
+
+        assert len(map_entries) == 1
+        map_entry = map_entries[0]
+        map_entry._cuda_stream = 0
+        """
 
         return sdfg
 
@@ -57,29 +74,29 @@ class ExpandCUDA(ExpandTransformation):
         cp_size = reduce(operator.mul, map_lengths, 1)
 
         sdfg = dace.SDFG(f"{node.label}_sdfg")
-        sdfg.add_array(inp_name, map_lengths, inp.dtype, inp.storage, strides=inp.strides)
-        sdfg.add_array(out_name, map_lengths, out.dtype, out.storage, strides=out.strides)
+        _, inp_arr = sdfg.add_array(inp_name, inp.shape, inp.dtype, inp.storage, strides=inp.strides)
+        _, out_arr = sdfg.add_array(out_name, out.shape, out.dtype, out.storage, strides=out.strides)
 
-        state = sdfg.add_state(f"{node.label}_main")
+        state = sdfg.add_state(f"{node.label}_state")
 
         in_access = state.add_access(inp_name)
         out_access = state.add_access(out_name)
         tasklet = state.add_tasklet(
             name=f"memcpy_tasklet",
-            inputs={"_in"},
-            outputs={"_out"},
+            inputs={"_memcpy_in"},
+            outputs={"_memcpy_out"},
             code=
-            f"cudaMemcpyAsync(_out, _in, {sym2cpp(cp_size)} * sizeof({inp.dtype.ctype}), cudaMemcpyDeviceToDevice, __dace_current_stream);",
+            f"cudaMemcpyAsync(_memcpy_out, _in, {sym2cpp(cp_size)} * sizeof({inp.dtype.ctype}), cudaMemcpyDeviceToDevice, __dace_current_stream);",
             language=dace.Language.CPP,
             code_global=f"#include <cuda_runtime.h>\n")
+
         tasklet.schedule = dace.dtypes.ScheduleType.GPU_Device
 
-        state.add_edge(
-            in_access, None, tasklet, "_in",
-            dace.memlet.Memlet(data=inp_name, subset=dace.subsets.Range([(0, e - 1, 1) for e in map_lengths])))
-        state.add_edge(
-            tasklet, "_out", out_access, None,
-            dace.memlet.Memlet(data=out_name, subset=dace.subsets.Range([(0, e - 1, 1) for e in map_lengths])))
+        state.add_edge(in_access, None, tasklet, "_memcpy_in",
+                              dace.memlet.Memlet(data=inp_name, subset=copy.deepcopy(in_subset)))
+        state.add_edge(tasklet, "_memcpy_out", out_access, None,
+                              dace.memlet.Memlet(data=out_name, subset=copy.deepcopy(out_subset)))
+
         return sdfg
 
 
@@ -87,16 +104,6 @@ class ExpandCUDA(ExpandTransformation):
 class CopyLibraryNode(nodes.LibraryNode):
     implementations = {"pure": ExpandPure, "CUDA": ExpandCUDA}
     default_implementation = 'pure'
-
-    def _extend_in_out_edges(self, parent_state, parent_sdfg):
-        # Set connection from parent state to the nested to cover the complete array subset
-        oes = {oe for oe in parent_state.edges() if oe.src == self}
-        ies = {ie for ie in parent_state.edges() if ie.dst == self}
-        assert len(oes) == 1 and len(
-            ies) == 1, f"Length of in edges / out edges of the library node is not both 1: {len(ies)}, {len(oes)}"
-        # New subset covers the complete array, as the correct subset offset is done in the inner map
-        for e in {next(iter(oes)), next(iter(ies))}:
-            e.data = dace.memlet.Memlet.from_array(e.data.data, parent_sdfg.arrays[e.data.data])
 
     def __init__(self, name, *args, **kwargs):
         super().__init__(name, *args, **kwargs)
@@ -116,11 +123,15 @@ class CopyLibraryNode(nodes.LibraryNode):
         oe = next(iter(state.out_edges(self)))
         out = sdfg.arrays[oe.data.data]
         out_subset = oe.data.subset
-        out_name = oe.data.data
+        out_name = oe.src_conn
+
         ie = next(iter(state.in_edges(self)))
         inp = sdfg.arrays[ie.data.data]
+
         in_subset = ie.data.subset
-        inp_name = ie.data.data
+        inp_name = ie.dst_conn
+        print("IN-OUT-NAMES", inp_name, out_name)
+        print("ARRANAMES", sdfg.arrays)
 
         if not inp:
             raise ValueError("Missing the input tensor.")
