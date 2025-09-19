@@ -19,25 +19,8 @@ def _get_sdfg(
     """
     Construct an SDFG that performs a configurable number of memcpy and memset
     operations, possibly with extra computation or non-zero memsets.
-
-    Parameters
-    ----------
-    num_memcpies : int
-        Number of memcpy operations to add.
-    num_memsets : int
-        Number of memset operations to add.
-    extra_computation : bool
-        If True, add an additional doubling computation after every other tasklet.
-    non_zero : bool
-        If True, memset writes `1.0` instead of `0.0`.
-    subset_in_first_dim : bool
-        If True, use a sliced subset in the first dimension of the map.
-
-    Returns
-    -------
-    dace.SDFG
-        The generated SDFG.
     """
+
     sdfg = dace.SDFG("main")
     state = sdfg.add_state("memset_memcpy_maps")
 
@@ -45,10 +28,11 @@ def _get_sdfg(
     map_entry, map_exit = state.add_map(
         name="memcpy_memset_map",
         ndrange={
-            "i": dace.subsets.Range([(0, DIM_SIZE - 1, 1)])
-            if not subset_in_first_dim
-            else dace.subsets.Range([(2, DIM_SIZE - 1, 1)]),
-            "j": dace.subsets.Range([(0, DIM_SIZE - 1, 1)]),
+            "i":
+            dace.subsets.Range([(0, DIM_SIZE - 1,
+                                 1)]) if not subset_in_first_dim else dace.subsets.Range([(2, DIM_SIZE - 1, 1)]),
+            "j":
+            dace.subsets.Range([(0, DIM_SIZE - 1, 1)]),
         },
     )
 
@@ -91,7 +75,8 @@ def _get_sdfg(
                 None,
                 map_entry,
                 f"IN_{in_name}",
-                dace.memlet.Memlet(f"{in_name}[2:{DIM_SIZE}, 0:{DIM_SIZE}]" if subset_in_first_dim else f"{in_name}[0:{DIM_SIZE}, 0:{DIM_SIZE}]"),
+                dace.memlet.Memlet(f"{in_name}[2:{DIM_SIZE}, 0:{DIM_SIZE}]"
+                                   if subset_in_first_dim else f"{in_name}[0:{DIM_SIZE}, 0:{DIM_SIZE}]"),
             )
             map_entry.add_in_connector(f"IN_{in_name}")
             map_entry.add_out_connector(f"OUT_{in_name}")
@@ -124,9 +109,7 @@ def _get_sdfg(
             tmp_access = state.add_access(f"tmp_{i}")
 
             # Store tasklet result in temporary
-            state.add_edge(
-                tasklet, "_out", tmp_access, None, dace.memlet.Memlet(f"tmp_{i}[0]")
-            )
+            state.add_edge(tasklet, "_out", tmp_access, None, dace.memlet.Memlet(f"tmp_{i}[0]"))
 
             # Add extra tasklet that doubles the value
             extra_tasklet = state.add_tasklet(
@@ -168,7 +151,8 @@ def _get_sdfg(
             f"OUT_{out_name}",
             state.add_access(out_name),
             None,
-            dace.memlet.Memlet(f"{out_name}[2:{DIM_SIZE}, 0:{DIM_SIZE}]" if subset_in_first_dim else f"{out_name}[0:{DIM_SIZE}, 0:{DIM_SIZE}]"),
+            dace.memlet.Memlet(f"{out_name}[2:{DIM_SIZE}, 0:{DIM_SIZE}]"
+                               if subset_in_first_dim else f"{out_name}[0:{DIM_SIZE}, 0:{DIM_SIZE}]"),
         )
         map_exit.add_in_connector(f"IN_{out_name}")
         map_exit.add_out_connector(f"OUT_{out_name}")
@@ -182,19 +166,14 @@ def _get_sdfg(
 # --- Utility functions for counting nodes in an SDFG ---
 def _get_num_memcpy_library_nodes(sdfg: dace.SDFG) -> int:
     """Return number of memcpy library nodes in an SDFG."""
-    return sum(
-        isinstance(node, CopyLibraryNode) for state in sdfg.all_states() for node in state.nodes()
-    )
+    return sum(isinstance(node, CopyLibraryNode) for state in sdfg.all_states() for node in state.nodes())
 
 
 def _get_num_memset_library_nodes(sdfg: dace.SDFG) -> int:
     """Return number of memset library nodes in an SDFG."""
-    return sum(
-        isinstance(node, MemsetLibraryNode) for state in sdfg.all_states() for node in state.nodes()
-    )
+    return sum(isinstance(node, MemsetLibraryNode) for state in sdfg.all_states() for node in state.nodes())
 
 
-# --- Tests ---
 # --- Tests ---
 def test_simple_memcpy():
     """Single memcpy test: output should match input exactly."""
@@ -212,6 +191,7 @@ def test_simple_memcpy():
     sdfg(A_IN=A_IN, A_OUT=A_OUT)
 
     assert numpy.allclose(A_IN, A_OUT), "A_OUT does not match A_IN in simple memcpy"
+
 
 def test_simple_memset():
     """Single memset test: output should be all zeros."""
@@ -269,7 +249,6 @@ def test_multi_memset():
     assert numpy.allclose(B_OUT, 0.0), "B_OUT is not zero in multi memset"
 
 
-
 def test_multi_mixed():
     """One memcpy and one memset: memcpy should copy, memset should zero output."""
     sdfg = _get_sdfg(1, 1, False, False, False)
@@ -309,8 +288,7 @@ def test_simple_with_extra_computation():
     D_IN = numpy.random.rand(DIM_SIZE, DIM_SIZE)
     D_OUT = numpy.zeros_like(D_IN)
 
-    sdfg(A_IN=A_IN, A_OUT=A_OUT, B_IN=B_IN, B_OUT=B_OUT,
-         C_IN=C_IN, C_OUT=C_OUT, D_IN=D_IN, D_OUT=D_OUT)
+    sdfg(A_IN=A_IN, A_OUT=A_OUT, B_IN=B_IN, B_OUT=B_OUT, C_IN=C_IN, C_OUT=C_OUT, D_IN=D_IN, D_OUT=D_OUT)
 
     # A_OUT should be double of A_IN
     assert numpy.allclose(A_OUT, 2 * A_IN), "A_OUT does not match expected doubled values"
@@ -357,8 +335,7 @@ def test_mixed_overapprox():
     D_IN = numpy.random.rand(DIM_SIZE, DIM_SIZE)
     D_OUT = numpy.zeros_like(D_IN)
 
-    sdfg(A_IN=A_IN, A_OUT=A_OUT, B_IN=B_IN, B_OUT=B_OUT,
-         C_IN=C_IN, C_OUT=C_OUT, D_IN=D_IN, D_OUT=D_OUT)
+    sdfg(A_IN=A_IN, A_OUT=A_OUT, B_IN=B_IN, B_OUT=B_OUT, C_IN=C_IN, C_OUT=C_OUT, D_IN=D_IN, D_OUT=D_OUT)
 
     assert numpy.allclose(A_IN, A_OUT), f"A_OUT does not match A_IN in mixed overapprox {A_IN - A_OUT}"
     assert numpy.allclose(B_OUT, B_IN), "B_OUT does not match B_IN in mixed overapprox"
@@ -367,7 +344,6 @@ def test_mixed_overapprox():
 
 
 if __name__ == "__main__":
-    # Run tests manually without pytest
     test_simple_memcpy()
     test_simple_memset()
     test_multi_memcpy()
