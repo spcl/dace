@@ -7,26 +7,20 @@ from itertools import chain, combinations
 from pathlib import Path
 from typing import Generator, Dict, Tuple, List, Optional, Union, Any
 
+import fparser.two.Fortran2003 as f03
 from fparser.api import get_reader
-from fparser.two.Fortran2003 import Module, Derived_Type_Stmt, Module_Subprogram_Part, Data_Component_Def_Stmt, \
-    Procedure_Stmt, Interface_Block, Program, Intrinsic_Type_Spec, \
-    Dimension_Component_Attr_Spec, Declaration_Type_Spec, Private_Components_Stmt, Component_Part, \
-    Derived_Type_Def, Subroutine_Subprogram, Subroutine_Stmt, Main_Program, Function_Subprogram, Use_Stmt, Name, \
-    Only_List, Rename, Generic_Spec, Specification_Part, Entity_Decl
 from fparser.two.utils import walk
 
 import dace
 from dace import SDFG
-from dace.frontend.fortran.ast_desugaring import identifier_specs, append_children, set_children, \
-    SPEC_TABLE, SPEC, find_name_of_node, alias_specs, remove_self, find_scope_spec, GLOBAL_DATA_OBJ_NAME, \
-    GLOBAL_DATA_TYPE_NAME, find_type_of_entity
+from dace.frontend.fortran.ast_desugaring import cleanup, analysis, utils, types
 from dace.frontend.fortran.ast_utils import singular, children_of_type, atmost_one
 
 NEW_LINE = "NEW_LINE('A')"
 
 
-def gen_f90_serde_module_skeleton(mod_name: str = 'serde') -> Module:
-    return Module(
+def gen_f90_serde_module_skeleton(mod_name: str = 'serde') -> f03.Module:
+    return f03.Module(
         get_reader(f"""
 module {mod_name}
   implicit none
@@ -99,7 +93,7 @@ end module {mod_name}
 """))
 
 
-def gen_base_type_serializer(typ: str, kind: Optional[int] = None) -> Subroutine_Subprogram:
+def gen_base_type_serializer(typ: str, kind: Optional[int] = None) -> f03.Subroutine_Subprogram:
     assert typ in {'logical', 'integer', 'real'}
     if typ == 'logical':
         assert kind is None
@@ -121,7 +115,7 @@ def gen_base_type_serializer(typ: str, kind: Optional[int] = None) -> Subroutine
     else:
         op = "write (io, '(g0)', advance='no') x"
 
-    return Subroutine_Subprogram(
+    return f03.Subroutine_Subprogram(
         get_reader(f"""
 subroutine {fn_name}(io, x, cleanup, nline)
   character(len=50) :: buf
@@ -206,7 +200,10 @@ end if
 """.strip().split('\n')
 
 
-def generate_array_serializer_f90(dtyp: str, rank: int, tag: str, use: Optional[str] = None) -> Subroutine_Subprogram:
+def generate_array_serializer_f90(dtyp: str,
+                                  rank: int,
+                                  tag: str,
+                                  use: Optional[str] = None) -> f03.Subroutine_Subprogram:
     iter_vars = ', '.join([f"k{k}" for k in range(1, rank + 1)])
     decls = f"""
 {dtyp}, intent(in) :: x({', '.join([':'] * rank)})
@@ -222,7 +219,7 @@ integer :: k, kmeta, {iter_vars}
     meta = '\n'.join(meta_ops)
     fn_name = f"W_{tag}_R_{rank}"
 
-    return Subroutine_Subprogram(
+    return f03.Subroutine_Subprogram(
         get_reader(f"""
 subroutine {fn_name}(io, x, cleanup, nline, meta)
   {use or ''}
@@ -251,14 +248,14 @@ end subroutine {fn_name}
 @dataclass(frozen=True)
 class DerivedTypeInfo:
     name: str
-    tdef: Derived_Type_Def
-    spec: SPEC
+    tdef: f03.Derived_Type_Def
+    spec: types.SPEC
 
 
-def iterate_over_derived_types(ident_map: SPEC_TABLE) -> Generator[DerivedTypeInfo, None, None]:
+def iterate_over_derived_types(ident_map: types.SPEC_TABLE) -> Generator[DerivedTypeInfo, None, None]:
     """Iterate over the derived types in the given map of identifiers to their AST nodes."""
     for tspec, dt in ident_map.items():
-        if not isinstance(dt, Derived_Type_Stmt):
+        if not isinstance(dt, f03.Derived_Type_Stmt):
             continue
         assert len(tspec) == 2
         _, dtname, _ = dt.children
@@ -269,7 +266,7 @@ def iterate_over_derived_types(ident_map: SPEC_TABLE) -> Generator[DerivedTypeIn
 @dataclass(frozen=True)
 class ComponentInfo:
     name: str
-    type: Union[Intrinsic_Type_Spec, Declaration_Type_Spec]
+    type: Union[f03.Intrinsic_Type_Spec, f03.Declaration_Type_Spec]
     ptr: bool
     alloc: bool
     rank: int
@@ -280,21 +277,21 @@ def iterate_over_public_components(dt: DerivedTypeInfo) \
         -> Generator[ComponentInfo, None, None]:
     private_access = False
     for c in dt.tdef.children:
-        if isinstance(c, Private_Components_Stmt):
+        if isinstance(c, f03.Private_Components_Stmt):
             private_access = True
-        if not isinstance(c, Component_Part):
+        if not isinstance(c, f03.Component_Part):
             # We care only about serialising components.
             continue
         if private_access:
             # We cannot serialise private components, since it won't compile.
             continue
 
-        for cdef in walk(c, Data_Component_Def_Stmt):
+        for cdef in walk(c, f03.Data_Component_Def_Stmt):
             ctyp, attrs, cdecls = cdef.children
             ptr = 'POINTER' in f"{attrs}" if attrs else False
             alloc = 'ALLOCATABLE' in f"{attrs}" if attrs else False
             dims = atmost_one(a for a in attrs.children
-                              if isinstance(a, Dimension_Component_Attr_Spec)) if attrs else None
+                              if isinstance(a, f03.Dimension_Component_Attr_Spec)) if attrs else None
             if dims:
                 _, dims = dims.children
 
@@ -306,7 +303,7 @@ def iterate_over_public_components(dt: DerivedTypeInfo) \
                 rank = 0
                 if shape:
                     rank = len(shape.children)
-                if isinstance(ctyp, Intrinsic_Type_Spec):
+                if isinstance(ctyp, f03.Intrinsic_Type_Spec):
                     dtyp, kind = ctyp.children
                     dtyp = f"{dtyp}"
                     if dtyp == 'DOUBLE PRECISION':
@@ -318,14 +315,14 @@ def iterate_over_public_components(dt: DerivedTypeInfo) \
                             'REAL': '(KIND = 4)',
                         }
                         kind = DEFAULT_KINDS.get(dtyp)
-                    ctyp = Intrinsic_Type_Spec(f"{dtyp}{kind or ''}")
+                    ctyp = f03.Intrinsic_Type_Spec(f"{dtyp}{kind or ''}")
                 else:
-                    assert isinstance(ctyp, Declaration_Type_Spec)
+                    assert isinstance(ctyp, f03.Declaration_Type_Spec)
 
                 yield ComponentInfo(f"{cname}", ctyp, ptr, alloc, rank, shape)
 
 
-def _make_type_injection_entry_op(typ: SPEC, component: SPEC, expr: str) -> str:
+def _make_type_injection_entry_op(typ: types.SPEC, component: types.SPEC, expr: str) -> str:
     return f"""
 call serialize(io, '{{ "type": "ConstTypeInjection", "scope": null, "root": "{'.'.join(typ)}", "component": "{'.'.join(component)}", "value": "', cleanup=.false., nline=.false.)
 call serialize(io, {expr}, cleanup=.false., nline=.false.)
@@ -333,11 +330,11 @@ call serialize(io, '" }}', cleanup=.false., nline=.true.)
 """
 
 
-def type_injection_leaf_ops(alias_map: SPEC_TABLE,
-                            all_derived_types: Dict[SPEC, DerivedTypeInfo],
+def type_injection_leaf_ops(alias_map: types.SPEC_TABLE,
+                            all_derived_types: Dict[types.SPEC, DerivedTypeInfo],
                             dt: DerivedTypeInfo,
-                            root_tspec: SPEC,
-                            trail: SPEC = tuple()) -> Generator[str, None, None]:
+                            root_tspec: types.SPEC,
+                            trail: types.SPEC = tuple()) -> Generator[str, None, None]:
     for z in iterate_over_public_components(dt):
         # Prepare array ops that go together.
         siz_ops, off_ops = [], []
@@ -367,10 +364,10 @@ end if
         elif z.ptr:
             comp = trail + (f"__f2dace_{z.name}_POINTERTO", )
             yield _make_type_injection_entry_op(root_tspec, comp, f"'=> MISSING'")
-        elif isinstance(z.type, Intrinsic_Type_Spec):
+        elif isinstance(z.type, f03.Intrinsic_Type_Spec):
             comp = trail + (z.name, )
             yield _make_type_injection_entry_op(root_tspec, comp, f"x%{'%'.join(comp)}")
-        elif isinstance(z.type, Declaration_Type_Spec):
+        elif isinstance(z.type, f03.Declaration_Type_Spec):
             _, typ_name = z.type.children
             comp_typ_alias = dt.spec[:-1] + (typ_name.string, )
             assert comp_typ_alias in alias_map
@@ -397,7 +394,7 @@ class SerdeCode:
     cpp_serde: str
 
 
-def _get_basic_serializers() -> List[Subroutine_Subprogram]:
+def _get_basic_serializers() -> List[f03.Subroutine_Subprogram]:
     return [
         gen_base_type_serializer('logical'),
         gen_base_type_serializer('integer', 1),
@@ -409,30 +406,30 @@ def _get_basic_serializers() -> List[Subroutine_Subprogram]:
     ]
 
 
-def _get_global_data_serde_code(ast: Program, g: SDFG) -> SerdeCode:
-    alias_map = alias_specs(ast)
+def _get_global_data_serde_code(ast: f03.Program, g: SDFG) -> SerdeCode:
+    alias_map = analysis.alias_specs(ast)
     uses, ser_ops, ser_ops_cpp, des_ops, consistent_ops_cpp = [], [], [], [], []
-    if GLOBAL_DATA_OBJ_NAME in g.arrays:
+    if cleanup.GLOBAL_DATA_OBJ_NAME in g.arrays:
         sdfg_structs: Dict[str, dace.data.Structure] = {
             v.name: v
             for k, v in g.arrays.items() if isinstance(v, dace.data.Structure)
         }
         all_sa_vars: Dict[str, str] = {
             strip_last_int(z): z
-            for z in sdfg_structs[GLOBAL_DATA_TYPE_NAME].keys() if z.startswith("__f2dace_SA_")
+            for z in sdfg_structs[cleanup.GLOBAL_DATA_TYPE_NAME].keys() if z.startswith("__f2dace_SA_")
         }
         all_soa_vars: Dict[str, str] = {
             strip_last_int(z): z
-            for z in sdfg_structs[GLOBAL_DATA_TYPE_NAME].keys() if z.startswith("__f2dace_SOA_")
+            for z in sdfg_structs[cleanup.GLOBAL_DATA_TYPE_NAME].keys() if z.startswith("__f2dace_SOA_")
         }
-        gdata = g.arrays[GLOBAL_DATA_OBJ_NAME].members
-        for mod in walk(ast, Module):
-            mname = find_name_of_node(mod)
-            spart = atmost_one(children_of_type(mod, Specification_Part))
+        gdata = g.arrays[cleanup.GLOBAL_DATA_OBJ_NAME].members
+        for mod in walk(ast, f03.Module):
+            mname = utils.find_name_of_node(mod)
+            spart = atmost_one(children_of_type(mod, f03.Specification_Part))
             if not spart:
                 continue
-            for var in walk(spart, Entity_Decl):
-                vname = find_name_of_node(var)
+            for var in walk(spart, f03.Entity_Decl):
+                vname = utils.find_name_of_node(var)
                 assert vname
                 if vname not in gdata:
                     continue
@@ -444,7 +441,7 @@ def _get_global_data_serde_code(ast: Program, g: SDFG) -> SerdeCode:
 call serialize(io, "# {vname}", cleanup=.false.)
 call serialize(io, {vname}, cleanup=.false.)
 """)
-                vtype = find_type_of_entity(var, alias_map)
+                vtype = analysis.find_type_of_entity(var, alias_map)
                 vctyp = _real_ctype(gdata[vname])
                 if isinstance(gdata[vname], dace.data.Array):
                     ser_ops_cpp.append(f"""
@@ -496,11 +493,11 @@ end subroutine serialize_global_data
     ser_ops_cpp = '\n'.join(ser_ops_cpp)
     consistent_ops_cpp = '\n'.join(consistent_ops_cpp)
     cpp_code = f"""
-void deserialize_global_data({GLOBAL_DATA_TYPE_NAME}* g, std::istream& s) {{
+void deserialize_global_data({cleanup.GLOBAL_DATA_TYPE_NAME}* g, std::istream& s) {{
     {des_ops}
 }}
 
-std::string serialize_global_data(const {GLOBAL_DATA_TYPE_NAME}* g) {{
+std::string serialize_global_data(const {cleanup.GLOBAL_DATA_TYPE_NAME}* g) {{
     std::stringstream s;
     {ser_ops_cpp}
     return s.str();
@@ -509,7 +506,7 @@ std::string serialize_global_data(const {GLOBAL_DATA_TYPE_NAME}* g) {{
 enum class SerializationType {{ INVALID, PLAIN, CONST_INJECTION, F90_MODULE }};
 
 std::string serialize_consistent_global_data(
-    std::vector<const {GLOBAL_DATA_TYPE_NAME}*>& gs,
+    std::vector<const {cleanup.GLOBAL_DATA_TYPE_NAME}*>& gs,
     SerializationType serialization_type = SerializationType::INVALID)
 {{
     assert(serialization_type != SerializationType::INVALID);
@@ -572,7 +569,7 @@ def strip_last_int(x: str) -> str:
     return '_'.join(x.split('_')[:-1]) if x.startswith("__f2dace_") else x
 
 
-def generate_serde_code(ast: Program, g: SDFG, mod_name: str = 'serde') -> SerdeCode:
+def generate_serde_code(ast: f03.Program, g: SDFG, mod_name: str = 'serde') -> SerdeCode:
     ast = _keep_only_derived_types(ast)
 
     # Global data.
@@ -581,9 +578,9 @@ def generate_serde_code(ast: Program, g: SDFG, mod_name: str = 'serde') -> Serde
     # F90 Serializer related data structures.
     f90_mod = gen_f90_serde_module_skeleton(mod_name)
     proc_names = []
-    impls = singular(sp for sp in walk(f90_mod, Module_Subprogram_Part))
+    impls = singular(sp for sp in walk(f90_mod, f03.Module_Subprogram_Part))
     base_serializers = _get_basic_serializers()
-    array_serializers: Dict[Tuple[str, int], Subroutine_Subprogram] = {}
+    array_serializers: Dict[Tuple[str, int], f03.Subroutine_Subprogram] = {}
     # Generate basic array serializers for ranks 1 to 4.
     for rank in range(1, 5):
         typez = [
@@ -748,7 +745,7 @@ std::string serialize(bool x) {{
     ]
 
     # Actual code generation begins here.
-    ident_map = identifier_specs(ast)
+    ident_map = analysis.identifier_specs(ast)
     for dt in iterate_over_derived_types(ident_map):
         if dt.name not in sdfg_structs:
             # The type is not present in the final SDFG, so we don't care for it.
@@ -790,9 +787,9 @@ std::string serialize(bool x) {{
 
             # This is some intermediate calculation for F90 code, but no actual code is generated here (i.e., in ops).
             if z.rank:
-                if isinstance(z.type, Intrinsic_Type_Spec):
+                if isinstance(z.type, f03.Intrinsic_Type_Spec):
                     use = None
-                elif isinstance(z.type, Declaration_Type_Spec):
+                elif isinstance(z.type, f03.Declaration_Type_Spec):
                     _, ctyp = z.type.children
                     ctyp = f"{ctyp}"
                     # TODO: Don't rely on unique names.
@@ -932,7 +929,7 @@ deserialize(&(x->{z.name}), s);
         # Conclude the F90 serializer of the type.
         f90_ser_ops: str = '\n'.join(f90_ser_ops)
         kmetas = ', '.join(f"kmeta_{k}" for k in range(10))
-        impl_fn = Subroutine_Subprogram(
+        impl_fn = f03.Subroutine_Subprogram(
             get_reader(f"""
 subroutine W_{dt.name}(io, x, cleanup, nline)
   use {dt.spec[0]}, only: {dt.name}
@@ -951,7 +948,7 @@ subroutine W_{dt.name}(io, x, cleanup, nline)
 end subroutine W_{dt.name}
 """.strip()))
         proc_names.append(f"W_{dt.name}")
-        append_children(impls, impl_fn)
+        utils.append_children(impls, impl_fn)
 
         # Conclude the C++ serializer of the type.
         cpp_ser_ops: str = '\n'.join(cpp_ser_ops)
@@ -978,14 +975,14 @@ void deserialize({dt.name}* x, std::istream& s) {{
     # Conclude the F90 serializer code.
     # Serializers.
     for fn in chain(array_serializers.values(), base_serializers):
-        _, name, _, _ = singular(children_of_type(fn, Subroutine_Stmt)).children
+        _, name, _, _ = singular(children_of_type(fn, f03.Subroutine_Stmt)).children
         proc_names.append(f"{name}")
-        append_children(impls, fn)
-    iface = singular(p for p in walk(f90_mod, Interface_Block) if find_name_of_node(p) == 'serialize')
-    proc_names = Procedure_Stmt(f"module procedure {', '.join(proc_names)}")
-    set_children(iface, iface.children[:-1] + [proc_names] + iface.children[-1:])
+        utils.append_children(impls, fn)
+    iface = singular(p for p in walk(f90_mod, f03.Interface_Block) if utils.find_name_of_node(p) == 'serialize')
+    proc_names = f03.Procedure_Stmt(f"module procedure {', '.join(proc_names)}")
+    utils.set_children(iface, iface.children[:-1] + [proc_names] + iface.children[-1:])
     # Global data.
-    append_children(impls, Subroutine_Subprogram(get_reader(gdata.f90_serializer)))
+    utils.append_children(impls, f03.Subroutine_Subprogram(get_reader(gdata.f90_serializer)))
     f90_code = f90_mod.tofortran()
 
     # Conclude the C++ serde code.
@@ -1277,36 +1274,37 @@ namespace {mod_name} {{
     return SerdeCode(f90_serializer=f90_code.strip(), cpp_serde=cpp_code.strip())
 
 
-def _keep_only_derived_types(ast: Program) -> Program:
-    for x in reversed(walk(ast, (Main_Program, Interface_Block, Subroutine_Subprogram, Function_Subprogram))):
-        remove_self(x)
-    ident_map = identifier_specs(ast)
+def _keep_only_derived_types(ast: f03.Program) -> f03.Program:
+    for x in reversed(
+            walk(ast, (f03.Main_Program, f03.Interface_Block, f03.Subroutine_Subprogram, f03.Function_Subprogram))):
+        utils.remove_self(x)
+    ident_map = analysis.identifier_specs(ast)
     aliases = set(ident_map.keys())
-    for olist in walk(ast, Only_List):
+    for olist in walk(ast, f03.Only_List):
         use = olist.parent
-        assert isinstance(use, Use_Stmt)
-        mod_name = singular(children_of_type(use, Name)).string
+        assert isinstance(use, f03.Use_Stmt)
+        mod_name = singular(children_of_type(use, f03.Name)).string
         mod_spec = (mod_name, )
-        scope_spec = find_scope_spec(use)
+        scope_spec = analysis.find_scope_spec(use)
         for c in olist.children:
-            assert isinstance(c, (Name, Rename, Generic_Spec))
-            if isinstance(c, (Name, Generic_Spec)):
+            assert isinstance(c, (f03.Name, f03.Rename, f03.Generic_Spec))
+            if isinstance(c, (f03.Name, f03.Generic_Spec)):
                 src, tgt = c, c
-            elif isinstance(c, Rename):
+            elif isinstance(c, f03.Rename):
                 _, src, tgt = c.children
             src, tgt = f"{src}", f"{tgt}"
             src_spec, tgt_spec = scope_spec + (src, ), mod_spec + (tgt, )
             if tgt_spec in aliases:
                 aliases.add(src_spec)
             else:
-                remove_self(c)
+                utils.remove_self(c)
     return ast
 
 
-def generate_type_injection_code(ast: Program, mod_name: str = 'type_injection') -> str:
+def generate_type_injection_code(ast: f03.Program, mod_name: str = 'type_injection') -> str:
     ast = _keep_only_derived_types(ast)
 
-    f90_mod = Module(
+    f90_mod = f03.Module(
         get_reader(f"""
 module {mod_name}
   use serde
@@ -1325,18 +1323,18 @@ contains
   end subroutine noop
 end module {mod_name}
 """.strip()))
-    impls = singular(sp for sp in walk(f90_mod, Module_Subprogram_Part))
+    impls = singular(sp for sp in walk(f90_mod, f03.Module_Subprogram_Part))
 
     # Actual code generation begins here.
-    type_injection_serializers: Dict[SPEC, Subroutine_Subprogram] = {}
-    ident_map = identifier_specs(ast)
-    alias_map = alias_specs(ast)
+    type_injection_serializers: Dict[types.SPEC, f03.Subroutine_Subprogram] = {}
+    ident_map = analysis.identifier_specs(ast)
+    alias_map = analysis.alias_specs(ast)
     derived_type_map = {dt.spec: dt for dt in iterate_over_derived_types(ident_map)}
     for idx, dt in enumerate(iterate_over_derived_types(ident_map)):
         # Add config injectors from this type regardless whether they are present in the final SDFG.
         ti_ops = '\n'.join(type_injection_leaf_ops(alias_map, derived_type_map, dt, dt.spec))
         ti_fn_name = f"TI_{dt.name}_{idx}"
-        type_injection_serializers[dt.spec] = Subroutine_Subprogram(
+        type_injection_serializers[dt.spec] = f03.Subroutine_Subprogram(
             get_reader(f"""
 subroutine {ti_fn_name}(io, x)
   use {dt.spec[0]}, only: {dt.name}
@@ -1350,12 +1348,12 @@ end subroutine {ti_fn_name}
     # Conclude the F90 type injection code.
     ti_procs = []
     for fn in type_injection_serializers.values():
-        _, name, _, _ = singular(children_of_type(fn, Subroutine_Stmt)).children
+        _, name, _, _ = singular(children_of_type(fn, f03.Subroutine_Stmt)).children
         ti_procs.append(f"{name}")
-        append_children(impls, fn)
-    iface = singular(p for p in walk(f90_mod, Interface_Block) if find_name_of_node(p) == 'type_inject')
-    proc_names = [Procedure_Stmt(f"module procedure {', '.join(ti_procs)}")] if ti_procs else []
-    set_children(iface, iface.children[:-1] + proc_names + iface.children[-1:])
+        utils.append_children(impls, fn)
+    iface = singular(p for p in walk(f90_mod, f03.Interface_Block) if utils.find_name_of_node(p) == 'type_inject')
+    proc_names = [f03.Procedure_Stmt(f"module procedure {', '.join(ti_procs)}")] if ti_procs else []
+    utils.set_children(iface, iface.children[:-1] + proc_names + iface.children[-1:])
 
     return f90_mod.tofortran()
 

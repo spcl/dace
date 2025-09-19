@@ -19,9 +19,8 @@ import argparse
 from pathlib import Path
 
 from dace import SDFG
-from dace.frontend.fortran.ast_desugaring import const_eval_nodes, inject_const_evals
-from dace.frontend.fortran.config_propagation_data import ecrad_config_injection_list, find_all_config_injections, \
-    find_all_config_injection_files
+from dace.frontend.fortran.ast_desugaring import optimizations
+from dace.frontend.fortran.config_propagation_data import find_all_config_injections, find_all_config_injection_files
 from dace.frontend.fortran.fortran_parser import ParseConfig, create_fparser_ast
 from dace.frontend.fortran.gen_serde import generate_serde_code, _keep_only_derived_types, find_all_f90_files
 
@@ -86,8 +85,8 @@ def main():
     # We trim the extra fat from the AST, since we just need the types and the global variables.
     ast = _keep_only_derived_types(ast)
     # But we may need to propagate the constants and injected configs.
-    ast = const_eval_nodes(ast)
-    ast = inject_const_evals(ast, cfg.config_injections)
+    ast = optimizations.const_eval_nodes(ast)
+    ast = optimizations.inject_const_evals(ast, cfg.config_injections)
     # NOTE: There is no need to generate a global structure for serialisation; there is a special function for that.
     # But, the graph **must** have these global structure if necessary.
 

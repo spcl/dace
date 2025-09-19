@@ -3,7 +3,7 @@ import argparse
 from pathlib import Path
 
 from dace import SDFG
-from dace.frontend.fortran.ast_desugaring import SPEC
+from dace.frontend.fortran.ast_desugaring import types
 from dace.frontend.fortran.ast_utils import singular
 from dace.frontend.fortran.config_propagation_data import find_all_config_injection_files, find_all_config_injections
 from dace.frontend.fortran.fortran_parser import ParseConfig, create_internal_ast, SDFGConfig, \
@@ -59,7 +59,7 @@ def main():
     input_f90s = [f for p in input_dirs for f in find_all_f90_files(p)]
     print(f"Will be reading from {len(input_f90s)} Fortran files in directories: {input_dirs}")
 
-    entry_point: SPEC = tuple(args.entry_point.split('.'))
+    entry_point: types.SPEC = tuple(args.entry_point.split('.'))
     print(f"Will be using this as entry points: {entry_point}")
 
     keep_components: bool = args.keep_components

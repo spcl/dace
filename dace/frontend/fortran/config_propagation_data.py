@@ -2,33 +2,33 @@
 import json
 import sys
 from pathlib import Path
-from typing import List, Any, Dict, Optional, Generator, Iterable, Tuple
+from typing import Any, Dict, Generator, Iterable, Tuple
 
-from dace.frontend.fortran.ast_desugaring import ConstTypeInjection, ConstInstanceInjection, ConstInjection, SPEC
+from dace.frontend.fortran.ast_desugaring import types
 
 
-def serialize(x: ConstInjection) -> str:
-    assert isinstance(x, (ConstTypeInjection, ConstInstanceInjection))
+def serialize(x: types.ConstInjection) -> str:
+    assert isinstance(x, (types.ConstTypeInjection, types.ConstInstanceInjection))
     d: Dict[str, Any] = {
         'type': type(x).__name__,
         'scope': '.'.join(x.scope_spec) if x.scope_spec else None,
-        'root': '.'.join(x.type_spec if isinstance(x, ConstTypeInjection) else x.root_spec),
+        'root': '.'.join(x.type_spec if isinstance(x, types.ConstTypeInjection) else x.root_spec),
         'component': '.'.join(x.component_spec),
         'value': x.value
     }
     return json.dumps(d)
 
 
-def deserialize(s: str) -> ConstInjection:
+def deserialize(s: str) -> types.ConstInjection:
     d = json.loads(s)
     assert d['type'] in {'ConstTypeInjection', 'ConstInstanceInjection'}
     scope = tuple(d['scope'].split('.')) if d['scope'] else None
     root = tuple(d['root'].split('.'))
     component = tuple(d['component'].split('.')) if d['component'] else tuple()
     value = d['value']
-    return ConstTypeInjection(scope, root, component, value) \
+    return types.ConstTypeInjection(scope, root, component, value) \
         if d['type'] == 'ConstTypeInjection' \
-        else ConstInstanceInjection(scope, root, component, value)
+        else types.ConstInstanceInjection(scope, root, component, value)
 
 
 def find_all_config_injection_files(root: Path) -> Generator[Path, None, None]:
@@ -39,8 +39,8 @@ def find_all_config_injection_files(root: Path) -> Generator[Path, None, None]:
             yield f
 
 
-def find_all_config_injections(ti_files: Iterable[Path]) -> Generator[ConstInjection, None, None]:
-    inj_map: Dict[Tuple[str, str], ConstInjection] = {}
+def find_all_config_injections(ti_files: Iterable[Path]) -> Generator[types.ConstInjection, None, None]:
+    inj_map: Dict[Tuple[str, str], types.ConstInjection] = {}
     for f in ti_files:
         for l in f.read_text().strip().splitlines():
             if not l.strip():
@@ -49,7 +49,7 @@ def find_all_config_injections(ti_files: Iterable[Path]) -> Generator[ConstInjec
             if len(x.component_spec) > 1:
                 print(f"{x}/{x.component_spec} must have just one-level for now; moving on...", file=sys.stderr)
                 continue
-            root = '.'.join(x.type_spec if isinstance(x, ConstTypeInjection) else x.root_spec)
+            root = '.'.join(x.type_spec if isinstance(x, types.ConstTypeInjection) else x.root_spec)
             comp = '.'.join(x.component_spec)
             key = (root, comp)
             if key in inj_map:

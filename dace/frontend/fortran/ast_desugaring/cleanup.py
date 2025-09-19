@@ -1,10 +1,19 @@
-from typing import Union, Set, Dict
+"""
+This module contains a collection of AST cleanup and canonicalization passes for the
+Fortran frontend. These passes are designed to run after the initial parsing and
+desugaring stages. They perform tasks such as disambiguating language constructs
+(e.g., array access vs. function calls), standardizing identifier names, removing
+constructs not relevant for dataflow analysis, and restructuring global data to
+simplify subsequent processing.
+"""
+from typing import Union, Set, Dict, List, Optional, Tuple
 
 import fparser.two.Fortran2003 as f03
 from fparser.api import get_reader
 from fparser.two.utils import walk, NumberBase
 
 from . import analysis
+from . import pruning
 from . import types
 from . import utils
 from .. import ast_utils
@@ -620,4 +629,299 @@ def lower_identifier_names(ast: f03.Program) -> f03.Program:
         val, kind = num.children
         if isinstance(kind, str):
             utils.set_children(num, (val, kind.lower()))
+    return ast
+
+
+GLOBAL_DATA_OBJ_NAME = 'global_data'
+GLOBAL_DATA_TYPE_NAME = 'global_data_type'
+
+
+def consolidate_global_data_into_arg(ast: f03.Program, always_add_global_data_arg: bool = False) -> f03.Program:
+    """
+    Consolidates all global variables into a single derived type and passes it as an argument.
+
+    This pass simplifies the handling of global state by:
+    1.  Identifying all variables declared at the module level (global variables).
+    2.  Creating a new module named `global_mod`.
+    3.  Within `global_mod`, defining a new derived type `global_data_type` that contains
+        all the identified global variables as its components.
+    4.  Adding a new argument (`global_data`) of type `global_data_type` to the
+        signature of every function and subroutine.
+    5.  Replacing all direct usages of the original global variables with accesses to the
+        corresponding components of the `global_data` argument (e.g., `my_global_var`
+        becomes `global_data % my_global_var`).
+    6.  Adding the `global_data` argument to all call sites.
+
+    This makes global data dependencies explicit and simplifies dataflow analysis.
+
+    :param ast: The Fortran AST to modify.
+    :param always_add_global_data_arg: If True, adds the global data argument even if
+                                       no global variables are found.
+    :return: The modified Fortran AST.
+    """
+    alias_map = analysis.alias_specs(ast)
+    GLOBAL_DATA_MOD_NAME = 'global_mod'
+    if (GLOBAL_DATA_MOD_NAME, ) in alias_map:
+        # We already have the global initialisers.
+        return ast
+
+    all_derived_types, all_global_vars = [], []
+    # Collect all the derived types into a global module.
+    for dt in walk(ast, f03.Derived_Type_Def):
+        dtspec = analysis.ident_spec(ast_utils.singular(ast_utils.children_of_type(dt, f03.Derived_Type_Stmt)))
+        assert len(dtspec) == 2
+        mod, dtname = dtspec
+        all_derived_types.append(f"use {mod}, only : {dtname}")
+    # Collect all the global variables into a single global data structure.
+    for m in walk(ast, f03.Module):
+        spart = ast_utils.atmost_one(ast_utils.children_of_type(m, f03.Specification_Part))
+        if not spart:
+            continue
+        for tdecl in ast_utils.children_of_type(spart, f03.Type_Declaration_Stmt):
+            typ, attr, _ = tdecl.children
+            if 'PARAMETER' in f"{attr}":
+                # This is a constant which should have been propagated away already.
+                continue
+            all_global_vars.append(tdecl.tofortran())
+    all_derived_types = '\n'.join(all_derived_types)
+    all_global_vars = '\n'.join(all_global_vars)
+
+    # Then, replace all the instances of references to global variables with corresponding data-refs.
+    for nm in walk(ast, f03.Name):
+        par = nm.parent
+        if isinstance(par, (f03.Entity_Decl, f03.Use_Stmt, f03.Rename, f03.Only_List)):
+            continue
+        if isinstance(par, (f03.Part_Ref, f03.Data_Ref)):
+            while par and isinstance(par.parent, (f03.Part_Ref, f03.Data_Ref)):
+                par = par.parent
+            scope_spec = analysis.search_scope_spec(par)
+            root, _, _ = analysis._dataref_root(par, scope_spec, alias_map)
+            if root is not nm:
+                continue
+        local_spec = analysis.search_real_local_alias_spec(nm, alias_map)
+        if not local_spec:
+            continue
+        assert local_spec in alias_map
+        if not isinstance(alias_map[local_spec], f03.Entity_Decl):
+            continue
+        edecl_spec = analysis.ident_spec(alias_map[local_spec])
+        assert len(edecl_spec) >= 2, \
+            f"Fortran cannot possibly have a top-level global variable, outside any module; got {edecl_spec}"
+        if len(edecl_spec) != 2:
+            # We cannot possibly have a module level variable declaration.
+            continue
+        mod, var = edecl_spec
+        assert (mod, ) in alias_map
+        if not isinstance(alias_map[(mod, )], f03.Module_Stmt):
+            continue
+        if isinstance(nm.parent, f03.Part_Ref):
+            _, subsc = nm.parent.children
+            utils.replace_node(nm.parent, f03.Data_Ref(f"{GLOBAL_DATA_OBJ_NAME} % {var}({subsc})"))
+        else:
+            utils.replace_node(nm, f03.Data_Ref(f"{GLOBAL_DATA_OBJ_NAME} % {var}"))
+
+    if all_global_vars or always_add_global_data_arg:
+        # Make `global_data` an argument to every defined function.
+        for fn in walk(ast, (f03.Function_Subprogram, f03.Subroutine_Subprogram)):
+            stmt = ast_utils.singular(ast_utils.children_of_type(fn, utils.NAMED_STMTS_OF_INTEREST_CLASSES))
+            assert isinstance(stmt, (f03.Function_Stmt, f03.Subroutine_Stmt))
+            prefix, name, dummy_args, whatever = stmt.children
+            if dummy_args:
+                utils.prepend_children(dummy_args, f03.Name(GLOBAL_DATA_OBJ_NAME))
+            else:
+                utils.set_children(stmt, (prefix, name, f03.Dummy_Arg_Name_List(GLOBAL_DATA_OBJ_NAME), whatever))
+            spart = ast_utils.atmost_one(ast_utils.children_of_type(fn, f03.Specification_Part))
+            use_stmt = f"use {GLOBAL_DATA_MOD_NAME}, only : {GLOBAL_DATA_TYPE_NAME}"
+            if spart:
+                utils.prepend_children(spart, f03.Use_Stmt(use_stmt))
+            else:
+                utils.set_children(fn,
+                                   fn.children[:1] + [f03.Specification_Part(get_reader(use_stmt))] + fn.children[1:])
+            spart = ast_utils.atmost_one(ast_utils.children_of_type(fn, f03.Specification_Part))
+            decl_idx = [idx for idx, v in enumerate(spart.children) if isinstance(v, f03.Type_Declaration_Stmt)]
+            decl_idx = decl_idx[0] if decl_idx else len(spart.children)
+            utils.set_children(
+                spart, spart.children[:decl_idx] +
+                [f03.Type_Declaration_Stmt(f"type({GLOBAL_DATA_TYPE_NAME}) :: {GLOBAL_DATA_OBJ_NAME}")] +
+                spart.children[decl_idx:])
+        for fcall in walk(ast, (f03.Function_Reference, f03.Call_Stmt)):
+            fn, args = fcall.children
+            fnspec = analysis.search_real_local_alias_spec(fn, alias_map)
+            if not fnspec:
+                continue
+            fnstmt = alias_map[fnspec]
+            assert isinstance(fnstmt, (f03.Function_Stmt, f03.Subroutine_Stmt))
+            if args:
+                utils.prepend_children(args, f03.Name(GLOBAL_DATA_OBJ_NAME))
+            else:
+                utils.set_children(fcall, (fn, f03.Actual_Arg_Spec_List(GLOBAL_DATA_OBJ_NAME)))
+        # NOTE: We do not remove the variables themselves, and let them be pruned later on.
+
+    global_mod = f03.Module(
+        get_reader(f"""
+module {GLOBAL_DATA_MOD_NAME}
+  {all_derived_types}
+
+  type {GLOBAL_DATA_TYPE_NAME}
+    {all_global_vars}
+  end type {GLOBAL_DATA_TYPE_NAME}
+end module {GLOBAL_DATA_MOD_NAME}
+"""))
+    utils.prepend_children(ast, global_mod)
+
+    ast = pruning.consolidate_uses(ast)
+    return ast
+
+
+def create_global_initializers(ast: f03.Program, entry_points: List[types.SPEC]) -> f03.Program:
+    """
+    Creates initializer subroutines for global variables and derived types.
+
+    This pass identifies global variables and derived type components that have
+    initialization values. It then generates subroutines to perform these
+    initializations at runtime.
+
+    The process is as follows:
+    1.  For each derived type with initialized components, a `type_init_...` subroutine
+        is created to initialize the components of an object of that type.
+    2.  A single `global_init_fn` subroutine is created to handle the initialization
+        of all module-level global variables. This function will call the appropriate
+        `type_init_...` subroutines for derived type variables.
+    3.  A call to `global_init_fn` is inserted at the beginning of the execution part
+        of every subprogram marked as an entry point.
+    4.  Any generated initializer functions that are not used are pruned from the AST.
+
+    This ensures that all global state is explicitly initialized before it is used
+    in the program's entry points.
+
+    :param ast: The Fortran AST to modify.
+    :param entry_points: A list of specifications for subprograms that are entry points.
+    :return: The modified Fortran AST.
+    """
+    # TODO: Ordering of the initializations may matter, but for that we need to find how Fortran's global initialization
+    #  works and then reorder the initialization calls appropriately.
+
+    ident_map = analysis.identifier_specs(ast)
+    GLOBAL_INIT_FN_NAME = 'global_init_fn'
+    if (GLOBAL_INIT_FN_NAME, ) in ident_map:
+        # We already have the global initialisers.
+        return ast
+    alias_map = analysis.alias_specs(ast)
+
+    created_init_fns: Set[str] = set()
+    used_init_fns: Set[str] = set()
+
+    def _make_init_fn(fn_name: str, inited_vars: List[types.SPEC], this: Optional[types.SPEC]):
+        if this:
+            assert this in ident_map and isinstance(ident_map[this], f03.Derived_Type_Stmt)
+            box = ident_map[this]
+            while not isinstance(box, f03.Specification_Part):
+                box = box.parent
+            box = box.parent
+            assert isinstance(box, f03.Module)
+            sp_part = ast_utils.atmost_one(ast_utils.children_of_type(box, f03.Module_Subprogram_Part))
+            if not sp_part:
+                rest, end_mod = box.children[:-1], box.children[-1]
+                assert isinstance(end_mod, f03.End_Module_Stmt)
+                # TODO: FParser bug; A simple `Module_Subprogram_Part('contains') should work, but doesn't;
+                #  hence the surgery.
+                sp_part = f03.Module(get_reader('module m\ncontains\nend module m')).children[1]
+                utils.set_children(box, rest + [sp_part, end_mod])
+            box = sp_part
+        else:
+            box = ast
+
+        uses, execs = [], []
+        for v in inited_vars:
+            var = ident_map[v]
+            mod = var
+            while not isinstance(mod, f03.Module):
+                mod = mod.parent
+            if not this:
+                uses.append(f"use {utils.find_name_of_node(mod)}, only: {utils.find_name_of_stmt(var)}")
+            var_t = analysis.find_type_of_entity(var, alias_map)
+            if var_t.spec in type_defs:
+                if var_t.shape:
+                    # TODO: We need to create loops for this initialization.
+                    continue
+                var_init, _ = type_defs[var_t.spec]
+                tmod = ident_map[var_t.spec]
+                while not isinstance(tmod, f03.Module):
+                    tmod = tmod.parent
+                uses.append(f"use {utils.find_name_of_node(tmod)}, only: {var_init}")
+                execs.append(f"call {var_init}({'this % ' if this else ''}{utils.find_name_of_node(var)})")
+                used_init_fns.add(var_init)
+            else:
+                name, _, _, init_val = var.children
+                assert init_val
+                execs.append(f"{'this % ' if this else ''}{name.tofortran()}{init_val.tofortran()}")
+        fn_args = 'this' if this else ''
+        uses_stmts = '\n'.join(uses)
+        this_decl = f"type({this[-1]}) :: this" if this else ''
+        execs_stmts = '\n'.join(execs)
+        init_fn = f"""
+subroutine {fn_name}({fn_args})
+  {uses_stmts}
+  implicit none
+  {this_decl}
+  {execs_stmts}
+end subroutine {fn_name}
+"""
+        init_fn = f03.Subroutine_Subprogram(get_reader(init_fn.strip()))
+        utils.append_children(box, init_fn)
+        created_init_fns.add(fn_name)
+
+    type_defs: List[types.SPEC] = [k for k in ident_map.keys() if isinstance(ident_map[k], f03.Derived_Type_Stmt)]
+    type_defs: Dict[types.SPEC, Tuple[str, List[types.SPEC]]] = \
+        {k: (f"type_init_{k[-1]}_{idx}", []) for idx, k in enumerate(type_defs)}
+    for k, v in ident_map.items():
+        if not isinstance(v, f03.Component_Decl) or not ast_utils.atmost_one(
+                ast_utils.children_of_type(v, f03.Component_Initialization)):
+            continue
+        td = k[:-1]
+        assert td in ident_map and isinstance(ident_map[td], f03.Derived_Type_Stmt)
+        if td not in type_defs:
+            type_init_fn = f"type_init_{td[-1]}_{len(type_defs)}"
+            type_defs[td] = type_init_fn, []
+        type_defs[td][1].append(k)
+    for t, v in type_defs.items():
+        if len(t) != 2:
+            # Not a type that's globally accessible anyway.
+            continue
+        mod, _ = t
+        assert (mod, ) in alias_map
+        if not isinstance(alias_map[(mod, )], f03.Module_Stmt):
+            # Not a type that's globally accessible anyway.
+            continue
+        init_fn_name, comps = v
+        _make_init_fn(init_fn_name, comps, t)
+
+    global_inited_vars: List[types.SPEC] = [
+        k for k, v in ident_map.items()
+        if isinstance(v, f03.Entity_Decl) and not analysis.find_type_of_entity(v, alias_map).const and (
+            analysis.find_type_of_entity(v, alias_map).spec in type_defs
+            or ast_utils.atmost_one(ast_utils.children_of_type(v, f03.Initialization)))
+        and analysis.search_scope_spec(v) and isinstance(alias_map[analysis.search_scope_spec(v)], f03.Module_Stmt)
+    ]
+    if global_inited_vars:
+        _make_init_fn(GLOBAL_INIT_FN_NAME, global_inited_vars, None)
+        for ep in entry_points:
+            assert ep in ident_map
+            fn = ident_map[ep]
+            if not isinstance(fn, (f03.Function_Stmt, f03.Subroutine_Stmt)):
+                # Not a function (or subroutine), so there is nothing to exectue here.
+                continue
+            ex = ast_utils.atmost_one(ast_utils.children_of_type(fn.parent, f03.Execution_Part))
+            if not ex:
+                # The function does nothing. We could still initialize, but there is no point.
+                continue
+            init_call = f03.Call_Stmt(f"call {GLOBAL_INIT_FN_NAME}")
+            utils.prepend_children(ex, init_call)
+            used_init_fns.add(GLOBAL_INIT_FN_NAME)
+
+    unused_init_fns = created_init_fns - used_init_fns
+    for fn in walk(ast, f03.Subroutine_Subprogram):
+        if utils.find_name_of_node(fn) in unused_init_fns:
+            utils.remove_self(fn)
+
     return ast

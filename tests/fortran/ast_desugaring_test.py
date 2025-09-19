@@ -4,26 +4,15 @@ from typing import Dict, Optional, Iterable
 from fparser.two.Fortran2003 import Program
 from fparser.two.parser import ParserFactory
 
-from dace.frontend.fortran.ast_desugaring import deconstruct_enums, \
-    deconstruct_interface_calls, deconstruct_procedure_calls, deconstruct_associations, \
-    create_global_initializers, convert_data_statements_into_assignments, \
-    deconstruct_statement_functions, deconstuct_goto_statements, SPEC, \
-    identifier_specs, alias_specs, consolidate_uses, consolidate_global_data_into_arg
-from dace.frontend.fortran.ast_desugaring_v2.cleanup import correct_for_function_calls, \
-    remove_access_and_bind_statements, assign_globally_unique_subprogram_names, assign_globally_unique_variable_names
-from dace.frontend.fortran.ast_desugaring_v2.optimizations import const_eval_nodes, inject_const_evals, \
-    make_practically_constant_arguments_constants, exploit_locally_constant_variables, \
-    make_practically_constant_global_vars_constants
-from dace.frontend.fortran.ast_desugaring_v2.pruning import prune_branches, prune_unused_objects
-from dace.frontend.fortran.ast_desugaring_v2.types import ConstTypeInjection, ConstInstanceInjection
+from dace.frontend.fortran.ast_desugaring import types, analysis, desugaring, pruning, cleanup, optimizations
 from dace.frontend.fortran.fortran_parser import construct_full_ast
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 
-def parse_and_improve(sources: Dict[str, str], entry_points: Optional[Iterable[SPEC]] = None):
+def parse_and_improve(sources: Dict[str, str], entry_points: Optional[Iterable[types.SPEC]] = None):
     parser = ParserFactory().create(std="f2008")
     ast = construct_full_ast(sources, parser, entry_points=entry_points)
-    ast = correct_for_function_calls(ast)
+    ast = cleanup.correct_for_function_calls(ast)
     assert isinstance(ast, Program)
     return ast
 
@@ -39,10 +28,10 @@ end module lib
 """).check_with_gfortran().get()
     ast = construct_full_ast(sources, ParserFactory().create(std="f2008"))
 
-    ident_map = identifier_specs(ast)
+    ident_map = analysis.identifier_specs(ast)
     assert ident_map.keys() == {('lib', ), ('lib', '__interface__', 'fun')}
 
-    alias_map = alias_specs(ast)
+    alias_map = analysis.alias_specs(ast)
     assert alias_map.keys() == {('lib', ), ('lib', '__interface__', 'fun')}
 
 
@@ -59,10 +48,10 @@ end module lib
 """).check_with_gfortran().get()
     ast = construct_full_ast(sources, ParserFactory().create(std="f2008"))
 
-    ident_map = identifier_specs(ast)
+    ident_map = analysis.identifier_specs(ast)
     assert ident_map.keys() == {('lib', ), ('lib', 'base'), ('lib', 'base', 'a'), ('lib', 'ext'), ('lib', 'ext', 'b')}
 
-    alias_map = alias_specs(ast)
+    alias_map = analysis.alias_specs(ast)
     assert alias_map.keys() == {('lib', ), ('lib', 'base'), ('lib', 'base', 'a'), ('lib', 'ext'), ('lib', 'ext', 'b'),
                                 ('lib', 'ext', 'base'), ('lib', 'ext', 'base', 'a')}
 
@@ -83,11 +72,11 @@ end module lib
 """).check_with_gfortran().get()
     ast = construct_full_ast(sources, ParserFactory().create(std="f2008"))
 
-    ident_map = identifier_specs(ast)
+    ident_map = analysis.identifier_specs(ast)
     assert (ident_map.keys() == {('lib', ), ('lib', 'T'), ('lib', 'T', 'fun'), ('lib', 'T', 'nofun'), ('lib', 'fun'),
                                  ('lib', 'real_fun')})
 
-    alias_map = alias_specs(ast)
+    alias_map = analysis.alias_specs(ast)
     assert (alias_map.keys() == {('lib', ), ('lib', 'T'), ('lib', 'T', 'fun'), ('lib', 'T', 'nofun'), ('lib', 'fun'),
                                  ('lib', 'real_fun')})
 
@@ -131,7 +120,7 @@ subroutine main
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = deconstruct_procedure_calls(ast)
+    ast = desugaring.deconstruct_procedure_calls(ast)
 
     got = ast.tofortran()
     want = """
@@ -213,7 +202,7 @@ subroutine main
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = deconstruct_procedure_calls(ast)
+    ast = desugaring.deconstruct_procedure_calls(ast)
 
     got = ast.tofortran()
     want = """
@@ -283,7 +272,7 @@ subroutine main
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = deconstruct_procedure_calls(ast)
+    ast = desugaring.deconstruct_procedure_calls(ast)
 
     got = ast.tofortran()
     want = """
@@ -363,7 +352,7 @@ subroutine main
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = deconstruct_procedure_calls(ast)
+    ast = desugaring.deconstruct_procedure_calls(ast)
 
     got = ast.tofortran()
     want = """
@@ -452,7 +441,7 @@ subroutine main
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = deconstruct_procedure_calls(ast)
+    ast = desugaring.deconstruct_procedure_calls(ast)
 
     got = ast.tofortran()
     want = """
@@ -523,7 +512,7 @@ subroutine main
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = deconstruct_associations(ast)
+    ast = desugaring.deconstruct_associations(ast)
 
     got = ast.tofortran()
     want = """
@@ -588,9 +577,9 @@ subroutine main
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = deconstruct_enums(ast)
-    ast = deconstruct_associations(ast)
-    ast = deconstruct_procedure_calls(ast)
+    ast = desugaring.deconstruct_enums(ast)
+    ast = desugaring.deconstruct_associations(ast)
+    ast = desugaring.deconstruct_procedure_calls(ast)
 
     got = ast.tofortran()
     want = """
@@ -658,8 +647,8 @@ subroutine main
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = deconstruct_associations(ast)
-    ast = deconstruct_procedure_calls(ast)
+    ast = desugaring.deconstruct_associations(ast)
+    ast = desugaring.deconstruct_procedure_calls(ast)
 
     got = ast.tofortran()
     want = """
@@ -732,8 +721,8 @@ subroutine main
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = deconstruct_associations(ast)
-    ast = deconstruct_procedure_calls(ast)
+    ast = desugaring.deconstruct_associations(ast)
+    ast = desugaring.deconstruct_procedure_calls(ast)
 
     got = ast.tofortran()
     want = """
@@ -793,9 +782,9 @@ end module main
     ast = parse_and_improve(sources)
 
     # A constant-evaluation will pin the constant values.
-    ast = const_eval_nodes(ast)
+    ast = optimizations.const_eval_nodes(ast)
     # A use-consolidation will remove the now-redundant use.
-    ast = consolidate_uses(ast)
+    ast = pruning.consolidate_uses(ast)
     got = ast.tofortran()
     want = """
 MODULE lib
@@ -838,7 +827,7 @@ subroutine main
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = consolidate_uses(ast)
+    ast = pruning.consolidate_uses(ast)
 
     got = ast.tofortran()
     want = """
@@ -881,7 +870,7 @@ subroutine main
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = consolidate_uses(ast)
+    ast = pruning.consolidate_uses(ast)
 
     got = ast.tofortran()
     want = """
@@ -920,7 +909,7 @@ subroutine main
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = deconstruct_enums(ast)
+    ast = desugaring.deconstruct_enums(ast)
 
     got = ast.tofortran()
     want = """
@@ -964,9 +953,9 @@ subroutine main
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = deconstruct_associations(ast)
-    ast = correct_for_function_calls(ast)
-    ast = deconstruct_procedure_calls(ast)
+    ast = desugaring.deconstruct_associations(ast)
+    ast = cleanup.correct_for_function_calls(ast)
+    ast = desugaring.deconstruct_procedure_calls(ast)
 
     got = ast.tofortran()
     want = """
@@ -1032,7 +1021,7 @@ subroutine main
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = deconstruct_interface_calls(ast)
+    ast = desugaring.deconstruct_interface_calls(ast)
 
     got = ast.tofortran()
     want = """
@@ -1102,7 +1091,7 @@ subroutine fun(z)
 end subroutine fun
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = deconstruct_interface_calls(ast)
+    ast = desugaring.deconstruct_interface_calls(ast)
 
     got = ast.tofortran()
     want = """
@@ -1164,7 +1153,7 @@ subroutine main
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = deconstruct_interface_calls(ast)
+    ast = desugaring.deconstruct_interface_calls(ast)
 
     got = ast.tofortran()
     want = """
@@ -1234,7 +1223,7 @@ subroutine main
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = deconstruct_interface_calls(ast)
+    ast = desugaring.deconstruct_interface_calls(ast)
 
     got = ast.tofortran()
     want = """
@@ -1319,7 +1308,7 @@ subroutine main
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = deconstruct_procedure_calls(ast)
+    ast = desugaring.deconstruct_procedure_calls(ast)
 
     got = ast.tofortran()
     want = """
@@ -1420,8 +1409,8 @@ subroutine main
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = assign_globally_unique_subprogram_names(ast, {('main', )})
-    ast = assign_globally_unique_variable_names(ast, set())
+    ast = cleanup.assign_globally_unique_subprogram_names(ast, {('main', )})
+    ast = cleanup.assign_globally_unique_variable_names(ast, set())
 
     got = ast.tofortran()
     want = """
@@ -1502,7 +1491,7 @@ subroutine main
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = prune_branches(ast)
+    ast = pruning.prune_branches(ast)
 
     got = ast.tofortran()
     want = """
@@ -1558,7 +1547,7 @@ subroutine main
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = prune_unused_objects(ast, [('main', )])
+    ast = pruning.prune_unused_objects(ast, [('main', )])
 
     got = ast.tofortran()
     want = """
@@ -1607,7 +1596,7 @@ subroutine main(out)
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = prune_unused_objects(ast, [('main', )])
+    ast = pruning.prune_unused_objects(ast, [('main', )])
 
     got = ast.tofortran()
     want = """
@@ -1702,7 +1691,7 @@ subroutine main
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = const_eval_nodes(ast)
+    ast = optimizations.const_eval_nodes(ast)
 
     got = ast.tofortran()
     want = """
@@ -1751,7 +1740,7 @@ contains
 end module main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = const_eval_nodes(ast)
+    ast = optimizations.const_eval_nodes(ast)
 
     got = ast.tofortran()
     want = """
@@ -1799,7 +1788,7 @@ subroutine main
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = const_eval_nodes(ast)
+    ast = optimizations.const_eval_nodes(ast)
 
     got = ast.tofortran()
     want = """
@@ -1859,9 +1848,9 @@ subroutine main(cfg)
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = inject_const_evals(ast, [
-        ConstTypeInjection(None, ('lib', 'config'), ('a', ), '42'),
-        ConstTypeInjection(None, ('lib', 'config'), ('b', ), '10000.0')
+    ast = optimizations.inject_const_evals(ast, [
+        types.ConstTypeInjection(None, ('lib', 'config'), ('a', ), '42'),
+        types.ConstTypeInjection(None, ('lib', 'config'), ('b', ), '10000.0')
     ])
 
     got = ast.tofortran()
@@ -1926,9 +1915,9 @@ subroutine main(cfg)
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = inject_const_evals(ast, [
-        ConstInstanceInjection(None, ('lib', 'globalo'), ('a', ), '42'),
-        ConstInstanceInjection(None, ('main', 'cfg'), ('big', 'b'), '10000.0')
+    ast = optimizations.inject_const_evals(ast, [
+        types.ConstInstanceInjection(None, ('lib', 'globalo'), ('a', ), '42'),
+        types.ConstInstanceInjection(None, ('main', 'cfg'), ('big', 'b'), '10000.0')
     ])
 
     got = ast.tofortran()
@@ -1991,8 +1980,8 @@ subroutine main(cfg)
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = inject_const_evals(ast, [
-        ConstTypeInjection(None, ('lib', 'config'), ('a_a', ), 'true'),
+    ast = optimizations.inject_const_evals(ast, [
+        types.ConstTypeInjection(None, ('lib', 'config'), ('a_a', ), 'true'),
     ])
 
     got = ast.tofortran()
@@ -2049,21 +2038,21 @@ subroutine main(cfg, b, c, d)
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = inject_const_evals(ast, [
-        ConstTypeInjection(None, ('lib', 'config'), ('a_a', ), 'true'),
-        ConstTypeInjection(None, ('lib', 'config'), ('__f2dace_SA_a_d_0_s', ), '3'),
-        ConstTypeInjection(None, ('lib', 'config'), ('__f2dace_SOA_a_d_0_s', ), '1'),
-        ConstTypeInjection(None, ('lib', 'config'), ('__f2dace_SA_a_d_1_s', ), '3'),
-        ConstTypeInjection(None, ('lib', 'config'), ('__f2dace_SOA_a_d_1_s', ), '2'),
-        ConstInstanceInjection(None, ('main', 'b_a'), tuple(), 'true'),
-        ConstInstanceInjection(None, ('main', '__f2dace_SA_b_d_0_s'), tuple(), '4'),
-        ConstInstanceInjection(None, ('main', '__f2dace_SOA_b_d_0_s'), tuple(), '1'),
-        ConstInstanceInjection(None, ('main', 'c_a'), tuple(), 'true'),
-        ConstInstanceInjection(None, ('main', '__f2dace_SA_c_d_0_s'), tuple(), '4'),
-        ConstInstanceInjection(None, ('main', '__f2dace_SOA_c_d_0_s'), tuple(), '1'),
-        ConstInstanceInjection(None, ('main', 'd_a'), tuple(), 'false'),
-        ConstInstanceInjection(None, ('main', '__f2dace_SA_d_d_0_s'), tuple(), '4'),
-        ConstInstanceInjection(None, ('main', '__f2dace_SOA_d_d_0_s'), tuple(), '1'),
+    ast = optimizations.inject_const_evals(ast, [
+        types.ConstTypeInjection(None, ('lib', 'config'), ('a_a', ), 'true'),
+        types.ConstTypeInjection(None, ('lib', 'config'), ('__f2dace_SA_a_d_0_s', ), '3'),
+        types.ConstTypeInjection(None, ('lib', 'config'), ('__f2dace_SOA_a_d_0_s', ), '1'),
+        types.ConstTypeInjection(None, ('lib', 'config'), ('__f2dace_SA_a_d_1_s', ), '3'),
+        types.ConstTypeInjection(None, ('lib', 'config'), ('__f2dace_SOA_a_d_1_s', ), '2'),
+        types.ConstInstanceInjection(None, ('main', 'b_a'), tuple(), 'true'),
+        types.ConstInstanceInjection(None, ('main', '__f2dace_SA_b_d_0_s'), tuple(), '4'),
+        types.ConstInstanceInjection(None, ('main', '__f2dace_SOA_b_d_0_s'), tuple(), '1'),
+        types.ConstInstanceInjection(None, ('main', 'c_a'), tuple(), 'true'),
+        types.ConstInstanceInjection(None, ('main', '__f2dace_SA_c_d_0_s'), tuple(), '4'),
+        types.ConstInstanceInjection(None, ('main', '__f2dace_SOA_c_d_0_s'), tuple(), '1'),
+        types.ConstInstanceInjection(None, ('main', 'd_a'), tuple(), 'false'),
+        types.ConstInstanceInjection(None, ('main', '__f2dace_SA_d_d_0_s'), tuple(), '4'),
+        types.ConstInstanceInjection(None, ('main', '__f2dace_SOA_d_d_0_s'), tuple(), '1'),
     ])
 
     got = ast.tofortran()
@@ -2148,7 +2137,7 @@ subroutine main()
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = make_practically_constant_arguments_constants(ast, [('main', )])
+    ast = optimizations.make_practically_constant_arguments_constants(ast, [('main', )])
 
     got = ast.tofortran()
     want = """
@@ -2229,7 +2218,7 @@ subroutine main
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = make_practically_constant_global_vars_constants(ast)
+    ast = optimizations.make_practically_constant_global_vars_constants(ast)
 
     got = ast.tofortran()
     want = """
@@ -2336,7 +2325,7 @@ contains
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = exploit_locally_constant_variables(ast)
+    ast = optimizations.exploit_locally_constant_variables(ast)
 
     got = ast.tofortran()
     want = """
@@ -2442,7 +2431,7 @@ contains
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = exploit_locally_constant_variables(ast)
+    ast = optimizations.exploit_locally_constant_variables(ast)
 
     got = ast.tofortran()
     want = """
@@ -2513,7 +2502,7 @@ subroutine main()
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = exploit_locally_constant_variables(ast)
+    ast = optimizations.exploit_locally_constant_variables(ast)
 
     got = ast.tofortran()
     want = """
@@ -2578,7 +2567,7 @@ subroutine main
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = consolidate_global_data_into_arg(ast)
+    ast = cleanup.consolidate_global_data_into_arg(ast)
 
     got = ast.tofortran()
     want = """
@@ -2656,7 +2645,7 @@ subroutine main
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = create_global_initializers(ast, [('main', )])
+    ast = cleanup.create_global_initializers(ast, [('main', )])
 
     got = ast.tofortran()
     want = """
@@ -2730,7 +2719,7 @@ subroutine main(res)
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = convert_data_statements_into_assignments(ast)
+    ast = desugaring.convert_data_statements_into_assignments(ast)
 
     got = ast.tofortran()
     want = """
@@ -2773,7 +2762,7 @@ subroutine main(d)
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = deconstruct_statement_functions(ast)
+    ast = desugaring.deconstruct_statement_functions(ast)
 
     got = ast.tofortran()
     want = """
@@ -2837,7 +2826,7 @@ subroutine main(d)
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = deconstuct_goto_statements(ast)
+    ast = desugaring.deconstuct_goto_statements(ast)
 
     got = ast.tofortran()
     want = """
@@ -2960,7 +2949,7 @@ subroutine main
 end subroutine main
 """, 'main').check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = remove_access_and_bind_statements(ast)
+    ast = cleanup.remove_access_and_bind_statements(ast)
 
     got = ast.tofortran()
     want = """
@@ -3009,7 +2998,7 @@ subroutine main(a)
 end subroutine main
 """, 'main').check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = remove_access_and_bind_statements(ast)
+    ast = cleanup.remove_access_and_bind_statements(ast)
 
     got = ast.tofortran()
     want = """
@@ -3053,7 +3042,7 @@ subroutine main()
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = const_eval_nodes(ast)
+    ast = optimizations.const_eval_nodes(ast)
 
     got = ast.tofortran()
     want = """
@@ -3090,7 +3079,7 @@ subroutine main
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = const_eval_nodes(ast)
+    ast = optimizations.const_eval_nodes(ast)
 
     got = ast.tofortran()
     want = """

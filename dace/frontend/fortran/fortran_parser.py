@@ -7,11 +7,10 @@ from copy import deepcopy as dpcp
 from pathlib import Path
 from typing import List, Optional, Set, Dict, Tuple, Union, Iterable
 
+import fparser.two.Fortran2003 as f03
 import networkx as nx
 from fparser.api import get_reader
 from fparser.two.C99Preprocessor import CPP_CLASS_NAMES
-from fparser.two.Fortran2003 import Program, Include_Stmt, Subroutine_Stmt, Function_Stmt, Interface_Stmt, \
-    Execution_Part, Component_Decl
 from fparser.two.parser import ParserFactory
 from fparser.two.utils import Base, walk, FortranSyntaxError
 
@@ -25,20 +24,16 @@ from dace import dtypes
 from dace import symbolic as sym
 from dace.data import Scalar, Structure
 from dace.frontend.fortran import ast_utils
-from dace.frontend.fortran.ast_desugaring import find_name_of_node, append_children, \
-    deconstruct_enums, deconstruct_interface_calls, deconstruct_procedure_calls, \
-    deconstruct_associations, ident_spec, convert_data_statements_into_assignments, \
-    deconstruct_statement_functions, deconstuct_goto_statements, remove_self, \
-    consolidate_global_data_into_arg, identifier_specs
-from dace.frontend.fortran.ast_desugaring_v2.cleanup import correct_for_function_calls, \
-    remove_access_and_bind_statements, lower_identifier_names, assign_globally_unique_subprogram_names, \
-    assign_globally_unique_variable_names
-from dace.frontend.fortran.ast_desugaring_v2.optimizations import inject_const_evals, \
+from dace.frontend.fortran.ast_desugaring import analysis, utils, desugaring, cleanup
+from dace.frontend.fortran.ast_desugaring.cleanup import correct_for_function_calls, \
+    lower_identifier_names, assign_globally_unique_subprogram_names, \
+    assign_globally_unique_variable_names, consolidate_global_data_into_arg
+from dace.frontend.fortran.ast_desugaring.optimizations import inject_const_evals, \
     make_practically_constant_arguments_constants, exploit_locally_constant_variables, const_eval_nodes
-from dace.frontend.fortran.ast_desugaring_v2.pruning import prune_branches, consolidate_uses, prune_unused_objects, \
+from dace.frontend.fortran.ast_desugaring.pruning import prune_branches, consolidate_uses, prune_unused_objects, \
     prune_coarsely, keep_sorted_used_modules
-from dace.frontend.fortran.ast_desugaring_v2.types import SPEC, ConstInjection, ConstTypeInjection
-from dace.frontend.fortran.ast_desugaring_v2.utils import NAMED_STMTS_OF_INTEREST_CLASSES, ENTRY_POINT_OBJECT_CLASSES
+from dace.frontend.fortran.ast_desugaring.types import SPEC, ConstInjection, ConstTypeInjection
+from dace.frontend.fortran.ast_desugaring.utils import NAMED_STMTS_OF_INTEREST_CLASSES, ENTRY_POINT_OBJECT_CLASSES
 from dace.frontend.fortran.ast_internal_classes import FNode, Main_Program_Node, Name_Node, Var_Decl_Node
 from dace.frontend.fortran.ast_internal_classes import Program_Node
 from dace.frontend.fortran.ast_utils import children_of_type, mywalk, atmost_one
@@ -2854,21 +2849,21 @@ class ParseConfig:
         self.rename_uniquely = rename_uniquely
         self.do_not_prune_type_components = do_not_prune_type_components
 
-    def set_all_possible_entry_points_from(self, ast: Program):
+    def set_all_possible_entry_points_from(self, ast: f03.Program):
         # Keep all the possible entry points.
         self.entry_points = [
-            ident_spec(ast_utils.singular(children_of_type(c, NAMED_STMTS_OF_INTEREST_CLASSES)))
+            analysis.ident_spec(ast_utils.singular(children_of_type(c, NAMED_STMTS_OF_INTEREST_CLASSES)))
             for c in walk(ast, ENTRY_POINT_OBJECT_CLASSES) if isinstance(c, ENTRY_POINT_OBJECT_CLASSES)
         ]
         self.do_not_prune = list({x for x in self.entry_points + self.do_not_prune})
 
-    def avoid_pruning_type_components(self, ast: Program):
-        ident_map = identifier_specs(ast)
-        comp_specs = [k for k, v in ident_map.items() if isinstance(v, Component_Decl)]
+    def avoid_pruning_type_components(self, ast: f03.Program):
+        ident_map = analysis.identifier_specs(ast)
+        comp_specs = [k for k, v in ident_map.items() if isinstance(v, f03.Component_Decl)]
         self.do_not_prune = list({x for x in comp_specs + self.do_not_prune})
 
 
-def top_level_objects_map(ast: Program, path: str) -> Dict[str, Base]:
+def top_level_objects_map(ast: f03.Program, path: str) -> Dict[str, Base]:
     out: Dict[str, Base] = {}
     for top in ast.children:
         if type(top).__name__ in CPP_CLASS_NAMES:
@@ -2877,17 +2872,17 @@ def top_level_objects_map(ast: Program, path: str) -> Dict[str, Base]:
                 f" got `{top}` in {path}",
                 file=sys.stderr)
             continue
-        name = find_name_of_node(top)
+        name = utils.find_name_of_node(top)
         assert name
         out[name.lower()] = top
     return out
 
 
-def create_fparser_ast(cfg: ParseConfig) -> Program:
+def create_fparser_ast(cfg: ParseConfig) -> f03.Program:
     parser = ParserFactory().create(std="f2008")
     ast = construct_full_ast(cfg.sources, parser, cfg.entry_points or None)
     ast = lower_identifier_names(ast)
-    assert isinstance(ast, Program)
+    assert isinstance(ast, f03.Program)
     return ast
 
 
@@ -2898,9 +2893,9 @@ def create_internal_ast(cfg: ParseConfig) -> Tuple[ast_components.InternalFortra
         cfg.set_all_possible_entry_points_from(ast)
 
     ast = run_fparser_transformations(ast, cfg)
-    ast = Program(get_reader(ast.tofortran()))
+    ast = f03.Program(get_reader(ast.tofortran()))
     ast = correct_for_function_calls(ast)
-    assert isinstance(ast, Program)
+    assert isinstance(ast, f03.Program)
 
     iast = ast_components.InternalFortranAst()
     prog = iast.create_ast(ast)
@@ -2926,7 +2921,7 @@ class SDFGConfig:
         self.multiple_sdfgs = multiple_sdfgs
 
 
-def _checkpoint_ast(cfg: ParseConfig, name: str, ast: Program):
+def _checkpoint_ast(cfg: ParseConfig, name: str, ast: f03.Program):
     """
     If a checkpoint directory was specified in the configs, will dump the AST there in various stages of preprocessing.
     """
@@ -2935,7 +2930,7 @@ def _checkpoint_ast(cfg: ParseConfig, name: str, ast: Program):
             f.write(ast.tofortran())
 
 
-def run_fparser_transformations(ast: Program, cfg: ParseConfig):
+def run_fparser_transformations(ast: f03.Program, cfg: ParseConfig):
     if not cfg.entry_points:
         cfg.set_all_possible_entry_points_from(ast)
     if cfg.do_not_prune_type_components:
@@ -2945,33 +2940,33 @@ def run_fparser_transformations(ast: Program, cfg: ParseConfig):
     if cfg.make_noop:
         print("FParser Op: Making certain functions no-op in the AST...")
         noop_missed: Set[SPEC] = set(cfg.make_noop)
-        for fn in walk(ast, (Function_Stmt, Subroutine_Stmt)):
-            fnspec = ident_spec(fn)
+        for fn in walk(ast, (f03.Function_Stmt, f03.Subroutine_Stmt)):
+            fnspec = analysis.ident_spec(fn)
             if fnspec not in cfg.make_noop:
                 continue
             noop_missed.remove(fnspec)
-            expart = atmost_one(children_of_type(fn.parent, Execution_Part))
+            expart = atmost_one(children_of_type(fn.parent, f03.Execution_Part))
             if expart:
-                remove_self(expart)
+                utils.remove_self(expart)
         if noop_missed:
             print(f"The following functions could not be found for making no-op: {noop_missed}", file=sys.stderr)
 
     print("FParser Op: Removing local indirections from AST...")
     # NOTE: The local indirection removal operations should not need full resolution (e.g., build an alias map).
-    ast = deconstruct_enums(ast)
-    ast = deconstruct_associations(ast)
-    ast = remove_access_and_bind_statements(ast)
-    ast = deconstuct_goto_statements(ast)
+    ast = desugaring.deconstruct_enums(ast)
+    ast = desugaring.deconstruct_associations(ast)
+    ast = cleanup.remove_access_and_bind_statements(ast)
+    ast = desugaring.deconstuct_goto_statements(ast)
     # NOTE: We need a coarse pruning as early (and as often) as reasonably possible to make it easier on the operations
     # that rely on full resolution (e.g., builds an alias map). After this pruning, a full resolution is expected.
     ast = prune_coarsely(ast, cfg.do_not_prune)
     _checkpoint_ast(cfg, 'ast_v1.f90', ast)
 
     print("FParser Op: Removing remote indirections from AST...")
-    ast = convert_data_statements_into_assignments(ast)
-    ast = correct_for_function_calls(ast)
-    ast = deconstruct_statement_functions(ast)
-    ast = deconstruct_procedure_calls(ast)
+    ast = desugaring.convert_data_statements_into_assignments(ast)
+    ast = cleanup.correct_for_function_calls(ast)
+    ast = desugaring.deconstruct_statement_functions(ast)
+    ast = desugaring.deconstruct_procedure_calls(ast)
     ast = prune_coarsely(ast, cfg.do_not_prune)
     ast_f90_old, ast_f90_new = None, ast.tofortran()
     while not ast_f90_old or ast_f90_old != ast_f90_new:
@@ -2981,10 +2976,10 @@ def run_fparser_transformations(ast: Program, cfg: ParseConfig):
         else:
             print(f"FParser Op: AST-size is {len(ast_f90_new.splitlines())} lines. Attempting pruning...")
         ast = correct_for_function_calls(ast)
-        ast = deconstruct_interface_calls(ast)
+        ast = desugaring.deconstruct_interface_calls(ast)
         ast = prune_coarsely(ast, cfg.do_not_prune)
         ast_f90_old, ast_f90_new = ast_f90_new, ast.tofortran()
-    if walk(ast, Interface_Stmt):
+    if walk(ast, f03.Interface_Stmt):
         _checkpoint_ast(cfg, 'ast_v1.error.f90', ast)
         raise RuntimeError(f"Could not remove all the interfaces from AST")
     ast = correct_for_function_calls(ast)
@@ -3257,7 +3252,7 @@ def create_sdfg_from_string(source_string: str, sdfg_name: str, normalize_offset
     return create_singular_sdfg_from_string(source_string, f"{sdfg_name}_function", normalize_offsets)
 
 
-def compute_dep_graph(ast: Program, start_point: Union[str, List[str]]) -> nx.DiGraph:
+def compute_dep_graph(ast: f03.Program, start_point: Union[str, List[str]]) -> nx.DiGraph:
     """
     Compute a dependency graph among all the top level objects in the program.
     """
@@ -3269,7 +3264,7 @@ def compute_dep_graph(ast: Program, start_point: Union[str, List[str]]) -> nx.Di
     to_process = start_point
     while to_process:
         item_name, to_process = to_process[0], to_process[1:]
-        item = ast_utils.atmost_one(c for c in ast.children if find_name_of_node(c) == item_name)
+        item = ast_utils.atmost_one(c for c in ast.children if utils.find_name_of_node(c) == item_name)
         if not item:
             print(f"Could not find: {item}")
             continue
@@ -3307,7 +3302,7 @@ def _get_toplevel_objects(path_f90: Tuple[str, str], parser, sources) -> Dict[st
         cast = parser(get_reader(f90))
         # 2. Create a table of how to replace string content.
         inc_map = {}
-        for inc in walk(cast, Include_Stmt):
+        for inc in walk(cast, f03.Include_Stmt):
             file, = inc.children
             repls = {k: c for k, c in sources.items() if k.endswith(f"{file}")}
             if not repls:
@@ -3333,7 +3328,7 @@ def _get_toplevel_objects(path_f90: Tuple[str, str], parser, sources) -> Dict[st
         return {}
 
 
-def construct_full_ast(sources: Dict[str, str], parser, entry_points: Optional[Iterable[SPEC]] = None) -> Program:
+def construct_full_ast(sources: Dict[str, str], parser, entry_points: Optional[Iterable[SPEC]] = None) -> f03.Program:
     tops = {}
     for path, f90 in sources.items():
         ctops = _get_toplevel_objects((path, f90), parser=parser, sources=sources)
@@ -3341,10 +3336,10 @@ def construct_full_ast(sources: Dict[str, str], parser, entry_points: Optional[I
             print(f"Found duplicate names for top-level objects: {ctops.keys() & tops.keys()}", file=sys.stderr)
         tops.update(ctops)
 
-    ast = Program(get_reader(''))
+    ast = f03.Program(get_reader(''))
     ast.content = []
     for k, v in tops.items():
-        append_children(ast, v)
+        utils.append_children(ast, v)
 
     ast = keep_sorted_used_modules(ast, entry_points)
     return ast

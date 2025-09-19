@@ -5,10 +5,10 @@ from fparser.two.Fortran2003 import Program
 from fparser.two.parser import ParserFactory
 from fparser.two.utils import walk
 
-from dace.frontend.fortran.ast_desugaring_v2.analysis import ident_spec
-from dace.frontend.fortran.ast_desugaring_v2.pruning import prune_unused_objects
-from dace.frontend.fortran.ast_desugaring_v2.types import SPEC
-from dace.frontend.fortran.ast_desugaring_v2.utils import ENTRY_POINT_OBJECT_CLASSES, NAMED_STMTS_OF_INTEREST_CLASSES, \
+from dace.frontend.fortran.ast_desugaring.analysis import ident_spec
+from dace.frontend.fortran.ast_desugaring.pruning import prune_unused_objects
+from dace.frontend.fortran.ast_desugaring.types import SPEC
+from dace.frontend.fortran.ast_desugaring.utils import ENTRY_POINT_OBJECT_CLASSES, NAMED_STMTS_OF_INTEREST_CLASSES, \
     find_name_of_node
 from dace.frontend.fortran.ast_utils import children_of_type, singular
 from dace.frontend.fortran.fortran_parser import construct_full_ast
