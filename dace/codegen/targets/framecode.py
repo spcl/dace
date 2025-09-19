@@ -244,11 +244,8 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
         fname = sdfg.name
         params = sdfg.signature(arglist=self.arglist)
         paramnames = sdfg.signature(False, for_call=True, arglist=self.arglist)
-        # TODO: Hack, revert!
-        initparams = sdfg.signature(arglist=self.arglist)
-        initparamnames = sdfg.signature(False, for_call=True, arglist=self.arglist)
-        #initparams = sdfg.init_signature(free_symbols=self.free_symbols(sdfg))
-        #initparamnames = sdfg.init_signature(for_call=True, free_symbols=self.free_symbols(sdfg))
+        initparams = sdfg.init_signature(free_symbols=self.free_symbols(sdfg))
+        initparamnames = sdfg.init_signature(for_call=True, free_symbols=self.free_symbols(sdfg))
 
         # Invoke all instrumentation providers
         for instr in self._dispatcher.instrumentation.values():
