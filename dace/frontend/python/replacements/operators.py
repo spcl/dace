@@ -115,7 +115,7 @@ def _is_op_boolean(op: str):
 
 def _handle_casting_for_stochastically_rounded_types(input_datatypes, result_type, cast_types):
     float_to_sr = {
-        dace.float32: dace.float32sr, 
+        dace.float32: dace.float32sr,
     }
 
     for i, dtype in enumerate(input_datatypes):
@@ -139,7 +139,7 @@ def _handle_casting_for_stochastically_rounded_types(input_datatypes, result_typ
         for i, dtype in enumerate(cast_types):
             if dtype in float_to_sr:
                 cast_types[i] = float_to_sr[dtype]
-    
+
     return result_type
 
 
@@ -181,7 +181,7 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
     coarse_types = []
     for dt in datatypes:
         dtype = dt
-        if hasattr(dt, "srtype"): # unwrap stochastically rounded vars
+        if hasattr(dt, "srtype"):  # unwrap stochastically rounded vars
             dtype = dt.srtype
 
         if dtype in complex_types:

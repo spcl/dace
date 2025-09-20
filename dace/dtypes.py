@@ -932,7 +932,7 @@ class Float32sr(typeclass):
 
     @staticmethod
     def from_json(json_obj, context=None):
-        from dace.symbolic import pystr_to_symbolic # must be included!
+        from dace.symbolic import pystr_to_symbolic  # must be included!
         return float32sr()
 
     @property
