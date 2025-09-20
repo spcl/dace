@@ -16,7 +16,7 @@ NP_TYPE = np.float32
 
 
 @dace.program
-def dace_test_add(A: TYPE[N], B:TYPE[N], OUT: TYPE[N]):
+def dace_test_add(A: TYPE[N], B: TYPE[N], OUT: TYPE[N]):
     for i in range(N):
         OUT[i] = A[i] + B[i]
 
@@ -26,7 +26,7 @@ def test_add():
     b = 1.9e-04
     fn = dace_test_add
     theoretical_prob = 0.66799
-    
+
     A = np.array([a] * N, dtype=NP_TYPE)
     B = np.array([b] * N, dtype=NP_TYPE)
     OUT = np.zeros(N, dtype=NP_TYPE)
@@ -40,7 +40,7 @@ def test_add():
 
     count = Counter(OUT)
     emp_prob = count[max(count.keys())] / N
-    
+
     print(count)
     print(f"empirical_prob: {emp_prob}")
     print(f"theoretical_prob: {theoretical_prob}")
@@ -49,7 +49,7 @@ def test_add():
 
 
 @dace.program
-def dace_test_sub(A: TYPE[N], B:TYPE[N], OUT: TYPE[N]):
+def dace_test_sub(A: TYPE[N], B: TYPE[N], OUT: TYPE[N]):
     for i in range(N):
         OUT[i] = A[i] - B[i]
 
@@ -59,7 +59,7 @@ def test_sub():
     b = 1.9e-04
     fn = dace_test_sub
     theoretical_prob = 0.32891
-    
+
     A = np.array([a] * N, dtype=NP_TYPE)
     B = np.array([b] * N, dtype=NP_TYPE)
     OUT = np.zeros(N, dtype=NP_TYPE)
@@ -73,7 +73,7 @@ def test_sub():
 
     count = Counter(OUT)
     emp_prob = count[max(count.keys())] / N
-    
+
     print(count)
     print(f"empirical_prob: {emp_prob}")
     print(f"theoretical_prob: {theoretical_prob}")
@@ -86,7 +86,7 @@ def test_sub_exact_rep():
     b = 0.25
     fn = dace_test_sub
     theoretical_prob = 1
-    
+
     A = np.array([a] * N, dtype=NP_TYPE)
     B = np.array([b] * N, dtype=NP_TYPE)
     OUT = np.zeros(N, dtype=NP_TYPE)
@@ -100,7 +100,7 @@ def test_sub_exact_rep():
 
     count = Counter(OUT)
     emp_prob = count[max(count.keys())] / N
-    
+
     print(count)
     print(f"empirical_prob: {emp_prob}")
     print(f"theoretical_prob: {theoretical_prob}")
@@ -109,7 +109,7 @@ def test_sub_exact_rep():
 
 
 @dace.program
-def dace_test_mult(A: TYPE[N], B:TYPE[N], OUT: TYPE[N]):
+def dace_test_mult(A: TYPE[N], B: TYPE[N], OUT: TYPE[N]):
     for i in range(N):
         OUT[i] = A[i] * B[i]
 
@@ -118,8 +118,8 @@ def test_mult():
     a = 0.54019
     b = 1.9e-04
     fn = dace_test_mult
-    theoretical_prob = 0.14345 
-    
+    theoretical_prob = 0.14345
+
     A = np.array([a] * N, dtype=NP_TYPE)
     B = np.array([b] * N, dtype=NP_TYPE)
     OUT = np.zeros(N, dtype=NP_TYPE)
@@ -133,7 +133,7 @@ def test_mult():
 
     count = Counter(OUT)
     emp_prob = count[max(count.keys())] / N
-    
+
     print(count)
     print(f"empirical_prob: {emp_prob}")
     print(f"theoretical_prob: {theoretical_prob}")
@@ -142,7 +142,7 @@ def test_mult():
 
 
 @dace.program
-def dace_test_div(A: TYPE[N], B:TYPE[N], OUT: TYPE[N]):
+def dace_test_div(A: TYPE[N], B: TYPE[N], OUT: TYPE[N]):
     for i in range(N):
         OUT[i] = A[i] / B[i]
 
@@ -151,8 +151,8 @@ def test_div():
     a = 0.54019
     b = 1.9e-04
     fn = dace_test_div
-    theoretical_prob = 0.38520 
-    
+    theoretical_prob = 0.38520
+
     A = np.array([a] * N, dtype=NP_TYPE)
     B = np.array([b] * N, dtype=NP_TYPE)
     OUT = np.zeros(N, dtype=NP_TYPE)
@@ -166,15 +166,16 @@ def test_div():
 
     count = Counter(OUT)
     emp_prob = count[max(count.keys())] / N
-    
+
     print(count)
     print(f"empirical_prob: {emp_prob}")
     print(f"theoretical_prob: {theoretical_prob}")
 
     assert abs(emp_prob - theoretical_prob) < EPS
 
+
 @dace.program
-def dace_test_dot_runs(A: TYPE[M], B:TYPE[M], OUT: TYPE[1]):
+def dace_test_dot_runs(A: TYPE[M], B: TYPE[M], OUT: TYPE[1]):
     OUT[0] = np.dot(A, B)
 
 
@@ -197,11 +198,12 @@ def test_dot_runs():
     expected = np.dot(A, B)
     print(expected)
     print(OUT[0])
-    assert abs(expected - OUT[0] < EPS) 
+    assert abs(expected - OUT[0] < EPS)
+
 
 @dace.program
-def dace_test_matrix_mult_runs(A: TYPE[M, M], B:TYPE[M, M], OUT: TYPE[M, M]):
-  OUT[:] = A @ B
+def dace_test_matrix_mult_runs(A: TYPE[M, M], B: TYPE[M, M], OUT: TYPE[M, M]):
+    OUT[:] = A @ B
 
 
 def test_matrix_mult_runs():
@@ -211,7 +213,7 @@ def test_matrix_mult_runs():
 
     A = np.array([a] * M * M, dtype=NP_TYPE)
     B = np.array([b] * M * M, dtype=NP_TYPE)
-    OUT = np.zeros((M,M), dtype=NP_TYPE)
+    OUT = np.zeros((M, M), dtype=NP_TYPE)
 
     if USE_GPU:
         sdfg = fn.to_sdfg()
@@ -220,10 +222,11 @@ def test_matrix_mult_runs():
     else:
         fn(A, B, OUT)
 
-    A = A.reshape((M,M))
-    B = B.reshape((M,M))
+    A = A.reshape((M, M))
+    B = B.reshape((M, M))
     expected = A @ B
     assert np.array_equal(expected, OUT)
+
 
 @dace.program
 def dace_test_assignment_properties(OUT: TYPE[N], c: dace.float64):
@@ -242,12 +245,13 @@ def dace_test_mixed_addition_properties(A: TYPE[N], B: dace.float64[N], OUT):
     for i in range(N):
         OUT[i] = A[i] + B[i]
 
+
 @dace.program
 def dace_test_single_mixed_addition_properties(A: TYPE[N], B: dace.float32[N], OUT):
     for i in range(N):
         OUT[i] = A[i] + B[i]
 
-    
+
 def test_init_properties():
     """ Init of a SR with same prec value should be deterministic """
     c = 1.5401030001
@@ -349,7 +353,6 @@ def calc_bounds(higher_prec_val, np_type):
         lower = rounded_val
     else:
         upper = rounded_val
-    
 
     print(f"lower: {lower}, upper: {upper}")
 
@@ -359,11 +362,10 @@ def calc_bounds(higher_prec_val, np_type):
     upper_diff = abs(upper - higher_prec_val)
     print(f"UF: {upper_diff}")
     theoretical_prob = lower_diff / (lower_diff + upper_diff)
-    
+
     return lower_diff, upper_diff, theoretical_prob
 
 
 if __name__ == "__main__":
     import pytest
     pytest.main([__file__])
-

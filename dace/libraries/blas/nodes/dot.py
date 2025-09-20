@@ -84,7 +84,6 @@ class ExpandDotOpenBLAS(ExpandTransformation):
         if veclen != 1:
             n /= veclen
 
-
         code = f"_result = cblas_{func}({n}, {cast} _x, {stride_x}, {cast} _y, {stride_y});"
         # The return type is scalar in cblas_?dot signature
         tasklet = dace.sdfg.nodes.Tasklet(node.name,

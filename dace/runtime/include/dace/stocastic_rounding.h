@@ -24,16 +24,16 @@ class float32sr {
 private:
     float value;
 
-    static constexpr double FLOATMIN_F32 = 1.1754943508222875e-38; 
+    static constexpr double FLOATMIN_F32 = 1.1754943508222875e-38;
     static thread_local uint64_t rng_state_64;
-    
+
     #if !defined(__CUDA_ARCH__)
 
     DACE_HOST_DEVICE static inline uint64_t lcg64() {
         rng_state_64 = rng_state_64 * 6364136223846793005ULL + 1442695040888963407ULL; // 64-bit LCG constants
         return rng_state_64;
     }
-    
+
     DACE_HOST_DEVICE static inline uint64_t xorshift64() {
         rng_state_64 ^= rng_state_64 << 13;
         rng_state_64 ^= rng_state_64 >> 7;
@@ -53,7 +53,7 @@ private:
         if (abs(x) < FLOATMIN_F32) {
             return static_cast<float>(x + rand_subnormal(rbits));
         }
-        
+
         uint64_t bits = double_to_bits(x);
         const uint64_t mask = 0x000000001FFFFFFF;  // mask last 29 surplus bits of the double prec mantissa
 
@@ -66,8 +66,8 @@ private:
     DACE_HOST_DEVICE static double rand_subnormal(uint64_t rbits) {
         // Impl of https://github.com/milankl/StochasticRounding.jl/blob/ff86c801ddd15b4182cb551b84811eb24295a48f/src/types.jl#L99C1-L106C4
         int lz = __builtin_clzll(rbits); // Count leading zeros
-        
-        uint64_t exponent = static_cast<uint64_t>(872 - lz); // Compute biased exponent 
+
+        uint64_t exponent = static_cast<uint64_t>(872 - lz); // Compute biased exponent
         exponent <<= 52;
 
         uint64_t sign = (rbits >> 63) << 63; // Take highest bit as sign
@@ -131,7 +131,7 @@ private:
     return rng;
 }
 #endif
-    
+
 
 public:
     DACE_HOST_DEVICE float32sr() : value(0.0f) {}
@@ -169,11 +169,11 @@ public:
       struct SharedRandomQueue {
           std::array<uint64_t, 10000> data;
           std::atomic<bool> initialized{false};
-          
+
           SharedRandomQueue() {
               initialize();
           }
-          
+
           void initialize() {
               std::cout << "Initializing shared random queue" << std::endl;
               for (auto& x : data) {
@@ -181,18 +181,18 @@ public:
               }
               initialized.store(true, std::memory_order_release);
           }
-          
+
           uint64_t get(size_t idx) const {
               return data[idx % data.size()];
           }
       };
-    
+
       static SharedRandomQueue shared_queue;
       thread_local static size_t thread_index = 0;
-      
+
       size_t current_index = thread_index;
       thread_index = (thread_index + 1) % shared_queue.data.size();
-      
+
       return shared_queue.get(current_index);
     #endif
     }
@@ -238,7 +238,7 @@ public:
         value = stochastic_round(v);
         return *this;
     }
-    
+
     DACE_HOST_DEVICE float32sr operator=(const int& v) {
         value = stochastic_round(static_cast<double>(v));
         return *this;
@@ -357,7 +357,7 @@ inline std::ostream& operator<<(std::ostream& os, const float32sr& obj) {
 #include <limits>
 
 // This functionality is required by the ICON Velocity Tendecies procedure
-namespace cub { 
+namespace cub {
 
 template <>
 struct Traits<dace::float32sr> {
