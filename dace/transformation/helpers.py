@@ -1862,8 +1862,8 @@ def all_isedges_between(src: ControlFlowBlock, dst: ControlFlowBlock) -> Iterabl
 
 def replace_sdfg_dtypes(
     sdfg: SDFG,
-    from_type: typeclass = None,
-    to_type: typeclass = None,
+    from_type: typeclass,
+    to_type: typeclass,
 ) -> int:
     """
     Iterate over an SDFG and replace all instances of simple data types
@@ -1874,19 +1874,17 @@ def replace_sdfg_dtypes(
     """
     swaps_count = 0
 
-    # Handle orig_sdfg if present
     if sdfg.orig_sdfg:
         for nested_sdfg in sdfg.orig_sdfg.all_sdfgs_recursive():
             swaps_count = _change_sdfg_type(nested_sdfg, from_type, to_type, swaps_count)
 
-    # Handle all nested sdfgs
     for nested_sdfg in sdfg.all_sdfgs_recursive():
         swaps_count = _change_sdfg_type(nested_sdfg, from_type, to_type, swaps_count)
 
     return swaps_count
 
 
-def _change_sdfg_type(sdfg: SDFG, from_type, to_type, swaps_count: int) -> int:
+def _change_sdfg_type(sdfg: SDFG, from_type: typeclass, to_type: typeclass, swaps_count: int) -> int:
     # Swap nodes
     for node, _ in sdfg.all_nodes_recursive():
         if hasattr(node, "in_connectors"):
@@ -1894,7 +1892,7 @@ def _change_sdfg_type(sdfg: SDFG, from_type, to_type, swaps_count: int) -> int:
                 if in_con_type == from_type:
                     node.in_connectors[in_con_name] = to_type
                     swaps_count += 1
-                elif isinstance(in_con_type, dtypes.pointer):
+                elif _is_pointer(in_con_type):
                     if in_con_type.base_type == from_type:
                         node.in_connectors[in_con_name] = dtypes.pointer(to_type)
                         swaps_count += 1
@@ -1904,7 +1902,7 @@ def _change_sdfg_type(sdfg: SDFG, from_type, to_type, swaps_count: int) -> int:
                 if out_con_type == from_type:
                     node.out_connectors[out_con_name] = to_type
                     swaps_count += 1
-                elif isinstance(out_con_type, dtypes.pointer):
+                elif _is_pointer(out_con_type):
                     if out_con_type.base_type == from_type:
                         node.out_connectors[out_con_name] = dtypes.pointer(to_type)
                         swaps_count += 1
@@ -1917,10 +1915,9 @@ def _change_sdfg_type(sdfg: SDFG, from_type, to_type, swaps_count: int) -> int:
 
     # Swap array types
     for array_name, array_desc in sdfg.arrays.items():
-        if from_type is not None and to_type is not None:
-            if array_desc.dtype == from_type:
-                array_desc.dtype = to_type
-                swaps_count += 1
+        if array_desc.dtype == from_type:
+            array_desc.dtype = to_type
+            swaps_count += 1
 
     # Swap structures and structure views
     for array_desc in sdfg._arrays.values():
@@ -1930,7 +1927,7 @@ def _change_sdfg_type(sdfg: SDFG, from_type, to_type, swaps_count: int) -> int:
     # Change dace.data.struct field types
     for array_desc in sdfg._arrays.values():
         if _is_structure(array_desc):
-            if isinstance(array_desc.dtype, dtypes.pointer):
+            if _is_pointer(array_desc.dtype):
                 if isinstance(array_desc.dtype.base_type, dtypes.struct):
                     for field_name, field_desc in array_desc.dtype.base_type.fields.items():
                         if field_desc == dtypes.pointer(from_type):
@@ -1940,9 +1937,10 @@ def _change_sdfg_type(sdfg: SDFG, from_type, to_type, swaps_count: int) -> int:
     return swaps_count
 
 
-def _change_structure_type(descriptor, from_type, to_type, swaps_count: int) -> int:
+def _change_structure_type(descriptor: data.Array, from_type: typeclass, to_type: typeclass, swaps_count: int) -> int:
+    """Change structure type for Structure or StructureView descriptors."""
     # Swap the Structure dtype definition
-    if isinstance(descriptor.dtype, dtypes.pointer):
+    if _is_pointer(descriptor.dtype):
         if isinstance(descriptor.dtype.base_type, dtypes.struct):
             swaps_count = _change_struct_type(descriptor.dtype.base_type, from_type, to_type, swaps_count)
 
@@ -1950,9 +1948,10 @@ def _change_structure_type(descriptor, from_type, to_type, swaps_count: int) -> 
     return swaps_count
 
 
-def _change_struct_type(descriptor, from_type, to_type, swaps_count: int) -> int:
+def _change_struct_type(descriptor: dtypes.struct, from_type: typeclass, to_type: typeclass, swaps_count: int) -> int:
+    """Recursively change field types in a struct descriptor."""
     for field_name, field_desc in descriptor.fields.items():
-        if isinstance(field_desc, dtypes.pointer):
+        if _is_pointer(field_desc):
             base_type = field_desc.base_type
             if isinstance(base_type, dtypes.struct):
                 swaps_count = _change_struct_type(base_type, from_type, to_type, swaps_count)
@@ -1965,7 +1964,8 @@ def _change_struct_type(descriptor, from_type, to_type, swaps_count: int) -> int
     return swaps_count
 
 
-def _change_member_types(descriptor, from_type, to_type, swaps_count: int) -> int:
+def _change_member_types(descriptor: data.Array, from_type: typeclass, to_type: typeclass, swaps_count: int) -> int:
+    """Change member types for descriptors with members attribute."""
     if not hasattr(descriptor, "members"):
         raise TypeError(f"Expected type with member attr but got {descriptor}")
 
@@ -1979,13 +1979,16 @@ def _change_member_types(descriptor, from_type, to_type, swaps_count: int) -> in
     return swaps_count
 
 
-def _is_structure(obj):
+def _is_structure(obj) -> bool:
+    """Check if object is a Structure."""
     return isinstance(obj, data.Structure)
 
 
-def _is_pointer(obj):
+def _is_pointer(obj) -> bool:
+    """Check if object is a pointer type."""
     return isinstance(obj, dtypes.pointer)
 
 
-def _is_structure_view(obj):
+def _is_structure_view(obj) -> bool:
+    """Check if object is a StructureView."""
     return isinstance(obj, data.StructureView)
