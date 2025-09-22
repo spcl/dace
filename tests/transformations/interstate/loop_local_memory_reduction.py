@@ -1,13 +1,11 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-"""Tests K Caching transformation."""
+"""Tests LoopLocalMemoryReduction transformation."""
 
 import numpy as np
-import pytest
 import copy
 import dace
 from dace.sdfg.state import LoopRegion, CodeBlock
 from dace.transformation.interstate import LoopLocalMemoryReduction
-from dace import InterstateEdge
 
 
 # Checks if LoopLocalMemoryReduction applied N times and if memory footprint was reduced
