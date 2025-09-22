@@ -411,16 +411,7 @@ class Graph(Generic[NodeT, EdgeT]):
         """
         if as_edges:
             for path in map(nx.utils.pairwise, nx.all_simple_paths(self._nx, source_node, dest_node)):
-                multi_edges = []
-                for e in path:
-                    src, dst = e[0], e[1]
-                    keys = list(self._nx[src][dst].keys())
-                    for key in keys:
-                        src_conn = self._nx.edges[src, dst, key]["src_conn"]
-                        dst_conn = self._nx.edges[src, dst, key]["dst_conn"]
-                        data = self._nx.edges[src, dst, key]["data"]
-                        multi_edges.append(MultiConnectorEdge(e[0], src_conn, e[1], dst_conn, data, key))
-                yield multi_edges
+                yield [Edge(e[0], e[1], self._nx.edges[e]['data']) for e in path]
         else:
             yield from nx.all_simple_paths(self._nx, source_node, dest_node)
 
