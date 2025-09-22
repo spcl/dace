@@ -16,7 +16,6 @@ import ast
 
 
 class PowToMulExpander(ast.NodeTransformer):
-
     def visit_BinOp(self, node):
         self.generic_visit(node)  # first rewrite children
 
@@ -36,7 +35,6 @@ class PowToMulExpander(ast.NodeTransformer):
 
 
 class DaceFloatRemover(ast.NodeTransformer):
-
     def visit_Call(self, node):
         self.generic_visit(node)  # first rewrite children
 
@@ -82,6 +80,7 @@ def _remove_dace_float_casts(src):
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class IntegerPowerToMult(ppl.Pass):
+    CATEGORY: str = 'Optimization Preparation'
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Tasklets
@@ -107,6 +106,7 @@ class IntegerPowerToMult(ppl.Pass):
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class RemoveFPTypeCasts(ppl.Pass):
+    CATEGORY: str = 'Optimization Preparation'
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Tasklets
