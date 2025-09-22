@@ -1,17 +1,14 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
-import re
 import warnings
 import dace
 import copy
 from dace import Tuple, properties
-from dace.codegen.common import sym2cpp
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
 from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
 from typing import Dict, List, Set
-
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
