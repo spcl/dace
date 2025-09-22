@@ -16,6 +16,7 @@ import ast
 
 
 class PowToMulExpander(ast.NodeTransformer):
+
     def visit_BinOp(self, node):
         self.generic_visit(node)  # first rewrite children
 
@@ -35,6 +36,7 @@ class PowToMulExpander(ast.NodeTransformer):
 
 
 class DaceFloatRemover(ast.NodeTransformer):
+
     def visit_Call(self, node):
         self.generic_visit(node)  # first rewrite children
 
