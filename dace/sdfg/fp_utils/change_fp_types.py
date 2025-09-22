@@ -1,6 +1,8 @@
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+
 import dace
 import copy
-from typing import Union, Set, Dict, List
+from typing import Union, Set, Dict
 
 
 def _repl_recursive_with_connectors(sdfg: dace.SDFG, repl_dict):

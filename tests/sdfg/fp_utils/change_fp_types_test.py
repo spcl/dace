@@ -1,3 +1,5 @@
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+
 import dace
 import pytest
 
@@ -20,7 +22,6 @@ def test_simple():
                   arrays_to_replace=None)
     sdfg.validate()
     sdfg.compile()
-    sdfg.save("x1.sdfg")
 
 
 if __name__ == "__main__":
