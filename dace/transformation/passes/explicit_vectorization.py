@@ -15,6 +15,42 @@ from dace.transformation.passes.split_tasklets import SplitTasklets
 from dace.transformation.passes.integer_power_to_mult import IntegerPowerToMult
 from dace.transformation.dataflow.tiling import MapTiling
 
+
+manual_gpu_templates = {
+    "*": "vector_mult({rhs1}, {rhs2}, {lhs});",
+    "+": "vector_add({rhs1}, {rhs2}, {lhs});",
+}
+
+class ExplicitVectorizationPipelineGPU(ppl.Pipeline):
+    _gpu_global_code="""
+__host__ __device__ __forceinline__ void vector_mult(const double * __restrict__ a, const double * __restrict__ b, double * __restrict__ c) {{
+    for (int i = 0; i < {vector_width}; i++) {{
+        c[i] = a[i] * b[i];
+    }}
+}}
+__host__ __device__ __forceinline__ void vector_add(const double * __restrict__ a, const double * __restrict__ b, double * __restrict__ c) {{
+    for (int i = 0; i < {vector_width}; i++) {{
+        c[i] = a[i] + b[i];
+    }}
+}}
+"""
+    def __init__(self, vector_width):
+        passes = [
+            IntegerPowerToMult(),
+            SplitTasklets(),
+            ExplicitVectorization(
+                templates={
+                    "*": "vector_mult({rhs1}, {rhs2}, {lhs});",
+                    "+": "vector_add({rhs1}, {rhs2}, {lhs});",
+                },
+                vector_width=vector_width,
+                vector_input_storage=dace.dtypes.StorageType.GPU_Global,
+                vector_output_storage=dace.dtypes.StorageType.GPU_Global,
+                global_code=ExplicitVectorizationPipelineGPU._gpu_global_code.format(vector_width=vector_width)
+            )
+        ]
+        super().__init__(passes)
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class ExplicitVectorization(ppl.Pass):
@@ -34,7 +70,17 @@ class ExplicitVectorization(ppl.Pass):
         dtype=dace.dtypes.StorageType,
         default=dace.dtypes.StorageType.Register
     )
-
+    global_code = properties.Property(
+        dtype=str,
+        default=""
+    )
+    def __init__(self, templates, vector_width, vector_input_storage, vector_output_storage, global_code):
+        super().__init__()
+        self.templates = templates
+        self.vector_width = vector_width
+        self.vector_input_storage = vector_input_storage
+        self.vector_output_storage = vector_output_storage
+        self.global_code = global_code
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
 

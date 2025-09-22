@@ -8,6 +8,7 @@ import warnings
 
 from dace import SDFG, SDFGState, properties, transformation
 from dace.transformation import pass_pipeline as ppl, dataflow as dftrans
+from dace.transformation.helpers import CodeBlock
 from dace.transformation.passes import analysis as ap, pattern_matching as pmp
 from dace.transformation.passes.split_tasklets import SplitTasklets
 
@@ -53,10 +54,10 @@ class IntegerPowerToMult(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Set[str]]]:
         for node, _ in sdfg.all_nodes_recursive():
             if isinstance(node, dace.sdfg.nodes.Tasklet):
-                if isinstance(node.code.language, dace.Language.Python):
+                if node.code.language == dace.dtypes.Language.Python:
                     ast_str = node.code.as_string
                     new_ast_str = expand_pow_to_mul(ast_str)
                     if new_ast_str != ast_str:
-                        node.code = dace.codegen.code.CodeBlock(new_ast_str, language=dace.Language.Python)
+                        node.code = CodeBlock(new_ast_str, language=dace.Language.Python)
 
         return None
