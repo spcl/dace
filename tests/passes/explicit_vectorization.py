@@ -5,7 +5,8 @@ from dace.transformation.passes.explicit_vectorization import ExplicitVectorizat
 N = dace.symbol('N')
 
 @dace.program
-def vadd(A: dace.float64[N, N], B: dace.float64[N, N]):
+def vadd(A: dace.float64[N, N] @ dace.dtypes.StorageType.GPU_Global,
+         B: dace.float64[N, N] @ dace.dtypes.StorageType.GPU_Global):
     for i, j in dace.map[0:N, 0:N] @ dace.dtypes.ScheduleType.GPU_Device:
         A[i, j] = A[i, j] + B[i, j]
     for i, j in dace.map[0:N, 0:N] @ dace.dtypes.ScheduleType.GPU_Device:
@@ -21,7 +22,7 @@ def test_simple():
     sdfg.save("vectorized_vadd.sdfg")
     sdfg.validate()
     sdfg.compile()
-    
+
 
 
 if __name__ == "__main__":
