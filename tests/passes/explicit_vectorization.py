@@ -30,12 +30,16 @@ def test_simple():
     
     # Original SDFG
     sdfg = vadd.to_sdfg()
-    sdfg(A=A_orig, B=B_orig, N=64)
+    c_sdfg = sdfg.compile()
     
     # Vectorized SDFG
     copy_sdfg = copy.deepcopy(sdfg)
     ExplicitVectorizationPipelineGPU(vector_width=4).apply_pass(copy_sdfg, {})
-    copy_sdfg(A=A_vec, B=B_vec, N=64)
+    c_copy_sdfg = copy_sdfg.compile()
+    copy_sdfg.save("a.sdfg")
+
+    c_sdfg(A=A_orig, B=B_orig, N=64)
+    c_copy_sdfg(A=A_vec, B=B_vec, N=64)
     
     # Compare results
     assert cupy.allclose(A_orig, A_vec)

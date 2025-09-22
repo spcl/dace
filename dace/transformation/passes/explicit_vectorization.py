@@ -2,11 +2,8 @@
 
 import copy
 import dace
-
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
-
-import warnings
 import ast
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 from dace import SDFG, SDFGState, properties, transformation
 from dace.transformation import pass_pipeline as ppl, dataflow as dftrans
@@ -15,15 +12,8 @@ from dace.transformation.passes.split_tasklets import SplitTasklets
 from dace.transformation.passes.tasklet_preprocessing_passes import IntegerPowerToMult, RemoveFPTypeCasts
 from dace.transformation.dataflow.tiling import MapTiling
 
-
-manual_gpu_templates = {
-    "*": "vector_mult({rhs1}, {rhs2}, {lhs});",
-    "+": "vector_add({rhs1}, {rhs2}, {lhs});",
-    "=": "vector_copy({rhs1}, {lhs});",
-}
-
 class ExplicitVectorizationPipelineGPU(ppl.Pipeline):
-    _gpu_global_code="""
+    _gpu_global_code = """
 __host__ __device__ __forceinline__ void vector_mult(const double * __restrict__ c, const double * __restrict__ a, double * __restrict__ b) {{
     #pragma unroll
     for (int i = 0; i < {vector_width}; i++) {{
@@ -117,6 +107,7 @@ class ExplicitVectorization(ppl.Pass):
         self.vector_input_storage = vector_input_storage
         self.vector_output_storage = vector_output_storage
         self.global_code = global_code
+
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
 
@@ -582,5 +573,5 @@ class ExplicitVectorization(ppl.Pass):
                     if len(parent_scopes) > 0:
                         self._vectorize_sdfg(nested_sdfg.sdfg)
 
-
+        sdfg.append_global_code(cpp_code=self.global_code, location="cuda")
         return None
