@@ -355,6 +355,18 @@ def test_multidimensional2():
     sdfg = tester.to_sdfg(simplify=True)
     check_transformation(sdfg, 1)
 
+def test_multidimensional_mixed():
+    @dace.program
+    def tester(b: dace.float64[16, 16], c: dace.float64[16]):
+        a = dace.define_local([16, 16], dace.float64)
+        a[:, :] = 0
+        for i in range(2, 14):
+            b[i, i] = a[i-1, 0] + a[0, i-2]
+            a[i, i+2] = c[i] * 2
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_transformation(sdfg, 0)
+
 def test_nested():
     @dace.program
     def tester(b: dace.float64[16, 16], c: dace.float64[16]):
@@ -368,7 +380,18 @@ def test_nested():
     sdfg = tester.to_sdfg(simplify=True)
     check_transformation(sdfg, 2)
 
+def test_nested_mixed():
+    @dace.program
+    def tester(b: dace.float64[16, 16], c: dace.float64[16]):
+        a = dace.define_local([16, 16], dace.float64)
+        a[:, :] = 0
+        for i in range(2, 14):
+          for j in range(2, 14):
+            b[i, j] = a[i-1, j+1] + a[j-1, i-2]
+            a[i, j+2] = c[i] * 2
 
+    sdfg = tester.to_sdfg(simplify=True)
+    check_transformation(sdfg, 0)
 
 if __name__ == "__main__":
     test_simple()
@@ -392,9 +415,8 @@ if __name__ == "__main__":
     test_used_values3()
     test_multidimensional()
     test_multidimensional2()
+    test_multidimensional_mixed()
     test_nested()
+    test_nested_mixed()
 
     # Views? WCR?
-    # nested with mixed indices
-    # multiple dimensional with mixed indices
-    
