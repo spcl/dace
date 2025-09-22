@@ -1,3 +1,4 @@
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
 
@@ -58,7 +59,7 @@ def test_memset_pure_gpu():
     exe = sdfg.compile()
 
     B = cp.zeros((200, ), dtype=cp.float64)
-    exe(B=B)
+    exe(gpuB=B)
 
     cp.testing.assert_array_equal(B[50:100], 0)
     assert cp.all(B[:50] == 0)
@@ -76,7 +77,7 @@ def test_memset_cuda_gpu():
     exe = sdfg.compile()
 
     B = cp.zeros((200, ), dtype=cp.float64)
-    exe(B=B)
+    exe(gpuB=B)
 
     cp.testing.assert_array_equal(B[50:100], 0)
     assert cp.all(B[:50] == 0)

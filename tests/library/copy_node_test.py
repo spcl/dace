@@ -1,3 +1,4 @@
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
 
@@ -49,7 +50,6 @@ def test_copy_pure_cpu():
     A = np.ones((200, ), dtype=np.float64)
     B = np.zeros((200, ), dtype=np.float64)
     exe(A=A, B=B)
-    sdfg.save("x.sdfgz", compress=True)
 
     # Check that the copied slice matches
     np.testing.assert_array_equal(B[50:100], A[150:200])
@@ -66,13 +66,12 @@ def test_copy_pure_gpu():
     sdfg.validate()
     sdfg.expand_library_nodes()
     sdfg.validate()
-    sdfg.save("y.sdfgz", compress=True)
     exe = sdfg.compile()
 
     A = cp.ones((200, ), dtype=cp.float64)
     B = cp.zeros((200, ), dtype=cp.float64)
 
-    exe(A=A, B=B)
+    exe(gpuA=A, gpuB=B)
 
     # Check that the copied slice matches
     cp.testing.assert_array_equal(B[50:100], A[150:200])
@@ -93,7 +92,7 @@ def test_copy_cuda_gpu():
 
     A = cp.arange(200, dtype=cp.float64)
     B = cp.zeros((200, ), dtype=cp.float64)
-    exe(A=A, B=B)
+    exe(gpuA=A, gpuB=B)
 
     # Check slice copy
     cp.testing.assert_array_equal(B[50:100], A[150:200])

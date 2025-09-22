@@ -44,18 +44,6 @@ class ExpandPure(ExpandTransformation):
                                  schedule=schedule,
                                  external_edges=True)
 
-        # To avoid _cuda_stream is missing crush / bug
-        """
-        map_entries = []
-        for n in state.nodes():
-            if isinstance(n, dace.nodes.MapEntry):
-                map_entries.append(n)
-
-        assert len(map_entries) == 1
-        map_entry = map_entries[0]
-        map_entry._cuda_stream = 0
-        """
-
         return sdfg
 
 
@@ -82,7 +70,7 @@ class ExpandCUDA(ExpandTransformation):
             inputs={"_memcpy_in"},
             outputs={"_memcpy_out"},
             code=
-            f"cudaMemcpyAsync(_memcpy_out, _in, {sym2cpp(cp_size)} * sizeof({inp.dtype.ctype}), cudaMemcpyDeviceToDevice, __dace_current_stream);",
+            f"cudaMemcpyAsync(_memcpy_out, _memcpy_in, {sym2cpp(cp_size)} * sizeof({inp.dtype.ctype}), cudaMemcpyDeviceToDevice, __dace_current_stream);",
             language=dace.Language.CPP,
             code_global=f"#include <cuda_runtime.h>\n")
 
