@@ -145,7 +145,7 @@ def make_sdfg(data_combo: tuple[dt.Data, dt.Data, Union[None, sbs.Range]],
             state.add_edge(non_view_access, None, view_access, "views", memlet)
         else:
             state.add_edge(view_access, "views", non_view_access, None, memlet)
-        return view_access
+        return non_view_access, view_access
 
     def _add_normal_access(is_scalar: bool):
         if is_scalar:
@@ -154,13 +154,54 @@ def make_sdfg(data_combo: tuple[dt.Data, dt.Data, Union[None, sbs.Range]],
             desc = constructors[parent_dtype]((N, ), dtypes[parent_dtype])
         sdfg.add_datadesc("A", desc)
         access = state.add_access("A")
-        return access
+        return access, access
 
     is_scalar = not issubclass(parent_dtype, dt.Array)
     if non_view_class is not None:
-        parent_access = _add_viewed_access(is_scalar=is_scalar)
+        outer_access, parent_access = _add_viewed_access(is_scalar=is_scalar)
     else:
-        parent_access = _add_normal_access(is_scalar=is_scalar)
+        outer_access, parent_access = _add_normal_access(is_scalar=is_scalar)
+
+    if parent_nesting is not None and len(parent_nesting) > 0:
+
+        if not outer_access is parent_access:
+            for e in state.all_edges(outer_access):
+                state.remove_edge(e)
+            state.remove_node(outer_access)
+            sdfg.arrays.pop(outer_access.data)
+            outer_access = parent_access
+
+        outer_desc = sdfg.arrays[outer_access.data]
+        non_view_desc = outer_desc
+        if issubclass(type(outer_desc), dt.View):
+            if hasattr(outer_desc, "as_array"):
+                non_view_desc = outer_desc.as_array()
+            elif hasattr(outer_desc, "as_structure"):
+                non_view_desc = outer_desc.as_structure()
+            else:
+                raise NotImplementedError(f"Cannot get non-view description of {type(outer_desc)}")
+
+        for i, nesting_type in reversed(list(enumerate(parent_nesting))):
+            if issubclass(nesting_type, dt.Array):
+                # ContainerArray or ContainerView
+                new_desc = nesting_type(shape=(N, ), stype=non_view_desc)
+                memlet = dace.Memlet.simple(data=f"Av{i}", subset_str=f"{N//4}:{N//4+1}")
+            else:
+                # Structure or StructureView
+                new_desc = nesting_type(name=f"level_{i}", members={"member": non_view_desc})
+                memlet = dace.Memlet.from_array(f"Av{i}.member", non_view_desc)
+            non_view_desc = new_desc
+            if i > 0:
+                new_desc = dt.View.view(new_desc)
+            sdfg.add_datadesc(f"Av{i}", new_desc)
+            new_access = state.add_access(f"Av{i}")
+            conn = "views" if issubclass(type(outer_desc), dt.View) else None
+            if is_read:
+                state.add_edge(new_access, None, outer_access, conn, memlet)
+            else:
+                state.add_edge(outer_access, conn, new_access, None, memlet)
+            outer_desc = new_desc
+            outer_access = new_access
 
     nested_sdfg = dace.SDFG("nested")
     _ = nested_sdfg.add_state("nested_state")  # Necessary to avoid errors
@@ -183,8 +224,12 @@ def make_sdfg(data_combo: tuple[dt.Data, dt.Data, Union[None, sbs.Range]],
 
 @pytest.mark.parametrize("data_combo", data_combinations)
 @pytest.mark.parametrize("is_read", [True, False])
-@pytest.mark.parametrize("parent_nesting", [None])
+@pytest.mark.parametrize("parent_nesting", parent_data_nesting)
 def test_nested_sdfg_signature_call(data_combo, is_read, parent_nesting):
+    parent_dtype, _, _ = data_combo
+    if parent_nesting is not None and len(parent_nesting) > 0:
+        if not (parent_dtype is dt.Scalar or issubclass(parent_dtype, dt.View)):
+            pytest.skip("Skipping nesting test for non-scalar, non-view parent data")
 
     sdfg = make_sdfg(data_combo, is_read, parent_nesting)
 
@@ -196,9 +241,8 @@ def test_nested_sdfg_signature_call(data_combo, is_read, parent_nesting):
 
 if __name__ == "__main__":
     for data_combo in data_combinations:
-        parent_nesting = None
-        # for parent_nesting in parent_data_nesting:
-        print(f"Testing combination: {data_combo} with parent nesting {parent_nesting}...")
-        test_nested_sdfg_signature_call(data_combo, True, parent_nesting)
-        test_nested_sdfg_signature_call(data_combo, False, parent_nesting)
+        for parent_nesting in parent_data_nesting:
+            print(f"Testing combination: {data_combo} with parent nesting {parent_nesting}...")
+            test_nested_sdfg_signature_call(data_combo, True, parent_nesting)
+            test_nested_sdfg_signature_call(data_combo, False, parent_nesting)
     print("All combinations passed!")
