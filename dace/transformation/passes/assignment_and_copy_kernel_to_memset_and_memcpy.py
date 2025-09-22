@@ -10,6 +10,7 @@ from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
 from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
 from typing import Dict, List, Set
 
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
