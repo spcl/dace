@@ -11,54 +11,49 @@ from dace import InterstateEdge
 
 
 # Checks if LoopLocalMemoryReduction applied N times and if memory footprint was reduced
-def check_transformation(kc_sdfg: dace.SDFG, N: int):
-    kc_sdfg.validate()
-    orig_sdfg = copy.deepcopy(kc_sdfg)
-    assert kc_sdfg.apply_transformations_repeated(LoopLocalMemoryReduction) == N
-    kc_sdfg.validate()
+def check_transformation(llmr_sdfg: dace.SDFG, N: int):
+    # Apply and validate
+    llmr_sdfg.validate()
+    orig_sdfg = copy.deepcopy(llmr_sdfg)
+    assert llmr_sdfg.apply_transformations_repeated(LoopLocalMemoryReduction) == N
+    llmr_sdfg.validate()
 
-    orig_mods = sum(
-        [
-            "Mod" in str(r)
-            for e, _ in orig_sdfg.all_edges_recursive()
-            if not isinstance(e.data, InterstateEdge)
-            if e.data.subset is not None
-            for r in e.data.subset
-        ]
-    )
-    kc_mods = sum(
-        [
-            "Mod" in str(r)
-            for e, _ in kc_sdfg.all_edges_recursive()
-            if not isinstance(e.data, InterstateEdge)
-            if e.data.subset is not None
-            for r in e.data.subset
-        ]
-    )
+    # We can stop here if we don't expect any transformations
     if N == 0:
-        assert kc_mods == orig_mods
-    else:
-        assert kc_mods > orig_mods
+        return
 
+    # Execute both SDFGs
     input_data_orig = {}
-    input_data_kc = {}
-    for argName, argType in kc_sdfg.arglist().items():
+    input_data_llmr = {}
+    for argName, argType in llmr_sdfg.arglist().items():
         arr = dace.ndarray(shape=argType.shape, dtype=argType.dtype)
         arr[:] = np.random.rand(*argType.shape).astype(argType.dtype.type)
         input_data_orig[argName] = arr
-        input_data_kc[argName] = copy.deepcopy(arr)
+        input_data_llmr[argName] = copy.deepcopy(arr)
 
     orig_sdfg(**input_data_orig)
-    kc_sdfg(**input_data_kc)
+    llmr_sdfg(**input_data_llmr)
 
     # No difference should be observable
     assert (
         sum(
-            not np.array_equal(input_data_orig[argName], input_data_kc[argName])
-            for argName, argType in kc_sdfg.arglist().items()
+            not np.array_equal(input_data_orig[argName], input_data_llmr[argName])
+            for argName, argType in llmr_sdfg.arglist().items()
         )
         == 0
     )
+
+    # Memory footprint should be reduced
+    orig_mem = sum(
+        np.prod(arrType.shape)
+        for arrName, arrType in orig_sdfg.arrays.items()
+    )
+    llmr_mem = sum(
+        np.prod(arrType.shape)
+        for arrName, arrType in llmr_sdfg.arrays.items()
+    )
+    assert llmr_mem < orig_mem
+    
 
 
 def test_simple():
@@ -74,6 +69,18 @@ def test_simple():
     sdfg = tester.to_sdfg(simplify=True)
     check_transformation(sdfg, 1)
 
+def test_no_offsets():
+    @dace.program
+    def tester(b: dace.float64[32], c: dace.float64[32]):
+        a = dace.define_local([32], dace.float64)
+        a[0] = 0
+        a[1] = 1
+        for i in range(0, 32):
+            b[i] = a[i] + a[i]
+            a[i] = c[i] * 2
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_transformation(sdfg, 1)
 
 def test_non_transient():
     @dace.program
@@ -191,6 +198,17 @@ def test_constant_index():
     sdfg = tester.to_sdfg(simplify=True)
     check_transformation(sdfg, 0)
 
+def test_constant_index2():
+    @dace.program
+    def tester(b: dace.float64[32], c: dace.float64[32]):
+        a = dace.define_local([32], dace.float64)
+        a[:] = 0
+        for i in range(2, 32):
+            b[i] = a[5] + a[3]
+            a[7] = c[i] * 2 
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_transformation(sdfg, 0)
 
 def test_larger_step():
     @dace.program
@@ -310,8 +328,51 @@ def test_used_values3():
     check_transformation(sdfg, 0)
 
 
+
+
+
+def test_multidimensional():
+    @dace.program
+    def tester(b: dace.float64[16, 16], c: dace.float64[16]):
+        a = dace.define_local([16, 16], dace.float64)
+        a[:, :] = 0
+        for i in range(2, 16):
+            b[i, i] = a[i-1, i-1] + a[i-2, i-2]
+            a[i, i] = c[i] * 2
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_transformation(sdfg, 1)
+
+def test_multidimensional2():
+    @dace.program
+    def tester(b: dace.float64[16, 16], c: dace.float64[16]):
+        a = dace.define_local([16, 16], dace.float64)
+        a[:, :] = 0
+        for i in range(2, 14):
+            b[i, i] = a[i-1, i+1] + a[i-2, i-1]
+            a[i, i+2] = c[i] * 2
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_transformation(sdfg, 1)
+
+def test_nested():
+    @dace.program
+    def tester(b: dace.float64[16, 16], c: dace.float64[16]):
+        a = dace.define_local([16, 16], dace.float64)
+        a[:, :] = 0
+        for i in range(2, 14):
+          for j in range(2, 14):
+            b[i, j] = a[i-1, j+1] + a[i-2, j-1]
+            a[i, j+2] = c[i] * 2
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_transformation(sdfg, 2)
+
+
+
 if __name__ == "__main__":
     test_simple()
+    test_no_offsets()
     test_non_transient()
     test_gaps()
     test_interleaved()
@@ -320,6 +381,7 @@ if __name__ == "__main__":
     test_nonconstant_step()
     test_indirect_access()
     test_constant_index()
+    test_constant_index2()
     test_larger_step()
     test_larger_index()
     test_reverse_step()
@@ -328,5 +390,11 @@ if __name__ == "__main__":
     test_used_values()
     test_used_values2()
     test_used_values3()
+    test_multidimensional()
+    test_multidimensional2()
+    test_nested()
+
     # Views? WCR?
-    # Same iteration variable used in multiple dimensions?
+    # nested with mixed indices
+    # multiple dimensional with mixed indices
+    

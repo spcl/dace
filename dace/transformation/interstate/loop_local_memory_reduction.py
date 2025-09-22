@@ -230,8 +230,8 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
         if not self._write_is_loop_local(array_name, write_indices):
             return False
 
-        # At least one write index must be higher than all read indices (i.e. K > 1).
-        if self._get_K_value(read_indices, write_indices) <= 1:
+        # At least one write index must be higher than all read indices (i.e. K >= 1).
+        if self._get_K_value(read_indices, write_indices) < 1:
             return False
 
         # Otherwise, we can apply the transformation.
@@ -242,20 +242,23 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
         K = self._get_K_value(read_indices, write_indices)
 
         # Replace all read and write edges in the loop with modulo accesses.
-        access_nodes = set(an for an in self.loop.data_nodes() if an.data == array_name)
         read_edges = set(
             e
-            for an in access_nodes
             for st in self.loop.all_states()
+            for an in st.data_nodes()
+            if an.data == array_name
             for e in st.out_edges(an)
         )
         write_edges = set(
             e
-            for an in access_nodes
             for st in self.loop.all_states()
+            for an in st.data_nodes()
+            if an.data == array_name
             for e in st.in_edges(an)
         )
 
+
+        changed_read_indices = set()
         for edge in read_edges:
             subset = edge.data.src_subset
             indices = self._get_edge_indices(subset)
@@ -266,8 +269,10 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
                 ub = pystr_to_symbolic(f"({subset[i][1]}) % ({K})")
                 st = subset[i][2]
                 subset[i] = (lb, ub, st)
+                changed_read_indices.add(i)
             edge.data.src_subset = subset
 
+        changed_write_indices = set()
         for edge in write_edges:
             subset = edge.data.dst_subset
             indices = self._get_edge_indices(subset)
@@ -278,4 +283,14 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
                 ub = pystr_to_symbolic(f"({subset[i][1]}) % ({K})")
                 st = subset[i][2]
                 subset[i] = (lb, ub, st)
+                changed_write_indices.add(i)
             edge.data.dst_subset = subset
+
+
+        # Reduce the size of the array in the SDFG.
+        array = self.loop.sdfg.arrays[array_name]
+        new_shape = list(array.shape)
+        for i in changed_read_indices | changed_write_indices:
+            new_shape[i] = K
+        array.set_shape(tuple(new_shape))
+
