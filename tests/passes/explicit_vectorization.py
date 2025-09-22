@@ -1,10 +1,8 @@
 import dace
+import copy
 from dace.transformation.passes.explicit_vectorization import ExplicitVectorizationPipelineGPU
 
 N = dace.symbol('N')
-
-
-
 
 @dace.program
 def vadd(A: dace.float64[N, N], B: dace.float64[N, N]):
@@ -15,10 +13,16 @@ def vadd(A: dace.float64[N, N], B: dace.float64[N, N]):
 
 def test_simple():
     sdfg = vadd.to_sdfg()
+    copy_sdfg = copy.deepcopy(sdfg)
+    copy_sdfg.compile()
     sdfg.validate()
+    sdfg.save("original_vadd.sdfg")
     ExplicitVectorizationPipelineGPU(vector_width=4).apply_pass(sdfg, {})
     sdfg.save("vectorized_vadd.sdfg")
     sdfg.validate()
+    sdfg.compile()
+    
+
 
 if __name__ == "__main__":
     test_simple()
