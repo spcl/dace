@@ -12,15 +12,16 @@ from dace.transformation.passes.split_tasklets import SplitTasklets
 from dace.transformation.passes.tasklet_preprocessing_passes import IntegerPowerToMult, RemoveFPTypeCasts
 from dace.transformation.dataflow.tiling import MapTiling
 
+
 class ExplicitVectorizationPipelineGPU(ppl.Pipeline):
     _gpu_global_code = """
-__host__ __device__ __forceinline__ void vector_mult(const double * __restrict__ c, const double * __restrict__ a, double * __restrict__ b) {{
+__host__ __device__ __forceinline__ void vector_mult(double * __restrict__ c, const double * __restrict__ a, const double * __restrict__ b) {{
     #pragma unroll
     for (int i = 0; i < {vector_width}; i++) {{
         c[i] = a[i] * b[i];
     }}
 }}
-__host__ __device__ __forceinline__ void vector_mult(const double * __restrict__ b, const double * __restrict__ a, const double constant) {{
+__host__ __device__ __forceinline__ void vector_mult(double * __restrict__ b, const double * __restrict__ a, const double constant) {{
     double cReg[{vector_width}];
     #pragma unroll
     for (int i = 0; i < {vector_width}; i++) {{
@@ -28,16 +29,16 @@ __host__ __device__ __forceinline__ void vector_mult(const double * __restrict__
     }}
     #pragma unroll
     for (int i = 0; i < {vector_width}; i++) {{
-        c[i] = a[i] * b[i];
+        b[i] = a[i] * cReg[i];
     }}
 }}
-__host__ __device__ __forceinline__ void vector_add(const double * __restrict__ c, const double * __restrict__ a, double * __restrict__ b) {{
+__host__ __device__ __forceinline__ void vector_add(double * __restrict__ c, const double * __restrict__ a, const double * __restrict__ b) {{
     #pragma unroll
     for (int i = 0; i < {vector_width}; i++) {{
         c[i] = a[i] + b[i];
     }}
 }}
-__host__ __device__ __forceinline__ void vector_add(const double * __restrict__ b, const double * __restrict__ a, const double constant) {{
+__host__ __device__ __forceinline__ void vector_add(double * __restrict__ b, const double * __restrict__ a, const double constant) {{
     double cReg[{vector_width}];
     #pragma unroll
     for (int i = 0; i < {vector_width}; i++) {{
@@ -45,16 +46,17 @@ __host__ __device__ __forceinline__ void vector_add(const double * __restrict__ 
     }}
     #pragma unroll
     for (int i = 0; i < {vector_width}; i++) {{
-        c[i] = a[i] + b[i];
+        b[i] = a[i] + cReg[i];
     }}
 }}
-__host__ __device__ __forceinline__ void vector_copy(const double * __restrict__ dst, const double * __restrict__ src) {{
+__host__ __device__ __forceinline__ void vector_copy(double * __restrict__ dst, const double * __restrict__ src) {{
     #pragma unroll
     for (int i = 0; i < {vector_width}; i++) {{
-        c[i] = a[i];
+        dst[i] = src[i];
     }}
 }}
 """
+
     def __init__(self, vector_width):
         passes = [
             RemoveFPTypeCasts(),
@@ -69,12 +71,12 @@ __host__ __device__ __forceinline__ void vector_copy(const double * __restrict__
                     "c*": "vector_mult({lhs}, {rhs1}, {constant});",
                 },
                 vector_width=vector_width,
-                vector_input_storage=dace.dtypes.StorageType.GPU_Global,
-                vector_output_storage=dace.dtypes.StorageType.GPU_Global,
-                global_code=ExplicitVectorizationPipelineGPU._gpu_global_code.format(vector_width=vector_width)
-            )
+                vector_input_storage=dace.dtypes.StorageType.Register,
+                vector_output_storage=dace.dtypes.StorageType.Register,
+                global_code=ExplicitVectorizationPipelineGPU._gpu_global_code.format(vector_width=vector_width))
         ]
         super().__init__(passes)
+
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
@@ -83,23 +85,11 @@ class ExplicitVectorization(ppl.Pass):
         key_type=str,
         value_type=str,
     )
-    vector_width = properties.Property(
-        dtype=int,
-        default=4
-    )
-    vector_input_storage = properties.Property(
-        dtype=dace.dtypes.StorageType,
-        default=dace.dtypes.StorageType.Register
-    )
-    vector_output_storage = properties.Property(
-        dtype=dace.dtypes.StorageType,
-        default=dace.dtypes.StorageType.Register
-    )
-    global_code = properties.Property(
-        dtype=str,
-        default=""
-    )
-    
+    vector_width = properties.Property(dtype=int, default=4)
+    vector_input_storage = properties.Property(dtype=dace.dtypes.StorageType, default=dace.dtypes.StorageType.Register)
+    vector_output_storage = properties.Property(dtype=dace.dtypes.StorageType, default=dace.dtypes.StorageType.Register)
+    global_code = properties.Property(dtype=str, default="")
+
     def __init__(self, templates, vector_width, vector_input_storage, vector_output_storage, global_code):
         super().__init__()
         self.templates = templates
@@ -125,8 +115,8 @@ class ExplicitVectorization(ppl.Pass):
             parent = state.scope_dict()[parent]
         return parents
 
-    def _vectorize_map(self, state: SDFGState, first_map_entry: dace.nodes.MapEntry):
-        # Get the innermost maps 
+    def _vectorize_map(self, state: SDFGState, first_map_entry: dace.nodes.MapEntry, vectorization_number: int):
+        # Get the innermost maps
         assert isinstance(first_map_entry, dace.nodes.MapEntry)
         parents = dict()
         for node in state.all_nodes_between(first_map_entry, state.exit_node(first_map_entry)).union({first_map_entry}):
@@ -151,8 +141,10 @@ class ExplicitVectorization(ppl.Pass):
             new_inner_map.schedule = dace.dtypes.ScheduleType.Sequential
             old_inner_map = state.entry_node(new_inner_map)
 
-            (b,e,s) = new_inner_map.map.range[0]
-            assert (e - b + 1).approx == self.vector_width, f"MapTiling should have created a map with range of size {self.vector_width}, found {(e - b + 1)}"
+            (b, e, s) = new_inner_map.map.range[0]
+            assert (
+                e - b + 1
+            ).approx == self.vector_width, f"MapTiling should have created a map with range of size {self.vector_width}, found {(e - b + 1)}"
             assert s == 1, f"MapTiling should have created a map with stride 1, found {s}"
             # Vector the range by for example making [0:4:1] to [0:4:4]
             new_inner_map.map.range = dace.subsets.Range([(0, self.vector_width - 1, self.vector_width)])
@@ -163,19 +155,17 @@ class ExplicitVectorization(ppl.Pass):
             self._replace_tasklets(state, new_inner_map)
             # Copies in data to the storage needed by the vector unit
             # Copies out data from the storage needed by the vector unit
-            self._copy_in_and_copy_out(state, new_inner_map)
-            # If tasklet -> sclar -> tasklet, now we have, 
+            self._copy_in_and_copy_out(state, new_inner_map, vectorization_number)
+            # If tasklet -> sclar -> tasklet, now we have,
             # vector_tasklet -> scalar -> vector_tasklet
             # makes the scalar into vector
             self._extend_temporary_scalars(state, new_inner_map)
-
 
     def _extend_temporary_scalars(self, state: SDFGState, map_entry: dace.nodes.MapEntry):
         nodes = list(state.all_nodes_between(map_entry, state.exit_node(map_entry)))
         edges_to_rm = set()
         edges_to_add = set()
         nodes_to_rm = set()
-        state.sdfg.save("x00.sdfg")
         for node in nodes:
             if isinstance(node, dace.nodes.AccessNode):
                 desc = state.parent_graph.sdfg.arrays[node.data]
@@ -183,7 +173,7 @@ class ExplicitVectorization(ppl.Pass):
                     if f"{node.data}_vec" not in state.parent_graph.sdfg.arrays:
                         state.sdfg.add_array(
                             name=f"{node.data}_vec",
-                            shape=(self.vector_width,),
+                            shape=(self.vector_width, ),
                             dtype=desc.dtype,
                             storage=self.vector_input_storage,
                             transient=True,
@@ -223,13 +213,16 @@ class ExplicitVectorization(ppl.Pass):
                 state.remove_edge(edge)
                 state.add_edge(edge.src, edge.src_conn, edge.dst, edge.dst_conn, new_memlet)
 
-
     def _get_vector_templates(self, rhs1: str, rhs2: str, lhs: str, constant: Union[str, None], op: str):
         if rhs2 is None:
             if constant is None:
                 new_code = self.templates[op].format(rhs1=rhs1, lhs=lhs, op=op, vector_width=self.vector_width)
             else:
-                new_code = self.templates[op].format(rhs1=rhs1, constant=constant, lhs=lhs, op=op, vector_width=self.vector_width)
+                new_code = self.templates[op].format(rhs1=rhs1,
+                                                     constant=constant,
+                                                     lhs=lhs,
+                                                     op=op,
+                                                     vector_width=self.vector_width)
         else:
             new_code = self.templates[op].format(rhs1=rhs1, rhs2=rhs2, lhs=lhs, op=op, vector_width=self.vector_width)
         return new_code
@@ -238,7 +231,7 @@ class ExplicitVectorization(ppl.Pass):
         nodes = list(state.all_nodes_between(map_entry, state.exit_node(map_entry)))
         edges = state.all_edges(*nodes)
         for edge in edges:
-            memlet : dace.memlet.Memlet = edge.data
+            memlet: dace.memlet.Memlet = edge.data
             # If memlet is equal to the array shape, we have a clear case of over-approximation
             # For the check we know: last dimension results in contiguous access,
             # We should memlets of form:
@@ -246,14 +239,21 @@ class ExplicitVectorization(ppl.Pass):
             # If b is i, e is i (inclusive range), then extension needs to result with (i, i + vector_width - 1, 1)
             # We can assume (and check) that s == 1
             # if b is 2*i and e is 2*i then we should extend the i in the end with 2*(i + vector_width - 1)
-            map_entry : dace.nodes.MapEntry = state.entry_node(edge.src) if not isinstance(edge.src, dace.nodes.MapEntry) else state.entry_node(edge.dst)
-            used_param = map_entry.map.params[-1] # Regardless of offsets F / C we assume last parameter of the map is useful
+            map_entry: dace.nodes.MapEntry = state.entry_node(
+                edge.src) if not isinstance(edge.src, dace.nodes.MapEntry) else state.entry_node(edge.dst)
+            used_param = map_entry.map.params[
+                -1]  # Regardless of offsets F / C we assume last parameter of the map is useful
             new_range_list = [(b, e, s) for (b, e, s) in memlet.subset]
-            stride_offset = 0 if self._stride_type == "F" else -1 # lest-contig is Fortran and right-contig is C
-            range_tup: Tuple[dace.symbolic.SymExpr, dace.symbolic.SymExpr, dace.symbolic.SymExpr] = new_range_list[stride_offset]
+            stride_offset = 0 if self._stride_type == "F" else -1  # lest-contig is Fortran and right-contig is C
+            range_tup: Tuple[dace.symbolic.SymExpr, dace.symbolic.SymExpr,
+                             dace.symbolic.SymExpr] = new_range_list[stride_offset]
             lb, le, ls = range_tup
             assert ls == 1, f"Previous checks must have ensured the final dimension should result in unit-stride access"
-            new_range_list[stride_offset] = (lb, le.subs(used_param, dace.symbolic.SymExpr(f"({self.vector_width} - 1) + {used_param}")), ls) if lb == le else (lb, le.subs(used_param, dace.symbolic.SymExpr(f"({self.vector_width} * {used_param}) - 1")), ls)
+            new_range_list[stride_offset] = (
+                lb, le.subs(used_param, dace.symbolic.SymExpr(f"({self.vector_width} - 1) + {used_param}")),
+                ls) if lb == le else (lb,
+                                      le.subs(used_param,
+                                              dace.symbolic.SymExpr(f"({self.vector_width} * {used_param}) - 1")), ls)
 
             assert memlet.other_subset is None, f"Other subset not supported in vectorization yet, found {memlet.other_subset} that is None for {memlet} (edge: {edge}) (state: {state})"
 
@@ -266,7 +266,7 @@ class ExplicitVectorization(ppl.Pass):
 
     def _extract_constant(self, src: str) -> str:
         tree = ast.parse(src)
-        
+
         for node in ast.walk(tree):
             # Direct constant
             if isinstance(node, ast.Constant):
@@ -277,7 +277,7 @@ class ExplicitVectorization(ppl.Pass):
                     return f"-{node.operand.value}"
                 elif isinstance(node.op, ast.UAdd):
                     return str(node.operand.value)
-        
+
         raise ValueError("No constant found")
 
     def _replace_tasklets(self, state: SDFGState, map_entry: dace.nodes.MapEntry):
@@ -295,40 +295,60 @@ class ExplicitVectorization(ppl.Pass):
                         op = "="
                         rhs1 = list(node.in_connectors.keys())[0]
                         lhs = next(iter(node.out_connectors.keys()))
-                        node.code = properties.CodeBlock(code=self._get_vector_templates(rhs1=rhs1, rhs2=None, constant=None, lhs=lhs, op=op), language=dace.Language.CPP)
+                        node.code = properties.CodeBlock(code=self._get_vector_templates(rhs1=rhs1,
+                                                                                         rhs2=None,
+                                                                                         constant=None,
+                                                                                         lhs=lhs,
+                                                                                         op=op),
+                                                         language=dace.Language.CPP)
                     else:
                         op = self._extract_single_op(node.code.as_string)
                         op = f"c{op}"
                         rhs1 = list(node.in_connectors.keys())[0]
                         lhs = next(iter(node.out_connectors.keys()))
                         constant = self._extract_constant(node.code.as_string)
-                        node.code = properties.CodeBlock(code=self._get_vector_templates(rhs1=rhs1, rhs2=None, constant=constant, lhs=lhs, op=op), language=dace.Language.CPP)
+                        node.code = properties.CodeBlock(code=self._get_vector_templates(rhs1=rhs1,
+                                                                                         rhs2=None,
+                                                                                         constant=constant,
+                                                                                         lhs=lhs,
+                                                                                         op=op),
+                                                         language=dace.Language.CPP)
                 else:
-                    assert len(node.in_connectors) == 2 or len(node.in_connectors) == 0, f"Only support tasklets with 2 inputs (binary ops) or 0 inputs (unary ops), found {node.in_connectors} in tasklet {node} in state {state}"
-                    assert len(node.out_connectors) == 1, f"Only support tasklets with 1 output, found {node.out_connectors} in tasklet {node} in state {state}"
+                    assert len(node.in_connectors) == 2 or len(
+                        node.in_connectors
+                    ) == 0, f"Only support tasklets with 2 inputs (binary ops) or 0 inputs (unary ops), found {node.in_connectors} in tasklet {node} in state {state}"
+                    assert len(
+                        node.out_connectors
+                    ) == 1, f"Only support tasklets with 1 output, found {node.out_connectors} in tasklet {node} in state {state}"
                     op = self._extract_single_op(node.code.as_string)
                     rhs1, rhs2 = list(node.in_connectors.keys())
                     lhs = next(iter(node.out_connectors.keys()))
-                    node.code = properties.CodeBlock(code=self._get_vector_templates(rhs1=rhs1, rhs2=rhs2, lhs=lhs, constant=None, op=op), language=dace.Language.CPP)
+                    node.code = properties.CodeBlock(code=self._get_vector_templates(rhs1=rhs1,
+                                                                                     rhs2=rhs2,
+                                                                                     lhs=lhs,
+                                                                                     constant=None,
+                                                                                     op=op),
+                                                     language=dace.Language.CPP)
 
-    def _offset_memlets(self, state: SDFGState, map_entry: dace.nodes.MapEntry, offsets: List[dace.symbolic.SymExpr], dataname: str):
+    def _offset_memlets(self, state: SDFGState, map_entry: dace.nodes.MapEntry, offsets: List[dace.symbolic.SymExpr],
+                        dataname: str, vectorization_number: int):
         nodes = list(state.all_nodes_between(map_entry, state.exit_node(map_entry)))
         edges = state.all_edges(*nodes)
         for edge in edges:
             if edge.data is None or edge.data.data != dataname:
                 continue
-            memlet : dace.memlet.Memlet = edge.data
+            memlet: dace.memlet.Memlet = edge.data
 
             assert memlet.other_subset is None, f"Other subset not supported in vectorization yet, found {memlet.other_subset} that is None for {memlet} (edge: {edge}) (state: {state})"
 
             new_memlet = dace.memlet.Memlet(
-                data=f"{memlet.data}_vec",
+                data=f"{memlet.data}_vec_k{vectorization_number}",
                 subset=dace.subsets.Range([(0, self.vector_width - 1, 1)]),
             )
             state.remove_edge(edge)
             state.add_edge(edge.src, edge.src_conn, edge.dst, edge.dst_conn, new_memlet)
 
-    def _copy_in_and_copy_out(self, state: SDFGState, map_entry: dace.nodes.MapEntry):
+    def _copy_in_and_copy_out(self, state: SDFGState, map_entry: dace.nodes.MapEntry, vectorization_number: int):
         map_exit = state.exit_node(map_entry)
         data_and_offsets = list()
         for ie in state.in_edges(map_entry):
@@ -336,23 +356,22 @@ class ExplicitVectorization(ppl.Pass):
             array = state.parent_graph.sdfg.arrays[ie.data.data]
             if array.storage != self.vector_input_storage:
                 # Add new array, if not there
-                if f"{ie.data.data}_vec" not in state.parent_graph.sdfg.arrays:
-                    state.parent_graph.sdfg.add_array(
-                        name=f"{ie.data.data}_vec",
-                        shape=(self.vector_width,),
-                        dtype=array.dtype,
-                        storage=self.vector_input_storage,
-                        transient=True,
-                        allow_conflicts=False,
-                        alignment=self.vector_width * array.dtype.bytes,
-                        find_new_name=False,
-                        may_alias=False
-                    )
-                an = state.add_access(f"{ie.data.data}_vec")
+                if f"{ie.data.data}_vec_k{vectorization_number}" not in state.parent_graph.sdfg.arrays:
+                    state.parent_graph.sdfg.add_array(name=f"{ie.data.data}_vec_k{vectorization_number}",
+                                                      shape=(self.vector_width, ),
+                                                      dtype=array.dtype,
+                                                      storage=self.vector_input_storage,
+                                                      transient=True,
+                                                      allow_conflicts=False,
+                                                      alignment=self.vector_width * array.dtype.bytes,
+                                                      find_new_name=False,
+                                                      may_alias=False)
+                an = state.add_access(f"{ie.data.data}_vec_k{vectorization_number}")
                 src, src_conn, dst, dst_conn, data = ie
                 state.remove_edge(ie)
                 state.add_edge(src, src_conn, an, None, copy.deepcopy(data))
-                state.add_edge(an, None, map_entry, ie.dst_conn, dace.memlet.Memlet(f"{ie.data.data}_vec[0:{self.vector_width}]"))
+                state.add_edge(an, None, map_entry, ie.dst_conn,
+                               dace.memlet.Memlet(f"{ie.data.data}_vec_k{vectorization_number}[0:{self.vector_width}]"))
 
                 memlet: dace.memlet.Memlet = ie.data
                 dataname: str = memlet.data
@@ -360,28 +379,29 @@ class ExplicitVectorization(ppl.Pass):
                 for data, _off in data_and_offsets:
                     if data == dataname:
                         if _off != offsets:
-                            raise ValueError(f"Cannot handle multiple input edges from the same array {dataname} to the same map {map_entry} in state {state}")
+                            raise ValueError(
+                                f"Cannot handle multiple input edges from the same array {dataname} to the same map {map_entry} in state {state}"
+                            )
                 data_and_offsets.append((dataname, offsets))
 
         for oe in state.out_edges(map_exit):
             array = state.parent_graph.sdfg.arrays[oe.data.data]
             if array.storage != self.vector_output_storage:
-                if f"{oe.data.data}_vec" not in state.parent_graph.sdfg.arrays:
-                    state.parent_graph.sdfg.add_array(
-                        name=f"{oe.data.data}_vec",
-                        shape=(self.vector_width,),
-                        dtype=array.dtype,
-                        storage=self.vector_input_storage,
-                        transient=True,
-                        allow_conflicts=False,
-                        alignment=self.vector_width * array.dtype.bytes,
-                        find_new_name=False,
-                        may_alias=False
-                    )
-                an = state.add_access(f"{oe.data.data}_vec")
+                if f"{oe.data.data}_vec_k{vectorization_number}" not in state.parent_graph.sdfg.arrays:
+                    state.parent_graph.sdfg.add_array(name=f"{oe.data.data}_vec_k{vectorization_number}",
+                                                      shape=(self.vector_width, ),
+                                                      dtype=array.dtype,
+                                                      storage=self.vector_input_storage,
+                                                      transient=True,
+                                                      allow_conflicts=False,
+                                                      alignment=self.vector_width * array.dtype.bytes,
+                                                      find_new_name=False,
+                                                      may_alias=False)
+                an = state.add_access(f"{oe.data.data}_vec_k{vectorization_number}")
                 src, src_conn, dst, dst_conn, data = oe
                 state.remove_edge(oe)
-                state.add_edge(map_exit, src_conn, an, None, dace.memlet.Memlet(f"{oe.data.data}_vec[0:{self.vector_width}]"))
+                state.add_edge(map_exit, src_conn, an, None,
+                               dace.memlet.Memlet(f"{oe.data.data}_vec_k{vectorization_number}[0:{self.vector_width}]"))
                 state.add_edge(an, None, dst, dst_conn, copy.deepcopy(data))
 
                 memlet: dace.memlet.Memlet = ie.data
@@ -390,15 +410,17 @@ class ExplicitVectorization(ppl.Pass):
                 for data, _off in data_and_offsets:
                     if data == dataname:
                         if _off != offsets:
-                            raise NotImplementedError(f"Vectorization can't handle when data appears both in input and output sets of a map")
+                            raise NotImplementedError(
+                                f"Vectorization can't handle when data appears both in input and output sets of a map")
                 data_and_offsets.append((dataname, offsets))
 
         for dataname, offsets in data_and_offsets:
-            self._offset_memlets(state, map_entry, offsets, dataname)
+            self._offset_memlets(state, map_entry, offsets, dataname, vectorization_number)
 
-    def _vectorize_sdfg(self, sdfg: dace.SDFG, has_parent_map: bool):
+    def _vectorize_sdfg(self, sdfg: dace.SDFG, has_parent_map: bool, num_vectorized: int):
         assert has_parent_map is True, f"Unhandled case, NestedSDFGs need to have a parent map that has been tiled"
         raise NotImplementedError("Vectorization of NestedSDFGs not implemented yet")
+        return num_vectorized
 
     def _check_stride(self, sdfg: dace.SDFG):
         stride_type = None
@@ -419,7 +441,7 @@ class ExplicitVectorization(ppl.Pass):
                 stride_type = current_type
             elif stride_type != current_type:
                 raise ValueError("All arrays must have consistent stride ordering (all F or all C)")
-        
+
         return stride_type
 
     def _check_last_dim_of_map_is_contigupus_access(self, sdfg: dace.SDFG):
@@ -434,26 +456,31 @@ class ExplicitVectorization(ppl.Pass):
                 map_entry = state.scope_dict()[node]
                 if map_entry is None:
                     if isinstance(node, dace.nodes.Tasklet):
-                        raise ValueError(f"All nodes must be within a map, found node {node} outside of any map in state {state}.")
+                        raise ValueError(
+                            f"All nodes must be within a map, found node {node} outside of any map in state {state}.")
                     else:
                         continue
                 else:
                     if not isinstance(map_entry, dace.nodes.MapEntry):
-                        raise ValueError(f"Parent scope of node {node} is not a map, found {map_entry} in state {state}.")
+                        raise ValueError(
+                            f"Parent scope of node {node} is not a map, found {map_entry} in state {state}.")
                     assert map_entry is not None
                     checked_map_entries.add(map_entry)
 
                 # If we have checked a map entry (and nodes within its body) then skip it
                 if map_entry not in checked_map_entries:
-                    assert isinstance(map_entry, dace.nodes.MapEntry), f"Parent scope of node {node} is not a map, returned value is {map_entry}."
+                    assert isinstance(map_entry, dace.nodes.MapEntry
+                                      ), f"Parent scope of node {node} is not a map, returned value is {map_entry}."
                     nodes = list(state.all_nodes_between(map_entry, state.exit_node(map_entry)))
                     edges = state.all_edges(*nodes)
                     for edge in edges:
-                        memlet : dace.memlet.Memlet = edge.data
+                        memlet: dace.memlet.Memlet = edge.data
                         free_symbols = memlet.subset.free_symbols
                         last_param = list(map_entry.map.params)[-1]
                         if last_param not in free_symbols:
-                            raise ValueError(f"Last map parameter {last_param} must be in the memlet {memlet}, not in this case - edge: {edge}, state: {state}")
+                            raise ValueError(
+                                f"Last map parameter {last_param} must be in the memlet {memlet}, not in this case - edge: {edge}, state: {state}"
+                            )
 
     def _extract_single_op(self, src: str) -> str:
         BINOP_SYMBOLS = {
@@ -547,18 +574,19 @@ class ExplicitVectorization(ppl.Pass):
         for state in sdfg.all_states():
             for node in state.nodes():
                 if isinstance(node, dace.nodes.MapEntry):
-                    map_entry : dace.nodes.MapEntry = node
+                    map_entry: dace.nodes.MapEntry = node
                     if state.scope_dict()[map_entry] is None:
                         top_level_maps.append((map_entry, state))
 
-        for map_entry, state in top_level_maps:
-            self._vectorize_map(state, map_entry)
+        for i, (map_entry, state) in enumerate(top_level_maps):
+            self._vectorize_map(state, map_entry, vectorization_number=i)
 
+        num_vectorized = len(top_level_maps)
 
         # Assume we have :
         # --- Map Entry ---
         # -----------------
-        #     NestedSDFG   
+        #     NestedSDFG
         # tasklet without map
         # --- Map Exit  ---
         #
@@ -568,10 +596,10 @@ class ExplicitVectorization(ppl.Pass):
         for state in sdfg.all_states():
             for node in state.nodes():
                 if isinstance(node, dace.nodes.NestedSDFG):
-                    nested_sdfg : dace.nodes.NestedSDFG = node
+                    nested_sdfg: dace.nodes.NestedSDFG = node
                     parent_scopes = self._get_all_parent_scopes(state, node)
                     if len(parent_scopes) > 0:
-                        self._vectorize_sdfg(nested_sdfg.sdfg)
+                        num_vectorized += self._vectorize_sdfg(nested_sdfg.sdfg, num_vectorized)
 
         sdfg.append_global_code(cpp_code=self.global_code, location="cuda")
         return None

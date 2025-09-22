@@ -14,7 +14,9 @@ from dace.transformation.passes.split_tasklets import SplitTasklets
 
 import ast
 
+
 class PowToMulExpander(ast.NodeTransformer):
+
     def visit_BinOp(self, node):
         self.generic_visit(node)  # first rewrite children
 
@@ -32,23 +34,24 @@ class PowToMulExpander(ast.NodeTransformer):
 
         return node
 
+
 class DaceFloatRemover(ast.NodeTransformer):
+
     def visit_Call(self, node):
         self.generic_visit(node)  # first rewrite children
-        
+
         # Check if this is a dace.float...() call
         if isinstance(node.func, ast.Attribute):
             # Handle dace.float64(), dace.float32(), etc.
-            if (isinstance(node.func.value, ast.Name) and 
-                node.func.value.id == 'dace' and 
-                node.func.attr.startswith('float')):
+            if (isinstance(node.func.value, ast.Name) and node.func.value.id == 'dace'
+                    and node.func.attr.startswith('float')):
                 # Return the first argument (the value being cast)
                 if node.args:
                     return node.args[0]
                 else:
                     # If no arguments, just remove the call entirely
                     return ast.Constant(value=0.0)
-        
+
         elif isinstance(node.func, ast.Name):
             # Handle direct calls like float64() if imported
             if node.func.id.startswith('float') and len(node.func.id) > 5:
@@ -58,8 +61,9 @@ class DaceFloatRemover(ast.NodeTransformer):
                 else:
                     # If no arguments, just remove the call entirely
                     return ast.Constant(value=0.0)
-        
+
         return node
+
 
 def _expand_pow_to_mul(src):
     tree = ast.parse(src)
@@ -67,15 +71,18 @@ def _expand_pow_to_mul(src):
     ast.fix_missing_locations(tree)
     return ast.unparse(tree)
 
+
 def _remove_dace_float_casts(src):
     tree = ast.parse(src)
     tree = DaceFloatRemover().visit(tree)
     ast.fix_missing_locations(tree)
     return ast.unparse(tree)
 
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class IntegerPowerToMult(ppl.Pass):
+
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Tasklets
 
@@ -96,9 +103,11 @@ class IntegerPowerToMult(ppl.Pass):
 
         return None
 
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class RemoveFPTypeCasts(ppl.Pass):
+
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Tasklets
 

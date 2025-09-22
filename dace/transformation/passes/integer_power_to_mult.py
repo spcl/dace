@@ -1,4 +1,4 @@
-# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import dace
 
@@ -14,7 +14,9 @@ from dace.transformation.passes.split_tasklets import SplitTasklets
 
 import ast
 
+
 class PowToMulExpander(ast.NodeTransformer):
+
     def visit_BinOp(self, node):
         self.generic_visit(node)  # first rewrite children
 
@@ -32,11 +34,13 @@ class PowToMulExpander(ast.NodeTransformer):
 
         return node
 
+
 def expand_pow_to_mul(src):
     tree = ast.parse(src)
     tree = PowToMulExpander().visit(tree)
     ast.fix_missing_locations(tree)
     return ast.unparse(tree)
+
 
 @properties.make_properties
 @transformation.explicit_cf_compatible

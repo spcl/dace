@@ -13,6 +13,7 @@ import re
 
 
 class ASTSplitter:
+
     def __init__(self):
         self.n = 0
         self.stmts = []
@@ -161,7 +162,9 @@ class SplitTasklets(ppl.Pass):
                     # The inputs should be available in the input data
                     for in_conn in t.in_connectors.keys():
                         matching_in_edges = {ie for ie in tasklet_input_edges if ie.dst_conn == in_conn}
-                        assert len(matching_in_edges) == 1, f"Could not find matching in edge for {in_conn} in {tasklet_input_edges} -> found {matching_in_edges}"
+                        assert len(
+                            matching_in_edges
+                        ) == 1, f"Could not find matching in edge for {in_conn} in {tasklet_input_edges} -> found {matching_in_edges}"
                         matching_in_edge = next(iter(matching_in_edges))
 
                         state.add_edge(matching_in_edge.src, matching_in_edge.src_conn, t, in_conn,
