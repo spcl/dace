@@ -683,7 +683,11 @@ class CPUCodeGen(TargetCodeGenerator):
     ) -> None:
         u, uconn, v, vconn, memlet = edge
         orig_vconn = vconn
-        stream.write("// CPU: Copy from {} to {}".format(u, v), sdfg, state_id, [u, v])
+        state = cfg.state(state_id)
+        assert src_node in state.nodes()
+        assert dst_node in state.nodes()
+        node_id = state.node_id(src_node)
+        stream.write("// CPU: Copy from {} to {}".format(u, v), sdfg, state_id, node_id)
         # Determine memlet directionality
         if isinstance(src_node, nodes.AccessNode) and validate_memlet_data(memlet.data, src_node.data):
             write = True
