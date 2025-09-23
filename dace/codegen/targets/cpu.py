@@ -222,14 +222,14 @@ class CPUCodeGen(TargetCodeGenerator):
                 memlet.subset = subsets.Range.from_array(viewed_dnode.desc(sdfg))
 
         # Emit memlet as a reference and register defined variable
-        atype, aname, value = cpp.emit_memlet_reference(self._dispatcher,
-                                                        sdfg,
-                                                        memlet,
-                                                        name,
-                                                        dtypes.pointer(nodedesc.dtype),
-                                                        ancestor=0,
-                                                        is_write=is_write,
-                                                        decouple_array_interfaces=decouple_array_interfaces)
+        atype, aname, value = cpp.emit_memlet_reference_view(self._dispatcher,
+                                                             sdfg,
+                                                             memlet,
+                                                             name,
+                                                             dtypes.pointer(nodedesc.dtype),
+                                                             ancestor=0,
+                                                             is_write=is_write,
+                                                             decouple_array_interfaces=decouple_array_interfaces)
 
         # Test for views of container arrays and structs
         if isinstance(sdfg.arrays[viewed_dnode.data], (data.Structure, data.ContainerArray, data.ContainerView)):
@@ -1665,21 +1665,21 @@ class CPUCodeGen(TargetCodeGenerator):
             if vconn in inout or in_memlet.data is None:
                 continue
             memlet_references.append(
-                cpp.emit_memlet_reference(self._dispatcher,
-                                          sdfg,
-                                          in_memlet,
-                                          vconn,
-                                          is_write=vconn in node.out_connectors,
-                                          conntype=node.in_connectors[vconn]))
+                cpp.emit_memlet_reference_nsdfg(self._dispatcher,
+                                                sdfg,
+                                                in_memlet,
+                                                vconn,
+                                                is_write=vconn in node.out_connectors,
+                                                conntype=node.in_connectors[vconn]))
 
         for _, uconn, _, _, out_memlet in sorted(state.out_edges(node), key=lambda e: e.src_conn or ''):
             if out_memlet.data is not None:
                 memlet_references.append(
-                    cpp.emit_memlet_reference(self._dispatcher,
-                                              sdfg,
-                                              out_memlet,
-                                              uconn,
-                                              conntype=node.out_connectors[uconn]))
+                    cpp.emit_memlet_reference_nsdfg(self._dispatcher,
+                                                    sdfg,
+                                                    out_memlet,
+                                                    uconn,
+                                                    conntype=node.out_connectors[uconn]))
         return memlet_references
 
     def _generate_NestedSDFG(
