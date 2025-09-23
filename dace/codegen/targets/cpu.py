@@ -269,11 +269,11 @@ class CPUCodeGen(TargetCodeGenerator):
                         defined_type = DefinedType.Scalar if isinstance(v, data.Scalar) else DefinedType.Pointer
                         self._dispatcher.declared_arrays.add(f"{name}->{k}", defined_type, ctypedef)
                         self._dispatcher.defined_vars.add(f"{name}->{k}", defined_type, ctypedef)
-                # TODO: Find a better way to do this (the issue is with pointers of pointers)
-                if atype.endswith('*'):
-                    atype = atype[:-1]
-                if value.startswith('&'):
-                    value = value[1:]
+                # # TODO: Find a better way to do this (the issue is with pointers of pointers)
+                # if atype.endswith('*'):
+                #     atype = atype[:-1]
+                # if value.startswith('&'):
+                #     value = value[1:]
             declaration_stream.write(f'{atype} {aname};', cfg, state_id, node)
         allocation_stream.write(f'{aname} = {value};', cfg, state_id, node)
 
@@ -719,7 +719,8 @@ class CPUCodeGen(TargetCodeGenerator):
 
             if write:
                 vconn = cpp.ptr(dst_node.data, dst_nodedesc, sdfg, self._frame)
-            ctype = dst_nodedesc.dtype.ctype
+            # ctype = dst_nodedesc.dtype.ctype
+            ctype = sdfg.arrays[memlet.data].dtype.ctype
 
             #############################################
             # Corner cases
@@ -1667,19 +1668,21 @@ class CPUCodeGen(TargetCodeGenerator):
             memlet_references.append(
                 cpp.emit_memlet_reference_nsdfg(self._dispatcher,
                                                 sdfg,
+                                                node.sdfg,
                                                 in_memlet,
                                                 vconn,
                                                 is_write=vconn in node.out_connectors,
-                                                conntype=node.in_connectors[vconn]))
+                                                conn_type=node.in_connectors[vconn]))
 
         for _, uconn, _, _, out_memlet in sorted(state.out_edges(node), key=lambda e: e.src_conn or ''):
             if out_memlet.data is not None:
                 memlet_references.append(
                     cpp.emit_memlet_reference_nsdfg(self._dispatcher,
                                                     sdfg,
+                                                    node.sdfg,
                                                     out_memlet,
                                                     uconn,
-                                                    conntype=node.out_connectors[uconn]))
+                                                    conn_type=node.out_connectors[uconn]))
         return memlet_references
 
     def _generate_NestedSDFG(

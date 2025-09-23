@@ -168,9 +168,18 @@ def memlet_copy_to_absolute_strides(dispatcher: 'TargetDispatcher',
     is_src_write = not memlet._is_data_src
 
     if dispatcher is not None:
+        src_data = src_node.data
+        dst_data = dst_node.data
+        tokens = memlet.data.split('.')
+        if len(tokens) > 1:
+            parent_data = ".".join(tokens[:-1])
+            if parent_data == src_data:
+                src_data = memlet.data
+            else:
+                dst_data = memlet.data
         src_expr = copy_expr(dispatcher,
                              sdfg,
-                             src_node.data,
+                             src_data,
                              memlet,
                              is_write=is_src_write,
                              offset=src_subset,
@@ -178,7 +187,7 @@ def memlet_copy_to_absolute_strides(dispatcher: 'TargetDispatcher',
                              packed_types=packed_types)
         dst_expr = copy_expr(dispatcher,
                              sdfg,
-                             dst_node.data,
+                             dst_data,
                              memlet,
                              is_write=(not is_src_write),
                              offset=dst_subset,
@@ -426,10 +435,11 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
 
 
 def emit_memlet_reference_nsdfg(dispatcher: 'TargetDispatcher',
-                                sdfg: SDFG,
+                                parent_sdfg: SDFG,
+                                nested_sdfg: SDFG,
                                 memlet: mmlt.Memlet,
-                                pointer_name: str,
-                                conntype: dtypes.typeclass,
+                                conn_name: str,
+                                conn_type: dtypes.typeclass,
                                 ancestor: int = 1,
                                 is_write: bool = None,
                                 device_code: bool = False,
@@ -438,26 +448,83 @@ def emit_memlet_reference_nsdfg(dispatcher: 'TargetDispatcher',
     Returns a tuple of three strings with a definition of a reference to an
     existing memlet. Only used for generating nested SDFG arguments.
 
+    :param parent_sdfg: The parent SDFG.
+    :param nested_sdfg: The nested SDFG.
+    :param memlet: The parent-graph memlet carrying the parent data from/to the nested SDFG.
+    :param conn_name: The name of the nested SDFG connector.
+    :param conn_type: The type of the nested SDFG connector.
     :param device_code: boolean flag indicating whether we are in the process of generating FPGA device code
     :param decouple_array_interfaces: boolean flag, used for Xilinx FPGA code generation. It indicates whether or not
         we are generating code by decoupling reads/write from memory.
     :return: A tuple of the form (type, name, value).
     """
-    desc = sdfg.arrays[memlet.data]
-    typedef = conntype.ctype
-    offset = cpp_offset_expr(desc, memlet.subset)
+    parent_desc = parent_sdfg.arrays[memlet.data]
+    nested_desc = nested_sdfg.arrays[conn_name]
+
+    parent_ptrname = ptr(memlet.data, parent_desc, parent_sdfg, dispatcher.frame)
+    try:
+        parent_deftype, parent_ctype = dispatcher.declared_arrays.get(parent_ptrname, ancestor)
+    except KeyError:
+        parent_deftype, parent_ctype = dispatcher.defined_vars.get(parent_ptrname, ancestor)
+    nested_dtype, nested_ctype = conn_type, conn_type.ctype
+
+    if isinstance(nested_desc, data.Scalar):
+        assert not isinstance(nested_dtype, (dtypes.pointer, dtypes.vector, dtypes.struct))
+        arg_type = f"{nested_ctype}&"
+        if is_write is not None and not is_write:
+            arg_type = f"const {arg_type}"
+        arg_name = conn_name
+        if isinstance(parent_desc, data.Scalar):
+            arg_value = parent_ptrname
+        else:
+            # data.Array
+            arg_value = f"{parent_ptrname}[{cpp_offset_expr(parent_desc, memlet.subset)}]"
+        return arg_type, arg_name, arg_value
+
+    if isinstance(nested_desc, data.Structure):
+        # NOTE: Structures are "currently" always pointers.
+        assert isinstance(nested_dtype, dtypes.pointer)
+        # NOTE: The following assertion fails when writing from the nested to the parent data.
+        # assert isinstance(nested_dtype.base_type, dtypes.struct)
+        # NOTE: In the non-writing case, the dtype is pointer(struct).
+        # NOTE: In the writing case, the dtype is pointer(pointer(struct)).
+        # NOTE: Because of that, we instead use the ctype of the nested data descriptor.
+        arg_type = f"{nested_desc.ctype}"
+        if is_write is not None and not is_write:
+            arg_type = f"const {arg_type} const"  # Both pointer and data are const
+        else:
+            arg_type = f"{arg_type} const"  # Pointer is const
+        if isinstance(parent_desc, data.Structure):
+            arg_value = parent_ptrname
+        else:
+            # data.ContainerArray
+            arg_value = f"{parent_ptrname}[{cpp_offset_expr(parent_desc, memlet.subset)}]"
+        return arg_type, conn_name, arg_value
+
+    if isinstance(nested_desc, data.Array):
+        assert isinstance(nested_dtype, dtypes.pointer)
+        if isinstance(nested_desc, data.ContainerArray):
+            # NOTE: Structures (i.e., elements of ContainerArrays) are "currently" always pointers.
+            assert isinstance(nested_dtype.base_type, dtypes.pointer)
+        arg_type = f"{nested_ctype}"  # Equivalent to base_type + '*'
+        arg_type = f"{arg_type} const"  # Pointer is const
+        arg_value = f"&{parent_ptrname}[{cpp_offset_expr(parent_desc, memlet.subset)}]"
+        return arg_type, conn_name, arg_value
+
+    typedef = conn_type.ctype
+    offset = cpp_offset_expr(parent_desc, memlet.subset)
     offset_expr = '[' + offset + ']'
-    is_scalar = not isinstance(conntype, dtypes.pointer) and not fpga.is_fpga_array(desc)
-    ptrname = ptr(memlet.data, desc, sdfg, dispatcher.frame)
+    is_scalar = not isinstance(conn_type, dtypes.pointer) and not fpga.is_fpga_array(parent_desc)
+    ptrname = ptr(memlet.data, parent_desc, parent_sdfg, dispatcher.frame)
     ref = ''
 
     # Get defined type (pointer, stream etc.) and change the type definition
     # accordingly.
     defined_types = None
     try:
-        if (isinstance(desc, data.Array) and not isinstance(desc, data.View) and any(
-                str(s) not in dispatcher.frame.symbols_and_constants(sdfg)
-                for s in dispatcher.frame.free_symbols(desc))):
+        if (isinstance(parent_desc, data.Array) and not isinstance(parent_desc, data.View) and any(
+                str(s) not in dispatcher.frame.symbols_and_constants(parent_sdfg)
+                for s in dispatcher.frame.free_symbols(parent_desc))):
             defined_types = dispatcher.declared_arrays.get(ptrname, ancestor)
     except KeyError:
         pass
@@ -465,11 +532,11 @@ def emit_memlet_reference_nsdfg(dispatcher: 'TargetDispatcher',
         defined_types = dispatcher.defined_vars.get(ptrname, ancestor)
     defined_type, defined_ctype = defined_types
 
-    if fpga.is_fpga_array(desc):
+    if fpga.is_fpga_array(parent_desc):
 
         datadef = fpga.fpga_ptr(memlet.data,
-                                desc,
-                                sdfg,
+                                parent_desc,
+                                parent_sdfg,
                                 memlet.subset,
                                 is_write,
                                 dispatcher,
@@ -478,7 +545,7 @@ def emit_memlet_reference_nsdfg(dispatcher: 'TargetDispatcher',
                                 decouple_array_interfaces=decouple_array_interfaces)
 
     else:
-        datadef = ptr(memlet.data, desc, sdfg, dispatcher.frame)
+        datadef = ptr(memlet.data, parent_desc, parent_sdfg, dispatcher.frame)
 
     def make_const(expr: str) -> str:
         # check whether const has already been added before
@@ -488,8 +555,8 @@ def emit_memlet_reference_nsdfg(dispatcher: 'TargetDispatcher',
             return expr
 
     if (defined_type == DefinedType.Pointer
-            or (defined_type == DefinedType.ArrayInterface and isinstance(desc, data.View))):
-        if not is_scalar and desc.dtype == conntype.base_type:
+            or (defined_type == DefinedType.ArrayInterface and isinstance(parent_desc, data.View))):
+        if not is_scalar and parent_desc.dtype == conn_type.base_type:
             # Cast potential consts
             typedef = defined_ctype
 
@@ -500,17 +567,17 @@ def emit_memlet_reference_nsdfg(dispatcher: 'TargetDispatcher',
             ref = '&'
         else:
             # constexpr arrays
-            if memlet.data in dispatcher.frame.symbols_and_constants(sdfg):
+            if memlet.data in dispatcher.frame.symbols_and_constants(parent_sdfg):
                 ref = '*'
                 typedef = make_const(typedef)
 
     elif defined_type == DefinedType.ArrayInterface:
-        base_ctype = conntype.base_type.ctype
+        base_ctype = conn_type.base_type.ctype
         typedef = f"{base_ctype}*" if is_write else f"const {base_ctype}*"
         is_scalar = False
     elif defined_type == DefinedType.Scalar:
         typedef = defined_ctype if is_scalar else (defined_ctype + '*')
-        if is_write is False and not isinstance(desc, data.Structure):
+        if is_write is False and not isinstance(parent_desc, data.Structure):
             typedef = make_const(typedef)
         ref = '&' if is_scalar else ''
         defined_type = DefinedType.Scalar if is_scalar else DefinedType.Pointer
@@ -520,7 +587,7 @@ def emit_memlet_reference_nsdfg(dispatcher: 'TargetDispatcher',
         ref = '&'
         offset_expr = ''
         if not is_scalar:
-            conntype = conntype.base_type
+            conn_type = conn_type.base_type
             is_scalar = True
     elif defined_type == DefinedType.StreamArray:
         # Stream array to stream (reference)
@@ -528,7 +595,7 @@ def emit_memlet_reference_nsdfg(dispatcher: 'TargetDispatcher',
             ref = '&'
             typedef = defined_ctype
             is_scalar = True  # Avoid "&" in expression below
-            conntype = conntype.base_type  # Avoid vector-esque casts
+            conn_type = conn_type.base_type  # Avoid vector-esque casts
             defined_type = DefinedType.Stream
         else:
             # Stream array to stream array (pointer)
@@ -541,8 +608,8 @@ def emit_memlet_reference_nsdfg(dispatcher: 'TargetDispatcher',
     else:
         raise TypeError('Unsupported memlet type "%s"' % defined_type.name)
 
-    if (not device_code and defined_type != DefinedType.ArrayInterface and desc.storage == dace.StorageType.FPGA_Global
-            and not isinstance(desc, dace.data.Scalar)):
+    if (not device_code and defined_type != DefinedType.ArrayInterface
+            and parent_desc.storage == dace.StorageType.FPGA_Global and not isinstance(parent_desc, dace.data.Scalar)):
         # This is a device buffer accessed on the host.
         # Can not be accessed with offset different than zero. Check this if we can:
         if (isinstance(offset, int) and int(offset) != 0) or (isinstance(offset, str) and offset.isnumeric()
@@ -553,16 +620,16 @@ def emit_memlet_reference_nsdfg(dispatcher: 'TargetDispatcher',
         ref = '&'
     else:
         # Cast as necessary
-        expr = make_ptr_vector_cast(datadef + offset_expr, desc.dtype, conntype, is_scalar, defined_type)
+        expr = make_ptr_vector_cast(datadef + offset_expr, parent_desc.dtype, conn_type, is_scalar, defined_type)
 
     # Register defined variable
-    dispatcher.defined_vars.add(pointer_name, defined_type, typedef, allow_shadowing=True)
+    dispatcher.defined_vars.add(conn_name, defined_type, typedef, allow_shadowing=True)
 
     # NOTE: `expr` may only be a name or a sequence of names and dots. The latter indicates nested data and structures.
     # NOTE: Since structures are implemented as pointers, we replace dots with arrows.
     expr = expr.replace('.', '->')
 
-    return (typedef + ref, pointer_name, expr)
+    return (typedef + ref, conn_name, expr)
 
 
 def emit_memlet_reference_view(dispatcher: 'TargetDispatcher',
@@ -583,21 +650,56 @@ def emit_memlet_reference_view(dispatcher: 'TargetDispatcher',
         we are generating code by decoupling reads/write from memory.
     :return: A tuple of the form (type, name, value).
     """
-    desc = sdfg.arrays[memlet.data]
+    viewed_name = memlet.data
+    viewed_desc = sdfg.arrays[viewed_name]
+    viewed_ptrname = ptr(viewed_name, viewed_desc, sdfg, dispatcher.frame)
+    view_name = pointer_name
+    view_desc = sdfg.arrays[view_name]
+    assert issubclass(type(view_desc), data.View)
+
+    view_deftype = DefinedType.Pointer
+
+    if issubclass(type(view_desc), data.Structure):
+        assert isinstance(view_desc.dtype, dtypes.pointer)
+        assert isinstance(view_desc.dtype.base_type, dtypes.struct)
+        assert view_desc.dtype.ctype == viewed_desc.ctype
+        view_ctype = view_desc.ctype
+        arg_type = f"{view_desc.ctype}"
+        if is_write is not None and not is_write:
+            arg_type = f"const {arg_type}"  # Data are const
+        if isinstance(viewed_desc, (data.Structure, data.StructureReference, data.StructureView)):
+            arg_value = viewed_ptrname
+        else:
+            # data.ContainerArray
+            arg_value = f"{viewed_ptrname}[{cpp_offset_expr(viewed_desc, memlet.subset)}]"
+    else:
+        # ArrayView, ContainerView
+        assert isinstance(view_desc.dtype, dtypes.pointer)
+        view_ctype = view_desc.ctype
+        if isinstance(view_desc, data.ContainerView):
+            assert not isinstance(view_desc.dtype.base_type, dtypes.pointer)
+            view_dtype = dtypes.pointer(view_desc.dtype)
+            view_ctype = view_dtype.ctype
+        arg_type = f"{view_ctype}"
+        arg_value = f"&{viewed_ptrname}[{cpp_offset_expr(viewed_desc, memlet.subset)}]"
+
+    dispatcher.defined_vars.add(view_name, view_deftype, view_ctype, allow_shadowing=True)
+    return arg_type, view_name, arg_value
+
     typedef = conntype.ctype
-    offset = cpp_offset_expr(desc, memlet.subset)
+    offset = cpp_offset_expr(viewed_desc, memlet.subset)
     offset_expr = '[' + offset + ']'
-    is_scalar = not isinstance(conntype, dtypes.pointer) and not fpga.is_fpga_array(desc)
-    ptrname = ptr(memlet.data, desc, sdfg, dispatcher.frame)
+    is_scalar = not isinstance(conntype, dtypes.pointer) and not fpga.is_fpga_array(viewed_desc)
+    ptrname = ptr(memlet.data, viewed_desc, sdfg, dispatcher.frame)
     ref = ''
 
     # Get defined type (pointer, stream etc.) and change the type definition
     # accordingly.
     defined_types = None
     try:
-        if (isinstance(desc, data.Array) and not isinstance(desc, data.View) and any(
+        if (isinstance(viewed_desc, data.Array) and not isinstance(viewed_desc, data.View) and any(
                 str(s) not in dispatcher.frame.symbols_and_constants(sdfg)
-                for s in dispatcher.frame.free_symbols(desc))):
+                for s in dispatcher.frame.free_symbols(viewed_desc))):
             defined_types = dispatcher.declared_arrays.get(ptrname, ancestor)
     except KeyError:
         pass
@@ -605,10 +707,10 @@ def emit_memlet_reference_view(dispatcher: 'TargetDispatcher',
         defined_types = dispatcher.defined_vars.get(ptrname, ancestor)
     defined_type, defined_ctype = defined_types
 
-    if fpga.is_fpga_array(desc):
+    if fpga.is_fpga_array(viewed_desc):
 
         datadef = fpga.fpga_ptr(memlet.data,
-                                desc,
+                                viewed_desc,
                                 sdfg,
                                 memlet.subset,
                                 is_write,
@@ -618,7 +720,7 @@ def emit_memlet_reference_view(dispatcher: 'TargetDispatcher',
                                 decouple_array_interfaces=decouple_array_interfaces)
 
     else:
-        datadef = ptr(memlet.data, desc, sdfg, dispatcher.frame)
+        datadef = ptr(memlet.data, viewed_desc, sdfg, dispatcher.frame)
 
     def make_const(expr: str) -> str:
         # check whether const has already been added before
@@ -628,8 +730,8 @@ def emit_memlet_reference_view(dispatcher: 'TargetDispatcher',
             return expr
 
     if (defined_type == DefinedType.Pointer
-            or (defined_type == DefinedType.ArrayInterface and isinstance(desc, data.View))):
-        if not is_scalar and desc.dtype == conntype.base_type:
+            or (defined_type == DefinedType.ArrayInterface and isinstance(viewed_desc, data.View))):
+        if not is_scalar and viewed_desc.dtype == conntype.base_type:
             # Cast potential consts
             typedef = defined_ctype
 
@@ -650,7 +752,7 @@ def emit_memlet_reference_view(dispatcher: 'TargetDispatcher',
         is_scalar = False
     elif defined_type == DefinedType.Scalar:
         typedef = defined_ctype if is_scalar else (defined_ctype + '*')
-        if is_write is False and not isinstance(desc, data.Structure):
+        if is_write is False and not isinstance(viewed_desc, data.Structure):
             typedef = make_const(typedef)
         ref = '&' if is_scalar else ''
         defined_type = DefinedType.Scalar if is_scalar else DefinedType.Pointer
@@ -681,8 +783,8 @@ def emit_memlet_reference_view(dispatcher: 'TargetDispatcher',
     else:
         raise TypeError('Unsupported memlet type "%s"' % defined_type.name)
 
-    if (not device_code and defined_type != DefinedType.ArrayInterface and desc.storage == dace.StorageType.FPGA_Global
-            and not isinstance(desc, dace.data.Scalar)):
+    if (not device_code and defined_type != DefinedType.ArrayInterface
+            and viewed_desc.storage == dace.StorageType.FPGA_Global and not isinstance(viewed_desc, dace.data.Scalar)):
         # This is a device buffer accessed on the host.
         # Can not be accessed with offset different than zero. Check this if we can:
         if (isinstance(offset, int) and int(offset) != 0) or (isinstance(offset, str) and offset.isnumeric()
@@ -693,7 +795,7 @@ def emit_memlet_reference_view(dispatcher: 'TargetDispatcher',
         ref = '&'
     else:
         # Cast as necessary
-        expr = make_ptr_vector_cast(datadef + offset_expr, desc.dtype, conntype, is_scalar, defined_type)
+        expr = make_ptr_vector_cast(datadef + offset_expr, viewed_desc.dtype, conntype, is_scalar, defined_type)
 
     # Register defined variable
     dispatcher.defined_vars.add(pointer_name, defined_type, typedef, allow_shadowing=True)
