@@ -205,34 +205,34 @@ class GPUTXMarkersProvider(InstrumentationProvider):
             return
         self.print_range_pop(callsite_stream)
 
-    def on_allocation_begin(self, sdfg: SDFG, callsite_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
+    def on_allocation_begin(self, sdfg: SDFG, stream: CodeIOStream) -> None:
         if sdfg.instrument != dtypes.InstrumentationType.GPU_TX_MARKERS:
             return
         if self._is_sdfg_in_device_code(sdfg):
             # Don't instrument device code
             return
-        self.print_range_push(f'alloc_{sdfg.name}', sdfg, global_stream)
+        self.print_range_push(f'alloc_{sdfg.name}', sdfg, stream)
 
-    def on_allocation_end(self, sdfg: SDFG, callsite_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
+    def on_allocation_end(self, sdfg: SDFG, stream: CodeIOStream) -> None:
         if sdfg.instrument != dtypes.InstrumentationType.GPU_TX_MARKERS:
             return
         if self._is_sdfg_in_device_code(sdfg):
             # Don't instrument device code
             return
-        self.print_range_pop(global_stream)
+        self.print_range_pop(stream)
 
-    def on_deallocation_start(self, sdfg: SDFG, callsite_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
+    def on_deallocation_start(self, sdfg: SDFG, stream: CodeIOStream) -> None:
         if sdfg.instrument != dtypes.InstrumentationType.GPU_TX_MARKERS:
             return
         if self._is_sdfg_in_device_code(sdfg):
             # Don't instrument device code
             return
-        self.print_range_push(f'dealloc_{sdfg.name}', sdfg, global_stream)
+        self.print_range_push(f'dealloc_{sdfg.name}', sdfg, stream)
 
-    def on_deallocation_end(self, sdfg: SDFG, callsite_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
+    def on_deallocation_end(self, sdfg: SDFG, stream: CodeIOStream) -> None:
         if sdfg.instrument != dtypes.InstrumentationType.GPU_TX_MARKERS:
             return
         if self._is_sdfg_in_device_code(sdfg):
             # Don't instrument device code
             return
-        self.print_range_pop(global_stream)
+        self.print_range_pop(stream)
