@@ -131,7 +131,6 @@ class SplitTasklets(ppl.Pass):
         # For the case a tasklet goes to a taskelt that needs to be split
         # If we have t1 -> t2 but then split t1 to (t1.1, t1.2) -> t2
         # For each tasklet we split we need to track the new input and output maps
-
         for tasklet, state, ssa_statements, input_type in tasklets_to_split:
             assert isinstance(state, dace.SDFGState)
             assert isinstance(tasklet, dace.nodes.Tasklet)
@@ -161,9 +160,11 @@ class SplitTasklets(ppl.Pass):
                 # First do inputs
                 if i == 0:  # First new tasklet
                     # The inputs should be available in the input data
-                    for in_conn in t.in_connectors:
+                    for in_conn in t.in_connectors.keys():
                         matching_in_edges = {ie for ie in tasklet_input_edges if ie.dst_conn == in_conn}
-                        assert len(matching_in_edges) == 1
+                        assert len(
+                            matching_in_edges
+                        ) == 1, f"Could not find matching in edge for {in_conn} in {tasklet_input_edges} -> found {matching_in_edges}"
                         matching_in_edge = next(iter(matching_in_edges))
 
                         state.add_edge(matching_in_edge.src, matching_in_edge.src_conn, t, in_conn,
@@ -171,7 +172,7 @@ class SplitTasklets(ppl.Pass):
                 else:
                     # Input comes from transient accesses (each unique and needs to be added to the SDFG)
                     # or from the unused in edges
-                    for in_conn in t.in_connectors:
+                    for in_conn in t.in_connectors.keys():
                         matching_in_edges = {ie for ie in tasklet_input_edges if ie.dst_conn == in_conn}
                         if len(matching_in_edges) == 0:
                             array_name = f"{in_conn}{self.tmp_access_identifier}{split_access_counter}"
