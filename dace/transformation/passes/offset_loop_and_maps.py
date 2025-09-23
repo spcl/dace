@@ -16,36 +16,22 @@ from dace.sdfg.nodes import CodeBlock
 import ast
 import re
 
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class OffsetLoopsAndMaps(ppl.Pass):
     CATEGORY: str = 'Optimization Preparation'
 
-    offset_expr = Property(
-        dtype=dace.symbolic.SymExpr,
-        default=dace.symbolic.SymExpr(0)
-    )
-    begin_expr = Property(
-        dtype=dace.symbolic.SymExpr,
-        default=dace.symbolic.SymExpr(0)
-    )
+    offset_expr = Property(dtype=dace.symbolic.SymExpr, default=dace.symbolic.SymExpr(0))
+    begin_expr = Property(dtype=dace.symbolic.SymExpr, default=dace.symbolic.SymExpr(0))
     # To avoid Invalid type "int" for property offset_expr: expected SymExpr
-    int_offset_expr = Property(
-        dtype=int,
-        default=0
-    )
-    int_begin_expr = Property(
-        dtype=int,
-        default=0
-    )
-    check_begin = Property(
-        dtype=bool,
-        default=False
-    )
+    int_offset_expr = Property(dtype=int, default=0)
+    int_begin_expr = Property(dtype=int, default=0)
+    check_begin = Property(dtype=bool, default=False)
 
-    def __init__(self,
-                 offset_expr: Union[dace.symbolic.SymExpr, dace.symbolic.symbol, int],
+    def __init__(self, offset_expr: Union[dace.symbolic.SymExpr, dace.symbolic.symbol, int],
                  begin_expr: Union[dace.symbolic.SymExpr, dace.symbolic.symbol, int]):
+
         def _cast(expr):
             if isinstance(expr, int):
                 return dace.symbolic.SymExpr(expr)
@@ -75,13 +61,12 @@ class OffsetLoopsAndMaps(ppl.Pass):
         else:
             self.offset_expr = offset_expr
 
-
     def _get_offset_expr(self):
         if self.int_offset_expr != 0:
             return self.int_offset_expr
         else:
             return pycode(self.offset_expr)
-    
+
     def _get_begin_expr(self):
         if self.check_begin is False:
             return None
@@ -104,11 +89,8 @@ class OffsetLoopsAndMaps(ppl.Pass):
         """Create a new memlet with substituted subset ranges."""
         if edge_data is None:
             return None
-        
-        new_range_list = [
-            (b.subs(repldict), e.subs(repldict), s.subs(repldict))
-            for b, e, s in edge_data.subset
-        ]
+
+        new_range_list = [(b.subs(repldict), e.subs(repldict), s.subs(repldict)) for b, e, s in edge_data.subset]
         new_range = dace.subsets.Range(new_range_list)
         return dace.memlet.Memlet(data=edge_data.data, subset=new_range)
 
@@ -116,11 +98,7 @@ class OffsetLoopsAndMaps(ppl.Pass):
         """Update edge if the new memlet is different from the current one."""
         if new_memlet and new_memlet != edge.data:
             state.remove_edge(edge)
-            state.add_edge(
-                edge.src, edge.src_conn,
-                edge.dst, edge.dst_conn,
-                new_memlet
-            )
+            state.add_edge(edge.src, edge.src_conn, edge.dst, edge.dst_conn, new_memlet)
 
     def _process_memlets_in_edges(self, state, edges, repldict: Dict[str, str]):
         """Process memlets in a collection of edges."""
@@ -150,7 +128,7 @@ class OffsetLoopsAndMaps(ppl.Pass):
         # Replace interstate edges
         for edge in cfg.all_interstate_edges():
             edge.data.replace_dict(repldict)
-        
+
         # Process nested SDFGs
         for state in cfg.all_states():
             for node in state.nodes():
@@ -169,25 +147,21 @@ class OffsetLoopsAndMaps(ppl.Pass):
         try:
             tree = ast.parse(expr, mode="eval")
             comparison = tree.body
-            
+
             if not isinstance(comparison, ast.Compare) or not comparison.comparators:
                 raise ValueError("Expression must be a comparison with at least one comparator")
-            
+
             # Modify the first comparator by adding the expression
             original_rhs = comparison.comparators[0]
             add_expr_ast = ast.parse(str(add_expr), mode="eval").body
-            
-            comparison.comparators[0] = ast.BinOp(
-                left=original_rhs,
-                op=ast.Add(),
-                right=add_expr_ast
-            )
-            
+
+            comparison.comparators[0] = ast.BinOp(left=original_rhs, op=ast.Add(), right=add_expr_ast)
+
             # Convert back to string and simplify
             str_expr = ast.unparse(tree)
             sym_expr = dace.symbolic.SymExpr(str_expr).simplify()
             return pycode(sym_expr)
-            
+
         except Exception as e:
             raise ValueError(f"Failed to process expression '{expr}': {e}")
 
@@ -199,7 +173,8 @@ class OffsetLoopsAndMaps(ppl.Pass):
                 # The begin expression matches apply offset
                 init_lhs, init_rhs = node.init_statement.as_string.split("=")
                 if self._get_begin_expr() is None or dace.symbolic.SymExpr(init_rhs) == self._get_begin_expr():
-                    new_init_statement = pycode(dace.symbolic.SymExpr(f"(({init_rhs}) + {self._get_offset_expr()})").simplify())
+                    new_init_statement = pycode(
+                        dace.symbolic.SymExpr(f"(({init_rhs}) + {self._get_offset_expr()})").simplify())
                     node.init_statement = CodeBlock(f"{init_lhs} = {new_init_statement}")
                     new_loop_condition = self._add_to_rhs(node.loop_condition.as_string, self._get_offset_expr())
                     node.loop_condition = CodeBlock(new_loop_condition)
@@ -215,7 +190,7 @@ class OffsetLoopsAndMaps(ppl.Pass):
                     if isinstance(state_node, dace.nodes.MapEntry):
                         has_matches = False
                         new_range_list = []
-                        repldict  = dict()
+                        repldict = dict()
                         for (b, e, s), param in zip(state_node.map.range, state_node.map.params):
                             if self._get_begin_expr() is None or b == self._get_begin_expr():
                                 has_matches = True
