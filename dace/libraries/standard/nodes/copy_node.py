@@ -76,10 +76,12 @@ class ExpandCUDA(ExpandTransformation):
 
         tasklet.schedule = dace.dtypes.ScheduleType.GPU_Device
 
-        state.add_edge(in_access, None, tasklet, "_memcpy_in",
-                       dace.memlet.Memlet(data=inp_name, subset=copy.deepcopy(in_subset)))
-        state.add_edge(tasklet, "_memcpy_out", out_access, None,
-                       dace.memlet.Memlet(data=out_name, subset=copy.deepcopy(out_subset)))
+        state.add_edge(
+            in_access, None, tasklet, "_memcpy_in",
+            dace.memlet.Memlet(data=inp_name, subset=dace.subsets.Range([(0, e - 1, 1) for e in map_lengths])))
+        state.add_edge(
+            tasklet, "_memcpy_out", out_access, None,
+            dace.memlet.Memlet(data=out_name, subset=dace.subsets.Range([(0, e - 1, 1) for e in map_lengths])))
 
         return sdfg
 

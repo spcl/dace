@@ -68,8 +68,9 @@ class ExpandCUDA(ExpandTransformation):
             language=dace.Language.CPP,
             code_global=f"#include <cuda_runtime.h>\n")
 
-        parent_state.add_edge(tasklet, "_memset_out", out_access, None,
-                              dace.memlet.Memlet(data=out_name, subset=copy.deepcopy(out_subset)))
+        parent_state.add_edge(
+            tasklet, "_memset_out", out_access, None,
+            dace.memlet.Memlet(data=out_name, subset=dace.subsets.Range([(0, e - 1, 1) for e in map_lengths])))
 
         return sdfg
 
