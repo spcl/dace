@@ -832,7 +832,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             return
         for instr in self._dispatcher.instrumentation.values():
             if instr is not None:
-                instr.on_allocation_begin(sdfg, callsite_stream)
+                instr.on_allocation_begin(sdfg, scope, callsite_stream)
         """ Dispatches allocation of all arrays in the given scope. """
         for tsdfg, state, node, declare, allocate, _ in self.to_allocate[scope]:
             if state is not None:
@@ -846,7 +846,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                                                node, desc, function_stream, callsite_stream, declare, allocate)
         for instr in self._dispatcher.instrumentation.values():
             if instr is not None:
-                instr.on_allocation_end(sdfg, callsite_stream)
+                instr.on_allocation_end(sdfg, scope, callsite_stream)
 
     def deallocate_arrays_in_scope(self, sdfg: SDFG, cfg: ControlFlowRegion, scope: Union[nodes.EntryNode, SDFGState,
                                                                                           SDFG],
@@ -855,7 +855,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             return
         for instr in self._dispatcher.instrumentation.values():
             if instr is not None:
-                instr.on_allocation_begin(sdfg, callsite_stream)
+                instr.on_deallocation_begin(sdfg, scope, callsite_stream)
         """ Dispatches deallocation of all arrays in the given scope. """
         for tsdfg, state, node, _, _, deallocate in self.to_allocate[scope]:
             if not deallocate:
@@ -871,7 +871,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                                                  function_stream, callsite_stream)
         for instr in self._dispatcher.instrumentation.values():
             if instr is not None:
-                instr.on_deallocation_end(sdfg, callsite_stream)
+                instr.on_deallocation_end(sdfg, scope, callsite_stream)
 
     def generate_code(self,
                       sdfg: SDFG,

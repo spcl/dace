@@ -220,7 +220,7 @@ class InstrumentationProvider(object):
         """
         pass
 
-    def on_allocation_begin(self, sdfg: SDFG, stream: CodeIOStream) -> None:
+    def on_allocation_begin(self, sdfg: SDFG, scope: Union[nodes.EntryNode, SDFGState, SDFG], stream: CodeIOStream) -> None:
         """ Event called at the beginning of an allocation code generation.
 
             :param sdfg: The generated SDFG object.
@@ -228,7 +228,7 @@ class InstrumentationProvider(object):
         """
         pass
 
-    def on_allocation_end(self, sdfg: SDFG, lstream: CodeIOStream) -> None:
+    def on_allocation_end(self, sdfg: SDFG, scope: Union[nodes.EntryNode, SDFGState, SDFG], lstream: CodeIOStream) -> None:
         """ Event called at the end of an allocation code generation.
 
             :param sdfg: The generated SDFG object.
@@ -236,7 +236,7 @@ class InstrumentationProvider(object):
         """
         pass
 
-    def on_deallocation_begin(self, sdfg: SDFG, stream: CodeIOStream) -> None:
+    def on_deallocation_begin(self, sdfg: SDFG, scope: Union[nodes.EntryNode, SDFGState, SDFG], stream: CodeIOStream) -> None:
         """ Event called at the beginning of a deallocation code generation.
 
             :param sdfg: The generated SDFG object.
@@ -244,7 +244,7 @@ class InstrumentationProvider(object):
         """
         pass
 
-    def on_deallocation_end(self, sdfg: SDFG, lstream: CodeIOStream) -> None:
+    def on_deallocation_end(self, sdfg: SDFG, scope: Union[nodes.EntryNode, SDFGState, SDFG], lstream: CodeIOStream) -> None:
         """ Event called at the end of a deallocation code generation.
 
             :param sdfg: The generated SDFG object.
