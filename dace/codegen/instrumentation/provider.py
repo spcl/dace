@@ -219,3 +219,39 @@ class InstrumentationProvider(object):
             :param global_stream: Code generator for global (external) code.
         """
         pass
+
+    def on_allocation_begin(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
+        """ Event called at the beginning of an allocation code generation.
+
+            :param sdfg: The generated SDFG object.
+            :param local_stream: Code generator for the in-function code.
+            :param global_stream: Code generator for global (external) code.
+        """
+        pass
+
+    def on_allocation_end(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
+        """ Event called at the end of an allocation code generation.
+
+            :param sdfg: The generated SDFG object.
+            :param local_stream: Code generator for the in-function code.
+            :param global_stream: Code generator for global (external) code.
+        """
+        pass
+
+    def on_deallocation_begin(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
+        """ Event called at the beginning of a deallocation code generation.
+
+            :param sdfg: The generated SDFG object.
+            :param local_stream: Code generator for the in-function code.
+            :param global_stream: Code generator for global (external) code.
+        """
+        pass
+
+    def on_deallocation_end(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
+        """ Event called at the end of a deallocation code generation.
+
+            :param sdfg: The generated SDFG object.
+            :param local_stream: Code generator for the in-function code.
+            :param global_stream: Code generator for global (external) code.
+        """
+        pass
