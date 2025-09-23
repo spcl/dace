@@ -976,7 +976,8 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         defined_syms = defined_syms or self.defined_symbols()
         scalar_args.update({
             k: dt.Scalar(defined_syms[k]) if k in defined_syms else sdfg.arrays[k]
-            for k in self.used_symbols(all_symbols=False) if not k.startswith('__dace') and k not in sdfg.constants
+            for k in self.used_symbols(all_symbols=False)
+            if not k.startswith('__dace') and k not in sdfg.constants and (k in defined_syms or k in sdfg.arrays)
         })
 
         # Add scalar arguments from free symbols of data descriptors
