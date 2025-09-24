@@ -266,3 +266,5 @@ if __name__ == "__main__":
     test_fortran_frontend_array_multiple_ranges_with_symbols()
     test_fortran_frontend_twoconnector()
     test_fortran_frontend_memlet_in_map_test()
+    test_pass_an_arrayslice_that_looks_like_a_scalar_from_outside_with_literal_size()
+    test_pass_an_arrayslice_that_looks_like_a_scalar_from_outside_with_symbolic_size()
