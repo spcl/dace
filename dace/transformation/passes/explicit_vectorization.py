@@ -13,6 +13,70 @@ from dace.transformation.passes.tasklet_preprocessing_passes import IntegerPower
 from dace.transformation.dataflow.tiling import MapTiling
 
 
+class ExplicitVectorizationPipelineCPU(ppl.Pipeline):
+    _cpu_global_code = """
+inline void vector_mult(double * __restrict__ c, const double * __restrict__ a, const double * __restrict__ b) {{
+    #pragma unroll
+    for (int i = 0; i < {vector_width}; i++) {{
+        c[i] = a[i] * b[i];
+    }}
+}}
+inline void vector_mult(double * __restrict__ b, const double * __restrict__ a, const double constant) {{
+    double cReg[{vector_width}];
+    #pragma unroll
+    for (int i = 0; i < {vector_width}; i++) {{
+        cReg[i] = constant;
+    }}
+    #pragma unroll
+    for (int i = 0; i < {vector_width}; i++) {{
+        b[i] = a[i] * cReg[i];
+    }}
+}}
+inline void vector_add(double * __restrict__ c, const double * __restrict__ a, const double * __restrict__ b) {{
+    #pragma unroll
+    for (int i = 0; i < {vector_width}; i++) {{
+        c[i] = a[i] + b[i];
+    }}
+}}
+inline void vector_add(double * __restrict__ b, const double * __restrict__ a, const double constant) {{
+    double cReg[{vector_width}];
+    #pragma unroll
+    for (int i = 0; i < {vector_width}; i++) {{
+        cReg[i] = constant;
+    }}
+    #pragma unroll
+    for (int i = 0; i < {vector_width}; i++) {{
+        b[i] = a[i] + cReg[i];
+    }}
+}}
+inline void vector_copy(double * __restrict__ dst, const double * __restrict__ src) {{
+    #pragma unroll
+    for (int i = 0; i < {vector_width}; i++) {{
+        dst[i] = src[i];
+    }}
+}}
+"""
+
+    def __init__(self, vector_width):
+        passes = [
+            RemoveFPTypeCasts(),
+            IntegerPowerToMult(),
+            SplitTasklets(),
+            ExplicitVectorization(
+                templates={
+                    "*": "vector_mult({lhs}, {rhs1}, {rhs2});",
+                    "+": "vector_add({lhs}, {rhs1}, {rhs2});",
+                    "=": "vector_copy({lhs}, {rhs1});",
+                    "c+": "vector_add({lhs}, {rhs1}, {constant});",
+                    "c*": "vector_mult({lhs}, {rhs1}, {constant});",
+                },
+                vector_width=vector_width,
+                vector_input_storage=dace.dtypes.StorageType.Register,
+                vector_output_storage=dace.dtypes.StorageType.Register,
+                global_code=ExplicitVectorizationPipelineGPU._cpu_global_code.format(vector_width=vector_width))
+        ]
+        super().__init__(passes)
+
 class ExplicitVectorizationPipelineGPU(ppl.Pipeline):
     _gpu_global_code = """
 __host__ __device__ __forceinline__ void vector_mult(double * __restrict__ c, const double * __restrict__ a, const double * __restrict__ b) {{
@@ -76,7 +140,6 @@ __host__ __device__ __forceinline__ void vector_copy(double * __restrict__ dst, 
                 global_code=ExplicitVectorizationPipelineGPU._gpu_global_code.format(vector_width=vector_width))
         ]
         super().__init__(passes)
-
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
