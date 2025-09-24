@@ -9,7 +9,7 @@ from dace import SDFG, SDFGState, properties, transformation
 from dace.transformation import pass_pipeline as ppl, dataflow as dftrans
 from dace.transformation.passes import analysis as ap, pattern_matching as pmp
 from dace.transformation.passes.split_tasklets import SplitTasklets
-from dace.transformation.passes.tasklet_preprocessing_passes import IntegerPowerToMult, RemoveFPTypeCasts
+from dace.transformation.passes.tasklet_preprocessing_passes import IntegerPowerToMult, RemoveFPTypeCasts, RemoveIntTypeCasts
 from dace.transformation.dataflow.tiling import MapTiling
 
 
@@ -60,6 +60,7 @@ inline void vector_copy(double * __restrict__ dst, const double * __restrict__ s
     def __init__(self, vector_width):
         passes = [
             RemoveFPTypeCasts(),
+            RemoveIntTypeCasts(),
             IntegerPowerToMult(),
             SplitTasklets(),
             ExplicitVectorization(
@@ -126,6 +127,7 @@ __host__ __device__ __forceinline__ void vector_copy(double * __restrict__ dst, 
     def __init__(self, vector_width):
         passes = [
             RemoveFPTypeCasts(),
+            RemoveIntTypeCasts(),
             IntegerPowerToMult(),
             SplitTasklets(),
             ExplicitVectorization(
