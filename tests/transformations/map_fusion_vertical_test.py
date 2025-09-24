@@ -2717,7 +2717,7 @@ def _make_multiple_top_level_connections_sdfg() -> Tuple[
         "b",
         shape=(10, 4, 15),
         dtype=dace.float64,
-        transient=False,
+        transient=True,
     )
     sdfg.add_array(
         "c",
@@ -2810,6 +2810,10 @@ def test_map_fusion_multiple_top_level_connections(strict_dataflow: bool):
     assert len(initial_nested_maps) == 1
     assert state.scope_dict()[inner_map_exit] is not None
 
+    initial_ac = {dnode.data for dnode in count_nodes(state, dace.nodes.AccessNode, return_nodes=True)}
+    assert len(initial_ac) == 4
+    assert "b" in initial_ac
+
     ref, res = make_sdfg_args(sdfg)
     compile_and_run_sdfg(sdfg, **ref)
 
@@ -2825,6 +2829,11 @@ def test_map_fusion_multiple_top_level_connections(strict_dataflow: bool):
     assert len(maps_after_fusion) == 2
     assert inner_map_exit in maps_after_fusion
     assert state.scope_dict()[state.entry_node(inner_map_exit)] is not None
+
+    ac_after_fusion = {dnode.data for dnode in count_nodes(state, dace.nodes.AccessNode, return_nodes=True)}
+    assert len(ac_after_fusion) == 4
+    assert "b" not in ac_after_fusion
+    assert initial_ac.copy().remove("b").issubset(ac_after_fusion)
 
     compile_and_run_sdfg(sdfg, **res)
     assert all(np.allclose(ref[k], res[k]) for k in ref)
