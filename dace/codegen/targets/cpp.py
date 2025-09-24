@@ -494,6 +494,8 @@ def emit_memlet_reference_nsdfg(dispatcher: 'TargetDispatcher',
             arg_type = f"const {arg_type} const"  # Both pointer and data are const
         else:
             arg_type = f"{arg_type} const"  # Pointer is const
+        if not nested_desc.may_alias:  # NOTE: Is this always true for Structures?
+            arg_type = f"{arg_type} __restrict__"
         if isinstance(parent_desc, data.Structure):
             arg_value = parent_ptrname
         else:
@@ -511,6 +513,8 @@ def emit_memlet_reference_nsdfg(dispatcher: 'TargetDispatcher',
         nested_ctype = nested_dtype.ctype
         arg_type = f"{nested_ctype}"  # Equivalent to base_type + '*'
         arg_type = f"{arg_type} const"  # Pointer is const
+        if not nested_desc.may_alias:
+            arg_type = f"{arg_type} __restrict__"
         arg_value = f"&{parent_ptrname}[{cpp_offset_expr(parent_desc, memlet.subset)}]"
         # NOTE: Special case: nested data is Array of size 1 and parent data is Scalar/Structure
         if isinstance(parent_desc, (data.Scalar, data.Structure)):
