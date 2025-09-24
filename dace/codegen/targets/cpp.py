@@ -469,8 +469,8 @@ def emit_memlet_reference_nsdfg(dispatcher: 'TargetDispatcher',
     nested_dtype, nested_ctype = conn_type, conn_type.ctype
 
     if isinstance(nested_desc, data.Scalar):
-        assert not isinstance(nested_dtype, (dtypes.pointer, dtypes.vector, dtypes.struct))
-        arg_type = f"{nested_ctype}&"
+        assert not isinstance(nested_desc.dtype, (dtypes.pointer, dtypes.vector, dtypes.struct))
+        arg_type = f"{nested_desc.dtype.ctype}&"
         if is_write is not None and not is_write:
             arg_type = f"const {arg_type}"
         arg_name = conn_name
