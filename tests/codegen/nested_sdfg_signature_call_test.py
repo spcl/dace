@@ -137,6 +137,7 @@ def make_sdfg(data_combo: tuple[dt.Data, dt.Data, Union[None, sbs.Range]],
             non_view_desc = constructors[non_view_class]((N, ), dtypes[non_view_class])
             view_desc = constructors[parent_dtype]((M, ), dtypes[non_view_class])
             memlet = dace.Memlet(data="A", subset=f"{N//4}:{N//4+M}", other_subset=f"0:{M}")
+        view_desc.transient = True
         sdfg.add_datadesc("A", non_view_desc)
         sdfg.add_datadesc("Av", view_desc)
         non_view_access = state.add_access("A")
@@ -172,6 +173,7 @@ def make_sdfg(data_combo: tuple[dt.Data, dt.Data, Union[None, sbs.Range]],
             outer_access = parent_access
 
         outer_desc = sdfg.arrays[outer_access.data]
+        outer_desc.transient = True
         non_view_desc = outer_desc
         if issubclass(type(outer_desc), dt.View):
             if hasattr(outer_desc, "as_array"):
@@ -193,6 +195,7 @@ def make_sdfg(data_combo: tuple[dt.Data, dt.Data, Union[None, sbs.Range]],
             non_view_desc = new_desc
             if i > 0:
                 new_desc = dt.View.view(new_desc)
+                new_desc.transient = True
             sdfg.add_datadesc(f"Av{i}", new_desc)
             new_access = state.add_access(f"Av{i}")
             conn = "views" if issubclass(type(outer_desc), dt.View) else None
