@@ -446,6 +446,12 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         # Set of intermediate nodes that we have already processed.
         processed_inter_nodes: Set[nodes.Node] = set()
 
+        debug = False
+        for oedge in state.out_edges(first_map_exit):
+            dnode = oedge.dst
+            if isinstance(dnode, nodes.AccessNode) and dnode.data == "__tmp9":
+                debug = True
+
         # Now scan all output edges of the first exit and classify them
         for out_edge in state.out_edges(first_map_exit):
             intermediate_node: nodes.Node = out_edge.dst
@@ -472,6 +478,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             # We require that there is only one edge between the MapExit of the
             #  top Map and the intermediate. We allow that the intermediate has
             #  multiple incoming edges. We assume that there is no write conflicts.
+            # TODO(phimuell): Lift this restriction to allow multiple edges from
+            #   `first_map_exit`. It is important that this is different, but related
+            #   from the check bellow where we check the `IN_*` connectors.
             for intermediate_node_iedge in state.in_edges(intermediate_node):
                 if intermediate_node_iedge is out_edge:
                     continue
@@ -562,7 +571,6 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                         ):
                             return None
 
-                # Now issues found with that edge.
                 producer_subsets.append(producer_edge.data.dst_subset)
                 assert producer_subsets[-1] not in reduced_intermediate_shape_cache
                 reduced_intermediate_shape_cache[producer_subsets[-1]] = reduced_inter_shape
@@ -576,49 +584,44 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             else:
                 for i, psbs1 in enumerate(producer_subsets):
                     for j, psbs2 in enumerate(producer_subsets):
-                        if i == j:
-                            continue
-                        if psbs1.intersects(psbs2):
+                        if i < j and psbs1.intersects(psbs2):
                             return None
 
-            # Now we determine the consumer of nodes. For this we are using the edges
-            #  leaves the second MapEntry. It is not necessary to find the actual
-            #  consumer nodes, as they might depend on symbols of nested Maps.
-            #  For the covering test we only need their subsets, but we will perform
-            #  some scan and filtering on them.
+            # We now determine the consumers of the intermediate node. For this we are
+            #  looking at the edges that leave the node and enter the second Map.
+            #  This means that we ignore the actual consumer, which are inside the
+            #  second Map scope. Instead we are only looking at the subset that the
+            #  second Map consumes. Note that we allows that the second Map is found
+            #  multiple times.
             found_second_map = False
-            for intermediate_node_out_edge in state.out_edges(intermediate_node):
+            for intermediate_consumer_edge in state.out_edges(intermediate_node):
                 # If the second MapEntry is not immediately reachable from the intermediate
-                #  node, then ensure that there is not path that goes to it.
-                if intermediate_node_out_edge.dst is not second_map_entry:
+                #  node, then ensure that there is no path that goes to it. Needed to
+                #  prevent cycles.
+                if intermediate_consumer_edge.dst is not second_map_entry:
                     if mfhelper.is_node_reachable_from(graph=state,
-                                                       begin=intermediate_node_out_edge.dst,
+                                                       begin=intermediate_consumer_edge.dst,
                                                        end=second_map_entry):
                         return None
                     continue
-
-                # Ensure that the second Map is found exactly once.
-                # TODO(phimuell): Lift this restriction.
-                if found_second_map:
-                    return None
                 found_second_map = True
 
                 # The output of the top Map can not define a dynamic Map range in the
                 #  second Map.
-                if not intermediate_node_out_edge.dst_conn.startswith("IN_"):
+                if not intermediate_consumer_edge.dst_conn.startswith("IN_"):
                     return None
 
                 # Now we look at all edges that leave the second MapEntry, i.e., the
-                #  edges that feeds the consumer and define what is read inside the Map.
-                #  We do not check them, but collect them and inspect them.
+                #  edges that feeds the data to the actual consumers and define what is
+                #  read inside the Map scope.
                 # NOTE1: The subset still uses the old iteration variables.
                 # NOTE2: In case of consumer Memlet we explicitly allow dynamic Memlets.
-                #   This is different compared to the producer Memlet. The reason is
-                #   because in a consumer the data is conditionally read, so the data
-                #   has to exists anyway.
+                #   This is different compared to the producer Memlet, where we do not
+                #   allow such Memlets. This guarantees that the data is always present,
+                #   even if it might not be read.
                 has_found_a_consumer = False
                 for inner_consumer_edge in state.out_edges_by_connector(
-                        second_map_entry, "OUT_" + intermediate_node_out_edge.dst_conn[3:]):
+                        second_map_entry, "OUT_" + intermediate_consumer_edge.dst_conn[3:]):
                     assert not inner_consumer_edge.data.is_empty()
                     consumer_subset = inner_consumer_edge.data.src_subset
                     if consumer_subset is None:
@@ -631,8 +634,8 @@ class MapFusionVertical(transformation.SingleStateTransformation):
 
                     # Now we are checking if a single iteration of the first (top) Map
                     #  can satisfy all data requirements of the second (bottom) Map.
-                    #  For this we look if the producer covers the consumer. A consumer must
-                    #  be covered by exactly one producer.
+                    #  For this we look if the producer covers the consumer. It is
+                    #  important that a consumer must be covered by exactly one producer.
                     prospective_producers = [
                         producer_subset for producer_subset in producer_subsets
                         if producer_subset.covers(consumer_subset)
@@ -1434,19 +1437,23 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         if self.assume_always_shared:
             return True
 
-        # This means the data is consumed by multiple Maps, through the same AccessNode, in this state
-        #  Note currently multiple incoming edges are not handled, but in the spirit of this function
-        #  we consider such AccessNodes as shared, because we can not remove the intermediate.
-        # TODO(phimuell): If one of the two Maps has multiple connections to the intermediate,
-        #   then this detection will fail here. This is not a problem because this is currently
-        #   not supported. But still.
-        if state.out_degree(data) > 1:
-            return True
-        if state.in_degree(data) > 1:
-            return True
-
         # Non transient data must be reconstructed anyways, so it is by definition shared.
         if not data.desc(sdfg).transient:
+            return True
+
+        # If the data is used (read/write) by more than one entity then it is shared (in this
+        #  state) and we do not have to scan the whole SDFG.
+        # NOTE: We can not use `state.{in, out}_degree(data) > 1` because we allow that there
+        #   are multiple connections between the intermediates and the Maps, thus we have to
+        #   look at all adjacent nodes.
+        # NOTE: We have to do these checks before we consult the pipeline results or perform a
+        #   scan, because the `FindSingleUseData` pass and the scan, ignores the degree and we
+        #   need to check for "shared data" within the state separately.
+        unique_sources = {iedge.src for iedge in state.in_edges(data)}
+        if len(unique_sources) > 1:
+            return True
+        unique_destinations = {oedge.dst for oedge in state.out_edges(data)}
+        if len(unique_destinations) > 1:
             return True
 
         # NOTE: Actually, if this transformation is run inside a pipeline, which specified
@@ -1464,7 +1471,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         elif self._single_use_data is not None:
             single_use_data = self._single_use_data
 
-        # The single use data was present so scan it.
+        # If the single use data is present use it.
         if single_use_data is not None:
             assert sdfg in single_use_data
             return data.data not in single_use_data[sdfg]
@@ -1480,42 +1487,28 @@ class MapFusionVertical(transformation.SingleStateTransformation):
     ) -> bool:
         """Scans `sdfg` to determine if `data` is shared.
 
-        Essentially, this function determine, if the intermediate AccessNode `data` is
-        can be removed or if it has to be restored as output of the Map.
-        A data descriptor is classified as shared if any of the following is true:
-        - `data` is non transient data.
-        - `data` has at most one incoming and/or outgoing edge.
-        - There are other AccessNodes beside `data` that refer to the same data.
-        - The data is accessed on an interstate edge.
-
-        This function should not be called directly. Instead it is called indirectly
-        by `is_shared_data()` if there is no short cut.
+        Note that it is not safe to use this function directly, instead the `is_shared_data()`
+        should be used. The function will scan the entire SDFG and looks if it found another
+        AccessNode that refers to the same data as `data`.
 
         :param data: The AccessNode that should checked if it is shared.
         :param sdfg: The SDFG for which the set of shared data should be computed.
         """
 
-        # NOTE: We do not use the `FindSingleUseData` because for us it does not have any use.
-        #   We just need to know if we can delete it (early exit).
-        if not data.desc(sdfg).transient:
-            return True
+        # These checks ensures that this function is not called directly.
+        assert data.desc(sdfg).transient
+        assert len({iedge.src for iedge in state.in_edges(data)}) <= 1
+        assert len({oedge.dst for oedge in state.out_edges(data)}) <= 1
 
-        # See description in `is_shared_data()` for more.
-        if state.out_degree(data) > 1:
-            return True
-        if state.in_degree(data) > 1:
-            return True
-
+        # Scan all states to see if another AccessNode is found that refers to the same data.
         data_name: str = data.data
         for state in sdfg.states():
             for dnode in state.data_nodes():
-                if dnode is data:
-                    # We have found the `data` AccessNode, which we must ignore.
-                    continue
                 if dnode.data == data_name:
-                    # We found a different AccessNode that refers to the same data
-                    #  as `data`. Thus `data` is shared.
-                    return True
+                    # We found an AccessNode referring to the data to check. This indicates
+                    #  only shared if the node is not `data`.
+                    if dnode is not data:
+                        return True
 
         # Test if the data is referenced in the interstate edges.
         for edge in sdfg.edges():

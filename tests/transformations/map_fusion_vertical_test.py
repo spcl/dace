@@ -117,7 +117,8 @@ def apply_fusion(sdfg: SDFG,
                  unspecific: bool = False,
                  apply_once: bool = False,
                  strict_dataflow: bool = True,
-                 map_fusion_opt: Dict[str, Any] = dict()) -> SDFG:
+                 map_fusion_opt: Dict[str, Any] = dict(),
+                 where: Optional[Dict[str, dace.nodes.Node]] = None) -> SDFG:
     """Applies the Map fusion transformation.
 
     The function checks that the number of maps has been reduced, it is also possible
@@ -135,14 +136,27 @@ def apply_fusion(sdfg: SDFG,
         with dace.config.temporary_config():
             dace.Config.set("optimizer", "match_exception", value=True)
 
-            map_fusion = MapFusionVertical(
-                strict_dataflow=strict_dataflow,
-                **map_fusion_opt,
-            )
-            if apply_once:
-                sdfg.apply_transformations(map_fusion, validate=True, validate_all=True)
+            if where is not None:
+                assert apply_once
+                MapFusionVertical.apply_to(
+                    sdfg=sdfg,
+                    options={
+                        "strict_dataflow": strict_dataflow,
+                    } | map_fusion_opt,
+                    expr_index=0,
+                    verify=True,
+                    **where,
+                )
+                sdfg.validate()
+
             else:
-                sdfg.apply_transformations_repeated(map_fusion, validate=True, validate_all=True)
+                map_fusion = MapFusionVertical(
+                    strict_dataflow=strict_dataflow,
+                    **map_fusion_opt,
+                )
+                apply_function = sdfg.apply_transformations if apply_once else sdfg.apply_transformations_repeated
+                apply_function(map_fusion, validate=True, validate_all=True)
+
     except:
         safe_view(org_sdfg)
         safe_view(sdfg)
@@ -2518,18 +2532,17 @@ def test_map_fusion_nested_sdfg_slicing(symbolic_size: bool, strict_dataflow: bo
     ref, res = make_sdfg_args(sdfg, spec=spec)
     compile_and_run_sdfg(sdfg, **ref)
 
-    MapFusionVertical.apply_to(
-        sdfg,
-        verify=True,
-        options={
-            "strict_dataflow": strict_dataflow,
+    apply_fusion(
+        sdfg=sdfg,
+        final_maps=1,
+        apply_once=True,
+        strict_dataflow=strict_dataflow,
+        where={
+            "first_map_exit": mx1,
+            "array": intermediate,
+            "second_map_entry": me2,
         },
-        first_map_exit=mx1,
-        array=intermediate,
-        second_map_entry=me2,
     )
-
-    assert count_nodes(state, nodes.MapEntry) == 1
 
     inner_reduction = reduction_nsdfg.sdfg.arrays["_in"]
     inner_local_hood = hood_nsdfg.sdfg.arrays["local_hood"]
@@ -2702,6 +2715,378 @@ def test_map_fusion_with_non_slicing_nsdfg(strict_dataflow: bool):
     assert all(np.allclose(ref[k], res[k]) for k in ref)
 
 
+def _make_multiple_top_level_connections_sdfg() -> Tuple[
+    dace.SDFG, dace.SDFGState, dace.nodes.MapExit, dace.nodes.AccessNode, dace.nodes.MapEntry, dace.nodes.MapExit]:
+    sdfg = dace.SDFG(unique_name("multiple_top_level_connections"))
+    state = sdfg.add_state(is_start_block=True)
+
+    sdfg.add_array(
+        "a",
+        shape=(10, 4, 15),
+        dtype=dace.float64,
+        transient=False,
+    )
+    sdfg.add_array(
+        "b",
+        shape=(10, 4, 15),
+        dtype=dace.float64,
+        transient=True,
+    )
+    sdfg.add_array(
+        "c",
+        shape=(10, 15),
+        dtype=dace.float64,
+        transient=False,
+    )
+    sdfg.add_array(
+        "d",
+        shape=(10, 15),
+        dtype=dace.float64,
+        transient=False,
+    )
+    a, b, c, d = (state.add_access(name) for name in "abcd")
+
+    def make_first_map(sdfg: dace.SDFG, state: dace.SDFGState, a: dace.nodes.AccessNode,
+                       b: dace.nodes.AccessNode) -> Tuple[dace.nodes.MapExit, dace.nodes.MapExit]:
+        ome, omx = state.add_map("first_map", {"i": "0:10", "j": "0:15"})
+        ime, imx = state.add_map("first_map_inner", {"k": "0:4"})
+        inner_tlet = state.add_tasklet(
+            "inner_tasklet",
+            inputs={"__in"},
+            outputs={"__out"},
+            code="__out = __in + 1.0 * k",
+        )
+
+        state.add_edge(a, None, ome, "IN_a", dace.Memlet("a[0:10, 0:4, 0:15]"))
+        state.add_edge(ome, "OUT_a", ime, "IN_a", dace.Memlet("a[i, 0:4, j]"))
+        state.add_edge(ime, "OUT_a", inner_tlet, "__in", dace.Memlet("a[i, k, j]"))
+        ome.add_scope_connectors("a")
+        ime.add_scope_connectors("a")
+
+        state.add_edge(inner_tlet, "__out", imx, "IN_b", dace.Memlet("b[i, k, j]"))
+        state.add_edge(imx, "OUT_b", omx, "IN_b", dace.Memlet("b[i, 0:4, j]"))
+        state.add_edge(omx, "OUT_b", b, None, dace.Memlet("b[0:10, 0:4, 0:15]"))
+        imx.add_scope_connectors("b")
+        omx.add_scope_connectors("b")
+
+        return omx, imx
+
+    def make_second_map(sdfg: dace.SDFG, state: dace.SDFGState, b: dace.nodes.AccessNode, c: dace.nodes.AccessNode,
+                        d: dace.nodes.AccessNode) -> dace.nodes.MapEntry:
+        me, mx = state.add_map("second_map", {"i": "0:10", "j": "0:15"})
+        tlet1 = state.add_tasklet(
+            "tasklet1",
+            inputs={"__in"},
+            outputs={"__out"},
+            code="__out = __in + 1.0",
+        )
+        tlet2 = state.add_tasklet(
+            "tasklet2",
+            inputs={"__in"},
+            outputs={"__out"},
+            code="__out = __in + 2.0",
+        )
+
+        state.add_edge(b, None, me, "IN_b1", dace.Memlet("b[0:10, 1, 0:15]"))
+        state.add_edge(me, "OUT_b1", tlet1, "__in", dace.Memlet("b[i, 1, j]"))
+        state.add_edge(tlet1, "__out", mx, "IN_c", dace.Memlet("c[i, j]"))
+        state.add_edge(mx, "OUT_c", c, None, dace.Memlet("c[0:10, 0:15]"))
+        me.add_scope_connectors("b1")
+        mx.add_scope_connectors("c")
+
+        state.add_edge(b, None, me, "IN_b2", dace.Memlet("b[0:10, 2, 0:15]"))
+        state.add_edge(me, "OUT_b2", tlet2, "__in", dace.Memlet("b[i, 2, j]"))
+        state.add_edge(tlet2, "__out", mx, "IN_d", dace.Memlet("d[i, j]"))
+        state.add_edge(mx, "OUT_d", d, None, dace.Memlet("d[0:10, 0:15]"))
+        me.add_scope_connectors("b2")
+        mx.add_scope_connectors("d")
+
+        return me
+
+    first_map_exit, inner_map_exit = make_first_map(sdfg, state, a, b)
+    second_map_entry = make_second_map(sdfg, state, b, c, d)
+    sdfg.validate()
+
+    return sdfg, state, first_map_exit, b, second_map_entry, inner_map_exit
+
+
+@pytest.mark.parametrize("strict_dataflow", [True, False])
+def test_map_fusion_multiple_top_level_connections(strict_dataflow: bool):
+    sdfg, state, first_map_exit, b, second_map_entry, inner_map_exit = _make_multiple_top_level_connections_sdfg()
+
+    initial_maps = count_nodes(state, dace.nodes.MapExit, return_nodes=True)
+    assert len(initial_maps) == 3
+    assert first_map_exit in initial_maps
+    assert inner_map_exit in initial_maps
+    assert state.exit_node(second_map_entry) in initial_maps
+    initial_nested_maps = [node for node in initial_maps if state.scope_dict()[state.entry_node(node)] is not None]
+    assert len(initial_nested_maps) == 1
+    assert state.scope_dict()[inner_map_exit] is not None
+
+    initial_ac = {dnode.data for dnode in count_nodes(state, dace.nodes.AccessNode, return_nodes=True)}
+    assert len(initial_ac) == 4
+    assert "b" in initial_ac
+
+    ref, res = make_sdfg_args(sdfg)
+    compile_and_run_sdfg(sdfg, **ref)
+
+    # Here it is possible to apply the fusion, because the nested SDFG does not need
+    #  to know the size.
+    apply_fusion(
+        sdfg,
+        removed_maps=1,
+        strict_dataflow=strict_dataflow,
+    )
+
+    maps_after_fusion = count_nodes(state, dace.nodes.MapExit, return_nodes=True)
+    assert len(maps_after_fusion) == 2
+    assert inner_map_exit in maps_after_fusion
+    assert state.scope_dict()[state.entry_node(inner_map_exit)] is not None
+
+    ac_after_fusion = {dnode.data for dnode in count_nodes(state, dace.nodes.AccessNode, return_nodes=True)}
+    assert len(ac_after_fusion) == 4
+    assert "b" not in ac_after_fusion
+    assert initial_ac.difference(["b"]).issubset(ac_after_fusion)
+
+    compile_and_run_sdfg(sdfg, **res)
+    assert all(np.allclose(ref[k], res[k]) for k in ref)
+
+
+def _make_multiple_top_level_connections_with_shared_intermediate_sdfg():
+    sdfg, state, first_map_exit, b, second_map_entry, inner_map_exit = _make_multiple_top_level_connections_sdfg()
+
+    sdfg.add_array(
+        "e",
+        shape=(10, 15),
+        dtype=dace.float64,
+        transient=False,
+    )
+    sdfg.add_array(
+        "f",
+        shape=(10, 4, 15),
+        dtype=dace.float64,
+        transient=False,
+    )
+
+    state.add_mapped_tasklet(
+        "partial_consume",
+        map_ranges={
+            "i": "0:10",
+            "j": "0:15"
+        },
+        inputs={"__in": dace.Memlet("b[i, 1, j]")},
+        code="__out = __in + 5.0",
+        outputs={"__out": dace.Memlet("e[i, j]")},
+        input_nodes={b},
+        external_edges=True,
+    )
+    state.add_mapped_tasklet(
+        "full_consume",
+        map_ranges={
+            "i": "0:10",
+            "k": "0:4",
+            "j": "0:15"
+        },
+        inputs={"__in": dace.Memlet("b[i, k, j]")},
+        code="__out = __in + 6.0",
+        outputs={"__out": dace.Memlet("f[i, k, j]")},
+        input_nodes={b},
+        external_edges=True,
+    )
+
+    sdfg.validate()
+    return sdfg, state, first_map_exit, b, second_map_entry, inner_map_exit
+
+
+@pytest.mark.parametrize("strict_dataflow", [True, False])
+def test_map_fusion_multiple_top_level_connections_with_shared_intermediate(strict_dataflow: bool):
+    """Similar situation as in `test_map_fusion_multiple_top_level_connections()` but here the
+    intermediate is shared with another top level Maps.
+    """
+    sdfg, state, first_map_exit, b, second_map_entry, inner_map_exit = _make_multiple_top_level_connections_with_shared_intermediate_sdfg(
+    )
+
+    initial_maps = count_nodes(state, dace.nodes.MapExit, return_nodes=True)
+    assert len(initial_maps) == 5
+    assert first_map_exit in initial_maps
+    assert inner_map_exit in initial_maps
+    assert state.exit_node(second_map_entry) in initial_maps
+    initial_nested_maps = [node for node in initial_maps if state.scope_dict()[state.entry_node(node)] is not None]
+    assert len(initial_nested_maps) == 1
+    assert state.scope_dict()[inner_map_exit] is not None
+
+    initial_ac = {dnode.data for dnode in count_nodes(state, dace.nodes.AccessNode, return_nodes=True)}
+    assert len(initial_ac) == 6
+    assert "b" in initial_ac
+
+    ref, res = make_sdfg_args(sdfg)
+    compile_and_run_sdfg(sdfg, **ref)
+
+    # Here it is possible to apply the fusion, because the nested SDFG does not need
+    #  to know the size.
+    apply_fusion(
+        sdfg,
+        removed_maps=1,
+        strict_dataflow=strict_dataflow,
+        apply_once=True,
+        where={
+            "first_map_exit": first_map_exit,
+            "array": b,
+            "second_map_entry": second_map_entry,
+        },
+    )
+
+    maps_after_fusion = count_nodes(state, dace.nodes.MapExit, return_nodes=True)
+    assert len(maps_after_fusion) == 4
+    assert inner_map_exit in maps_after_fusion
+    assert state.scope_dict()[state.entry_node(inner_map_exit)] is not None
+
+    ac_after_fusion = {dnode.data for dnode in count_nodes(state, dace.nodes.AccessNode, return_nodes=True)}
+    assert len(ac_after_fusion) == 7
+    assert "b" in ac_after_fusion
+    assert initial_ac.issubset(ac_after_fusion)
+
+    compile_and_run_sdfg(sdfg, **res)
+    assert all(np.allclose(ref[k], res[k]) for k in ref)
+
+
+def _make_multiple_top_level_connections_multi_producer_sdfg(
+) -> Tuple[dace.SDFG, dace.SDFGState, dace.nodes.MapExit, dace.nodes.AccessNode, dace.nodes.MapEntry]:
+    sdfg = dace.SDFG(unique_name("multiple_top_level_connections"))
+    state = sdfg.add_state(is_start_block=True)
+
+    sdfg.add_array(
+        "a",
+        shape=(10, 2, 15),
+        dtype=dace.float64,
+        transient=False,
+    )
+    sdfg.add_array(
+        "b",
+        shape=(10, 2, 15),
+        dtype=dace.float64,
+        transient=True,
+    )
+    sdfg.add_array(
+        "c",
+        shape=(10, 15),
+        dtype=dace.float64,
+        transient=False,
+    )
+    sdfg.add_array(
+        "d",
+        shape=(10, 15),
+        dtype=dace.float64,
+        transient=False,
+    )
+    a, b, c, d = (state.add_access(name) for name in "abcd")
+
+    def make_first_map(sdfg: dace.SDFG, state: dace.SDFGState, a: dace.nodes.AccessNode,
+                       b: dace.nodes.AccessNode) -> dace.nodes.MapExit:
+        me, mx = state.add_map("first_map", {"i": "0:10", "j": "0:15"})
+        tlet1 = state.add_tasklet(
+            "tasklet2_1",
+            inputs={"__in"},
+            outputs={"__out"},
+            code="__out = __in + 3.0",
+        )
+        tlet2 = state.add_tasklet(
+            "tasklet2_2",
+            inputs={"__in"},
+            outputs={"__out"},
+            code="__out = __in + 4.0",
+        )
+
+        state.add_edge(a, None, me, "IN_a1", dace.Memlet("a[0:10, 0, 0:15]"))
+        state.add_edge(me, "OUT_a1", tlet1, "__in", dace.Memlet("a[i, 0, j]"))
+        state.add_edge(tlet1, "__out", mx, "IN_b1", dace.Memlet("b[i, 0, j]"))
+        state.add_edge(mx, "OUT_b1", b, None, dace.Memlet("b[0:10, 0, 0:15]"))
+        me.add_scope_connectors("a1")
+        mx.add_scope_connectors("b1")
+
+        state.add_edge(a, None, me, "IN_a2", dace.Memlet("a[0:10, 1, 0:15]"))
+        state.add_edge(me, "OUT_a2", tlet2, "__in", dace.Memlet("a[i, 1, j]"))
+        state.add_edge(tlet2, "__out", mx, "IN_b2", dace.Memlet("b[i, 1, j]"))
+        state.add_edge(mx, "OUT_b2", b, None, dace.Memlet("b[0:10, 1, 0:15]"))
+        me.add_scope_connectors("a2")
+        mx.add_scope_connectors("b2")
+
+        return mx
+
+    def make_second_map(sdfg: dace.SDFG, state: dace.SDFGState, b: dace.nodes.AccessNode, c: dace.nodes.AccessNode,
+                        d: dace.nodes.AccessNode) -> dace.nodes.MapEntry:
+        me, mx = state.add_map("second_map", {"i": "0:10", "j": "0:15"})
+        tlet1 = state.add_tasklet(
+            "tasklet2_1",
+            inputs={"__in"},
+            outputs={"__out"},
+            code="__out = __in + 1.0",
+        )
+        tlet2 = state.add_tasklet(
+            "tasklet2_2",
+            inputs={"__in"},
+            outputs={"__out"},
+            code="__out = __in + 2.0",
+        )
+
+        state.add_edge(b, None, me, "IN_b1", dace.Memlet("b[0:10, 0, 0:15]"))
+        state.add_edge(me, "OUT_b1", tlet1, "__in", dace.Memlet("b[i, 0, j]"))
+        state.add_edge(tlet1, "__out", mx, "IN_c", dace.Memlet("c[i, j]"))
+        state.add_edge(mx, "OUT_c", c, None, dace.Memlet("c[0:10, 0:15]"))
+        me.add_scope_connectors("b1")
+        mx.add_scope_connectors("c")
+
+        state.add_edge(b, None, me, "IN_b2", dace.Memlet("b[0:10, 1, 0:15]"))
+        state.add_edge(me, "OUT_b2", tlet2, "__in", dace.Memlet("b[i, 1, j]"))
+        state.add_edge(tlet2, "__out", mx, "IN_d", dace.Memlet("d[i, j]"))
+        state.add_edge(mx, "OUT_d", d, None, dace.Memlet("d[0:10, 0:15]"))
+        me.add_scope_connectors("b2")
+        mx.add_scope_connectors("d")
+
+        return me
+
+    first_map_exit = make_first_map(sdfg, state, a, b)
+    second_map_entry = make_second_map(sdfg, state, b, c, d)
+    sdfg.validate()
+
+    return sdfg, state, first_map_exit, b, second_map_entry
+
+
+@pytest.mark.xfail(reason="Multiple edges between `first_map_exit` and intermediate are not yet supported.")
+@pytest.mark.parametrize("strict_dataflow", [True, False])
+def test_map_fusion_multiple_top_level_connections_multi_producer(strict_dataflow: bool):
+    sdfg, state, first_map_exit, b, second_map_entry = _make_multiple_top_level_connections_multi_producer_sdfg()
+
+    initial_maps = count_nodes(state, dace.nodes.MapExit, return_nodes=True)
+    assert len(initial_maps) == 2
+
+    initial_ac = {dnode.data for dnode in count_nodes(state, dace.nodes.AccessNode, return_nodes=True)}
+    assert len(initial_ac) == 4
+    assert "b" in initial_ac
+
+    ref, res = make_sdfg_args(sdfg)
+    compile_and_run_sdfg(sdfg, **ref)
+
+    # Here it is possible to apply the fusion, because the nested SDFG does not need
+    #  to know the size.
+    apply_fusion(
+        sdfg,
+        removed_maps=1,
+        strict_dataflow=strict_dataflow,
+    )
+
+    maps_after_fusion = count_nodes(state, dace.nodes.MapExit, return_nodes=True)
+    assert len(maps_after_fusion) == 1
+
+    ac_after_fusion = {dnode.data for dnode in count_nodes(state, dace.nodes.AccessNode, return_nodes=True)}
+    assert len(ac_after_fusion) == 4
+    assert "b" not in ac_after_fusion
+    assert initial_ac.difference(["b"]).issubset(ac_after_fusion)
+
+    compile_and_run_sdfg(sdfg, **res)
+    assert all(np.allclose(ref[k], res[k]) for k in ref)
+
+
 if __name__ == '__main__':
     test_fusion_intrinsic_memlet_direction()
     test_fusion_dynamic_producer()
@@ -2743,3 +3128,7 @@ if __name__ == '__main__':
     test_map_fusion_consolidate_consume_same_range_if_not_extending()
     test_map_fusion_consolidate_consume_not_same_range_if_not_extending()
     test_map_fusion_nested_sdfg_slicing()
+    test_map_fusion_multiple_top_level_connections(True)
+    test_map_fusion_multiple_top_level_connections(False)
+    test_map_fusion_multiple_top_level_connections_with_shared_intermediate(True)
+    test_map_fusion_multiple_top_level_connections_with_shared_intermediate(False)
