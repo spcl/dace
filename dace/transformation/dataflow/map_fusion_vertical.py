@@ -1434,19 +1434,23 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         if self.assume_always_shared:
             return True
 
-        # This means the data is consumed by multiple Maps, through the same AccessNode, in this state
-        #  Note currently multiple incoming edges are not handled, but in the spirit of this function
-        #  we consider such AccessNodes as shared, because we can not remove the intermediate.
-        # TODO(phimuell): If one of the two Maps has multiple connections to the intermediate,
-        #   then this detection will fail here. This is not a problem because this is currently
-        #   not supported. But still.
-        if state.out_degree(data) > 1:
-            return True
-        if state.in_degree(data) > 1:
-            return True
-
         # Non transient data must be reconstructed anyways, so it is by definition shared.
         if not data.desc(sdfg).transient:
+            return True
+
+        # If the data is used (read/write) by more than one entity then it is shared (in this
+        #  state) and we do not have to scan the whole SDFG.
+        # NOTE: We can not use `state.{in, out}_degree(data) > 1` because we allow that there
+        #   are multiple connections between the intermediates and the Maps, thus we have to
+        #   look at all adjacent nodes.
+        # NOTE: We have to do these checks before we consult the pipeline results or perform a
+        #   scan, because the `FindSingleUseData` pass and the scan, ignores the degree and we
+        #   need to check for "shared data" within the state separately.
+        unique_sources = {iedge.src for iedge in state.in_edges(data)}
+        if len(unique_sources) > 1:
+            return True
+        unique_destinations = {oedge.dst for oedge in state.out_edges(data)}
+        if len(unique_destinations) > 1:
             return True
 
         # NOTE: Actually, if this transformation is run inside a pipeline, which specified
@@ -1464,7 +1468,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         elif self._single_use_data is not None:
             single_use_data = self._single_use_data
 
-        # The single use data was present so scan it.
+        # If the single use data is present use it.
         if single_use_data is not None:
             assert sdfg in single_use_data
             return data.data not in single_use_data[sdfg]
@@ -1480,42 +1484,28 @@ class MapFusionVertical(transformation.SingleStateTransformation):
     ) -> bool:
         """Scans `sdfg` to determine if `data` is shared.
 
-        Essentially, this function determine, if the intermediate AccessNode `data` is
-        can be removed or if it has to be restored as output of the Map.
-        A data descriptor is classified as shared if any of the following is true:
-        - `data` is non transient data.
-        - `data` has at most one incoming and/or outgoing edge.
-        - There are other AccessNodes beside `data` that refer to the same data.
-        - The data is accessed on an interstate edge.
-
-        This function should not be called directly. Instead it is called indirectly
-        by `is_shared_data()` if there is no short cut.
+        Note that it is not safe to use this function directly, instead the `is_shared_data()`
+        should be used. The function will scan the entire SDFG and looks if it found another
+        AccessNode that refers to the same data as `data`.
 
         :param data: The AccessNode that should checked if it is shared.
         :param sdfg: The SDFG for which the set of shared data should be computed.
         """
 
-        # NOTE: We do not use the `FindSingleUseData` because for us it does not have any use.
-        #   We just need to know if we can delete it (early exit).
-        if not data.desc(sdfg).transient:
-            return True
+        # These checks ensures that this function is not called directly.
+        assert data.desc(sdfg).transient
+        assert len({iedge.src for iedge in state.in_edges(data)}) <= 1
+        assert len({oedge.dst for oedge in state.out_edges(data)}) <= 1
 
-        # See description in `is_shared_data()` for more.
-        if state.out_degree(data) > 1:
-            return True
-        if state.in_degree(data) > 1:
-            return True
-
+        # Scan all states to see if another AccessNode is found that refers to the same data.
         data_name: str = data.data
         for state in sdfg.states():
             for dnode in state.data_nodes():
-                if dnode is data:
-                    # We have found the `data` AccessNode, which we must ignore.
-                    continue
                 if dnode.data == data_name:
-                    # We found a different AccessNode that refers to the same data
-                    #  as `data`. Thus `data` is shared.
-                    return True
+                    # We found an AccessNode referring to the data to check. This indicates
+                    #  only shared if the node is not `data`.
+                    if dnode is not data:
+                        return True
 
         # Test if the data is referenced in the interstate edges.
         for edge in sdfg.edges():
