@@ -98,6 +98,7 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
 
     def can_be_applied(self, graph: ControlFlowRegion, expr_index, sdfg: sd.SDFG, permissive=False):
         arrays = set(acc_node.data for acc_node in self.loop.data_nodes())
+        self.can_reach = StateReachability().apply_pass(sdfg, {})
         return any(self._can_apply_for_array(arr, sdfg) for arr in arrays)
 
     def apply(self, graph: ControlFlowRegion, sdfg: sd.SDFG):
@@ -209,10 +210,8 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
         # The (overapproximated) written subset must be written before read or not read at all.
         # TODO: This is overly conservative. Just checks if there are access nodes after the loop.
 
-        can_reach = StateReachability().apply_pass(sdfg, {})
         loop_states = set(self.loop.all_states())
-
-        for k1, v1 in can_reach.items():
+        for k1, v1 in self.can_reach.items():
             for k2, v2 in v1.items():
                 if k2 not in loop_states:
                     continue
@@ -224,10 +223,9 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
 
     def _get_max_indices_before_loop(self, array_name: str, sdfg: sd.SDFG) -> list[int]:
         # Collect all read and write subsets of the array before the loop.
-        can_reach = StateReachability().apply_pass(sdfg, {})
         loop_states = set(self.loop.all_states())
         subsets = set()
-        for k1, v1 in can_reach.items():
+        for k1, v1 in self.can_reach.items():
             for k2, v2 in v1.items():
                 if len(v2.intersection(loop_states)) == 0 or k2 in loop_states:
                     continue
