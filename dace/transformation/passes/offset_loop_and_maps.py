@@ -1,9 +1,8 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-import copy
 import dace
 from typing import Dict, Optional, Set
+import sympy
 from sympy.printing.pycode import pycode
-
 from dace import SDFG
 from dace import properties
 from dace import Union
@@ -11,10 +10,13 @@ from dace import ControlFlowRegion
 from dace.properties import Property
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation import pass_pipeline as ppl, transformation
-
 from dace.sdfg.nodes import CodeBlock
 import ast
-import re
+
+
+def _get_expr_from_str(expr: str) -> dace.symbolic.SymExpr:
+    parsed_expr = sympy.sympify(expr, evaluate=False)
+    return parsed_expr
 
 
 @properties.make_properties
@@ -22,59 +24,16 @@ import re
 class OffsetLoopsAndMaps(ppl.Pass):
     CATEGORY: str = 'Optimization Preparation'
 
-    offset_expr = Property(dtype=dace.symbolic.SymExpr, default=dace.symbolic.SymExpr(0))
-    begin_expr = Property(dtype=dace.symbolic.SymExpr, default=dace.symbolic.SymExpr(0))
-    # To avoid Invalid type "int" for property offset_expr: expected SymExpr
-    int_offset_expr = Property(dtype=int, default=0)
-    int_begin_expr = Property(dtype=int, default=0)
-    check_begin = Property(dtype=bool, default=False)
+    offset_expr = Property(dtype=str, default="0")
+    begin_expr = Property(dtype=str, default="0")
+    do_not_check_begin = Property(dtype=bool, default=False)
 
-    def __init__(self, offset_expr: Union[dace.symbolic.SymExpr, dace.symbolic.symbol, int],
-                 begin_expr: Union[dace.symbolic.SymExpr, dace.symbolic.symbol, int]):
-
-        def _cast(expr):
-            if isinstance(expr, int):
-                return dace.symbolic.SymExpr(expr)
-            elif isinstance(expr, dace.symbolic.symbol):
-                return dace.symbolic.SymExpr(str(expr))
-            else:
-                if not isinstance(expr, dace.symbolic.SymExpr):
-                    raise ValueError(f"Input {expr} to OffsetLoopsAndMaps is not a SymExpr | Symbol | Integer")
-                else:
-                    return expr
-
-        if begin_expr is not None:
-            begin_expr = _cast(begin_expr)
-            self.check_begin = True
-            if isinstance(begin_expr, int):
-                self.int_begin_expr = begin_expr
-            else:
-                self.begin_expr = begin_expr
+    def __init__(self, offset_expr: str, begin_expr: Union[str, None]):
+        self.offset_expr = offset_expr
+        if begin_expr is None:
+            self.do_not_check_begin = True
         else:
-            self.check_begin = False
-
-        offset_expr = _cast(offset_expr)
-
-        # To avoid Invalid type "int" for property offset_expr: expected SymExpr
-        if isinstance(offset_expr, int):
-            self.int_offset_expr = offset_expr
-        else:
-            self.offset_expr = offset_expr
-
-    def _get_offset_expr(self):
-        if self.int_offset_expr != 0:
-            return self.int_offset_expr
-        else:
-            return pycode(self.offset_expr)
-
-    def _get_begin_expr(self):
-        if self.check_begin is False:
-            return None
-        else:
-            if self.int_begin_expr != 0:
-                return self.int_begin_expr
-            else:
-                return pycode(self.begin_expr)
+            self.begin_expr = begin_expr
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Tasklets | ppl.Modifies.CFG | ppl.Modifies.Edges
@@ -89,10 +48,10 @@ class OffsetLoopsAndMaps(ppl.Pass):
         """Create a new memlet with substituted subset ranges."""
         if edge_data is None:
             return None
-
+        # Using symbols might create problems due to having different symbol objects with same symbols
         new_range_list = [(b.subs(repldict), e.subs(repldict), s.subs(repldict)) for b, e, s in edge_data.subset]
-        new_range = dace.subsets.Range(new_range_list)
-        return dace.memlet.Memlet(data=edge_data.data, subset=new_range)
+        new_range_str = ", ".join(f"{b}:{e+1}:{s}" for b, e, s in new_range_list)
+        return dace.memlet.Memlet(expr=f"{edge_data.data}[{new_range_str}]")
 
     def _update_edge_if_changed(self, state, edge, new_memlet):
         """Update edge if the new memlet is different from the current one."""
@@ -142,28 +101,28 @@ class OffsetLoopsAndMaps(ppl.Pass):
         # TODO:
         # Implement for tasklets in case the loop variable is used as a symbol inside tasklet code
 
-    def _add_to_rhs(self, expr: str, add_expr) -> str:
+    def _add_to_rhs(self, expr: str, add_expr: dace.symbolic.SymExpr, sdfg: dace.SDFG) -> str:
         """Add an expression to the right-hand side of a comparison."""
-        try:
-            tree = ast.parse(expr, mode="eval")
-            comparison = tree.body
+        #try:
+        tree = ast.parse(expr, mode="eval")
+        comparison = tree.body
 
-            if not isinstance(comparison, ast.Compare) or not comparison.comparators:
-                raise ValueError("Expression must be a comparison with at least one comparator")
+        if not isinstance(comparison, ast.Compare) or not comparison.comparators:
+            raise ValueError("Expression must be a comparison with at least one comparator")
 
-            # Modify the first comparator by adding the expression
-            original_rhs = comparison.comparators[0]
-            add_expr_ast = ast.parse(str(add_expr), mode="eval").body
+        # Modify the first comparator by adding the expression
+        original_rhs = comparison.comparators[0]
+        add_expr_ast = ast.parse(pycode(add_expr), mode="eval").body
 
-            comparison.comparators[0] = ast.BinOp(left=original_rhs, op=ast.Add(), right=add_expr_ast)
+        comparison.comparators[0] = ast.BinOp(left=original_rhs, op=ast.Add(), right=add_expr_ast)
 
-            # Convert back to string and simplify
-            str_expr = ast.unparse(tree)
-            sym_expr = dace.symbolic.SymExpr(str_expr).simplify()
-            return pycode(sym_expr)
+        # Convert back to string and simplify
+        str_expr = ast.unparse(tree)
+        sym_expr = _get_expr_from_str(str_expr).simplify()
+        return pycode(sym_expr)
 
-        except Exception as e:
-            raise ValueError(f"Failed to process expression '{expr}': {e}")
+        #except Exception as e:
+        #    raise ValueError(f"Failed to process expression '{expr}': {e}")
 
     def _apply(self, cfg: dace.ControlFlowRegion):
         for node in cfg.nodes():
@@ -172,17 +131,19 @@ class OffsetLoopsAndMaps(ppl.Pass):
                 node.loop_condition
                 # The begin expression matches apply offset
                 init_lhs, init_rhs = node.init_statement.as_string.split("=")
-                if self._get_begin_expr() is None or dace.symbolic.SymExpr(init_rhs) == self._get_begin_expr():
-                    new_init_statement = pycode(
-                        dace.symbolic.SymExpr(f"(({init_rhs}) + {self._get_offset_expr()})").simplify())
+                if self.do_not_check_begin or _get_expr_from_str(init_rhs) == _get_expr_from_str(self.offset_expr):
+                    init_expr_str = f"(({init_rhs}) + {self.offset_expr})"
+                    init_expr = _get_expr_from_str(init_expr_str)
+                    new_init_statement = pycode(init_expr)
                     node.init_statement = CodeBlock(f"{init_lhs} = {new_init_statement}")
-                    new_loop_condition = self._add_to_rhs(node.loop_condition.as_string, self._get_offset_expr())
+                    new_loop_condition = self._add_to_rhs(node.loop_condition.as_string,
+                                                          _get_expr_from_str(self.offset_expr), cfg.sdfg)
                     node.loop_condition = CodeBlock(new_loop_condition)
 
                     # Try normalize after update
                     node.normalize()
 
-                    repldict = {node.loop_variable: f"({node.loop_variable} - {self._get_offset_expr()})"}
+                    repldict = {node.loop_variable: f"({node.loop_variable} - {_get_expr_from_str(self.offset_expr)})"}
                     self._repl_recursive(node, repldict)
             elif isinstance(node, dace.SDFGState):
                 state = node
@@ -192,10 +153,11 @@ class OffsetLoopsAndMaps(ppl.Pass):
                         new_range_list = []
                         repldict = dict()
                         for (b, e, s), param in zip(state_node.map.range, state_node.map.params):
-                            if self._get_begin_expr() is None or b == self._get_begin_expr():
+                            if self.do_not_check_begin is None or b == _get_expr_from_str(self.begin_expr):
                                 has_matches = True
-                                new_range_list.append((b + self._get_offset_expr(), e + self._get_offset_expr(), s))
-                                repldict[param] = f"({param} - {self._get_offset_expr()})"
+                                new_range_list.append((b + self._get_expr_from_str(self.offset_expr),
+                                                       e + self._get_expr_from_str(self.offset_expr), s))
+                                repldict[param] = f"({param} - {pycode(self._get_expr_from_str(self.offset_expr))})"
                             else:
                                 new_range_list.append((b, e, s))
 
@@ -218,3 +180,9 @@ class OffsetLoopsAndMaps(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, pipeline_results) -> Optional[Dict[str, Set[str]]]:
         # Do it for LoopRegions and Maps
         self._apply(sdfg)
+        # TODO:
+        # Current SDFG results in missing symbols in generated function expressions,
+        # Only saving and loading it seems to fix the issue
+        # create a temporary file
+        sdfg.validate()
+        return None

@@ -1,4 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+import os
+import tempfile
 import pytest
 import copy
 import dace
@@ -40,16 +42,32 @@ def test_loop_offsetting():
     sdfg.compile()
     sdfg.simplify()
     sdfg.validate()
+    sdfg.save("s1.sdfg")
 
     copy_sdfg = copy.deepcopy(sdfg)
-    OffsetLoopsAndMaps(begin_expr=None, offset_expr=-1).apply_pass(copy_sdfg, {})
     copy_sdfg.validate()
-    copy_sdfg.save("s3.sdfg")
+    copy_sdfg.compile()
+    copy_sdfg.save("s2.sdfg")
+    OffsetLoopsAndMaps(begin_expr=None, offset_expr="-1").apply_pass(copy_sdfg, {})
+    copy_sdfg.validate()
+    copy_sdfg.compile()
+    #copy_sdfg.save("s3.sdfg")
+    #copy_sdfg.compile() # Triggers compile error
+    #_cloudsc_snippet_one.cpp: In function ‘void _cloudsc_snippet_one_33_12_2_3_2(_cloudsc_snippet_one_state_t*,
+    # double*, const int64_t&, const int64_t&, double&, int)’:
+    #_cloudsc_snippet_one.cpp:21:33: error: ‘i’ was not declared in this scope
+    #   21 |         __tmp_34_42_r + ((((5 * i) * kfdia) + (5 * __sym___tmp_34_52_r))
+    #  + __sym___tmp_34_56_r), __tmp_34_42_r_slice, 1);
+    #copy_sdfg = dace.SDFG.from_file("s3.sdfg")
+    #copy_sdfg.save("s4.sdfg")
+    #copy_sdfg.compile() # Is OK
+
+    copy_sdfg.simplify()
     copy_sdfg.compile()
 
-    SymbolPropagation().apply_pass(copy_sdfg)
-    copy_sdfg.validate()
-    copy_sdfg.save("s4.sdfg")
+    #SymbolPropagation().apply_pass(copy_sdfg)
+    #copy_sdfg.validate()
+    #copy_sdfg.save("s4.sdfg")
 
 
 def test_begin_expr_condition():
