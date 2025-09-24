@@ -501,6 +501,8 @@ def emit_memlet_reference_nsdfg(dispatcher: 'TargetDispatcher',
         else:
             # data.ContainerArray
             arg_value = f"{parent_ptrname}[{cpp_offset_expr(parent_desc, memlet.subset)}]"
+        if nested_desc.dtype != parent_desc.dtype:
+            arg_value = f"({nested_ctype})({arg_value})"
         return arg_type, conn_name, arg_value
 
     if isinstance(nested_desc, data.Array):
@@ -520,6 +522,8 @@ def emit_memlet_reference_nsdfg(dispatcher: 'TargetDispatcher',
         if isinstance(parent_desc, (data.Scalar, data.Structure)):
             assert data._prod(nested_desc.shape) == 1
             arg_value = f"&{parent_ptrname}"
+        if nested_desc.dtype != parent_desc.dtype:
+            arg_value = f"({nested_ctype})({arg_value})"
         return arg_type, conn_name, arg_value
 
     typedef = conn_type.ctype
@@ -693,6 +697,9 @@ def emit_memlet_reference_view(dispatcher: 'TargetDispatcher',
         view_ctype = view_dtype.ctype
         arg_type = f"{view_ctype}"
         arg_value = f"&{viewed_ptrname}[{cpp_offset_expr(viewed_desc, memlet.subset)}]"
+
+    if viewed_desc.dtype != view_desc.dtype:
+        arg_value = f"({view_ctype})({arg_value})"
 
     dispatcher.defined_vars.add(view_name, view_deftype, view_ctype, allow_shadowing=True)
     return arg_type, view_name, arg_value
