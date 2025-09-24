@@ -8,10 +8,11 @@ from typing import Any, Dict, List, Optional, Set, Tuple, Union
 from dace import SDFG, SDFGState, properties, transformation
 from dace.transformation import pass_pipeline as ppl, dataflow as dftrans
 from dace.transformation.passes import analysis as ap, pattern_matching as pmp
+from dace.transformation.passes.clean_data_to_scalar_slice_to_tasklet_pattern import CleanDataToScalarSliceToTaskletPattern
 from dace.transformation.passes.split_tasklets import SplitTasklets
 from dace.transformation.passes.tasklet_preprocessing_passes import IntegerPowerToMult, RemoveFPTypeCasts, RemoveIntTypeCasts
 from dace.transformation.dataflow.tiling import MapTiling
-
+from dace.transformation.passes import InlineSDFGs
 
 class ExplicitVectorizationPipelineCPU(ppl.Pipeline):
     _cpu_global_code = """
@@ -63,6 +64,8 @@ inline void vector_copy(double * __restrict__ dst, const double * __restrict__ s
             RemoveIntTypeCasts(),
             IntegerPowerToMult(),
             SplitTasklets(),
+            CleanDataToScalarSliceToTaskletPattern(),
+            InlineSDFGs(),
             ExplicitVectorization(
                 templates={
                     "*": "vector_mult({lhs}, {rhs1}, {rhs2});",
@@ -130,6 +133,8 @@ __host__ __device__ __forceinline__ void vector_copy(double * __restrict__ dst, 
             RemoveIntTypeCasts(),
             IntegerPowerToMult(),
             SplitTasklets(),
+            CleanDataToScalarSliceToTaskletPattern(),
+            InlineSDFGs(),
             ExplicitVectorization(
                 templates={
                     "*": "vector_mult({lhs}, {rhs1}, {rhs2});",
@@ -159,6 +164,7 @@ class ExplicitVectorization(ppl.Pass):
     vector_output_storage = properties.Property(dtype=dace.dtypes.StorageType, default=dace.dtypes.StorageType.Register)
     global_code = properties.Property(dtype=str, default="")
     global_code_location = properties.Property(dtype=str, default="")
+    
 
     def __init__(self, templates, vector_width, vector_input_storage, vector_output_storage, global_code,
                  global_code_location):
@@ -169,6 +175,7 @@ class ExplicitVectorization(ppl.Pass):
         self.vector_output_storage = vector_output_storage
         self.global_code = global_code
         self.global_code_location = global_code_location
+        self._tasklet_vectorizable_map = dict()
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
@@ -220,6 +227,10 @@ class ExplicitVectorization(ppl.Pass):
             assert s == 1, f"MapTiling should have created a map with stride 1, found {s}"
             # Vector the range by for example making [0:4:1] to [0:4:4]
             new_inner_map.map.range = dace.subsets.Range([(0, self.vector_width - 1, self.vector_width)])
+
+            # Need to check that all tasklets within the map are vectorizable
+            nodes = state.all_nodes_between(new_inner_map, state.exit_node(new_inner_map))
+            assert all(self._is_vectorizable(state, node) for node in nodes if isinstance(node, dace.nodes.Tasklet)), f"All tasklets within maps need to be vectorizable. This means all inputs / outputs of the maps need to be arrays"
 
             # Updates memlets from [k, i] to [k, i:i+4]
             self._extend_memlets(state, new_inner_map)
@@ -351,6 +362,50 @@ class ExplicitVectorization(ppl.Pass):
                     return str(node.operand.value)
 
         raise ValueError("No constant found")
+
+    def _is_vectorizable(self, state: SDFGState, node: dace.nodes.Tasklet):
+        # Arr1 -> Tasklet1 -> sc1 -> Tasklet2 -> sc3 -> Tasklet3 -> Arr
+        # Arr2
+        # Should return [Arr,Arr], [Arr]
+        # It is important to determine if a tasklet is "vectorizable"
+        # Only a tasklet that reads from arrays and writes to arrays are vectorizable
+        # But if we only check Tasklet1, Tasklet2 or Tasklet3's ddirect neighbors we would consider
+        # they can't, but they can
+        
+        # First check cache
+        if node in self._tasklet_vectorizable_map:
+            return self._tasklet_vectorizable_map[node]
+
+        in_edges = state.in_edges(node)
+        out_edges = state.out_edges(node)
+        input_types = set()
+        output_types = set()
+        while in_edges:
+            in_edge = in_edges.pop()
+            if state.in_degree(in_edge.src) == 0:
+                if isinstance(in_edge.src, dace.nodes.AccessNode):
+                    input_types.add(type(state.sdfg.arrays[in_edge.src.data]))
+                else:
+                    raise Exception("Unsupported Type")
+            if not isinstance(in_edge.src, dace.nodes.MapEntry):
+                in_edges += state.in_edges(in_edge.src)
+            else:
+                input_types.add(type(state.sdfg.arrays[in_edge.data.data]))
+        while out_edges:
+            out_edge = out_edges.pop()
+            if state.out_degree(out_edge.dst) == 0:
+                output_types.add(type(state.sdfg.arrays[out_edge.dst.data]))
+            else:
+                raise Exception("Unsupported Type")
+            if not isinstance(out_edge.dst, dace.nodes.MapExit):
+                out_edges = state.out_edges(out_edge.dst)
+            else:
+                output_types.add(type(state.sdfg.arrays[out_edge.data.data]))
+
+        vectorizable =  (all({isinstance(itype, dace.data.Array) for itype in input_types}) 
+                and all({isinstance(otype, dace.data.Array) for otype in output_types}) )
+        self._tasklet_vectorizable_map[node] = vectorizable
+        return vectorizable
 
     def _replace_tasklets(self, state: SDFGState, map_entry: dace.nodes.MapEntry):
         nodes = list(state.all_nodes_between(map_entry, state.exit_node(map_entry)))
@@ -675,6 +730,9 @@ class ExplicitVectorization(ppl.Pass):
                         num_vectorized += self._vectorize_sdfg(sdfg=nested_sdfg.sdfg,
                                                                has_parent_map=True,
                                                                num_vectorized=num_vectorized)
+                    else:
+                        raise NotImplementedError("NestedSDFGs without parent map scopes are not supported, they must have been inlined if the pipeline has been called."
+                                                  "If pipeline has been called verify why InlineSDFG failed, otherwise call InlineSDFG")
 
         sdfg.append_global_code(cpp_code=self.global_code, location=self.global_code_location)
         return None
