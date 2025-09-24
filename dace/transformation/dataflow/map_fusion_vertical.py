@@ -478,6 +478,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             # We require that there is only one edge between the MapExit of the
             #  top Map and the intermediate. We allow that the intermediate has
             #  multiple incoming edges. We assume that there is no write conflicts.
+            # TODO(phimuell): Lift this restriction to allow multiple edges from
+            #   `first_map_exit`. It is important that this is different, but related
+            #   from the check bellow where we check the `IN_*` connectors.
             for intermediate_node_iedge in state.in_edges(intermediate_node):
                 if intermediate_node_iedge is out_edge:
                     continue
