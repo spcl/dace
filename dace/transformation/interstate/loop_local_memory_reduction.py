@@ -73,13 +73,13 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
     Works with:
       - Interleaved reads and writes
       - Gaps in the range of indices
+      - Iteration variable on multiple dimensions, e.g. a[i, i]
 
-    Might work with (need to check and how to compute K):
+    Might work with (need to check and add support):
       - Constant indexes (a*i + b) with a = 0
       - Index expression (a*i + b) with a > 1
       - Backwards loops step < 0 or a < 0
       - Step > 1
-      - Iteration variable on multiple dimensions, e.g. a[i, i]
 
     Does not work with:
       - Non-linear index expressions (a*i + b)
@@ -275,6 +275,10 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
         # TODO: For now we only support a = 1.
         read_indices, write_indices = self._get_read_write_indices(array_name)
         if any(i is None or i[0] != 1 for il in read_indices + write_indices for i in il):
+            return False
+        
+        # There needs to be at least one read and one write.
+        if not read_indices or not write_indices:
             return False
 
         # Outside of the loop, the written subset of the array must be written before read or not read at all.

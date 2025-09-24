@@ -114,6 +114,24 @@ def test_non_transient():
     check_transformation(sdfg, 0)
 
 
+def test_multiple_writes():
+
+    @dace.program
+    def tester(b: dace.float64[32], c: dace.float64[32]):
+        a = dace.define_local([32], dace.float64)
+        a[0] = 0
+        a[1] = 1
+        for i in range(2, 31):
+            b[i] = a[i - 1] + a[i - 2]
+            a[i] = c[i] * 2
+
+            b[i+1] = a[i] + a[i - 1]
+            a[i+1] = c[i+1] * 2
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_transformation(sdfg, 1)
+
+
 def test_gaps():
 
     @dace.program
@@ -495,6 +513,7 @@ if __name__ == "__main__":
     test_self_dependency2()
     test_no_offsets()
     test_non_transient()
+    test_multiple_writes()
     test_gaps()
     test_interleaved()
     test_nonlinear_index()
