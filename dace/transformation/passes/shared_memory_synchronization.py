@@ -4,6 +4,7 @@ from typing import Dict, Set, Tuple
 
 import dace
 from dace import SDFG, SDFGState, dtypes, properties
+from dace.codegen.targets.experimental_cuda_helpers import gpu_utils
 from dace.sdfg.nodes import AccessNode, MapEntry, MapExit, NestedSDFG, Node
 from dace.sdfg.state import LoopRegion
 from dace.transformation import helpers, pass_pipeline as ppl, transformation
@@ -14,24 +15,32 @@ from dace.transformation import helpers, pass_pipeline as ppl, transformation
 class DefaultSharedMemorySync(ppl.Pass):
     """
     This pass inserts synchronization tasklets that call "__syncthreads()".
+    This is for GPUs.
 
-    Synchronization is added after ThreadBlock (TB) MapExits if the TB map
-    writes to shared memory.
+    Synchronization is added after GPU_ThreadBlock (TB) MapExits if the TB map
+    writes to shared memory or after collaborative writes to shared memory (smem).
 
     Important notes:
-    - Users are expected to **not** write to shared memory inside a Sequential
-      map or LoopRegion **within** a TB map. Calling "__syncthreads()" inside
-      a TB map can cause deadlocks, e.g., when only a subset of threads
-      participates (thread divergence).
+    - Calling "__syncthreads()" inside a TB map can lead to deadlocks, 
+      for example when only a subset of threads participates (thread divergence). 
+      Therefore, users must **not** write to shared memory inside a Sequential 
+      map or LoopRegion that is nested within a TB map.
 
-    - If shared memory is still written sequentially within a TB map, the missing
-      intermediate synchronizations may lead to race conditions and incorrect results.
-      Since deadlocks are worse than race conditions, this pass avoids inserting
-      synchronization inside TB maps, but it will warn the user of the race condition risk.
+    - If shared memory is still written sequentially within a TB map, the missing 
+      intermediate synchronizations may lead to race conditions and incorrect results. 
+      Because deadlocks are worse than race conditions, this pass avoids inserting 
+      synchronization inside TB maps, but it will warn the user about potential risks.
 
-    - In nested TB maps (e.g., GPU_Device map -> TB map -> TB map ...),
-      synchronization is only inserted at the outermost TB map's exit. The reason is again
-      the previously described deadlock danger.
+    - When writing to and reading from shared memory within the same TB map, 
+      users must ensure that no synchronization is required, since barriers 
+      are not inserted automatically in this case (again, to avoid deadlocks). 
+      If synchronization is needed, the computation should instead be split 
+      across sequential TB maps. There is no warning for race conditions in this 
+      case for misbehavior.
+
+    - In nested TB maps (e.g., GPU_Device map -> TB map -> TB map ...), 
+      synchronization is only inserted at the outermost TB map's exit, 
+      again to avoid deadlocks.
     """
 
     def __init__(self):
@@ -41,32 +50,75 @@ class DefaultSharedMemorySync(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, _) -> None:
         """
-        Apply this pass to insert synchronization barriers for GPU ThreadBlock maps.
+        Insert synchronization barriers (`__syncthreads()`) where needed to ensure
+        shared memory writes are synchronied for potential subsequent reads.
 
-        The pass:
-        - Finds all ThreadBlock-scheduled maps in the SDFG,
-        - Analyzes them for shared memory usage and race-condition risks, and
-        - Inserts synchronization barriers (`__syncthreads()`) after the
-          corresponding ThreadBlock-scheduled MapExits where needed.
+        This pass performs the following steps:
+        1. Collect all ThreadBlock-scheduled MapExits and candidate collaborative
+           shared-memory writes (AccessNodes).
+        2. Analyze ThreadBlock MapExits for synchronization requirements.
+        3. Insert synchronization barriers after both MapExits and collaborative
+           shared-memory writes as needed.
         """
 
-        # 1. Find all GPU_ThreadBlock schedules Maps and
-        #    cache each node's parent state for convenience
+        # 1. Find all GPU_ThreadBlock-scheduled Maps and all collaborative writes to 
+        #    GPU shared memory, and cache each node's parent state for convenience.
         tb_map_exits: Dict[MapExit, SDFGState] = dict()
+        collaborative_smem_copies: Dict[AccessNode, SDFGState] = dict()
         for node, parent_state in sdfg.all_nodes_recursive():
             self._node_to_parent_state[node] = parent_state
             if isinstance(node, MapExit) and node.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
                 tb_map_exits[node] = parent_state
+            elif isinstance(node, AccessNode) and self.is_collaborative_smem_write(node, parent_state):
+                collaborative_smem_copies[node] = parent_state
+
 
         # 2. Identify TB MapExits requiring a synchronization barrier
         sync_requiring_exits = self.identify_synchronization_tb_exits(tb_map_exits)
 
         # 3. Insert synchronization barriers for previous TB MapExits
-        self.insert_synchronization_after_tb_exits(sync_requiring_exits)
+        self.insert_synchronization_after_nodes(sync_requiring_exits)
 
+        # 4. Insert synchronization after collaborative shared memory writes
+        self.insert_synchronization_after_nodes(collaborative_smem_copies)
+
+
+    def is_collaborative_smem_write(self, node: AccessNode, state: SDFGState) -> bool:
+        """
+        Determine whether the given AccessNode corresponds to a collaborative
+        shared-memory (smem) write, i.e., whether it is written cooperatively
+        by GPU threads at the device level but not within a thread block map.
+
+        Parameters
+        ----------
+        node : AccessNode
+            The candidate access node.
+        state : SDFGState
+            The state in which the node resides.
+
+        Returns
+        -------
+        bool
+            True if the node is a collaborative smem write, False otherwise.
+        """
+        # 1. node is not stored in shared memory - skip
+        if node.desc(state).storage != dtypes.StorageType.GPU_Shared:
+            return False
+        
+        # 2. No writes to the shared memory - skip
+        if state.in_degree(node) == 0:
+            return False 
+        
+        # 3. It is a collaborative copy if it is within a kernel but not within a GPU_ThreadBlock map
+        if (not gpu_utils.is_within_schedule_types(state, node, [dtypes.ScheduleType.GPU_Device]) 
+            or gpu_utils.is_within_schedule_types(state, node, [dtypes.ScheduleType.GPU_ThreadBlock])):
+            return False
+
+        return True
+        
     def identify_synchronization_tb_exits(self, tb_map_exits: Dict[MapExit, SDFGState]) -> Dict[MapExit, SDFGState]:
         """
-        Identify ThreadBlock exits after which "__syncthread()" should be called.
+        Identify ThreadBlock exits after which "__syncthreads()" should be called.
 
         Parameters
         ----------
@@ -274,18 +326,18 @@ class DefaultSharedMemorySync(ppl.Pass):
         # No writes to shared memory found
         return False
 
-    def insert_synchronization_after_tb_exits(self, tb_map_exits: Dict[MapExit, SDFGState]) -> None:
+    def insert_synchronization_after_nodes(self, nodes: Dict[Node, SDFGState]) -> None:
         """
         Insert synchronization tasklets (calling `__syncthreads()`) after the given
-        GPU ThreadBlock MapExit nodes.
+        GPU-related nodes.
 
         Parameters
         ----------
-        tb_map_exits : Dict[MapExit, SDFGState]
-            Mapping from ThreadBlock MapExit nodes to their parent states after which a synchronization
-            tasklet should be inserted.
+        nodes : Dict[Node, SDFGState]
+            Mapping from SDFG nodes to their parent states after which a
+            synchronization tasklet should be inserted.
         """
-        for map_exit, state in tb_map_exits.items():
+        for node, state in nodes.items():
 
             sync_tasklet = state.add_tasklet(name="sync_threads",
                                              inputs=set(),
@@ -293,7 +345,7 @@ class DefaultSharedMemorySync(ppl.Pass):
                                              code="__syncthreads();\n",
                                              language=dtypes.Language.CPP)
 
-            for succ in state.successors(map_exit):
+            for succ in state.successors(node):
                 state.add_edge(sync_tasklet, None, succ, None, dace.Memlet())
 
-            state.add_edge(map_exit, None, sync_tasklet, None, dace.Memlet())
+            state.add_edge(node, None, sync_tasklet, None, dace.Memlet())
