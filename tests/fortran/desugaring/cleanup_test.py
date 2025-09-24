@@ -4,7 +4,11 @@ from tests.fortran.fortran_test_helper import SourceCodeBuilder, parse_and_impro
 
 
 def test_globally_unique_names():
-    sources, main = (SourceCodeBuilder().add_file("""
+    """
+    Tests that all subprograms and variables are renamed to have globally unique
+    names. This is important to avoid name collisions when moving code around.
+    """
+    sources, _ = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   type :: Square
@@ -108,7 +112,11 @@ END SUBROUTINE main
 
 
 def test_remove_binds():
-    sources, main = (SourceCodeBuilder().add_file(
+    """
+    Tests that BIND(C) statements, which are used for C interoperability,
+    are removed from the AST, as they are not relevant for dataflow analysis.
+    """
+    sources, _ = (SourceCodeBuilder().add_file(
         """
 module lib
   type, bind(C) :: cmplx
@@ -173,8 +181,12 @@ END SUBROUTINE main
 
 
 def test_remove_contiguous_statements():
+    """
+    Tests that the CONTIGUOUS attribute is preserved, as it can be important
+    for performance, but that the cleanup pass doesn't crash on it.
+    """
     # TODO: We're testing here that FParser can even parse these (it couldn't in v0.1.3). Do we want to remove these?
-    sources, main = (SourceCodeBuilder().add_file(
+    sources, _ = (SourceCodeBuilder().add_file(
         """
 subroutine main(a)
   implicit none
@@ -210,7 +222,12 @@ END SUBROUTINE main
 
 
 def test_consolidate_global_data():
-    sources, main = (SourceCodeBuilder().add_file("""
+    """
+    Tests that global variables from modules are consolidated into a single
+    derived type, which is then passed as an argument to subroutines.
+    This makes global data dependencies explicit.
+    """
+    sources, _ = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   logical :: inited_var = .false.
@@ -286,7 +303,12 @@ END SUBROUTINE main
 
 
 def test_create_global_initializers():
-    sources, main = (SourceCodeBuilder().add_file("""
+    """
+    Tests that initializer subroutines are created for global variables and
+    derived types with initial values. This ensures that global state is
+    explicitly initialized.
+    """
+    sources, _ = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   logical :: inited_var = .false.

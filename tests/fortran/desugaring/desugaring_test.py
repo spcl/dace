@@ -1,10 +1,13 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-from tests.fortran.fortran_test_helper import SourceCodeBuilder, parse_and_improve
 from dace.frontend.fortran.ast_desugaring import desugaring, cleanup
+from tests.fortran.fortran_test_helper import SourceCodeBuilder, parse_and_improve
 
 
 def test_procedure_replacer():
-    sources, main = (SourceCodeBuilder().add_file("""
+    """
+    Tests that type-bound procedures are correctly replaced with standard subroutine calls.
+    """
+    sources, _ = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   type Square
@@ -84,7 +87,10 @@ END SUBROUTINE main
 
 
 def test_procedure_replacer_nested():
-    sources, main = (SourceCodeBuilder().add_file("""
+    """
+    Tests that nested type-bound procedures are correctly replaced.
+    """
+    sources, _ = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   type Value
@@ -166,7 +172,10 @@ END SUBROUTINE main
 
 
 def test_procedure_replacer_name_collision_with_exisiting_var():
-    sources, main = (SourceCodeBuilder().add_file("""
+    """
+    Tests that procedure replacement handles name collisions with existing variables.
+    """
+    sources, _ = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   type Square
@@ -226,7 +235,10 @@ END SUBROUTINE main
 
 
 def test_procedure_replacer_name_collision_with_another_import():
-    sources, main = (SourceCodeBuilder().add_file("""
+    """
+    Tests that procedure replacement handles name collisions with other imports.
+    """
+    sources, _ = (SourceCodeBuilder().add_file("""
 module lib_1
   implicit none
   type Square
@@ -324,7 +336,10 @@ END SUBROUTINE main
 
 
 def test_generic_replacer():
-    sources, main = (SourceCodeBuilder().add_file("""
+    """
+    Tests that generic procedures are correctly replaced based on the argument types.
+    """
+    sources, _ = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   type Square
@@ -405,7 +420,11 @@ END SUBROUTINE main
 
 
 def test_association_replacer():
-    sources, main = (SourceCodeBuilder().add_file("""
+    """
+    Tests that the `ASSOCIATE` construct is correctly replaced by substituting
+    the associated name with the original expression.
+    """
+    sources, _ = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   type Square
@@ -466,7 +485,10 @@ END SUBROUTINE main
 
 
 def test_association_replacer_array_access():
-    sources, main = (SourceCodeBuilder().add_file("""
+    """
+    Tests that `ASSOCIATE` constructs with array accesses are correctly replaced.
+    """
+    sources, _ = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   type Square
@@ -536,7 +558,11 @@ END SUBROUTINE main
 
 
 def test_association_replacer_array_access_within_array_access():
-    sources, main = (SourceCodeBuilder().add_file("""
+    """
+    Tests that `ASSOCIATE` constructs with array accesses within array accesses
+    are correctly replaced.
+    """
+    sources, _ = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   type Square
@@ -605,7 +631,10 @@ END SUBROUTINE main
 
 
 def test_enum_bindings_become_constants():
-    sources, main = (SourceCodeBuilder().add_file("""
+    """
+    Tests that `ENUM` bindings are converted to integer constants.
+    """
+    sources, _ = (SourceCodeBuilder().add_file("""
 subroutine main
   implicit none
   integer, parameter :: k = 42
@@ -644,7 +673,10 @@ END SUBROUTINE main
 
 
 def test_aliasing_through_module_procedure():
-    sources, main = (SourceCodeBuilder().add_file("""
+    """
+    Tests that aliasing through module procedures is handled correctly.
+    """
+    sources, _ = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   interface fun
@@ -694,7 +726,10 @@ END SUBROUTINE main
 
 
 def test_interface_replacer_with_module_procedures():
-    sources, main = (SourceCodeBuilder().add_file("""
+    """
+    Tests that interfaces with module procedures are correctly replaced.
+    """
+    sources, _ = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   interface fun
@@ -778,7 +813,10 @@ END SUBROUTINE main
 
 
 def test_interface_replacer_with_subroutine_decls():
-    sources, main = (SourceCodeBuilder().add_file("""
+    """
+    Tests that interfaces with subroutine declarations are correctly replaced.
+    """
+    sources, _ = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   interface
@@ -832,7 +870,10 @@ END SUBROUTINE fun
 
 
 def test_interface_replacer_with_optional_args():
-    sources, main = (SourceCodeBuilder().add_file("""
+    """
+    Tests that interfaces with optional arguments are correctly replaced.
+    """
+    sources, _ = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   interface fun
@@ -904,7 +945,10 @@ END SUBROUTINE main
 
 
 def test_interface_replacer_with_keyworded_args():
-    sources, main = (SourceCodeBuilder().add_file("""
+    """
+    Tests that interfaces with keyworded arguments are correctly replaced.
+    """
+    sources, _ = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   interface fun
@@ -972,7 +1016,10 @@ END SUBROUTINE main
 
 
 def test_generic_replacer_deducing_array_types():
-    sources, main = (SourceCodeBuilder().add_file("""
+    """
+    Tests that generic procedures with array types are correctly replaced.
+    """
+    sources, _ = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   type T
@@ -1073,7 +1120,10 @@ END SUBROUTINE main
 
 
 def test_convert_data_statements_into_assignments():
-    sources, main = (SourceCodeBuilder().add_file("""
+    """
+    Tests that DATA statements are converted to assignments.
+    """
+    sources, _ = (SourceCodeBuilder().add_file("""
 subroutine fun(res)
   implicit none
   real :: val = 0.0
@@ -1119,7 +1169,10 @@ END SUBROUTINE main
 
 
 def test_deconstruct_statement_functions():
-    sources, main = (SourceCodeBuilder().add_file("""
+    """
+    Tests that statement functions are deconstructed into proper functions.
+    """
+    sources, _ = (SourceCodeBuilder().add_file("""
 subroutine main(d)
   double precision d(3, 4, 5)
   double precision :: ptare, rtt(2), foedelta, foeldcp
@@ -1171,7 +1224,11 @@ END SUBROUTINE main
 
 
 def test_goto_statements():
-    sources, main = (SourceCodeBuilder().add_file("""
+    """
+    Tests that GOTO statements are correctly deconstructed into structured
+    control flow, in this case by using boolean flags and IF statements.
+    """
+    sources, _ = (SourceCodeBuilder().add_file("""
 subroutine main(d)
   implicit none
   real, intent(inout) :: d
@@ -1239,7 +1296,10 @@ END SUBROUTINE main
 
 
 def test_operator_overloading():
-    sources, main = (SourceCodeBuilder().add_file(
+    """
+    Tests that operator overloading is handled correctly.
+    """
+    sources, _ = (SourceCodeBuilder().add_file(
         """
 module lib
   type cmplx

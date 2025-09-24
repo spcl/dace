@@ -1,10 +1,14 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-from tests.fortran.fortran_test_helper import SourceCodeBuilder, parse_and_improve
 from dace.frontend.fortran.ast_desugaring import optimizations, types
+from tests.fortran.fortran_test_helper import SourceCodeBuilder, parse_and_improve
 
 
 def test_constant_resolving_expressions():
-    sources, main = (SourceCodeBuilder().add_file("""
+    """
+    Tests that constant expressions, including those involving `PARAMETER`
+    variables, are evaluated and folded at compile time.
+    """
+    sources, _ = (SourceCodeBuilder().add_file("""
 subroutine main
   implicit none
   integer, parameter :: k = 8
@@ -54,7 +58,11 @@ END SUBROUTINE main
 
 
 def test_constant_expression_replacement():
-    sources, main = (SourceCodeBuilder().add_file("""
+    """
+    Tests that constant expressions are replaced with their literal values
+    throughout the code, including in exponentiation.
+    """
+    sources, _ = (SourceCodeBuilder().add_file("""
 module main
   implicit none
   private
@@ -99,7 +107,11 @@ END MODULE main
 
 
 def test_constant_resolving_non_expressions():
-    sources, main = (SourceCodeBuilder().add_file("""
+    """
+    Tests that constants are resolved in non-expression contexts, such as
+    loop bounds and function arguments.
+    """
+    sources, _ = (SourceCodeBuilder().add_file("""
 subroutine main
   implicit none
   integer, parameter :: k = 8
@@ -154,7 +166,11 @@ END SUBROUTINE main
 
 
 def test_config_injection_type():
-    sources, main = (SourceCodeBuilder().add_file("""
+    """
+    Tests that constant values can be injected into the AST based on derived
+    type, affecting all instances of that type.
+    """
+    sources, _ = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   type config
@@ -224,7 +240,11 @@ END SUBROUTINE main
 
 
 def test_config_injection_instance():
-    sources, main = (SourceCodeBuilder().add_file("""
+    """
+    Tests that constant values can be injected into specific instances of
+    variables or derived types.
+    """
+    sources, _ = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   type config
@@ -294,7 +314,11 @@ END SUBROUTINE main
 
 
 def test_config_injection_array():
-    sources, main = (SourceCodeBuilder().add_file("""
+    """
+    Tests that constant values can be injected for array properties, such as
+    the allocation status of an allocatable array.
+    """
+    sources, _ = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   type config
@@ -359,7 +383,11 @@ END SUBROUTINE main
 
 
 def test_config_injection_allocatable_fixing():
-    sources, main = (SourceCodeBuilder().add_file("""
+    """
+    Tests that an allocatable array can be converted to a static array by
+    injecting its dimensions.
+    """
+    sources, _ = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   type config
@@ -429,7 +457,11 @@ END SUBROUTINE main
 
 
 def test_practically_constant_arguments():
-    sources, main = (SourceCodeBuilder().add_file("""
+    """
+    Tests that arguments to functions that are always called with the same
+    constant value are replaced by that value within the function body.
+    """
+    sources, _ = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
 contains
@@ -542,7 +574,11 @@ END SUBROUTINE main
 
 
 def test_practically_constant_global_vars_constants():
-    sources, main = (SourceCodeBuilder().add_file("""
+    """
+    Tests that global variables that are initialized but never modified are
+    converted to `PARAMETER`s.
+    """
+    sources, _ = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   logical :: fixed_cond = .false.
@@ -594,7 +630,11 @@ END SUBROUTINE main
 
 
 def test_exploit_locally_constant_variables():
-    sources, main = (SourceCodeBuilder().add_file("""
+    """
+    Tests that locally constant variables are propagated and folded into
+    expressions within their scope.
+    """
+    sources, _ = (SourceCodeBuilder().add_file("""
 subroutine main()
   implicit none
   logical :: cond = .true.
@@ -739,7 +779,10 @@ END SUBROUTINE main
 
 
 def test_exploit_locally_constant_struct_members():
-    sources, main = (SourceCodeBuilder().add_file("""
+    """
+    Tests that locally constant struct members are exploited.
+    """
+    sources, _ = (SourceCodeBuilder().add_file("""
 subroutine main()
   implicit none
   type config
@@ -819,7 +862,10 @@ END SUBROUTINE main
 
 
 def test_exploit_locally_constant_pointers():
-    sources, main = (SourceCodeBuilder().add_file("""
+    """
+    Tests that locally constant pointers are exploited.
+    """
+    sources, _ = (SourceCodeBuilder().add_file("""
 subroutine main()
   implicit none
   type cfg
@@ -885,7 +931,10 @@ END SUBROUTINE main
 
 
 def test_replace_case_selector_consts():
-    sources, main = (SourceCodeBuilder().add_file("""
+    """
+    Tests that constants in CASE selectors are replaced.
+    """
+    sources, _ = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   integer, parameter :: a = 1
@@ -937,7 +986,11 @@ END SUBROUTINE main
 
 
 def test_constant_function_evaluation():
-    sources, main = (SourceCodeBuilder().add_file("""
+    """
+    Tests that intrinsic functions with constant arguments are evaluated at
+    compile time.
+    """
+    sources, _ = (SourceCodeBuilder().add_file("""
 subroutine main
   implicit none
   double precision :: a = sqrt(4.)

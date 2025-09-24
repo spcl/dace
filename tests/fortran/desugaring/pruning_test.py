@@ -1,10 +1,14 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-from tests.fortran.fortran_test_helper import SourceCodeBuilder, parse_and_improve
 from dace.frontend.fortran.ast_desugaring import pruning, optimizations, desugaring
+from tests.fortran.fortran_test_helper import SourceCodeBuilder, parse_and_improve
 
 
 def test_branch_pruning():
-    sources, main = (SourceCodeBuilder().add_file("""
+    """
+    Tests that dead branches in `IF` constructs are pruned if the condition
+    can be evaluated at compile time.
+    """
+    sources, _ = (SourceCodeBuilder().add_file("""
 subroutine main
   implicit none
   integer, parameter :: k = 4
@@ -50,7 +54,10 @@ END SUBROUTINE main
 
 
 def test_object_pruning():
-    sources, main = (SourceCodeBuilder().add_file("""
+    """
+    Tests that unused objects (variables, types, etc.) are pruned from the AST.
+    """
+    sources, _ = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   type config
@@ -113,7 +120,10 @@ END SUBROUTINE main
 
 
 def test_pointer_pruning():
-    sources, main = (SourceCodeBuilder().add_file("""
+    """
+    Tests that unused pointers are pruned from the AST.
+    """
+    sources, _ = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   type T
@@ -160,7 +170,10 @@ END SUBROUTINE main
 
 
 def test_completely_unsed_modules_are_pruned_early():
-    sources, main = (SourceCodeBuilder().add_file(
+    """
+    Tests that completely unused modules are pruned from the AST.
+    """
+    sources, _ = (SourceCodeBuilder().add_file(
         """
 module used
   implicit none
@@ -210,7 +223,11 @@ END SUBROUTINE main
 
 
 def test_uses_with_renames():
-    sources, main = (SourceCodeBuilder().add_file("""
+    """
+    Tests that `USE` statements with renames are handled correctly, especially
+    after constant evaluation, which might make the import redundant.
+    """
+    sources, _ = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   integer, parameter :: pi4 = 9
@@ -256,7 +273,12 @@ END MODULE main
 
 
 def test_use_consolidation_with_potential_ambiguity():
-    sources, main = (SourceCodeBuilder().add_file("""
+    """
+    Tests that `USE` statement consolidation correctly handles cases where
+    the same symbol is imported from different modules, avoiding ambiguity by
+    using `ONLY` clauses.
+    """
+    sources, _ = (SourceCodeBuilder().add_file("""
 module A
   integer, parameter :: mod = 1
 end module A
@@ -301,7 +323,11 @@ END SUBROUTINE main
 
 
 def test_use_consolidation_with_type_extension():
-    sources, main = (SourceCodeBuilder().add_file("""
+    """
+    Tests that `USE` statement consolidation correctly handles type extensions,
+    ensuring that the base type is imported where needed.
+    """
+    sources, _ = (SourceCodeBuilder().add_file("""
 module A
   type, abstract :: AA
   end type AA
@@ -342,7 +368,11 @@ END SUBROUTINE main
 
 
 def test_uses_allows_indirect_aliasing():
-    sources, main = (SourceCodeBuilder().add_file("""
+    """
+    Tests that `USE` statements allow indirect aliasing of symbols through
+    a chain of modules.
+    """
+    sources, _ = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   type Square

@@ -4,7 +4,12 @@ from tests.fortran.fortran_test_helper import SourceCodeBuilder, parse_and_impro
 
 
 def test_spec_mapping_of_abstract_interface():
-    sources, main = (SourceCodeBuilder().add_file("""
+    """
+    Tests that the spec mapping correctly identifies and maps symbols within an
+    abstract interface. It ensures that the interface and the subroutine inside
+    are correctly added to the identifier and alias maps.
+    """
+    sources, _ = (SourceCodeBuilder().add_file("""
 module lib  ! should be present
   abstract interface  ! should NOT be present
     subroutine fun  ! should be present
@@ -22,7 +27,12 @@ end module lib
 
 
 def test_spec_mapping_of_type_extension():
-    sources, main = (SourceCodeBuilder().add_file("""
+    """
+    Tests that the spec mapping correctly handles type extensions. It checks that
+    the components of the base type are correctly included in the extended type's
+    alias map.
+    """
+    sources, _ = (SourceCodeBuilder().add_file("""
 module lib
   type base
     integer :: a
@@ -56,7 +66,11 @@ end module lib
 
 
 def test_spec_mapping_of_procedure_pointers():
-    sources, main = (SourceCodeBuilder().add_file("""
+    """
+    Tests that the spec mapping correctly handles procedure pointers, both as
+    components of a derived type and as standalone variables.
+    """
+    sources, _ = (SourceCodeBuilder().add_file("""
 module lib
   type T
     procedure(fun), nopass, pointer :: fun
