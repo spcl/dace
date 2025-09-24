@@ -510,7 +510,8 @@ def emit_memlet_reference_nsdfg(dispatcher: 'TargetDispatcher',
         if isinstance(nested_desc, data.ContainerArray):
             # NOTE: Structures (i.e., elements of ContainerArrays) are "currently" always pointers.
             assert isinstance(nested_desc.dtype, dtypes.pointer)
-            assert isinstance(nested_desc.dtype.base_type, dtypes.struct)
+            if isinstance(nested_desc.stype, data.Structure):
+                assert isinstance(nested_desc.dtype.base_type, dtypes.struct)
         nested_dtype = dtypes.pointer(nested_desc.dtype)
         nested_ctype = nested_dtype.ctype
         arg_type = f"{nested_ctype}"  # Equivalent to base_type + '*'
@@ -692,7 +693,8 @@ def emit_memlet_reference_view(dispatcher: 'TargetDispatcher',
         view_ctype = view_desc.ctype
         if isinstance(view_desc, data.ContainerView):
             assert isinstance(view_desc.dtype, dtypes.pointer)
-            assert isinstance(view_desc.dtype.base_type, dtypes.struct)
+            if isinstance(view_desc.stype, data.Structure):
+                assert isinstance(view_desc.dtype.base_type, dtypes.struct)
         view_dtype = dtypes.pointer(view_desc.dtype)
         view_ctype = view_dtype.ctype
         arg_type = f"{view_ctype}"
