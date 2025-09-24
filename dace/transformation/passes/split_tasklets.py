@@ -199,6 +199,12 @@ class SplitTasklets(ppl.Pass):
                     for in_conn in list(t.in_connectors.keys()):
                         if in_conn not in matched_in_conns:
                             t.remove_in_connector(in_conn)
+
+                    # dace.float64(symbol) has no sources after split,
+                    # but if we for example inside a map we need to add a dependency edge
+                    if len(matched_in_conns) == 0 and state.in_degree(tasklet) > 0:
+                        for ie in state.in_edges(tasklet):
+                            state.add_edge(ie.src, None, t, None, dace.memlet.Memlet(None))
                 else:
                     # Input comes from transient accesses (each unique and needs to be added to the SDFG)
                     # or from the unused in edges

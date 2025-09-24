@@ -257,6 +257,12 @@ def tasklet_in_nested_sdfg(
         a[i + offset1, j + offset1] = ((1.5 * b[i + offset1, j + offset2]) + (2.0 * a[i + offset1, j + offset2])) / 3.5
 
 
+@dace.program
+def cast_tasklet_first_in_a_map(a: dace.float64[S, S], ):
+    for i, j in dace.map[S1:S2:1, S1:S2:1] @ dace.dtypes.ScheduleType.Sequential:
+        a[i, j] = dace.float64(i) + ((dace.float64(j) + 5.2) * 2.7)
+
+
 def test_expressions_with_nested_sdfg_and_explicit_typecast():
     _S1 = 1
     _S2 = 65
@@ -287,8 +293,37 @@ def test_expressions_with_nested_sdfg_and_explicit_typecast():
     assert numpy.allclose(B_orig, B_vec)
 
 
+def test_expressions_with_typecast_first_in_map():
+    _S1 = 0
+    _S2 = 32
+    _S = _S2 - _S1
+    A = numpy.random.random((_S, _S))
+
+    # Create copies for comparison
+    A_orig = A.copy()
+    A_vec = A.copy()
+
+    # Original SDFG
+    sdfg = cast_tasklet_first_in_a_map.to_sdfg()
+    sdfg.validate()
+    c_sdfg = sdfg.compile()
+
+    # Vectorized SDFG
+    copy_sdfg = copy.deepcopy(sdfg)
+    SplitTasklets().apply_pass(copy_sdfg, {})
+    c_copy_sdfg = copy_sdfg.compile()
+    copy_sdfg.validate()
+
+    c_sdfg(a=A_orig, S1=_S1, S2=_S2, S=_S)
+    c_copy_sdfg(a=A_vec, S1=_S1, S2=_S2, S=_S)
+
+    # Compare results
+    assert numpy.allclose(A_orig, A_vec)
+
+
 if __name__ == "__main__":
     test_expressions_with_nested_sdfg_and_explicit_typecast()
+    test_expressions_with_typecast_first_in_map()
     for expression_str in example_expressions:
         test_single_tasklet_split(expression_str)
     for expression_strs in example_double_expressions:
