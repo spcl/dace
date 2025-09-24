@@ -154,9 +154,9 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
 
         defined_syms = set()
         for edge in self.loop.all_interstate_edges():
-            if isinstance(edge.data, InterstateEdge):
-                defined_syms.update(edge.data.assignments.keys())
+            defined_syms.update(edge.data.assignments.keys())
 
+        # TODO: For now we only support step = 1.
         return (itervar not in defined_syms and step.free_symbols.isdisjoint(defined_syms)
                 and step.free_symbols.isdisjoint({itervar}) and symbolic.resolve_symbol_to_constant(step, sdfg) == 1)
 
@@ -180,16 +180,18 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
             read_ub = max([i[1] for i in dim_read_indices])
             write_ub = max([i[1] for i in dim_write_indices])
 
+            # TODO: What we really should do here is find the write linear function, which eventually dominates all reads, yet leads to the smallest K.
+
             # K = hw - lr
             # Take maximum from previous accesses into account
             k = sp.Max(write_ub - read_lb, max_indices[dim])
+            k = symbolic.resolve_symbol_to_constant(k, sdfg)
 
             # Write upper bound must be higher than read upper bound
-            k = symbolic.resolve_symbol_to_constant(k, sdfg)
             if k is None or read_ub >= write_ub or k >= sdfg.arrays[array_name].shape[dim]:
                 k_values.append(None)
             else:
-                k_values.append(k + 1)  # +1 because k is the highest index
+                k_values.append(k + 1)  # +1 because k is the highest index accessed, so size is k+1
         return k_values
 
     def _write_is_loop_local(self, array_name: str, write_indices: list[list[tuple]], sdfg: sd.SDFG) -> bool:
@@ -232,6 +234,7 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
                     continue
                 access_nodes = set(an for an in k2.data_nodes() if an.data == array_name)
 
+                # Replace loop variables in subsets with their max value.
                 pgraph = k2.parent_graph
                 replacement = {}
                 while isinstance(pgraph, LoopRegion):
@@ -269,7 +272,7 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
             return False
 
         # All read and write indices must be linear combinations of the loop variable. I.e. a*i + b, where a and b are constants.
-        # XXX: For now we only support a = 1, step = 1.
+        # TODO: For now we only support a = 1.
         read_indices, write_indices = self._get_read_write_indices(array_name)
         if any(i is None or i[0] != 1 for il in read_indices + write_indices for i in il):
             return False
