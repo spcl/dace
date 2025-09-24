@@ -674,12 +674,12 @@ def emit_memlet_reference_view(dispatcher: 'TargetDispatcher',
             arg_value = f"{viewed_ptrname}[{cpp_offset_expr(viewed_desc, memlet.subset)}]"
     else:
         # ArrayView, ContainerView
-        assert isinstance(view_desc.dtype, dtypes.pointer)
         view_ctype = view_desc.ctype
         if isinstance(view_desc, data.ContainerView):
-            assert not isinstance(view_desc.dtype.base_type, dtypes.pointer)
-            view_dtype = dtypes.pointer(view_desc.dtype)
-            view_ctype = view_dtype.ctype
+            assert isinstance(view_desc.dtype, dtypes.pointer)
+            assert isinstance(view_desc.dtype.base_type, dtypes.struct)
+        view_dtype = dtypes.pointer(view_desc.dtype)
+        view_ctype = view_dtype.ctype
         arg_type = f"{view_ctype}"
         arg_value = f"&{viewed_ptrname}[{cpp_offset_expr(viewed_desc, memlet.subset)}]"
 
