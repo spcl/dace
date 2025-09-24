@@ -697,6 +697,9 @@ def emit_memlet_reference_view(dispatcher: 'TargetDispatcher',
         view_ctype = view_dtype.ctype
         arg_type = f"{view_ctype}"
         arg_value = f"&{viewed_ptrname}[{cpp_offset_expr(viewed_desc, memlet.subset)}]"
+        if isinstance(viewed_desc, data.Scalar):
+            assert data._prod(view_desc.shape) == 1
+            arg_value = f"&{viewed_ptrname}"
 
     if viewed_desc.dtype != view_desc.dtype:
         arg_value = f"({view_ctype})({arg_value})"
