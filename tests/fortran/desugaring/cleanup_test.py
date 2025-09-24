@@ -1,7 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-from tests.fortran.desugaring.common import parse_and_improve
-from tests.fortran.fortran_test_helper import SourceCodeBuilder
 from dace.frontend.fortran.ast_desugaring import cleanup
+from tests.fortran.fortran_test_helper import SourceCodeBuilder, parse_and_improve
 
 
 def test_globally_unique_names():

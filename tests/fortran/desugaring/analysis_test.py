@@ -1,7 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 from dace.frontend.fortran.ast_desugaring import analysis
-from tests.fortran.desugaring.common import parse_and_improve
-from tests.fortran.fortran_test_helper import SourceCodeBuilder
+from tests.fortran.fortran_test_helper import SourceCodeBuilder, parse_and_improve
 
 
 def test_spec_mapping_of_abstract_interface():

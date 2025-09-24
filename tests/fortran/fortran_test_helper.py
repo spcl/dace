@@ -6,9 +6,12 @@ from tempfile import TemporaryDirectory
 from typing import Dict, Optional, Tuple, Type, Union, List, Sequence, Collection, Iterable
 
 import numpy as np
-from fparser.two.Fortran2003 import Name
+from fparser.two.Fortran2003 import Name, Program
+from fparser.two.parser import ParserFactory
 
+from dace.frontend.fortran.ast_desugaring import types, cleanup
 from dace.frontend.fortran.ast_internal_classes import Name_Node
+from dace.frontend.fortran.fortran_parser import construct_full_ast
 
 
 @dataclass
@@ -335,3 +338,11 @@ def deduce_f2dace_variables_for_array(arr: np.ndarray, arg: str,
         start_counting_from += 1
 
     return out
+
+
+def parse_and_improve(sources: Dict[str, str], entry_points: Optional[Iterable[types.SPEC]] = None):
+    parser = ParserFactory().create(std="f2008")
+    ast = construct_full_ast(sources, parser, entry_points=entry_points)
+    ast = cleanup.correct_for_function_calls(ast)
+    assert isinstance(ast, Program)
+    return ast

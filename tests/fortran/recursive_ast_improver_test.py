@@ -1,18 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Dict
 
-from fparser.two.Fortran2003 import Program
-from fparser.two.parser import ParserFactory
-
-from dace.frontend.fortran.fortran_parser import construct_full_ast
-from tests.fortran.fortran_test_helper import SourceCodeBuilder
-
-
-def parse_and_improve(sources: Dict[str, str]):
-    parser = ParserFactory().create(std="f2008")
-    ast = construct_full_ast(sources, parser)
-    assert isinstance(ast, Program)
-    return ast
+from tests.fortran.fortran_test_helper import SourceCodeBuilder, parse_and_improve
 
 
 def test_minimal():

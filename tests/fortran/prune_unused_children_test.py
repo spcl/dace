@@ -1,8 +1,7 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Dict, List
+from typing import List
 
 from fparser.two.Fortran2003 import Program
-from fparser.two.parser import ParserFactory
 from fparser.two.utils import walk
 
 from dace.frontend.fortran.ast_desugaring.analysis import ident_spec
@@ -11,15 +10,7 @@ from dace.frontend.fortran.ast_desugaring.types import SPEC
 from dace.frontend.fortran.ast_desugaring.utils import ENTRY_POINT_OBJECT_CLASSES, NAMED_STMTS_OF_INTEREST_CLASSES, \
     find_name_of_node
 from dace.frontend.fortran.ast_utils import children_of_type, singular
-from dace.frontend.fortran.fortran_parser import construct_full_ast
-from tests.fortran.fortran_test_helper import SourceCodeBuilder
-
-
-def parse_and_improve(sources: Dict[str, str]):
-    parser = ParserFactory().create(std="f2008")
-    ast = construct_full_ast(sources, parser)
-    assert isinstance(ast, Program)
-    return ast
+from tests.fortran.fortran_test_helper import SourceCodeBuilder, parse_and_improve
 
 
 def find_entrypoint_objects_named(ast: Program, name: str) -> List[SPEC]:
