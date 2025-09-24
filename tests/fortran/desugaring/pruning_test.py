@@ -1,11 +1,11 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-from dace.frontend.fortran.ast_desugaring import pruning, optimizations, desugaring
 from tests.fortran.desugaring.common import parse_and_improve
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
+from dace.frontend.fortran.ast_desugaring import pruning, optimizations, desugaring
 
 
 def test_branch_pruning():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = (SourceCodeBuilder().add_file("""
 subroutine main
   implicit none
   integer, parameter :: k = 4
@@ -29,7 +29,7 @@ subroutine main
   if (k < 5) a = 70 + k
   if (k > 5) a = 70 - k
 end subroutine main
-""").check_with_gfortran().get()
+""").check_with_gfortran().get())
     ast = parse_and_improve(sources)
     ast = pruning.prune_branches(ast)
 
@@ -51,7 +51,7 @@ END SUBROUTINE main
 
 
 def test_object_pruning():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   type config
@@ -85,9 +85,9 @@ subroutine main
   ucfg%b = a*i
   garray(3)%b = a*i*2
 end subroutine main
-""").check_with_gfortran().get()
+""").check_with_gfortran().get())
     ast = parse_and_improve(sources)
-    ast = pruning.prune_unused_objects(ast, [('main', )])
+    ast = pruning.prune_unused_objects(ast, [("main", )])
 
     got = ast.tofortran()
     want = """
@@ -114,7 +114,7 @@ END SUBROUTINE main
 
 
 def test_pointer_pruning():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   type T
@@ -134,9 +134,9 @@ subroutine main(out)
   ptr => cfg % ptr
   out = cfg % data
 end subroutine main
-""").check_with_gfortran().get()
+""").check_with_gfortran().get())
     ast = parse_and_improve(sources)
-    ast = pruning.prune_unused_objects(ast, [('main', )])
+    ast = pruning.prune_unused_objects(ast, [("main", )])
 
     got = ast.tofortran()
     want = """
@@ -161,7 +161,7 @@ END SUBROUTINE main
 
 
 def test_completely_unsed_modules_are_pruned_early():
-    sources, main = SourceCodeBuilder().add_file(
+    sources, main = (SourceCodeBuilder().add_file(
         """
 module used
   implicit none
@@ -185,8 +185,10 @@ subroutine main(d)
   real, intent(inout) :: d
   d = fun()
 end subroutine main
-""", 'main').check_with_gfortran().get()
-    ast = parse_and_improve(sources, [('main', )])
+""",
+        "main",
+    ).check_with_gfortran().get())
+    ast = parse_and_improve(sources, [("main", )])
 
     got = ast.tofortran()
     want = """
@@ -207,8 +209,9 @@ END SUBROUTINE main
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
 
+
 def test_uses_with_renames():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   integer, parameter :: pi4 = 9
@@ -225,7 +228,7 @@ contains
     d(2) = 5.5 + i
   end subroutine fun
 end module main
-""").check_with_gfortran().get()
+""").check_with_gfortran().get())
     ast = parse_and_improve(sources)
 
     # A constant-evaluation will pin the constant values.
@@ -254,7 +257,7 @@ END MODULE main
 
 
 def test_use_consolidation_with_potential_ambiguity():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = (SourceCodeBuilder().add_file("""
 module A
   integer, parameter :: mod = 1
 end module A
@@ -272,7 +275,7 @@ subroutine main
   use B
   call foo
 end subroutine main
-""").check_with_gfortran().get()
+""").check_with_gfortran().get())
     ast = parse_and_improve(sources)
     ast = pruning.consolidate_uses(ast)
 
@@ -299,7 +302,7 @@ END SUBROUTINE main
 
 
 def test_use_consolidation_with_type_extension():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = (SourceCodeBuilder().add_file("""
 module A
   type, abstract :: AA
   end type AA
@@ -315,7 +318,7 @@ subroutine main
   use B
   type(BB) :: c = BB()
 end subroutine main
-""").check_with_gfortran().get()
+""").check_with_gfortran().get())
     ast = parse_and_improve(sources)
     ast = pruning.consolidate_uses(ast)
 
@@ -338,8 +341,9 @@ END SUBROUTINE main
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
 
+
 def test_uses_allows_indirect_aliasing():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   type Square
@@ -375,7 +379,7 @@ subroutine main
     a = s%area(1.0)
   end associate
 end subroutine main
-""").check_with_gfortran().get()
+""").check_with_gfortran().get())
     ast = parse_and_improve(sources)
     ast = desugaring.deconstruct_associations(ast)
     ast = desugaring.deconstruct_procedure_calls(ast)
@@ -414,3 +418,14 @@ END SUBROUTINE main
 """.strip()
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+if __name__ == "__main__":
+    test_branch_pruning()
+    test_object_pruning()
+    test_pointer_pruning()
+    test_completely_unsed_modules_are_pruned_early()
+    test_uses_with_renames()
+    test_use_consolidation_with_potential_ambiguity()
+    test_use_consolidation_with_type_extension()
+    test_uses_allows_indirect_aliasing()

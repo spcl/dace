@@ -5,25 +5,25 @@ from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 
 def test_spec_mapping_of_abstract_interface():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = (SourceCodeBuilder().add_file("""
 module lib  ! should be present
   abstract interface  ! should NOT be present
     subroutine fun  ! should be present
     end subroutine fun
   end interface
 end module lib
-""").check_with_gfortran().get()
+""").check_with_gfortran().get())
     ast = parse_and_improve(sources)
 
     ident_map = analysis.identifier_specs(ast)
-    assert ident_map.keys() == {('lib', ), ('lib', '__interface__', 'fun')}
+    assert ident_map.keys() == {("lib", ), ("lib", "__interface__", "fun")}
 
     alias_map = analysis.alias_specs(ast)
-    assert alias_map.keys() == {('lib', ), ('lib', '__interface__', 'fun')}
+    assert alias_map.keys() == {("lib", ), ("lib", "__interface__", "fun")}
 
 
 def test_spec_mapping_of_type_extension():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = (SourceCodeBuilder().add_file("""
 module lib
   type base
     integer :: a
@@ -32,19 +32,32 @@ module lib
     integer :: b
   end type ext
 end module lib
-""").check_with_gfortran().get()
+""").check_with_gfortran().get())
     ast = parse_and_improve(sources)
 
     ident_map = analysis.identifier_specs(ast)
-    assert ident_map.keys() == {('lib', ), ('lib', 'base'), ('lib', 'base', 'a'), ('lib', 'ext'), ('lib', 'ext', 'b')}
+    assert ident_map.keys() == {
+        ("lib", ),
+        ("lib", "base"),
+        ("lib", "base", "a"),
+        ("lib", "ext"),
+        ("lib", "ext", "b"),
+    }
 
     alias_map = analysis.alias_specs(ast)
-    assert alias_map.keys() == {('lib', ), ('lib', 'base'), ('lib', 'base', 'a'), ('lib', 'ext'), ('lib', 'ext', 'b'),
-                                ('lib', 'ext', 'base'), ('lib', 'ext', 'base', 'a')}
+    assert alias_map.keys() == {
+        ("lib", ),
+        ("lib", "base"),
+        ("lib", "base", "a"),
+        ("lib", "ext"),
+        ("lib", "ext", "b"),
+        ("lib", "ext", "base"),
+        ("lib", "ext", "base", "a"),
+    }
 
 
 def test_spec_mapping_of_procedure_pointers():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = (SourceCodeBuilder().add_file("""
 module lib
   type T
     procedure(fun), nopass, pointer :: fun
@@ -56,13 +69,31 @@ contains
     fun = 1.1
   end function fun
 end module lib
-""").check_with_gfortran().get()
+""").check_with_gfortran().get())
     ast = parse_and_improve(sources)
 
     ident_map = analysis.identifier_specs(ast)
-    assert (ident_map.keys() == {('lib', ), ('lib', 'T'), ('lib', 'T', 'fun'), ('lib', 'T', 'nofun'), ('lib', 'fun'),
-                                 ('lib', 'real_fun')})
+    assert ident_map.keys() == {
+        ("lib", ),
+        ("lib", "T"),
+        ("lib", "T", "fun"),
+        ("lib", "T", "nofun"),
+        ("lib", "fun"),
+        ("lib", "real_fun"),
+    }
 
     alias_map = analysis.alias_specs(ast)
-    assert (alias_map.keys() == {('lib', ), ('lib', 'T'), ('lib', 'T', 'fun'), ('lib', 'T', 'nofun'), ('lib', 'fun'),
-                                 ('lib', 'real_fun')})
+    assert alias_map.keys() == {
+        ("lib", ),
+        ("lib", "T"),
+        ("lib", "T", "fun"),
+        ("lib", "T", "nofun"),
+        ("lib", "fun"),
+        ("lib", "real_fun"),
+    }
+
+
+if __name__ == "__main__":
+    test_spec_mapping_of_abstract_interface()
+    test_spec_mapping_of_type_extension()
+    test_spec_mapping_of_procedure_pointers()

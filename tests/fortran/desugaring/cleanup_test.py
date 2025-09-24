@@ -1,11 +1,11 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-from dace.frontend.fortran.ast_desugaring import cleanup
 from tests.fortran.desugaring.common import parse_and_improve
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
+from dace.frontend.fortran.ast_desugaring import cleanup
 
 
 def test_globally_unique_names():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   type :: Square
@@ -51,9 +51,9 @@ subroutine main
   s%sides = area(s, 4.1)
   circle = 5.0
 end subroutine main
-""").check_with_gfortran().get()
+""").check_with_gfortran().get())
     ast = parse_and_improve(sources)
-    ast = cleanup.assign_globally_unique_subprogram_names(ast, {('main', )})
+    ast = cleanup.assign_globally_unique_subprogram_names(ast, {("main", )})
     ast = cleanup.assign_globally_unique_variable_names(ast, set())
 
     got = ast.tofortran()
@@ -109,7 +109,7 @@ END SUBROUTINE main
 
 
 def test_remove_binds():
-    sources, main = SourceCodeBuilder().add_file(
+    sources, main = (SourceCodeBuilder().add_file(
         """
 module lib
   type, bind(C) :: cmplx
@@ -136,7 +136,9 @@ subroutine main
   b = a + a
   call fun
 end subroutine main
-""", 'main').check_with_gfortran().get()
+""",
+        "main",
+    ).check_with_gfortran().get())
     ast = parse_and_improve(sources)
     ast = cleanup.remove_access_and_bind_statements(ast)
 
@@ -173,7 +175,7 @@ END SUBROUTINE main
 
 def test_remove_contiguous_statements():
     # TODO: We're testing here that FParser can even parse these (it couldn't in v0.1.3). Do we want to remove these?
-    sources, main = SourceCodeBuilder().add_file(
+    sources, main = (SourceCodeBuilder().add_file(
         """
 subroutine main(a)
   implicit none
@@ -185,7 +187,9 @@ subroutine main(a)
   z % x => a
   a = sum(z % x)
 end subroutine main
-""", 'main').check_with_gfortran().get()
+""",
+        "main",
+    ).check_with_gfortran().get())
     ast = parse_and_improve(sources)
     ast = cleanup.remove_access_and_bind_statements(ast)
 
@@ -207,7 +211,7 @@ END SUBROUTINE main
 
 
 def test_consolidate_global_data():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   logical :: inited_var = .false.
@@ -234,7 +238,7 @@ subroutine main
   call update(uninited_var)
   if (inited_var .and. uninited_var) a = 7.1
 end subroutine main
-""").check_with_gfortran().get()
+""").check_with_gfortran().get())
     ast = parse_and_improve(sources)
     ast = cleanup.consolidate_global_data_into_arg(ast)
 
@@ -283,7 +287,7 @@ END SUBROUTINE main
 
 
 def test_create_global_initializers():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   logical :: inited_var = .false.
@@ -312,9 +316,9 @@ subroutine main
   call update(uninited_var)
   if (inited_var .and. uninited_var) a = 7.1
 end subroutine main
-""").check_with_gfortran().get()
+""").check_with_gfortran().get())
     ast = parse_and_improve(sources)
-    ast = cleanup.create_global_initializers(ast, [('main', )])
+    ast = cleanup.create_global_initializers(ast, [("main", )])
 
     got = ast.tofortran()
     want = """
@@ -366,3 +370,11 @@ END SUBROUTINE global_init_fn
 """.strip()
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+if __name__ == "__main__":
+    test_globally_unique_names()
+    test_remove_binds()
+    test_remove_contiguous_statements()
+    test_consolidate_global_data()
+    test_create_global_initializers()

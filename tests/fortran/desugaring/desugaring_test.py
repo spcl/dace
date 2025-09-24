@@ -1,11 +1,11 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-from dace.frontend.fortran.ast_desugaring import desugaring, cleanup
 from tests.fortran.desugaring.common import parse_and_improve
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
+from dace.frontend.fortran.ast_desugaring import desugaring, cleanup
 
 
 def test_procedure_replacer():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   type Square
@@ -41,7 +41,7 @@ subroutine main
   a = s%area_alt(1.0)
   call s%get_area(a)
 end subroutine main
-""").check_with_gfortran().get()
+""").check_with_gfortran().get())
     ast = parse_and_improve(sources)
     ast = desugaring.deconstruct_procedure_calls(ast)
 
@@ -85,7 +85,7 @@ END SUBROUTINE main
 
 
 def test_procedure_replacer_nested():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   type Value
@@ -123,7 +123,7 @@ subroutine main
   s%side%val = 1.0
   a = s%get_area(1.0)
 end subroutine main
-""").check_with_gfortran().get()
+""").check_with_gfortran().get())
     ast = parse_and_improve(sources)
     ast = desugaring.deconstruct_procedure_calls(ast)
 
@@ -167,7 +167,7 @@ END SUBROUTINE main
 
 
 def test_procedure_replacer_name_collision_with_exisiting_var():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   type Square
@@ -193,7 +193,7 @@ subroutine main
   s%side = 1.0
   area = s%area(1.0)
 end subroutine main
-""").check_with_gfortran().get()
+""").check_with_gfortran().get())
     ast = parse_and_improve(sources)
     ast = desugaring.deconstruct_procedure_calls(ast)
 
@@ -227,7 +227,7 @@ END SUBROUTINE main
 
 
 def test_procedure_replacer_name_collision_with_another_import():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = (SourceCodeBuilder().add_file("""
 module lib_1
   implicit none
   type Square
@@ -273,7 +273,7 @@ subroutine main
   c%rad = 1.0
   area = c%area(1.0)
 end subroutine main
-""").check_with_gfortran().get()
+""").check_with_gfortran().get())
     ast = parse_and_improve(sources)
     ast = desugaring.deconstruct_procedure_calls(ast)
 
@@ -325,7 +325,7 @@ END SUBROUTINE main
 
 
 def test_generic_replacer():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   type Square
@@ -362,7 +362,7 @@ subroutine main
   a = s%g_area(mr)
   a = s%g_area(mi)
 end subroutine main
-""").check_with_gfortran().get()
+""").check_with_gfortran().get())
     ast = parse_and_improve(sources)
     ast = desugaring.deconstruct_procedure_calls(ast)
 
@@ -406,7 +406,7 @@ END SUBROUTINE main
 
 
 def test_association_replacer():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   type Square
@@ -433,7 +433,7 @@ subroutine main
     a = area(s, 1.0)
   end associate
 end subroutine main
-""").check_with_gfortran().get()
+""").check_with_gfortran().get())
     ast = parse_and_improve(sources)
     ast = desugaring.deconstruct_associations(ast)
 
@@ -467,7 +467,7 @@ END SUBROUTINE main
 
 
 def test_association_replacer_array_access():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   type Square
@@ -498,7 +498,7 @@ subroutine main
     a = s%area(1.0)
   end associate
 end subroutine main
-""").check_with_gfortran().get()
+""").check_with_gfortran().get())
     ast = parse_and_improve(sources)
     ast = desugaring.deconstruct_enums(ast)
     ast = desugaring.deconstruct_associations(ast)
@@ -537,7 +537,7 @@ END SUBROUTINE main
 
 
 def test_association_replacer_array_access_within_array_access():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   type Square
@@ -568,7 +568,7 @@ subroutine main
     a = s%area(1.0)
   end associate
 end subroutine main
-""").check_with_gfortran().get()
+""").check_with_gfortran().get())
     ast = parse_and_improve(sources)
     ast = desugaring.deconstruct_associations(ast)
     ast = desugaring.deconstruct_procedure_calls(ast)
@@ -606,7 +606,7 @@ END SUBROUTINE main
 
 
 def test_enum_bindings_become_constants():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = (SourceCodeBuilder().add_file("""
 subroutine main
   implicit none
   integer, parameter :: k = 42
@@ -620,7 +620,7 @@ subroutine main
     enumerator :: g = k, h = k, i = k + 1
   end enum
 end subroutine main
-""").check_with_gfortran().get()
+""").check_with_gfortran().get())
     ast = parse_and_improve(sources)
     ast = desugaring.deconstruct_enums(ast)
 
@@ -645,7 +645,7 @@ END SUBROUTINE main
 
 
 def test_aliasing_through_module_procedure():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   interface fun
@@ -664,7 +664,7 @@ subroutine main
   real d(4)
   d(2) = fun()
 end subroutine main
-""").check_with_gfortran().get()
+""").check_with_gfortran().get())
     ast = parse_and_improve(sources)
     ast = desugaring.deconstruct_associations(ast)
     ast = cleanup.correct_for_function_calls(ast)
@@ -695,7 +695,7 @@ END SUBROUTINE main
 
 
 def test_interface_replacer_with_module_procedures():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   interface fun
@@ -732,7 +732,7 @@ subroutine main
   call not_fun(d(3))
   d(4) = same_name(2.0)
 end subroutine main
-""").check_with_gfortran().get()
+""").check_with_gfortran().get())
     ast = parse_and_improve(sources)
     ast = desugaring.deconstruct_interface_calls(ast)
 
@@ -779,7 +779,7 @@ END SUBROUTINE main
 
 
 def test_interface_replacer_with_subroutine_decls():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   interface
@@ -802,7 +802,7 @@ subroutine fun(z)
   real, intent(out) :: z
   z = 1.0
 end subroutine fun
-""").check_with_gfortran().get()
+""").check_with_gfortran().get())
     ast = parse_and_improve(sources)
     ast = desugaring.deconstruct_interface_calls(ast)
 
@@ -833,7 +833,7 @@ END SUBROUTINE fun
 
 
 def test_interface_replacer_with_optional_args():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   interface fun
@@ -864,7 +864,7 @@ subroutine main
   d(3) = fun(x=4)
   d(4) = fun(x=5.0)
 end subroutine main
-""").check_with_gfortran().get()
+""").check_with_gfortran().get())
     ast = parse_and_improve(sources)
     ast = desugaring.deconstruct_interface_calls(ast)
 
@@ -905,7 +905,7 @@ END SUBROUTINE main
 
 
 def test_interface_replacer_with_keyworded_args():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   interface fun
@@ -934,7 +934,7 @@ subroutine main
   d(2) = fun(y=1.1, w=3.1)  ! only required ones, keyworded
   d(3) = fun(1.2, 2.2, y=3.2)  ! partially keyworded, last optional omitted.
 end subroutine main
-""").check_with_gfortran().get()
+""").check_with_gfortran().get())
     ast = parse_and_improve(sources)
     ast = desugaring.deconstruct_interface_calls(ast)
 
@@ -973,7 +973,7 @@ END SUBROUTINE main
 
 
 def test_generic_replacer_deducing_array_types():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   type T
@@ -1019,7 +1019,7 @@ subroutine main
   call s%copy(b(:, :))
   call s%copy(s1%val(:, 1))
 end subroutine main
-""").check_with_gfortran().get()
+""").check_with_gfortran().get())
     ast = parse_and_improve(sources)
     ast = desugaring.deconstruct_procedure_calls(ast)
 
@@ -1074,7 +1074,7 @@ END SUBROUTINE main
 
 
 def test_convert_data_statements_into_assignments():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = (SourceCodeBuilder().add_file("""
 subroutine fun(res)
   implicit none
   real :: val = 0.0
@@ -1091,7 +1091,7 @@ subroutine main(res)
   real, dimension(2) :: res
   call fun(res)
 end subroutine main
-""").check_with_gfortran().get()
+""").check_with_gfortran().get())
     ast = parse_and_improve(sources)
     ast = desugaring.convert_data_statements_into_assignments(ast)
 
@@ -1120,7 +1120,7 @@ END SUBROUTINE main
 
 
 def test_deconstruct_statement_functions():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = (SourceCodeBuilder().add_file("""
 subroutine main(d)
   double precision d(3, 4, 5)
   double precision :: ptare, rtt(2), foedelta, foeldcp
@@ -1134,7 +1134,7 @@ subroutine main(d)
   res = foeldcp(3.d0)
   d(1, 1, 2) = res
 end subroutine main
-""").check_with_gfortran().get()
+""").check_with_gfortran().get())
     ast = parse_and_improve(sources)
     ast = desugaring.deconstruct_statement_functions(ast)
 
@@ -1172,7 +1172,7 @@ END SUBROUTINE main
 
 
 def test_goto_statements():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = (SourceCodeBuilder().add_file("""
 subroutine main(d)
   implicit none
   real, intent(inout) :: d
@@ -1198,7 +1198,7 @@ subroutine main(d)
 10002 continue
   d = 7.1*i
 end subroutine main
-""").check_with_gfortran().get()
+""").check_with_gfortran().get())
     ast = parse_and_improve(sources)
     ast = desugaring.deconstuct_goto_statements(ast)
 
@@ -1240,7 +1240,7 @@ END SUBROUTINE main
 
 
 def test_operator_overloading():
-    sources, main = SourceCodeBuilder().add_file(
+    sources, main = (SourceCodeBuilder().add_file(
         """
 module lib
   type cmplx
@@ -1263,7 +1263,9 @@ subroutine main
   type(cmplx) :: a, b
   b = a + a
 end subroutine main
-""", 'main').check_with_gfortran().get()
+""",
+        "main",
+    ).check_with_gfortran().get())
     ast = parse_and_improve(sources)
 
     got = ast.tofortran()
@@ -1291,3 +1293,25 @@ END SUBROUTINE main
 """.strip()
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+if __name__ == "__main__":
+    test_procedure_replacer()
+    test_procedure_replacer_nested()
+    test_procedure_replacer_name_collision_with_exisiting_var()
+    test_procedure_replacer_name_collision_with_another_import()
+    test_generic_replacer()
+    test_association_replacer()
+    test_association_replacer_array_access()
+    test_association_replacer_array_access_within_array_access()
+    test_enum_bindings_become_constants()
+    test_aliasing_through_module_procedure()
+    test_interface_replacer_with_module_procedures()
+    test_interface_replacer_with_subroutine_decls()
+    test_interface_replacer_with_optional_args()
+    test_interface_replacer_with_keyworded_args()
+    test_generic_replacer_deducing_array_types()
+    test_convert_data_statements_into_assignments()
+    test_deconstruct_statement_functions()
+    test_goto_statements()
+    test_operator_overloading()

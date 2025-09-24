@@ -1,11 +1,11 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-from dace.frontend.fortran.ast_desugaring import optimizations, types
 from tests.fortran.desugaring.common import parse_and_improve
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
+from dace.frontend.fortran.ast_desugaring import optimizations, types
 
 
 def test_constant_resolving_expressions():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = (SourceCodeBuilder().add_file("""
 subroutine main
   implicit none
   integer, parameter :: k = 8
@@ -25,7 +25,7 @@ subroutine main
     p = a*p + k*pk
   end if
 end subroutine main
-""").check_with_gfortran().get()
+""").check_with_gfortran().get())
     ast = parse_and_improve(sources)
     ast = optimizations.const_eval_nodes(ast)
 
@@ -55,7 +55,7 @@ END SUBROUTINE main
 
 
 def test_constant_expression_replacement():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = (SourceCodeBuilder().add_file("""
 module main
   implicit none
   private
@@ -74,7 +74,7 @@ contains
     res3 = unk ** z
   end subroutine foo
 end module main
-""").check_with_gfortran().get()
+""").check_with_gfortran().get())
     ast = parse_and_improve(sources)
     ast = optimizations.const_eval_nodes(ast)
 
@@ -100,7 +100,7 @@ END MODULE main
 
 
 def test_constant_resolving_non_expressions():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = (SourceCodeBuilder().add_file("""
 subroutine main
   implicit none
   integer, parameter :: k = 8
@@ -122,7 +122,7 @@ subroutine main
     y = x * k
   end subroutine not_fun
 end subroutine main
-""").check_with_gfortran().get()
+""").check_with_gfortran().get())
     ast = parse_and_improve(sources)
     ast = optimizations.const_eval_nodes(ast)
 
@@ -155,7 +155,7 @@ END SUBROUTINE main
 
 
 def test_config_injection_type():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   type config
@@ -182,12 +182,15 @@ subroutine main(cfg)
   real :: a = 1
   a = cfg%big%b + a * globalo%a
 end subroutine main
-""").check_with_gfortran().get()
+""").check_with_gfortran().get())
     ast = parse_and_improve(sources)
-    ast = optimizations.inject_const_evals(ast, [
-        types.ConstTypeInjection(None, ('lib', 'config'), ('a', ), '42'),
-        types.ConstTypeInjection(None, ('lib', 'config'), ('b', ), '10000.0')
-    ])
+    ast = optimizations.inject_const_evals(
+        ast,
+        [
+            types.ConstTypeInjection(None, ("lib", "config"), ("a", ), "42"),
+            types.ConstTypeInjection(None, ("lib", "config"), ("b", ), "10000.0"),
+        ],
+    )
 
     got = ast.tofortran()
     want = """
@@ -222,7 +225,7 @@ END SUBROUTINE main
 
 
 def test_config_injection_instance():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   type config
@@ -249,12 +252,15 @@ subroutine main(cfg)
   real :: a = 1
   a = cfg%big%b + a * globalo%a
 end subroutine main
-""").check_with_gfortran().get()
+""").check_with_gfortran().get())
     ast = parse_and_improve(sources)
-    ast = optimizations.inject_const_evals(ast, [
-        types.ConstInstanceInjection(None, ('lib', 'globalo'), ('a', ), '42'),
-        types.ConstInstanceInjection(None, ('main', 'cfg'), ('big', 'b'), '10000.0')
-    ])
+    ast = optimizations.inject_const_evals(
+        ast,
+        [
+            types.ConstInstanceInjection(None, ("lib", "globalo"), ("a", ), "42"),
+            types.ConstInstanceInjection(None, ("main", "cfg"), ("big", "b"), "10000.0"),
+        ],
+    )
 
     got = ast.tofortran()
     want = """
@@ -289,7 +295,7 @@ END SUBROUTINE main
 
 
 def test_config_injection_array():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   type config
@@ -314,11 +320,14 @@ subroutine main(cfg)
   real :: a = 1
   if (allocated(cfg%a)) a = 7.2
 end subroutine main
-""").check_with_gfortran().get()
+""").check_with_gfortran().get())
     ast = parse_and_improve(sources)
-    ast = optimizations.inject_const_evals(ast, [
-        types.ConstTypeInjection(None, ('lib', 'config'), ('a_a', ), 'true'),
-    ])
+    ast = optimizations.inject_const_evals(
+        ast,
+        [
+            types.ConstTypeInjection(None, ("lib", "config"), ("a_a", ), "true"),
+        ],
+    )
 
     got = ast.tofortran()
     want = """
@@ -351,7 +360,7 @@ END SUBROUTINE main
 
 
 def test_config_injection_allocatable_fixing():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   type config
@@ -372,24 +381,27 @@ subroutine main(cfg, b, c, d)
   if (allocated(c)) c = 7.2
   if (allocated(d)) d = 7.2
 end subroutine main
-""").check_with_gfortran().get()
+""").check_with_gfortran().get())
     ast = parse_and_improve(sources)
-    ast = optimizations.inject_const_evals(ast, [
-        types.ConstTypeInjection(None, ('lib', 'config'), ('a_a', ), 'true'),
-        types.ConstTypeInjection(None, ('lib', 'config'), ('__f2dace_SA_a_d_0_s', ), '3'),
-        types.ConstTypeInjection(None, ('lib', 'config'), ('__f2dace_SOA_a_d_0_s', ), '1'),
-        types.ConstTypeInjection(None, ('lib', 'config'), ('__f2dace_SA_a_d_1_s', ), '3'),
-        types.ConstTypeInjection(None, ('lib', 'config'), ('__f2dace_SOA_a_d_1_s', ), '2'),
-        types.ConstInstanceInjection(None, ('main', 'b_a'), tuple(), 'true'),
-        types.ConstInstanceInjection(None, ('main', '__f2dace_SA_b_d_0_s'), tuple(), '4'),
-        types.ConstInstanceInjection(None, ('main', '__f2dace_SOA_b_d_0_s'), tuple(), '1'),
-        types.ConstInstanceInjection(None, ('main', 'c_a'), tuple(), 'true'),
-        types.ConstInstanceInjection(None, ('main', '__f2dace_SA_c_d_0_s'), tuple(), '4'),
-        types.ConstInstanceInjection(None, ('main', '__f2dace_SOA_c_d_0_s'), tuple(), '1'),
-        types.ConstInstanceInjection(None, ('main', 'd_a'), tuple(), 'false'),
-        types.ConstInstanceInjection(None, ('main', '__f2dace_SA_d_d_0_s'), tuple(), '4'),
-        types.ConstInstanceInjection(None, ('main', '__f2dace_SOA_d_d_0_s'), tuple(), '1'),
-    ])
+    ast = optimizations.inject_const_evals(
+        ast,
+        [
+            types.ConstTypeInjection(None, ("lib", "config"), ("a_a", ), "true"),
+            types.ConstTypeInjection(None, ("lib", "config"), ("__f2dace_SA_a_d_0_s", ), "3"),
+            types.ConstTypeInjection(None, ("lib", "config"), ("__f2dace_SOA_a_d_0_s", ), "1"),
+            types.ConstTypeInjection(None, ("lib", "config"), ("__f2dace_SA_a_d_1_s", ), "3"),
+            types.ConstTypeInjection(None, ("lib", "config"), ("__f2dace_SOA_a_d_1_s", ), "2"),
+            types.ConstInstanceInjection(None, ("main", "b_a"), tuple(), "true"),
+            types.ConstInstanceInjection(None, ("main", "__f2dace_SA_b_d_0_s"), tuple(), "4"),
+            types.ConstInstanceInjection(None, ("main", "__f2dace_SOA_b_d_0_s"), tuple(), "1"),
+            types.ConstInstanceInjection(None, ("main", "c_a"), tuple(), "true"),
+            types.ConstInstanceInjection(None, ("main", "__f2dace_SA_c_d_0_s"), tuple(), "4"),
+            types.ConstInstanceInjection(None, ("main", "__f2dace_SOA_c_d_0_s"), tuple(), "1"),
+            types.ConstInstanceInjection(None, ("main", "d_a"), tuple(), "false"),
+            types.ConstInstanceInjection(None, ("main", "__f2dace_SA_d_d_0_s"), tuple(), "4"),
+            types.ConstInstanceInjection(None, ("main", "__f2dace_SOA_d_d_0_s"), tuple(), "1"),
+        ],
+    )
 
     got = ast.tofortran()
     want = """
@@ -418,7 +430,7 @@ END SUBROUTINE main
 
 
 def test_practically_constant_arguments():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
 contains
@@ -471,9 +483,9 @@ subroutine main()
   call user_1()
   call user_2()
 end subroutine main
-""").check_with_gfortran().get()
+""").check_with_gfortran().get())
     ast = parse_and_improve(sources)
-    ast = optimizations.make_practically_constant_arguments_constants(ast, [('main', )])
+    ast = optimizations.make_practically_constant_arguments_constants(ast, [("main", )])
 
     got = ast.tofortran()
     want = """
@@ -531,7 +543,7 @@ END SUBROUTINE main
 
 
 def test_practically_constant_global_vars_constants():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   logical :: fixed_cond = .false.
@@ -552,7 +564,7 @@ subroutine main
   movable_cond = .not. movable_cond
   if (fixed_cond .and. movable_cond) a = 7.1
 end subroutine main
-""").check_with_gfortran().get()
+""").check_with_gfortran().get())
     ast = parse_and_improve(sources)
     ast = optimizations.make_practically_constant_global_vars_constants(ast)
 
@@ -583,7 +595,7 @@ END SUBROUTINE main
 
 
 def test_exploit_locally_constant_variables():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = (SourceCodeBuilder().add_file("""
 subroutine main()
   implicit none
   logical :: cond = .true.
@@ -659,7 +671,7 @@ contains
     arrfun = arr(1)
   end function arrfun
 end subroutine main
-""").check_with_gfortran().get()
+""").check_with_gfortran().get())
     ast = parse_and_improve(sources)
     ast = optimizations.exploit_locally_constant_variables(ast)
 
@@ -728,7 +740,7 @@ END SUBROUTINE main
 
 
 def test_exploit_locally_constant_struct_members():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = (SourceCodeBuilder().add_file("""
 subroutine main()
   implicit none
   type config
@@ -765,7 +777,7 @@ contains
     fun = out + 1.0
   end function fun
 end subroutine main
-""").check_with_gfortran().get()
+""").check_with_gfortran().get())
     ast = parse_and_improve(sources)
     ast = optimizations.exploit_locally_constant_variables(ast)
 
@@ -808,7 +820,7 @@ END SUBROUTINE main
 
 
 def test_exploit_locally_constant_pointers():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = (SourceCodeBuilder().add_file("""
 subroutine main()
   implicit none
   type cfg
@@ -836,7 +848,7 @@ subroutine main()
     end if
   end do
 end subroutine main
-""").check_with_gfortran().get()
+""").check_with_gfortran().get())
     ast = parse_and_improve(sources)
     ast = optimizations.exploit_locally_constant_variables(ast)
 
@@ -874,7 +886,7 @@ END SUBROUTINE main
 
 
 def test_replace_case_selector_consts():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = (SourceCodeBuilder().add_file("""
 module lib
   implicit none
   integer, parameter :: a = 1
@@ -896,7 +908,7 @@ subroutine main()
   integer :: b
   call foo(b)
 end subroutine main
-""").check_with_gfortran().get()
+""").check_with_gfortran().get())
     ast = parse_and_improve(sources)
     ast = optimizations.const_eval_nodes(ast)
 
@@ -926,14 +938,14 @@ END SUBROUTINE main
 
 
 def test_constant_function_evaluation():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = (SourceCodeBuilder().add_file("""
 subroutine main
   implicit none
   double precision :: a = sqrt(4.)
   double precision :: b = cos(0.)
   double precision :: c = abs(-3.)
 end subroutine main
-""").check_with_gfortran().get()
+""").check_with_gfortran().get())
     ast = parse_and_improve(sources)
     ast = optimizations.const_eval_nodes(ast)
 
@@ -948,3 +960,20 @@ END SUBROUTINE main
 """.strip()
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+if __name__ == "__main__":
+    test_constant_resolving_expressions()
+    test_constant_expression_replacement()
+    test_constant_resolving_non_expressions()
+    test_config_injection_type()
+    test_config_injection_instance()
+    test_config_injection_array()
+    test_config_injection_allocatable_fixing()
+    test_practically_constant_arguments()
+    test_practically_constant_global_vars_constants()
+    test_exploit_locally_constant_variables()
+    test_exploit_locally_constant_struct_members()
+    test_exploit_locally_constant_pointers()
+    test_replace_case_selector_consts()
+    test_constant_function_evaluation()
