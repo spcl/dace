@@ -153,9 +153,13 @@ class SplitTasklets(ppl.Pass):
         for tasklet, state, ssa_statements, input_type in tasklets_to_split:
             assert isinstance(state, dace.SDFGState)
             assert isinstance(tasklet, dace.nodes.Tasklet)
+            assert tasklet in state.nodes()
             tasklet_input_edges = state.in_edges(tasklet)
             tasklet_output_edges = state.out_edges(tasklet)
 
+            tasklet_in_degree = state.in_degree(tasklet)
+            tasklet_in_edges = state.in_edges(tasklet)
+            tasklet_out_degree = state.out_degree(tasklet)
             state.remove_node(tasklet)
             added_tasklets = list()
             for i, ssa_statement in enumerate(ssa_statements):  # Since SSA we are going to add in a line
@@ -201,8 +205,8 @@ class SplitTasklets(ppl.Pass):
 
                     # dace.float64(symbol) has no sources after split,
                     # but if we for example inside a map we need to add a dependency edge
-                    if len(matched_in_conns) == 0 and state.in_degree(tasklet) > 0:
-                        for ie in state.in_edges(tasklet):
+                    if len(matched_in_conns) == 0 and tasklet_in_degree > 0:
+                        for ie in tasklet_in_edges:
                             state.add_edge(ie.src, None, t, None, dace.memlet.Memlet(None))
                 else:
                     # Input comes from transient accesses (each unique and needs to be added to the SDFG)

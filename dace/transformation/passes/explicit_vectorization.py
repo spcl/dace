@@ -16,41 +16,41 @@ from dace.transformation.dataflow.tiling import MapTiling
 class ExplicitVectorizationPipelineCPU(ppl.Pipeline):
     _cpu_global_code = """
 inline void vector_mult(double * __restrict__ c, const double * __restrict__ a, const double * __restrict__ b) {{
-    #pragma unroll
+    #pragma omp unroll
     for (int i = 0; i < {vector_width}; i++) {{
         c[i] = a[i] * b[i];
     }}
 }}
 inline void vector_mult(double * __restrict__ b, const double * __restrict__ a, const double constant) {{
     double cReg[{vector_width}];
-    #pragma unroll
+    #pragma omp unroll
     for (int i = 0; i < {vector_width}; i++) {{
         cReg[i] = constant;
     }}
-    #pragma unroll
+    #pragma omp unroll
     for (int i = 0; i < {vector_width}; i++) {{
         b[i] = a[i] * cReg[i];
     }}
 }}
 inline void vector_add(double * __restrict__ c, const double * __restrict__ a, const double * __restrict__ b) {{
-    #pragma unroll
+    #pragma omp unroll
     for (int i = 0; i < {vector_width}; i++) {{
         c[i] = a[i] + b[i];
     }}
 }}
 inline void vector_add(double * __restrict__ b, const double * __restrict__ a, const double constant) {{
     double cReg[{vector_width}];
-    #pragma unroll
+    #pragma omp unroll
     for (int i = 0; i < {vector_width}; i++) {{
         cReg[i] = constant;
     }}
-    #pragma unroll
+    #pragma omp unroll
     for (int i = 0; i < {vector_width}; i++) {{
         b[i] = a[i] + cReg[i];
     }}
 }}
 inline void vector_copy(double * __restrict__ dst, const double * __restrict__ src) {{
-    #pragma unroll
+    #pragma omp unroll
     for (int i = 0; i < {vector_width}; i++) {{
         dst[i] = src[i];
     }}
@@ -73,9 +73,11 @@ inline void vector_copy(double * __restrict__ dst, const double * __restrict__ s
                 vector_width=vector_width,
                 vector_input_storage=dace.dtypes.StorageType.Register,
                 vector_output_storage=dace.dtypes.StorageType.Register,
-                global_code=ExplicitVectorizationPipelineGPU._cpu_global_code.format(vector_width=vector_width))
+                global_code=ExplicitVectorizationPipelineCPU._cpu_global_code.format(vector_width=vector_width),
+                global_code_location="frame")
         ]
         super().__init__(passes)
+
 
 class ExplicitVectorizationPipelineGPU(ppl.Pipeline):
     _gpu_global_code = """
@@ -137,9 +139,11 @@ __host__ __device__ __forceinline__ void vector_copy(double * __restrict__ dst, 
                 vector_width=vector_width,
                 vector_input_storage=dace.dtypes.StorageType.Register,
                 vector_output_storage=dace.dtypes.StorageType.Register,
-                global_code=ExplicitVectorizationPipelineGPU._gpu_global_code.format(vector_width=vector_width))
+                global_code=ExplicitVectorizationPipelineGPU._gpu_global_code.format(vector_width=vector_width),
+                global_code_location="frame")
         ]
         super().__init__(passes)
+
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
@@ -152,14 +156,17 @@ class ExplicitVectorization(ppl.Pass):
     vector_input_storage = properties.Property(dtype=dace.dtypes.StorageType, default=dace.dtypes.StorageType.Register)
     vector_output_storage = properties.Property(dtype=dace.dtypes.StorageType, default=dace.dtypes.StorageType.Register)
     global_code = properties.Property(dtype=str, default="")
+    global_code_location = properties.Property(dtype=str, default="")
 
-    def __init__(self, templates, vector_width, vector_input_storage, vector_output_storage, global_code):
+    def __init__(self, templates, vector_width, vector_input_storage, vector_output_storage, global_code,
+                 global_code_location):
         super().__init__()
         self.templates = templates
         self.vector_width = vector_width
         self.vector_input_storage = vector_input_storage
         self.vector_output_storage = vector_output_storage
         self.global_code = global_code
+        self.global_code_location = global_code_location
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
@@ -664,5 +671,5 @@ class ExplicitVectorization(ppl.Pass):
                     if len(parent_scopes) > 0:
                         num_vectorized += self._vectorize_sdfg(nested_sdfg.sdfg, num_vectorized)
 
-        sdfg.append_global_code(cpp_code=self.global_code, location="cuda")
+        sdfg.append_global_code(cpp_code=self.global_code, location=self.global_code_location)
         return None
