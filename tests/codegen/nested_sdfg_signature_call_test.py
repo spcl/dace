@@ -20,11 +20,13 @@ M = 10  # View size
 data_combinations = [
     (dt.Scalar, dt.Scalar, None),
     (dt.Scalar, dt.Scalar, sbs.Range.from_string(f"0:1")),
+    (dt.Scalar, dt.Array, sbs.Range.from_string(f"0:1")),
     (dt.Array, dt.Scalar, sbs.Range.from_string(f"{N//4}:{N//4+1}")),
     (dt.Array, dt.Array, sbs.Range.from_string(f"0:{N}")),
     (dt.Array, dt.Array, sbs.Range.from_string(f"{N//4}:{(3*N)//4}")),
     (dt.Structure, dt.Structure, None),
     (dt.Structure, dt.Structure, sbs.Range.from_string("0:1")),
+    (dt.Structure, dt.ContainerArray, sbs.Range.from_string("0:1")),
     (dt.ContainerArray, dt.Structure, sbs.Range.from_string(f"{N//4}:{N//4+1}")),
     (dt.ContainerArray, dt.ContainerArray, sbs.Range.from_string(f"0:{N}")),
     (dt.ContainerArray, dt.ContainerArray, sbs.Range.from_string(f"{N//4}:{(3*N)//4}")),
