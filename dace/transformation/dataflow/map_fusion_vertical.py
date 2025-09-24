@@ -446,6 +446,12 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         # Set of intermediate nodes that we have already processed.
         processed_inter_nodes: Set[nodes.Node] = set()
 
+        debug = False
+        for oedge in state.out_edges(first_map_exit):
+            dnode = oedge.dst
+            if isinstance(dnode, nodes.AccessNode) and dnode.data == "__tmp9":
+                debug = True
+
         # Now scan all output edges of the first exit and classify them
         for out_edge in state.out_edges(first_map_exit):
             intermediate_node: nodes.Node = out_edge.dst
@@ -562,7 +568,6 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                         ):
                             return None
 
-                # Now issues found with that edge.
                 producer_subsets.append(producer_edge.data.dst_subset)
                 assert producer_subsets[-1] not in reduced_intermediate_shape_cache
                 reduced_intermediate_shape_cache[producer_subsets[-1]] = reduced_inter_shape
@@ -576,49 +581,44 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             else:
                 for i, psbs1 in enumerate(producer_subsets):
                     for j, psbs2 in enumerate(producer_subsets):
-                        if i == j:
-                            continue
-                        if psbs1.intersects(psbs2):
+                        if i < j and psbs1.intersects(psbs2):
                             return None
 
-            # Now we determine the consumer of nodes. For this we are using the edges
-            #  leaves the second MapEntry. It is not necessary to find the actual
-            #  consumer nodes, as they might depend on symbols of nested Maps.
-            #  For the covering test we only need their subsets, but we will perform
-            #  some scan and filtering on them.
+            # We now determine the consumers of the intermediate node. For this we are
+            #  looking at the edges that leave the node and enter the second Map.
+            #  This means that we ignore the actual consumer, which are inside the
+            #  second Map scope. Instead we are only looking at the subset that the
+            #  second Map consumes. Note that we allows that the second Map is found
+            #  multiple times.
             found_second_map = False
-            for intermediate_node_out_edge in state.out_edges(intermediate_node):
+            for intermediate_consumer_edge in state.out_edges(intermediate_node):
                 # If the second MapEntry is not immediately reachable from the intermediate
-                #  node, then ensure that there is not path that goes to it.
-                if intermediate_node_out_edge.dst is not second_map_entry:
+                #  node, then ensure that there is no path that goes to it. Needed to
+                #  prevent cycles.
+                if intermediate_consumer_edge.dst is not second_map_entry:
                     if mfhelper.is_node_reachable_from(graph=state,
-                                                       begin=intermediate_node_out_edge.dst,
+                                                       begin=intermediate_consumer_edge.dst,
                                                        end=second_map_entry):
                         return None
                     continue
-
-                # Ensure that the second Map is found exactly once.
-                # TODO(phimuell): Lift this restriction.
-                if found_second_map:
-                    return None
                 found_second_map = True
 
                 # The output of the top Map can not define a dynamic Map range in the
                 #  second Map.
-                if not intermediate_node_out_edge.dst_conn.startswith("IN_"):
+                if not intermediate_consumer_edge.dst_conn.startswith("IN_"):
                     return None
 
                 # Now we look at all edges that leave the second MapEntry, i.e., the
-                #  edges that feeds the consumer and define what is read inside the Map.
-                #  We do not check them, but collect them and inspect them.
+                #  edges that feeds the data to the actual consumers and define what is
+                #  read inside the Map scope.
                 # NOTE1: The subset still uses the old iteration variables.
                 # NOTE2: In case of consumer Memlet we explicitly allow dynamic Memlets.
-                #   This is different compared to the producer Memlet. The reason is
-                #   because in a consumer the data is conditionally read, so the data
-                #   has to exists anyway.
+                #   This is different compared to the producer Memlet, where we do not
+                #   allow such Memlets. This guarantees that the data is always present,
+                #   even if it might not be read.
                 has_found_a_consumer = False
                 for inner_consumer_edge in state.out_edges_by_connector(
-                        second_map_entry, "OUT_" + intermediate_node_out_edge.dst_conn[3:]):
+                        second_map_entry, "OUT_" + intermediate_consumer_edge.dst_conn[3:]):
                     assert not inner_consumer_edge.data.is_empty()
                     consumer_subset = inner_consumer_edge.data.src_subset
                     if consumer_subset is None:
@@ -631,8 +631,8 @@ class MapFusionVertical(transformation.SingleStateTransformation):
 
                     # Now we are checking if a single iteration of the first (top) Map
                     #  can satisfy all data requirements of the second (bottom) Map.
-                    #  For this we look if the producer covers the consumer. A consumer must
-                    #  be covered by exactly one producer.
+                    #  For this we look if the producer covers the consumer. It is
+                    #  important that a consumer must be covered by exactly one producer.
                     prospective_producers = [
                         producer_subset for producer_subset in producer_subsets
                         if producer_subset.covers(consumer_subset)
