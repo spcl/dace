@@ -279,13 +279,13 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         symbolic.safe_replace(repldict, lambda m: replace_datadesc_names(nsdfg, m), value_as_string=True)
 
-        # Make unique names for states
-        statenames = set(s.label for s in sdfg.states())
-        for nstate in nsdfg.states():
-            if nstate.label in statenames:
-                newname = data.find_new_name(nstate.label, statenames)
-                nstate.label = newname
-            statenames.add(nstate.label)
+        # Make unique names for all control-flow blocks
+        node_names = set(cfr.label for cfr in sdfg.all_control_flow_blocks(recursive=True))
+        for node in nsdfg.all_control_flow_blocks(recursive=True):
+            if node.label in node_names:
+                node_name = data.find_new_name(node.label, node_names)
+                node.label = node_name
+            node_names.add(node.label)
 
         #######################################################
         # Add nested SDFG states into top-level SDFG
