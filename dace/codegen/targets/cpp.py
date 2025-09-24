@@ -483,9 +483,9 @@ def emit_memlet_reference_nsdfg(dispatcher: 'TargetDispatcher',
 
     if isinstance(nested_desc, data.Structure):
         # NOTE: Structures are "currently" always pointers.
-        assert isinstance(nested_dtype, dtypes.pointer)
+        assert isinstance(nested_desc.dtype, dtypes.pointer)
         # NOTE: The following assertion fails when writing from the nested to the parent data.
-        # assert isinstance(nested_dtype.base_type, dtypes.struct)
+        assert isinstance(nested_desc.dtype.base_type, dtypes.struct)
         # NOTE: In the non-writing case, the dtype is pointer(struct).
         # NOTE: In the writing case, the dtype is pointer(pointer(struct)).
         # NOTE: Because of that, we instead use the ctype of the nested data descriptor.
@@ -502,10 +502,13 @@ def emit_memlet_reference_nsdfg(dispatcher: 'TargetDispatcher',
         return arg_type, conn_name, arg_value
 
     if isinstance(nested_desc, data.Array):
-        assert isinstance(nested_dtype, dtypes.pointer)
+        # assert isinstance(nested_dtype, dtypes.pointer)
         if isinstance(nested_desc, data.ContainerArray):
             # NOTE: Structures (i.e., elements of ContainerArrays) are "currently" always pointers.
-            assert isinstance(nested_dtype.base_type, dtypes.pointer)
+            assert isinstance(nested_desc.dtype, dtypes.pointer)
+            assert isinstance(nested_desc.dtype.base_type, dtypes.struct)
+        nested_dtype = dtypes.pointer(nested_desc.dtype)
+        nested_ctype = nested_dtype.ctype
         arg_type = f"{nested_ctype}"  # Equivalent to base_type + '*'
         arg_type = f"{arg_type} const"  # Pointer is const
         arg_value = f"&{parent_ptrname}[{cpp_offset_expr(parent_desc, memlet.subset)}]"
