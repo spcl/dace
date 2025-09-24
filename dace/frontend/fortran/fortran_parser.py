@@ -2788,18 +2788,19 @@ class AST_translator:
 
 class ParseConfig:
 
-    def __init__(self,  # noqa: C901
-                 sources: Union[None, List[Path], Dict[str, str]] = None,
-                 includes: Union[None, List[Path], Dict[str, str]] = None,
-                 entry_points: Union[None, types.SPEC, List[types.SPEC]] = None,
-                 config_injections: Optional[List[types.ConstInjection]] = None,
-                 do_not_prune: Union[None, types.SPEC, List[types.SPEC]] = None,
-                 do_not_rename: Union[None, types.SPEC, List[types.SPEC]] = None,
-                 make_noop: Union[None, types.SPEC, List[types.SPEC]] = None,
-                 ast_checkpoint_dir: Union[None, str, Path] = None,
-                 consolidate_global_data: bool = True,
-                 rename_uniquely: bool = True,
-                 do_not_prune_type_components: bool = False):
+    def __init__(
+            self,  # noqa: C901
+            sources: Union[None, List[Path], Dict[str, str]] = None,
+            includes: Union[None, List[Path], Dict[str, str]] = None,
+            entry_points: Union[None, types.SPEC, List[types.SPEC]] = None,
+            config_injections: Optional[List[types.ConstInjection]] = None,
+            do_not_prune: Union[None, types.SPEC, List[types.SPEC]] = None,
+            do_not_rename: Union[None, types.SPEC, List[types.SPEC]] = None,
+            make_noop: Union[None, types.SPEC, List[types.SPEC]] = None,
+            ast_checkpoint_dir: Union[None, str, Path] = None,
+            consolidate_global_data: bool = True,
+            rename_uniquely: bool = True,
+            do_not_prune_type_components: bool = False):
         # Make the configs canonical, by processing the various types upfront.
         if not sources:
             sources: Dict[str, str] = {}
@@ -3092,7 +3093,8 @@ def run_ast_transformations(own_ast: ast_components.InternalFortranAst,
     array_dims_info = ast_transforms.ArrayDimensionSymbolsMapper()
     array_dims_info.visit(program)
     program = ast_transforms.ArrayDimensionConfigInjector(
-        array_dims_info, [ci for ci in cfg.config_injections if isinstance(ci, types.ConstTypeInjection)]).visit(program)
+        array_dims_info,
+        [ci for ci in cfg.config_injections if isinstance(ci, types.ConstTypeInjection)]).visit(program)
 
     program = ast_transforms.ParDeclNonContigArrayExpander(program).visit(program)
     program = ast_transforms.TypeInference(program, assert_voids=False).visit(program)
@@ -3319,7 +3321,9 @@ def _get_toplevel_objects(path_f90: Tuple[str, str], parser, sources) -> Dict[st
         return {}
 
 
-def construct_full_ast(sources: Dict[str, str], parser, entry_points: Optional[Iterable[types.SPEC]] = None) -> f03.Program:
+def construct_full_ast(sources: Dict[str, str],
+                       parser,
+                       entry_points: Optional[Iterable[types.SPEC]] = None) -> f03.Program:
     tops = {}
     for path, f90 in sources.items():
         ctops = _get_toplevel_objects((path, f90), parser=parser, sources=sources)
