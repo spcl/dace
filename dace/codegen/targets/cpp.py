@@ -175,7 +175,7 @@ def memlet_copy_to_absolute_strides(dispatcher: 'TargetDispatcher',
             parent_data = ".".join(tokens[:-1])
             if parent_data == src_data:
                 src_data = memlet.data
-            else:
+            elif parent_data == dst_data:
                 dst_data = memlet.data
         src_expr = copy_expr(dispatcher,
                              sdfg,
