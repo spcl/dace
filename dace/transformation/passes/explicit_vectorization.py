@@ -663,13 +663,14 @@ class ExplicitVectorization(ppl.Pass):
         # If the inside has no maps
         # We have problems. If no maps,
         # We need to add a parent map
+        sdfg.save("intermediate.sdfg")
         for state in sdfg.all_states():
             for node in state.nodes():
                 if isinstance(node, dace.nodes.NestedSDFG):
                     nested_sdfg: dace.nodes.NestedSDFG = node
                     parent_scopes = self._get_all_parent_scopes(state, node)
                     if len(parent_scopes) > 0:
-                        num_vectorized += self._vectorize_sdfg(nested_sdfg.sdfg, num_vectorized)
+                        num_vectorized += self._vectorize_sdfg(sdfg=nested_sdfg.sdfg, has_parent_map=True, num_vectorized=num_vectorized)
 
         sdfg.append_global_code(cpp_code=self.global_code, location=self.global_code_location)
         return None
