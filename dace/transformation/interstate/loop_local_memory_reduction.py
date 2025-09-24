@@ -74,8 +74,6 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
       - Interleaved reads and writes
       - Gaps in the range of indices
       - Iteration variable on multiple dimensions, e.g. a[i, i]
-
-    Might work with (need to check and add support):
       - Constant indexes (a*i + b) with a = 0
       - Index expression (a*i + b) with a > 1
       - Backwards loops step < 0 or a < 0
