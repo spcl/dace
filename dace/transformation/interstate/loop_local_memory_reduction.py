@@ -4,7 +4,7 @@ import sympy as sp
 from dace import sdfg as sd, symbolic, properties
 from dace.sdfg import InterstateEdge
 from dace.sdfg import utils as sdutil
-from dace.sdfg.state import ControlFlowRegion, LoopRegion
+from dace.sdfg.state import ControlFlowRegion, LoopRegion, ConditionalBlock
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis, StateReachability
 from dace.symbolic import pystr_to_symbolic
@@ -293,6 +293,16 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
         a = a_values.pop() * step
         if a != 0 and any(i[1] % a != 0 for il in read_indices + write_indices for i in il if i is not None):
             return False
+        
+        # None of the write accesses must be within a conditional block. Reads are ok.
+        for st in self.loop.all_states():
+            for an in st.data_nodes():
+                if an.data == array_name and st.in_degree(an) > 0:
+                    pgraph = st.parent_graph
+                    while pgraph is not None and pgraph != self.loop:
+                        if isinstance(pgraph, ConditionalBlock):
+                            return False
+                        pgraph = pgraph.parent_graph
 
         # Outside of the loop, the written subset of the array must be written before read or not read at all.
         if not self._write_is_loop_local(array_name, write_indices, sdfg):

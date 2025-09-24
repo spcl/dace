@@ -372,14 +372,14 @@ def test_reverse_index():
 def test_reverse_index_step():
 
     @dace.program
-    def tester(b: dace.float64[8], c: dace.float64[8]):
+    def tester(b: dace.float64[32], c: dace.float64[32]):
         a = dace.define_local([64], dace.float64)
-        a[7] = 0
-        a[6] = 1
+        a[0] = 0
+        a[1] = 1
 
-        for i in range(5, 0, -1):
-            b[i] = a[-i + 7 - 1] + a[-i + 7 - 2]
-            a[-i + 7] = c[i] * 2
+        for i in range(29, 0, -1):
+            b[i] = a[-i + 31 - 1] + a[-i + 31 - 2]
+            a[-i + 31] = c[i] * 2
 
     sdfg = tester.to_sdfg(simplify=True)
     check_transformation(sdfg, 1)
@@ -573,13 +573,27 @@ def test_conditional():
     sdfg = tester.to_sdfg(simplify=True)
     check_transformation(sdfg, 0)
 
+def test_conditional2():
+
+    @dace.program
+    def tester(b: dace.float64[32], c: dace.float64[32]):
+        a = dace.define_local([32], dace.float64)
+        a[0] = 0
+        a[1] = 1
+        for i in range(2, 32):
+            if i % 2 == 0:
+                b[i] = a[i - 1] + a[i - 2]
+            a[i] = c[i] * 2
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_transformation(sdfg, 1)
 
 def test_symbolic_offset():
     
     N = dace.symbol('N')
 
     @dace.program
-    def tester(b: dace.float64[32], c: dace.float64[32], d: dace.int64[0]):
+    def tester(b: dace.float64[32], c: dace.float64[32], d: dace.int64[1]):
         a = dace.define_local([32], dace.float64)
         a[0] = 0
         a[1] = 1
@@ -625,4 +639,5 @@ if __name__ == "__main__":
     test_nested2()
     test_nested_mixed()
     test_conditional()
+    test_conditional2()
     test_symbolic_offset()
