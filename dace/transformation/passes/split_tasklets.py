@@ -150,13 +150,16 @@ class SplitTasklets(ppl.Pass):
         # For the case a tasklet goes to a taskelt that needs to be split
         # If we have t1 -> t2 but then split t1 to (t1.1, t1.2) -> t2
         # For each tasklet we split we need to track the new input and output maps
-
         for tasklet, state, ssa_statements, input_type in tasklets_to_split:
             assert isinstance(state, dace.SDFGState)
             assert isinstance(tasklet, dace.nodes.Tasklet)
+            assert tasklet in state.nodes()
             tasklet_input_edges = state.in_edges(tasklet)
             tasklet_output_edges = state.out_edges(tasklet)
 
+            tasklet_in_degree = state.in_degree(tasklet)
+            tasklet_in_edges = state.in_edges(tasklet)
+            tasklet_out_degree = state.out_degree(tasklet)
             state.remove_node(tasklet)
             added_tasklets = list()
             for i, ssa_statement in enumerate(ssa_statements):  # Since SSA we are going to add in a line
@@ -202,13 +205,13 @@ class SplitTasklets(ppl.Pass):
 
                     # dace.float64(symbol) has no sources after split,
                     # but if we for example inside a map we need to add a dependency edge
-                    if len(matched_in_conns) == 0 and state.in_degree(tasklet) > 0:
-                        for ie in state.in_edges(tasklet):
+                    if len(matched_in_conns) == 0 and tasklet_in_degree > 0:
+                        for ie in tasklet_in_edges:
                             state.add_edge(ie.src, None, t, None, dace.memlet.Memlet(None))
                 else:
                     # Input comes from transient accesses (each unique and needs to be added to the SDFG)
                     # or from the unused in edges
-                    for in_conn in t.in_connectors:
+                    for in_conn in t.in_connectors.keys():
                         matching_in_edges = {ie for ie in tasklet_input_edges if ie.dst_conn == in_conn}
                         if len(matching_in_edges) == 0:
                             array_name = f"{in_conn}{self.tmp_access_identifier}{split_access_counter}"
