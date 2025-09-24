@@ -712,3 +712,20 @@ END SUBROUTINE fun
 """.strip()
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+if __name__ == "__main__":
+    test_minimal()
+    test_toplevel_subroutine()
+    test_standalone_subroutine()
+    test_program_contains_subroutine()
+    test_subroutine_contains_function()
+    test_program_contains_interface_block()
+    test_program_contains_interface_block_with_useall()
+    test_uses_module()
+    test_uses_module_which_uses_module()
+    test_interface_block_contains_module_procedure()
+    test_module_contains_interface_block()
+    test_program_contains_type()
+    test_floaters_are_brought_in()
+    test_floaters_can_bring_in_more_modules()
