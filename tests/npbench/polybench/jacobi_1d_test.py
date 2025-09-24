@@ -31,7 +31,7 @@ def jacobi_1d_kernel(TSTEPS: dc.int64, A: dc.float64[N], B: dc.float64[N]):
         A[1:-1] = 0.33333 * (B[:-2] + B[1:-1] + B[2:])
 
 
-def jacobi_1d_jax_kernel(TSTEPS, A, B, S):
+def jacobi_1d_jax_kernel(TSTEPS, A, B):
 
     for t in range(1, TSTEPS):
         B = B.at[1:-1].set(0.33333 * (A[:-2] + A[1:-1] + A[2:]))
@@ -98,19 +98,18 @@ def run_jacobi_1d_autodiff():
     jax_A, jax_B = np.copy(A), np.copy(B)
 
     # Intiialize gradient computation data
-    S = np.zeros((1, ), dtype=np.float64)
     gradient_A = np.zeros_like(A)
-    gradient___return = np.ones_like(S)
+    gradient___return = np.ones((1, ), dtype=np.float64)
 
     # Define sum reduction for the output
     @dc.program
     def autodiff_kernel(TSTEPS: dc.int64, A: dc.float64[N], B: dc.float64[N]):
-        jacobi_1d_kernel(TSTEPS, A, B, S)
+        jacobi_1d_kernel(TSTEPS, A, B)
         return np.sum(A)
 
     # Add the backward pass to the SDFG
     sdfg = autodiff_kernel.to_sdfg()
-    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"], autooptimize=False)
+    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"], autooptimize=True)
     sdfg(TSTEPS, A, B, gradient_A=gradient_A, gradient___return=gradient___return)
 
     # Enable float64 support
@@ -118,8 +117,7 @@ def run_jacobi_1d_autodiff():
 
     # Numerically validate vs JAX
     jax_grad = jax.jit(jax.grad(jacobi_1d_jax_kernel, argnums=1), static_argnums=0)
-    S_jax = S.astype(np.float64)
-    jax_grad_A = jax_grad(TSTEPS, jax_A, jax_B, S_jax)
+    jax_grad_A = jax_grad(TSTEPS, jax_A, jax_B)
     np.testing.assert_allclose(gradient_A, jax_grad_A)
 
 
@@ -132,7 +130,7 @@ def test_gpu():
     run_jacobi_1d(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.daceml
+@pytest.mark.ad
 def test_autodiff():
     run_jacobi_1d_autodiff()
 

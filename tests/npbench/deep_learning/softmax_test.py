@@ -40,7 +40,7 @@ def ground_truth(x):
     return tmp_out / tmp_sum
 
 
-def softmax_jax_kernel(x, out, S):
+def softmax_jax_kernel(x):
     tmp_max = jnp.max(x, axis=-1, keepdims=True)
     tmp_out = jnp.exp(x - tmp_max)
     tmp_sum = jnp.sum(tmp_out, axis=-1, keepdims=True)
@@ -87,34 +87,25 @@ def run_softmax_autodiff():
     N, H, SM = 4, 4, 32
     x = initialize(N, H, SM)
     out = np.zeros_like(x)
-    
+
     # Initialize gradient computation data
-    S = np.zeros((1,), dtype=np.float32)
     gradient_x = np.zeros_like(x)
-    gradient___return = np.ones_like(S)
-    
+    gradient___return = np.ones((1, ), dtype=np.float32)
+
     # Define sum reduction for the output
     @dc.program
-    def autodiff_kernel(x: dc.float32[N, H, SM, SM], out: dc.float32[N, H, SM, SM]):
-        # tmp_max = np.max(x, axis=-1, keepdims=True)
-        tmp_max = np.maximum.reduce(x, axis=-1, keepdims=True, initial=-9999)
-        tmp_out = np.exp(x - tmp_max)
-        # tmp_sum = np.sum(tmp_out, axis=-1, keepdims=True)
-        tmp_sum = np.add.reduce(tmp_out, axis=-1, keepdims=True)
-        out[:] = tmp_out / tmp_sum
-        return np.sum(out)
-    
+    def softmax_autodiff_kernel(x: dc.float32[N, H, SM, SM]):
+        return np.sum(softmax_kernel(x))
+
     # Add the backward pass to the SDFG
-    sdfg = autodiff_kernel.to_sdfg()
-    add_backward_pass(sdfg=sdfg, inputs=["x"], outputs=["__return"], autooptimize=False)
-    
-    sdfg(x, out, N=N, H=H, SM=SM, 
-         gradient_x=gradient_x, gradient___return=gradient___return)
-    
-    # Numerically validate vs JAX  
+    sdfg = softmax_autodiff_kernel.to_sdfg()
+    add_backward_pass(sdfg=sdfg, inputs=["x"], outputs=["__return"], autooptimize=True)
+    sdfg(x, out, N=N, H=H, SM=SM, gradient_x=gradient_x, gradient___return=gradient___return)
+
+    # Numerically validate vs JAX
     jax_grad = jax.jit(jax.grad(softmax_jax_kernel, argnums=0))
-    jax_grad_x = jax_grad(x, out, S)
-    np.testing.assert_allclose(gradient_x, jax_grad_x, rtol=1e-4, atol=1e-6)
+    jax_grad_x = jax_grad(x)
+    np.testing.assert_allclose(gradient_x, jax_grad_x, atol=1e-6)
 
 
 def test_cpu():
@@ -126,7 +117,7 @@ def test_gpu():
     run_softmax(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.daceml
+@pytest.mark.ad
 def test_autodiff():
     run_softmax_autodiff()
 

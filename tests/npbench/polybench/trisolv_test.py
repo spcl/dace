@@ -35,6 +35,7 @@ def initialize(N, datatype=np.float64):
 
 
 def trisolv_jax_kernel(L, x, b):
+
     def scan_body(carry, i):
         L, x, b = carry
         mask = jnp.arange(x.shape[0]) < i
@@ -92,12 +93,11 @@ def run_trisolv_autodiff():
     # Initialize data (polybench mini size)
     N = sizes["mini"]
     L, x, b = initialize(N)
-    
+
     # Initialize gradient computation data
-    S = np.zeros((1,), dtype=np.float64)
     gradient_L = np.zeros_like(L)
-    gradient___return = np.ones_like(S)
-    
+    gradient___return = np.ones((1, ), dtype=np.float64)
+
     # Define sum reduction for the output
     @dc.program
     def autodiff_kernel(L: dc.float64[N, N], x: dc.float64[N], b: dc.float64[N]):
@@ -106,20 +106,17 @@ def run_trisolv_autodiff():
 
     # Add the backward pass to the SDFG
     sdfg = autodiff_kernel.to_sdfg()
-    add_backward_pass(sdfg=sdfg, inputs=["L"], outputs=["__return"], autooptimize=False)
+    add_backward_pass(sdfg=sdfg, inputs=["L"], outputs=["__return"], autooptimize=True)
     sdfg(L, x, np.copy(b), N=N, gradient_L=gradient_L, gradient___return=gradient___return)
-    
+
     # Enable float64 support
     jax.config.update("jax_enable_x64", True)
 
     # Numerically validate vs JAX
     jax_grad = jax.jit(jax.grad(trisolv_jax_kernel, argnums=0))
-    L_jax = L.astype(np.float64)
-    x_jax = np.copy(initialize(N)[1]).astype(np.float64)  # Fresh copy of x
-    b_jax = b.astype(np.float64)
-    S_jax = S.astype(np.float64)
+    L_jax, x_jax, b_jax = initialize(N)
     jax_grad_L = jax_grad(L_jax, x_jax, b_jax)
-    np.testing.assert_allclose(gradient_L, jax_grad_L, rtol=1e-5, atol=1e-8)
+    np.testing.assert_allclose(gradient_L, jax_grad_L)
 
 
 def test_cpu():
@@ -131,7 +128,7 @@ def test_gpu():
     run_trisolv(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.daceml
+@pytest.mark.ad
 def test_autodiff():
     run_trisolv_autodiff()
 

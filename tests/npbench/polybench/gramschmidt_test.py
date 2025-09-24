@@ -56,30 +56,24 @@ def gramschmidt_jax_kernel(A):
     Q = jnp.zeros_like(A)
     R = jnp.zeros((n, n), dtype=A.dtype)
 
-    # Outer loop: iterate over k = 0, 1, ..., n-1.
     def body_fun(carry, k):
         Q, R, A = carry
 
-        # Compute the norm for the k-th column and update R and Q.
         nrm = jnp.dot(A[:, k], A[:, k])
         R = R.at[k, k].set(jnp.sqrt(nrm))
         Q = Q.at[:, k].set(A[:, k] / R[k, k])
 
-        # Inner loop: iterate over j = 0,1,...,n-1, but update only when j >= k+1.
         def inner_body_fun(carry_inner, j):
             Q, R, A = carry_inner
 
             def do_update(_):
-                # Update R[k, j] with dot(Q[:, k], A[:, j])
                 new_R = R.at[k, j].set(jnp.dot(Q[:, k], A[:, j]))
-                # Then update A[:, j] by subtracting Q[:, k] * new_R[k, j]
                 new_A = A.at[:, j].add(-Q[:, k] * new_R[k, j])
                 return (Q, new_R, new_A)
 
             def no_update(_):
                 return (Q, R, A)
 
-            # Only perform the update if j >= k+1.
             Q, R, A = lax.cond(j >= (k + 1), do_update, no_update, operand=None)
             return (Q, R, A), None
 
@@ -147,12 +141,11 @@ def run_gramschmidt_autodiff():
     # Initialize data (polybench mini size)
     M, N = sizes["mini"]
     A = initialize(M, N)
-    
+
     # Initialize gradient computation data
-    S = np.zeros((1,), dtype=np.float64)
     gradient_A = np.zeros_like(A)
-    gradient___return = np.ones_like(S)
-    
+    gradient___return = np.ones((1, ), dtype=np.float64)
+
     # Define sum reduction for the output
     @dc.program
     def autodiff_kernel(A: dc.float64[M, N]):
@@ -161,18 +154,17 @@ def run_gramschmidt_autodiff():
 
     # Add the backward pass to the SDFG
     sdfg = autodiff_kernel.to_sdfg()
-    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"], autooptimize=False)
+    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"], autooptimize=True)
     sdfg(A, M=M, N=N, gradient_A=gradient_A, gradient___return=gradient___return)
-    
+
     # Enable float64 support
     jax.config.update("jax_enable_x64", True)
 
     # Numerically validate vs JAX
     jax_grad = jax.jit(jax.grad(gramschmidt_jax_kernel))
-    A_jax = np.copy(initialize(M, N)).astype(np.float64)  # Fresh copy of A
-    S_jax = S.astype(np.float64)
+    A_jax = initialize(M, N)
     jax_grad_A = jax_grad(A_jax)
-    np.testing.assert_allclose(gradient_A, jax_grad_A, rtol=1e-5, atol=1e-8)
+    np.testing.assert_allclose(gradient_A, jax_grad_A)
 
 
 def test_cpu():
@@ -184,7 +176,7 @@ def test_gpu():
     run_gramschmidt(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.daceml
+@pytest.mark.ad
 def test_autodiff():
     run_gramschmidt_autodiff()
 

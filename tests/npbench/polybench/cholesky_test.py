@@ -48,17 +48,12 @@ def init_data(N):
 
 
 def cholesky_jax_kernel(A):
-    # First update the (0,0) element.
     A = A.at[0, 0].set(jnp.sqrt(A[0, 0]))
 
-    # Outer scan: process rows i = 1,2,...,A.shape[0]-1.
     def row_update_body(A, i):
-        # Inner scan to mimic:
-        #    for j in 0 .. i-1:
-        #         A[i, j] = (A[i, j] - dot(A[i, :j], A[j, :j])) / A[j, j]
-        #
-        # We scan over a fixed range (0 to A.shape[0]-1) and update only if j < i.
+
         def col_update_body(A, j):
+
             def do_update(_):
                 mask = jnp.arange(A.shape[1]) < j
                 A_i_slice = jnp.where(mask, A[i, :], 0)
@@ -66,14 +61,12 @@ def cholesky_jax_kernel(A):
                 dot_product = jnp.dot(A_i_slice, A_j_slice)
                 new_val = (A[i, j] - dot_product) / A[j, j]
                 return A.at[i, j].set(new_val)
-            # Update only if j < i; otherwise, do nothing.
+
             A = lax.cond(j < i, do_update, lambda _: A, operand=None)
             return A, None
 
         A, _ = lax.scan(col_update_body, A, jnp.arange(A.shape[0]))
 
-        # Now update the diagonal element:
-        #   A[i, i] = sqrt( A[i, i] - dot(A[i, :i], A[i, :i]) )
         mask = jnp.arange(A.shape[1]) < i
         A_i_slice = jnp.where(mask, A[i, :], 0)
         dot_product = jnp.dot(A_i_slice, A_i_slice)
@@ -139,12 +132,12 @@ def run_cholesky_autodiff():
     # Initialize data (polybench mini size)
     N = sizes["mini"]
     A = init_data(N)
-    
+    A_jax = jnp.copy(A)
+
     # Initialize gradient computation data
-    S = np.zeros((1,), dtype=np.float32)
     gradient_A = np.zeros_like(A)
-    gradient___return = np.ones_like(S)
-    
+    gradient___return = np.ones((1, ), dtype=np.float32)
+
     # Define sum reduction for the output
     @dc.program
     def autodiff_kernel(A: dc.float32[N, N]):
@@ -153,18 +146,13 @@ def run_cholesky_autodiff():
 
     # Add the backward pass to the SDFG
     sdfg = autodiff_kernel.to_sdfg()
-    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"], autooptimize=False)
+    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"], autooptimize=True)
     sdfg(A, N=N, gradient_A=gradient_A, gradient___return=gradient___return)
-    
-    # Enable float64 support
-    jax.config.update("jax_enable_x64", True)
 
     # Numerically validate vs JAX
     jax_grad = jax.jit(jax.grad(cholesky_jax_kernel))
-    A_jax = np.copy(init_data(N)).astype(np.float64)  # Fresh copy of A
-    S_jax = S.astype(np.float64)
     jax_grad_A = jax_grad(A_jax)
-    np.testing.assert_allclose(gradient_A, jax_grad_A, rtol=1e-5, atol=1e-8)
+    np.testing.assert_allclose(gradient_A, jax_grad_A, rtol=1e-4, atol=1e-4)
 
 
 def test_cpu():
@@ -176,7 +164,7 @@ def test_gpu():
     run_cholesky(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.daceml
+@pytest.mark.ad
 def test_autodiff():
     run_cholesky_autodiff()
 

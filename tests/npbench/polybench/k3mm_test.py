@@ -86,9 +86,8 @@ def run_k3mm_autodiff():
     A, B, C, D = initialize(NI, NJ, NK, NL, NM)
 
     # Intiialize gradient computation data
-    S = np.zeros((1, ), dtype=np.float64)
     gradient_A = np.zeros_like(A)
-    gradient___return = np.ones_like(S)
+    gradient___return = np.ones((1, ), dtype=np.float64)
 
     # Define sum reduction for the output
     @dc.program
@@ -99,7 +98,7 @@ def run_k3mm_autodiff():
     # Add the backward pass to the SDFG
     sdfg = autodiff_kernel.to_sdfg()
     add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"], autooptimize=True)
-    sdfg(A, B, C, D, S, NI=NI, NJ=NJ, NK=NK, NL=NL, NM=NM, gradient_A=gradient_A, gradient___return=gradient___return)
+    sdfg(A, B, C, D, NI=NI, NJ=NJ, NK=NK, NL=NL, NM=NM, gradient_A=gradient_A, gradient___return=gradient___return)
 
     # Enable float64 support
     jax.config.update("jax_enable_x64", True)
@@ -119,7 +118,7 @@ def test_gpu():
     run_k3mm(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.daceml
+@pytest.mark.ad
 def test_autodiff():
     run_k3mm_autodiff()
 
@@ -130,7 +129,7 @@ def test_fpga():
 
 
 if __name__ == "__main__":
-    run_k3mm_autodiff()
+
     parser = argparse.ArgumentParser()
     parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
 

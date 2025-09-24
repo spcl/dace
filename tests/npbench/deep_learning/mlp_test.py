@@ -92,7 +92,8 @@ def jax_softmax(x):
     tmp_sum = jnp.sum(tmp_out, axis=-1, keepdims=True)
     return tmp_out / tmp_sum
 
-def mlp_jax_kernel(input, w1, b1, w2, b2, w3, b3, S):
+
+def mlp_jax_kernel(input, w1, b1, w2, b2, w3, b3):
     x = jax_relu(input @ w1 + b1)
     x = jax_relu(x @ w2 + b2)
     x = jax_softmax(x @ w3 + b3)  # Softmax call can be omitted if necessary
@@ -140,37 +141,43 @@ def run_mlp_autodiff():
     # Initialize data (npbench test size)
     C_in, N, S0, S1, S2 = 3, 8, 30, 20, 20
     input, w1, b1, w2, b2, w3, b3 = initialize(C_in, N, S0, S1, S2)
-    
+
     # Initialize gradient computation data
-    S = np.zeros((1,), dtype=np.float32)
     gradient_input = np.zeros_like(input, dtype=np.float32)
-    gradient___return = np.ones_like(S)
-    
+    gradient___return = np.ones((1, ), dtype=np.float32)
+
     # Define sum reduction for the output
     @dc.program
-    def autodiff_kernel(input: dc.float32[N, C_in], w1: dc.float32[C_in, S0], b1: dc.float32[S0], 
-                        w2: dc.float32[S0, S1], b2: dc.float32[S1], w3: dc.float32[S1, S2], 
-                        b3: dc.float32[S2]):
+    def autodiff_kernel(input: dc.float32[N, C_in], w1: dc.float32[C_in, S0], b1: dc.float32[S0],
+                        w2: dc.float32[S0, S1], b2: dc.float32[S1], w3: dc.float32[S1, S2], b3: dc.float32[S2]):
         x1 = relu(input @ w1 + b1)
         x2 = relu(x1 @ w2 + b2)
         x3 = softmax(x2 @ w3 + b3)
         return np.sum(x3)
-    
+
     # Add the backward pass to the SDFG
     sdfg = autodiff_kernel.to_sdfg()
-    add_backward_pass(sdfg=sdfg, inputs=["input"], outputs=["__return"], autooptimize=False)
-    
-    sdfg(input, w1, b1, w2, b2, w3, b3, 
-         N=N, S0=S0, S1=S1, S2=S2, C_in=C_in, 
-         gradient_input=gradient_input, gradient___return=gradient___return)
-    
-    # Enable float64 support for JAX but keep float32 for DaCe consistency
-    jax.config.update("jax_enable_x64", False)
-    
+    add_backward_pass(sdfg=sdfg, inputs=["input"], outputs=["__return"], autooptimize=True)
+
+    sdfg(input,
+         w1,
+         b1,
+         w2,
+         b2,
+         w3,
+         b3,
+         N=N,
+         S0=S0,
+         S1=S1,
+         S2=S2,
+         C_in=C_in,
+         gradient_input=gradient_input,
+         gradient___return=gradient___return)
+
     # Numerically validate vs JAX
     jax_grad = jax.jit(jax.grad(mlp_jax_kernel, argnums=0))
-    jax_grad_input = jax_grad(input, w1, b1, w2, b2, w3, b3, S)
-    np.testing.assert_allclose(gradient_input, jax_grad_input, rtol=1e-4, atol=1e-6)
+    jax_grad_input = jax_grad(input, w1, b1, w2, b2, w3, b3)
+    np.testing.assert_allclose(gradient_input, jax_grad_input, rtol=1e-4, atol=1e-10)
 
 
 def test_cpu():
@@ -182,7 +189,7 @@ def test_gpu():
     run_mlp(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.daceml
+@pytest.mark.ad
 def test_autodiff():
     run_mlp_autodiff()
 

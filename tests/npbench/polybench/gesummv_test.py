@@ -80,34 +80,30 @@ def run_gesummv_autodiff():
     # Initialize data (polybench mini size)
     N = sizes["mini"]
     alpha, beta, A, B, x = initialize(N)
-    
+
     # Initialize gradient computation data
-    S = np.zeros((1,), dtype=np.float64)
     gradient_A = np.zeros_like(A)
-    gradient___return = np.ones_like(S)
-    
+    gradient___return = np.ones((1, ), dtype=np.float64)
+
     # Define sum reduction for the output
     @dc.program
-    def autodiff_kernel(alpha: dc.float64, beta: dc.float64, A: dc.float64[N, N], B: dc.float64[N, N], x: dc.float64[N]):
+    def autodiff_kernel(alpha: dc.float64, beta: dc.float64, A: dc.float64[N, N], B: dc.float64[N, N],
+                        x: dc.float64[N]):
         C = gesummv_kernel(alpha, beta, A, B, x)
         return np.sum(C)
 
     # Add the backward pass to the SDFG
     sdfg = autodiff_kernel.to_sdfg()
-    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"], autooptimize=False)
+    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"], autooptimize=True)
     sdfg(alpha, beta, A, B, x, N=N, gradient_A=gradient_A, gradient___return=gradient___return)
-    
+
     # Enable float64 support
     jax.config.update("jax_enable_x64", True)
 
     # Numerically validate vs JAX
-    jax_grad = jax.jit(jax.grad(gesummv_jax_kernel, argnums=2), static_argnums=(0,1))
-    A_jax = A.astype(np.float64)
-    B_jax = B.astype(np.float64)
-    x_jax = x.astype(np.float64)
-    S_jax = S.astype(np.float64)
-    jax_grad_A = jax_grad(alpha, beta, A_jax, B_jax, x_jax)
-    np.testing.assert_allclose(gradient_A, jax_grad_A, rtol=1e-5, atol=1e-8)
+    jax_grad = jax.jit(jax.grad(gesummv_jax_kernel, argnums=2), static_argnums=(0, 1))
+    jax_grad_A = jax_grad(alpha, beta, A, B, x)
+    np.testing.assert_allclose(gradient_A, jax_grad_A)
 
 
 def test_cpu():
@@ -119,7 +115,7 @@ def test_gpu():
     run_gesummv(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.daceml
+@pytest.mark.ad
 def test_autodiff():
     run_gesummv_autodiff()
 

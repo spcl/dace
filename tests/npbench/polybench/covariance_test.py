@@ -141,12 +141,12 @@ def run_covariance_autodiff():
     # Initialize data (polybench mini size)
     M, N = sizes["mini"]
     float_n, data = init_data(M, N)
-    
+    data_jax = np.copy(data)
+
     # Initialize gradient computation data
-    S = np.zeros((1,), dtype=np.float32)
     gradient_data = np.zeros_like(data)
-    gradient___return = np.ones_like(S)
-    
+    gradient___return = np.ones((1, ), dtype=np.float32)
+
     # Define sum reduction for the output
     @dc.program
     def autodiff_kernel(float_n: dc.float32, data: dc.float32[N, M]):
@@ -155,18 +155,12 @@ def run_covariance_autodiff():
 
     # Add the backward pass to the SDFG
     sdfg = autodiff_kernel.to_sdfg()
-    add_backward_pass(sdfg=sdfg, inputs=["data"], outputs=["__return"], autooptimize=False)
+    add_backward_pass(sdfg=sdfg, inputs=["data"], outputs=["__return"], autooptimize=True)
     sdfg(float_n, data, M=M, N=N, gradient_data=gradient_data, gradient___return=gradient___return)
-    
-    # Enable float64 support
-    jax.config.update("jax_enable_x64", True)
 
     # Numerically validate vs JAX
-    jax_grad = jax.jit(jax.grad(covariance_jax_kernel, argnums=1), static_argnums=(0,))
-    float_n_jax = float(float_n)
-    data_jax = np.copy(init_data(M, N)[1]).astype(np.float64)  # Fresh copy of data
-    S_jax = S.astype(np.float64)
-    jax_grad_data = jax_grad(float_n_jax, data_jax)
+    jax_grad = jax.jit(jax.grad(covariance_jax_kernel, argnums=1), static_argnums=(0, ))
+    jax_grad_data = jax_grad(float_n, data_jax)
     np.testing.assert_allclose(gradient_data, jax_grad_data, rtol=1e-5, atol=1e-8)
 
 
@@ -181,7 +175,7 @@ def test_gpu():
     run_covariance(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.daceml
+@pytest.mark.ad
 def test_autodiff():
     run_covariance_autodiff()
 

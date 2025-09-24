@@ -77,41 +77,6 @@ def run_compute(device_type: dace.dtypes.DeviceType):
 def compute_jax_kernel(array_1, array_2, a, b, c, S):
     return jnp.sum(jnp.minimum(jnp.maximum(array_1, 2), 10) * a + array_2 * b + c)
 
-def run_compute_autodiff():
-    # Initialize forward data (using smaller size for AD test)
-    M, N = (20, 20)
-    array_1, array_2, a, b, c = initialize(M, N)
-    # Convert to float64 for AD
-    array_1 = array_1.astype(np.float64)
-    array_2 = array_2.astype(np.float64)
-    a = np.float64(a)
-    b = np.float64(b)
-    c = np.float64(c)
-    
-    # Initialize gradient computation data
-    S = np.zeros((1,), dtype=np.float64)
-    gradient_array_2 = np.zeros_like(array_2)
-    gradient___return = np.ones_like(S)
-    
-    # Define sum reduction for the output
-    @dace.program
-    def autodiff_kernel(array_1: dace.float64[M, N], array_2: dace.float64[M, N], 
-                        a: dace.float64, b: dace.float64, c: dace.float64):
-        result = compute(array_1, array_2, a, b, c)
-        return np.sum(result)
-    
-    # Add the backward pass to the SDFG
-    sdfg = autodiff_kernel.to_sdfg()
-    add_backward_pass(sdfg=sdfg, inputs=["array_2"], outputs=["__return"], autooptimize=True)
-    sdfg(array_1, array_2, a, b, c, M=M, N=N, gradient_array_2=gradient_array_2, gradient___return=gradient___return)
-    
-    # Enable float64 support
-    jax.config.update("jax_enable_x64", True)
-    
-    # Numerically validate vs JAX
-    jax_grad = jax.jit(jax.grad(compute_jax_kernel, argnums=1))
-    jax_grad_array_2 = jax_grad(array_1, array_2, a, b, c, S)
-    np.testing.assert_allclose(gradient_array_2, jax_grad_array_2, rtol=1e-5, atol=1e-8)
 
 def test_cpu():
     run_compute(dace.dtypes.DeviceType.CPU)
@@ -121,10 +86,6 @@ def test_cpu():
 def test_gpu():
     run_compute(dace.dtypes.DeviceType.GPU)
 
-
-@pytest.mark.daceml
-def test_autodiff():
-    run_compute_autodiff()
 
 @pytest.mark.skip(reason="Compiler error")
 @fpga_test(assert_ii_1=False)

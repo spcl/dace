@@ -78,51 +78,36 @@ def ludcmp_jax_kernel(A, b):
     x = jnp.zeros_like(b)
     y = jnp.zeros_like(b)
 
-    # === Loop Body 1 ===
-    # This corresponds to:
-    #   for i in 0..n-1:
-    #       for j in 0..i-1: inner_loop_1 (update A[i, j])
-    #       for j in i..n-1: inner_loop_2 (update A[i, j])
     def outer_loop_body_1(A, i):
-        # inner_loop_1: update if j < i
+
         def inner_loop_1_body(A, j):
+
             def update():
-                # Use fixed range jnp.arange(n) since A.shape is static.
                 A_slice_1 = jnp.where(jnp.arange(n) < j, A[i, :], 0.0)
                 A_slice_2 = jnp.where(jnp.arange(n) < j, A[:, j], 0.0)
                 new_val = (A[i, j] - A_slice_1 @ A_slice_2) / A[j, j]
                 return A.at[i, j].set(new_val)
-            # Only update if j < i.
-            A = lax.cond(j < i,
-                         lambda _: update(),
-                         lambda _: A,
-                         operand=None)
+
+            A = lax.cond(j < i, lambda _: update(), lambda _: A, operand=None)
             return A, None
 
-        # inner_loop_2: update if j >= i
         def inner_loop_2_body(A, j):
+
             def update():
                 A_slice_1 = jnp.where(jnp.arange(n) < i, A[i, :], 0.0)
                 A_slice_2 = jnp.where(jnp.arange(n) < i, A[:, j], 0.0)
                 new_val = A[i, j] - A_slice_1 @ A_slice_2
                 return A.at[i, j].set(new_val)
-            A = lax.cond(j >= i,
-                         lambda _: update(),
-                         lambda _: A,
-                         operand=None)
+
+            A = lax.cond(j >= i, lambda _: update(), lambda _: A, operand=None)
             return A, None
 
-        # Scan over a fixed j range [0, n)
         A, _ = lax.scan(inner_loop_1_body, A, jnp.arange(n))
         A, _ = lax.scan(inner_loop_2_body, A, jnp.arange(n))
         return A, None
 
-    # Scan over i from 0 to n-1 for loop body 1.
     A, _ = lax.scan(outer_loop_body_1, A, jnp.arange(n))
 
-    # === Loop Body 2 ===
-    # For i in 0..n-1, update y[i]:
-    #   y[i] = b[i] - (A[i, :] where indices < i) @ (y where indices < i)
     def loop_body_2_scan(loop_vars, i):
         A, y, b = loop_vars
         A_slice = jnp.where(jnp.arange(n) < i, A[i, :], 0.0)
@@ -133,9 +118,6 @@ def ludcmp_jax_kernel(A, b):
 
     (A, y, b), _ = lax.scan(loop_body_2_scan, (A, y, b), jnp.arange(n))
 
-    # === Loop Body 3 ===
-    # For t in 0..n-1, compute i = n-1-t and update x[i]:
-    #   x[i] = (y[i] - (A[i, :] where indices > i) @ (x where indices > i)) / A[i,i]
     def loop_body_3_scan(loop_vars, t):
         A, x, y = loop_vars
         i = n - 1 - t  # reverse order
@@ -154,12 +136,11 @@ def run_ludcmp_autodiff():
     # Initialize data (polybench mini size)
     N = sizes["mini"]
     A, b = initialize(N)
-    
+
     # Initialize gradient computation data
-    S = np.zeros((1,), dtype=np.float64)
     gradient_A = np.zeros_like(A)
-    gradient___return = np.ones_like(S)
-    
+    gradient___return = np.ones((1, ), dtype=np.float64)
+
     # Define sum reduction for the output
     @dc.program
     def autodiff_kernel(A: dc.float64[N, N], b: dc.float64[N]):
@@ -168,19 +149,17 @@ def run_ludcmp_autodiff():
 
     # Add the backward pass to the SDFG
     sdfg = autodiff_kernel.to_sdfg()
-    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"], autooptimize=False)
+    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"], autooptimize=True)
     sdfg(A, b, N=N, gradient_A=gradient_A, gradient___return=gradient___return)
-    
+
     # Enable float64 support
     jax.config.update("jax_enable_x64", True)
 
     # Numerically validate vs JAX
     jax_grad = jax.jit(jax.grad(ludcmp_jax_kernel, argnums=0))
-    A_jax = np.copy(initialize(N)[0]).astype(np.float64)  # Fresh copy of A
-    b_jax = b.astype(np.float64)
-    S_jax = S.astype(np.float64)
+    A_jax, b_jax = initialize(N)
     jax_grad_A = jax_grad(A_jax, b_jax)
-    np.testing.assert_allclose(gradient_A, jax_grad_A, rtol=1e-5, atol=1e-8)
+    np.testing.assert_allclose(gradient_A, jax_grad_A)
 
 
 def run_ludcmp(device_type: dace.dtypes.DeviceType):
@@ -229,7 +208,7 @@ def test_gpu():
     run_ludcmp(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.daceml
+@pytest.mark.ad
 def test_autodiff():
     run_ludcmp_autodiff()
 

@@ -174,12 +174,12 @@ def resnet_basicblock_np(input, conv1, conv2, conv3):
 
 def conv2d_lax(input, weights):
     # Kernel size, number of input images, and output dimensions.
-    K = weights.shape[0]           # Assuming square kernel of size K x K.
-    N = input.shape[0]             # Batch size.
-    H_out = input.shape[1] - K + 1   # Output height.
-    W_out = input.shape[2] - K + 1   # Output width.
-    C_out = weights.shape[3]       # Number of output channels.
-    
+    K = weights.shape[0]  # Assuming square kernel of size K x K.
+    N = input.shape[0]  # Batch size.
+    H_out = input.shape[1] - K + 1  # Output height.
+    W_out = input.shape[2] - K + 1  # Output width.
+    C_out = weights.shape[3]  # Number of output channels.
+
     # Allocate output array.
     output = jnp.empty((N, H_out, W_out, C_out), dtype=input.dtype)
 
@@ -188,22 +188,14 @@ def conv2d_lax(input, weights):
         # Column update: iterate over output columns.
         def col_update(out, j):
             # Extract a patch from 'input' at the given (i, j) position.
-            patch = lax.dynamic_slice(
-                input, 
-                (0, i, j, 0), 
-                (N, K, K, input.shape[-1])
-            )
+            patch = lax.dynamic_slice(input, (0, i, j, 0), (N, K, K, input.shape[-1]))
             # Expand dims on the patch to broadcast with weights.
             # weights: shape (K, K, in_channels, C_out)
             # patch[..., None] becomes shape (N, K, K, in_channels, 1)
             # We add a new leading dimension to weights to broadcast:
             conv = jnp.sum(patch[..., None] * weights[None, :, :, :], axis=(1, 2, 3))
             # conv now has shape (N, C_out). Update output at (0, i, j, 0).
-            out = lax.dynamic_update_slice(
-                out, 
-                conv[:, None, None, :], 
-                (0, i, j, 0)
-            )
+            out = lax.dynamic_update_slice(out, conv[:, None, None, :], (0, i, j, 0))
             return out, None
 
         out, _ = lax.scan(col_update, out, jnp.arange(W_out))
@@ -212,8 +204,10 @@ def conv2d_lax(input, weights):
     output, _ = lax.scan(row_update, output, jnp.arange(H_out))
     return output
 
+
 def jax_relu(x):
     return jnp.maximum(x, 0)
+
 
 # Batch normalization operator, as used in ResNet
 def jax_batchnorm2d(x, eps=1e-5):
@@ -221,15 +215,11 @@ def jax_batchnorm2d(x, eps=1e-5):
     std = jnp.std(x, axis=0, keepdims=True)
     return (x - mean) / jnp.sqrt(std + eps)
 
-def resnet_jax_kernel(input, conv1, conv2, conv3, S):
+
+def resnet_jax_kernel(input, conv1, conv2, conv3):
     # Pad output of first convolution for second convolution
-    padded = jnp.zeros((input.shape[0], input.shape[1] + 2, input.shape[2] + 2,
-                       conv1.shape[3]), dtype=input.dtype)
-    padded = lax.dynamic_update_slice(
-        padded,
-        conv2d_lax(input, conv1),
-        (0, 1, 1, 0)
-    )
+    padded = jnp.zeros((input.shape[0], input.shape[1] + 2, input.shape[2] + 2, conv1.shape[3]), dtype=input.dtype)
+    padded = lax.dynamic_update_slice(padded, conv2d_lax(input, conv1), (0, 1, 1, 0))
     x = jax_batchnorm2d(padded)
     x = jax_relu(x)
 
@@ -280,47 +270,42 @@ def run_resnet_autodiff():
     # Initialize data (npbench test size)
     N, W, H, C1, C2 = 2, 8, 8, 8, 4
     input, conv1, conv2, conv3 = initialize(N, W, H, C1, C2)
-    
+
     # Initialize gradient computation data
-    S = np.zeros((1,), dtype=np.float32)
     gradient_input = np.zeros_like(input, dtype=np.float32)
-    gradient___return = np.ones_like(S)
-    
+    gradient___return = np.ones((1, ), dtype=np.float32)
+
     # Define sum reduction for the output
     @dc.program
-    def autodiff_kernel(input: dc.float32[N, H, W, C1], conv1: dc.float32[1, 1, C1, C2], 
+    def autodiff_kernel(input: dc.float32[N, H, W, C1], conv1: dc.float32[1, 1, C1, C2],
                         conv2: dc.float32[3, 3, C2, C2], conv3: dc.float32[1, 1, C2, C1]):
         # Pad output of first convolution for second convolution
-        padded = np.ndarray((N, H + 2, W + 2, C2), dtype=np.float32)
-        padded[:] = 0
-        
-        # Use explicit slicing instead of -1 indexing
-        padded[:, 1:H + 1, 1:W + 1, :] = conv2d(input, conv1)
-        x = batchnorm2d(padded)
-        x1 = relu(x)
+        x = resnet_basicblock(input, conv1, conv2, conv3)
+        return np.sum(x)
 
-        x2 = conv2d(x1, conv2)
-        x3 = batchnorm2d(x2)
-        x4 = relu(x3)
-        x5 = conv2d(x4, conv3)
-        x6 = batchnorm2d(x5)
-        x7 = relu(x6 + input)
-        return np.sum(x7)
-    
     # Add the backward pass to the SDFG
     sdfg = autodiff_kernel.to_sdfg()
-    add_backward_pass(sdfg=sdfg, inputs=["input"], outputs=["__return"], autooptimize=False)
-    
-    sdfg(input, conv1, conv2, conv3, N=N, W=W, H=H, C1=C1, C2=C2, 
-         gradient_input=gradient_input, gradient___return=gradient___return)
-    
-    # Enable float32 for JAX to match DaCe consistency
-    jax.config.update("jax_enable_x64", False)
-    
+    add_backward_pass(sdfg=sdfg, inputs=["input"], outputs=["__return"], autooptimize=True)
+
+    sdfg(input,
+         conv1,
+         conv2,
+         conv3,
+         N=N,
+         W=W,
+         H=H,
+         C1=C1,
+         C2=C2,
+         gradient_input=gradient_input,
+         gradient___return=gradient___return)
+
     # Numerically validate vs JAX
     jax_grad = jax.jit(jax.grad(resnet_jax_kernel, argnums=0))
-    jax_grad_input = jax_grad(input, conv1, conv2, conv3, S)
-    np.testing.assert_allclose(gradient_input, jax_grad_input, rtol=1e-4, atol=1e-6)
+    jax_grad_input = jax_grad(input, conv1, conv2, conv3)
+
+    # The tolerance if fairly high with float32 inputs
+    # The same code using float64 works with a 1e-12 tolerance
+    np.testing.assert_allclose(gradient_input, jax_grad_input, atol=1e-2, rtol=1e-2)
 
 
 def test_cpu():
@@ -333,7 +318,7 @@ def test_gpu():
     run_resnet(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.daceml
+@pytest.mark.ad
 def test_autodiff():
     run_resnet_autodiff()
 

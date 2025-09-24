@@ -152,12 +152,12 @@ def lenet5_np(input, conv1, conv1bias, conv2, conv2bias, fc1w, fc1b, fc2w, fc2b,
 
 def conv2d_lax(input, weights):
     # Kernel size, number of input images, and output dimensions.
-    K = weights.shape[0]           # Assuming square kernel of size K x K.
-    N = input.shape[0]             # Batch size.
-    H_out = input.shape[1] - K + 1   # Output height.
-    W_out = input.shape[2] - K + 1   # Output width.
-    C_out = weights.shape[3]       # Number of output channels.
-    
+    K = weights.shape[0]  # Assuming square kernel of size K x K.
+    N = input.shape[0]  # Batch size.
+    H_out = input.shape[1] - K + 1  # Output height.
+    W_out = input.shape[2] - K + 1  # Output width.
+    C_out = weights.shape[3]  # Number of output channels.
+
     # Allocate output array.
     output = jnp.empty((N, H_out, W_out, C_out), dtype=input.dtype)
 
@@ -166,22 +166,14 @@ def conv2d_lax(input, weights):
         # Column update: iterate over output columns.
         def col_update(out, j):
             # Extract a patch from 'input' at the given (i, j) position.
-            patch = lax.dynamic_slice(
-                input, 
-                (0, i, j, 0), 
-                (N, K, K, input.shape[-1])
-            )
+            patch = lax.dynamic_slice(input, (0, i, j, 0), (N, K, K, input.shape[-1]))
             # Expand dims on the patch to broadcast with weights.
             # weights: shape (K, K, in_channels, C_out)
             # patch[..., None] becomes shape (N, K, K, in_channels, 1)
             # We add a new leading dimension to weights to broadcast:
             conv = jnp.sum(patch[..., None] * weights[None, :, :, :], axis=(1, 2, 3))
             # conv now has shape (N, C_out). Update output at (0, i, j, 0).
-            out = lax.dynamic_update_slice(
-                out, 
-                conv[:, None, None, :], 
-                (0, i, j, 0)
-            )
+            out = lax.dynamic_update_slice(out, conv[:, None, None, :], (0, i, j, 0))
             return out, None
 
         out, _ = lax.scan(col_update, out, jnp.arange(W_out))
@@ -190,37 +182,30 @@ def conv2d_lax(input, weights):
     output, _ = lax.scan(row_update, output, jnp.arange(H_out))
     return output
 
+
 def maxpool2d_lax(x):
-    output = jnp.empty(
-        [x.shape[0], x.shape[1] // 2, x.shape[2] // 2, x.shape[3]],
-        dtype=x.dtype)
-    
+    output = jnp.empty([x.shape[0], x.shape[1] // 2, x.shape[2] // 2, x.shape[3]], dtype=x.dtype)
+
     def row_update(output, i):
+
         def col_update(output, j):
-            input_slice = lax.dynamic_slice(
-                x,
-                (0, 2 * i, 2 * j, 0),
-                (x.shape[0], 2, 2, x.shape[3])
-            )
-            output = lax.dynamic_update_slice(
-                output, 
-                jnp.max(input_slice, axis=(1, 2))[:, None, None, :], 
-                (0, i, j, 0)
-            )
+            input_slice = lax.dynamic_slice(x, (0, 2 * i, 2 * j, 0), (x.shape[0], 2, 2, x.shape[3]))
+            output = lax.dynamic_update_slice(output, jnp.max(input_slice, axis=(1, 2))[:, None, None, :], (0, i, j, 0))
             return output, None
 
         output, _ = lax.scan(col_update, output, jnp.arange(x.shape[2] // 2))
         return output, None
-    
+
     output, _ = lax.scan(row_update, output, jnp.arange(x.shape[1] // 2))
 
     return output
 
+
 def jax_relu(x):
     return jnp.maximum(x, 0)
 
-def lenet_jax_kernel(input, conv1, conv1bias, conv2, conv2bias, fc1w, fc1b, fc2w, fc2b,
-           fc3w, fc3b, S):
+
+def lenet_jax_kernel(input, conv1, conv1bias, conv2, conv2bias, fc1w, fc1b, fc2w, fc2b, fc3w, fc3b):
     C_before_fc1 = fc1w.shape[0]
     N = input.shape[0]
     x = jax_relu(conv2d_lax(input, conv1) + conv1bias)
@@ -286,44 +271,46 @@ def run_lenet_autodiff():
     # Initialize data (npbench test size)
     N, H, W = 4, 16, 16
     input, conv1, conv1bias, conv2, conv2bias, fc1w, fc1b, fc2w, fc2b, fc3w, fc3b, C_before_fc1 = initialize(N, H, W)
-    
+
     # Initialize gradient computation data
-    S = np.zeros((1,), dtype=np.float32)
     gradient_input = np.zeros_like(input, dtype=np.float32)
-    gradient___return = np.ones_like(S)
-    
+    gradient___return = np.ones((1, ), dtype=np.float32)
+
     # Define sum reduction for the output
     @dc.program
     def autodiff_kernel(input: dc.float32[N, H, W, 1], conv1: dc.float32[5, 5, 1, 6], conv1bias: dc.float32[6],
                         conv2: dc.float32[5, 5, 6, 16], conv2bias: dc.float32[16], fc1w: dc.float32[C_before_fc1, 120],
-                        fc1b: dc.float32[120], fc2w: dc.float32[120, 84], fc2b: dc.float32[84], 
+                        fc1b: dc.float32[120], fc2w: dc.float32[120, 84], fc2b: dc.float32[84],
                         fc3w: dc.float32[84, 10], fc3b: dc.float32[10]):
-        x1 = relu4(conv2d(input, conv1) + conv1bias)
-        x2 = maxpool2d(x1)
-        x3 = relu4(conv2d(x2, conv2) + conv2bias)
-        x4 = maxpool2d(x3)
-        x5 = np.reshape(x4, (N, C_before_fc1))
-        x6 = relu2(x5 @ fc1w + fc1b)
-        x7 = relu2(x6 @ fc2w + fc2b)
-        result = x7 @ fc3w + fc3b
+        result = lenet5_kernel(input, conv1, conv1bias, conv2, conv2bias, fc1w, fc1b, fc2w, fc2b, fc3w, fc3b)
         return np.sum(result)
-    
+
     # Add the backward pass to the SDFG
     sdfg = autodiff_kernel.to_sdfg()
-    add_backward_pass(sdfg=sdfg, inputs=["input"], outputs=["__return"], autooptimize=False)
-    
-    sdfg(input, conv1, conv1bias, conv2, conv2bias, fc1w, fc1b, fc2w, fc2b, 
-         fc3w, fc3b, N=N, H=H, W=W, C_before_fc1=C_before_fc1, 
-         gradient_input=gradient_input, gradient___return=gradient___return)
-    
-    # Enable float32 for JAX to match DaCe consistency
-    jax.config.update("jax_enable_x64", False)
-    
+    add_backward_pass(sdfg=sdfg, inputs=["input"], outputs=["__return"], autooptimize=True)
+
+    sdfg(input,
+         conv1,
+         conv1bias,
+         conv2,
+         conv2bias,
+         fc1w,
+         fc1b,
+         fc2w,
+         fc2b,
+         fc3w,
+         fc3b,
+         N=N,
+         H=H,
+         W=W,
+         C_before_fc1=C_before_fc1,
+         gradient_input=gradient_input,
+         gradient___return=gradient___return)
+
     # Numerically validate vs JAX
     jax_grad = jax.jit(jax.grad(lenet_jax_kernel, argnums=0))
-    jax_grad_input = jax_grad(input, conv1, conv1bias, conv2, conv2bias, 
-                              fc1w, fc1b, fc2w, fc2b, fc3w, fc3b, S)
-    np.testing.assert_allclose(gradient_input, jax_grad_input, rtol=1e-4, atol=1e-6)
+    jax_grad_input = jax_grad(input, conv1, conv1bias, conv2, conv2bias, fc1w, fc1b, fc2w, fc2b, fc3w, fc3b)
+    np.testing.assert_allclose(gradient_input, jax_grad_input, rtol=1e-6)
 
 
 def test_cpu(monkeypatch):
@@ -338,7 +325,7 @@ def test_gpu():
     run_lenet(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.daceml
+@pytest.mark.ad
 def test_autodiff():
     run_lenet_autodiff()
 

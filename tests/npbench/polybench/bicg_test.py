@@ -34,14 +34,14 @@ def initialize(M, N, datatype=np.float64):
     return A, p, r
 
 
-def bicg_jax_kernel(A, B, D, p, r):
-    B, D = r @ A, A @ p
-    return jnp.sum(D)
-
-
 @dc.program
 def bicg_kernel(A: dc.float64[N, M], p: dc.float64[M], r: dc.float64[N]):
     return r @ A, A @ p
+
+
+def bicg_jax_kernel(A, p, r):
+    B, D = r @ A, A @ p
+    return jnp.sum(D)
 
 
 def run_bicg(device_type: dace.dtypes.DeviceType):
@@ -99,38 +99,31 @@ def run_bicg_autodiff():
     # Initialize data (polybench mini size)
     M, N = sizes["mini"]
     A, p, r = initialize(M, N)
-    
+
     # Initialize gradient computation data
-    S = np.zeros((1,), dtype=np.float64)
-    B = np.zeros((M,), dtype=np.float64)
-    D = np.zeros((N,), dtype=np.float64)
+    B = np.zeros((M, ), dtype=np.float64)
+    D = np.zeros((N, ), dtype=np.float64)
     gradient_A = np.zeros_like(A)
-    gradient___return = np.ones_like(S)
-    
+    gradient___return = np.ones((1, ), dtype=np.float64)
+
     # Define sum reduction for the output
     @dc.program
     def autodiff_kernel(A: dc.float64[N, M], p: dc.float64[M], r: dc.float64[N]):
-        s, q = bicg_kernel(A, p, r)
-        return np.sum(q)
+        B, D = bicg_kernel(A, p, r)
+        return np.sum(D)
 
     # Add the backward pass to the SDFG
     sdfg = autodiff_kernel.to_sdfg()
-    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"], autooptimize=False)
+    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"], autooptimize=True)
     sdfg(A, p, r, M=M, N=N, gradient_A=gradient_A, gradient___return=gradient___return)
-    
+
     # Enable float64 support
     jax.config.update("jax_enable_x64", True)
 
     # Numerically validate vs JAX
     jax_grad = jax.jit(jax.grad(bicg_jax_kernel, argnums=0))
-    A_jax = A.astype(np.float64)
-    B_jax = B.astype(np.float64)
-    D_jax = D.astype(np.float64)
-    p_jax = p.astype(np.float64) 
-    r_jax = r.astype(np.float64)
-    S_jax = S.astype(np.float64)
-    jax_grad_A = jax_grad(A_jax, B_jax, D_jax, p_jax, r_jax)
-    np.testing.assert_allclose(gradient_A, jax_grad_A, rtol=1e-5, atol=1e-8)
+    jax_grad_A = jax_grad(A, p, r)
+    np.testing.assert_allclose(gradient_A, jax_grad_A)
 
 
 def test_cpu():
@@ -142,7 +135,7 @@ def test_gpu():
     run_bicg(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.daceml
+@pytest.mark.ad
 def test_autodiff():
     run_bicg_autodiff()
 

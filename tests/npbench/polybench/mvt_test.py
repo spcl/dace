@@ -86,36 +86,31 @@ def run_mvt_autodiff():
     # Initialize data (polybench mini size)
     N = sizes["mini"]
     x1, x2, y_1, y_2, A = initialize(N)
-    
+
     # Initialize gradient computation data
-    S = np.zeros((1,), dtype=np.float64)
     gradient_A = np.zeros_like(A)
-    gradient___return = np.ones_like(S)
-    
+    gradient___return = np.ones((1, ), dtype=np.float64)
+
     # Define sum reduction for the output
     @dc.program
-    def autodiff_kernel(x1: dc.float64[N], x2: dc.float64[N], y_1: dc.float64[N], y_2: dc.float64[N], A: dc.float64[N, N]):
+    def autodiff_kernel(x1: dc.float64[N], x2: dc.float64[N], y_1: dc.float64[N], y_2: dc.float64[N], A: dc.float64[N,
+                                                                                                                    N]):
         mvt_kernel(x1, x2, y_1, y_2, A)
         return np.sum(x2)
 
     # Add the backward pass to the SDFG
     sdfg = autodiff_kernel.to_sdfg()
-    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"], autooptimize=False)
+    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"], autooptimize=True)
     sdfg(x1, x2, y_1, y_2, A, N=N, gradient_A=gradient_A, gradient___return=gradient___return)
-    
+
     # Enable float64 support
     jax.config.update("jax_enable_x64", True)
 
     # Numerically validate vs JAX
     jax_grad = jax.jit(jax.grad(mvt_jax_kernel, argnums=4))
-    x1_jax = x1.astype(np.float64)
-    x2_jax = x2.astype(np.float64)
-    A_jax = A.astype(np.float64)
-    y_1_jax = y_1.astype(np.float64)
-    y_2_jax = y_2.astype(np.float64)
-    S_jax = S.astype(np.float64)
+    x1_jax, x2_jax, y_1_jax, y_2_jax, A_jax = initialize(N)
     jax_grad_A = jax_grad(x1_jax, x2_jax, y_1_jax, y_2_jax, A_jax)
-    np.testing.assert_allclose(gradient_A, jax_grad_A, rtol=1e-5, atol=1e-8)
+    np.testing.assert_allclose(gradient_A, jax_grad_A)
 
 
 def test_cpu():
@@ -127,7 +122,7 @@ def test_gpu():
     run_mvt(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.daceml
+@pytest.mark.ad
 def test_autodiff():
     run_mvt_autodiff()
 

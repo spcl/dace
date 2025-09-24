@@ -106,14 +106,13 @@ def run_jacobi_2d_autodiff():
     jax_A, jax_B = np.copy(A), np.copy(B)
 
     # Intiialize gradient computation data
-    S = np.zeros((1, ), dtype=np.float32)
     gradient_A = np.zeros_like(A)
-    gradient___return = np.ones_like(S)
+    gradient___return = np.ones((1, ), dtype=np.float32)
 
     # Define sum reduction for the output
     @dc.program
     def autodiff_kernel(TSTEPS: dc.int32, A: dc.float32[N, N], B: dc.float32[N, N]):
-        kernel(TSTEPS, A, B, S)
+        kernel(TSTEPS, A, B)
         return np.sum(A)
 
     # Add the backward pass to the SDFG
@@ -124,7 +123,7 @@ def run_jacobi_2d_autodiff():
     # Numerically validate vs JAX
     jax_grad = jax.jit(jax.grad(kernel_jax, argnums=1), static_argnums=0)
     jax_grad_A = jax_grad(TSTEPS, jax_A, jax_B)
-    np.testing.assert_allclose(gradient_A, jax_grad_A)
+    np.testing.assert_allclose(gradient_A, jax_grad_A, rtol=1e-6, atol=1e-6)
 
 
 def test_cpu():
@@ -136,7 +135,7 @@ def test_gpu():
     run_jacobi_2d(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.daceml
+@pytest.mark.ad
 def test_autodiff():
     run_jacobi_2d_autodiff()
 

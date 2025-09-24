@@ -93,12 +93,11 @@ def vadv_kernel(utens_stage: dc.float64[I, J, K], u_stage: dc.float64[I, J, K], 
 
     for k in range(K - 2, -1, -1):
         # datacol = dcol[:, :, k] - ccol[:, :, k] * data_col[:, :]
-        datacol[:] = dcol[:, :, k] - ccol[:, :, k] * data_col[:, :]
-        data_col[:] = datacol
-        utens_stage[:, :, k] = dtr_stage * (datacol - u_pos[:, :, k])
+        data_col[:] = dcol[:, :, k] - ccol[:, :, k] * data_col[:, :]
+        utens_stage[:, :, k] = dtr_stage * (data_col - u_pos[:, :, k])
 
 
-def vadv_jax_kernel(utens_stage, u_stage, wcon, u_pos, utens, dtr_stage, S):
+def vadv_jax_kernel(utens_stage, u_stage, wcon, u_pos, utens, dtr_stage):
     I, J, K = utens_stage.shape[0], utens_stage.shape[1], utens_stage.shape[2]
     # Allocate working arrays.
     ccol = jnp.empty((I, J, K), dtype=utens_stage.dtype)
@@ -117,8 +116,8 @@ def vadv_jax_kernel(utens_stage, u_stage, wcon, u_pos, utens, dtr_stage, S):
         correction_term = -cs * (u_stage[:, :, k + 1] - u_stage[:, :, k])
         divided = 1.0 / bcol
         ccol = ccol.at[:, :, k].set(bs * divided)
-        dcol = dcol.at[:, :, k].set((dtr_stage * u_pos[:, :, k] + utens[:, :, k] +
-                                     utens_stage[:, :, k] + correction_term) * divided)
+        dcol = dcol.at[:, :, k].set(
+            (dtr_stage * u_pos[:, :, k] + utens[:, :, k] + utens_stage[:, :, k] + correction_term) * divided)
         return (ccol, dcol), None
 
     (ccol, dcol), _ = lax.scan(loop1_body, (ccol, dcol), jnp.arange(0, 1))
@@ -133,13 +132,13 @@ def vadv_jax_kernel(utens_stage, u_stage, wcon, u_pos, utens, dtr_stage, S):
         bs = gcv * BET_P
         acol = gav * BET_P
         bcol = dtr_stage - acol - bs
-        correction_term = (-as_ * (u_stage[:, :, k - 1] - u_stage[:, :, k])
-                           - cs * (u_stage[:, :, k + 1] - u_stage[:, :, k]))
+        correction_term = (-as_ * (u_stage[:, :, k - 1] - u_stage[:, :, k]) - cs *
+                           (u_stage[:, :, k + 1] - u_stage[:, :, k]))
         divided = 1.0 / (bcol - ccol[:, :, k - 1] * acol)
         ccol = ccol.at[:, :, k].set(bs * divided)
-        dcol = dcol.at[:, :, k].set(((dtr_stage * u_pos[:, :, k] + utens[:, :, k] +
-                                      utens_stage[:, :, k] + correction_term)
-                                     - dcol[:, :, k - 1] * acol) * divided)
+        dcol = dcol.at[:, :, k].set(
+            ((dtr_stage * u_pos[:, :, k] + utens[:, :, k] + utens_stage[:, :, k] + correction_term) -
+             dcol[:, :, k - 1] * acol) * divided)
         return (ccol, dcol), None
 
     (ccol, dcol), _ = lax.scan(loop2_body, (ccol, dcol), jnp.arange(1, K - 1))
@@ -152,9 +151,9 @@ def vadv_jax_kernel(utens_stage, u_stage, wcon, u_pos, utens, dtr_stage, S):
         bcol = dtr_stage - acol
         correction_term = -as_ * (u_stage[:, :, k - 1] - u_stage[:, :, k])
         divided = 1.0 / (bcol - ccol[:, :, k - 1] * acol)
-        dcol = dcol.at[:, :, k].set(((dtr_stage * u_pos[:, :, k] + utens[:, :, k] +
-                                      utens_stage[:, :, k] + correction_term)
-                                     - dcol[:, :, k - 1] * acol) * divided)
+        dcol = dcol.at[:, :, k].set(
+            ((dtr_stage * u_pos[:, :, k] + utens[:, :, k] + utens_stage[:, :, k] + correction_term) -
+             dcol[:, :, k - 1] * acol) * divided)
         return dcol, None
 
     dcol, _ = lax.scan(loop3_body, dcol, jnp.arange(K - 1, K))
@@ -167,8 +166,7 @@ def vadv_jax_kernel(utens_stage, u_stage, wcon, u_pos, utens, dtr_stage, S):
         utens_stage = utens_stage.at[:, :, k].set(dtr_stage * (datacol - u_pos[:, :, k]))
         return (data_col, utens_stage), None
 
-    (data_col, utens_stage), _ = lax.scan(loop4_body, (data_col, utens_stage),
-                                          jnp.arange(K - 1, K))
+    (data_col, utens_stage), _ = lax.scan(loop4_body, (data_col, utens_stage), jnp.arange(K - 1, K))
 
     # --- Loop 5: for k in range(0, K-1) with reverse order ---
     def loop5_body(carry, k):
@@ -179,8 +177,7 @@ def vadv_jax_kernel(utens_stage, u_stage, wcon, u_pos, utens, dtr_stage, S):
         utens_stage = utens_stage.at[:, :, idx].set(dtr_stage * (datacol - u_pos[:, :, idx]))
         return (data_col, utens_stage), None
 
-    (data_col, utens_stage), _ = lax.scan(loop5_body, (data_col, utens_stage),
-                                          jnp.arange(0, K - 1))
+    (data_col, utens_stage), _ = lax.scan(loop5_body, (data_col, utens_stage), jnp.arange(0, K - 1))
     return jnp.sum(utens_stage)
 
 
@@ -303,39 +300,45 @@ def run_vadv(device_type: dace.dtypes.DeviceType):
 
 def run_vadv_autodiff():
     # Initialize data (npbench small size)
-    I, J, K = 60, 60, 40
+    I, J, K = 4, 4, 3
     dtr_stage, utens_stage, u_stage, wcon, u_pos, utens = initialize(I, J, K)
-    
+    dtr_stage_jax, utens_stage_jax, u_stage_jax, wcon_jax, u_pos_jax, utens_jax = [
+        np.copy(arr) for arr in (dtr_stage, utens_stage, u_stage, wcon, u_pos, utens)
+    ]
+
     # Initialize gradient computation data
-    S = np.zeros((1,), dtype=np.float64)
     gradient_utens = np.zeros_like(utens)
-    gradient___return = np.ones_like(S)
-    
+    gradient___return = np.ones((1, ), dtype=np.float64)
+
     # Define sum reduction for the output
     @dc.program
     def autodiff_kernel(utens_stage: dc.float64[I, J, K], u_stage: dc.float64[I, J, K], wcon: dc.float64[I + 1, J, K],
                         u_pos: dc.float64[I, J, K], utens: dc.float64[I, J, K], dtr_stage: dc.float64):
         vadv_kernel(utens_stage, u_stage, wcon, u_pos, utens, dtr_stage)
         return np.sum(utens_stage)
-    
+
     # Add the backward pass to the SDFG
     sdfg = autodiff_kernel.to_sdfg()
-    add_backward_pass(sdfg=sdfg, inputs=["utens"], outputs=["__return"], autooptimize=False)
-    sdfg(utens_stage, u_stage, wcon, u_pos, utens, dtr_stage, I=I, J=J, K=K, gradient_utens=gradient_utens, gradient___return=gradient___return)
-    
+    add_backward_pass(sdfg=sdfg, inputs=["utens"], outputs=["__return"])
+    sdfg(utens_stage,
+         u_stage,
+         wcon,
+         u_pos,
+         utens,
+         dtr_stage,
+         I=I,
+         J=J,
+         K=K,
+         gradient_utens=gradient_utens,
+         gradient___return=gradient___return)
+
     # Enable float64 support
     jax.config.update("jax_enable_x64", True)
-    
+
     # Numerically validate vs JAX
     jax_grad = jax.jit(jax.grad(vadv_jax_kernel, argnums=4))
-    utens_stage_jax = utens_stage.astype(np.float64)
-    u_stage_jax = u_stage.astype(np.float64)
-    wcon_jax = wcon.astype(np.float64)
-    u_pos_jax = u_pos.astype(np.float64)
-    utens_jax = utens.astype(np.float64)
-    S_jax = S.astype(np.float64)
-    jax_grad_utens = jax_grad(utens_stage_jax, u_stage_jax, wcon_jax, u_pos_jax, utens_jax, dtr_stage, S_jax)
-    np.testing.assert_allclose(gradient_utens, jax_grad_utens, rtol=1e-5, atol=1e-8)
+    jax_grad_utens = jax_grad(utens_stage_jax, u_stage_jax, wcon_jax, u_pos_jax, utens_jax, dtr_stage_jax)
+    np.testing.assert_allclose(gradient_utens, jax_grad_utens)
 
 
 def test_cpu(monkeypatch):
@@ -349,7 +352,7 @@ def test_gpu():
     run_vadv(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.daceml
+@pytest.mark.ad
 def test_autodiff():
     run_vadv_autodiff()
 

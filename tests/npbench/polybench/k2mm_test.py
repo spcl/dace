@@ -91,9 +91,8 @@ def run_k2mm_autodiff():
     alpha, beta, A, B, C, D = initialize(NI, NJ, NK, NL)
 
     # Intiialize gradient computation data
-    S = np.zeros((1, ), dtype=np.float64)
     gradient_A = np.zeros_like(A)
-    gradient___return = np.ones_like(S)
+    gradient___return = np.ones((1, ), dtype=np.float64)
 
     # Define sum reduction for the output
     @dc.program
@@ -111,7 +110,6 @@ def run_k2mm_autodiff():
          B,
          C,
          D,
-         S,
          NI=NI,
          NJ=NJ,
          NK=NK,
@@ -137,7 +135,7 @@ def test_gpu():
     run_k2mm(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.daceml
+@pytest.mark.ad
 def test_autodiff():
     run_k2mm_autodiff()
 

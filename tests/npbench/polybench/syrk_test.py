@@ -136,12 +136,11 @@ def run_syrk_autodiff():
     # Initialize data (polybench mini size) - note the order swap for this test
     M, N = sizes["mini"]
     alpha, beta, C, A = init_data(N, M)
-    
+
     # Initialize gradient computation data
-    S = np.zeros((1,), dtype=np.float32)
     gradient_A = np.zeros_like(A)
-    gradient___return = np.ones_like(S)
-    
+    gradient___return = np.ones((1, ), dtype=np.float32)
+
     # Define sum reduction for the output
     @dc.program
     def autodiff_kernel(alpha: dc.float32, beta: dc.float32, C: dc.float32[N, N], A: dc.float32[N, M]):
@@ -150,19 +149,14 @@ def run_syrk_autodiff():
 
     # Add the backward pass to the SDFG
     sdfg = autodiff_kernel.to_sdfg()
-    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"], autooptimize=False)
+    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"], autooptimize=True)
     sdfg(alpha=alpha, beta=beta, C=C, A=A, M=M, N=N, gradient_A=gradient_A, gradient___return=gradient___return)
-    
-    # Enable float32 support (matching the original test data type)
-    jax.config.update("jax_enable_x64", False)
 
     # Numerically validate vs JAX
-    jax_grad = jax.jit(jax.grad(syrk_jax_kernel, argnums=3), static_argnums=(0,1))
-    A_jax = A.astype(np.float32)
-    C_jax = np.copy(init_data(N, M)[2]).astype(np.float32)  # Fresh copy of C
-    S_jax = S.astype(np.float32)
+    jax_grad = jax.jit(jax.grad(syrk_jax_kernel, argnums=3), static_argnums=(0, 1))
+    alpha, beta, C_jax, A_jax = init_data(N, M)
     jax_grad_A = jax_grad(alpha, beta, C_jax, A_jax)
-    np.testing.assert_allclose(gradient_A, jax_grad_A, rtol=1e-4, atol=1e-5)
+    np.testing.assert_allclose(gradient_A, jax_grad_A, rtol=1e-6, atol=1e-5)
 
 
 def test_cpu():
@@ -174,7 +168,7 @@ def test_gpu():
     run_syrk(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.daceml
+@pytest.mark.ad
 def test_autodiff():
     run_syrk_autodiff()
 

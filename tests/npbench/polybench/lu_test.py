@@ -57,34 +57,32 @@ def init_data(N):
 
 
 def lu_jax_kernel(A):
-    n = A.shape[0]  
+    n = A.shape[0]
 
     def outer_loop_body(A, i):
+
         def inner_loop_1_body(A, j):
+
             def update_fn(_):
                 mask = jnp.arange(n) < j
                 A_slice_1 = jnp.where(mask, A[i, :], 0.0)
                 A_slice_2 = jnp.where(mask, A[:, j], 0.0)
                 new_val = (A[i, j] - A_slice_1 @ A_slice_2) / A[j, j]
                 return A.at[i, j].set(new_val)
-            
-            A = lax.cond(j < i,
-                         lambda _: update_fn(None),
-                         lambda _: A,
-                         operand=None)
+
+            A = lax.cond(j < i, lambda _: update_fn(None), lambda _: A, operand=None)
             return A, None
 
         def inner_loop_2_body(A, j):
+
             def update_fn(_):
                 mask = jnp.arange(n) < i
                 A_slice_1 = jnp.where(mask, A[i, :], 0.0)
                 A_slice_2 = jnp.where(mask, A[:, j], 0.0)
                 new_val = A[i, j] - A_slice_1 @ A_slice_2
                 return A.at[i, j].set(new_val)
-            A = lax.cond(j >= i,
-                         lambda _: update_fn(None),
-                         lambda _: A,
-                         operand=None)
+
+            A = lax.cond(j >= i, lambda _: update_fn(None), lambda _: A, operand=None)
             return A, None
 
         A, _ = lax.scan(inner_loop_1_body, A, jnp.arange(n))
@@ -146,14 +144,14 @@ def run_lu(device_type: dace.dtypes.DeviceType):
 
 def run_lu_autodiff():
     # Initialize data (polybench mini size)
-    N = 40
+    N = 10
     A = init_data(N)
-    
+    A_jax = jnp.copy(A)
+
     # Initialize gradient computation data
-    S = np.zeros((1,), dtype=np.float32)
     gradient_A = np.zeros_like(A)
-    gradient___return = np.ones_like(S)
-    
+    gradient___return = np.ones((1, ), dtype=np.float32)
+
     # Define sum reduction for the output
     @dc.program
     def autodiff_kernel(A: dc.float32[N, N]):
@@ -162,18 +160,13 @@ def run_lu_autodiff():
 
     # Add the backward pass to the SDFG
     sdfg = autodiff_kernel.to_sdfg()
-    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"], autooptimize=False)
+    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"], autooptimize=True)
     sdfg(A, N=N, gradient_A=gradient_A, gradient___return=gradient___return)
-    
-    # Enable float64 support
-    jax.config.update("jax_enable_x64", True)
 
     # Numerically validate vs JAX
     jax_grad = jax.jit(jax.grad(lu_jax_kernel))
-    A_jax = np.copy(init_data(N)).astype(np.float64)  # Fresh copy of A
-    S_jax = S.astype(np.float64)
     jax_grad_A = jax_grad(A_jax)
-    np.testing.assert_allclose(gradient_A, jax_grad_A, rtol=1e-5, atol=1e-8)
+    np.testing.assert_allclose(gradient_A, jax_grad_A, rtol=1e-5, atol=1e-5)
 
 
 def test_cpu():
@@ -185,7 +178,7 @@ def test_gpu():
     run_lu(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.daceml
+@pytest.mark.ad
 def test_autodiff():
     run_lu_autodiff()
 

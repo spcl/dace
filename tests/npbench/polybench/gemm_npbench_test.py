@@ -43,7 +43,7 @@ def initialize(NI, NJ, NK, datatype=np.float64):
     return alpha, beta, C, A, B
 
 
-def gemm_jax_kernel(alpha, beta, A, B, C, D, S):
+def gemm_jax_kernel(alpha, beta, A, B, C):
     return jnp.sum(alpha * A @ B + beta * C)
 
 
@@ -87,36 +87,30 @@ def run_gemm_autodiff():
     # Initialize data (polybench mini size)
     NI, NJ, NK = sizes["mini"]
     alpha, beta, C, A, B = initialize(NI, NJ, NK)
-    
+
     # Initialize gradient computation data
-    S = np.zeros((1,), dtype=np.float64)
-    D = np.zeros_like(C)  # D should match C dimensions for GEMM
     gradient_A = np.zeros_like(A)
-    gradient___return = np.ones_like(S)
-    
+    gradient___return = np.ones((1, ), dtype=np.float64)
+
     # Define sum reduction for the output
     @dc.program
-    def autodiff_kernel(alpha: dc.float64, beta: dc.float64, C: dc.float64[NI, NJ], A: dc.float64[NI, NK], B: dc.float64[NK, NJ]):
+    def autodiff_kernel(alpha: dc.float64, beta: dc.float64, C: dc.float64[NI, NJ], A: dc.float64[NI, NK],
+                        B: dc.float64[NK, NJ]):
         gemm_kernel(alpha, beta, C, A, B)
         return np.sum(C)
 
     # Add the backward pass to the SDFG
     sdfg = autodiff_kernel.to_sdfg()
-    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"], autooptimize=False)
+    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"], autooptimize=True)
     sdfg(alpha, beta, C, A, B, NI=NI, NJ=NJ, NK=NK, gradient_A=gradient_A, gradient___return=gradient___return)
-    
+
     # Enable float64 support
     jax.config.update("jax_enable_x64", True)
 
     # Numerically validate vs JAX
-    jax_grad = jax.jit(jax.grad(gemm_jax_kernel, argnums=2), static_argnums=(0,1))
-    A_jax = A.astype(np.float64)
-    B_jax = B.astype(np.float64)
-    C_jax = np.copy(initialize(NI, NJ, NK)[2]).astype(np.float64)  # Fresh copy of C
-    D_jax = D.astype(np.float64)
-    S_jax = S.astype(np.float64)
-    jax_grad_A = jax_grad(alpha, beta, A_jax, B_jax, C_jax, D_jax, S_jax)
-    np.testing.assert_allclose(gradient_A, jax_grad_A, rtol=1e-5, atol=1e-8)
+    jax_grad = jax.jit(jax.grad(gemm_jax_kernel, argnums=2), static_argnums=(0, 1))
+    jax_grad_A = jax_grad(alpha, beta, A, B, C)
+    np.testing.assert_allclose(gradient_A, jax_grad_A)
 
 
 def test_cpu():
@@ -128,7 +122,7 @@ def test_gpu():
     run_gemm(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.daceml
+@pytest.mark.ad
 def test_autodiff():
     run_gemm_autodiff()
 

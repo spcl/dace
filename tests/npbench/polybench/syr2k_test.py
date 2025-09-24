@@ -48,13 +48,9 @@ def syr2k_jax_kernel(alpha, beta, C, A, B):
         alpha, beta, C, A, B = carry
 
         # Outer-loop update: scale row i of C by beta, but only for columns < i+1.
-        C_slice = jnp.where(jnp.arange(C.shape[1]) < (i + 1),
-                            C[i, :],
-                            0.0)
+        C_slice = jnp.where(jnp.arange(C.shape[1]) < (i + 1), C[i, :], 0.0)
         C_slice = C_slice * beta
-        C_slice = jnp.where(jnp.arange(C.shape[1]) < (i + 1),
-                            C_slice,
-                            C[i, :])
+        C_slice = jnp.where(jnp.arange(C.shape[1]) < (i + 1), C_slice, C[i, :])
         C = lax.dynamic_update_slice(C, C_slice[None, :], (i, 0))
 
         # Define the inner scan that will update row i of C using index k.
@@ -63,26 +59,18 @@ def syr2k_jax_kernel(alpha, beta, C, A, B):
             alpha_inner, C_inner, A_inner, B_inner = inner_carry
 
             # For A_update_slice and B_update_slice, only entries for indices < i+1 are used.
-            A_update_slice = jnp.where(jnp.arange(A_inner.shape[0]) < (i + 1),
-                                       A_inner[:, k],
-                                       0.0)
+            A_update_slice = jnp.where(jnp.arange(A_inner.shape[0]) < (i + 1), A_inner[:, k], 0.0)
             A_update_slice = A_update_slice * (alpha_inner * B_inner[i, k])
 
-            B_update_slice = jnp.where(jnp.arange(B_inner.shape[0]) < (i + 1),
-                                       B_inner[:, k],
-                                       0.0)
+            B_update_slice = jnp.where(jnp.arange(B_inner.shape[0]) < (i + 1), B_inner[:, k], 0.0)
             B_update_slice = B_update_slice * (alpha_inner * A_inner[i, k])
 
             # Compute an update for row i of C: take its current values (only for indices < i+1)
             # and add the contributions from A_update_slice and B_update_slice.
-            C_update_slice = jnp.where(jnp.arange(C_inner.shape[1]) < (i + 1),
-                                       C_inner[i, :],
-                                       0.0)
+            C_update_slice = jnp.where(jnp.arange(C_inner.shape[1]) < (i + 1), C_inner[i, :], 0.0)
             C_update_slice = C_update_slice + A_update_slice + B_update_slice
             # For indices not less than i+1, keep the original C[i, :].
-            C_update_slice = jnp.where(jnp.arange(C_inner.shape[1]) < (i + 1),
-                                       C_update_slice,
-                                       C_inner[i, :])
+            C_update_slice = jnp.where(jnp.arange(C_inner.shape[1]) < (i + 1), C_update_slice, C_inner[i, :])
             # Update row i of C.
             C_inner = lax.dynamic_update_slice(C_inner, C_update_slice[None, :], (i, 0))
             return (alpha_inner, C_inner, A_inner, B_inner), None
@@ -141,34 +129,31 @@ def run_syr2k_autodiff():
     # Initialize data (polybench mini size)
     M, N = sizes["mini"]
     alpha, beta, C, A, B = initialize(M, N)
-    
+
     # Initialize gradient computation data
-    S = np.zeros((1,), dtype=np.float64)
     gradient_A = np.zeros_like(A)
-    gradient___return = np.ones_like(S)
-    
+    gradient___return = np.ones((1, ), dtype=np.float64)
+
     # Define sum reduction for the output
     @dc.program
-    def autodiff_kernel(alpha: dc.float64, beta: dc.float64, C: dc.float64[N, N], A: dc.float64[N, M], B: dc.float64[N, M]):
+    def autodiff_kernel(alpha: dc.float64, beta: dc.float64, C: dc.float64[N, N], A: dc.float64[N, M],
+                        B: dc.float64[N, M]):
         syr2k_kernel(alpha, beta, C, A, B)
         return np.sum(C)
 
     # Add the backward pass to the SDFG
     sdfg = autodiff_kernel.to_sdfg()
-    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"], autooptimize=False)
-    sdfg(alpha, beta, C, A, B, S, M=M, N=N, gradient_A=gradient_A, gradient___return=gradient___return)
-    
+    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"])
+    sdfg(alpha, beta, C, A, B, M=M, N=N, gradient_A=gradient_A, gradient___return=gradient___return)
+
     # Enable float64 support
     jax.config.update("jax_enable_x64", True)
 
     # Numerically validate vs JAX
     jax_grad = jax.jit(jax.grad(syr2k_jax_kernel, argnums=3), static_argnums=(0, 1))
-    A_jax = A.astype(np.float64)
-    B_jax = B.astype(np.float64)
-    C_jax = np.copy(initialize(M, N)[2]).astype(np.float64)  # Fresh copy of C
-    S_jax = S.astype(np.float64)
+    alpha, beta, C_jax, A_jax, B_jax = initialize(M, N)
     jax_grad_A = jax_grad(alpha, beta, C_jax, A_jax, B_jax)
-    np.testing.assert_allclose(gradient_A, jax_grad_A, rtol=1e-5, atol=1e-8)
+    np.testing.assert_allclose(gradient_A, jax_grad_A)
 
 
 def test_cpu():
@@ -180,7 +165,7 @@ def test_gpu():
     run_syr2k(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.daceml
+@pytest.mark.ad
 def test_autodiff():
     run_syr2k_autodiff()
 

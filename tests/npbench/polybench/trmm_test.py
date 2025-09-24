@@ -41,22 +41,21 @@ def initialize(M, N, datatype=np.float64):
     return alpha, A, B
 
 
-def trmm_jax_kernel(alpha, A, B, S):
-    # Outer scan: iterate over row index i.
+def trmm_jax_kernel(alpha, A, B):
+
     def outer_body(carry, i):
         B = carry
-        # Inner scan: iterate over column index j.
+
         def inner_body(B, j):
-            # Instead of using A[i+1:, i] and B[i+1:, j],
-            # compute a mask that selects entries with indices > i.
+
             mask = (jnp.arange(A.shape[0]) > i).astype(A.dtype)
-            # Compute dot product over the entire column using the mask.
             dot_val = jnp.sum(A[:, i] * B[:, j] * mask)
             new_val = B[i, j] + dot_val
             B = B.at[i, j].set(new_val)
-            return B, jnp.array(0)  # dummy output
+            return B, jnp.array(0)
+
         B, _ = lax.scan(inner_body, B, jnp.arange(B.shape[1]))
-        return B, jnp.array(0)  # dummy output
+        return B, jnp.array(0)
 
     B, _ = lax.scan(outer_body, B, jnp.arange(B.shape[0]))
     B = B * alpha
@@ -110,12 +109,11 @@ def run_trmm_autodiff():
     # Initialize data (polybench mini size)
     M, N = sizes["mini"]
     alpha, A, B = initialize(M, N)
-    
+
     # Initialize gradient computation data
-    S = np.zeros((1,), dtype=np.float64)
     gradient_A = np.zeros_like(A)
-    gradient___return = np.ones_like(S)
-    
+    gradient___return = np.ones((1, ), dtype=np.float64)
+
     # Define sum reduction for the output
     @dc.program
     def autodiff_kernel(alpha: dc.float64, A: dc.float64[M, M], B: dc.float64[M, N]):
@@ -124,19 +122,17 @@ def run_trmm_autodiff():
 
     # Add the backward pass to the SDFG
     sdfg = autodiff_kernel.to_sdfg()
-    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"], autooptimize=False)
+    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"], autooptimize=True)
     sdfg(alpha, A, B, M=M, N=N, gradient_A=gradient_A, gradient___return=gradient___return)
-    
+
     # Enable float64 support
     jax.config.update("jax_enable_x64", True)
 
     # Numerically validate vs JAX
-    jax_grad = jax.jit(jax.grad(trmm_jax_kernel, argnums=1), static_argnums=(0,))
-    A_jax = A.astype(np.float64)
-    B_jax = np.copy(initialize(M, N)[2]).astype(np.float64)  # Fresh copy of B
-    S_jax = S.astype(np.float64)
-    jax_grad_A = jax_grad(alpha, A_jax, B_jax, S_jax)
-    np.testing.assert_allclose(gradient_A, jax_grad_A, rtol=1e-5, atol=1e-8)
+    jax_grad = jax.jit(jax.grad(trmm_jax_kernel, argnums=1), static_argnums=(0, ))
+    alpha, A_jax, B_jax = initialize(M, N)
+    jax_grad_A = jax_grad(alpha, A_jax, B_jax)
+    np.testing.assert_allclose(gradient_A, jax_grad_A)
 
 
 def test_cpu():
@@ -148,7 +144,7 @@ def test_gpu():
     run_trmm(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.daceml
+@pytest.mark.ad
 def test_autodiff():
     run_trmm_autodiff()
 

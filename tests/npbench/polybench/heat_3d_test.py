@@ -43,26 +43,25 @@ def initialize(N, datatype=np.float64):
     return A, B
 
 
-def heat_3d_jax_kernel(TSTEPS, A, B, S):
+def heat_3d_jax_kernel(TSTEPS, A, B):
+
     def time_step(carry, t):
         A, B = carry
-        # First, update B using the current A.
-        B_new = B.at[1:-1, 1:-1, 1:-1].set(
-            0.125 * (A[2:, 1:-1, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[:-2, 1:-1, 1:-1]) +
-            0.125 * (A[1:-1, 2:, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, :-2, 1:-1]) +
-            0.125 * (A[1:-1, 1:-1, 2:] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, 1:-1, :-2]) +
-            A[1:-1, 1:-1, 1:-1]
-        )
-        # Then, update A using the new B.
-        A_new = A.at[1:-1, 1:-1, 1:-1].set(
-            0.125 * (B_new[2:, 1:-1, 1:-1] - 2.0 * B_new[1:-1, 1:-1, 1:-1] + B_new[:-2, 1:-1, 1:-1]) +
-            0.125 * (B_new[1:-1, 2:, 1:-1] - 2.0 * B_new[1:-1, 1:-1, 1:-1] + B_new[1:-1, :-2, 1:-1]) +
-            0.125 * (B_new[1:-1, 1:-1, 2:] - 2.0 * B_new[1:-1, 1:-1, 1:-1] + B_new[1:-1, 1:-1, :-2]) +
-            B_new[1:-1, 1:-1, 1:-1]
-        )
+        B_new = B.at[1:-1, 1:-1,
+                     1:-1].set(0.125 * (A[2:, 1:-1, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[:-2, 1:-1, 1:-1]) + 0.125 *
+                               (A[1:-1, 2:, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, :-2, 1:-1]) + 0.125 *
+                               (A[1:-1, 1:-1, 2:] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, 1:-1, :-2]) +
+                               A[1:-1, 1:-1, 1:-1])
+        A_new = A.at[1:-1, 1:-1,
+                     1:-1].set(0.125 *
+                               (B_new[2:, 1:-1, 1:-1] - 2.0 * B_new[1:-1, 1:-1, 1:-1] + B_new[:-2, 1:-1, 1:-1]) +
+                               0.125 *
+                               (B_new[1:-1, 2:, 1:-1] - 2.0 * B_new[1:-1, 1:-1, 1:-1] + B_new[1:-1, :-2, 1:-1]) +
+                               0.125 *
+                               (B_new[1:-1, 1:-1, 2:] - 2.0 * B_new[1:-1, 1:-1, 1:-1] + B_new[1:-1, 1:-1, :-2]) +
+                               B_new[1:-1, 1:-1, 1:-1])
         return (A_new, B_new), None
 
-    # Scan over time steps from 1 to TSTEPS-1.
     (A_final, B_final), _ = lax.scan(time_step, (A, B), jnp.arange(1, TSTEPS))
     return jnp.sum(A_final)
 
@@ -133,12 +132,11 @@ def run_heat_3d_autodiff():
     # Initialize data (polybench small size)
     TSTEPS, N = sizes["small"]
     A, B = initialize(N)
-    
+
     # Initialize gradient computation data
-    S = np.zeros((1,), dtype=np.float64)
     gradient_A = np.zeros_like(A)
-    gradient___return = np.ones_like(S)
-    
+    gradient___return = np.ones((1, ), dtype=np.float64)
+
     # Define sum reduction for the output
     @dc.program
     def autodiff_kernel(TSTEPS: dc.int64, A: dc.float64[N, N, N], B: dc.float64[N, N, N]):
@@ -147,19 +145,17 @@ def run_heat_3d_autodiff():
 
     # Add the backward pass to the SDFG
     sdfg = autodiff_kernel.to_sdfg()
-    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"], autooptimize=False)
-    sdfg(TSTEPS, A, B, S, N=N, gradient_A=gradient_A, gradient___return=gradient___return)
-    
+    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"])
+    sdfg(TSTEPS, A, B, N=N, gradient_A=gradient_A, gradient___return=gradient___return)
+
     # Enable float64 support
     jax.config.update("jax_enable_x64", True)
 
     # Numerically validate vs JAX
-    jax_grad = jax.jit(jax.grad(heat_3d_jax_kernel, argnums=1), static_argnums=(0,))
-    A_jax = np.copy(initialize(N)[0]).astype(np.float64)  # Fresh copy of A
-    B_jax = np.copy(initialize(N)[1]).astype(np.float64)  # Fresh copy of B
-    S_jax = S.astype(np.float64)
-    jax_grad_A = jax_grad(TSTEPS, A_jax, B_jax, S_jax)
-    np.testing.assert_allclose(gradient_A, jax_grad_A, rtol=1e-5, atol=1e-8)
+    jax_grad = jax.jit(jax.grad(heat_3d_jax_kernel, argnums=1), static_argnums=(0, ))
+    A_jax, B_jax = initialize(N)
+    jax_grad_A = jax_grad(TSTEPS, A_jax, B_jax)
+    np.testing.assert_allclose(gradient_A, jax_grad_A)
 
 
 def test_cpu():
@@ -171,7 +167,7 @@ def test_gpu():
     run_heat_3d(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.daceml
+@pytest.mark.ad
 def test_autodiff():
     run_heat_3d_autodiff()
 
