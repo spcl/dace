@@ -2833,7 +2833,7 @@ def test_map_fusion_multiple_top_level_connections(strict_dataflow: bool):
     ac_after_fusion = {dnode.data for dnode in count_nodes(state, dace.nodes.AccessNode, return_nodes=True)}
     assert len(ac_after_fusion) == 4
     assert "b" not in ac_after_fusion
-    assert initial_ac.copy().remove("b").issubset(ac_after_fusion)
+    assert initial_ac.difference(["b"]).issubset(ac_after_fusion)
 
     compile_and_run_sdfg(sdfg, **res)
     assert all(np.allclose(ref[k], res[k]) for k in ref)
