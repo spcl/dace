@@ -293,7 +293,7 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
         a = a_values.pop() * step
         if a != 0 and any(i[1] % a != 0 for il in read_indices + write_indices for i in il if i is not None):
             return False
-        
+
         # None of the write accesses must be within a conditional block. Reads are ok.
         for st in self.loop.all_states():
             for an in st.data_nodes():
@@ -325,7 +325,6 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
                          for e in st.out_edges(an))
         write_edges = set(e for st in sdfg.all_states() for an in st.data_nodes() if an.data == array_name
                           for e in st.in_edges(an))
-        
 
         # XXX: We use abs() because pystr_to_symbolic() rewrites modulo operations, e.g. (-i + 32) % 31 -> Mod(1 - i, 31), which changes the behavior as C++ modulo differs from Python for negative numbers.
         for edge in read_edges:

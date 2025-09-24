@@ -520,6 +520,7 @@ def test_nested():
     sdfg = tester.to_sdfg(simplify=True)
     check_transformation(sdfg, 0)
 
+
 def test_nested2():
 
     @dace.program
@@ -536,7 +537,6 @@ def test_nested2():
 
     sdfg = tester.to_sdfg(simplify=True)
     check_transformation(sdfg, 0)
-
 
 
 def test_nested_mixed():
@@ -573,6 +573,7 @@ def test_conditional():
     sdfg = tester.to_sdfg(simplify=True)
     check_transformation(sdfg, 0)
 
+
 def test_conditional2():
 
     @dace.program
@@ -588,8 +589,9 @@ def test_conditional2():
     sdfg = tester.to_sdfg(simplify=True)
     check_transformation(sdfg, 1)
 
+
 def test_symbolic_offset():
-    
+
     N = dace.symbol('N')
 
     @dace.program
