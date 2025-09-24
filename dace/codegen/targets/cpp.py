@@ -509,6 +509,10 @@ def emit_memlet_reference_nsdfg(dispatcher: 'TargetDispatcher',
         arg_type = f"{nested_ctype}"  # Equivalent to base_type + '*'
         arg_type = f"{arg_type} const"  # Pointer is const
         arg_value = f"&{parent_ptrname}[{cpp_offset_expr(parent_desc, memlet.subset)}]"
+        # NOTE: Special case: nested data is Array of size 1 and parent data is Scalar/Structure
+        if isinstance(parent_desc, (data.Scalar, data.Structure)):
+            assert data._prod(nested_desc.shape) == 1
+            arg_value = f"&{parent_ptrname}"
         return arg_type, conn_name, arg_value
 
     typedef = conn_type.ctype
