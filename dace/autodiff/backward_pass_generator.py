@@ -110,26 +110,29 @@ def generate_grad_connector_names(existing_connectors: Set[str], forward_connect
 
     return names
 
+
 def extract_indices(expression: str) -> Dict[str, List[str]]:
     """
     Extracts indexed array names and their indices from a given string expression.
     """
     # Regular expression to match the array names and their indices
     pattern = r"(\w+)\[((?:\w+,?\s*)+)\]"
-    
+
     # Find all matches in the given expression
     matches = re.findall(pattern, expression)
-    
+
     # Create a dictionary to store the arrays and their indices
     index_map = {}
     for name, indices in matches:
         # Split indices by comma and remove any extra spaces
         index_list = [index.strip() for index in indices.split(',')]
         index_map[name] = index_list
-    
+
     return index_map
 
-def code_to_exprs(code: str, tasklet: nodes.Tasklet, symbols: List[str]) -> Tuple[Dict[str, sp.Expr], Dict[str, List[str]]]:
+
+def code_to_exprs(code: str, tasklet: nodes.Tasklet,
+                  symbols: List[str]) -> Tuple[Dict[str, sp.Expr], Dict[str, List[str]]]:
     """ Convert a python string to a set of (simplified) symbolic sympy expressions. Currently, this
         supports only code consisting of assignment statements.
 
@@ -147,18 +150,18 @@ def code_to_exprs(code: str, tasklet: nodes.Tasklet, symbols: List[str]) -> Tupl
     symbol_code = ""
     for symb in symbols:
         symbol_code += f"    {symb} = sp.symbols('{symb}')\n"
-    
+
     # We prepare a map of indexed objects and their indices
     indexed_objects_map = extract_indices(code)
-    
+
     # For now, make sure none of the outputs are indexed objects
     assert not any(out in indexed_objects_map for out in outputs)
-    
+
     # Add the definition of indexed objects to the sympy code
     indexed_objects_code = ""
     for conn in inputs + outputs:
-        if (conn in inputs and isinstance(tasklet.in_connectors[conn], dace.dtypes.pointer) or
-           (conn in outputs and isinstance(tasklet.out_connectors[conn], dace.dtypes.pointer))):
+        if (conn in inputs and isinstance(tasklet.in_connectors[conn], dace.dtypes.pointer)
+                or (conn in outputs and isinstance(tasklet.out_connectors[conn], dace.dtypes.pointer))):
             assert conn in indexed_objects_map
             indexed_objects_code += f"    {conn} = sp.IndexedBase('{conn}')\n"
             for idx in indexed_objects_map[conn]:
@@ -956,69 +959,6 @@ class BackwardPassGenerator:
                             clear_out_gradients = True
                             break
 
-        last_read = True
-        # We check if there are any reads in the states after this one
-        # If there any, this means the gradient array will have values and we cannot zero it out by overwrites
-        # since the wcr sum will not be with zeros
-        for state in self.state_order[self.state_order.index(forward_state):]:
-            # TODO: what if there are multiple views of the same state
-            state_view = self.states_view_map[state]
-            for node, parent in state_view.all_nodes_recursive():
-                if isinstance(node, nodes.AccessNode) and node.data == forward_node.data and node != forward_node:
-                    if parent.out_degree(node) > 0:
-                        last_read = False
-                        break
-            if not last_read:
-                break
-
-        # If this if the first read of the data and there is a write to this node then an immediate read of the same values
-        if last_read and forward_state.in_degree(forward_node) == 1 and forward_state.out_degree(forward_node) == 1:
-            # Check that the same range is being read and written to
-            in_edge = forward_state.in_edges(forward_node)[0]
-            out_edge = forward_state.out_edges(forward_node)[0]
-            if in_edge.data.data == out_edge.data.data and in_edge.data.subset == out_edge.data.subset:
-                # Careful with many writes from a map to the same value in an array
-                # For now, avoid doing this with scalars they likely need the wcr
-                # TODO: this should avoid any conflicting writes to the gradients that will require a wcr
-                # Not sure how to do this since this will conflicting reads in the forward pass
-                desc = self.sdfg.arrays[forward_node.data]
-                avoid = True
-                lis = [
-                ]
-                if isinstance(out_edge.dst, nodes.MapEntry) and (len(out_edge.dst.range) != len(desc.shape)
-                                                                 or desc.shape == (1, )) or forward_node.data in lis:
-                    avoid = False
-                if avoid:
-                    # In this case we can avoid clearing out the gradients and just not have a wcr edge on the write edge in the backward pass
-                    # clearing out the gradients is unnecessary because we will write to the same accesses immediatly after
-                    clear_out_gradients = False
-
-                    if forward_node in self.reverse_map:
-                        backward_node = self.reverse_map[forward_node]
-                        assert forward_state in self.reversed_states_map
-                        backward_state: SDFGState = self.reversed_states_map[forward_state]
-                        in_edges = backward_state.in_edges(backward_node)
-
-                        # Remove empty sync edges
-                        in_edges = [e for e in in_edges if not e.data.is_empty()]
-
-                        # There should only be one incoming edge in the backward pass
-                        # Becuase there is only one outgoing edge in the forward pass
-                        assert len(in_edges) == 1
-                        in_edge = in_edges[0]
-
-                        # If the edge exists it should have a wcr by default
-                        if in_edge.data.wcr is not None:
-                            # We remove the wcr from the edge
-                            if "resnet" not in self.sdfg.name and "hdiff" not in self.sdfg.name:
-                                for tree_edge in backward_state.memlet_tree(in_edge):
-                                    tree_edge.data.wcr = None
-                            else:
-                                in_edge.data.wcr = None
-                    else:
-                        # If this edge has already been added in the backward pass, we need to remove the wcr sum from it
-                        # Otherwise we add it to a set to avoid adding a wcr when we create it
-                        self.no_wcr_edges.add(out_edge)
         # We can avoid clearing out the gradients
         if not clear_out_gradients:
             return
@@ -1156,9 +1096,10 @@ class BackwardPassGenerator:
         for node in nodes_list[:]:  # Iterate over a copy of the list to avoid modification issues
             if isinstance(node, nodes.AccessNode):
                 out_edges = state.out_edges(node)
-                if out_edges and all(isinstance(edge.dst, ONNXOp) and edge.dst_conn in attribute_to_remove for edge in out_edges):
+                if out_edges and all(
+                        isinstance(edge.dst, ONNXOp) and edge.dst_conn in attribute_to_remove for edge in out_edges):
                     nodes_list.remove(node)
-                        
+
     def _remove_maps_without_input_connectors(self, nodes_list: List[nodes.Node], state: SDFGState) -> None:
         """
         Remove maps that don't have any input connectors from the nodes_list.
@@ -2171,10 +2112,10 @@ class BackwardPassGenerator:
                 else:
                     # if the input is not an indexed object, we can just use it as is
                     inp_expr = sp.symbols(inp)
-                    
+
                 # symbolically differentiate the output w.r.t inp
                 diff_expr = output_expr.diff(inp_expr)
-                
+
                 # do common subexpression elimination
                 sub_expressions, diff_expr = sp.cse(diff_expr, symbols=symbol_generator)
 
@@ -2229,7 +2170,7 @@ class BackwardPassGenerator:
                 if inp in indexed_objects_map:
                     # We need to have indirection of the output container in the backward
                     output_code = rev_output_grad_name + "[" + " , ".join(indexed_objects_map[inp]) + "]"
-                    
+
                     # We also need to add the indices as connectors so that they are forwarded from the forward pass
                     for idx in indexed_objects_map[inp]:
                         if idx not in rev_inputs:
@@ -2241,8 +2182,8 @@ class BackwardPassGenerator:
                             rev_inputs.add(idx)
                 else:
                     output_code = rev_output_grad_name
-                
-                code += converted_sub_expressions + "\n"    
+
+                code += converted_sub_expressions + "\n"
                 rev_code[output_code].append(converted_code)
 
         for output, exprs in sorted(rev_code.items()):
@@ -2660,7 +2601,7 @@ class BackwardPassGenerator:
                         write_size = edge.data.subset.num_elements()
 
                         # Check if the node doesn't have a wcr
-                        # If it does this is not an overwrite and the gradients should not be cleared
+                        # If it does, this is not an overwrite and the gradients should not be cleared
                         has_wcr = edge.data.wcr is not None
 
                         # Check if the edge is dynamic, this means not all values are overwritten
@@ -2674,13 +2615,9 @@ class BackwardPassGenerator:
 
                             # We need to zero out the same memlet accesses in the backward pass
                             if zero_out:
-                                pass
-                                # DEBUG code
-                                if "tmp" not in node.data and "cavity_flow" in self.sdfg.name:
-                                    # if forward_state.label != "call_40" and "tmp" not in node.data and "cavity_flow" in self.sdfg.name:
-                                    self._zero_out_gradient(forward_state=forward_state,
-                                                            forward_node=node,
-                                                            memlet=edge.data)
+                                self._zero_out_gradient(forward_state=forward_state,
+                                                        forward_node=node,
+                                                        memlet=edge.data)
 
                 # Clean up of isolated nodes
                 # We will have an isolated node if it is not connected to any other node in the state view
@@ -3448,6 +3385,17 @@ class BackwardPassGenerator:
                                                          starting_edge=starting_edge,
                                                          replicated_node=new_recomp_node)
 
+    def _within_nested_sdfg(self, forward_state: SDFGState) -> bool:
+        """
+        Check if the state is within a nested SDFG
+        """
+        parent = forward_state.parent
+        while parent is not None:
+            if isinstance(parent, nodes.NestedSDFG):
+                return True
+            parent = parent.parent
+        return False
+
     def _resolve_overwrite_with_store(self, forward_state: SDFGState, backward_state: SDFGState,
                                       forward_node: nodes.AccessNode, target_node: nodes.Node,
                                       starting_edge: dstate.MultiConnectorEdge):
@@ -3462,6 +3410,16 @@ class BackwardPassGenerator:
                                                      forward_an=forward_node,
                                                      target_node=target_node,
                                                      edge=starting_edge)
+
+        # Check if this data needs to be forwarded through a SDFGs
+        if self.separate_sdfgs or self._within_nested_sdfg(forward_state):
+            # We need to make sure the new array is forwarded to the backward SDFG
+            if new_stored_array.data not in self.backward_input_arrays:
+                # If the data is needed inside a NestedSDFG
+                # This will make sure the added array is correctly forwarded
+                # and an in connector to the NestedSDFG is added
+                data_desc = new_stored_array.desc(forward_state)
+                self.backward_input_arrays[new_stored_array.data] = data_desc
 
         # Connect the new array to the target node
         self._connect_stored_data_to_target(forward_state=forward_state,
@@ -4096,6 +4054,14 @@ class BackwardPassGenerator:
         :param memlets: the set of memlets to use for the edges in the path
         :param forward_sink_edge: the sink edge connecting the original nodes in the forward state
         """
+        # First, if the stored data is not already in the sdfg descriptors, add it
+        # This is the case for NestedSDFGs
+        if source_node.data not in backward_state.sdfg.arrays:
+            # Get the data descriptor from the original sdfg
+            data_desc = copy.deepcopy(self.sdfg.arrays[source_node.data])
+            data_desc.transient = False  # The stored data will be forwarded
+            backward_state.sdfg.add_datadesc(source_node.data, data_desc)
+
         # Get the memlet path from the forward state
         all_edges = self._get_all_path_edges(forward_state, forward_node, starting_edge)
         assert len(all_edges) > 0
@@ -5354,7 +5320,6 @@ class BackwardPassGenerator:
         for outp in outputs:
             if outp in reverse_nsdfg.arrays:
                 reverse_nsdfg.arrays[outp].transient = False
-
         # Create the sdfg and return it
         nsdfg = backward_state.add_nested_sdfg(
             reverse_nsdfg,
