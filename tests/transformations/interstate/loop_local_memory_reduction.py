@@ -125,11 +125,11 @@ def test_multiple_writes():
             b[i] = a[i - 1] + a[i - 2]
             a[i] = c[i] * 2
 
-            b[i+1] = a[i] + a[i - 1]
-            a[i+1] = c[i+1] * 2
+            b[i + 1] = a[i] + a[i - 1]
+            a[i + 1] = c[i + 1] * 2
 
     sdfg = tester.to_sdfg(simplify=True)
-    check_transformation(sdfg, 1)
+    check_transformation(sdfg, 0)
 
 
 def test_gaps():
@@ -165,7 +165,7 @@ def test_interleaved():
             a[i + 2] = c[i] * 2
 
     sdfg = tester.to_sdfg(simplify=True)
-    check_transformation(sdfg, 1)
+    check_transformation(sdfg, 0)
 
 
 def test_nonlinear_index():
@@ -262,15 +262,15 @@ def test_constant_index2():
     @dace.program
     def tester(b: dace.float64[32], c: dace.float64[32]):
         a = dace.define_local([32], dace.float64)
-        for j in range(32):
-            a[j] = j
+        a[3] = 3
+        a[5] = 5
 
         for i in range(2, 32):
             b[i] = a[5] + a[3]
             a[7] = c[i] * 2
 
     sdfg = tester.to_sdfg(simplify=True)
-    check_transformation(sdfg, 0)
+    check_transformation(sdfg, 1)
 
 
 def test_larger_step():
@@ -278,10 +278,10 @@ def test_larger_step():
     @dace.program
     def tester(b: dace.float64[32], c: dace.float64[32]):
         a = dace.define_local([32], dace.float64)
-        for j in range(32):
-            a[j] = j
+        a[0] = 0
+        a[4] = 4
 
-        for i in range(2, 32, 8):
+        for i in range(2, 32, 4):
             b[i] = a[i - 1] + a[i - 2]
             a[i] = c[i] * 2
 
@@ -289,27 +289,59 @@ def test_larger_step():
     check_transformation(sdfg, 0)
 
 
+def test_larger_step2():
+
+    @dace.program
+    def tester(b: dace.float64[32], c: dace.float64[32]):
+        a = dace.define_local([32], dace.float64)
+        a[0] = 0
+        a[4] = 4
+
+        for i in range(8, 32, 4):
+            b[i] = a[i - 4] + a[i - 8]
+            a[i] = c[i] * 2
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_transformation(sdfg, 1)
+
+
 def test_larger_index():
 
     @dace.program
     def tester(b: dace.float64[32], c: dace.float64[32]):
         a = dace.define_local([32], dace.float64)
-        for j in range(32):
-            a[j] = j
+        a[0] = 0
+        a[4] = 4
 
-        for i in range(2, 4):
-            b[i] = a[8 * i - 1] + a[8 * i - 2]
-            a[8 * i] = c[i] * 2
+        for i in range(2, 7):
+            b[i] = a[4 * i - 1] + a[4 * i - 2]
+            a[4 * i] = c[i] * 2
 
     sdfg = tester.to_sdfg(simplify=True)
     check_transformation(sdfg, 0)
+
+
+def test_larger_index2():
+
+    @dace.program
+    def tester(b: dace.float64[32], c: dace.float64[32]):
+        a = dace.define_local([32], dace.float64)
+        a[0] = 0
+        a[4] = 4
+
+        for i in range(2, 7):
+            b[i] = a[4 * i - 4] + a[4 * i - 8]
+            a[4 * i] = c[i] * 2
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_transformation(sdfg, 1)
 
 
 def test_reverse_step():
 
     @dace.program
     def tester(b: dace.float64[32], c: dace.float64[32]):
-        a = dace.define_local([32], dace.float64)
+        a = dace.define_local([64], dace.float64)
         a[31] = 0
         a[30] = 1
 
@@ -318,39 +350,39 @@ def test_reverse_step():
             a[i] = c[i] * 2
 
     sdfg = tester.to_sdfg(simplify=True)
-    check_transformation(sdfg, 0)
-
-
-def test_reverse_step2():
-
-    @dace.program
-    def tester(b: dace.float64[32], c: dace.float64[32]):
-        a = dace.define_local([32], dace.float64)
-        for j in range(32):
-            a[j] = j
-
-        for i in range(31, 2, -1):
-            b[i] = a[i - 1] + a[i - 2]
-            a[i] = c[i] * 2
-
-    sdfg = tester.to_sdfg(simplify=True)
-    check_transformation(sdfg, 0)
+    check_transformation(sdfg, 1)
 
 
 def test_reverse_index():
 
     @dace.program
     def tester(b: dace.float64[32], c: dace.float64[32]):
-        a = dace.define_local([32], dace.float64)
-        for j in range(32):
-            a[j] = j
+        a = dace.define_local([64], dace.float64)
+        a[31] = 0
+        a[30] = 1
 
-        for i in range(2, 32):
-            b[i] = a[-i - 1 + 33] + a[-i - 2 + 33]
-            a[-i + 33] = c[i] * 2
+        for i in range(2, 31):
+            b[i] = a[-i + 31 + 1] + a[-i + 31 + 2]
+            a[-i + 31] = c[i] * 2
 
     sdfg = tester.to_sdfg(simplify=True)
-    check_transformation(sdfg, 0)
+    check_transformation(sdfg, 1)
+
+
+def test_reverse_index_step():
+
+    @dace.program
+    def tester(b: dace.float64[8], c: dace.float64[8]):
+        a = dace.define_local([64], dace.float64)
+        a[7] = 0
+        a[6] = 1
+
+        for i in range(5, 0, -1):
+            b[i] = a[-i + 7 - 1] + a[-i + 7 - 2]
+            a[-i + 7] = c[i] * 2
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_transformation(sdfg, 1)
 
 
 def test_used_values():
@@ -482,11 +514,29 @@ def test_nested():
 
         for i in range(2, 14):
             for j in range(2, 14):
-                b[i, j] = a[i - 1, j + 1] + a[i - 2, j - 1]
-                a[i, j + 2] = c[i] * 2
+                b[i, j] = a[i - 1, j - 1] + a[i - 2, j - 2]
+                a[i, j] = c[i] * 2
 
     sdfg = tester.to_sdfg(simplify=True)
     check_transformation(sdfg, 0)
+
+def test_nested2():
+
+    @dace.program
+    def tester(b: dace.float64[16, 16], c: dace.float64[16]):
+        a = dace.define_local([16, 16], dace.float64)
+        for ii in range(2):
+            for jj in range(4):
+                a[ii, jj] = 0
+
+        for i in range(2, 14):
+            for j in range(2, 14):
+                b[i, j] = a[i - 1, j] + a[i - 2, j - 1]
+                a[i, j + 1] = c[i] * 2
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_transformation(sdfg, 0)
+
 
 
 def test_nested_mixed():
@@ -500,11 +550,46 @@ def test_nested_mixed():
 
         for i in range(2, 14):
             for j in range(2, 14):
-                b[i, j] = a[i - 1, j + 1] + a[j - 1, i - 2]
-                a[i, j + 2] = c[i] * 2
+                b[i, j] = a[i - 1, j - 1] + a[j - 2, i - 2]
+                a[i, j] = c[i] * 2
 
     sdfg = tester.to_sdfg(simplify=True)
     check_transformation(sdfg, 0)
+
+
+def test_conditional():
+
+    @dace.program
+    def tester(b: dace.float64[32], c: dace.float64[32]):
+        a = dace.define_local([32], dace.float64)
+        a[0] = 0
+        a[1] = 1
+        for i in range(2, 32):
+            if i % 2 == 0:
+                b[i] = a[i - 1] + a[i - 2]
+            else:
+                a[i] = c[i] * 2
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_transformation(sdfg, 0)
+
+
+def test_symbolic_offset():
+    
+    N = dace.symbol('N')
+
+    @dace.program
+    def tester(b: dace.float64[32], c: dace.float64[32], d: dace.int64[0]):
+        a = dace.define_local([32], dace.float64)
+        a[0] = 0
+        a[1] = 1
+        N = d[0]
+        for i in range(2, 32):
+            b[i] = a[i - 1 + N] + a[i - 2 + N]
+            a[i + N] = c[i] * 2
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_transformation(sdfg, 1)
 
 
 if __name__ == "__main__":
@@ -523,10 +608,12 @@ if __name__ == "__main__":
     test_constant_index()
     test_constant_index2()
     test_larger_step()
+    test_larger_step2()
     test_larger_index()
+    test_larger_index2()
     test_reverse_step()
-    test_reverse_step2()
     test_reverse_index()
+    test_reverse_index_step()
     test_used_values()
     test_used_values2()
     test_used_values3()
@@ -535,4 +622,7 @@ if __name__ == "__main__":
     test_multidimensional_mixed()
     test_multidimensional_no_overwrite()
     test_nested()
+    test_nested2()
     test_nested_mixed()
+    test_conditional()
+    test_symbolic_offset()
