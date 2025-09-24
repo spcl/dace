@@ -24,16 +24,7 @@ from dace import dtypes
 from dace import symbolic as sym
 from dace.data import Scalar, Structure
 from dace.frontend.fortran import ast_utils
-from dace.frontend.fortran.ast_desugaring import analysis, utils, desugaring, cleanup
-from dace.frontend.fortran.ast_desugaring.cleanup import correct_for_function_calls, \
-    lower_identifier_names, assign_globally_unique_subprogram_names, \
-    assign_globally_unique_variable_names, consolidate_global_data_into_arg
-from dace.frontend.fortran.ast_desugaring.optimizations import inject_const_evals, \
-    make_practically_constant_arguments_constants, exploit_locally_constant_variables, const_eval_nodes
-from dace.frontend.fortran.ast_desugaring.pruning import prune_branches, consolidate_uses, prune_unused_objects, \
-    prune_coarsely, keep_sorted_used_modules
-from dace.frontend.fortran.ast_desugaring.types import SPEC, ConstInjection, ConstTypeInjection
-from dace.frontend.fortran.ast_desugaring.utils import NAMED_STMTS_OF_INTEREST_CLASSES, ENTRY_POINT_OBJECT_CLASSES
+from dace.frontend.fortran.ast_desugaring import analysis, cleanup, desugaring, optimizations, pruning, types, utils
 from dace.frontend.fortran.ast_internal_classes import FNode, Main_Program_Node, Name_Node, Var_Decl_Node
 from dace.frontend.fortran.ast_internal_classes import Program_Node
 from dace.frontend.fortran.ast_utils import children_of_type, mywalk, atmost_one
@@ -2797,14 +2788,14 @@ class AST_translator:
 
 class ParseConfig:
 
-    def __init__(self,
+    def __init__(self,  # noqa: C901
                  sources: Union[None, List[Path], Dict[str, str]] = None,
                  includes: Union[None, List[Path], Dict[str, str]] = None,
-                 entry_points: Union[None, SPEC, List[SPEC]] = None,
-                 config_injections: Optional[List[ConstInjection]] = None,
-                 do_not_prune: Union[None, SPEC, List[SPEC]] = None,
-                 do_not_rename: Union[None, SPEC, List[SPEC]] = None,
-                 make_noop: Union[None, SPEC, List[SPEC]] = None,
+                 entry_points: Union[None, types.SPEC, List[types.SPEC]] = None,
+                 config_injections: Optional[List[types.ConstInjection]] = None,
+                 do_not_prune: Union[None, types.SPEC, List[types.SPEC]] = None,
+                 do_not_rename: Union[None, types.SPEC, List[types.SPEC]] = None,
+                 make_noop: Union[None, types.SPEC, List[types.SPEC]] = None,
                  ast_checkpoint_dir: Union[None, str, Path] = None,
                  consolidate_global_data: bool = True,
                  rename_uniquely: bool = True,
@@ -2839,11 +2830,11 @@ class ParseConfig:
 
         self.sources: Dict[str, str] = sources
         self.includes = includes
-        self.entry_points: List[SPEC] = entry_points
-        self.config_injections: List[ConstInjection] = config_injections or []
-        self.do_not_prune: List[SPEC] = do_not_prune
-        self.do_not_rename: List[SPEC] = do_not_rename
-        self.make_noop: List[SPEC] = make_noop
+        self.entry_points: List[types.SPEC] = entry_points
+        self.config_injections: List[types.ConstInjection] = config_injections or []
+        self.do_not_prune: List[types.SPEC] = do_not_prune
+        self.do_not_rename: List[types.SPEC] = do_not_rename
+        self.make_noop: List[types.SPEC] = make_noop
         self.ast_checkpoint_dir = ast_checkpoint_dir
         self.consolidate_global_data = consolidate_global_data
         self.rename_uniquely = rename_uniquely
@@ -2852,8 +2843,8 @@ class ParseConfig:
     def set_all_possible_entry_points_from(self, ast: f03.Program):
         # Keep all the possible entry points.
         self.entry_points = [
-            analysis.ident_spec(ast_utils.singular(children_of_type(c, NAMED_STMTS_OF_INTEREST_CLASSES)))
-            for c in walk(ast, ENTRY_POINT_OBJECT_CLASSES) if isinstance(c, ENTRY_POINT_OBJECT_CLASSES)
+            analysis.ident_spec(ast_utils.singular(children_of_type(c, utils.NAMED_STMTS_OF_INTEREST_CLASSES)))
+            for c in walk(ast, utils.ENTRY_POINT_OBJECT_CLASSES) if isinstance(c, utils.ENTRY_POINT_OBJECT_CLASSES)
         ]
         self.do_not_prune = list({x for x in self.entry_points + self.do_not_prune})
 
@@ -2881,7 +2872,7 @@ def top_level_objects_map(ast: f03.Program, path: str) -> Dict[str, Base]:
 def create_fparser_ast(cfg: ParseConfig) -> f03.Program:
     parser = ParserFactory().create(std="f2008")
     ast = construct_full_ast(cfg.sources, parser, cfg.entry_points or None)
-    ast = lower_identifier_names(ast)
+    ast = cleanup.lower_identifier_names(ast)
     assert isinstance(ast, f03.Program)
     return ast
 
@@ -2894,7 +2885,7 @@ def create_internal_ast(cfg: ParseConfig) -> Tuple[ast_components.InternalFortra
 
     ast = run_fparser_transformations(ast, cfg)
     ast = f03.Program(get_reader(ast.tofortran()))
-    ast = correct_for_function_calls(ast)
+    ast = cleanup.correct_for_function_calls(ast)
     assert isinstance(ast, f03.Program)
 
     iast = ast_components.InternalFortranAst()
@@ -2909,7 +2900,7 @@ class SDFGConfig:
 
     def __init__(self,
                  entry_points: Dict[str, Union[str, List[str]]],
-                 config_injections: Optional[List[ConstTypeInjection]] = None,
+                 config_injections: Optional[List[types.ConstTypeInjection]] = None,
                  normalize_offsets: bool = True,
                  multiple_sdfgs: bool = False):
         for k in entry_points:
@@ -2939,7 +2930,7 @@ def run_fparser_transformations(ast: f03.Program, cfg: ParseConfig):
 
     if cfg.make_noop:
         print("FParser Op: Making certain functions no-op in the AST...")
-        noop_missed: Set[SPEC] = set(cfg.make_noop)
+        noop_missed: Set[types.SPEC] = set(cfg.make_noop)
         for fn in walk(ast, (f03.Function_Stmt, f03.Subroutine_Stmt)):
             fnspec = analysis.ident_spec(fn)
             if fnspec not in cfg.make_noop:
@@ -2959,7 +2950,7 @@ def run_fparser_transformations(ast: f03.Program, cfg: ParseConfig):
     ast = desugaring.deconstuct_goto_statements(ast)
     # NOTE: We need a coarse pruning as early (and as often) as reasonably possible to make it easier on the operations
     # that rely on full resolution (e.g., builds an alias map). After this pruning, a full resolution is expected.
-    ast = prune_coarsely(ast, cfg.do_not_prune)
+    ast = pruning.prune_coarsely(ast, cfg.do_not_prune)
     _checkpoint_ast(cfg, 'ast_v1.f90', ast)
 
     print("FParser Op: Removing remote indirections from AST...")
@@ -2967,7 +2958,7 @@ def run_fparser_transformations(ast: f03.Program, cfg: ParseConfig):
     ast = cleanup.correct_for_function_calls(ast)
     ast = desugaring.deconstruct_statement_functions(ast)
     ast = desugaring.deconstruct_procedure_calls(ast)
-    ast = prune_coarsely(ast, cfg.do_not_prune)
+    ast = pruning.prune_coarsely(ast, cfg.do_not_prune)
     ast_f90_old, ast_f90_new = None, ast.tofortran()
     while not ast_f90_old or ast_f90_old != ast_f90_new:
         if ast_f90_old:
@@ -2975,14 +2966,14 @@ def run_fparser_transformations(ast: f03.Program, cfg: ParseConfig):
                   f" {len(ast_f90_new.splitlines())} lines. Attempting further pruning...")
         else:
             print(f"FParser Op: AST-size is {len(ast_f90_new.splitlines())} lines. Attempting pruning...")
-        ast = correct_for_function_calls(ast)
+        ast = cleanup.correct_for_function_calls(ast)
         ast = desugaring.deconstruct_interface_calls(ast)
-        ast = prune_coarsely(ast, cfg.do_not_prune)
+        ast = pruning.prune_coarsely(ast, cfg.do_not_prune)
         ast_f90_old, ast_f90_new = ast_f90_new, ast.tofortran()
     if walk(ast, f03.Interface_Stmt):
         _checkpoint_ast(cfg, 'ast_v1.error.f90', ast)
         raise RuntimeError(f"Could not remove all the interfaces from AST")
-    ast = correct_for_function_calls(ast)
+    ast = cleanup.correct_for_function_calls(ast)
     _checkpoint_ast(cfg, 'ast_v2.f90', ast)
 
     ast_f90_old, ast_f90_new = None, ast.tofortran()
@@ -2994,22 +2985,22 @@ def run_fparser_transformations(ast: f03.Program, cfg: ParseConfig):
             print(f"FParser Op: AST-size is {len(ast_f90_new.splitlines())} lines. Attempting pruning...")
 
         print("FParser Op: Coarsely pruning the AST...")
-        ast = prune_coarsely(ast, cfg.do_not_prune)
+        ast = pruning.prune_coarsely(ast, cfg.do_not_prune)
 
         print("FParser Op: Inject configs...")
-        ast = inject_const_evals(ast, cfg.config_injections)
+        ast = optimizations.inject_const_evals(ast, cfg.config_injections)
         print("FParser Op: Fix arguments...")
         # Fix the practically constant arguments, just in case.
-        ast = make_practically_constant_arguments_constants(ast, cfg.entry_points)
+        ast = optimizations.make_practically_constant_arguments_constants(ast, cfg.entry_points)
         print("FParser Op: Fix local vars...")
         # Fix the locally constant variables, just in case.
-        ast = exploit_locally_constant_variables(ast)
+        ast = optimizations.exploit_locally_constant_variables(ast)
 
         print("FParser Op: Pruning...")
-        ast = const_eval_nodes(ast)
-        ast = prune_branches(ast)
-        ast = prune_unused_objects(ast, cfg.do_not_prune)
-        ast = consolidate_uses(ast)
+        ast = optimizations.const_eval_nodes(ast)
+        ast = pruning.prune_branches(ast)
+        ast = pruning.prune_unused_objects(ast, cfg.do_not_prune)
+        ast = pruning.consolidate_uses(ast)
 
         ast_f90_old, ast_f90_new = ast_f90_new, ast.tofortran()
     print(f"FParser Op: AST-size settled at {len(ast_f90_new.splitlines())} lines.")
@@ -3017,15 +3008,15 @@ def run_fparser_transformations(ast: f03.Program, cfg: ParseConfig):
 
     if cfg.consolidate_global_data:
         print("FParser Op: Consolidating the global variables of the AST...")
-        ast = consolidate_global_data_into_arg(ast)
-        ast = prune_coarsely(ast, cfg.do_not_prune)
+        ast = cleanup.consolidate_global_data_into_arg(ast)
+        ast = pruning.prune_coarsely(ast, cfg.do_not_prune)
         _checkpoint_ast(cfg, 'ast_v4.f90', ast)
 
     if cfg.rename_uniquely:
         print("FParser Op: Rename uniquely...")
-        ast = assign_globally_unique_subprogram_names(ast, set(cfg.do_not_rename))
-        ast = assign_globally_unique_variable_names(ast, set(cfg.do_not_rename))
-        ast = consolidate_uses(ast)
+        ast = cleanup.assign_globally_unique_subprogram_names(ast, set(cfg.do_not_rename))
+        ast = cleanup.assign_globally_unique_variable_names(ast, set(cfg.do_not_rename))
+        ast = pruning.consolidate_uses(ast)
         _checkpoint_ast(cfg, 'ast_v5.f90', ast)
 
     return ast
@@ -3101,7 +3092,7 @@ def run_ast_transformations(own_ast: ast_components.InternalFortranAst,
     array_dims_info = ast_transforms.ArrayDimensionSymbolsMapper()
     array_dims_info.visit(program)
     program = ast_transforms.ArrayDimensionConfigInjector(
-        array_dims_info, [ci for ci in cfg.config_injections if isinstance(ci, ConstTypeInjection)]).visit(program)
+        array_dims_info, [ci for ci in cfg.config_injections if isinstance(ci, types.ConstTypeInjection)]).visit(program)
 
     program = ast_transforms.ParDeclNonContigArrayExpander(program).visit(program)
     program = ast_transforms.TypeInference(program, assert_voids=False).visit(program)
@@ -3220,7 +3211,7 @@ def create_sdfg_from_internal_ast(own_ast: ast_components.InternalFortranAst, pr
 def create_singular_sdfg_from_string(sources: Union[str, Dict[str, str]],
                                      entry_point: str,
                                      normalize_offsets: bool = True,
-                                     config_injections: Optional[List[ConstTypeInjection]] = None) -> SDFG:
+                                     config_injections: Optional[List[types.ConstTypeInjection]] = None) -> SDFG:
     if isinstance(sources, str):
         # Allow passing a single file's content.
         sources = {'main.f90': sources}
@@ -3328,7 +3319,7 @@ def _get_toplevel_objects(path_f90: Tuple[str, str], parser, sources) -> Dict[st
         return {}
 
 
-def construct_full_ast(sources: Dict[str, str], parser, entry_points: Optional[Iterable[SPEC]] = None) -> f03.Program:
+def construct_full_ast(sources: Dict[str, str], parser, entry_points: Optional[Iterable[types.SPEC]] = None) -> f03.Program:
     tops = {}
     for path, f90 in sources.items():
         ctops = _get_toplevel_objects((path, f90), parser=parser, sources=sources)
@@ -3341,7 +3332,7 @@ def construct_full_ast(sources: Dict[str, str], parser, entry_points: Optional[I
     for k, v in tops.items():
         utils.append_children(ast, v)
 
-    ast = keep_sorted_used_modules(ast, entry_points)
+    ast = pruning.keep_sorted_used_modules(ast, entry_points)
     return ast
 
 
@@ -3355,7 +3346,7 @@ def name_and_rename_dict_creator(parse_order: list, dep_graph: nx.DiGraph) \
         names = []
         for j in edges:
             list_dict = dep_graph.get_edge_data(j[0], j[1])
-            if (list_dict['obj_list'] is not None):
+            if list_dict['obj_list'] is not None:
                 for k in list_dict['obj_list']:
                     if not k.__class__.__name__ == "Name":
                         if k.__class__.__name__ == "Rename":
