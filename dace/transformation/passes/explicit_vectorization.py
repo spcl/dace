@@ -672,7 +672,9 @@ class ExplicitVectorization(ppl.Pass):
                     nested_sdfg: dace.nodes.NestedSDFG = node
                     parent_scopes = self._get_all_parent_scopes(state, node)
                     if len(parent_scopes) > 0:
-                        num_vectorized += self._vectorize_sdfg(sdfg=nested_sdfg.sdfg, has_parent_map=True, num_vectorized=num_vectorized)
+                        num_vectorized += self._vectorize_sdfg(sdfg=nested_sdfg.sdfg,
+                                                               has_parent_map=True,
+                                                               num_vectorized=num_vectorized)
 
         sdfg.append_global_code(cpp_code=self.global_code, location=self.global_code_location)
         return None

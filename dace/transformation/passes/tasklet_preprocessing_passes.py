@@ -36,6 +36,7 @@ class PowToMulExpander(ast.NodeTransformer):
 
 
 class DaceCastRemover(ast.NodeTransformer):
+
     def __init__(self, call_name: str):
         self.call_name = call_name
 
@@ -79,11 +80,13 @@ def _remove_dace_float_casts(src):
     ast.fix_missing_locations(tree)
     return ast.unparse(tree)
 
+
 def _remove_dace_int_casts(src):
     tree = ast.parse(src)
     tree = DaceCastRemover(call_name="int").visit(tree)
     ast.fix_missing_locations(tree)
     return ast.unparse(tree)
+
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
@@ -133,6 +136,7 @@ class RemoveFPTypeCasts(ppl.Pass):
                     new_ast_str = _remove_dace_float_casts(ast_str)
                     if new_ast_str != ast_str:
                         node.code = CodeBlock(new_ast_str, language=dace.Language.Python)
+
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
