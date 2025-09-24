@@ -522,6 +522,7 @@ def emit_memlet_reference_nsdfg(dispatcher: 'TargetDispatcher',
         # NOTE: Special case: nested data is Array of size 1 and parent data is Scalar/Structure
         if isinstance(parent_desc, (data.Scalar, data.Structure)):
             assert data._prod(nested_desc.shape) == 1
+            arg_type = f"const {arg_type}"  # Data is const too
             arg_value = f"&{parent_ptrname}"
         if nested_desc.dtype != parent_desc.dtype:
             arg_value = f"({nested_ctype})({arg_value})"
