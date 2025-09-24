@@ -309,3 +309,12 @@ end subroutine fun
           },
           has_empty_attr={'function_definitions', 'placeholders', 'placeholders_offsets'})
     m.check(prog)
+
+
+if __name__ == '__main__':
+    test_minimal()
+    test_standalone_subroutines()
+    test_subroutines_from_module()
+    test_subroutine_with_local_variable()
+    test_subroutine_contains_function()
+    test_module_contains_types()
