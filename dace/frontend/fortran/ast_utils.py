@@ -927,7 +927,6 @@ def iter_child_nodes(node: ast_internal_classes.FNode):
     """
 
     for name, field in iter_fields(node):
-        # print("NASME:",name)
         if isinstance(field, ast_internal_classes.FNode):
             yield field
         elif isinstance(field, list):
