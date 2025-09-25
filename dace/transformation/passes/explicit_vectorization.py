@@ -231,7 +231,8 @@ class ExplicitVectorization(ppl.Pass):
             # Need to check that all tasklets within the map are vectorizable
             nodes = state.all_nodes_between(new_inner_map, state.exit_node(new_inner_map))
             assert all(
-                self._is_vectorizable(state, node) for node in nodes if isinstance(node, dace.nodes.Tasklet)
+                {self._is_vectorizable(state, node)
+                 for node in nodes if isinstance(node, dace.nodes.Tasklet)}
             ), f"All tasklets within maps need to be vectorizable. This means all inputs / outputs of the maps need to be arrays"
 
             # Updates memlets from [k, i] to [k, i:i+4]
@@ -388,7 +389,7 @@ class ExplicitVectorization(ppl.Pass):
                 if isinstance(in_edge.src, dace.nodes.AccessNode):
                     input_types.add(type(state.sdfg.arrays[in_edge.src.data]))
                 else:
-                    raise Exception("Unsupported Type")
+                    raise Exception(f"Unsupported Type for in_edge.src got type {type(in_edge.src)}, need AccessNode")
             if not isinstance(in_edge.src, dace.nodes.MapEntry):
                 in_edges += state.in_edges(in_edge.src)
             else:
@@ -396,18 +397,19 @@ class ExplicitVectorization(ppl.Pass):
         while out_edges:
             out_edge = out_edges.pop()
             if state.out_degree(out_edge.dst) == 0:
-                output_types.add(type(state.sdfg.arrays[out_edge.dst.data]))
-            else:
-                raise Exception("Unsupported Type")
+                if isinstance(out_edge.dst, dace.nodes.AccessNode):
+                    output_types.add(type(state.sdfg.arrays[out_edge.dst.data]))
+                else:
+                    raise Exception(f"Unsupported Type for out_edge.dst got type {type(out_edge.dst)}, need AccessNode")
             if not isinstance(out_edge.dst, dace.nodes.MapExit):
                 out_edges = state.out_edges(out_edge.dst)
             else:
                 output_types.add(type(state.sdfg.arrays[out_edge.data.data]))
 
-        vectorizable = (all({isinstance(itype, dace.data.Array)
-                             for itype in input_types})
-                        and all({isinstance(otype, dace.data.Array)
-                                 for otype in output_types}))
+        vectorizable = (all({isinstance(itype, dace.data.Array) or itype == dace.data.Array
+                             for itype in input_types}) and
+                        all({isinstance(otype, dace.data.Array) or otype == dace.data.Array
+                             for otype in output_types}))
         self._tasklet_vectorizable_map[node] = vectorizable
         return vectorizable
 
@@ -422,9 +424,17 @@ class ExplicitVectorization(ppl.Pass):
                 if len(node.in_connectors) == 1 and len(node.out_connectors) == 1:
                     in_conn = next(iter(node.in_connectors.keys()))
                     out_conn = next(iter(node.out_connectors.keys()))
-                    if node.code.as_string == f"{out_conn} = {in_conn};" or node.code.as_string == f"{out_conn} = {in_conn}":
-                        op = "="
+                    has_constant = False
+                    constant = None
+                    try:
+                        constant = self._extract_constant(node.code.as_string)
+                        has_constant = True
+                    except Exception as e:
+                        pass
+                    is_assignment = node.code.as_string == f"{out_conn} = {in_conn};" or node.code.as_string == f"{out_conn} = {in_conn}"
+                    if is_assignment:
                         rhs1 = list(node.in_connectors.keys())[0]
+                        op = "="
                         lhs = next(iter(node.out_connectors.keys()))
                         node.code = properties.CodeBlock(code=self._get_vector_templates(rhs1=rhs1,
                                                                                          rhs2=None,
@@ -433,17 +443,28 @@ class ExplicitVectorization(ppl.Pass):
                                                                                          op=op),
                                                          language=dace.Language.CPP)
                     else:
-                        op = self._extract_single_op(node.code.as_string)
-                        op = f"c{op}"
-                        rhs1 = list(node.in_connectors.keys())[0]
-                        lhs = next(iter(node.out_connectors.keys()))
-                        constant = self._extract_constant(node.code.as_string)
-                        node.code = properties.CodeBlock(code=self._get_vector_templates(rhs1=rhs1,
-                                                                                         rhs2=None,
-                                                                                         constant=constant,
-                                                                                         lhs=lhs,
-                                                                                         op=op),
-                                                         language=dace.Language.CPP)
+                        if has_constant:
+                            op = self._extract_single_op(node.code.as_string)
+                            op = f"c{op}"
+                            rhs1 = list(node.in_connectors.keys())[0]
+                            lhs = next(iter(node.out_connectors.keys()))
+                            node.code = properties.CodeBlock(code=self._get_vector_templates(rhs1=rhs1,
+                                                                                             rhs2=None,
+                                                                                             constant=constant,
+                                                                                             lhs=lhs,
+                                                                                             op=op),
+                                                             language=dace.Language.CPP)
+                        else:
+                            op = self._extract_single_op(node.code.as_string)
+                            rhs1 = list(node.in_connectors.keys())[0]
+                            rhs2 = rhs1
+                            lhs = next(iter(node.out_connectors.keys()))
+                            node.code = properties.CodeBlock(code=self._get_vector_templates(rhs1=rhs1,
+                                                                                             rhs2=rhs2,
+                                                                                             constant=None,
+                                                                                             lhs=lhs,
+                                                                                             op=op),
+                                                             language=dace.Language.CPP)
                 else:
                     assert len(node.in_connectors) == 2 or len(
                         node.in_connectors
@@ -666,6 +687,7 @@ class ExplicitVectorization(ppl.Pass):
         return found
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Set[str]]]:
+        sdfg.save("begin.sdfg")
         self._stride_type = self._check_stride(sdfg)
         self._check_last_dim_of_map_is_contigupus_access(sdfg)
 
@@ -740,4 +762,5 @@ class ExplicitVectorization(ppl.Pass):
                             "If pipeline has been called verify why InlineSDFG failed, otherwise call InlineSDFG")
 
         sdfg.append_global_code(cpp_code=self.global_code, location=self.global_code_location)
+        sdfg.save("done.sdfg")
         return None

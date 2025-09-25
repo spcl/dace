@@ -16,7 +16,7 @@ def vadds_gpu(A: dace.float64[N, N] @ dace.dtypes.StorageType.GPU_Global,
     for i, j in dace.map[0:N, 0:N] @ dace.dtypes.ScheduleType.GPU_Device:
         A[i, j] = A[i, j] + B[i, j]
     for i, j in dace.map[0:N, 0:N] @ dace.dtypes.ScheduleType.GPU_Device:
-        B[i, j] = 3 * B[i, j] + 2.0
+        B[i, j] = 3 * B[i, j]**2.0 + 2.0
 
 
 @dace.program
@@ -24,7 +24,7 @@ def vadds_cpu(A: dace.float64[N, N], B: dace.float64[N, N]):
     for i, j in dace.map[0:N, 0:N]:
         A[i, j] = A[i, j] + B[i, j]
     for i, j in dace.map[0:N, 0:N]:
-        B[i, j] = 3 * B[i, j] + 2.0
+        B[i, j] = 3 * B[i, j]**2.0 + 2.0
 
 
 @dace.program
@@ -161,5 +161,5 @@ def test_nested_sdfg():
 
 if __name__ == "__main__":
     #test_simple()
-    # test_simple_cpu()
-    test_nested_sdfg()
+    test_simple_cpu()
+    #test_nested_sdfg()

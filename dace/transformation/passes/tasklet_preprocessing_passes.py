@@ -20,14 +20,24 @@ class PowToMulExpander(ast.NodeTransformer):
     def visit_BinOp(self, node):
         self.generic_visit(node)  # first rewrite children
 
-        # Match "var ** integer"
-        if isinstance(node.op, ast.Pow) and isinstance(node.right, ast.Constant) and isinstance(node.right.value, int):
-            n = node.right.value
+        # Match "var ** int_like"
+        if isinstance(node.op, ast.Pow) and isinstance(node.right, ast.Constant):
+            val = node.right.value
+
+            # Accept ints directly
+            if isinstance(val, int):
+                n = val
+            # Accept floats that are exactly whole numbers (e.g. 3.0)
+            elif isinstance(val, float) and val.is_integer():
+                n = int(val)
+            else:
+                return node  # not integer-like → leave unchanged
+
             if n > 1:
-                # Create x * x * ... * x (n times)
+                # Expand: x * x * ... * x
                 new_node = node.left
                 for _ in range(n - 1):
-                    new_node = ast.BinOp(left=ast.copy_location(ast.fix_missing_locations(new_node), node.left),
+                    new_node = ast.BinOp(left=ast.copy_location(new_node, node.left),
                                          op=ast.Mult(),
                                          right=ast.copy_location(ast.fix_missing_locations(node.left), node.left))
                 return ast.copy_location(new_node, node)
