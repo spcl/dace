@@ -753,9 +753,7 @@ class AST_translator:
                                    transient=transient)
 
     def write2sdfg(self, node: ast_internal_classes.Write_Stmt_Node, sdfg: SDFG, cfg: ControlFlowRegion):
-        # TODO implement
-        print("Uh oh")
-        # raise NotImplementedError("Fortran write statements are not implemented yet")
+        raise NotImplementedError("Fortran write statements are not implemented yet")
 
     def ifstmt2sdfg(self, node: ast_internal_classes.If_Stmt_Node, sdfg: SDFG, cfg: ControlFlowRegion):
         """
@@ -1046,10 +1044,9 @@ class AST_translator:
         if not (
             (len(variables_in_call) == len(parameters)) or
             (len(variables_in_call) == len(parameters) + 1 and not isinstance(node.type, ast_internal_classes.Void))):
-            print("Subroutine", node.name.name)
-            print('Variables in call', len(variables_in_call))
-            print('Parameters', len(parameters))
-            raise ValueError("number of parameters does not match the function signature")
+            raise ValueError(
+                f"number of parameters does not match the function signature: {node.name.name}\n Variables in call: {len(variables_in_call)}\n Parameters: {len(parameters)}"
+            )
 
         # creating new arrays for nested sdfg
         ins_in_new_sdfg = []
@@ -1322,19 +1319,11 @@ class AST_translator:
                                            offset=array_in_global.offset)
         # self.temporary_ins[new_sdfg] = ins_in_new_sdfg
         # self.temporary_outs[new_sdfg] = outs_in_new_sdfg
-        all_symbols = new_sdfg.free_symbols
-        missing_symbols = [s for s in all_symbols if s not in sym_dict]
-        for i in missing_symbols:
-            if i in sdfg.arrays:
-                # sym_dict[i] = i
-                print("This is missing on the nested sdfg bbut not force adding symbol to nested sdfg: ", i)
-            else:
-                print("Symbol not found in sdfg arrays: ", i)
         memlet_skip = []
         new_sdfg.parent_sdfg = sdfg
         self.temporary_sym_dict[new_sdfg.name] = sym_dict
         self.temporary_link_to_parent[new_sdfg.name] = substate
-        if self.multiple_sdfgs == False:
+        if not self.multiple_sdfgs:
             if node.execution_part is not None:
                 if node.specification_part is not None and node.specification_part.uses is not None:
                     for j in node.specification_part.uses:
@@ -1719,9 +1708,7 @@ class AST_translator:
         else:
             shape = array.shape
             offset = array.offset
-            strides = array.strides
             dtype = array.dtype
-            print(f"Array: {local_name.name} shape: {shape}")
             if len(shape) != len(local_shape):
                 is_scalar = (len(shape) == 0) or (len(shape) == 1 and shape[0] == 1)
                 is_local_scalar = (len(local_shape) == 0) or (len(local_shape) == 1 and local_shape[0] == 1)
@@ -1925,7 +1912,6 @@ class AST_translator:
 
         # this can be an array slice or a derived type object member slice
         elif isinstance(variable_in_calling_context, ast_internal_classes.Array_Subscript_Node):
-            print("Array Subscript node")
             shape, offsets, strides, subset = self.compute_array_shape(variable_in_calling_context, sdfg, array)
             offsets_zero = [0] * len(offsets)
             memlet = Memlet(f'{sdfg_name}[{subset}]')
@@ -1959,16 +1945,13 @@ class AST_translator:
             if local_shape != shape and (not (is_scalar and is_local_scalar)):
                 # we must add an extra view reshaping the access to the local shape
                 if len(shape) == len(local_shape):
-                    print(
-                        "Shapes are not equal, but the same size. We hope that the symbolic sizes evaluate to the same values"
-                    )
+                    # FIXME: Shapes are not equal, but the same size. We hope that the symbolic sizes evaluate to the same values
                     recompute_strides = False
                     for i, local in enumerate(local_shape):
                         if not (hasattr(local, "name")):
                             continue
                         if local.name.startswith("__f2dace"):
                             local_shape[i] = shape[i]
-                            print(f"replacing local shape: {local_shape[i]}")
                             local_offsets[i] = offsets[i]
                             recompute_strides = True
                     if recompute_strides:
@@ -2008,7 +1991,6 @@ class AST_translator:
         # this is an access to a (potentially nested) derived type object member
         elif isinstance(variable_in_calling_context, ast_internal_classes.Data_Ref_Node):
             self.struct_view_count = self.struct_view_count + 1
-            print("Data Ref node")
             intermediate_step = variable_in_calling_context
             top_structure_name = self.name_mapping[sdfg][ast_utils.get_name(variable_in_calling_context.parent_ref)]
             top_structure = sdfg.arrays[top_structure_name]
@@ -2058,7 +2040,6 @@ class AST_translator:
                         return True, [sdfg_name, last_read, last_written, variable_in_calling_context]
                 elif isinstance(member, ast_internal_classes.Array_Subscript_Node):
 
-                    print("Array Subscript node in Data Ref as last level")
                     array = current_structure.members[ast_utils.get_name(member)]
                     shape, offsets, strides, subset = self.compute_array_shape(member, sdfg, array)
 
@@ -2104,12 +2085,9 @@ class AST_translator:
                         is_scalar = (len(shape) == 0) or (len(shape) == 1 and shape[0] == 1)
                         is_local_scalar = (len(local_shape) == 0) or (len(local_shape) == 1 and local_shape[0] == 1)
                         if local_shape != shape and (not (is_scalar and is_local_scalar)):
-                            if len(shape) == len(local_shape):
-                                print(
-                                    "Shapes are not equal, but the same size. We hope that the symbolic sizes evaluate to the same values"
-                                )
-                            else:
+                            if len(shape) != len(local_shape):
                                 raise NotImplementedError("Local shape not the same as outside shape")
+                            # FIXME: Else, shapes are not equal, but the same size. We hope that the symbolic sizes evaluate to the same values
                         shape, strides = self.fix_shapes_before_adding_nested(sdfg, new_sdfg, shape, strides)
                         new_sdfg.add_array(self.name_mapping[new_sdfg][local_name.name],
                                            shape,
@@ -2680,7 +2658,6 @@ class AST_translator:
                         self.temporary_sym_dict[new_sdfg.name]["sym_" + s.name] = s.name
                         i = i.subs(s, sym.symbol("sym_" + s.name))
                     else:
-                        print(f"Symbol {s.name} not found in arrays")
                         raise ValueError(f"Symbol {s.name} not found in arrays")
 
             sizes = list(sizes)
@@ -2715,10 +2692,6 @@ class AST_translator:
                         if s.name == name_pair[0]:
                             name_in_parent = name_pair[1]
                             i = i.subs(s, sym.symbol(name_in_parent))
-
-                            print("here")
-                else:
-                    print(f"Symbol {s.name} not found in arrays")
 
             sizes = list(sizes)
             sizes[idx] = i
@@ -2759,8 +2732,6 @@ class AST_translator:
                                     found = True
                             if not found:
                                 raise ValueError(f"Temporary symbol not found for {s.name}")
-                else:
-                    print(f"Symbol {s.name} not found in arrays")
 
             sizes = list(sizes)
             sizes[idx] = i
