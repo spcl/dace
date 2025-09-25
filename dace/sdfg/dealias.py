@@ -6,6 +6,9 @@ from typing import Set, Dict
 from dace.sdfg.graph import MultiConnectorEdge
 from dace import SDFGState
 
+FULL_VIEW_SUFFIX = "fullview"
+SLICE_SUFFIX = "slice"
+
 
 def _get_new_connector_name(edge: MultiConnectorEdge, repldict: Dict[str, str], state: SDFGState,
                             sdfg: dace.SDFG) -> str:
@@ -32,12 +35,12 @@ def _get_new_connector_name(edge: MultiConnectorEdge, repldict: Dict[str, str], 
     if is_complete_subset:
         candidate_name = edge.data.data
         i = 1
-        while candidate_name in sdfg.arrays:
-            candidate_name = f"{edge.data.data}_view_{i}"
+        while candidate_name in sdfg.arrays or candidate_name in repldict.values():
+            candidate_name = f"{edge.data.data}_{FULL_VIEW_SUFFIX}_{i}"
             i += 1
         return candidate_name
     else:
-        candidate_name = f"{edge.data.data}_slice"
+        candidate_name = f"{edge.data.data}_{SLICE_SUFFIX}"
         i = 1
         while f"{candidate_name}_{i}" in repldict.values():
             i += 1
@@ -81,11 +84,16 @@ def dealias(sdfg: dace.SDFG):
                 input_repldict = dict()
                 output_repldict = dict()
                 for in_edge in in_edges:
+                    # Skip "__return"
+                    if in_edge.data is not None and in_edge.data.data == "__return":
+                        continue
                     if in_edge.data is not None and in_edge.data.data != in_edge.dst_conn:
                         new_connector = _get_new_connector_name(in_edge, input_repldict, state, node.sdfg)
                         input_repldict[in_edge.dst_conn] = new_connector
 
                 for out_edge in out_edges:
+                    if out_edge.data is not None and out_edge.data.data == "__return":
+                        continue
                     if out_edge.data is not None and out_edge.data.data != out_edge.src_conn:
                         new_connector = _get_new_connector_name(out_edge, output_repldict, state, node.sdfg)
                         output_repldict[out_edge.src_conn] = new_connector
