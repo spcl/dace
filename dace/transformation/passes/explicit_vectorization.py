@@ -8,9 +8,80 @@ from typing import Any, Dict, List, Optional, Set, Tuple, Union
 from dace import SDFG, SDFGState, properties, transformation
 from dace.transformation import pass_pipeline as ppl, dataflow as dftrans
 from dace.transformation.passes import analysis as ap, pattern_matching as pmp
+from dace.transformation.passes.clean_data_to_scalar_slice_to_tasklet_pattern import CleanDataToScalarSliceToTaskletPattern
 from dace.transformation.passes.split_tasklets import SplitTasklets
-from dace.transformation.passes.tasklet_preprocessing_passes import IntegerPowerToMult, RemoveFPTypeCasts
+from dace.transformation.passes.tasklet_preprocessing_passes import IntegerPowerToMult, RemoveFPTypeCasts, RemoveIntTypeCasts
 from dace.transformation.dataflow.tiling import MapTiling
+from dace.transformation.passes import InlineSDFGs
+
+
+class ExplicitVectorizationPipelineCPU(ppl.Pipeline):
+    _cpu_global_code = """
+inline void vector_mult(double * __restrict__ c, const double * __restrict__ a, const double * __restrict__ b) {{
+    #pragma omp unroll
+    for (int i = 0; i < {vector_width}; i++) {{
+        c[i] = a[i] * b[i];
+    }}
+}}
+inline void vector_mult(double * __restrict__ b, const double * __restrict__ a, const double constant) {{
+    double cReg[{vector_width}];
+    #pragma omp unroll
+    for (int i = 0; i < {vector_width}; i++) {{
+        cReg[i] = constant;
+    }}
+    #pragma omp unroll
+    for (int i = 0; i < {vector_width}; i++) {{
+        b[i] = a[i] * cReg[i];
+    }}
+}}
+inline void vector_add(double * __restrict__ c, const double * __restrict__ a, const double * __restrict__ b) {{
+    #pragma omp unroll
+    for (int i = 0; i < {vector_width}; i++) {{
+        c[i] = a[i] + b[i];
+    }}
+}}
+inline void vector_add(double * __restrict__ b, const double * __restrict__ a, const double constant) {{
+    double cReg[{vector_width}];
+    #pragma omp unroll
+    for (int i = 0; i < {vector_width}; i++) {{
+        cReg[i] = constant;
+    }}
+    #pragma omp unroll
+    for (int i = 0; i < {vector_width}; i++) {{
+        b[i] = a[i] + cReg[i];
+    }}
+}}
+inline void vector_copy(double * __restrict__ dst, const double * __restrict__ src) {{
+    #pragma omp unroll
+    for (int i = 0; i < {vector_width}; i++) {{
+        dst[i] = src[i];
+    }}
+}}
+"""
+
+    def __init__(self, vector_width):
+        passes = [
+            RemoveFPTypeCasts(),
+            RemoveIntTypeCasts(),
+            IntegerPowerToMult(),
+            SplitTasklets(),
+            CleanDataToScalarSliceToTaskletPattern(),
+            InlineSDFGs(),
+            ExplicitVectorization(
+                templates={
+                    "*": "vector_mult({lhs}, {rhs1}, {rhs2});",
+                    "+": "vector_add({lhs}, {rhs1}, {rhs2});",
+                    "=": "vector_copy({lhs}, {rhs1});",
+                    "c+": "vector_add({lhs}, {rhs1}, {constant});",
+                    "c*": "vector_mult({lhs}, {rhs1}, {constant});",
+                },
+                vector_width=vector_width,
+                vector_input_storage=dace.dtypes.StorageType.Register,
+                vector_output_storage=dace.dtypes.StorageType.Register,
+                global_code=ExplicitVectorizationPipelineCPU._cpu_global_code.format(vector_width=vector_width),
+                global_code_location="frame")
+        ]
+        super().__init__(passes)
 
 
 class ExplicitVectorizationPipelineGPU(ppl.Pipeline):
@@ -60,8 +131,11 @@ __host__ __device__ __forceinline__ void vector_copy(double * __restrict__ dst, 
     def __init__(self, vector_width):
         passes = [
             RemoveFPTypeCasts(),
+            RemoveIntTypeCasts(),
             IntegerPowerToMult(),
             SplitTasklets(),
+            CleanDataToScalarSliceToTaskletPattern(),
+            InlineSDFGs(),
             ExplicitVectorization(
                 templates={
                     "*": "vector_mult({lhs}, {rhs1}, {rhs2});",
@@ -73,7 +147,8 @@ __host__ __device__ __forceinline__ void vector_copy(double * __restrict__ dst, 
                 vector_width=vector_width,
                 vector_input_storage=dace.dtypes.StorageType.Register,
                 vector_output_storage=dace.dtypes.StorageType.Register,
-                global_code=ExplicitVectorizationPipelineGPU._gpu_global_code.format(vector_width=vector_width))
+                global_code=ExplicitVectorizationPipelineGPU._gpu_global_code.format(vector_width=vector_width),
+                global_code_location="frame")
         ]
         super().__init__(passes)
 
@@ -89,14 +164,18 @@ class ExplicitVectorization(ppl.Pass):
     vector_input_storage = properties.Property(dtype=dace.dtypes.StorageType, default=dace.dtypes.StorageType.Register)
     vector_output_storage = properties.Property(dtype=dace.dtypes.StorageType, default=dace.dtypes.StorageType.Register)
     global_code = properties.Property(dtype=str, default="")
+    global_code_location = properties.Property(dtype=str, default="")
 
-    def __init__(self, templates, vector_width, vector_input_storage, vector_output_storage, global_code):
+    def __init__(self, templates, vector_width, vector_input_storage, vector_output_storage, global_code,
+                 global_code_location):
         super().__init__()
         self.templates = templates
         self.vector_width = vector_width
         self.vector_input_storage = vector_input_storage
         self.vector_output_storage = vector_output_storage
         self.global_code = global_code
+        self.global_code_location = global_code_location
+        self._tasklet_vectorizable_map = dict()
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
@@ -148,6 +227,13 @@ class ExplicitVectorization(ppl.Pass):
             assert s == 1, f"MapTiling should have created a map with stride 1, found {s}"
             # Vector the range by for example making [0:4:1] to [0:4:4]
             new_inner_map.map.range = dace.subsets.Range([(0, self.vector_width - 1, self.vector_width)])
+
+            # Need to check that all tasklets within the map are vectorizable
+            nodes = state.all_nodes_between(new_inner_map, state.exit_node(new_inner_map))
+            assert all(
+                {self._is_vectorizable(state, node)
+                 for node in nodes if isinstance(node, dace.nodes.Tasklet)}
+            ), f"All tasklets within maps need to be vectorizable. This means all inputs / outputs of the maps need to be arrays"
 
             # Updates memlets from [k, i] to [k, i:i+4]
             self._extend_memlets(state, new_inner_map)
@@ -280,6 +366,53 @@ class ExplicitVectorization(ppl.Pass):
 
         raise ValueError("No constant found")
 
+    def _is_vectorizable(self, state: SDFGState, node: dace.nodes.Tasklet):
+        # Arr1 -> Tasklet1 -> sc1 -> Tasklet2 -> sc3 -> Tasklet3 -> Arr
+        # Arr2
+        # Should return [Arr,Arr], [Arr]
+        # It is important to determine if a tasklet is "vectorizable"
+        # Only a tasklet that reads from arrays and writes to arrays are vectorizable
+        # But if we only check Tasklet1, Tasklet2 or Tasklet3's ddirect neighbors we would consider
+        # they can't, but they can
+
+        # First check cache
+        if node in self._tasklet_vectorizable_map:
+            return self._tasklet_vectorizable_map[node]
+
+        in_edges = state.in_edges(node)
+        out_edges = state.out_edges(node)
+        input_types = set()
+        output_types = set()
+        while in_edges:
+            in_edge = in_edges.pop()
+            if state.in_degree(in_edge.src) == 0:
+                if isinstance(in_edge.src, dace.nodes.AccessNode):
+                    input_types.add(type(state.sdfg.arrays[in_edge.src.data]))
+                else:
+                    raise Exception(f"Unsupported Type for in_edge.src got type {type(in_edge.src)}, need AccessNode")
+            if not isinstance(in_edge.src, dace.nodes.MapEntry):
+                in_edges += state.in_edges(in_edge.src)
+            else:
+                input_types.add(type(state.sdfg.arrays[in_edge.data.data]))
+        while out_edges:
+            out_edge = out_edges.pop()
+            if state.out_degree(out_edge.dst) == 0:
+                if isinstance(out_edge.dst, dace.nodes.AccessNode):
+                    output_types.add(type(state.sdfg.arrays[out_edge.dst.data]))
+                else:
+                    raise Exception(f"Unsupported Type for out_edge.dst got type {type(out_edge.dst)}, need AccessNode")
+            if not isinstance(out_edge.dst, dace.nodes.MapExit):
+                out_edges = state.out_edges(out_edge.dst)
+            else:
+                output_types.add(type(state.sdfg.arrays[out_edge.data.data]))
+
+        vectorizable = (all({isinstance(itype, dace.data.Array) or itype == dace.data.Array
+                             for itype in input_types}) and
+                        all({isinstance(otype, dace.data.Array) or otype == dace.data.Array
+                             for otype in output_types}))
+        self._tasklet_vectorizable_map[node] = vectorizable
+        return vectorizable
+
     def _replace_tasklets(self, state: SDFGState, map_entry: dace.nodes.MapEntry):
         nodes = list(state.all_nodes_between(map_entry, state.exit_node(map_entry)))
         for node in nodes:
@@ -291,9 +424,17 @@ class ExplicitVectorization(ppl.Pass):
                 if len(node.in_connectors) == 1 and len(node.out_connectors) == 1:
                     in_conn = next(iter(node.in_connectors.keys()))
                     out_conn = next(iter(node.out_connectors.keys()))
-                    if node.code.as_string == f"{out_conn} = {in_conn};" or node.code.as_string == f"{out_conn} = {in_conn}":
-                        op = "="
+                    has_constant = False
+                    constant = None
+                    try:
+                        constant = self._extract_constant(node.code.as_string)
+                        has_constant = True
+                    except Exception as e:
+                        pass
+                    is_assignment = node.code.as_string == f"{out_conn} = {in_conn};" or node.code.as_string == f"{out_conn} = {in_conn}"
+                    if is_assignment:
                         rhs1 = list(node.in_connectors.keys())[0]
+                        op = "="
                         lhs = next(iter(node.out_connectors.keys()))
                         node.code = properties.CodeBlock(code=self._get_vector_templates(rhs1=rhs1,
                                                                                          rhs2=None,
@@ -302,17 +443,28 @@ class ExplicitVectorization(ppl.Pass):
                                                                                          op=op),
                                                          language=dace.Language.CPP)
                     else:
-                        op = self._extract_single_op(node.code.as_string)
-                        op = f"c{op}"
-                        rhs1 = list(node.in_connectors.keys())[0]
-                        lhs = next(iter(node.out_connectors.keys()))
-                        constant = self._extract_constant(node.code.as_string)
-                        node.code = properties.CodeBlock(code=self._get_vector_templates(rhs1=rhs1,
-                                                                                         rhs2=None,
-                                                                                         constant=constant,
-                                                                                         lhs=lhs,
-                                                                                         op=op),
-                                                         language=dace.Language.CPP)
+                        if has_constant:
+                            op = self._extract_single_op(node.code.as_string)
+                            op = f"c{op}"
+                            rhs1 = list(node.in_connectors.keys())[0]
+                            lhs = next(iter(node.out_connectors.keys()))
+                            node.code = properties.CodeBlock(code=self._get_vector_templates(rhs1=rhs1,
+                                                                                             rhs2=None,
+                                                                                             constant=constant,
+                                                                                             lhs=lhs,
+                                                                                             op=op),
+                                                             language=dace.Language.CPP)
+                        else:
+                            op = self._extract_single_op(node.code.as_string)
+                            rhs1 = list(node.in_connectors.keys())[0]
+                            rhs2 = rhs1
+                            lhs = next(iter(node.out_connectors.keys()))
+                            node.code = properties.CodeBlock(code=self._get_vector_templates(rhs1=rhs1,
+                                                                                             rhs2=rhs2,
+                                                                                             constant=None,
+                                                                                             lhs=lhs,
+                                                                                             op=op),
+                                                             language=dace.Language.CPP)
                 else:
                     assert len(node.in_connectors) == 2 or len(
                         node.in_connectors
@@ -599,7 +751,13 @@ class ExplicitVectorization(ppl.Pass):
                     nested_sdfg: dace.nodes.NestedSDFG = node
                     parent_scopes = self._get_all_parent_scopes(state, node)
                     if len(parent_scopes) > 0:
-                        num_vectorized += self._vectorize_sdfg(nested_sdfg.sdfg, num_vectorized)
+                        num_vectorized += self._vectorize_sdfg(sdfg=nested_sdfg.sdfg,
+                                                               has_parent_map=True,
+                                                               num_vectorized=num_vectorized)
+                    else:
+                        raise NotImplementedError(
+                            "NestedSDFGs without parent map scopes are not supported, they must have been inlined if the pipeline has been called."
+                            "If pipeline has been called verify why InlineSDFG failed, otherwise call InlineSDFG")
 
-        sdfg.append_global_code(cpp_code=self.global_code, location="cuda")
+        sdfg.append_global_code(cpp_code=self.global_code, location=self.global_code_location)
         return None
