@@ -464,10 +464,12 @@ def emit_memlet_reference_nsdfg(dispatcher: 'TargetDispatcher',
     parent_ptrname = ptr(memlet.data, parent_desc, parent_sdfg, dispatcher.frame)
     arg_name = conn_name
 
+    is_read = is_write is not None and not is_write
+
     if isinstance(nested_desc, data.Scalar):
         assert not isinstance(nested_desc.dtype, (dtypes.pointer, dtypes.vector, dtypes.struct))
         arg_type = f"{nested_desc.dtype.ctype}&"
-        if is_write is not None and not is_write:
+        if is_read:
             arg_type = f"const {arg_type}"
         if isinstance(parent_desc, data.Scalar):
             arg_value = parent_ptrname
@@ -480,7 +482,7 @@ def emit_memlet_reference_nsdfg(dispatcher: 'TargetDispatcher',
         assert isinstance(nested_desc.dtype, dtypes.pointer)
         assert isinstance(nested_desc.dtype.base_type, dtypes.struct)
         arg_type = f"{nested_desc.ctype}"
-        if is_write is not None and not is_write:
+        if is_read:
             arg_type = f"const {arg_type} const"  # Both pointer and data are const
         else:
             arg_type = f"{arg_type} const"  # Pointer is const
@@ -499,7 +501,7 @@ def emit_memlet_reference_nsdfg(dispatcher: 'TargetDispatcher',
             if isinstance(nested_desc.stype, data.Structure):
                 assert isinstance(nested_desc.dtype.base_type, dtypes.struct)
         arg_type = f"{nested_desc.dtype.ctype}"
-        if is_write is not None and not is_write:
+        if is_read:
             if isinstance(nested_desc.dtype, dtypes.pointer):
                 arg_type = f"{arg_type} const"  # Data is const pointer.
             # NOTE: We comment out the following so that regular arrays do not become pointers to const data,
@@ -513,6 +515,9 @@ def emit_memlet_reference_nsdfg(dispatcher: 'TargetDispatcher',
         # NOTE: Special case: nested data is Array of size 1 and parent data is Scalar/Structure
         if isinstance(parent_desc, (data.Scalar, data.Structure)):
             assert data._prod(nested_desc.shape) == 1
+            # NOTE: Solves issue with explicit Fibonacci example, where a const scalar is passed to an array of size 1.
+            if isinstance(parent_desc, data.Scalar) and is_read:
+                arg_type = f"const {arg_type}"  # Data is const.
             arg_value = f"&{parent_ptrname}"
 
     else:
