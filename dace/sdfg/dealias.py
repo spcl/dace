@@ -106,28 +106,24 @@ def dealias(sdfg: dace.SDFG):
                 # Replace connectors rm tmpxceX connector with A
                 for dst_name in set(input_repldict.keys()):
                     rmed = node.remove_in_connector(dst_name)
-                    assert rmed
+                    assert rmed, f"Could not removed in connector that is not used anymore: {dst_name}"
                 for dst_name in set(output_repldict.keys()):
                     rmed = node.remove_out_connector(dst_name)
-                    assert rmed
+                    assert rmed, f"Could not removed out connector that is not used anymore: {dst_name}"
                 for src_name in set(input_repldict.values()):
                     added = node.add_in_connector(src_name, force=True)
-                    assert added
+                    assert added, f"Could add the new in connector to the nested sdfg: {src_name}"
                 for src_name in set(output_repldict.values()):
                     added = node.add_out_connector(src_name, force=True)
-                    assert added
+                    assert added, f"Could add the new out connector to the nested sdfg: {src_name}"
 
                 # Update edges
                 for in_edge in state.in_edges(node):
                     if in_edge.dst_conn in input_repldict:
-                        state.remove_edge(in_edge)
-                        state.add_edge(in_edge.src, in_edge.src_conn, in_edge.dst, input_repldict[in_edge.dst_conn],
-                                       copy.deepcopy(in_edge.data))
+                        in_edge.dst_conn = input_repldict[in_edge.dst_conn]
                 for out_edge in state.out_edges(node):
                     if out_edge.src_conn in output_repldict:
-                        state.remove_edge(out_edge)
-                        state.add_edge(out_edge.src, output_repldict[out_edge.src_conn], out_edge.dst,
-                                       out_edge.dst_conn, copy.deepcopy(out_edge.data))
+                        out_edge.src_conn = output_repldict[out_edge.src_conn]
 
                 # Replace the data containers
                 # If data / access nodes are not manually changed before hand
