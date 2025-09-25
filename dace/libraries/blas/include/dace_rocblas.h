@@ -5,7 +5,7 @@
 #include <hip/hip_fp16.h>  // for __float2half
 #include <hip/amd_detail/amd_hip_complex.h> // for hip*Complex
 
-#include <rocblas.h>
+#include <rocblas/rocblas.h>
 
 #include <cstddef>    // size_t
 #include <stdexcept>  // std::runtime_error
