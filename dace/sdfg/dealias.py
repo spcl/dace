@@ -1,10 +1,26 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import copy
-from typing import Set
+from typing import Set, Dict
 
-def _get_new_connector_name(edge, repldict, state):
-    """Determine new connector name for an edge."""
+from dace.sdfg.graph import MultiConnectorEdge
+from dace import SDFGState
+
+
+def _get_new_connector_name(edge: MultiConnectorEdge, repldict: Dict[str, str], state: SDFGState) -> str:
+    """
+    Determine new connector name for an edge based on data access patterns.
+    Following the description in the dealias
+
+    Args:
+        edge: The edge containing data access information
+        repldict: Dictionary of existing replacements to avoid name conflicts
+        state: The SDFG state containing the edge
+
+    Returns:
+        str: New connector name - either the original array name (for full access)
+             or a unique slice name (for partial access)
+    """
     arr = state.sdfg.arrays[edge.data.data]
     data_shape = arr.shape
 
@@ -21,8 +37,24 @@ def _get_new_connector_name(edge, repldict, state):
             i += 1
         return f"{candidate_name}_{i}"
 
+
 def dealias(sdfg: dace.SDFG):
-    recurse_in : Set[dace.nodes.NestedSDFG] = set()
+    """
+    Remove aliasing in nested SDFG connectors by replacing temporary names with meaningful ones.
+
+    Temporary connector names (e.g., tmpxceX) are replaced with names that reflect the actual data
+    being accessed (e.g. <data_name>_slice_<id> or <data_name>). Depending on applicability
+
+    The function handles two main cases:
+    1. Full array access: A[::] -> connector gets named 'A'
+    2. Partial array access: A[i:j] -> connector gets named 'A_slice_<id>' <id> is needed in
+    case multiple slices of the same array are used.
+
+
+    Args:
+        sdfg (dace.SDFG): Modified in-place.
+    """
+    recurse_in: Set[dace.nodes.NestedSDFG] = set()
 
     for state in sdfg.all_states():
         for node in state.nodes():
@@ -38,7 +70,7 @@ def dealias(sdfg: dace.SDFG):
                 # A_slice is chosen if the subset is different than the complete shape A
                 # Otherwise A is chosen
                 # Also consider the case where A[i] -> tmp1 (NestedSDFG)
-                #                              A[j] -> tmp2 
+                #                              A[j] -> tmp2
                 # In this case we need not map them to A twice but to A_slice1, A_slice2
                 input_repldict = dict()
                 output_repldict = dict()
@@ -70,32 +102,31 @@ def dealias(sdfg: dace.SDFG):
                 for in_edge in state.in_edges(node):
                     if in_edge.dst_conn in input_repldict:
                         state.remove_edge(in_edge)
-                        state.add_edge(
-                            in_edge.src,
-                            in_edge.src_conn,
-                            in_edge.dst,
-                            input_repldict[in_edge.dst_conn],
-                            copy.deepcopy(in_edge.data)
-                        )
+                        state.add_edge(in_edge.src, in_edge.src_conn, in_edge.dst, input_repldict[in_edge.dst_conn],
+                                       copy.deepcopy(in_edge.data))
                 for out_edge in state.out_edges(node):
                     if out_edge.src_conn in output_repldict:
                         state.remove_edge(out_edge)
-                        state.add_edge(
-                            out_edge.src,
-                            output_repldict[out_edge.src_conn],
-                            out_edge.dst,
-                            out_edge.dst_conn,
-                            copy.deepcopy(out_edge.data)
-                        )
+                        state.add_edge(out_edge.src, output_repldict[out_edge.src_conn], out_edge.dst,
+                                       out_edge.dst_conn, copy.deepcopy(out_edge.data))
 
                 # Replace the data containers
                 # If data / access nodes are not manually changed before hand
                 # Dace will try to assign to scalars from a symbolic value and crash the thing
-                for dst_name, src_name in (input_repldict | output_repldict).items():
-                    desc : dace.data.Data = node.sdfg.arrays[dst_name]
+                replace_dict = (input_repldict | output_repldict)
+                for dst_name, src_name in replace_dict.items():
+                    desc: dace.data.Data = node.sdfg.arrays[dst_name]
                     node.sdfg.remove_data(dst_name, validate=False)
                     node.sdfg.add_datadesc(name=src_name, datadesc=desc, find_new_name=False)
 
-                for dst_name, src_name in (input_repldict | output_repldict).items():
+                for dst_name, src_name in replace_dict.items():
                     assert src_name in node.sdfg.arrays
                     assert dst_name not in node.sdfg.arrays
+
+                # Necessary for DaCe to try assign the value to the missing access node from a tasklet
+                for inner_state in node.sdfg.all_states():
+                    for inner_node in inner_state.nodes():
+                        if isinstance(inner_node, dace.nodes.AccessNode) and inner_node.data in replace_dict:
+                            inner_node.data = replace_dict[inner_node.data]
+
+                node.sdfg.replace_dict(repldict=replace_dict)
