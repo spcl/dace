@@ -687,7 +687,6 @@ class ExplicitVectorization(ppl.Pass):
         return found
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Set[str]]]:
-        sdfg.save("begin.sdfg")
         self._stride_type = self._check_stride(sdfg)
         self._check_last_dim_of_map_is_contigupus_access(sdfg)
 
@@ -746,7 +745,6 @@ class ExplicitVectorization(ppl.Pass):
         # If the inside has no maps
         # We have problems. If no maps,
         # We need to add a parent map
-        sdfg.save("intermediate.sdfg")
         for state in sdfg.all_states():
             for node in state.nodes():
                 if isinstance(node, dace.nodes.NestedSDFG):
@@ -762,5 +760,4 @@ class ExplicitVectorization(ppl.Pass):
                             "If pipeline has been called verify why InlineSDFG failed, otherwise call InlineSDFG")
 
         sdfg.append_global_code(cpp_code=self.global_code, location=self.global_code_location)
-        sdfg.save("done.sdfg")
         return None
