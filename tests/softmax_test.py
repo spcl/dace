@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
+
 import dace
 
 N = dace.symbol('N')
@@ -56,5 +57,24 @@ def test_softmax():
     assert np.allclose(softmax(X), Y)
 
 
+def test_softmax_ufunc():
+
+    @dace.program
+    def softmax_ufunc(input: dace.float64[1, 2, 8, 8], output: dace.float64[1, 2, 8, 8]):
+        maximum = np.maximum.reduce(input, axis=3, keepdims=True)
+        exponent = np.exp(input - maximum)
+        sum = np.add.reduce(exponent, axis=3, keepdims=True)
+        output[:] = exponent / sum
+
+    a = np.random.rand(1, 2, 8, 8)
+    expected = np.random.rand(1, 2, 8, 8)
+    b = np.random.rand(1, 2, 8, 8)
+    softmax_ufunc.f(a, expected)
+
+    softmax_ufunc(a, b)
+    assert np.allclose(b, expected)
+
+
 if __name__ == "__main__":
     test_softmax()
+    test_softmax_ufunc()

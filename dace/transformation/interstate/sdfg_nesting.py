@@ -323,19 +323,24 @@ class InlineSDFG(transformation.SingleStateTransformation):
             if array.transient:
                 continue
             edge = None
+            # Any differing strides will become views
             if aname in inputs:
                 edge = inputs[aname]
-                if len(array.shape) > len(edge.data.subset):
+                if isinstance(array, data.Scalar):
+                    continue
+                if array.strides != sdfg.arrays[edge.data.data].strides:
                     reshapes.add(aname)
                     continue
             if aname in outputs:
                 edge = outputs[aname]
-                if len(array.shape) > len(edge.data.subset):
+                if isinstance(array, data.Scalar):
+                    continue
+                if array.strides != sdfg.arrays[edge.data.data].strides:
                     reshapes.add(aname)
                     continue
-            if edge is not None and not InlineSDFG._check_strides(array.strides, sdfg.arrays[edge.data.data].strides,
-                                                                  edge.data, nsdfg_node):
-                reshapes.add(aname)
+            # if edge is not None and not InlineSDFG._check_strides(array.strides, sdfg.arrays[edge.data.data].strides,
+            #                                                       edge.data, nsdfg_node):
+            #     reshapes.add(aname)
         # Among the nodes needing reshapes are any input/output nodes directly being used by library nodes. The shape
         # influences the behavior of the access nodes and thus the reshapes through views are necessary.
         for node in nstate.nodes():

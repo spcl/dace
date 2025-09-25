@@ -1013,6 +1013,7 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
         if len(in_edges) not in [2, 3]:
             raise ValueError("Expected 2 or 3 inputs to gemm")
         size2 = None
+        a_subset, b_subset, c_subset = None, None, None
         for _, _, _, dst_conn, memlet in state.in_edges(self):
             if dst_conn == '_a':
                 size0 = memlet.subset.size()
@@ -1030,9 +1031,19 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
         if len(out_edges) != 1:
             raise ValueError("Expected exactly one output from matrix-matrix product")
         out_memlet = out_edges[0].data
+
+        # Try original subsets to avoid oversqueezing (e.g. explicitly calling GEMM on a vector)
+        if len(size0) != 2 and len(a_subset) == 2:
+            size0 = a_subset.size()
+        if len(size1) != 2 and len(b_subset) == 2:
+            size1 = b_subset.size()
+        if size2 is not None and len(size2) != 2 and len(c_subset) == 2:
+            size2 = c_subset.size()
+
         # Function is symmetric, edge order does not matter
         if len(size0) != 2 or len(size1) != 2:
             raise ValueError("matrix-matrix product only supported on matrices")
+
         res = equal(size0[1], size1[0])
         if res is None:
             warnings.warn(f'First matrix columns {size0[1]} and second matrix rows {size1[0]} may not match',
@@ -1048,6 +1059,7 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
                 raise ValueError("Input C matrix must match output matrix.")
             elif not success:
                 warnings.warn(f"Size of input C matrix {size2} may not match output matrix size {size3}", UserWarning)
+
         if len(size3) != 2:
             raise ValueError("matrix-matrix product only supported on matrices")
         if len(size3) == 2:
