@@ -158,3 +158,10 @@ end subroutine fun
     fun = gmap['fun'].compile()
     fun(d=d)
     assert np.allclose(d, [1, 4.2, 1, 1])
+
+
+if __name__ == "__main__":
+    test_minimal()
+    test_standalone_subroutines()
+    test_subroutines_from_module()
+    test_subroutine_with_local_variable()
