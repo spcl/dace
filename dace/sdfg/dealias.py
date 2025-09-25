@@ -10,8 +10,8 @@ FULL_VIEW_SUFFIX = "fullview"
 SLICE_SUFFIX = "slice"
 
 
-def _get_new_connector_name(edge: MultiConnectorEdge, repldict: Dict[str, str], state: SDFGState,
-                            sdfg: dace.SDFG) -> str:
+def _get_new_connector_name(edge: MultiConnectorEdge, repldict: Dict[str, str], other_repldict: Dict[str, str],
+                            state: SDFGState, sdfg: dace.SDFG) -> str:
     """
     Determine new connector name for an edge based on data access patterns.
     Following the description in the dealias routine
@@ -32,6 +32,8 @@ def _get_new_connector_name(edge: MultiConnectorEdge, repldict: Dict[str, str], 
     full_range = dace.subsets.Range([(0, dim - 1, 1) for dim in data_shape])
     is_complete_subset = edge.data.subset == full_range
 
+    combined_repldict = repldict | other_repldict
+
     if is_complete_subset:
         candidate_name = edge.data.data
         i = 1
@@ -40,11 +42,12 @@ def _get_new_connector_name(edge: MultiConnectorEdge, repldict: Dict[str, str], 
             i += 1
         return candidate_name
     else:
-        candidate_name = f"{edge.data.data}_{SLICE_SUFFIX}"
         i = 1
-        while f"{candidate_name}_{i}" in repldict.values():
+        candidate_name = f"{edge.data.data}_{SLICE_SUFFIX}_{i}"
+        while candidate_name in combined_repldict.values() or candidate_name in sdfg.arrays:
             i += 1
-        return f"{candidate_name}_{i}"
+            candidate_name = f"{edge.data.data}_{SLICE_SUFFIX}_{i}"
+        return candidate_name
 
 
 def dealias(sdfg: dace.SDFG):
@@ -88,14 +91,16 @@ def dealias(sdfg: dace.SDFG):
                     if in_edge.data is not None and in_edge.data.data == "__return":
                         continue
                     if in_edge.data is not None and in_edge.data.data != in_edge.dst_conn:
-                        new_connector = _get_new_connector_name(in_edge, input_repldict, state, node.sdfg)
+                        new_connector = _get_new_connector_name(in_edge, input_repldict, output_repldict, state,
+                                                                node.sdfg)
                         input_repldict[in_edge.dst_conn] = new_connector
 
                 for out_edge in out_edges:
                     if out_edge.data is not None and out_edge.data.data == "__return":
                         continue
                     if out_edge.data is not None and out_edge.data.data != out_edge.src_conn:
-                        new_connector = _get_new_connector_name(out_edge, output_repldict, state, node.sdfg)
+                        new_connector = _get_new_connector_name(out_edge, output_repldict, input_repldict, state,
+                                                                node.sdfg)
                         output_repldict[out_edge.src_conn] = new_connector
 
                 # Replace connectors rm tmpxceX connector with A
@@ -128,14 +133,16 @@ def dealias(sdfg: dace.SDFG):
                 # If data / access nodes are not manually changed before hand
                 # Dace will try to assign to scalars from a symbolic value and crash the thing
                 replace_dict = (input_repldict | output_repldict)
+                print(replace_dict)
+                added_arrays: Set[str] = set()
                 for dst_name, src_name in replace_dict.items():
                     desc: dace.data.Data = node.sdfg.arrays[dst_name]
-                    node.sdfg.remove_data(dst_name, validate=False)
-                    node.sdfg.add_datadesc(name=src_name, datadesc=desc, find_new_name=False)
-
-                for dst_name, src_name in replace_dict.items():
-                    assert src_name in node.sdfg.arrays
-                    assert dst_name not in node.sdfg.arrays
+                    added_arrays.add(src_name)
+                    if src_name in node.sdfg.arrays:
+                        assert src_name in added_arrays, f"{src_name} is in sdfg.arrays but has not been added by dealias for replacements: {replace_dict}."
+                    else:
+                        node.sdfg.remove_data(dst_name, validate=False)
+                        node.sdfg.add_datadesc(name=src_name, datadesc=desc, find_new_name=False)
 
                 # Necessary for DaCe to try assign the value to the missing access node from a tasklet
                 for inner_state in node.sdfg.all_states():
