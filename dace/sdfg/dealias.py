@@ -49,6 +49,18 @@ def _get_new_connector_name(edge: MultiConnectorEdge, repldict: Dict[str, str], 
             candidate_name = f"{edge.data.data}_{SLICE_SUFFIX}_{i}"
         return candidate_name
 
+wcr_checks = dict()
+def _has_wcr_writes(sdfg: dace.SDFG, arr_name: str) -> bool:
+    if wcr_checks.get(sdfg, None) is None:
+        wcr_checks[sdfg] = dict()
+        for state in sdfg.all_states():
+            for node in state.nodes():
+                if isinstance(node, dace.nodes.AccessNode):
+                    for ie in state.in_edges(node):
+                        if ie.data is not None and ie.data.wcr is not None:
+                            wcr_checks[sdfg][node.data] = True
+
+    return wcr_checks[sdfg].get(arr_name, False)
 
 def dealias(sdfg: dace.SDFG):
     """
@@ -98,6 +110,9 @@ def dealias(sdfg: dace.SDFG):
                 for out_edge in out_edges:
                     if out_edge.data is not None and out_edge.data.data == "__return":
                         continue
+                    # Skip WCR edges, TODO: this should be extended
+                    #if (out_edge.data is not None and out_edge.data.wcr is not None) or _has_wcr_writes(node.sdfg, out_edge.src_conn):
+                    #    continue
                     if out_edge.data is not None and out_edge.data.data != out_edge.src_conn:
                         new_connector = _get_new_connector_name(out_edge, output_repldict, input_repldict, state,
                                                                 node.sdfg)
