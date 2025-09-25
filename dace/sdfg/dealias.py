@@ -7,10 +7,11 @@ from dace.sdfg.graph import MultiConnectorEdge
 from dace import SDFGState
 
 
-def _get_new_connector_name(edge: MultiConnectorEdge, repldict: Dict[str, str], state: SDFGState) -> str:
+def _get_new_connector_name(edge: MultiConnectorEdge, repldict: Dict[str, str], state: SDFGState,
+                            sdfg: dace.SDFG) -> str:
     """
     Determine new connector name for an edge based on data access patterns.
-    Following the description in the dealias
+    Following the description in the dealias routine
 
     Args:
         edge: The edge containing data access information
@@ -29,7 +30,12 @@ def _get_new_connector_name(edge: MultiConnectorEdge, repldict: Dict[str, str], 
     is_complete_subset = edge.data.subset == full_range
 
     if is_complete_subset:
-        return edge.data.data
+        candidate_name = edge.data.data
+        i = 1
+        while candidate_name in sdfg.arrays:
+            candidate_name = f"{edge.data.data}_view_{i}"
+            i += 1
+        return candidate_name
     else:
         candidate_name = f"{edge.data.data}_slice"
         i = 1
@@ -76,12 +82,12 @@ def dealias(sdfg: dace.SDFG):
                 output_repldict = dict()
                 for in_edge in in_edges:
                     if in_edge.data is not None and in_edge.data.data != in_edge.dst_conn:
-                        new_connector = _get_new_connector_name(in_edge, input_repldict, state)
+                        new_connector = _get_new_connector_name(in_edge, input_repldict, state, node.sdfg)
                         input_repldict[in_edge.dst_conn] = new_connector
 
                 for out_edge in out_edges:
                     if out_edge.data is not None and out_edge.data.data != out_edge.src_conn:
-                        new_connector = _get_new_connector_name(out_edge, output_repldict, state)
+                        new_connector = _get_new_connector_name(out_edge, output_repldict, state, node.sdfg)
                         output_repldict[out_edge.src_conn] = new_connector
 
                 # Replace connectors rm tmpxceX connector with A
