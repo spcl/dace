@@ -14,6 +14,7 @@ from dace.transformation.passes.tasklet_preprocessing_passes import IntegerPower
 from dace.transformation.dataflow.tiling import MapTiling
 from dace.transformation.passes import InlineSDFGs
 
+
 class ExplicitVectorizationPipelineCPU(ppl.Pipeline):
     _cpu_global_code = """
 inline void vector_mult(double * __restrict__ c, const double * __restrict__ a, const double * __restrict__ b) {{
@@ -164,7 +165,6 @@ class ExplicitVectorization(ppl.Pass):
     vector_output_storage = properties.Property(dtype=dace.dtypes.StorageType, default=dace.dtypes.StorageType.Register)
     global_code = properties.Property(dtype=str, default="")
     global_code_location = properties.Property(dtype=str, default="")
-    
 
     def __init__(self, templates, vector_width, vector_input_storage, vector_output_storage, global_code,
                  global_code_location):
@@ -230,7 +230,9 @@ class ExplicitVectorization(ppl.Pass):
 
             # Need to check that all tasklets within the map are vectorizable
             nodes = state.all_nodes_between(new_inner_map, state.exit_node(new_inner_map))
-            assert all(self._is_vectorizable(state, node) for node in nodes if isinstance(node, dace.nodes.Tasklet)), f"All tasklets within maps need to be vectorizable. This means all inputs / outputs of the maps need to be arrays"
+            assert all(
+                self._is_vectorizable(state, node) for node in nodes if isinstance(node, dace.nodes.Tasklet)
+            ), f"All tasklets within maps need to be vectorizable. This means all inputs / outputs of the maps need to be arrays"
 
             # Updates memlets from [k, i] to [k, i:i+4]
             self._extend_memlets(state, new_inner_map)
@@ -371,7 +373,7 @@ class ExplicitVectorization(ppl.Pass):
         # Only a tasklet that reads from arrays and writes to arrays are vectorizable
         # But if we only check Tasklet1, Tasklet2 or Tasklet3's ddirect neighbors we would consider
         # they can't, but they can
-        
+
         # First check cache
         if node in self._tasklet_vectorizable_map:
             return self._tasklet_vectorizable_map[node]
@@ -402,8 +404,10 @@ class ExplicitVectorization(ppl.Pass):
             else:
                 output_types.add(type(state.sdfg.arrays[out_edge.data.data]))
 
-        vectorizable =  (all({isinstance(itype, dace.data.Array) for itype in input_types}) 
-                and all({isinstance(otype, dace.data.Array) for otype in output_types}) )
+        vectorizable = (all({isinstance(itype, dace.data.Array)
+                             for itype in input_types})
+                        and all({isinstance(otype, dace.data.Array)
+                                 for otype in output_types}))
         self._tasklet_vectorizable_map[node] = vectorizable
         return vectorizable
 
@@ -731,8 +735,9 @@ class ExplicitVectorization(ppl.Pass):
                                                                has_parent_map=True,
                                                                num_vectorized=num_vectorized)
                     else:
-                        raise NotImplementedError("NestedSDFGs without parent map scopes are not supported, they must have been inlined if the pipeline has been called."
-                                                  "If pipeline has been called verify why InlineSDFG failed, otherwise call InlineSDFG")
+                        raise NotImplementedError(
+                            "NestedSDFGs without parent map scopes are not supported, they must have been inlined if the pipeline has been called."
+                            "If pipeline has been called verify why InlineSDFG failed, otherwise call InlineSDFG")
 
         sdfg.append_global_code(cpp_code=self.global_code, location=self.global_code_location)
         return None

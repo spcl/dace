@@ -5,6 +5,7 @@ import copy
 import pytest
 import numpy
 from dace.transformation.passes.explicit_vectorization import ExplicitVectorizationPipelineCPU, ExplicitVectorizationPipelineGPU
+from dace.transformation.passes.clean_data_to_scalar_slice_to_tasklet_pattern import CleanDataToScalarSliceToTaskletPattern
 
 N = dace.symbol('N')
 
@@ -139,11 +140,15 @@ def test_nested_sdfg():
 
     # Original SDFG
     sdfg = tasklet_in_nested_sdfg.to_sdfg()
-    c_sdfg = sdfg.compile()
+    sdfg.save("s1.sdfg")
 
     # Vectorized SDFG
     copy_sdfg = copy.deepcopy(sdfg)
+    CleanDataToScalarSliceToTaskletPattern().apply_pass(copy_sdfg, {})
+    sdfg.save("s2.sdfg")
     ExplicitVectorizationPipelineCPU(vector_width=8).apply_pass(copy_sdfg, {})
+
+    c_sdfg = sdfg.compile()
     c_copy_sdfg = copy_sdfg.compile()
 
     c_sdfg(a=A_orig, b=B_orig, S=_S, S1=_S1, S2=_S2, offset1=-1, offset2=-1)
@@ -156,5 +161,5 @@ def test_nested_sdfg():
 
 if __name__ == "__main__":
     #test_simple()
-    test_simple_cpu()
+    # test_simple_cpu()
     test_nested_sdfg()

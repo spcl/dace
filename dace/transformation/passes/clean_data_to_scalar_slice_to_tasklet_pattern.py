@@ -7,6 +7,7 @@ from dace.sdfg.graph import MultiConnectorEdge
 from dace.transformation import pass_pipeline as ppl, transformation
 from typing import Optional
 
+
 @transformation.explicit_cf_compatible
 class CleanDataToScalarSliceToTaskletPattern(ppl.Pass):
     CATEGORY: str = 'Optimization Preparation'
@@ -15,19 +16,19 @@ class CleanDataToScalarSliceToTaskletPattern(ppl.Pass):
         return ppl.Modifies.Tasklets | ppl.Modifies.AccessNodes | ppl.Modifies.Edges
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
-        return (modified & ppl.Modifies.Tasklets) or (modified & ppl.Modifies.AccessNodes) or (modified & ppl.Modifies.Edges)
+        return (modified & ppl.Modifies.Tasklets) or (modified & ppl.Modifies.AccessNodes) or (modified
+                                                                                               & ppl.Modifies.Edges)
 
     def depends_on(self):
         return {}
 
-    def _is_array_scalar_tasklet(
-        self,
-        middle_node: dace.nodes.AccessNode,
-        state: dace.SDFGState
-    ) -> Optional[Tuple[MultiConnectorEdge, MultiConnectorEdge]]:
+    def _is_array_scalar_tasklet(self, middle_node: dace.nodes.AccessNode,
+                                 state: dace.SDFGState) -> Optional[Tuple[MultiConnectorEdge, MultiConnectorEdge]]:
         middle_data = state.sdfg.arrays[middle_node.data]
 
-        if not (isinstance(middle_data, dace.data.Scalar) or (isinstance(middle_data, dace.data.Array) and (middle_data.shape == (1,) or middle_data.shape  == [1]))):
+        if not (isinstance(middle_data, dace.data.Scalar) or
+                (isinstance(middle_data, dace.data.Array) and
+                 (middle_data.shape == (1, ) or middle_data.shape == [1]))):
             return None
         if isinstance(middle_data, dace.data.View):
             return None
@@ -77,9 +78,8 @@ class CleanDataToScalarSliceToTaskletPattern(ppl.Pass):
 
         return ie, oe
 
-
     def apply_pass(self, sdfg: SDFG, pipeline_results) -> Optional[Dict[str, Set[str]]]:
-        patterns_to_rm : List[Tuple[MultiConnectorEdge, MultiConnectorEdge, dace.SDFGState]] = []
+        patterns_to_rm: List[Tuple[MultiConnectorEdge, MultiConnectorEdge, dace.SDFGState]] = []
         for node, graph in sdfg.all_nodes_recursive():
             if isinstance(node, dace.nodes.AccessNode):
                 pattern = self._is_array_scalar_tasklet(node, graph)
@@ -97,15 +97,7 @@ class CleanDataToScalarSliceToTaskletPattern(ppl.Pass):
             state.remove_edge(arr_scalar_edge)
             state.remove_edge(scalar_tasklet_edge)
             state.remove_node(intermediate)
-            state.add_edge(
-                src,
-                arr_scalar_edge.src_conn,
-                dst,
-                scalar_tasklet_edge.dst_conn,
-                dace.memlet.Memlet(
-                    data=src.data,
-                    subset=copy.deepcopy(arr_scalar_edge.data.subset)
-                )
-            )
+            state.add_edge(src, arr_scalar_edge.src_conn, dst, scalar_tasklet_edge.dst_conn,
+                           dace.memlet.Memlet(data=src.data, subset=copy.deepcopy(arr_scalar_edge.data.subset)))
 
         return None

@@ -6,7 +6,9 @@ import pytest
 import numpy
 from dace.transformation.passes.explicit_vectorization import ExplicitVectorizationPipelineCPU, ExplicitVectorizationPipelineGPU
 from dace.transformation.passes.clean_data_to_scalar_slice_to_tasklet_pattern import CleanDataToScalarSliceToTaskletPattern
+
 N = dace.symbol('N')
+
 
 @dace.program
 def t1(A: dace.float64[N]):
@@ -26,10 +28,12 @@ def t2(A: dace.float64[N], B: dace.float64[N]):
         sc = B[i]
         A[i] = 1.1 * sc
 
+
 def test_t1():
     sdfg = t1.to_sdfg()
     sdfg.validate()
     sdfg.save("s1.sdfg")
+
 
 def test_t2():
     sdfg = t2.to_sdfg()
