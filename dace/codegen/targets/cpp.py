@@ -458,8 +458,14 @@ def emit_memlet_reference_nsdfg(dispatcher: 'TargetDispatcher',
         we are generating code by decoupling reads/write from memory.
     :return: A tuple of the form (type, name, value).
     """
+
     parent_desc = parent_sdfg.arrays[memlet.data]
     nested_desc = nested_sdfg.arrays[conn_name]
+
+    # If either parent or nested data is an FPGA array, use the original method
+    if fpga.is_fpga_array(parent_desc) or fpga.is_fpga_array(nested_desc):
+        return emit_memlet_reference(dispatcher, parent_sdfg, memlet, conn_name, conn_type, ancestor, is_write,
+                                     device_code, decouple_array_interfaces)
 
     parent_ptrname = ptr(memlet.data, parent_desc, parent_sdfg, dispatcher.frame)
     arg_name = conn_name
