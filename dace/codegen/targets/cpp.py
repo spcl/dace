@@ -506,8 +506,9 @@ def emit_memlet_reference_nsdfg(dispatcher: 'TargetDispatcher',
                 arg_type = f"{arg_type} const"  # Data is const pointer.
             # NOTE: We comment out the following so that regular arrays do not become pointers to const data,
             # NOTE: because tasklet input arguments do not get the const qualifier, causing invalid conversions.
-            # else:
-            #     arg_type = f"const {arg_type}"  # Data is const.
+            elif isinstance(parent_desc, data.Scalar) or is_devicelevel_gpu(parent_sdfg, nested_sdfg.parent,
+                                                                            nested_sdfg.parent_nsdfg_node):
+                arg_type = f"const {arg_type}"  # Data is const.
         arg_type = f"{arg_type}* const"  # Const pointer.
         if not nested_desc.may_alias:
             arg_type = f"{arg_type} __restrict__"
@@ -516,8 +517,8 @@ def emit_memlet_reference_nsdfg(dispatcher: 'TargetDispatcher',
         if isinstance(parent_desc, (data.Scalar, data.Structure)):
             assert data._prod(nested_desc.shape) == 1
             # NOTE: Solves issue with explicit Fibonacci example, where a const scalar is passed to an array of size 1.
-            if isinstance(parent_desc, data.Scalar) and is_read:
-                arg_type = f"const {arg_type}"  # Data is const.
+            # if isinstance(parent_desc, data.Scalar) and is_read:
+            #     arg_type = f"const {arg_type}"  # Data is const.
             arg_value = f"&{parent_ptrname}"
 
     else:
