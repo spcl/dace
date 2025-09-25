@@ -40,7 +40,6 @@ END SUBROUTINE
 """, 'main').check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'main', normalize_offsets=True)
     sdfg.simplify()
-    sdfg.compile()
 
     size = 14
     arg1 = np.full([size], 42, order="F", dtype=np.float64)

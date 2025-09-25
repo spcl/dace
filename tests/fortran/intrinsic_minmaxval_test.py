@@ -35,7 +35,6 @@ def test_fortran_frontend_minval_double():
     # Now test to verify it executes correctly with no offset normalization
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "minval_test", True)
     sdfg.simplify()
-    sdfg.compile()
     size = 7
 
     # Minimum is in the beginning
@@ -90,7 +89,6 @@ def test_fortran_frontend_minval_int():
     # Now test to verify it executes correctly with no offset normalization
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "minval_test", True)
     sdfg.simplify()
-    sdfg.compile()
     size = 7
 
     # Minimum is in the beginning
@@ -157,7 +155,6 @@ def test_fortran_frontend_maxval_double():
     # Now test to verify it executes correctly with no offset normalization
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "minval_test", True)
     sdfg.simplify()
-    sdfg.compile()
     size = 7
 
     # Minimum is in the beginning
@@ -212,7 +209,6 @@ def test_fortran_frontend_maxval_int():
     # Now test to verify it executes correctly with no offset normalization
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "minval_test", True)
     sdfg.simplify()
-    sdfg.compile()
     size = 7
 
     # Minimum is in the beginning
@@ -290,7 +286,6 @@ END MODULE
 """, 'main').check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'test_minval.minval_test_func')
     sdfg.simplify()
-    sdfg.compile()
 
     size = 7
     inp = np.full([size], 0, order="F", dtype=np.int32)

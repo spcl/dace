@@ -26,7 +26,6 @@ def test_fortran_frontend_count_array():
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_count_test")
     sdfg.simplify()
-    sdfg.compile()
 
     size = 5
     d = np.full([size], False, order="F", dtype=np.int32)
@@ -93,7 +92,6 @@ def test_fortran_frontend_count_array_comparison():
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_count_test")
     sdfg.simplify()
-    sdfg.compile()
 
     size = 5
     first = np.full([size], 1, order="F", dtype=np.int32)
@@ -144,7 +142,6 @@ def test_fortran_frontend_count_array_scalar_comparison():
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_count_test")
     sdfg.simplify()
-    sdfg.compile()
 
     size = 5
     first = np.full([size], 1, order="F", dtype=np.int32)
@@ -213,7 +210,6 @@ def test_fortran_frontend_count_array_2d():
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_count_test")
     sdfg.simplify()
-    sdfg.compile()
 
     sizes = [5, 7]
     d = np.full(sizes, True, order="F", dtype=np.int32)
@@ -263,7 +259,6 @@ def test_fortran_frontend_count_array_comparison_2d():
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_count_test")
     sdfg.simplify()
-    sdfg.compile()
 
     sizes = [5, 4]
     first = np.full(sizes, 1, order="F", dtype=np.int32)
@@ -305,7 +300,6 @@ def test_fortran_frontend_count_array_comparison_2d_subset():
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_count_test")
     sdfg.simplify()
-    sdfg.compile()
 
     sizes = [5, 4]
     first = np.full(sizes, 1, order="F", dtype=np.int32)
@@ -348,7 +342,6 @@ def test_fortran_frontend_count_array_comparison_2d_subset_offset():
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_count_test", True)
     sdfg.simplify()
-    sdfg.compile()
 
     sizes = [5, 4]
     first = np.full(sizes, 1, order="F", dtype=np.int32)

@@ -43,7 +43,6 @@ def test_fortran_frontend_bound():
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_bound_test", True)
     sdfg.simplify()
-    sdfg.compile()
 
     size = 4
     res = np.full([size], 42, order="F", dtype=np.int32)
@@ -75,7 +74,6 @@ def test_fortran_frontend_bound_offsets():
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_bound_test", True)
     sdfg.simplify()
-    sdfg.compile()
 
     size = 4
     res = np.full([size], 42, order="F", dtype=np.int32)
@@ -139,7 +137,6 @@ END MODULE
                                             'test_bounds.intrinsic_bound_test_function',
                                             normalize_offsets=True)
     sdfg.simplify()
-    sdfg.compile()
 
     size = 4
     res = np.full([size], 42, order="F", dtype=np.int32)

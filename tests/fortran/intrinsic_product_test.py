@@ -33,7 +33,6 @@ def test_fortran_frontend_product_array():
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_product_array", True)
     sdfg.simplify()
-    sdfg.compile()
 
     size = 7
     d = np.full([size], 0, order="F", dtype=np.float64)
@@ -96,7 +95,6 @@ def test_fortran_frontend_product_2d():
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_product_2d_test", True)
     sdfg.simplify()
-    sdfg.compile()
 
     sizes = [5, 3]
     d = np.full(sizes, 42, order="F", dtype=np.float64)

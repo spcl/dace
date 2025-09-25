@@ -42,7 +42,6 @@ end subroutine fun
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
     sdfg.simplify()
-    sdfg.compile()
 
     size = 5
     d = np.full([size], 42, order="F", dtype=np.float64)
@@ -91,7 +90,6 @@ end subroutine fun
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
     sdfg.simplify()
-    sdfg.compile()
 
     size_x, size_y = 4, 5
     d = np.full([size_x, size_y], 42, order="F", dtype=np.float64)
@@ -136,7 +134,6 @@ end subroutine fun
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
     sdfg.simplify()
-    sdfg.compile()
 
     size_x, size_y = 4, 5
     d = np.full([size_x, size_y], 42, order="F", dtype=np.float64)
@@ -181,7 +178,6 @@ end subroutine fun
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
     sdfg.simplify()
-    sdfg.compile()
 
     size_x, size_y = 4, 5
     d = np.full([size_x, size_y], 42, order="F", dtype=np.float64)
@@ -247,7 +243,6 @@ end subroutine fun
 """, 'main').check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
     sdfg.simplify()
-    sdfg.compile()
 
     size_x, size_y = 4, 5
     d = np.full([size_x, size_y], 42, order="F", dtype=np.float64)
@@ -285,7 +280,6 @@ end subroutine main
     sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
     sdfg.validate()
     sdfg.simplify()
-    sdfg.compile()
 
     size_x = 5
     d = np.full([1, size_x], 42, order="F", dtype=np.float64)

@@ -32,7 +32,6 @@ def test_fortran_frontend_sum2loop_1d_without_offset():
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_sum", True)
     sdfg.simplify()
-    sdfg.compile()
 
     size = 7
     d = np.full([size], 0, order="F", dtype=np.float64)
@@ -72,7 +71,6 @@ def test_fortran_frontend_sum2loop_1d_offset():
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_sum_offset", True)
     sdfg.simplify()
-    sdfg.compile()
 
     size = 5
     d = np.full([size], 0, order="F", dtype=np.float64)
@@ -113,7 +111,6 @@ def test_fortran_frontend_arr2loop_2d():
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_sum2d", True)
     sdfg.simplify()
-    sdfg.compile()
 
     sizes = [5, 3]
     d = np.full(sizes, 42, order="F", dtype=np.float64)
@@ -157,7 +154,6 @@ def test_fortran_frontend_arr2loop_2d_offset():
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_sum2d_offset", True)
     sdfg.simplify()
-    sdfg.compile()
 
     sizes = [5, 4]
     d = np.full(sizes, 42, order="F", dtype=np.float64)

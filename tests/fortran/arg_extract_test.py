@@ -22,7 +22,6 @@ end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'main', True)
     sdfg.simplify()
-    sdfg.compile()
 
     d = np.full([2], 42, order="F", dtype=np.float32)
     res = np.full([2], 42, order="F", dtype=np.float32)
@@ -48,7 +47,6 @@ end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'main', True)
     sdfg.simplify()
-    sdfg.compile()
 
     d = np.full([2], 42, order="F", dtype=np.float32)
     res = np.full([2], 42, order="F", dtype=np.float32)
@@ -77,7 +75,6 @@ end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'main', True)
     sdfg.simplify()
-    sdfg.compile()
 
     d = np.full([2], 42, order="F", dtype=np.float32)
     res = np.full([2], 42, order="F", dtype=np.float32)

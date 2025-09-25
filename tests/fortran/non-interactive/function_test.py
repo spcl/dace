@@ -269,7 +269,6 @@ END FUNCTION function3_test_function
     sdfg.reset_sdfg_list()
     sdfg.simplify()
     sdfg.view()
-    sdfg.compile()
 
 
 @pytest.mark.skip(reason="Interactive test (opens SDFG).")
@@ -335,7 +334,6 @@ length=norm(v)+a
     sdfg.reset_sdfg_list()
     sdfg.simplify()
     sdfg.view()
-    sdfg.compile()
 
 
 @pytest.mark.skip(reason="Interactive test (opens SDFG).")
@@ -394,7 +392,6 @@ end
     sdfg.reset_sdfg_list()
     sdfg.simplify()
     sdfg.view()
-    sdfg.compile()
 
 
 if __name__ == "__main__":

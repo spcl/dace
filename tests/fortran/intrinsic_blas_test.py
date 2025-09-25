@@ -68,7 +68,6 @@ end subroutine main
     sdfg = create_singular_sdfg_from_string(sources, 'main', normalize_offsets=False)
     # TODO: We should re-enable `simplify()` once we merge it.
     # sdfg.simplify()
-    sdfg.compile()
 
     size_x = 5
     size_y = 4
@@ -95,7 +94,6 @@ end subroutine main
     sdfg = create_singular_sdfg_from_string(sources, 'main', normalize_offsets=False)
     # TODO: We should re-enable `simplify()` once we merge it.
     # sdfg.simplify()
-    sdfg.compile()
 
     size_x = 5
     size_y = 4
@@ -169,7 +167,6 @@ end subroutine main
     sdfg = create_singular_sdfg_from_string(sources, 'main', normalize_offsets=False)
     # TODO: We should re-enable `simplify()` once we merge it.
     # sdfg.simplify()
-    sdfg.compile()
 
     size_x = 5
     size_y = 3
@@ -202,7 +199,6 @@ end subroutine main
     sdfg = create_singular_sdfg_from_string(sources, 'main', normalize_offsets=False)
     # TODO: We should re-enable `simplify()` once we merge it.
     # sdfg.simplify()
-    sdfg.compile()
 
     size_x = 5
     size_y = 3

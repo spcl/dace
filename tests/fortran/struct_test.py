@@ -38,7 +38,6 @@ end subroutine fun
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, entry_point='main', normalize_offsets=False)
     sdfg.simplify()
-    sdfg.compile()
 
     size = 6
     res = np.full([size], 42, order="F", dtype=np.int32)

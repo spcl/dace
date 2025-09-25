@@ -21,7 +21,6 @@ end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'main', False)
     sdfg.simplify()
-    sdfg.compile()
 
     assert len(sdfg.data('d').shape) == 1
     assert sdfg.data('d').shape[0] == 5
@@ -51,7 +50,6 @@ end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'main', False)
     sdfg.simplify()
-    sdfg.compile()
 
     assert len(sdfg.data('d').shape) == 1
     from dace.symbolic import symbol
@@ -82,7 +80,6 @@ end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'main', False)
     sdfg.simplify()
-    sdfg.compile()
 
     assert len(sdfg.data('d').shape) == 1
     assert sdfg.data('d').shape[0] == 5
@@ -111,7 +108,6 @@ end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'main', False)
     sdfg.simplify()
-    sdfg.compile()
 
     assert len(sdfg.data('d').shape) == 1
     assert sdfg.data('d').shape[0] == 5
@@ -144,7 +140,6 @@ end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'main', False)
     sdfg.simplify()
-    sdfg.compile()
 
     from dace.symbolic import evaluate
 
@@ -159,7 +154,7 @@ end subroutine main
     sdfg(d=a, arrsize=arrsize, arrsize2=arrsize2)
     for i in range(1, 5):
         # offset -1 is already added
-        assert a[i - 1] == (i - 1 + 50) * 2
+        assert a[i - 1] == (i + 50 - 1) * 2
 
 
 def test_fortran_frontend_array_offset():
@@ -177,7 +172,6 @@ end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'main', False)
     sdfg.simplify()
-    sdfg.compile()
 
     assert len(sdfg.data('d').shape) == 1
     assert sdfg.data('d').shape[0] == 5
@@ -208,7 +202,6 @@ end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'main', False)
     sdfg.simplify()
-    sdfg.compile()
 
     from dace.symbolic import evaluate
 
@@ -240,7 +233,6 @@ end subroutine main
 """, 'main').check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'main', normalize_offsets=False)
     sdfg.simplify()
-    sdfg.compile()
 
     arrsize = 5
     arrsize2 = 10
@@ -264,7 +256,6 @@ end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'main', normalize_offsets=False)
     sdfg.simplify()
-    sdfg.compile()
 
     arrsize = 5
     arrsize2 = 10

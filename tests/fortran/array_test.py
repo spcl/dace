@@ -67,7 +67,6 @@ end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'main')
     sdfg.simplify()
-    sdfg.compile()
 
     iend, m = 3, 4
     lu = np.full([iend, m, m], 0, order="F", dtype=np.float64)
@@ -215,7 +214,6 @@ end subroutine main
 """).check_with_gfortran().get()
     g = create_singular_sdfg_from_string(sources, 'main')
     g.simplify()
-    g.compile()
 
     d = np.full([50], 42, order="F", dtype=np.float32)
     g(d=d)
@@ -251,7 +249,6 @@ end subroutine main
 """).check_with_gfortran().get()
     g = create_singular_sdfg_from_string(sources, 'main')
     g.simplify()
-    g.compile()
 
     d = np.full([50], 42, order="F", dtype=np.float32)
     g(d=d)
