@@ -2,7 +2,6 @@
 
 import sympy as sp
 from dace import sdfg as sd, symbolic, properties
-from dace.sdfg import InterstateEdge
 from dace.sdfg import utils as sdutil
 from dace.sdfg.state import ControlFlowRegion, LoopRegion, ConditionalBlock
 from dace.transformation import transformation as xf
@@ -10,6 +9,7 @@ from dace.transformation.passes.analysis import loop_analysis, StateReachability
 from dace.symbolic import pystr_to_symbolic
 from dace.subsets import Range
 import copy
+from typing import Tuple, List
 
 
 @properties.make_properties
@@ -105,7 +105,7 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
             if self._can_apply_for_array(arr, sdfg):
                 self._apply_for_array(arr, sdfg)
 
-    def _get_edge_indices(self, subset: Range) -> list[tuple | None]:
+    def _get_edge_indices(self, subset: Range) -> List[Tuple | None]:
         # list of tuples of (a, b) for a*i + b, None if cannot be determined
         indices = list()
         itervar = self.loop.loop_variable
@@ -122,7 +122,7 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
 
         return indices
 
-    def _get_read_write_indices(self, array_name: str) -> tuple[list[list[tuple | None]], list[list[tuple | None]]]:
+    def _get_read_write_indices(self, array_name: str) -> Tuple[List[List[Tuple | None]], List[List[Tuple | None]]]:
         # list of list of tuples of (a, b) for a*i + b
         read_indices = list()
         write_indices = list()
@@ -143,7 +143,7 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
 
         return read_indices, write_indices
 
-    def _has_constant_loop_expressions(self, sdfg: sd.SDFG) -> tuple[bool, int | None]:
+    def _has_constant_loop_expressions(self, sdfg: sd.SDFG) -> Tuple[bool, int | None]:
         itervar = self.loop.loop_variable
         step = loop_analysis.get_loop_stride(self.loop)
         if step is None:
@@ -157,8 +157,8 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
         return (itervar not in defined_syms and step.free_symbols.isdisjoint(defined_syms)
                 and step.free_symbols.isdisjoint({itervar}) and resolved_step is not None), resolved_step
 
-    def _get_K_values(self, array_name: str, read_indices: list[list[tuple | None]],
-                      write_indices: list[list[tuple | None]], step: int, sdfg: sd.SDFG) -> list[int | None]:
+    def _get_K_values(self, array_name: str, read_indices: List[List[Tuple | None]],
+                      write_indices: List[List[Tuple | None]], step: int, sdfg: sd.SDFG) -> List[int | None]:
         k_values = []
         max_indices = self._get_max_indices_before_loop(array_name, sdfg)
 
@@ -204,7 +204,7 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
                 k_values.append(k + 1)  # +1 because k is the highest index accessed, so size is k+1
         return k_values
 
-    def _write_is_loop_local(self, array_name: str, write_indices: list[list[tuple]], sdfg: sd.SDFG) -> bool:
+    def _write_is_loop_local(self, array_name: str, write_indices: List[List[Tuple]], sdfg: sd.SDFG) -> bool:
         # The (overapproximated) written subset must be written before read or not read at all.
         # TODO: This is overly conservative. Just checks if there are access nodes after the loop.
 
@@ -219,7 +219,7 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
                         return False
         return True
 
-    def _get_max_indices_before_loop(self, array_name: str, sdfg: sd.SDFG) -> list[int]:
+    def _get_max_indices_before_loop(self, array_name: str, sdfg: sd.SDFG) -> List[int]:
         # Collect all read and write subsets of the array before the loop.
         loop_states = set(self.loop.all_states())
         subsets = set()
