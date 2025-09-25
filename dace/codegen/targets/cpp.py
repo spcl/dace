@@ -502,8 +502,10 @@ def emit_memlet_reference_nsdfg(dispatcher: 'TargetDispatcher',
         if is_write is not None and not is_write:
             if isinstance(nested_desc.dtype, dtypes.pointer):
                 arg_type = f"{arg_type} const"  # Data is const pointer.
-            else:
-                arg_type = f"const {arg_type}"  # Data is const.
+            # NOTE: We comment out the following so that regular arrays do not become pointers to const data,
+            # NOTE: because tasklet input arguments do not get the const qualifier, causing invalid conversions.
+            # else:
+            #     arg_type = f"const {arg_type}"  # Data is const.
         arg_type = f"{arg_type}* const"  # Const pointer.
         if not nested_desc.may_alias:
             arg_type = f"{arg_type} __restrict__"
