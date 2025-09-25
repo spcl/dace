@@ -49,6 +49,7 @@ def _get_new_connector_name(edge: MultiConnectorEdge, repldict: Dict[str, str], 
             candidate_name = f"{edge.data.data}_{SLICE_SUFFIX}_{i}"
         return candidate_name
 
+
 def dealias(sdfg: dace.SDFG):
     """
     Remove aliasing in nested SDFG connectors by replacing temporary names with meaningful ones.
