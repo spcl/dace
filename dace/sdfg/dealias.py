@@ -98,10 +98,10 @@ def dealias(sdfg: dace.SDFG):
                     rmed = node.remove_out_connector(dst_name)
                     assert rmed
                 for src_name in set(input_repldict.values()):
-                    added = node.add_in_connector(src_name)
+                    added = node.add_in_connector(src_name, force=True)
                     assert added
                 for src_name in set(output_repldict.values()):
-                    added = node.add_out_connector(src_name)
+                    added = node.add_out_connector(src_name, force=True)
                     assert added
 
                 # Update edges
