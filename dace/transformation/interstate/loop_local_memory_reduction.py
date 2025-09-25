@@ -122,7 +122,8 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
 
         return indices
 
-    def _get_read_write_indices(self, array_name: str) -> tuple[list[list[Union[tuple, None]]], list[list[Union[tuple, None]]]]:
+    def _get_read_write_indices(
+            self, array_name: str) -> tuple[list[list[Union[tuple, None]]], list[list[Union[tuple, None]]]]:
         # list of list of tuples of (a, b) for a*i + b
         read_indices = list()
         write_indices = list()
@@ -158,7 +159,8 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
                 and step.free_symbols.isdisjoint({itervar}) and resolved_step is not None), resolved_step
 
     def _get_K_values(self, array_name: str, read_indices: list[list[Union[tuple, None]]],
-                      write_indices: list[list[Union[tuple, None]]], step: int, sdfg: sd.SDFG) -> list[Union[int, None]]:
+                      write_indices: list[list[Union[tuple,
+                                                     None]]], step: int, sdfg: sd.SDFG) -> list[Union[int, None]]:
         k_values = []
         max_indices = self._get_max_indices_before_loop(array_name, sdfg)
 
