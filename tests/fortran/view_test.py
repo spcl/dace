@@ -1,4 +1,4 @@
-# Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 from fparser.common.readfortran import FortranStringReader
 from fparser.common.readfortran import FortranFileReader
@@ -27,7 +27,7 @@ def test_fortran_frontend_view_test():
                     PROGRAM """ + test_name + """_program
 implicit none
 double precision a(10,11,12)
-double precision res(1,1,2)
+double precision res(2,2,2)
 
 CALL """ + test_name + """_function(a,res)
 
@@ -36,7 +36,7 @@ end
 SUBROUTINE """ + test_name + """_function(aa,res)
 
 double precision aa(10,11,12)
-double precision res(1,1,2)
+double precision res(2,2,2)
 
 call viewlens(aa(:,:,1),res)
 
@@ -46,8 +46,8 @@ SUBROUTINE viewlens(aa,res)
 
 IMPLICIT NONE
 
-double precision  :: aa(10,11,23)
-double precision :: res(1,1,2)
+double precision  :: aa(10,11)
+double precision :: res(2,2,2)
 
 INTEGER ::  JK, JL
 
@@ -62,8 +62,10 @@ aa(1,1)=res(1,1,1)
 
 END SUBROUTINE viewlens
                     """
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name)
-    sdfg.simplify(verbose=True)
+
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name, True)
+
+    sdfg.simplify()
     a = np.full([10, 11, 12], 42, order="F", dtype=np.float64)
     b = np.full([1, 1, 2], 42, order="F", dtype=np.float64)
     b[0, 0, 0] = 1
@@ -91,7 +93,7 @@ end
 SUBROUTINE """ + test_name + """_function(aa,bb,cc,n)
 
 integer, parameter :: n=10
-double precision a(n,11,12),b(n,11,12),c(n,11,12)
+double precision aa(n,11,12),bb(n,11,12),cc(n,11,12)
 integer j,k
 
 j=1
@@ -101,24 +103,24 @@ k=2
 
 end SUBROUTINE """ + test_name + """_function
 
-SUBROUTINE viewlens(aa,bb,cc)
+SUBROUTINE viewlens(aaa,bbb,ccc)
 
 IMPLICIT NONE
 
-double precision  :: aa(10,11),bb(10,11),cc(10,11)
+double precision  :: aaa(10,11),bbb(10,11),ccc(10,11)
 
 INTEGER ::  JK, JL
 
 DO JK=1,10
   DO JL=1,11
-    cc(JK,JL)=bb(JK,JL)+aa(JK,JL)
+    ccc(JK,JL)=bbb(JK,JL)+aaa(JK,JL)
   ENDDO
 ENDDO
 
 END SUBROUTINE viewlens
                     """
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name)
-    sdfg.simplify(verbose=True)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name, True)
+    sdfg.simplify()
     a = np.full([10, 11, 12], 42, order="F", dtype=np.float64)
     b = np.full([10, 11, 12], 42, order="F", dtype=np.float64)
     c = np.full([10, 11, 12], 42, order="F", dtype=np.float64)
@@ -146,7 +148,7 @@ end
 SUBROUTINE """ + test_name + """_function(aa,bb,n)
 
 integer, parameter :: n=10
-double precision a(n,n+1,12),b(n,n+1,12)
+double precision aa(n,n+1,12),bb(n,n+1,12)
 integer j,k
 
 j=1
@@ -170,8 +172,8 @@ ENDDO
 
 END SUBROUTINE viewlens
                     """
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name)
-    sdfg.simplify(verbose=True)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name, True)
+    sdfg.simplify()
     a = np.full([10, 11, 12], 42, order="F", dtype=np.float64)
     b = np.full([10, 11, 12], 42, order="F", dtype=np.float64)
 
