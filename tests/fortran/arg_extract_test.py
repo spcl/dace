@@ -6,8 +6,11 @@ from dace.frontend.fortran.fortran_parser import create_singular_sdfg_from_strin
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 
-def test_fortran_frontend_arg_extract():
-    sources, main = SourceCodeBuilder().add_file("""
+def test_fortran_frontend_min_in_if():
+    """
+    Tests that the min intrinsic function is correctly handled in an if condition.
+    """
+    sources, main = (SourceCodeBuilder().add_file("""
 subroutine main(d, res)
   real, dimension(2) :: d
   real, dimension(2) :: res
@@ -19,8 +22,8 @@ subroutine main(d, res)
     res(2) = 10
   end if
 end subroutine main
-""").check_with_gfortran().get()
-    sdfg = create_singular_sdfg_from_string(sources, 'main', True)
+""").check_with_gfortran().get())
+    sdfg = create_singular_sdfg_from_string(sources, "main", True)
     sdfg.simplify()
 
     d = np.full([2], 42, order="F", dtype=np.float32)
@@ -29,8 +32,11 @@ end subroutine main
     assert np.allclose(res, [3, 7])
 
 
-def test_fortran_frontend_arg_extract3():
-    sources, main = SourceCodeBuilder().add_file("""
+def test_fortran_frontend_nested_merge():
+    """
+    Tests that nested merge intrinsic functions are correctly handled.
+    """
+    sources, main = (SourceCodeBuilder().add_file("""
 subroutine main(d, res)
   implicit none
   real, dimension(2) :: d
@@ -44,8 +50,8 @@ subroutine main(d, res)
   res(1) = merge(merge(d(1), d(2), d(1) < d(2) .and. is_cloud(jg)), 0.0, is_cloud(jg))
   res(2) = 52
 end subroutine main
-""").check_with_gfortran().get()
-    sdfg = create_singular_sdfg_from_string(sources, 'main', True)
+""").check_with_gfortran().get())
+    sdfg = create_singular_sdfg_from_string(sources, "main", True)
     sdfg.simplify()
 
     d = np.full([2], 42, order="F", dtype=np.float32)
@@ -54,8 +60,11 @@ end subroutine main
     assert np.allclose(res, [10, 52])
 
 
-def test_fortran_frontend_arg_extract4():
-    sources, main = SourceCodeBuilder().add_file("""
+def test_fortran_frontend_sequential_merge():
+    """
+    Tests that sequential merge intrinsic functions are correctly handled.
+    """
+    sources, main = (SourceCodeBuilder().add_file("""
 subroutine main(d, res)
   real, dimension(2) :: d
   real, dimension(2) :: res
@@ -72,8 +81,8 @@ subroutine main(d, res)
   res(1) = merge_val2
   res(2) = 52
 end subroutine main
-""").check_with_gfortran().get()
-    sdfg = create_singular_sdfg_from_string(sources, 'main', True)
+""").check_with_gfortran().get())
+    sdfg = create_singular_sdfg_from_string(sources, "main", True)
     sdfg.simplify()
 
     d = np.full([2], 42, order="F", dtype=np.float32)
@@ -83,6 +92,6 @@ end subroutine main
 
 
 if __name__ == "__main__":
-    test_fortran_frontend_arg_extract()
-    test_fortran_frontend_arg_extract3()
-    test_fortran_frontend_arg_extract4()
+    test_fortran_frontend_min_in_if()
+    test_fortran_frontend_nested_merge()
+    test_fortran_frontend_sequential_merge()
