@@ -2745,6 +2745,14 @@ class AST_translator:
 
 
 class ParseConfig:
+    """
+    Configuration class for parsing and transforming a Fortran project.
+
+    This class holds all the settings that control the behavior of the Fortran
+    frontend, from initial parsing to the various desugaring, pruning, and
+    optimization passes. It is used to configure the process of converting
+    a set of Fortran source files into a simplified, self-contained fparser AST.
+    """
 
     def __init__(
             self,  # noqa: C901
@@ -2759,6 +2767,32 @@ class ParseConfig:
             consolidate_global_data: bool = True,
             rename_uniquely: bool = True,
             do_not_prune_type_components: bool = False):
+        """
+        Initializes the parsing and transformation configuration.
+
+        :param sources: A list of `Path` objects to Fortran files, or a dictionary
+                        mapping file names to their string content.
+        :param includes: A list of `Path` objects for include directories. (Currently unused).
+        :param entry_points: A list of specifications for subprograms/programs to be
+                             treated as entry points. The frontend will prune any code
+                             not reachable from these points.
+        :param config_injections: A list of constant injection rules to be applied for
+                                  compile-time constant propagation.
+        :param do_not_prune: A list of object specifications to explicitly keep during
+                             pruning, in addition to entry points and their dependencies.
+        :param do_not_rename: A list of object specifications whose names should not be
+                              changed during the unique renaming pass.
+        :param make_noop: A list of subprogram specifications to replace with an empty body.
+        :param ast_checkpoint_dir: A directory path to save intermediate ASTs as Fortran
+                                   source files for debugging purposes.
+        :param consolidate_global_data: If True, all module-level variables are gathered
+                                        into a single derived type and passed as an argument
+                                        to all subprograms.
+        :param rename_uniquely: If True, all variables and subprograms are renamed to ensure
+                                they have globally unique identifiers.
+        :param do_not_prune_type_components: If True, prevents the pruning of unused components
+                                             from derived type definitions.
+        """
         # Make the configs canonical, by processing the various types upfront.
         if not sources:
             sources: Dict[str, str] = {}
@@ -2800,6 +2834,14 @@ class ParseConfig:
         self.do_not_prune_type_components = do_not_prune_type_components
 
     def set_all_possible_entry_points_from(self, ast: f03.Program):
+        """
+        Scans the AST and sets all found subprograms and the main program as entry points.
+
+        This is useful when the goal is to process an entire Fortran file or project
+        without pruning any top-level callable units.
+
+        :param ast: The fparser AST to scan for entry points.
+        """
         # Keep all the possible entry points.
         self.entry_points = [
             analysis.ident_spec(ast_utils.singular(children_of_type(c, utils.NAMED_STMTS_OF_INTEREST_CLASSES)))
@@ -2808,12 +2850,27 @@ class ParseConfig:
         self.do_not_prune = list({x for x in self.entry_points + self.do_not_prune})
 
     def avoid_pruning_type_components(self, ast: f03.Program):
+        """
+        Marks all derived type components in the AST to be preserved during pruning.
+        :param ast: The fparser AST to scan for components.
+        """
         ident_map = analysis.identifier_specs(ast)
         comp_specs = [k for k, v in ident_map.items() if isinstance(v, f03.Component_Decl)]
         self.do_not_prune = list({x for x in comp_specs + self.do_not_prune})
 
 
 def top_level_objects_map(ast: f03.Program, path: str) -> Dict[str, Base]:
+    """
+    Creates a map from lowercase names of top-level Fortran objects (modules, main programs)
+    to their corresponding fparser AST nodes.
+
+    :param ast: The fparser `Program` node to inspect.
+    :param path: The file path from which the AST was parsed, used for error messages.
+    :return: A dictionary mapping lowercase names to their `fparser.two.utils.Base` nodes.
+    :raises AssertionError: If a top-level object does not have a name.
+    :note: This function will print a warning to stderr if it encounters C preprocessor
+           directives, as they should be resolved before this stage.
+    """
     out: Dict[str, Base] = {}
     for top in ast.children:
         if type(top).__name__ in CPP_CLASS_NAMES:
@@ -2829,6 +2886,16 @@ def top_level_objects_map(ast: f03.Program, path: str) -> Dict[str, Base]:
 
 
 def create_fparser_ast(cfg: ParseConfig) -> f03.Program:
+    """
+    Parses a collection of Fortran source files into a single, combined fparser AST.
+
+    This function acts as a high-level entry point for parsing. It takes a `ParseConfig`
+    object, constructs a full AST from all specified source files, and then normalizes
+    all identifiers to lowercase for consistent processing.
+
+    :param cfg: A `ParseConfig` object containing the source files and other parsing settings.
+    :return: A single `fparser.two.Fortran2003.Program` node representing the entire project.
+    """
     parser = ParserFactory().create(std="f2008")
     ast = construct_full_ast(cfg.sources, parser, cfg.entry_points or None)
     ast = cleanup.lower_identifier_names(ast)
@@ -2837,6 +2904,23 @@ def create_fparser_ast(cfg: ParseConfig) -> f03.Program:
 
 
 def create_internal_ast(cfg: ParseConfig) -> Tuple[ast_components.InternalFortranAst, Program_Node]:
+    """
+    Performs the full conversion of Fortran source files to DaCe's internal AST representation.
+
+    This is a major workflow function that orchestrates the entire frontend process up to
+    the internal AST. It involves:
+    1. Parsing the source files into an fparser AST.
+    2. Applying an extensive series of desugaring, simplification, and optimization passes
+       (see `run_fparser_transformations`).
+    3. Re-parsing the transformed code to ensure a clean AST.
+    4. Translating the simplified fparser AST into DaCe's internal `Program_Node` format.
+
+    :param cfg: A `ParseConfig` object with all settings for parsing and transformation.
+    :return: A tuple containing:
+             - An `InternalFortranAst` instance (the converter object).
+             - A `Program_Node` which is the root of the generated internal AST, ready for
+               translation to an SDFG.
+    """
     ast = create_fparser_ast(cfg)
 
     if not cfg.entry_points:
@@ -2856,12 +2940,33 @@ def create_internal_ast(cfg: ParseConfig) -> Tuple[ast_components.InternalFortra
 
 
 class SDFGConfig:
+    """
+    Configuration class for translating the internal Fortran AST to SDFGs.
+
+    This class holds settings that control the final conversion process from the
+    internal AST representation to one or more DaCe SDFGs. It specifies which
+    subprograms to convert, what to name the resulting SDFGs, and other
+    SDFG-specific options like constant injection.
+    """
 
     def __init__(self,
                  entry_points: Dict[str, Union[str, List[str]]],
                  config_injections: Optional[List[types.ConstTypeInjection]] = None,
                  normalize_offsets: bool = True,
                  multiple_sdfgs: bool = False):
+        """
+        Initializes the SDFG generation configuration.
+
+        :param entry_points: A dictionary mapping the desired name of the output SDFG
+                             to the full specification of its entry point. For example,
+                             `{'my_kernel': ['my_module', 'my_subroutine']}`.
+        :param config_injections: A list of constant injection rules to be applied for
+                                  compile-time constant propagation during SDFG generation.
+        :param normalize_offsets: If True, array offsets are normalized (e.g., to be 0-based).
+        :param multiple_sdfgs: If True, generates multiple separate SDFG files for nested
+                               subroutines instead of creating nested SDFGs within a
+                               single file.
+        """
         for k in entry_points:
             if isinstance(entry_points[k], str):
                 entry_points[k] = [entry_points[k]]
@@ -2881,6 +2986,42 @@ def _checkpoint_ast(cfg: ParseConfig, name: str, ast: f03.Program):
 
 
 def run_fparser_transformations(ast: f03.Program, cfg: ParseConfig):
+    """
+    Executes the main pipeline of desugaring and simplification passes on an fparser AST.
+
+    This function takes a raw fparser AST and applies a sequence of transformations to
+    convert high-level Fortran constructs into a simpler, canonical form that is easier
+    to analyze and translate into an SDFG. The pipeline is carefully ordered to handle
+    dependencies between transformations.
+
+    The key stages of the pipeline include:
+    1.  **Initial Setup**: Sets entry points, handles no-op functions.
+    2.  **Local Indirection Removal**: Desugars constructs like `ENUM`, `ASSOCIATE`,
+        and `GOTO` that don't require cross-module analysis.
+    3.  **Remote Indirection Removal**: Resolves `USE` statements, `INTERFACE` calls,
+        and type-bound procedures, which require a global view of the program. This
+        stage is iterative, as resolving one indirection can enable the resolution
+        of others.
+    4.  **Optimization and Pruning Loop**: An iterative process that:
+        - Prunes unused code (functions, variables, types).
+        - Injects constant values from configuration files.
+        - Performs constant propagation for arguments and local variables.
+        - Folds constant expressions.
+        - Prunes dead `IF` branches.
+        This loop continues until the AST size stabilizes.
+    5.  **Final Canonicalization**:
+        - (Optional) Consolidates all global variables into a single derived type
+          passed by argument.
+        - (Optional) Renames all subprograms and variables to have globally unique
+          names to prevent collisions.
+
+    Throughout the process, intermediate versions of the AST can be saved for debugging
+    if a `checkpoint_dir` is provided in the `ParseConfig`.
+
+    :param ast: The initial fparser AST to be transformed.
+    :param cfg: The `ParseConfig` object containing transformation settings.
+    :return: The fully transformed and simplified fparser AST.
+    """
     if not cfg.entry_points:
         cfg.set_all_possible_entry_points_from(ast)
     if cfg.do_not_prune_type_components:
@@ -3110,6 +3251,28 @@ def run_ast_transformations(own_ast: ast_components.InternalFortranAst,
 
 
 def create_sdfg_from_internal_ast(own_ast: ast_components.InternalFortranAst, program: FNode, cfg: SDFGConfig):
+    """
+    Creates one or more SDFGs from the internal Fortran AST representation.
+
+    This function orchestrates the final stage of the Fortran frontend, converting the
+    internal AST into DaCe SDFGs. It performs the following steps:
+
+    1.  **Internal AST Transformations**: Applies a series of transformations to the
+        internal AST to prepare it for SDFG generation. This includes resolving
+        function calls, handling intrinsics, and expanding array operations.
+    2.  **Entry Point Processing**: For each entry point specified in the `SDFGConfig`,
+        it locates the corresponding subprogram in the internal AST.
+    3.  **SDFG Translation**: Uses the `AST_translator` class to walk the internal
+        AST from the entry point and generate the corresponding SDFG structure.
+    4.  **Post-processing**: Applies DaCe-level passes to the newly created SDFG,
+        such as lifting struct views, expanding library nodes, and simplification.
+
+    :param own_ast: The `InternalFortranAst` object that was used to create the `program` node.
+    :param program: The root `Program_Node` of the internal AST.
+    :param cfg: An `SDFGConfig` object specifying which entry points to convert and
+                other generation options.
+    :return: A dictionary mapping the simple name of each entry point to its generated `SDFG` object.
+    """
     # Repeated!
     # We need that to know in transformations what structures are used.
     # The actual structure listing is repeated later to resolve cycles.
@@ -3245,6 +3408,25 @@ def compute_dep_graph(ast: f03.Program, start_point: Union[str, List[str]]) -> n
 
 
 def _get_toplevel_objects(path_f90: Tuple[str, str], parser, sources) -> Dict[str, Base]:
+    """
+    Parses a single Fortran source file, resolves its `INCLUDE` statements, and maps
+    its top-level objects (modules, programs) to their AST nodes.
+
+    This helper function handles `INCLUDE` directives by performing a simple text-based
+    substitution before final parsing. It finds the content of the included file from
+    the `sources` dictionary and replaces the `INCLUDE` statement with it.
+
+    :param path_f90: A tuple containing the file path (for error messages) and its
+                     string content.
+    :param parser: The fparser instance to use for parsing.
+    :param sources: A dictionary of all available source files, used to find the
+                    content for `INCLUDE` statements.
+    :return: A dictionary mapping lowercase names of top-level objects to their
+             `fparser.two.utils.Base` nodes. Returns an empty dictionary if a
+             `FortranSyntaxError` occurs.
+    :note: It warns if multiple candidate files are found for an `INCLUDE` statement
+           and proceeds with an arbitrary one.
+    """
     path, f90 = path_f90
     assert isinstance(f90, str)
     try:
@@ -3282,6 +3464,25 @@ def _get_toplevel_objects(path_f90: Tuple[str, str], parser, sources) -> Dict[st
 def construct_full_ast(sources: Dict[str, str],
                        parser,
                        entry_points: Optional[Iterable[types.SPEC]] = None) -> f03.Program:
+    """
+    Constructs a single, combined fparser AST from multiple source files, resolving
+    `INCLUDE` statements and pruning unused modules based on entry points.
+
+    This function orchestrates the initial parsing of a multi-file Fortran project.
+    It processes each source file to identify its top-level objects, merges them into
+    a single `Program` AST, and then performs a topological sort and pruning pass to
+    keep only the modules that are dependencies of the specified `entry_points`.
+
+    :param sources: A dictionary mapping file paths to their string content.
+    :param parser: The fparser instance to use for parsing.
+    :param entry_points: An iterable of specifications for entry-point subprograms.
+                         Modules not used by these entry points will be pruned. If
+                         `None`, all modules are considered reachable.
+    :return: A single `fparser.two.Fortran2003.Program` node representing the
+             combined and pruned AST for the project.
+    :note: This function warns if it finds top-level objects with duplicate names
+           across different files.
+    """
     tops = {}
     for path, f90 in sources.items():
         ctops = _get_toplevel_objects((path, f90), parser=parser, sources=sources)
