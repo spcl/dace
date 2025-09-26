@@ -462,10 +462,15 @@ def emit_memlet_reference_nsdfg(dispatcher: 'TargetDispatcher',
     parent_desc = parent_sdfg.arrays[memlet.data]
     nested_desc = nested_sdfg.arrays[conn_name]
 
+    # print(f"{memlet.data} -> {conn_name} ... ", end='')
+
     # If either parent or nested data is an FPGA array, use the original method
     if fpga.is_fpga_array(parent_desc) or fpga.is_fpga_array(nested_desc):
+        # print("FPGA array, using original method")
         return emit_memlet_reference(dispatcher, parent_sdfg, memlet, conn_name, conn_type, ancestor, is_write,
                                      device_code, decouple_array_interfaces)
+
+    # print("not FPGA array, using NSDFG method")
 
     parent_ptrname = ptr(memlet.data, parent_desc, parent_sdfg, dispatcher.frame)
     arg_name = conn_name
@@ -567,6 +572,15 @@ def emit_memlet_reference_view(dispatcher: 'TargetDispatcher',
     view_desc = sdfg.arrays[view_name]
     assert issubclass(type(view_desc), data.View)
 
+    # print(f"{viewed_name} (viewed) -> {view_name} (view) ... ", end='')
+
+    # If the viewed data is an FPGA array, use the original method
+    if fpga.is_fpga_array(viewed_desc):
+        print("viewed is FPGA array, using original method")
+        return emit_memlet_reference(dispatcher, sdfg, memlet, pointer_name, conntype, ancestor, is_write, device_code,
+                                     decouple_array_interfaces)
+
+    # print("viewed is not FPGA array, using view method")
     view_deftype = DefinedType.Pointer
 
     if issubclass(type(view_desc), data.Structure):
