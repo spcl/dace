@@ -348,7 +348,7 @@ def main():
     print(f"Test {'PASSED' if success else 'FAILED'}")
 
 
-def run_sdfg_in_tempdir(combo, extra_arr, extra_interleaver):
+def run_sdfg_in_tempdir(combo):
     dace.config.Config.set("backend", "softhier", "HBM_ADDRESS_SPACE", value=HBM_ADDR_SPACE_STR)
     dace.config.Config.set("backend", "softhier", "HBM_ADDRESS_BASE", value=HBM_ADDR_BASE_STR)
     dace.config.Config.set("backend", "softhier", "HBM_NUM_CHANNELS", value=8)
@@ -471,7 +471,9 @@ def run_sdfg_in_tempdir(combo, extra_arr, extra_interleaver):
             "hwN": hwN,
             "hwK": hwK,
             "execution_period_ns": execution_period_ns,
-            "sdfg": sdfg
+            "sdfg": sdfg,
+            "A_handler": A_handler,
+            "A": A_host
         }
 
 
@@ -521,14 +523,13 @@ if __name__ == "__main__":
     setup_environment()
     setup_architecture()
     M, N, K, hwM, hwN, hwK = 512, 512, 512, THREAD_GROUP_DIMS[0], THREAD_GROUP_DIMS[1], 128
-    A, A_handler = create_test_data(M, N, K, hwM, hwN, hwK)
-    assert isinstance(A, np.ndarray)
-    # np_to_hbm(A_handler, M, N, K)
 
-    preA = A.copy()
 
     combo = (512, 512, 512, 64, 64, 128, (2, 2), (4096))
-    d = run_sdfg_in_tempdir(combo, A, A_handler)
+    d = run_sdfg_in_tempdir(combo)
+    A = d["A"]
+    A_handler = d["A_handler"]
+    preA = A.copy()
     sdfg = d["sdfg"]
 
     postA = A.copy()
