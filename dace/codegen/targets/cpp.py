@@ -462,15 +462,9 @@ def emit_memlet_reference_nsdfg(dispatcher: 'TargetDispatcher',
     parent_desc = parent_sdfg.arrays[memlet.data]
     nested_desc = nested_sdfg.arrays[conn_name]
 
-    # print(f"{memlet.data} -> {conn_name} ... ", end='')
-
-    # If either parent or nested data is an FPGA array, use the original method
     if fpga.is_fpga_array(parent_desc) or fpga.is_fpga_array(nested_desc):
-        # print("FPGA array, using original method")
         return emit_memlet_reference(dispatcher, parent_sdfg, memlet, conn_name, conn_type, ancestor, is_write,
                                      device_code, decouple_array_interfaces)
-
-    # print("not FPGA array, using NSDFG method")
 
     parent_ptrname = ptr(memlet.data, parent_desc, parent_sdfg, dispatcher.frame)
     arg_name = conn_name
@@ -487,6 +481,7 @@ def emit_memlet_reference_nsdfg(dispatcher: 'TargetDispatcher',
         else:
             # data.Array
             arg_value = f"{parent_ptrname}[{cpp_offset_expr(parent_desc, memlet.subset)}]"
+        defined_type = DefinedType.Scalar
 
     elif isinstance(nested_desc, data.Structure):
         # NOTE: Structures are "currently" always pointers.
@@ -504,6 +499,7 @@ def emit_memlet_reference_nsdfg(dispatcher: 'TargetDispatcher',
         else:
             # data.ContainerArray
             arg_value = f"{parent_ptrname}[{cpp_offset_expr(parent_desc, memlet.subset)}]"
+        defined_type = DefinedType.Pointer
 
     elif isinstance(nested_desc, data.Array):
         if isinstance(nested_desc, data.ContainerArray):
@@ -515,10 +511,7 @@ def emit_memlet_reference_nsdfg(dispatcher: 'TargetDispatcher',
         if is_read:
             if isinstance(nested_desc.dtype, dtypes.pointer):
                 arg_type = f"{arg_type} const"  # Data is const pointer.
-            # NOTE: We comment out the following so that regular arrays do not become pointers to const data,
-            # NOTE: because tasklet input arguments do not get the const qualifier, causing invalid conversions.
-            elif isinstance(parent_desc, data.Scalar) or is_devicelevel_gpu(parent_sdfg, nested_sdfg.parent,
-                                                                            nested_sdfg.parent_nsdfg_node):
+            else:
                 arg_type = f"const {arg_type}"  # Data is const.
         arg_type = f"{arg_type}* const"  # Const pointer.
         if not nested_desc.may_alias:
@@ -527,10 +520,8 @@ def emit_memlet_reference_nsdfg(dispatcher: 'TargetDispatcher',
         # NOTE: Special case: nested data is Array of size 1 and parent data is Scalar/Structure
         if isinstance(parent_desc, (data.Scalar, data.Structure)):
             assert data._prod(nested_desc.shape) == 1
-            # NOTE: Solves issue with explicit Fibonacci example, where a const scalar is passed to an array of size 1.
-            # if isinstance(parent_desc, data.Scalar) and is_read:
-            #     arg_type = f"const {arg_type}"  # Data is const.
             arg_value = f"&{parent_ptrname}"
+        defined_type = DefinedType.Pointer
 
     else:
         return emit_memlet_reference(dispatcher, parent_sdfg, memlet, conn_name, conn_type, ancestor, is_write,
@@ -543,6 +534,8 @@ def emit_memlet_reference_nsdfg(dispatcher: 'TargetDispatcher',
             nested_dtype = dtypes.pointer(nested_dtype.dtype)
         nested_ctype = nested_dtype.ctype
         arg_value = f"({nested_ctype})({arg_value})"
+
+    dispatcher.defined_vars.add(arg_name, defined_type, arg_type, allow_shadowing=True)
 
     return arg_type, arg_name, arg_value
 
@@ -572,15 +565,10 @@ def emit_memlet_reference_view(dispatcher: 'TargetDispatcher',
     view_desc = sdfg.arrays[view_name]
     assert issubclass(type(view_desc), data.View)
 
-    # print(f"{viewed_name} (viewed) -> {view_name} (view) ... ", end='')
-
-    # If the viewed data is an FPGA array, use the original method
     if fpga.is_fpga_array(viewed_desc):
-        print("viewed is FPGA array, using original method")
         return emit_memlet_reference(dispatcher, sdfg, memlet, pointer_name, conntype, ancestor, is_write, device_code,
                                      decouple_array_interfaces)
 
-    # print("viewed is not FPGA array, using view method")
     view_deftype = DefinedType.Pointer
 
     if issubclass(type(view_desc), data.Structure):
