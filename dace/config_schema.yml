@@ -245,6 +245,27 @@ required:
                     of ``cmake``.
 
             #############################################
+            # SoftHier compiler
+            softhier:
+                type: dict
+                title: SoftHier
+                description: SoftHier compiler preferences
+                required:
+                    args:
+                        type: str
+                        title: Arguments
+                        description: Compiler argument flags
+                        default: '-std=c17 -fPIC -Wall -Wextra -O3 -march=native -ffast-math -Wno-unused-parameter -Wno-unused-label'
+                        default_Windows: ''
+                    
+                    link_args:
+                        type: str
+                        title: Link Arguments
+                        description: Compiler link argument flags
+                        default: ''
+                        default_Windows: ''
+
+            #############################################
             # CPU compiler
             cpu:
                 type: dict
@@ -261,7 +282,7 @@ required:
                         type: str
                         title: Arguments
                         description: Compiler argument flags
-                        default: '-fopenmp -std=c++14 -fPIC -Wall -Wextra -O3 -march=native -ffast-math -Wno-unused-parameter -Wno-unused-label'
+                        default: '-fopenmp -std=c++20 -lstdc++fs -fPIC -Wall -Wextra -O3 -march=native -ffast-math -Wno-unused-parameter -Wno-unused-label'
                         default_Windows: '/O2 /fp:fast /arch:AVX2 /D_USRDLL /D_WINDLL /D__restrict__=__restrict'
 
                     libs:
@@ -305,7 +326,7 @@ required:
                         type: str
                         title: nvcc Arguments
                         description: Compiler argument flags for CUDA
-                        default: '--expt-relaxed-constexpr -Xcompiler -march=native --use_fast_math -Xcompiler -Wno-unused-parameter'
+                        default: '-std=c++20 -lstdc++fs --expt-relaxed-constexpr -Xcompiler -march=native --use_fast_math -Xcompiler -Wno-unused-parameter'
                         default_Windows: '-O3 --use_fast_math'
 
                     hip_args:
@@ -868,6 +889,12 @@ required:
                         description: >
                             HBM address BASE
 
+                    HBM_NUM_CHANNELS:
+                        type: int
+                        default: 1
+                        title: HBM_NUM_CHANNELS
+                        description: >
+                            HBM_NUM_CHANNELS
 
     #############################################
 
