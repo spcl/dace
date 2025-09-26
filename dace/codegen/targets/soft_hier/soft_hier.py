@@ -1902,27 +1902,26 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 
         # Just dump the whole HBM address space
         dump_str = ""
+        dump_str += "flex_dump_open();\n"
         dump_str += '//printf("Start dumping arrays");\n'
-        dump_str += "//Print Out the input and output-arrays\nif (flex_is_dm_core())\n{\n"
+        dump_str += "//Print Out the input and output-arrays\nif (flex_is_dm_core() && flex_get_cluster_id() == 0)\n{\n"
         dump_str += '//printf("Start dumping arrays on dm_core / cluster_id == 0");\n'
         for arr_name, arr in sdfg.arrays.items():
             if arr.transient is True:
                 continue
             if arr.storage != dace.dtypes.StorageType.SoftHier_HBM:
                 continue
-            # TODO: Fix input arguments
-            if arr_name not in {"A"}:
-                continue
-            dump_str += "for (int i = 0; i < 1; i++){\n"
+            dump_str += "for (int i = 0; i < 8; i++){\n"
             dump_str += f'//printf("Dumping file: %s \\n", {arr_name});\n'
-            dump_str += "flex_dump_open();\n"
             dump_str += f"flex_dump_hbm({arr_name} + (i * HBM_ADDRESS_SPACE), {arr_name}_tile_width * {arr_name}_tile_height);\n"
-            dump_str += "flex_dump_close();\n"
             dump_str += f'//printf("Dumped file: %s. Renaming dump file.\\n", {arr_name});\n'
+            dump_str += f'//printf("Dumping file: %s \\n", {arr_name});\n'
             dump_str += "}\n"
 
         dump_str += "}\n"
         dump_str += "flex_intra_cluster_sync();\n"
+        dump_str += "flex_dump_close();\n"
+
 
         """
         dump_str += f'''{{
@@ -1931,7 +1930,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 
     // Construct the filenames
     snprintf(old_file, sizeof(old_file), "%s/dump_0", GVSOC_PATH);
-    snprintf(new_file, sizeof(new_file), "%s/dump_%s_ch_%d", GVSOC_PATH, "{{arr_name}}", {i});
+    snprintf(new_file, sizeof(new_file), "%s/dump_%s_ch_%d", GVSOC_PATH, "{{arr_name}}", 0);
 
     // Rename
     if (rename(old_file, new_file) == 0) {{
