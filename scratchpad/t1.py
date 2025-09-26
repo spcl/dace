@@ -565,5 +565,8 @@ if __name__ == "__main__":
     print(preA)
 
     print(postA)
+    # Save as text files you can open and examine
+    np.savetxt('input_array.txt', preA, fmt='%03d')
+    np.savetxt('output_array.txt', postA, fmt='%03d')
 
     print(postA - preA)
