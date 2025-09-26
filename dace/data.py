@@ -21,8 +21,8 @@ import dace.dtypes as dtypes
 from dace import serialize, symbolic
 from dace.codegen import cppunparse
 from dace.properties import (DebugInfoProperty, DictProperty, EnumProperty, ListProperty, NestedDataClassProperty,
-                             OrderedDictProperty, Property, ShapeProperty, SymbolicProperty, TypeClassProperty, HBMPlacementProperty, HBMSplitProperty,
-                             make_properties)
+                             OrderedDictProperty, Property, ShapeProperty, SymbolicProperty, TypeClassProperty,
+                             HBMPlacementProperty, HBMSplitProperty, make_properties)
 
 
 def create_datadescriptor(obj, no_custom_desc=False):
@@ -1388,9 +1388,9 @@ class Array(Data):
     pool = Property(dtype=bool, default=False, desc='Hint to the allocator that using a memory pool is preferred')
 
     is_hbm_interleaved = Property(dtype=bool,
-                      default=False,
-                      desc='This array is interleaved between different HBM banks')
-    
+                                  default=False,
+                                  desc='This array is interleaved between different HBM banks')
+
     hbm_split_scheme = HBMSplitProperty(desc='Scheme to split the array between different HBM banks')
 
     hbm_placement_scheme = HBMPlacementProperty(desc='How split data is placed into different banks.')
@@ -1421,7 +1421,7 @@ class Array(Data):
         self.allow_conflicts = allow_conflicts
         self.may_alias = may_alias
         self.alignment = alignment
-        
+
         if start_offset is not None:
             self.start_offset = start_offset
         self.optional = optional
@@ -1448,7 +1448,7 @@ class Array(Data):
         self.is_hbm_interleaved = is_hbm_interleaved
         if hbm_split_scheme is not None:
             self.hbm_split_scheme = hbm_split_scheme
-        
+
         if hbm_placement_scheme is not None:
             self.hbm_placement_scheme = hbm_placement_scheme
         self.validate()

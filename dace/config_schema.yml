@@ -257,7 +257,7 @@ required:
                         description: Compiler argument flags
                         default: '-std=c17 -fPIC -Wall -Wextra -O3 -march=native -ffast-math -Wno-unused-parameter -Wno-unused-label'
                         default_Windows: ''
-                    
+
                     link_args:
                         type: str
                         title: Link Arguments

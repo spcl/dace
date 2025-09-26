@@ -425,16 +425,17 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
 
     return (typedef + ref, pointer_name, expr)
 
+
 def emit_softhier_memlet_reference(dispatcher: 'TargetDispatcher',
-                          sdfg: SDFG,
-                          memlet: mmlt.Memlet,
-                          pointer_name: str,
-                          conntype: dtypes.typeclass,
-                          ancestor: int = 1,
-                          is_write: bool = None,
-                          device_code: bool = False,
-                          decouple_array_interfaces: bool = False,
-                          is_soft_hier: bool = False) -> Tuple[str, str, str]:
+                                   sdfg: SDFG,
+                                   memlet: mmlt.Memlet,
+                                   pointer_name: str,
+                                   conntype: dtypes.typeclass,
+                                   ancestor: int = 1,
+                                   is_write: bool = None,
+                                   device_code: bool = False,
+                                   decouple_array_interfaces: bool = False,
+                                   is_soft_hier: bool = False) -> Tuple[str, str, str]:
     """
     Returns a tuple of three strings with a definition of a reference to an
     existing memlet. Used in nested SDFG arguments.
@@ -470,13 +471,13 @@ def emit_softhier_memlet_reference(dispatcher: 'TargetDispatcher',
 
     # expr = make_ptr_vector_cast(datadef + offset_expr, desc.dtype, conntype, is_scalar, defined_type)
     expr = copy_expr(dispatcher,
-                                sdfg,
-                                memlet.data,
-                                memlet,
-                                is_write=is_write,
-                                offset=memlet.subset,
-                                relative_offset=False,
-                                packed_types=False)
+                     sdfg,
+                     memlet.data,
+                     memlet,
+                     is_write=is_write,
+                     offset=memlet.subset,
+                     relative_offset=False,
+                     packed_types=False)
     if expr != datadef:
         expr = f"{expr} * {desc.dtype.bytes}"
     # Register defined variable
@@ -486,6 +487,7 @@ def emit_softhier_memlet_reference(dispatcher: 'TargetDispatcher',
     # NOTE: Since structures are implemented as pointers, we replace dots with arrows.
 
     return (typedef, pointer_name, expr)
+
 
 def reshape_strides(subset, strides, original_strides, copy_shape):
     """ Helper function that reshapes a shape to the given strides. """

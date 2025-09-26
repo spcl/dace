@@ -660,7 +660,7 @@ if(DACE_ENABLE_SOFTHIER)
   if (NOT GVSOC_INSTALL_PATH)
     set(GVSOC_INSTALL_PATH "/usr/scratch/badile111/dace4softhier/gvsoc")
   endif()
-  
+
   configure_file(
     ${DACE_SOFTHIER_SHCC_CMAKE_PATH}/dace.sh.in
     ${CMAKE_BINARY_DIR}/../../dace.sh
@@ -715,5 +715,3 @@ if (MSVC_IDE)
     set_property(TARGET ${DACE_PROGRAM_NAME} PROPERTY
                  MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
-
-

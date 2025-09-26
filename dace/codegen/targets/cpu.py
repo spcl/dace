@@ -1311,7 +1311,7 @@ class CPUCodeGen(TargetCodeGenerator):
         result = ''
         expr = (cpp.cpp_array_expr(sdfg, memlet, with_brackets=False, codegen=self._frame)
                 if var_type in [DefinedType.Pointer, DefinedType.StreamArray, DefinedType.ArrayInterface] else ptr)
-        print(f"expr: {expr}") 
+        print(f"expr: {expr}")
         print(f"ptr: {ptr}")
         if expr != ptr:
             expr = '%s[%s]' % (ptr, expr)
@@ -1391,9 +1391,15 @@ class CPUCodeGen(TargetCodeGenerator):
 
     #########################################################################
     # Dynamically-called node dispatchers
-    def _generate_RedMule_Tasklet(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
-                            node: nodes.Tasklet, function_stream: CodeIOStream, callsite_stream: CodeIOStream,
-                            codegen=None):
+    def _generate_RedMule_Tasklet(self,
+                                  sdfg: SDFG,
+                                  cfg: ControlFlowRegion,
+                                  dfg: StateSubgraphView,
+                                  state_id: int,
+                                  node: nodes.Tasklet,
+                                  function_stream: CodeIOStream,
+                                  callsite_stream: CodeIOStream,
+                                  codegen=None):
 
         print("Generating Tasklet Using RedMule Codegen")
         # Allow other code generators to call this with a callback
@@ -1417,7 +1423,7 @@ class CPUCodeGen(TargetCodeGenerator):
         # Prepare preamble and code for after memlets
         after_memlets_stream = CodeIOStream()
         codegen.generate_tasklet_preamble(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream,
-                                        after_memlets_stream)
+                                          after_memlets_stream)
 
         self._dispatcher.defined_vars.enter_scope(node)
 
@@ -1438,7 +1444,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     if not shared_data_name:
                         # Very unique name. TODO: Make more intuitive
                         shared_data_name = '__dace_%d_%d_%d_%d_%s' % (cfg.cfg_id, state_id, dfg.node_id(src_node),
-                                                                    dfg.node_id(node), edge.src_conn)
+                                                                      dfg.node_id(node), edge.src_conn)
 
                     # Read variable from shared storage
                     defined_type, _ = self._dispatcher.defined_vars.get(shared_data_name)
@@ -1557,7 +1563,7 @@ class CPUCodeGen(TargetCodeGenerator):
         # Generate pre-memlet tasklet postamble
         after_memlets_stream = CodeIOStream()
         codegen.generate_tasklet_postamble(sdfg, cfg, dfg, state_id, node, function_stream, inner_stream,
-                                        after_memlets_stream)
+                                           after_memlets_stream)
 
         # Process outgoing memlets
         codegen.process_out_memlets(

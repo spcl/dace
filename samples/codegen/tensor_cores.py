@@ -279,7 +279,6 @@ if __name__ == '__main__':
     sdfg.apply_transformations(GPUTransformSDFG, options=dict(sequential_innermaps=False))
     # sdfg(A=A, B=B, C=C, N=1024)
     # Code(sdfg.generate_code()[0].clean_code, language='cpp')
-    
 
     # diff = np.linalg.norm(A @ B - C) / (1024 * 1024)
     # print('Difference:', diff)

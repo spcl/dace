@@ -1,12 +1,19 @@
 import dace
 
+
 def vec_copy():
     sdfg = dace.SDFG("soft_hier_vec_copy")
     state = sdfg.add_state("main")
-    a_host = sdfg.add_array("A", (256*32, ), dace.float16, dace.dtypes.StorageType.CPU_Heap, transient=True)
-    a_dev = sdfg.add_array("soft_hier_A", (256*32, ), dace.float16, dace.dtypes.StorageType.SoftHier_HBM, transient=True)
-    b_host = sdfg.add_array("B", (256*32, ), dace.float16, dace.dtypes.StorageType.CPU_Heap, transient=True)
-    b_dev = sdfg.add_array("soft_hier_B", (256*32, ), dace.float16, dace.dtypes.StorageType.SoftHier_HBM, transient=True)
+    a_host = sdfg.add_array("A", (256 * 32, ), dace.float16, dace.dtypes.StorageType.CPU_Heap, transient=True)
+    a_dev = sdfg.add_array("soft_hier_A", (256 * 32, ),
+                           dace.float16,
+                           dace.dtypes.StorageType.SoftHier_HBM,
+                           transient=True)
+    b_host = sdfg.add_array("B", (256 * 32, ), dace.float16, dace.dtypes.StorageType.CPU_Heap, transient=True)
+    b_dev = sdfg.add_array("soft_hier_B", (256 * 32, ),
+                           dace.float16,
+                           dace.dtypes.StorageType.SoftHier_HBM,
+                           transient=True)
     ahc = state.add_access("A")
     adc = state.add_access("soft_hier_A")
     bhc = state.add_access("B")
@@ -16,8 +23,12 @@ def vec_copy():
     #af = state.add_access("frag_A")
     #bf = state.add_access("frag_B")
 
-    dev_entry, dev_exit = state.add_map(name="copy_map_outer", ndrange={"i": dace.subsets.Range([(0, 256*32-1, 256*32)])}, schedule=dace.dtypes.ScheduleType.SoftHier_Device)
-    tblock_entry, tblock_exit = state.add_map(name="copy_map_inner", ndrange={"ii": dace.subsets.Range([(0, 256*32-1, 256)])}, schedule=dace.dtypes.ScheduleType.SoftHier_Cluster)
+    dev_entry, dev_exit = state.add_map(name="copy_map_outer",
+                                        ndrange={"i": dace.subsets.Range([(0, 256 * 32 - 1, 256 * 32)])},
+                                        schedule=dace.dtypes.ScheduleType.SoftHier_Device)
+    tblock_entry, tblock_exit = state.add_map(name="copy_map_inner",
+                                              ndrange={"ii": dace.subsets.Range([(0, 256 * 32 - 1, 256)])},
+                                              schedule=dace.dtypes.ScheduleType.SoftHier_Cluster)
 
     #glb_to_vecin = GlobalToVECIN(name="glb_to_vecin_a", input_names=["IN_A"], output_names=["OUT_frag_A"], queue_length=1, load_length=256)
     glb_to_vecin = state.add_access("frag_A")
@@ -48,11 +59,11 @@ def vec_copy():
 
     #t = state.add_tasklet(name="assign", inputes={"_in"}, outputs={"_out"}, code="_out = _in")
 
-
     sdfg.save("soft_hier_2.sdfgz")
     return sdfg
 
+
 if __name__ == "__main__":
-  s = vec_copy()
-#   print(list(dace.ScheduleType))
-  s.compile()
+    s = vec_copy()
+    #   print(list(dace.ScheduleType))
+    s.compile()

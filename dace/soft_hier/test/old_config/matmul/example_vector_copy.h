@@ -43,4 +43,3 @@ void copy_map_outer_0_0_4(uint32_t soft_hier_A, uint32_t soft_hier_B) {
         flex_global_barrier_xy();
     }
 }
-

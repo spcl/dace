@@ -3,7 +3,11 @@ import numpy as np
 from .interleave_handler import InterleaveHandler
 
 
-def make_preload_elf(output_file_path, np_arrays, start_addresses=None, hbm_node_addr_base=0xc0000000, hbm_node_addr_space=0x04000000):
+def make_preload_elf(output_file_path,
+                     np_arrays,
+                     start_addresses=None,
+                     hbm_node_addr_base=0xc0000000,
+                     hbm_node_addr_space=0x04000000):
     """
     Generate an ELF file preloading numpy arrays.
 
@@ -26,11 +30,11 @@ def make_preload_elf(output_file_path, np_arrays, start_addresses=None, hbm_node
         np.dtype('float32'): 'float',
         np.dtype('float64'): 'double',
     }
-    
+
     ENV_PATH = os.environ.get("PATH")
     # Add RISC-V toolchain to PATH /scratch/dace4softhier/gvsoc/third_party/toolchain/v1.0.16-pulp-riscv-gcc-centos-7/bin/
     # os.environ["PATH"] = f"{ENV_PATH}:/scratch/dace4softhier/gvsoc/third_party/toolchain/install/bin/"
-    
+
     # Handle default for start_addresses
     if start_addresses is None:
         start_addresses = [None] * len(np_arrays)
@@ -55,7 +59,7 @@ def make_preload_elf(output_file_path, np_arrays, start_addresses=None, hbm_node
 
         section_name = f".custom_section_{idx}"
         section_names.append(section_name)
-        
+
         if start_addr is None:
             # Auto-determine the address with alignment
             start_addr = (current_address + alignment - 1) & ~(alignment - 1)
@@ -67,8 +71,7 @@ def make_preload_elf(output_file_path, np_arrays, start_addresses=None, hbm_node
         # Generate the array definition
         array_values = ", ".join(map(str, array.flatten()))
         array_c_content.append(
-            f'{c_type} array_{idx}[] __attribute__((section("{section_name}"))) = {{{array_values}}};'
-        )
+            f'{c_type} array_{idx}[] __attribute__((section("{section_name}"))) = {{{array_values}}};')
 
         current_address = start_addr + array.nbytes
 
@@ -76,7 +79,6 @@ def make_preload_elf(output_file_path, np_arrays, start_addresses=None, hbm_node
 
     with open("array.c", "w") as f:
         f.write(array_c_code)
-
 
     # Step 2: Create "link.ld"
     link_ld_content = ["SECTIONS {"]
@@ -88,9 +90,7 @@ def make_preload_elf(output_file_path, np_arrays, start_addresses=None, hbm_node
         if start_addr is None:
             # Auto-determine the address with alignment
             start_addr = (current_address + alignment - 1) & ~(alignment - 1)
-        link_ld_content.append(
-            f"    . = 0x{start_addr:X};\n    {section_name} : {{ *({section_name}) }}"
-        )
+        link_ld_content.append(f"    . = 0x{start_addr:X};\n    {section_name} : {{ *({section_name}) }}")
         current_address = start_addr + array.nbytes
 
     link_ld_content.append("}")
@@ -102,18 +102,20 @@ def make_preload_elf(output_file_path, np_arrays, start_addresses=None, hbm_node
     # Step 3: Compile the ELF file
     os.system("riscv32-unknown-elf-gcc -c array.c -o array.o")
     os.system(f"riscv32-unknown-elf-ld -T link.ld array.o -o {output_file_path}")
-    os.system(f"riscv32-unknown-elf-strip --remove-section=.comment --remove-section=.Pulp_Chip.Info {output_file_path}")
+    os.system(
+        f"riscv32-unknown-elf-strip --remove-section=.comment --remove-section=.Pulp_Chip.Info {output_file_path}")
 
     # Step 4: Cleanup
     os.remove("array.c")
     os.remove("link.ld")
     os.remove("array.o")
 
-def make_preload_elf_hbm_interleaved_new(output_file_path, 
+
+def make_preload_elf_hbm_interleaved_new(output_file_path,
                                          Handler_list: list[InterleaveHandler],
-                                         KMN=None, 
-                                         hbm_node_addr_base=0xc0000000, 
-                                         hbm_node_addr_space=0x04000000, 
+                                         KMN=None,
+                                         hbm_node_addr_base=0xc0000000,
+                                         hbm_node_addr_space=0x04000000,
                                          args_only=True):
     """
     Split np arrays into tiles and blocks and then use make_preload_elf to generate an ELF file preloading numpy arrays.
@@ -124,13 +126,10 @@ def make_preload_elf_hbm_interleaved_new(output_file_path,
     placement_schemes = [handler.placement_scheme for handler in Handler_list]
     hardware_block_sizes = [handler.block_shape for handler in Handler_list]
     total_channels = (Handler_list[0].cluster_dims[0] + Handler_list[0].cluster_dims[1]) * 2
-    
-    
-     # 1) Combine relevant info with original indices
-    arrays_info = [
-        (idx, array, split_schemes[idx], placement_schemes[idx], hardware_block_sizes[idx])
-        for idx, array in enumerate(np_arrays)
-    ]
+
+    # 1) Combine relevant info with original indices
+    arrays_info = [(idx, array, split_schemes[idx], placement_schemes[idx], hardware_block_sizes[idx])
+                   for idx, array in enumerate(np_arrays)]
 
     # Helper to compute the number of channels from a placement scheme
     def get_num_channels(placement_scheme):
@@ -161,10 +160,8 @@ def make_preload_elf_hbm_interleaved_new(output_file_path,
         tile_height = array_shape[0] // split_scheme[0]
         tile_length = array_shape[1] // split_scheme[1]
         if tile_height < hardware_block_size[0] or tile_length < hardware_block_size[1]:
-            raise ValueError(
-                f"Invalid tile size: {tile_height}x{tile_length}"
-                f" < {hardware_block_size[0]}x{hardware_block_size[1]}"
-            )
+            raise ValueError(f"Invalid tile size: {tile_height}x{tile_length}"
+                             f" < {hardware_block_size[0]}x{hardware_block_size[1]}")
 
         # Compute how many bytes total and how many bytes per channel
         array_size = array.nbytes
@@ -181,29 +178,26 @@ def make_preload_elf_hbm_interleaved_new(output_file_path,
         # 6) Check if the placement scheme is valid
         for channel_idx in set(placement_scheme):
             if start_addr_in_each_channel[channel_idx] != array_start_addr_in_channel:
-                raise ValueError(
-                    f"Invalid placement scheme: {placement_scheme}, "
-                    f"channel {channel_idx} start address mismatch"
-                )
-        
+                raise ValueError(f"Invalid placement scheme: {placement_scheme}, "
+                                 f"channel {channel_idx} start address mismatch")
+
         # 7) Advance addresses in all channels used by this array
         for i in range(len(placement_scheme)):
             channel_idx = placement_scheme[i]
             start_addr_in_each_channel[channel_idx] += array_size_per_tile
-        
 
     args = start_addresses_in_original_order
     for arg in args:
         print(f"arg: {hex(arg)}")
 
-      
     split_arrays = []
     split_arrays.append(args)
     split_arrays_start_addresses = []
-    split_arrays_start_addresses.append(hbm_node_addr_base) # for store args
+    split_arrays_start_addresses.append(hbm_node_addr_base)  # for store args
 
     if not args_only:
-        for array, split_scheme, placement_scheme, hardware_block_size, arg_start_addr in zip(np_arrays, split_schemes, placement_schemes, hardware_block_sizes, args):
+        for array, split_scheme, placement_scheme, hardware_block_size, arg_start_addr in zip(
+                np_arrays, split_schemes, placement_schemes, hardware_block_sizes, args):
             current_start_address = arg_start_addr
             print(f"current_start_address: {hex(current_start_address)}")
             block_height = hardware_block_size[0]
@@ -236,15 +230,16 @@ def make_preload_elf_hbm_interleaved_new(output_file_path,
                     # How many tiles have been assigned to this channel before this one?
                     tile_offset = sum(1 for t in range(tile_idx) if placement_scheme[t] == channel_idx)
                     print(f"tile_offset: {tile_offset}")
-                    tile = array[i*tile_height:(i+1)*tile_height, j*tile_length:(j+1)*tile_length]
+                    tile = array[i * tile_height:(i + 1) * tile_height, j * tile_length:(j + 1) * tile_length]
                     for bi in range(0, tile_height, block_height):
                         for bj in range(0, tile_length, block_length):
                             print(f"bi: {bi}, bj: {bj}")
-                            block = tile[bi:bi+block_height, bj:bj+block_length] 
+                            block = tile[bi:bi + block_height, bj:bj + block_length]
                             split_arrays.append(block)
                             bi_index = bi // block_height
                             bj_index = bj // block_length
-                            block_address = hbm_node_addr_base + current_start_address + channel_idx * hbm_node_addr_space + tile_offset * tile_size + (bi_index * tile_length // block_length + bj_index) * block_size
+                            block_address = hbm_node_addr_base + current_start_address + channel_idx * hbm_node_addr_space + tile_offset * tile_size + (
+                                bi_index * tile_length // block_length + bj_index) * block_size
                             print(f"block_address: {hex(block_address)}")
                             split_arrays_start_addresses.append(block_address)
 
@@ -253,26 +248,35 @@ def make_preload_elf_hbm_interleaved_new(output_file_path,
         args.append(KMN[1])
         args.append(KMN[2])
     # args to np arrays
-    args = np.array(args, dtype=np.uint32)  
+    args = np.array(args, dtype=np.uint32)
 
     # replace the args in split_arrays with new args
     split_arrays[0] = args
 
-    make_preload_elf(output_file_path, split_arrays, split_arrays_start_addresses, hbm_node_addr_base, hbm_node_addr_space)
+    make_preload_elf(output_file_path, split_arrays, split_arrays_start_addresses, hbm_node_addr_base,
+                     hbm_node_addr_space)
 
     return args
 
 
-def make_preload_elf_hbm_interleaved(output_file_path, np_arrays, split_schemes, placement_schemes, hardware_block_sizes, start_addresses=None, KMN=None, total_channels=16, hbm_node_addr_base=0xc0000000, hbm_node_addr_space=0x02000000, args_only=True):
+def make_preload_elf_hbm_interleaved(output_file_path,
+                                     np_arrays,
+                                     split_schemes,
+                                     placement_schemes,
+                                     hardware_block_sizes,
+                                     start_addresses=None,
+                                     KMN=None,
+                                     total_channels=16,
+                                     hbm_node_addr_base=0xc0000000,
+                                     hbm_node_addr_space=0x02000000,
+                                     args_only=True):
     """
     Split np arrays into tiles and blocks and then use make_preload_elf to generate an ELF file preloading numpy arrays.
 
     """
-     # 1) Combine relevant info with original indices
-    arrays_info = [
-        (idx, array, split_schemes[idx], placement_schemes[idx], hardware_block_sizes[idx])
-        for idx, array in enumerate(np_arrays)
-    ]
+    # 1) Combine relevant info with original indices
+    arrays_info = [(idx, array, split_schemes[idx], placement_schemes[idx], hardware_block_sizes[idx])
+                   for idx, array in enumerate(np_arrays)]
 
     # Helper to compute the number of channels from a placement scheme
     def get_num_channels(placement_scheme):
@@ -305,10 +309,8 @@ def make_preload_elf_hbm_interleaved(output_file_path, np_arrays, split_schemes,
         tile_height = array_shape[0] // split_scheme[0]
         tile_length = array_shape[1] // split_scheme[1]
         if tile_height < hardware_block_size[0] or tile_length < hardware_block_size[1]:
-            raise ValueError(
-                f"Invalid tile size: {tile_height}x{tile_length}"
-                f" < {hardware_block_size[0]}x{hardware_block_size[1]}"
-            )
+            raise ValueError(f"Invalid tile size: {tile_height}x{tile_length}"
+                             f" < {hardware_block_size[0]}x{hardware_block_size[1]}")
 
         # Compute how many bytes total and how many bytes per channel
         array_size = array.nbytes
@@ -327,24 +329,22 @@ def make_preload_elf_hbm_interleaved(output_file_path, np_arrays, split_schemes,
 
             # Optional: Validate all channels in the group are at the same start
             if start_addr_in_each_channel[channel_idx] != array_start_addr_in_channel:
-                raise ValueError(
-                    f"Invalid placement scheme: {placement_scheme}, "
-                    f"channel {channel_idx} start address mismatch"
-                )
+                raise ValueError(f"Invalid placement scheme: {placement_scheme}, "
+                                 f"channel {channel_idx} start address mismatch")
             start_addr_in_each_channel[channel_idx] += array_size_per_channel
 
     args = start_addresses_in_original_order
     for arg in args:
         print(f"arg: {hex(arg)}")
 
-      
     split_arrays = []
     split_arrays.append(args)
     split_arrays_start_addresses = []
-    split_arrays_start_addresses.append(hbm_node_addr_base) # for store args
+    split_arrays_start_addresses.append(hbm_node_addr_base)  # for store args
 
     if not args_only:
-        for array, split_scheme, placement_scheme, hardware_block_size, arg_start_addr in zip(np_arrays, split_schemes, placement_schemes, hardware_block_sizes, args):
+        for array, split_scheme, placement_scheme, hardware_block_size, arg_start_addr in zip(
+                np_arrays, split_schemes, placement_schemes, hardware_block_sizes, args):
             current_start_address = arg_start_addr
             print(f"current_start_address: {hex(current_start_address)}")
             block_height = hardware_block_size[0]
@@ -375,15 +375,17 @@ def make_preload_elf_hbm_interleaved(output_file_path, np_arrays, split_schemes,
                     channel_idx = channel_start + channel_offset * channel_stride
                     channel_idx = (channel_idx + total_channels) % total_channels
                     print(f"channel_idx: {channel_idx}")
-                    tile = array[i*tile_height:(i+1)*tile_height, j*tile_length:(j+1)*tile_length]
+                    tile = array[i * tile_height:(i + 1) * tile_height, j * tile_length:(j + 1) * tile_length]
                     for bi in range(0, tile_height, block_height):
                         for bj in range(0, tile_length, block_length):
                             print(f"bi: {bi}, bj: {bj}")
-                            block = tile[bi:bi+block_height, bj:bj+block_length] 
+                            block = tile[bi:bi + block_height, bj:bj + block_length]
                             split_arrays.append(block)
                             bi_index = bi // block_height
                             bj_index = bj // block_length
-                            block_address = hbm_node_addr_base + current_start_address + channel_idx * hbm_node_addr_space + (tile_idx // num_channels) * tile_size + (bi_index * tile_length // block_length + bj_index) * block_size
+                            block_address = hbm_node_addr_base + current_start_address + channel_idx * hbm_node_addr_space + (
+                                tile_idx // num_channels) * tile_size + (bi_index * tile_length // block_length +
+                                                                         bj_index) * block_size
                             print(f"block_address: {hex(block_address)}")
                             split_arrays_start_addresses.append(block_address)
 
@@ -392,11 +394,12 @@ def make_preload_elf_hbm_interleaved(output_file_path, np_arrays, split_schemes,
         args.append(KMN[1])
         args.append(KMN[2])
     # args to np arrays
-    args = np.array(args, dtype=np.uint32)  
+    args = np.array(args, dtype=np.uint32)
 
     # replace the args in split_arrays with new args
     split_arrays[0] = args
 
-    make_preload_elf(output_file_path, split_arrays, split_arrays_start_addresses, hbm_node_addr_base, hbm_node_addr_space)
+    make_preload_elf(output_file_path, split_arrays, split_arrays_start_addresses, hbm_node_addr_base,
+                     hbm_node_addr_space)
 
     return args

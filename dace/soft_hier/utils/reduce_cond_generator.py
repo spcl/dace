@@ -37,4 +37,3 @@ class reduce_cond_generator:
 
         # Get the reduction condition from the node
         return reduce_cond
-    

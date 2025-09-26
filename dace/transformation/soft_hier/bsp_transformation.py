@@ -8,10 +8,11 @@ from random import randint as rand
 from dace import data, sdfg as sd, subsets, symbolic, InterstateEdge, SDFGState, Memlet, dtypes
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.transformation import transformation 
+from dace.transformation import transformation
 from dace.properties import make_properties, Property, SymbolicProperty, CodeBlock, CodeProperty
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
 from dace.sdfg.state import LoopRegion, ConditionalBlock, ControlFlowRegion
+
 
 @make_properties
 class BSPTransformer(transformation.SingleStateTransformation):
@@ -19,16 +20,16 @@ class BSPTransformer(transformation.SingleStateTransformation):
     accumulator = transformation.PatternNode(nodes.AccessNode)
     map_entry = transformation.PatternNode(nodes.MapEntry)
     transient = transformation.PatternNode(nodes.AccessNode)
-    
+
     # Properties
     npe_x = Property(default=None, allow_none=True, desc="Number of processing elements")
     npe_y = Property(default=None, allow_none=True, desc="Number of processing elements")
     tM = Property(default=None, allow_none=True, desc="tM")
     tN = Property(default=None, allow_none=True, desc="tN")
     tK = Property(default=None, allow_none=True, desc="tK")
-    M  = SymbolicProperty(default=None, allow_none=True, desc="M")
-    N  = SymbolicProperty(default=None, allow_none=True, desc="N")
-    K  = SymbolicProperty(default=None, allow_none=True, desc="K")
+    M = SymbolicProperty(default=None, allow_none=True, desc="M")
+    N = SymbolicProperty(default=None, allow_none=True, desc="N")
+    K = SymbolicProperty(default=None, allow_none=True, desc="K")
     gi = SymbolicProperty(default=None, allow_none=True, desc="gi")
     gj = SymbolicProperty(default=None, allow_none=True, desc="gj")
     i = SymbolicProperty(default=None, allow_none=True, desc="i")
@@ -138,8 +139,6 @@ class BSPTransformer(transformation.SingleStateTransformation):
 
         map_entry.map.range = subsets.Range([(map_rstart, map_rend, new_map_rstride)])
 
-       
-
         # Add dimension to transients and modify memlets
         for transient in transients_to_modify:
             desc: data.Array = sdfg.arrays[transient]
@@ -148,7 +147,6 @@ class BSPTransformer(transformation.SingleStateTransformation):
             desc.shape = [2] + list(desc.shape)
             desc.offset = [0] + list(desc.offset)
             desc.total_size = desc.total_size * 2
-        
 
         ##############################
         # Modify memlets to use map parameter as buffer index
@@ -172,12 +170,12 @@ class BSPTransformer(transformation.SingleStateTransformation):
                     subset = (edge.data.other_subset or subsets.Range.from_array(sdfg.arrays[dataname]))
                     edge.data.other_subset = self._modify_memlet(sdfg, subset, dataname)
                     modified_subsets.append(edge.data.other_subset)
-        
-        
+
         from dace.transformation.helpers import nest_state_subgraph
         from dace.sdfg import SDFG, SDFGState
         ##############################
-        node = nest_state_subgraph(sdfg, graph, graph.scope_subgraph(map_entry, include_entry=False, include_exit=False))
+        node = nest_state_subgraph(sdfg, graph, graph.scope_subgraph(map_entry, include_entry=False,
+                                                                     include_exit=False))
         # node.schedule = map_entry.map.schedule
         nsdfg: SDFG = node.sdfg
         nstate: SDFGState = nsdfg.nodes()[0]
@@ -215,27 +213,33 @@ class BSPTransformer(transformation.SingleStateTransformation):
                         if idx == 1:
                             # memlet.subset = self._replace_in_subset(memlet.subset, map_param, f"{map_param} + (({gi}+{gj})%{NPE})*{map_rstride}")
                             memlet.other_subset = None
-        
+
         ##############################
-        new_streams = {}     
+        new_streams = {}
         for transient in transients_to_modify:
             desc: data.Array = nsdfg.arrays[transient]
             trans_name = transient
             trans_dtype = desc.dtype
             trans_storage = desc.storage
             trans_shape = desc.shape
-            sn, s = nsdfg.add_stream(f"s_{trans_name}", dtype=trans_dtype, storage=trans_storage, buffer_size=1, shape=(npe_x, npe_y)+trans_shape, transient=True)
+            sn, s = nsdfg.add_stream(f"s_{trans_name}",
+                                     dtype=trans_dtype,
+                                     storage=trans_storage,
+                                     buffer_size=1,
+                                     shape=(npe_x, npe_y) + trans_shape,
+                                     transient=True)
             new_streams[f"s_{trans_name}"] = s
 
         ##############################
         # init state
         init_state = nsdfg.add_state("init", is_start_block=True)
         cfg_list.append(init_state)
-        
+
         if BSP_init is not None:
             for ast_node in BSP_init.code:
                 if isinstance(ast_node, ast.Assign):
-                    self._generate_assign_sdfg(ast_node, init_state, transients_to_modify, global_arrays, new_streams, nsdfg)
+                    self._generate_assign_sdfg(ast_node, init_state, transients_to_modify, global_arrays, new_streams,
+                                               nsdfg)
             init_sync_state = nsdfg.add_state("init_sync")
             nsdfg.add_edge(init_state, init_sync_state, InterstateEdge(None, None))
             init_sync_state.add_tasklet(name="SoftHier_sync",
@@ -249,7 +253,6 @@ class BSPTransformer(transformation.SingleStateTransformation):
                                         ''',
                                         language=dtypes.Language.CPP)
             cfg_list.append(init_sync_state)
-
 
         ##############################
         # Create the LoopRegion using the extracted expressions and loop variable.
@@ -271,14 +274,14 @@ class BSPTransformer(transformation.SingleStateTransformation):
             update_expr=update_expr,
             sdfg=nsdfg,
         )
-        
+
         nsdfg.add_edge(cfg_list[-1], lr, InterstateEdge(None, None))
         cfg_list.append(lr)
         lr_param = lr.loop_variable
         lr_cfg_list = []
         ##############################
         # start block for loop region
-        lr_s0 : SDFGState = lr.add_state("start", is_start_block=True)
+        lr_s0: SDFGState = lr.add_state("start", is_start_block=True)
         lr_cfg_list.append(lr_s0)
 
         if BSP_compute is not None:
@@ -291,25 +294,17 @@ class BSPTransformer(transformation.SingleStateTransformation):
                 parent=lr,
             )
 
-            cb_compute_cfg1 = ControlFlowRegion(
-                label="cb_compute_s1"
-            )
+            cb_compute_cfg1 = ControlFlowRegion(label="cb_compute_s1")
 
-            compute_cfg1_cond = CodeBlock(
-                code=condition_expr,
-                language=dtypes.Language.Python
-            )
+            compute_cfg1_cond = CodeBlock(code=condition_expr, language=dtypes.Language.Python)
 
-            cb_compute.add_branch(
-                condition=compute_cfg1_cond,
-                branch=cb_compute_cfg1
-            )
+            cb_compute.add_branch(condition=compute_cfg1_cond, branch=cb_compute_cfg1)
         if BSP_compute is not None:
-            lr_s1 : SDFGState = cb_compute_cfg1.add_state("compute")
+            lr_s1: SDFGState = cb_compute_cfg1.add_state("compute")
             lr.add_edge(lr_s0, cb_compute, InterstateEdge(None, None))
             lr_cfg_list.append(cb_compute)
         else:
-            lr_s1 : SDFGState = lr.add_state("compute")
+            lr_s1: SDFGState = lr.add_state("compute")
             lr.add_edge(lr_cfg_list[-1], lr_s1, InterstateEdge(None, None))
             lr_cfg_list.append(lr_s1)
 
@@ -330,29 +325,29 @@ class BSPTransformer(transformation.SingleStateTransformation):
                     if lr_s1.out_degree(src_node) == 0:
                         lr_s1.remove_node(src_node)
 
-        compute_expr = symbolic.pystr_to_symbolic('(%s) %% 2' % (lr_param)) 
+        compute_expr = symbolic.pystr_to_symbolic('(%s) %% 2' % (lr_param))
         sd.replace(lr_s1, '__dace_db_param', compute_expr)
 
         if len(BSP_communication.code) == 1 and isinstance(BSP_communication.code[0], ast.If):
-            cb_comm = self._process_if_node(lr, BSP_communication.code[0], transients_to_modify, global_arrays, new_streams, nsdfg)
+            cb_comm = self._process_if_node(lr, BSP_communication.code[0], transients_to_modify, global_arrays,
+                                            new_streams, nsdfg)
             lr.add_edge(lr_cfg_list[-1], cb_comm, InterstateEdge(None, None))
             lr_cfg_list.append(cb_comm)
         elif len(BSP_communication.code) > 1 and isinstance(BSP_communication.code[0], ast.Assign):
-            lr_s2 : SDFGState = lr.add_state("communication")
+            lr_s2: SDFGState = lr.add_state("communication")
             lr.add_edge(lr_cfg_list[-1], lr_s2, InterstateEdge(None, None))
             lr_cfg_list.append(lr_s2)
             for ast_node in BSP_communication.code:
                 if isinstance(ast_node, ast.Assign):
                     self._generate_assign_sdfg(ast_node, lr_s2, transients_to_modify, global_arrays, new_streams, nsdfg)
 
-
         if BSP_sync:
-            lr_sync : SDFGState = lr.add_state("sync")
+            lr_sync: SDFGState = lr.add_state("sync")
             lr.add_edge(lr_cfg_list[-1], lr_sync, InterstateEdge(None, None))
             lr_cfg_list.append(lr_sync)
-            lr_sync.add_tasklet(name="SoftHier_sync", 
-                                inputs=None, 
-                                outputs=None, 
+            lr_sync.add_tasklet(name="SoftHier_sync",
+                                inputs=None,
+                                outputs=None,
                                 code=f'''
                                 // if (flex_is_dm_core()) {{
                                 //     flex_dma_async_wait_all();
@@ -361,14 +356,15 @@ class BSPTransformer(transformation.SingleStateTransformation):
                                 flex_global_barrier_xy();
                                 ''',
                                 language=dtypes.Language.CPP)
-        
+
         nsdfg.remove_node(nstate)
 
         for edge in graph.in_edges(accumulator):
             entry_node = edge.src
 
         if pre_shift is not None and post_shift is not None:
-            node = nest_state_subgraph(sdfg, graph, graph.scope_subgraph(entry_node, include_entry=False, include_exit=False))
+            node = nest_state_subgraph(sdfg, graph,
+                                       graph.scope_subgraph(entry_node, include_entry=False, include_exit=False))
             nsdfg: SDFG = node.sdfg
             nstate: SDFGState = nsdfg.nodes()[0]
             if pre_shift is not None:
@@ -383,11 +379,10 @@ class BSPTransformer(transformation.SingleStateTransformation):
                 post_shift_state = nsdfg.add_state("post_shift")
                 nsdfg.add_edge(nstate, post_shift_state, InterstateEdge(None, None))
                 post_shift_state.add_tasklet(name="post_shift",
-                                            inputs=None,
-                                            outputs=None,
-                                            code=post_shift,
-                                            language=dtypes.Language.CPP)
-
+                                             inputs=None,
+                                             outputs=None,
+                                             code=post_shift,
+                                             language=dtypes.Language.CPP)
 
     @staticmethod
     def _modify_memlet(sdfg, subset, data_name):
@@ -412,8 +407,9 @@ class BSPTransformer(transformation.SingleStateTransformation):
                 new_subset[i] = (dim.subs(repldict) if symbolic.issymbolic(dim) else dim)
 
         return new_subset
-    
+
     def _process_assignment(self, assign_node):
+
         def _extract_name(node):
             """
             Recursively extract the base variable name from an AST node.
@@ -427,10 +423,11 @@ class BSPTransformer(transformation.SingleStateTransformation):
             else:
                 # Fall back to using ast.unparse if the node type is unexpected.
                 return ast.unparse(node).strip()
+
         dst = _extract_name(assign_node.targets[0])
         src = _extract_name(assign_node.value)
         return dst, src
-    
+
     def _get_index_info(self, subscript_node):
         """
         Given a Subscript node, examine its .slice attribute and return a dictionary
@@ -443,7 +440,7 @@ class BSPTransformer(transformation.SingleStateTransformation):
         if isinstance(slice_node, ast.Slice):
             lower = ast.unparse(slice_node.lower).strip() if slice_node.lower is not None else None
             upper = ast.unparse(slice_node.upper).strip() if slice_node.upper is not None else None
-            step  = ast.unparse(slice_node.step).strip() if slice_node.step is not None else None
+            step = ast.unparse(slice_node.step).strip() if slice_node.step is not None else None
             return {"type": "slice", "lower": lower, "upper": upper, "step": step}
         else:
             # If not a slice, then it's a single index expression.
@@ -472,7 +469,7 @@ class BSPTransformer(transformation.SingleStateTransformation):
     def _generate_assign_sdfg(self, assign_node, state, transients_to_modify, global_arrays, new_streams, nsdfg):
         dst, src = self._process_assignment(assign_node)
         # Add the access nodes to the state
-        
+
         # Process left-hand side (target) and right-hand side (value).
         lhs_base, lhs_indexes = self._extract_subscript_info(assign_node.targets[0])
         rhs_base, rhs_indexes = self._extract_subscript_info(assign_node.value)
@@ -481,42 +478,40 @@ class BSPTransformer(transformation.SingleStateTransformation):
         if dst in transients_to_modify and src in global_arrays:
             new_memlet.data = f"{src}"
         elif dst in transients_to_modify and src in new_streams.keys():
-            new_memlet.data = f"{src}"                            
+            new_memlet.data = f"{src}"
         elif dst in new_streams.keys() and src in transients_to_modify:
             new_memlet.data = f"{src}"
 
         # initialize the subset of the memlet, subset is the shape from src, other_subset is the shape from dst
-        new_memlet.subset = subsets.Range([(0, s-1, 1) for s in nsdfg.arrays[src].shape])
-        new_memlet.other_subset = subsets.Range([(0, s-1, 1) for s in nsdfg.arrays[dst].shape])
+        new_memlet.subset = subsets.Range([(0, s - 1, 1) for s in nsdfg.arrays[src].shape])
+        new_memlet.other_subset = subsets.Range([(0, s - 1, 1) for s in nsdfg.arrays[dst].shape])
 
         # print("Left-hand side:")
         # print("  Base variable:", lhs_base)
         for dim, idx_info in enumerate(lhs_indexes):
-            # print(f"  Dimension {dim}: {idx_info}") 
+            # print(f"  Dimension {dim}: {idx_info}")
             if idx_info["type"] == "index":
-                new_memlet.other_subset.ranges[dim] = (symbolic.pystr_to_symbolic(idx_info["value"]), 
-                                                        symbolic.pystr_to_symbolic(idx_info["value"]), 
-                                                        1)
+                new_memlet.other_subset.ranges[dim] = (symbolic.pystr_to_symbolic(idx_info["value"]),
+                                                       symbolic.pystr_to_symbolic(idx_info["value"]), 1)
             if idx_info["type"] == "slice":
                 # print(idx_info)
                 # if lower and upper are None, do nothing
                 if idx_info["lower"] is None and idx_info["upper"] is None:
-                    continue   
+                    continue
                 else:
                     # if step is None, set it to 1
                     if idx_info["step"] is None:
                         idx_info["step"] = "1"
-                    new_memlet.other_subset.ranges[dim] = (symbolic.pystr_to_symbolic(idx_info["lower"]), 
-                                                        symbolic.pystr_to_symbolic(idx_info["upper"])-1, 
-                                                        symbolic.pystr_to_symbolic(idx_info["step"])) 
+                    new_memlet.other_subset.ranges[dim] = (symbolic.pystr_to_symbolic(idx_info["lower"]),
+                                                           symbolic.pystr_to_symbolic(idx_info["upper"]) - 1,
+                                                           symbolic.pystr_to_symbolic(idx_info["step"]))
         # print("\nRight-hand side:")
         # print("  Base variable:", rhs_base)
         for dim, idx_info in enumerate(rhs_indexes):
             # print(f"  Dimension {dim}: {idx_info}")
             if idx_info["type"] == "index":
-                new_memlet.subset.ranges[dim] = (symbolic.pystr_to_symbolic(idx_info["value"]), 
-                                                    symbolic.pystr_to_symbolic(idx_info["value"]), 
-                                                    1)
+                new_memlet.subset.ranges[dim] = (symbolic.pystr_to_symbolic(idx_info["value"]),
+                                                 symbolic.pystr_to_symbolic(idx_info["value"]), 1)
             if idx_info["type"] == "slice":
                 # if lower and upper are None, do nothing
                 if idx_info["lower"] is None and idx_info["upper"] is None:
@@ -525,9 +520,9 @@ class BSPTransformer(transformation.SingleStateTransformation):
                     # if step is None, set it to 1
                     if idx_info["step"] is None:
                         idx_info["step"] = "1"
-                    new_memlet.subset.ranges[dim] = (symbolic.pystr_to_symbolic(idx_info["lower"]), 
-                                                        symbolic.pystr_to_symbolic(idx_info["upper"])-1, 
-                                                        symbolic.pystr_to_symbolic(idx_info["step"]))   
+                    new_memlet.subset.ranges[dim] = (symbolic.pystr_to_symbolic(idx_info["lower"]),
+                                                     symbolic.pystr_to_symbolic(idx_info["upper"]) - 1,
+                                                     symbolic.pystr_to_symbolic(idx_info["step"]))
         # check if there is dependency between the two access nodes
         # NOTE: this is a naive implementation, it only checks if they share same subset.
         src_an = None
@@ -537,36 +532,26 @@ class BSPTransformer(transformation.SingleStateTransformation):
                 if e.data.other_subset == new_memlet.subset:
                     src_an = e.dst
         if src_an is None:
-            src_an = state.add_access(src)            
+            src_an = state.add_access(src)
         dst_an = state.add_access(dst)
-        state.add_edge(src_an, None, dst_an, None, new_memlet)   
+        state.add_edge(src_an, None, dst_an, None, new_memlet)
 
     def _process_if_node(self, parent, if_node, transients_to_modify, global_arrays, new_streams, nsdfg, is_elif=False):
         local_cb_list = []
         if not is_elif:
-            cb_communication_local = ConditionalBlock(
-                        label=f"communication_{rand(a=0, b=1000)}",
-                        sdfg=nsdfg,
-                        parent=parent
-                    )
+            cb_communication_local = ConditionalBlock(label=f"communication_{rand(a=0, b=1000)}",
+                                                      sdfg=nsdfg,
+                                                      parent=parent)
         if is_elif:
             cb_communication_local = parent
 
         condition_expr = ast.unparse(if_node.test)
-        comm_cfg1_local_cond = CodeBlock(
-            code=condition_expr,
-            language=dtypes.Language.Python
-        )
-                            
-        cb_cfg = ControlFlowRegion(
-            label=f"cb_comm_{rand(a=0, b=1000)}"
-        )
-        
-        cb_communication_local.add_branch(
-            condition=comm_cfg1_local_cond,
-            branch=cb_cfg
-        )
-        
+        comm_cfg1_local_cond = CodeBlock(code=condition_expr, language=dtypes.Language.Python)
+
+        cb_cfg = ControlFlowRegion(label=f"cb_comm_{rand(a=0, b=1000)}")
+
+        cb_communication_local.add_branch(condition=comm_cfg1_local_cond, branch=cb_cfg)
+
         local_state = cb_cfg.add_state(f"local_{rand(a=0, b=1000)}")
         # Process all nodes in the body of the current if node
         for node in if_node.body:
@@ -575,15 +560,22 @@ class BSPTransformer(transformation.SingleStateTransformation):
                 self._generate_assign_sdfg(node, local_state, transients_to_modify, global_arrays, new_streams, nsdfg)
             # You can add more clauses here if you need to support other node types.
             elif isinstance(node, ast.If):
-                local_cb_list.append(self._process_if_node(cb_cfg, node, transients_to_modify, global_arrays, new_streams, nsdfg))
+                local_cb_list.append(
+                    self._process_if_node(cb_cfg, node, transients_to_modify, global_arrays, new_streams, nsdfg))
         # Process the orelse part if it exists (could be else or elif(s))
         for node in if_node.orelse:
             if isinstance(node, ast.If):
-                self._process_if_node(cb_communication_local, node, transients_to_modify, global_arrays, new_streams, nsdfg, is_elif=True)
+                self._process_if_node(cb_communication_local,
+                                      node,
+                                      transients_to_modify,
+                                      global_arrays,
+                                      new_streams,
+                                      nsdfg,
+                                      is_elif=True)
 
         for idx, cb in enumerate(local_cb_list):
             if idx == 0:
                 cb_cfg.add_edge(local_state, cb, InterstateEdge(None, None))
             else:
-                cb_cfg.add_edge(local_cb_list[idx-1], cb, InterstateEdge(None, None))
+                cb_cfg.add_edge(local_cb_list[idx - 1], cb, InterstateEdge(None, None))
         return cb_communication_local

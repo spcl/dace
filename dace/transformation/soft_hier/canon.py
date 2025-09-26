@@ -6,17 +6,18 @@ import copy
 from dace import data, sdfg as sd, subsets, symbolic, InterstateEdge, SDFGState, Memlet, dtypes
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.transformation import transformation 
+from dace.transformation import transformation
 from dace.properties import make_properties, Property, SymbolicProperty
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
 from dace.sdfg.state import LoopRegion
+
 
 @make_properties
 class CanonTransformer(transformation.SingleStateTransformation):
 
     map_entry = transformation.PatternNode(nodes.MapEntry)
     transient = transformation.PatternNode(nodes.AccessNode)
-    
+
     # Properties
     npe = Property(default=None, allow_none=True, desc="Number of processing elements")
     gi = SymbolicProperty(default=None, allow_none=True, desc="gi")
@@ -93,8 +94,6 @@ class CanonTransformer(transformation.SingleStateTransformation):
 
         map_entry.map.range = subsets.Range([(map_rstart, map_rend, new_map_rstride)])
 
-       
-
         # Add dimension to transients and modify memlets
         for transient in transients_to_modify:
             desc: data.Array = sdfg.arrays[transient]
@@ -103,7 +102,6 @@ class CanonTransformer(transformation.SingleStateTransformation):
             desc.shape = [2] + list(desc.shape)
             desc.offset = [0] + list(desc.offset)
             desc.total_size = desc.total_size * 2
-        
 
         ##############################
         # Modify memlets to use map parameter as buffer index
@@ -127,12 +125,12 @@ class CanonTransformer(transformation.SingleStateTransformation):
                     subset = (edge.data.other_subset or subsets.Range.from_array(sdfg.arrays[dataname]))
                     edge.data.other_subset = self._modify_memlet(sdfg, subset, dataname)
                     modified_subsets.append(edge.data.other_subset)
-        
-        
+
         from dace.transformation.helpers import nest_state_subgraph
         from dace.sdfg import SDFG, SDFGState
         ##############################
-        node = nest_state_subgraph(sdfg, graph, graph.scope_subgraph(map_entry, include_entry=False, include_exit=False))
+        node = nest_state_subgraph(sdfg, graph, graph.scope_subgraph(map_entry, include_entry=False,
+                                                                     include_exit=False))
         node.schedule = map_entry.map.schedule
         nsdfg: SDFG = node.sdfg
         nstate: SDFGState = nsdfg.nodes()[0]
@@ -163,21 +161,26 @@ class CanonTransformer(transformation.SingleStateTransformation):
                         if idx == 1:
                             # memlet.subset = self._replace_in_subset(memlet.subset, map_param, f"{map_param} + (({gi}+{gj})%{NPE})*{map_rstride}")
                             memlet.other_subset = None
-        
+
         ##############################
-        new_streams = {}     
+        new_streams = {}
         for transient in transients_to_modify:
             desc: data.Array = nsdfg.arrays[transient]
             trans_name = transient
             trans_dtype = desc.dtype
             trans_storage = desc.storage
             trans_shape = desc.shape
-            sn, s = nsdfg.add_stream(f"s_{trans_name}", dtype=trans_dtype, storage=trans_storage, buffer_size=1, shape=(NPE, NPE)+trans_shape, transient=True)
+            sn, s = nsdfg.add_stream(f"s_{trans_name}",
+                                     dtype=trans_dtype,
+                                     storage=trans_storage,
+                                     buffer_size=1,
+                                     shape=(NPE, NPE) + trans_shape,
+                                     transient=True)
             new_streams[f"s_{trans_name}"] = s
-        
+
         # Add the canon_init state
         init_state = nsdfg.add_state("canon_init")
-        
+
         ##############################
         # init state
         for transient in transients_to_modify:
@@ -188,16 +191,21 @@ class CanonTransformer(transformation.SingleStateTransformation):
                     init_stream = f"s_{transient}"
                     init_edge = copy.deepcopy(edge)
                     if transient == "local_A":
-                        init_edge.data.subset.ranges[1] = (((gi + gj) % NPE) * map_rstride, ((gi + gj) % NPE) * map_rstride + map_rstride - 1, map_rstride)
+                        init_edge.data.subset.ranges[1] = (((gi + gj) % NPE) * map_rstride,
+                                                           ((gi + gj) % NPE) * map_rstride + map_rstride - 1,
+                                                           map_rstride)
                     elif transient == "local_B":
-                        init_edge.data.subset.ranges[0] = (((gi + gj) % NPE) * map_rstride, ((gi + gj) % NPE) * map_rstride + map_rstride - 1, map_rstride)
+                        init_edge.data.subset.ranges[0] = (((gi + gj) % NPE) * map_rstride,
+                                                           ((gi + gj) % NPE) * map_rstride + map_rstride - 1,
+                                                           map_rstride)
 
-                    init_edge.data.other_subset = subsets.Range([(gi, gi, 1)] + [(gj, gj, 1)] + list(init_edge.data.other_subset))
+                    init_edge.data.other_subset = subsets.Range([(gi, gi, 1)] + [(gj, gj, 1)] +
+                                                                list(init_edge.data.other_subset))
                     init_src_node = init_state.add_access(init_src)
                     init_dst_node = init_state.add_access(init_stream)
-                    init_state.add_edge(init_src_node, None, init_dst_node, None, memlet=init_edge.data)          
+                    init_state.add_edge(init_src_node, None, init_dst_node, None, memlet=init_edge.data)
         sd.replace(init_state, '__dace_db_param', 0)
-        
+
         ##############################
         # Define the loop region (compute + communicate steps)
         lr = LoopRegion(
@@ -208,23 +216,23 @@ class CanonTransformer(transformation.SingleStateTransformation):
             update_expr="_c = _c + 1",
             sdfg=nsdfg,
         )
-        
+
         lr_param = lr.loop_variable
 
         ##############################
         nsdfg.add_edge(init_state, lr, InterstateEdge(None, None))
-        
-        lr_s1 : SDFGState = lr.add_state("canon_compute")
-        
+
+        lr_s1: SDFGState = lr.add_state("canon_compute")
+
         ##############################
         # conon compute state
-        
+
         # copy all the nodes and edges from the nested state to the compute state
         for node in nstate.nodes():
             lr_s1.add_node(node)
         for edge in nstate.edges():
             lr_s1.add_edge(edge.src, edge.src_conn, edge.dst, edge.dst_conn, edge.data)
-        
+
         # change the input edge of the compute state
         for transient in transients_to_modify:
             desc: data.Array = nsdfg.arrays[transient]
@@ -245,7 +253,7 @@ class CanonTransformer(transformation.SingleStateTransformation):
                     new_edge.data.other_subset = None
                     lr_s1.add_edge(s, None, edge.dst, None, new_edge.data)
 
-        compute_expr = symbolic.pystr_to_symbolic('(%s) %% 2' % (lr_param)) 
+        compute_expr = symbolic.pystr_to_symbolic('(%s) %% 2' % (lr_param))
         sd.replace(lr_s1, '__dace_db_param', compute_expr)
 
         ##############################
@@ -254,32 +262,39 @@ class CanonTransformer(transformation.SingleStateTransformation):
             desc: data.Array = nsdfg.arrays[transient]
             local_an = lr_s1.add_access(transient)
             s_an = lr_s1.add_access(f"s_{transient}")
-            curr_buffer_range = subsets.Range([(f"{lr_param} % 2", f"{lr_param} % 2", 1)] )
+            curr_buffer_range = subsets.Range([(f"{lr_param} % 2", f"{lr_param} % 2", 1)])
             next_buffer_range = subsets.Range([(f"({lr_param}+1) % 2", f"({lr_param}+1) % 2", 1)])
-            if transient == "local_A": # pass the localA to the right PE
+            if transient == "local_A":  # pass the localA to the right PE
                 next_x_pos_range = subsets.Range([(gi, gi, 1)])
-                next_y_pos_range = subsets.Range([(f"({gj}+1) % {NPE}", f"({gj}+1) % {NPE}", 1)])  
-            elif transient == "local_B": # pass the localB to the bottom PE
+                next_y_pos_range = subsets.Range([(f"({gj}+1) % {NPE}", f"({gj}+1) % {NPE}", 1)])
+            elif transient == "local_B":  # pass the localB to the bottom PE
                 next_x_pos_range = subsets.Range([(f"({gi}+1) % {NPE}", f"({gi}+1) % {NPE}", 1)])
                 next_y_pos_range = subsets.Range([(gj, gj, 1)])
 
-            local_subset = subsets.Range([(0, s-1, 1) for s in desc.shape])
+            local_subset = subsets.Range([(0, s - 1, 1) for s in desc.shape])
             local_subset = subsets.Range(list(curr_buffer_range) + list(local_subset)[1:])
-            stream_subset = subsets.Range([(0, s-1, 1) for s in desc.shape])
+            stream_subset = subsets.Range([(0, s - 1, 1) for s in desc.shape])
             stream_subset = subsets.Range(list(next_buffer_range) + list(stream_subset)[1:])
             stream_subset = subsets.Range(list(next_x_pos_range) + list(next_y_pos_range) + list(stream_subset))
-            lr_s1.add_edge(local_an, None, s_an, None, 
-                            memlet=Memlet(
-                            data=transient,
-                            subset=local_subset,
-                            # other_subset=dace.subsets.Range([((gi, gi, 1), (gi, gi, 1), 1), (((gj + NPE - 1) % NPE), ((gj + NPE -1) % NPE), 1)])
-                            other_subset=stream_subset
-                        ),
-                    )
+            lr_s1.add_edge(
+                local_an,
+                None,
+                s_an,
+                None,
+                memlet=Memlet(
+                    data=transient,
+                    subset=local_subset,
+                    # other_subset=dace.subsets.Range([((gi, gi, 1), (gi, gi, 1), 1), (((gj + NPE - 1) % NPE), ((gj + NPE -1) % NPE), 1)])
+                    other_subset=stream_subset),
+            )
 
-        lr_s2 : SDFGState = lr.add_state("canon_sync")
+        lr_s2: SDFGState = lr.add_state("canon_sync")
         lr.add_edge(lr_s1, lr_s2, InterstateEdge(None, None))
-        lr_s2.add_tasklet(name="SoftHier_sync", inputs=None, outputs=None, code="flex_global_barrier_xy();", language=dtypes.Language.CPP)
+        lr_s2.add_tasklet(name="SoftHier_sync",
+                          inputs=None,
+                          outputs=None,
+                          code="flex_global_barrier_xy();",
+                          language=dtypes.Language.CPP)
 
         ##############################
         # remove nstate from the nested state

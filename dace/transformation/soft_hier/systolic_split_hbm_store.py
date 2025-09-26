@@ -6,26 +6,27 @@ import copy
 from dace import data, sdfg as sd, subsets, symbolic, InterstateEdge, SDFGState, Memlet, dtypes
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.transformation import transformation 
+from dace.transformation import transformation
 from dace.properties import make_properties, Property, SymbolicProperty, CodeBlock
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
 from dace.sdfg.state import LoopRegion, ConditionalBlock, ControlFlowRegion
 import ast
+
 
 @make_properties
 class SystolicSplitStore(transformation.SingleStateTransformation):
 
     map_entry = transformation.PatternNode(nodes.MapEntry)
     accumulator = transformation.PatternNode(nodes.AccessNode)
-    
+
     # Properties
     npe = Property(default=None, allow_none=True, desc="Number of processing elements")
     tM = Property(default=None, allow_none=True, desc="tM")
     tN = Property(default=None, allow_none=True, desc="tN")
     tK = Property(default=None, allow_none=True, desc="tK")
-    M  = SymbolicProperty(default=None, allow_none=True, desc="M")
-    N  = SymbolicProperty(default=None, allow_none=True, desc="N")
-    K  = SymbolicProperty(default=None, allow_none=True, desc="K")
+    M = SymbolicProperty(default=None, allow_none=True, desc="M")
+    N = SymbolicProperty(default=None, allow_none=True, desc="N")
+    K = SymbolicProperty(default=None, allow_none=True, desc="K")
     gi = SymbolicProperty(default=None, allow_none=True, desc="gi")
     gj = SymbolicProperty(default=None, allow_none=True, desc="gj")
     i = SymbolicProperty(default=None, allow_none=True, desc="i")
@@ -58,29 +59,26 @@ class SystolicSplitStore(transformation.SingleStateTransformation):
         ##############################
         from dace.transformation.helpers import nest_state_subgraph
         from dace.sdfg import SDFG, SDFGState
-        node = nest_state_subgraph(sdfg, graph, graph.scope_subgraph(map_entry, include_entry=False, include_exit=False))
+        node = nest_state_subgraph(sdfg, graph, graph.scope_subgraph(map_entry, include_entry=False,
+                                                                     include_exit=False))
         # node.schedule = map_entry.map.schedule
         nsdfg: SDFG = node.sdfg
         nstate: SDFGState = nsdfg.nodes()[0]
 
         for cfg in nsdfg.all_control_flow_blocks(recursive=True):
-            if isinstance(cfg, LoopRegion) and (cfg=="loop" or "systolic_loop"):
+            if isinstance(cfg, LoopRegion) and (cfg == "loop" or "systolic_loop"):
                 lr_param = cfg.loop_variable
                 cond_code = cfg.loop_condition.code
-                new_cond_code = CodeBlock(
-                    code=f"{lr_param} < (({gi}+{gj}+1) + ({K}/({tK})))",
-                    language=dtypes.Language.Python
-                )
+                new_cond_code = CodeBlock(code=f"{lr_param} < (({gi}+{gj}+1) + ({K}/({tK})))",
+                                          language=dtypes.Language.Python)
                 cfg.loop_condition = new_cond_code
 
-
-
-        last_systolic_sync : SDFGState = nsdfg.add_state("systolic_sync")
+        last_systolic_sync: SDFGState = nsdfg.add_state("systolic_sync")
         nsdfg.add_edge(nstate, last_systolic_sync, InterstateEdge(None, None))
-        last_systolic_sync.add_tasklet(name="SoftHier_sync", 
-                            inputs=None, 
-                            outputs=None, 
-                            code=f'''
+        last_systolic_sync.add_tasklet(name="SoftHier_sync",
+                                       inputs=None,
+                                       outputs=None,
+                                       code=f'''
                             if (({i} >= {M} - {NPE}*{tM}) && ({j} >= {N} - {NPE}*{tN}))
                             {{
                                 for (int sync_iter = 0; sync_iter < 2*{NPE} - 1 - {gi} - {gj} - 1; sync_iter++){{
@@ -91,11 +89,10 @@ class SystolicSplitStore(transformation.SingleStateTransformation):
                                 }}
                                 flex_intra_cluster_sync();
                                 flex_global_barrier_xy();
-                            }}                         
+                            }}
                             ''',
-                            language=dtypes.Language.CPP)
-      
-        
+                                       language=dtypes.Language.CPP)
+
     @staticmethod
     def _modify_memlet(sdfg, subset, data_name):
         desc = sdfg.arrays[data_name]

@@ -56,6 +56,7 @@ class StorageType(aenum.AutoNumberEnum):
     SoftHier_HBM = ()
     SoftHier_TCDM = ()
 
+
 @undefined_safe_enum
 @extensible_enum
 class OMPScheduleType(aenum.AutoNumberEnum):
@@ -77,7 +78,8 @@ class ScheduleType(aenum.AutoNumberEnum):
     CPU_Persistent = ()  #: OpenMP parallel region
     Unrolled = ()  #: Unrolled code
     SVE_Map = ()  #: Arm SVE
-    GPU_Default = () #: Default scope schedule for GPU code. Specializes to schedule GPU_Device and GPU_Global during inference.
+    GPU_Default = (
+    )  #: Default scope schedule for GPU code. Specializes to schedule GPU_Device and GPU_Global during inference.
     GPU_Device = ()  #: Kernel
     GPU_ThreadBlock = ()  #: Thread-block code
     GPU_ThreadBlock_Dynamic = ()  #: Allows rescheduling work within a block
@@ -94,6 +96,7 @@ class ScheduleType(aenum.AutoNumberEnum):
     SoftHier_Sequential = ()
     SoftHier_Snitch = ()
     SoftHier_Redmule = ()
+
 
 # A subset of GPU schedule types
 GPU_SCHEDULES = [
@@ -121,11 +124,7 @@ FPGA_STORAGES = [
     StorageType.FPGA_ShiftRegister,
 ]
 
-ASCEND_SCHEDULES = [
-    ScheduleType.Ascend_Device,
-    ScheduleType.Ascend_AiCoreGroup,
-    ScheduleType.Ascend_AiCore
-]
+ASCEND_SCHEDULES = [ScheduleType.Ascend_Device, ScheduleType.Ascend_AiCoreGroup, ScheduleType.Ascend_AiCore]
 
 ASCNED_STORAGES = [
     StorageType.Ascend_Global,
@@ -151,6 +150,8 @@ SOFTHIER_STORAGES = [
     StorageType.SoftHier_HBM,
     StorageType.SoftHier_TCDM,
 ]
+
+
 @undefined_safe_enum
 class ReductionType(aenum.AutoNumberEnum):
     """ Reduction types natively supported by the SDFG compiler. """
