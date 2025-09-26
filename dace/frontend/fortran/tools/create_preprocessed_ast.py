@@ -1,27 +1,14 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+
 import argparse
 from pathlib import Path
 
-from dace.frontend.fortran.fortran_parser import ParseConfig, create_fparser_ast, run_fparser_transformations
-from dace.frontend.fortran.gen_serde import find_all_f90_files
-
-STUBS = """
-module mpi
-  integer, parameter :: mpi_success = 0
-end module mpi
-module netcdf_nf_interfaces
-end module netcdf_nf_interfaces
-module netcdf4_nf_interfaces
-end module netcdf4_nf_interfaces
-module netcdf_nf_data
-  integer, parameter :: nf_nowrite = 0, nf_global = 0, nf_noerr = 0, nf_strerror = 1
-  integer, parameter :: nfint2 = 2
-  interface nf_open
-  end interface nf_open
-  interface nf_close
-  end interface nf_close
-end module netcdf_nf_data
-"""
+from dace.frontend.fortran.fortran_parser import (
+    ParseConfig,
+    create_fparser_ast,
+    run_fparser_transformations,
+)
+from dace.frontend.fortran.tools.helpers import find_all_f90_files
 
 BUILTINS = """
 module iso_c_binding
@@ -68,62 +55,76 @@ end module iso_fortran_env
 
 def main():
     argp = argparse.ArgumentParser()
-    argp.add_argument('-i',
-                      '--in_src',
-                      type=str,
-                      required=True,
-                      action='append',
-                      default=[],
-                      help='The files or directories containing Fortran source code (absolute path or relative to CWD).'
-                      'Can be repeated to include multiple files and directories.')
-    argp.add_argument('-k',
-                      '--entry_point',
-                      type=str,
-                      required=True,
-                      action='append',
-                      default=[],
-                      help='The entry points which should be kept with their dependencies (can be repeated).'
-                      'Specify each entry point as a `dot` separated path through named objects from the top.')
-    argp.add_argument('-o',
-                      '--output_ast',
-                      type=str,
-                      required=False,
-                      default=None,
-                      help='(Optional) A file to write the preprocessed AST into (absolute path or relative to CWD).'
-                      'If nothing is given, then will write to STDOUT.')
-    argp.add_argument('--noop',
-                      type=str,
-                      required=False,
-                      action='append',
-                      default=[],
-                      help='(Optional) Functions or subroutine to make no-op.')
-    argp.add_argument('-d',
-                      '--checkpoint_dir',
-                      type=str,
-                      required=False,
-                      default=None,
-                      help='(Optional) If specified, the AST in various stages of preprocessing will be written as'
-                      'Fortran code in there.')
-    argp.add_argument('--consolidate_global_data',
-                      type=bool,
-                      required=False,
-                      default=False,
-                      help='Whether to consolidate the global data into one structure.')
-    argp.add_argument('--rename_uniquely',
-                      type=bool,
-                      required=False,
-                      default=False,
-                      help='Whether to rename the variables and the functions to have globally unique names.')
+    argp.add_argument(
+        "-i",
+        "--in_src",
+        type=str,
+        required=True,
+        action="append",
+        default=[],
+        help="The files or directories containing Fortran source code (absolute path or relative to CWD)."
+        "Can be repeated to include multiple files and directories.",
+    )
+    argp.add_argument(
+        "-k",
+        "--entry_point",
+        type=str,
+        required=True,
+        action="append",
+        default=[],
+        help="The entry points which should be kept with their dependencies (can be repeated)."
+        "Specify each entry point as a `dot` separated path through named objects from the top.",
+    )
+    argp.add_argument(
+        "-o",
+        "--output_ast",
+        type=str,
+        required=False,
+        default=None,
+        help="(Optional) A file to write the preprocessed AST into (absolute path or relative to CWD)."
+        "If nothing is given, then will write to STDOUT.",
+    )
+    argp.add_argument(
+        "--noop",
+        type=str,
+        required=False,
+        action="append",
+        default=[],
+        help="(Optional) Functions or subroutine to make no-op.",
+    )
+    argp.add_argument(
+        "-d",
+        "--checkpoint_dir",
+        type=str,
+        required=False,
+        default=None,
+        help="(Optional) If specified, the AST in various stages of preprocessing will be written as"
+        "Fortran code in there.",
+    )
+    argp.add_argument(
+        "--consolidate_global_data",
+        type=bool,
+        required=False,
+        default=False,
+        help="Whether to consolidate the global data into one structure.",
+    )
+    argp.add_argument(
+        "--rename_uniquely",
+        type=bool,
+        required=False,
+        default=False,
+        help="Whether to rename the variables and the functions to have globally unique names.",
+    )
     args = argp.parse_args()
 
     input_dirs = [Path(p) for p in args.in_src]
     input_f90s = [f for p in input_dirs for f in find_all_f90_files(p)]
     print(f"Will be reading from {len(input_f90s)} Fortran files in directories: {input_dirs}")
 
-    entry_points = [tuple(ep.split('.')) for ep in args.entry_point]
+    entry_points = [tuple(ep.split(".")) for ep in args.entry_point]
     print(f"Will be keeping these as entry points: {entry_points}")
 
-    noops = [tuple(np.split('.')) for np in args.noop]
+    noops = [tuple(np.split(".")) for np in args.noop]
     print(f"Will be making these as no-ops: {noops}")
 
     checkpoint_dir = args.checkpoint_dir
@@ -142,14 +143,15 @@ def main():
     else:
         print(f"Will leave the variable names as they are")
 
-    cfg = ParseConfig(sources=input_f90s,
-                      entry_points=entry_points,
-                      make_noop=noops,
-                      ast_checkpoint_dir=checkpoint_dir,
-                      consolidate_global_data=consolidate_global_data,
-                      rename_uniquely=rename_uniquely)
-    cfg.sources['_stubs.f90'] = STUBS
-    cfg.sources['_builtins.f90'] = BUILTINS
+    cfg = ParseConfig(
+        sources=input_f90s,
+        entry_points=entry_points,
+        make_noop=noops,
+        ast_checkpoint_dir=checkpoint_dir,
+        consolidate_global_data=consolidate_global_data,
+        rename_uniquely=rename_uniquely,
+    )
+    cfg.sources["_builtins.f90"] = BUILTINS
 
     ast = create_fparser_ast(cfg)
     ast = run_fparser_transformations(ast, cfg)
@@ -157,10 +159,10 @@ def main():
     f90 = ast.tofortran()
 
     if args.output_ast:
-        with open(args.output_ast, 'w') as f:
+        with open(args.output_ast, "w") as f:
             f.write(f90)
     else:
-        print('Preprocessed Fortran AST:\n===')
+        print("Preprocessed Fortran AST:\n===")
         print(f90)
 
 
