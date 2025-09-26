@@ -4,6 +4,7 @@ from dace.data import ListProperty, make_properties
 from dace.libraries.standard.nodes.code import CodeLibraryNode
 from dace.properties import Property
 
+
 @make_properties
 class VecUnit(CodeLibraryNode):
     queue_length = Property(dtype=int, allow_none=False, default=1, desc="Queue Length")
@@ -30,13 +31,21 @@ class VecUnit(CodeLibraryNode):
 
     def generate_required_member_initialization(self):
         return f"//TODO"
+
+
 def two():
     sdfg = dace.SDFG("ascendc_test_2")
     state = sdfg.add_state("main")
-    a_host = sdfg.add_array("A", (256*32, ), dace.float16, dace.dtypes.StorageType.CPU_Heap, transient=True)
-    a_dev = sdfg.add_array("ascend_A", (256*32, ), dace.float16, dace.dtypes.StorageType.Ascend_Global, transient=True)
-    b_host = sdfg.add_array("B", (256*32, ), dace.float16, dace.dtypes.StorageType.CPU_Heap, transient=True)
-    b_dev = sdfg.add_array("ascend_B", (256*32, ), dace.float16, dace.dtypes.StorageType.Ascend_Global, transient=True)
+    a_host = sdfg.add_array("A", (256 * 32, ), dace.float16, dace.dtypes.StorageType.CPU_Heap, transient=True)
+    a_dev = sdfg.add_array("ascend_A", (256 * 32, ),
+                           dace.float16,
+                           dace.dtypes.StorageType.Ascend_Global,
+                           transient=True)
+    b_host = sdfg.add_array("B", (256 * 32, ), dace.float16, dace.dtypes.StorageType.CPU_Heap, transient=True)
+    b_dev = sdfg.add_array("ascend_B", (256 * 32, ),
+                           dace.float16,
+                           dace.dtypes.StorageType.Ascend_Global,
+                           transient=True)
     ahc = state.add_access("A")
     adc = state.add_access("ascend_A")
     bhc = state.add_access("B")
@@ -46,8 +55,12 @@ def two():
     #af = state.add_access("frag_A")
     #bf = state.add_access("frag_B")
 
-    dev_entry, dev_exit = state.add_map(name="copy_map_outer", ndrange={"i": dace.subsets.Range([(0, 256*32-1, 256*32)])}, schedule=dace.dtypes.ScheduleType.Ascend_Device)
-    tblock_entry, tblock_exit = state.add_map(name="copy_map_inner", ndrange={"ii": dace.subsets.Range([(0, 256*32-1, 256)])}, schedule=dace.dtypes.ScheduleType.Ascend_AiCoreGroup)
+    dev_entry, dev_exit = state.add_map(name="copy_map_outer",
+                                        ndrange={"i": dace.subsets.Range([(0, 256 * 32 - 1, 256 * 32)])},
+                                        schedule=dace.dtypes.ScheduleType.Ascend_Device)
+    tblock_entry, tblock_exit = state.add_map(name="copy_map_inner",
+                                              ndrange={"ii": dace.subsets.Range([(0, 256 * 32 - 1, 256)])},
+                                              schedule=dace.dtypes.ScheduleType.Ascend_AiCoreGroup)
 
     #glb_to_vecin = GlobalToVECIN(name="glb_to_vecin_a", input_names=["IN_A"], output_names=["OUT_frag_A"], queue_length=1, load_length=256)
     glb_to_vecin = state.add_access("frag_A")
@@ -77,7 +90,6 @@ def two():
     #libnode.add_out_connector("OUT_B")
 
     #t = state.add_tasklet(name="assign", inputes={"_in"}, outputs={"_out"}, code="_out = _in")
-
 
     sdfg.save("ascend_2.sdfgz")
     return sdfg

@@ -9,24 +9,25 @@ from dace.soft_hier import generate_arg_cfg, make_preload_elf, make_preload_elf_
 from dace.soft_hier import generate_systolic_BSP, generate_cannon_BSP, generate_summa_BSP, generate_summa_systolic_BSP, generate_split_K_summa_systolic_BSP
 from dace.properties import CodeBlock
 
-
 M = dace.symbol("M")
 N = dace.symbol("N")
 K = dace.symbol("K")
+
+
 def _my_gen_matmul_sdfg(hardware_matmul_mnk: typing.Tuple,
-                     global_storage: dace.dtypes.StorageType,
-                     local_storage: dace.dtypes.StorageType,
-                     device_schedule: dace.dtypes.ScheduleType,
-                     thread_group_schedule: dace.dtypes.ScheduleType,
-                     thread_group_dims: typing.Tuple,
-                     k_group_dims: typing.Tuple,
-                     hbm_split_scheme: typing.List[typing.Tuple[int, int]],
-                     hbm_placement_scheme: typing.List[typing.Tuple[int, int]],
-                     input_float,
-                     output_float,
-                     mmad_tasklet_str: str,
-                     coarsening_factor=1,
-                     is_hbm_interleaved: bool = False):
+                        global_storage: dace.dtypes.StorageType,
+                        local_storage: dace.dtypes.StorageType,
+                        device_schedule: dace.dtypes.ScheduleType,
+                        thread_group_schedule: dace.dtypes.ScheduleType,
+                        thread_group_dims: typing.Tuple,
+                        k_group_dims: typing.Tuple,
+                        hbm_split_scheme: typing.List[typing.Tuple[int, int]],
+                        hbm_placement_scheme: typing.List[typing.Tuple[int, int]],
+                        input_float,
+                        output_float,
+                        mmad_tasklet_str: str,
+                        coarsening_factor=1,
+                        is_hbm_interleaved: bool = False):
     sdfg = dace.SDFG("GEMM")
     tM, tN, tK = hardware_matmul_mnk
     tM *= coarsening_factor
@@ -42,28 +43,54 @@ def _my_gen_matmul_sdfg(hardware_matmul_mnk: typing.Tuple,
     arrs = dict()
     for arr_name, shape, ftype in [("A", (M, K), input_float), ("B", (K, N), input_float), ("C", (M, N), output_float)]:
         if arr_name == "A":
-            arrn, arr = sdfg.add_array(name=arr_name, shape=shape, dtype=ftype, storage=global_storage, transient=False, is_hbm_interleaved=is_hbm_interleaved, hbm_split_scheme=hbm_split_scheme[0], hbm_placement_scheme=hbm_placement_scheme[0])
+            arrn, arr = sdfg.add_array(name=arr_name,
+                                       shape=shape,
+                                       dtype=ftype,
+                                       storage=global_storage,
+                                       transient=False,
+                                       is_hbm_interleaved=is_hbm_interleaved,
+                                       hbm_split_scheme=hbm_split_scheme[0],
+                                       hbm_placement_scheme=hbm_placement_scheme[0])
             arrs[arrn] = arr
         if arr_name == "B":
-            arrn, arr = sdfg.add_array(name=arr_name, shape=shape, dtype=ftype, storage=global_storage, transient=False, is_hbm_interleaved=is_hbm_interleaved, hbm_split_scheme=hbm_split_scheme[1], hbm_placement_scheme=hbm_placement_scheme[1])
+            arrn, arr = sdfg.add_array(name=arr_name,
+                                       shape=shape,
+                                       dtype=ftype,
+                                       storage=global_storage,
+                                       transient=False,
+                                       is_hbm_interleaved=is_hbm_interleaved,
+                                       hbm_split_scheme=hbm_split_scheme[1],
+                                       hbm_placement_scheme=hbm_placement_scheme[1])
             arrs[arrn] = arr
         if arr_name == "C":
-            arrn, arr = sdfg.add_array(name=arr_name, shape=shape, dtype=ftype, storage=global_storage, transient=False, is_hbm_interleaved=is_hbm_interleaved, hbm_split_scheme=hbm_split_scheme[2], hbm_placement_scheme=hbm_placement_scheme[2])
+            arrn, arr = sdfg.add_array(name=arr_name,
+                                       shape=shape,
+                                       dtype=ftype,
+                                       storage=global_storage,
+                                       transient=False,
+                                       is_hbm_interleaved=is_hbm_interleaved,
+                                       hbm_split_scheme=hbm_split_scheme[2],
+                                       hbm_placement_scheme=hbm_placement_scheme[2])
             arrs[arrn] = arr
-    arrn, arr = sdfg.add_array(name="accumulator", shape=(coarsening_factor*coarsening_factor, tM//coarsening_factor, tN//coarsening_factor), dtype=ftype, storage=local_storage, transient=True)
+    arrn, arr = sdfg.add_array(name="accumulator",
+                               shape=(coarsening_factor * coarsening_factor, tM // coarsening_factor,
+                                      tN // coarsening_factor),
+                               dtype=ftype,
+                               storage=local_storage,
+                               transient=True)
     arrs[arrn] = arr
 
-    dev_map_entry, dev_map_exit = main_state.add_map(
-        name="gemm_entry",
-        ndrange={"i" : dace.subsets.Range([(0, M-1, tM*gM//kg_m)]),
-                 "j" : dace.subsets.Range([(0, N-1, tN*gN//kg_n)])},
-        schedule=device_schedule
-    )
+    dev_map_entry, dev_map_exit = main_state.add_map(name="gemm_entry",
+                                                     ndrange={
+                                                         "i": dace.subsets.Range([(0, M - 1, tM * gM // kg_m)]),
+                                                         "j": dace.subsets.Range([(0, N - 1, tN * gN // kg_n)])
+                                                     },
+                                                     schedule=device_schedule)
     i = dace.symbol("i")
     j = dace.symbol("j")
 
     for name in ["A", "B", "C"]:
-    # for name in ["A", "B"]:
+        # for name in ["A", "B"]:
         if name == "A" or name == "B":
             access_str = ", ".join([f"0:{n}" for n in arrs[name].shape])
             an = state.add_access(name)
@@ -75,12 +102,12 @@ def _my_gen_matmul_sdfg(hardware_matmul_mnk: typing.Tuple,
             anc3 = state.add_access(name)
             state.add_edge(dev_map_exit, f"OUT_{name}", anc3, None, dace.memlet.Memlet(f"{name}[{access_str}]"))
 
-    thread_group_map_entry, thread_group_map_exit = main_state.add_map(
-        name="thread_group_mmad",
-        ndrange={"gi" : dace.subsets.Range([(0, gM-1, 1)]),
-                 "gj" : dace.subsets.Range([(0, gN-1, 1)])},
-        schedule=thread_group_schedule
-    )
+    thread_group_map_entry, thread_group_map_exit = main_state.add_map(name="thread_group_mmad",
+                                                                       ndrange={
+                                                                           "gi": dace.subsets.Range([(0, gM - 1, 1)]),
+                                                                           "gj": dace.subsets.Range([(0, gN - 1, 1)])
+                                                                       },
+                                                                       schedule=thread_group_schedule)
 
     gi = dace.symbol("gi")
     gj = dace.symbol("gj")
@@ -101,182 +128,198 @@ def _my_gen_matmul_sdfg(hardware_matmul_mnk: typing.Tuple,
                 access_str = ", ".join(["0:K", f"j:j + {tN} * {gN} / {kg_n}"])
             elif name == "C":
                 access_str = ", ".join([f"i:i + {gM} * {tM} / {kg_m}", f"j:j + {gN} * {tN} / {kg_n}"])
-            state.add_edge(dev_map_entry, f"OUT_{name}", thread_group_map_entry, f"IN_{name}", dace.memlet.Memlet(f"{name}[{access_str}]"))
+            state.add_edge(dev_map_entry, f"OUT_{name}", thread_group_map_entry, f"IN_{name}",
+                           dace.memlet.Memlet(f"{name}[{access_str}]"))
             dev_map_entry.add_out_connector(f"OUT_{name}")
             thread_group_map_entry.add_in_connector(f"IN_{name}")
         if name == "C":
             access_str = ", ".join([f"i:i + {gM} * {tM} / {kg_m}", f"j:j + {gN} * {tN} / {kg_n}"])
-            state.add_edge(thread_group_map_exit, f"OUT_{name}", dev_map_exit, f"IN_{name}", dace.memlet.Memlet(f"{name}[{access_str}]"))
+            state.add_edge(thread_group_map_exit, f"OUT_{name}", dev_map_exit, f"IN_{name}",
+                           dace.memlet.Memlet(f"{name}[{access_str}]"))
             dev_map_exit.add_in_connector(f"IN_{name}")
             thread_group_map_exit.add_out_connector(f"OUT_{name}")
 
     thread_coarsened_map_entry, thread_coarsened_map_exit = main_state.add_map(
         name="thread_coarsened",
-        ndrange={"ci" : dace.subsets.Range([(0, tM-1, tM//coarsening_factor)]),
-                 "cj" : dace.subsets.Range([(0, tN-1, tN//coarsening_factor)])},
-        schedule=dace.dtypes.ScheduleType.SoftHier_Sequential
-    )
-
-    
+        ndrange={
+            "ci": dace.subsets.Range([(0, tM - 1, tM // coarsening_factor)]),
+            "cj": dace.subsets.Range([(0, tN - 1, tN // coarsening_factor)])
+        },
+        schedule=dace.dtypes.ScheduleType.SoftHier_Sequential)
 
     for name in ["A", "B", "C"]:
         if name == "A" or name == "B":
-                if name == "A":
-                    access_str = ", ".join([f"i + {kg_i} * {tM}:i + {kg_i} * {tM} + {tM}", "0:K"])
-                    access_subsets = dace.subsets.Range([(f"i + {kg_i} * {tM}",f"i + {kg_i} * {tM} + {tM} - 1",1), 
-                                                         (0,K-1,1)])
-                elif name == "B":
-                    access_str = ", ".join(["0:K", f"j + {kg_j} * {tN}:j + {kg_j} * {tN} + {tN}"])
-                    access_subsets = dace.subsets.Range([(0,K-1,1), 
-                                                         (f"j + {kg_j} * {tN}",f"j + {kg_j} * {tN} + {tN} - 1",1)])
-                state.add_edge(thread_group_map_entry, f"OUT_{name}", thread_coarsened_map_entry, f"IN_{name}", 
-                               dace.memlet.Memlet(
-                                    data=f"{name}",
-                                    subset=access_subsets
-                               ))
-                thread_group_map_entry.add_out_connector(f"OUT_{name}")
-                thread_coarsened_map_entry.add_in_connector(f"IN_{name}")
+            if name == "A":
+                access_str = ", ".join([f"i + {kg_i} * {tM}:i + {kg_i} * {tM} + {tM}", "0:K"])
+                access_subsets = dace.subsets.Range([(f"i + {kg_i} * {tM}", f"i + {kg_i} * {tM} + {tM} - 1", 1),
+                                                     (0, K - 1, 1)])
+            elif name == "B":
+                access_str = ", ".join(["0:K", f"j + {kg_j} * {tN}:j + {kg_j} * {tN} + {tN}"])
+                access_subsets = dace.subsets.Range([(0, K - 1, 1),
+                                                     (f"j + {kg_j} * {tN}", f"j + {kg_j} * {tN} + {tN} - 1", 1)])
+            state.add_edge(thread_group_map_entry, f"OUT_{name}", thread_coarsened_map_entry, f"IN_{name}",
+                           dace.memlet.Memlet(data=f"{name}", subset=access_subsets))
+            thread_group_map_entry.add_out_connector(f"OUT_{name}")
+            thread_coarsened_map_entry.add_in_connector(f"IN_{name}")
         if name == "C":
-            access_str = ", ".join([f"i + {kg_i} * {tM}:i + {kg_i} * {tM} + {tM}", f"j + {kg_j} * {tN}:j + {kg_j} * {tN} + {tN}"])
-            access_subsets = dace.subsets.Range([(f"i + {kg_i} * {tM}",f"i + {kg_i} * {tM} + {tM} - 1",1), 
-                                                 (f"j + {kg_j} * {tN}",f"j + {kg_j} * {tN} + {tN} - 1",1)])
+            access_str = ", ".join(
+                [f"i + {kg_i} * {tM}:i + {kg_i} * {tM} + {tM}", f"j + {kg_j} * {tN}:j + {kg_j} * {tN} + {tN}"])
+            access_subsets = dace.subsets.Range([(f"i + {kg_i} * {tM}", f"i + {kg_i} * {tM} + {tM} - 1", 1),
+                                                 (f"j + {kg_j} * {tN}", f"j + {kg_j} * {tN} + {tN} - 1", 1)])
             # state.add_edge(thread_coarsened_map_exit, f"OUT_{name}", thread_group_map_exit, f"IN_{name}", dace.memlet.Memlet(f"{name}[{access_str}]"))
             state.add_edge(thread_coarsened_map_exit, f"OUT_{name}", thread_group_map_exit, f"IN_{name}",
-                           dace.memlet.Memlet(
-                                data=f"{name}",
-                                subset=access_subsets
-                           ))
+                           dace.memlet.Memlet(data=f"{name}", subset=access_subsets))
             thread_group_map_exit.add_in_connector(f"IN_{name}")
             thread_coarsened_map_exit.add_out_connector(f"OUT_{name}")
-
-    
 
     block_tiled_map_entry, block_tiled_map_exit = main_state.add_map(
         name="block_tiled",
         # ndrange={"bK" : dace.subsets.Range([(0, K-1, tK//coarsening_factor)])},
-        ndrange={"bK" : dace.subsets.Range([(bK_start, bK_end-1, tK//coarsening_factor)])},
-        schedule=dace.dtypes.ScheduleType.SoftHier_Sequential
-    )
+        ndrange={"bK": dace.subsets.Range([(bK_start, bK_end - 1, tK // coarsening_factor)])},
+        schedule=dace.dtypes.ScheduleType.SoftHier_Sequential)
 
     accumulator_an = state.add_access("accumulator")
     accumulator_an.setzero = True
     state.add_edge(thread_coarsened_map_entry, None, accumulator_an, None, dace.memlet.Memlet(None))
-    access_str = ", ".join([f"0:{coarsening_factor}*{coarsening_factor}", f"0:{tM//coarsening_factor}", f"0:{tN//coarsening_factor}"])
-    state.add_edge(accumulator_an, None, block_tiled_map_entry, f"IN_accumulator", dace.memlet.Memlet(f"accumulator[{access_str}]"))
+    access_str = ", ".join(
+        [f"0:{coarsening_factor}*{coarsening_factor}", f"0:{tM//coarsening_factor}", f"0:{tN//coarsening_factor}"])
+    state.add_edge(accumulator_an, None, block_tiled_map_entry, f"IN_accumulator",
+                   dace.memlet.Memlet(f"accumulator[{access_str}]"))
     block_tiled_map_entry.add_in_connector("IN_accumulator")
     thread_group_map_entry
 
-
     for name in ["A", "B"]:
         if name == "A":
-            access_str = ", ".join([f"i + {kg_i} * {tM} + ci * {tM//coarsening_factor}:i + {kg_i} * {tM} + ci * {tM//coarsening_factor} + {tM//coarsening_factor}", "0:K"])
-            access_subsets = dace.subsets.Range([(f"i + {kg_i} * {tM} + ci * {tM//coarsening_factor}",
-                                                  f"i + {kg_i} * {tM} + ci * {tM//coarsening_factor} + {tM//coarsening_factor} - 1",
-                                                  1), 
-                                                 (0,K-1,1)])
+            access_str = ", ".join([
+                f"i + {kg_i} * {tM} + ci * {tM//coarsening_factor}:i + {kg_i} * {tM} + ci * {tM//coarsening_factor} + {tM//coarsening_factor}",
+                "0:K"
+            ])
+            access_subsets = dace.subsets.Range([
+                (f"i + {kg_i} * {tM} + ci * {tM//coarsening_factor}",
+                 f"i + {kg_i} * {tM} + ci * {tM//coarsening_factor} + {tM//coarsening_factor} - 1", 1), (0, K - 1, 1)
+            ])
         elif name == "B":
-            access_str = ", ".join(["0:K", f"j + {kg_j} * {tN} + cj * {tN//coarsening_factor}:j + {kg_j} * {tN} + cj * {tN//coarsening_factor} + {tN//coarsening_factor}"])
-            access_subsets = dace.subsets.Range([(0,K-1,1), 
-                                                 (f"j + {kg_j} * {tN} + cj * {tN//coarsening_factor}",
-                                                  f"j + {kg_j} * {tN} + cj * {tN//coarsening_factor} + {tN//coarsening_factor} - 1",
-                                                  1)])
+            access_str = ", ".join([
+                "0:K",
+                f"j + {kg_j} * {tN} + cj * {tN//coarsening_factor}:j + {kg_j} * {tN} + cj * {tN//coarsening_factor} + {tN//coarsening_factor}"
+            ])
+            access_subsets = dace.subsets.Range([
+                (0, K - 1, 1),
+                (f"j + {kg_j} * {tN} + cj * {tN//coarsening_factor}",
+                 f"j + {kg_j} * {tN} + cj * {tN//coarsening_factor} + {tN//coarsening_factor} - 1", 1)
+            ])
 
         # state.add_edge(thread_coarsened_map_entry, f"OUT_{name}", block_tiled_map_entry, f"IN_{name}", dace.memlet.Memlet(f"{name}[{access_str}]"))
         state.add_edge(thread_coarsened_map_entry, f"OUT_{name}", block_tiled_map_entry, f"IN_{name}",
-                       dace.memlet.Memlet(
-                            data=f"{name}",
-                            subset=access_subsets
-                       ))
+                       dace.memlet.Memlet(data=f"{name}", subset=access_subsets))
         block_tiled_map_entry.add_in_connector(f"IN_{name}")
         thread_coarsened_map_entry.add_out_connector(f"OUT_{name}")
 
-
     # Load
     local_access_nodes = dict()
-    for name, shape in [("A", (tM//coarsening_factor, tK//coarsening_factor)), ("B", (tK//coarsening_factor, tN//coarsening_factor))]:
+    for name, shape in [("A", (tM // coarsening_factor, tK // coarsening_factor)),
+                        ("B", (tK // coarsening_factor, tN // coarsening_factor))]:
         block_tiled_map_entry.add_out_connector(f"OUT_{name}")
-        arrn, arr = sdfg.add_array(name=f"local_{name}", shape=shape, dtype=input_float, storage=local_storage, transient=True)
+        arrn, arr = sdfg.add_array(name=f"local_{name}",
+                                   shape=shape,
+                                   dtype=input_float,
+                                   storage=local_storage,
+                                   transient=True)
         arrs[arrn] = arr
         an = state.add_access(f"local_{name}")
         local_access_nodes[f"local_{name}"] = an
         if name == "A":
-            access_str = ", ".join([f"i + {kg_i} * {tM} + ci * {tM//coarsening_factor}:i + {kg_i} * {tM} + ci * {tM//coarsening_factor} + {tM//coarsening_factor}", 
-                                    f"bK:bK+{tK//coarsening_factor}"])
-            access_subsets = dace.subsets.Range([(f"i + {kg_i} * {tM} + ci * {tM//coarsening_factor}",
-                                                  f"i + {kg_i} * {tM} + ci * {tM//coarsening_factor} + {tM//coarsening_factor}-1",
-                                                  1), 
-                                                 (f"bK",
-                                                  f"bK+{tK//coarsening_factor}-1",
-                                                  1)])
+            access_str = ", ".join([
+                f"i + {kg_i} * {tM} + ci * {tM//coarsening_factor}:i + {kg_i} * {tM} + ci * {tM//coarsening_factor} + {tM//coarsening_factor}",
+                f"bK:bK+{tK//coarsening_factor}"
+            ])
+            access_subsets = dace.subsets.Range([
+                (f"i + {kg_i} * {tM} + ci * {tM//coarsening_factor}",
+                 f"i + {kg_i} * {tM} + ci * {tM//coarsening_factor} + {tM//coarsening_factor}-1", 1),
+                (f"bK", f"bK+{tK//coarsening_factor}-1", 1)
+            ])
         elif name == "B":
-            access_str = ", ".join([f"bK:bK+{tK//coarsening_factor}", 
-                                    f"j + {kg_j} * {tN} + cj * {tN//coarsening_factor}:j + {kg_j} * {tN} + cj * {tN//coarsening_factor} + {tN//coarsening_factor}"])
-            access_subsets = dace.subsets.Range([(f"bK",
-                                                  f"bK+{tK//coarsening_factor}-1",
-                                                  1), 
-                                                 (f"j + {kg_j} * {tN} + cj * {tN//coarsening_factor}",
-                                                  f"j + {kg_j} * {tN} + cj * {tN//coarsening_factor} + {tN//coarsening_factor}-1",
-                                                  1)])
+            access_str = ", ".join([
+                f"bK:bK+{tK//coarsening_factor}",
+                f"j + {kg_j} * {tN} + cj * {tN//coarsening_factor}:j + {kg_j} * {tN} + cj * {tN//coarsening_factor} + {tN//coarsening_factor}"
+            ])
+            access_subsets = dace.subsets.Range([
+                (f"bK", f"bK+{tK//coarsening_factor}-1", 1),
+                (f"j + {kg_j} * {tN} + cj * {tN//coarsening_factor}",
+                 f"j + {kg_j} * {tN} + cj * {tN//coarsening_factor} + {tN//coarsening_factor}-1", 1)
+            ])
         # state.add_edge(block_tiled_map_entry, f"OUT_{name}", an, None, dace.memlet.Memlet(f"{name}[{access_str}]"))
         state.add_edge(block_tiled_map_entry, f"OUT_{name}", an, None,
-                       dace.memlet.Memlet(
-                            data=f"{name}",
-                            subset=access_subsets
-                       ))
+                       dace.memlet.Memlet(data=f"{name}", subset=access_subsets))
 
     # Connect local_A + local_B -> matmul -> accumulator
-    matmul_tasklet = state.add_tasklet(name="mmad_redmule", inputs={"_in_local_a", "_in_local_b", "_in_accumulator"}, outputs={"_out_accumulator"},
-                                       code=mmad_tasklet_str, language=dace.dtypes.Language.CPP)
-
-
+    matmul_tasklet = state.add_tasklet(name="mmad_redmule",
+                                       inputs={"_in_local_a", "_in_local_b", "_in_accumulator"},
+                                       outputs={"_out_accumulator"},
+                                       code=mmad_tasklet_str,
+                                       language=dace.dtypes.Language.CPP)
 
     for name, an in local_access_nodes.items():
         state.add_edge(an, None, matmul_tasklet, "_in_" + name.lower(), dace.memlet.Memlet(name))
-    state.add_edge(block_tiled_map_entry, f"OUT_accumulator", matmul_tasklet, "_in_accumulator", dace.memlet.Memlet("accumulator"))
-    access_str = ", ".join([f"0:{coarsening_factor}*{coarsening_factor}", f"0:{tM//coarsening_factor}", f"0:{tN//coarsening_factor}"])
-    state.add_edge(matmul_tasklet, "_out_accumulator", block_tiled_map_exit, "IN_accumulator", dace.memlet.Memlet(f"accumulator[{access_str}]"))
+    state.add_edge(block_tiled_map_entry, f"OUT_accumulator", matmul_tasklet, "_in_accumulator",
+                   dace.memlet.Memlet("accumulator"))
+    access_str = ", ".join(
+        [f"0:{coarsening_factor}*{coarsening_factor}", f"0:{tM//coarsening_factor}", f"0:{tN//coarsening_factor}"])
+    state.add_edge(matmul_tasklet, "_out_accumulator", block_tiled_map_exit, "IN_accumulator",
+                   dace.memlet.Memlet(f"accumulator[{access_str}]"))
     block_tiled_map_entry.add_in_connector("IN_accumulator")
     block_tiled_map_exit.add_in_connector("IN_accumulator")
     block_tiled_map_entry.add_out_connector("OUT_accumulator")
     block_tiled_map_exit.add_out_connector("OUT_accumulator")
 
-
     accumulator_an3 = state.add_access("accumulator")
-    
-    access_str = ", ".join([f"0:{coarsening_factor}*{coarsening_factor}", f"0:{tM//coarsening_factor}", f"0:{tN//coarsening_factor}"])
-    state.add_edge(block_tiled_map_exit, f"OUT_accumulator", accumulator_an3, None, dace.memlet.Memlet(f"accumulator[{access_str}]"))
-    access_str = ", ".join([f"i + {kg_i} * {tM} + ci * {tM//coarsening_factor}:i + {kg_i} * {tM} + ci * {tM//coarsening_factor} + {tM//coarsening_factor}", 
-                            f"j + {kg_j} * {tN} + cj * {tN//coarsening_factor}:j + {kg_j} * {tN} + cj * {tN//coarsening_factor} + {tN//coarsening_factor}"])
-    access_subsets = dace.subsets.Range([(f"i + {kg_i} * {tM} + ci * {tM//coarsening_factor}",
-                                          f"i + {kg_i} * {tM} + ci * {tM//coarsening_factor} + {tM//coarsening_factor}-1",
-                                          1), 
-                                         (f"j + {kg_j} * {tN} + cj * {tN//coarsening_factor}",
-                                          f"j + {kg_j} * {tN} + cj * {tN//coarsening_factor} + {tN//coarsening_factor}-1",
-                                          1)])
+
+    access_str = ", ".join(
+        [f"0:{coarsening_factor}*{coarsening_factor}", f"0:{tM//coarsening_factor}", f"0:{tN//coarsening_factor}"])
+    state.add_edge(block_tiled_map_exit, f"OUT_accumulator", accumulator_an3, None,
+                   dace.memlet.Memlet(f"accumulator[{access_str}]"))
+    access_str = ", ".join([
+        f"i + {kg_i} * {tM} + ci * {tM//coarsening_factor}:i + {kg_i} * {tM} + ci * {tM//coarsening_factor} + {tM//coarsening_factor}",
+        f"j + {kg_j} * {tN} + cj * {tN//coarsening_factor}:j + {kg_j} * {tN} + cj * {tN//coarsening_factor} + {tN//coarsening_factor}"
+    ])
+    access_subsets = dace.subsets.Range([
+        (f"i + {kg_i} * {tM} + ci * {tM//coarsening_factor}",
+         f"i + {kg_i} * {tM} + ci * {tM//coarsening_factor} + {tM//coarsening_factor}-1", 1),
+        (f"j + {kg_j} * {tN} + cj * {tN//coarsening_factor}",
+         f"j + {kg_j} * {tN} + cj * {tN//coarsening_factor} + {tN//coarsening_factor}-1", 1)
+    ])
     # state.add_edge(accumulator_an3, None, thread_coarsened_map_exit, "IN_C", dace.memlet.Memlet(f"C[{access_str}]"))
     state.add_edge(accumulator_an3, None, thread_coarsened_map_exit, "IN_C",
-                   dace.memlet.Memlet(
-                        data="C",
-                        subset=access_subsets,
-                        wcr="lambda a, b: a + b"
-                   ))
+                   dace.memlet.Memlet(data="C", subset=access_subsets, wcr="lambda a, b: a + b"))
     thread_coarsened_map_exit.add_in_connector("IN_C")
-    SplitKReduction.apply_to(sdfg, accumulator=accumulator_an3, global_hbm=anc3,
-                             options={"npe_x": gM, "npe_y": gN, 
-                                     "gi": gi, "gj": gj,
-                                    "i": i, "j": j,
-                                    "M": M, "N": N, "K": K,
-                                    "tM": tM, "tN": tN, "tK": tK,
-                                    "kg_m": kg_m, "kg_n": kg_n})
+    SplitKReduction.apply_to(sdfg,
+                             accumulator=accumulator_an3,
+                             global_hbm=anc3,
+                             options={
+                                 "npe_x": gM,
+                                 "npe_y": gN,
+                                 "gi": gi,
+                                 "gj": gj,
+                                 "i": i,
+                                 "j": j,
+                                 "M": M,
+                                 "N": N,
+                                 "K": K,
+                                 "tM": tM,
+                                 "tN": tN,
+                                 "tK": tK,
+                                 "kg_m": kg_m,
+                                 "kg_n": kg_n
+                             })
     return sdfg
 
-if __name__ == "__main__":
 
+if __name__ == "__main__":
 
     dim_x = 1
     dim_y = 64
     cluster_dims = (dim_x, dim_y)
-    k_dims = (1,8)
+    k_dims = (1, 8)
 
     K = 7168
     M = 64
@@ -289,7 +332,7 @@ if __name__ == "__main__":
     A_host = np.ones((M, K), dtype=np.float16)
     B_host = np.ones((K, N), dtype=np.float16)
     C_host = np.zeros((M, N), dtype=np.float16)
-    
+
     A_handler = InterleaveHandler(array=A_host, block_shape=(tM, tK), cluster_dims=cluster_dims)
     # A_handler.split_horizental()
     A_handler.split_to_blocks()
@@ -304,7 +347,6 @@ if __name__ == "__main__":
     split_scheme_B = B_handler.split_scheme
     placement_scheme_B = B_handler.placement_scheme
 
-
     C_handler = InterleaveHandler(array=C_host, block_shape=(tM, tN), cluster_dims=cluster_dims)
     # C_handler.split_vertical()
     C_handler.split_to_blocks()
@@ -313,23 +355,23 @@ if __name__ == "__main__":
     placement_scheme_C = C_handler.placement_scheme
 
     print(f"placement_scheme_A: {placement_scheme_A}")
-    print(f"placement_scheme_B: {placement_scheme_B}") 
+    print(f"placement_scheme_B: {placement_scheme_B}")
     print(f"placement_scheme_C: {placement_scheme_C}")
 
-
-    sdfg = _my_gen_matmul_sdfg(hardware_matmul_mnk=(tM, tN, tK),
-                                global_storage=dace.dtypes.StorageType.SoftHier_HBM,
-                                local_storage=dace.dtypes.StorageType.SoftHier_TCDM,
-                                device_schedule=dace.dtypes.ScheduleType.SoftHier_Device,
-                                thread_group_schedule=dace.dtypes.ScheduleType.SoftHier_Cluster,
-                                thread_group_dims=cluster_dims,
-                                k_group_dims=k_dims,
-                                hbm_split_scheme=[split_scheme_A, split_scheme_B, split_scheme_C],
-                                hbm_placement_scheme=[placement_scheme_A, placement_scheme_B, placement_scheme_C],
-                                is_hbm_interleaved=True,
-                                input_float=dace.float16,
-                                output_float=dace.float16,
-                                coarsening_factor=1,
-                                mmad_tasklet_str="flex_redmule_trigger(_in_local_a, _in_local_b, _in_accumulator, REDMULE_FP_16);")
+    sdfg = _my_gen_matmul_sdfg(
+        hardware_matmul_mnk=(tM, tN, tK),
+        global_storage=dace.dtypes.StorageType.SoftHier_HBM,
+        local_storage=dace.dtypes.StorageType.SoftHier_TCDM,
+        device_schedule=dace.dtypes.ScheduleType.SoftHier_Device,
+        thread_group_schedule=dace.dtypes.ScheduleType.SoftHier_Cluster,
+        thread_group_dims=cluster_dims,
+        k_group_dims=k_dims,
+        hbm_split_scheme=[split_scheme_A, split_scheme_B, split_scheme_C],
+        hbm_placement_scheme=[placement_scheme_A, placement_scheme_B, placement_scheme_C],
+        is_hbm_interleaved=True,
+        input_float=dace.float16,
+        output_float=dace.float16,
+        coarsening_factor=1,
+        mmad_tasklet_str="flex_redmule_trigger(_in_local_a, _in_local_b, _in_accumulator, REDMULE_FP_16);")
     sdfg.save("my_gemm.sdfgz")
     sdfg.validate()

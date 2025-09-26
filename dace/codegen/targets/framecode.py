@@ -188,7 +188,8 @@ class DaCeCodeGenerator(object):
         #########################################################
         # Write state struct
         structstr = '\n'.join(self.statestruct)
-        global_stream.write(f'''
+        global_stream.write(
+            f'''
 typedef struct {mangle_dace_state_struct_name(sdfg)} {{
     {structstr}
 }}{mangle_dace_state_struct_name(sdfg)};

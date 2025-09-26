@@ -87,7 +87,7 @@ class SoftHierCodeGen(TargetCodeGenerator):
         self._globalcode = CodeIOStream()
         self._initcode = CodeIOStream()
         self._exitcode = CodeIOStream()
-        
+
         self._global_sdfg: SDFG = sdfg
         self._toplevel_schedule = None
         self._arglists: Dict[nodes.MapEntry, Dict[str, dt.Data]] = {}
@@ -114,7 +114,6 @@ class SoftHierCodeGen(TargetCodeGenerator):
 
         # tcdm array hbm map dic
         self._tcdm_hbm_map = {}
-
 
         # Register additional SoftHier dispatchers
         dispatcher.register_map_dispatcher(dtypes.SOFTHIER_SCHEDULES, self)
@@ -211,7 +210,7 @@ class SoftHierCodeGen(TargetCodeGenerator):
                         CopyToMap.apply_to(nsdfg, save=False, annotate=False, a=e.src, b=e.dst)
                     except ValueError:  # If transformation doesn't match, continue normally
                         continue
-        
+
         for node, parent in sdfg.all_nodes_recursive():
             if isinstance(node, nodes.AccessNode):
                 desc_stream = node.desc(parent)
@@ -230,7 +229,8 @@ class SoftHierCodeGen(TargetCodeGenerator):
                             if isinstance(desc_src, dt.Array) and desc_src.storage == dtypes.StorageType.SoftHier_TCDM:
                                 if node.data in self._stream_name_map:
                                     if self._stream_name_map[node.data] != edge.src.data:
-                                        raise ValueError(f"Stream {node.data} already mapped to {self._stream_name_map[node.data]}")
+                                        raise ValueError(
+                                            f"Stream {node.data} already mapped to {self._stream_name_map[node.data]}")
                                 else:
                                     self._stream_name_map[node.data] = f"{edge.src.data}"
                                     # print(f"SoftHier: Stream {node.data} mapped to { self._stream_name_map[node.data]}")
@@ -246,7 +246,7 @@ class SoftHierCodeGen(TargetCodeGenerator):
                 dst_node = path[-1].dst
                 if isinstance(src_node, nodes.AccessNode) and isinstance(dst_node, nodes.AccessNode):
                     src_desc = src_node.desc(parent)
-                    if src_desc.storage == dtypes.StorageType.SoftHier_HBM:    
+                    if src_desc.storage == dtypes.StorageType.SoftHier_HBM:
                         if edge.data.data not in self._dma_core_map:
                             self._dma_core_map[edge.data.data] = len(self._dma_core_map)
                         if isinstance(dst_node, nodes.AccessNode):
@@ -256,9 +256,11 @@ class SoftHierCodeGen(TargetCodeGenerator):
                                     self._tcdm_hbm_map[dst_node.data] = edge.data.data
                                 else:
                                     if self._tcdm_hbm_map[dst_node.data] != edge.data.data:
-                                        raise ValueError(f"Array {dst_node.data} already mapped to {self._tcdm_hbm_map[dst_node.data]}")
+                                        raise ValueError(
+                                            f"Array {dst_node.data} already mapped to {self._tcdm_hbm_map[dst_node.data]}"
+                                        )
 
-                if isinstance(dst_node, nodes.AccessNode):   
+                if isinstance(dst_node, nodes.AccessNode):
                     dst_desc = dst_node.desc(parent)
                     if dst_desc.storage == dtypes.StorageType.SoftHier_HBM:
                         if edge.data.data not in self._dma_core_map:
@@ -270,8 +272,9 @@ class SoftHierCodeGen(TargetCodeGenerator):
                                     self._tcdm_hbm_map[src_node.data] = edge.data.data
                                 else:
                                     if self._tcdm_hbm_map[src_node.data] != edge.data.data:
-                                        raise ValueError(f"Array {src_node.data} already mapped to {self._tcdm_hbm_map[src_node.data]}")
-
+                                        raise ValueError(
+                                            f"Array {src_node.data} already mapped to {self._tcdm_hbm_map[src_node.data]}"
+                                        )
 
         print(f"SoftHier: DMA core map: {self._dma_core_map}")
         print(f"SoftHier: TCDM HBM map: {self._tcdm_hbm_map}")
@@ -288,8 +291,7 @@ class SoftHierCodeGen(TargetCodeGenerator):
         # Collect all defined symbols and argument lists with one traversal
         shared_transients = {}
         for state, node, defined_syms in sdutil.traverse_sdfg_with_defined_symbols(sdfg, recursive=True):
-            if (isinstance(node, nodes.MapEntry)
-                    and node.map.schedule in (dtypes.ScheduleType.SoftHier_Device, )):
+            if (isinstance(node, nodes.MapEntry) and node.map.schedule in (dtypes.ScheduleType.SoftHier_Device, )):
                 if state.parent not in shared_transients:
                     shared_transients[state.parent] = state.parent.shared_transients()
                 self._arglists[node] = state.scope_subgraph(node).arglist(defined_syms, shared_transients[state.parent])
@@ -429,7 +431,7 @@ class SoftHierCodeGen(TargetCodeGenerator):
     cudaMemPool_t mempool;
     cudaDeviceGetDefaultMemPool(&mempool, 0);
     uint32_t threshold = {poolcfg if poolcfg != -1 else 'UINT64_MAX'};
-    cudaMemPoolSetAttribute(mempool, cudaMemPoolAttrReleaseThreshold, &threshold);            
+    cudaMemPoolSetAttribute(mempool, cudaMemPoolAttrReleaseThreshold, &threshold);
 '''
 
         self._codeobject.code = """
@@ -465,7 +467,7 @@ typedef struct DacePlacementInfo
 {other_globalcode}
 
 int __dace_init_cuda(struct {sdfg_state_name} *__state{params}) {{
-    
+
     {pool_header}
 
     // __state->gpu_context = new dace::cuda::Context({nstreams}, {nevents});
@@ -625,8 +627,7 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
 
             # Strides are left to the user's discretion
-            result_alloc.write('DACE_ACL_CHECK(aclrtMalloc((void**)&%s, %s));\n' %
-                                ( dataname, arrsize_malloc))
+            result_alloc.write('DACE_ACL_CHECK(aclrtMalloc((void**)&%s, %s));\n' % (dataname, arrsize_malloc))
 
             # if node.setzero:
             #     result_alloc.write('''
@@ -672,7 +673,7 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
         dataname = node.data
         allocname = cpp.ptr(dataname, nodedesc, sdfg, self._frame)
         result_decl = StringIO()
-        result_alloc = StringIO()   
+        result_alloc = StringIO()
         if nodedesc.storage == dtypes.StorageType.SoftHier_TCDM:
             ctypedef = 'dace::SoftHierTCDMStream<%s>' % nodedesc.dtype.ctype
             self._dispatcher.defined_vars.add(allocname, DefinedType.Stream, ctypedef)
@@ -700,7 +701,6 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
             except KeyError:  # Array not declared yet
                 pass
 
-            
             write_type = 'uint32_t'
             shape = node_to_allocate_desc.shape
             arrsize = prod(shape)
@@ -725,7 +725,6 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
             #     ''')
         declaration_stream.write(result_decl.getvalue(), cfg, state_id, node)
         allocation_stream.write(result_alloc.getvalue(), cfg, state_id, node)
-
 
     def deallocate_stream(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                           node: nodes.AccessNode, nodedesc: dt.Data, function_stream: CodeIOStream,
@@ -757,9 +756,7 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
         result_alloc = StringIO()
         if nodedesc.storage == dtypes.StorageType.SoftHier_HBM:
             result_alloc.write("DACE_ACL_CHECK(aclrtFree((void**)&%s));\n" % (dataname))
-        elif nodedesc.storage in [
-            dtypes.StorageType.SoftHier_TCDM
-        ]:
+        elif nodedesc.storage in [dtypes.StorageType.SoftHier_TCDM]:
             result_alloc.write(f"// Free {dataname}\n")
         else:
             raise NotImplementedError
@@ -768,7 +765,7 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
         """ Annotates an SDFG (and all nested ones) to include a `_cuda_stream`
             field. This field is applied to all GPU maps, tasklets, and copies
             that can be executed in parallel.
-            
+
             :param sdfg: The sdfg to modify.
             :param default_stream: The stream ID to start counting from (used
                                    in recursion to nested SDFGs).
@@ -913,9 +910,7 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
         u, uconn, v, vconn, memlet = edge
         state_dfg = cfg.state(state_id)
         # print('SoftHier: Emitting copy from', src_node, 'to', dst_node)
-        cpu_storage_types = [
-            dtypes.StorageType.CPU_Heap
-        ]
+        cpu_storage_types = [dtypes.StorageType.CPU_Heap]
         soft_hier_storage_types = [dtypes.StorageType.SoftHier_HBM, dtypes.StorageType.SoftHier_TCDM]
 
         copy_shape = memlet.subset.bounding_box_size()
@@ -945,8 +940,9 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                 dma_id = self._dma_core_map[data_name]
             expr = f"flex_get_core_id() == ({dma_id} % (ARCH_NUM_CORE_PER_CLUSTER - 1)) + 1"
             return expr
-        
-        def _emit_hbm_interleaved_code(nodedesc, src_name, s:subsets.Indices, callsite_stream, cfg, state_id, src_node, dst_node, is_load):   
+
+        def _emit_hbm_interleaved_code(nodedesc, src_name, s: subsets.Indices, callsite_stream, cfg, state_id, src_node,
+                                       dst_node, is_load):
             hbm_width = nodedesc.shape[1]
             hbm_height = nodedesc.shape[0]
             row_start = sym2cpp(s[0][0])
@@ -957,39 +953,47 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
             block_height = length_0
             callsite_stream.write(f"const uint32_t tile_width = {src_name}_tile_width;")
             callsite_stream.write(f"const uint32_t tile_height = {src_name}_tile_height;")
-            callsite_stream.write(f"const uint32_t row_start_offset = (({src_name} - {src_name}_base) / {data_size}) / {src_name}_width;")
-            callsite_stream.write(f"const uint32_t col_start_offset = (({src_name} - {src_name}_base) / {data_size}) % {src_name}_width;")
+            callsite_stream.write(
+                f"const uint32_t row_start_offset = (({src_name} - {src_name}_base) / {data_size}) / {src_name}_width;")
+            callsite_stream.write(
+                f"const uint32_t col_start_offset = (({src_name} - {src_name}_base) / {data_size}) % {src_name}_width;")
             callsite_stream.write(f"const uint32_t col_start_temp = {col_start} + col_start_offset;")
             callsite_stream.write(f"const uint32_t col_start = col_start_temp % {src_name}_width;")
-            callsite_stream.write(f"const uint32_t row_start = {row_start} + row_start_offset + col_start_temp / {src_name}_width;")
+            callsite_stream.write(
+                f"const uint32_t row_start = {row_start} + row_start_offset + col_start_temp / {src_name}_width;")
             callsite_stream.write(f"const uint32_t tile_row_index = row_start/tile_height;")
             callsite_stream.write(f"const uint32_t tile_col_index = col_start/tile_width;")
             callsite_stream.write(f"const uint32_t tile_row_offset = row_start%tile_height;")
             callsite_stream.write(f"const uint32_t tile_col_offset = col_start%tile_width;")
             callsite_stream.write(f"const uint32_t tile_index = tile_row_index*{width_split} + tile_col_index;")
             callsite_stream.write(f"const uint32_t channel_id = {src_name}_placement_info[tile_index].channel_id;")
-            callsite_stream.write(f"const uint32_t num_blocks_per_tile = (tile_height/{block_height}) * (tile_width/{block_width});")
-            callsite_stream.write(f"const uint32_t num_blocks_in_previous_tiles_in_channel = {src_name}_placement_info[tile_index].tile_offset * num_blocks_per_tile;")
+            callsite_stream.write(
+                f"const uint32_t num_blocks_per_tile = (tile_height/{block_height}) * (tile_width/{block_width});")
+            callsite_stream.write(
+                f"const uint32_t num_blocks_in_previous_tiles_in_channel = {src_name}_placement_info[tile_index].tile_offset * num_blocks_per_tile;"
+            )
             callsite_stream.write(f"const uint32_t block_row_index = tile_row_offset/{block_height};")
             callsite_stream.write(f"const uint32_t block_col_index = tile_col_offset/{block_width};")
-            callsite_stream.write(f"const uint32_t block_index = block_row_index * (tile_width/{block_width}) + block_col_index;")
-            callsite_stream.write(f"const uint32_t total_block_index = num_blocks_in_previous_tiles_in_channel + block_index;")
-            callsite_stream.write(f"const uint64_t block_addr = {src_name}_base + channel_id * (uint64_t)ARCH_HBM_NODE_ADDR_SPACE + total_block_index * {block_height} * {block_width} * {data_size};")
+            callsite_stream.write(
+                f"const uint32_t block_index = block_row_index * (tile_width/{block_width}) + block_col_index;")
+            callsite_stream.write(
+                f"const uint32_t total_block_index = num_blocks_in_previous_tiles_in_channel + block_index;")
+            callsite_stream.write(
+                f"const uint64_t block_addr = {src_name}_base + channel_id * (uint64_t)ARCH_HBM_NODE_ADDR_SPACE + total_block_index * {block_height} * {block_width} * {data_size};"
+            )
             funcname = "flex_dma_async_1d"
             if is_load:
-                callsite_stream.write(('    {func}({args});').format(
-                        func=funcname,
-                        args=', '.join([f'local({dst_expr})']+ 
-                                    [f'hbm_addr(block_addr)'] + 
-                                    [f'{block_height}*{block_width}*{data_size}'])), cfg, state_id, [src_node, dst_node]
-                )
+                callsite_stream.write(
+                    ('    {func}({args});').format(func=funcname,
+                                                   args=', '.join([f'local({dst_expr})'] + [f'hbm_addr(block_addr)'] +
+                                                                  [f'{block_height}*{block_width}*{data_size}'])), cfg,
+                    state_id, [src_node, dst_node])
             else:
-                callsite_stream.write(('    {func}({args});').format(
-                        func=funcname,
-                        args=', '.join([f'hbm_addr(block_addr)'] + 
-                                    [f'local({src_expr})'] + 
-                                    [f'{block_height}*{block_width}*{data_size}'])), cfg, state_id, [src_node, dst_node]
-                )
+                callsite_stream.write(
+                    ('    {func}({args});').format(func=funcname,
+                                                   args=', '.join([f'hbm_addr(block_addr)'] + [f'local({src_expr})'] +
+                                                                  [f'{block_height}*{block_width}*{data_size}'])), cfg,
+                    state_id, [src_node, dst_node])
 
         if (isinstance(src_node, nodes.AccessNode) and isinstance(dst_node, nodes.AccessNode)
                 and not SoftHierCodeGen._in_device_code
@@ -998,7 +1002,7 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                 and not (src_storage in cpu_storage_types and dst_storage in cpu_storage_types)):
             pass
         # Copy within the SoftHier storage
-        elif (isinstance(src_node, nodes.AccessNode) and isinstance(dst_node, nodes.AccessNode) 
+        elif (isinstance(src_node, nodes.AccessNode) and isinstance(dst_node, nodes.AccessNode)
               and src_storage in soft_hier_storage_types and dst_storage in soft_hier_storage_types
               and isinstance(src_node_desc, dt.Array) and isinstance(dst_node_desc, dt.Array)):
             state = state_dfg
@@ -1012,7 +1016,9 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
             data_size = nodedesc.dtype.bytes
             dims = len(copy_shape)
             # print(f'copy_memory: {src_node} -> {dst_node}, {copy_shape}, {src_strides}, {dst_strides}, {src_expr}, {dst_expr}')
-            callsite_stream.write(f'// copy_memory: {src_node} -> {dst_node}, {copy_shape}, {src_strides}, {dst_strides}, {src_expr}, {dst_expr}')
+            callsite_stream.write(
+                f'// copy_memory: {src_node} -> {dst_node}, {copy_shape}, {src_strides}, {dst_strides}, {src_expr}, {dst_expr}'
+            )
             # print(f'dims = {dims}')
             if vconn:
                 # Rm. IN_
@@ -1027,7 +1033,7 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                 src_name = u.data
             #src_name = name
             # assert len(subset.string_list()) == 1
-            
+
             if src_expr != src_name:
                 src_expr = f"{src_expr} * {data_size}"
             if dst_expr != dst_name:
@@ -1044,30 +1050,21 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                 beg, end, step = subset.ranges[0]
                 length = (end + 1) - beg
                 data_size = nodedesc.dtype.bytes  # Number of bytes per element
-                if (
-                    src_storage == dtypes.StorageType.SoftHier_HBM
-                    and dst_storage == dtypes.StorageType.SoftHier_TCDM
-                ):
-                    callsite_stream.write(
-                        "// SoftHier_HBM -> SoftHier_TCDM"
-                    )
-                    callsite_stream.write(
-                        "if(flex_is_dm_core())"
-                    )
+                if (src_storage == dtypes.StorageType.SoftHier_HBM and dst_storage == dtypes.StorageType.SoftHier_TCDM):
+                    callsite_stream.write("// SoftHier_HBM -> SoftHier_TCDM")
+                    callsite_stream.write("if(flex_is_dm_core())")
                     callsite_stream.write("{", cfg, state_id, src_node)
                     funcname = "flex_dma_async_1d"
                     callsite_stream.write(('    {func}({args});').format(
-                            func=funcname,
-                            args=', '.join([f'local({dst_expr})'] + [f'hbm_addr({src_expr})'] + [f'{length}*{data_size}'])), cfg, state_id, [src_node, dst_node]
-                    )
+                        func=funcname,
+                        args=', '.join([f'local({dst_expr})'] + [f'hbm_addr({src_expr})'] + [f'{length}*{data_size}'])),
+                                          cfg, state_id, [src_node, dst_node])
                     callsite_stream.write("flex_dma_async_wait_all();")
                     callsite_stream.write("}", cfg, state_id, src_node)
                     # if is_sync:
                     #     callsite_stream.write("flex_intra_cluster_sync();")
-                elif (
-                    src_storage == dtypes.StorageType.SoftHier_TCDM
-                    and dst_storage == dtypes.StorageType.SoftHier_TCDM
-                ):
+                elif (src_storage == dtypes.StorageType.SoftHier_TCDM
+                      and dst_storage == dtypes.StorageType.SoftHier_TCDM):
                     callsite_stream.write("// SoftHier_TCDM -> SoftHier_TCDM")
                     # when src_node name is same as dst_node name then no need to copy
                     if src_name == dst_name:
@@ -1076,37 +1073,27 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                         # callsite_stream.write("/* src_expr == dst_expr */")
                         pass
                     else:
-                        callsite_stream.write(
-                            "if(flex_is_dm_core())"
-                        )
+                        callsite_stream.write("if(flex_is_dm_core())")
                         callsite_stream.write("{", cfg, state_id, src_node)
                         funcname = "flex_dma_async_1d"
                         callsite_stream.write(('    {func}({args});').format(
-                                func=funcname,
-                                args=', '.join([f'local({dst_expr})'] + [f'local({src_expr})'] + [f'{length}*{data_size}'])), cfg, state_id, [src_node, dst_node]
-                        )
+                            func=funcname,
+                            args=', '.join([f'local({dst_expr})'] + [f'local({src_expr})'] +
+                                           [f'{length}*{data_size}'])), cfg, state_id, [src_node, dst_node])
                         callsite_stream.write("flex_dma_async_wait_all();")
                         callsite_stream.write("}", cfg, state_id, src_node)
                         # if is_sync:
                         #     callsite_stream.write("flex_intra_cluster_sync();")
-                elif (
-                    src_storage == dtypes.StorageType.SoftHier_TCDM
-                    and dst_storage == dtypes.StorageType.SoftHier_HBM
-                ):
-                    callsite_stream.write(
-                        "// SoftHier_TCDM -> SoftHier_HBM"
-                    )
-                    callsite_stream.write(
-                        "if(flex_is_dm_core())"
-                    )
+                elif (src_storage == dtypes.StorageType.SoftHier_TCDM
+                      and dst_storage == dtypes.StorageType.SoftHier_HBM):
+                    callsite_stream.write("// SoftHier_TCDM -> SoftHier_HBM")
+                    callsite_stream.write("if(flex_is_dm_core())")
                     callsite_stream.write("{", cfg, state_id, src_node)
                     funcname = "flex_dma_async_1d"
                     callsite_stream.write(('    {func}({args});').format(
-                            func=funcname,
-                            args=', '.join([f'hbm_addr({dst_expr})'] + 
-                                           [f'local({src_expr})'] + 
-                                           [f'{length}*{data_size}'])), cfg, state_id, [src_node, dst_node]
-                    )
+                        func=funcname,
+                        args=', '.join([f'hbm_addr({dst_expr})'] + [f'local({src_expr})'] + [f'{length}*{data_size}'])),
+                                          cfg, state_id, [src_node, dst_node])
                     callsite_stream.write("flex_dma_async_wait_all();")
                     callsite_stream.write("}", cfg, state_id, src_node)
                     # if is_sync:
@@ -1114,141 +1101,108 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                 else:
                     if src_name == dst_name:
                         return
-                    raise NotImplementedError(
-                        f"Unimplemented copy type: {src_storage} -> {dst_storage}"
-                    )
+                    raise NotImplementedError(f"Unimplemented copy type: {src_storage} -> {dst_storage}")
             elif dims == 2:
                 # print(f'subset = {subset}; subset.string_list() = {subset.string_list()}')
-                
+
                 beg, end, step = subset.ranges[0]
                 # print(f'index_0: {src_name} -> {dst_name}, {beg}, {end}, {step}')
                 length_0 = (end + 1) - beg
-                
+
                 beg, end, step = subset.ranges[1]
                 length_1 = (end + 1) - beg
-                
+
                 # print(f'index_1: {src_name} -> {dst_name}, {beg}, {end}, {step}')
                 data_size = nodedesc.dtype.bytes
-                if (
-                    src_storage == dtypes.StorageType.SoftHier_HBM
-                    and dst_storage == dtypes.StorageType.SoftHier_TCDM
-                ):
+                if (src_storage == dtypes.StorageType.SoftHier_HBM and dst_storage == dtypes.StorageType.SoftHier_TCDM):
                     s = subsets.Indices(memlet.src_subset)
                     # print(f"src_subset = {s[0][0]} {s[0][1]} {s[1][0]} {s[1][1]}")
                     # print(f"src data shape = {nodedesc.shape[0]} {nodedesc.shape[1]}")
-                    
 
-                    callsite_stream.write(
-                        "// SoftHier_HBM -> SoftHier_TCDM 2D"
-                    )
+                    callsite_stream.write("// SoftHier_HBM -> SoftHier_TCDM 2D")
                     # def _get_dma_core_expr(data_name):
                     #     dma_id = self._dma_core_map[data_name]
                     #     expr = f"flex_get_core_id() == (ARCH_NUM_CORE_PER_CLUSTER - 1 - {dma_id})"
-                    
+
                     cond_expr = _get_dma_core_expr(src_name)
-                    callsite_stream.write(
-                        f"if({cond_expr})"
-                    )
+                    callsite_stream.write(f"if({cond_expr})")
                     callsite_stream.write("{", cfg, state_id, src_node)
 
-                    if(nodedesc.is_hbm_interleaved):
-                        _emit_hbm_interleaved_code(nodedesc, src_name, s, callsite_stream, cfg, state_id, src_node, dst_node, True)
+                    if (nodedesc.is_hbm_interleaved):
+                        _emit_hbm_interleaved_code(nodedesc, src_name, s, callsite_stream, cfg, state_id, src_node,
+                                                   dst_node, True)
 
                     else:
                         funcname = "flex_dma_sync_2d"
                         callsite_stream.write(('    {func}({args});').format(
-                                func=funcname,
-                                args=', '.join([f'local({dst_expr})'] + 
-                                            [f'hbm_addr({src_expr})'] + 
-                                            [f'{length_1}*{data_size}'] +
-                                            [f'{dst_strides[0]}*{data_size}'] +
-                                            [f'{src_strides[0]}*{data_size}'] +
-                                            [f'{length_0}'])), cfg, state_id, [src_node, dst_node]
-                        )
+                            func=funcname,
+                            args=', '.join([f'local({dst_expr})'] + [f'hbm_addr({src_expr})'] +
+                                           [f'{length_1}*{data_size}'] + [f'{dst_strides[0]}*{data_size}'] +
+                                           [f'{src_strides[0]}*{data_size}'] + [f'{length_0}'])), cfg, state_id,
+                                              [src_node, dst_node])
                     # if is_sync:
                     callsite_stream.write("flex_dma_async_wait_all();")
                     callsite_stream.write("}", cfg, state_id, src_node)
                     # if is_sync:
                     #     callsite_stream.write("flex_intra_cluster_sync();")
-                elif (
-                    src_storage == dtypes.StorageType.SoftHier_TCDM
-                    and dst_storage == dtypes.StorageType.SoftHier_TCDM
-                ):
+                elif (src_storage == dtypes.StorageType.SoftHier_TCDM
+                      and dst_storage == dtypes.StorageType.SoftHier_TCDM):
                     callsite_stream.write("// SoftHier_TCDM -> SoftHier_TCDM")
                     if src_name == dst_name:
                         # do nothing
                         pass
                     else:
-                        callsite_stream.write(
-                            "if(flex_is_dm_core())"
-                        )
+                        callsite_stream.write("if(flex_is_dm_core())")
                         callsite_stream.write("{", cfg, state_id, src_node)
                         funcname = "flex_dma_sync_2d"
                         callsite_stream.write(('    {func}({args});').format(
-                                func=funcname,
-                                args=', '.join([f'local({dst_expr})'] + 
-                                            [f'local({src_expr})'] + 
-                                            [f'{length_1}*{data_size}'] +
-                                            [f'{dst_strides[0]}*{data_size}'] +
-                                            [f'{src_strides[0]}*{data_size}'] +
-                                            [f'{length_0}'])), cfg, state_id, [src_node, dst_node]
-                        )
+                            func=funcname,
+                            args=', '.join([f'local({dst_expr})'] + [f'local({src_expr})'] +
+                                           [f'{length_1}*{data_size}'] + [f'{dst_strides[0]}*{data_size}'] +
+                                           [f'{src_strides[0]}*{data_size}'] + [f'{length_0}'])), cfg, state_id,
+                                              [src_node, dst_node])
                         # if is_sync:
                         callsite_stream.write("flex_dma_async_wait_all();")
                         callsite_stream.write("}", cfg, state_id, src_node)
                         # if is_sync:
                         #     callsite_stream.write("flex_intra_cluster_sync();")
-                elif (
-                    src_storage == dtypes.StorageType.SoftHier_TCDM
-                    and dst_storage == dtypes.StorageType.SoftHier_HBM
-                ):
+                elif (src_storage == dtypes.StorageType.SoftHier_TCDM
+                      and dst_storage == dtypes.StorageType.SoftHier_HBM):
                     s = subsets.Indices(memlet.dst_subset)
-                    callsite_stream.write(
-                        "// SoftHier_TCDM -> SoftHier_HBM"
-                    )
-                    
+                    callsite_stream.write("// SoftHier_TCDM -> SoftHier_HBM")
+
                     cond_expr = _get_dma_core_expr(dst_name)
-                    callsite_stream.write(
-                        f"if({cond_expr})"
-                    )
+                    callsite_stream.write(f"if({cond_expr})")
                     callsite_stream.write("{", cfg, state_id, src_node)
-                    if(nodedesc.is_hbm_interleaved):
-                        _emit_hbm_interleaved_code(nodedesc, dst_name, s, callsite_stream, cfg, state_id, src_node, dst_node, False)
+                    if (nodedesc.is_hbm_interleaved):
+                        _emit_hbm_interleaved_code(nodedesc, dst_name, s, callsite_stream, cfg, state_id, src_node,
+                                                   dst_node, False)
                         # if is_sync:
                         callsite_stream.write("flex_dma_async_wait_all();")
                     else:
                         funcname = "flex_dma_sync_2d"
                         callsite_stream.write(('    {func}({args});').format(
-                                func=funcname,
-                                args=', '.join([f'hbm_addr({dst_expr})'] + 
-                                            [f'local({src_expr})'] + 
-                                            [f'{length_1}*{data_size}'] +
-                                            [f'{dst_strides[0]}*{data_size}'] +
-                                            [f'{src_strides[0]}*{data_size}'] +
-                                            [f'{length_0}'])), cfg, state_id, [src_node, dst_node]
-                        )
+                            func=funcname,
+                            args=', '.join([f'hbm_addr({dst_expr})'] + [f'local({src_expr})'] +
+                                           [f'{length_1}*{data_size}'] + [f'{dst_strides[0]}*{data_size}'] +
+                                           [f'{src_strides[0]}*{data_size}'] + [f'{length_0}'])), cfg, state_id,
+                                              [src_node, dst_node])
                     # if is_sync:
                     #     callsite_stream.write("flex_dma_async_wait_all();")
                     callsite_stream.write("}", cfg, state_id, src_node)
-                elif (
-                    src_storage == dtypes.StorageType.SoftHier_HBM
-                    and dst_storage == dtypes.StorageType.SoftHier_HBM
-                ):       
+                elif (src_storage == dtypes.StorageType.SoftHier_HBM
+                      and dst_storage == dtypes.StorageType.SoftHier_HBM):
                     if src_expr == dst_expr:
                         # do nothing
                         pass
                     else:
-                        raise NotImplementedError(
-                            f"Unimplemented copy type: {src_storage} -> {dst_storage}"
-                        )
+                        raise NotImplementedError(f"Unimplemented copy type: {src_storage} -> {dst_storage}")
                 else:
-                    raise NotImplementedError(
-                        f"Unimplemented copy type: {src_storage} -> {dst_storage}"
-                    )
-        elif (isinstance(src_node, nodes.AccessNode) and isinstance(dst_node, nodes.AccessNode) 
+                    raise NotImplementedError(f"Unimplemented copy type: {src_storage} -> {dst_storage}")
+        elif (isinstance(src_node, nodes.AccessNode) and isinstance(dst_node, nodes.AccessNode)
               and src_storage in soft_hier_storage_types and dst_storage in soft_hier_storage_types
               and (isinstance(src_node_desc, dt.Stream) or isinstance(dst_node_desc, dt.Stream))):
-            
+
             state = state_dfg
             is_sync = False
             # check whether the dst node has a out edge
@@ -1258,10 +1212,10 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                 is_sync = True
             copy_shape = edge.data.subset.size_exact()
             dims = len(copy_shape)
-            
+
             self._has_async_dma = (not is_sync) or self._has_async_dma
             if vconn:
-            # Rm. IN_
+                # Rm. IN_
                 dst_name = vconn[3:]
             elif isinstance(v, nodes.AccessNode):
                 dst_name = v.data
@@ -1276,27 +1230,27 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                 callsite_stream.write(f'// copy_memory: {src_node} -> {dst_node}')
                 callsite_stream.write(f'// is_sync = {is_sync}')
                 data_size = dst_node_desc.dtype.bytes
-                dst_subset = memlet.get_dst_subset(edge, state)        
+                dst_subset = memlet.get_dst_subset(edge, state)
                 is_src_write = not memlet._is_data_src
                 dst_expr = cpp.copy_expr(self._dispatcher,
-                             sdfg,
-                             dst_node.data,
-                             memlet,
-                             is_write=is_src_write,
-                             offset=dst_subset,
-                             relative_offset=False)
+                                         sdfg,
+                                         dst_node.data,
+                                         memlet,
+                                         is_write=is_src_write,
+                                         offset=dst_subset,
+                                         relative_offset=False)
                 if dst_expr != dst_name:
                     dst_expr = dst_expr + "*" + f"{data_size}"
                 src_subset = memlet.get_src_subset(edge, state)
                 pos_x_range = subsets.Range(src_subset[0:1])
-                pos_x = pos_x_range.at([0],[1])
+                pos_x = pos_x_range.at([0], [1])
                 pos_y_range = subsets.Range(src_subset[1:2])
-                pos_y = pos_y_range.at([0],[1])
+                pos_y = pos_y_range.at([0], [1])
                 pos_x = sym2cpp(pos_x)
                 pos_y = sym2cpp(pos_y)
                 # print(f"pos_x = {pos_x}, pos_y = {pos_y}")
                 src_subset = subsets.Range(src_subset[2:])
-                src_expr = sym2cpp(src_subset.at([0,0,0],[1,1,1]))
+                src_expr = sym2cpp(src_subset.at([0, 0, 0], [1, 1, 1]))
                 src_size = src_subset.num_elements() * data_size
                 src_expr = self._stream_name_map[src_node.data] + "+" + src_expr + " * " + str(src_size)
                 if src_subset[-3] == dst_subset[-3]:
@@ -1306,55 +1260,62 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                     callsite_stream.write(f"if ({expr})")
                     # callsite_stream.write("if (flex_is_dm_core())")
                     callsite_stream.write("{")
-                    callsite_stream.write(f"bare_dma_start_1d(local({dst_expr}), dace_remote_xy({pos_x},{pos_y},{src_expr},{self._soft_hier_dims[0]}), {src_size});")
+                    callsite_stream.write(
+                        f"bare_dma_start_1d(local({dst_expr}), dace_remote_xy({pos_x},{pos_y},{src_expr},{self._soft_hier_dims[0]}), {src_size});"
+                    )
                     # if is_sync:
                     callsite_stream.write("flex_dma_async_wait_all();")
                     callsite_stream.write("}")
 
             else:
-                
+
                 data_size = src_node_desc.dtype.bytes
-                src_subset = memlet.get_src_subset(edge, state)        
+                src_subset = memlet.get_src_subset(edge, state)
                 is_src_write = not memlet._is_data_src
                 src_expr = cpp.copy_expr(self._dispatcher,
-                             sdfg,
-                             src_node.data,
-                             memlet,
-                             is_write=is_src_write,
-                             offset=src_subset,
-                             relative_offset=False)
+                                         sdfg,
+                                         src_node.data,
+                                         memlet,
+                                         is_write=is_src_write,
+                                         offset=src_subset,
+                                         relative_offset=False)
                 if src_expr != src_name:
                     src_expr = src_expr + "*" + f"{data_size}"
                 dst_subset = memlet.get_dst_subset(edge, state)
                 pos_x_range = subsets.Range(dst_subset[0:1])
-                pos_x = pos_x_range.at([0],[1])
+                pos_x = pos_x_range.at([0], [1])
                 pos_y_range = subsets.Range(dst_subset[1:2])
-                pos_y = pos_y_range.at([0],[1])
+                pos_y = pos_y_range.at([0], [1])
                 pos_x = sym2cpp(pos_x)
                 pos_y = sym2cpp(pos_y)
                 # print(f"pos_x = {pos_x}, pos_y = {pos_y}")
                 dst_subset = subsets.Range(dst_subset[2:])
-                dst_expr = sym2cpp(dst_subset.at([0,0,0],[1,1,1]))
+                dst_expr = sym2cpp(dst_subset.at([0, 0, 0], [1, 1, 1]))
                 dst_size = dst_subset.num_elements() * data_size
                 dst_expr = self._stream_name_map[dst_node.data] + "+" + dst_expr + " * " + str(dst_size)
                 # check whether it is a broadcast
                 (pos_x_start, pos_x_end, pos_x_step) = pos_x_range[0]
                 (pos_y_start, pos_y_end, pos_y_step) = pos_y_range[0]
                 is_broadcast = False
-                if src_subset[-3] == dst_subset[-3] and pos_x_range.num_elements() == 1 and pos_y_range.num_elements() == 1:
+                if src_subset[-3] == dst_subset[-3] and pos_x_range.num_elements() == 1 and pos_y_range.num_elements(
+                ) == 1:
                     return
                 else:
                     is_broadcast = True
-                    
+
                 if src_storage == dtypes.StorageType.SoftHier_TCDM and dst_storage == dtypes.StorageType.SoftHier_TCDM:
                     expr = _get_dma_core_expr(dst_name)
                     callsite_stream.write(f"if ({expr})")
                     # callsite_stream.write("if (flex_is_dm_core())")
                     callsite_stream.write("{")
                     if is_broadcast:
-                        callsite_stream.write(f"flex_dma_async_1d_broadcast(dace_remote_xy({pos_x_end-pos_x_step+1},{pos_y_end-pos_y_step+1},{dst_expr},{self._soft_hier_dims[0]}), local({src_expr}), {dst_size});")
+                        callsite_stream.write(
+                            f"flex_dma_async_1d_broadcast(dace_remote_xy({pos_x_end-pos_x_step+1},{pos_y_end-pos_y_step+1},{dst_expr},{self._soft_hier_dims[0]}), local({src_expr}), {dst_size});"
+                        )
                     else:
-                        callsite_stream.write(f"bare_dma_start_1d(dace_remote_xy({pos_x},{pos_y},{dst_expr},{self._soft_hier_dims[0]}), local({src_expr}), {dst_size});")
+                        callsite_stream.write(
+                            f"bare_dma_start_1d(dace_remote_xy({pos_x},{pos_y},{dst_expr},{self._soft_hier_dims[0]}), local({src_expr}), {dst_size});"
+                        )
                     # if is_sync:
                     callsite_stream.write("flex_dma_async_wait_all();")
                     callsite_stream.write("}")
@@ -1362,15 +1323,15 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                 elif src_storage == dtypes.StorageType.SoftHier_HBM and dst_storage == dtypes.StorageType.SoftHier_TCDM:
                     name = memlet.data
                     nodedesc = sdfg.arrays[name]
-                    raise NotImplementedError(
-                        f"Unimplemented copy type: {src_storage} -> {dst_storage}"
-                    )
+                    raise NotImplementedError(f"Unimplemented copy type: {src_storage} -> {dst_storage}")
                     if dims == 1:
                         beg, end, step = subset.ranges[0]
                         length = (end + 1) - beg
                         callsite_stream.write("if (flex_is_dm_core())")
                         callsite_stream.write("{")
-                        callsite_stream.write(f"bare_dma_start_1d(dace_remote_xy({pos_x},{pos_y},{dst_expr}), hbm({src_expr}), {length * data_size});")
+                        callsite_stream.write(
+                            f"bare_dma_start_1d(dace_remote_xy({pos_x},{pos_y},{dst_expr}), hbm({src_expr}), {length * data_size});"
+                        )
                         # if is_sync:
                         callsite_stream.write("flex_dma_async_wait_all();")
                         callsite_stream.write("}")
@@ -1383,32 +1344,28 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                             callsite_stream.write("if (flex_is_dm_core())")
                             callsite_stream.write("{")
                             s = subsets.Indices(memlet.src_subset)
-                            _emit_hbm_interleaved_code(nodedesc, src_name, s, callsite_stream, cfg, state_id, src_node, dst_node)
+                            _emit_hbm_interleaved_code(nodedesc, src_name, s, callsite_stream, cfg, state_id, src_node,
+                                                       dst_node)
                             # if is_sync:
                             callsite_stream.write("flex_dma_async_wait_all();")
                             callsite_stream.write("}")
-                        else: # not interleaved
+                        else:  # not interleaved
                             src_strides = src_node_desc.strides[-dims:]
                             dst_strides = dst_node_desc.strides[-dims:]
                             callsite_stream.write("if (flex_is_dm_core())")
                             callsite_stream.write("{")
                             funcname = "flex_dma_sync_2d"
                             callsite_stream.write(('    {func}({args});').format(
-                                    func=funcname,
-                                    args=', '.join([f'dace_remote_xy({pos_x},{pos_y},{dst_expr})'] + 
-                                                [f'hbm_addr({src_expr})'] + 
-                                                [f'{length_1}*{data_size}'] +
-                                                [f'{dst_strides[0]}*{data_size}'] +
-                                                [f'{src_strides[0]}*{data_size}'] +
-                                                [f'{length_0}'])), cfg, state_id, [src_node, dst_node]
-                            )
+                                func=funcname,
+                                args=', '.join([f'dace_remote_xy({pos_x},{pos_y},{dst_expr})'] +
+                                               [f'hbm_addr({src_expr})'] + [f'{length_1}*{data_size}'] +
+                                               [f'{dst_strides[0]}*{data_size}'] + [f'{src_strides[0]}*{data_size}'] +
+                                               [f'{length_0}'])), cfg, state_id, [src_node, dst_node])
                             # if is_sync:
                             callsite_stream.write("flex_dma_async_wait_all();")
                             callsite_stream.write("}")
                     else:
-                        raise NotImplementedError(
-                            f"Not Implemented Dim > 2: {src_storage} -> {dst_storage}"
-                        )
+                        raise NotImplementedError(f"Not Implemented Dim > 2: {src_storage} -> {dst_storage}")
                 # if is_sync:
                 #     callsite_stream.write("flex_intra_cluster_sync();")
         else:
@@ -1551,7 +1508,7 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
             for instr in self._frame._dispatcher.instrumentation.values():
                 if instr is not None:
                     instr.on_state_end(sdfg, state, callsite_stream, function_stream)
-        
+
     def generate_devicelevel_state(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState,
                                    function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         # Special case: if this is a GPU grid state and something is reading
@@ -1574,6 +1531,7 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
             callsite_stream.write('flex_dma_async_wait_all();')
             callsite_stream.write('}')
         callsite_stream.write('flex_intra_cluster_sync();')
+
     # NOTE: This function is ONLY called from the CPU side. Therefore, any
     # schedule that is out of the ordinary will raise an exception
     def generate_scope(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: StateSubgraphView, state_id: int,
@@ -1591,10 +1549,9 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
             return
 
         # If not device-level code, ensure the schedule is correct
-        if scope_entry.map.schedule not in (dtypes.ScheduleType.SoftHier_Device,):
+        if scope_entry.map.schedule not in (dtypes.ScheduleType.SoftHier_Device, ):
             # print("Cannot schedule %s directly from non-GPU code" % scope_entry.map.schedule)
             raise TypeError('Cannot schedule %s directly from non-GPU code' % str(scope_entry.map.schedule))
-
 
         # self.create_grid_barrier = create_grid_barrier
         kernel_name = '%s_%d_%d_%d' % (scope_entry.map.label, sdfg.cfg_id, sdfg.node_id(state),
@@ -1668,22 +1625,24 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
         prototype_kernel_args = {}
         hbm_interleaved_args = {}
         for aname, arg in kernel_args.items():  # `list` wrapper is used to modify kernel_args within the loop
+
             def _generate_placement_info(aname, placement_scheme, split_scheme):
-                            num_tiles = split_scheme[0] * split_scheme[1]
-                            define_str = f"const DacePlacementInfo {aname}_placement_info[{num_tiles}] = \n"
-                            define_str += "{\n"
-                            assign_str = ""
-                            tiling_offset_dic = {}
-                            for i in range(num_tiles):
-                                if placement_scheme[i] not in tiling_offset_dic.keys():
-                                    tiling_offset_dic[placement_scheme[i]] = 0
-                                assign_str += "{"
-                                assign_str += f" .channel_id = {placement_scheme[i]}," # .channel_id = (no need for this)
-                                assign_str += f" .tile_offset = {tiling_offset_dic[placement_scheme[i]]} " # .tile_offset =  (no need for this)
-                                assign_str += "},\n"
-                                tiling_offset_dic[placement_scheme[i]] += 1
-                            # [:-2] to avoid last comma
-                            return define_str + assign_str[:-2] + "\n" + "};\n"
+                num_tiles = split_scheme[0] * split_scheme[1]
+                define_str = f"const DacePlacementInfo {aname}_placement_info[{num_tiles}] = \n"
+                define_str += "{\n"
+                assign_str = ""
+                tiling_offset_dic = {}
+                for i in range(num_tiles):
+                    if placement_scheme[i] not in tiling_offset_dic.keys():
+                        tiling_offset_dic[placement_scheme[i]] = 0
+                    assign_str += "{"
+                    assign_str += f" .channel_id = {placement_scheme[i]},"  # .channel_id = (no need for this)
+                    assign_str += f" .tile_offset = {tiling_offset_dic[placement_scheme[i]]} "  # .tile_offset =  (no need for this)
+                    assign_str += "},\n"
+                    tiling_offset_dic[placement_scheme[i]] += 1
+                # [:-2] to avoid last comma
+                return define_str + assign_str[:-2] + "\n" + "};\n"
+
             if aname in const_params:
                 defined_type, ctype = None, None
                 if aname in sdfg.arrays:
@@ -1727,7 +1686,7 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                         split_scheme = data_desc.hbm_split_scheme
                         placement_scheme = data_desc.hbm_placement_scheme
                         self._globalcode.write(_generate_placement_info(aname, placement_scheme, split_scheme))
-                        self._dispatcher.defined_vars.add(f"{aname}_base", defined_type, ctype, allow_shadowing=True)         
+                        self._dispatcher.defined_vars.add(f"{aname}_base", defined_type, ctype, allow_shadowing=True)
                         hbm_interleaved_args[aname] = arg
             else:
                 if aname in sdfg.arrays:
@@ -1745,7 +1704,7 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                     # Rename argument in kernel prototype as necessary
                     aname = inner_ptrname
                     if data_desc.is_hbm_interleaved:
-                        self._globalcode.write(f"uint32_t {aname}_base;")     
+                        self._globalcode.write(f"uint32_t {aname}_base;")
                         self._globalcode.write(f"uint32_t {aname}_height;")
                         self._globalcode.write(f"uint32_t {aname}_width;")
                         self._globalcode.write(f"uint32_t {aname}_tile_height;")
@@ -1754,18 +1713,16 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                         placement_scheme = data_desc.hbm_placement_scheme
                         self._globalcode.write(_generate_placement_info(aname, placement_scheme, split_scheme))
                         self._dispatcher.defined_vars.add(f"{aname}_base", defined_type, ctype, allow_shadowing=True)
-                        hbm_interleaved_args[aname] = arg     
+                        hbm_interleaved_args[aname] = arg
 
             prototype_kernel_args[aname] = arg
 
-        kernel_args_typed = [f'uint32_t {k}'
-                             for k, v in prototype_kernel_args.items()]
-        
+        kernel_args_typed = [f'uint32_t {k}' for k, v in prototype_kernel_args.items()]
+
         kernel_device_args_typed = []
         for k, v in prototype_kernel_args.items():
             kernel_device_args_typed.append(f'const uint32_t {k}')
 
-                
         # print("Kernel Args Typed: ", kernel_args_typed)
         kernel_stream = CodeIOStream()
         self.generate_kernel_scope(sdfg, cfg, dfg_scope, state_id, scope_entry.map, kernel_name, grid_dims, block_dims,
@@ -1791,9 +1748,8 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
         #     launch_bounds = f'__launch_bounds__({node.gpu_launch_bounds})'
 
         # Write kernel prototype
-        self._localcode.write(
-            'void %s(%s) {\n' %
-            (kernel_name, ', '.join(kernel_device_args_typed)), sdfg, state_id, node)
+        self._localcode.write('void %s(%s) {\n' % (kernel_name, ', '.join(kernel_device_args_typed)), sdfg, state_id,
+                              node)
 
         # Write constant expressions in GPU code
         self._frame.generate_constants(sdfg, self._localcode)
@@ -1818,8 +1774,7 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
 void main({fargs});
 void main({fargs})
 {{
-""".format(fargs=', '.join(state_param + kernel_args_typed + extra_call_args_typed)), cfg, state_id,
-            node)
+""".format(fargs=', '.join(state_param + kernel_args_typed + extra_call_args_typed)), cfg, state_id, node)
 
         if is_persistent:
             self._localcode.write('''
@@ -1873,8 +1828,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
         bdims = ', '.join(_topy(block_dims))
 
         # TODO: Read the arguments(_localcode)
-        self._localcode.write(
-            '''flex_barrier_xy_init();
+        self._localcode.write('''flex_barrier_xy_init();
                 flex_global_barrier_xy();''')
         start_address = 0
         for k, v in prototype_kernel_args.items():
@@ -1885,7 +1839,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 
         for k, v in hbm_interleaved_args.items():
             self._localcode.write(f'{k}_base = {k};')
-        
+
         for aname, arg in hbm_interleaved_args.items():
             if aname in sdfg.arrays:
                 nodedesc = sdfg.arrays[aname]
@@ -1899,7 +1853,6 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                     self._localcode.write(f'{aname}_tile_height = {hbm_height}/{height_split};')
                     self._localcode.write(f'{aname}_tile_width = {hbm_width}/{width_split};')
 
-
         # Just dump the whole HBM address space
         dump_str = ""
         dump_str += "flex_dump_open();\n"
@@ -1911,7 +1864,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                 continue
             if arr.storage != dace.dtypes.StorageType.SoftHier_HBM:
                 continue
-            dump_str += "for (int i = 0; i < 8; i++){\n"
+            dump_str += "for (int i = 0; i < HBM_NUM_CHANNELS; i++){\n"
             dump_str += f'//printf("Dumping file: %s \\n", {arr_name});\n'
             dump_str += f"flex_dump_hbm({arr_name} + (i * HBM_ADDRESS_SPACE), {arr_name}_tile_width * {arr_name}_tile_height);\n"
             dump_str += f'//printf("Dumped file: %s. Renaming dump file.\\n", {arr_name});\n'
@@ -1922,28 +1875,8 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
         dump_str += "flex_intra_cluster_sync();\n"
         dump_str += "flex_dump_close();\n"
 
-
-        """
-        dump_str += f'''{{
-    char old_file[256];
-    char new_file[256];
-
-    // Construct the filenames
-    snprintf(old_file, sizeof(old_file), "%s/dump_0", GVSOC_PATH);
-    snprintf(new_file, sizeof(new_file), "%s/dump_%s_ch_%d", GVSOC_PATH, "{{arr_name}}", 0);
-
-    // Rename
-    if (rename(old_file, new_file) == 0) {{
-        printf("Renamed successfully to %s\\n", new_file);
-    }} else {{
-        perror("Error renaming file");
-    }}
-}}\n
-'''
-        """
         # Prepare an empty-grid check for runtime grids
 
-        dummy_dump_str = 'if (flex_is_dm_core() && (flex_get_cluster_id() == 0)) printf("doing stuff \\n");'
         dimcheck = True
         if dimcheck:
             emptygrid_warning = ''
@@ -1952,22 +1885,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                                      'due to an empty grid.\\n");')
 
             self._localcode.write(
-            '''
-            // if (flex_is_first_core() && (flex_get_cluster_id()==0))
-            // {{
-                // printf("A: %x\\n", A);
-                // printf("B: %x\\n", B);
-                // printf("C: %x\\n", C);
-                // printf("K: %x\\n", K);
-                // printf("M: %x\\n", M);
-                // printf("N: %x\\n", N);
-            // }}
-            // if (flex_is_first_core() && (flex_get_cluster_id()==0))
-            // {{
-                // printf("%x\\n", ((uint32_t *)(hbm_addr(A)))[0]);
-                // printf("%x\\n", ((uint32_t *)(hbm_addr(B)))[0]);
-                // printf("%x\\n", ((uint32_t *)(hbm_addr(C)))[0]);
-            // }}
+                '''
             uint32_t eoc_val = 0;
             flex_global_barrier_xy();
             flex_timer_start();
@@ -1980,18 +1898,17 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
             flex_global_barrier_xy();
             flex_intra_cluster_sync();
             flex_eoc(eoc_val);
-            return;'''
-            .format(kname=kernel_name,
-                    kargs=', '.join([arg for arg in prototype_kernel_args] + extra_kernel_args),
-                    gdims=gdims,
-                    bdims=bdims,
-                    dynsmem=_topy(dynsmem_size),
-                    stream=cudastream,
-                    backend=self.backend,
-                    dump_str=dump_str), cfg, state_id, scope_entry)
+            return;'''.format(kname=kernel_name,
+                              kargs=', '.join([arg for arg in prototype_kernel_args] + extra_kernel_args),
+                              gdims=gdims,
+                              bdims=bdims,
+                              dynsmem=_topy(dynsmem_size),
+                              stream=cudastream,
+                              backend=self.backend,
+                              dump_str=dump_str), cfg, state_id, scope_entry)
         # Check kernel launch for errors
         # self._localcode.write(f'DACE_KERNEL_LAUNCH_CHECK(__err, "{kernel_name}", {gdims}, {bdims});')
-        
+
         self._emit_sync(self._localcode)
 
         # Close the runkernel function
@@ -2017,33 +1934,14 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
             callsite_stream.write(
                 self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn]),
                 cfg, state_id, node)
-        
 
         # TODO: Load the arguments(callsite_stream)
-    #     callsite_stream.write('''
-    #         size_t array_size = 8192;
-    #         std::vector<uint32_t> array1 = {64, 64 + static_cast<uint32_t>(array_size * 2)};
-    #         std::vector<uint32_t> array2;
-
-    #         std::vector<float> array2_data(array_size, 0.5f);
-    #         for (float val : array2_data) {
-    #             uint32_t scaled_val = static_cast<uint32_t>(std::round(val * 65535));
-    #             array2.push_back(scaled_val);
-    #         }
-
-    #         std::vector<std::vector<uint32_t>> arrays = {array1, array2};
-    #         std::vector<std::string> dtypes = {"uint64", "uint64"};
-
-    #         ELFGenerator generator;
-    #         generator.generate("/scratch/dace4softhier/gvsoc/output.elf", arrays, dtypes);
-    # ''', cfg, state_id, scope_entry)
 
         callsite_stream.write("printf(\"Start Running Kernel\");")
         # system("bash -c 'cd /scratch/dace4softhier/gvsoc && source sourceme.sh && ./install/bin/gvsoc --target=pulp.chips.flex_cluster.flex_cluster --binary ./sw_build/softhier.elf run --trace=/chip/cluster_0/redmule'");
-        callsite_stream.write(
-            'int result = system("cd ./.dacecache && ./dace.sh");'
-            # 'int result = system("pwd");'
-        )
+        callsite_stream.write('int result = system("cd ./.dacecache && ./dace.sh");'
+                              # 'int result = system("pwd");'
+                              )
         callsite_stream.write("printf(\"Result: %d\", result);")
         callsite_stream.write("printf(\"Finish Running Kernel\");")
         # Invoke kernel call
@@ -2063,7 +1961,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
         # Instrumentation (post-kernel)
         if instr is not None:
             callsite_stream.write(outer_stream.getvalue())
-        
+
         self.tcdm_offset = 0
         # print("################################Finish Using SoftHierCodeGen Scope######################################")
 
@@ -2306,7 +2204,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
         # kernel_stream.write("flex_global_barrier_xy();\n", cfg, state_id, node)
         kernel_stream.write(f"const uint32_t cluster_id = flex_get_cluster_id();\n", cfg, state_id, node)
         # kernel_stream.write(f"uint32_t core_id = flex_get_core_id();\n", cfg, state_id, node)
-        
+
         # for i in range(len(kernel_map.range)):
         #     varname = kernel_map.params[-i - 1]
         #     kernel_stream.write(f'int {varname} = 0;\n', cfg, state_id, node)
@@ -2321,7 +2219,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
         dsym = [symbolic.symbol('__DAPB%d' % i, nonnegative=True, integer=True) for i in range(len(krange))]
         bidx = krange.coord_at(dsym)
         entry_node = dfg_scope.source_nodes()[0]
-        
+
         # print(f'krange: {krange}; kdims: {kdims}; dsym: {dsym}; bidx: {bidx}')
         for i, r in enumerate(node.map.range):
             var = kernel_map.params[i]
@@ -2423,16 +2321,10 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
             kdims = brange.size()
             minels = brange.min_element()
             maxels = brange.max_element()
-            dsym = [
-                symbolic.symbol('__DAPT%d' % i, nonnegative=True, integer=True) 
-                for i in range(len(brange))
-            ]
-            dsym_end = [
-                d + (bs * rng[2]) - 1 
-                for d, bs, rng in zip(dsym, self._block_dims, brange)
-            ]
+            dsym = [symbolic.symbol('__DAPT%d' % i, nonnegative=True, integer=True) for i in range(len(brange))]
+            dsym_end = [d + (bs * rng[2]) - 1 for d, bs, rng in zip(dsym, self._block_dims, brange)]
             tidx = brange.coord_at(dsym)
-            
+
             # First three dimensions are evaluated directly
             if len(brange) == 1:
                 for i in range(min(len(brange), 3)):
@@ -2446,7 +2338,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                     condition = ''
                     condition += '%s <= %s' % (varname, brange.max_element()[i])
                     if len(condition) > 0:
-                        callsite_stream.write('if (%s) {' % condition, cfg, state_id, scope_entry)    
+                        callsite_stream.write('if (%s) {' % condition, cfg, state_id, scope_entry)
                     else:
                         callsite_stream.write('{', cfg, state_id, scope_entry)
 
@@ -2464,11 +2356,11 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                     callsite_stream.write('int %s = %s;' % (varname, expr), cfg, state_id, scope_entry)
                     self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, 'int')
                 for i in range(min(len(brange), 3)):
-                    varname = scope_map.params[-i-1]
+                    varname = scope_map.params[-i - 1]
                     condition = ''
                     condition += '%s <= %s' % (varname, brange.max_element()[i])
                     if len(condition) > 0:
-                        callsite_stream.write('if (%s) {' % condition, cfg, state_id, scope_entry)    
+                        callsite_stream.write('if (%s) {' % condition, cfg, state_id, scope_entry)
                     else:
                         callsite_stream.write('{', cfg, state_id, scope_entry)
 
@@ -2478,7 +2370,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 
             # Generate conditions for this block's execution using min and max
             # element, e.g. skipping out-of-bounds threads in trailing block
-            
+
             callsite_stream.write(f'// Minels: {minels}, Maxels: {maxels}', cfg, state_id, scope_entry)
             # callsite_stream.write(f'// Configure RedMule Here\n')
             for node, parent in dfg_scope.all_nodes_recursive():
@@ -2500,7 +2392,9 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                                 callsite_stream.write(f'// Configure RedMule Here\n')
                                 callsite_stream.write(f'if(flex_is_first_core())')
                                 callsite_stream.write('{', cfg, state_id, scope_entry)
-                                callsite_stream.write(f'flex_redmule_config({redmule_dims[0][-2]}, {redmule_dims[0][-1]}, {redmule_dims[1][-1]});')
+                                callsite_stream.write(
+                                    f'flex_redmule_config({redmule_dims[0][-2]}, {redmule_dims[0][-1]}, {redmule_dims[1][-1]});'
+                                )
                                 callsite_stream.write('}', cfg, state_id, scope_entry)
                                 break
                             else:
@@ -2513,17 +2407,16 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 
         # Generate contents normally
         self._dispatcher.dispatch_subgraph(sdfg,
-                                            cfg,
-                                            dfg_scope,
-                                            state_id,
-                                            function_stream,
-                                            callsite_stream,
-                                            skip_entry_node=True)
+                                           cfg,
+                                           dfg_scope,
+                                           state_id,
+                                           function_stream,
+                                           callsite_stream,
+                                           skip_entry_node=True)
         # callsite_stream.write("flex_global_barrier_xy();\n")
         callsite_stream.write("flex_intra_cluster_sync();\n")
         callsite_stream.write("// Finished deivelevel scope\n")
         self._soft_hier_dims = []
-
 
     def generate_node(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int, node: nodes.Node,
                       function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
@@ -2551,7 +2444,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
         #     sdfg, cfg, state, state_id, node, memlet_references, sdfg_label, state_struct=False)
         # TODO: Use a single method for GPU kernels, FPGA modules, and NSDFGs
         arguments = []
-        state_struct=False
+        state_struct = False
         if state_struct:
             toplevel_sdfg: SDFG = sdfg.cfg_list[0]
             arguments.append(f'{cpp.mangle_dace_state_struct_name(toplevel_sdfg)} *__state')
@@ -2562,16 +2455,14 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
         for atype, aname, _ in memlet_references:
 
             def make_restrict(expr: str) -> str:
-                    return ''
+                return ''
 
             if aname in node.sdfg.arrays and not node.sdfg.arrays[aname].may_alias:
                 restrict_args.append(make_restrict(atype))
             else:
                 restrict_args.append('')
 
-        arguments += [
-            f'{write_type} {aname}' for (atype, aname, _), restrict in zip(memlet_references, restrict_args)
-        ]
+        arguments += [f'{write_type} {aname}' for (atype, aname, _), restrict in zip(memlet_references, restrict_args)]
         fsyms = node.sdfg.used_symbols(all_symbols=False, keep_defined_in_mapping=True)
         arguments += [
             f'{write_type} {aname}' for aname in sorted(node.symbol_mapping.keys())
@@ -2579,8 +2470,6 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
         ]
         arguments = ', '.join(arguments)
         return f'inline int {sdfg_label}({arguments}) {{'
-
-        
 
     def generate_nsdfg_call(self, sdfg, cfg, state, node, memlet_references, sdfg_label):
         return self._cpu_codegen.generate_nsdfg_call(sdfg,
@@ -2592,7 +2481,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                                                      state_struct=False)
 
     def generate_nsdfg_arguments(self, sdfg, cfg, dfg, state, node):
-                # Connectors that are both input and output share the same name
+        # Connectors that are both input and output share the same name
         inout = set(node.in_connectors.keys() & node.out_connectors.keys())
 
         memlet_references = []
@@ -2601,22 +2490,22 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                 continue
             memlet_references.append(
                 cpp.emit_softhier_memlet_reference(self._dispatcher,
-                                          sdfg,
-                                          in_memlet,
-                                          vconn,
-                                          is_write=vconn in node.out_connectors,
-                                          conntype=node.in_connectors[vconn],
-                                          is_soft_hier=True))
+                                                   sdfg,
+                                                   in_memlet,
+                                                   vconn,
+                                                   is_write=vconn in node.out_connectors,
+                                                   conntype=node.in_connectors[vconn],
+                                                   is_soft_hier=True))
 
         for _, uconn, _, _, out_memlet in sorted(state.out_edges(node), key=lambda e: e.src_conn or ''):
             if out_memlet.data is not None:
                 memlet_references.append(
                     cpp.emit_softhier_memlet_reference(self._dispatcher,
-                                              sdfg,
-                                              out_memlet,
-                                              uconn,
-                                              conntype=node.out_connectors[uconn],
-                                              is_soft_hier=True))
+                                                       sdfg,
+                                                       out_memlet,
+                                                       uconn,
+                                                       conntype=node.out_connectors[uconn],
+                                                       is_soft_hier=True))
 
         result = memlet_references
 
@@ -2713,9 +2602,15 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 
         return 1
 
-    def _generate_RedMule_Tasklet(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
-                        node: nodes.Tasklet, function_stream: CodeIOStream, callsite_stream: CodeIOStream,
-                        codegen=None):
+    def _generate_RedMule_Tasklet(self,
+                                  sdfg: SDFG,
+                                  cfg: ControlFlowRegion,
+                                  dfg: StateSubgraphView,
+                                  state_id: int,
+                                  node: nodes.Tasklet,
+                                  function_stream: CodeIOStream,
+                                  callsite_stream: CodeIOStream,
+                                  codegen=None):
 
         is_sync = False
         # Allow other code generators to call this with a callback
@@ -2761,8 +2656,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                         if isinstance(desc, dace.data.Stream):
                             is_sync = False
                             break
-                        
-                
+
             if edge.dst_conn:  # Not (None or "")
                 if edge.dst_conn in arrays:  # Disallow duplicates
                     raise SyntaxError("Duplicates found in memlets")
@@ -2773,7 +2667,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                     if not shared_data_name:
                         # Very unique name. TODO: Make more intuitive
                         shared_data_name = '__dace_%d_%d_%d_%d_%s' % (cfg.cfg_id, state_id, dfg.node_id(src_node),
-                                                                    dfg.node_id(node), edge.src_conn)
+                                                                      dfg.node_id(node), edge.src_conn)
 
                     # Read variable from shared storage
                     defined_type, _ = self._dispatcher.defined_vars.get(shared_data_name)
@@ -2798,17 +2692,17 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                         self._dispatcher.defined_vars.add(edge.dst_conn, DefinedType.Pointer, ctype)
                     else:
                         # Find the source Access Node
-                        desc = sdfg.arrays[memlet.data]  
+                        desc = sdfg.arrays[memlet.data]
                         src_subset = memlet.get_src_subset(edge, state_dfg)
                         is_src_write = not memlet._is_data_src
                         src_expr = cpp.copy_expr(self._dispatcher,
-                             sdfg,
-                             src_node.data,
-                             memlet,
-                             is_write=is_src_write,
-                             offset=src_subset,
-                             relative_offset=False,
-                             packed_types=self._cpu_codegen._packed_types)
+                                                 sdfg,
+                                                 src_node.data,
+                                                 memlet,
+                                                 is_write=is_src_write,
+                                                 offset=src_subset,
+                                                 relative_offset=False,
+                                                 packed_types=self._cpu_codegen._packed_types)
                         assign_str = (f"{write_type} {edge.dst_conn} = {src_expr};")
                         inner_stream.write(
                             assign_str,
@@ -2897,13 +2791,12 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 
         inner_stream.write("\n    ///////////////////\n", cfg, state_id, node)
         self._cpu_codegen.unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, inner_stream, self._locals,
-                                self._ldepth, self._toplevel_schedule)
+                                          self._ldepth, self._toplevel_schedule)
         inner_stream.write("flex_redmule_wait();\n", cfg, state_id, node)
         inner_stream.write("    ///////////////////\n\n", cfg, state_id, node)
 
         # Generate pre-memlet tasklet postamble
         after_memlets_stream = CodeIOStream()
-
 
         # Instrumentation: Post-tasklet
         if instr is not None:
@@ -2923,14 +2816,17 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
         # self._locals.clear_scope(self._ldepth + 1)
         self._dispatcher.defined_vars.exit_scope(node)
 
+    def _generate_SoftHier_Tasklet(self,
+                                   sdfg: SDFG,
+                                   cfg: ControlFlowRegion,
+                                   dfg: StateSubgraphView,
+                                   state_id: int,
+                                   node: nodes.Tasklet,
+                                   function_stream: CodeIOStream,
+                                   callsite_stream: CodeIOStream,
+                                   codegen=None):
 
-    
-    
-    def _generate_SoftHier_Tasklet(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
-                        node: nodes.Tasklet, function_stream: CodeIOStream, callsite_stream: CodeIOStream,
-                        codegen=None):
-
- # Allow other code generators to call this with a callback
+        # Allow other code generators to call this with a callback
         codegen = codegen or self
         write_type = 'uint64_t'
         outer_stream_begin = CodeIOStream()
@@ -2991,17 +2887,17 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                         self._dispatcher.defined_vars.add(edge.dst_conn, DefinedType.Pointer, ctype)
                     else:
                         # Find the source Access Node
-                        desc = sdfg.arrays[memlet.data]  
+                        desc = sdfg.arrays[memlet.data]
                         src_subset = memlet.get_src_subset(edge, state_dfg)
                         is_src_write = not memlet._is_data_src
                         src_expr = cpp.copy_expr(self._dispatcher,
-                             sdfg,
-                             src_node.data,
-                             memlet,
-                             is_write=is_src_write,
-                             offset=src_subset,
-                             relative_offset=False,
-                             packed_types=self._cpu_codegen._packed_types)
+                                                 sdfg,
+                                                 src_node.data,
+                                                 memlet,
+                                                 is_write=is_src_write,
+                                                 offset=src_subset,
+                                                 relative_offset=False,
+                                                 packed_types=self._cpu_codegen._packed_types)
                         assign_str = (f"{write_type} {edge.dst_conn} = {src_expr};")
                         inner_stream.write(
                             assign_str,
@@ -3028,7 +2924,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
             if edge.src_conn:
                 if edge.src_conn in tasklet_out_connectors:  # Disallow duplicates
                     continue
-                
+
                 output_definition_stream = CodeIOStream()
                 self._dispatcher.dispatch_output_definition(node, dst_node, edge, sdfg, cfg, dfg, state_id,
                                                             function_stream, output_definition_stream)
@@ -3038,7 +2934,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                 s = output_definition_stream.getvalue()
                 s = re.sub(r'\bdace::[A-Za-z0-9_]+(?:\s*\*+)?', 'uint64_t', s)
                 output_definition_stream = s
-                
+
                 # inner_stream.write(output_definition_stream, cfg, state_id, node)
 
                 # Also define variables in the C++ unparser scope
@@ -3097,14 +2993,14 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
         inner_stream.write("\n    ///////////////////\n", cfg, state_id, node)
 
         self._cpu_codegen.unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, inner_stream, self._locals,
-                                self._ldepth, self._toplevel_schedule)
+                                          self._ldepth, self._toplevel_schedule)
 
         inner_stream.write("    ///////////////////\n\n", cfg, state_id, node)
 
         # Generate pre-memlet tasklet postamble
         after_memlets_stream = CodeIOStream()
         self._cpu_codegen.generate_tasklet_postamble(sdfg, cfg, dfg, state_id, node, function_stream, inner_stream,
-                                           after_memlets_stream)
+                                                     after_memlets_stream)
 
         # Process outgoing memlets
         self.process_out_memlets(
@@ -3133,7 +3029,6 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
         self._locals.clear_scope(self._ldepth + 1)
         self._dispatcher.defined_vars.exit_scope(node)
 
-    
     def _generate_Tasklet(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                           node: nodes.Tasklet, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         generated_preamble_scopes = 0

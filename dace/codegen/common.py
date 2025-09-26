@@ -15,6 +15,7 @@ from typing import List, Optional, Set, Union
 import warnings
 import numpy as np
 
+
 def find_incoming_edges(node, dfg):
     # If it's an entire SDFG, look in each state
     if isinstance(dfg, SDFG):
@@ -232,8 +233,7 @@ def make_preload_elf(output_file_path, np_arrays, start_addresses=None):
         # Generate the array definition
         array_values = ", ".join(map(str, array.flatten()))
         array_c_content.append(
-            f'{c_type} array_{idx}[] __attribute__((section("{section_name}"))) = {{{array_values}}};'
-        )
+            f'{c_type} array_{idx}[] __attribute__((section("{section_name}"))) = {{{array_values}}};')
 
         current_address = start_addr + array.nbytes
 
@@ -241,7 +241,6 @@ def make_preload_elf(output_file_path, np_arrays, start_addresses=None):
 
     with open("array.c", "w") as f:
         f.write(array_c_code)
-
 
     # Step 2: Create "link.ld"
     link_ld_content = ["SECTIONS {"]
@@ -253,9 +252,7 @@ def make_preload_elf(output_file_path, np_arrays, start_addresses=None):
         if start_addr is None:
             # Auto-determine the address with alignment
             start_addr = (current_address + alignment - 1) & ~(alignment - 1)
-        link_ld_content.append(
-            f"    . = 0x{start_addr:X};\n    {section_name} : {{ *({section_name}) }}"
-        )
+        link_ld_content.append(f"    . = 0x{start_addr:X};\n    {section_name} : {{ *({section_name}) }}")
         current_address = start_addr + array.nbytes
 
     link_ld_content.append("}")
@@ -267,7 +264,8 @@ def make_preload_elf(output_file_path, np_arrays, start_addresses=None):
     # Step 3: Compile the ELF file
     os.system("riscv32-unknown-elf-gcc -c array.c -o array.o")
     os.system(f"riscv32-unknown-elf-ld -T link.ld array.o -o {output_file_path}")
-    os.system(f"riscv32-unknown-elf-strip --remove-section=.comment --remove-section=.Pulp_Chip.Info {output_file_path}")
+    os.system(
+        f"riscv32-unknown-elf-strip --remove-section=.comment --remove-section=.Pulp_Chip.Info {output_file_path}")
 
     # Step 4: Cleanup
     os.remove("array.c")

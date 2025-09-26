@@ -109,10 +109,10 @@ private:
     void compile_elf(const std::string& output_file_path) {
         std::string compile_command = "export PATH=/scratch/dace4softhier/gvsoc/third_party/toolchain/v1.0.16-pulp-riscv-gcc-centos-7/bin:$PATH && riscv32-unknown-elf-g++ -c array.cpp -o array.o";
         system(compile_command.c_str());
-        
+
         std::string link_command = "export PATH=/scratch/dace4softhier/gvsoc/third_party/toolchain/v1.0.16-pulp-riscv-gcc-centos-7/bin:$PATH && riscv32-unknown-elf-ld -T link.ld array.o -o " + output_file_path;
         system(link_command.c_str());
-        
+
         std::string strip_command = "export PATH=/scratch/dace4softhier/gvsoc/third_party/toolchain/v1.0.16-pulp-riscv-gcc-centos-7/bin:$PATH && riscv32-unknown-elf-strip --remove-section=.comment --remove-section=.Pulp_Chip.Info " + output_file_path;
         system(strip_command.c_str());
     }
