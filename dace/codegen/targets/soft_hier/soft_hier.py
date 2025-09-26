@@ -417,13 +417,6 @@ class SoftHierCodeGen(TargetCodeGenerator):
         if params_comma:
             params_comma = ', ' + params_comma
 
-        gvsoc_path = shutil.which("gvsoc")
-        if gvsoc_path is None:
-            raise FileNotFoundError("gvsoc not found in PATH")
-
-        # Go three directories up
-        gvsoc_path = os.path.dirname(os.path.dirname(os.path.dirname(gvsoc_path)))
-
         pool_header = ''
         if self.has_pool:
             poolcfg = Config.get('compiler', 'cuda', 'mempool_release_threshold')
@@ -452,7 +445,6 @@ class SoftHierCodeGen(TargetCodeGenerator):
 static const uint64_t HBM_ADDRESS_SPACE = {hbm_address_space};
 static const uint64_t HBM_ADDRESS_BASE = {hbm_address_base};
 static const uint64_t HBM_NUM_CHANNELS = {hbm_num_channels};
-static const char GVSOC_PATH[]  = "{gvsoc_path}";
 
 
 int __dace_init_cuda(struct {sdfg_state_name} *__state{params});
@@ -502,7 +494,7 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
            hbm_address_space=dace.config.Config.get("backend", "softhier", "HBM_ADDRESS_SPACE"),
            hbm_address_base=dace.config.Config.get("backend", "softhier", "HBM_ADDRESS_BASE"),
            hbm_num_channels=dace.config.Config.get("backend", "softhier", "HBM_NUM_CHANNELS"),
-           gvsoc_path=gvsoc_path)
+           )
 
         return [self._codeobject]
 
