@@ -1851,14 +1851,17 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
         dump_str += '//printf("Start dumping arrays");\n'
         dump_str += "//Print Out the input and output-arrays\nif (flex_is_dm_core() && flex_get_cluster_id() == 0)\n{\n"
         dump_str += '//printf("Start dumping arrays on dm_core / cluster_id == 0");\n'
+        sdfg.save("x.sdfg")
+        raise Exception({(arr, arr.dtype, type(arr.dtype), arr.dtype.ctype) for arr in sdfg.arrays.values()})
         for arr_name, arr in sdfg.arrays.items():
             if arr.transient is True:
                 continue
             if arr.storage != dace.dtypes.StorageType.SoftHier_HBM:
                 continue
+            
             dump_str += "for (int i = 0; i < HBM_NUM_CHANNELS; i++){\n"
             dump_str += f'//printf("Dumping file: %s \\n", {arr_name});\n'
-            dump_str += f"flex_dump_hbm({arr_name} + (i * HBM_ADDRESS_SPACE), {arr_name}_tile_width * {arr_name}_tile_height*2);\n"
+            dump_str += f"flex_dump_hbm({arr_name} + (i * HBM_ADDRESS_SPACE), {arr_name}_tile_width * {arr_name}_tile_height * sizeof({arr.dtype.ctype}));\n"
             dump_str += f'//printf("Dumped file: %s. Renaming dump file.\\n", {arr_name});\n'
             dump_str += f'//printf("Dumping file: %s \\n", {arr_name});\n'
             dump_str += "}\n"
