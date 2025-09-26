@@ -1858,7 +1858,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                 continue
             dump_str += "for (int i = 0; i < HBM_NUM_CHANNELS; i++){\n"
             dump_str += f'//printf("Dumping file: %s \\n", {arr_name});\n'
-            dump_str += f"flex_dump_hbm({arr_name} + (i * HBM_ADDRESS_SPACE), {arr_name}_tile_width * {arr_name}_tile_height);\n"
+            dump_str += f"flex_dump_hbm({arr_name} + (i * HBM_ADDRESS_SPACE), {arr_name}_tile_width * {arr_name}_tile_height*2);\n"
             dump_str += f'//printf("Dumped file: %s. Renaming dump file.\\n", {arr_name});\n'
             dump_str += f'//printf("Dumping file: %s \\n", {arr_name});\n'
             dump_str += "}\n"
