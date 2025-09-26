@@ -305,23 +305,23 @@ class AST_translator:
             ast_internal_classes.While_Stmt_Node: self.whilestmt2sdfg,
         }
 
-    def get_dace_type(self, type):
+    def get_dace_type(self, typ):
         """
         This function matches the fortran type to the corresponding dace type
         by referencing the ast_utils.fortrantypes2dacetypes dictionary.
         """
-        if isinstance(type, str):
-            if type in ast_utils.fortrantypes2dacetypes:
-                return ast_utils.fortrantypes2dacetypes[type]
-            elif type in self.registered_types:
-                return self.registered_types[type]
+        if isinstance(typ, str):
+            if typ in ast_utils.fortrantypes2dacetypes:
+                return ast_utils.fortrantypes2dacetypes[typ]
+            elif typ in self.registered_types:
+                return self.registered_types[typ]
             else:
-                # TODO: This is bandaid.
-                if type == "VOID":
+                # TODO: The fortran type should have been known at this point. This is bandaid that falls back to double for VOID, instead of raising an error.
+                if typ == "VOID":
                     return ast_utils.fortrantypes2dacetypes["DOUBLE"]
-                    raise ValueError("Unknown type " + type)
                 else:
-                    raise ValueError("Unknown type " + type)
+                    raise ValueError(f"Unknown type: {typ}")
+        return None
 
     def get_name_mapping_in_context(self, sdfg: SDFG):
         """
@@ -517,9 +517,6 @@ class AST_translator:
                             for k in j.vardecl:
                                 self.module_vars.append((k.name, i.name))
             if i.specification_part is not None:
-
-                # this works with CloudSC
-                # unsure about ICON
                 self.transient_mode = self.do_not_make_internal_variables_argument
 
                 for j in i.specification_part.symbols:
@@ -534,8 +531,6 @@ class AST_translator:
                     self.translate(j, sdfg, cfg)
                     for k in j.vardecl:
                         self.module_vars.append((k.name, i.name))
-        # this works with CloudSC
-        # unsure about ICON
         self.transient_mode = True
         ast_utils.add_simple_state_to_sdfg(self, sdfg, "GlobalDefEnd")
         if self.startpoint is None:
@@ -543,8 +538,6 @@ class AST_translator:
         assert self.startpoint is not None, "No main program or start point found"
 
         if self.startpoint.specification_part is not None:
-            # this works with CloudSC
-            # unsure about ICON
             self.transient_mode = self.do_not_make_internal_variables_argument
 
             for i in self.startpoint.specification_part.typedecls:
@@ -566,8 +559,6 @@ class AST_translator:
                                                            self.replace_names, self.actual_offsets_per_sdfg[sdfg])
 
         if not isinstance(self.startpoint, Main_Program_Node):
-            # this works with CloudSC
-            # unsure about ICON
             arg_names = [ast_utils.get_name(i) for i in self.startpoint.args]
             for arr_name, arr in sdfg.arrays.items():
 
@@ -592,10 +583,6 @@ class AST_translator:
                 for i in range(len(sdfg.arrays[self.name_mapping[sdfg][node.name_pointer.name]].shape))
             ]
             offsetnames = self.actual_offsets_per_sdfg[sdfg][node.name_pointer.name]
-            [
-                sdfg.arrays[self.name_mapping[sdfg][node.name_pointer.name]].offset[i]
-                for i in range(len(sdfg.arrays[self.name_mapping[sdfg][node.name_pointer.name]].offset))
-            ]
             sdfg.arrays.pop(self.name_mapping[sdfg][node.name_pointer.name])
         if isinstance(node.name_target, ast_internal_classes.Data_Ref_Node):
             if node.name_target.parent_ref.name not in self.name_mapping[sdfg]:
