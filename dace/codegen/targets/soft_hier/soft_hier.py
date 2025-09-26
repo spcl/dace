@@ -1,6 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import ctypes
 import functools
+import os
+import shutil
 import warnings
 from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Union
 
@@ -413,6 +415,13 @@ class SoftHierCodeGen(TargetCodeGenerator):
         if params_comma:
             params_comma = ', ' + params_comma
 
+        gvsoc_path = shutil.which("gvsoc")
+        if gvsoc_path is None:
+            raise FileNotFoundError("gvsoc not found in PATH")
+
+        # Go three directories up
+        gvsoc_path = os.path.dirname(os.path.dirname(os.path.dirname(gvsoc_path)))
+
         pool_header = ''
         if self.has_pool:
             poolcfg = Config.get('compiler', 'cuda', 'mempool_release_threshold')
@@ -427,6 +436,7 @@ class SoftHierCodeGen(TargetCodeGenerator):
 // #include <{backend_header}>
 // #include <dace/dace.h>
 #include <math.h>
+#include <stdio.h>
 #include "flex_runtime.h"
 #include "flex_redmule.h"
 #include "flex_printf.h"
@@ -437,8 +447,11 @@ class SoftHierCodeGen(TargetCodeGenerator):
 #define Mod(x, y) ((x) % (y))
 {file_header}
 
-static uint64_t HBM_ADDRESS_SPACE = {hbm_address_space};
-static uint64_t HBM_ADDRESS_BASE = {hbm_address_base};
+static const uint64_t HBM_ADDRESS_SPACE = {hbm_address_space};
+static const uint64_t HBM_ADDRESS_BASE = {hbm_address_base};
+static const uint64_t HBM_NUM_CHANNELS = {hbm_num_channels};
+static const char GVSOC_PATH[]  = "{gvsoc_path}";
+
 
 int __dace_init_cuda(struct {sdfg_state_name} *__state{params});
 int __dace_exit_cuda(struct {sdfg_state_name} *__state);
@@ -485,7 +498,9 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
            pool_header=pool_header,
            sdfg=self._global_sdfg,
            hbm_address_space=dace.config.Config.get("backend", "softhier", "HBM_ADDRESS_SPACE"),
-           hbm_address_base=dace.config.Config.get("backend", "softhier", "HBM_ADDRESS_BASE"))
+           hbm_address_base=dace.config.Config.get("backend", "softhier", "HBM_ADDRESS_BASE"),
+           hbm_num_channels=dace.config.Config.get("backend", "softhier", "HBM_NUM_CHANNELS"),
+           gvsoc_path=gvsoc_path)
 
         return [self._codeobject]
 
@@ -525,36 +540,11 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
     def cmake_options():
         options = []
 
-        # Override SoftHier toolkit
-        if Config.get('compiler', 'cuda', 'path'):
-            options.append("-DCUDA_TOOLKIT_ROOT_DIR=\"{}\"".format(
-                Config.get('compiler', 'cuda', 'path').replace('\\', '/')))
-
-        # Get CUDA architectures from configuration
-        backend = common.get_gpu_backend()
-        if backend == 'cuda':
-            cuda_arch = Config.get('compiler', 'cuda', 'cuda_arch').split(',')
-            cuda_arch = [ca for ca in cuda_arch if ca is not None and len(ca) > 0]
-
-            cuda_arch = ';'.join(cuda_arch)
-            options.append(f'-DDACE_CUDA_ARCHITECTURES_DEFAULT="{cuda_arch}"')
-
-            flags = Config.get("compiler", "cuda", "args")
-            options.append("-DCMAKE_CUDA_FLAGS=\"{}\"".format(flags))
-
-        if backend == 'hip':
-            hip_arch = Config.get('compiler', 'cuda', 'hip_arch').split(',')
-            hip_arch = [ha for ha in hip_arch if ha is not None and len(ha) > 0]
-
-            flags = Config.get("compiler", "cuda", "hip_args")
-            flags += ' ' + ' '.join(
-                '--offload-arch={arch}'.format(arch=arch if arch.startswith("gfx") else "gfx" + arch)
-                for arch in hip_arch)
-            options.append("-DEXTRA_HIP_FLAGS=\"{}\"".format(flags))
-
-        if Config.get('compiler', 'cpu', 'executable'):
-            host_compiler = make_absolute(Config.get("compiler", "cpu", "executable"))
-            options.append("-DCUDA_HOST_COMPILER=\"{}\"".format(host_compiler))
+        flags = Config.get("compiler", "softhier", "args")
+        link_flags = Config.get("compiler", "softhier", "link_args")
+        options.append("-DCMAKE_SOFTHIER_FLAGS=\"{}\"".format(flags))
+        options.append("-DDACE_SOFTHIER_FLAGS=\"{}\"".format(flags))
+        options.append("-DDACE_SOFTHIER_LINK_FLAGS=\"{}\"".format(link_flags))
 
         return options
 
@@ -1911,20 +1901,50 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 
 
         # Just dump the whole HBM address space
-        dump_str = "if (flex_is_dm_core() && (flex_get_cluster_id() == 0))\n{"
+        dump_str = ""
+        dump_str += '//printf("Start dumping arrays");\n'
+        dump_str += "//Print Out the input and output-arrays\nif (flex_is_dm_core())\n{\n"
+        dump_str += '//printf("Start dumping arrays on dm_core / cluster_id == 0");\n'
         for arr_name, arr in sdfg.arrays.items():
             if arr.transient is True:
                 continue
             if arr.storage != dace.dtypes.StorageType.SoftHier_HBM:
                 continue
-            if arr_name != "B":
+            # TODO: Fix input arguments
+            if arr_name not in {"A"}:
                 continue
+            dump_str += "for (int i = 0; i < 1; i++){\n"
+            dump_str += f'//printf("Dumping file: %s \\n", {arr_name});\n'
             dump_str += "flex_dump_open();\n"
-            dump_str += f"flex_dump_hbm(A, A_tile_width * A_tile_height);\n"
+            dump_str += f"flex_dump_hbm({arr_name} + (i * HBM_ADDRESS_SPACE), {arr_name}_tile_width * {arr_name}_tile_height);\n"
             dump_str += "flex_dump_close();\n"
+            dump_str += f'//printf("Dumped file: %s. Renaming dump file.\\n", {arr_name});\n'
+            dump_str += "}\n"
+
         dump_str += "}\n"
         dump_str += "flex_intra_cluster_sync();\n"
+
+        """
+        dump_str += f'''{{
+    char old_file[256];
+    char new_file[256];
+
+    // Construct the filenames
+    snprintf(old_file, sizeof(old_file), "%s/dump_0", GVSOC_PATH);
+    snprintf(new_file, sizeof(new_file), "%s/dump_%s_ch_%d", GVSOC_PATH, "{{arr_name}}", {i});
+
+    // Rename
+    if (rename(old_file, new_file) == 0) {{
+        printf("Renamed successfully to %s\\n", new_file);
+    }} else {{
+        perror("Error renaming file");
+    }}
+}}\n
+'''
+        """
         # Prepare an empty-grid check for runtime grids
+
+        dummy_dump_str = 'if (flex_is_dm_core() && (flex_get_cluster_id() == 0)) printf("doing stuff \\n");'
         dimcheck = True
         if dimcheck:
             emptygrid_warning = ''
@@ -1959,6 +1979,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
             flex_global_barrier_xy();
             {dump_str}
             flex_global_barrier_xy();
+            flex_intra_cluster_sync();
             flex_eoc(eoc_val);
             return;'''
             .format(kname=kernel_name,

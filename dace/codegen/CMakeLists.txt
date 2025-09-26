@@ -289,13 +289,9 @@ endif()
 
 if(DACE_ENABLE_SOFTHIER)
   include_directories(${DACE_RUNTIME_DIR}/include/soft_hier)
-  message(STATUS "11111111111")
   enable_language(SHCC)
-  message(STATUS "2222222222")
   add_definitions(-DDACE_SOFTHIER)
   set_source_files_properties(${DACE_SOFTHIER_FILES} PROPERTIES LANGUAGE SHCC)
-  # set_source_files_properties(${DACE_HOST_FILES} PROPERTIES LANGUAGE SHCC)
-  message(STATUS "3333333333")
 endif()
 
 
@@ -671,6 +667,14 @@ if(DACE_ENABLE_SOFTHIER)
     @ONLY
   )
 
+  # add_custom_target(dump ALL DEPENDS softhier.dump)
+  string(REPLACE " " ";" DACE_SOFTHIER_FLAGS_LIST "${DACE_SOFTHIER_FLAGS}")
+  # Now DACE_SOFTHIER_FLAGS_LIST is a proper CMake list
+  message(STATUS "Flags list: ${DACE_SOFTHIER_FLAGS_LIST}")
+  string(REPLACE " " ";" DACE_SOFTHIER_LINK_FLAGS_LIST "${DACE_SOFTHIER_LINK_FLAGS}")
+  # Now DACE_SOFTHIER_FLAGS_LIST is a proper CMake list
+  message(STATUS "Flags list: ${DACE_SOFTHIER_LINK_FLAGS_LIST}")
+
   add_custom_command(
       OUTPUT softhier.elf
       # COMMAND ${CMAKE_SHCC_COMPILER} -I ${SOFTHIER_INSTALL_PATH}/include -I ${SOFTHIER_INCLUDE_DIRS} -T ${SHCC_LINKER_SCRIPT} -nostartfiles -mabi=ilp32d -mcmodel=medany -march=rv32imafd -g -O3 -ffast-math -fno-builtin-printf -fno-common -ffunction-sections -Wl,--gc-sections -o ${SOFTHIER_SW_BUILD_PATH}/softhier.elf ${SOFTHIER_INSTALL_PATH}/flex_start.s -x c ${DACE_SOFTHIER_FILES}
@@ -690,7 +694,8 @@ if(DACE_ENABLE_SOFTHIER)
   #     COMMENT "Creating disassembly output.dump"
   # )
 
-  # add_custom_target(dump ALL DEPENDS softhier.dump)
+  target_compile_options(${DACE_PROGRAM_NAME} PUBLIC ${DACE_SOFTHIER_FLAGS_LIST})
+  target_compile_options(${DACE_PROGRAM_NAME} PUBLIC ${DACE_SOFTHIER_LINK_FLAGS_LIST})
 endif()
 
 
@@ -710,3 +715,5 @@ if (MSVC_IDE)
     set_property(TARGET ${DACE_PROGRAM_NAME} PROPERTY
                  MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
+
+
