@@ -569,6 +569,7 @@ def emit_memlet_reference_view(dispatcher: 'TargetDispatcher',
         return emit_memlet_reference(dispatcher, sdfg, memlet, pointer_name, conntype, ancestor, is_write, device_code,
                                      decouple_array_interfaces)
 
+    is_read = is_write is not None and not is_write
     view_deftype = DefinedType.Pointer
 
     if issubclass(type(view_desc), data.Structure):
@@ -577,7 +578,7 @@ def emit_memlet_reference_view(dispatcher: 'TargetDispatcher',
         assert view_desc.dtype.ctype == viewed_desc.ctype
         view_ctype = view_desc.ctype
         arg_type = f"{view_desc.ctype}"
-        if is_write is not None and not is_write:
+        if is_read:
             arg_type = f"const {arg_type}"  # Data are const
         if isinstance(viewed_desc, (data.Structure, data.StructureReference, data.StructureView)):
             arg_value = viewed_ptrname
@@ -594,6 +595,11 @@ def emit_memlet_reference_view(dispatcher: 'TargetDispatcher',
         view_dtype = dtypes.pointer(view_desc.dtype)
         view_ctype = view_dtype.ctype
         arg_type = f"{view_ctype}"
+        if is_read:
+            if isinstance(view_desc.dtype, dtypes.pointer):
+                arg_type = f"{arg_type} const"  # Data are const pointer.
+            else:
+                arg_type = f"const {arg_type}"  # Data are const.
         arg_value = f"&{viewed_ptrname}[{cpp_offset_expr(viewed_desc, memlet.subset)}]"
         if isinstance(viewed_desc, data.Scalar):
             assert data._prod(view_desc.shape) == 1
@@ -605,7 +611,7 @@ def emit_memlet_reference_view(dispatcher: 'TargetDispatcher',
     if viewed_desc.dtype != view_desc.dtype:
         arg_value = f"({view_ctype})({arg_value})"
 
-    dispatcher.defined_vars.add(view_name, view_deftype, view_ctype, allow_shadowing=True)
+    dispatcher.defined_vars.add(view_name, view_deftype, arg_type, allow_shadowing=True)
     return arg_type, view_name, arg_value
 
 
