@@ -6,7 +6,7 @@ from dace.frontend.fortran.fortran_parser import create_singular_sdfg_from_strin
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 
-def test_fortran_frontend_min_in_if():
+def test_arg_extract_min_in_if():
     """
     Tests that the min intrinsic function is correctly handled in an if condition.
     """
@@ -32,7 +32,7 @@ end subroutine main
     assert np.allclose(res, [3, 7])
 
 
-def test_fortran_frontend_nested_merge():
+def test_arg_extract_nested_merge():
     """
     Tests that nested merge intrinsic functions are correctly handled.
     """
@@ -60,7 +60,7 @@ end subroutine main
     assert np.allclose(res, [10, 52])
 
 
-def test_fortran_frontend_sequential_merge():
+def test_arg_extract_sequential_merge():
     """
     Tests that sequential merge intrinsic functions are correctly handled.
     """
@@ -92,6 +92,6 @@ end subroutine main
 
 
 if __name__ == "__main__":
-    test_fortran_frontend_min_in_if()
-    test_fortran_frontend_nested_merge()
-    test_fortran_frontend_sequential_merge()
+    test_arg_extract_min_in_if()
+    test_arg_extract_nested_merge()
+    test_arg_extract_sequential_merge()
