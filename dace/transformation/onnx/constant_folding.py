@@ -63,8 +63,7 @@ class ConstantFolding(transformation.SingleStateTransformation):
             return False
 
         # the ONNX importer adds a _parent_onnx_model attribute to the sdfg
-        if isinstance(node, nd.AccessNode
-                      ) and node.data in sdfg._parent_onnx_model.clean_weights:
+        if isinstance(node, nd.AccessNode) and node.data in sdfg._parent_onnx_model.clean_weights:
             return True
 
         return False
@@ -125,18 +124,15 @@ class ConstantFolding(transformation.SingleStateTransformation):
 
             constant_name = sdfg.temp_data_name()
             clean_constant_name = clean_onnx_name(constant_name)
-            sdfg.add_array(clean_constant_name, (len(shape_desc.shape), ),
-                           dace.int64)
+            sdfg.add_array(clean_constant_name, (len(shape_desc.shape), ), dace.int64)
 
             assert constant_name not in parent.clean_weights
-            parent.weights[constant_name] = torch.from_numpy(
-                np.array(shape_desc.shape, np.int64))
+            parent.weights[constant_name] = torch.from_numpy(np.array(shape_desc.shape, np.int64))
 
             assert len(state.out_edges(node)) == 1
             output_edge = state.out_edges(node)[0]
             access_shape = state.add_access(clean_constant_name)
-            state.add_edge(access_shape, None, output_edge.dst,
-                           output_edge.dst_conn,
+            state.add_edge(access_shape, None, output_edge.dst, output_edge.dst_conn,
                            sdfg.make_array_memlet(clean_constant_name))
         else:
             # otherwise compute the result of the op using the ORT API
@@ -144,12 +140,10 @@ class ConstantFolding(transformation.SingleStateTransformation):
             inputs = {}
             for edge in state.in_edges(node):
                 # we know from can_be_applied that all in edges are from AccessNodes
-                assert (isinstance(edge.src, nd.AccessNode)
-                        and hasattr(sdfg, "_parent_onnx_model") and
-                        edge.src.data in sdfg._parent_onnx_model.clean_weights)
+                assert (isinstance(edge.src, nd.AccessNode) and hasattr(sdfg, "_parent_onnx_model")
+                        and edge.src.data in sdfg._parent_onnx_model.clean_weights)
 
-                input_value = sdfg._parent_onnx_model.clean_weights[
-                    edge.src.data]
+                input_value = sdfg._parent_onnx_model.clean_weights[edge.src.data]
 
                 inputs[edge.dst_conn] = input_value.clone()
 
@@ -167,8 +161,7 @@ class ConstantFolding(transformation.SingleStateTransformation):
                 assert constant_name not in parent.weights
                 assert type(output_value) is torch.Tensor
 
-                if not dtypes.can_access(dtypes.ScheduleType.CPU_Multicore,
-                                         desc.storage):
+                if not dtypes.can_access(dtypes.ScheduleType.CPU_Multicore, desc.storage):
                     cpu_desc = copy.deepcopy(desc)
                     cpu_desc.storage = dtypes.StorageType.CPU_Heap
                     cpu_desc.transient = False
@@ -178,8 +171,7 @@ class ConstantFolding(transformation.SingleStateTransformation):
                     sdfg.add_datadesc(clean_copy_in_name, cpu_desc)
 
                     access_constant = state.add_access(clean_constant_name)
-                    state.add_edge(state.add_read(clean_copy_in_name), None,
-                                   access_constant, None,
+                    state.add_edge(state.add_read(clean_copy_in_name), None, access_constant, None,
                                    sdfg.make_array_memlet(clean_copy_in_name))
 
                     name_to_add = copy_in_name
@@ -196,10 +188,7 @@ class ConstantFolding(transformation.SingleStateTransformation):
         remove_node_and_computation(sdfg, state, node)
 
 
-def remove_node_and_computation(sdfg: dace.SDFG,
-                                state: dace.SDFGState,
-                                node: nd.Node,
-                                connector: Optional[str] = None):
+def remove_node_and_computation(sdfg: dace.SDFG, state: dace.SDFGState, node: nd.Node, connector: Optional[str] = None):
     """ Remove a node and the parent nodes that compute this node, if the outputs are not used elsewhere.
 
         :param sdfg: the sdfg containing the node.
@@ -220,12 +209,7 @@ def remove_node_and_computation(sdfg: dace.SDFG,
         for e in edges:
             state.remove_edge(e)
 
-    pass_pipeline.Pipeline([
-        dead_dataflow_elimination.DeadDataflowElimination()
-    ]).apply_pass(sdfg, {})
-
     # remove dangling nodes, this can happen with non-transients
     for node, parent in sdfg.all_nodes_recursive():
-        if (isinstance(node, nd.AccessNode)
-                and parent.in_degree(node) + parent.out_degree(node) == 0):
+        if (isinstance(node, nd.AccessNode) and parent.in_degree(node) + parent.out_degree(node) == 0):
             parent.remove_node(node)
