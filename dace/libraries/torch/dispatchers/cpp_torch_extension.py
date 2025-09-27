@@ -63,16 +63,16 @@ def typeclass_to_torch_cpp_type(type: dace.typeclass) -> str:
 
 def tensor_init_for_desc(name: str, desc: data.Data, clean_weights: Dict[str, torch.Tensor], zeros=True) -> str:
     """Emit the initialization code for a descriptor."""
-    
+
     # Check if name is in clean_weights
     if name in clean_weights:
         # Get the tensor from clean_weights
         weight_tensor = clean_weights[name]
-        
+
         # Convert the tensor to a C++ initializer list format
         # Flatten the tensor and convert to list
         values = weight_tensor.flatten().tolist()
-        
+
         # Format the values based on the data type
         def format_value(v, dtype):
             if dtype in [dt.float32, dt.float16]:
@@ -85,10 +85,10 @@ def tensor_init_for_desc(name: str, desc: data.Data, clean_weights: Dict[str, to
                 return str(v).lower()
             else:
                 return str(v)
-            
+
         # Format the values as a C++ initializer list
         values_str = ', '.join(format_value(v, desc.dtype) for v in values)
-        
+
         return f"""\
             Tensor {name} = torch::from_blob(
                 new float[{len(values)}]{{{values_str}}},
@@ -110,7 +110,8 @@ def tensor_init_for_desc(name: str, desc: data.Data, clean_weights: Dict[str, to
             """
 
 
-def initialize_outputs_code(module: 'dace.frontend.python.DaceModule', output_names: List[str], clean_weights: Dict[str, torch.Tensor]) -> str:
+def initialize_outputs_code(module: 'dace.frontend.python.DaceModule', output_names: List[str],
+                            clean_weights: Dict[str, torch.Tensor]) -> str:
     """ Generate the code that initializes the output tensors
 
         :param module: the module
@@ -255,6 +256,10 @@ def constant_initializer_code(name: str, desc: data.Data, value) -> str:
             return f"{desc.dtype.ctype} {name}_ptr = -std::numeric_limits<{desc.dtype.ctype}>::infinity();"
         elif str(value.item()) == "inf":
             return f"{desc.dtype.ctype} {name}_ptr = std::numeric_limits<{desc.dtype.ctype}>::infinity();"
+        if desc.dtype.ctype == "bool":
+            # Special case for bools
+            bool_str = "true" if value.item() else "false"
+            return f"{desc.dtype.ctype} {name}_ptr = {bool_str};"
         return f"{desc.dtype.ctype} {name}_ptr = {str(value.item())};"
     else:
         raise ValueError("Unsupported data descriptor")
@@ -281,7 +286,8 @@ def recover_saved_inputs_outputs(saved_inputs_outputs: List[str], other_saved: L
     return code
 
 
-def setup_grad_values(backward_result: BackwardResult, sdfg: dace.SDFG, outputs: List[str], clean_weights: Dict[str, torch.Tensor]) -> str:
+def setup_grad_values(backward_result: BackwardResult, sdfg: dace.SDFG, outputs: List[str],
+                      clean_weights: Dict[str, torch.Tensor]) -> str:
     code = "// input grads"
     for param_name, grad_name in sorted(backward_result.required_grad_names.items()):
         zero_init = backward_result.zero_init.get(param_name, True)
