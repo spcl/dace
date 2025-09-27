@@ -26,22 +26,18 @@ def make_backward_function(
     """
 
     if len(model.sdfg.nodes()) != 1:
-        raise AutoDiffException(
-            "Expected to find exactly one SDFGState, found {}".format(
-                len(model.sdfg.nodes())))
+        raise AutoDiffException("Expected to find exactly one SDFGState, found {}".format(len(model.sdfg.nodes())))
 
     forward_sdfg = model.sdfg
 
     backward_sdfg = dace.SDFG(forward_sdfg.name + "_backward")
 
-    gen = BackwardPassGenerator(
-        sdfg=forward_sdfg,
-        given_gradients=[clean_onnx_name(name) for name in model.outputs],
-        required_gradients=required_grads,
-        backward_sdfg=backward_sdfg)
+    gen = BackwardPassGenerator(sdfg=forward_sdfg,
+                                given_gradients=[clean_onnx_name(name) for name in model.outputs],
+                                required_gradients=required_grads,
+                                backward_sdfg=backward_sdfg)
 
-    backward_result, backward_grad_arrays, backward_input_arrays = gen.backward(
-    )
+    backward_result, backward_grad_arrays, backward_input_arrays = gen.backward()
 
     replaced_scalars = {}
 
@@ -59,8 +55,7 @@ def make_backward_function(
 
     for name, desc in backward_input_arrays.items():
         if name not in forward_sdfg.arrays:
-            raise AutoDiffException(
-                "Expected to find array with name '{}' in SDFG".format(name))
+            raise AutoDiffException("Expected to find array with name '{}' in SDFG".format(name))
 
         forward_desc = forward_sdfg.arrays[name]
         # we will save this output and pass it to the backward pass
@@ -70,32 +65,24 @@ def make_backward_function(
         assert type(forward_desc) is not dt.View
         if isinstance(forward_desc, dt.Scalar):
             # we can't return scalars from SDFGs, so we add a copy to an array of size 1
-            fwd_arr_name, _ = forward_sdfg.add_array(
-                name + "_array", [1],
-                forward_desc.dtype,
-                transient=False,
-                storage=forward_desc.storage,
-                find_new_name=True)
-            bwd_arr_name, bwd_desc = backward_sdfg.add_array(
-                name + "_array", [1],
-                forward_desc.dtype,
-                transient=False,
-                storage=forward_desc.storage,
-                find_new_name=True)
+            fwd_arr_name, _ = forward_sdfg.add_array(name + "_array", [1],
+                                                     forward_desc.dtype,
+                                                     transient=False,
+                                                     storage=forward_desc.storage,
+                                                     find_new_name=True)
+            bwd_arr_name, bwd_desc = backward_sdfg.add_array(name + "_array", [1],
+                                                             forward_desc.dtype,
+                                                             transient=False,
+                                                             storage=forward_desc.storage,
+                                                             find_new_name=True)
             backward_sdfg.arrays[name].transient = True
 
-            fwd_copy_state = forward_sdfg.add_state_after(forward_state,
-                                                          label="copy_out_" +
-                                                          fwd_arr_name)
-            bwd_copy_state = backward_sdfg.add_state_before(backward_state,
-                                                            label="copy_in_" +
-                                                            bwd_arr_name)
-            fwd_copy_state.add_edge(fwd_copy_state.add_read(name), None,
-                                    fwd_copy_state.add_write(fwd_arr_name),
-                                    None, dace.Memlet(name + "[0]"))
+            fwd_copy_state = forward_sdfg.add_state_after(forward_state, label="copy_out_" + fwd_arr_name)
+            bwd_copy_state = backward_sdfg.add_state_before(backward_state, label="copy_in_" + bwd_arr_name)
+            fwd_copy_state.add_edge(fwd_copy_state.add_read(name), None, fwd_copy_state.add_write(fwd_arr_name), None,
+                                    dace.Memlet(name + "[0]"))
 
-            bwd_copy_state.add_edge(bwd_copy_state.add_read(bwd_arr_name),
-                                    None, bwd_copy_state.add_write(name), None,
+            bwd_copy_state.add_edge(bwd_copy_state.add_read(bwd_arr_name), None, bwd_copy_state.add_write(name), None,
                                     dace.Memlet(name + "[0]"))
             replaced_scalars[name] = (bwd_arr_name, bwd_desc)
         else:
@@ -108,18 +95,14 @@ def make_backward_function(
     for fwd_name, bwd_name in backward_result.required_grad_names.items():
         desc = backward_sdfg.arrays[bwd_name]
         if isinstance(desc, dt.Scalar):
-            arr_name, arr_desc = backward_sdfg.add_array(bwd_name + "_array",
-                                                         [1],
+            arr_name, arr_desc = backward_sdfg.add_array(bwd_name + "_array", [1],
                                                          desc.dtype,
                                                          transient=False,
                                                          storage=desc.storage,
                                                          find_new_name=True)
             desc.transient = True
-            bwd_copy_state = backward_sdfg.add_state_after(backward_state,
-                                                           label="copy_out_" +
-                                                           bwd_name)
-            bwd_copy_state.add_edge(bwd_copy_state.add_read(bwd_name), None,
-                                    bwd_copy_state.add_write(arr_name), None,
+            bwd_copy_state = backward_sdfg.add_state_after(backward_state, label="copy_out_" + bwd_name)
+            bwd_copy_state.add_edge(bwd_copy_state.add_read(bwd_name), None, bwd_copy_state.add_write(arr_name), None,
                                     dace.Memlet(bwd_name + "[0]"))
             backward_result.required_grad_names[fwd_name] = arr_name
 
