@@ -105,7 +105,7 @@ class ONNXModel:
                  name: str,
                  model: onnx.ModelProto,
                  cuda: bool = False,
-                 auto_optimize: bool = True,
+                 auto_optimize: bool = False,
                  simplify: bool = False,
                  onnx_simplify: bool = True,
                  storage: Optional[dtypes.StorageType] = None,
@@ -466,7 +466,11 @@ class ONNXModel:
         inputs, symbols, outputs = self._call_args(args=args, kwargs=kwargs)
 
         for name, desc in transient_kwargs.items():
-            transient_kwargs[name] = create_output_array(symbols, desc, use_torch=True, zeros=True)
+            if name in self.initialized_parameters:
+                transient_kwargs[name] = self.initialized_parameters[name]
+                self.initialized_parameters.pop(name)
+            else:
+                transient_kwargs[name] = create_output_array(symbols, desc, use_torch=True, zeros=True)
             self.save_transients[name] = transient_kwargs[name]
 
         compiled(**inputs, **outputs, **self.initialized_parameters, **symbols, **transient_kwargs)
