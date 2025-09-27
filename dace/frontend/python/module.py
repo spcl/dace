@@ -122,10 +122,6 @@ class DaceModule(nn.Module, pycommon.SDFGConvertible):
         #: hooks that are executed after the sdfg is compiled
         self.post_compile_hooks: OrderedDict[str, Callable[[compiled_sdfg.CompiledSDFG],
                                                            None]] = collections.OrderedDict()
-
-        if dummy_inputs is not None:
-            self.function = self._initialize_sdfg(dummy_inputs)
-
         # setup debug hook
         if self.debug_transients:
 
@@ -163,6 +159,9 @@ class DaceModule(nn.Module, pycommon.SDFGConvertible):
                 self.append_post_autodiff_hook("simplify", simplify)
             else:
                 self.append_post_onnx_hook("simplify", lambda dace_module: dace_module.sdfg.simplify())
+
+        if dummy_inputs is not None:
+            self.function = self._initialize_sdfg(dummy_inputs)
 
     def reset_sdfg(self):
         """ Clear the sdfg so that optimizations are reapplied. """
