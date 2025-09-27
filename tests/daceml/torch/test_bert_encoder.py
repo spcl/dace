@@ -1,7 +1,8 @@
 import pytest
 import numpy as np
 import torch
-from transformers import BertConfig, BertLayer
+from transformers import BertConfig
+from transformers.models.bert.modeling_bert import BertLayer
 
 from dace.frontend.python.module import DaceModule
 from dace.testing import copy_to_gpu, torch_tensors_close
@@ -16,14 +17,10 @@ def test_bert_encoder(gpu, default_implementation, sdfg_name):
 
     input = copy_to_gpu(gpu, torch.randn([batch_size, seq_len, hidden_size]))
 
-    ptmodel = copy_to_gpu(gpu, BertLayer(BertConfig(hidden_size=hidden_size)).eval())
+    ptmodel = copy_to_gpu(gpu, BertLayer(BertConfig(hidden_size=hidden_size, attn_implementation="eager")).eval())
     pt_outputs = ptmodel(input.clone())
 
-    dace_model = DaceModule(ptmodel,
-                            training=False,
-                            sdfg_name=sdfg_name,
-                            simplify=False,
-                            backward=True)
+    dace_model = DaceModule(ptmodel, training=False, sdfg_name=sdfg_name, simplify=False, backward=True)
 
     if gpu:
 
@@ -39,18 +36,17 @@ def test_bert_encoder(gpu, default_implementation, sdfg_name):
     if default_implementation == "pure":
         ort_nodes = [
             n for n, _ in dace_model.sdfg.all_nodes_recursive()
-            if hasattr(n, "environments") and any("onnx" in e.lower()
-                                                  for e in n.environments)
+            if hasattr(n, "environments") and any("onnx" in e.lower() for e in n.environments)
         ]
         if len(ort_nodes) > 0:
             assert False, f"expected pure graph, found ORT nodes: {ort_nodes} "
 
         # check that cuBLAS is being used
         if gpu:
-            assert any(
-                (hasattr(n, "environments") and "cuBLAS" in n.environments or
-                 hasattr(n, "implementation") and n.implementation == "cuBLAS")
-                for n, _ in dace_model.sdfg.all_nodes_recursive())
+            assert any((hasattr(n, "environments") and "cuBLAS" in n.environments
+                        or hasattr(n, "implementation") and n.implementation == "cuBLAS")
+                       for n, _ in dace_model.sdfg.all_nodes_recursive())
+
 
 if __name__ == "__main__":
     torch.manual_seed(42)

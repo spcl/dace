@@ -50,6 +50,7 @@ def test_llama_decoder(gpu, sdfg_name):
         rope_theta=10000.0,
         attention_dropout=0.0,
         hidden_act="silu",
+        attn_implementation="eager",
     )
 
     # Create decoder layer

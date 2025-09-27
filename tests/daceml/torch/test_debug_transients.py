@@ -5,8 +5,9 @@ import dace
 from dace.testing import torch_tensors_close
 
 
-@dace.module(debug_transients=True)
+@dace.module(debug_transients=True, sdfg_name="test_debug_transients")
 class Module(nn.Module):
+
     def forward(self, x):
         y = x + 3
         return y * 5

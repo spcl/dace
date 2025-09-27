@@ -12,6 +12,7 @@ from dace.testing.utils import torch_tensors_close
 
 
 class LeNet(nn.Module):
+
     def __init__(self):
         super(LeNet, self).__init__()
         self.conv1 = nn.Conv2d(1, 6, (3, 3))
@@ -33,7 +34,6 @@ class LeNet(nn.Module):
 
 
 @pytest.mark.parametrize("conv_impl", ["pure", "im2col"])
-@pytest.mark.pure
 def test_lenet(conv_impl, sdfg_name, use_cpp_dispatcher):
     if conv_impl == "im2col":
         pytest.skip("im2col is currently broken due to schedule inference")
@@ -45,9 +45,7 @@ def test_lenet(conv_impl, sdfg_name, use_cpp_dispatcher):
     net = LeNet()
     dace_net = LeNet()
     dace_net.load_state_dict(net.state_dict())
-    dace_net = DaceModule(dace_net,
-                          sdfg_name=sdfg_name,
-                          compile_torch_extension=use_cpp_dispatcher)
+    dace_net = DaceModule(dace_net, sdfg_name=sdfg_name, compile_torch_extension=use_cpp_dispatcher)
 
     torch_output = net(torch.clone(input))
     dace_output = dace_net(torch.clone(input))

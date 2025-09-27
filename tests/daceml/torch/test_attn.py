@@ -24,9 +24,7 @@ def test_attn(gpu, sdfg_name, use_cpp_dispatcher):
 
     pt_outputs = ptmodel(Q, K, V)
 
-    dace_model = DaceModule(ptmodel,
-                            sdfg_name=sdfg_name,
-                            compile_torch_extension=use_cpp_dispatcher)
+    dace_model = DaceModule(ptmodel, sdfg_name=sdfg_name, compile_torch_extension=use_cpp_dispatcher)
 
     dace_outputs = dace_model(Q, K, V)
 
@@ -35,4 +33,4 @@ def test_attn(gpu, sdfg_name, use_cpp_dispatcher):
 
 
 if __name__ == "__main__":
-    test_attn(False, "ewfw", True)
+    test_attn(False, "test_torch_attention", True)

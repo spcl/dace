@@ -10,6 +10,7 @@ from dace.testing import torch_tensors_close, copy_to_gpu
 
 
 class CustomBatchNorm(torch.autograd.Function):
+
     @staticmethod
     def forward(ctx, x, running_mean, running_var, weight, bias, training, momentum, eps):
         output = torch.nn.functional.batch_norm(x, running_mean, running_var, weight, bias, training, momentum, eps)
@@ -17,39 +18,33 @@ class CustomBatchNorm(torch.autograd.Function):
 
     @staticmethod
     def symbolic(g, x, running_mean, running_var, weight, bias, training, momentum, eps):
-        outputs = g.op(
-            "BatchNormalization", x, weight, bias, running_mean, running_var,
-            training_mode_i=int(training),
-            momentum_f=momentum,
-            epsilon_f=eps,
-            outputs=3
-        )
+        outputs = g.op("BatchNormalization",
+                       x,
+                       weight,
+                       bias,
+                       running_mean,
+                       running_var,
+                       training_mode_i=int(training),
+                       momentum_f=momentum,
+                       epsilon_f=eps,
+                       outputs=3)
         y, new_running_mean, new_running_var = outputs
         return y, new_running_mean, new_running_var
 
 
 class BatchNorm2dMeanVar(nn.Module):
+
     def __init__(self, num_features, eps=1e-5, momentum=0.1, affine=True, track_running_stats=True):
         super(BatchNorm2dMeanVar, self).__init__()
-        self.bn = nn.BatchNorm2d(
-            num_features,
-            eps=eps,
-            momentum=momentum,
-            affine=affine,
-            track_running_stats=track_running_stats
-        )
+        self.bn = nn.BatchNorm2d(num_features,
+                                 eps=eps,
+                                 momentum=momentum,
+                                 affine=affine,
+                                 track_running_stats=track_running_stats)
 
     def forward(self, x):
-        return CustomBatchNorm.apply(
-            x,
-            self.bn.running_mean,
-            self.bn.running_var,
-            self.bn.weight,
-            self.bn.bias,
-            self.bn.training,
-            self.bn.momentum,
-            self.bn.eps
-        )
+        return CustomBatchNorm.apply(x, self.bn.running_mean, self.bn.running_var, self.bn.weight, self.bn.bias,
+                                     self.bn.training, self.bn.momentum, self.bn.eps)
 
 
 @pytest.mark.parametrize("implementation", ["pure", "cuDNN"])
@@ -80,7 +75,6 @@ def test_bn(gpu, implementation, sdfg_name):
         torch_tensors_close("var", pt_var, dace_var)
 
 
-@pytest.mark.pure
 def test_global_avg_pool(gpu, sdfg_name):
     inputs = copy_to_gpu(gpu, torch.rand(1, 64, 60, 60))
 

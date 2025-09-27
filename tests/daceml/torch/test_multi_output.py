@@ -7,6 +7,7 @@ from dace.testing import torch_tensors_close
 
 
 class Model(nn.Module):
+
     def __init__(self, new_shape):
         super(Model, self).__init__()
         self.new_shape = new_shape
@@ -15,7 +16,6 @@ class Model(nn.Module):
         return x + 1, x + 2
 
 
-@pytest.mark.pure
 def test_multiple_outputs(sdfg_name, use_cpp_dispatcher):
 
     ptmodel = Model([5, 5])

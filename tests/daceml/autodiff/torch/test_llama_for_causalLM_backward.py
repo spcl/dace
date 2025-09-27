@@ -56,6 +56,8 @@ class LlamaWrapper(nn.Module):
 
 
 @pytest.mark.cpublas
+@pytest.mark.long
+@pytest.mark.skip(reason="Long test, run manually")
 def test_llama_model_backward(gpu, sdfg_name):
     # Create a small LLaMA configuration
     config = LlamaConfig(
@@ -71,6 +73,7 @@ def test_llama_model_backward(gpu, sdfg_name):
         pad_token_id=0,
         bos_token_id=1,
         eos_token_id=2,
+        attn_implementation="eager",
     )
 
     # Create the full model

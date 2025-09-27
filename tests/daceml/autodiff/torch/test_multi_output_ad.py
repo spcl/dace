@@ -6,7 +6,6 @@ from dace.frontend.python.module import DaceModule
 from dace.testing import torch_tensors_close, copy_to_gpu
 
 
-@pytest.mark.pure
 def test_multi_output(sdfg_name, gpu, use_cpp_dispatcher):
 
     class Module(torch.nn.Module):
@@ -60,6 +59,4 @@ def test_multi_output(sdfg_name, gpu, use_cpp_dispatcher):
 
 
 if __name__ == "__main__":
-    test_multi_output(sdfg_name="multi_output",
-                      gpu=False,
-                      use_cpp_dispatcher=True)
+    test_multi_output(sdfg_name="multi_output", gpu=False, use_cpp_dispatcher=True)

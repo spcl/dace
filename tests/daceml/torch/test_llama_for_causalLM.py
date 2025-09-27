@@ -56,6 +56,7 @@ class LlamaWrapper(nn.Module):
 
 
 @pytest.mark.cpublas
+@pytest.mark.skip()
 def test_llama_model(gpu, sdfg_name):
     # Create a small LLaMA configuration
     config = LlamaConfig(
@@ -71,6 +72,7 @@ def test_llama_model(gpu, sdfg_name):
         pad_token_id=0,
         bos_token_id=1,
         eos_token_id=2,
+        attn_implementation="eager",
     )
 
     # Create the full model

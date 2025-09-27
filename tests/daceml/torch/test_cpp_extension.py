@@ -4,7 +4,6 @@ import torch
 import torch.utils.cpp_extension
 from dace.codegen import targets, compiler
 from dace.codegen.codeobject import CodeObject
-import dace.library
 from torch import nn
 
 import dace
@@ -92,7 +91,7 @@ def test_extension():
         sources=[os.path.join(BUILD_PATH, 'src', 'cpu', 'myadd.cpp')],
         is_python_module=False,
     )
-    print(torch.ops.myops.myadd(torch.randn(32, 32), torch.rand(32, 32)))
+    torch.ops.myops.myadd(torch.randn(32, 32), torch.rand(32, 32))
 
 
 def test_module_with_constant(gpu, sdfg_name):

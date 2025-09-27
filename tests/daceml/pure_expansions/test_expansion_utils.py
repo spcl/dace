@@ -5,7 +5,6 @@ import dace
 import dace.libraries.onnx as donnx
 
 
-@pytest.mark.pure
 def test_sqrt_expansion(sdfg_name):
     # sqrt expansion makes use of the program_for_node function
     sdfg = dace.SDFG(sdfg_name)
@@ -20,19 +19,15 @@ def test_sqrt_expansion(sdfg_name):
     op_node = donnx.ONNXSqrt("sqrt")
 
     state.add_node(op_node)
-    state.add_edge(access_in, None, op_node, "X",
-                   sdfg.make_array_memlet("inp"))
+    state.add_edge(access_in, None, op_node, "X", sdfg.make_array_memlet("inp"))
 
-    state.add_edge(op_node, "Y", access_result, None,
-                   sdfg.make_array_memlet("__return"))
+    state.add_edge(op_node, "Y", access_result, None, sdfg.make_array_memlet("__return"))
 
     X = np.random.rand(2, 4).astype(np.float32)
 
     sdfg.expand_library_nodes()
     # check that the expansion worked. The default ORT expansion wouldn't produce a map
-    assert any(
-        isinstance(n, dace.nodes.MapEntry)
-        for n, _ in sdfg.all_nodes_recursive())
+    assert any(isinstance(n, dace.nodes.MapEntry) for n, _ in sdfg.all_nodes_recursive())
 
     result = sdfg(inp=X)
 

@@ -1,14 +1,15 @@
 import numpy as np
 import pytest
 import torch
-from transformers import BertConfig, BertLayer
+from transformers import BertConfig
+from transformers.models.bert.modeling_bert import BertLayer
 
 from dace.frontend.python.module import DaceModule
 from dace.testing import copy_to_gpu, torch_tensors_close
 
 
-@pytest.mark.pure
 @pytest.mark.cpublas
+@pytest.mark.long
 def test_bert_encoder_backward(gpu, sdfg_name):
     batch_size = 2
     seq_len = 512
@@ -17,14 +18,13 @@ def test_bert_encoder_backward(gpu, sdfg_name):
     input = copy_to_gpu(gpu, torch.randn([batch_size, seq_len, hidden_size]))
     ptmodel = copy_to_gpu(
         gpu,
-        BertLayer(BertConfig(hidden_act="relu",
-                             hidden_size=hidden_size)).eval())
+        BertLayer(BertConfig(
+            hidden_act="relu",
+            hidden_size=hidden_size,
+            attn_implementation="eager",
+        )).eval())
 
-    dace_model = DaceModule(ptmodel,
-                            training=False,
-                            backward=True,
-                            sdfg_name=sdfg_name,
-                            simplify=False)
+    dace_model = DaceModule(ptmodel, training=False, backward=True, sdfg_name=sdfg_name)
 
     ptinput = torch.clone(input)
     ptinput.requires_grad = True
@@ -32,15 +32,14 @@ def test_bert_encoder_backward(gpu, sdfg_name):
 
     dace_input = torch.clone(input)
     dace_input.requires_grad = True
-    dace_model(dace_input).sum().backward()
+    dace_model(dace_input)[0].sum().backward()
 
     torch_tensors_close("input_grad", ptinput.grad, dace_input.grad)
 
-    for (name, dace_param), (pt_name,
-                             pt_param) in zip(ptmodel.named_parameters(),
-                                              dace_model.named_parameters()):
+    for (name, dace_param), (pt_name, pt_param) in zip(ptmodel.named_parameters(), dace_model.named_parameters()):
         assert 'model.' + name == pt_name
         torch_tensors_close(name, pt_param.grad, dace_param.grad)
+
 
 if __name__ == "__main__":
     torch.manual_seed(42)

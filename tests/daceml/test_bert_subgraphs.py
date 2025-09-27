@@ -28,20 +28,22 @@ def test_slice(gpu, sdfg_name):
 # this test contains an ORT slice node
 def test_reshape(gpu, sdfg_name):
     model = onnx.load(os.path.join(data_directory, "reshape.onnx"))
-    dace_model = ONNXModel(sdfg_name, model, cuda=gpu, onnx_simplify=False)
+    dace_model = ONNXModel(sdfg_name, model, cuda=gpu)
     dace_model()
 
 
 def test_save_transients(gpu, sdfg_name):
     model = onnx.load(os.path.join(data_directory, "reshape.onnx"))
     transients = {}
-    dace_model = ONNXModel(sdfg_name,
-                           model,
-                           save_transients=transients,
-                           cuda=gpu,
-                           onnx_simplify=False)
+    dace_model = ONNXModel(sdfg_name, model, save_transients=transients, cuda=gpu)
     dace_model()
-    assert torch.allclose(
-        transients["bertSLASHembeddingsSLASHReshape_4__42COLON0"].type(
-            torch.int32).cpu(),
-        dace_model.weights["bert/embeddings/Reshape_4/shape:0"])
+    assert torch.allclose(transients["bertSLASHembeddingsSLASHReshape_4COLON0"].cpu(),
+                          dace_model.weights["bert/embeddings/Reshape_4:0"])
+
+
+if __name__ == "__main__":
+    gpu = False
+    sdfg_name = "test_bert_subgraphs"
+    test_slice(gpu, sdfg_name)
+    test_reshape(gpu, sdfg_name)
+    test_save_transients(gpu, sdfg_name)

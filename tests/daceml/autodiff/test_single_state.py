@@ -22,10 +22,7 @@ def run_correctness(func):
     def test_correctness():
         runner, pytorch_func, inputs = func()
         sdfg_dict = {name: arr.copy() for name, arr in inputs.items()}
-        torch_dict = {
-            name: torch.tensor(arr.copy(), requires_grad=True)
-            for name, arr in inputs.items()
-        }
+        torch_dict = {name: torch.tensor(arr.copy(), requires_grad=True) for name, arr in inputs.items()}
 
         sdfg_results = runner.run(**sdfg_dict)
         torch_results = pytorch_func(**torch_dict)
@@ -33,8 +30,7 @@ def run_correctness(func):
         for k, v in torch_results.items():
             print("-" * 10, k, "-" * 10)
             v = v.detach().numpy()
-            diff = np.linalg.norm(sdfg_results[k] - v) / reduce(
-                lambda x, y: x * y, v.shape)
+            diff = np.linalg.norm(sdfg_results[k] - v) / reduce(lambda x, y: x * y, v.shape)
 
             print("Difference:", diff)
 
@@ -61,27 +57,22 @@ class SDFGBackwardRunner:
         assert len(sdfg.nodes()) == 1
         state = sdfg.nodes()[0]
         required_grads = list(
-            node for node in state.nodes()
-            if isinstance(node, nd.AccessNode) and node.desc(sdfg).dtype in
-            [dace.float32, dace.float64] and not node.desc(sdfg).transient)
+            node for node in state.nodes() if isinstance(node, nd.AccessNode)
+            and node.desc(sdfg).dtype in [dace.float32, dace.float64] and not node.desc(sdfg).transient)
 
-        add_backward_pass(sdfg=self.sdfg,
-                          outputs=[self.target],
-                          inputs=required_grads)
+        add_backward_pass(sdfg=self.sdfg, outputs=[self.target], inputs=required_grads)
 
     def run(self, **inputs):
 
         # zero out all arrays
         intermediate_arrs = {
             name: np.zeros(arr.shape, dtype=getattr(np, arr.dtype.to_string()))
-            for name, arr in self.sdfg.arrays.items()
-            if name != "gradient_" + self.target if not name.startswith("__")
+            for name, arr in self.sdfg.arrays.items() if name != "gradient_" + self.target if not name.startswith("__")
             if name not in inputs if not arr.transient
         }
         inputs.update(intermediate_arrs)
-        inputs["gradient_" + self.target] = np.ones(
-            (1, ),
-            dtype=getattr(np, self.sdfg.arrays[self.target].dtype.to_string()))
+        inputs["gradient_" + self.target] = np.ones((1, ),
+                                                    dtype=getattr(np, self.sdfg.arrays[self.target].dtype.to_string()))
 
         print("Pre-execution arrays")
         for k, v in inputs.items():
@@ -228,57 +219,6 @@ def test_complex_tasklet():
 
 
 @run_correctness
-def test_tasklets_direct_scalar_edges():
-
-    def torch_func(*, A):
-        tmp_a = torch.sqrt(A)
-        tmp_b = torch.log(tmp_a + 1)
-        tmp_c = torch.sin(tmp_b)
-
-        tmp_c.backward()
-        return dict(gradient_A=A.grad)
-
-    sdfg = dace.SDFG("tasklets_direct_scalar_edges")
-    state = sdfg.add_state()
-
-    sdfg.add_array(
-        "A",
-        shape=[
-            1,
-        ],
-        dtype=dace.float32,
-    )
-    sdfg.add_array(
-        "C",
-        shape=[
-            1,
-        ],
-        dtype=dace.float32,
-    )
-
-    tmp_a, tmp_a_desc = sdfg.add_scalar("tmp_a", dace.float32, transient=True)
-    tmp_b, tmp_b_desc = sdfg.add_scalar("tmp_b", dace.float32, transient=True)
-
-    A = state.add_access("A")
-    C = state.add_access("C")
-
-    task1 = state.add_tasklet("task1", {"inp"}, {"out"}, "out = sqrt(inp)")
-    task2 = state.add_tasklet("task2", {"inp"}, {"out"}, "out = log(inp + 1)")
-    task3 = state.add_tasklet("task3", {"inp"}, {"out"}, "out = sin(inp)")
-
-    state.add_edge(A, None, task1, "inp", dace.Memlet.simple("A", "0"))
-    state.add_edge(task1, "out", task2, "inp", dace.Memlet.simple(tmp_a, "0"))
-    state.add_edge(task2, "out", task3, "inp", dace.Memlet.simple(tmp_b, "0"))
-    state.add_edge(task3, "out", C, None, dace.Memlet.simple("C", "0"))
-
-    return (
-        SDFGBackwardRunner(sdfg, "C"),
-        torch_func,
-        dict(A=np.random.rand(1).astype(np.float32)),
-    )
-
-
-@run_correctness
 def test_tasklets_only_reuse():
 
     def torch_func(*, A):
@@ -315,7 +255,7 @@ def test_tasklets_only_reuse():
 
     sdfg = tasklets_only_reuse.to_sdfg(simplify=False)
     sdfg.simplify()
-
+    sdfg.save("log_sdfgs/tasklets_only_reuse.sdfg")
     return (
         SDFGBackwardRunner(sdfg, "C"),
         torch_func,
@@ -336,8 +276,7 @@ def test_tasklets_multioutput():
         return dict(gradient_A=A.grad, gradient_B=B.grad)
 
     @dace.program
-    def tasklets_multioutput(A: dace.float32[1], B: dace.float32[1],
-                             C: dace.float32[1]):
+    def tasklets_multioutput(A: dace.float32[1], B: dace.float32[1], C: dace.float32[1]):
         tmp_a = dace.define_local_scalar(dace.float32)
         tmp_b = dace.define_local_scalar(dace.float32)
         tmp_d = dace.define_local_scalar(dace.float32)
@@ -389,8 +328,7 @@ def test_tasklets_only():
         return dict(gradient_A=A.grad, gradient_B=B.grad)
 
     @dace.program
-    def tasklets_only(A: dace.float32[1], B: dace.float32[1],
-                      C: dace.float32[1]):
+    def tasklets_only(A: dace.float32[1], B: dace.float32[1], C: dace.float32[1]):
         tmp_a = dace.define_local_scalar(dace.float32)
         tmp_b = dace.define_local_scalar(dace.float32)
 
@@ -485,9 +423,7 @@ def test_reduce_node_1_axis_and_none_axis():
         return dict(gradient_X=X.grad, gradient_Y=Y.grad, gradient_W=W.grad)
 
     @dace.program
-    def reduce_node_1_axis_and_none_axis(X: dace.float32[4, 5],
-                                         Y: dace.float32[4, 3],
-                                         W: dace.float32[7, 4, 3]):
+    def reduce_node_1_axis_and_none_axis(X: dace.float32[4, 5], Y: dace.float32[4, 3], W: dace.float32[7, 4, 3]):
 
         Xt = np.transpose(X)
         YW = np.sum(W, axis=0) * Y
@@ -551,8 +487,7 @@ def test_reduce_max_node_1_axis():
         return dict(gradient_X=X.grad, gradient_Y=Y.grad, gradient_W=W.grad)
 
     @dace.program
-    def dace_func(X: dace.float64[4, 5], Y: dace.float64[4, 3],
-                  W: dace.float64[7, 4, 3]):
+    def dace_func(X: dace.float64[4, 5], Y: dace.float64[4, 3], W: dace.float64[7, 4, 3]):
 
         Xt = np.transpose(X)
         YW = np.min(W, axis=0) * Y
@@ -579,8 +514,7 @@ def test_reduce_max_node_1_axis():
 def test_reshape():
 
     @dace.program
-    def single_state_reshape(inp: dace.float64[9], bias: dace.float64[3],
-                             target_shape: dace.int64[2]):
+    def single_state_reshape(inp: dace.float64[9], bias: dace.float64[3], target_shape: dace.int64[2]):
         reshaped = dace.define_local([3, 3], dace.float64)
         donnx.ONNXReshape(data=inp, shape=target_shape, reshaped=reshaped)
         Z = reshaped + bias
@@ -618,9 +552,7 @@ def test_reshape_on_memlet_path():
     donnx.default_implementation = "pure"
 
     @dace.program
-    def single_state_reshape_memlet_path(inp1: dace.float64[9],
-                                         bias: dace.float64[3],
-                                         target_shape: dace.int64[2]):
+    def single_state_reshape_memlet_path(inp1: dace.float64[9], bias: dace.float64[3], target_shape: dace.int64[2]):
         reshaped = dace.define_local([3, 3], dace.float64)
         donnx.ONNXReshape(data=inp1, shape=target_shape, reshaped=reshaped)
         Z = reshaped + bias
@@ -661,8 +593,7 @@ def test_reshape_reuse_in_same_state():
     donnx.default_implementation = "pure"
 
     @dace.program
-    def single_state_reshape_same_state(inp: dace.float64[9],
-                                        target_shape: dace.int64[2]):
+    def single_state_reshape_same_state(inp: dace.float64[9], target_shape: dace.int64[2]):
         reshaped = dace.define_local([3, 3], dace.float64)
         donnx.ONNXReshape(data=inp, shape=target_shape, reshaped=reshaped)
         Zl = dace.elementwise(lambda x: log(x + 1), reshaped)

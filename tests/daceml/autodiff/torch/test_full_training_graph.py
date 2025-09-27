@@ -14,7 +14,6 @@ from dace.autodiff import library
 from dace.testing import torch_tensors_close, copy_to_gpu, tensors_close
 
 
-@pytest.mark.pure
 def test_module():
     gpu = False
     module = torch.nn.Sequential(torch.nn.Linear(12, 2, bias=False))
@@ -24,7 +23,7 @@ def test_module():
 
     torch_module = copy_to_gpu(gpu, torch_module)
     dace_module = copy_to_gpu(gpu, dace_module)
-    dace_module = DaceModule(dace_module, auto_optimize=False)
+    dace_module = DaceModule(dace_module, simplify=False, backward=True, training=True, auto_optimize=False)
 
     x = copy_to_gpu(gpu, torch.randn(8, 12))
 
@@ -32,28 +31,19 @@ def test_module():
     result = dace_module(x)
     torch_tensors_close('output', expected_output, result)
 
-    @dace
-    def train_step(x):
-        output = dace_module(x)
-        loss = np.add.reduce(output, axis=[0, 1])
-        loss.backward()
-        return loss
+    dc_loss = dace_module(x).sum()
+    dc_loss.backward()
 
-    def torch_fn(x):
-        loss = torch_module(x).sum()
-        loss.backward()
-        return loss
+    pt_loss = torch_module(x).sum()
+    pt_loss.backward()
 
-    expected = torch_fn(x)
-    result = train_step(x)
-    tensors_close('loss', expected, result)
+    tensors_close('loss', pt_loss, dc_loss)
     assert all(hasattr(p, 'grad') and p.grad is not None for p in dace_module.parameters())
 
     for d, t in zip(dace_module.parameters(), torch_module.parameters()):
         torch_tensors_close("param", t.grad, d.grad)
 
 
-@pytest.mark.pure
 def test_parse_backward_simple():
     x = torch.randn(10, 5, dtype=torch.float64)
     dy = torch.randn(10, dtype=torch.float64)
@@ -91,7 +81,6 @@ def test_parse_backward_scalar():
     tensors_close('x.grad', 1, result)
 
 
-@pytest.mark.pure
 def test_parse_backward_with_forwarding():
     x = torch.randn(10, 5, dtype=torch.float64)
     dy = torch.randn(10, dtype=torch.float64)
@@ -124,7 +113,6 @@ def test_parse_backward_with_forwarding():
     tensors_close('x.grad', expected, result)
 
 
-@pytest.mark.pure
 def test_two_backward_passes():
 
     @dace.program
@@ -171,7 +159,6 @@ def test_two_backward_passes():
     tensors_close('x1.grad', ex_1, r1)
 
 
-@pytest.mark.pure
 def test_two_backward_passes_accumulate():
 
     @dace.program

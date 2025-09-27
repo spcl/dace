@@ -6,6 +6,7 @@ from dace.testing import copy_to_gpu, torch_tensors_close
 from dace.frontend.python.module import DaceModule
 import copy
 
+
 # Create a wrapper module that handles the position embeddings internally
 class LlamaDecoderLayerWrapper(nn.Module):
 
@@ -50,6 +51,7 @@ def test_llama_decoder_backward(gpu, sdfg_name):
         rope_theta=10000.0,
         attention_dropout=0.0,
         hidden_act="silu",
+        attn_implementation="eager",
     )
 
     # Create decoder layer
@@ -75,27 +77,29 @@ def test_llama_decoder_backward(gpu, sdfg_name):
         backward=True,
     )
 
-    hidden_states_pt, attention_mask_pt, position_ids_pt = (
-        torch.clone(hidden_states), torch.clone(attention_mask), torch.clone(position_ids)
-    )
+    hidden_states_pt, attention_mask_pt, position_ids_pt = (torch.clone(hidden_states), torch.clone(attention_mask),
+                                                            torch.clone(position_ids))
     hidden_states_pt.requires_grad = True
 
-    hidden_states_dace, attention_mask_dace, position_ids_dace = (
-        torch.clone(hidden_states), torch.clone(attention_mask), torch.clone(position_ids)
-    )
+    hidden_states_dace, attention_mask_dace, position_ids_dace = (torch.clone(hidden_states),
+                                                                  torch.clone(attention_mask),
+                                                                  torch.clone(position_ids))
     hidden_states_dace.requires_grad = True
-    
+
     wrapped_model(hidden_states_pt, attention_mask_pt, position_ids_pt).sum().backward()
     dace_model(hidden_states_dace, attention_mask_dace, position_ids_dace).sum().backward()
-    
+
     # Check gradients of the parameters
     for i, (name, param) in enumerate(wrapped_model.named_parameters()):
         if param.requires_grad:
-            torch_tensors_close(f"grad_{name}", list(wrapped_model.parameters())[i].grad, list(dace_model.model.parameters())[i].grad)
-    
+            torch_tensors_close(f"grad_{name}",
+                                list(wrapped_model.parameters())[i].grad,
+                                list(dace_model.model.parameters())[i].grad)
+
     # Check the gradients of the input tensor
     torch_tensors_close("hidden_states_pt_grad", hidden_states_pt.grad, hidden_states_dace.grad)
-    
+
+
 if __name__ == "__main__":
     torch.manual_seed(42)
     test_llama_decoder_backward(gpu=False, sdfg_name="llama_decoder_backward_test")
