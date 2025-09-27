@@ -57,6 +57,7 @@ def strides_from_shape(shape, *, order="C", itemsize=1, in_bytes=False):
         strides = [s * itemsize for s in strides]
     return tuple(strides)
 
+
 def broadcast_indices(input_shape, output_shape):
     """
     Returns a list of index expressions for broadcasting input_shape to output_shape.
@@ -316,6 +317,7 @@ def Exp(input, output):
 def Sqrt(X, Y):
     Y[:] = dace.elementwise(lambda x: sqrt(x), X)
 
+
 @op_implementation(op="Pow", name="pure")
 class PurePow(ONNXForward):
 
@@ -329,15 +331,18 @@ class PurePow(ONNXForward):
         # Special case for constant exponents
         y_value = None
         try:
-            if hasattr(sdfg, "_parent_onnx_model") and in_edge_with_name(node, state, "Y").src.data in sdfg._parent_onnx_model.clean_weights:
+            if hasattr(sdfg, "_parent_onnx_model") and in_edge_with_name(
+                    node, state, "Y").src.data in sdfg._parent_onnx_model.clean_weights:
                 y_value = sdfg._parent_onnx_model.clean_weights[in_edge_with_name(node, state, "Y").src.data].numpy()
         except ValueError:
             pass
-        
+
         if y_value is not None and y_value.ndim == 0:
             y_value = int(y_value)
+
             def prog(X, Z):
                 Z[:] = X**y_value
+
             return program_for_node(prog, sdfg, state, node)
 
         # General case
@@ -345,7 +350,8 @@ class PurePow(ONNXForward):
             Z[:] = X**Y
 
         return program_for_node(prog, sdfg, state, node)
-    
+
+
 @op_implementation(op="Concat", name="pure")
 class PureConcat(ONNXForward):
 
@@ -1128,28 +1134,215 @@ class PureCumSum(ONNXForward):
         nstate.add_edge(tasklet, "__y", output_nodes["y"], None, dace.Memlet.from_array("y", y_desc))
 
         return nsdfg
-    
+
+
+@op_implementation(op="Dropout", name="pure")
+class PureDropout(ONNXForward):
+    """ Dropout implementation with support for training and inference modes.
+    """
+
+    @staticmethod
+    def forward_can_be_applied(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> bool:
+        # Get input descriptor
+        data = in_desc_with_name(node, state, sdfg, "data")
+
+        # Check if optional inputs are present
+        has_ratio = "ratio" in node.in_connectors
+        has_training_mode = "training_mode" in node.in_connectors
+
+        # Check data type
+        if data.dtype not in [dace.float16, dace.float32, dace.float64]:
+            return False
+
+        # If ratio is provided as input, it should be a scalar
+        if has_ratio:
+            ratio = in_desc_with_name(node, state, sdfg, "ratio")
+            if ratio.total_size != 1:
+                return False
+
+        # If training_mode is provided as input, it should be a scalar boolean
+        if has_training_mode:
+            training_mode = in_desc_with_name(node, state, sdfg, "training_mode")
+            if training_mode.total_size != 1:
+                return False
+
+        return True
+
+    @staticmethod
+    def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[nodes.Node, SDFG]:
+        # Get descriptors
+        data = in_desc_with_name(node, state, sdfg, "data")
+        output = out_desc_with_name(node, state, sdfg, "output")
+
+        # Check for optional mask output
+        has_mask_output = "mask" in node.out_connectors
+        mask = out_desc_with_name(node, state, sdfg, "mask") if has_mask_output else None
+
+        # Check for optional inputs
+        has_ratio_input = "ratio" in node.in_connectors
+        has_training_mode_input = "training_mode" in node.in_connectors
+
+        ratio_desc = in_desc_with_name(node, state, sdfg, "ratio") if has_ratio_input else None
+        training_mode_desc = in_desc_with_name(node, state, sdfg, "training_mode") if has_training_mode_input else None
+
+        # Get dropout ratio (from attribute or will be provided as input)
+        # ONNX spec: default ratio is 0.5 if not specified
+        dropout_ratio = getattr(node, 'ratio', 0.5) if not has_ratio_input else None
+
+        # Get seed if specified (for reproducible dropout)
+        seed = getattr(node, 'seed', None)
+
+        # Calculate total elements
+        total_elements = data.total_size
+
+        # Get data type
+        dtype = data.dtype
+        dtype_str = str(dtype).replace("dace.", "")
+
+        # Create new SDFG
+        nsdfg = dace.SDFG(node.label + "_expansion")
+        nstate = nsdfg.add_state()
+
+        # Add data descriptors
+        nsdfg.add_datadesc("data", copy.deepcopy(data))
+        nsdfg.add_datadesc("output", copy.deepcopy(output))
+
+        if has_mask_output:
+            nsdfg.add_datadesc("mask", copy.deepcopy(mask))
+
+        if has_ratio_input:
+            nsdfg.add_datadesc("ratio", copy.deepcopy(ratio_desc))
+
+        if has_training_mode_input:
+            nsdfg.add_datadesc("training_mode", copy.deepcopy(training_mode_desc))
+
+        # Set arrays as non-transient
+        nsdfg.arrays["data"].transient = False
+        nsdfg.arrays["output"].transient = False
+        if has_mask_output:
+            nsdfg.arrays["mask"].transient = False
+        if has_ratio_input:
+            nsdfg.arrays["ratio"].transient = False
+        if has_training_mode_input:
+            nsdfg.arrays["training_mode"].transient = False
+
+        # Add access nodes
+        data_read = nstate.add_read("data")
+        output_write = nstate.add_write("output")
+        mask_write = nstate.add_write("mask") if has_mask_output else None
+        ratio_read = nstate.add_read("ratio") if has_ratio_input else None
+        training_mode_read = nstate.add_read("training_mode") if has_training_mode_input else None
+
+        # Generate C++ code for dropout
+        # Note: This implementation uses a simple linear congruential generator for portability
+        # In production, you might want to use a better random number generator
+
+        code = f"""
+        #include <cstdint>
+        #include <ctime>
+
+        // Get dropout ratio
+        {dtype_str} ratio = {dropout_ratio if not has_ratio_input else '__ratio'};
+
+        // Get training mode (default to false if not specified)
+        bool training_mode = {('__training_mode' if has_training_mode_input else 'false')};
+
+        // If in inference mode, just copy input to output
+        if (!training_mode) {{
+            for (int i = 0; i < {total_elements}; i++) {{
+                __output[i] = __data[i];
+                {"__mask[i] = true;" if has_mask_output else ""}
+            }}
+        }} else {{
+            // Training mode: apply dropout
+
+            // Initialize random seed
+            static uint64_t rng_state = {seed if seed is not None else 'uint64_t(std::time(nullptr))'};
+
+            // Scale factor for remaining values (1 / (1 - ratio))
+            {dtype_str} scale = ({dtype_str})(1.0 / (1.0 - ratio));
+
+            // Apply dropout
+            for (int i = 0; i < {total_elements}; i++) {{
+                // Simple LCG for random number generation
+                // This generates a random number in [0, 1)
+                rng_state = (rng_state * 1664525ULL + 1013904223ULL);
+                double random_val = double(rng_state) / double(UINT64_MAX);
+
+                // Dropout: keep if random value is greater than ratio
+                bool keep = (random_val >= ratio);
+
+                if (keep) {{
+                    // Scale the kept values
+                    __output[i] = __data[i] * scale;
+                    {"__mask[i] = true;" if has_mask_output else ""}
+                }} else {{
+                    // Drop the value
+                    __output[i] = 0;
+                    {"__mask[i] = false;" if has_mask_output else ""}
+                }}
+            }}
+        }}
+        """
+
+        # Create tasklet inputs and outputs
+        tasklet_inputs = {
+            "__data": dace.pointer(data.dtype),
+        }
+        tasklet_outputs = {
+            "__output": dace.pointer(output.dtype),
+        }
+
+        if has_ratio_input:
+            tasklet_inputs["__ratio"] = ratio_desc.dtype
+        if has_training_mode_input:
+            tasklet_inputs["__training_mode"] = training_mode_desc.dtype
+        if has_mask_output:
+            tasklet_outputs["__mask"] = dace.pointer(mask.dtype)
+
+        # Create the tasklet
+        tasklet = nstate.add_tasklet(name=node.label + "_tasklet",
+                                     inputs=tasklet_inputs,
+                                     outputs=tasklet_outputs,
+                                     code=code,
+                                     language=dace.Language.CPP)
+
+        # Connect the tasklet with memlets
+        nstate.add_edge(data_read, None, tasklet, "__data", dace.Memlet.from_array("data", data))
+
+        if has_ratio_input:
+            nstate.add_edge(ratio_read, None, tasklet, "__ratio", dace.Memlet.from_array("ratio", ratio_desc))
+
+        if has_training_mode_input:
+            nstate.add_edge(training_mode_read, None, tasklet, "__training_mode",
+                            dace.Memlet.from_array("training_mode", training_mode_desc))
+
+        nstate.add_edge(tasklet, "__output", output_write, None, dace.Memlet.from_array("output", output))
+
+        if has_mask_output:
+            nstate.add_edge(tasklet, "__mask", mask_write, None, dace.Memlet.from_array("mask", mask))
+
+        return nsdfg
+
+
 @op_implementation(op="Unsqueeze", name="pure")
 class PureUnsqueeze(ONNXForward):
 
     @staticmethod
-    def forward_can_be_applied(node: 'ONNXOp', state: SDFGState,
-                               sdfg: SDFG) -> bool:
+    def forward_can_be_applied(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> bool:
         # Avoid this expansion if the backward pass will be contructed
         # TODO pass the backward flag to the functions
         return False
 
     @staticmethod
-    def forward(node: 'ONNXOp', state: SDFGState,
-                sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
         # Create new SDFG
         nsdfg = dace.SDFG(node.label + "_expansion")
         nstate = nsdfg.add_state()
 
         # Get input/output descriptors
         data_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, "data"))
-        expanded_desc = copy.deepcopy(
-            out_desc_with_name(node, state, sdfg, "expanded"))
+        expanded_desc = copy.deepcopy(out_desc_with_name(node, state, sdfg, "expanded"))
 
         # Add data descriptors to SDFG
         nsdfg.add_datadesc("data", data_desc)
@@ -1169,18 +1362,14 @@ class PureUnsqueeze(ONNXForward):
             axes_arr_dtype = dace.int64
             _, axes_desc = nsdfg.add_array("axes", axes_arr_shape, axes_arr_dtype, transient=True)
             axes_node = nstate.add_access("axes")
-            
+
             # Add tasklet to initialize axes array
             axes_init_tasklet = nstate.add_tasklet(
                 f"init_axes",
                 set(), {"out": dace.pointer(axes_arr_dtype)},
-                "\n".join([
-                    f"out [{idx}] = {val};"
-                    for idx, val in enumerate(axes_values)
-                ]),
+                "\n".join([f"out [{idx}] = {val};" for idx, val in enumerate(axes_values)]),
                 language=dace.Language.CPP)
-            nstate.add_edge(axes_init_tasklet, "out", axes_node, None,
-                            dace.Memlet(f"axes[0:{len(axes_values)}]"))
+            nstate.add_edge(axes_init_tasklet, "out", axes_node, None, dace.Memlet(f"axes[0:{len(axes_values)}]"))
         else:
             # axes is input - get from input connector
             axes_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, "axes"))
@@ -1196,29 +1385,26 @@ class PureUnsqueeze(ONNXForward):
 
         # Create tasklet that performs the unsqueeze operation
         data_size = int(np.prod(data_desc.shape))
-        tasklet = nstate.add_tasklet(
-            name=node.label + "_tasklet",
-            inputs={
-                "__data": dace.pointer(data_desc.dtype),
-                "__axes": dace.pointer(axes_desc.dtype),
-            },
-            outputs={"__unsqueezed": dace.pointer(expanded_desc.dtype)},
-            code=f"""
+        tasklet = nstate.add_tasklet(name=node.label + "_tasklet",
+                                     inputs={
+                                         "__data": dace.pointer(data_desc.dtype),
+                                         "__axes": dace.pointer(axes_desc.dtype),
+                                     },
+                                     outputs={"__unsqueezed": dace.pointer(expanded_desc.dtype)},
+                                     code=f"""
             for (int i = 0; i < {data_size}; i++) {{
                 __unsqueezed[i] = {data_str}[i];
             }}
             """,
-            language=dace.Language.CPP)
+                                     language=dace.Language.CPP)
 
         # Connect the tasklet with memlets
-        nstate.add_edge(data_read, None, tasklet, "__data",
-                        dace.Memlet("data"))
-        nstate.add_edge(axes_node, None, tasklet, "__axes",
-                        dace.Memlet("axes"))
-        nstate.add_edge(tasklet, "__unsqueezed", expanded_write, None,
-                        dace.Memlet("expanded"))
+        nstate.add_edge(data_read, None, tasklet, "__data", dace.Memlet("data"))
+        nstate.add_edge(axes_node, None, tasklet, "__axes", dace.Memlet("axes"))
+        nstate.add_edge(tasklet, "__unsqueezed", expanded_write, None, dace.Memlet("expanded"))
 
         return nsdfg
+
 
 @op_implementation(op="Unsqueeze", name="pure")
 class PureUnsqueeze(ONNXForward):
@@ -1237,7 +1423,8 @@ class PureUnsqueeze(ONNXForward):
             expanded[:] = np.reshape(data, expanded_desc.shape)
 
         return program_for_node(prog, sdfg, state, node)
-    
+
+
 @op_implementation(op="Squeeze", name="pure")
 class PureSqueeze(ONNXForward):
 
@@ -1308,11 +1495,12 @@ class PureSqueeze(ONNXForward):
 
 @op_implementation(op="ReduceMean", name="pure")
 class PureReduceMeanCPP(ONNXForward):
+
     def forward_can_be_applied(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> bool:
         # Avoid this expansion if the backward pass will be contructed
         # TODO pass the backward flag to the functions
         return False
-    
+
     @staticmethod
     def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
         # Set up the common SDFG structure
@@ -1489,39 +1677,36 @@ def Identity(input, output):
 
 @op_implementation(op="Expand", name="pure")
 class PureExpand(ONNXForward):
-    """ Handle no-op case for Expand """
+
     @staticmethod
-    def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState,
-                               sdfg: SDFG) -> bool:
+    def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
         return True
 
     @staticmethod
-    def forward(node: onnx_op.ONNXOp, state: SDFGState,
-                sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
 
-        shape = (3, 5)
+        shape = out_desc_with_name(node, state, sdfg, "output").shape
 
         def prog(input, output):
             output = np.broadcast_to(input, shape)
 
         return program_for_node(prog, sdfg, state, node)
-    
+
+
 @op_implementation(op="Expand", name="pure")
 class PureExpand(ONNXForward):
     """ Handle no-op case for Expand """
+
     @staticmethod
-    def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState,
-                               sdfg: SDFG) -> bool:
+    def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
         return iterables_equal(
             in_desc_with_name(node, state, sdfg, "input").shape,
             out_desc_with_name(node, state, sdfg, "output").shape)
 
     @staticmethod
-    def forward(node: onnx_op.ONNXOp, state: SDFGState,
-                sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
 
-        constant_folding.remove_node_and_computation(sdfg, state, node,
-                                                     "shape")
+        constant_folding.remove_node_and_computation(sdfg, state, node, "shape")
 
         def prog(input, output):
             output[:] = input
@@ -2019,9 +2204,8 @@ class PureSlice(ONNXForward):
         if not hasattr(sdfg, "_parent_onnx_model"):
             return False
 
-
         constant_starts = in_edge_with_name(node, state, "starts").src.data in sdfg._parent_onnx_model.clean_weights
-        
+
         if not constant_starts:
             return False
         if in_edge_with_name(node, state, "ends").src.data not in sdfg._parent_onnx_model.clean_weights:
@@ -2077,13 +2261,16 @@ class PureSlice(ONNXForward):
 def Sin(input, output):
     output[:] = np.sin(input)
 
+
 @python_pure_op_implementation
 def Cos(input, output):
     output[:] = np.cos(input)
 
+
 @python_pure_op_implementation
 def Neg(X, Y):
     Y[:] = -X
+
 
 @python_pure_op_implementation
 def Softplus(X, Y):
@@ -2107,18 +2294,19 @@ class PureReduceMean(ONNXForward):
         # optional inputs
         is_axes_present = True
         try:
-            if hasattr(sdfg, "_parent_onnx_model") and in_edge_with_name(node, state, "axes").src.data not in sdfg._parent_onnx_model.clean_weights:
+            if hasattr(sdfg, "_parent_onnx_model") and in_edge_with_name(
+                    node, state, "axes").src.data not in sdfg._parent_onnx_model.clean_weights:
                 return False
         except ValueError:
             is_axes_present = False
 
         if not is_axes_present and hasattr(node, "axes"):
             is_axes_present = True
-            
+
         # Current constraints: axes must be explict. Axes must be zero
         if not is_axes_present:
             return False
-        
+
         return True
 
     @staticmethod
@@ -2128,7 +2316,8 @@ class PureReduceMean(ONNXForward):
         axes = None
         # TODO: avoid catching Exceptions
         try:
-            if hasattr(sdfg, "_parent_onnx_model") and in_edge_with_name(node, state, "axes").src.data in sdfg._parent_onnx_model.clean_weights:
+            if hasattr(sdfg, "_parent_onnx_model") and in_edge_with_name(
+                    node, state, "axes").src.data in sdfg._parent_onnx_model.clean_weights:
                 axes = sdfg._parent_onnx_model.clean_weights[in_edge_with_name(node, state, "axes").src.data].numpy()
         except ValueError:
             pass
@@ -2137,15 +2326,18 @@ class PureReduceMean(ONNXForward):
                 axes = axes[0]
             else:
                 raise NotImplementedError(
-                    "PureReduceMean in the case where there are multiple axes as input connectors is not implemented yet.")
+                    "PureReduceMean in the case where there are multiple axes as input connectors is not implemented yet."
+                )
         else:
             # Axes is an attribute of the node
             axes = node.axes if hasattr(node, "axes") else None
+
         def prog(data, reduced):
             reduced[:] = np.mean(data, axis=axes)
 
         result = program_for_node(prog, sdfg, state, node)
         return result
+
 
 @python_pure_op_implementation
 def Erf(input, output):
@@ -2163,10 +2355,10 @@ class PureSigmoid(ONNXForward):
     def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
         input_data = list(state.in_edges_by_connector(node, "X"))[0].src.data
         dtype = sdfg.arrays[input_data].dtype
-        
+
         def prog(X, Y):
             Y[:] = dace.elementwise(lambda x: dtype(1) / (dtype(1) + exp(-x)), X)
-            
+
         result = program_for_node(prog, sdfg, state, node)
         return result
 
@@ -2625,7 +2817,8 @@ class PureGather(ONNXForward):
         tasklet.in_connectors["__data"] = dace.pointer(out_desc.dtype)
 
         return nsdfg
-        
+
+
 @op_implementation(op="ReduceSum", name="pure")
 class PureReduceSumCPP(ONNXForward):
 
@@ -2674,18 +2867,19 @@ class PureReduceSum(ONNXForward):
         # optional inputs
         is_axes_present = True
         try:
-            if hasattr(sdfg, "_parent_onnx_model") and in_edge_with_name(node, state, "axes").src.data not in sdfg._parent_onnx_model.clean_weights:
+            if hasattr(sdfg, "_parent_onnx_model") and in_edge_with_name(
+                    node, state, "axes").src.data not in sdfg._parent_onnx_model.clean_weights:
                 return False
         except ValueError:
             is_axes_present = False
 
         if not is_axes_present and hasattr(node, "axes"):
             is_axes_present = True
-            
-        # Current constraints: axes must be explict. Axes must be zero
+
+        # Current constraints: axes must be explict.
         if not is_axes_present:
             return False
-        
+
         return True
 
     @staticmethod
@@ -2695,7 +2889,8 @@ class PureReduceSum(ONNXForward):
         axes = None
         # TODO: avoid catching Exceptions
         try:
-            if hasattr(sdfg, "_parent_onnx_model") and in_edge_with_name(node, state, "axes").src.data in sdfg._parent_onnx_model.clean_weights:
+            if hasattr(sdfg, "_parent_onnx_model") and in_edge_with_name(
+                    node, state, "axes").src.data in sdfg._parent_onnx_model.clean_weights:
                 axes = sdfg._parent_onnx_model.clean_weights[in_edge_with_name(node, state, "axes").src.data].numpy()
         except ValueError:
             pass
@@ -2704,10 +2899,12 @@ class PureReduceSum(ONNXForward):
                 axes = axes[0]
             else:
                 raise NotImplementedError(
-                    "PureReduceSum in the case where there are multiple axes as input connectors is not implemented yet.")
+                    "PureReduceSum in the case where there are multiple axes as input connectors is not implemented yet."
+                )
         else:
             # Axes is an attribute of the node
             axes = node.axes if hasattr(node, "axes") else None
+
         def prog(data, reduced):
             reduced[:] = np.sum(data, axis=axes)
 
@@ -2726,18 +2923,19 @@ class PureReduceMax(ONNXForward):
         # optional inputs
         is_axes_present = True
         try:
-            if hasattr(sdfg, "_parent_onnx_model") and in_edge_with_name(node, state, "axes").src.data not in sdfg._parent_onnx_model.clean_weights:
+            if hasattr(sdfg, "_parent_onnx_model") and in_edge_with_name(
+                    node, state, "axes").src.data not in sdfg._parent_onnx_model.clean_weights:
                 return False
         except ValueError:
             is_axes_present = False
 
         if not is_axes_present and hasattr(node, "axes"):
             is_axes_present = True
-            
+
         # Current constraints: axes must be explict. Axes must be zero
         if not is_axes_present:
             return False
-        
+
         return True
 
     @staticmethod
@@ -2747,7 +2945,8 @@ class PureReduceMax(ONNXForward):
         axes = None
         # TODO: avoid catching Exceptions
         try:
-            if hasattr(sdfg, "_parent_onnx_model") and in_edge_with_name(node, state, "axes").src.data in sdfg._parent_onnx_model.clean_weights:
+            if hasattr(sdfg, "_parent_onnx_model") and in_edge_with_name(
+                    node, state, "axes").src.data in sdfg._parent_onnx_model.clean_weights:
                 axes = sdfg._parent_onnx_model.clean_weights[in_edge_with_name(node, state, "axes").src.data].numpy()
         except ValueError:
             pass
@@ -2756,10 +2955,12 @@ class PureReduceMax(ONNXForward):
                 axes = axes[0]
             else:
                 raise NotImplementedError(
-                    "PureReduceSum in the case where there are multiple axes as input connectors is not implemented yet.")
+                    "PureReduceSum in the case where there are multiple axes as input connectors is not implemented yet."
+                )
         else:
             # Axes is an attribute of the node
             axes = node.axes if hasattr(node, "axes") else None
+
         def prog(data, reduced):
             reduced[:] = np.max(data, axis=axes)
 
