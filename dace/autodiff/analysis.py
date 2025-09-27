@@ -8,6 +8,7 @@ import networkx as nx
 
 from dace.sdfg import SDFG, SDFGState, nodes, utils as sdfg_utils
 from dace.transformation.passes import analysis
+from dace.sdfg.state import FunctionCallRegion
 
 AccessSets = Dict[SDFGState, Tuple[Set[str], Set[str]]]
 
@@ -22,10 +23,17 @@ def dependency_analysis(sdfg: SDFG) -> Dict[str, Set[str]]:
 
     # FIXME can be made more efficient
     dependencies = nx.DiGraph()
-    for state in sdfg.nodes():
-        for node in state.data_nodes():
-            for edge in state.edge_bfs(node, reverse=True):
-                dependencies.add_edge(node.data, edge.data.data)
+    for sdfg_node in sdfg.nodes():
+        if isinstance(sdfg_node, SDFGState):
+            for node in sdfg_node.data_nodes():
+                for edge in sdfg_node.edge_bfs(node, reverse=True):
+                    dependencies.add_edge(node.data, edge.data.data)
+        elif isinstance(sdfg_node, FunctionCallRegion):
+            for state in sdfg_node.nodes():
+                assert isinstance(state, SDFGState)
+                for node in state.data_nodes():
+                    for edge in state.edge_bfs(node, reverse=True):
+                        dependencies.add_edge(node.data, edge.data.data)
 
     dependencies = nx.transitive_closure(dependencies)
     result = {}
