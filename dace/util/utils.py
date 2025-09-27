@@ -183,6 +183,7 @@ def expand_nodes(sdfg: dace.SDFG, predicate: Callable[[nd.Node], bool]):
         if expanded_something:
             states.append(state)  # Nodes have changed. Check state again
 
+
 # TODO: Remove this auto-opt pass or rename it to be specific to ONNX
 def auto_optimize(sdfg: dace.SDFG, cuda, simplify=False, fold_constants=True):
     """ Automatically optimize ``sdfg``.
@@ -214,6 +215,7 @@ def auto_optimize(sdfg: dace.SDFG, cuda, simplify=False, fold_constants=True):
         if cuda:
             sdfg.apply_transformations_once_everywhere(CopyToMap)
 
+
 def remove_unnecessary_views(sdfg: dace.SDFG):
     """
     InlineSDFG generates some unnecessary views that make the SDFG more complex.
@@ -229,26 +231,28 @@ def remove_unnecessary_views(sdfg: dace.SDFG):
                 incoming_edge = state.in_edges(node)[0]
                 outgoing_edge = state.out_edges(node)[0]
                 view_desc = sdfg.arrays[node.data]
-                if not isinstance(incoming_edge.src, nd.AccessNode) or isinstance(sdfg.arrays[incoming_edge.src.data], dt.ArrayView):
+                if not isinstance(incoming_edge.src, nd.AccessNode) or isinstance(sdfg.arrays[incoming_edge.src.data],
+                                                                                  dt.ArrayView):
                     continue
                 original_node = incoming_edge.src
                 original_desc = sdfg.arrays[original_node.data]
-                
+
                 # Additional restrictive condition: this should only cause a problem for library nodes
                 if not isinstance(outgoing_edge.dst, nd.LibraryNode):
                     continue
-                
+
                 # They need to have the same shape
                 if original_desc.shape != view_desc.shape:
                     continue
-                
+
                 # The memlet subsets need to be the same for the outgoing edge and incoming edge
-                if not (incoming_edge.data.subset == outgoing_edge.data.subset and 
-                        incoming_edge.data.other_subset == outgoing_edge.data.other_subset):
+                if not (incoming_edge.data.subset == outgoing_edge.data.subset
+                        and incoming_edge.data.other_subset == outgoing_edge.data.other_subset):
                     continue
-                
+
                 # Remove the view node
-                state.add_edge(incoming_edge.src, None, outgoing_edge.dst, outgoing_edge.dst_conn, copy.deepcopy(incoming_edge.data))
+                state.add_edge(incoming_edge.src, None, outgoing_edge.dst, outgoing_edge.dst_conn,
+                               copy.deepcopy(incoming_edge.data))
                 state.remove_node(node)
 
 
