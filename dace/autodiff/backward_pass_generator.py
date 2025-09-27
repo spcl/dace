@@ -471,7 +471,7 @@ class BackwardPassGenerator:
         # TODO: either change this to be a clean up function at this level or remove it
         self._remove_unnecessary_conditional_regions()
 
-        # Create state views mapping and exapnd all the SDFG nodes
+        # Create state views mapping and expand all the SDFG nodes
         # TODO: deal with a full unroll of a loop inside this function
         self._create_stateviews_mapping()
 
@@ -1001,6 +1001,9 @@ class BackwardPassGenerator:
                     # The end of the range is inclusive in the loop
                     # We add 1 to get the upper bound for the map
                     ranges.append((iteration[0], iteration[1] + 1))
+                elif isinstance(iteration, sp.Number):
+                    # This covers the case of a single element being written
+                    ranges.append((int(iteration), int(iteration) + 1))
                 else:
                     raise AutoDiffException(f"Unsupported subset type {type(iteration)} in memlet {memlet}")
 
@@ -2623,9 +2626,8 @@ class BackwardPassGenerator:
                 # We will have an isolated node if it is not connected to any other node in the state view
                 # And it has not been cleared out if it is an AccessNode
                 # Isolated nodes should only appear from clearing out gradients
-                if not any(e.src in subgraph.nodes()
-                           for e in forward_state.in_edges(node)) and not any(e.dst in subgraph.nodes()
-                                                                              for e in forward_state.out_edges(node)):
+                # Check if this is an isolated node and remove it if it is
+                if backward_state.out_degree(reversed_node) == 0 and backward_state.in_degree(reversed_node) == 0:
                     if isinstance(node, nodes.AccessNode) and node not in self.zeroed_out:
                         backward_state.remove_node(reversed_node)
 
@@ -2745,6 +2747,11 @@ class BackwardPassGenerator:
             if self.sdfg.arrays[edge.data.data].dtype == dace.bool:
                 # we also need to remove this connector otherwise it will be dangeling
                 backward_node = self.reverse_map[edge.src]
+                if not (isinstance(backward_node, nodes.MapEntry) or isinstance(backward_node, nodes.MapExit)):
+                    # If this is not a map entry or exit, the boolean gradients will not be added
+                    # No need to remove the connector in this case
+                    continue
+
                 conn_to_remove = _invert_map_connector(edge.src_conn)
                 assert conn_to_remove in backward_node.in_connectors
                 assert backward_node.remove_in_connector(conn_to_remove)
@@ -2819,6 +2826,8 @@ class BackwardPassGenerator:
                                                  other_subset=fwd_memlet.other_subset
                                                  if fwd_memlet.data == forward_node.data else fwd_memlet.subset)
                     memlet = new_memlet
+            if input_conn not in self.result_map[dest_node].required_grad_names:
+                continue
             new_edge = backward_state.add_edge(
                 backward_dst_node,
                 self._lookup_required_grad_name(dest_node, input_conn),
