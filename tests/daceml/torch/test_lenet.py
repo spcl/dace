@@ -33,12 +33,7 @@ class LeNet(nn.Module):
         return x
 
 
-@pytest.mark.parametrize("conv_impl", ["pure", "im2col"])
-def test_lenet(conv_impl, sdfg_name, use_cpp_dispatcher):
-    if conv_impl == "im2col":
-        pytest.skip("im2col is currently broken due to schedule inference")
-
-    donnx.ONNXConv.default_implementation = conv_impl
+def test_lenet(sdfg_name, use_cpp_dispatcher):
 
     input = torch.rand(8, 1, 32, 32, dtype=torch.float32)
 

@@ -8,7 +8,7 @@ from torch import nn
 
 import dace
 from dace.libraries.torch import PyTorch
-from dace.testing import copy_to_gpu, torch_tensors_close
+from dace.testing import torch_tensors_close
 
 op_source = """
 #include <torch/torch.h>
@@ -94,15 +94,15 @@ def test_extension():
     torch.ops.myops.myadd(torch.randn(32, 32), torch.rand(32, 32))
 
 
-def test_module_with_constant(gpu, sdfg_name):
+def test_module_with_constant(sdfg_name):
 
-    @dace.module(cuda=gpu, sdfg_name=sdfg_name)
+    @dace.module(sdfg_name=sdfg_name)
     class Module(nn.Module):
 
         def forward(self, x):
             return x + 1
 
     inp = torch.ones((5, 5))
-    output = Module()(copy_to_gpu(gpu, inp))
+    output = Module()(inp)
 
     torch_tensors_close("output", inp + 1, output.cpu())

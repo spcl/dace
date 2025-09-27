@@ -21,9 +21,7 @@ def assert_allclose(a, b, rtol=1e-5, atol=1e-8):
 
 #+yapf: disable
 @pytest.mark.parametrize("a_shape, b_shape",
-                         [([2, 4], [4, 3]),
-                          pytest.param([3, 5], [5], marks=pytest.mark.skip("issues in dace")),
-                          pytest.param([5], [5, 6], marks=pytest.mark.skip("issues in dace"))])
+                         [([2, 4], [4, 3])])
 #+yapf: enable
 def test_matmul_expansion(a_shape, b_shape, sdfg_name):
     blas.Gemm.default_implementation = "pure"

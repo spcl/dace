@@ -13,11 +13,11 @@ import torch
 from transformers import BertTokenizer, BertModel
 
 import dace.libraries.onnx as donnx
-from dace.testing import copy_to_gpu, torch_tensors_close, get_data_file
+from dace.testing import torch_tensors_close, get_data_file
 
 
 @pytest.mark.cpublas
-def test_bert_full(gpu, default_implementation, sdfg_name):
+def test_bert_full(default_implementation, sdfg_name):
     bert_tiny_root = 'http://spclstorage.inf.ethz.ch/~rauscho/bert-tiny'
     get_data_file(bert_tiny_root + "/config.json", directory_name='bert-tiny')
     vocab = get_data_file(bert_tiny_root + "/vocab.txt", directory_name='bert-tiny')
@@ -26,16 +26,16 @@ def test_bert_full(gpu, default_implementation, sdfg_name):
     model_dir = os.path.dirname(vocab)
 
     tokenizer = BertTokenizer.from_pretrained(vocab)
-    pt_model = copy_to_gpu(gpu, BertModel.from_pretrained(model_dir))
+    pt_model = BertModel.from_pretrained(model_dir)
 
     text = "[CLS] how are you today [SEP] dude [SEP]"
     tokenized_text = tokenizer.tokenize(text)
     indexed_tokens = tokenizer.convert_tokens_to_ids(tokenized_text)
     segment_ids = [0] * 6 + [1] * 2
 
-    tokens_tensor = copy_to_gpu(gpu, torch.tensor([indexed_tokens]))
-    segments_tensors = copy_to_gpu(gpu, torch.tensor([segment_ids]))
-    attention_mask = copy_to_gpu(gpu, torch.ones(1, 8, dtype=torch.int64))
+    tokens_tensor = torch.tensor([indexed_tokens])
+    segments_tensors = torch.tensor([segment_ids])
+    attention_mask = torch.ones(1, 8, dtype=torch.int64)
 
     model = onnx.load(bert_path)
     # infer shapes
@@ -45,7 +45,7 @@ def test_bert_full(gpu, default_implementation, sdfg_name):
                                                       token_type_ids=segments_tensors.shape,
                                                       attention_mask=attention_mask.shape))
 
-    dace_model = donnx.ONNXModel(sdfg_name, model, cuda=gpu, auto_merge=True)
+    dace_model = donnx.ONNXModel(sdfg_name, model, auto_merge=True)
 
     dace_output = dace_model(input_ids=tokens_tensor, token_type_ids=segments_tensors, attention_mask=attention_mask)
 

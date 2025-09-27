@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 from transformers import LlamaForCausalLM, LlamaConfig
 from dace.frontend.python.module import DaceModule
-from dace.testing import copy_to_gpu, torch_tensors_close
+from dace.testing import torch_tensors_close
 
 
 class LlamaWrapper(nn.Module):
@@ -57,8 +57,7 @@ class LlamaWrapper(nn.Module):
 
 @pytest.mark.cpublas
 @pytest.mark.long
-@pytest.mark.skip(reason="Long test, run manually")
-def test_llama_model_backward(gpu, sdfg_name):
+def test_llama_model_backward(sdfg_name):
     # Create a small LLaMA configuration
     config = LlamaConfig(
         vocab_size=32000,
@@ -82,10 +81,8 @@ def test_llama_model_backward(gpu, sdfg_name):
     export_seq_length = 32
     export_batch_size = 2
     export_input = torch.randint(3, config.vocab_size, (export_batch_size, export_seq_length), dtype=torch.long)
-    export_input = copy_to_gpu(gpu, export_input)
 
     wrapped_model = LlamaWrapper(model)
-    wrapped_model = copy_to_gpu(gpu, wrapped_model)
     dace_model = DaceModule(wrapped_model, backward=True, onnx_simplify=True, simplify=True, sdfg_name=sdfg_name)
 
     wrapped_model(export_input.clone()).sum().backward()
@@ -100,4 +97,4 @@ def test_llama_model_backward(gpu, sdfg_name):
 
 
 if __name__ == "__main__":
-    test_llama_model_backward(gpu=False, sdfg_name="llama_model_test")
+    test_llama_model_backward(sdfg_name="llama_model_test")

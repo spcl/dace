@@ -2,9 +2,8 @@ import pytest
 import torch
 import torch.nn as nn
 from transformers.models.llama.modeling_llama import LlamaDecoderLayer, LlamaConfig
-from dace.testing import copy_to_gpu, torch_tensors_close
+from dace.testing import torch_tensors_close
 from dace.frontend.python.module import DaceModule
-import copy
 
 
 # Create a wrapper module that handles the position embeddings internally
@@ -39,7 +38,7 @@ class LlamaDecoderLayerWrapper(nn.Module):
 
 
 @pytest.mark.cpublas
-def test_llama_decoder_backward(gpu, sdfg_name):
+def test_llama_decoder_backward(sdfg_name):
     # Create configuration
     config = LlamaConfig(
         hidden_size=512,
@@ -62,13 +61,13 @@ def test_llama_decoder_backward(gpu, sdfg_name):
     seq_length = 128
 
     # Create input tensors
-    hidden_states = copy_to_gpu(gpu, torch.ones(batch_size, seq_length, config.hidden_size))
-    attention_mask = copy_to_gpu(gpu, torch.ones(batch_size, 1, seq_length, seq_length))
-    position_ids = copy_to_gpu(gpu, torch.arange(seq_length).unsqueeze(0).expand(batch_size, seq_length))
+    hidden_states = torch.ones(batch_size, seq_length, config.hidden_size)
+    attention_mask = torch.ones(batch_size, 1, seq_length, seq_length)
+    position_ids = torch.arange(seq_length).unsqueeze(0).expand(batch_size, seq_length)
 
     # Create wrapped model
     wrapped_model = LlamaDecoderLayerWrapper(decoder_layer, config)
-    wrapped_model = copy_to_gpu(gpu, wrapped_model)
+    wrapped_model = wrapped_model
     dace_model = DaceModule(
         wrapped_model,
         sdfg_name=sdfg_name,
@@ -102,4 +101,4 @@ def test_llama_decoder_backward(gpu, sdfg_name):
 
 if __name__ == "__main__":
     torch.manual_seed(42)
-    test_llama_decoder_backward(gpu=False, sdfg_name="llama_decoder_backward_test")
+    test_llama_decoder_backward(sdfg_name="llama_decoder_backward_test")

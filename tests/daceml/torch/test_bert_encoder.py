@@ -5,30 +5,27 @@ from transformers import BertConfig
 from transformers.models.bert.modeling_bert import BertLayer
 
 from dace.frontend.python.module import DaceModule
-from dace.testing import copy_to_gpu, torch_tensors_close
+from dace.testing import torch_tensors_close
 from dace.transformation.onnx import parameter_to_transient
 
 
 @pytest.mark.cpublas
-def test_bert_encoder(gpu, default_implementation, sdfg_name):
+def test_bert_encoder(default_implementation, sdfg_name):
     batch_size = 2
     seq_len = 32
     hidden_size = 48
 
-    input = copy_to_gpu(gpu, torch.randn([batch_size, seq_len, hidden_size]))
+    input = torch.randn([batch_size, seq_len, hidden_size])
 
-    ptmodel = copy_to_gpu(gpu, BertLayer(BertConfig(hidden_size=hidden_size, attn_implementation="eager")).eval())
+    ptmodel = BertLayer(BertConfig(hidden_size=hidden_size, attn_implementation="eager")).eval()
     pt_outputs = ptmodel(input.clone())
 
-    dace_model = DaceModule(ptmodel, training=False, sdfg_name=sdfg_name, simplify=False, backward=True)
-
-    if gpu:
-
-        def param_to_trans(model):
-            for name, _ in model.model.named_parameters():
-                parameter_to_transient(model, name)
-
-        dace_model.append_post_onnx_hook("param_to_transient", param_to_trans)
+    dace_model = DaceModule(ptmodel,
+                            sdfg_name=sdfg_name,
+                            training=False,
+                            simplify=False,
+                            backward=True,
+                            auto_optimize=False)
 
     dace_outputs0 = dace_model(input.clone())
     torch_tensors_close("output", pt_outputs[0], dace_outputs0)
@@ -41,13 +38,7 @@ def test_bert_encoder(gpu, default_implementation, sdfg_name):
         if len(ort_nodes) > 0:
             assert False, f"expected pure graph, found ORT nodes: {ort_nodes} "
 
-        # check that cuBLAS is being used
-        if gpu:
-            assert any((hasattr(n, "environments") and "cuBLAS" in n.environments
-                        or hasattr(n, "implementation") and n.implementation == "cuBLAS")
-                       for n, _ in dace_model.sdfg.all_nodes_recursive())
-
 
 if __name__ == "__main__":
     torch.manual_seed(42)
-    test_bert_encoder(gpu=False, default_implementation="pure", sdfg_name="bert_encoder")
+    test_bert_encoder(default_implementation="pure", sdfg_name="bert_encoder")

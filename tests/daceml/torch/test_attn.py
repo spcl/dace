@@ -6,25 +6,24 @@ from dace.frontend.python.module import DaceModule
 
 from dace.transformation.dataflow import RedundantSecondArray
 
-from dace.testing import copy_to_gpu, torch_tensors_close
+from dace.testing import torch_tensors_close
 
 
-def test_attn(gpu, sdfg_name, use_cpp_dispatcher):
+def test_attn(sdfg_name, use_cpp_dispatcher):
     B = 2
     H = 16
     P = 64
     N = P * H
     SM, SN = 512, 512
-    K, Q, V = [
-        copy_to_gpu(gpu, torch.randn([SM, B, N])),
-        copy_to_gpu(gpu, torch.randn([SN, B, N])),
-        copy_to_gpu(gpu, torch.randn([SM, B, N]))
-    ]
-    ptmodel = copy_to_gpu(gpu, torch.nn.MultiheadAttention(N, H, bias=False))
+    K, Q, V = [torch.randn([SM, B, N]), torch.randn([SN, B, N]), torch.randn([SM, B, N])]
+    ptmodel = torch.nn.MultiheadAttention(N, H, bias=False)
 
     pt_outputs = ptmodel(Q, K, V)
 
-    dace_model = DaceModule(ptmodel, sdfg_name=sdfg_name, compile_torch_extension=use_cpp_dispatcher)
+    dace_model = DaceModule(ptmodel,
+                            sdfg_name=sdfg_name,
+                            compile_torch_extension=use_cpp_dispatcher,
+                            auto_optimize=False)
 
     dace_outputs = dace_model(Q, K, V)
 

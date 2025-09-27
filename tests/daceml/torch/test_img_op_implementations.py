@@ -1,12 +1,9 @@
 import pytest
 import torch
-from dace.library import change_default
 from torch import nn
 
-from dace.libraries import onnx as donnx
-
 from dace.frontend.python.module import DaceModule
-from dace.testing import torch_tensors_close, copy_to_gpu
+from dace.testing import torch_tensors_close
 
 
 class CustomBatchNorm(torch.autograd.Function):
@@ -47,39 +44,35 @@ class BatchNorm2dMeanVar(nn.Module):
                                      self.bn.training, self.bn.momentum, self.bn.eps)
 
 
-@pytest.mark.parametrize("implementation", ["pure", "cuDNN"])
-def test_bn(gpu, implementation, sdfg_name):
-    if implementation == "cuDNN" and not gpu:
-        pytest.skip("cuDNN is GPU only")
+def test_bn(sdfg_name):
 
-    with change_default(donnx.ONNXBatchNormalization, implementation):
-        inputs = copy_to_gpu(gpu, torch.rand(1, 64, 60, 60))
+    inputs = torch.rand(1, 64, 60, 60)
 
-        # pytorch and onnx specification differ in the way they use momentum:
-        # pytorch_momentum = 1 - onnx_momentum
-        # to guarantee matching behavior, we set the momentum to 0.5
+    # pytorch and onnx specification differ in the way they use momentum:
+    # pytorch_momentum = 1 - onnx_momentum
+    # to guarantee matching behavior, we set the momentum to 0.5
 
-        pt_model = copy_to_gpu(gpu, BatchNorm2dMeanVar(64, momentum=0.5))
-        dace_model = copy_to_gpu(gpu, BatchNorm2dMeanVar(64, momentum=0.5))
-        pt_model.train()
-        dace_model.train()
+    pt_model = BatchNorm2dMeanVar(64, momentum=0.5)
+    dace_model = BatchNorm2dMeanVar(64, momentum=0.5)
+    pt_model.train()
+    dace_model.train()
 
-        dace_model.load_state_dict(pt_model.state_dict())
+    dace_model.load_state_dict(pt_model.state_dict())
 
-        dace_model = DaceModule(dace_model, sdfg_name=sdfg_name, training=True)
-        dace_output, dace_mean, dace_var = dace_model(inputs)
-        pt_output, pt_mean, pt_var = pt_model(inputs)
+    dace_model = DaceModule(dace_model, sdfg_name=sdfg_name, training=True)
+    dace_output, dace_mean, dace_var = dace_model(inputs)
+    pt_output, pt_mean, pt_var = pt_model(inputs)
 
-        torch_tensors_close("output", pt_output, dace_output)
-        torch_tensors_close("mean", pt_mean, dace_mean)
-        torch_tensors_close("var", pt_var, dace_var)
+    torch_tensors_close("output", pt_output, dace_output)
+    torch_tensors_close("mean", pt_mean, dace_mean)
+    torch_tensors_close("var", pt_var, dace_var)
 
 
-def test_global_avg_pool(gpu, sdfg_name):
-    inputs = copy_to_gpu(gpu, torch.rand(1, 64, 60, 60))
+def test_global_avg_pool(sdfg_name):
+    inputs = torch.rand(1, 64, 60, 60)
 
-    pt_model = copy_to_gpu(gpu, nn.AdaptiveAvgPool2d(1))
-    dace_model = copy_to_gpu(gpu, nn.AdaptiveAvgPool2d(1))
+    pt_model = nn.AdaptiveAvgPool2d(1)
+    dace_model = nn.AdaptiveAvgPool2d(1)
 
     dace_model.load_state_dict(pt_model.state_dict())
 

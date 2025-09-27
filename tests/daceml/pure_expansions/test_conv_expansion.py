@@ -6,15 +6,9 @@ import torch.nn.functional as F
 import numpy as np
 
 
-@pytest.mark.parametrize("implementation", ["pure", "im2col"])
 @pytest.mark.parametrize("num_in_channels, kernel_size, num_filters, bias",
                          [(1, (3, 3), 8, True), (8, (3, 3), 3, False), (8, (5, 5), 3, True), (8, (4, 4), 3, False)])
-def test_conv_simple(num_in_channels, kernel_size, num_filters, bias, implementation):
-    if implementation == "im2col":
-        pytest.skip("pure im2col is currently broken")
-
-    old_implementation = donnx.ONNXConv.default_implementation
-    donnx.ONNXConv.default_implementation = implementation
+def test_conv_simple(num_in_channels, kernel_size, num_filters, bias):
 
     batch_size = 8
 
@@ -53,5 +47,3 @@ def test_conv_simple(num_in_channels, kernel_size, num_filters, bias, implementa
 
     print(torch_Z - dace_Z)
     assert np.allclose(torch_Z, dace_Z)
-
-    donnx.ONNXConv.default_implementation = old_implementation

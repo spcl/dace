@@ -9,13 +9,10 @@ from transformers import BertConfig
 from transformers.models.bert.modeling_bert import BertLayer
 
 from dace.frontend.python.module import DaceModule
-from dace.testing.utils import torch_tensors_close, copy_to_gpu
+from dace.testing.utils import torch_tensors_close
 
 
-def training_step(dace_model, pt_model, train_batch, sdfg_name, gpu, train_criterion=None):
-
-    pt_model = copy_to_gpu(gpu, pt_model)
-    dace_model = copy_to_gpu(gpu, dace_model)
+def training_step(dace_model, pt_model, train_batch, sdfg_name, train_criterion=None):
 
     # copy over the weights
     dace_model.load_state_dict(pt_model.state_dict())
@@ -25,8 +22,6 @@ def training_step(dace_model, pt_model, train_batch, sdfg_name, gpu, train_crite
     dace_model = DaceModule(dace_model, backward=True, simplify=True, training=True, sdfg_name=sdfg_name)
 
     x, y = train_batch
-    x = copy_to_gpu(gpu, x)
-    y = copy_to_gpu(gpu, y)
 
     train_criterion = train_criterion or nn.NLLLoss()
 
@@ -55,7 +50,7 @@ def training_step(dace_model, pt_model, train_batch, sdfg_name, gpu, train_crite
         torch_tensors_close(name, pt_param.detach(), dace_param.detach())
 
 
-def test_mnist(sdfg_name, gpu):
+def test_mnist(sdfg_name):
     input_size = 784
     hidden_sizes = [128, 64]
     output_size = 10
@@ -82,12 +77,12 @@ def test_mnist(sdfg_name, gpu):
     images = torch.randn(64, 784)
     labels = torch.randint(0, 10, [64], dtype=torch.long)
 
-    training_step(dace_model, model, (images, labels), sdfg_name, gpu)
+    training_step(dace_model, model, (images, labels), sdfg_name)
 
 
 @pytest.mark.cpublas
 @pytest.mark.skip(reason="Requires pure implementation of expand")
-def test_bert(sdfg_name, gpu):
+def test_bert(sdfg_name):
     batch_size = 2
     seq_len = 512
     hidden_size = 768
@@ -107,4 +102,4 @@ def test_bert(sdfg_name, gpu):
     input = torch.randn([batch_size, seq_len, hidden_size])
     labels = torch.tensor([0, 123], dtype=torch.long)
 
-    training_step(BertTokenSoftmaxClf(), BertTokenSoftmaxClf(), (input, labels), sdfg_name, gpu)
+    training_step(BertTokenSoftmaxClf(), BertTokenSoftmaxClf(), (input, labels), sdfg_name)

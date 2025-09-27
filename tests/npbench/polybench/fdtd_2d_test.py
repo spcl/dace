@@ -155,7 +155,7 @@ def run_fdtd_2d_autodiff():
 
     # Add the backward pass to the SDFG
     sdfg = autodiff_kernel.to_sdfg()
-    add_backward_pass(sdfg=sdfg, inputs=["ex"], outputs=["__return"], autooptimize=True)
+    add_backward_pass(sdfg=sdfg, inputs=["ex"], outputs=["__return"])
     sdfg(ex, ey, hz, _fict_, TMAX=TMAX, NX=NX, NY=NY, gradient_ex=gradient_ex, gradient___return=gradient___return)
 
     # Numerically validate vs JAX (use float32 consistent with kernel)
