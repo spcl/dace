@@ -127,7 +127,7 @@ setup(name='dace',
       extras_require={
           'testing': [
               'coverage', 'pytest-cov', 'absl-py', 'opt_einsum', 'pymlir',
-              'click', 'transformers'
+              'click', 'transformers == 4.50', 'jax'
           ],
           'docs': [
               'jinja2<3.2.0', 'sphinx-autodoc-typehints',
