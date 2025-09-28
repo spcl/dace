@@ -304,7 +304,7 @@ def test_gpu():
     run_cavity_flow(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.ad
+@pytest.mark.autodiff
 def test_autodiff():
     run_cavity_flow_autodiff()
 

@@ -119,7 +119,7 @@ def test_gpu():
     run_go_fast(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.ad
+@pytest.mark.autodiff
 def test_autodiff():
     run_go_fast_autodiff()
 

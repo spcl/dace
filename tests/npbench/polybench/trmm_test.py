@@ -144,7 +144,7 @@ def test_gpu():
     run_trmm(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.ad
+@pytest.mark.autodiff
 def test_autodiff():
     run_trmm_autodiff()
 

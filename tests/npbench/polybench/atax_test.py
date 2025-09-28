@@ -134,7 +134,7 @@ def test_gpu():
     run_atax(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.ad
+@pytest.mark.autodiff
 def test_autodiff():
     run_atax_autodiff()
 

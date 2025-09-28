@@ -117,7 +117,7 @@ def test_gpu():
     run_softmax(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.ad
+@pytest.mark.autodiff
 def test_autodiff():
     run_softmax_autodiff()
 

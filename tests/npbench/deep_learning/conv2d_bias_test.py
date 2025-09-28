@@ -199,7 +199,7 @@ def test_gpu():
     run_conv2d_bias(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.ad
+@pytest.mark.autodiff
 def test_autodiff():
     run_conv2d_bias_autodiff()
 

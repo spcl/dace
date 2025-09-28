@@ -135,7 +135,7 @@ def test_gpu():
     run_bicg(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.ad
+@pytest.mark.autodiff
 def test_autodiff():
     run_bicg_autodiff()
 

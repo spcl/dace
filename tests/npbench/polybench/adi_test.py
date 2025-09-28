@@ -278,7 +278,7 @@ def test_gpu():
     run_adi(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.ad
+@pytest.mark.autodiff
 def test_autodiff():
     run_adi_autodiff()
 

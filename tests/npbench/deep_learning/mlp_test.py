@@ -189,7 +189,7 @@ def test_gpu():
     run_mlp(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.ad
+@pytest.mark.autodiff
 def test_autodiff():
     run_mlp_autodiff()
 

@@ -118,7 +118,7 @@ def test_gpu():
     run_k3mm(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.ad
+@pytest.mark.autodiff
 def test_autodiff():
     run_k3mm_autodiff()
 

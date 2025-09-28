@@ -134,7 +134,7 @@ def test_gpu():
     run_doitgen(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.ad
+@pytest.mark.autodiff
 def test_autodiff():
     run_doitgen_autodiff()
 

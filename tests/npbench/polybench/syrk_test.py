@@ -168,7 +168,7 @@ def test_gpu():
     run_syrk(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.ad
+@pytest.mark.autodiff
 def test_autodiff():
     run_syrk_autodiff()
 

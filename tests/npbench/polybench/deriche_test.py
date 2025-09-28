@@ -257,7 +257,7 @@ def test_gpu():
     run_deriche(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.ad
+@pytest.mark.autodiff
 def test_autodiff():
     run_deriche_autodiff()
 

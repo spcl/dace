@@ -128,7 +128,7 @@ def test_gpu():
     run_trisolv(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.ad
+@pytest.mark.autodiff
 def test_autodiff():
     run_trisolv_autodiff()
 

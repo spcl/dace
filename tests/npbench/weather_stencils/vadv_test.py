@@ -352,7 +352,7 @@ def test_gpu():
     run_vadv(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.ad
+@pytest.mark.autodiff
 def test_autodiff():
     run_vadv_autodiff()
 

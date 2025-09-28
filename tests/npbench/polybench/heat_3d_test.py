@@ -167,7 +167,7 @@ def test_gpu():
     run_heat_3d(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.ad
+@pytest.mark.autodiff
 def test_autodiff():
     run_heat_3d_autodiff()
 

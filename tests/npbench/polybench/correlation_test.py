@@ -144,7 +144,7 @@ def test_gpu():
     run_correlation(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.ad
+@pytest.mark.autodiff
 def test_autodiff():
     run_correlation_autodiff()
 

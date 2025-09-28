@@ -181,7 +181,7 @@ def test_gpu():
     run_durbin(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.ad
+@pytest.mark.autodiff
 def test_autodiff():
     run_durbin_autodiff()
 
