@@ -16,8 +16,7 @@ import dace.libraries.onnx as donnx
 from dace.testing import torch_tensors_close, get_data_file
 
 
-@pytest.mark.cpublas
-def test_bert_full(default_implementation, sdfg_name):
+def test_bert_full(sdfg_name):
     bert_tiny_root = 'http://spclstorage.inf.ethz.ch/~rauscho/bert-tiny'
     get_data_file(bert_tiny_root + "/config.json", directory_name='bert-tiny')
     vocab = get_data_file(bert_tiny_root + "/vocab.txt", directory_name='bert-tiny')

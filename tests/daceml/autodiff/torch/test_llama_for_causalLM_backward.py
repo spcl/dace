@@ -55,7 +55,6 @@ class LlamaWrapper(nn.Module):
         return logits
 
 
-@pytest.mark.cpublas
 @pytest.mark.long
 def test_llama_model_backward(sdfg_name):
     # Create a small LLaMA configuration

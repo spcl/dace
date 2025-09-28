@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 from transformers import LlamaForCausalLM, LlamaConfig
 from dace.frontend.python.module import DaceModule
-from dace.testing import copy_to_gpu, torch_tensors_close
+from dace.testing import torch_tensors_close
 
 
 class LlamaWrapper(nn.Module):
@@ -55,9 +55,8 @@ class LlamaWrapper(nn.Module):
         return logits
 
 
-@pytest.mark.cpublas
-@pytest.mark.skip()
-def test_llama_model(gpu, sdfg_name):
+@pytest.mark.long
+def test_llama_model(sdfg_name):
     # Create a small LLaMA configuration
     config = LlamaConfig(
         vocab_size=32000,
@@ -81,11 +80,11 @@ def test_llama_model(gpu, sdfg_name):
     export_seq_length = 32
     export_batch_size = 2
     export_input = torch.randint(3, config.vocab_size, (export_batch_size, export_seq_length), dtype=torch.long)
-    export_input = copy_to_gpu(gpu, export_input)
+    export_input = export_input
 
     wrapped_model = LlamaWrapper(model)
     wrapped_model.eval()
-    wrapped_model = copy_to_gpu(gpu, wrapped_model)
+    wrapped_model = wrapped_model
     dace_model = DaceModule(wrapped_model, sdfg_name=sdfg_name)
 
     with torch.no_grad():
@@ -95,4 +94,4 @@ def test_llama_model(gpu, sdfg_name):
 
 
 if __name__ == "__main__":
-    test_llama_model(gpu=False, sdfg_name="llama_test")
+    test_llama_model(sdfg_name="llama_test")

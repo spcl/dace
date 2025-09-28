@@ -8,7 +8,7 @@ import dace
 from dace.frontend.python.module import DaceModule
 
 
-def test_conv2d(default_implementation, sdfg_name, use_cpp_dispatcher):
+def test_conv2d(sdfg_name, use_cpp_dispatcher):
 
     class Model(nn.Module):
 

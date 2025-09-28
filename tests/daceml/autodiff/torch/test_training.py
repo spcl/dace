@@ -80,7 +80,6 @@ def test_mnist(sdfg_name):
     training_step(dace_model, model, (images, labels), sdfg_name)
 
 
-@pytest.mark.cpublas
 @pytest.mark.skip(reason="Requires pure implementation of expand")
 def test_bert(sdfg_name):
     batch_size = 2

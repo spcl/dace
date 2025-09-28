@@ -58,23 +58,6 @@ def test_matmul_expansion(a_shape, b_shape, sdfg_name):
     assert_allclose(expected_result, result)
 
 
-@pytest.mark.gpu
-def test_cast_scalar_on_gpu():
-    to_int = converters.typeclass_to_onnx_tensor_type_int(dace.float32)
-
-    @dace.program
-    def cast_scalar_on_gpu(inp: dace.float64):
-        output = dace.define_local_scalar(dace.float32)
-        donnx.ONNXCast(input=inp, output=output, to=to_int)
-        output_unsqueeze = dace.define_local([1], dace.float32)
-        output_unsqueeze[0] = output
-        return output_unsqueeze
-
-    sdfg = cast_scalar_on_gpu.to_sdfg()
-    result = sdfg(inp=2)
-    assert result[0] == 2
-
-
 def test_cast_int_to_float(sdfg_name):
     sdfg = dace.SDFG(sdfg_name)
 
@@ -409,7 +392,7 @@ def test_sum_arrays(input_desc, sdfg_name):
     assert_allclose(result, np_result)
 
 
-def test_shape(gpu):
+def test_shape():
 
     @dace.program
     def shape(inp: dace.float64[9, 5, 3]):
@@ -426,7 +409,7 @@ def test_shape(gpu):
     assert_allclose(result, [9, 5, 3]), result
 
 
-def test_gather_onnx_1(gpu):
+def test_gather_onnx_1():
     # gather in ONNX operators.md
     @dace.program
     def gather(inp: dace.float64[3, 2], indices: dace.int64[2, 2]):
@@ -444,7 +427,7 @@ def test_gather_onnx_1(gpu):
     assert_allclose(result, data[indices])
 
 
-def test_gather_bert(gpu):
+def test_gather_bert():
     # gather found at start of bert model
     @dace.program
     def gather(embs: dace.float64[64, 8], input_ids: dace.int64[8, 16]):
@@ -462,7 +445,7 @@ def test_gather_bert(gpu):
     assert_allclose(result, embs[input_ids])
 
 
-def test_gather_scalar(gpu):
+def test_gather_scalar():
     # gather test 2 in BERT model (third last op)
     @dace.program
     def gather(inp: dace.float64[1, 8, 32], indices: dace.int64):
@@ -482,7 +465,7 @@ def test_gather_scalar(gpu):
     assert_allclose(result, np_result)
 
 
-def test_gather_onnx_2(gpu):
+def test_gather_onnx_2():
     # gather test 2 in ONNX operators.md
     @dace.program
     def gather(inp: dace.float64[3, 3], indices: dace.int64[1, 2]):
@@ -506,7 +489,7 @@ def test_gather_onnx_2(gpu):
     assert_allclose(result, np_result)
 
 
-def test_unsqueeze(gpu):
+def test_unsqueeze():
 
     @dace.program
     def unsqueeze(inp: dace.float64[3, 3]):

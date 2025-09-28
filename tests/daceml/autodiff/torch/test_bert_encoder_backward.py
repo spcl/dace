@@ -8,7 +8,6 @@ from dace.frontend.python.module import DaceModule
 from dace.testing import torch_tensors_close
 
 
-@pytest.mark.cpublas
 @pytest.mark.long
 def test_bert_encoder_backward(sdfg_name):
     batch_size = 2

@@ -49,8 +49,7 @@ def test_skip_input_grads(sdfg_name, use_cpp_dispatcher):
     # check that fc1.grad is being computed
     dace_output.backward(dy)
     pt_output.backward(dy)
-    torch_tensors_close("param_grad", pt_module.fc1.grad,
-                        dace_module.model.fc1.grad)
+    torch_tensors_close("param_grad", pt_module.fc1.grad, dace_module.model.fc1.grad)
 
     # make sure that input grad is not being computed
     assert len(dace_module.backward_sdfg.node(0).sink_nodes()) == 1

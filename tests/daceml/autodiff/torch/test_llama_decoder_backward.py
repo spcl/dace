@@ -37,7 +37,6 @@ class LlamaDecoderLayerWrapper(nn.Module):
         return outputs[0]
 
 
-@pytest.mark.cpublas
 def test_llama_decoder_backward(sdfg_name):
     # Create configuration
     config = LlamaConfig(
