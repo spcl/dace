@@ -59,7 +59,6 @@ def add_memlet_read(substate: SDFGState, var_name: str, tasklet: Tasklet, dest_c
     if not found:
         src = substate.add_read(var_name)
 
-    # src = substate.add_access(var_name)
     if memlet_range != "":
         substate.add_memlet_path(src, tasklet, dst_conn=dest_conn, memlet=Memlet(expr=var_name, subset=memlet_range))
     else:
@@ -77,7 +76,6 @@ def add_memlet_write(substate: SDFGState, var_name: str, tasklet: Tasklet, sourc
                 break
     if not found:
         dst = substate.add_write(var_name)
-    # dst = substate.add_write(var_name)
     if memlet_range != "":
         substate.add_memlet_path(tasklet, dst, src_conn=source_conn, memlet=Memlet(expr=var_name, subset=memlet_range))
     else:
@@ -183,8 +181,7 @@ class TaskletWriter:
     def pardecl2string(self, node: ast_internal_classes.ParDecl_Node):
         # At this point in the process, the should not be any ParDecl nodes left in the AST - they should have been replaced by the appropriate ranges
         return '0'
-        #raise NameError("Error in code generation")
-        return f"ERROR{node.type}"
+        
 
     def actualarg2string(self, node: ast_internal_classes.Actual_Arg_Spec_Node):
         return self.write_code(node.arg)
@@ -214,8 +211,7 @@ class TaskletWriter:
             if text is None:
                 raise NameError("Error in code generation")
             if "ERRORALL" in text and self.depth == 1:
-                print(text)
-                #raise NameError("Error in code generation")
+                raise NameError("Error in code generation")
             self.depth -= 1
             return text
         elif isinstance(node, int):
