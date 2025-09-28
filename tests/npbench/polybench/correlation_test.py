@@ -122,7 +122,7 @@ def run_correlation_autodiff():
 
     # Add the backward pass to the SDFG
     sdfg = autodiff_kernel.to_sdfg()
-    add_backward_pass(sdfg=sdfg, inputs=["data"], outputs=["__return"], autooptimize=True)
+    add_backward_pass(sdfg=sdfg, inputs=["data"], outputs=["__return"])
     sdfg(float_n, data, M=M, N=N, gradient_data=gradient_data, gradient___return=gradient___return)
 
     # Enable float64 support

@@ -116,7 +116,7 @@ def run_atax_autodiff():
 
     # Add the backward pass to the SDFG
     sdfg = autodiff_kernel.to_sdfg()
-    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"], autooptimize=True)
+    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"])
     sdfg(A, x, M=M, N=N, gradient_A=gradient_A, gradient___return=gradient___return)
 
     # Numerically validate vs JAX

@@ -148,13 +148,13 @@ def run_fdtd_2d_autodiff():
 
     # Define sum reduction for the output using __return pattern
     @dc.program
-    def autodiff_kernel(ex: dc.float32[NX, NY], ey: dc.float32[NX, NY], hz: dc.float32[NX, NY],
-                        _fict_: dc.float32[TMAX]):
+    def fdtd_2d_autodiff_kernel(ex: dc.float32[NX, NY], ey: dc.float32[NX, NY], hz: dc.float32[NX, NY],
+                                _fict_: dc.float32[TMAX]):
         kernel(ex, ey, hz, _fict_)
         return np.sum(hz)
 
     # Add the backward pass to the SDFG
-    sdfg = autodiff_kernel.to_sdfg()
+    sdfg = fdtd_2d_autodiff_kernel.to_sdfg()
     add_backward_pass(sdfg=sdfg, inputs=["ex"], outputs=["__return"])
     sdfg(ex, ey, hz, _fict_, TMAX=TMAX, NX=NX, NY=NY, gradient_ex=gradient_ex, gradient___return=gradient___return)
 

@@ -3,18 +3,16 @@ import typing
 from dace.autodiff.backward_pass_generator import BackwardPassGenerator
 
 from dace.sdfg import SDFG, nodes
-from dace.autodiff.optimize_backward_pass_generator import autooptimize_sdfgs_for_ad, preprocess_fwd_sdfg, fuse_states_cav
 from dace.sdfg.utils import inline_control_flow_regions
 from dace.sdfg.state import LoopRegion
 
 
 def add_backward_pass(sdfg: SDFG,
-                      outputs: typing.List[typing.Union[nodes.AccessNode,
-                                                        str]],
+                      outputs: typing.List[typing.Union[nodes.AccessNode, str]],
                       inputs: typing.List[typing.Union[nodes.AccessNode, str]],
                       overwite_strategy: str = "store_all",
                       data_to_recompute: typing.List[str] = None,
-                      autooptimize: bool = False,
+                      simplify: bool = True,
                       seprate_sdfgs=False):
     """ Experimental: Add a backward pass to `state` using reverse-mode automatic differentiation.
 
@@ -44,10 +42,6 @@ def add_backward_pass(sdfg: SDFG,
     # Validate SDFG
     sdfg.validate()
 
-    # preprocess the SDFG
-    if "go_fast" in sdfg.name:
-        preprocess_fwd_sdfg(sdfg)
-
     # Simplify and validate
     sdfg.validate()
     sdfg.simplify()
@@ -68,9 +62,11 @@ def add_backward_pass(sdfg: SDFG,
                                 overwrite_strategy=overwite_strategy,
                                 data_to_recompute=data_to_recompute)
     gen.backward()
-    if autooptimize:
-        autooptimize_sdfgs_for_ad(gen)
     sdfg.validate()
+
+    if simplify:
+        sdfg.simplify()
+        sdfg.validate()
 
     if seprate_sdfgs:
         return backward_sdfg

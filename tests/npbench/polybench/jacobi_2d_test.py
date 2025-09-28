@@ -111,12 +111,12 @@ def run_jacobi_2d_autodiff():
 
     # Define sum reduction for the output
     @dc.program
-    def autodiff_kernel(TSTEPS: dc.int32, A: dc.float32[N, N], B: dc.float32[N, N]):
+    def jacobi_2d_autodiff_kernel(TSTEPS: dc.int32, A: dc.float32[N, N], B: dc.float32[N, N]):
         kernel(TSTEPS, A, B)
         return np.sum(A)
 
     # Add the backward pass to the SDFG
-    sdfg = autodiff_kernel.to_sdfg()
+    sdfg = jacobi_2d_autodiff_kernel.to_sdfg()
     add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"])
     sdfg(TSTEPS, A, B, gradient_A=gradient_A, gradient___return=gradient___return)
 

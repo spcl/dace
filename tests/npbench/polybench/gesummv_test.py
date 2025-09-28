@@ -94,7 +94,7 @@ def run_gesummv_autodiff():
 
     # Add the backward pass to the SDFG
     sdfg = autodiff_kernel.to_sdfg()
-    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"], autooptimize=True)
+    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"])
     sdfg(alpha, beta, A, B, x, N=N, gradient_A=gradient_A, gradient___return=gradient___return)
 
     # Enable float64 support

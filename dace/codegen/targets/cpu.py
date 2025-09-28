@@ -966,9 +966,6 @@ class CPUCodeGen(TargetCodeGenerator):
                 vec_prefix = 'v'
                 vec_suffix = f'<{dtype.veclen}>'
                 dtype = dtype.base_type
-        if 'reduce' in sdfg.name and '_out' in memlet.data and memlet.wcr is not None and isinstance(memlet.wcr, str) and memlet.wcr == '(lambda a, b: max(a, b))':
-            atomic = ""
-            print("forcing atomic")
         func = f'{vec_prefix}reduce{atomic}{vec_suffix}'
 
         # Special call for detected reduction types

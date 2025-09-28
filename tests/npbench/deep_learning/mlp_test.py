@@ -157,7 +157,7 @@ def run_mlp_autodiff():
 
     # Add the backward pass to the SDFG
     sdfg = autodiff_kernel.to_sdfg()
-    add_backward_pass(sdfg=sdfg, inputs=["input"], outputs=["__return"], autooptimize=True)
+    add_backward_pass(sdfg=sdfg, inputs=["input"], outputs=["__return"])
 
     sdfg(input,
          w1,

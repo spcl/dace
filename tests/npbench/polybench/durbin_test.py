@@ -159,7 +159,7 @@ def run_durbin_autodiff():
 
     # Add the backward pass to the SDFG
     sdfg = autodiff_kernel.to_sdfg()
-    add_backward_pass(sdfg=sdfg, inputs=["r"], outputs=["__return"])
+    add_backward_pass(sdfg=sdfg, inputs=["r"], outputs=["__return"], simplify=False)
     sdfg(r, N=N, gradient_r=gradient_r, gradient___return=gradient___return)
 
     # Enable float64 support

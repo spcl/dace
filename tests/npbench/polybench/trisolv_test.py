@@ -106,7 +106,7 @@ def run_trisolv_autodiff():
 
     # Add the backward pass to the SDFG
     sdfg = autodiff_kernel.to_sdfg()
-    add_backward_pass(sdfg=sdfg, inputs=["L"], outputs=["__return"], autooptimize=True)
+    add_backward_pass(sdfg=sdfg, inputs=["L"], outputs=["__return"])
     sdfg(L, x, np.copy(b), N=N, gradient_L=gradient_L, gradient___return=gradient___return)
 
     # Enable float64 support

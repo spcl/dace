@@ -99,7 +99,7 @@ def run_softmax_autodiff():
 
     # Add the backward pass to the SDFG
     sdfg = softmax_autodiff_kernel.to_sdfg()
-    add_backward_pass(sdfg=sdfg, inputs=["x"], outputs=["__return"], autooptimize=True)
+    add_backward_pass(sdfg=sdfg, inputs=["x"], outputs=["__return"])
     sdfg(x, out, N=N, H=H, SM=SM, gradient_x=gradient_x, gradient___return=gradient___return)
 
     # Numerically validate vs JAX
