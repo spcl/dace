@@ -1557,26 +1557,18 @@ class AST_translator:
             for i in assigns:
                 self.translate(i, new_sdfg, new_sdfg)
             self.translate(node.execution_part, new_sdfg, new_sdfg)
-            # import copy
-            #
+            
             new_sdfg.reset_cfg_list()
-            # new_sdfg.validate()
-            # tmp_sdfg=copy.deepcopy(new_sdfg)
             new_sdfg.apply_transformations_repeated(IntrinsicSDFGTransformation)
-            # from dace.transformation.dataflow import RemoveSliceView
-            # new_sdfg.apply_transformations_repeated([RemoveSliceView])
             from dace.transformation.passes.lift_struct_views import LiftStructViews
             from dace.transformation.pass_pipeline import FixedPointPipeline
             FixedPointPipeline([LiftStructViews()]).apply_pass(new_sdfg, {})
-            # new_sdfg.validate()
-            # tmp_sdfg=copy.deepcopy(new_sdfg)
+            
             new_sdfg.simplify(verbose=True)
-            # new_sdfg.validate()
-            # sdfg.validate()
-
+            
         if self.multiple_sdfgs == True:
             internal_sdfg.path = self.sdfg_path + new_sdfg.name + ".sdfg"
-            # new_sdfg.save(path.join(self.sdfg_path, new_sdfg.name + ".sdfg"))
+            
 
     def compute_array_shape(self, node: ast_internal_classes.Array_Subscript_Node, sdfg: SDFG, array: dat.Array):
         """
@@ -3129,9 +3121,7 @@ def run_ast_transformations(own_ast: ast_components.InternalFortranAst,
     functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
     functions_and_subroutines_builder.visit(program)
 
-    # program = ast_transforms.StructConstructorToFunctionCall(
-    #    ast_transforms.FindFunctionAndSubroutines.from_node(program).names).visit(program)
-    # program = ast_transforms.CallToArray(ast_transforms.FindFunctionAndSubroutines.from_node(program)).visit(program)
+   
     program = ast_transforms.IfConditionExtractor().visit(program)
     program = ast_transforms.WhileConditionExtractor().visit(program)
     program = ast_transforms.CallExtractor(program).visit(program)
@@ -3202,7 +3192,6 @@ def run_ast_transformations(own_ast: ast_components.InternalFortranAst,
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
     program = ast_transforms.optionalArgsExpander(program)
-    # program = ast_transforms.ParDeclOffsetNormalizer(program).visit(program)
     program = ast_transforms.AllocatableReplacerTransformer(program).visit(program)
     program = ast_transforms.ParDeclOffsetNormalizer(program).visit(program)
 
@@ -3233,7 +3222,6 @@ def run_ast_transformations(own_ast: ast_components.InternalFortranAst,
                     i, cycle[(cycle.index(i) + 1) % len(cycle)], point_name)
                 actually_used_pointer_node_finder.visit(program)
                 if len(actually_used_pointer_node_finder.nodes) == 0:
-                    print("We can ignore this cycle")
                     program = ast_transforms.StructPointerEliminator(i, cycle[(cycle.index(i) + 1) % len(cycle)],
                                                                      point_name).visit(program)
                 else:
@@ -3242,7 +3230,6 @@ def run_ast_transformations(own_ast: ast_components.InternalFortranAst,
         raise NameError("Structs have cyclic dependencies")
 
     # TODO: `ArgumentPruner` does not cleanly remove arguments -> disable until fixed.
-    # Check before rerunning CloudSC
     # ast_transforms.ArgumentPruner(functions_and_subroutines_builder.nodes).visit(program)
 
     # TODO: Enable permanently after the tests pass.
