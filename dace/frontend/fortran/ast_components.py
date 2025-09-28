@@ -128,6 +128,8 @@ class InternalFortranAst:
             "INTEGER": "INTEGER",
             "INTEGER4": "INTEGER",
             "INTEGER8": "INTEGER8",
+            "INTEGER2": "INTEGER2",
+            "INTEGER1": "INTEGER1",
             "REAL4": "REAL",
             "REAL8": "DOUBLE",
             "DOUBLE PRECISION": "DOUBLE",
@@ -382,7 +384,6 @@ class InternalFortranAst:
                 self.unsupported_fortran_syntax[self.current_ast].append(type(node).__name__)
         for i in node.children:
             self.create_ast(i)
-        print("Unsupported syntax: ", type(node).__name__, node.string)
         return None
 
     def finalize_ast(self, prog: Program_Node):
@@ -1122,16 +1123,13 @@ class InternalFortranAst:
                                 if kind == "4":
                                     basetype = "INTEGER"
                                 elif kind == "1":
-                                    # TODO: support for 1 byte integers /chars would be useful
-                                    basetype = "INTEGER"
+                                    basetype = "INTEGER1"
 
                                 elif kind == "2":
-                                    # TODO: support for 2 byte integers would be useful
-                                    basetype = "INTEGER"
+                                    basetype = "INTEGER2"
 
                                 elif kind == "8":
-                                    # TODO: support for 8 byte integers would be useful
-                                    basetype = "INTEGER"
+                                    basetype = "INTEGER8"
                                 else:
                                     raise TypeError("Integer kind not supported")
                             else:
@@ -1551,8 +1549,7 @@ class InternalFortranAst:
         line = get_line(node)
         cond = children[0]
         body = children[1:]
-        # !THIS IS HACK
-        body = [i for i in body if i is not None]
+
         return ast_internal_classes.If_Stmt_Node(cond=cond,
                                                  body=ast_internal_classes.Execution_Part_Node(execution=body),
                                                  body_else=ast_internal_classes.Execution_Part_Node(execution=[]),

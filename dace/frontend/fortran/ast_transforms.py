@@ -190,7 +190,6 @@ class Flatten_Classes(NodeTransformer):
 
     def visit_Subroutine_Subprogram_Node(self, node: ast_internal_classes.Subroutine_Subprogram_Node):
         node: ast_internal_classes.Subroutine_Subprogram_Node = self.generic_visit(node)
-        print("Subroutine: ", node.name.name)
         if not self.current_class:
             return node
         for i in self.classes:
@@ -670,7 +669,7 @@ class CallToArray(NodeTransformer):
                             module = k
                             original_one = original_name
                             node.name.name = original_name
-                            print(f"Found {name} in {module} with original name {original_one}")
+                            
                             break
                     elif isinstance(replacement_names, list):
                         for repl in replacement_names:
@@ -679,7 +678,6 @@ class CallToArray(NodeTransformer):
                                 module = k
                                 original_one = original_name
                                 node.name.name = original_name
-                                print(f"Found in list {name} in {module} with original name {original_one}")
                                 break
                     else:
                         raise ValueError(f"Invalid type {type(replacement_names)} for {replacement_names}")
@@ -1018,7 +1016,7 @@ class CallExtractorNodeLister(NodeVisitor):
 
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
         if not stop and node.name.name not in [
-                "malloc", "pow", "cbrt", "__dace_epsilon", *FortranIntrinsics.call_extraction_exemptions()
+                "__dace_epsilon", *FortranIntrinsics.call_extraction_exemptions()
         ]:
             self.nodes.append(node)
         # return self.generic_visit(node)
@@ -2296,9 +2294,9 @@ class ElementalFunctionExpander(NodeTransformer):
                 sizes = None
                 for i in self.func_list:
                     if child.name.name == i.name or child.name.name == i.name + "_srt":
-                        print("F: " + child.name.name)
+                        
                         if hasattr(i, "elemental"):
-                            print("El: " + str(i.elemental))
+                            
                             if i.elemental is True:
                                 if len(child.args) > 0:
                                     for j in child.args:
@@ -2955,11 +2953,11 @@ class IfEvaluator(NodeTransformer):
             return self.generic_visit(node)
 
         if evaluated == sp.true:
-            print("Expr: " + text + " eval to True replace")
+            
             self.replacements += 1
             return node.body
         elif evaluated == sp.false:
-            print("Expr: " + text + " eval to False replace")
+            
             self.replacements += 1
             return node.body_else
 

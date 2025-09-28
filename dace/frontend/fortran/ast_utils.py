@@ -28,6 +28,8 @@ fortrantypes2dacetypes = {
     "DOUBLE": dtypes.float64,
     "REAL": dtypes.float32,
     "INTEGER": dtypes.int32,
+    "INTEGER1": dtypes.int8,
+    "INTEGER2": dtypes.int16, 
     "INTEGER8": dtypes.int64,
     "CHAR": dtypes.int8,
     "LOGICAL": dtypes.int32,  # This is a hack to allow fortran to pass through external C
