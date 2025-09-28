@@ -540,14 +540,6 @@ def register_and_compile_torch_extension(module: 'dace.frontend.python.module.Da
         sources.append(code_path_bwd)
     dace_include_path_onnx = os.path.abspath(
         os.path.join(os.path.dirname(dace.__file__), "libraries", "onnx", "include"))
-    onnxruntime_include_path = []
-    onnxruntime_lib_path = []
-    onnxruntime_lib_name = []
-    ort_release_path = os.getenv('ORT_RELEASE')
-    if ort_release_path:
-        onnxruntime_include_path.append(os.path.abspath(os.path.join(ort_release_path, "include")))
-        onnxruntime_lib_path.append(os.path.abspath(os.path.join(ort_release_path, "lib")))
-        onnxruntime_lib_name.append("onnxruntime")
     dace_include_path_blas = os.path.abspath(
         os.path.join(os.path.dirname(dace.__file__), "libraries", "blas", "include"))
     conda_lib_path = os.path.abspath(os.getenv("CONDA_PREFIX") + "/lib")
@@ -556,13 +548,14 @@ def register_and_compile_torch_extension(module: 'dace.frontend.python.module.Da
         sources=sources,
         extra_cflags=["-g"],
         extra_include_paths=[
-            include_path, include_path_bwd, dace_include_path, dace_include_path_blas, dace_include_path_onnx,
-            *onnxruntime_include_path
+            include_path,
+            include_path_bwd,
+            dace_include_path,
+            dace_include_path_blas,
+            dace_include_path_onnx,
         ],
         extra_ldflags=[
             f'-L{conda_lib_path}',
-            *[f'-L{lib_path}' for lib_path in onnxruntime_lib_path],
-            *[f'-l{lib_name}' for lib_name in onnxruntime_lib_name],
             '-lcblas',
         ],
         is_python_module=False,

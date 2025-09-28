@@ -7,7 +7,6 @@ from efficientnet_pytorch import get_model_params
 from efficientnet_pytorch.model import MBConvBlock
 
 import dace.libraries.onnx as donnx
-from dace.libraries.onnx.op_implementations.cudnn_implementations import CudnnConvolution
 from dace.frontend.python.module import DaceModule
 from dace.testing import torch_tensors_close
 
@@ -35,8 +34,6 @@ def test_mbconv(use_cpp_dispatcher):
                                                             torch_model.state_dict().items()):
         assert dace_name == torch_name
         torch_tensors_close(dace_name, value, dace_value)
-
-    CudnnConvolution.default_algorithm = "gemm"
 
     dace_output = dace_model(dace_inputs)
 
@@ -76,19 +73,6 @@ def test_fast_mb(use_cpp_dispatcher):
                                                             torch_model.state_dict().items()):
         assert dace_name == torch_name
         torch_tensors_close(dace_name, value, dace_value)
-
-    CudnnConvolution.default_algorithm = "gemm"
-
-    convs = ["Conv_81", "Conv_86", "Conv_89", "Conv_92"]
-
-    def set_impls_fuse_conv(module: DaceModule):
-        for state in module.sdfg.nodes():
-            for n in state.nodes():
-                if isinstance(n, donnx.ONNXConv):
-                    if n.label == "Conv_92":
-                        n.implementation = "pure"
-
-    dace_model.prepend_post_onnx_hook("high_level", set_impls_fuse_conv)
 
     def fuse_everything(module: DaceModule):
         sdfg = module.sdfg
