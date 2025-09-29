@@ -29,7 +29,7 @@ fortrantypes2dacetypes = {
     "REAL": dtypes.float32,
     "INTEGER": dtypes.int32,
     "INTEGER1": dtypes.int8,
-    "INTEGER2": dtypes.int16, 
+    "INTEGER2": dtypes.int16,
     "INTEGER8": dtypes.int64,
     "CHAR": dtypes.int8,
     "LOGICAL": dtypes.int32,  # This is a hack to allow fortran to pass through external C
@@ -181,7 +181,6 @@ class TaskletWriter:
     def pardecl2string(self, node: ast_internal_classes.ParDecl_Node):
         # At this point in the process, the should not be any ParDecl nodes left in the AST - they should have been replaced by the appropriate ranges
         return '0'
-        
 
     def actualarg2string(self, node: ast_internal_classes.Actual_Arg_Spec_Node):
         return self.write_code(node.arg)

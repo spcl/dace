@@ -1557,18 +1557,17 @@ class AST_translator:
             for i in assigns:
                 self.translate(i, new_sdfg, new_sdfg)
             self.translate(node.execution_part, new_sdfg, new_sdfg)
-            
+
             new_sdfg.reset_cfg_list()
             new_sdfg.apply_transformations_repeated(IntrinsicSDFGTransformation)
             from dace.transformation.passes.lift_struct_views import LiftStructViews
             from dace.transformation.pass_pipeline import FixedPointPipeline
             FixedPointPipeline([LiftStructViews()]).apply_pass(new_sdfg, {})
-            
+
             new_sdfg.simplify(verbose=True)
-            
+
         if self.multiple_sdfgs == True:
             internal_sdfg.path = self.sdfg_path + new_sdfg.name + ".sdfg"
-            
 
     def compute_array_shape(self, node: ast_internal_classes.Array_Subscript_Node, sdfg: SDFG, array: dat.Array):
         """
@@ -3121,7 +3120,6 @@ def run_ast_transformations(own_ast: ast_components.InternalFortranAst,
     functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
     functions_and_subroutines_builder.visit(program)
 
-   
     program = ast_transforms.IfConditionExtractor().visit(program)
     program = ast_transforms.WhileConditionExtractor().visit(program)
     program = ast_transforms.CallExtractor(program).visit(program)
