@@ -1,22 +1,60 @@
-import typing
+"""
+DaCe Library Node Backward Pass Implementations for Automatic Differentiation.
 
+This module provides backward pass implementations for DaCe standard library nodes
+in the automatic differentiation system. Each class implements the BackwardImplementation
+interface to compute gradients for specific library operations during reverse-mode
+automatic differentiation.
+
+The implementations handle various library nodes including:
+- Reduction operations (Sum, Max, Min)
+- View operations and memory layout transformations
+- Standard computational patterns
+"""
+
+import copy
+import typing
+from typing import List, Optional, Tuple
+
+# DaCe core imports
+import dace
 import dace.dtypes as dtypes
 import dace.libraries.standard.nodes
 from dace import SDFGState, SDFG, Memlet
+from dace.sdfg.nodes import Node
+
+# DaCe frontend imports
 from dace.frontend.operations import detect_reduction_type
 from dace.registry import autoregister_params
-from dace.sdfg.nodes import Node
-import copy
+
+# Autodiff imports
 from dace.autodiff.base_abc import BackwardImplementation, BackwardContext, BackwardResult, AutoDiffException
+
+# Utility imports
 from dace.util import in_desc_with_name, out_desc_with_name, out_edge_with_name
 
-@autoregister_params(node_type=dace.libraries.standard.nodes.Reduce,
-                     name="pure")
+@autoregister_params(node_type=dace.libraries.standard.nodes.Reduce, name="pure")
 class ReverseReduce(BackwardImplementation):
+    """Backward implementation for DaCe Reduce library nodes.
+
+    Supports Sum, Max, and Min reduction operations. The backward pass distributes
+    gradients appropriately based on the reduction type:
+    - Sum: Broadcasts gradients uniformly across reduced dimensions
+    - Max/Min: Routes gradients only to positions that achieved the extremal value
+    """
 
     @staticmethod
-    def backward_can_be_applied(node: Node, state: SDFGState,
-                                sdfg: SDFG) -> bool:
+    def backward_can_be_applied(node: Node, state: SDFGState, sdfg: SDFG) -> bool:
+        """Check if backward pass can be applied to this reduction node.
+
+        Args:
+            node: The reduction node to check
+            state: The SDFG state containing the node (unused but required by interface)
+            sdfg: The SDFG containing the state (unused but required by interface)
+
+        Returns:
+            True if backward pass can be applied, False otherwise
+        """
         reduction_type = detect_reduction_type(node.wcr)
         if reduction_type not in (dtypes.ReductionType.Sum,
                                   dtypes.ReductionType.Max,
@@ -35,13 +73,15 @@ class ReverseReduce(BackwardImplementation):
 
         if len(given_gradients) != 1:
             raise AutoDiffException(
-                "recieved invalid SDFG: reduce node {} should have exactly one output edge"
-                .format(forward_node))
+                f"Invalid SDFG: reduce node {forward_node} should have exactly one output edge, "
+                f"got {len(given_gradients)} output gradients"
+            )
 
         if len(required_gradients) != 1:
             raise AutoDiffException(
-                "recieved invalid SDFG: reduce node {} should have exactly one input edge"
-                .format(forward_node))
+                f"Invalid SDFG: reduce node {forward_node} should have exactly one input edge, "
+                f"got {len(required_gradients)} input gradients"
+            )
 
         input_name = next(iter(required_gradients))
         in_desc = in_desc_with_name(forward_node, context.forward_state,
@@ -77,14 +117,14 @@ class ReverseReduce(BackwardImplementation):
             result.given_grad_names[input_name] = rev_input_conn_name
 
             # It is important to add the strides in the case of accesses to a view where the shape is not enough
-            _, rev_input_arr = sdfg.add_array(rev_input_conn_name,
-                                              shape=out_desc.shape,
-                                              dtype=out_desc.dtype,
-                                              strides=out_desc.strides)
-            _, rev_output_arr = sdfg.add_array(rev_output_conn_name,
-                                               shape=in_desc.shape,
-                                               dtype=in_desc.dtype,
-                                               strides=in_desc.strides)
+            sdfg.add_array(rev_input_conn_name,
+                          shape=out_desc.shape,
+                          dtype=out_desc.dtype,
+                          strides=out_desc.strides)
+            sdfg.add_array(rev_output_conn_name,
+                          shape=in_desc.shape,
+                          dtype=in_desc.dtype,
+                          strides=in_desc.strides)
 
             # Make sure the output is set to zero
             reduce_all_axes = forward_node.axes is None or set(
@@ -111,11 +151,13 @@ class ReverseReduce(BackwardImplementation):
                 external_edges=True)
 
             # Get the output AccessNode and setzero
-            out_eges = state.out_edges(exit_map)
-            assert len(out_eges) == 1
-            out_edge = out_eges[0]
+            out_edges = state.out_edges(exit_map)
+            if len(out_edges) != 1:
+                raise AutoDiffException(f"Expected exactly one output edge from map exit, got {len(out_edges)}")
+            out_edge = out_edges[0]
             out_node = out_edge.dst
-            assert isinstance(out_node, dace.nodes.AccessNode)
+            if not isinstance(out_node, dace.nodes.AccessNode):
+                raise AutoDiffException(f"Expected AccessNode as output, got {type(out_node)}")
             out_node.setzero = True
             return context.backward_state.add_nested_sdfg(
                 sdfg, {rev_input_conn_name},
@@ -153,15 +195,15 @@ class ReverseReduce(BackwardImplementation):
                                                strides=in_desc.strides)
 
             # Get the forwarded data descriptors for the max operation and add them to the new SDFG
-            _, max_desc = sdfg.add_array(max_conn_name,
-                                         shape=out_desc.shape,
-                                         dtype=out_desc.dtype,
-                                         strides=out_desc.strides)
+            sdfg.add_array(max_conn_name,
+                          shape=out_desc.shape,
+                          dtype=out_desc.dtype,
+                          strides=out_desc.strides)
 
-            _, max_idx_desc = sdfg.add_array(max_idx_conn_name,
-                                             shape=in_desc.shape,
-                                             dtype=in_desc.dtype,
-                                             strides=in_desc.strides)
+            sdfg.add_array(max_idx_conn_name,
+                          shape=in_desc.shape,
+                          dtype=in_desc.dtype,
+                          strides=in_desc.strides)
 
             reduce_all_axes = forward_node.axes is None or set(
                 range(len(in_desc.shape))) == set(forward_node.axes)
@@ -171,7 +213,7 @@ class ReverseReduce(BackwardImplementation):
                 rev_input_conn_name,
                 "0" if reduce_all_axes else ",".join("i" + str(i)
                                                      for i in non_reduce_axes))
-            reverse_reduction_memelt = Memlet.simple(
+            reverse_reduction_memlet = Memlet.simple(
                 rev_output_conn_name,
                 ",".join("i" + str(i) for i in all_axes),
                 wcr_str="lambda x, y: x + y")
@@ -193,7 +235,7 @@ class ReverseReduce(BackwardImplementation):
                     "__max_val": max_val_memlet,
                     "__max_val_idx": max_val_index_memlet
                 },
-                tasklet_code, {"__out": reverse_reduction_memelt},
+                tasklet_code, {"__out": reverse_reduction_memlet},
                 external_edges=True)
 
             # Add the nested SDFG to the backward state
@@ -203,20 +245,24 @@ class ReverseReduce(BackwardImplementation):
                 {rev_output_conn_name})
 
             # Get the output AccessNode and setzero
-            out_eges = state.out_edges(exit_map)
-            assert len(out_eges) == 1
-            out_edge = out_eges[0]
+            out_edges = state.out_edges(exit_map)
+            if len(out_edges) != 1:
+                raise AutoDiffException(f"Expected exactly one output edge from map exit, got {len(out_edges)}")
+            out_edge = out_edges[0]
             out_node = out_edge.dst
-            assert isinstance(out_node, dace.nodes.AccessNode)
+            if not isinstance(out_node, dace.nodes.AccessNode):
+                raise AutoDiffException(f"Expected AccessNode as output, got {type(out_node)}")
             out_node.setzero = True
 
             # We need to manually add the required inputs here
             backward_state = context.backward_state
             fwd_in_edges = context.forward_state.in_edges(forward_node)
-            assert len(fwd_in_edges) == 1
+            if len(fwd_in_edges) != 1:
+                raise AutoDiffException(f"Expected exactly one input edge to forward node, got {len(fwd_in_edges)}")
             fwd_in_edge = fwd_in_edges[0]
             fwd_in_node = fwd_in_edge.src
-            assert isinstance(fwd_in_node, dace.nodes.AccessNode)
+            if not isinstance(fwd_in_node, dace.nodes.AccessNode):
+                raise AutoDiffException(f"Expected AccessNode as input source, got {type(fwd_in_node)}")
             bwd_read = backward_state.add_read(fwd_in_node.data)
             backward_state.add_edge(bwd_read, None, nsdfg, max_idx_conn_name,
                                     copy.deepcopy(fwd_in_edge.data))
@@ -225,14 +271,16 @@ class ReverseReduce(BackwardImplementation):
                           (dace.data.View, dace.data.ArrayView)):
                 # Get incoming edge
                 in_edge = context.forward_state.in_edges(fwd_in_node)
-                assert len(in_edge) == 1
+                if len(in_edge) != 1:
+                    raise AutoDiffException(f"Expected exactly one input edge to view node, got {len(in_edge)}")
                 in_edge = in_edge[0]
                 in_node = in_edge.src
                 if isinstance(in_node, dace.nodes.AccessNode):
-                    # Make sure this is not a view iteself
-                    assert not isinstance(
+                    # Make sure this is not a view itself
+                    if isinstance(
                         context.forward_sdfg.arrays[in_node.data],
-                        (dace.data.View, dace.data.ArrayView))
+                        (dace.data.View, dace.data.ArrayView)):
+                        raise AutoDiffException(f"Nested views are not supported: {in_node.data}")
                     # Add the read node
                     bwd_in_read = backward_state.add_read(in_node.data)
                     # Add the edge
@@ -241,24 +289,27 @@ class ReverseReduce(BackwardImplementation):
                                             copy.deepcopy(in_edge.data))
 
             fwd_out_edges = context.forward_state.out_edges(forward_node)
-            assert len(fwd_out_edges) == 1
+            if len(fwd_out_edges) != 1:
+                raise AutoDiffException(f"Expected exactly one output edge from forward node, got {len(fwd_out_edges)}")
             fwd_out_edge = fwd_out_edges[0]
             fwd_out_node = fwd_out_edge.dst
-            assert isinstance(fwd_out_node, dace.nodes.AccessNode)
+            if not isinstance(fwd_out_node, dace.nodes.AccessNode):
+                raise AutoDiffException(f"Expected AccessNode as output destination, got {type(fwd_out_node)}")
             bwd_out_read = backward_state.add_read(fwd_out_node.data)
             backward_state.add_edge(bwd_out_read, None, nsdfg, max_conn_name,
                                     copy.deepcopy(fwd_out_edge.data))
-            # avoid ambigous views
+            # avoid ambiguous views
             # if this is a view
             if isinstance(context.forward_sdfg.arrays[fwd_out_node.data],
                           (dace.data.View, dace.data.ArrayView)):
                 # Get incoming edge
                 out_edge = context.forward_state.out_edges(fwd_out_node)
-                assert len(out_edge) == 1
+                if len(out_edge) != 1:
+                    raise AutoDiffException(f"Expected exactly one output edge from view node, got {len(out_edge)}")
                 out_edge = out_edge[0]
                 out_node = out_edge.dst
                 if isinstance(out_node, dace.nodes.AccessNode):
-                    # Make sure this is not a view iteself
+                    # Make sure this is not a view itself
                     assert not isinstance(
                         context.forward_sdfg.arrays[out_node.data],
                         (dace.data.View, dace.data.ArrayView))
@@ -300,15 +351,15 @@ class ReverseReduce(BackwardImplementation):
                                                strides=in_desc.strides)
 
             # Get the forwarded data descriptors for the min operation and add them to the new SDFG
-            _, min_desc = sdfg.add_array(min_conn_name,
-                                         shape=out_desc.shape,
-                                         dtype=out_desc.dtype,
-                                         strides=out_desc.strides)
+            sdfg.add_array(min_conn_name,
+                          shape=out_desc.shape,
+                          dtype=out_desc.dtype,
+                          strides=out_desc.strides)
 
-            _, min_idx_desc = sdfg.add_array(min_idx_conn_name,
-                                             shape=in_desc.shape,
-                                             dtype=in_desc.dtype,
-                                             strides=in_desc.strides)
+            sdfg.add_array(min_idx_conn_name,
+                          shape=in_desc.shape,
+                          dtype=in_desc.dtype,
+                          strides=in_desc.strides)
 
             reduce_all_axes = forward_node.axes is None or set(
                 range(len(in_desc.shape))) == set(forward_node.axes)
@@ -318,7 +369,7 @@ class ReverseReduce(BackwardImplementation):
                 rev_input_conn_name,
                 "0" if reduce_all_axes else ",".join("i" + str(i)
                                                      for i in non_reduce_axes))
-            reverse_reduction_memelt = Memlet.simple(
+            reverse_reduction_memlet = Memlet.simple(
                 rev_output_conn_name,
                 ",".join("i" + str(i) for i in all_axes),
                 wcr_str="lambda x, y: x + y")
@@ -340,7 +391,7 @@ class ReverseReduce(BackwardImplementation):
                     "__min_val": min_val_memlet,
                     "__min_val_idx": min_val_index_memlet
                 },
-                tasklet_code, {"__out": reverse_reduction_memelt},
+                tasklet_code, {"__out": reverse_reduction_memlet},
                 external_edges=True)
 
             # Add the nested SDFG to the backward state
@@ -350,20 +401,24 @@ class ReverseReduce(BackwardImplementation):
                 {rev_output_conn_name})
 
             # Get the output AccessNode and setzero
-            out_eges = state.out_edges(exit_map)
-            assert len(out_eges) == 1
-            out_edge = out_eges[0]
+            out_edges = state.out_edges(exit_map)
+            if len(out_edges) != 1:
+                raise AutoDiffException(f"Expected exactly one output edge from map exit, got {len(out_edges)}")
+            out_edge = out_edges[0]
             out_node = out_edge.dst
-            assert isinstance(out_node, dace.nodes.AccessNode)
+            if not isinstance(out_node, dace.nodes.AccessNode):
+                raise AutoDiffException(f"Expected AccessNode as output, got {type(out_node)}")
             out_node.setzero = True
 
             # We need to manually add the required inputs here
             backward_state = context.backward_state
             fwd_in_edges = context.forward_state.in_edges(forward_node)
-            assert len(fwd_in_edges) == 1
+            if len(fwd_in_edges) != 1:
+                raise AutoDiffException(f"Expected exactly one input edge to forward node, got {len(fwd_in_edges)}")
             fwd_in_edge = fwd_in_edges[0]
             fwd_in_node = fwd_in_edge.src
-            assert isinstance(fwd_in_node, dace.nodes.AccessNode)
+            if not isinstance(fwd_in_node, dace.nodes.AccessNode):
+                raise AutoDiffException(f"Expected AccessNode as input source, got {type(fwd_in_node)}")
             bwd_read = backward_state.add_read(fwd_in_node.data)
             backward_state.add_edge(bwd_read, None, nsdfg, min_idx_conn_name,
                                     copy.deepcopy(fwd_in_edge.data))
@@ -372,14 +427,16 @@ class ReverseReduce(BackwardImplementation):
                           (dace.data.View, dace.data.ArrayView)):
                 # Get incoming edge
                 in_edge = context.forward_state.in_edges(fwd_in_node)
-                assert len(in_edge) == 1
+                if len(in_edge) != 1:
+                    raise AutoDiffException(f"Expected exactly one input edge to view node, got {len(in_edge)}")
                 in_edge = in_edge[0]
                 in_node = in_edge.src
                 if isinstance(in_node, dace.nodes.AccessNode):
-                    # Make sure this is not a view iteself
-                    assert not isinstance(
+                    # Make sure this is not a view itself
+                    if isinstance(
                         context.forward_sdfg.arrays[in_node.data],
-                        (dace.data.View, dace.data.ArrayView))
+                        (dace.data.View, dace.data.ArrayView)):
+                        raise AutoDiffException(f"Nested views are not supported: {in_node.data}")
                     # Add the read node
                     bwd_in_read = backward_state.add_read(in_node.data)
                     # Add the edge
@@ -388,24 +445,27 @@ class ReverseReduce(BackwardImplementation):
                                             copy.deepcopy(in_edge.data))
 
             fwd_out_edges = context.forward_state.out_edges(forward_node)
-            assert len(fwd_out_edges) == 1
+            if len(fwd_out_edges) != 1:
+                raise AutoDiffException(f"Expected exactly one output edge from forward node, got {len(fwd_out_edges)}")
             fwd_out_edge = fwd_out_edges[0]
             fwd_out_node = fwd_out_edge.dst
-            assert isinstance(fwd_out_node, dace.nodes.AccessNode)
+            if not isinstance(fwd_out_node, dace.nodes.AccessNode):
+                raise AutoDiffException(f"Expected AccessNode as output destination, got {type(fwd_out_node)}")
             bwd_out_read = backward_state.add_read(fwd_out_node.data)
             backward_state.add_edge(bwd_out_read, None, nsdfg, min_conn_name,
                                     copy.deepcopy(fwd_out_edge.data))
-            # avoid ambigous views
+            # avoid ambiguous views
             # if this is a view
             if isinstance(context.forward_sdfg.arrays[fwd_out_node.data],
                           (dace.data.View, dace.data.ArrayView)):
                 # Get incoming edge
                 out_edge = context.forward_state.out_edges(fwd_out_node)
-                assert len(out_edge) == 1
+                if len(out_edge) != 1:
+                    raise AutoDiffException(f"Expected exactly one output edge from view node, got {len(out_edge)}")
                 out_edge = out_edge[0]
                 out_node = out_edge.dst
                 if isinstance(out_node, dace.nodes.AccessNode):
-                    # Make sure this is not a view iteself
+                    # Make sure this is not a view itself
                     assert not isinstance(
                         context.forward_sdfg.arrays[out_node.data],
                         (dace.data.View, dace.data.ArrayView))
@@ -419,16 +479,33 @@ class ReverseReduce(BackwardImplementation):
             return nsdfg, result
         else:
             raise AutoDiffException(
-                "Unsupported reduction type '{}'".format(reduction_type))
+                f"Unsupported reduction type '{reduction_type}'. "
+                f"Supported types: Sum, Max, Min"
+            )
 
 
-@autoregister_params(node_type=dace.libraries.standard.nodes.Reduce,
-                     name="pure")
+# TODO: This class is largely redundant with ReverseReduce and should be consolidated
+# The registration conflicts with ReverseReduce (both use name="pure")
+@autoregister_params(node_type=dace.libraries.standard.nodes.Reduce, name="max_only")
 class ReverseReduceMax(BackwardImplementation):
+    """Specialized backward implementation for Max reduction only.
+
+    NOTE: This class duplicates functionality from ReverseReduce and should be
+    consolidated. It only supports Sum reduction despite the class name suggesting Max.
+    """
 
     @staticmethod
-    def backward_can_be_applied(node: Node, state: SDFGState,
-                                sdfg: SDFG) -> bool:
+    def backward_can_be_applied(node: Node, state: SDFGState, sdfg: SDFG) -> bool:
+        """Check if backward pass can be applied to this max reduction node.
+
+        Args:
+            node: The reduction node to check
+            state: The SDFG state containing the node (unused but required by interface)
+            sdfg: The SDFG containing the state (unused but required by interface)
+
+        Returns:
+            True if node is a Max reduction, False otherwise
+        """
         reduction_type = detect_reduction_type(node.wcr)
         if reduction_type is not dtypes.ReductionType.Max:
             return False
@@ -436,21 +513,41 @@ class ReverseReduceMax(BackwardImplementation):
 
     @staticmethod
     def backward(
-        forward_node: Node, context: BackwardContext,
+        forward_node: Node,
+        context: BackwardContext,
         given_gradients: typing.List[typing.Optional[str]],
         required_gradients: typing.List[typing.Optional[str]]
     ) -> typing.Tuple[Node, BackwardResult]:
+        """Compute the backward pass for a max reduction node.
+
+        NOTE: Despite the class name, this currently only implements Sum reduction.
+        This is likely a bug or incomplete implementation.
+
+        Args:
+            forward_node: The forward reduction node
+            context: Backward pass context information
+            given_gradients: Output gradient names from forward pass
+            required_gradients: Input gradient names to compute
+
+        Returns:
+            Tuple of (backward node, BackwardResult with gradient mappings)
+
+        Raises:
+            AutoDiffException: If unsupported reduction type or invalid graph structure
+        """
         reduction_type = detect_reduction_type(forward_node.wcr)
 
         if len(given_gradients) != 1:
             raise AutoDiffException(
-                "recieved invalid SDFG: reduce node {} should have exactly one output edge"
-                .format(forward_node))
+                f"Invalid SDFG: reduce node {forward_node} should have exactly one output edge, "
+                f"got {len(given_gradients)} output gradients"
+            )
 
         if len(required_gradients) != 1:
             raise AutoDiffException(
-                "recieved invalid SDFG: reduce node {} should have exactly one input edge"
-                .format(forward_node))
+                f"Invalid SDFG: reduce node {forward_node} should have exactly one input edge, "
+                f"got {len(required_gradients)} input gradients"
+            )
 
         input_name = next(iter(required_gradients))
         in_desc = in_desc_with_name(forward_node, context.forward_state,
@@ -486,14 +583,14 @@ class ReverseReduceMax(BackwardImplementation):
             result.given_grad_names[input_name] = rev_input_conn_name
 
             # It is important to add the strides in the case of accesses to a view where the shape is not enough
-            _, rev_input_arr = sdfg.add_array(rev_input_conn_name,
-                                              shape=out_desc.shape,
-                                              dtype=out_desc.dtype,
-                                              strides=out_desc.strides)
-            _, rev_output_arr = sdfg.add_array(rev_output_conn_name,
-                                               shape=in_desc.shape,
-                                               dtype=in_desc.dtype,
-                                               strides=in_desc.strides)
+            sdfg.add_array(rev_input_conn_name,
+                          shape=out_desc.shape,
+                          dtype=out_desc.dtype,
+                          strides=out_desc.strides)
+            sdfg.add_array(rev_output_conn_name,
+                          shape=in_desc.shape,
+                          dtype=in_desc.dtype,
+                          strides=in_desc.strides)
             # Make sure the output is set to zero
             reduce_all_axes = forward_node.axes is None or set(
                 range(len(in_desc.shape))) == set(forward_node.axes)
@@ -519,15 +616,19 @@ class ReverseReduceMax(BackwardImplementation):
                 external_edges=True)
 
             # Get the output AccessNode and setzero
-            out_eges = state.out_edges(exit_map)
-            assert len(out_eges) == 1
-            out_edge = out_eges[0]
+            out_edges = state.out_edges(exit_map)
+            if len(out_edges) != 1:
+                raise AutoDiffException(f"Expected exactly one output edge from map exit, got {len(out_edges)}")
+            out_edge = out_edges[0]
             out_node = out_edge.dst
-            assert isinstance(out_node, dace.nodes.AccessNode)
+            if not isinstance(out_node, dace.nodes.AccessNode):
+                raise AutoDiffException(f"Expected AccessNode as output, got {type(out_node)}")
             out_node.setzero = True
             return context.backward_state.add_nested_sdfg(
                 sdfg, {rev_input_conn_name},
                 {rev_output_conn_name}), result
         else:
             raise AutoDiffException(
-                "Unsupported reduction type '{}'".format(reduction_type))
+                f"Unsupported reduction type '{reduction_type}'. "
+                f"Supported types: Sum, Max, Min"
+            )

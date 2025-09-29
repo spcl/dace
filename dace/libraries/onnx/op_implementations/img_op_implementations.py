@@ -13,11 +13,6 @@ from dace.libraries.onnx.forward_implementation_abc import ONNXForward
 from dace.libraries.onnx.nodes.onnx_op import ONNXOp
 from dace.libraries.onnx.op_implementations.utils import op_implementation, program_for_node
 from dace.util import in_desc_with_name, out_desc_with_name, in_edge_with_name, out_edge_with_name
-from dace.libraries.onnx.op_implementations.utils import python_pure_op_implementation
-
-
-def _2d_sliding_window_index_expr(x_or_y, stride, pad, kernel_size):
-    return f"out_{x_or_y} * {stride} + h{x_or_y} - {pad}"
 
 
 def _prod(sequence):
@@ -26,9 +21,20 @@ def _prod(sequence):
 
 @op_implementation(op="MaxPool", name="pure")
 class PureMaxPool2D(ONNXForward):
+    """Pure implementation of 2D MaxPool operation."""
 
     @staticmethod
     def forward_can_be_applied(node: ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
+        """Check if this implementation can be applied to the given node.
+        
+        Args:
+            node: The MaxPool ONNX node
+            state: The SDFG state containing the node
+            sdfg: The parent SDFG
+            
+        Returns:
+            True if the implementation can be applied, False otherwise
+        """
         X = in_desc_with_name(node, state, sdfg, "X")
 
         if "Indices" in {e.src_conn for e in state.out_edges(node)}:
@@ -36,7 +42,7 @@ class PureMaxPool2D(ONNXForward):
 
         image_dims = len(X.shape) - 2
 
-        # only do 2D for now
+        # Only do 2D for now
         if image_dims != 2:
             return False
 
@@ -59,6 +65,16 @@ class PureMaxPool2D(ONNXForward):
 
     @staticmethod
     def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[nodes.Node, SDFG]:
+        """Generate the forward pass implementation for MaxPool2D.
+        
+        Args:
+            node: The MaxPool ONNX node
+            state: The SDFG state containing the node
+            sdfg: The parent SDFG
+            
+        Returns:
+            A nested SDFG implementing the MaxPool operation
+        """
         X = in_desc_with_name(node, state, sdfg, "X")
         Y = out_desc_with_name(node, state, sdfg, "Y")
 
@@ -137,11 +153,20 @@ class PureMaxPool2D(ONNXForward):
 
 @op_implementation(op="Conv", name="pure")
 class PureConv2D(ONNXForward):
-    """ Convolution implementation with support for grouped and depthwise convolutions.
-    """
+    """Convolution implementation with support for grouped and depthwise convolutions."""
 
     @staticmethod
     def forward_can_be_applied(node: ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
+        """Check if this implementation can be applied to the given node.
+        
+        Args:
+            node: The Conv ONNX node
+            state: The SDFG state containing the node
+            sdfg: The parent SDFG
+            
+        Returns:
+            True if the implementation can be applied, False otherwise
+        """
         X = in_desc_with_name(node, state, sdfg, "X")
         W = in_desc_with_name(node, state, sdfg, "W")
         try:
@@ -157,7 +182,7 @@ class PureConv2D(ONNXForward):
                 or W.dtype not in [dace.float16, dace.float32, dace.float64]):
             return False
 
-        # only do 2D for now
+        # Only do 2D for now
         if len(X.shape) != 4 or len(W.shape) != 4:
             return False
 
@@ -197,6 +222,16 @@ class PureConv2D(ONNXForward):
 
     @staticmethod
     def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[nodes.Node, SDFG]:
+        """Generate the forward pass implementation for Conv2D.
+        
+        Args:
+            node: The Conv ONNX node
+            state: The SDFG state containing the node
+            sdfg: The parent SDFG
+            
+        Returns:
+            A nested SDFG implementing the Conv operation
+        """
         X = in_desc_with_name(node, state, sdfg, "X")
         W = in_desc_with_name(node, state, sdfg, "W")
         Y = out_desc_with_name(node, state, sdfg, "Y")
@@ -265,7 +300,7 @@ class PureConv2D(ONNXForward):
             }}
         }}
         ''' if B is not None else f'''
-        // Zero initialize output
+        // Zero-initialize output
         for (int b = 0; b < {batch_size}; b++) {{
             for (int m = 0; m < {num_filters}; m++) {{
                 for (int out_x = 0; out_x < {output_size_x}; out_x++) {{
@@ -346,9 +381,20 @@ class PureConv2D(ONNXForward):
 
 @op_implementation(op="BatchNormalization", name="pure")
 class PureBatchNormalization(ONNXForward):
+    """Pure implementation of BatchNormalization operation."""
 
     @staticmethod
     def forward_can_be_applied(node: ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
+        """Check if this implementation can be applied to the given node.
+        
+        Args:
+            node: The BatchNormalization ONNX node
+            state: The SDFG state containing the node
+            sdfg: The parent SDFG
+            
+        Returns:
+            True if the implementation can be applied, False otherwise
+        """
         X = in_desc_with_name(node, state, sdfg, "X")
         if len(X.shape) != 4:
             return False
@@ -371,6 +417,16 @@ class PureBatchNormalization(ONNXForward):
 
     @staticmethod
     def forward(node: ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[nodes.Node, SDFG]:
+        """Generate the forward pass implementation for BatchNormalization.
+        
+        Args:
+            node: The BatchNormalization ONNX node
+            state: The SDFG state containing the node
+            sdfg: The parent SDFG
+            
+        Returns:
+            A nested SDFG implementing the BatchNormalization operation
+        """
         shape = copy.deepcopy(in_desc_with_name(node, state, sdfg, "X").shape)
         reduce_axes = list(shape)
         num_channels = reduce_axes.pop(1)
@@ -390,9 +446,9 @@ class PureBatchNormalization(ONNXForward):
             node.training_mode = False
 
         if node.training_mode:
-            # TRAINING: compute batch stats + update running stats (EMA like PyTorch)
+            # TRAINING: compute batch statistics and update running statistics (EMA like PyTorch)
             def prog(input_mean, scale, input_var, B, X, Y, running_mean, running_var):
-                # batch mean, var over axis=(0,2,3) for NCHW (your `axis`/`N` already set)
+                # Batch mean, variance over axis=(0,2,3) for NCHW (your `axis`/`N` already set)
                 batch_mean = np.add.reduce(X, axis=axis) / N
 
                 batch_mean_broadcastable = dace.define_local(broadcast_shape, dtype)
@@ -416,7 +472,7 @@ class PureBatchNormalization(ONNXForward):
 
             new_sdfg = program_for_node(prog, sdfg, state, node)
 
-            # keep your “write-back” edges as-is
+            # Keep your "write-back" edges as-is
             new_state = sdfg.add_state_after(sdfg.nodes()[0])
             rm_name = out_edge_with_name(node, state, "running_mean").data.data
             new_state.add_edge(new_state.add_read(rm_name), None,
@@ -427,7 +483,7 @@ class PureBatchNormalization(ONNXForward):
                                new_state.add_read(in_edge_with_name(node, state, "input_var").data.data), None,
                                sdfg.make_array_memlet(rv_name))
         else:
-            # EVAL: use provided running stats; DO NOT recompute mean/var
+            # EVAL: use provided running statistics; DO NOT recompute mean/var
             def prog(input_mean, scale, input_var, B, X, Y):
                 mean_b = dace.define_local(broadcast_shape, dtype)
                 var_b = dace.define_local(broadcast_shape, dtype)
@@ -449,13 +505,34 @@ class PureBatchNormalization(ONNXForward):
 
 @op_implementation(op="GlobalAveragePool", name="pure")
 class PureGlobalAveragePool(ONNXForward):
+    """Pure implementation of GlobalAveragePool operation."""
 
     @staticmethod
     def forward_can_be_applied(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> bool:
+        """Check if this implementation can be applied to the given node.
+        
+        Args:
+            node: The GlobalAveragePool ONNX node
+            state: The SDFG state containing the node
+            sdfg: The parent SDFG
+            
+        Returns:
+            Always True for this implementation
+        """
         return True
 
     @staticmethod
     def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+        """Generate the forward pass implementation for GlobalAveragePool.
+        
+        Args:
+            node: The GlobalAveragePool ONNX node
+            state: The SDFG state containing the node
+            sdfg: The parent SDFG
+            
+        Returns:
+            A nested SDFG implementing the GlobalAveragePool operation
+        """
         from dace.libraries.onnx.nodes.onnx_op_registry import ONNXReduceMean
 
         # Get input and output descriptors

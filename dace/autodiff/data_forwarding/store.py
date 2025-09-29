@@ -494,7 +494,7 @@ def _get_assign_tasklet(forward_state: SDFGState,
     forward_state.add_node(assign_tasklet_node)
 
     # Connect it to the last map entry node
-    # Create the memlet for the assignement
+    # Create the memlet for the assignment
     # This will be the same as the memlet going to the tasklet
     assign_memlet_data = copy.deepcopy(last_edge.data)
     assign_block = assign_tasklet_node
@@ -527,7 +527,7 @@ def _get_assign_tasklet(forward_state: SDFGState,
                 param_dict.update({free_symbol: element})
 
         # Create the map and add it to the SDFG
-        map = nodes.Map("flatten_assignement_map",
+        map = nodes.Map("flatten_assignment_map",
                         params=list(param_dict.keys()),
                         ndrange=list(param_dict.values()),
                         schedule=dtypes.ScheduleType.GPU_Device if cuda else dtypes.ScheduleType.Default)

@@ -29,16 +29,19 @@ log = logging.getLogger(__name__)
 
 
 def _get_typecons_docstring(cons: ONNXTypeConstraint) -> str:
+    """Generate documentation string for type constraints."""
     return "    * **{}** -- {}".format(cons.type_str,
                                        ", ".join(":class:`{}`".format(t.to_string()) for t in cons.types))
 
 
 def _get_connector_docstring(param: ONNXParameter) -> str:
+    """Generate documentation string for connectors."""
     return "    * **{}** ({}, {}) -- {}".format(param.name, param.type_str, param.param_type.name.lower(),
                                                 param.description)
 
 
 def _get_attr_docstring(attr: ONNXAttribute) -> str:
+    """Generate documentation string for attributes."""
     param_doc = ":param {}: {}".format(attr.name, attr.description)
 
     if attr.attribute_type is ONNXAttributeType.Unsupported:
@@ -63,6 +66,7 @@ def _get_attr_docstring(attr: ONNXAttribute) -> str:
 
 
 def _get_all_schemas():
+    """Get all ONNX schemas with version history."""
     name_to_schemas = collections.defaultdict(list)
     for schema in onnx.defs.get_all_schemas_with_history():
         name_to_schemas[schema.name].append(schema)
@@ -75,11 +79,12 @@ def _get_all_schemas():
 
 
 def register_op_repo_replacement(cls: Type[onnx_op.ONNXOp], cls_name: str, dace_schema: ONNXSchema):
+    """Register an op repository replacement for the given ONNX operation class."""
 
     @dace_op_repo.replaces("dace.libraries.onnx.{}".format(cls_name))
     def op_repo_replacement(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, **kwargs):
         attrs = {name: value for name, value in kwargs.items() if name in dace_schema.attributes}
-        # remove used attrs
+        # Remove used attrs
         kwargs = {k: v for k, v in kwargs.items() if k not in attrs}
 
         onnx_node = cls(name=cls_name, **attrs)
@@ -114,7 +119,7 @@ def register_op_repo_replacement(cls: Type[onnx_op.ONNXOp], cls_name: str, dace_
         if len(kwargs) > 0:
             raise TypeError(f"Unknown arguments {', '.join(kwargs)}")
 
-        # Remove all non_string attributes
+        # Remove all non-string attributes
         # Sometimes constants are passed as inputs, but they do not require AccessNodes
         # so we add them first as attributes to the node
         for inp, arr_name in inputs.items():
@@ -141,7 +146,7 @@ _ONNX_OPS = {}
 for schema in _get_all_schemas():
     try:
         dace_schema = ONNXSchema.from_onnx_proto(schema)
-        # if the schema has a parameter name that exists as both an input and an output, prepend "in_" and "out_"
+        # If the schema has a parameter name that exists as both an input and an output, prepend "in_" and "out_"
         intersecting_names = set(i.name for i in dace_schema.inputs).intersection(o.name for o in dace_schema.outputs)
         for name in intersecting_names:
             in_cands = [i for i in dace_schema.inputs if i.name == name]
@@ -155,7 +160,7 @@ for schema in _get_all_schemas():
         continue
 
     attrs = {}
-    # add properties for each op attribute
+    # Add properties for each op attribute
     for name, attr in dace_schema.attributes.items():
         if attr.attribute_type in [
                 ONNXAttributeType.Int, ONNXAttributeType.String, ONNXAttributeType.Float, ONNXAttributeType.Tensor
@@ -178,7 +183,7 @@ for schema in _get_all_schemas():
         super(onnx_op.ONNXOp, self).__init__(
             name,
             location=location,
-            # add required parameters as in/out connectors, without types for now
+            # Add required parameters as in/out connectors, without types for now
             inputs={
                 inp.name
                 for inp in self.schema.inputs if inp.param_type == ONNXParameterType.Single or (
@@ -216,12 +221,12 @@ for schema in _get_all_schemas():
 
     cls_name = "ONNX" + dace_schema.name
 
-    # the first line of the init docstring contains the signature of the method. This will be picked up by sphinx and
+    # The first line of the init docstring contains the signature of the method. This will be picked up by sphinx and
     # means that the generated sphinx docs have a proper signature, and not just *args, **kwargs.
     init_docstring = "__init__(name, *, {})\n".format(", ".join(attr.name if attr.required else attr.name + "=" +
                                                                 repr(attr.default_value)
                                                                 for _, attr in dace_schema.attributes.items()))
-    init_docstring += ":param name: the name of the node.\n" + "\n".join(
+    init_docstring += ":param name: The name of the node.\n" + "\n".join(
         _get_attr_docstring(attr) for _, attr in dace_schema.attributes.items())
 
     docstring = "\n" + dace_schema.doc
@@ -269,7 +274,7 @@ for schema in _get_all_schemas():
             registered = True
 
     if not registered:
-        # WARNING: no implementation found for this op
+        # WARNING: No implementation found for this op
         cls.default_implementation = None
 
     version = schema.since_version
@@ -291,25 +296,29 @@ for name, ver_to_cls in _ONNX_OPS.items():
 
 
 def has_onnx_node(name: str) -> bool:
-    """ Check if an ONNX operator is supported.
+    """Check if an ONNX operator is supported.
 
-        :param name: the operator name.
+    :param name: The operator name.
+    :return: True if the operator is supported, False otherwise.
     """
     return ("ONNX" + name) in _ONNX_OPS
 
 
 def get_onnx_node(name: str, version: int = -1) -> onnx_op.ONNXOp:
-    """ Get the ONNX Operator node for an operator by name.
+    """Get the ONNX Operator node for an operator by name.
 
-        :param name: the operator name
+    :param name: The operator name.
+    :param version: The version of the operator (-1 for latest).
+    :return: The ONNX operator node class.
+    :raises ValueError: If no version of the operator is found for the given version.
     """
     name_to_versions = list(_ONNX_OPS["ONNX" + name].items())
 
     if version == -1:
-        # take the latest version
+        # Take the latest version
         return name_to_versions[-1][1]
     else:
-        # take the latest version which is less than or equal to the given version
+        # Take the latest version which is less than or equal to the given version
         for ver, cls in reversed(name_to_versions):
             if ver <= version:
                 return cls

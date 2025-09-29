@@ -110,7 +110,7 @@ def _connect_recomputation_nsdfg(bwd_generator: 'BackwardPassGenerator', forward
                                                               replicated_node=new_recomp_node)
 
 
-def _prune_decendants_recomputation_nsdfg(forward_state: SDFGState, target_an: nodes.AccessNode,
+def _prune_descendants_recomputation_nsdfg(forward_state: SDFGState, target_an: nodes.AccessNode,
                                           nsdfg: nodes.NestedSDFG):
     """
     1: From this Nested-SDFG, we remove everything that will be executed after the target access node to be recomputed
@@ -122,19 +122,19 @@ def _prune_decendants_recomputation_nsdfg(forward_state: SDFGState, target_an: n
     # Get the states order for the nested_sdfg
     states_order: List[SDFGState] = ad_utils.get_state_topological_order(nsdfg.sdfg)
     state_index = states_order.index(forward_state)
-    decendant_states: List[SDFGState] = states_order[state_index:]
-    assert decendant_states.pop(0) == forward_state
+    descendant_states: List[SDFGState] = states_order[state_index:]
+    assert descendant_states.pop(0) == forward_state
 
     # Check if the target state is within a loop
     target_within_loop, target_loop = ad_utils.state_within_loop(forward_state)
 
     # We will save the states that are within the same loop because they require special treatement
     same_loop_states: List[SDFGState] = []
-    for state in decendant_states:
-        # We want to avoid removing the decendant states that are inside the same loop region
+    for state in descendant_states:
+        # We want to avoid removing the descendant states that are inside the same loop region
         if target_within_loop:
-            decendant_within_loop, decendant_loop = ad_utils.state_within_loop(state)
-            if decendant_within_loop and decendant_loop == target_loop:
+            descendant_within_loop, descendant_loop = ad_utils.state_within_loop(state)
+            if descendant_within_loop and descendant_loop == target_loop:
                 # If the state is within the same loop, we don't remove it
                 same_loop_states.add(state)
                 continue
@@ -159,15 +159,15 @@ def _prune_decendants_recomputation_nsdfg(forward_state: SDFGState, target_an: n
         pass
     else:
         # If the target state is not within a loop
-        # We remove all the decendant computation from the graph
+        # We remove all the descendant computation from the graph
 
         # Do a reverse bfs to get all the necessary computation
         backward_nodes = {n for e in forward_state.edge_bfs(target_an, reverse=True) for n in [e.src, e.dst]}
 
         # Remove everything else
-        decendant_nodes = set(forward_state.nodes()) - backward_nodes
+        descendant_nodes = set(forward_state.nodes()) - backward_nodes
 
-        for node in decendant_nodes:
+        for node in descendant_nodes:
             if node is not target_an:
                 forward_state.remove_node(node)
 
@@ -181,7 +181,7 @@ def _prune_recomputation_sdfg(forward_state: SDFGState, target_an: nodes.AccessN
     """
 
     # 1 and 2
-    _prune_decendants_recomputation_nsdfg(forward_state=forward_state, target_an=target_an, nsdfg=nsdfg)
+    _prune_descendants_recomputation_nsdfg(forward_state=forward_state, target_an=target_an, nsdfg=nsdfg)
 
 
 def _rename_descriptors_for_recomputation_nsdfg(forward_sdfg: SDFG, nsdfg: nodes.NestedSDFG):
@@ -266,27 +266,27 @@ def get_recomputation_nsdfg(bwd_generator: 'BackwardPassGenerator', forward_stat
 
     # Find the same target node and state in the nsdfg
     nsdfg_forward_state: SDFGState = None
-    nb_occurances = 0
+    nb_occurrences = 0
     for state in nsdfg.sdfg.states():
         if state.label == forward_state.label:
             nsdfg_forward_state = state
-            nb_occurances += 1
+            nb_occurrences += 1
 
     # Sanity check
-    assert nb_occurances == 1
+    assert nb_occurrences == 1
     assert nsdfg_forward_state
 
     # Find the target AccessNode within the state
     nsdfg_target_node: nodes.AccessNode = None
-    nb_occurances = 0
+    nb_occurrences = 0
     for node in nsdfg_forward_state.nodes():
         if isinstance(node, nodes.AccessNode) and node.data == target_an.data and nsdfg_forward_state.node_id(
                 node) == forward_state.node_id(target_an):
             nsdfg_target_node = node
-            nb_occurances += 1
+            nb_occurrences += 1
 
     # Sanity check
-    assert nb_occurances == 1
+    assert nb_occurrences == 1
     assert nsdfg_target_node
 
     _prune_recomputation_sdfg(nsdfg=nsdfg, forward_state=nsdfg_forward_state, target_an=nsdfg_target_node)

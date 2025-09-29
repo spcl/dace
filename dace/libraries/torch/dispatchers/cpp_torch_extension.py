@@ -1,4 +1,4 @@
-""" Code generation for PyTorch C++ dispatched operators. """
+"""Code generation for PyTorch C++ dispatched operators."""
 import copy
 import dataclasses
 import itertools
@@ -30,6 +30,14 @@ _REPLACED_CTYPES = {dace.int64: "int64_t", dace.uint64: "uint64_t", dace.float16
 
 
 def torch_ctype(dtype: dace.typeclass) -> str:
+    """Convert a DaCe type to the corresponding PyTorch C++ type string.
+    
+    Args:
+        dtype: The DaCe typeclass to convert
+        
+    Returns:
+        The corresponding C++ type string for PyTorch
+    """
     if isinstance(dtype, dace.pointer):
         # assuming pointers are 64 bit
         ctype = "int64_t"
@@ -54,6 +62,14 @@ _TYPECLASS_TO_TORCH_DTYPE_STR = {
 
 
 def typeclass_to_torch_cpp_type(type: dace.typeclass) -> str:
+    """Convert a DaCe typeclass to PyTorch C++ tensor type string.
+    
+    Args:
+        type: The DaCe typeclass to convert
+        
+    Returns:
+        The corresponding PyTorch tensor type string (e.g., 'kFloat32')
+    """
     if isinstance(type, dace.pointer):
         # assuming pointers are 64 bit
         return "kInt64"
@@ -62,7 +78,17 @@ def typeclass_to_torch_cpp_type(type: dace.typeclass) -> str:
 
 
 def tensor_init_for_desc(name: str, desc: data.Data, clean_weights: Dict[str, torch.Tensor], zeros=True) -> str:
-    """Emit the initialization code for a descriptor."""
+    """Emit the initialization code for a descriptor.
+    
+    Args:
+        name: The name of the tensor
+        desc: The data descriptor
+        clean_weights: Dictionary of constant weights
+        zeros: Whether to initialize with zeros (True) or empty (False)
+        
+    Returns:
+        C++ code string for tensor initialization
+    """
 
     # Check if name is in clean_weights
     if name in clean_weights:
@@ -112,13 +138,12 @@ def tensor_init_for_desc(name: str, desc: data.Data, clean_weights: Dict[str, to
 
 def initialize_outputs_code(module: 'dace.frontend.python.DaceModule', output_names: List[str],
                             clean_weights: Dict[str, torch.Tensor]) -> str:
-    """ Generate the code that initializes the output tensors
+    """Generate the code that initializes the output tensors.
 
-        :param module: the module
-        :param output_names: the output names of the SDFG.
-        :param backward_arrays: names of array that must be saved for the backward pass. Only required if
-                                generating code for a differentiable function.
-        :return: the code
+    :param module: The module
+    :param output_names: The output names of the SDFG.
+    :param clean_weights: Dictionary of constant weights
+    :return: The code
     """
     arglist = module.sdfg.arglist()
     code = ""
@@ -133,19 +158,19 @@ def argument_codegen(sdfg: dace.SDFG,
                      input_names: List[str],
                      output_names: List[str],
                      guard_contiguous: Optional[List[str]] = None) -> Tuple[str, str, str]:
-    """ Generate the code that grabs the pointers of inputs and outputs.
+    """Generate the code that grabs the pointers of inputs and outputs.
 
-        The names of the tensors will match the SDFG tensor names. Tensors that are not created by us (i.e. inputs)
-        should be named {sdfg_name}_ first, and then .contiguous() will be called on them to yield the tensor that we
-        require. This is the case for all tensors in ``guard_contiguous``.
+    The names of the tensors will match the SDFG tensor names. Tensors that are not created by us (i.e. inputs)
+    should be named {sdfg_name}_ first, and then .contiguous() will be called on them to yield the tensor that we
+    require. This is the case for all tensors in ``guard_contiguous``.
 
-        :param module: the module
-        :param clean_weights: the constant weights of the SDFG.
-        :param input_names: names of inputs to the torch function.
-        :param output_names: names of outputs to the torch function.
-        :param guard_contiguous: a subset of input_names to call .contiguous on. If None, all input names will be
-                                 guarded.
-        :return: the code for initializing the argument, the sdfg arguments in order, and the init call arguments
+    :param sdfg: The SDFG to generate code for
+    :param clean_weights: The constant weights of the SDFG.
+    :param input_names: Names of inputs to the torch function.
+    :param output_names: Names of outputs to the torch function.
+    :param guard_contiguous: A subset of input_names to call .contiguous on. If None, all input names will be
+                             guarded.
+    :return: The code for initializing the argument, the SDFG arguments in order, and the init call arguments
     """
     arglist = sdfg.arglist()
 
@@ -154,8 +179,8 @@ def argument_codegen(sdfg: dace.SDFG,
     assert set(input_names).issubset(arglist.keys()), \
         f"Input names {set(input_names).difference(arglist.keys())} are not SDFG arguments {arglist.keys()}"
 
-    # initialize the inputs and outputs
-    ptr_init_code = "\n// setup input and output pointers\n"
+    # Initialize the inputs and outputs
+    ptr_init_code = "\n// Setup input and output pointers\n"
     for name in sorted(input_names):
         tctype = torch_ctype(arglist[name].dtype)
         dctype = arglist[name].dtype
@@ -182,20 +207,20 @@ def argument_codegen(sdfg: dace.SDFG,
 
     ptr_init_code += '\n'
 
-    # outputs and bwd arrays
+    # Outputs and backward arrays
     ptr_init_code += '\n'.join(
         f"{arglist[name].dtype.ctype} *{name}_ptr = reinterpret_cast<{arglist[name].dtype.ctype}*>"
         f"({name}.data_ptr<{torch_ctype(arglist[name].dtype)}>());" for name in sorted(output_names))
-    ptr_init_code += "\n// setup constant arguments\n"
+    ptr_init_code += "\n// Setup constant arguments\n"
 
     all_access_nodes = set()
     for state in sdfg.nodes():
         all_access_nodes |= set(n.data for n in state.data_nodes())
 
-    # initialize all remaining parameters
+    # Initialize all remaining parameters
     remaining = set(arglist).difference(itertools.chain(input_names, output_names))
     for name in sorted(remaining):
-        # remaining args must be constants
+        # Remaining args must be constants
         if name not in clean_weights:
             raise ValueError(f"Cannot generate PyTorch module C++ code: SDFG argument {name} is not an input or output"
                              f" of the PyTorch Module, and not a constant.")
@@ -210,6 +235,14 @@ def argument_codegen(sdfg: dace.SDFG,
 
 
 def item_to_cpp_literal(item) -> str:
+    """Convert a numpy item to a C++ literal string.
+    
+    Args:
+        item: The numpy item to convert
+        
+    Returns:
+        The C++ literal representation as a string
+    """
     dtype = str(item.dtype)
     if np.isneginf(item):
         return "-std::numeric_limits<float>::infinity()"
@@ -231,6 +264,16 @@ def item_to_cpp_literal(item) -> str:
 
 
 def constant_initializer_code(name: str, desc: data.Data, value) -> str:
+    """Generate C++ code for initializing a constant value.
+    
+    Args:
+        name: The name of the constant
+        desc: The data descriptor
+        value: The constant value
+        
+    Returns:
+        C++ code string for constant initialization
+    """
     gpu_storage = dt.can_access(dt.ScheduleType.GPU_Device, desc.storage)
     gpu_storage = False
     if desc.total_size == 0:
@@ -266,14 +309,39 @@ def constant_initializer_code(name: str, desc: data.Data, value) -> str:
 
 
 def return_type_str(outputs: List[str]) -> str:
+    """Generate the return type string for the given outputs.
+    
+    Args:
+        outputs: List of output names
+        
+    Returns:
+        The C++ return type string
+    """
     return f"""{"Tensor" if len(outputs) == 1 else f"variable_list"}"""
 
 
 def save_non_inputs_outputs(names: List[str]):
+    """Generate code to save non-input/output tensors for backward pass.
+    
+    Args:
+        names: List of tensor names to save
+        
+    Returns:
+        C++ code string for saving tensors
+    """
     return "\n".join(f'ctx->saved_data["{n}"] = {n};' for n in names)
 
 
 def recover_saved_inputs_outputs(saved_inputs_outputs: List[str], other_saved: List[str]):
+    """Generate code to recover saved tensors in backward pass.
+    
+    Args:
+        saved_inputs_outputs: List of saved input/output tensor names
+        other_saved: List of other saved tensor names
+        
+    Returns:
+        C++ code string for recovering saved tensors
+    """
     code = ""
     if saved_inputs_outputs:
         code += "auto saved = ctx->get_saved_variables();\n"
@@ -288,6 +356,17 @@ def recover_saved_inputs_outputs(saved_inputs_outputs: List[str], other_saved: L
 
 def setup_grad_values(backward_result: BackwardResult, sdfg: dace.SDFG, outputs: List[str],
                       clean_weights: Dict[str, torch.Tensor]) -> str:
+    """Generate code to setup gradient values for backward pass.
+    
+    Args:
+        backward_result: The backward pass result containing gradient information
+        sdfg: The SDFG
+        outputs: List of output names
+        clean_weights: Dictionary of constant weights
+        
+    Returns:
+        C++ code string for gradient setup
+    """
     code = "// input grads"
     for param_name, grad_name in sorted(backward_result.required_grad_names.items()):
         zero_init = backward_result.zero_init.get(param_name, True)
@@ -304,6 +383,18 @@ def setup_grad_values(backward_result: BackwardResult, sdfg: dace.SDFG, outputs:
 def code_for_backward_function(module: 'dace.frontend.python.module.DaceModule', forward_sdfg: dace.SDFG,
                                backward_sdfg: dace.SDFG, backward_result: BackwardResult,
                                forwarded_arrays: Dict[str, data.Data]) -> str:
+    """Generate C++ code for a differentiable PyTorch function.
+    
+    Args:
+        module: The DaCe module
+        forward_sdfg: The forward SDFG
+        backward_sdfg: The backward SDFG
+        backward_result: The backward pass result
+        forwarded_arrays: Arrays forwarded from forward to backward pass
+        
+    Returns:
+        Complete C++ code string for the differentiable function
+    """
 
     inputs, outputs = get_arglist(module)
     sdfg_name = forward_sdfg.name
@@ -316,10 +407,10 @@ def code_for_backward_function(module: 'dace.frontend.python.module.DaceModule',
     fwd_ptr_init_code, fwd_sdfg_call_arguments, _ = argument_codegen(forward_sdfg, module.dace_model.clean_weights,
                                                                      inputs, outputs_with_forwarded_outputs)
 
-    # inputs are given_grads + forwarded_outputs
+    # Inputs are given_grads + forwarded_outputs
     bwd_inputs = list(backward_result.given_grad_names.values()) + list(forwarded_arrays)
 
-    # outputs are required grads
+    # Outputs are required grads
     bwd_outputs = list(backward_result.required_grad_names.values())
 
     bwd_ptr_init_code, bwd_sdfg_call_arguments, _ = argument_codegen(backward_sdfg,
@@ -329,7 +420,7 @@ def code_for_backward_function(module: 'dace.frontend.python.module.DaceModule',
                                                                      guard_contiguous=list(
                                                                          backward_result.given_grad_names.values()))
 
-    # saved inputs/outputs
+    # Saved inputs/outputs
     saved_io_for_backward = [n for n in forwarded_arrays if n in inputs or n in outputs]
     other_saved_for_backward = [n for n in forwarded_arrays if n not in inputs and n not in outputs]
     return f"""
@@ -414,10 +505,10 @@ m.impl("{sdfg_name}", {sdfg_name}_autograd);
 
 
 def code_for_module(module: 'dace.frontend.python.module.DaceModule', compiled_sdfg: CompiledSDFG) -> str:
-    """ Generate the code for an operator that calls the sdfgs in the module.
+    """Generate the code for an operator that calls the SDFGs in the module.
 
-        :param module: the module.
-        :param compiled_sdfg: the compiled SDFG.
+    :param module: The module.
+    :param compiled_sdfg: The compiled SDFG.
     """
 
     inputs, outputs = get_arglist(module)
@@ -430,22 +521,22 @@ def code_for_module(module: 'dace.frontend.python.module.DaceModule', compiled_s
     return f"""
 {get_header(compiled_sdfg.sdfg, None, inputs, outputs, module.use_cuda)}
 
-// function definition
+// Function definition
 {ret_str}
 {sdfg_name}(int64_t handle_ptr, {",".join(f"const Tensor& {name}_" for name in inputs)}) {{
 
-    // initialize outputs
+    // Initialize outputs
     {initialize_outputs_code(module, outputs, module.dace_model.clean_weights)}
     
     {ptr_init_code}
 
-    // get SDFG state handle
+    // Get SDFG state handle
     {sdfg_name}Handle_t handle = reinterpret_cast<{sdfg_name}Handle_t>(handle_ptr);
 
-    // call SDFG
+    // Call SDFG
     __program_{sdfg_name}(handle, {sdfg_call_arguments});
 
-    // return to torch
+    // Return to torch
     return {f"{outputs[0]}" if len(outputs) == 1
         else f"{{{', '.join(o for o in outputs)}}}"};
 }}
@@ -457,6 +548,18 @@ TORCH_LIBRARY_IMPL(dace_{sdfg_name}, {'CUDA' if module.use_cuda else 'CPU'}, m) 
 
 
 def get_header(fwd_sdfg: dace.SDFG, bwd_sdfg: Optional[dace.SDFG], inputs, outputs, use_cuda: bool) -> str:
+    """Generate the C++ header code for the PyTorch extension.
+    
+    Args:
+        fwd_sdfg: The forward SDFG
+        bwd_sdfg: The backward SDFG (optional)
+        inputs: List of input names
+        outputs: List of output names
+        use_cuda: Whether CUDA is used
+        
+    Returns:
+        C++ header code string
+    """
     return f"""
 #include <torch/torch.h>
 #include <torch/script.h>
@@ -476,18 +579,18 @@ TORCH_LIBRARY(dace_{fwd_sdfg.name}, m) {{
 
 def register_and_compile_torch_extension(module: 'dace.frontend.python.module.DaceModule',
                                          dummy_inputs) -> DaCeMLTorchFunction:
-    """ Get a torch callable for the module. This will compile the sdfg, compile a PyTorch C++ operator, register it
-        with PyTorch and return the function that calls it.
+    """Get a torch callable for the module. This will compile the SDFG, compile a PyTorch C++ operator, register it
+    with PyTorch and return the function that calls it.
 
-        This function handles code generation for both the forward and backward pass.
+    This function handles code generation for both the forward and backward pass.
 
-        :param module: the module.
-        :param dummy_inputs: dummy inputs to initialize the model with.
-        :return: the callable function for the SDFG.
+    :param module: The module.
+    :param dummy_inputs: Dummy inputs to initialize the model with.
+    :return: The callable function for the SDFG.
     """
 
-    # build the SDFG
-    # set all states to not-sync
+    # Build the SDFG
+    # Set all states to not-sync
     for state in module.sdfg.nodes():
         state.nosync = True
 
@@ -516,7 +619,7 @@ def register_and_compile_torch_extension(module: 'dace.frontend.python.module.Da
     environments.add(get_env_for_sdfg(compiled).full_class_path())
     code = indent_code(code)
 
-    # build the PyTorch module
+    # Build the PyTorch module
     libname = f"torch_{compiled.sdfg.name}"
     program = CodeObject(libname,
                          code,
@@ -568,12 +671,18 @@ def register_and_compile_torch_extension(module: 'dace.frontend.python.module.Da
 
 
 def get_env_for_sdfg(compiled: CompiledSDFG):
-
+    """Create an environment for the given compiled SDFG.
+    
+    Args:
+        compiled: The compiled SDFG
+        
+    Returns:
+        The environment class for the SDFG
+    """
     sdfg_build_path = os.path.abspath(compiled.sdfg.build_folder)
 
     class SDFGEnvironment:
-        """ Environment for the SDFG
-        """
+        """Environment for the SDFG."""
 
         cmake_minimum_version = None
         cmake_packages = []
@@ -595,6 +704,14 @@ def get_env_for_sdfg(compiled: CompiledSDFG):
 
 
 def indent_code(code: str) -> str:
+    """Indent the given code string properly.
+    
+    Args:
+        code: The code string to indent
+        
+    Returns:
+        The indented code string
+    """
     stream = CodeIOStream()
     stream.write(code)
     return stream.getvalue()

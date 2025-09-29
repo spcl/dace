@@ -6,7 +6,7 @@ get around the 64 parameter limit of torch's dispatcher.
 """
 import copy
 import itertools
-from typing import List, Optional, Dict, Tuple
+from typing import List, Dict, Tuple
 
 from dace import data
 import torch
@@ -22,6 +22,20 @@ from dace.util import is_cuda
 
 
 def init_remaining_parameters(module, fwd_arglist, input_names, output_names):
+    """Initialize remaining parameters that are not inputs or outputs.
+
+    Args:
+        module: The DaCe module containing the weights.
+        fwd_arglist: Forward pass argument list.
+        input_names: Names of input tensors.
+        output_names: Names of output tensors.
+
+    Returns:
+        dict: Dictionary of constant parameters.
+
+    Raises:
+        ValueError: If a parameter is neither an input/output nor a constant.
+    """
     # initialize all remaining parameters
     remaining = set(fwd_arglist).difference(itertools.chain(input_names, output_names))
     constants = {}
@@ -38,6 +52,15 @@ def init_remaining_parameters(module, fwd_arglist, input_names, output_names):
 
 
 def callable_for_fwd_module(module: 'dace.frontend.python.module.DaceModule', forward_compiled: CompiledSDFG):
+    """Create a callable for forward pass execution.
+
+    Args:
+        module: The DaCe module containing the model.
+        forward_compiled: Compiled SDFG for forward pass.
+
+    Returns:
+        callable: Function that executes the forward pass.
+    """
     assert forward_compiled._initialized
 
     fwd_arglist = forward_compiled.sdfg.arglist()
@@ -56,7 +79,9 @@ def callable_for_fwd_module(module: 'dace.frontend.python.module.DaceModule', fo
         # initialize the outputs
         for name in output_names:
             output_desc = forward_compiled.sdfg.arrays[name]
-            kwargs[name] = create_output_array({}, output_desc, use_torch=True, zeros=False) if name not in module.dace_model.initialized_parameters else module.dace_model.initialized_parameters[name]
+            kwargs[name] = create_output_array(
+                {}, output_desc, use_torch=True, zeros=False
+            ) if name not in module.dace_model.initialized_parameters else module.dace_model.initialized_parameters[name]
 
         # call the SDFG
         return forward_compiled(**kwargs, **constants)
@@ -122,7 +147,10 @@ def callable_for_bwd_module(module: 'dace.frontend.python.module.DaceModule', fo
             # initialize the outputs
             for name in outputs_with_forwarded_outputs:
                 output_desc = forward_compiled.sdfg.arrays[name]
-                kwargs[name] = create_output_array({}, output_desc, use_torch=True, zeros=True) if name not in module.dace_model.initialized_parameters else module.dace_model.initialized_parameters[name]
+                kwargs[name] = create_output_array(
+                    {}, output_desc, use_torch=True, zeros=True
+                ) if name not in module.dace_model.initialized_parameters else module.dace_model.initialized_parameters[
+                    name]
 
             # call the SDFG
             outputs = forward_compiled(**kwargs, **constants)

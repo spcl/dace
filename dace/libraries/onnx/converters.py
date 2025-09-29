@@ -1,5 +1,21 @@
-import re
+"""
+Type conversion utilities for ONNX-DaCe integration.
+
+This module provides conversion functions between ONNX and DaCe type systems:
+- Converting ONNX protobuf types to DaCe types
+- Converting DaCe types to ONNX representation
+- Handling ONNX AttributeProto conversions
+- Type validation and name sanitization
+
+Key Functions:
+- convert_onnx_proto: Convert ONNX protobuf objects to Python/DaCe types
+- onnx_tensor_type_to_typeclass: Convert ONNX tensor types to DaCe typeclasses
+- typeclass_to_onnx_str: Convert DaCe types to ONNX string representation
+- clean_onnx_name: Sanitize ONNX names for valid DaCe identifiers
+"""
+
 import logging
+import re
 from typing import Union
 
 import onnx
@@ -10,13 +26,29 @@ from onnx.numpy_helper import to_array
 log = logging.getLogger(__name__)
 
 
-def get_proto_attr(proto, name):
-    """ A more safe access method for protobuf. It checks that the name is ASCII (A defensive safeguard against any
-        encoding issues with protobuf: python getattr calls take a string, but protobuf attributes are utf-8), and that
-        the protobuf has the field. Note that the HasField checks might break in proto3, but ONNX doesn't use this yet.
+def get_proto_attr(proto, name: str):
+    """
+    Safely access a protobuf attribute with encoding validation.
+
+    This function provides defensive checks against encoding issues when accessing
+    protobuf attributes. Python's getattr expects strings, but protobuf uses UTF-8.
+
+    Args:
+        proto: The protobuf object to access.
+        name: The attribute name to retrieve (must be ASCII).
+
+    Returns:
+        The value of the requested attribute.
+
+    Raises:
+        ValueError: If the name is not ASCII-encodable.
+
+    Note:
+        HasField checks may break in proto3, but ONNX doesn't use proto3 yet.
     """
 
-    def is_ascii(s):
+    def is_ascii(s: str) -> bool:
+        """Check if a string is ASCII-encodable."""
         try:
             s.encode('ascii')
         except UnicodeEncodeError:
@@ -25,8 +57,10 @@ def get_proto_attr(proto, name):
             return True
 
     if not is_ascii(name):
-        raise ValueError("Attempted to access non-ASCII property name '{}' on protobuf {} (type {})."
-                         " Please open an issue".format(name, proto, type(proto)))
+        raise ValueError(
+            f"Attempted to access non-ASCII property name '{name}' on protobuf {proto} (type {type(proto)}). "
+            "Please open an issue"
+        )
 
     return getattr(proto, name)
 
@@ -192,9 +226,32 @@ def onnx_type_str_to_typeclass(onnx_str) -> Union[typeclass, None]:
 
 
 def clean_onnx_name(name: str) -> str:
-    """Modifies a onnx name that is potentially invalid in dace
-       to make it valid"""
-    # if the first character is a digit, add the ONNX_ prefix
+    """
+    Sanitize an ONNX name to make it a valid DaCe identifier.
+
+    This function transforms ONNX names that may contain invalid characters
+    or patterns into valid DaCe identifiers by:
+    - Prefixing names starting with digits with "ONNX_"
+    - Replacing special characters with their textual equivalents
+
+    Args:
+        name: The ONNX name to sanitize.
+
+    Returns:
+        A valid DaCe identifier based on the ONNX name.
+
+    Examples:
+        >>> clean_onnx_name("123_layer")
+        'ONNX_123_layer'
+        >>> clean_onnx_name("my.tensor:0")
+        'myDOTtensorCOLON0'
+    """
+    # If the first character is a digit, add the ONNX_ prefix
     if re.match("^[0-9]", name):
         name = f"ONNX_{name}"
-    return name.replace(".", "DOT").replace(":", "COLON").replace("/", "SLASH").replace("-", "DASH")
+
+    # Replace special characters with their textual equivalents
+    return (name.replace(".", "DOT")
+                .replace(":", "COLON")
+                .replace("/", "SLASH")
+                .replace("-", "DASH"))

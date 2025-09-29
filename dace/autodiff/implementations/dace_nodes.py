@@ -140,8 +140,8 @@ class DaceNodeBackwardImplementations:
         given_gradients: List[str],
         required_gradients: List[str],
     ) -> Tuple[nodes.Node, BackwardResult]:
-        rev = nodes.AccessNode(self.bwd_engine.array_grad_name(node.data))
 
+        rev = nodes.AccessNode(self.bwd_engine.array_grad_name(node.data))
         # We want all gradient arrays to be initialized to zero
         # This is important for correct gradient accumulation
         rev.setzero = True
@@ -244,7 +244,7 @@ class DaceNodeBackwardImplementations:
         # check if this is a conditional tasklet
         if self.bwd_engine._conditional_tasklet(tasklet):
             # we want to extract the if and else expressions and pass them to sympy
-            if_expression, else_expression, conditional = ad_utils.extract_conitional_expressions(tasklet)
+            if_expression, else_expression, conditional = ad_utils.extract_conditional_expressions(tasklet)
 
             if_code, if_rev_inputs, if_rev_outputs, if_result = self._differentiate_code_symbolically(
                 self.bwd_engine.sdfg, if_expression, state, tasklet, given_gradients, required_gradients)
@@ -326,7 +326,7 @@ class DaceNodeBackwardImplementations:
 
         for output_conn in sorted(given_gradients):
 
-            # special case for conditional tasklets with constant assignement
+            # special case for conditional tasklets with constant assignment
             if len(required_gradients) == 0:
                 # for this we need to assing a zero to the gradient output
                 # pick a name for the input gradient
@@ -351,7 +351,7 @@ class DaceNodeBackwardImplementations:
                     rev_output_grad_name = result.required_grad_names[inp]
 
                 output_expr = output_exprs[output_conn]
-                # if the expression is a constant assignement, we need to cast the float to the sympy equivalent
+                # if the expression is a constant assignment, we need to cast the float to the sympy equivalent
                 if type(output_expr) in [np.float64, np.float32, np.float16]:
                     output_expr = sp.Float(output_expr)
 

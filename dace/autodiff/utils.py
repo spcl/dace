@@ -1,60 +1,87 @@
+"""
+Automatic Differentiation Utility Functions for DaCe.
+
+This module provides utility functions for the DaCe automatic differentiation system.
+It contains helper functions for:
+- Data descriptor management and creation
+- Symbolic computation and expression manipulation
+- SDFG analysis and graph traversal utilities
+- Loop region analysis and code generation
+- Error handling and validation
+- Forward/backward pass data forwarding
+
+These utilities support the BackwardPassGenerator and various backward implementations
+by providing common functionality for gradient computation and graph manipulation.
+"""
+
+import ast
 import collections
-import numbers
-import typing
 import copy
 import inspect
-import ast
+import numbers
 import re
+from typing import Dict, List, Set, Tuple, Union
+
 import astunparse
 import sympy as sp
-from typing import List, Tuple, Set, Dict, Union
 
 # DaCe imports
 import dace
-from dace import dtypes, data as dt
-from dace.sdfg import SDFG, SDFGState, graph as dgraph, state as dstate, utils as dutils, nodes as nd
-import dace.data as dt
-from dace.sdfg.state import LoopRegion
-from dace.frontend.python.parser import DaceProgram
 import dace.util.utils as utils
+from dace import dtypes
+from dace import data as dt
+from dace.frontend.python.parser import DaceProgram
+from dace.sdfg import SDFG, SDFGState, graph as dgraph, nodes as nd, state as dstate, utils as dutils
+from dace.sdfg.state import LoopRegion
 
 # Autodiff imports
-from dace.autodiff.base_abc import BackwardContext, BackwardResult
-
-from dace.autodiff.base_abc import AutoDiffException
+from dace.autodiff.base_abc import AutoDiffException, BackwardContext, BackwardResult
 
 
-def forward_in_desc_with_name(forward_node: nd.Node, context: BackwardContext, name) -> dt.Data:
-    """ Find the descriptor of the data that connects to input connector `name`.
+def forward_in_desc_with_name(forward_node: nd.Node, context: BackwardContext, name: str) -> dt.Data:
+    """
+    Find the descriptor of the data that connects to input connector `name`.
 
-        :param forward_node: the node.
-        :param context: the backward context.
-        :param name: the input connector name.
-        :return: the descriptor of the data that connects to connector `name`.
-     """
+    Args:
+        forward_node: The node in the forward pass.
+        context: The backward context containing forward SDFG and state information.
+        name: The input connector name to find the descriptor for.
+
+    Returns:
+        The data descriptor that connects to the specified connector.
+    """
     return utils.in_desc_with_name(forward_node, context.forward_state, context.forward_sdfg, name)
 
 
-def forward_out_desc_with_name(forward_node: nd.Node, context: BackwardContext, name) -> dt.Data:
-    """ Find the descriptor of the data that connects to output connector `name`.
+def forward_out_desc_with_name(forward_node: nd.Node, context: BackwardContext, name: str) -> dt.Data:
+    """
+    Find the descriptor of the data that connects to output connector `name`.
 
-        :param forward_node: the node.
-        :param context: the backward context.
-        :param name: the output connector name.
-        :return: the descriptor of the data that connects to connector `name`.
-     """
+    Args:
+        forward_node: The node in the forward pass.
+        context: The backward context containing forward SDFG and state information.
+        name: The output connector name to find the descriptor for.
+
+    Returns:
+        The data descriptor that connects to the specified connector.
+    """
     return utils.out_desc_with_name(forward_node, context.forward_state, context.forward_sdfg, name)
 
 
 def add_backward_desc_for_connector(backward_sdfg: dace.SDFG, forward_node: nd.Node, context: BackwardContext,
                                     connector: str, input: bool) -> str:
-    """ Adds the backward array for the connector of ``forward_node``.
+    """
+    Adds the backward array for the connector of ``forward_node``.
 
-        :param backward_sdfg: the sdfg to add to.
-        :param forward_node: the forward node with the connector that we want to add a descriptor for
-        :param connector: the connector on the forward node that we want to add the descriptor for
-        :param input: ``True`` if the connector is an input, ``False`` otherwise
-        :return: the name of the newly added array in ``backward_sdfg``.
+    Args:
+        backward_sdfg: The SDFG to add the backward array descriptor to.
+        forward_node: The forward node with the connector to create a descriptor for.
+        context: The backward context containing forward SDFG and state information.
+        connector: The connector name on the forward node.
+        input: True if the connector is an input, False if it's an output.
+
+    Returns:
+        The name of the newly added gradient array in ``backward_sdfg``.
     """
 
     if input:
@@ -72,13 +99,17 @@ def add_backward_desc_for_connector(backward_sdfg: dace.SDFG, forward_node: nd.N
 
 def add_backward_desc(backward_sdfg: dace.SDFG, forward_sdfg: dace.SDFG, forward_desc: dt.Data,
                       forward_name: str) -> str:
-    """ Adds the backward array for the given descriptor.
+    """
+    Adds the backward array for the given descriptor.
 
-        :param backward_sdfg: the sdfg to add to.
-        :param forward_sdfg: the forward sdfg.
-        :param forward_desc: the data descriptor of the forward array from ``forward_sdfg``.
-        :param forward_name: a name for the forward array (does not have to match it's actual name).
-        :return: the name of the newly added array in ``backward_sdfg``.
+    Args:
+        backward_sdfg: The SDFG to add the backward array descriptor to.
+        forward_sdfg: The forward SDFG used for finding unique names.
+        forward_desc: The data descriptor of the forward array.
+        forward_name: A name for the forward array (doesn't have to match its actual name).
+
+    Returns:
+        The name of the newly added gradient array in ``backward_sdfg``.
     """
     backward_name = utils.find_str_not_in_set(forward_sdfg.arrays, forward_name + "_grad")
     new_desc = copy.deepcopy(forward_desc)
@@ -86,8 +117,8 @@ def add_backward_desc(backward_sdfg: dace.SDFG, forward_sdfg: dace.SDFG, forward
     return backward_sdfg.add_datadesc(backward_name, new_desc)
 
 
-def add_empty_sdfg_for_node(forward_node: nd.Node, required_descriptors: typing.List[str],
-                            context: BackwardContext) -> typing.Tuple[nd.NestedSDFG, BackwardResult]:
+def add_empty_sdfg_for_node(forward_node: nd.Node, required_descriptors: List[str],
+                            context: BackwardContext) -> Tuple[nd.NestedSDFG, BackwardResult]:
     """ Given a node, return an SDFG that can be used as a nested SDFG expansion for that node.
 
         ``required_descriptors`` may contain:
@@ -151,7 +182,7 @@ def add_empty_sdfg_for_node(forward_node: nd.Node, required_descriptors: typing.
 
 
 def backward_program_for_node(program, context: BackwardContext,
-                              forward_node: nd.Node) -> typing.Tuple[nd.Node, BackwardResult]:
+                              forward_node: nd.Node) -> Tuple[nd.Node, BackwardResult]:
     """ Expand a function to the backward function for a node.
 
         The dtypes for the arguments will be extracted by matching the parameter names to edges.
@@ -177,7 +208,7 @@ def backward_program_for_node(program, context: BackwardContext,
 
     inputs = {}
     outputs = {}
-    for name, param in params.items():
+    for name, _ in params.items():
         if name in input_names:
             inputs[name] = copy.deepcopy(forward_in_desc_with_name(forward_node, context, name))
 
@@ -240,21 +271,23 @@ def connect_output_from_forward(forward_node: nd.Node, backward_node: nd.Node, c
 
 
 def cast_consts_to_type(code: str, dtype: dace.typeclass) -> str:
-    """ Convert a piece of code so that constants are wrapped in casts to ``dtype``.
+    """
+    Convert a piece of code so that constants are wrapped in casts to ``dtype``.
 
-        For example:
+    For example:
+        x * (3 / 2)
+    becomes:
+        x * (dace.float32(3) / dace.float32(2))
 
-            x * (3 / 2)
+    This is only done when it is required due to a Div operator to ensure proper
+    type casting in mathematical expressions during automatic differentiation.
 
-        becomes:
+    Args:
+        code: The code string to convert.
+        dtype: The DaCe typeclass to cast constants to.
 
-            x * (dace.float32(3) / dace.float32(2))
-
-        This is only done when it is required due to a Div operator.
-
-        :param code: the code string to convert.
-        :param dtype: the dace typeclass to wrap cast to
-        :return: a string of the converted code.
+    Returns:
+        A string of the converted code with properly typed constants.
     """
 
     class CastConsts(ast.NodeTransformer):
@@ -297,13 +330,22 @@ def cast_consts_to_type(code: str, dtype: dace.typeclass) -> str:
     return astunparse.unparse(CastConsts().visit(ast.parse(code)))
 
 
-def init_grad(data: str, sdfg: SDFG, current_state: SDFGState):
+def init_grad(data: str, sdfg: SDFG, current_state: SDFGState) -> None:
     """
     Add a state where `data` is initialized with zero.
 
-    :param data: the data to initialize
-    :param sdfg: the SDFG to add the state to
-    :param current_state: the current state; the initialization will be done before this state
+    This function creates a new state before the current state that initializes
+    the gradient array with zeros. It handles different storage types (CPU/GPU)
+    and array types appropriately.
+
+    Args:
+        data: The name of the data array to initialize.
+        sdfg: The SDFG to add the initialization state to.
+        current_state: The current state; initialization will be done before this state.
+
+    Raises:
+        ValueError: If the storage type is not supported.
+        AutoDiffException: If the data descriptor type is not supported.
     """
     arr = sdfg.arrays[data]
 
@@ -342,6 +384,19 @@ def symbols_to_strings(symbs: Set[sp.Symbol]) -> Set[str]:
 def extract_indices(expression: str) -> Dict[str, List[str]]:
     """
     Extracts indexed array names and their indices from a given string expression.
+
+    This function uses regular expressions to find patterns like "array[i, j, k]"
+    and returns a dictionary mapping array names to their index lists.
+
+    Args:
+        expression: The string expression to analyze.
+
+    Returns:
+        A dictionary mapping array names to lists of their indices.
+
+    Example:
+        >>> extract_indices("a[i, j] + b[k]")
+        {'a': ['i', 'j'], 'b': ['k']}
     """
     # Regular expression to match the array names and their indices
     pattern = r"(\w+)\[((?:\w+,?\s*)+)\]"
@@ -383,14 +438,17 @@ def code_to_exprs(code: str, tasklet: nd.Tasklet,
     indexed_objects_map = extract_indices(code)
 
     # For now, make sure none of the outputs are indexed objects
-    assert not any(out in indexed_objects_map for out in outputs)
+    indexed_outputs = [out for out in outputs if out in indexed_objects_map]
+    if indexed_outputs:
+        raise AutoDiffException(f"Indexed outputs are not currently supported: {indexed_outputs}")
 
     # Add the definition of indexed objects to the sympy code
     indexed_objects_code = ""
     for conn in inputs + outputs:
         if (conn in inputs and isinstance(tasklet.in_connectors[conn], dace.dtypes.pointer)
                 or (conn in outputs and isinstance(tasklet.out_connectors[conn], dace.dtypes.pointer))):
-            assert conn in indexed_objects_map
+            if conn not in indexed_objects_map:
+                raise AutoDiffException(f"Expected connector '{conn}' to be in indexed objects map for pointer type")
             indexed_objects_code += f"    {conn} = sp.IndexedBase('{conn}')\n"
             for idx in indexed_objects_map[conn]:
                 indexed_objects_code += f"    {idx} = sp.symbols('{idx}', cls=sp.Idx)\n"
@@ -424,7 +482,7 @@ def symbolic_execution({}):
         ", ".join(outputs),
     )
 
-    # Clean out type coonversions from the code
+    # Clean out type conversions from the code
     code_fn = re.sub(r"dace\.(float32|int32|float64|int64)\((.*?)\)", r"\2", code_fn)
 
     try:
@@ -448,7 +506,7 @@ def symbolic_execution({}):
             return {outputs[0]: results}, indexed_objects_map
     except Exception as e:
         raise AutoDiffException(
-            "Exception occured while attempting to symbolically execute code:\n{}".format(code)) from e
+            "Exception occurred while attempting to symbolically execute code:\n{}".format(code)) from e
 
 
 def is_int(s: str) -> bool:
@@ -469,7 +527,7 @@ def is_int_eq_value(value, target_value: int) -> bool:
     return True
 
 
-def invert_map_connector(conn):
+def invert_map_connector(conn: str) -> str:
     if conn.startswith("IN"):
         return "OUT" + conn[2:]
     elif conn.startswith("OUT"):
@@ -478,14 +536,23 @@ def invert_map_connector(conn):
         raise AutoDiffException("Could not parse map connector '{}'".format(conn))
 
 
-def path_src_node_in_subgraph(edge: dgraph.MultiConnectorEdge, subgraph: dstate.StateSubgraphView):
+def path_src_node_in_subgraph(edge: dgraph.MultiConnectorEdge, subgraph: dstate.StateSubgraphView) -> bool:
     path_src = subgraph.memlet_path(edge)[0].src
     return path_src in subgraph.nodes()
 
 
 def get_read_only_arrays(sdfg: SDFG) -> Set[str]:
     """
-    Get the arrays that are only read in SDFG
+    Get the arrays that are only read in SDFG.
+
+    This function identifies arrays that are never written to (only have outgoing
+    edges with data or only empty memlets on incoming edges).
+
+    Args:
+        sdfg: The SDFG to analyze.
+
+    Returns:
+        A set of array names that are read-only in the SDFG.
     """
     written_to_arrays = set()
     for node, parent in sdfg.all_nodes_recursive():
@@ -521,7 +588,7 @@ def get_state_topological_order(graph) -> List[SDFGState]:
 
 def shape_has_symbols_to_replace(sdfg: SDFG, shape: Union[str, sp.Symbol, sp.Expr]) -> bool:
     """"
-        Check if the shape dimension passed as a pramater has a symbol that needs to be replaced.
+        Check if the shape dimension passed as a parameter has a symbol that needs to be replaced.
         We do not replace global SDFG symbols but rather the loop indicies only
         """
     symbol_not_numeric_and_not_sdfg_symb = False
@@ -614,7 +681,7 @@ def analyze_loop_change(code: str, loop_variable: str) -> str:
     return change_type
 
 
-def get_map_nest_information(edges_list: List[dstate.MultiConnectorEdge]):
+def get_map_nest_information(edges_list: List[dstate.MultiConnectorEdge]) -> Tuple[List, List[str], List, Dict[str, Tuple]]:
     """
         """
     # First, get the shape of the new array
@@ -637,7 +704,8 @@ def get_map_nest_information(edges_list: List[dstate.MultiConnectorEdge]):
             for par in edge_src.map.params:
                 param_list.append(par)
 
-    assert len(param_list) == len(shape_list) == len(start_range)
+    if not (len(param_list) == len(shape_list) == len(start_range)):
+        raise AutoDiffException(f"Mismatched lengths: params={len(param_list)}, shapes={len(shape_list)}, ranges={len(start_range)}")
 
     # Create a dictionary mapping parameters to their start and end ranges
     param_dict = {param: (start, end) for param, start, end in zip(param_list, start_range, shape_list)}
@@ -681,7 +749,7 @@ def get_all_path_edges(state: SDFGState, source: nd.Node,
     raise AutoDiffException("Can't easily find path. Upgrade function.")
 
 
-def extract_conitional_expressions(tasklet_node: nd.Tasklet):
+def extract_conditional_expressions(tasklet_node: nd.Tasklet) -> Tuple[str, str, str]:
     """
         Given a conditional tasklet node, extract the if and else expressions and return them with the conditional.
         The else statement could be None in case there is only an if statement. The current supported formats are the following:
@@ -697,7 +765,8 @@ def extract_conitional_expressions(tasklet_node: nd.Tasklet):
     if ":" in tasklet_code:
         # get the conditional input connector through regular expression matching
         matches = re.search(r"if (.)*:", tasklet_code)
-        assert matches
+        if not matches:
+            raise AutoDiffException(f"Could not find 'if' statement in conditional tasklet code: {tasklet_code}")
         conditional = matches.group()
 
         # remove the conditional from the code to get the expression
@@ -710,16 +779,18 @@ def extract_conitional_expressions(tasklet_node: nd.Tasklet):
         # extract the in connector only
         conditional = conditional.replace(":", "")
         conditional = conditional.replace("if ", "")
-        assert conditional in tasklet_node.in_connectors
+        if conditional not in tasklet_node.in_connectors:
+            raise AutoDiffException(f"Conditional '{conditional}' not found in tasklet input connectors: {list(tasklet_node.in_connectors.keys())}")
 
         else_statement = None
 
         # match the out connector
         matches = re.search(r"^(.)* =", if_statement)
-        assert matches
+        if not matches:
+            raise AutoDiffException(f"Could not find output assignment in if statement: {if_statement}")
         out_connector = matches.group()
 
-        # remove the assingment from the if statement
+        # remove the assignment from the if statement
         if_statement = if_statement.replace(out_connector, "")
 
         # extract the out connector only
@@ -728,21 +799,24 @@ def extract_conitional_expressions(tasklet_node: nd.Tasklet):
     else:
         # get the conditional input connector through regular expression matching
         matches = re.search(r"if (.)* else", tasklet_code)
-        assert matches
+        if not matches:
+            raise AutoDiffException(f"Could not find 'if...else' statement in conditional tasklet code: {tasklet_code}")
         conditional = matches.group()
 
         # extract the in connector only
         conditional = conditional.replace("if ", "")
         conditional = conditional.replace(" else", "")
 
-        assert conditional in tasklet_node.in_connectors
+        if conditional not in tasklet_node.in_connectors:
+            raise AutoDiffException(f"Conditional '{conditional}' not found in tasklet input connectors: {list(tasklet_node.in_connectors.keys())}")
 
-        # get the if statement by matching what comes before the if until we encounter a paranthesis or =
+        # get the if statement by matching what comes before the if until we encounter a parenthesis or =
         matches = re.search(r"= \((.)* if", tasklet_code)
         if not matches:
             # try without the parenthesis
             matches = re.search(r"= (.)* if", tasklet_code)
-            assert matches
+            if not matches:
+                raise AutoDiffException(f"Could not find if expression pattern in tasklet code: {tasklet_code}")
 
         if_statement = matches.group()
 
@@ -750,9 +824,10 @@ def extract_conitional_expressions(tasklet_node: nd.Tasklet):
         if_statement = if_statement.replace("= (", "")
         if_statement = if_statement.replace(" if", "")
 
-        # get the else statement by matching the else and what comes after it until we encounter a paranthesis
+        # get the else statement by matching the else and what comes after it until we encounter a parenthesis
         matches = re.search(r"else (.)*\)", tasklet_code)
-        assert matches
+        if not matches:
+            raise AutoDiffException(f"Could not find else expression pattern in tasklet code: {tasklet_code}")
         else_statement = matches.group()
 
         # extract the in statement only
@@ -764,14 +839,16 @@ def extract_conitional_expressions(tasklet_node: nd.Tasklet):
 
         # match the out connector
         matches = re.search(r"^(.)* =", tasklet_code)
-        assert matches
+        if not matches:
+            raise AutoDiffException(f"Could not find output assignment in tasklet code: {tasklet_code}")
         out_connector = matches.group()
 
         # extract the in statement only
         out_connector = out_connector.replace(" =", "")
 
     # sanity check this should be in the out connectors of the tasklet
-    assert out_connector in tasklet_node.out_connectors
+    if out_connector not in tasklet_node.out_connectors:
+        raise AutoDiffException(f"Output connector '{out_connector}' not found in tasklet output connectors: {list(tasklet_node.out_connectors.keys())}")
 
     # create the return expressions
     if_expression = f"{out_connector} = {if_statement}"
@@ -780,7 +857,7 @@ def extract_conitional_expressions(tasklet_node: nd.Tasklet):
     return if_expression, else_expression, conditional
 
 
-def check_edges_type_in_state(subgraph: dstate.StateSubgraphView):
+def check_edges_type_in_state(subgraph: dstate.StateSubgraphView) -> None:
     """
         Check if all the edges in this state are of type float, int, or boolean.
         """
@@ -825,7 +902,7 @@ class SympyCleaner(ast.NodeTransformer):
             return self.generic_visit(node)
 
 
-def extract_loop_region_info(loop: LoopRegion):
+def extract_loop_region_info(loop: LoopRegion) -> Tuple[str, str]:
     """
         Use regular expression matching to extract the start and end of the loop region.
         We only treat regular for-loops with incrementation and decrementation updates.
@@ -848,11 +925,13 @@ def extract_loop_region_info(loop: LoopRegion):
 
     # Match the conditional using regular expressions
     matches = re.search(conditional_expression, conditional)
-    assert matches
+    if not matches:
+        raise AutoDiffException(f"Could not match conditional expression '{conditional_expression}' in '{conditional}'")
     expression = matches.group()
-    matches = re.search(conditional_expression[:-2], conditional)
-    assert matches
-    expression_to_remove = matches.group()
+    matches_inner = re.search(conditional_expression[:-2], conditional)
+    if not matches_inner:
+        raise AutoDiffException(f"Could not match conditional pattern '{conditional_expression[:-2]}' in '{conditional}'")
+    expression_to_remove = matches_inner.group()
     end = expression.replace(expression_to_remove, "")
 
     # TODO: need more generalized solution for functions in the loop bounds
@@ -869,10 +948,12 @@ def extract_loop_region_info(loop: LoopRegion):
     # Get the start from the initialization code
     init_code = loop.init_statement.as_string
     matches = re.search(fr".*{it} = .*", init_code)
-    assert matches
+    if not matches:
+        raise AutoDiffException(f"Could not find initialization pattern for loop variable '{it}' in '{init_code}'")
     expression = matches.group()
     matches = re.search(fr"{it} =", init_code)
-    assert matches
+    if not matches:
+        raise AutoDiffException(f"Could not find assignment pattern for loop variable '{it}' in '{init_code}'")
     expression_to_remove = matches.group()
     start = expression.replace(expression_to_remove, "")
 

@@ -15,6 +15,7 @@ from dace import data, dtypes
 
 
 class DLDeviceType(ctypes.c_int):
+    """DLPack device type enumeration."""
     kDLCPU = 1
     kDLGPU = 2
     kDLCPUPinned = 3
@@ -27,6 +28,7 @@ class DLDeviceType(ctypes.c_int):
 
 
 class DLDataTypeCode(ctypes.c_uint8):
+    """DLPack data type code enumeration."""
     kDLInt = 0
     kDLUInt = 1
     kDLFloat = 2
@@ -34,6 +36,7 @@ class DLDataTypeCode(ctypes.c_uint8):
 
 
 class DLDataType(ctypes.Structure):
+    """DLPack data type structure."""
     _fields_ = [('type_code', DLDataTypeCode), ('bits', ctypes.c_uint8), ('lanes', ctypes.c_uint16)]
 
 
@@ -52,16 +55,19 @@ dace_to_dldtype_dict = {
 
 
 class DLContext(ctypes.Structure):
+    """DLPack context structure for device information."""
     _fields_ = [('device_type', DLDeviceType), ('device_id', ctypes.c_int)]
 
 
 class DLTensor(ctypes.Structure):
+    """DLPack tensor structure."""
     _fields_ = [('data', ctypes.c_void_p), ('ctx', DLContext), ('ndim', ctypes.c_int), ('dtype', DLDataType),
                 ('shape', ctypes.POINTER(ctypes.c_int64)), ('strides', ctypes.POINTER(ctypes.c_int64)),
                 ('byte_offset', ctypes.c_uint64)]
 
 
 class DLManagedTensor(ctypes.Structure):
+    """DLPack managed tensor structure."""
     pass
 
 
@@ -72,7 +78,19 @@ DeleterFunc = ctypes.CFUNCTYPE(None, DLManagedTensorHandle)
 DLManagedTensor._fields_ = [("dl_tensor", DLTensor), ("manager_ctx", ctypes.c_void_p), ("deleter", DeleterFunc)]
 
 
-def make_manager_ctx(obj):
+def make_manager_ctx(obj) -> ctypes.c_void_p:
+    """
+    Create a manager context from a Python object.
+
+    This function wraps a Python object in a ctypes void pointer and increments
+    its reference count to prevent garbage collection while in use by DLPack.
+
+    Args:
+        obj: The Python object to create a context for.
+
+    Returns:
+        A ctypes void pointer to the object.
+    """
     pyobj = ctypes.py_object(obj)
     void_p = ctypes.c_void_p.from_buffer(pyobj)
     ctypes.pythonapi.Py_IncRef(pyobj)
@@ -80,12 +98,22 @@ def make_manager_ctx(obj):
 
 
 @DeleterFunc
-def dl_managed_tensor_deleter(dl_managed_tensor_handle):
-    # do nothing: the data is freed in the state struct
+def dl_managed_tensor_deleter(_dl_managed_tensor_handle) -> None:
+    """
+    Deleter function for DLPack managed tensors.
+
+    This is a no-op deleter because the underlying data is managed by DaCe
+    and will be freed when the SDFG state struct is deallocated.
+
+    Args:
+        _dl_managed_tensor_handle: Handle to the managed tensor (unused).
+    """
+    # Do nothing: the data is freed in the state struct
     pass
 
 
 class PyCapsule:
+    """Python capsule interface for DLPack integration."""
     New = ctypes.pythonapi.PyCapsule_New
     New.restype = ctypes.py_object
     New.argtypes = (ctypes.c_void_p, ctypes.c_char_p, ctypes.c_void_p)
@@ -110,17 +138,27 @@ class PyCapsule:
 
 
 def array_to_torch_tensor(ptr: ctypes.c_void_p, desc: data.Array) -> torch.Tensor:
-    """ Convert a dace array descriptor to a torch tensor that points to the same data.
+    """
+    Convert a DaCe array descriptor to a PyTorch tensor that points to the same data.
 
-        :param ptr: the pointer the the memory of the array.
-        :param desc: the dace array descriptor.
-        :return: the tensor.
+    This function performs zero-copy conversion using the DLPack protocol,
+    allowing PyTorch to access DaCe arrays without data duplication.
+
+    Args:
+        ptr: The pointer to the memory of the array.
+        desc: The DaCe array descriptor containing shape, strides, and dtype information.
+
+    Returns:
+        A PyTorch tensor that shares memory with the DaCe array.
+
+    Raises:
+        ValueError: If the storage type or dtype is unsupported.
     """
 
     if desc.storage is dtypes.StorageType.GPU_Global:
-        device_type = 2
+        device_type = DLDeviceType.kDLGPU
     elif desc.storage in [dtypes.StorageType.CPU_Heap, dtypes.StorageType.Default]:
-        device_type = 1
+        device_type = DLDeviceType.kDLCPU
     else:
         raise ValueError(f"Unsupported storage type {desc.storage}")
 
@@ -151,11 +189,11 @@ def array_to_torch_tensor(ptr: ctypes.c_void_p, desc: data.Array) -> torch.Tenso
     c_obj.manager_ctx = ctypes.c_void_p(0)
     c_obj.deleter = dl_managed_tensor_deleter
 
-    # the capsule must be used in the same stackframe, otherwise it will be deallocated an the capsule will
+    # The capsule must be used in the same stack frame, otherwise it will be deallocated and the capsule will
     # point to invalid data.
     capsule = PyCapsule.New(ctypes.byref(c_obj), b"dltensor", None)
     tensor: torch.Tensor = torch.utils.dlpack.from_dlpack(capsule)
 
-    # store the dltensor as an attribute of the tensor so that the tensor takes ownership
+    # Store the dltensor as an attribute of the tensor so that the tensor takes ownership
     tensor._dace_dlpack = c_obj
     return tensor

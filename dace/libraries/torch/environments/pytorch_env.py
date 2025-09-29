@@ -8,8 +8,7 @@ from dace.util import platform_library_name
 
 @dace.library.environment
 class PyTorch:
-    """ Environment used to build PyTorch C++ Operators
-    """
+    """Environment used to build PyTorch C++ Operators."""
 
     cmake_minimum_version = None
     cmake_packages = []
@@ -18,6 +17,14 @@ class PyTorch:
 
     @staticmethod
     def cmake_libraries():
+        """Get the required PyTorch library paths for linking.
+
+        Returns:
+            List of library paths for PyTorch CPU libraries
+
+        Raises:
+            RuntimeError: If a required library cannot be found
+        """
         library_names = ["c10", "torch", "torch_cpu", "torch_python"]
         library_paths = []
 
@@ -45,8 +52,7 @@ class PyTorch:
 
 @dace.library.environment
 class PyTorchCUDA:
-    """ Environment used to build PyTorch C++ Operators (with CUDA)
-    """
+    """Environment used to build PyTorch C++ Operators (with CUDA)."""
 
     cmake_minimum_version = None
     cmake_packages = []
@@ -55,6 +61,14 @@ class PyTorchCUDA:
 
     @staticmethod
     def cmake_libraries():
+        """Get the required PyTorch library paths for linking with CUDA support.
+
+        Returns:
+            List of library paths for PyTorch CUDA libraries
+
+        Raises:
+            RuntimeError: If a required library cannot be found
+        """
         library_names = ["c10", "torch", "torch_cpu", "torch_cuda", "torch_python", "c10_cuda"]
         library_paths = []
 

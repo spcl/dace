@@ -1,3 +1,35 @@
+"""
+ONNX Schema System for DaCe.
+
+This module provides a Python representation layer for ONNX protobuf schemas,
+enabling type-safe interaction with ONNX operations in DaCe. It handles:
+
+- Converting ONNX protobuf definitions to Python classes
+- Type validation and constraint checking for ONNX operations
+- Attribute and parameter schema definitions
+- Automatic mapping between ONNX types and DaCe types
+
+Key Components:
+- onnx_representation: Decorator for creating Python representations of ONNX protobufs
+- ONNXSchema: Complete schema for an ONNX operation
+- ONNXAttribute: Attribute definitions (e.g., kernel_shape, strides)
+- ONNXParameter: Input/output parameter specifications
+- ONNXTypeConstraint: Type constraints for operation parameters
+- Enums: ONNXAttributeType, ONNXParameterType for type classification
+
+The schema system enables:
+- Compile-time validation of ONNX operations
+- Automatic property generation from schemas
+- Type-safe conversion between ONNX and DaCe representations
+- Integration with DaCe's property system
+
+Example:
+    @onnx_representation(onnx.TensorProto)
+    class ONNXTensor:
+        dims: List[int]
+        data_type: int
+"""
+
 import logging
 from itertools import chain
 from typing import List
@@ -8,11 +40,12 @@ import onnx
 
 import dace
 from dace.dtypes import typeclass
-from dace.libraries.onnx.converters import convert_onnx_proto, onnx_type_str_to_typeclass, get_proto_attr
-from dace.properties import make_properties, Property, DictProperty, ListProperty
+from dace.libraries.onnx.converters import convert_onnx_proto, get_proto_attr, onnx_type_str_to_typeclass
+from dace.properties import DictProperty, ListProperty, Property, make_properties
 
 log = logging.getLogger(__name__)
 
+#: Global registry of known ONNX protobuf types and their Python representations
 _KNOWN_ONNX_PROTOS = {}
 
 

@@ -1,8 +1,56 @@
+"""
+ONNX Model Importer for DaCe.
+
+This module provides the ONNXModel class, which is the main entry point for
+importing ONNX models into DaCe. It handles the complete pipeline of:
+
+1. **Model Loading**: Loading ONNX models from files or protobuf objects
+2. **Model Simplification**: Applying onnx-simplifier for optimization
+3. **Shape Inference**: Computing tensor shapes symbolically or concretely
+4. **Graph Conversion**: Converting ONNX graph to DaCe SDFG
+5. **Weight Management**: Handling model parameters and initializers
+6. **Compilation**: Compiling the SDFG to executable code
+7. **Execution**: Running the model with NumPy or PyTorch tensors
+
+Key Features:
+- Automatic shape inference for dynamic models
+- Support for both CPU and CUDA execution
+- Integration with PyTorch for seamless tensor conversion
+- Configurable optimization levels
+- Weight initialization and parameter management
+- Support for nested models and subgraphs
+
+Typical Workflow:
+    >>> import onnx
+    >>> from dace.libraries.onnx import ONNXModel
+    >>>
+    >>> # Load ONNX model
+    >>> onnx_model = onnx.load("model.onnx")
+    >>> dace_model = ONNXModel("my_model", onnx_model)
+    >>>
+    >>> # Run inference
+    >>> import numpy as np
+    >>> input_data = np.random.randn(1, 3, 224, 224).astype(np.float32)
+    >>> output = dace_model(input_data)
+
+The module also provides utility functions for:
+- Type conversion between NumPy, PyTorch, and ONNX types
+- Model validation and checking
+- Shape inference helpers
+- Weight loading and initialization
+
+Note:
+    This is a large module (900+ lines) that handles multiple concerns.
+    Consider the architectural recommendations in the code review for
+    potential refactoring into smaller, focused modules.
+"""
+
 import collections
-import logging
-from itertools import chain, repeat
-from typing import Dict, Union, Tuple, Any, List, Optional, OrderedDict, Callable
 import copy
+import logging
+import tempfile
+from itertools import chain, repeat
+from typing import Any, Callable, Dict, List, Optional, OrderedDict, Tuple, Union
 
 import numpy as np
 import torch
@@ -14,20 +62,23 @@ from onnx import numpy_helper
 import onnxsim
 
 import dace
-from dace import data as dt, dtypes, nodes, SDFG, SDFGState
-from dace.sdfg import utils as sdfg_utils
-from dace.frontend.python import parser
-from dace.symbolic import pystr_to_symbolic
+from dace import SDFG, SDFGState, data as dt, dtypes, nodes
 from dace.codegen import compiled_sdfg
+from dace.frontend.python import parser
+from dace.sdfg import utils as sdfg_utils
+from dace.symbolic import pystr_to_symbolic
+from dace.util import auto_optimize as auto_opt
+from dace.util import expand_onnx_nodes as onnx_node_expander
+from dace.util import is_cuda
 
-from dace.libraries.onnx.shape_inference import shape_inference
-from dace.libraries.onnx.converters import convert_attribute_proto, onnx_tensor_type_to_typeclass, clean_onnx_name
-from dace.libraries.onnx.schema import ONNXParameterType
+from dace.libraries.onnx.converters import clean_onnx_name, convert_attribute_proto, onnx_tensor_type_to_typeclass
 from dace.libraries.onnx.nodes.onnx_op_registry import get_onnx_node, has_onnx_node
-from dace.util import expand_onnx_nodes as onnx_node_expander, is_cuda, auto_optimize as auto_opt
+from dace.libraries.onnx.schema import ONNXParameterType
+from dace.libraries.onnx.shape_inference import shape_inference
 
 log = logging.getLogger(__name__)
 
+#: Mapping from NumPy dtypes to PyTorch dtypes for tensor conversion
 numpy_to_torch_dtype_dict = {
     np.bool_: torch.bool,
     np.uint8: torch.uint8,
@@ -42,11 +93,28 @@ numpy_to_torch_dtype_dict = {
     np.complex128: torch.complex128
 }
 
+#: Reverse mapping from PyTorch dtypes to NumPy dtypes
 torch_to_numpy_dtype_dict = {v: k for k, v in numpy_to_torch_dtype_dict.items()}
 
 
-def _nested_HasField(obj, full_attr):
-    """Performs a nested hasattr check, separating attr on dots."""
+def _nested_HasField(obj, full_attr: str) -> bool:
+    """
+    Check if a protobuf object has a nested field.
+
+    This function performs a nested hasattr check by traversing dot-separated
+    attribute names on a protobuf object.
+
+    Args:
+        obj: The protobuf object to check.
+        full_attr: Dot-separated attribute path (e.g., "graph.node").
+
+    Returns:
+        True if all attributes in the path exist, False otherwise.
+
+    Example:
+        >>> _nested_HasField(model, "graph.node")
+        True
+    """
     attrs = full_attr.split(".")
     for attr in attrs:
         if obj.HasField(attr):
@@ -57,10 +125,33 @@ def _nested_HasField(obj, full_attr):
 
 
 def simplify_onnx_model(model: onnx.ModelProto, auto_merge: bool) -> onnx.ModelProto:
+    """
+    Simplify an ONNX model using onnx-simplifier.
+
+    This function applies various optimizations to the ONNX model including:
+    - Constant folding
+    - Dead code elimination
+    - Shape inference
+    - Operator fusion (except batch normalization)
+
+    Args:
+        model: The ONNX model to simplify.
+        auto_merge: Whether to automatically merge nodes (passed to onnxsim).
+
+    Returns:
+        The simplified ONNX model.
+
+    Raises:
+        RuntimeError: If onnx-simplifier optimizations fail validation.
+
+    Note:
+        Batch normalization fusion is skipped (skip_fuse_bn=True) to maintain
+        numerical accuracy and allow separate optimization strategies.
+    """
     model, check = onnxsim.simplify(model, skip_fuse_bn=True)
 
     if not check:
-        raise RuntimeError("onnx-simplifier optimizations failed")
+        raise RuntimeError("onnx-simplifier optimizations failed validation")
     return model
 
 
@@ -128,15 +219,19 @@ class ONNXModel:
         """
 
         onnx.checker.check_model(model)
-        # TODO: Don't save into the main directory, use temporary
-        onnx.save(model, 'model_original.onnx')
-        model = shape_inference.infer_shapes(model, auto_merge=auto_merge)
-        # TODO: Don't save into the main directory, use temporary files
-        onnx.save(model, 'model_original_with_shapes.onnx')
-        if onnx_simplify:
-            model = simplify_onnx_model(model, auto_merge)
-            # TODO: Don't save into the main directory, use temporary files
-            onnx.save(model, 'model_simplified.onnx')
+
+        # Use temporary files for intermediate model saves
+        with tempfile.NamedTemporaryFile(suffix='.onnx', delete=True) as temp_original:
+            onnx.save(model, temp_original.name)
+            model = shape_inference.infer_shapes(model, auto_merge=auto_merge)
+
+            with tempfile.NamedTemporaryFile(suffix='.onnx', delete=True) as temp_shapes:
+                onnx.save(model, temp_shapes.name)
+
+                if onnx_simplify:
+                    model = simplify_onnx_model(model, auto_merge)
+                    with tempfile.NamedTemporaryFile(suffix='.onnx', delete=True) as temp_simplified:
+                        onnx.save(model, temp_simplified.name)
 
         self.do_auto_optimize = auto_optimize
         self.model = model

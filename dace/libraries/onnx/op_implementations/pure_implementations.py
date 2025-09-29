@@ -1,23 +1,46 @@
+"""
+Pure Python Implementations for ONNX Operations in DaCe.
+
+This module provides pure Python implementations for ONNX operations that can be
+automatically converted to DaCe SDFGs. These implementations serve as reference
+implementations and fallbacks when specialized optimized implementations are not
+available.
+
+The module contains:
+- Mathematical operations (Log, Exp, Sqrt, etc.)
+- Reduction operations (ReduceMean, ReduceSum, etc.)
+- Array manipulation operations (Reshape, Transpose, etc.)
+- Logical and comparison operations (Where, Equal, etc.)
+- Broadcasting and shape manipulation utilities
+- Helper functions for SDFG generation and optimization
+
+Each implementation follows the ONNX specification and is designed to be:
+- Semantically correct according to ONNX standards
+- Efficient when converted to DaCe SDFGs
+- Well-documented with clear parameter descriptions
+- Robust with proper error handling
+"""
+
 import copy
 import itertools
 import logging
+from math import prod
 import typing
 
 import dace
 import numpy as np
-from dace import SDFGState, SDFG, nodes, subsets, data
+from dace import SDFG, SDFGState, data, nodes, subsets
 from dace.frontend.common import create_einsum_sdfg
 from dace.sdfg.nodes import Node
+from dace.util import (in_desc_with_name, in_edge_with_name, iterables_equal, out_desc_with_name)
 
 from dace.libraries.onnx import converters
 from dace.libraries.onnx.forward_implementation_abc import ONNXForward
 from dace.libraries.onnx.nodes import onnx_op
-from dace.libraries.onnx.op_implementations.utils import op_implementation, program_for_node, empty_sdfg_for_node, \
-    python_pure_op_implementation
+from dace.libraries.onnx.op_implementations.utils import (empty_sdfg_for_node, op_implementation, program_for_node,
+                                                          python_pure_op_implementation)
 from dace.transformation.onnx import constant_folding
 from dace.transformation.onnx.replacement import onnx_constant_or_none
-from dace.util import iterables_equal, in_desc_with_name, out_desc_with_name, in_edge_with_name
-from math import prod
 
 log = logging.getLogger(__name__)
 
@@ -305,16 +328,43 @@ def _generate_reduction_tasklet_code(data_desc, reduced_desc, num_reduce_axes, k
 
 @python_pure_op_implementation
 def Log(input, output):
+    """
+    ONNX Log operation implementation.
+
+    Computes the natural logarithm of the input tensor element-wise.
+
+    Args:
+        input: Input tensor of any numeric type.
+        output: Output tensor with the same shape and type as input.
+    """
     output[:] = np.log(input)
 
 
 @python_pure_op_implementation
 def Exp(input, output):
+    """
+    ONNX Exp operation implementation.
+
+    Computes the exponential of the input tensor element-wise.
+
+    Args:
+        input: Input tensor of any numeric type.
+        output: Output tensor with the same shape and type as input.
+    """
     output[:] = np.exp(input)
 
 
 @python_pure_op_implementation
 def Sqrt(X, Y):
+    """
+    ONNX Sqrt operation implementation.
+
+    Computes the square root of the input tensor element-wise.
+
+    Args:
+        X: Input tensor of any numeric type.
+        Y: Output tensor with the same shape and type as X.
+    """
     Y[:] = dace.elementwise(lambda x: sqrt(x), X)
 
 
@@ -1330,7 +1380,7 @@ class PureUnsqueeze(ONNXForward):
 
     @staticmethod
     def forward_can_be_applied(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> bool:
-        # Avoid this expansion if the backward pass will be contructed
+        # Avoid this expansion if the backward pass will be constructed
         # TODO pass the backward flag to the functions
         return False
 
@@ -1497,7 +1547,7 @@ class PureSqueeze(ONNXForward):
 class PureReduceMeanCPP(ONNXForward):
 
     def forward_can_be_applied(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> bool:
-        # Avoid this expansion if the backward pass will be contructed
+        # Avoid this expansion if the backward pass will be constructed
         # TODO pass the backward flag to the functions
         return False
 
@@ -1610,7 +1660,8 @@ class PureMatMul(ONNXForward):
 
         einsum_str = '{},{}->{}'.format(arg1, arg2, result)
 
-        # we lower to an ONNXEinsum node instead straight to the dace einsum to make the autodiff simpler
+        # we lower to an ONNXEinsum node instead straight to the dace einsum to
+        # make the autodiff simpler
         nsdfg = dace.SDFG(node.label + "_expansion")
         nstate = nsdfg.add_state()
         einsum_node: onnx_op.ONNXOp = ONNXEinsum(node.label + "_einsum_expansion", equation=einsum_str)
