@@ -96,7 +96,8 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
     next_power_of_two = properties.Property(
         dtype=bool,
         default=True,
-        desc="Whether or not to round up the reduced memory size to the next power of two (enables bitmasking instead of modulo).",
+        desc=
+        "Whether or not to round up the reduced memory size to the next power of two (enables bitmasking instead of modulo).",
     )
 
     @classmethod
@@ -205,10 +206,12 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
             if a <= -1:
                 span = (read_ub - write_ub) / (-a)
                 cond = write_ub < read_lb  # At least one write index must be lower than all read indices
-            
+
             # If we have a span of one, it's enough that reads happen after writes in the loop.
             if span == 0:
-                cond = all(st.in_degree(an) == st.out_degree(an) for st in self.loop.all_states() for an in st.data_nodes() if an.data == array_name)
+                cond = all(
+                    st.in_degree(an) == st.out_degree(an) for st in self.loop.all_states() for an in st.data_nodes()
+                    if an.data == array_name)
 
             # Take maximum from previous accesses into account
             k = sp.Max(span, max_indices[dim])
@@ -218,7 +221,7 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
             # Round up to next power of two if enabled
             if self.next_power_of_two and k is not None:
                 k_p2 = 1 << (k - 1).bit_length()
-                
+
                 # If we're larger than the array size, don't round up.
                 if k_p2 + 1 < sdfg.arrays[array_name].shape[dim]:
                     k = k_p2
@@ -359,8 +362,8 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
                     lb = pystr_to_symbolic(f"{subset[i][0]} & ({k - 1})")
                     ub = pystr_to_symbolic(f"{subset[i][1]} & ({k - 1})")
                 else:
-                  lb = pystr_to_symbolic(f"abs({subset[i][0]}) % ({k})")
-                  ub = pystr_to_symbolic(f"abs({subset[i][1]}) % ({k})")
+                    lb = pystr_to_symbolic(f"abs({subset[i][0]}) % ({k})")
+                    ub = pystr_to_symbolic(f"abs({subset[i][1]}) % ({k})")
                 st = subset[i][2]
                 subset[i] = (lb, ub, st)
             edge.data.src_subset = subset
@@ -375,8 +378,8 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
                     lb = pystr_to_symbolic(f"{subset[i][0]} & ({k - 1})")
                     ub = pystr_to_symbolic(f"{subset[i][1]} & ({k - 1})")
                 else:
-                  lb = pystr_to_symbolic(f"abs({subset[i][0]}) % ({k})")
-                  ub = pystr_to_symbolic(f"abs({subset[i][1]}) % ({k})")
+                    lb = pystr_to_symbolic(f"abs({subset[i][0]}) % ({k})")
+                    ub = pystr_to_symbolic(f"abs({subset[i][1]}) % ({k})")
                 st = subset[i][2]
                 subset[i] = (lb, ub, st)
             edge.data.dst_subset = subset

@@ -80,9 +80,10 @@ def test_window_one():
         for i in range(0, 32):
             a[i] = c[i] * 2
             b[i] = a[i] + 2
-            
+
     sdfg = tester.to_sdfg(simplify=True)
     check_transformation(sdfg, 1)
+
 
 def test_window_one2():
 
@@ -93,7 +94,7 @@ def test_window_one2():
         for i in range(0, 32):
             b[i] = a[i] + 2
             a[i] = c[i] * 2
-            
+
     sdfg = tester.to_sdfg(simplify=True)
     check_transformation(sdfg, 0)
 
