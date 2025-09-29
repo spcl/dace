@@ -478,23 +478,24 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
 
 
 {localcode}
-""".format(params=params_comma,
-           sdfg_state_name=mangle_dace_state_struct_name(self._global_sdfg),
-           initcode=initcode.getvalue(),
-           exitcode=exitcode.getvalue(),
-           other_globalcode=self._globalcode.getvalue(),
-           localcode=self._localcode.getvalue(),
-           file_header=fileheader.getvalue(),
-           nstreams=max(1, self._cuda_streams),
-           nevents=max(1, self._cuda_events),
-           backend=self.backend,
-           backend_header=backend_header,
-           pool_header=pool_header,
-           sdfg=self._global_sdfg,
-           hbm_address_space=dace.config.Config.get("backend", "softhier", "HBM_ADDRESS_SPACE"),
-           hbm_address_base=dace.config.Config.get("backend", "softhier", "HBM_ADDRESS_BASE"),
-           hbm_num_channels=dace.config.Config.get("backend", "softhier", "HBM_NUM_CHANNELS"),
-           )
+""".format(
+            params=params_comma,
+            sdfg_state_name=mangle_dace_state_struct_name(self._global_sdfg),
+            initcode=initcode.getvalue(),
+            exitcode=exitcode.getvalue(),
+            other_globalcode=self._globalcode.getvalue(),
+            localcode=self._localcode.getvalue(),
+            file_header=fileheader.getvalue(),
+            nstreams=max(1, self._cuda_streams),
+            nevents=max(1, self._cuda_events),
+            backend=self.backend,
+            backend_header=backend_header,
+            pool_header=pool_header,
+            sdfg=self._global_sdfg,
+            hbm_address_space=dace.config.Config.get("backend", "softhier", "HBM_ADDRESS_SPACE"),
+            hbm_address_base=dace.config.Config.get("backend", "softhier", "HBM_ADDRESS_BASE"),
+            hbm_num_channels=dace.config.Config.get("backend", "softhier", "HBM_NUM_CHANNELS"),
+        )
 
         return [self._codeobject]
 
@@ -1856,7 +1857,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                 continue
             if arr.storage != dace.dtypes.StorageType.SoftHier_HBM:
                 continue
-            
+
             dump_str += "for (int i = 0; i < HBM_NUM_CHANNELS; i++){\n"
             dump_str += f'//printf("Dumping file: %s \\n", {arr_name});\n'
             #dump_str += f"static_assert(sizeof({arr.dtype.ctype}) == 2);\n"
