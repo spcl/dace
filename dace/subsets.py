@@ -949,7 +949,7 @@ class Indices(Subset):
             #   `a`, i.e. `isinstance(self.indices, symbolic.SymExpr)` is `True`.
             self.indices = indices
         else:
-            self.indices = tuple(symbolic.pystr_to_symbolic(i) for i in indices)
+            self.indices = [symbolic.pystr_to_symbolic(i) for i in indices]
             if len(self.indices) == 0:
                 raise ValueError('Expected an array of index expressions: got an empty iterable.')
         self.tile_sizes = [1]
