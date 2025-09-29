@@ -121,7 +121,6 @@ setup(name='dace',
           'onnxsim',
           'protobuf',
           'scipy',
-          'pulp',
           'ninja'
       ] + cmake_requires,
       extras_require={

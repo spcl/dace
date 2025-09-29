@@ -8,298 +8,30 @@ import astunparse
 import collections
 import copy
 import logging
-import numbers
 import re
-from typing import List, Tuple, Set, Dict, Union, Deque, cast, Optional, Callable, Sequence
+from typing import List, Tuple, Set, Dict, Union,  cast, Optional, Callable, Sequence
 import numpy as np
+import sympy as sp
+
+# DaCe imports
 import dace
 from dace.properties import CodeBlock
 import dace.sdfg.nodes as nodes
 import dace.transformation.transformation as xf
-import sympy as sp
-from dace import dtypes, subsets, data as dt
-
-from dace.frontend.operations import detect_reduction_type
-from dace.sdfg import SDFG, SDFGState, graph as dgraph, state as dstate, utils as dutils, infer_types
+from dace import dtypes,  data as dt
+from dace.sdfg import SDFG, SDFGState, graph as dgraph, state as dstate, utils as dutils
 from dace.sdfg.state import LoopRegion, ControlFlowRegion
-
-from dace.sdfg.analysis import cfg
 from dace.memlet import Memlet
-from dace.autodiff.base_abc import (BackwardContext, BackwardResult, AutoDiffException, find_backward_implementation)
-
-from dace.autodiff.utils import cast_consts_to_type
 from dace.util import find_str_not_in_set
 from dace.libraries.onnx.forward_implementation_abc import ONNXForward
 from dace.libraries.onnx.nodes.onnx_op import ONNXOp
-
-from dace.codegen.targets.cpp import is_write_conflicted_with_reason
-
-# Performance evaluation
-from dace.sdfg.performance_evaluation.operational_intensity import analyze_sdfg_op_in
-from dace.sdfg.performance_evaluation.helpers import get_uuid
-from dace.sdfg.performance_evaluation.work_depth import (analyze_sdfg, get_tasklet_work_depth, get_tasklet_avg_par,
-                                                         parse_assumptions)
 from dace.codegen.targets import framecode
 
-from pulp import LpMinimize, LpProblem, LpVariable, LpStatus
-import pulp
-
-ReverseNodeReturnType = Tuple[nodes.Node, BackwardResult]
+# Autodiff imports
+from dace.autodiff.base_abc import (BackwardContext, BackwardResult, AutoDiffException, find_backward_implementation)
+from dace.autodiff.utils import cast_consts_to_type, is_int, symbols_to_strings, code_to_exprs, is_int_eq_value, invert_map_connector, path_src_node_in_subgraph, get_read_only_arrays, get_state_topological_order, SympyCleaner
 
 log = logging.getLogger(__name__)
-
-
-def init_grad(data: str, sdfg: SDFG, current_state: SDFGState):
-    """
-    Add a state where `data` is initialized with zero.
-
-    :param data: the data to initialize
-    :param sdfg: the SDFG to add the state to
-    :param current_state: the current state; the initialization will be done before this state
-    """
-    arr = sdfg.arrays[data]
-
-    state = sdfg.add_state_before(current_state, label="init_" + data)
-
-    scalar = 0
-    if dtypes.can_access(dtypes.ScheduleType.CPU_Multicore, arr.storage):
-        cuda = False
-    elif dtypes.can_access(dtypes.ScheduleType.GPU_Default, arr.storage):
-        cuda = True
-    else:
-        raise ValueError(f"Unsupported storage {arr.storage}")
-
-    if isinstance(arr, (dt.Array, dt.Scalar)):
-        state.add_mapped_tasklet(
-            "_init_" + data + "_", {
-                "i{}".format(i): "0:{}".format(shape)
-                for i, shape in enumerate(arr.shape)
-            }, {},
-            "__out = {}".format(scalar),
-            {"__out": dace.Memlet.simple(data, ", ".join("i{}".format(i) for i in range(len(arr.shape))))},
-            schedule=dtypes.ScheduleType.GPU_Device if cuda else dtypes.ScheduleType.Default,
-            external_edges=True)
-    elif type(arr) is dt.View:
-        # not need to initialize: the viewed array will always be visited
-        # (since a view can never be a required grad), and thus the viewed array will be initialized.
-        pass
-    else:
-        raise AutoDiffException("Unsupported data descriptor {}".format(arr))
-
-
-def _symbols_to_strings(symbs: Set[sp.Symbol]) -> Set[str]:
-    return {str(symb) for symb in symbs}
-
-
-def generate_grad_connector_names(existing_connectors: Set[str], forward_connector_names: List[str]) -> Dict[str, str]:
-    """ Choose connector names for the gradients of all forward connectors.
-
-        :param existing_connectors: existing connectors on the node.
-        :param forward_connector_names: the list of connectors to generate names for.
-        :return: a mapping from entries in ``forward_connector_names`` to names for those entries.
-    """
-
-    # copy
-    existing_connectors = set(existing_connectors)
-
-    names = {}
-    for n in sorted(forward_connector_names):
-        result = find_str_not_in_set(existing_connectors, n + "_gradient")
-        names[n] = result
-        existing_connectors.add(result)
-
-    return names
-
-
-def extract_indices(expression: str) -> Dict[str, List[str]]:
-    """
-    Extracts indexed array names and their indices from a given string expression.
-    """
-    # Regular expression to match the array names and their indices
-    pattern = r"(\w+)\[((?:\w+,?\s*)+)\]"
-
-    # Find all matches in the given expression
-    matches = re.findall(pattern, expression)
-
-    # Create a dictionary to store the arrays and their indices
-    index_map = {}
-    for name, indices in matches:
-        # Split indices by comma and remove any extra spaces
-        index_list = [index.strip() for index in indices.split(',')]
-        index_map[name] = index_list
-
-    return index_map
-
-
-def code_to_exprs(code: str, tasklet: nodes.Tasklet,
-                  symbols: List[str]) -> Tuple[Dict[str, sp.Expr], Dict[str, List[str]]]:
-    """ Convert a python string to a set of (simplified) symbolic sympy expressions. Currently, this
-        supports only code consisting of assignment statements.
-
-        :param code: the code to convert
-        :param inputs: the inputs (i.e. the defined variables) for the code
-        :param outputs: the outputs to generate simplified expressions for
-        :return: map from outputs to symbolic expressions
-    """
-
-    inputs: List[str] = list(tasklet.in_connectors)
-    outputs: List[str] = list(tasklet.out_connectors)
-
-    # Add the definition of global constant symbols that are presen in the code
-    # Prepare the Symbol declaration code
-    symbol_code = ""
-    for symb in symbols:
-        symbol_code += f"    {symb} = sp.symbols('{symb}')\n"
-
-    # We prepare a map of indexed objects and their indices
-    indexed_objects_map = extract_indices(code)
-
-    # For now, make sure none of the outputs are indexed objects
-    assert not any(out in indexed_objects_map for out in outputs)
-
-    # Add the definition of indexed objects to the sympy code
-    indexed_objects_code = ""
-    for conn in inputs + outputs:
-        if (conn in inputs and isinstance(tasklet.in_connectors[conn], dace.dtypes.pointer)
-                or (conn in outputs and isinstance(tasklet.out_connectors[conn], dace.dtypes.pointer))):
-            assert conn in indexed_objects_map
-            indexed_objects_code += f"    {conn} = sp.IndexedBase('{conn}')\n"
-            for idx in indexed_objects_map[conn]:
-                indexed_objects_code += f"    {idx} = sp.symbols('{idx}', cls=sp.Idx)\n"
-
-    code_fn = """
-def symbolic_execution({}):
-    # define functions from cmath.h
-    from sympy import exp, log
-    def log2(x):
-        return log(x, 2)
-    def log10(x):
-        return log(x, 10)
-    from sympy import sin, cos, tan, asin, acos, atan, sinh, cosh, tanh, asinh, acosh, atanh
-    from sympy import sin, cos, tan, asin, acos, atan, sinh, cosh, tanh, asinh, acosh, atanh
-    from sympy import Pow as pow, sqrt
-    from sympy import sign, floor, ceiling as ceil, Abs as abs, Abs as fabs
-    from sympy import Max as max, Min as min
-    from sympy import Max as fmax, Min as fmin
-    from sympy import erf
-    import sympy as sp
-{}
-{}
-{}
-    return {}
-    """
-    code_fn = code_fn.format(
-        ", ".join(inputs),
-        symbol_code,
-        indexed_objects_code,
-        "\n".join("    " + line.strip() for line in code.split("\n")),
-        ", ".join(outputs),
-    )
-
-    # Clean out type coonversions from the code
-    code_fn = re.sub(r"dace\.(float32|int32|float64|int64)\((.*?)\)", r"\2", code_fn)
-
-    try:
-        # need to have dace so things like `dace.float32(1)` work
-        temp_globals = {'dace': dace}
-        exec(code_fn, temp_globals)
-
-        # no idea why, but simply calling symbolic_execution doesn't work
-        results = temp_globals["symbolic_execution"](*[sp.symbols(inp) for inp in inputs])
-
-        if len(outputs) > 1:
-            # make sure that everything is a sympy expression
-            for i, res in enumerate(results):
-                if not isinstance(res, sp.Expr):
-                    results[i] = sp.sympify(res)
-            return dict(zip(outputs, results)), indexed_objects_map
-        else:
-            # make sure that everything is a sympy expression
-            if not isinstance(results, sp.Expr):
-                results = sp.sympify(results)
-            return {outputs[0]: results}, indexed_objects_map
-    except Exception as e:
-        raise AutoDiffException(
-            "Exception occured while attempting to symbolically execute code:\n{}".format(code)) from e
-
-
-def is_int(s: str) -> bool:
-    try:
-        int(s)
-        return True
-    except ValueError:
-        return False
-
-
-# TODO: use this function if the compare memlet assignement
-def _is_int_value(value, target_value: int) -> bool:
-    if isinstance(value, numbers.Integral):
-        return value == target_value
-
-    if len(value.free_symbols) > 0 or int(value) != target_value:
-        return False
-
-    return True
-
-
-def _add_through_connector(node: Union[nodes.MapEntry, nodes.MapExit]):
-    i = 1
-    while ("IN_{}".format(i) in node.in_connectors or "OUT_{}".format(i) in node.out_connectors):
-        i += 1
-    assert node.add_in_connector("IN_{}".format(i))
-    assert node.add_out_connector("OUT_{}".format(i))
-    return "IN_{}".format(i), "OUT_{}".format(i)
-
-
-def _invert_map_connector(conn):
-    if conn.startswith("IN"):
-        return "OUT" + conn[2:]
-    elif conn.startswith("OUT"):
-        return "IN" + conn[3:]
-    else:
-        raise AutoDiffException("Could not parse map connector '{}'".format(conn))
-
-
-def _path_src_node_in_subgraph(edge: dgraph.MultiConnectorEdge, subgraph: dstate.StateSubgraphView):
-    path_src = subgraph.memlet_path(edge)[0].src
-    return path_src in subgraph.nodes()
-
-
-def _get_read_only_arrays(sdfg: SDFG) -> Set[str]:
-    """
-    Get the arrays that are only read in SDFG
-    """
-    written_to_arrays = set()
-    for node, parent in sdfg.all_nodes_recursive():
-        if isinstance(node, nodes.AccessNode):
-            if parent.in_degree(node) > 0 and any(not e.data.is_empty() for e in parent.in_edges(node)):
-                written_to_arrays.add(node.data)
-
-    read_only_arrays = set(sdfg.arrays.keys()) - written_to_arrays
-    return read_only_arrays
-
-
-def _get_state_topological_order(graph) -> List[SDFGState]:
-    """
-    Returns the SDFG states in topological order.
-    """
-    all_nodes = list(dutils.dfs_topological_sort(graph, graph.source_nodes()))
-    state_order = []
-    for node in all_nodes:
-        if isinstance(node, SDFGState):
-            state_order.append(node)
-        elif isinstance(node, LoopRegion):
-            loop_state_order = _get_state_topological_order(node)
-            state_order.extend(loop_state_order)
-        else:
-            raise AutoDiffException(
-                f"Unsupported node type {node} at the highest level of the SDFG while getting the state order")
-
-    # All states in the graph need to be present in the state order
-    if isinstance(graph, SDFG) and set(state_order) != set(graph.states()):
-        raise AutoDiffException("Could not find all states of the SDFG in the state order")
-    return state_order
-
 
 class BackwardPassGenerator:
     """ Class that holds the states for one backward pass creation.
@@ -316,7 +48,7 @@ class BackwardPassGenerator:
                                             be computed, and thus gradients should be computed with
                                             write-conflict-resolution.
         :param overwrite_strategy: The strategy to use to provide overwritten values from the forward pass to the backward pass. 
-                                    Should be either: store_all, recompute_all, dynamic, or user_defined.
+                                    Should be either: store_all, recompute_all, or user_defined.
     """
 
     def __init__(
@@ -398,10 +130,10 @@ class BackwardPassGenerator:
         self.no_wcr_edges: Set[dstate.MultiConnectorEdge] = set()
 
         #: The read only arrays of the forward sdfg
-        self.read_only_arrays: Set[str] = _get_read_only_arrays(self.sdfg)
+        self.read_only_arrays: Set[str] = get_read_only_arrays(self.sdfg)
 
         # Topological orderning of the states
-        self.state_order = _get_state_topological_order(self.sdfg)
+        self.state_order = get_state_topological_order(self.sdfg)
         self.conflicted_gradient_buffers: Set[str] = conflicted_gradient_buffers or set()
 
         self.interstate_symbols: Dict[str, str] = {}
@@ -440,7 +172,7 @@ class BackwardPassGenerator:
             if len(given_gradients) != 1:
                 raise AutoDiffException("When the forward sdfg is the same as the backward sdfg, outputs must be a"
                                         "single scalar")
-            if not _is_int_value(sdfg.arrays[given_gradients[0].data].total_size, 1):
+            if not is_int_eq_value(sdfg.arrays[given_gradients[0].data].total_size, 1):
                 raise AutoDiffException("When the forward sdfg is the same as the backward sdfg, outputs must be a"
                                         "single scalar")
             self.separate_sdfgs = False
@@ -1079,7 +811,6 @@ class BackwardPassGenerator:
     def _forward_data_to_backward_states(self) -> None:
         """
         Iterate through all the data that needs to be forwarded to the backward pass states.
-        Create an ILP to decide the optimal combination of what to store and what to recompute.
         """
         # Get the strategy decision for each data that needs to be forwarded to the backward pass
         strategy_choice, recomputation_nsdfgs = self._get_overwrite_resolution_strategy()
@@ -2140,7 +1871,7 @@ class BackwardPassGenerator:
                     .union(s for _, e in sub_expressions for s in e.free_symbols)\
                     .difference(e for e, _ in sub_expressions)
 
-                string_symbols = _symbols_to_strings(input_symbols)
+                string_symbols = symbols_to_strings(input_symbols)
 
                 # If there are any symbols that are defined at the global SDFG scope
                 # We do not need to add these as inputs to the reverse tasklet
@@ -2528,13 +2259,13 @@ class BackwardPassGenerator:
                 # Output names on the forward node
                 # (for which the gradient will be connected as an input on the reverse node)
                 given_gradients = [
-                    edge.src_conn for edge in subgraph.out_edges(node) if _path_src_node_in_subgraph(edge, subgraph)
+                    edge.src_conn for edge in subgraph.out_edges(node) if path_src_node_in_subgraph(edge, subgraph)
                 ]
 
                 # Input names on the forward node that gradients should be generated for
                 # note that the edge for the conditional is not included
                 required_gradients = [
-                    edge.dst_conn for edge in subgraph.in_edges(node) if _path_src_node_in_subgraph(edge, subgraph)
+                    edge.dst_conn for edge in subgraph.in_edges(node) if path_src_node_in_subgraph(edge, subgraph)
                     and self.sdfg.arrays[edge.data.data].dtype != dace.bool
                 ]
 
@@ -2733,7 +2464,7 @@ class BackwardPassGenerator:
                 self._add_gradient_data_descriptor(forward_node.data)
 
         for edge in subgraph.out_edges(forward_node):
-            if not _path_src_node_in_subgraph(edge, subgraph) or edge.dst not in self.reverse_map:
+            if not path_src_node_in_subgraph(edge, subgraph) or edge.dst not in self.reverse_map:
                 if edge.dst in self.conditional_block_entry:
                     backward_node = self.reverse_map[edge.src]
                     assert isinstance(edge.dst, nodes.MapEntry)
@@ -2752,7 +2483,7 @@ class BackwardPassGenerator:
                     # No need to remove the connector in this case
                     continue
 
-                conn_to_remove = _invert_map_connector(edge.src_conn)
+                conn_to_remove = invert_map_connector(edge.src_conn)
                 assert conn_to_remove in backward_node.in_connectors
                 assert backward_node.remove_in_connector(conn_to_remove)
                 if len(backward_node.in_connectors) == 0:
@@ -2901,7 +2632,6 @@ class BackwardPassGenerator:
         if replicated_node is None:
             replicated_node = copy.deepcopy(forward_node)
             backward_state.add_node(replicated_node)
-            # TODO: shouldn't this check be applied even if the node is already replicated?
             if self.separate_sdfgs:
                 # Need to copy over the descriptor from the forward pass
                 data_name = replicated_node.data
@@ -3086,7 +2816,7 @@ class BackwardPassGenerator:
 
         # 1
         # Get the states order for the nested_sdfg
-        states_order: List[SDFGState] = _get_state_topological_order(nsdfg.sdfg)
+        states_order: List[SDFGState] = get_state_topological_order(nsdfg.sdfg)
         state_index = states_order.index(forward_state)
         decendant_states: List[SDFGState] = states_order[state_index:]
         assert decendant_states.pop(0) == forward_state
@@ -3499,388 +3229,11 @@ class BackwardPassGenerator:
                     # We store everything else
                     recomputation_nsdfgs.append(None)
                     strategy_choice.append("store")
-        elif self.strategy == "dynamic":
-            # Solve the ILP and get the decision variables
-            strategy_choice, recomputation_nsdfgs = self._solve_ilp_for_data()
         else:
             raise AutoDiffException("Please specify a valid overwrite resolution strategy."
-                                    "Expected either store_all, recompute_all, or dynamic"
+                                    "Expected either store_all, recompute_all, or user_defined"
                                     f"but got {self.strategy}")
         return strategy_choice, recomputation_nsdfgs
-
-    def _solve_ilp_for_data(self):
-        """
-        Create and solve an ILP to decide on the best store-recompute combination for the desired data.
-        """
-
-        # Get the measurements sequence for the ILP
-        strategy_choices, recomputation_nsdfgs = self._define_and_solve_ilp()
-
-        # Solve the ILP and return the decision
-        return strategy_choices, recomputation_nsdfgs
-
-    def _get_data_computational_cost(self, recomputation_nsdfgs: List[nodes.NestedSDFG]) -> List[float]:
-        """
-        Get an estimate of the comuptational cost of recomputing the data that needs to be forwarded to the backward pass.
-        """
-        computational_costs = []
-        for nsdfg in recomputation_nsdfgs:
-            if nsdfg is None:
-                # If the array cannot be recomputed, we add an infinit cost to make sure we store it
-                # computational_costs.append(float('inf'))
-                # TODO: this should raise an error
-                computational_costs.append(100)
-                continue
-
-            # Get the operational intensity of the NSDFG
-            op_in_map: Dict[str, sp.Expr] = {}
-            c = 64 * 64  # Cache size in bytes.
-            l = 64  # Cache line size in bytes.
-            assumptions = {}  # Dictionary mapping SDFG symbols to concrete values
-            # analyze_sdfg_op_in(nsdfg.sdfg, op_in_map, c * l, l, assumptions)
-            # opin_res = (op_in_map[get_uuid(nsdfg.sdfg)])
-
-            # Get the work and work depth
-            w_d_map: Dict[str, sp.Expr] = {}
-            analyze_sdfg(nsdfg.sdfg, w_d_map, get_tasklet_work_depth, [], False)
-            w_d_res = w_d_map[get_uuid(nsdfg.sdfg)]
-
-            # Combine the three metrics with some weights
-            alpha, beta, gamma = 0.4, 0.2, 0.4
-            computational_costs.append(w_d_res[0] * alpha + w_d_res[1] * beta)
-
-        return computational_costs
-
-    def _define_and_solve_ilp(self):
-        """
-        Get the memory measurement sequence to be fed to the ilp solver as constraints
-        """
-
-        # Define the problem
-        model = LpProblem(name=f"ILP-{self.sdfg.label}", sense=LpMinimize)
-
-        recomputation_nsdfgs: List[nodes.NestedSDFG] = []
-        storage_costs: List[int] = []
-
-        # Dict of all the data that is within the loop
-        loop_data: Dict[LoopRegion, nodes.AccessNode] = {}
-
-        # Dict of the loops and data to be recomputed and their recomputation nsdfg
-        loop_data_recomputation_nsdfg: Dict[Tuple[LoopRegion, nodes.AccessNode], nodes.NestedSDFG] = {}
-
-        # Dict of the data and its storage cost
-        loop_storage_costs: Dict[nodes.AccessNode, int] = {}
-        # Loop data to remove from the original list
-        to_remove = []
-
-        # Remove loop data from the forward data list to be treated separetly
-        for i, (forward_state, backward_state, access_node, node, edge) in enumerate(self._forward_data):
-            within_loop, loop = self._state_within_loop(forward_state)
-            if within_loop:
-                # Add it to the dictionary
-                loop_data[loop] = access_node
-
-                # Get the recomputation nsdfgs for the loop data
-                nsdfg = self._get_recomputation_nsdfg(forward_state, access_node)
-
-                # Add it to the dictionary
-                loop_data_recomputation_nsdfg[(loop, access_node)] = nsdfg
-
-                # Get the storage cost for this access node
-                size = 1
-                for shape in self.sdfg.arrays[access_node.data].shape:
-                    # Only accept int sizes for now
-                    if not isinstance(shape, int):
-                        raise AutoDiffException("Symbolic shapes not yet supported for the ILP")
-                    size *= shape
-
-                # Convert the shape to KiBs
-                size = size * self.sdfg.arrays[access_node.data].dtype.bytes / 1024
-
-                loop_storage_costs[access_node] = size
-
-                # Remove it from the forward_data dict
-                to_remove.append(i)
-
-        # Get the cost of recomputing the loop data
-        loop_computation_costs = self._get_loop_recomputation_costs()
-
-        # Define the decision variables for each loop
-        loop_decs: Dict[LoopRegion, LpVariable] = []
-        for i, (loop, access_node) in enumerate(loop_data_recomputation_nsdfg.keys()):
-            start, end = self._extract_loop_region_info(loop)
-
-            # TODO: Make sure the low and up bound are as expected
-            if loop not in loop_decs:
-                loop_decs[loop] = LpVariable(name=f"loop_v_{i}", lowBound=start, upBound=end, cat="Integer")
-
-            # Get the cost of recomputing this access node in the loop
-            cost = loop_computation_costs[loop, access_node]
-
-            # Add the constraint to the loop
-            model += pulp.lpSum(cost * loop_decs[loop]), "Maximize_Performance"
-
-        # Clean up the forward data list
-        self._forward_data = [data for i, data in enumerate(self._forward_data) if i not in to_remove]
-
-        # Get the recomputation NSDFGs for non-loop data
-        for forward_state, backward_state, access_node, node, edge in self._forward_data:
-            try:
-                nsdfg = self._get_recomputation_nsdfg(forward_state, access_node)
-            except:
-                print(f"WARNING! couldn't get the recomputation nested SDFG for {access_node.label}")
-                nsdfg = None
-
-            recomputation_nsdfgs.append(nsdfg)
-
-            # Get the storage cost for this access node
-            size = 1
-            for shape in self.sdfg.arrays[access_node.data].shape:
-                # Only accept int sizes for now
-                if not isinstance(shape, int):
-                    raise AutoDiffException("Symbolic shapes not yet supported for the ILP")
-                size *= shape
-
-            # Convert the shape to KiBs
-            size = size * self.sdfg.arrays[access_node.data].dtype.bytes / 1024
-
-            storage_costs.append(size)
-
-        # Get the computational cost of each recomputation block
-        computational_costs = self._get_data_computational_cost(recomputation_nsdfgs)
-
-        # Define the decision variables for non-loop data
-        decs: List[LpVariable] = []
-        for i, nsdfg in enumerate(recomputation_nsdfgs):
-            decs.append(LpVariable(name=f"v_{i}", cat="Binary"))
-
-        # Add non loop data to the objective function
-        model += pulp.lpSum(cost * (1 - decs[i]) for i, cost in enumerate(computational_costs)), "Maximize_Performance"
-
-        # Get memory constraints
-        # self._add_memory_constraints_to_ilp(model, decs, storage_costs, loop_sorage_costs,
-        #                                     loop_data_recomputation_nsdfg)
-        self._add_memory_constraints_to_ilp(model, decs, storage_costs, [], None, loop_data_recomputation_nsdfg)
-
-        # Solve the ILP and return the decisions
-        # Add the parameter for supressing print messages
-        model.solve(pulp.PULP_CBC_CMD(msg=False))
-        status = pulp.LpStatus[model.status]
-        print(model)
-
-        # Output results
-        if status == "Infeasible":
-            print(model)
-            raise AutoDiffException("ILP Couldn't be solved please check the inputs")
-        choices = ["store" if pulp.value(dec) == 1.0 else "recompute" for dec in decs]
-
-        return choices, recomputation_nsdfgs
-
-    def _get_loop_recomputation_costs(self):
-        """
-        Get the recomputation costs for data that will require running a sequential loop again. 
-        This will return the cost of a single iteration of this loop. 
-        """
-        return []
-
-    def _add_memory_constraints_to_ilp(self,
-                                       model: LpProblem,
-                                       decs: List[LpVariable],
-                                       storage_costs: List[int],
-                                       loop_decs: List[LpVariable],
-                                       loop_sorage_costs: Dict[nodes.AccessNode, int],
-                                       loop_recomputation_nsdfgs: Dict[Tuple[LoopRegion, nodes.AccessNode],
-                                                                       nodes.NestedSDFG],
-                                       max_memory_usage: int = 8722000):
-        """
-        """
-        # List of constraints to return
-        constraints: List = []
-        constraints.append(0)
-        sdfg_allocation_sizes: List[int] = []
-
-        # Create an auxiliary variable that represents the PMU
-        pmu = LpVariable(name=f"PMU", cat="Integer")
-
-        # Call the code gen to determin where each allocation will happen
-        # codegen.to_allocate is a dictionary mapping what to allocate in each scope
-        codegen = framecode.DaCeCodeGenerator(self.sdfg)
-        codegen.determine_allocation_lifetime(self.sdfg)
-
-        # Add the global inputs as initial constraints
-        for arg in self.sdfg.arg_names:
-            # Get the size of the array associated with this access node
-            size = 1
-            for shape in self.sdfg.arrays[arg].shape:
-                # Only accept int sizes for now
-                if not isinstance(shape, int):
-                    raise AutoDiffException("Symbolic shapes not yet supported for the ILP")
-                size *= shape
-
-            # Convert the shape to KiBs
-            size = size * self.sdfg.arrays[arg].dtype.bytes / 1024
-            sdfg_allocation_sizes.append(size)
-
-            # Add the constraint
-            new_constraint = constraints[-1] + size
-            constraints.append(new_constraint)
-            model += (pmu >= new_constraint, f"Constraint_{len(constraints)}")
-
-        # Add global allocation constraints
-        for _, _, first_node_instance, _, _, _ in codegen.to_allocate[self.sdfg]:
-            # Get the size of the array associated with this access node
-            size = 1
-            for shape in self.sdfg.arrays[first_node_instance.data].shape:
-                # Only accept int sizes for now
-                if not isinstance(shape, int):
-                    raise AutoDiffException("Symbolic shapes not yet supported for the ILP")
-                size *= shape
-
-            # Convert the shape to KiBs
-            size = size * self.sdfg.arrays[first_node_instance.data].dtype.bytes / 1024
-            sdfg_allocation_sizes.append(size)
-
-            # Add the constraint
-            new_constraint = constraints[-1] + size
-            constraints.append(new_constraint)
-            model += (pmu >= new_constraint, f"Constraint_{len(constraints)}")
-
-        # Add the store constraints
-        # Since we know the stored values will be used in a different state,
-        # we know they will be allocated on the SDFG level
-        for i, v in enumerate(decs):
-            new_constraint = constraints[-1] + v * storage_costs[i]
-            constraints.append(new_constraint)
-            model += (pmu >= new_constraint, f"Constraint_{len(constraints)}")
-
-        for loop, node in loop_recomputation_nsdfgs.keys():
-            # cost = loop_sorage_costs[node]
-            cost = 1
-            low_bound, up_bound = self._extract_loop_region_info(loop)
-            decision_variable = loop_decs[loop]
-            new_constraint = constraints[-1] + (up_bound - decision_variable) * cost
-            constraints.append(new_constraint)
-            model += (pmu >= new_constraint, f"Constraint_loop_{len(constraints)}")
-
-        # Get the order of the states
-        states_topological = list(self.sdfg.bfs_nodes(self.sdfg.start_state))
-
-        # Identify the recomputation states
-        # These are the states where the recomputation could be inserted
-        recomputation_states: List[SDFGState] = []
-        for _, backward_state, _, _, _ in self._forward_data:
-            recomputation_states.append(backward_state)
-
-        # Dictionary of state : set of last updated constraints
-        state_constraints_dict = {}
-
-        # Go through the states and add the allocation/deallocation accordingly
-        for node in states_topological:
-            if isinstance(node, LoopRegion):
-                loop = node
-                # Evaluate the peak memory usage of the loop body for a single iteration without recomputation
-                # Evaluate the peak memory usage of the loop body for a single iteration with recomputation
-                # Evaluate the leftover memory from an average iteration for the loop
-                # Add the formula to the constraints
-            else:
-                state = node
-                assert isinstance(state, SDFGState)
-                state_allocation_sizes: list[int] = []
-
-                # Identify where to add the measurements of this state
-                # Get all the incoming state edges to this state
-                in_edges = self.sdfg.in_edges(state)
-
-                to_add = []
-                if len(in_edges) == 0:
-                    # Start state
-                    to_add.append(constraints[-1])
-                else:
-                    # Get the to add list of all the incoming states and merge them
-                    for edge in in_edges:
-                        state_constraints = state_constraints_dict[edge.src]
-                        to_add = to_add + state_constraints
-
-                # Get the allocations for this state
-                for _, _, first_node_instance, _, _, _ in codegen.to_allocate[state]:
-                    # Get the size of the array associated with this access node
-                    size = 1
-                    for shape in self.sdfg.arrays[first_node_instance.data].shape:
-                        # Only accept int sizes for now
-                        if not isinstance(shape, int):
-                            raise AutoDiffException("Symbolic shapes not yet supported for the ILP")
-                        size *= shape
-
-                    # Convert the shape to KiBs
-                    size = size * self.sdfg.arrays[first_node_instance.data].dtype.bytes / 1024
-                    state_allocation_sizes.append(size)
-
-                    updated_to_add = []
-
-                    # Add the constraint
-                    for const in to_add:
-                        new_constraint = const + size
-                        updated_to_add.append(new_constraint)
-                        constraints.append(new_constraint)
-                        model += (pmu >= new_constraint, f"Constraint_{len(constraints)}")
-                    to_add = updated_to_add
-                # Check if any recomputation terms can be inserted here
-                if state in recomputation_states:
-                    for i, (forward_state, backward_state, access_node, node, edge) in enumerate(self._forward_data):
-                        if not backward_state == state:
-                            continue
-
-                        # Get the size of the array associated with this access node
-                        size = 1
-                        for shape in self.sdfg.arrays[access_node.data].shape:
-                            # Only accept int sizes for now
-                            if not isinstance(shape, int):
-                                raise AutoDiffException("Symbolic shapes not yet supported for the ILP")
-                            size *= shape
-
-                        # Convert the shape to KiBs
-                        size = size * self.sdfg.arrays[access_node.data].dtype.bytes / 1024
-                        state_allocation_sizes.append(size)
-
-                        # Add the constraint
-                        # TODO: evaluate the recomputation peak memory usage and replace it here
-                        updated_to_add = []
-                        for const in to_add:
-                            new_constraint = const + (1 - decs[i]) * storage_costs[i]
-                            updated_to_add.append(new_constraint)
-                            constraints.append(new_constraint)
-                            model += (pmu >= new_constraint, f"Constraint_{len(constraints)}")
-                        to_add = updated_to_add
-                # Add the deallocation for when the state exists
-                for size in state_allocation_sizes:
-                    # Add the constraint
-                    updated_to_add = []
-                    for const in to_add:
-                        new_constraint = const - size
-                        updated_to_add.append(new_constraint)
-                        constraints.append(new_constraint)
-                        model += (pmu >= new_constraint, f"Constraint_{len(constraints)}")
-                    to_add = updated_to_add
-
-                # Update the state constraints dict
-                state_constraints_dict[state] = to_add
-
-        # Add the deallocation for when the sdfg exists
-        for size in sdfg_allocation_sizes:
-            # Get the end states of the SDFG
-            end_states = [state for state in states_topological if self.sdfg.out_degree(state) == 0]
-            to_add_final = []
-            for state in end_states:
-                to_add_final += state_constraints_dict[state]
-
-            # Add the constraint
-            for const in to_add_final:
-                new_constraint = const - size
-                constraints.append(new_constraint)
-                model += (pmu >= new_constraint, f"Constraint_{len(constraints)}")
-
-        # Make sure the pmu is less than the user provided maximum memory usage
-        model += (pmu <= max_memory_usage, f"Final_Constraint")
 
     def _get_accessnode_to_forward(self, forward_state: SDFGState, backward_state: SDFGState,
                                    forward_node: nodes.AccessNode):
@@ -5212,7 +4565,7 @@ class BackwardPassGenerator:
         return src_candidates[0]
 
     def _get_reverse_node(self, state: SDFGState, backward_state: SDFGState, node, given_gradients,
-                          required_gradients) -> ReverseNodeReturnType:
+                          required_gradients) -> Tuple[nodes.Node, BackwardResult]:
         """ Add the reverse node for a node from the forward pass to the backward pass, and return it.
 
             Resolution order:
@@ -5258,7 +4611,7 @@ class BackwardPassGenerator:
         node: nodes.NestedSDFG,
         given_gradients: List[str],
         required_gradients: List[str],
-    ) -> ReverseNodeReturnType:
+    ) -> Tuple[nodes.Node, BackwardResult]:
         reverse_nsdfg = dace.SDFG(node.sdfg.name + "_backward")
         # recursive call
         gen = BackwardPassGenerator(sdfg=node.sdfg,
@@ -5361,7 +4714,7 @@ class BackwardPassGenerator:
         node: nodes.AccessNode,
         given_gradients: List[str],
         required_gradients: List[str],
-    ) -> ReverseNodeReturnType:
+    ) -> Tuple[nodes.Node, BackwardResult]:
         rev = nodes.AccessNode(self.array_grad_name(node.data))
 
         # We want all gradient arrays to be initialized to zero
@@ -5385,10 +4738,10 @@ class BackwardPassGenerator:
         node: nodes.MapEntry,
         given_gradients: List[str],
         required_gradients: List[str],
-    ) -> ReverseNodeReturnType:
+    ) -> Tuple[nodes.Node, BackwardResult]:
 
-        required_grad_names = {n: _invert_map_connector(n) for n in required_gradients}
-        given_grad_names = {n: _invert_map_connector(n) for n in given_gradients}
+        required_grad_names = {n: invert_map_connector(n) for n in required_gradients}
+        given_grad_names = {n: invert_map_connector(n) for n in given_gradients}
         result = BackwardResult(required_grad_names=required_grad_names, given_grad_names=given_grad_names)
         rev = nodes.MapExit(self.reverse_map[node.map])
 
@@ -5423,11 +4776,11 @@ class BackwardPassGenerator:
         return (
             rev,
             BackwardResult(required_grad_names={
-                n: _invert_map_connector(n)
+                n: invert_map_connector(n)
                 for n in required_gradients
             },
                 given_grad_names={
-                    n: _invert_map_connector(n)
+                    n: invert_map_connector(n)
                     for n in given_gradients
                 }),
         )
@@ -5440,7 +4793,7 @@ class BackwardPassGenerator:
         tasklet: nodes.Tasklet,
         given_gradients: List[str],
         required_gradients: List[str],
-    ) -> ReverseNodeReturnType:
+    ) -> Tuple[nodes.Node, BackwardResult]:
         if tasklet.language is not dtypes.Language.Python:
             raise AutoDiffException("Expected tasklet with language Python, got language {}".format(tasklet.language))
 
@@ -5448,7 +4801,7 @@ class BackwardPassGenerator:
         for _, _, _, _, memlet in state.in_edges(tasklet):
             if memlet.data is not None:
                 try:
-                    _is_int_value(memlet.subset.num_elements(), 1)
+                    is_int_eq_value(memlet.subset.num_elements(), 1)
                 except AutoDiffException as e:
                     raise AutoDiffException(
                         "Autodiff only supported for tasklets with scalar inputs and outputs") from e
@@ -5456,7 +4809,7 @@ class BackwardPassGenerator:
         for _, _, _, _, memlet in state.out_edges(tasklet):
             if memlet.data is not None:
                 try:
-                    _is_int_value(memlet.subset.num_elements(), 1)
+                    is_int_eq_value(memlet.subset.num_elements(), 1)
                 except AutoDiffException as e:
                     raise AutoDiffException(
                         "Autodiff only supported for tasklets with scalar inputs and outputs") from e
@@ -5516,12 +4869,3 @@ class BackwardPassGenerator:
                                 debuginfo=tasklet.debuginfo)
             backward_state.add_node(rev)
         return rev, result
-
-
-class SympyCleaner(ast.NodeTransformer):
-
-    def visit_Name(self, node):
-        if node.id == "pi":
-            return ast.copy_location(ast.parse("(3.141592653589)").body[0], node)
-        else:
-            return self.generic_visit(node)

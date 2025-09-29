@@ -13,6 +13,7 @@ from dace.transformation import transformation as pm
 from dace.sdfg import SDFG, SDFGState, graph, nodes
 
 from dace.autodiff import backward_pass_generator as engine, analysis as autodiff_analysis
+from dace.autodiff.utils import init_grad
 from dace.util import in_edge_with_name
 from dace.transformation.passes.analysis import AccessSets
 
@@ -185,7 +186,7 @@ class ExpandBackwardPass(pm.ExpandTransformation):
                                                                                gradient_we_are_writing,
                                                                                access_sets=access_sets)
             if not anyone_written_before_us and is_written_with_wcr:
-                engine.init_grad(gradient_we_are_writing, sdfg, state)
+                init_grad(gradient_we_are_writing, sdfg, state)
 
         for name in required_forwarded_values:
             # get the access to the forwarded_value
