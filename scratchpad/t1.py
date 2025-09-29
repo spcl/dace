@@ -52,7 +52,7 @@ config = HardwareConfig(
 )
 
 
-def create_data_and_handlers(M_val, N_val, K_val, hw_config: HardwareConfig):
+def create_data_and_handlers(M_val, N_val, K_val, hw_config: HardwareConfig, hwM, hwN, hwK):
     DTYPE_INPUT = hw_config.dtype_input
     DTYPE_OUTPUT = hw_config.dtype_output
     hardware_thread_group_dims = hw_config.hardware_thread_group_dims
@@ -199,17 +199,17 @@ if __name__ == "__main__":
     setup_hw_env_dace(config)
 
     M, N, K, hwM, hwN, hwK = 512, 512, 512, 64, 64, 128
-    combo = (512, 512, 512, 64, 64, 128)
-    data_and_interleavers = create_data_and_handlers(M, N, K, config)
+    combo = (M, N, K, hwM, hwN, hwK)
+    data_and_interleavers = create_data_and_handlers(M, N, K, config, hwM, hwN, hwK)
+
     data = data_and_interleavers["numpy_data"]
     interleavers = data_and_interleavers["interleavers"]
-    d = run_sdfg_in_tempdir(combo, interleavers, config, data)
 
-    run_numpy = partial(gemm, data["A"], data["B"], data["C"])
-    run_sdfg = partial(run_sdfg_in_tempdir, combo, interleavers, config, data)
+    run_numpy_fn = partial(gemm, data["A"], data["B"], data["C"])
+    run_sdfg_fn = partial(run_sdfg_in_tempdir, combo, interleavers, config, data)
 
     run_e2e_verification(hw_config=config,
                          data=data,
                          interleave_handlers=interleavers,
-                         numpy_fn=run_numpy,
-                         sdfg_fn=run_sdfg)
+                         numpy_fn=run_numpy_fn,
+                         sdfg_fn=run_sdfg_fn)
