@@ -11,43 +11,78 @@ from dace.frontend.fortran.fortran_parser import (
 from dace.frontend.fortran.tools.helpers import find_all_f90_files
 
 BUILTINS = """
+! This file provides stub implementations for standard Fortran intrinsic modules.
+! These are included during preprocessing to ensure that `USE` statements for
+! these common modules can be resolved by the parser, even if the full
+! standard library implementations are not available.
+
+!> A stub for the standard `iso_c_binding` module, providing essential types
+!> and interfaces for C interoperability.
 module iso_c_binding
+  !> Integer kind parameters corresponding to C integer types.
   integer, parameter :: c_int8_t = 1, c_int16_t = 2, c_int32_t = 4, c_int64_t = 8
+  !> Aliases for common C types.
   integer, parameter :: c_char = c_int8_t, c_signed_char = c_char, c_bool = c_int8_t, c_int = c_int32_t, c_long = c_int, c_size_t = c_int64_t
+  !> Kind parameters for C floating-point types.
   integer, parameter :: c_float = 4, c_double = 8
+
+  !> Opaque derived type to represent a C pointer.
   type c_ptr
   end type c_ptr
+
+  !> Opaque derived type to represent a C function pointer.
   type c_funptr
   end type c_funptr
+
+  !> A named constant for a null C pointer.
   type(c_ptr), parameter :: c_null_ptr = c_ptr()
+  !> A named constant for the C null character.
   character(kind=c_char), parameter :: c_null_char = char(0)
+
+  !> Interface for converting a C pointer to a Fortran pointer.
   interface c_f_pointer
     module procedure :: cfp_logical_r3
   end interface c_f_pointer
+
+  !> Interface for converting a C function pointer to a Fortran procedure pointer.
   interface c_f_procpointer
   end interface c_f_procpointer
+
+  !> Interface for `C_LOC` intrinsic function to get the C address of a Fortran entity.
   interface c_loc
   end interface c_loc
+
+  !> Interface for `C_ASSOCIATED` intrinsic function to check pointer association.
   interface c_associated
     module procedure :: cass_cptr
   end interface c_associated
 contains
+  !> A stub implementation for a procedure within the `c_f_pointer` interface.
+  !> The name `cfp_logical_r3` indicates it converts a C pointer to a Fortran
+  !> pointer (`cfp`) of type `LOGICAL` with rank 3 (`r3`).
   subroutine cfp_logical_r3(cptr, fptr, shape, lower)
     type(c_ptr), intent(in) :: cptr
     logical, pointer, intent(out) :: fptr(:, :, :)
     integer, optional :: shape(:)
     integer, optional :: lower(:)
   end subroutine cfp_logical_r3
+
+  !> A stub implementation for a function within the `c_associated` interface.
   logical function cass_cptr(a, b)
     type(c_ptr), intent(in) :: a
     type(c_ptr), optional, intent(in) :: b
   end function cass_cptr
 end module iso_c_binding
+
+!> A stub for the standard `iso_fortran_env` module, providing access to
+!> environment-specific parameters and constants.
 module iso_fortran_env
+  !> Kind parameters for standard real and integer types.
   integer, parameter :: real32 = 4
   integer, parameter :: real64 = 8
   integer, parameter :: int32 = 4
   integer, parameter :: int64 = 8
+  !> Character constants providing compiler information (stubbed as empty).
   character, parameter :: compiler_version = "", compiler_options = ""
 end module iso_fortran_env
 """
