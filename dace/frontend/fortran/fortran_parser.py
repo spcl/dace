@@ -1,6 +1,7 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import copy
+import logging
 import sys
 import warnings
 from copy import deepcopy as dpcp
@@ -563,7 +564,8 @@ class AST_translator:
             for arr_name, arr in sdfg.arrays.items():
 
                 if arr.transient and arr_name in arg_names:
-                    print(f"Changing the transient status to false of {arr_name} because it's a function argument")
+                    logging.debug(
+                        f"Changing the transient status to false of {arr_name} because it's a function argument")
                     arr.transient = False
 
         self.transient_mode = True
@@ -991,7 +993,7 @@ class AST_translator:
         if len(node.execution_part.execution) == 0:
             return
 
-        print("TRANSLATE SUBROUTINE", node.name.name)
+        logging.debug("TRANSLATE SUBROUTINE", node.name.name)
 
         # First get the list of read and written variables
         inputnodefinder = ast_transforms.FindInputs()
@@ -1673,7 +1675,8 @@ class AST_translator:
                 new_sdfg.add_datadesc(self.name_mapping[new_sdfg][local_name.name], datatype_to_add)
             else:
                 # raise warning that array already exists in sdfg
-                print(f"Array {self.name_mapping[new_sdfg][local_name.name]} already exists in SDFG {new_sdfg.name}")
+                logging.warning(
+                    f"Array {self.name_mapping[new_sdfg][local_name.name]} already exists in SDFG {new_sdfg.name}")
 
             if self.struct_views.get(new_sdfg) is None:
                 self.struct_views[new_sdfg] = {}
@@ -1738,7 +1741,8 @@ class AST_translator:
                 return False, None
             else:
                 # raise warning that array already exists in sdfg
-                print(f"Array {self.name_mapping[new_sdfg][local_name.name]} already exists in SDFG {new_sdfg.name}")
+                logging.warning(
+                    f"Array {self.name_mapping[new_sdfg][local_name.name]} already exists in SDFG {new_sdfg.name}")
 
     def add_simple_array_to_element_view_pair_in_tower(self, sdfg: SDFG, array: dat.Array, name_chain: List[str],
                                                        member: ast_internal_classes.FNode, substate: SDFGState,
@@ -2865,10 +2869,8 @@ def top_level_objects_map(ast: f03.Program, path: str) -> Dict[str, Base]:
     out: Dict[str, Base] = {}
     for top in ast.children:
         if type(top).__name__ in CPP_CLASS_NAMES:
-            print(
-                f"Resolve the C++ preprocessor statements before starting to do anything with it;"
-                f" got `{top}` in {path}",
-                file=sys.stderr)
+            logging.warning(f"Resolve the C++ preprocessor statements before starting to do anything with it;"
+                            f" got `{top}` in {path}")
             continue
         name = utils.find_name_of_node(top)
         assert name
@@ -3020,7 +3022,7 @@ def run_fparser_transformations(ast: f03.Program, cfg: ParseConfig):
     _checkpoint_ast(cfg, 'ast_v0.f90', ast)
 
     if cfg.make_noop:
-        print("FParser Op: Making certain functions no-op in the AST...")
+        logging.debug("FParser Op: Making certain functions no-op in the AST...")
         noop_missed: Set[types.SPEC] = set(cfg.make_noop)
         for fn in walk(ast, (f03.Function_Stmt, f03.Subroutine_Stmt)):
             fnspec = analysis.ident_spec(fn)
@@ -3031,9 +3033,9 @@ def run_fparser_transformations(ast: f03.Program, cfg: ParseConfig):
             if expart:
                 utils.remove_self(expart)
         if noop_missed:
-            print(f"The following functions could not be found for making no-op: {noop_missed}", file=sys.stderr)
+            logging.warning(f"The following functions could not be found for making no-op: {noop_missed}")
 
-    print("FParser Op: Removing local indirections from AST...")
+    logging.debug("FParser Op: Removing local indirections from AST...")
     # NOTE: The local indirection removal operations should not need full resolution (e.g., build an alias map).
     ast = desugaring.deconstruct_enums(ast)
     ast = desugaring.deconstruct_associations(ast)
@@ -3044,7 +3046,7 @@ def run_fparser_transformations(ast: f03.Program, cfg: ParseConfig):
     ast = pruning.prune_coarsely(ast, cfg.do_not_prune)
     _checkpoint_ast(cfg, 'ast_v1.f90', ast)
 
-    print("FParser Op: Removing remote indirections from AST...")
+    logging.debug("FParser Op: Removing remote indirections from AST...")
     ast = desugaring.convert_data_statements_into_assignments(ast)
     ast = cleanup.correct_for_function_calls(ast)
     ast = desugaring.deconstruct_statement_functions(ast)
@@ -3053,10 +3055,10 @@ def run_fparser_transformations(ast: f03.Program, cfg: ParseConfig):
     ast_f90_old, ast_f90_new = None, ast.tofortran()
     while not ast_f90_old or ast_f90_old != ast_f90_new:
         if ast_f90_old:
-            print(f"FParser Op: AST-size went from {len(ast_f90_old.splitlines())} lines to"
-                  f" {len(ast_f90_new.splitlines())} lines. Attempting further pruning...")
+            logging.debug(f"FParser Op: AST-size went from {len(ast_f90_old.splitlines())} lines to"
+                          f" {len(ast_f90_new.splitlines())} lines. Attempting further pruning...")
         else:
-            print(f"FParser Op: AST-size is {len(ast_f90_new.splitlines())} lines. Attempting pruning...")
+            logging.debug(f"FParser Op: AST-size is {len(ast_f90_new.splitlines())} lines. Attempting pruning...")
         ast = cleanup.correct_for_function_calls(ast)
         ast = desugaring.deconstruct_interface_calls(ast)
         ast = pruning.prune_coarsely(ast, cfg.do_not_prune)
@@ -3070,41 +3072,41 @@ def run_fparser_transformations(ast: f03.Program, cfg: ParseConfig):
     ast_f90_old, ast_f90_new = None, ast.tofortran()
     while not ast_f90_old or ast_f90_old != ast_f90_new:
         if ast_f90_old:
-            print(f"FParser Op: AST-size went from {len(ast_f90_old.splitlines())} lines to"
-                  f" {len(ast_f90_new.splitlines())} lines. Attempting further pruning...")
+            logging.debug(f"FParser Op: AST-size went from {len(ast_f90_old.splitlines())} lines to"
+                          f" {len(ast_f90_new.splitlines())} lines. Attempting further pruning...")
         else:
-            print(f"FParser Op: AST-size is {len(ast_f90_new.splitlines())} lines. Attempting pruning...")
+            logging.debug(f"FParser Op: AST-size is {len(ast_f90_new.splitlines())} lines. Attempting pruning...")
 
-        print("FParser Op: Coarsely pruning the AST...")
+        logging.debug("FParser Op: Coarsely pruning the AST...")
         ast = pruning.prune_coarsely(ast, cfg.do_not_prune)
 
-        print("FParser Op: Inject configs...")
+        logging.debug("FParser Op: Inject configs...")
         ast = optimizations.inject_const_evals(ast, cfg.config_injections)
-        print("FParser Op: Fix arguments...")
+        logging.debug("FParser Op: Fix arguments...")
         # Fix the practically constant arguments, just in case.
         ast = optimizations.make_practically_constant_arguments_constants(ast, cfg.entry_points)
-        print("FParser Op: Fix local vars...")
+        logging.debug("FParser Op: Fix local vars...")
         # Fix the locally constant variables, just in case.
         ast = optimizations.exploit_locally_constant_variables(ast)
 
-        print("FParser Op: Pruning...")
+        logging.debug("FParser Op: Pruning...")
         ast = optimizations.const_eval_nodes(ast)
         ast = pruning.prune_branches(ast)
         ast = pruning.prune_unused_objects(ast, cfg.do_not_prune)
         ast = pruning.consolidate_uses(ast)
 
         ast_f90_old, ast_f90_new = ast_f90_new, ast.tofortran()
-    print(f"FParser Op: AST-size settled at {len(ast_f90_new.splitlines())} lines.")
+    logging.debug(f"FParser Op: AST-size settled at {len(ast_f90_new.splitlines())} lines.")
     _checkpoint_ast(cfg, 'ast_v3.f90', ast)
 
     if cfg.consolidate_global_data:
-        print("FParser Op: Consolidating the global variables of the AST...")
+        logging.debug("FParser Op: Consolidating the global variables of the AST...")
         ast = cleanup.consolidate_global_data_into_arg(ast)
         ast = pruning.prune_coarsely(ast, cfg.do_not_prune)
         _checkpoint_ast(cfg, 'ast_v4.f90', ast)
 
     if cfg.rename_uniquely:
-        print("FParser Op: Rename uniquely...")
+        logging.debug("FParser Op: Rename uniquely...")
         ast = cleanup.assign_globally_unique_subprogram_names(ast, set(cfg.do_not_rename))
         ast = cleanup.assign_globally_unique_variable_names(ast, set(cfg.do_not_rename))
         ast = pruning.consolidate_uses(ast)
@@ -3211,7 +3213,6 @@ def run_ast_transformations(own_ast: ast_components.InternalFortranAst,
     has_cycles = list(cycles)
     cycles_we_cannot_ignore = []
     for cycle in has_cycles:
-        print(cycle)
         for i in cycle:
             is_pointer = struct_dep_graph.get_edge_data(i, cycle[(cycle.index(i) + 1) % len(cycle)])["pointing"]
             point_name = struct_dep_graph.get_edge_data(i, cycle[(cycle.index(i) + 1) % len(cycle)])["point_name"]
@@ -3365,7 +3366,7 @@ def compute_dep_graph(ast: f03.Program, start_point: Union[str, List[str]]) -> n
         item_name, to_process = to_process[0], to_process[1:]
         item = ast_utils.atmost_one(c for c in ast.children if utils.find_name_of_node(c) == item_name)
         if not item:
-            print(f"Could not find: {item}")
+            logging.warning(f"Could not find: {item}")
             continue
 
         fandsl = ast_utils.FunctionSubroutineLister()
@@ -3424,13 +3425,11 @@ def _get_toplevel_objects(path_f90: Tuple[str, str], parser, sources) -> Dict[st
             file, = inc.children
             repls = {k: c for k, c in sources.items() if k.endswith(f"{file}")}
             if not repls:
-                print(f"Could not find the file to include `{inc}` in {path}; moving on", file=sys.stderr)
+                logging.warning(f"Could not find the file to include `{inc}` in {path}; moving on")
                 continue
             elif len(repls) > 1:
-                print(
-                    f"Found multiple candidate files to include `{inc}` in {path}: {sorted(repls.keys())}; "
-                    f"proceeding with an arbitrary one",
-                    file=sys.stderr)
+                logging.warning(f"Found multiple candidate files to include `{inc}` in {path}: {sorted(repls.keys())}; "
+                                f"proceeding with an arbitrary one")
             _, content = repls.popitem()
             inc_map[inc.tofortran()] = content
         # 3. Replace that string content.
@@ -3442,7 +3441,7 @@ def _get_toplevel_objects(path_f90: Tuple[str, str], parser, sources) -> Dict[st
         # 4. Now proceed to map the top-level objects in this preprocessed Fortran content.
         return top_level_objects_map(cast, path)
     except FortranSyntaxError as e:
-        print(f"Could not parse `{path}`; got {e}", file=sys.stderr)
+        logging.warning(f"Could not parse `{path}`; got {e}")
         return {}
 
 
@@ -3472,7 +3471,7 @@ def construct_full_ast(sources: Dict[str, str],
     for path, f90 in sources.items():
         ctops = _get_toplevel_objects((path, f90), parser=parser, sources=sources)
         if ctops.keys() & tops.keys():
-            print(f"Found duplicate names for top-level objects: {ctops.keys() & tops.keys()}", file=sys.stderr)
+            logging.warning(f"Found duplicate names for top-level objects: {ctops.keys() & tops.keys()}")
         tops.update(ctops)
 
     ast = f03.Program(get_reader(''))
