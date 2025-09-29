@@ -13,7 +13,7 @@ def add_backward_pass(sdfg: SDFG,
                       data_forwarding_strategy: str = "store_all",
                       data_to_recompute: typing.List[str] = None,
                       simplify: bool = True,
-                      seprate_sdfgs=False):
+                      separate_sdfgs: bool = False):
     """ Experimental: Add a backward pass to `state` using reverse-mode automatic differentiation.
 
         ``inputs``, ``outputs`` and ``grads`` can be provided either as ``AccessNode`` nodes, or as ``str``, in which
@@ -49,7 +49,7 @@ def add_backward_pass(sdfg: SDFG,
     # Inline conditional blocks but keep loops
     inline_control_flow_regions(sdfg, ignore_region_types=[LoopRegion])
 
-    if seprate_sdfgs:
+    if separate_sdfgs:
         backward_sdfg = SDFG(sdfg.name + "_backward")
     else:
         backward_sdfg = sdfg
@@ -68,5 +68,5 @@ def add_backward_pass(sdfg: SDFG,
         sdfg.simplify()
         sdfg.validate()
 
-    if seprate_sdfgs:
+    if separate_sdfgs:
         return backward_sdfg
