@@ -1539,7 +1539,7 @@ class AST_translator:
                     nested_sdfg = parent_sdfg
                     parent_sdfg = parent_sdfg.parent_sdfg
 
-        if self.multiple_sdfgs == False:
+        if not self.multiple_sdfgs:
 
             prev_block = None if new_sdfg not in self.last_sdfg_states else self.last_sdfg_states[new_sdfg]
             is_start = prev_block is None
@@ -1566,7 +1566,7 @@ class AST_translator:
 
             new_sdfg.simplify(verbose=True)
 
-        if self.multiple_sdfgs == True:
+        else:
             internal_sdfg.path = self.sdfg_path + new_sdfg.name + ".sdfg"
 
     def compute_array_shape(self, node: ast_internal_classes.Array_Subscript_Node, sdfg: SDFG, array: dat.Array):
