@@ -13,7 +13,7 @@ from dace.soft_hier.utils.preload import make_preload_elf_hbm_interleaved_new
 import ctypes
 from dace.soft_hier.utils.generate_sdfg import _my_gen_baseline_matmul_sdfg
 from dace.soft_hier.utils.read_from_dump_file import get_address_and_read_from_file
-from dace.soft_hier.utils.run_e2e_verification import run_e2e_verification, HardwareConfig
+from dace.soft_hier.utils.run_e2e_verification import run_e2e_verification, HardwareConfig, setup_hw_env_dace
 from functools import partial
 
 
@@ -22,14 +22,15 @@ def _get_gvsoc_path() -> str:
     # First try environment variable
     if "GVSOC_PATH" in os.environ:
         return os.environ["GVSOC_PATH"]
-    
+
     # Try to find gvsoc binary
     gvsoc_binary = shutil.which("gvsoc")
     if gvsoc_binary:
         # Get parent directory three times: bin -> install -> gvsoc_root
         return str(Path(gvsoc_binary).parent.parent.parent)
-_get_gvsoc_path()
 
+
+_get_gvsoc_path()
 
 # Configuration
 config = HardwareConfig(
@@ -49,6 +50,7 @@ config = HardwareConfig(
     dace_input_type=dace.uint16,
     dace_output_type=dace.uint16,
 )
+
 
 def create_data_and_handlers(M_val, N_val, K_val, hw_config: HardwareConfig):
     DTYPE_INPUT = hw_config.dtype_input
@@ -71,18 +73,19 @@ def create_data_and_handlers(M_val, N_val, K_val, hw_config: HardwareConfig):
     C_handler.split_to_blocks()
     C_handler.place_to_range(place_range=(0, 7, 1))
 
-
-    return { "numpy_data": {
-        "A": A_host,
-        "B": B_host,
-        "C": C_host,
+    return {
+        "numpy_data": {
+            "A": A_host,
+            "B": B_host,
+            "C": C_host,
         },
-      "interleavers": {
-        "A": A_handler,
-        "B": B_handler,
-        "C": C_handler,
-      }
+        "interleavers": {
+            "A": A_handler,
+            "B": B_handler,
+            "C": C_handler,
+        }
     }
+
 
 def run_sdfg_in_tempdir(combo, interleavers: Dict[str, InterleaveHandler], hw_config: HardwareConfig,
                         host_data: Dict[str, np.ndarray]):
@@ -108,10 +111,9 @@ def run_sdfg_in_tempdir(combo, interleavers: Dict[str, InterleaveHandler], hw_co
 
     tmp_dir = "."
 
-    interleaver_list = [interleavers["A"],
-                        interleavers["B"],
-                        interleavers["C"]]
-    make_preload_elf_hbm_interleaved_new("output.elf", interleaver_list,
+    interleaver_list = [interleavers["A"], interleavers["B"], interleavers["C"]]
+    make_preload_elf_hbm_interleaved_new("output.elf",
+                                         interleaver_list,
                                          KMN=[K_val, M_val, N_val],
                                          hbm_node_addr_base=hw_config.hbm_addr_base,
                                          hbm_node_addr_space=hw_config.hbm_addr_space,
@@ -192,7 +194,9 @@ def gemm(A: np.ndarray, B: np.ndarray, C: np.ndarray):
     """Naive GEMM: C = A @ B + C"""
     C = A @ B + C
 
+
 if __name__ == "__main__":
+    setup_hw_env_dace(config)
 
     M, N, K, hwM, hwN, hwK = 512, 512, 512, 64, 64, 128
     combo = (512, 512, 512, 64, 64, 128)
@@ -204,11 +208,8 @@ if __name__ == "__main__":
     run_numpy = partial(gemm, data["A"], data["B"], data["C"])
     run_sdfg = partial(run_sdfg_in_tempdir, combo, interleavers, config, data)
 
-    run_e2e_verification(
-        hw_config=config,
-        data=data,
-        interleave_handlers=interleavers,
-        numpy_fn=run_numpy,
-        sdfg_fn=run_sdfg
-    )
-
+    run_e2e_verification(hw_config=config,
+                         data=data,
+                         interleave_handlers=interleavers,
+                         numpy_fn=run_numpy,
+                         sdfg_fn=run_sdfg)
