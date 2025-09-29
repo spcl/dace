@@ -8,7 +8,7 @@ from typing import Any, List, Optional, Tuple, Union
 
 from dace.frontend.fortran import ast_internal_classes
 from dace.frontend.fortran.ast_transforms import NodeVisitor, NodeTransformer, ParentScopeAssigner, \
-    ScopeVarsDeclarations, TypeInference, par_Decl_Range_Finder, NeedsTypeInferenceException
+    ScopeVarsDeclarations, par_Decl_Range_Finder, NeedsTypeInferenceException
 from dace.frontend.fortran.ast_utils import fortrantypes2dacetypes, mywalk, is_literal
 from dace.libraries.blas.nodes.dot import dot_libnode
 from dace.libraries.blas.nodes.gemm import gemm_libnode
@@ -93,11 +93,6 @@ class IntrinsicNodeTransformer(NodeTransformer):
     @abstractmethod
     def func_name() -> str:
         pass
-
-    # @staticmethod
-    # @abstractmethod
-    # def transformation_name(self) -> str:
-    #    pass
 
 
 class DirectReplacement(IntrinsicTransformation):
@@ -322,9 +317,6 @@ class DirectReplacement(IntrinsicTransformation):
 
     def replacement_epsilon(args: ast_internal_classes.Arg_List_Node, line, symbols: list):
 
-        # assert len(args) == 1
-        # assert isinstance(args[0], ast_internal_classes.Name_Node)
-
         ret_val = sys.float_info.epsilon
         return ast_internal_classes.Real_Literal_Node(value=str(ret_val))
 
@@ -355,7 +347,6 @@ class DirectReplacement(IntrinsicTransformation):
 
     @staticmethod
     def replace_name(func_name: str) -> str:
-        # return ast_internal_classes.Name_Node(name=DirectReplacement.FUNCTIONS[func_name][0])
         return ast_internal_classes.Name_Node(name=f'__dace_{func_name}')
 
     @staticmethod
@@ -628,15 +619,6 @@ class LoopBasedReplacementTransformation(IntrinsicNodeTransformer):
                                                         rval=difference,
                                                         line_number=node.line_number)
             array.indices[i] = new_index
-            #difference = int(end_loop.value) - int(start_loop.value)
-            #if difference != 0:
-            #    new_index = ast_internal_classes.BinOp_Node(
-            #        lval=idx_var,
-            #        op="+",
-            #        rval=ast_internal_classes.Int_Literal_Node(value=str(difference)),
-            #        line_number=node.line_number
-            #    )
-            #    array.indices[i] = new_index
 
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
 
@@ -1085,10 +1067,6 @@ class MinMaxValTransformation(LoopBasedReplacementTransformation):
     def _parse_call_expr_node(self, node: ast_internal_classes.Call_Expr_Node):
 
         for arg in node.args:
-
-            #if isinstance(arg, ast_internal_classes.Data_Ref_Node):
-            #    self.rvals.append(arg)
-            #    continue
 
             array_node = self._parse_array(node, arg)
 
@@ -1763,7 +1741,6 @@ class MathFunctions(IntrinsicTransformation):
 
             input_type = self.func_type(node)
             if input_type == 'VOID':
-                #assert input_type != 'VOID', f"Unexpected void input at line number: {node.line_number}"
                 raise NeedsTypeInferenceException(func_name, node.line_number)
 
             replacement_rule = MathFunctions.INTRINSIC_TO_DACE[func_name]
@@ -1954,7 +1931,6 @@ class FortranIntrinsics:
     def output_size(node: ast_internal_classes.Call_Expr_Node):
 
         name = node.name.name.split('__dace_')
-        #if len(name) != 2 or name[1].upper() not in MathFunctions.INTRINSIC_SIZE_FUNCTIONS:
         if len(name) != 2:
             return None, None, 'VOID'
 
