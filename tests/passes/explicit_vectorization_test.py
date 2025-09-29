@@ -4,8 +4,8 @@ import dace
 import copy
 import pytest
 import numpy
-from dace.transformation.passes.explicit_vectorization import ExplicitVectorizationPipelineCPU, ExplicitVectorizationPipelineGPU
-from dace.transformation.passes.clean_data_to_scalar_slice_to_tasklet_pattern import CleanDataToScalarSliceToTaskletPattern
+from dace.transformation.passes.explicit_vectorization_cpu import ExplicitVectorizationPipelineCPU
+from dace.transformation.passes.explicit_vectorization_gpu import ExplicitVectorizationPipelineGPU
 
 N = dace.symbol('N')
 
@@ -140,12 +140,9 @@ def test_nested_sdfg():
 
     # Original SDFG
     sdfg = tasklet_in_nested_sdfg.to_sdfg()
-    sdfg.save("s1.sdfg")
 
     # Vectorized SDFG
     copy_sdfg = copy.deepcopy(sdfg)
-    CleanDataToScalarSliceToTaskletPattern().apply_pass(copy_sdfg, {})
-    sdfg.save("s2.sdfg")
     ExplicitVectorizationPipelineCPU(vector_width=8).apply_pass(copy_sdfg, {})
 
     c_sdfg = sdfg.compile()
@@ -159,7 +156,36 @@ def test_nested_sdfg():
     assert numpy.allclose(B_orig, B_vec)
 
 
+n = dace.symbol('n')  # number of rows
+m = dace.symbol('m')  # number of columns
+nnz = dace.symbol('nnz')  # number of nonzeros
+
+
+@dace.program
+def spmv_csr(indptr: dace.int32[n + 1], indices: dace.int32[nnz], data: dace.float64[nnz], x: dace.float64[m],
+             y: dace.float64[n]):
+    n_rows = len(indptr) - 1
+
+    for i in dace.map[0:n_rows:1]:
+        row_start = indptr[i]
+        row_end = indptr[i + 1]
+        for idx in dace.map[row_start:row_end:1]:
+            j = indices[idx]
+            y[i] = y[i] + data[idx] * x[j]
+
+
+def test_spmv():
+    sdfg = spmv_csr.to_sdfg()
+    copy_sdfg = copy.deepcopy(sdfg)
+    ExplicitVectorizationPipelineCPU(vector_width=8).apply_pass(copy_sdfg, {})
+
+    c_sdfg = sdfg.compile()
+    c_copy_sdfg = copy_sdfg.compile()
+    sdfg.save("a.sdfg")
+
+
 if __name__ == "__main__":
-    #test_simple()
-    test_simple_cpu()
+    # test_simple()
+    # test_simple_cpu()
+    test_spmv()
     #test_nested_sdfg()
