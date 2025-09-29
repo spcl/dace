@@ -2525,16 +2525,12 @@ class SDFG(ControlFlowRegion):
 
         # Pickle the SDFG and arguments
         with tempfile.NamedTemporaryFile(mode='wb', delete=False) as f:
-          pickle.dump({
-              'sdfg': self,
-              'args': args,
-              'kwargs': kwargs
-          }, f)
-          temp_path = f.name      
+            pickle.dump({'sdfg': self, 'args': args, 'kwargs': kwargs}, f)
+            temp_path = f.name
 
         # Call the SDFG in a separate process
-        result = subprocess.run(
-            [sys.executable, '-c', f'''
+        result = subprocess.run([
+            sys.executable, '-c', f'''
 import pickle
 with open(r"{temp_path}", "rb") as f:
     data = pickle.load(f)
@@ -2546,8 +2542,9 @@ with open(r"{temp_path}", "wb") as f:
         'args': data['args'],
         'kwargs': data['kwargs']
     }}, f)
-             '''])
-        
+             '''
+        ])
+
         # Receive the result
         with open(temp_path, 'rb') as f:
             data = pickle.load(f)
