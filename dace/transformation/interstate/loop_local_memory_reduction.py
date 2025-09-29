@@ -4,9 +4,10 @@ import sympy as sp
 from dace import sdfg as sd, symbolic, properties
 from dace.sdfg import utils as sdutil
 from dace.sdfg.state import ControlFlowRegion, LoopRegion, ConditionalBlock
+from dace.data import Scalar
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis, StateReachability
-from dace.symbolic import pystr_to_symbolic
+from dace.symbolic import pystr_to_symbolic, issymbolic
 from dace.subsets import Range
 import copy
 from typing import Union
@@ -220,7 +221,7 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
 
             # Round up to next power of two if enabled
             if self.next_power_of_two and k is not None:
-                k_p2 = 1 << (k - 1).bit_length()
+                k_p2 = (1 << k.bit_length()) - 1
 
                 # If we're larger than the array size, don't round up.
                 if k_p2 + 1 < sdfg.arrays[array_name].shape[dim]:
@@ -357,13 +358,25 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
             for i, k in enumerate(Ks):
                 if k is None:
                     continue
-                # if k is a power of two, we can use a bitmask instead of modulo.
-                if self.bitmask_indexing and k & (k - 1) == 0:
+
+                if k == 1:
+                    # we can replace the array with a scalar, so no need for modulo.
+                    lb = pystr_to_symbolic("0")
+                    ub = pystr_to_symbolic("0")
+                elif self.bitmask_indexing and k & (k - 1) == 0:
+                    # if k is a power of two, we can use a bitmask instead of modulo.
                     lb = pystr_to_symbolic(f"{subset[i][0]} & ({k - 1})")
                     ub = pystr_to_symbolic(f"{subset[i][1]} & ({k - 1})")
                 else:
                     lb = pystr_to_symbolic(f"abs({subset[i][0]}) % ({k})")
                     ub = pystr_to_symbolic(f"abs({subset[i][1]}) % ({k})")
+
+                # If both k and lb / ub are constant, simpy can simplify with the modulo.
+                if not issymbolic(k) and not issymbolic(lb):
+                    lb = pystr_to_symbolic(f"abs({subset[i][0]}) % ({k})")
+                if not issymbolic(k) and not issymbolic(ub):
+                    ub = pystr_to_symbolic(f"abs({subset[i][1]}) % ({k})")
+
                 st = subset[i][2]
                 subset[i] = (lb, ub, st)
             edge.data.src_subset = subset
@@ -373,13 +386,25 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
             for i, k in enumerate(Ks):
                 if k is None:
                     continue
-                # if k is a power of two, we can use a bitmask instead of modulo.
-                if self.bitmask_indexing and k & (k - 1) == 0:
+
+                if k == 1:
+                    # we can replace the array with a scalar, so no need for modulo.
+                    lb = pystr_to_symbolic("0")
+                    ub = pystr_to_symbolic("0")
+                elif self.bitmask_indexing and k & (k - 1) == 0:
+                    # if k is a power of two, we can use a bitmask instead of modulo.
                     lb = pystr_to_symbolic(f"{subset[i][0]} & ({k - 1})")
                     ub = pystr_to_symbolic(f"{subset[i][1]} & ({k - 1})")
                 else:
                     lb = pystr_to_symbolic(f"abs({subset[i][0]}) % ({k})")
                     ub = pystr_to_symbolic(f"abs({subset[i][1]}) % ({k})")
+
+                # If both k and lb / ub are constant, simpy can simplify with the modulo.
+                if not issymbolic(k) and not issymbolic(lb):
+                    lb = pystr_to_symbolic(f"abs({subset[i][0]}) % ({k})")
+                if not issymbolic(k) and not issymbolic(ub):
+                    ub = pystr_to_symbolic(f"abs({subset[i][1]}) % ({k})")
+
                 st = subset[i][2]
                 subset[i] = (lb, ub, st)
             edge.data.dst_subset = subset
@@ -391,3 +416,13 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
             if k is not None:
                 new_shape[i] = k
         array.set_shape(tuple(new_shape))
+
+        # If the new shape is a single element, we can replace the array with a scalar.
+        if all(s == 1 for s in new_shape):
+            sdfg.arrays[array_name] = Scalar(dtype=array.dtype,
+                                             transient=array.transient,
+                                             storage=array.storage,
+                                             allow_conflicts=array.allow_conflicts,
+                                             location=array.location,
+                                             lifetime=array.lifetime,
+                                             debuginfo=array.debuginfo)
