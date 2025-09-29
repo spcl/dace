@@ -13,6 +13,9 @@ import shutil
 import sys
 from typing import Any, AnyStr, Dict, List, Optional, Sequence, Set, Tuple, Type, TYPE_CHECKING, Union
 import warnings
+import subprocess
+import tempfile
+import pickle
 
 import dace
 from dace.sdfg.graph import generate_element_id
@@ -2513,6 +2516,50 @@ class SDFG(ControlFlowRegion):
                 sdfg.argument_typecheck(args, kwargs)
 
             return binaryobj(*args, **kwargs)
+
+    def safe_call(self, *args, **kwargs):
+        """ Invokes an SDFG in a separate process to avoid crashes in the main process,
+            generating and compiling code if necessary.
+            Raises an exception if the SDFG execution fails.
+        """
+
+        # Pickle the SDFG and arguments
+        with tempfile.NamedTemporaryFile(mode='wb', delete=False) as f:
+          pickle.dump({
+              'sdfg': self,
+              'args': args,
+              'kwargs': kwargs
+          }, f)
+          temp_path = f.name      
+
+        # Call the SDFG in a separate process
+        result = subprocess.run(
+            [sys.executable, '-c', f'''
+import pickle
+with open(r"{temp_path}", "rb") as f:
+    data = pickle.load(f)
+sdfg = data['sdfg']
+sdfg(*data['args'], **data['kwargs'])
+
+with open(r"{temp_path}", "wb") as f:
+    pickle.dump({{
+        'args': data['args'],
+        'kwargs': data['kwargs']
+    }}, f)
+             '''])
+        
+        # Receive the result
+        with open(temp_path, 'rb') as f:
+            data = pickle.load(f)
+            for i in range(len(args)):
+                args[i].__setitem__(slice(None), data['args'][i])
+            for k in kwargs:
+                kwargs[k].__setitem__(slice(None), data['kwargs'][k])
+
+        # Clean up
+        os.remove(temp_path)
+        if result.returncode != 0:
+            raise RuntimeError(f'SDFG execution failed with return code {result.returncode}.')
 
     def fill_scope_connectors(self):
         """ Fills missing scope connectors (i.e., "IN_#"/"OUT_#" on entry/exit
