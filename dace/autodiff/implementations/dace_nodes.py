@@ -1,534 +1,291 @@
-import typing
-
-import dace.dtypes as dtypes
-import dace.libraries.standard.nodes
-from dace import SDFGState, SDFG, Memlet
-from dace.frontend.operations import detect_reduction_type
-from dace.registry import autoregister_params
-from dace.sdfg.nodes import Node
+"""
+    Class for defining the reversal of pure SDFG nodes: AccessNode, Tasklet, MapEntry/Exit, NestedSDFG
+    Each method should return a tuple (reversed_node, BackwardResult)
+"""
 import copy
-from dace.autodiff.base_abc import BackwardImplementation, BackwardContext, BackwardResult, AutoDiffException
-from dace.util import in_desc_with_name, out_desc_with_name, out_edge_with_name
+from typing import List, Tuple
+
+# DaCe imports
+import dace
+import dace.sdfg.nodes as nodes
+from dace import dtypes
+from dace.sdfg import SDFGState
+from dace.util import find_str_not_in_set
+
+# Autodiff imports
+from dace.autodiff.base_abc import BackwardResult, AutoDiffException
+from dace.autodiff.utils import is_int_eq_value, invert_map_connector
 
 
-@autoregister_params(node_type=dace.libraries.standard.nodes.Reduce,
-                     name="pure")
-class ReverseReduce(BackwardImplementation):
 
-    @staticmethod
-    def backward_can_be_applied(node: Node, state: SDFGState,
-                                sdfg: SDFG) -> bool:
-        reduction_type = detect_reduction_type(node.wcr)
-        if reduction_type not in (dtypes.ReductionType.Sum,
-                                  dtypes.ReductionType.Max,
-                                  dtypes.ReductionType.Min):
-            return False
+class DaceNodeBackwardImplementations:
+    def __init__(self, backward_pass_generator: 'BackwardPassGenerator'):
+        self.bwd_engine = backward_pass_generator 
+        pass
+    
+    def _reverse_NestedSDFG(
+        self,
+        forward_state: SDFGState,
+        backward_state: SDFGState,
+        node: nodes.NestedSDFG,
+        given_gradients: List[str],
+        required_gradients: List[str],
+    ) -> Tuple[nodes.Node, BackwardResult]:
+        reverse_nsdfg = dace.SDFG(node.sdfg.name + "_backward")
+        
+        # Create a new backward pass generator object for the nested SDFG
+        gen = self.bwd_engine.__class__(sdfg=node.sdfg,
+                                    given_gradients=given_gradients,
+                                    required_gradients=required_gradients,
+                                    backward_sdfg=reverse_nsdfg,
+                                    overwrite_strategy=self.bwd_engine.strategy,
+                                    data_to_recompute=self.bwd_engine.data_to_recompute)
+        backward_result, _, backward_input_arrays = gen.backward()
 
-        return True
+        # we need to defer add edges until after the arrays have been added because creation of the nested
+        # sdfg fails otherwise
+        deferred_edges = []
 
-    @staticmethod
-    def backward(
-        forward_node: Node, context: BackwardContext,
-        given_gradients: typing.List[typing.Optional[str]],
-        required_gradients: typing.List[typing.Optional[str]]
-    ) -> typing.Tuple[Node, BackwardResult]:
-        reduction_type = detect_reduction_type(forward_node.wcr)
+        inputs = set(backward_result.given_grad_names[name] for name in sorted(given_gradients))
+        # loop through the arrays that we need from the forward pass
+        for name, desc in sorted(backward_input_arrays.items()):
+            # if the name is not already passed to the reverse SDFG node ...
+            if name not in required_gradients and name not in node.in_connectors:
+                # ... this array needs to be forwarded out of the forward SDFG (i.e. it is an intermediate value)
+                # 1) add it to the current SDFG, and to self.bwd_engine.backward_input_arrays
+                # 2) add an out connector to the forward nested SDFG, add a write node to the current state, and an edge
+                #    from the output to there
+                # 3) add a read node to the backward state, and an edge into it
 
-        if len(given_gradients) != 1:
-            raise AutoDiffException(
-                "recieved invalid SDFG: reduce node {} should have exactly one output edge"
-                .format(forward_node))
+                desc = node.sdfg.arrays[name]
 
-        if len(required_gradients) != 1:
-            raise AutoDiffException(
-                "recieved invalid SDFG: reduce node {} should have exactly one input edge"
-                .format(forward_node))
+                # if the original view node is in the in-connector, no need to connect it, continue
+                # if forwarded_name in node.in_connectors:
+                #     continue
 
-        input_name = next(iter(required_gradients))
-        in_desc = in_desc_with_name(forward_node, context.forward_state,
-                                    context.forward_sdfg, input_name)
+                # (1)
+                new_name = find_str_not_in_set(set(self.bwd_engine.sdfg.arrays), name + "_forwarded")
+                if new_name in self.bwd_engine.sdfg.arrays or new_name in self.bwd_engine.backward_input_arrays:
+                    raise AutoDiffException(
+                        "Attempted to create array with name '{}', but it already existed".format(new_name))
 
-        output_name = next(iter(given_gradients))
-        out_desc = out_desc_with_name(forward_node, context.forward_state,
-                                      context.forward_sdfg, output_name)
+                self.bwd_engine.sdfg.add_datadesc(new_name, copy.deepcopy(desc))
+                self.bwd_engine.backward_input_arrays[new_name] = copy.deepcopy(desc)
 
-        all_axes: typing.List[int] = list(range(len(in_desc.shape)))
-        reduce_axes: typing.List[
-            int] = all_axes if forward_node.axes is None else forward_node.axes
-        non_reduce_axes: typing.List[int] = [
-            i for i in all_axes if i not in reduce_axes
-        ]
+                if self.bwd_engine.separate_sdfgs:
+                    to_add = copy.deepcopy(desc)
+                    to_add.transient = False
+                    self.bwd_engine.backward_sdfg.add_datadesc(new_name, to_add)
 
-        result = BackwardResult.empty()
+                # (2)
+                node.sdfg.arrays[name].transient = False
+                assert node.add_out_connector(name, force=True)
+                write = forward_state.add_write(new_name)
+                forward_state.add_edge(node, name, write, None, self.bwd_engine.sdfg.make_array_memlet(new_name))
 
-        if reduction_type is dtypes.ReductionType.Sum:
-            # in this case, we need to simply scatter the grad across the axes that were reduced
+                # (3)
+                read = backward_state.add_read(new_name)
+                deferred_edges.append(
+                    dict(u=read,
+                         u_connector=None,
+                         v_connector=name,
+                         memlet=self.bwd_engine.backward_sdfg.make_array_memlet(new_name)))
+                inputs.add(name)
+            else:
+                inputs.add(name)
 
-            sdfg = SDFG("_reverse_" + str(reduction_type).replace(".", "_") +
-                        "_")
-            # Create a name with a random number to avoid name clashes
-            # TODO: This is not an issue in the backward pass
-            # but sometimes simplify will inline these SDFGs and create states with the same label
-            state_label = f"block_{id(forward_node)}"
-            state = sdfg.add_state(state_label)
+        outputs = set(backward_result.required_grad_names[name] for name in required_gradients)
 
-            rev_input_conn_name = "input_gradient"
-            rev_output_conn_name = "output_gradient"
-            result.required_grad_names[output_name] = rev_output_conn_name
-            result.given_grad_names[input_name] = rev_input_conn_name
+        for inp in inputs:
+            if inp in reverse_nsdfg.arrays:
+                reverse_nsdfg.arrays[inp].transient = False
+        for outp in outputs:
+            if outp in reverse_nsdfg.arrays:
+                reverse_nsdfg.arrays[outp].transient = False
+        # Create the sdfg and return it
+        nsdfg = backward_state.add_nested_sdfg(
+            reverse_nsdfg,
+            inputs=inputs,
+            outputs=outputs,
+        )
 
-            # It is important to add the strides in the case of accesses to a view where the shape is not enough
-            _, rev_input_arr = sdfg.add_array(rev_input_conn_name,
-                                              shape=out_desc.shape,
-                                              dtype=out_desc.dtype,
-                                              strides=out_desc.strides)
-            _, rev_output_arr = sdfg.add_array(rev_output_conn_name,
-                                               shape=in_desc.shape,
-                                               dtype=in_desc.dtype,
-                                               strides=in_desc.strides)
+        # If any input connectors point to symbols
+        for conn, _ in nsdfg.in_connectors.items():
+            if conn in nsdfg.sdfg.symbols:
+                # We need to add a new symbol and create a mapping
+                new_symbol = find_str_not_in_set(nsdfg.sdfg.symbols, conn)
+                nsdfg.sdfg.add_symbol(new_symbol, nsdfg.sdfg.symbols[conn])
+                nsdfg.sdfg.replace(conn, new_symbol)
+                nsdfg.symbol_mapping[new_symbol] = conn
+                # Remove it from the symbol mapping too
+                if conn in nsdfg.symbol_mapping:
+                    del nsdfg.symbol_mapping[conn]
+        for edge_args in deferred_edges:
+            edge_args["v"] = nsdfg
+            backward_state.add_edge(**edge_args)
 
-            # Make sure the output is set to zero
-            reduce_all_axes = forward_node.axes is None or set(
-                range(len(in_desc.shape))) == set(forward_node.axes)
+        return nsdfg, BackwardResult(required_grad_names=backward_result.required_grad_names,
+                                     given_grad_names=backward_result.given_grad_names)
 
-            _, _, exit_map = state.add_mapped_tasklet(
-                "_distribute_grad_" + str(reduction_type).replace(".", "_") +
-                "_", {
-                    "i" + str(i): "0:{}".format(shape)
-                    for i, shape in enumerate(in_desc.shape)
-                }, {
-                    "__in":
-                    Memlet.simple(
-                        rev_input_conn_name,
-                        "0" if reduce_all_axes else ",".join(
-                            "i" + str(i) for i in non_reduce_axes))
-                },
-                "__out = __in", {
-                    "__out":
-                    Memlet.simple(rev_output_conn_name,
-                                  ",".join("i" + str(i) for i in all_axes),
-                                  wcr_str="lambda x, y: x + y")
-                },
-                external_edges=True)
+    def _reverse_AccessNode(
+        self,
+        forward_state: SDFGState,
+        backward_state: SDFGState,
+        node: nodes.AccessNode,
+        given_gradients: List[str],
+        required_gradients: List[str],
+    ) -> Tuple[nodes.Node, BackwardResult]:
+        rev = nodes.AccessNode(self.bwd_engine.array_grad_name(node.data))
 
-            # Get the output AccessNode and setzero
-            out_eges = state.out_edges(exit_map)
-            assert len(out_eges) == 1
-            out_edge = out_eges[0]
-            out_node = out_edge.dst
-            assert isinstance(out_node, dace.nodes.AccessNode)
-            out_node.setzero = True
-            return context.backward_state.add_nested_sdfg(
-                sdfg, {rev_input_conn_name},
-                {rev_output_conn_name}), result
+        # We want all gradient arrays to be initialized to zero
+        # This is important for correct gradient accumulation
+        rev.setzero = True
+        backward_state.add_node(rev)
+        required_grad_names = {None: None}
+        given_grad_names = {None: None}
 
-        # TODO: Remove code duplication between Max and Min reductions
-        elif reduction_type is dtypes.ReductionType.Max:
+        if "views" in node.in_connectors:
+            required_grad_names = {"views": "views"}
+        if "views" in node.out_connectors:
+            given_grad_names = {"views": "views"}
 
-            # In this case, we need to get the index of the minimum value
-            sdfg = SDFG("_reverse_" + str(reduction_type).replace(".", "_") +
-                        "_")
-            # Create a name with a random number to avoid name clashes
-            # TODO: This is not an issue in the backward pass
-            # but sometimes simplify will inline these SDFGs and create states with the same label
-            state_label = f"block_{id(forward_node)}"
-            state = sdfg.add_state(state_label)
+        return rev, BackwardResult(required_grad_names=required_grad_names, given_grad_names=given_grad_names)
 
-            rev_input_conn_name = "input_gradient"
-            rev_output_conn_name = "output_gradient"
-            max_conn_name = "input_max"
-            max_idx_conn_name = "input_max_idx"
-            rev_output_conn_name = "output_gradient"
-            result.required_grad_names[output_name] = rev_output_conn_name
-            result.given_grad_names[input_name] = rev_input_conn_name
+    def _reverse_MapEntry(
+        self,
+        forward_state: SDFGState,
+        backward_state: SDFGState,
+        node: nodes.MapEntry,
+        given_gradients: List[str],
+        required_gradients: List[str],
+    ) -> Tuple[nodes.Node, BackwardResult]:
 
-            # It is important to add the strides in the case of accesses to a view where the shape is not enough
-            _, rev_input_arr = sdfg.add_array(rev_input_conn_name,
-                                              shape=out_desc.shape,
-                                              dtype=out_desc.dtype,
-                                              strides=out_desc.strides)
+        required_grad_names = {n: invert_map_connector(n) for n in required_gradients}
+        given_grad_names = {n: invert_map_connector(n) for n in given_gradients}
+        result = BackwardResult(required_grad_names=required_grad_names, given_grad_names=given_grad_names)
+        rev = nodes.MapExit(self.bwd_engine.reverse_map[node.map])
 
-            _, rev_output_arr = sdfg.add_array(rev_output_conn_name,
-                                               shape=in_desc.shape,
-                                               dtype=in_desc.dtype,
-                                               strides=in_desc.strides)
+        for _, conn in sorted(given_grad_names.items()):
+            assert rev.add_in_connector(conn)
 
-            # Get the forwarded data descriptors for the max operation and add them to the new SDFG
-            _, max_desc = sdfg.add_array(max_conn_name,
-                                         shape=out_desc.shape,
-                                         dtype=out_desc.dtype,
-                                         strides=out_desc.strides)
+        for _, conn in sorted(required_grad_names.items()):
+            assert rev.add_out_connector(conn)
 
-            _, max_idx_desc = sdfg.add_array(max_idx_conn_name,
-                                             shape=in_desc.shape,
-                                             dtype=in_desc.dtype,
-                                             strides=in_desc.strides)
+        backward_state.add_node(rev)
+        return rev, result
 
-            reduce_all_axes = forward_node.axes is None or set(
-                range(len(in_desc.shape))) == set(forward_node.axes)
+    def _reverse_MapExit(
+        self,
+        forward_state: SDFGState,
+        backward_state: SDFGState,
+        node: nodes.MapExit,
+        given_gradients: List[str],
+        required_gradients: List[str],
+    ):
+        self.bwd_engine.reverse_map[node.map] = copy.deepcopy(node.map)
 
-            # prepare memlets for the tasklet
-            reduction_memlet = Memlet.simple(
-                rev_input_conn_name,
-                "0" if reduce_all_axes else ",".join("i" + str(i)
-                                                     for i in non_reduce_axes))
-            reverse_reduction_memelt = Memlet.simple(
-                rev_output_conn_name,
-                ",".join("i" + str(i) for i in all_axes),
-                wcr_str="lambda x, y: x + y")
+        rev = nodes.MapEntry(self.bwd_engine.reverse_map[node.map])
+        for conn in sorted(node.in_connectors):
+            assert rev.add_in_connector(conn)
 
-            max_val_memlet = Memlet.simple(
-                max_conn_name,
-                "0" if reduce_all_axes else ",".join("i" + str(i)
-                                                     for i in non_reduce_axes))
+        for conn in sorted(node.out_connectors):
+            assert rev.add_out_connector(conn)
 
-            max_val_index_memlet = Memlet.simple(
-                max_idx_conn_name, ",".join("i" + str(i) for i in all_axes))
-            tasklet_code = "__out = __in if __max_val == __max_val_idx else 0"
-            _, _, exit_map = state.add_mapped_tasklet(
-                "_max_grad_" + str(reduction_type).replace(".", "_") + "_", {
-                    "i" + str(i): "0:{}".format(shape)
-                    for i, shape in enumerate(in_desc.shape)
-                }, {
-                    "__in": reduction_memlet,
-                    "__max_val": max_val_memlet,
-                    "__max_val_idx": max_val_index_memlet
-                },
-                tasklet_code, {"__out": reverse_reduction_memelt},
-                external_edges=True)
+        backward_state.add_node(rev)
+        # yapf: disable
+        return (
+            rev,
+            BackwardResult(required_grad_names={
+                n: invert_map_connector(n)
+                for n in required_gradients
+            },
+                given_grad_names={
+                    n: invert_map_connector(n)
+                    for n in given_gradients
+                }),
+        )
+        # yapf: enable
 
-            # Add the nested SDFG to the backward state
-            nsdfg = context.backward_state.add_nested_sdfg(
-                sdfg,
-                {rev_input_conn_name, max_conn_name, max_idx_conn_name},
-                {rev_output_conn_name})
+    def _reverse_Tasklet(
+        self,
+        state: SDFGState,
+        backward_state: SDFGState,
+        tasklet: nodes.Tasklet,
+        given_gradients: List[str],
+        required_gradients: List[str],
+    ) -> Tuple[nodes.Node, BackwardResult]:
+        if tasklet.language is not dtypes.Language.Python:
+            raise AutoDiffException("Expected tasklet with language Python, got language {}".format(tasklet.language))
 
-            # Get the output AccessNode and setzero
-            out_eges = state.out_edges(exit_map)
-            assert len(out_eges) == 1
-            out_edge = out_eges[0]
-            out_node = out_edge.dst
-            assert isinstance(out_node, dace.nodes.AccessNode)
-            out_node.setzero = True
+        # tasklets should have scalar inputs (can be relaxed)
+        for _, _, _, _, memlet in state.in_edges(tasklet):
+            if memlet.data is not None:
+                try:
+                    is_int_eq_value(memlet.subset.num_elements(), 1)
+                except AutoDiffException as e:
+                    raise AutoDiffException(
+                        "Autodiff only supported for tasklets with scalar inputs and outputs") from e
 
-            # We need to manually add the required inputs here
-            backward_state = context.backward_state
-            fwd_in_edges = context.forward_state.in_edges(forward_node)
-            assert len(fwd_in_edges) == 1
-            fwd_in_edge = fwd_in_edges[0]
-            fwd_in_node = fwd_in_edge.src
-            assert isinstance(fwd_in_node, dace.nodes.AccessNode)
-            bwd_read = backward_state.add_read(fwd_in_node.data)
-            backward_state.add_edge(bwd_read, None, nsdfg, max_idx_conn_name,
-                                    copy.deepcopy(fwd_in_edge.data))
-            # if this is a view
-            if isinstance(context.forward_sdfg.arrays[fwd_in_node.data],
-                          (dace.data.View, dace.data.ArrayView)):
-                # Get incoming edge
-                in_edge = context.forward_state.in_edges(fwd_in_node)
-                assert len(in_edge) == 1
-                in_edge = in_edge[0]
-                in_node = in_edge.src
-                if isinstance(in_node, dace.nodes.AccessNode):
-                    # Make sure this is not a view iteself
-                    assert not isinstance(
-                        context.forward_sdfg.arrays[in_node.data],
-                        (dace.data.View, dace.data.ArrayView))
-                    # Add the read node
-                    bwd_in_read = backward_state.add_read(in_node.data)
-                    # Add the edge
-                    backward_state.add_edge(bwd_in_read, None,
-                                            bwd_read, "views",
-                                            copy.deepcopy(in_edge.data))
+        for _, _, _, _, memlet in state.out_edges(tasklet):
+            if memlet.data is not None:
+                try:
+                    is_int_eq_value(memlet.subset.num_elements(), 1)
+                except AutoDiffException as e:
+                    raise AutoDiffException(
+                        "Autodiff only supported for tasklets with scalar inputs and outputs") from e
 
-            fwd_out_edges = context.forward_state.out_edges(forward_node)
-            assert len(fwd_out_edges) == 1
-            fwd_out_edge = fwd_out_edges[0]
-            fwd_out_node = fwd_out_edge.dst
-            assert isinstance(fwd_out_node, dace.nodes.AccessNode)
-            bwd_out_read = backward_state.add_read(fwd_out_node.data)
-            backward_state.add_edge(bwd_out_read, None, nsdfg, max_conn_name,
-                                    copy.deepcopy(fwd_out_edge.data))
-            # avoid ambigous views
-            # if this is a view
-            if isinstance(context.forward_sdfg.arrays[fwd_out_node.data],
-                          (dace.data.View, dace.data.ArrayView)):
-                # Get incoming edge
-                out_edge = context.forward_state.out_edges(fwd_out_node)
-                assert len(out_edge) == 1
-                out_edge = out_edge[0]
-                out_node = out_edge.dst
-                if isinstance(out_node, dace.nodes.AccessNode):
-                    # Make sure this is not a view iteself
-                    assert not isinstance(
-                        context.forward_sdfg.arrays[out_node.data],
-                        (dace.data.View, dace.data.ArrayView))
-                    # Add the read node
-                    bwd_in_read = backward_state.add_read(out_node.data)
-                    # Add the edge
-                    backward_state.add_edge(bwd_in_read, None, bwd_out_read,
-                                            "views",
-                                            copy.deepcopy(out_edge.data))
-            return nsdfg, result
-        elif reduction_type is dtypes.ReductionType.Min:
+        code_str = tasklet.code.as_string
 
-            # In this case, we need to get the index of the minimum value
-            sdfg = SDFG("_reverse_" + str(reduction_type).replace(".", "_") +
-                        "_")
-            # Create a name with a random number to avoid name clashes
-            # TODO: This is not an issue in the backward pass
-            # but sometimes simplify will inline these SDFGs and create states with the same label
-            state_label = f"block_{id(forward_node)}"
-            state = sdfg.add_state(state_label)
+        # check if this is a conditional tasklet
+        if self.bwd_engine._conditional_tasklet(tasklet):
+            # we want to extract the if and else expressions and pass them to sympy
+            if_expression, else_expression, conditional = self.bwd_engine._extract_conitional_expressions(tasklet)
 
-            rev_input_conn_name = "input_gradient"
-            rev_output_conn_name = "output_gradient"
-            min_conn_name = "input_min"
-            min_idx_conn_name = "input_min_idx"
-            rev_output_conn_name = "output_gradient"
-            result.required_grad_names[output_name] = rev_output_conn_name
-            result.given_grad_names[input_name] = rev_input_conn_name
+            if_code, if_rev_inputs, if_rev_outputs, if_result = self.bwd_engine._differentiate_code_symbolically(
+                if_expression, state, tasklet, given_gradients, required_gradients)
 
-            # It is important to add the strides in the case of accesses to a view where the shape is not enough
-            _, rev_input_arr = sdfg.add_array(rev_input_conn_name,
-                                              shape=out_desc.shape,
-                                              dtype=out_desc.dtype,
-                                              strides=out_desc.strides)
+            if else_expression:
+                else_code, else_rev_inputs, else_rev_outputs, else_result = self.bwd_engine._differentiate_code_symbolically(
+                    else_expression, state, tasklet, given_gradients, required_gradients)
+                assert else_rev_inputs == if_rev_inputs
+                assert if_rev_outputs == else_rev_outputs
+                assert else_result == if_result
 
-            _, rev_output_arr = sdfg.add_array(rev_output_conn_name,
-                                               shape=in_desc.shape,
-                                               dtype=in_desc.dtype,
-                                               strides=in_desc.strides)
+            # prepare the tasklet code depending on the conditional type
+            # add the same conditional to the if_code
+            # first, add indentation
+            if_code = if_code.replace("\n", "\n\t")
+            if_code = f"if {conditional}:\n{if_code}"
 
-            # Get the forwarded data descriptors for the min operation and add them to the new SDFG
-            _, min_desc = sdfg.add_array(min_conn_name,
-                                         shape=out_desc.shape,
-                                         dtype=out_desc.dtype,
-                                         strides=out_desc.strides)
+            # add the conditional to the in connectors
+            if_rev_inputs.add(conditional)
+            joint_code = if_code
 
-            _, min_idx_desc = sdfg.add_array(min_idx_conn_name,
-                                             shape=in_desc.shape,
-                                             dtype=in_desc.dtype,
-                                             strides=in_desc.strides)
+            if ":" not in code_str:
+                # only an if in the original code
+                assert else_expression
+                else_code = else_code.replace("\n", "\n\t")
+                else_code = f"else:\n{else_code}"
+                joint_code = f"{if_code}\n{else_code}"
 
-            reduce_all_axes = forward_node.axes is None or set(
-                range(len(in_desc.shape))) == set(forward_node.axes)
+            # in case there are no out_connectors, we will zero out the assigned-to AccessNode
+            if len(if_rev_outputs) == 0:
+                if_rev_outputs = {"__zero_out_conn__"}
 
-            # prepare memlets for the tasklet
-            reduction_memlet = Memlet.simple(
-                rev_input_conn_name,
-                "0" if reduce_all_axes else ",".join("i" + str(i)
-                                                     for i in non_reduce_axes))
-            reverse_reduction_memelt = Memlet.simple(
-                rev_output_conn_name,
-                ",".join("i" + str(i) for i in all_axes),
-                wcr_str="lambda x, y: x + y")
+            rev = nodes.Tasklet("_" + tasklet.label + "_reverse_",
+                                inputs=if_rev_inputs,
+                                outputs=if_rev_outputs,
+                                code=joint_code,
+                                debuginfo=tasklet.debuginfo)
 
-            min_val_memlet = Memlet.simple(
-                min_conn_name,
-                "0" if reduce_all_axes else ",".join("i" + str(i)
-                                                     for i in non_reduce_axes))
-
-            min_val_index_memlet = Memlet.simple(
-                min_idx_conn_name, ",".join("i" + str(i) for i in all_axes))
-            tasklet_code = "__out = __in if __min_val == __min_val_idx else 0"
-            _, _, exit_map = state.add_mapped_tasklet(
-                "_min_grad_" + str(reduction_type).replace(".", "_") + "_", {
-                    "i" + str(i): "0:{}".format(shape)
-                    for i, shape in enumerate(in_desc.shape)
-                }, {
-                    "__in": reduction_memlet,
-                    "__min_val": min_val_memlet,
-                    "__min_val_idx": min_val_index_memlet
-                },
-                tasklet_code, {"__out": reverse_reduction_memelt},
-                external_edges=True)
-
-            # Add the nested SDFG to the backward state
-            nsdfg = context.backward_state.add_nested_sdfg(
-                sdfg,
-                {rev_input_conn_name, min_conn_name, min_idx_conn_name},
-                {rev_output_conn_name})
-
-            # Get the output AccessNode and setzero
-            out_eges = state.out_edges(exit_map)
-            assert len(out_eges) == 1
-            out_edge = out_eges[0]
-            out_node = out_edge.dst
-            assert isinstance(out_node, dace.nodes.AccessNode)
-            out_node.setzero = True
-
-            # We need to manually add the required inputs here
-            backward_state = context.backward_state
-            fwd_in_edges = context.forward_state.in_edges(forward_node)
-            assert len(fwd_in_edges) == 1
-            fwd_in_edge = fwd_in_edges[0]
-            fwd_in_node = fwd_in_edge.src
-            assert isinstance(fwd_in_node, dace.nodes.AccessNode)
-            bwd_read = backward_state.add_read(fwd_in_node.data)
-            backward_state.add_edge(bwd_read, None, nsdfg, min_idx_conn_name,
-                                    copy.deepcopy(fwd_in_edge.data))
-            # if this is a view
-            if isinstance(context.forward_sdfg.arrays[fwd_in_node.data],
-                          (dace.data.View, dace.data.ArrayView)):
-                # Get incoming edge
-                in_edge = context.forward_state.in_edges(fwd_in_node)
-                assert len(in_edge) == 1
-                in_edge = in_edge[0]
-                in_node = in_edge.src
-                if isinstance(in_node, dace.nodes.AccessNode):
-                    # Make sure this is not a view iteself
-                    assert not isinstance(
-                        context.forward_sdfg.arrays[in_node.data],
-                        (dace.data.View, dace.data.ArrayView))
-                    # Add the read node
-                    bwd_in_read = backward_state.add_read(in_node.data)
-                    # Add the edge
-                    backward_state.add_edge(bwd_in_read, None,
-                                            bwd_read, "views",
-                                            copy.deepcopy(in_edge.data))
-
-            fwd_out_edges = context.forward_state.out_edges(forward_node)
-            assert len(fwd_out_edges) == 1
-            fwd_out_edge = fwd_out_edges[0]
-            fwd_out_node = fwd_out_edge.dst
-            assert isinstance(fwd_out_node, dace.nodes.AccessNode)
-            bwd_out_read = backward_state.add_read(fwd_out_node.data)
-            backward_state.add_edge(bwd_out_read, None, nsdfg, min_conn_name,
-                                    copy.deepcopy(fwd_out_edge.data))
-            # avoid ambigous views
-            # if this is a view
-            if isinstance(context.forward_sdfg.arrays[fwd_out_node.data],
-                          (dace.data.View, dace.data.ArrayView)):
-                # Get incoming edge
-                out_edge = context.forward_state.out_edges(fwd_out_node)
-                assert len(out_edge) == 1
-                out_edge = out_edge[0]
-                out_node = out_edge.dst
-                if isinstance(out_node, dace.nodes.AccessNode):
-                    # Make sure this is not a view iteself
-                    assert not isinstance(
-                        context.forward_sdfg.arrays[out_node.data],
-                        (dace.data.View, dace.data.ArrayView))
-                    # Add the read node
-                    bwd_in_read = backward_state.add_read(out_node.data)
-                    # Add the edge
-                    backward_state.add_edge(bwd_in_read, None, bwd_out_read,
-                                            "views",
-                                            copy.deepcopy(out_edge.data))
-
-            return nsdfg, result
+            result = if_result
         else:
-            raise AutoDiffException(
-                "Unsupported reduction type '{}'".format(reduction_type))
-
-
-@autoregister_params(node_type=dace.libraries.standard.nodes.Reduce,
-                     name="pure")
-class ReverseReduceMax(BackwardImplementation):
-
-    @staticmethod
-    def backward_can_be_applied(node: Node, state: SDFGState,
-                                sdfg: SDFG) -> bool:
-        reduction_type = detect_reduction_type(node.wcr)
-        if reduction_type is not dtypes.ReductionType.Max:
-            return False
-        return True
-
-    @staticmethod
-    def backward(
-        forward_node: Node, context: BackwardContext,
-        given_gradients: typing.List[typing.Optional[str]],
-        required_gradients: typing.List[typing.Optional[str]]
-    ) -> typing.Tuple[Node, BackwardResult]:
-        reduction_type = detect_reduction_type(forward_node.wcr)
-
-        if len(given_gradients) != 1:
-            raise AutoDiffException(
-                "recieved invalid SDFG: reduce node {} should have exactly one output edge"
-                .format(forward_node))
-
-        if len(required_gradients) != 1:
-            raise AutoDiffException(
-                "recieved invalid SDFG: reduce node {} should have exactly one input edge"
-                .format(forward_node))
-
-        input_name = next(iter(required_gradients))
-        in_desc = in_desc_with_name(forward_node, context.forward_state,
-                                    context.forward_sdfg, input_name)
-
-        output_name = next(iter(given_gradients))
-        out_desc = out_desc_with_name(forward_node, context.forward_state,
-                                      context.forward_sdfg, output_name)
-
-        all_axes: typing.List[int] = list(range(len(in_desc.shape)))
-        reduce_axes: typing.List[
-            int] = all_axes if forward_node.axes is None else forward_node.axes
-        non_reduce_axes: typing.List[int] = [
-            i for i in all_axes if i not in reduce_axes
-        ]
-
-        result = BackwardResult.empty()
-
-        if reduction_type is dtypes.ReductionType.Sum:
-            # in this case, we need to simply scatter the grad across the axes that were reduced
-
-            sdfg = SDFG("_reverse_" + str(reduction_type).replace(".", "_") +
-                        "_")
-            # Create a name with a random number to avoid name clashes
-            # TODO: This is not an issue in the backward pass
-            # but sometimes simplify will inline these SDFGs and create states with the same label
-            state_label = f"block_{id(forward_node)}"
-            state = sdfg.add_state(state_label)
-
-            rev_input_conn_name = "input_gradient"
-            rev_output_conn_name = "output_gradient"
-            result.required_grad_names[output_name] = rev_output_conn_name
-            result.given_grad_names[input_name] = rev_input_conn_name
-
-            # It is important to add the strides in the case of accesses to a view where the shape is not enough
-            _, rev_input_arr = sdfg.add_array(rev_input_conn_name,
-                                              shape=out_desc.shape,
-                                              dtype=out_desc.dtype,
-                                              strides=out_desc.strides)
-            _, rev_output_arr = sdfg.add_array(rev_output_conn_name,
-                                               shape=in_desc.shape,
-                                               dtype=in_desc.dtype,
-                                               strides=in_desc.strides)
-            # Make sure the output is set to zero
-            reduce_all_axes = forward_node.axes is None or set(
-                range(len(in_desc.shape))) == set(forward_node.axes)
-
-            _, _, exit_map = state.add_mapped_tasklet(
-                "_distribute_grad_" + str(reduction_type).replace(".", "_") +
-                "_", {
-                    "i" + str(i): "0:{}".format(shape)
-                    for i, shape in enumerate(in_desc.shape)
-                }, {
-                    "__in":
-                    Memlet.simple(
-                        rev_input_conn_name,
-                        "0" if reduce_all_axes else ",".join(
-                            "i" + str(i) for i in non_reduce_axes))
-                },
-                "__out = __in", {
-                    "__out":
-                    Memlet.simple(rev_output_conn_name,
-                                  ",".join("i" + str(i) for i in all_axes),
-                                  wcr_str="lambda x, y: x + y")
-                },
-                external_edges=True)
-
-            # Get the output AccessNode and setzero
-            out_eges = state.out_edges(exit_map)
-            assert len(out_eges) == 1
-            out_edge = out_eges[0]
-            out_node = out_edge.dst
-            assert isinstance(out_node, dace.nodes.AccessNode)
-            out_node.setzero = True
-            return context.backward_state.add_nested_sdfg(
-                sdfg, {rev_input_conn_name},
-                {rev_output_conn_name}), result
-        else:
-            raise AutoDiffException(
-                "Unsupported reduction type '{}'".format(reduction_type))
+            code, rev_inputs, rev_outputs, result = self.bwd_engine._differentiate_code_symbolically(
+                code_str, state, tasklet, given_gradients, required_gradients)
+            rev = nodes.Tasklet("_" + tasklet.label + "_reverse_",
+                                inputs=rev_inputs,
+                                outputs=rev_outputs,
+                                code=code,
+                                debuginfo=tasklet.debuginfo)
+            backward_state.add_node(rev)
+        return rev, result

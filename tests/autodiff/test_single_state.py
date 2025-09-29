@@ -28,19 +28,8 @@ def run_correctness(func):
         torch_results = pytorch_func(**torch_dict)
 
         for k, v in torch_results.items():
-            print("-" * 10, k, "-" * 10)
             v = v.detach().numpy()
             diff = np.linalg.norm(sdfg_results[k] - v) / reduce(lambda x, y: x * y, v.shape)
-
-            print("Difference:", diff)
-
-            print("Torch results:", "-" * 10)
-            print(v)
-            print("SDFG results:", "-" * 10)
-            print(sdfg_results[k])
-            print("Difference:")
-            print(v - sdfg_results[k])
-
             assert diff < 1e-5
 
     return test_correctness
@@ -74,21 +63,7 @@ class SDFGBackwardRunner:
         inputs["gradient_" + self.target] = np.ones((1, ),
                                                     dtype=getattr(np, self.sdfg.arrays[self.target].dtype.to_string()))
 
-        print("Pre-execution arrays")
-        for k, v in inputs.items():
-            print(k, "-" * 10)
-            print("\t{}".format(v.dtype))
-            print("\t{}".format("is_contiguous:", v.flags["C_CONTIGUOUS"]))
-            print("\t{}".format(v))
-
         self.sdfg(**inputs)
-
-        print("Post-execution arrays")
-        for k, v in inputs.items():
-            print(k, "-" * 10)
-            print("\t{}".format(v.dtype))
-            print("\t{}".format("is_contiguous:", v.flags["C_CONTIGUOUS"]))
-            print("\t{}".format(v))
 
         results = {name: arr for name, arr in inputs.items()}
         return results

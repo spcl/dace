@@ -25,11 +25,11 @@ from dace.memlet import Memlet
 from dace.util import find_str_not_in_set
 from dace.libraries.onnx.forward_implementation_abc import ONNXForward
 from dace.libraries.onnx.nodes.onnx_op import ONNXOp
-from dace.codegen.targets import framecode
 
 # Autodiff imports
 from dace.autodiff.base_abc import (BackwardContext, BackwardResult, AutoDiffException, find_backward_implementation)
 from dace.autodiff.utils import cast_consts_to_type, is_int, symbols_to_strings, code_to_exprs, is_int_eq_value, invert_map_connector, path_src_node_in_subgraph, get_read_only_arrays, get_state_topological_order, SympyCleaner
+from dace.autodiff.implementations.dace_nodes import DaceNodeBackwardImplementations
 
 log = logging.getLogger(__name__)
 
@@ -69,6 +69,9 @@ class BackwardPassGenerator:
         self.data_to_recompute = data_to_recompute
         self.backward_sdfg: SDFG = backward_sdfg
 
+        # DaCe nodes backward implementations
+        self.dace_node_impl = DaceNodeBackwardImplementations(self)
+        
         given_gradients = [
             n if isinstance(n, nodes.AccessNode) else self._str_to_access(n, "outputs") for n in given_gradients
         ]
@@ -3022,54 +3025,6 @@ class BackwardPassGenerator:
 
             assert first_instance
 
-            # # Check if this input is overwritten
-            # overwritten, _ = self._check_node_overwrite(forward_state=first_node_state, node=first_instance)
-
-            # if overwritten:
-            #     # Store the input in an initial state
-            #     if input in self.stored_inputs:
-            #         # Already has been copied
-            #         new_an = copy.deepcopy(self.stored_inputs[input])
-            #         input_name = new_an.data
-            #     else:
-            #         # Create a storing state
-            #         if initialization_state is None:
-            #             for state in self.state_order:
-            #                 if "call" in state.label:
-            #                     start_state = state
-            #             initialization_state = self.sdfg.add_state_before(start_state, label="store_inputs_state")
-
-            #             # For conformity, we will add an empty state representing the reversal of this state
-            #             reversed_init_state = SDFGState("reversed_store_inputs_state")
-            #             self.backward_sdfg.add_state(reversed_init_state)
-            #             reversed_init_state.parent_graph = initialization_state.parent_graph
-            #             self.reversed_states_map[initialization_state] = reversed_init_state
-
-            #         # Create a new array and copy the data to it
-            #         new_name = f"stored_input_{input}"
-
-            #         # Add the desciptor
-            #         old_desc = nsdfg.sdfg.arrays[input]
-            #         new_desc = copy.deepcopy(old_desc)
-            #         new_desc.transient = True
-            #         self.sdfg.add_datadesc(name=new_name, datadesc=new_desc)
-
-            #         # Add a copy operation between the input node and the new descriptor
-            #         input_node = nodes.AccessNode(input)
-            #         new_an = nodes.AccessNode(new_name)
-            #         initialization_state.add_node(input_node)
-            #         initialization_state.add_node(new_an)
-
-            #         # Add memory copy edge
-            #         initialization_state.add_edge(input_node, None, new_an, None, self.sdfg.make_array_memlet(input))
-
-            #         # Add the stored input to a dictionary
-            #         self.stored_inputs[input] = new_an
-            #         input_name = new_an.data
-            # else:
-            #     # Create the access Node for this argument
-            #     new_an = nodes.AccessNode(input_name)
-
             new_an = nodes.AccessNode(input_name)
             backward_state.add_node(new_an)
 
@@ -4580,8 +4535,8 @@ class BackwardPassGenerator:
         """
 
         # (1)
-        if hasattr(self, "_reverse_" + type(node).__name__):
-            return getattr(self, "_reverse_" + type(node).__name__)(state, backward_state, node, given_gradients,
+        if hasattr(self.dace_node_impl, "_reverse_" + type(node).__name__):
+            return getattr(self.dace_node_impl, "_reverse_" + type(node).__name__)(state, backward_state, node, given_gradients,
                                                                     required_gradients)
 
         # (2)
@@ -4603,269 +4558,4 @@ class BackwardPassGenerator:
 
         raise AutoDiffException("Unable to differentiate node type {}. Either add a pure forward implementation "
                                 "or a backward implementation to progress.".format(type(node)))
-
-    def _reverse_NestedSDFG(
-        self,
-        forward_state: SDFGState,
-        backward_state: SDFGState,
-        node: nodes.NestedSDFG,
-        given_gradients: List[str],
-        required_gradients: List[str],
-    ) -> Tuple[nodes.Node, BackwardResult]:
-        reverse_nsdfg = dace.SDFG(node.sdfg.name + "_backward")
-        # recursive call
-        gen = BackwardPassGenerator(sdfg=node.sdfg,
-                                    given_gradients=given_gradients,
-                                    required_gradients=required_gradients,
-                                    backward_sdfg=reverse_nsdfg,
-                                    overwrite_strategy=self.strategy,
-                                    data_to_recompute=self.data_to_recompute)
-        backward_result, _, backward_input_arrays = gen.backward()
-
-        # we need to defer add edges until after the arrays have been added because creation of the nested
-        # sdfg fails otherwise
-        deferred_edges = []
-
-        inputs = set(backward_result.given_grad_names[name] for name in sorted(given_gradients))
-        # loop through the arrays that we need from the forward pass
-        for name, desc in sorted(backward_input_arrays.items()):
-            # if the name is not already passed to the reverse SDFG node ...
-            if name not in required_gradients and name not in node.in_connectors:
-                # ... this array needs to be forwarded out of the forward SDFG (i.e. it is an intermediate value)
-                # 1) add it to the current SDFG, and to self.backward_input_arrays
-                # 2) add an out connector to the forward nested SDFG, add a write node to the current state, and an edge
-                #    from the output to there
-                # 3) add a read node to the backward state, and an edge into it
-
-                desc = node.sdfg.arrays[name]
-
-                # if the original view node is in the in-connector, no need to connect it, continue
-                # if forwarded_name in node.in_connectors:
-                #     continue
-
-                # (1)
-                new_name = find_str_not_in_set(set(self.sdfg.arrays), name + "_forwarded")
-                if new_name in self.sdfg.arrays or new_name in self.backward_input_arrays:
-                    raise AutoDiffException(
-                        "Attempted to create array with name '{}', but it already existed".format(new_name))
-
-                self.sdfg.add_datadesc(new_name, copy.deepcopy(desc))
-                self.backward_input_arrays[new_name] = copy.deepcopy(desc)
-
-                if self.separate_sdfgs:
-                    to_add = copy.deepcopy(desc)
-                    to_add.transient = False
-                    self.backward_sdfg.add_datadesc(new_name, to_add)
-
-                # (2)
-                node.sdfg.arrays[name].transient = False
-                assert node.add_out_connector(name, force=True)
-                write = forward_state.add_write(new_name)
-                forward_state.add_edge(node, name, write, None, self.sdfg.make_array_memlet(new_name))
-
-                # (3)
-                read = backward_state.add_read(new_name)
-                deferred_edges.append(
-                    dict(u=read,
-                         u_connector=None,
-                         v_connector=name,
-                         memlet=self.backward_sdfg.make_array_memlet(new_name)))
-                inputs.add(name)
-            else:
-                inputs.add(name)
-
-        outputs = set(backward_result.required_grad_names[name] for name in required_gradients)
-
-        for inp in inputs:
-            if inp in reverse_nsdfg.arrays:
-                reverse_nsdfg.arrays[inp].transient = False
-        for outp in outputs:
-            if outp in reverse_nsdfg.arrays:
-                reverse_nsdfg.arrays[outp].transient = False
-        # Create the sdfg and return it
-        nsdfg = backward_state.add_nested_sdfg(
-            reverse_nsdfg,
-            inputs=inputs,
-            outputs=outputs,
-        )
-
-        # If any input connectors point to symbols
-        for conn, _ in nsdfg.in_connectors.items():
-            if conn in nsdfg.sdfg.symbols:
-                # We need to add a new symbol and create a mapping
-                new_symbol = find_str_not_in_set(nsdfg.sdfg.symbols, conn)
-                nsdfg.sdfg.add_symbol(new_symbol, nsdfg.sdfg.symbols[conn])
-                nsdfg.sdfg.replace(conn, new_symbol)
-                nsdfg.symbol_mapping[new_symbol] = conn
-                # Remove it from the symbol mapping too
-                if conn in nsdfg.symbol_mapping:
-                    del nsdfg.symbol_mapping[conn]
-        for edge_args in deferred_edges:
-            edge_args["v"] = nsdfg
-            backward_state.add_edge(**edge_args)
-
-        return nsdfg, BackwardResult(required_grad_names=backward_result.required_grad_names,
-                                     given_grad_names=backward_result.given_grad_names)
-
-    def _reverse_AccessNode(
-        self,
-        forward_state: SDFGState,
-        backward_state: SDFGState,
-        node: nodes.AccessNode,
-        given_gradients: List[str],
-        required_gradients: List[str],
-    ) -> Tuple[nodes.Node, BackwardResult]:
-        rev = nodes.AccessNode(self.array_grad_name(node.data))
-
-        # We want all gradient arrays to be initialized to zero
-        # This is important for correct gradient accumulation
-        rev.setzero = True
-        backward_state.add_node(rev)
-        required_grad_names = {None: None}
-        given_grad_names = {None: None}
-
-        if "views" in node.in_connectors:
-            required_grad_names = {"views": "views"}
-        if "views" in node.out_connectors:
-            given_grad_names = {"views": "views"}
-
-        return rev, BackwardResult(required_grad_names=required_grad_names, given_grad_names=given_grad_names)
-
-    def _reverse_MapEntry(
-        self,
-        forward_state: SDFGState,
-        backward_state: SDFGState,
-        node: nodes.MapEntry,
-        given_gradients: List[str],
-        required_gradients: List[str],
-    ) -> Tuple[nodes.Node, BackwardResult]:
-
-        required_grad_names = {n: invert_map_connector(n) for n in required_gradients}
-        given_grad_names = {n: invert_map_connector(n) for n in given_gradients}
-        result = BackwardResult(required_grad_names=required_grad_names, given_grad_names=given_grad_names)
-        rev = nodes.MapExit(self.reverse_map[node.map])
-
-        for _, conn in sorted(given_grad_names.items()):
-            assert rev.add_in_connector(conn)
-
-        for _, conn in sorted(required_grad_names.items()):
-            assert rev.add_out_connector(conn)
-
-        backward_state.add_node(rev)
-        return rev, result
-
-    def _reverse_MapExit(
-        self,
-        forward_state: SDFGState,
-        backward_state: SDFGState,
-        node: nodes.MapExit,
-        given_gradients: List[str],
-        required_gradients: List[str],
-    ):
-        self.reverse_map[node.map] = copy.deepcopy(node.map)
-
-        rev = nodes.MapEntry(self.reverse_map[node.map])
-        for conn in sorted(node.in_connectors):
-            assert rev.add_in_connector(conn)
-
-        for conn in sorted(node.out_connectors):
-            assert rev.add_out_connector(conn)
-
-        backward_state.add_node(rev)
-        # yapf: disable
-        return (
-            rev,
-            BackwardResult(required_grad_names={
-                n: invert_map_connector(n)
-                for n in required_gradients
-            },
-                given_grad_names={
-                    n: invert_map_connector(n)
-                    for n in given_gradients
-                }),
-        )
-        # yapf: enable
-
-    def _reverse_Tasklet(
-        self,
-        state: SDFGState,
-        backward_state: SDFGState,
-        tasklet: nodes.Tasklet,
-        given_gradients: List[str],
-        required_gradients: List[str],
-    ) -> Tuple[nodes.Node, BackwardResult]:
-        if tasklet.language is not dtypes.Language.Python:
-            raise AutoDiffException("Expected tasklet with language Python, got language {}".format(tasklet.language))
-
-        # tasklets should have scalar inputs (can be relaxed)
-        for _, _, _, _, memlet in state.in_edges(tasklet):
-            if memlet.data is not None:
-                try:
-                    is_int_eq_value(memlet.subset.num_elements(), 1)
-                except AutoDiffException as e:
-                    raise AutoDiffException(
-                        "Autodiff only supported for tasklets with scalar inputs and outputs") from e
-
-        for _, _, _, _, memlet in state.out_edges(tasklet):
-            if memlet.data is not None:
-                try:
-                    is_int_eq_value(memlet.subset.num_elements(), 1)
-                except AutoDiffException as e:
-                    raise AutoDiffException(
-                        "Autodiff only supported for tasklets with scalar inputs and outputs") from e
-
-        code_str = tasklet.code.as_string
-
-        # check if this is a conditional tasklet
-        if self._conditional_tasklet(tasklet):
-            # we want to extract the if and else expressions and pass them to sympy
-            if_expression, else_expression, conditional = self._extract_conitional_expressions(tasklet)
-
-            if_code, if_rev_inputs, if_rev_outputs, if_result = self._differentiate_code_symbolically(
-                if_expression, state, tasklet, given_gradients, required_gradients)
-
-            if else_expression:
-                else_code, else_rev_inputs, else_rev_outputs, else_result = self._differentiate_code_symbolically(
-                    else_expression, state, tasklet, given_gradients, required_gradients)
-                assert else_rev_inputs == if_rev_inputs
-                assert if_rev_outputs == else_rev_outputs
-                assert else_result == if_result
-
-            # prepare the tasklet code depending on the conditional type
-            # add the same conditional to the if_code
-            # first, add indentation
-            if_code = if_code.replace("\n", "\n\t")
-            if_code = f"if {conditional}:\n{if_code}"
-
-            # add the conditional to the in connectors
-            if_rev_inputs.add(conditional)
-            joint_code = if_code
-
-            if ":" not in code_str:
-                # only an if in the original code
-                assert else_expression
-                else_code = else_code.replace("\n", "\n\t")
-                else_code = f"else:\n{else_code}"
-                joint_code = f"{if_code}\n{else_code}"
-
-            # in case there are no out_connectors, we will zero out the assigned-to AccessNode
-            if len(if_rev_outputs) == 0:
-                if_rev_outputs = {"__zero_out_conn__"}
-
-            rev = nodes.Tasklet("_" + tasklet.label + "_reverse_",
-                                inputs=if_rev_inputs,
-                                outputs=if_rev_outputs,
-                                code=joint_code,
-                                debuginfo=tasklet.debuginfo)
-
-            result = if_result
-        else:
-            code, rev_inputs, rev_outputs, result = self._differentiate_code_symbolically(
-                code_str, state, tasklet, given_gradients, required_gradients)
-            rev = nodes.Tasklet("_" + tasklet.label + "_reverse_",
-                                inputs=rev_inputs,
-                                outputs=rev_outputs,
-                                code=code,
-                                debuginfo=tasklet.debuginfo)
-            backward_state.add_node(rev)
-        return rev, result
+    
