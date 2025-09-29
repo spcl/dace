@@ -10,7 +10,7 @@ from dace.sdfg.state import LoopRegion
 def add_backward_pass(sdfg: SDFG,
                       outputs: typing.List[typing.Union[nodes.AccessNode, str]],
                       inputs: typing.List[typing.Union[nodes.AccessNode, str]],
-                      overwite_strategy: str = "store_all",
+                      data_forwarding_strategy: str = "store_all",
                       data_to_recompute: typing.List[str] = None,
                       simplify: bool = True,
                       seprate_sdfgs=False):
@@ -59,7 +59,7 @@ def add_backward_pass(sdfg: SDFG,
                                 given_gradients=outputs,
                                 required_gradients=inputs,
                                 backward_sdfg=backward_sdfg,
-                                overwrite_strategy=overwite_strategy,
+                                data_forwarding_strategy=data_forwarding_strategy,
                                 data_to_recompute=data_to_recompute)
     gen.backward()
     sdfg.validate()

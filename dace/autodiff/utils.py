@@ -803,6 +803,19 @@ def check_edges_type_in_state(subgraph: dstate.StateSubgraphView):
                     f" on edge {edge} has type {edge_type}")
 
 
+def state_within_loop(forward_state: SDFGState) -> Tuple[bool, LoopRegion]:
+    """
+    Check if this state will be executed several times within a loop.
+    We check if any of the parents of this state is a loop region.
+    """
+    parent = forward_state.parent_graph
+    while parent is not None:
+        if isinstance(parent, LoopRegion):
+            return True, parent
+        parent = parent.parent_graph
+    return False, None
+
+
 class SympyCleaner(ast.NodeTransformer):
 
     def visit_Name(self, node):
@@ -810,3 +823,80 @@ class SympyCleaner(ast.NodeTransformer):
             return ast.copy_location(ast.parse("(3.141592653589)").body[0], node)
         else:
             return self.generic_visit(node)
+
+
+def extract_loop_region_info(loop: LoopRegion):
+    """
+        Use regular expression matching to extract the start and end of the loop region.
+        We only treat regular for-loops with incrementation and decrementation updates.
+        """
+
+    # Extract the loop iterator
+    it = loop.loop_variable
+
+    # Extract the end of the loop from the conditional statement
+    conditional = loop.loop_condition.as_string
+
+    stride_sign = get_stride_sign(loop)
+
+    # If the stride is positive
+    if stride_sign > 0:
+        conditional_expression = fr".*{it} < .*"
+    else:
+        # If the stride is negative
+        conditional_expression = fr".*{it} > .*"
+
+    # Match the conditional using regular expressions
+    matches = re.search(conditional_expression, conditional)
+    assert matches
+    expression = matches.group()
+    matches = re.search(conditional_expression[:-2], conditional)
+    assert matches
+    expression_to_remove = matches.group()
+    end = expression.replace(expression_to_remove, "")
+
+    # TODO: need more generalized solution for functions in the loop bounds
+    if "floor" not in conditional:
+        # There is no function call in the statement, remove parenthesis
+        end = end.replace("(", "")
+        end = end.replace(")", "")
+        end = end.replace(" ", "")
+    else:
+        if expression_to_remove.startswith("(") and not expression_to_remove.endswith(")") and expression.endswith(")"):
+            # Remove extra parenthesis
+            end = end[:-1]
+
+    # Get the start from the initialization code
+    init_code = loop.init_statement.as_string
+    matches = re.search(fr".*{it} = .*", init_code)
+    assert matches
+    expression = matches.group()
+    matches = re.search(fr"{it} =", init_code)
+    assert matches
+    expression_to_remove = matches.group()
+    start = expression.replace(expression_to_remove, "")
+
+    # Remove parenthesis and space
+    start = start.replace("(", "")
+    start = start.replace(")", "")
+    start = start.replace(" ", "")
+
+    return start, end
+
+
+def get_stride_sign(loop: LoopRegion) -> int:
+    """
+        Check if the stride for this loop is positive or negative.
+        returns: 1 if the stride is positive and -1 if it is negative
+        """
+    if loop.update_statement is None:
+        raise AutoDiffException("While loops are not yet supported in DaCe AD")
+    update_statement = loop.update_statement.as_string
+    if "-" in update_statement:
+        return -1
+    if "+" in update_statement:
+        return 1
+
+    # unsupported loop structure
+    raise AutoDiffException(f"Expected the loop region {loop.label} to have a regular update statement."
+                            f" Instead got: {update_statement}")

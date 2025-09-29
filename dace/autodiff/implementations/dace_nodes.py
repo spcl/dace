@@ -43,7 +43,7 @@ class DaceNodeBackwardImplementations:
                                         given_gradients=given_gradients,
                                         required_gradients=required_gradients,
                                         backward_sdfg=reverse_nsdfg,
-                                        overwrite_strategy=self.bwd_engine.strategy,
+                                        data_forwarding_strategy=self.bwd_engine.data_forwarding_strategy,
                                         data_to_recompute=self.bwd_engine.data_to_recompute)
         backward_result, _, backward_input_arrays = gen.backward()
 
