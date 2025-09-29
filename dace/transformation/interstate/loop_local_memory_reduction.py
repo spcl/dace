@@ -39,7 +39,7 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
       1, a2 a1, a0
       2, a0 a2, a1
 
-    With K = 3 the memory footprint is reduced from O(N) to O(K).
+    # With K = 3 the memory footprint is reduced from O(N) to O(K).
 
     Second example:
 
@@ -86,6 +86,18 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
     """
 
     loop = xf.PatternNode(LoopRegion)
+
+    bitmask_indexing = properties.Property(
+        dtype=bool,
+        default=True,
+        desc="Whether or not to use bitmasking for modulo operations when the reduced memory size is a power of two.",
+    )
+
+    next_power_of_two = properties.Property(
+        dtype=bool,
+        default=True,
+        desc="Whether or not to round up the reduced memory size to the next power of two (enables bitmasking instead of modulo).",
+    )
 
     @classmethod
     def expressions(cls):
@@ -180,7 +192,7 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
             write_lb = min([i[1] for i in dim_write_indices])
             write_ub = max([i[1] for i in dim_write_indices])
 
-            # TODO: We can support a span of 1 (with conditions having an equals part >= <=) if we can show that the read happens after the write in each iteration.
+            # TODO: We could also handle cases where write_lb == read_ub if we can prove that the write happens before the read in the loop for larger spans.
 
             # We assume a is the same for all indices, so we can just take the first one.
             a = dim_read_indices[0][0] * step
@@ -188,16 +200,28 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
                 span = (write_ub - read_lb) / a
                 cond = write_lb > read_ub  # At least one write index must be higher than all read indices
             if a == 0:
-                # Only constants, span is the number of elements accessed
                 span = len(dim_read_indices + dim_write_indices)
                 cond = write_lb > read_ub  # At least one write index must be higher than all read indices
             if a <= -1:
                 span = (read_ub - write_ub) / (-a)
                 cond = write_ub < read_lb  # At least one write index must be lower than all read indices
+            
+            # If we have a span of one, it's enough that reads happen after writes in the loop.
+            if span == 0:
+                cond = all(st.in_degree(an) == st.out_degree(an) for st in self.loop.all_states() for an in st.data_nodes() if an.data == array_name)
 
             # Take maximum from previous accesses into account
             k = sp.Max(span, max_indices[dim])
             k = symbolic.resolve_symbol_to_constant(k, sdfg)
+            k = None if k is None else int(k)
+
+            # Round up to next power of two if enabled
+            if self.next_power_of_two and k is not None:
+                k_p2 = 1 << (k - 1).bit_length()
+                
+                # If we're larger than the array size, don't round up.
+                if k_p2 + 1 < sdfg.arrays[array_name].shape[dim]:
+                    k = k_p2
 
             # Condition must hold
             if k is None or not cond or k + 1 >= sdfg.arrays[array_name].shape[dim]:
@@ -330,8 +354,13 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
             for i, k in enumerate(Ks):
                 if k is None:
                     continue
-                lb = pystr_to_symbolic(f"abs({subset[i][0]}) % ({k})")
-                ub = pystr_to_symbolic(f"abs({subset[i][1]}) % ({k})")
+                # if k is a power of two, we can use a bitmask instead of modulo.
+                if self.bitmask_indexing and k & (k - 1) == 0:
+                    lb = pystr_to_symbolic(f"{subset[i][0]} & ({k - 1})")
+                    ub = pystr_to_symbolic(f"{subset[i][1]} & ({k - 1})")
+                else:
+                  lb = pystr_to_symbolic(f"abs({subset[i][0]}) % ({k})")
+                  ub = pystr_to_symbolic(f"abs({subset[i][1]}) % ({k})")
                 st = subset[i][2]
                 subset[i] = (lb, ub, st)
             edge.data.src_subset = subset
@@ -341,8 +370,13 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
             for i, k in enumerate(Ks):
                 if k is None:
                     continue
-                lb = pystr_to_symbolic(f"abs({subset[i][0]}) % ({k})")
-                ub = pystr_to_symbolic(f"abs({subset[i][1]}) % ({k})")
+                # if k is a power of two, we can use a bitmask instead of modulo.
+                if self.bitmask_indexing and k & (k - 1) == 0:
+                    lb = pystr_to_symbolic(f"{subset[i][0]} & ({k - 1})")
+                    ub = pystr_to_symbolic(f"{subset[i][1]} & ({k - 1})")
+                else:
+                  lb = pystr_to_symbolic(f"abs({subset[i][0]}) % ({k})")
+                  ub = pystr_to_symbolic(f"abs({subset[i][1]}) % ({k})")
                 st = subset[i][2]
                 subset[i] = (lb, ub, st)
             edge.data.dst_subset = subset

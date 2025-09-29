@@ -72,6 +72,32 @@ def test_no_offsets():
     check_transformation(sdfg, 0)
 
 
+def test_window_one():
+
+    @dace.program
+    def tester(b: dace.float64[32], c: dace.float64[32]):
+        a = dace.define_local([32], dace.float64)
+        for i in range(0, 32):
+            a[i] = c[i] * 2
+            b[i] = a[i] + 2
+            
+    sdfg = tester.to_sdfg(simplify=True)
+    check_transformation(sdfg, 1)
+
+def test_window_one2():
+
+    @dace.program
+    def tester(b: dace.float64[32], c: dace.float64[32]):
+        a = dace.define_local([32], dace.float64)
+        a[:] = 0
+        for i in range(0, 32):
+            b[i] = a[i] + 2
+            a[i] = c[i] * 2
+            
+    sdfg = tester.to_sdfg(simplify=True)
+    check_transformation(sdfg, 0)
+
+
 def test_self_dependency():
 
     @dace.program
@@ -270,7 +296,7 @@ def test_constant_index2():
             a[7] = c[i] * 2
 
     sdfg = tester.to_sdfg(simplify=True)
-    check_transformation(sdfg, 1)
+    check_transformation(sdfg, 2)
 
 
 def test_larger_step():
@@ -610,9 +636,11 @@ def test_symbolic_offset():
 
 if __name__ == "__main__":
     test_simple()
+    test_no_offsets()
+    test_window_one()
+    test_window_one2()
     test_self_dependency()
     test_self_dependency2()
-    test_no_offsets()
     test_non_transient()
     test_multiple_writes()
     test_gaps()
