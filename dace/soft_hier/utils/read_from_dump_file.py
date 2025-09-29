@@ -2,10 +2,17 @@ import struct
 from typing import Dict, List
 from dace.soft_hier.utils.interleave_handler import InterleaveHandler
 
-def get_address_and_read_from_file(i: int, j: int, interleave_handler: InterleaveHandler, array_name: str,
-                                   element_size_in_bytes: int, dtype: str, parsed_sections: Dict[str, Dict[int,
-                                                                                                           List[str]]],
-                                    debug_print: bool = False, debug_i: int = None, debug_j: int = None):
+
+def get_address_and_read_from_file(i: int,
+                                   j: int,
+                                   interleave_handler: InterleaveHandler,
+                                   array_name: str,
+                                   element_size_in_bytes: int,
+                                   dtype: str,
+                                   parsed_sections: Dict[str, Dict[int, List[str]]],
+                                   debug_print: bool = False,
+                                   debug_i: int = None,
+                                   debug_j: int = None):
 
     # Only print debug info for specific elements
     if debug_print:

@@ -10,26 +10,26 @@ from dace.soft_hier.utils.interleave_handler import InterleaveHandler
 import subprocess
 from dace.soft_hier.utils.generate_arch_config import generate_arg_cfg
 
+
 class HardwareConfig:
     """Hardware configuration container"""
-    def __init__(
-        self,
-        hardware_thread_group_dims=(2, 2),
-        hbm_addr_base=0xc0000000,
-        hbm_addr_space=0x04000000,
-        tcdm_size=0x00100000,
-        redmule_ce_height=64,
-        redmule_ce_width=64,
-        redmule_ce_pipe=1,
-        hbm_placement="2,2,2,2",
-        num_node_per_ctrl=1,
-        noc_link_width=4096,
-        num_hbm_channels=8,
-        dtype_input=np.uint16,
-        dtype_output=np.uint16,
-        dace_input_type=dace.uint16,
-        dace_output_type=dace.uint16
-    ):
+
+    def __init__(self,
+                 hardware_thread_group_dims=(2, 2),
+                 hbm_addr_base=0xc0000000,
+                 hbm_addr_space=0x04000000,
+                 tcdm_size=0x00100000,
+                 redmule_ce_height=64,
+                 redmule_ce_width=64,
+                 redmule_ce_pipe=1,
+                 hbm_placement="2,2,2,2",
+                 num_node_per_ctrl=1,
+                 noc_link_width=4096,
+                 num_hbm_channels=8,
+                 dtype_input=np.uint16,
+                 dtype_output=np.uint16,
+                 dace_input_type=dace.uint16,
+                 dace_output_type=dace.uint16):
         self.hardware_thread_group_dims = hardware_thread_group_dims
         self.hbm_addr_base = hbm_addr_base
         self.hbm_addr_space = hbm_addr_space
@@ -52,24 +52,23 @@ def _get_gvsoc_path() -> str:
     # First try environment variable
     if "GVSOC_PATH" in os.environ:
         return os.environ["GVSOC_PATH"]
-    
+
     # Try to find gvsoc binary
     gvsoc_binary = shutil.which("gvsoc")
     if gvsoc_binary:
         # Get parent directory three times: bin -> install -> gvsoc_root
-        raise Exception(str(Path(gvsoc_binary).parent.parent.parent))
         return str(Path(gvsoc_binary).parent.parent.parent)
-
 
     # Fallback to default
     raise ValueError("GVSOC PATH COULD NOT BE FOUND, SET DACE_PATH OR ENSURE gvsoc IS IN PATH")
+
 
 def _get_dace_path() -> str:
     """Get DACE path from environment or by locating sdfgcc binary"""
     # First try environment variable
     if "DACE_PATH" in os.environ:
         return os.environ["DACE_PATH"]
-    
+
     # Try to find sdfgcc binary
     return Path(dace.__file__).parent.parent
 
@@ -89,27 +88,24 @@ def setup_environment():
         "C_INCLUDE_PATH"] = f"{DACE_PATH}/dace/runtime/include/dace/soft_hier/runtime/include:{os.environ.get('C_INCLUDE_PATH','')}"
     os.environ["SOFTHIER_INSTALL_PATH"] = f"{GVSOC_PATH}/soft_hier/flex_cluster_sdk/runtime/"
 
-def _parse_hbm_dump(
-    filepath: str,
-    num_channels: int,
-    array_names: Iterable[str]
-) -> Dict[str, Dict[int, List[str]]]:
+
+def _parse_hbm_dump(filepath: str, num_channels: int, array_names: Iterable[str]) -> Dict[str, Dict[int, List[str]]]:
     """Parse HBM dump file into structured format"""
     sections: Dict[int, List[str]] = {}
     section_id = -1
-    
+
     with open(filepath, "r") as f:
         for line in f:
             line = line.strip()
             if not line:
                 continue
-            
+
             if line.startswith("HBM offset =="):
                 section_id += 1
                 sections[section_id] = []
             elif line.startswith("0x"):
                 sections[section_id].append(line)
-    
+
     # Re-arrange into dictionary structure
     parsed = {}
     for i, name in enumerate(sorted(array_names)):
@@ -118,44 +114,34 @@ def _parse_hbm_dump(
             offset = i * num_channels + j
             if offset in sections:
                 parsed[name][j] = sections[offset]
-    
+
     return parsed
 
 
-def _read_hbm_to_numpy(
-    array_name: str,
-    handler: InterleaveHandler,
-    element_bytes: int,
-    dtype: str,
-    parsed: Dict[str, Dict[int, List[str]]],
-    buffer: np.ndarray
-) -> None:
+def _read_hbm_to_numpy(array_name: str, handler: InterleaveHandler, element_bytes: int, dtype: str,
+                       parsed: Dict[str, Dict[int, List[str]]], buffer: np.ndarray) -> None:
     """Read HBM data into NumPy array"""
     assert len(buffer.shape) == 2
-    
+
     for i in range(buffer.shape[0]):
         for j in range(buffer.shape[1]):
-            buffer[i, j] = get_address_and_read_from_file(
-                i=i,
-                j=j,
-                interleave_handler=handler,
-                array_name=array_name,
-                element_size_in_bytes=element_bytes,
-                dtype=dtype,
-                parsed_sections=parsed
-            )
+            buffer[i, j] = get_address_and_read_from_file(i=i,
+                                                          j=j,
+                                                          interleave_handler=handler,
+                                                          array_name=array_name,
+                                                          element_size_in_bytes=element_bytes,
+                                                          dtype=dtype,
+                                                          parsed_sections=parsed)
 
 
-def compare(
-    hardware_config: HardwareConfig,
-    numpy_results: Dict[str, np.ndarray],
-    sdfg_results: Dict[str, Any],
-    interleave_handlers: Dict[str, InterleaveHandler],
-    tolerance: float = 1e-5
-) -> Dict[str, Any]:
+def compare(hardware_config: HardwareConfig,
+            numpy_results: Dict[str, np.ndarray],
+            sdfg_results: Dict[str, Any],
+            interleave_handlers: Dict[str, InterleaveHandler],
+            tolerance: float = 1e-5) -> Dict[str, Any]:
     """
     Step 5: Compare NumPy reference with SDFG results
-    
+
     Args:
         hw_config: Hardware configuration
         numpy_results: Results from NumPy computation
@@ -163,7 +149,7 @@ def compare(
         data: Original data dictionary with handlers
         dump_path: Path to HBM dump file
         tolerance: Comparison tolerance for values
-    
+
     Returns:
         Dictionary containing comparison results: {
             'all_match': bool,
@@ -176,7 +162,7 @@ def compare(
     print("=" * 80)
 
     dump_path = f"{_get_gvsoc_path()}/dump_0"
-    
+
     # Parse HBM dump
     if not os.path.exists(dump_path):
         print(f"Warning: Dump file not found at {dump_path}")
@@ -193,13 +179,13 @@ def compare(
         dtype_str = str(numpy_array.dtype).replace('numpy.', '')
 
         _read_hbm_to_numpy(name, handler, element_size, dtype_str, parsed, sdfg_array)
-        
+
         # Compare
         diff = np.abs(sdfg_array - numpy_array)
         max_diff = np.max(diff)
         mean_diff = np.mean(diff)
         matches = max_diff <= tolerance
-        
+
         details[name] = {
             'matches': matches,
             'max_diff': max_diff,
@@ -207,10 +193,10 @@ def compare(
             'numpy_array': numpy_array,
             'sdfg_array': sdfg_array
         }
-        
+
         status = "✓ MATCH" if matches else "✗ MISMATCH"
         print(f"  {name}: {status} (max_diff={max_diff:.6e}, mean_diff={mean_diff:.6e})")
-        
+
         if not matches:
             all_match = False
 
@@ -230,12 +216,8 @@ def compare(
     print("✓ ALL RESULTS MATCH" if all_match else "✗ SOME RESULTS DO NOT MATCH")
     print("=" * 80)
     print()
-    
-    return {
-        'all_match': all_match,
-        'details': details
-    }
 
+    return {'all_match': all_match, 'details': details}
 
 
 def setup_architecture(hw_config: HardwareConfig):
@@ -264,24 +246,25 @@ def setup_architecture(hw_config: HardwareConfig):
         check=True,
     )
 
+
 def setup_dace_config(hw_config: HardwareConfig):
     dace.config.Config.set("backend", "softhier", "HBM_ADDRESS_SPACE", value=str(hw_config.hbm_addr_space))
     dace.config.Config.set("backend", "softhier", "HBM_ADDRESS_BASE", value=str(hw_config.hbm_addr_base))
     dace.config.Config.set("backend", "softhier", "HBM_NUM_CHANNELS", value=int(hw_config.num_hbm_channels))
+
 
 def setup_hw_env_dace(hw_config: HardwareConfig):
     setup_architecture(hw_config)
     setup_environment()
     setup_dace_config(hw_config)
 
-def run_e2e_verification(
-    hw_config: HardwareConfig,
-    data: Dict[str, Any],
-    interleave_handlers: Dict[str, Any],
-    numpy_fn: Callable,
-    sdfg_fn: Callable,
-    tolerance: float = 1e-3
-) -> Dict[str, Any]:
+
+def run_e2e_verification(hw_config: HardwareConfig,
+                         data: Dict[str, Any],
+                         interleave_handlers: Dict[str, Any],
+                         numpy_fn: Callable,
+                         sdfg_fn: Callable,
+                         tolerance: float = 1e-3) -> Dict[str, Any]:
     # Step 1 Setup
     setup_hw_env_dace(hw_config)
 
