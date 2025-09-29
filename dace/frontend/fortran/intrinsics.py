@@ -141,8 +141,8 @@ class DirectReplacement(IntrinsicTransformation):
 
     def replace_size(transformer: IntrinsicNodeTransformer, var: ast_internal_classes.Call_Expr_Node, line):
 
-        if len(var.args) not in [1, 2]:
-            assert False, "Incorrect arguments to size!"
+        if len(var.args) not in (1, 2):
+            raise ValueError("Incorrect number of arguments to SIZE intrinsic")
 
         # get variable declaration for the first argument
         var_decl = transformer.get_var_declaration(var.parent, var.args[0])
@@ -176,8 +176,8 @@ class DirectReplacement(IntrinsicTransformation):
     def _replace_lbound_ubound(func: str, transformer: IntrinsicNodeTransformer,
                                var: ast_internal_classes.Call_Expr_Node, line):
 
-        if len(var.args) not in [1, 2]:
-            assert False, "Incorrect arguments to lbound/ubound"
+        if len(var.args) not in (1, 2):
+            raise ValueError(f"Incorrect number of arguments to {func.upper()} intrinsic")
 
         # get variable declaration for the first argument
         var_decl = transformer.get_var_declaration(var.parent, var.args[0])
@@ -243,7 +243,7 @@ class DirectReplacement(IntrinsicTransformation):
     def replace_bit_size(transformer: IntrinsicNodeTransformer, var: ast_internal_classes.Call_Expr_Node, line):
 
         if len(var.args) != 1:
-            assert False, "Incorrect arguments to bit_size"
+            raise ValueError("Incorrect number of arguments to BIT_SIZE intrinsic")
 
         # get variable declaration for the first argument
         var_decl = transformer.get_var_declaration(var.parent, var.args[0])
@@ -297,8 +297,10 @@ class DirectReplacement(IntrinsicTransformation):
 
     def replace_present(transformer: IntrinsicNodeTransformer, call: ast_internal_classes.Call_Expr_Node, line):
 
-        assert len(call.args) == 1
-        assert isinstance(call.args[0], ast_internal_classes.Name_Node)
+        if len(call.args) != 1:
+            raise ValueError("PRESENT intrinsic expects exactly one argument")
+        if not isinstance(call.args[0], ast_internal_classes.Name_Node):
+            raise TypeError("Argument to PRESENT must be a variable name")
 
         var_name = call.args[0].name
         test_var_name = f'__f2dace_OPTIONAL_{var_name}'
@@ -307,8 +309,10 @@ class DirectReplacement(IntrinsicTransformation):
 
     def replace_allocated(transformer: IntrinsicNodeTransformer, call: ast_internal_classes.Call_Expr_Node, line):
 
-        assert len(call.args) == 1
-        assert isinstance(call.args[0], ast_internal_classes.Name_Node)
+        if len(call.args) != 1:
+            raise ValueError("ALLOCATED intrinsic expects exactly one argument")
+        if not isinstance(call.args[0], ast_internal_classes.Name_Node):
+            raise TypeError("Argument to ALLOCATED must be a variable name")
 
         var_name = call.args[0].name
         test_var_name = f'__f2dace_ALLOCATED_{var_name}'
@@ -512,7 +516,8 @@ class LoopBasedReplacementTransformation(IntrinsicNodeTransformer):
 
             _, _, cur_val = self.ast.structures.find_definition(self.scope_vars, arg)
 
-            assert not isinstance(cur_val.part_ref, ast_internal_classes.Data_Ref_Node)
+            if isinstance(cur_val.part_ref, ast_internal_classes.Data_Ref_Node):
+                raise TypeError("Unexpected nested Data_Ref_Node in structure definition")
 
             if isinstance(cur_val.part_ref, ast_internal_classes.Name_Node):
                 cur_val.part_ref = ast_internal_classes.Array_Subscript_Node(
@@ -1278,7 +1283,8 @@ class Merge(LoopBasedReplacement):
                 for ind in indices:
                     pardecls = [i for i in mywalk(ind) if isinstance(i, ast_internal_classes.ParDecl_Node)]
                     len_pardecls_second_array += len(pardecls)
-                assert len_pardecls_first_array == len_pardecls_second_array
+                if len_pardecls_first_array != len_pardecls_second_array:
+                    raise ValueError("MERGE arguments must have the same rank")
                 if len_pardecls_first_array == 0:
                     self.uses_scalars = True
                 else:
@@ -1344,7 +1350,8 @@ class Merge(LoopBasedReplacement):
 
             # parse destination
 
-            assert isinstance(node.lval, ast_internal_classes.Name_Node)
+            if not isinstance(node.lval, ast_internal_classes.Name_Node):
+                raise TypeError(f"Expected a variable name as the destination for MERGE, but got {type(node.lval)}")
 
             array_decl = self.get_var_declaration(exec_node.parent, node.lval)
             if array_decl.sizes is None or len(array_decl.sizes) == 0:
@@ -1475,13 +1482,15 @@ class IntrinsicSDFGTransformation(xf.SingleStateTransformation):
     @staticmethod
     def transpose_size(node: ast_internal_classes.Call_Expr_Node, arg_sizes: List[List[ast_internal_classes.FNode]]):
 
-        assert len(arg_sizes) == 1
+        if len(arg_sizes) != 1:
+            raise ValueError("TRANSPOSE intrinsic expects exactly one argument")
         return list(reversed(arg_sizes[0]))
 
     @staticmethod
     def matmul_size(node: ast_internal_classes.Call_Expr_Node, arg_sizes: List[List[ast_internal_classes.FNode]]):
 
-        assert len(arg_sizes) == 2
+        if len(arg_sizes) != 2:
+            raise ValueError("MATMUL intrinsic expects exactly two arguments")
         return [arg_sizes[0][0], arg_sizes[1][1]]
 
     LIBRARY_NODE_TRANSFORMATIONS = {
@@ -1600,9 +1609,9 @@ class MathFunctions(IntrinsicTransformation):
         # The call to REAL can contain a second KIND parameter.
         # If it is 8, we need to return a double.
         if len(arg.args) == 2:
-            assert isinstance(arg.args[1], ast_internal_classes.Int_Literal_Node)
-
-            if arg.args[1].value not in ["4", "8"]:
+            if not isinstance(arg.args[1], ast_internal_classes.Int_Literal_Node):
+                raise TypeError("KIND argument to REAL must be an integer literal")
+            if arg.args[1].value not in ("4", "8"):
                 raise NotImplementedError()
 
             arg.type = "DOUBLE" if arg.args[1].value == "8" else "REAL"
