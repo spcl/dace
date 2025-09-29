@@ -11,8 +11,7 @@ import fparser.two.Fortran2008 as f08
 import numpy as np
 from fparser.two.utils import Base, walk, BinaryOpBase, UnaryOpBase
 
-from . import types
-from . import utils
+from . import types, utils, optimizations
 from .. import ast_utils
 
 # Namespace for anonymous interfaces
@@ -485,23 +484,7 @@ def _const_eval_basic_type(expr: Base, alias_map: types.SPEC_TABLE) -> Optional[
         if f"{iexpr}" == 'NULL()': return None
         val = _const_eval_basic_type(iexpr, alias_map)
         assert val is not None
-        if typ.spec == ('INTEGER1', ):
-            val = np.int8(val)
-        elif typ.spec == ('INTEGER2', ):
-            val = np.int16(val)
-        elif typ.spec in (('INTEGER4', ), ('INTEGER', )):
-            val = np.int32(val)
-        elif typ.spec == ('INTEGER8', ):
-            val = np.int64(val)
-        elif typ.spec in (('REAL4', ), ('REAL', )):
-            val = np.float32(val)
-        elif typ.spec == ('REAL8', ):
-            val = np.float64(val)
-        elif typ.spec == ('LOGICAL', ):
-            val = np.bool_(val)
-        else:
-            raise ValueError(f"{expr}/{typ.spec} is not a basic type")
-        return val
+        return optimizations._val_2_np_lit(val, typ.spec)
     elif isinstance(expr, f03.Intrinsic_Function_Reference):
         intr, args = expr.children
         args = args.children if args else tuple()

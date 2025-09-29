@@ -368,12 +368,12 @@ def const_eval_nodes(ast: f03.Program) -> f03.Program:
     return ast
 
 
-def _val_2_lit(val: str, type_spec: types.SPEC) -> types.LITERAL_TYPES:
+def _val_2_np_lit(val, type_spec: types.SPEC) -> types.NUMPY_TYPES:
     """
-    Converts a string value to a Fortran literal node of a specific type.
+    Converts a string value to a NumPy scalar of a specific Fortran type.
     :param val: The string representation of the value (e.g., "123", "true").
     :param type_spec: The target Fortran type specification (e.g., ('INTEGER4',)).
-    :return: An fparser literal node representing the value.
+    :return: A NumPy scalar (e.g., np.int32, np.float64) representing the value.
     """
     val = str(val).lower()
     # Convert the string value to the appropriate NumPy type based on the Fortran type specification.
@@ -394,7 +394,17 @@ def _val_2_lit(val: str, type_spec: types.SPEC) -> types.LITERAL_TYPES:
         val = np.bool_(val in {'true', '1'})
     else:
         raise NotImplementedError(f"{val} cannot be parsed as the target literal type: {type_spec}")
-    return types.numpy_type_to_literal(val)
+    return val
+
+
+def _val_2_lit(val, type_spec: types.SPEC) -> types.LITERAL_TYPES:
+    """
+    Converts a string value to a Fortran literal node of a specific type.
+    :param val: The string representation of the value (e.g., "123", "true").
+    :param type_spec: The target Fortran type specification (e.g., ('INTEGER4',)).
+    :return: An fparser literal node representing the value.
+    """
+    return types.numpy_type_to_literal(_val_2_np_lit(val, type_spec))
 
 
 def _item_comp_matches_actual_comp(item_comp: str, actual_comp: str) -> bool:
