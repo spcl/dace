@@ -520,7 +520,6 @@ class LoopBasedReplacementTransformation(IntrinsicNodeTransformer):
                 return None
 
             _, _, cur_val = self.ast.structures.find_definition(self.scope_vars, arg)
-            #_, cur_val, _= self.ast.structures.find_definition(self.scope_vars, arg)
 
             assert not isinstance(cur_val.part_ref, ast_internal_classes.Data_Ref_Node)
 
@@ -530,12 +529,6 @@ class LoopBasedReplacementTransformation(IntrinsicNodeTransformer):
                     parent=arg.parent,
                     type='VOID',
                     indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * dims)
-                ##i
-                #else:
-                #    cur_val.part_ref = ast_internal_classes.Array_Subscript_Node(
-                #        name=cur_val.part_ref.name, parent=arg.parent, type='VOID',
-                #        indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * dims
-                #    )
             return arg
 
         # supports syntax func(arr(:))
