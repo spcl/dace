@@ -2,7 +2,12 @@
     Class for defining the reversal of pure SDFG nodes: AccessNode, Tasklet, MapEntry/Exit, NestedSDFG
     Each method should return a tuple (reversed_node, BackwardResult)
 """
+import ast
+import collections
 import copy
+import astunparse
+import sympy as sp
+import numpy as np
 from typing import List, Tuple
 
 # DaCe imports
@@ -14,15 +19,15 @@ from dace.util import find_str_not_in_set
 
 # Autodiff imports
 from dace.autodiff.base_abc import BackwardResult, AutoDiffException
-from dace.autodiff.utils import is_int_eq_value, invert_map_connector
-
+import dace.autodiff.utils as ad_utils
 
 
 class DaceNodeBackwardImplementations:
+
     def __init__(self, backward_pass_generator: 'BackwardPassGenerator'):
-        self.bwd_engine = backward_pass_generator 
+        self.bwd_engine = backward_pass_generator
         pass
-    
+
     def _reverse_NestedSDFG(
         self,
         forward_state: SDFGState,
@@ -32,14 +37,14 @@ class DaceNodeBackwardImplementations:
         required_gradients: List[str],
     ) -> Tuple[nodes.Node, BackwardResult]:
         reverse_nsdfg = dace.SDFG(node.sdfg.name + "_backward")
-        
+
         # Create a new backward pass generator object for the nested SDFG
         gen = self.bwd_engine.__class__(sdfg=node.sdfg,
-                                    given_gradients=given_gradients,
-                                    required_gradients=required_gradients,
-                                    backward_sdfg=reverse_nsdfg,
-                                    overwrite_strategy=self.bwd_engine.strategy,
-                                    data_to_recompute=self.bwd_engine.data_to_recompute)
+                                        given_gradients=given_gradients,
+                                        required_gradients=required_gradients,
+                                        backward_sdfg=reverse_nsdfg,
+                                        overwrite_strategy=self.bwd_engine.strategy,
+                                        data_to_recompute=self.bwd_engine.data_to_recompute)
         backward_result, _, backward_input_arrays = gen.backward()
 
         # we need to defer add edges until after the arrays have been added because creation of the nested
@@ -160,8 +165,8 @@ class DaceNodeBackwardImplementations:
         required_gradients: List[str],
     ) -> Tuple[nodes.Node, BackwardResult]:
 
-        required_grad_names = {n: invert_map_connector(n) for n in required_gradients}
-        given_grad_names = {n: invert_map_connector(n) for n in given_gradients}
+        required_grad_names = {n: ad_utils.invert_map_connector(n) for n in required_gradients}
+        given_grad_names = {n: ad_utils.invert_map_connector(n) for n in given_gradients}
         result = BackwardResult(required_grad_names=required_grad_names, given_grad_names=given_grad_names)
         rev = nodes.MapExit(self.bwd_engine.reverse_map[node.map])
 
@@ -196,11 +201,11 @@ class DaceNodeBackwardImplementations:
         return (
             rev,
             BackwardResult(required_grad_names={
-                n: invert_map_connector(n)
+                n: ad_utils.invert_map_connector(n)
                 for n in required_gradients
             },
                 given_grad_names={
-                    n: invert_map_connector(n)
+                    n: ad_utils.invert_map_connector(n)
                     for n in given_gradients
                 }),
         )
@@ -221,7 +226,7 @@ class DaceNodeBackwardImplementations:
         for _, _, _, _, memlet in state.in_edges(tasklet):
             if memlet.data is not None:
                 try:
-                    is_int_eq_value(memlet.subset.num_elements(), 1)
+                    ad_utils.is_int_eq_value(memlet.subset.num_elements(), 1)
                 except AutoDiffException as e:
                     raise AutoDiffException(
                         "Autodiff only supported for tasklets with scalar inputs and outputs") from e
@@ -229,7 +234,7 @@ class DaceNodeBackwardImplementations:
         for _, _, _, _, memlet in state.out_edges(tasklet):
             if memlet.data is not None:
                 try:
-                    is_int_eq_value(memlet.subset.num_elements(), 1)
+                    ad_utils.is_int_eq_value(memlet.subset.num_elements(), 1)
                 except AutoDiffException as e:
                     raise AutoDiffException(
                         "Autodiff only supported for tasklets with scalar inputs and outputs") from e
@@ -239,14 +244,14 @@ class DaceNodeBackwardImplementations:
         # check if this is a conditional tasklet
         if self.bwd_engine._conditional_tasklet(tasklet):
             # we want to extract the if and else expressions and pass them to sympy
-            if_expression, else_expression, conditional = self.bwd_engine._extract_conitional_expressions(tasklet)
+            if_expression, else_expression, conditional = ad_utils.extract_conitional_expressions(tasklet)
 
-            if_code, if_rev_inputs, if_rev_outputs, if_result = self.bwd_engine._differentiate_code_symbolically(
-                if_expression, state, tasklet, given_gradients, required_gradients)
+            if_code, if_rev_inputs, if_rev_outputs, if_result = self._differentiate_code_symbolically(
+                self.bwd_engine.sdfg, if_expression, state, tasklet, given_gradients, required_gradients)
 
             if else_expression:
-                else_code, else_rev_inputs, else_rev_outputs, else_result = self.bwd_engine._differentiate_code_symbolically(
-                    else_expression, state, tasklet, given_gradients, required_gradients)
+                else_code, else_rev_inputs, else_rev_outputs, else_result = self._differentiate_code_symbolically(
+                    self.bwd_engine.sdfg, else_expression, state, tasklet, given_gradients, required_gradients)
                 assert else_rev_inputs == if_rev_inputs
                 assert if_rev_outputs == else_rev_outputs
                 assert else_result == if_result
@@ -280,8 +285,8 @@ class DaceNodeBackwardImplementations:
 
             result = if_result
         else:
-            code, rev_inputs, rev_outputs, result = self.bwd_engine._differentiate_code_symbolically(
-                code_str, state, tasklet, given_gradients, required_gradients)
+            code, rev_inputs, rev_outputs, result = self._differentiate_code_symbolically(
+                self.bwd_engine.sdfg, code_str, state, tasklet, given_gradients, required_gradients)
             rev = nodes.Tasklet("_" + tasklet.label + "_reverse_",
                                 inputs=rev_inputs,
                                 outputs=rev_outputs,
@@ -289,3 +294,151 @@ class DaceNodeBackwardImplementations:
                                 debuginfo=tasklet.debuginfo)
             backward_state.add_node(rev)
         return rev, result
+
+    def _differentiate_code_symbolically(
+        self,
+        sdfg: dace.SDFG,
+        code_str: str,
+        forward_state: SDFGState,
+        tasklet: nodes.Tasklet,
+        given_gradients: List[str],
+        required_gradients: List[str],
+    ):
+        """
+        """
+        output_exprs, indexed_objects_map = ad_utils.code_to_exprs(code_str, tasklet, list(sdfg.symbols.keys()))
+
+        # for each output that an input is used in, there will be an entry for the expression of the
+        # grad in this list in the final code snippet. When we generate the final code for the
+        # reverse tasklet, we need to add them all up.
+        rev_code = collections.defaultdict(list)
+
+        # the outputs of the reversed nodes are the grads of inputs of the original node
+        rev_outputs = set()
+        rev_inputs = set()
+
+        result = BackwardResult(required_grad_names={}, given_grad_names={})
+
+        # symbol generator to use for CSE
+        symbol_generator = sp.numbered_symbols()
+
+        code = ""
+
+        for output_conn in sorted(given_gradients):
+
+            # special case for conditional tasklets with constant assignement
+            if len(required_gradients) == 0:
+                # for this we need to assing a zero to the gradient output
+                # pick a name for the input gradient
+                rev_input_grad_name = find_str_not_in_set(rev_inputs, output_conn + "_gradient")
+                result.given_grad_names[output_conn] = rev_input_grad_name
+
+                # zero out the gradient
+                code = f"\n__zero_out_conn__ = 0.0"
+                rev_outputs = {}
+                rev_inputs = {rev_input_grad_name}
+
+            # for each output_conn...
+            for inp in sorted(required_gradients):
+                # ...add the code to generate {inp}_grad
+
+                if inp not in result.required_grad_names:
+                    # pick a name for the gradient
+                    rev_output_grad_name = find_str_not_in_set(rev_outputs, inp + "_gradient")
+                    result.required_grad_names[inp] = rev_output_grad_name
+                    rev_outputs.add(rev_output_grad_name)
+                else:
+                    rev_output_grad_name = result.required_grad_names[inp]
+
+                output_expr = output_exprs[output_conn]
+                # if the expression is a constant assignement, we need to cast the float to the sympy equivalent
+                if type(output_expr) in [np.float64, np.float32, np.float16]:
+                    output_expr = sp.Float(output_expr)
+
+                # We need to prepare the w.r.t expression
+                if inp in indexed_objects_map:
+                    # if the input is an indexed object, we need to create the sympy expression
+                    indexed_base = sp.IndexedBase(inp)
+                    idx_objects = [sp.Idx(index) for index in indexed_objects_map[inp]]
+                    inp_expr = indexed_base[tuple(idx_objects)]
+                else:
+                    # if the input is not an indexed object, we can just use it as is
+                    inp_expr = sp.symbols(inp)
+
+                # symbolically differentiate the output w.r.t inp
+                diff_expr = output_expr.diff(inp_expr)
+
+                # do common subexpression elimination
+                sub_expressions, diff_expr = sp.cse(diff_expr, symbols=symbol_generator)
+
+                diff_expr = diff_expr[0]
+
+                if diff_expr.atoms(sp.Derivative):
+                    # the final result contains a call to sp.Derivative
+                    raise AutoDiffException("Unable to symbolically differentiate expression: {}".format(
+                        diff_expr.expr))
+
+                if output_conn not in result.given_grad_names:
+                    # pick a name for the input gradient
+                    rev_input_grad_name = find_str_not_in_set(rev_inputs, output_conn + "_gradient")
+                    result.given_grad_names[output_conn] = rev_input_grad_name
+                else:
+                    rev_input_grad_name = result.given_grad_names[output_conn]
+
+                input_symbols = diff_expr.free_symbols\
+                    .union(s for _, e in sub_expressions for s in e.free_symbols)\
+                    .difference(e for e, _ in sub_expressions)
+
+                string_symbols = ad_utils.symbols_to_strings(input_symbols)
+
+                # If there are any symbols that are defined at the global SDFG scope
+                # We do not need to add these as inputs to the reverse tasklet
+                string_symbols = string_symbols.difference(set(sdfg.symbols.keys()))
+                rev_inputs |= string_symbols | {rev_input_grad_name}
+
+                diff_code_str = "{input} * ({diff_expr})".format(input=rev_input_grad_name, diff_expr=str(diff_expr))
+                # small hack: our heaviside is lowercase
+                diff_code_str = diff_code_str.replace("Heaviside", "heaviside")
+
+                diff_code_str = astunparse.unparse(ad_utils.SympyCleaner().visit(ast.parse(diff_code_str)))
+
+                sub_expression_code_strs = "\n".join(f"{target} = {expression}"
+                                                     for target, expression in sub_expressions)
+
+                # get the the final type of the gradient: this is just the type of the input connector we creating the
+                # gradient for
+                cands = list(forward_state.in_edges_by_connector(tasklet, inp))
+                if len(cands) != 1:
+                    raise AutoDiffException(f"Unexpected graph structure, could not find input edge for connector {inp}"
+                                            f" on tasklet {tasklet}")
+
+                converted_code = ad_utils.cast_consts_to_type(diff_code_str, sdfg.arrays[cands[0].data.data].dtype)
+                converted_code = converted_code.replace("\n", " ")
+
+                converted_sub_expressions = ad_utils.cast_consts_to_type(sub_expression_code_strs,
+                                                                         sdfg.arrays[cands[0].data.data].dtype)
+
+                # If there is indirection in the input
+                if inp in indexed_objects_map:
+                    # We need to have indirection of the output container in the backward
+                    output_code = rev_output_grad_name + "[" + " , ".join(indexed_objects_map[inp]) + "]"
+
+                    # We also need to add the indices as connectors so that they are forwarded from the forward pass
+                    for idx in indexed_objects_map[inp]:
+                        if idx not in rev_inputs:
+                            # This needs to be available in the forward pass in the first place
+                            if idx not in tasklet.in_connectors:
+                                raise AutoDiffException(
+                                    f"Expected index {idx} to be an input connector of the tasklet {tasklet}, "
+                                    f"but it is not. This is required for the backward pass to work correctly.")
+                            rev_inputs.add(idx)
+                else:
+                    output_code = rev_output_grad_name
+
+                code += converted_sub_expressions + "\n"
+                rev_code[output_code].append(converted_code)
+
+        for output, exprs in sorted(rev_code.items()):
+            code += "\n" + output + " = " + " + ".join(exprs)
+
+        return code, rev_inputs, rev_outputs, result

@@ -7,11 +7,11 @@ import ast
 import re
 import astunparse
 import sympy as sp
-from typing import List, Tuple, Set, Dict
+from typing import List, Tuple, Set, Dict, Union
 
 # DaCe imports
 import dace
-from dace import dtypes,  data as dt
+from dace import dtypes, data as dt
 from dace.sdfg import SDFG, SDFGState, graph as dgraph, state as dstate, utils as dutils, nodes as nd
 import dace.data as dt
 from dace.sdfg.state import LoopRegion
@@ -21,9 +21,9 @@ import dace.util.utils as utils
 # Autodiff imports
 from dace.autodiff.base_abc import BackwardContext, BackwardResult
 
-
-
 from dace.autodiff.base_abc import AutoDiffException
+
+
 def forward_in_desc_with_name(forward_node: nd.Node, context: BackwardContext, name) -> dt.Data:
     """ Find the descriptor of the data that connects to input connector `name`.
 
@@ -517,6 +517,291 @@ def get_state_topological_order(graph) -> List[SDFGState]:
     if isinstance(graph, SDFG) and set(state_order) != set(graph.states()):
         raise AutoDiffException("Could not find all states of the SDFG in the state order")
     return state_order
+
+
+def shape_has_symbols_to_replace(sdfg: SDFG, shape: Union[str, sp.Symbol, sp.Expr]) -> bool:
+    """"
+        Check if the shape dimension passed as a pramater has a symbol that needs to be replaced.
+        We do not replace global SDFG symbols but rather the loop indicies only
+        """
+    symbol_not_numeric_and_not_sdfg_symb = False
+
+    # Get interstate edges symbols
+    defined_symbols = sdfg.free_symbols | set(sdfg.arg_names)
+    if isinstance(shape, (sp.Symbol, sp.Expr)):
+        # TODO: we should check the type of the symbol if it is in arg_names
+        if any(str(s) not in defined_symbols for s in shape.free_symbols):
+            # Check if any of these symbols will be given as a parameter to the SDFG
+            symbol_not_numeric_and_not_sdfg_symb = True
+
+    string_not_int_and_not_sdfg_symb = False
+    if isinstance(shape, str):
+        variable_regex = r'\b[a-zA-Z_][a-zA-Z0-9_]*\b'
+        loop_size_indices = re.findall(variable_regex, shape)
+        if any(str(symb) not in defined_symbols for symb in loop_size_indices):
+            string_not_int_and_not_sdfg_symb = True
+    return string_not_int_and_not_sdfg_symb or symbol_not_numeric_and_not_sdfg_symb
+
+
+def get_loop_end(start: str, end: str, loop: LoopRegion) -> str:
+    """
+        Get the smallest and largest index of a loop given the start and end values.
+        This is an attempt at estimating the number of iterations of the loop.
+        """
+    # TODO: This function only accepts for loops that starts or end at zero
+    if is_int(start) and is_int(end):
+        int_start, int_end = int(start), int(end)
+        if int_start < int_end:
+            # Increasing loop
+            largest_index = int_end
+            smallest_index = int_start
+        else:
+            # Decreasing loop e.g., range(6, -1, -1)
+            # Since the start will be the first index there are start+1 iterations
+            largest_index = int_start + 1
+            smallest_index = int_end
+    else:
+        # We check using the update statement
+        change = analyze_loop_change(loop.update_statement.as_string, loop.loop_variable)
+        if change == "increase":
+            # Increasing loop
+            largest_index = end
+            smallest_index = start
+        else:
+            # Decreasing loop
+            # Since the start will be the first index there are start+1 iterations
+            largest_index = start + "+1"
+            smallest_index = end
+
+    return smallest_index, largest_index
+
+
+def analyze_loop_change(code: str, loop_variable: str) -> str:
+    """
+        Analyze if the given loop variable in the provided code increases or decreases.
+
+        Parameters:
+            code (str): The Python code to analyze.
+            loop_variable (str): The name of the loop variable to analyze.
+
+        Returns:
+            str: 'increase', 'decrease', or 'unknown'
+        """
+    tree = ast.parse(code)
+    change_type = "unknown"
+
+    for node in ast.walk(tree):
+        # Look for assignment statements
+        if isinstance(node, ast.Assign):
+            # Ensure the assignment targets the loop variable
+            if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+                target = node.targets[0].id
+                if target == loop_variable and isinstance(node.value, ast.BinOp):
+                    # Check for `loop_variable = loop_variable + ...`
+                    if isinstance(node.value.left, ast.Name) and node.value.left.id == loop_variable:
+                        # Analyze the right-hand side for increase or decrease
+                        rhs = node.value.right
+                        if isinstance(rhs, ast.UnaryOp) and isinstance(rhs.op, ast.USub):  # Unary negative
+                            if isinstance(rhs.operand, ast.Constant) and isinstance(rhs.operand.value, (int, float)):
+                                change_type = "decrease"
+                        elif isinstance(rhs, ast.UnaryOp) and isinstance(rhs.op, ast.UAdd):  # Unary positive
+                            if isinstance(rhs.operand, ast.Constant) and isinstance(rhs.operand.value, (int, float)):
+                                change_type = "increase"
+                        elif isinstance(rhs, ast.Constant) and isinstance(rhs.value, (int, float)):
+                            change_type = "increase" if rhs.value > 0 else "decrease"
+    if change_type == "unknown":
+        raise AutoDiffException(f"Could not determine loop variable change in code: {code}")
+    return change_type
+
+
+def get_map_nest_information(edges_list: List[dstate.MultiConnectorEdge]):
+    """
+        """
+    # First, get the shape of the new array
+    shape_list = []
+
+    # We will also need the starting range of the maps in the path
+    start_range = []
+
+    # And the names of the parameters of the maps in the path
+    param_list = []
+
+    for e in edges_list:
+        edge_src = e.src
+        if isinstance(edge_src, nd.MapEntry):
+            for rng in edge_src.map.range.ranges:
+                # the range contains the last index in the loop
+                # while we want the size so we add 1
+                shape_list.append(rng[1] + 1)
+                start_range.append(rng[0])
+            for par in edge_src.map.params:
+                param_list.append(par)
+
+    assert len(param_list) == len(shape_list) == len(start_range)
+
+    # Create a dictionary mapping parameters to their start and end ranges
+    param_dict = {param: (start, end) for param, start, end in zip(param_list, start_range, shape_list)}
+    return start_range, param_list, shape_list, param_dict
+
+
+def within_nested_sdfg(forward_state: SDFGState) -> bool:
+    """
+    Check if the state is within a nested SDFG
+    """
+    parent = forward_state.parent
+    while parent is not None:
+        if isinstance(parent, nd.NestedSDFG):
+            return True
+        parent = parent.parent
+    return False
+
+
+def get_all_path_edges(state: SDFGState, source: nd.Node,
+                       starting_edge: dgraph.MultiConnectorEdge) -> List[dgraph.MultiConnectorEdge]:
+    """
+    We will start from the target node and go back until we reach the destination.
+    Starting edge should be an in node 
+    """
+    all_edges = []
+    memlet_path = state.memlet_path(starting_edge)
+    all_edges += memlet_path
+    first_source = memlet_path[0].src
+    if first_source == source:
+        return all_edges
+
+    # If there is only one edge coming to the first node
+    if state.in_degree(first_source) == 1:
+        edge = state.in_edges(first_source)[0]
+        memlet_path = state.memlet_path(edge)
+        all_edges += memlet_path
+        first_source = memlet_path[0].src
+        if first_source == source:
+            return all_edges
+
+    raise AutoDiffException("Can't easily find path. Upgrade function.")
+
+
+def extract_conitional_expressions(tasklet_node: nd.Tasklet):
+    """
+        Given a conditional tasklet node, extract the if and else expressions and return them with the conditional.
+        The else statement could be None in case there is only an if statement. The current supported formats are the following:
+        1 - if cond:
+                out = expression_1
+        which would return ("out = expression_1", None, "if cond")
+        2- out = expression_1 if cond else expression 2
+        """
+
+    tasklet_code = tasklet_node.code.as_string
+
+    # check which type of assignment this is
+    if ":" in tasklet_code:
+        # get the conditional input connector through regular expression matching
+        matches = re.search(r"if (.)*:", tasklet_code)
+        assert matches
+        conditional = matches.group()
+
+        # remove the conditional from the code to get the expression
+        if_statement = tasklet_code.replace(conditional, "")
+        if_statement = if_statement.replace("\n", "")
+
+        # remove indentation
+        if_statement = if_statement[3:]
+
+        # extract the in connector only
+        conditional = conditional.replace(":", "")
+        conditional = conditional.replace("if ", "")
+        assert conditional in tasklet_node.in_connectors
+
+        else_statement = None
+
+        # match the out connector
+        matches = re.search(r"^(.)* =", if_statement)
+        assert matches
+        out_connector = matches.group()
+
+        # remove the assingment from the if statement
+        if_statement = if_statement.replace(out_connector, "")
+
+        # extract the out connector only
+        out_connector = out_connector[1:].replace(" =", "")
+
+    else:
+        # get the conditional input connector through regular expression matching
+        matches = re.search(r"if (.)* else", tasklet_code)
+        assert matches
+        conditional = matches.group()
+
+        # extract the in connector only
+        conditional = conditional.replace("if ", "")
+        conditional = conditional.replace(" else", "")
+
+        assert conditional in tasklet_node.in_connectors
+
+        # get the if statement by matching what comes before the if until we encounter a paranthesis or =
+        matches = re.search(r"= \((.)* if", tasklet_code)
+        if not matches:
+            # try without the parenthesis
+            matches = re.search(r"= (.)* if", tasklet_code)
+            assert matches
+
+        if_statement = matches.group()
+
+        # extract the in statement only
+        if_statement = if_statement.replace("= (", "")
+        if_statement = if_statement.replace(" if", "")
+
+        # get the else statement by matching the else and what comes after it until we encounter a paranthesis
+        matches = re.search(r"else (.)*\)", tasklet_code)
+        assert matches
+        else_statement = matches.group()
+
+        # extract the in statement only
+        else_statement = else_statement.replace("else ", "")
+
+        # remove the last closing parenthesis if it exists
+        if else_statement.endswith(")"):
+            else_statement = else_statement[:-1]
+
+        # match the out connector
+        matches = re.search(r"^(.)* =", tasklet_code)
+        assert matches
+        out_connector = matches.group()
+
+        # extract the in statement only
+        out_connector = out_connector.replace(" =", "")
+
+    # sanity check this should be in the out connectors of the tasklet
+    assert out_connector in tasklet_node.out_connectors
+
+    # create the return expressions
+    if_expression = f"{out_connector} = {if_statement}"
+    else_expression = f"{out_connector} = {else_statement}" if else_statement else None
+
+    return if_expression, else_expression, conditional
+
+
+def check_edges_type_in_state(subgraph: dstate.StateSubgraphView):
+    """
+        Check if all the edges in this state are of type float, int, or boolean.
+        """
+    for edge, parent_subgraph in subgraph.all_edges_recursive():
+        if isinstance(parent_subgraph, SDFGState):
+            parent_sdfg = parent_subgraph.parent
+        elif isinstance(parent_subgraph, dstate.StateSubgraphView):
+            parent_sdfg = parent_subgraph.graph.parent
+        elif isinstance(parent_subgraph, SDFG) or isinstance(parent_subgraph, LoopRegion):
+            # if there are any fancy things on the interstate edges we should probably throw an error
+            continue
+        else:
+            raise AutoDiffException("Unexpected subgraph structure")
+
+        if edge.data.data:
+            edge_type = parent_sdfg.arrays[edge.data.data].dtype
+            if edge_type in [dace.string]:
+                raise AutoDiffException(
+                    f"Expected Subgraph to differentiate to only contain float, int, and bool edges, but data {edge.data}"
+                    f" on edge {edge} has type {edge_type}")
+
 
 class SympyCleaner(ast.NodeTransformer):
 
