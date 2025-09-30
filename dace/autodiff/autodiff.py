@@ -19,14 +19,13 @@ def add_backward_pass(sdfg: SDFG,
         ``inputs``, ``outputs`` and ``grads`` can be provided either as ``AccessNode`` nodes, or as ``str``, in which
         case the graph will be searched for exactly one matching ``AccessNode`` with data matching the ``str``.
 
-        The SDFG should not contain any inplace operations. It may contain the following nodes:
+        The SDFG may contain the following nodes:
 
         * Maps
         * AccessNodes
         * Reductions (Sum, Min, Max)
         * ONNXOps
-        * NestedSDFGs containing a single SDFGState (subject to the same constraints). NestedSDFGs may contain multiple
-          states as long as all other states are only used for zero initialization.
+        * NestedSDFGs (subject to the same constraints)
 
         When differentiating an :class:`~dace.libraries.onnx.nodes.onnx_op.ONNXOp`, the ONNXBackward registry will be checked
         for any matching backward pass implementations. If none are found, the ONNXForward registry will be checked for

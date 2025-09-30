@@ -192,9 +192,7 @@ def method(f: F,
     return MethodWrapper()
 
 
-# # DaCeML decorator
-
-
+# DaCeML decorator to support torch.nn.Modules
 @paramdec
 def module(
         moduleclass,

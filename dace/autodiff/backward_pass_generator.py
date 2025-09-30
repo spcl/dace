@@ -144,7 +144,7 @@ class BackwardPassGenerator:
         # to the transients that contain the values before they are zeroed out
         self.zeroed_out: Dict[nodes.AccessNode, List[nodes.AccessNode]] = {}
 
-        #: The read-only arrays of the forward SDFG
+        #: The read-only arrays of the forward SDFG. Used in data forwarding decisions
         self.read_only_arrays: Set[str] = ad_utils.get_read_only_arrays(self.sdfg)
 
         #: Mapping from overwritten input name to storing AccessNode
@@ -1659,7 +1659,6 @@ class BackwardPassGenerator:
 
                             # We need to zero out the same memlet accesses in the backward pass
                             if zero_out:
-                                self.sdfg.save("log_sdfgs/before_zero_out.sdfg")
                                 self._zero_out_gradient(forward_state=forward_state,
                                                         forward_node=node,
                                                         memlet=edge.data)

@@ -44,13 +44,15 @@ def make_backward_function(
     # get the forward state
     forward_state = forward_sdfg.nodes()
     # A loaded pytorch model should only have one state
-    assert len(forward_state) == 1
+    if len(forward_state) != 1:
+        raise AutoDiffException(f"Expected forward SDFG to have exactly one state, found {len(forward_state)}")
     forward_state = forward_state[0]
 
     # get the backward state
     backward_state = backward_sdfg.nodes()
     # A loaded pytorch model should only have one state
-    assert len(backward_state) == 1
+    if len(backward_state) != 1:
+        raise AutoDiffException(f"Expected backward SDFG to have exactly one state, found {len(backward_state)}")
     backward_state = backward_state[0]
 
     for name, desc in backward_input_arrays.items():
@@ -62,7 +64,11 @@ def make_backward_function(
 
         # Views should not be forwarded. Instead the backward pass generator should forward the source of the view,
         # and rebuild the sequence of required views in the backward pass.
-        assert type(forward_desc) is not dt.View
+        if type(forward_desc) is dt.View:
+            raise AutoDiffException(
+                f"Cannot forward View '{name}' to backward pass. "
+                "Views should not be forwarded; the backward pass generator should forward "
+                "the source of the view and rebuild the sequence of required views in the backward pass.")
         if isinstance(forward_desc, dt.Scalar):
             # we can't return scalars from SDFGs, so we add a copy to an array of size 1
             fwd_arr_name, _ = forward_sdfg.add_array(name + "_array", [1],
