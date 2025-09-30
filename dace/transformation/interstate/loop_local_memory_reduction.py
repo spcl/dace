@@ -189,10 +189,15 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
                 continue
 
             # Get the minimum read index and maximum write index
-            read_lb = min([i[1] for i in dim_read_indices])
-            read_ub = max([i[1] for i in dim_read_indices])
-            write_lb = min([i[1] for i in dim_write_indices])
-            write_ub = max([i[1] for i in dim_write_indices])
+            try:
+                read_lb = min([i[1] for i in dim_read_indices])
+                read_ub = max([i[1] for i in dim_read_indices])
+                write_lb = min([i[1] for i in dim_write_indices])
+                write_ub = max([i[1] for i in dim_write_indices])
+            except TypeError:
+                # If the minimum or maximum cannot be determined (e.g. because of symbolic expressions being uncomparable), we cannot apply the transformation.
+                k_values.append(None)
+                continue
 
             # TODO: We could also handle cases where write_lb == read_ub if we can prove that the write happens before the read in the loop for larger spans.
 
@@ -211,16 +216,24 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
             # If we have a span of one, it's enough that reads happen after writes in the loop.
             if span == 0:
                 cond = all(
-                    st.in_degree(an) == st.out_degree(an) for st in self.loop.all_states() for an in st.data_nodes()
-                    if an.data == array_name)
+                    st.in_degree(an) > 0 and st.out_degree(an) > 0 for st in self.loop.all_states()
+                    for an in st.data_nodes() if an.data == array_name)
 
             # Take maximum from previous accesses into account
-            k = sp.Max(span, max_indices[dim])
+            try:
+                k = max(span, max_indices[dim])
+            except TypeError:
+                k_values.append(None)
+                continue
+
             k = symbolic.resolve_symbol_to_constant(k, sdfg)
-            k = None if k is None else int(k)
+            if k is None:
+                k_values.append(None)
+                continue
+            k = int(k)
 
             # Round up to next power of two if enabled
-            if self.next_power_of_two and k is not None:
+            if self.next_power_of_two:
                 k_p2 = (1 << k.bit_length()) - 1
 
                 # If we're larger than the array size, don't round up.
@@ -228,7 +241,7 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
                     k = k_p2
 
             # Condition must hold
-            if k is None or not cond or k + 1 >= sdfg.arrays[array_name].shape[dim]:
+            if not cond or k + 1 >= sdfg.arrays[array_name].shape[dim]:
                 k_values.append(None)
             else:
                 k_values.append(k + 1)  # +1 because k is the highest index accessed, so size is k+1
@@ -282,7 +295,11 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
             max_index = 0
             for subset in subsets:
                 rb, re, _ = subset.ndrange()[dim]
-                max_index = sp.Max(max_index, re)
+                try:
+                    max_index = max(max_index, re)
+                except TypeError:
+                    # If the maximum cannot be determined (e.g. because of symbolic expressions being uncomparable), we cannot determine the maximum index.
+                    max_index = None
             max_index = symbolic.resolve_symbol_to_constant(max_index, sdfg)
 
             if max_index is None:
@@ -310,15 +327,24 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
         if any(i is None for il in read_indices + write_indices for i in il):
             return False
 
-        # The scaling factor a must be the same for all indices.
-        a_values = set(i[0] for il in read_indices + write_indices for i in il if i is not None)
-        if len(a_values) != 1:
+        # The scaling factor a must be the same for all indices if a != 0.
+        a_values = set(i[0] for il in read_indices + write_indices for i in il if i[0] != 0)
+        if len(a_values) > 1:
             return False
+        if len(a_values) == 0:
+            a_values.add(0)
 
         # The offset b must be multiple of a if a != 0.
         a = a_values.pop() * step
-        if a != 0 and any(i[1] % a != 0 for il in read_indices + write_indices for i in il if i is not None):
+        if a != 0 and any(i[1] % a != 0 for il in read_indices + write_indices for i in il if i[0] != 0):
             return False
+
+        # All constants (a == 0) must be in the same dimension.
+        for dim in range(len(read_indices[0])):
+            if any(il[dim][0] == 0 for il in read_indices) and any(il[dim][0] != 0 for il in read_indices):
+                return False
+            if any(il[dim][0] == 0 for il in write_indices) and any(il[dim][0] != 0 for il in write_indices):
+                return False
 
         # None of the write accesses must be within a conditional block. Reads are ok.
         for st in self.loop.all_states():
@@ -334,8 +360,9 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
         if not self._write_is_loop_local(array_name, write_indices, sdfg):
             return False
 
-        # At least one write index must be higher than all read indices for a dimension (i.e. K >= 1).
-        if all([k is None for k in self._get_K_values(array_name, read_indices, write_indices, step, sdfg)]):
+        # A K value must be found for at least one dimension.
+        Ks = self._get_K_values(array_name, read_indices, write_indices, step, sdfg)
+        if all(k is None for k in Ks):
             return False
 
         # Otherwise, we can apply the transformation.
@@ -371,7 +398,7 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
                     lb = pystr_to_symbolic(f"abs({subset[i][0]}) % ({k})")
                     ub = pystr_to_symbolic(f"abs({subset[i][1]}) % ({k})")
 
-                # If both k and lb / ub are constant, simpy can simplify with the modulo.
+                # If both k and lb / ub are constant, sympy can simplify with the modulo.
                 if not issymbolic(k) and not issymbolic(lb):
                     lb = pystr_to_symbolic(f"abs({subset[i][0]}) % ({k})")
                 if not issymbolic(k) and not issymbolic(ub):
@@ -399,7 +426,7 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
                     lb = pystr_to_symbolic(f"abs({subset[i][0]}) % ({k})")
                     ub = pystr_to_symbolic(f"abs({subset[i][1]}) % ({k})")
 
-                # If both k and lb / ub are constant, simpy can simplify with the modulo.
+                # If both k and lb / ub are constant, sympy can simplify with the modulo.
                 if not issymbolic(k) and not issymbolic(lb):
                     lb = pystr_to_symbolic(f"abs({subset[i][0]}) % ({k})")
                 if not issymbolic(k) and not issymbolic(ub):
@@ -412,7 +439,7 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
         # Reduce the size of the array in the SDFG.
         array = sdfg.arrays[array_name]
         new_shape = list(array.shape)
-        for k in Ks:
+        for i, k in enumerate(Ks):
             if k is not None:
                 new_shape[i] = k
         array.set_shape(tuple(new_shape))
@@ -426,3 +453,7 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
                                              location=array.location,
                                              lifetime=array.lifetime,
                                              debuginfo=array.debuginfo)
+            for edge in read_edges:
+                edge.data.src_subset = Range([(0, 0, 1)])
+            for edge in write_edges:
+                edge.data.dst_subset = Range([(0, 0, 1)])

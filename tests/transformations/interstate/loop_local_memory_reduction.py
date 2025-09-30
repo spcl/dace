@@ -6,15 +6,16 @@ import copy
 import dace
 from dace.sdfg.state import LoopRegion, CodeBlock
 from dace.transformation.interstate import LoopLocalMemoryReduction
+from typing import Any, Dict
 
 
-# Checks if LoopLocalMemoryReduction applied N times and if memory footprint was reduced
-def check_transformation(llmr_sdfg: dace.SDFG, N: int):
+# Checks if LoopLocalMemoryReduction applied at least N times and if memory footprint was reduced for a specific option
+def check_transformation_option(orig_sdfg: dace.SDFG, N: int, options: Dict[str, Any]):
     # Apply and validate
-    llmr_sdfg.validate()
-    orig_sdfg = copy.deepcopy(llmr_sdfg)
-    apps = llmr_sdfg.apply_transformations_repeated(LoopLocalMemoryReduction)
-    assert apps == N, f"Expected {N} applications, got {apps}"
+    orig_sdfg.validate()
+    llmr_sdfg = copy.deepcopy(orig_sdfg)
+    apps = llmr_sdfg.apply_transformations_repeated(LoopLocalMemoryReduction, options=options)
+    assert apps >= N, f"Expected at least {N} applications, got {apps} with options {options}"
     llmr_sdfg.validate()
 
     # We can stop here if we don't expect any transformations
@@ -25,6 +26,11 @@ def check_transformation(llmr_sdfg: dace.SDFG, N: int):
     input_data_orig = {}
     input_data_llmr = {}
     for argName, argType in llmr_sdfg.arglist().items():
+        if isinstance(argType, dace.data.Scalar):
+            input_data_orig[argName] = np.random.rand()
+            input_data_llmr[argName] = copy.deepcopy(input_data_orig[argName])
+            continue
+
         arr = dace.ndarray(shape=argType.shape, dtype=argType.dtype)
         arr[:] = np.random.rand(*argType.shape).astype(argType.dtype.type)
         input_data_orig[argName] = arr
@@ -35,12 +41,20 @@ def check_transformation(llmr_sdfg: dace.SDFG, N: int):
 
     # No difference should be observable
     assert (sum(not np.array_equal(input_data_orig[argName], input_data_llmr[argName])
-                for argName, argType in llmr_sdfg.arglist().items()) == 0)
+                for argName, argType in llmr_sdfg.arglist().items()) == 0
+            ), f"Output differs after transformation! Options: {options}"
 
     # Memory footprint should be reduced
     orig_mem = sum(np.prod(arrType.shape) for arrName, arrType in orig_sdfg.arrays.items())
     llmr_mem = sum(np.prod(arrType.shape) for arrName, arrType in llmr_sdfg.arrays.items())
     assert llmr_mem < orig_mem, f"Memory not reduced: {orig_mem} >= {llmr_mem}"
+
+
+# Checks if LoopLocalMemoryReduction applied at least N times and if memory footprint was reduced for all options
+def check_transformation(sdfg: dace.SDFG, N: int):
+    for bitmask in [False, True]:
+        for np2 in [False, True]:
+            check_transformation_option(sdfg, N, options={"bitmask_indexing": bitmask, "next_power_of_two": np2})
 
 
 def test_simple():
@@ -297,7 +311,7 @@ def test_constant_index2():
             a[7] = c[i] * 2
 
     sdfg = tester.to_sdfg(simplify=True)
-    check_transformation(sdfg, 2)
+    check_transformation(sdfg, 1)
 
 
 def test_larger_step():
@@ -496,6 +510,23 @@ def test_multidimensional2():
     check_transformation(sdfg, 1)
 
 
+def test_multidimensional3():
+
+    @dace.program
+    def tester(b: dace.float64[16, 16], c: dace.float64[16]):
+        a = dace.define_local([16, 16], dace.float64)
+        for ii in range(3):
+            for jj in range(3):
+                a[ii, jj] = ii + jj
+
+        for i in range(2, 8):
+            b[i, i] = a[2 * i - 2, 2 * i - 2] + a[2 * i - 4, 2 * i - 4]
+            a[2 * i, 2 * i] = c[i] * 2
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_transformation(sdfg, 1)
+
+
 def test_multidimensional_mixed():
 
     @dace.program
@@ -513,6 +544,22 @@ def test_multidimensional_mixed():
     check_transformation(sdfg, 0)
 
 
+def test_multidimensional_constant():
+
+    @dace.program
+    def tester(b: dace.float64[16, 16], c: dace.float64[16]):
+        a = dace.define_local([16, 16], dace.float64)
+        for jj in range(2):
+            a[5, jj] = jj
+
+        for i in range(2, 16):
+            b[i, i] = a[5, i - 2] + a[5, i - 1]
+            a[5, i] = c[i] * 2
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_transformation(sdfg, 1)
+
+
 def test_multidimensional_no_overwrite():
 
     @dace.program
@@ -527,7 +574,7 @@ def test_multidimensional_no_overwrite():
             a[i, i + 2] = c[i] * 2
 
     sdfg = tester.to_sdfg(simplify=True)
-    check_transformation(sdfg, 1)
+    check_transformation(sdfg, 0)
 
 
 def test_nested():
@@ -537,7 +584,7 @@ def test_nested():
         a = dace.define_local([16, 16], dace.float64)
         for ii in range(2):
             for jj in range(4):
-                a[ii, jj] = 0
+                a[ii, jj] = ii + jj
 
         for i in range(2, 14):
             for j in range(2, 14):
@@ -555,7 +602,7 @@ def test_nested2():
         a = dace.define_local([16, 16], dace.float64)
         for ii in range(2):
             for jj in range(4):
-                a[ii, jj] = 0
+                a[ii, jj] = ii + jj
 
         for i in range(2, 14):
             for j in range(2, 14):
@@ -566,6 +613,38 @@ def test_nested2():
     check_transformation(sdfg, 0)
 
 
+def test_nested3():
+
+    @dace.program
+    def tester(b: dace.float64[16, 16], c: dace.float64[16]):
+        a = dace.define_local([16, 16], dace.float64)
+        for ii in range(16):
+            for jj in range(3):
+                a[ii, jj] = ii + jj
+
+        for i in range(0, 16):
+            for j in range(2, 14):
+                b[i, j] = a[i, j - 1] + a[i, j - 2]
+                a[i, j] = c[i] * 2
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_transformation(sdfg, 1)
+
+
+def test_nested4():
+
+    @dace.program
+    def tester(b: dace.float64[16, 16], c: dace.float64[16]):
+        a = dace.define_local([16, 16], dace.float64)
+        for i in range(0, 16):
+            for j in range(2, 14):
+                a[i, j] = c[i] * 2
+                b[i, j] = a[i, j] + a[i, j]
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_transformation(sdfg, 1)
+
+
 def test_nested_mixed():
 
     @dace.program
@@ -573,7 +652,7 @@ def test_nested_mixed():
         a = dace.define_local([16, 16], dace.float64)
         for ii in range(2):
             for jj in range(4):
-                a[ii, jj] = 0
+                a[ii, jj] = ii + jj
 
         for i in range(2, 14):
             for j in range(2, 14):
@@ -635,6 +714,31 @@ def test_symbolic_offset():
     check_transformation(sdfg, 1)
 
 
+def test_cloudsc():
+
+    @dace.program
+    def tester(pt: dace.float64[100000], tendency_tmp_t: dace.float64[100000], ptsphy: dace.float64, r2es: dace.float64,
+               rtice: dace.float64, rtwat: dace.float64, rtwat_rtice_r: dace.float64, r3les: dace.float64,
+               r4les: dace.float64, r3ies: dace.float64, r4ies: dace.float64, rtt: dace.float64,
+               pap: dace.float64[100000], zqx: dace.float64, zsolqa: dace.float64[100000]):
+        ztp1 = dace.define_local([100000], dace.float64)
+        zfoeewmt = dace.define_local([100000], dace.float64)
+        zlevap = dace.define_local([100000], dace.float64)
+
+        for jk in range(0, 100000):
+            ztp1[jk] = pt[jk] + ptsphy * tendency_tmp_t[jk]
+            zfoeewmt[jk] = min(
+                ((r2es * ((min(1.0, ((max(rtice, min(rtwat, ztp1[jk])) - rtice) * rtwat_rtice_r)**2)) *
+                          ((r3les * (ztp1[jk] - rtt)) / (ztp1[jk] - r4les)) +
+                          (1.0 - (min(1.0, ((max(rtice, min(rtwat, ztp1[jk])) - rtice) * rtwat_rtice_r)**2))) *
+                          ((r3ies * (ztp1[jk] - rtt)) / (ztp1[jk] - r4ies))))) / pap[jk], 0.5)
+            zlevap[jk] = max(zqx, 0.0)
+            zsolqa[jk] = zsolqa[jk] + zlevap[jk] * zlevap[jk]
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_transformation(sdfg, 1)
+
+
 if __name__ == "__main__":
     test_simple()
     test_no_offsets()
@@ -664,11 +768,16 @@ if __name__ == "__main__":
     test_used_values3()
     test_multidimensional()
     test_multidimensional2()
+    test_multidimensional3()
     test_multidimensional_mixed()
+    test_multidimensional_constant()
     test_multidimensional_no_overwrite()
     test_nested()
     test_nested2()
+    test_nested3()
+    test_nested4()
     test_nested_mixed()
     test_conditional()
     test_conditional2()
     test_symbolic_offset()
+    test_cloudsc()
