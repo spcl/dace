@@ -14,6 +14,6 @@ def test_desc_to_dlpack():
 
     ptr = ctypes.c_void_p(mydata.__array_interface__["data"][0])
     tensor = array_to_torch_tensor(ptr, dace.float32[2, 3])
-    assert np.testing.assert_allclose(tensor, mydata), "Initial DLPack tensor conversion failed"
+    np.testing.assert_allclose(tensor, mydata), "Initial DLPack tensor conversion failed"
     mydata += 1
     np.testing.assert_allclose(tensor, mydata), "DLPack tensor does not share memory with numpy array"
