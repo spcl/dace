@@ -2549,9 +2549,11 @@ with open(r"{temp_path}", "wb") as f:
         with open(temp_path, 'rb') as f:
             data = pickle.load(f)
             for i in range(len(args)):
-                args[i].__setitem__(slice(None), data['args'][i])
+                if hasattr(args[i], '__setitem__'):
+                    args[i].__setitem__(slice(None), data['args'][i])
             for k in kwargs:
-                kwargs[k].__setitem__(slice(None), data['kwargs'][k])
+                if hasattr(kwargs[k], '__setitem__'):
+                    kwargs[k].__setitem__(slice(None), data['kwargs'][k])
 
         # Clean up
         os.remove(temp_path)
