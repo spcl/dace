@@ -19,7 +19,7 @@ class LlamaWrapper(nn.Module):
 
         # Create position ids
         batch_size, seq_length = input_ids.shape
-        position_ids = torch.arange(seq_length, dtype=torch.long, device=input_ids.device)
+        position_ids = torch.arange(seq_length, device=input_ids.device)
         position_ids = position_ids.unsqueeze(0).expand(batch_size, -1)
 
         # Process through decoder layers
@@ -55,7 +55,6 @@ class LlamaWrapper(nn.Module):
         return logits
 
 
-@pytest.mark.long
 @pytest.mark.torch
 @pytest.mark.autodiff
 def test_llama_model_backward(sdfg_name):
@@ -78,23 +77,22 @@ def test_llama_model_backward(sdfg_name):
 
     # Create the full model
     model = LlamaForCausalLM(config)
-    model.eval()
     export_seq_length = 32
     export_batch_size = 2
-    export_input = torch.randint(3, config.vocab_size, (export_batch_size, export_seq_length), dtype=torch.long)
+    input = torch.randint(3, config.vocab_size, (export_batch_size, export_seq_length))
 
     wrapped_model = LlamaWrapper(model)
-    dace_model = DaceModule(wrapped_model, backward=True, onnx_simplify=True, simplify=True, sdfg_name=sdfg_name)
 
-    wrapped_model(export_input.clone()).sum().backward()
-    dace_model(export_input.clone()).sum().backward()
+    # Avoid the simplify pass since it takes too long for this model
+    dace_model = DaceModule(wrapped_model, backward=True, onnx_simplify=True, simplify=False, sdfg_name=sdfg_name)
+
+    wrapped_model(input.clone()).sum().backward()
+    dace_model(input.clone()).sum().backward()
 
     # Check gradients of the parameters
-    for i, (name, param) in enumerate(wrapped_model.named_parameters()):
-        if param.requires_grad:
-            torch_tensors_close(f"grad_{name}",
-                                list(wrapped_model.parameters())[i].grad,
-                                list(dace_model.model.parameters())[i].grad)
+    for (name, dace_param), (pt_name, pt_param) in zip(wrapped_model.named_parameters(), dace_model.named_parameters()):
+        assert 'model.' + name == pt_name, f"Parameter name mismatch: expected 'model.{name}', got '{pt_name}'"
+        torch_tensors_close(name, pt_param.grad, dace_param.grad)
 
 
 if __name__ == "__main__":
