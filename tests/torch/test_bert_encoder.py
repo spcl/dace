@@ -5,12 +5,12 @@ from transformers import BertConfig
 from transformers.models.bert.modeling_bert import BertLayer
 
 from dace.frontend.python.module import DaceModule
-from dace.testing import torch_tensors_close
 from dace.transformation.onnx import parameter_to_transient
+from tests.utils import torch_tensors_close
 
 
 @pytest.mark.torch
-def test_bert_encoder(sdfg_name):
+def test_bert_encoder(sdfg_name: str):
     batch_size = 2
     seq_len = 32
     hidden_size = 48
@@ -34,10 +34,9 @@ def test_bert_encoder(sdfg_name):
         n for n, _ in dace_model.sdfg.all_nodes_recursive()
         if hasattr(n, "environments") and any("onnx" in e.lower() for e in n.environments)
     ]
-    if len(ort_nodes) > 0:
-        assert False, f"expected pure graph, found ORT nodes: {ort_nodes} "
+    assert len(ort_nodes) == 0, f"Expected pure graph, found {len(ort_nodes)} ORT nodes: {ort_nodes}"
 
 
 if __name__ == "__main__":
-    torch.manual_seed(42)
-    test_bert_encoder(sdfg_name="bert_encoder")
+    import pytest
+    pytest.main([__file__, "-v"])

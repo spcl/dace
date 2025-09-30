@@ -3,7 +3,6 @@ import pytest
 import torch
 
 import dace
-from dace import nodes as nd
 from dace.transformation.interstate import StateFusion
 
 import dace.libraries.onnx as donnx
@@ -137,7 +136,6 @@ def test_view_forwarding():
     donnx.default_implementation = old_default
 
     # Prepare the outer SDFG
-
     @dace.program
     def inner_view_forwarding(inp1: dace.float64[9], bias: dace.float64[3]):
         result = dace.define_local_scalar(dace.float64)

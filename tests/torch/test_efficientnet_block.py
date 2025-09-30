@@ -1,18 +1,17 @@
 import pytest
 import torch
-from dace.library import change_default
+import numpy as np
 from dace.transformation.dataflow import TrivialMapElimination
 from dace.transformation.interstate import HoistState
 from efficientnet_pytorch import get_model_params
 from efficientnet_pytorch.model import MBConvBlock
 
-import dace.libraries.onnx as donnx
 from dace.frontend.python.module import DaceModule
-from dace.testing import torch_tensors_close
+from tests.utils import torch_tensors_close
 
 
 @pytest.mark.torch
-def test_mbconv(use_cpp_dispatcher):
+def test_mbconv(use_cpp_dispatcher: bool):
 
     with torch.no_grad():
         dace_inputs = torch.rand(8, 32, 224, 224)
@@ -32,27 +31,31 @@ def test_mbconv(use_cpp_dispatcher):
 
     for (dace_name, dace_value), (torch_name, value) in zip(dace_model.model.state_dict().items(),
                                                             torch_model.state_dict().items()):
-        assert dace_name == torch_name
-        torch_tensors_close(dace_name, value, dace_value)
+        assert dace_name == torch_name, f"Parameter name mismatch: {dace_name} != {torch_name}"
+        np.testing.assert_allclose(value, dace_value, err_msg=f"{dace_name} tensors do not match")
 
     dace_output = dace_model(dace_inputs)
 
     torch_output = torch_model(torch_inputs)
-    torch_tensors_close("output", torch_output, dace_output, rtol=1e-3, atol=1e-3)
+    np.testing.assert_allclose(torch_output.detach(),
+                               dace_output.detach(),
+                               rtol=1e-3,
+                               atol=1e-3,
+                               err_msg="output tensors do not match")
 
     # check that the batch norm running means and so on are written out correctly
     for (dace_name, dace_value), (torch_name, value) in zip(dace_model.model.state_dict().items(),
                                                             torch_model.state_dict().items()):
 
-        assert dace_name == torch_name
+        assert dace_name == torch_name, f"Parameter name mismatch after inference: {dace_name} != {torch_name}"
         if "num_batches_tracked" in dace_name:
             # we don't update this parameter
             continue
-        torch_tensors_close(dace_name, value, dace_value)
+        np.testing.assert_allclose(value, dace_value, err_msg=f"{dace_name} tensors do not match")
 
 
 @pytest.mark.torch
-def test_fast_mb(use_cpp_dispatcher):
+def test_fast_mb(use_cpp_dispatcher: bool):
     with torch.no_grad():
         dace_inputs = torch.rand(8, 32, 224, 224)
         torch_inputs = torch.clone(dace_inputs)
@@ -71,7 +74,7 @@ def test_fast_mb(use_cpp_dispatcher):
 
     for (dace_name, dace_value), (torch_name, value) in zip(dace_model.model.state_dict().items(),
                                                             torch_model.state_dict().items()):
-        assert dace_name == torch_name
+        assert dace_name == torch_name, f"Parameter name mismatch: {dace_name} != {torch_name}"
         torch_tensors_close(dace_name, value, dace_value)
 
     def fuse_everything(module: DaceModule):
@@ -92,7 +95,7 @@ def test_fast_mb(use_cpp_dispatcher):
     for (dace_name, dace_value), (torch_name, value) in zip(dace_model.model.state_dict().items(),
                                                             torch_model.state_dict().items()):
 
-        assert dace_name == torch_name
+        assert dace_name == torch_name, f"Parameter name mismatch after inference: {dace_name} != {torch_name}"
         if "num_batches_tracked" in dace_name:
             # we don't update this parameter
             continue
@@ -100,6 +103,5 @@ def test_fast_mb(use_cpp_dispatcher):
 
 
 if __name__ == "__main__":
-    torch.manual_seed(42)
-    # test_mbconv(use_cpp_dispatcher=True)
-    test_fast_mb(use_cpp_dispatcher=True)
+    import pytest
+    pytest.main([__file__, "-v"])

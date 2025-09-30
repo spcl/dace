@@ -3,7 +3,7 @@ import torch
 from torch import nn
 
 from dace.frontend.python.module import DaceModule
-from dace.testing import torch_tensors_close
+from tests.utils import torch_tensors_close
 
 
 class Model(nn.Module):
@@ -17,7 +17,7 @@ class Model(nn.Module):
 
 
 @pytest.mark.torch
-def test_multiple_outputs(sdfg_name, use_cpp_dispatcher):
+def test_multiple_outputs(sdfg_name: str, use_cpp_dispatcher: bool):
 
     ptmodel = Model([5, 5])
     x = torch.rand([25])

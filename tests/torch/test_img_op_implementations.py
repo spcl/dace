@@ -1,9 +1,10 @@
 import pytest
 import torch
 from torch import nn
+import numpy as np
 
 from dace.frontend.python.module import DaceModule
-from dace.testing import torch_tensors_close
+from tests.utils import torch_tensors_close
 
 
 class CustomBatchNorm(torch.autograd.Function):
@@ -45,7 +46,7 @@ class BatchNorm2dMeanVar(nn.Module):
 
 
 @pytest.mark.torch
-def test_bn(sdfg_name):
+def test_bn(sdfg_name: str):
 
     inputs = torch.rand(1, 64, 60, 60)
 
@@ -70,12 +71,13 @@ def test_bn(sdfg_name):
 
 
 @pytest.mark.torch
-def test_global_avg_pool(sdfg_name):
+def test_global_avg_pool(sdfg_name: str):
     inputs = torch.rand(1, 64, 60, 60)
 
     pt_model = nn.AdaptiveAvgPool2d(1)
     dace_model = nn.AdaptiveAvgPool2d(1)
 
+    # Note: AdaptiveAvgPool2d has no parameters, but load_state_dict ensures compatibility
     dace_model.load_state_dict(pt_model.state_dict())
 
     dace_model = DaceModule(dace_model, sdfg_name=sdfg_name, training=True)

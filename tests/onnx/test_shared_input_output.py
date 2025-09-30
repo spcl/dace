@@ -12,12 +12,12 @@ import dace
 import dace.libraries.onnx as donnx
 from dace.frontend.python.module import DaceModule
 
-from dace.testing.utils import torch_tensors_close
+from tests.utils import torch_tensors_close
 
 
 @pytest.mark.onnx
 @pytest.mark.parametrize("training_mode", [True, False])
-def test_bn_standalone(training_mode):
+def test_bn_standalone(training_mode: bool):
 
     if training_mode:
 
@@ -101,6 +101,5 @@ def test_bn_in_import():
 
 
 if __name__ == "__main__":
-    torch.manual_seed(42)
-    test_bn_standalone(True)
-    # test_bn_in_import()
+    import pytest
+    pytest.main([__file__, "-v"])

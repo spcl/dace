@@ -5,12 +5,11 @@ import pytest
 from dace.frontend.python.module import DaceModule
 
 from dace.transformation.dataflow import RedundantSecondArray
-
-from dace.testing import torch_tensors_close
+from tests.utils import torch_tensors_close
 
 
 @pytest.mark.torch
-def test_attn(sdfg_name, use_cpp_dispatcher):
+def test_attn(sdfg_name: str, use_cpp_dispatcher: bool):
     B = 2
     H = 16
     P = 64
@@ -33,4 +32,5 @@ def test_attn(sdfg_name, use_cpp_dispatcher):
 
 
 if __name__ == "__main__":
-    test_attn(False, "test_torch_attention", True)
+    import pytest
+    pytest.main([__file__, "-v"])

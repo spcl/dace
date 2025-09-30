@@ -6,7 +6,7 @@ import dace.libraries.onnx as donnx
 
 
 @pytest.mark.onnx
-def test_sum(sdfg_name):
+def test_sum(sdfg_name: str):
     sdfg = dace.SDFG(sdfg_name)
 
     sdfg.add_array("A_arr", [2, 2], dace.float32)
@@ -37,10 +37,9 @@ def test_sum(sdfg_name):
     C = np.random.rand(2, 2).astype(np.float32)
 
     sdfg.validate()
-    sdfg.validate()
 
     result = sdfg(A_arr=A, B_arr=B, C_arr=C)
 
     numpy_result = A + B + C
 
-    assert np.allclose(result, numpy_result)
+    assert np.allclose(result, numpy_result), f"Variadic sum mismatch: max diff = {np.max(np.abs(result - numpy_result))}"

@@ -13,7 +13,7 @@ import numpy as np
 
 @pytest.mark.onnx
 def test_openblas_is_installed():
-    assert blas.environments.OpenBLAS.is_installed()
+    assert blas.environments.OpenBLAS.is_installed(), "OpenBLAS is not installed or not found in the system"
 
 
 @pytest.mark.onnx

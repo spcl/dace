@@ -21,4 +21,4 @@ def test_matmul():
     A = np.random.normal(size=(5, 5)).astype(np.float32)
     B = np.random.normal(size=(5, 3)).astype(np.float32)
     result = matmul(inp1=A.copy(), inp2=B.copy())
-    np.testing.assert_allclose(A @ B, result, atol=1e-5, rtol=1e-5)
+    np.testing.assert_allclose(A @ B, result, atol=1e-5, rtol=1e-5, err_msg="MatMul output mismatch")

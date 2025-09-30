@@ -1,9 +1,10 @@
 import pytest
 import torch
 from torch import nn
+import numpy as np
 
 import dace
-from dace.testing import torch_tensors_close
+from tests.utils import torch_tensors_close
 
 
 @dace.module(debug_transients=True, sdfg_name="test_debug_transients")

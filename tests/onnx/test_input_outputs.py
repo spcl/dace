@@ -17,7 +17,7 @@ import dace.libraries.onnx as donnx
 
 @pytest.mark.onnx
 @pytest.mark.parametrize("simplify", [True, False])
-def test_squeeze(simplify, sdfg_name):
+def test_squeeze(simplify: bool, sdfg_name: str):
 
     sdfg = dace.SDFG(sdfg_name)
 
@@ -64,13 +64,13 @@ def test_squeeze(simplify, sdfg_name):
     sdfg.expand_library_nodes()
     result = sdfg(X_arr=X)
 
-    assert result.shape == (1, )
-    assert result[0] == X
+    assert result.shape == (1,), f"Expected shape (1,), got {result.shape}"
+    assert result[0] == X, f"Expected value {X}, got {result[0]}"
 
 
 @pytest.mark.onnx
 @pytest.mark.parametrize("simplify", [True, False])
-def test_shape(simplify, sdfg_name):
+def test_shape(simplify: bool, sdfg_name: str):
     sdfg = dace.SDFG(sdfg_name)
 
     sdfg.add_array("X_arr", [2, 4], dace.float32)
@@ -101,7 +101,7 @@ def test_shape(simplify, sdfg_name):
 
 @pytest.mark.onnx
 @pytest.mark.parametrize("simplify", [True, False])
-def test_unsqueeze(simplify, sdfg_name):
+def test_unsqueeze(simplify: bool, sdfg_name: str):
     sdfg = dace.SDFG(sdfg_name)
 
     sdfg.add_scalar("X_arr", dace.float32)
@@ -139,14 +139,14 @@ def test_unsqueeze(simplify, sdfg_name):
 
     result = sdfg(X_arr=X)
 
-    assert result.shape == (1, )
-    assert X == result[0]
+    assert result.shape == (1,), f"Expected shape (1,), got {result.shape}"
+    assert X == result[0], f"Expected value {X}, got {result[0]}"
 
 
 @pytest.mark.onnx
 @pytest.mark.parametrize("scalars", [True, False])
 @pytest.mark.parametrize("simplify", [True, False])
-def test_add(scalars, simplify, sdfg_name):
+def test_add(scalars: bool, simplify: bool, sdfg_name: str):
     sdfg = dace.SDFG(sdfg_name)
 
     if scalars:
@@ -216,5 +216,5 @@ def test_add(scalars, simplify, sdfg_name):
 
 
 if __name__ == "__main__":
-    test_squeeze(False, True, "test_squeeze")
-    # test_unsqueeze(False, True, True, "test_unsqueeze")
+    import pytest
+    pytest.main([__file__, "-v"])

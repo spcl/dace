@@ -2,8 +2,8 @@ import pytest
 import torch
 import torch.nn as nn
 from transformers.models.llama.modeling_llama import LlamaDecoderLayer, LlamaConfig
-from dace.testing import torch_tensors_close
 from dace.frontend.python.module import DaceModule
+from tests.utils import torch_tensors_close
 
 
 # Create a wrapper module that handles the position embeddings internally
@@ -101,5 +101,5 @@ def test_llama_decoder_backward(sdfg_name):
 
 
 if __name__ == "__main__":
-    torch.manual_seed(42)
-    test_llama_decoder_backward(sdfg_name="llama_decoder_backward_test")
+    import pytest
+    pytest.main([__file__, "-v"])

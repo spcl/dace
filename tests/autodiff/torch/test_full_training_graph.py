@@ -4,14 +4,11 @@ import pytest
 
 import numpy as np
 import torch
-from torch import nn, autograd
 
 import dace
 
 from dace.frontend.python.module import DaceModule
-from dace.util import utils
-from dace.autodiff import library
-from dace.testing import torch_tensors_close, copy_to_gpu, tensors_close
+from tests.utils import torch_tensors_close, tensors_close
 
 
 @pytest.mark.torch
@@ -23,11 +20,9 @@ def test_module():
     torch_module = copy.deepcopy(module)
     dace_module = copy.deepcopy(module)
 
-    torch_module = copy_to_gpu(gpu, torch_module)
-    dace_module = copy_to_gpu(gpu, dace_module)
     dace_module = DaceModule(dace_module, simplify=False, backward=True, training=True, auto_optimize=False)
 
-    x = copy_to_gpu(gpu, torch.randn(8, 12))
+    x = torch.randn(8, 12)
 
     expected_output = torch_module(x)
     result = dace_module(x)
@@ -39,8 +34,9 @@ def test_module():
     pt_loss = torch_module(x).sum()
     pt_loss.backward()
 
-    tensors_close('loss', pt_loss, dc_loss)
-    assert all(hasattr(p, 'grad') and p.grad is not None for p in dace_module.parameters())
+    tensors_close("loss", pt_loss, dc_loss)
+    assert all(hasattr(p, 'grad') and p.grad is not None for p in dace_module.parameters()), \
+        "Not all parameters have gradients computed"
 
     for d, t in zip(dace_module.parameters(), torch_module.parameters()):
         torch_tensors_close("param", t.grad, d.grad)
@@ -215,9 +211,5 @@ def test_two_backward_passes_accumulate():
 
 
 if __name__ == "__main__":
-    # test_two_backward_passes_accumulate()
-    # test_two_backward_passes()
-    # test_parse_backward_with_forwarding()
-    # test_parse_backward_scalar()
-    # test_parse_backward_simple()
-    test_module()
+    import pytest
+    pytest.main([__file__, "-v"])

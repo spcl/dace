@@ -1,6 +1,7 @@
 import os
 
 import pytest
+import numpy as np
 import torch
 import torch.utils.cpp_extension
 from dace.codegen import targets, compiler
@@ -9,7 +10,7 @@ from torch import nn
 
 import dace
 from dace.libraries.torch import PyTorch
-from dace.testing import torch_tensors_close
+from tests.utils import torch_tensors_close
 
 op_source = """
 #include <torch/torch.h>
@@ -97,7 +98,7 @@ def test_extension():
 
 
 @pytest.mark.torch
-def test_module_with_constant(sdfg_name):
+def test_module_with_constant(sdfg_name: str):
 
     @dace.module(sdfg_name=sdfg_name)
     class Module(nn.Module):

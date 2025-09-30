@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 from transformers import LlamaForCausalLM, LlamaConfig
 from dace.frontend.python.module import DaceModule
-from dace.testing import torch_tensors_close
+from tests.utils import torch_tensors_close
 
 
 class LlamaWrapper(nn.Module):
@@ -98,4 +98,5 @@ def test_llama_model_backward(sdfg_name):
 
 
 if __name__ == "__main__":
-    test_llama_model_backward(sdfg_name="llama_model_test")
+    import pytest
+    pytest.main([__file__, "-v"])

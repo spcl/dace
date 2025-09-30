@@ -5,28 +5,25 @@ import copy
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from dace.transformation.dataflow import MapFusion
 
 from dace.frontend.python.module import DaceModule
-from dace.testing import torch_tensors_close
-from dace.util import utils
+from tests.utils import torch_tensors_close
 
 
 @pytest.mark.torch
 @pytest.mark.autodiff
 def run_pytorch_module(
-    module,
-    sdfg_name,
-    shape=None,
-    use_max=False,
-    auto_optimize=False,
-    rtol=1e-4,
-    atol=1e-3,
-    post_onnx_hooks=None,
+    module: torch.nn.Module,
+    sdfg_name: str,
+    shape: tuple = None,
+    use_max: bool = False,
+    auto_optimize: bool = False,
+    rtol: float = 1e-4,
+    atol: float = 1e-3,
+    post_onnx_hooks: list = None,
 ):
     shape = shape or (3, 5)
 
-    module = module
     pt_model_for_dace = copy.deepcopy(module)
 
     input_value = torch.rand(*shape, dtype=torch.float32)
@@ -40,9 +37,6 @@ def run_pytorch_module(
 
     dace_input = torch.empty(*shape, dtype=torch.float32, requires_grad=False)
     dace_input.copy_(input_value)
-
-    dace_input = dace_input
-    pytorch_input = pytorch_input
 
     pytorch_input.requires_grad = True
     dace_input.requires_grad = True
@@ -79,7 +73,7 @@ def run_pytorch_module(
 
 @pytest.mark.torch
 @pytest.mark.autodiff
-def test_simple(sdfg_name):
+def test_simple(sdfg_name: str):
 
     class Module(torch.nn.Module):
 

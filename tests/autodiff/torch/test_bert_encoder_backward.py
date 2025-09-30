@@ -1,11 +1,10 @@
-import numpy as np
 import pytest
 import torch
 from transformers import BertConfig
 from transformers.models.bert.modeling_bert import BertLayer
 
 from dace.frontend.python.module import DaceModule
-from dace.testing import torch_tensors_close
+from tests.utils import torch_tensors_close
 
 
 @pytest.mark.long
@@ -36,10 +35,10 @@ def test_bert_encoder_backward(sdfg_name):
     torch_tensors_close("input_grad", ptinput.grad, dace_input.grad)
 
     for (name, dace_param), (pt_name, pt_param) in zip(ptmodel.named_parameters(), dace_model.named_parameters()):
-        assert 'model.' + name == pt_name
+        assert 'model.' + name == pt_name, f"Parameter name mismatch: expected 'model.{name}', got '{pt_name}'"
         torch_tensors_close(name, pt_param.grad, dace_param.grad)
 
 
 if __name__ == "__main__":
-    torch.manual_seed(42)
-    test_bert_encoder_backward(sdfg_name="bert_encoder")
+    import pytest
+    pytest.main([__file__, "-v"])

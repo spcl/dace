@@ -3,12 +3,12 @@ import pytest
 import torch
 
 from dace.frontend.python.module import DaceModule
-from dace.testing import torch_tensors_close
+from tests.utils import torch_tensors_close
 
 
 @pytest.mark.torch
 @pytest.mark.autodiff
-def test_multi_output(sdfg_name, use_cpp_dispatcher):
+def test_multi_output(sdfg_name: str, use_cpp_dispatcher: bool):
 
     class Module(torch.nn.Module):
 
@@ -16,7 +16,6 @@ def test_multi_output(sdfg_name, use_cpp_dispatcher):
             return x + 1, x * 2
 
     module = Module()
-    module = module
 
     input_value = torch.rand(5, 10, dtype=torch.float32)
 
@@ -30,9 +29,6 @@ def test_multi_output(sdfg_name, use_cpp_dispatcher):
 
     dace_input = torch.empty(5, 10, dtype=torch.float32, requires_grad=False)
     dace_input.copy_(input_value)
-
-    dace_input = dace_input
-    pytorch_input = pytorch_input
 
     pytorch_input.requires_grad = True
     dace_input.requires_grad = True
@@ -61,4 +57,5 @@ def test_multi_output(sdfg_name, use_cpp_dispatcher):
 
 
 if __name__ == "__main__":
-    test_multi_output(sdfg_name="multi_output", use_cpp_dispatcher=True)
+    import pytest
+    pytest.main([__file__, "-v"])

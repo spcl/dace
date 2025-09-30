@@ -6,7 +6,7 @@ import dace.libraries.onnx as donnx
 
 
 @pytest.mark.onnx
-def test_shadowing(sdfg_name):
+def test_shadowing(sdfg_name: str):
     new_shape = [8, 10]
     sdfg = dace.SDFG(sdfg_name)
 

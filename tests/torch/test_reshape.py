@@ -1,9 +1,9 @@
 import pytest
 import torch
 from torch import nn
-
+import numpy as np
 from dace.frontend.python.module import DaceModule
-from dace.testing import torch_tensors_close
+from tests.utils import torch_tensors_close
 
 
 class Model(nn.Module):
@@ -18,7 +18,7 @@ class Model(nn.Module):
 
 
 @pytest.mark.torch
-def test_reshape_module(sdfg_name):
+def test_reshape_module(sdfg_name: str):
 
     ptmodel = Model([5, 5])
     x = torch.rand([25])

@@ -6,14 +6,40 @@ import os
 
 import onnx
 import onnxsim
-
+import pathlib
 import pytest
+import numpy as np
+import urllib
 
 import torch
 from transformers import BertTokenizer, BertModel
 
+import dace
 import dace.libraries.onnx as donnx
-from dace.testing import torch_tensors_close, get_data_file
+from tests.utils import torch_tensors_close
+
+
+def get_data_file(url, directory_name=None) -> str:
+    """ Get a data file from ``url``, cache it locally and return the local file path to it.
+
+        :param url: the url to download from.
+        :param directory_name: an optional relative directory path where the file will be downloaded to.
+        :returns: the path of the downloaded file.
+    """
+
+    data_directory = (pathlib.Path(dace.__file__).parent.parent / 'tests' / 'data')
+
+    if directory_name is not None:
+        data_directory /= directory_name
+
+    data_directory.mkdir(exist_ok=True, parents=True)
+
+    file_name = os.path.basename(urllib.parse.urlparse(url).path)
+    file_path = str(data_directory / file_name)
+
+    if not os.path.exists(file_path):
+        urllib.request.urlretrieve(url, file_path)
+    return file_path
 
 
 @pytest.mark.onnx
@@ -39,11 +65,11 @@ def test_bert_full(sdfg_name):
 
     model = onnx.load(bert_path)
     # infer shapes
-    model, check = onnxsim.simplify(model,
-                                    skip_fuse_bn=True,
-                                    input_shapes=dict(input_ids=tokens_tensor.shape,
-                                                      token_type_ids=segments_tensors.shape,
-                                                      attention_mask=attention_mask.shape))
+    model, _ = onnxsim.simplify(model,
+                                skip_fuse_bn=True,
+                                input_shapes=dict(input_ids=tokens_tensor.shape,
+                                                  token_type_ids=segments_tensors.shape,
+                                                  attention_mask=attention_mask.shape))
 
     dace_model = donnx.ONNXModel(sdfg_name, model, auto_merge=True)
 

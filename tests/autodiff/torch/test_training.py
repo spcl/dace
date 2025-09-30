@@ -9,15 +9,21 @@ from transformers import BertConfig
 from transformers.models.bert.modeling_bert import BertLayer
 
 from dace.frontend.python.module import DaceModule
-from dace.testing.utils import torch_tensors_close
+from tests.utils import torch_tensors_close
 
 
-def training_step(dace_model, pt_model, train_batch, sdfg_name, train_criterion=None):
+def training_step(
+    dace_model: torch.nn.Module,
+    pt_model: torch.nn.Module,
+    train_batch: tuple,
+    sdfg_name: str,
+    train_criterion: torch.nn.Module = None,
+):
 
-    # copy over the weights
+    # Copy over the weights
     dace_model.load_state_dict(pt_model.state_dict())
     for dace_value, value in zip(pt_model.state_dict().values(), dace_model.state_dict().values()):
-        assert torch.allclose(dace_value, value)
+        assert torch.allclose(dace_value, value), "State dict copy verification failed"
 
     dace_model = DaceModule(dace_model, backward=True, simplify=True, training=True, sdfg_name=sdfg_name)
 
@@ -31,13 +37,13 @@ def training_step(dace_model, pt_model, train_batch, sdfg_name, train_criterion=
     dace_loss = train_criterion(dace_output, y)
 
     diff = abs(pt_loss.item() - dace_loss.item()) / pt_loss.item()
-    assert diff < 1e-5
+    assert diff < 1e-5, f"Loss mismatch: relative difference {diff:.2e} exceeds tolerance 1e-5"
 
     pt_loss.backward()
     dace_loss.backward()
 
     for (name, dace_param), (pt_name, pt_param) in zip(pt_model.named_parameters(), dace_model.named_parameters()):
-        assert 'model.' + name == pt_name
+        assert 'model.' + name == pt_name, f"Parameter name mismatch: expected 'model.{name}', got '{pt_name}'"
         torch_tensors_close(name, pt_param.grad, dace_param.grad)
 
     optimizer = optim.SGD(pt_model.parameters(), lr=0.001)
@@ -46,13 +52,13 @@ def training_step(dace_model, pt_model, train_batch, sdfg_name, train_criterion=
     dace_optimizer.step()
 
     for (name, dace_param), (pt_name, pt_param) in zip(pt_model.named_parameters(), dace_model.named_parameters()):
-        assert 'model.' + name == pt_name
+        assert 'model.' + name == pt_name, f"Parameter name mismatch after optimizer step: expected 'model.{name}', got '{pt_name}'"
         torch_tensors_close(name, pt_param.detach(), dace_param.detach())
 
 
 @pytest.mark.torch
 @pytest.mark.autodiff
-def test_mnist(sdfg_name):
+def test_mnist(sdfg_name: str):
     input_size = 784
     hidden_sizes = [128, 64]
     output_size = 10

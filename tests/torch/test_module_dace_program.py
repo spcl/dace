@@ -7,7 +7,7 @@ from torch import nn
 import dace
 
 from dace.frontend.python.module import DaceModule
-from dace.testing import torch_tensors_close, tensors_close
+from tests.utils import tensors_close, torch_tensors_close
 
 
 @pytest.mark.torch

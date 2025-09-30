@@ -9,7 +9,7 @@ from dace.libraries import onnx as donnx
 
 
 @pytest.mark.onnx
-def test_onnx_return_scalars(sdfg_name):
+def test_onnx_return_scalars(sdfg_name: str):
     # Dace programs can't return scalars.
     # this test checks that we correctly copy out the scalars using a size [1] array
 
@@ -51,5 +51,5 @@ def test_onnx_return_scalars(sdfg_name):
     inp = torch.arange(5).type(torch.float32)
 
     result = dace_model(inp)
-    assert result.shape == ()
-    assert result[()] == 1 + 2 + 3 + 4
+    assert result.shape == (), f"Expected scalar shape (), got {result.shape}"
+    assert result[()] == 1 + 2 + 3 + 4, f"Expected sum 10, got {result[()]}"

@@ -1,22 +1,17 @@
-from functools import reduce
-
 import numpy as np
 import pytest
 import torch
-import torch.nn.functional as F
 
 import dace
-from dace import data
 import dace.sdfg.nodes as nd
 from dace.transformation.interstate import StateFusion
 
 import dace.libraries.onnx as donnx
-from dace.autodiff import AutoDiffException, add_backward_pass
+from dace.autodiff import add_backward_pass
+
 
 ##################################
 # Testing utilities
-
-
 def run_correctness(func):
 
     def test_correctness():
@@ -29,8 +24,8 @@ def run_correctness(func):
 
         for k, v in torch_results.items():
             v = v.detach().numpy()
-            diff = np.linalg.norm(sdfg_results[k] - v) / reduce(lambda x, y: x * y, v.shape)
-            assert diff < 1e-5
+            diff = np.linalg.norm(sdfg_results[k] - v) / np.prod(v.shape)
+            assert diff < 1e-5, f"Gradient mismatch for '{k}': normalized difference {diff:.2e} exceeds tolerance 1e-5"
 
     return test_correctness
 
@@ -43,7 +38,7 @@ class SDFGBackwardRunner:
         self.sdfg: dace.SDFG = sdfg
         self.target = target
 
-        assert len(sdfg.nodes()) == 1
+        assert len(sdfg.nodes()) == 1, f"Expected single-state SDFG, got {len(sdfg.nodes())} states"
         state = sdfg.nodes()[0]
         required_grads = list(
             node for node in state.nodes() if isinstance(node, nd.AccessNode)
@@ -53,12 +48,18 @@ class SDFGBackwardRunner:
 
     def run(self, **inputs):
 
-        # zero out all arrays
-        intermediate_arrs = {
-            name: np.zeros(arr.shape, dtype=getattr(np, arr.dtype.to_string()))
-            for name, arr in self.sdfg.arrays.items() if name != "gradient_" + self.target if not name.startswith("__")
-            if name not in inputs if not arr.transient
-        }
+        # Zero out all arrays
+        intermediate_arrs = {}
+        gradient_target = "gradient_" + self.target
+
+        for name, arr in self.sdfg.arrays.items():
+            # Skip gradient target, dunder names, inputs, and transients
+            if (name == gradient_target or name.startswith("__") or name in inputs or arr.transient):
+                continue
+
+            dtype = getattr(np, arr.dtype.to_string())
+            intermediate_arrs[name] = np.zeros(arr.shape, dtype=dtype)
+
         inputs.update(intermediate_arrs)
         inputs["gradient_" + self.target] = np.ones((1, ),
                                                     dtype=getattr(np, self.sdfg.arrays[self.target].dtype.to_string()))
@@ -71,8 +72,6 @@ class SDFGBackwardRunner:
 
 ##################################
 # Tests
-
-
 @pytest.mark.autodiff
 @run_correctness
 def test_gemm():
@@ -139,7 +138,6 @@ def test_sum():
             s = z * z
 
     sdfg = dace_sum.to_sdfg()
-    state = sdfg.nodes()[0]
 
     return (
         SDFGBackwardRunner(sdfg, "S"),
@@ -184,7 +182,6 @@ def test_complex_tasklet():
             s = z1 * z2
 
     sdfg = dace_sum_complex.to_sdfg()
-    state = sdfg.nodes()[0]
 
     return (
         SDFGBackwardRunner(sdfg, "S"),
@@ -234,7 +231,6 @@ def test_tasklets_only_reuse():
 
     sdfg = tasklets_only_reuse.to_sdfg(simplify=False)
     sdfg.simplify()
-    sdfg.save("log_sdfgs/tasklets_only_reuse.sdfg")
     return (
         SDFGBackwardRunner(sdfg, "C"),
         torch_func,
@@ -613,6 +609,5 @@ def test_reshape_reuse_in_same_state():
 
 
 if __name__ == "__main__":
-    test_reshape_on_memlet_path()
-    test_reshape_reuse_in_same_state()
-    test_reduce_max_node_1_axis()
+    import pytest
+    pytest.main([__file__, "-v"])

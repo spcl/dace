@@ -9,7 +9,7 @@ from dace.frontend.python.module import DaceModule
 
 
 @pytest.mark.torch
-def test_conv2d(sdfg_name, use_cpp_dispatcher):
+def test_conv2d(sdfg_name: str, use_cpp_dispatcher: bool):
 
     class Model(nn.Module):
 
@@ -37,4 +37,7 @@ def test_conv2d(sdfg_name, use_cpp_dispatcher):
 
     torch_output = ptmodel(x)
 
-    np.testing.assert_allclose(torch_output.detach().numpy(), dace_output.detach().numpy(), atol=1e-06)
+    np.testing.assert_allclose(torch_output.detach().numpy(),
+                               dace_output.detach().numpy(),
+                               atol=1e-06,
+                               err_msg="Conv2d output mismatch between PyTorch and DaCe")

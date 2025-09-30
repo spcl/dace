@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from dace.testing.utils import torch_tensors_close
+from tests.utils import torch_tensors_close
 
 
 class LeNet(nn.Module):
@@ -34,7 +34,7 @@ class LeNet(nn.Module):
 
 
 @pytest.mark.torch
-def test_lenet(sdfg_name, use_cpp_dispatcher):
+def test_lenet(sdfg_name: str, use_cpp_dispatcher: bool):
 
     input = torch.rand(8, 1, 32, 32, dtype=torch.float32)
 

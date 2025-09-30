@@ -3,7 +3,7 @@ import pytest
 import torch
 from torch import nn
 from dace.frontend.python.module import DaceModule
-from dace.testing import torch_tensors_close
+from tests.utils import torch_tensors_close
 
 
 @pytest.mark.torch
@@ -57,5 +57,5 @@ def test_dropout_bwd(p: Union[float, Literal[0]]):
 
 
 if __name__ == "__main__":
-    test_dropout_bwd(0.5)
-    # test_dropout_fwd_training()
+    import pytest
+    pytest.main([__file__, "-v"])

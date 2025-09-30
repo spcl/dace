@@ -3,12 +3,12 @@ import torch
 from torch import nn
 
 from dace.frontend.python.module import DaceModule
-from dace.testing import torch_tensors_close
+from tests.utils import torch_tensors_close
 
 
 @pytest.mark.torch
 @pytest.mark.autodiff
-def test_skip_input_grads(sdfg_name, use_cpp_dispatcher):
+def test_skip_input_grads(sdfg_name: str, use_cpp_dispatcher: bool):
 
     class Module(torch.nn.Module):
 
@@ -54,10 +54,11 @@ def test_skip_input_grads(sdfg_name, use_cpp_dispatcher):
     pt_output.backward(dy)
     torch_tensors_close("param_grad", pt_module.fc1.grad, dace_module.model.fc1.grad)
 
-    # make sure that input grad is not being computed
-    assert len(dace_module.backward_sdfg.node(0).sink_nodes()) == 1
+    # Make sure that input grad is not being computed
+    assert len(dace_module.backward_sdfg.node(0).sink_nodes()) == 1, \
+        f"Expected 1 sink node (no input gradient), got {len(dace_module.backward_sdfg.node(0).sink_nodes())}"
 
 
 if __name__ == "__main__":
-    test_skip_input_grads("test_skip_input_grads", use_cpp_dispatcher=False)
-    test_skip_input_grads("test_skip_input_grads_cpp", use_cpp_dispatcher=True)
+    import pytest
+    pytest.main([__file__, "-v"])
