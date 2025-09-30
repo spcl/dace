@@ -27,15 +27,17 @@ from dace.autodiff import torch as torch_autodiff
 from dace.autodiff.library import library as autodiff_library
 from dace.libraries.onnx import ONNXModel
 from dace.util import find_str_not_in_set, auto_optimize as auto_opt
-from dace.codegen import compiled_sdfg
 
 log = logging.getLogger(__name__)
 
 
-def _onnx_delete_initializers(model: onnx.ModelProto, names: Set[str]):
+def _onnx_delete_initializers(model: onnx.ModelProto, names: Set[str]) -> None:
     """
     Delete the given initializers from the given onnx model.
-    Operates inplace
+
+    :param model: The ONNX model to modify.
+    :param names: Set of initializer names to delete.
+    :note: Operates in-place.
     """
     to_remove = []
     for i, initializer in enumerate(model.graph.initializer):
@@ -86,7 +88,7 @@ class DaceModule(nn.Module, pycommon.SDFGConvertible):
                  dummy_inputs: Optional[Tuple[torch.Tensor, ...]] = None,
                  cuda: Optional[bool] = None,
                  training: bool = False,
-                 backward=False,
+                 backward: bool = False,
                  inputs_to_skip: Optional[List[str]] = None,
                  onnx_simplify: bool = True,
                  simplify: bool = True,
@@ -152,22 +154,48 @@ class DaceModule(nn.Module, pycommon.SDFGConvertible):
         elif self.simplify:
             if self.backward:
 
-                def simplify(fwd_sdfg, bwd_sdfg):
+                def simplify_hook(fwd_sdfg, bwd_sdfg):
                     fwd_sdfg.simplify()
                     bwd_sdfg.simplify()
 
-                self.append_post_autodiff_hook("simplify", simplify)
+                self.append_post_autodiff_hook("simplify", simplify_hook)
             else:
                 self.append_post_onnx_hook("simplify", lambda dace_module: dace_module.sdfg.simplify())
 
         if dummy_inputs is not None:
             self.function = self._initialize_sdfg(dummy_inputs)
 
-    def reset_sdfg(self):
-        """ Clear the sdfg so that optimizations are reapplied. """
+    def reset_sdfg(self) -> None:
+        """Clear the SDFG so that optimizations are reapplied."""
         self.function = None
 
-    def prepend_post_onnx_hook(self, name: str, func: Callable[["DaceModule"], None]):
+    def _detect_cuda_usage(self, dummy_inputs) -> bool:
+        """
+        Detect whether CUDA should be used based on inputs and model parameters.
+
+        :param dummy_inputs: Tuple of tensors to check.
+        :return: True if CUDA should be used, False otherwise.
+        """
+        try:
+            module_is_cuda = next(iter(dummy_inputs)).is_cuda
+        except StopIteration:
+            module_is_cuda = False
+
+        if not module_is_cuda:
+            # check the parameters
+            try:
+                module_is_cuda = next(self.model.parameters()).is_cuda
+            except StopIteration:
+                module_is_cuda = False
+        return module_is_cuda
+
+    def prepend_post_onnx_hook(self, name: str, func: Callable[["DaceModule"], None]) -> None:
+        """
+        Add a hook to be executed after ONNX graph import, at the beginning of the hook list.
+
+        :param name: Name of the hook (will be made unique if necessary).
+        :param func: Callable to execute after ONNX import.
+        """
         if self.function is not None:
             log.warning(f"Added a hook after the model was already initialized. This hook "
                         f"(with name {name}) will not be executed!")
@@ -175,14 +203,26 @@ class DaceModule(nn.Module, pycommon.SDFGConvertible):
         self.post_onnx_hooks[name] = func
         self.post_onnx_hooks.move_to_end(name, last=False)
 
-    def append_post_onnx_hook(self, name: str, func: Callable[["DaceModule"], None]):
+    def append_post_onnx_hook(self, name: str, func: Callable[["DaceModule"], None]) -> None:
+        """
+        Add a hook to be executed after ONNX graph import, at the end of the hook list.
+
+        :param name: Name of the hook (will be made unique if necessary).
+        :param func: Callable to execute after ONNX import.
+        """
         if self.function is not None:
             log.warning(f"Added a hook after the model was already initialized. This hook "
                         f"(with name {name}) will not be executed!")
         name = find_str_not_in_set(set(self.post_onnx_hooks), name)
         self.post_onnx_hooks[name] = func
 
-    def prepend_post_autodiff_hook(self, name: str, func: Callable[[SDFG, SDFG], None]):
+    def prepend_post_autodiff_hook(self, name: str, func: Callable[[SDFG, SDFG], None]) -> None:
+        """
+        Add a hook to be executed after autodiff, at the beginning of the hook list.
+
+        :param name: Name of the hook (will be made unique if necessary).
+        :param func: Callable to execute after autodiff, receiving forward and backward SDFGs.
+        """
         if self.function is not None:
             log.warning(f"Added a hook after the model was already initialized. This hook "
                         f"(with name {name}) will not be executed!")
@@ -190,19 +230,26 @@ class DaceModule(nn.Module, pycommon.SDFGConvertible):
         self.post_autodiff_hooks[name] = func
         self.post_autodiff_hooks.move_to_end(name, last=False)
 
-    def append_post_autodiff_hook(self, name: str, func: Callable[[SDFG, SDFG], None]):
+    def append_post_autodiff_hook(self, name: str, func: Callable[[SDFG, SDFG], None]) -> None:
+        """
+        Add a hook to be executed after autodiff, at the end of the hook list.
+
+        :param name: Name of the hook (will be made unique if necessary).
+        :param func: Callable to execute after autodiff, receiving forward and backward SDFGs.
+        """
         if self.function is not None:
             log.warning(f"Added a hook after the model was already initialized. This hook "
                         f"(with name {name}) will not be executed!")
         name = find_str_not_in_set(set(self.post_autodiff_hooks), name)
         self.post_autodiff_hooks[name] = func
 
-    def prepend_post_compile_hook(
-            self,
-            name: str,
-            func: Callable[
-                [compiled_sdfg.CompiledSDFG],  # type: ignore
-                None]):
+    def prepend_post_compile_hook(self, name: str, func: Callable[[compiled_sdfg.CompiledSDFG], None]) -> None:
+        """
+        Add a hook to be executed after compilation, at the beginning of the hook list.
+
+        :param name: Name of the hook (will be made unique if necessary).
+        :param func: Callable to execute after compilation, receiving the compiled SDFG.
+        """
         if self.function is not None:
             log.warning(f"Added a hook after the model was already initialized. This hook "
                         f"(with name {name}) will not be executed!")
@@ -210,12 +257,13 @@ class DaceModule(nn.Module, pycommon.SDFGConvertible):
         self.post_compile_hooks[name] = func
         self.post_compile_hooks.move_to_end(name, last=False)
 
-    def append_post_compile_hook(
-            self,
-            name: str,
-            func: Callable[
-                [compiled_sdfg.CompiledSDFG],  # type: ignore
-                None]):
+    def append_post_compile_hook(self, name: str, func: Callable[[compiled_sdfg.CompiledSDFG], None]) -> None:
+        """
+        Add a hook to be executed after compilation, at the end of the hook list.
+
+        :param name: Name of the hook (will be made unique if necessary).
+        :param func: Callable to execute after compilation, receiving the compiled SDFG.
+        """
         if self.function is not None:
             log.warning(f"Added a hook after the model was already initialized. This hook "
                         f"(with name {name}) will not be executed!")
@@ -223,21 +271,15 @@ class DaceModule(nn.Module, pycommon.SDFGConvertible):
         self.post_compile_hooks[name] = func
 
     def _initialize_sdfg(self, dummy_inputs):
+        """
+        Initialize the SDFG by converting the PyTorch module to ONNX and then to DaCe.
 
+        :param dummy_inputs: Tuple of tensors to use for tracing.
+        :return: Forward function to be called during execution.
+        """
         # determine whether we are using CUDA
         if self.use_cuda is None:
-            try:
-                module_is_cuda = next(iter(dummy_inputs)).is_cuda
-            except StopIteration:
-                module_is_cuda = False
-
-            if not module_is_cuda:
-                # check the parameters
-                try:
-                    module_is_cuda = next(self.model.parameters()).is_cuda
-                except StopIteration:
-                    module_is_cuda = False
-            self.use_cuda = module_is_cuda
+            self.use_cuda = self._detect_cuda_usage(dummy_inputs)
 
         if self.use_cuda:
             self.model = self.model.cuda()
@@ -336,9 +378,12 @@ class DaceModule(nn.Module, pycommon.SDFGConvertible):
 
             return forward
 
-    def _call_params(self) -> Tuple[Union[Tensor, nn.parameter.Parameter]]:
-        """ Get the parameters that we need to pass to the model, in the correct order. """
+    def _call_params(self) -> Tuple[Union[Tensor, nn.parameter.Parameter], ...]:
+        """
+        Get the parameters that we need to pass to the model, in the correct order.
 
+        :return: Tuple of parameters and buffers in the order expected by the SDFG.
+        """
         # self.dace_model.inputs contains the buffers, parameters and the inputs.
         # We only want the parameters and buffers
         model_inputs = self.dace_model.inputs
@@ -351,7 +396,12 @@ class DaceModule(nn.Module, pycommon.SDFGConvertible):
         return tuple(self._exported_parameters[i] for i in model_inputs[start_idx:])
 
     def forward(self, *actual_inputs):
-        """ Execute the forward pass using the traced ``module``."""
+        """
+        Execute the forward pass using the traced module.
+
+        :param actual_inputs: Input tensors to the model.
+        :return: Output tensors from the model.
+        """
         if self.function is None:
             self.function = self._initialize_sdfg(actual_inputs)
 
@@ -362,11 +412,16 @@ class DaceModule(nn.Module, pycommon.SDFGConvertible):
     #################################################
 
     def __sdfg__(self, *args):
+        """
+        Get the SDFG representation of this module (SDFGConvertible interface).
+
+        :param args: Arguments (currently unused).
+        :return: The SDFG representation.
+        :raises ValueError: If the model has not been initialized yet.
+        """
         if self.sdfg is None:
-            raise ValueError("""
-            Using a PyTorch model in a DaceProgram requires that the model is initialized first.
-            Either call this model using some inputs, or pass 'dummy_inputs' to the constructor.
-            """)
+            raise ValueError("Using a PyTorch model in a DaceProgram requires that the model is initialized first. "
+                             "Either call this model using some inputs, or pass 'dummy_inputs' to the constructor.")
         for name, param in self._exported_parameters.items():
             onnx_name = clean_onnx_name(name)
             if param.requires_grad:
@@ -404,7 +459,12 @@ class DaceModule(nn.Module, pycommon.SDFGConvertible):
         return buffers
 
     def __sdfg_signature__(self):
+        """
+        Get the SDFG signature (SDFGConvertible interface).
 
+        :return: Tuple of (input names, output names).
+        :raises ValueError: If the SDFG has not been generated yet.
+        """
         if self.dace_model is None:
             raise ValueError("Can't determine signature before SDFG is generated.")
         inputs = [clean_onnx_name(name) for name in self.dace_model.inputs]
@@ -414,13 +474,25 @@ class DaceModule(nn.Module, pycommon.SDFGConvertible):
         return inputs, []
 
     @staticmethod
-    def _tensor_from_param(param):
+    def _tensor_from_param(param) -> Tensor:
+        """
+        Extract tensor from parameter while preserving requires_grad flag.
+
+        :param param: PyTorch parameter.
+        :return: Tensor with correct requires_grad setting.
+        """
         t = param.data
         # Accessing .data on a Parameter resets the requires_grad flag
         t.requires_grad = param.requires_grad
         return t
 
     def __sdfg_closure__(self, reevaluate: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """
+        Get the SDFG closure (SDFGConvertible interface).
+
+        :param reevaluate: Optional dictionary for reevaluation (unused).
+        :return: Dictionary mapping parameter names to their tensor values.
+        """
         result = {}
         for name, param in self._exported_parameters.items():
             onnx_name = clean_onnx_name(name)
@@ -437,20 +509,29 @@ class DaceModule(nn.Module, pycommon.SDFGConvertible):
                          constant_args: Dict[str, Any],
                          given_args: Set[str],
                          parent_closure: Optional[pycommon.SDFGClosure] = None) -> pycommon.SDFGClosure:
-        assert self.sdfg is not None
+        """
+        Resolve closure for SDFG execution (SDFGConvertible interface).
+
+        :param constant_args: Constant arguments.
+        :param given_args: Arguments already provided.
+        :param parent_closure: Optional parent closure.
+        :return: SDFGClosure object containing closure arrays.
+        """
+        assert self.sdfg is not None, "SDFG must be initialized before resolving closure"
         result = pycommon.SDFGClosure()
+
+        class TensorClosure:
+            """Helper class to wrap tensor access in a callable."""
+
+            def __init__(self, t):
+                self.t = t
+
+            def __call__(self):
+                return self.t
+
         for name, param in self._exported_parameters.items():
             onnx_name = clean_onnx_name(name)
-
             desc = self.sdfg.arrays[onnx_name]
-
-            class TensorClosure:
-
-                def __init__(self, t):
-                    self.t = t
-
-                def __call__(self):
-                    return self.t
 
             if param.requires_grad:
                 # the gradient was already added when __sdfg_signature__ was called earlier
