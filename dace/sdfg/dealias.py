@@ -6,12 +6,11 @@ from typing import Set, Dict
 from dace.sdfg.graph import MultiConnectorEdge
 from dace import SDFGState
 
-FULL_VIEW_SUFFIX = "fullview"
 SLICE_SUFFIX = "slice"
 
 
 def _get_new_connector_name(edge: MultiConnectorEdge, repldict: Dict[str, str], other_repldict: Dict[str, str],
-                            state: SDFGState, sdfg: dace.SDFG) -> str:
+                            state: SDFGState, nsdfg_node: dace.nodes.NestedSDFG) -> str:
     """
     Determine new connector name for an edge based on data access patterns.
     Following the description in the dealias routine
@@ -25,6 +24,7 @@ def _get_new_connector_name(edge: MultiConnectorEdge, repldict: Dict[str, str], 
         str: New connector name - either the original array name (for full access)
              or a unique slice name (for partial access)
     """
+    nested_sdfg: dace.SDFG = nsdfg_node.sdfg
     arr = state.sdfg.arrays[edge.data.data]
     data_shape = arr.shape
 
@@ -34,23 +34,16 @@ def _get_new_connector_name(edge: MultiConnectorEdge, repldict: Dict[str, str], 
 
     combined_repldict = repldict | other_repldict
 
+    array_names = set(nested_sdfg.arrays.keys())
     if is_complete_subset:
         candidate_name = edge.data.data
-        i = 1
-        while candidate_name in sdfg.arrays or candidate_name in repldict.values():
-            candidate_name = f"{edge.data.data}_{FULL_VIEW_SUFFIX}_{i}"
-            i += 1
-        return candidate_name
+        return dace.data.find_new_name(candidate_name, array_names)
     else:
-        i = 1
-        candidate_name = f"{edge.data.data}_{SLICE_SUFFIX}_{i}"
-        while candidate_name in combined_repldict.values() or candidate_name in sdfg.arrays:
-            i += 1
-            candidate_name = f"{edge.data.data}_{SLICE_SUFFIX}_{i}"
-        return candidate_name
+        candidate_name = f"{edge.data.data}_{SLICE_SUFFIX}"
+        return dace.data.find_new_name(candidate_name, array_names)
 
 
-def dealias(sdfg: dace.SDFG):
+def find_readable_connector_names_for_nested_sdfgs(sdfg: dace.SDFG):
     """
     Remove aliasing in nested SDFG connectors by replacing temporary names with meaningful ones.
 
@@ -91,16 +84,14 @@ def dealias(sdfg: dace.SDFG):
                     if in_edge.data is not None and in_edge.data.data == "__return":
                         continue
                     if in_edge.data is not None and in_edge.data.data != in_edge.dst_conn:
-                        new_connector = _get_new_connector_name(in_edge, input_repldict, output_repldict, state,
-                                                                node.sdfg)
+                        new_connector = _get_new_connector_name(in_edge, input_repldict, output_repldict, state, node)
                         input_repldict[in_edge.dst_conn] = new_connector
 
                 for out_edge in out_edges:
                     if out_edge.data is not None and out_edge.data.data == "__return":
                         continue
                     if out_edge.data is not None and out_edge.data.data != out_edge.src_conn:
-                        new_connector = _get_new_connector_name(out_edge, output_repldict, input_repldict, state,
-                                                                node.sdfg)
+                        new_connector = _get_new_connector_name(out_edge, output_repldict, input_repldict, state, node)
                         output_repldict[out_edge.src_conn] = new_connector
 
                 # Replace connectors rm tmpxceX connector with A
