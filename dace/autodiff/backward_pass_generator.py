@@ -39,7 +39,8 @@ from dace.libraries.onnx.forward_implementation_abc import ONNXForward
 from dace.libraries.onnx.nodes.onnx_op import ONNXOp
 
 # Autodiff imports
-from dace.autodiff.base_abc import (BackwardContext, BackwardResult, AutoDiffException, find_backward_implementation)
+from dace.autodiff.base_abc import (BackwardContext, BackwardResult, AutoDiffException, find_backward_implementation,
+                                    ExpansionTemplate)
 import dace.autodiff.utils as ad_utils
 from dace.autodiff.implementations.dace_nodes import DaceNodeBackwardImplementations
 from dace.autodiff.data_forwarding.manager import DataForwardingManager
@@ -1261,21 +1262,11 @@ class BackwardPassGenerator:
                     impls = [i for name, i in impls if "pure" in name] + [i for name, i in impls if "pure" not in name]
                     for impl in impls:
                         if impl.forward_can_be_applied(node, parent_graph, self.sdfg):
-                            # Try to apply the expansion
-                            class Expansion(xf.ExpandTransformation):
-                                environments = impl.environments if hasattr(impl, "environments") else []
-                                _expansion_result = None
-
-                                @classmethod
-                                def expansion(cls, node, state, sdfg):
-                                    return impl.forward(node, state, sdfg)
-
-                                @staticmethod
-                                def annotates_memlets() -> bool:
-                                    return True
-
-                            Expansion._match_node = xf.PatternNode(type(node))
-                            Expansion.apply_to(parent_graph.parent, verify=False, _match_node=node)
+                            # Configure the module-level expansion class
+                            ExpansionTemplate.environments = impl.environments if hasattr(impl, "environments") else []
+                            ExpansionTemplate._impl = impl
+                            ExpansionTemplate._match_node = xf.PatternNode(type(node))
+                            ExpansionTemplate.apply_to(parent_graph.parent, verify=False, _match_node=node)
                             expanded_something = True
                             break
 

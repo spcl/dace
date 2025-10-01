@@ -8,7 +8,7 @@ import typing
 
 import dace.registry
 from dace.sdfg import SDFG, SDFGState, nodes as nd
-
+import dace.transformation.transformation as xf
 from dace.libraries.onnx.nodes.onnx_op import ONNXOp
 
 log = logging.getLogger(__name__)
@@ -145,3 +145,28 @@ def find_backward_implementation(forward_sdfg: SDFG, forward_state: SDFGState,
         return valid_impls[0][1]
     else:
         return None
+
+
+class ExpansionTemplate(xf.ExpandTransformation):
+    """Module-level expansion class for operations during autodiff.
+
+    This class is used by BackwardPassGenerator._expand_nodes to expand operations
+    that don't have backward implementations. It needs to be at module level for serialization.
+
+    The class is dynamically configured before use by setting:
+    - environments: List of required environments
+    - _impl: The implementation object containing the forward method
+    - _match_node: The pattern node to match
+    """
+    environments = []
+    _impl = None
+
+    @classmethod
+    def expansion(cls, node, state, sdfg):
+        if cls._impl is None:
+            raise RuntimeError("_ONNXExpansion._impl must be set before expansion")
+        return cls._impl.forward(node, state, sdfg)
+
+    @staticmethod
+    def annotates_memlets() -> bool:
+        return True

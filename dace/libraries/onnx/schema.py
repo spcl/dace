@@ -118,7 +118,10 @@ def onnx_representation(represents, **mapping):
         @classmethod
         def from_json(cls, json, context=None):
 
-            constructor_args = {name: prop.from_json(json[name]) for name, prop in cls.__properties__.items()}
+            constructor_args = {
+                name: prop.from_json(json[name] if name in json else prop.default)
+                for name, prop in cls.__properties__.items()
+            }
             return cls(**constructor_args)
 
         def to_json(self):
