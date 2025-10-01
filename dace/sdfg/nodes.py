@@ -912,11 +912,10 @@ class MapEntry(EntryNode):
                     )
                     free_symbols |= code_symbols
                     continue
+            elif isinstance(n, NestedSDFG):
+                free_symbols |= n.used_symbols(all_symbols)
 
-            if hasattr(n, 'used_symbols'):
-                free_symbols |= n.used_symbols(parent_state, all_symbols)
-            else:
-                free_symbols |= n.free_symbols
+            free_symbols |= n.free_symbols
 
         # Free symbols from memlets
         for e in parent_state.all_edges(*parent_state.all_nodes_between(self, parent_state.exit_node(self))):
