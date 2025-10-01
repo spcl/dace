@@ -586,11 +586,11 @@ def auto_optimize(sdfg: SDFG,
            certain cases. Please report an issue if it does.
     """
     debugprint = config.Config.get_bool('debugprint')
-    
+
     # Simplification and loop parallelization
     transformed = True
     sdfg.apply_transformations_repeated(TrivialMapElimination, validate=validate, validate_all=validate_all)
-    
+
     while transformed:
         sdfg.simplify(validate=False, validate_all=validate_all)
         l2ms = sdfg.apply_transformations_repeated((LoopToMap, RefineNestedAccess),
@@ -601,7 +601,7 @@ def auto_optimize(sdfg: SDFG,
     # Collapse maps and eliminate trivial dimensions
     sdfg.simplify()
     sdfg.apply_transformations_repeated(MapCollapse, validate=False, validate_all=validate_all)
-    
+
     # Apply GPU transformations and set library node implementations
 
     if device == dtypes.DeviceType.GPU:

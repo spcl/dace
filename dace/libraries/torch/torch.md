@@ -203,7 +203,7 @@ User Code: loss.backward()  # Backward pass
 
 ```
 dace/libraries/torch/
-├── __init__.py                          # Library exports 
+├── __init__.py                          # Library exports
 │   └── Exports: PyTorch, PyTorchCUDA environment classes
 │
 ├── dlpack.py                            # Zero-copy tensor sharing

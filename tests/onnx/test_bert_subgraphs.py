@@ -20,7 +20,7 @@ def test_slice(sdfg_name: str):
     data = torch.ones(2)
 
     out = dace_model(data=data)
-    assert out.shape == (1,), f"Expected output shape (1,), got {out.shape}"
+    assert out.shape == (1, ), f"Expected output shape (1,), got {out.shape}"
     assert out[0] == 1.0, f"Expected output value 1.0, got {out[0]}"
 
 

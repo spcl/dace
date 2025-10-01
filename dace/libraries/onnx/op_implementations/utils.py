@@ -17,7 +17,7 @@ from dace.util import in_desc_with_name, out_desc_with_name
 
 def op_implementation(op, name):
     """A decorator that registers an op implementation.
-    
+
     It should be used on classes that extend :class:`~dace.libraries.onnx.forward_implementation_abc.ONNXForward`.
 
     :param op: The ONNX name of the op to register for.
@@ -52,14 +52,14 @@ def program_for_node(program,
 
     All inputs that are not specified as parameters will be removed using
     constant_folding.remove_node_and_computation.
-    
+
     Args:
         program: The function to expand into a DaCe program
         sdfg: The parent SDFG
         state: The SDFG state containing the node
         node: The ONNX node to create a program for
         extra_vars: Optional extra variables to add to the program
-        
+
     Returns:
         A new SDFG implementing the program
     """
@@ -114,13 +114,13 @@ def empty_sdfg_for_node(
     """Given a node, return an SDFG that can be used as a nested SDFG expansion for that node.
 
     The dtypes for the arguments will be extracted by matching the parameter names to edges.
-    
+
     Args:
         sdfg: The parent SDFG
         state: The SDFG state containing the node
         node: The ONNX node to create an SDFG for
         add_access_nodes: Whether to add access nodes to the SDFG
-        
+
     Returns:
         A tuple containing (nested SDFG, nested state, input nodes dict, output nodes dict)
     """
@@ -148,7 +148,7 @@ def empty_sdfg_for_node(
 @dace.dtypes.paramdec
 def python_pure_op_implementation(func, **compute: Dict[str, Callable]):
     """A decorator that registers a Python op implementation.
-    
+
     The name of the function will be the name of the op that is being replaced.
 
     The compute parameter enables you to compute a variable given the node and
@@ -162,7 +162,7 @@ def python_pure_op_implementation(func, **compute: Dict[str, Callable]):
 
     For example, the following compute argument instantiation will make
     variables ``axis`` and ``shape`` available when the function is parsed.
-    
+
 
     .. highlight:: python
     .. code-block:: python

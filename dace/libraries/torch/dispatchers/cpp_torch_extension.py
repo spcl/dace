@@ -31,10 +31,10 @@ _REPLACED_CTYPES = {dace.int64: "int64_t", dace.uint64: "uint64_t", dace.float16
 
 def torch_ctype(dtype: dace.typeclass) -> str:
     """Convert a DaCe type to the corresponding PyTorch C++ type string.
-    
+
     Args:
         dtype: The DaCe typeclass to convert
-        
+
     Returns:
         The corresponding C++ type string for PyTorch
     """
@@ -63,10 +63,10 @@ _TYPECLASS_TO_TORCH_DTYPE_STR = {
 
 def typeclass_to_torch_cpp_type(type: dace.typeclass) -> str:
     """Convert a DaCe typeclass to PyTorch C++ tensor type string.
-    
+
     Args:
         type: The DaCe typeclass to convert
-        
+
     Returns:
         The corresponding PyTorch tensor type string (e.g., 'kFloat32')
     """
@@ -79,13 +79,13 @@ def typeclass_to_torch_cpp_type(type: dace.typeclass) -> str:
 
 def tensor_init_for_desc(name: str, desc: data.Data, clean_weights: Dict[str, torch.Tensor], zeros=True) -> str:
     """Emit the initialization code for a descriptor.
-    
+
     Args:
         name: The name of the tensor
         desc: The data descriptor
         clean_weights: Dictionary of constant weights
         zeros: Whether to initialize with zeros (True) or empty (False)
-        
+
     Returns:
         C++ code string for tensor initialization
     """
@@ -236,10 +236,10 @@ def argument_codegen(sdfg: dace.SDFG,
 
 def item_to_cpp_literal(item) -> str:
     """Convert a numpy item to a C++ literal string.
-    
+
     Args:
         item: The numpy item to convert
-        
+
     Returns:
         The C++ literal representation as a string
     """
@@ -265,12 +265,12 @@ def item_to_cpp_literal(item) -> str:
 
 def constant_initializer_code(name: str, desc: data.Data, value) -> str:
     """Generate C++ code for initializing a constant value.
-    
+
     Args:
         name: The name of the constant
         desc: The data descriptor
         value: The constant value
-        
+
     Returns:
         C++ code string for constant initialization
     """
@@ -310,10 +310,10 @@ def constant_initializer_code(name: str, desc: data.Data, value) -> str:
 
 def return_type_str(outputs: List[str]) -> str:
     """Generate the return type string for the given outputs.
-    
+
     Args:
         outputs: List of output names
-        
+
     Returns:
         The C++ return type string
     """
@@ -322,10 +322,10 @@ def return_type_str(outputs: List[str]) -> str:
 
 def save_non_inputs_outputs(names: List[str]):
     """Generate code to save non-input/output tensors for backward pass.
-    
+
     Args:
         names: List of tensor names to save
-        
+
     Returns:
         C++ code string for saving tensors
     """
@@ -334,11 +334,11 @@ def save_non_inputs_outputs(names: List[str]):
 
 def recover_saved_inputs_outputs(saved_inputs_outputs: List[str], other_saved: List[str]):
     """Generate code to recover saved tensors in backward pass.
-    
+
     Args:
         saved_inputs_outputs: List of saved input/output tensor names
         other_saved: List of other saved tensor names
-        
+
     Returns:
         C++ code string for recovering saved tensors
     """
@@ -357,13 +357,13 @@ def recover_saved_inputs_outputs(saved_inputs_outputs: List[str], other_saved: L
 def setup_grad_values(backward_result: BackwardResult, sdfg: dace.SDFG, outputs: List[str],
                       clean_weights: Dict[str, torch.Tensor]) -> str:
     """Generate code to setup gradient values for backward pass.
-    
+
     Args:
         backward_result: The backward pass result containing gradient information
         sdfg: The SDFG
         outputs: List of output names
         clean_weights: Dictionary of constant weights
-        
+
     Returns:
         C++ code string for gradient setup
     """
@@ -384,14 +384,14 @@ def code_for_backward_function(module: 'dace.frontend.python.module.DaceModule',
                                backward_sdfg: dace.SDFG, backward_result: BackwardResult,
                                forwarded_arrays: Dict[str, data.Data]) -> str:
     """Generate C++ code for a differentiable PyTorch function.
-    
+
     Args:
         module: The DaCe module
         forward_sdfg: The forward SDFG
         backward_sdfg: The backward SDFG
         backward_result: The backward pass result
         forwarded_arrays: Arrays forwarded from forward to backward pass
-        
+
     Returns:
         Complete C++ code string for the differentiable function
     """
@@ -449,7 +449,7 @@ class {sdfg_name}Function : public torch::autograd::Function<{sdfg_name}Function
 
             // save inputs/outputs for backward
             {
-                f"ctx->save_for_backward({{{', '.join(f'{n}' for n in saved_io_for_backward)}}});" 
+                f"ctx->save_for_backward({{{', '.join(f'{n}' for n in saved_io_for_backward)}}});"
                 if saved_io_for_backward else ""
             }
 
@@ -463,7 +463,7 @@ class {sdfg_name}Function : public torch::autograd::Function<{sdfg_name}Function
             return {f"{outputs[0]}" if len(outputs) == 1
             else f"{{{', '.join(o for o in outputs)}}}"};
         }}
-        
+
         static tensor_list backward(AutogradContext *ctx, tensor_list grad_outputs) {{
             // recover bwd_handle_ptr
             int64_t bwd_handle_ptr = ctx->saved_data.find("bwd_handle")->second.toInt();
@@ -474,7 +474,7 @@ class {sdfg_name}Function : public torch::autograd::Function<{sdfg_name}Function
             // create grad values
             // NOTE, it might make sense take these from .grad()
             {setup_grad_values(backward_result, backward_sdfg, outputs, module.dace_model.clean_weights)}
-            
+
             {bwd_ptr_init_code}
 
             // get SDFG state handle
@@ -482,7 +482,7 @@ class {sdfg_name}Function : public torch::autograd::Function<{sdfg_name}Function
 
             // call bwd SDFG
             __program_{backward_sdfg.name}(handle, {bwd_sdfg_call_arguments});
-            
+
             // return calculated grads in correct order
             // first two grads are None (these are the grads for the handle ptrs)
             return {{
@@ -527,7 +527,7 @@ def code_for_module(module: 'dace.frontend.python.module.DaceModule', compiled_s
 
     // Initialize outputs
     {initialize_outputs_code(module, outputs, module.dace_model.clean_weights)}
-    
+
     {ptr_init_code}
 
     // Get SDFG state handle
@@ -549,14 +549,14 @@ TORCH_LIBRARY_IMPL(dace_{sdfg_name}, {'CUDA' if module.use_cuda else 'CPU'}, m) 
 
 def get_header(fwd_sdfg: dace.SDFG, bwd_sdfg: Optional[dace.SDFG], inputs, outputs, use_cuda: bool) -> str:
     """Generate the C++ header code for the PyTorch extension.
-    
+
     Args:
         fwd_sdfg: The forward SDFG
         bwd_sdfg: The backward SDFG (optional)
         inputs: List of input names
         outputs: List of output names
         use_cuda: Whether CUDA is used
-        
+
     Returns:
         C++ header code string
     """
@@ -671,10 +671,10 @@ def register_and_compile_torch_extension(module: 'dace.frontend.python.module.Da
 
 def get_env_for_sdfg(compiled: CompiledSDFG):
     """Create an environment for the given compiled SDFG.
-    
+
     Args:
         compiled: The compiled SDFG
-        
+
     Returns:
         The environment class for the SDFG
     """
@@ -704,10 +704,10 @@ def get_env_for_sdfg(compiled: CompiledSDFG):
 
 def indent_code(code: str) -> str:
     """Indent the given code string properly.
-    
+
     Args:
         code: The code string to indent
-        
+
     Returns:
         The indented code string
     """

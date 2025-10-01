@@ -681,7 +681,8 @@ def analyze_loop_change(code: str, loop_variable: str) -> str:
     return change_type
 
 
-def get_map_nest_information(edges_list: List[dstate.MultiConnectorEdge]) -> Tuple[List, List[str], List, Dict[str, Tuple]]:
+def get_map_nest_information(
+        edges_list: List[dstate.MultiConnectorEdge]) -> Tuple[List, List[str], List, Dict[str, Tuple]]:
     """
         """
     # First, get the shape of the new array
@@ -705,7 +706,8 @@ def get_map_nest_information(edges_list: List[dstate.MultiConnectorEdge]) -> Tup
                 param_list.append(par)
 
     if not (len(param_list) == len(shape_list) == len(start_range)):
-        raise AutoDiffException(f"Mismatched lengths: params={len(param_list)}, shapes={len(shape_list)}, ranges={len(start_range)}")
+        raise AutoDiffException(
+            f"Mismatched lengths: params={len(param_list)}, shapes={len(shape_list)}, ranges={len(start_range)}")
 
     # Create a dictionary mapping parameters to their start and end ranges
     param_dict = {param: (start, end) for param, start, end in zip(param_list, start_range, shape_list)}
@@ -728,7 +730,7 @@ def get_all_path_edges(state: SDFGState, source: nd.Node,
                        starting_edge: dgraph.MultiConnectorEdge) -> List[dgraph.MultiConnectorEdge]:
     """
     We will start from the target node and go back until we reach the destination.
-    Starting edge should be an in node 
+    Starting edge should be an in node
     """
     all_edges = []
     memlet_path = state.memlet_path(starting_edge)
@@ -780,7 +782,9 @@ def extract_conditional_expressions(tasklet_node: nd.Tasklet) -> Tuple[str, str,
         conditional = conditional.replace(":", "")
         conditional = conditional.replace("if ", "")
         if conditional not in tasklet_node.in_connectors:
-            raise AutoDiffException(f"Conditional '{conditional}' not found in tasklet input connectors: {list(tasklet_node.in_connectors.keys())}")
+            raise AutoDiffException(
+                f"Conditional '{conditional}' not found in tasklet input connectors: {list(tasklet_node.in_connectors.keys())}"
+            )
 
         else_statement = None
 
@@ -808,7 +812,9 @@ def extract_conditional_expressions(tasklet_node: nd.Tasklet) -> Tuple[str, str,
         conditional = conditional.replace(" else", "")
 
         if conditional not in tasklet_node.in_connectors:
-            raise AutoDiffException(f"Conditional '{conditional}' not found in tasklet input connectors: {list(tasklet_node.in_connectors.keys())}")
+            raise AutoDiffException(
+                f"Conditional '{conditional}' not found in tasklet input connectors: {list(tasklet_node.in_connectors.keys())}"
+            )
 
         # get the if statement by matching what comes before the if until we encounter a parenthesis or =
         matches = re.search(r"= \((.)* if", tasklet_code)
@@ -848,7 +854,9 @@ def extract_conditional_expressions(tasklet_node: nd.Tasklet) -> Tuple[str, str,
 
     # sanity check this should be in the out connectors of the tasklet
     if out_connector not in tasklet_node.out_connectors:
-        raise AutoDiffException(f"Output connector '{out_connector}' not found in tasklet output connectors: {list(tasklet_node.out_connectors.keys())}")
+        raise AutoDiffException(
+            f"Output connector '{out_connector}' not found in tasklet output connectors: {list(tasklet_node.out_connectors.keys())}"
+        )
 
     # create the return expressions
     if_expression = f"{out_connector} = {if_statement}"
@@ -930,7 +938,8 @@ def extract_loop_region_info(loop: LoopRegion) -> Tuple[str, str]:
     expression = matches.group()
     matches_inner = re.search(conditional_expression[:-2], conditional)
     if not matches_inner:
-        raise AutoDiffException(f"Could not match conditional pattern '{conditional_expression[:-2]}' in '{conditional}'")
+        raise AutoDiffException(
+            f"Could not match conditional pattern '{conditional_expression[:-2]}' in '{conditional}'")
     expression_to_remove = matches_inner.group()
     end = expression.replace(expression_to_remove, "")
 

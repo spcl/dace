@@ -104,13 +104,13 @@ def broadcast_indices(input_shape, output_shape):
 def _setup_reduction_sdfg(node: 'ONNXOp', state: SDFGState, sdfg: SDFG, operation_name: str):
     """
     Helper function to set up the common SDFG structure for reduction operations.
-    
+
     Args:
         node: The ONNX operation node
         state: The SDFG state
         sdfg: The parent SDFG
         operation_name: Name of the reduction operation (e.g., 'reduce_mean', 'reduce_sum')
-    
+
     Returns:
         tuple: (nsdfg, nstate, data_desc, reduced_desc, data_read, reduced_write, axes_node, axes_desc, num_reduce_axes)
     """
@@ -192,15 +192,15 @@ def _setup_reduction_sdfg(node: 'ONNXOp', state: SDFGState, sdfg: SDFG, operatio
 def _generate_reduction_tasklet_code(data_desc, reduced_desc, num_reduce_axes, keepdims, reduction_type, **kwargs):
     """
     Helper function to generate the C++ tasklet code for reduction operations.
-    
+
     Args:
         data_desc: Input data descriptor
-        reduced_desc: Output data descriptor  
+        reduced_desc: Output data descriptor
         num_reduce_axes: Number of reduction axes
         keepdims: Whether to keep dimensions
         reduction_type: Type of reduction ('sum', 'mean', 'max', 'min')
         **kwargs: Additional arguments for specific reduction types
-    
+
     Returns:
         str: The generated C++ tasklet code
     """
@@ -2507,7 +2507,7 @@ class PureLayerNormalization(ONNXForward):
         code = f"""
         // Outer loop over dimensions before axis
         {chr(10).join([f'for (int i{i} = 0; i{i} < {X_desc.shape[i]}; i{i}++) {{' for i in range(axis)])}
-        
+
         // Calculate mean over normalization dimensions
         {compute_type} sum = 0.0;
         {chr(10).join([f'for (int i{i} = 0; i{i} < {X_desc.shape[i]}; i{i}++) {{' for i in range(axis, rank)])}

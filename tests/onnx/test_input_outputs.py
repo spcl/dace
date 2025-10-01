@@ -1,7 +1,7 @@
 """
 Testing input and output combinations for onnx Ops
 
-| Output / Input | Array CPU | 
+| Output / Input | Array CPU |
 |----------------+-----------|
 | Scalar CPU     | Shape     |
 | Array CPU      | Add       |
@@ -64,7 +64,7 @@ def test_squeeze(simplify: bool, sdfg_name: str):
     sdfg.expand_library_nodes()
     result = sdfg(X_arr=X)
 
-    assert result.shape == (1,), f"Expected shape (1,), got {result.shape}"
+    assert result.shape == (1, ), f"Expected shape (1,), got {result.shape}"
     assert result[0] == X, f"Expected value {X}, got {result[0]}"
 
 
@@ -139,7 +139,7 @@ def test_unsqueeze(simplify: bool, sdfg_name: str):
 
     result = sdfg(X_arr=X)
 
-    assert result.shape == (1,), f"Expected shape (1,), got {result.shape}"
+    assert result.shape == (1, ), f"Expected shape (1,), got {result.shape}"
     assert X == result[0], f"Expected value {X}, got {result[0]}"
 
 

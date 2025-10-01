@@ -107,14 +107,15 @@ class DataForwardingManager:
 
     def _connect_forward_accessnode(self, forward_state: SDFGState, backward_state: SDFGState,
                                     forward_node: nodes.AccessNode, target_node: nodes.Node,
-                                    starting_edge: dgraph.MultiConnectorEdge, recomputation_nsdfg: Optional[nodes.NestedSDFG], strategy: str):
+                                    starting_edge: dgraph.MultiConnectorEdge,
+                                    recomputation_nsdfg: Optional[nodes.NestedSDFG], strategy: str):
         """
         We need to forward an array from the forward pass to the backward pass.
         To do this we first check if this array has been overwritten or not.
         If the array has not been overwritten, we just need to replicate it
-        in the backward pass and then forward it. 
+        in the backward pass and then forward it.
         If the array has been overwritten, we pick a strategy for this AN:
-            - Store strategy: 
+            - Store strategy:
                 - We modify the forward pass to save the values in a new array
                 - Connect this new array to the node in the backward pass
             - Recomputation:

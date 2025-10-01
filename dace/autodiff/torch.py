@@ -21,7 +21,7 @@ def make_backward_function(
 
         :param model: the model to convert.
         :param required_grads: the list of inputs names of the module that we must compute gradients for.
-        :return: A 4-tuple of forward SDFG, backward SDFG, backward result, and input arrays for 
+        :return: A 4-tuple of forward SDFG, backward SDFG, backward result, and input arrays for
                  backward pass (as mapping of names to DaCe data descriptors).
     """
 

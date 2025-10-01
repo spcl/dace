@@ -856,7 +856,8 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                     continue
                 src = edge.src
                 out_edges = [
-                    e for e in graph.out_edges(map_entry) if (e.src_conn and e.dst_conn and e.src_conn[3:] == edge.dst_conn[2:])
+                    e for e in graph.out_edges(map_entry)
+                    if (e.src_conn and e.dst_conn and e.src_conn[3:] == edge.dst_conn[2:])
                 ]
 
                 if src in in_nodes:

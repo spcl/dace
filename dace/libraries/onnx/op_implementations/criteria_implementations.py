@@ -23,12 +23,12 @@ class PureSoftmaxCrossEntropyLoss(ONNXForward):
     @staticmethod
     def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
         """Check if this implementation can be applied to the given node.
-        
+
         Args:
             node: The SoftmaxCrossEntropyLoss ONNX node
             state: The SDFG state containing the node
             sdfg: The parent SDFG
-            
+
         Returns:
             True if the implementation can be applied, False otherwise
         """
@@ -50,12 +50,12 @@ class PureSoftmaxCrossEntropyLoss(ONNXForward):
     @staticmethod
     def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> Union[nd.Node, SDFG]:
         """Generate the forward pass implementation for SoftmaxCrossEntropyLoss.
-        
+
         Args:
             node: The SoftmaxCrossEntropyLoss ONNX node
             state: The SDFG state containing the node
             sdfg: The parent SDFG
-            
+
         Returns:
             A nested SDFG implementing the SoftmaxCrossEntropyLoss operation
         """

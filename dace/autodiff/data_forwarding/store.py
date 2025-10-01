@@ -61,9 +61,9 @@ def _store_data(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState
         add a path from the connector for this AccessNode to store its values for all iterations.
         This can increase the dimension of the array. i.e. the size of the stored array is
         greater or equal to the size of the original array.
-        
+
         :param edge: the edge connecting the AccessNode to save data from to a map node.
-        :return: the new AccessNode which contains the stored data, 
+        :return: the new AccessNode which contains the stored data,
                  a list of memlets connecting an assign tasklet to this new AccessNode.
         """
 

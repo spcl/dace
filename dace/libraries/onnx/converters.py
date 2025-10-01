@@ -59,8 +59,7 @@ def get_proto_attr(proto, name: str):
     if not is_ascii(name):
         raise ValueError(
             f"Attempted to access non-ASCII property name '{name}' on protobuf {proto} (type {type(proto)}). "
-            "Please open an issue"
-        )
+            "Please open an issue")
 
     return getattr(proto, name)
 
@@ -251,7 +250,4 @@ def clean_onnx_name(name: str) -> str:
         name = f"ONNX_{name}"
 
     # Replace special characters with their textual equivalents
-    return (name.replace(".", "DOT")
-                .replace(":", "COLON")
-                .replace("/", "SLASH")
-                .replace("-", "DASH"))
+    return (name.replace(".", "DOT").replace(":", "COLON").replace("/", "SLASH").replace("-", "DASH"))

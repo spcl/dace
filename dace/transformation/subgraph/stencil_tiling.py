@@ -255,7 +255,7 @@ class StencilTiling(transformation.SubgraphTransformation):
                     children_coverage = None
                     if data_name in coverages[child_entry][0]:
                         children_coverage = subsets.union(children_coverage, coverages[child_entry][0][data_name])
-                    
+
                     # TODO: Is there a better fix for this?
                     if children_coverage is None:
                         # no coverage for this data_name in children

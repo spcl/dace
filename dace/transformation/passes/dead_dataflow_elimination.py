@@ -67,10 +67,8 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
             if "store" in node.label and "durbin" in sdfg.label:
                 print(f"Avoiding DDE in region {region} from {sdfg.label} because of {node.label}")
                 return None
-            
-        if region.cfg_id not in pipeline_results[
-            ap.ControlFlowBlockReachability.__name__
-        ]:
+
+        if region.cfg_id not in pipeline_results[ap.ControlFlowBlockReachability.__name__]:
             return None
         reachable: Dict[ControlFlowBlock, Set[ControlFlowBlock]] = pipeline_results[
             ap.ControlFlowBlockReachability.__name__][region.cfg_id]

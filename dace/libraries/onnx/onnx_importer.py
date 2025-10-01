@@ -215,7 +215,7 @@ class ONNXModel:
                         ``cuda``.
         :param save_transients: if not None, save transients to this dict (for debugging).
         :param: whether to automatically merge conflicting shapes in symbolic shape inference.
-        :param auto_merge: whether to automatically merge symbolic shapes in symbolic shape inference.    
+        :param auto_merge: whether to automatically merge symbolic shapes in symbolic shape inference.
         """
 
         onnx.checker.check_model(model)

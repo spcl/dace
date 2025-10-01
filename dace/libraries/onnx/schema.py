@@ -101,16 +101,14 @@ def onnx_representation(represents, **mapping):
         def from_onnx_proto(cls, onnx_proto):
 
             if type(onnx_proto) is not represents:
-                raise ValueError(
-                    "Unexpected protobuf '{}' (type {}), expected protobuf of type {}"
-                    .format(onnx_proto, type(onnx_proto), represents))
+                raise ValueError("Unexpected protobuf '{}' (type {}), expected protobuf of type {}".format(
+                    onnx_proto, type(onnx_proto), represents))
 
             constructor_args = {}
             for name, _ in cls.__properties__.items():
                 if type(mapping[name]) is str:
                     # if the value of the mapping for that property is a string, read the attribute with that name
-                    constructor_args[name] = convert_onnx_proto(
-                        get_proto_attr(onnx_proto, mapping[name]))
+                    constructor_args[name] = convert_onnx_proto(get_proto_attr(onnx_proto, mapping[name]))
                 else:
                     # the value of the mapping should be a function, apply it to the onnx_proto
                     constructor_args[name] = mapping[name](onnx_proto)
@@ -120,10 +118,7 @@ def onnx_representation(represents, **mapping):
         @classmethod
         def from_json(cls, json, context=None):
 
-            constructor_args = {
-                name: prop.from_json(json[name])
-                for name, prop in cls.__properties__.items()
-            }
+            constructor_args = {name: prop.from_json(json[name]) for name, prop in cls.__properties__.items()}
             return cls(**constructor_args)
 
         def to_json(self):
@@ -135,29 +130,23 @@ def onnx_representation(represents, **mapping):
 
         # the first line of the init docstring contains the signature of the method. This will be picked up by sphinx
         # and means that the generated sphinx docs have a proper signature, and not just *args, **kwargs.
-        init_docstring = "__init__({})\n\n".format(", ".join(
-            name + "=" + repr(prop._default)
-            for name, prop in cls.__properties__.items()))
+        init_docstring = "__init__({})\n\n".format(", ".join(name + "=" + repr(prop._default)
+                                                             for name, prop in cls.__properties__.items()))
 
         def get_prop_docstring(name, prop):
             return ":param {}: {}\n:type {}: ``{}``, default ``{}``".format(
-                name, prop.__doc__, name, prop._dtype.__name__
-                if prop._dtype is not None else type(prop._default).__name__,
-                repr(prop._default))
+                name, prop.__doc__, name,
+                prop._dtype.__name__ if prop._dtype is not None else type(prop._default).__name__, repr(prop._default))
 
-        init_docstring += "\n".join(
-            get_prop_docstring(name, prop)
-            for name, prop in cls.__properties__.items())
+        init_docstring += "\n".join(get_prop_docstring(name, prop) for name, prop in cls.__properties__.items())
 
         cls.__init__.__doc__ = init_docstring
 
         cls.from_onnx_proto = from_onnx_proto
         cls.from_json = from_json
         cls.to_json = to_json
-        from_onnx_proto.__func__.__doc__ = " Construct an object from an ONNX proto of type ``{}``. ".format(
-            represents)
-        from_json.__func__.__doc__ = " Construct an object json ".format(
-            represents)
+        from_onnx_proto.__func__.__doc__ = " Construct an object from an ONNX proto of type ``{}``. ".format(represents)
+        from_json.__func__.__doc__ = " Construct an object json ".format(represents)
         to_json.__doc__ = " Serialize to json ".format(represents)
 
         # register so that we're able to load it
@@ -187,8 +176,7 @@ class ONNXParameter:
     param_type = Property(choices=ONNXParameterType,
                           desc="The type of the this parameter",
                           default=ONNXParameterType.Single)
-    homogeneous = Property(dtype=bool,
-                           desc="Whether this parameter is homogeneous")
+    homogeneous = Property(dtype=bool, desc="Whether this parameter is homogeneous")
 
     def __repr__(self):
         return "{} ({})".format(self.name, str(self.param_type))
@@ -226,37 +214,27 @@ class ONNXAttribute:
     attribute_type = Property(choices=ONNXAttributeType,
                               desc="The type of this attribute",
                               default=ONNXAttributeType.Int)
-    default_value = Property(dtype=None,
-                             desc="The default value of this attribute",
-                             default=None,
-                             allow_none=True)
+    default_value = Property(dtype=None, desc="The default value of this attribute", default=None, allow_none=True)
 
     def validate(self):
         if self.required and self.attribute_type == ONNXAttributeType.Unsupported:
-            raise NotImplementedError(
-                "Required attribute '{}' has an unsupported type".format(
-                    self.name))
+            raise NotImplementedError("Required attribute '{}' has an unsupported type".format(self.name))
 
     def __repr__(self):
         return self.name
 
 
-@onnx_representation(onnx.defs.OpSchema.TypeConstraintParam,
-                     type_str='type_param_str',
-                     types=lambda proto: list(
-                         filter(
-                             lambda x: x is not None,
-                             map(onnx_type_str_to_typeclass,
-                                 get_proto_attr(proto, "allowed_type_strs")))))
+@onnx_representation(
+    onnx.defs.OpSchema.TypeConstraintParam,
+    type_str='type_param_str',
+    types=lambda proto: list(
+        filter(lambda x: x is not None, map(onnx_type_str_to_typeclass, get_proto_attr(proto, "allowed_type_strs")))))
 class ONNXTypeConstraint:
     """ Python representation of an ONNX type constraint. """
 
     type_str = Property(dtype=str, desc="The type parameter string")
-    types = ListProperty(
-        element_type=typeclass,
-        desc=
-        "The possible types. Note that only tensor types are currently supported."
-    )
+    types = ListProperty(element_type=typeclass,
+                         desc="The possible types. Note that only tensor types are currently supported.")
 
     def __repr__(self):
         return self.type_str
@@ -264,18 +242,15 @@ class ONNXTypeConstraint:
 
 @onnx_representation(
     onnx.defs.OpSchema,
-    inputs=lambda proto: list(
-        map(convert_onnx_proto, get_proto_attr(proto, "inputs"))),
-    outputs=lambda proto: list(
-        map(convert_onnx_proto, get_proto_attr(proto, "outputs"))),
+    inputs=lambda proto: list(map(convert_onnx_proto, get_proto_attr(proto, "inputs"))),
+    outputs=lambda proto: list(map(convert_onnx_proto, get_proto_attr(proto, "outputs"))),
     attributes=lambda proto: {
         str(k): convert_onnx_proto(v)
         for k, v in get_proto_attr(proto, "attributes").items()
     },
-    type_constraints=lambda proto: {
-        str(cons.type_param_str): convert_onnx_proto(cons)
-        for cons in get_proto_attr(proto, "type_constraints")
-    })
+    type_constraints=lambda proto:
+    {str(cons.type_param_str): convert_onnx_proto(cons)
+     for cons in get_proto_attr(proto, "type_constraints")})
 class ONNXSchema:
     """Python representation of an ONNX schema"""
 
@@ -283,55 +258,36 @@ class ONNXSchema:
     domain = Property(dtype=str, desc="The operator domain")
     doc = Property(dtype=str, desc="The operator's docstring")
     since_version = Property(dtype=int, desc="The version of the operator")
-    attributes = DictProperty(
-        key_type=str,
-        value_type=ONNXAttribute,
-        desc=
-        "The operator attributes. Keys should contain the name of the attribute, and values "
-        "should have type :class:`~dace.libraries.onnx.ONNXAttribute`.")
+    attributes = DictProperty(key_type=str,
+                              value_type=ONNXAttribute,
+                              desc="The operator attributes. Keys should contain the name of the attribute, and values "
+                              "should have type :class:`~dace.libraries.onnx.ONNXAttribute`.")
     type_constraints = DictProperty(
         key_type=str,
         value_type=ONNXTypeConstraint,
-        desc=
-        "The type constraints for inputs and outputs. Keys should contain the type string of the constraint, "
-        "values should have type :class:`~dace.libraries.onnx.ONNXTypeConstraint`."
-    )
-    inputs = ListProperty(
-        element_type=ONNXParameter,
-        desc="The operator input parameter descriptors. Entries should have type"
-        " :class:`~dace.libraries.onnx.ONNXParameter`.")
-    outputs = ListProperty(
-        element_type=ONNXParameter,
-        desc=
-        "The operator output parameter descriptors. Entries should have type"
-        " :class:`~dace.libraries.onnx.ONNXParameter`.")
+        desc="The type constraints for inputs and outputs. Keys should contain the type string of the constraint, "
+        "values should have type :class:`~dace.libraries.onnx.ONNXTypeConstraint`.")
+    inputs = ListProperty(element_type=ONNXParameter,
+                          desc="The operator input parameter descriptors. Entries should have type"
+                          " :class:`~dace.libraries.onnx.ONNXParameter`.")
+    outputs = ListProperty(element_type=ONNXParameter,
+                           desc="The operator output parameter descriptors. Entries should have type"
+                           " :class:`~dace.libraries.onnx.ONNXParameter`.")
 
     def __repr__(self):
         return self.domain + "." + self.name
 
     def non_variadic_inputs(self) -> List[str]:
-        return [
-            i.name for i in self.inputs
-            if i.param_type is not ONNXParameterType.Variadic
-        ]
+        return [i.name for i in self.inputs if i.param_type is not ONNXParameterType.Variadic]
 
     def variadic_inputs(self) -> List[str]:
-        return [
-            i.name for i in self.inputs
-            if i.param_type is ONNXParameterType.Variadic
-        ]
+        return [i.name for i in self.inputs if i.param_type is ONNXParameterType.Variadic]
 
     def non_variadic_outputs(self) -> List[str]:
-        return [
-            i.name for i in self.outputs
-            if i.param_type is not ONNXParameterType.Variadic
-        ]
+        return [i.name for i in self.outputs if i.param_type is not ONNXParameterType.Variadic]
 
     def variadic_outputs(self) -> List[str]:
-        return [
-            i.name for i in self.outputs
-            if i.param_type is ONNXParameterType.Variadic
-        ]
+        return [i.name for i in self.outputs if i.param_type is ONNXParameterType.Variadic]
 
     def validate(self):
         # check all parameters with a type str have a entry in the type constraints
@@ -341,50 +297,38 @@ class ONNXSchema:
                 cons_name = param.name + "_constraint"
                 if cons_name in self.type_constraints:
                     raise ValueError(
-                        "Attempted to insert new type constraint, but the name already existed. Please open an issue."
-                    )
+                        "Attempted to insert new type constraint, but the name already existed. Please open an issue.")
                 parsed_typeclass = onnx_type_str_to_typeclass(param.type_str)
 
                 if parsed_typeclass is None:
-                    log.debug(
-                        "Could not parse typeStr '{}' for parameter '{}'".
-                        format(param.type_str, param.name))
+                    log.debug("Could not parse typeStr '{}' for parameter '{}'".format(param.type_str, param.name))
 
-                cons = ONNXTypeConstraint(
-                    cons_name,
-                    [parsed_typeclass] if parsed_typeclass is not None else [])
+                cons = ONNXTypeConstraint(cons_name, [parsed_typeclass] if parsed_typeclass is not None else [])
                 self.type_constraints[cons_name] = cons
                 param.type_str = cons_name
 
         # check for required parameters with no supported type
         for param in chain(self.inputs, self.outputs):
-            if ((param.param_type == ONNXParameterType.Single
-                 or param.param_type == ONNXParameterType.Variadic)
+            if ((param.param_type == ONNXParameterType.Single or param.param_type == ONNXParameterType.Variadic)
                     and len(self.type_constraints[param.type_str].types) == 0):
-                raise NotImplementedError(
-                    "None of the types for parameter '{}' are supported".
-                    format(param.name))
+                raise NotImplementedError("None of the types for parameter '{}' are supported".format(param.name))
 
         # check that all variadic parameter names do not contain "__"
         for param in chain(self.inputs, self.outputs):
             if param.param_type == ONNXParameterType.Variadic and "__" in param.name:
                 raise ValueError(
-                    "Unsupported parameter name '{}': variadic parameter names must not contain '__'"
-                    .format(param.name))
+                    "Unsupported parameter name '{}': variadic parameter names must not contain '__'".format(
+                        param.name))
 
         # check that all inputs and outputs have unique names
         seen = set()
         for param in self.inputs:
             if param.name in seen:
-                raise ValueError(
-                    "Got duplicate input parameter name '{}'".format(
-                        param.name))
+                raise ValueError("Got duplicate input parameter name '{}'".format(param.name))
             seen.add(param.name)
 
         seen = set()
         for param in self.outputs:
             if param.name in seen:
-                raise ValueError(
-                    "Got duplicate output parameter name '{}'".format(
-                        param.name))
+                raise ValueError("Got duplicate output parameter name '{}'".format(param.name))
             seen.add(param.name)

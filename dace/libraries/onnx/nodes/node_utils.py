@@ -60,15 +60,15 @@ def parse_variadic_param(param: str) -> Tuple[str, int]:
 
 def get_position(schema: ONNXSchema, is_input: bool, parameter_name: str):
     """Get the position that the parameter has in the ONNX op.
-    
+
     Args:
         schema: The ONNX schema containing parameter definitions
         is_input: True if looking for input parameters, False for output parameters
         parameter_name: The name of the parameter to find position for
-        
+
     Returns:
         The position index of the parameter in the operation signature
-        
+
     Raises:
         ValueError: If parameter is not found, has incorrect variadic format,
                    or schema validation fails

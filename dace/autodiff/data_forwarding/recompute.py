@@ -37,7 +37,7 @@ def _connect_recomputation_nsdfg(bwd_generator: 'BackwardPassGenerator', forward
                                  backward_state: SDFGState, target_an: nodes.AccessNode, target_node: nodes.Node,
                                  nsdfg: nodes.NestedSDFG, starting_edge: dstate.MultiConnectorEdge):
     """
-        
+
     """
     # Connect all the SDFG inputs to the nested SDFG
     # First, add the nested sdfg
@@ -111,10 +111,10 @@ def _connect_recomputation_nsdfg(bwd_generator: 'BackwardPassGenerator', forward
 
 
 def _prune_descendants_recomputation_nsdfg(forward_state: SDFGState, target_an: nodes.AccessNode,
-                                          nsdfg: nodes.NestedSDFG):
+                                           nsdfg: nodes.NestedSDFG):
     """
     1: From this Nested-SDFG, we remove everything that will be executed after the target access node to be recomputed
-    2: Prune the unnecessary computation inside the forward state 
+    2: Prune the unnecessary computation inside the forward state
         Note: this is even necessary sometimes since the output could be overwritten in the same state
     """
 
@@ -175,7 +175,7 @@ def _prune_descendants_recomputation_nsdfg(forward_state: SDFGState, target_an: 
 def _prune_recomputation_sdfg(forward_state: SDFGState, target_an: nodes.AccessNode, nsdfg: nodes.NestedSDFG):
     """
     1: From this Nested-SDFG, we remove everything that will be executed after the target access node to be recomputed
-    2: Prune the unnecessary computation inside the forward state 
+    2: Prune the unnecessary computation inside the forward state
         Note: this is even necessary sometimes since the output could be overwritten in the same state
     3: TODO: From the target access node, we go backward in the graph and see what elements are required to get this array
     """

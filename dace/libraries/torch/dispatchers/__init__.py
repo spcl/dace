@@ -18,8 +18,4 @@ from .common import DaCeMLTorchFunction
 from .cpp_torch_extension import register_and_compile_torch_extension
 from .ctypes_module import get_ctypes_dispatcher
 
-__all__ = [
-    "DaCeMLTorchFunction",
-    "register_and_compile_torch_extension",
-    "get_ctypes_dispatcher"
-]
+__all__ = ["DaCeMLTorchFunction", "register_and_compile_torch_extension", "get_ctypes_dispatcher"]

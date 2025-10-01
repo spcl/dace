@@ -229,7 +229,7 @@ def module(
                      ``module``.
         :param training: whether to use train mode when tracing ``model``.
         :param backward: whether to enable the backward pass.
-        :param inputs_to_skip: if provided, a list of inputs to skip computing gradients for. 
+        :param inputs_to_skip: if provided, a list of inputs to skip computing gradients for.
                                (only relevant when the backward pass is enabled)
         :param onnx_simplify: whether to apply onnx simplification using onnxsim.
         :param simplify: whether to apply simplification transforms after conversion (this generally improves performance,

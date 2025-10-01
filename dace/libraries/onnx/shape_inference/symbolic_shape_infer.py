@@ -15,12 +15,12 @@ assert version.parse(onnx.__version__) >= version.parse("1.5.0")
 
 def get_attribute(node, attr_name, default_value=None):
     """Get an attribute value from an ONNX node.
-    
+
     Args:
         node: The ONNX node
         attr_name: Name of the attribute to retrieve
         default_value: Default value if attribute is not found
-        
+
     Returns:
         The attribute value or default_value if not found
     """
@@ -32,10 +32,10 @@ def get_attribute(node, attr_name, default_value=None):
 
 def get_dim_from_type_proto(dim):
     """Extract dimension value from type proto.
-    
+
     Args:
         dim: The dimension proto
-        
+
     Returns:
         The dimension value or None if not available
     """
@@ -44,10 +44,10 @@ def get_dim_from_type_proto(dim):
 
 def get_shape_from_type_proto(type_proto):
     """Extract shape from type proto.
-    
+
     Args:
         type_proto: The type proto
-        
+
     Returns:
         List of dimension values or None if shape is not available
     """
@@ -61,10 +61,10 @@ def get_shape_from_type_proto(type_proto):
 
 def get_shape_from_sympy_shape(sympy_shape):
     """Convert sympy shape to standard shape format.
-    
+
     Args:
         sympy_shape: The sympy shape representation
-        
+
     Returns:
         List of dimensions in standard format
     """
@@ -73,10 +73,10 @@ def get_shape_from_sympy_shape(sympy_shape):
 
 def is_literal(dim):
     """Check if a dimension is a literal value.
-    
+
     Args:
         dim: The dimension to check
-        
+
     Returns:
         True if the dimension is a literal value
     """
@@ -85,14 +85,14 @@ def is_literal(dim):
 
 def handle_negative_axis(axis, rank):
     """Handle negative axis values by converting to positive equivalent.
-    
+
     Args:
         axis: The axis value (can be negative)
         rank: The tensor rank
-        
+
     Returns:
         The positive axis value
-        
+
     Raises:
         AssertionError: If axis is out of valid range
     """
@@ -102,11 +102,11 @@ def handle_negative_axis(axis, rank):
 
 def get_opset(mp, domain=None):
     """Get opset version from model proto.
-    
+
     Args:
         mp: The model proto
         domain: The domain to check (default checks standard ONNX domains)
-        
+
     Returns:
         The opset version or None if not found
     """
@@ -121,10 +121,10 @@ def get_opset(mp, domain=None):
 
 def as_scalar(x):
     """Convert input to scalar value.
-    
+
     Args:
         x: Input value (can be list, numpy array, or scalar)
-        
+
     Returns:
         Scalar value
     """
@@ -139,11 +139,11 @@ def as_scalar(x):
 
 def as_list(x, keep_none):
     """Convert input to list format.
-    
+
     Args:
         x: Input value
         keep_none: Whether to keep None values
-        
+
     Returns:
         List representation of input
     """
@@ -159,10 +159,10 @@ def as_list(x, keep_none):
 
 def sympy_reduce_product(x):
     """Compute product of sympy expressions.
-    
+
     Args:
         x: Input value or list of values
-        
+
     Returns:
         Product of all values
     """
@@ -177,10 +177,10 @@ def sympy_reduce_product(x):
 
 def get_numpy_dtype_from_onnx_tensor_type(tensor_type):
     """Convert ONNX tensor type to numpy dtype.
-    
+
     Args:
         tensor_type: ONNX tensor type (int)
-        
+
     Returns:
         numpy dtype
     """
@@ -202,10 +202,10 @@ def get_numpy_dtype_from_onnx_tensor_type(tensor_type):
 
 class SymbolicShapeInference:
     """Symbolic shape inference for ONNX models.
-    
+
     This class performs symbolic shape inference on ONNX models, allowing for
     dynamic shapes and symbolic dimensions.
-    
+
     Args:
         int_max: Maximum integer value for boundless operations
         auto_merge: Whether to automatically merge symbolic dimensions on conflicts
@@ -290,7 +290,7 @@ class SymbolicShapeInference:
 
     def _add_suggested_merge(self, symbols, apply=False):
         """Add suggested merge for symbolic dimensions.
-        
+
         Args:
             symbols: List of symbols to merge
             apply: Whether to apply the merge immediately
@@ -341,7 +341,7 @@ class SymbolicShapeInference:
 
     def _apply_suggested_merge(self, graph_input_only=False):
         """Apply suggested merges to the graph.
-        
+
         Args:
             graph_input_only: Whether to apply only to graph inputs
         """
@@ -358,7 +358,7 @@ class SymbolicShapeInference:
 
     def _preprocess(self, in_mp):
         """Preprocess the input model proto.
-        
+
         Args:
             in_mp: Input model proto
         """
@@ -372,10 +372,10 @@ class SymbolicShapeInference:
 
     def _merge_symbols(self, dims):
         """Merge symbolic dimensions if possible.
-        
+
         Args:
             dims: List of dimensions to merge
-            
+
         Returns:
             Merged dimension or None if merge is not possible
         """
@@ -409,11 +409,11 @@ class SymbolicShapeInference:
     # broadcast from right to left, and merge symbolic dims if needed
     def _broadcast_shapes(self, shape1, shape2):
         """Broadcast two shapes according to broadcasting rules.
-        
+
         Args:
             shape1: First shape
             shape2: Second shape
-            
+
         Returns:
             Broadcasted shape
         """
@@ -443,11 +443,11 @@ class SymbolicShapeInference:
 
     def _get_shape(self, node, idx):
         """Get shape for a node input.
-        
+
         Args:
             node: The ONNX node
             idx: Input index
-            
+
         Returns:
             Shape of the specified input
         """
@@ -460,11 +460,11 @@ class SymbolicShapeInference:
 
     def _get_shape_rank(self, node, idx):
         """Get rank (number of dimensions) for a node input.
-        
+
         Args:
             node: The ONNX node
             idx: Input index
-            
+
         Returns:
             Rank of the specified input
         """
@@ -472,11 +472,11 @@ class SymbolicShapeInference:
 
     def _get_sympy_shape(self, node, idx):
         """Get sympy representation of shape for a node input.
-        
+
         Args:
             node: The ONNX node
             idx: Input index
-            
+
         Returns:
             Sympy shape representation
         """
@@ -492,11 +492,11 @@ class SymbolicShapeInference:
 
     def _get_value(self, node, idx):
         """Get value for a node input.
-        
+
         Args:
             node: The ONNX node
             idx: Input index
-            
+
         Returns:
             Value of the specified input
         """
@@ -506,11 +506,11 @@ class SymbolicShapeInference:
 
     def _try_get_value(self, node, idx):
         """Try to get value for a node input.
-        
+
         Args:
             node: The ONNX node
             idx: Input index
-            
+
         Returns:
             Value of the specified input or None if not available
         """
@@ -523,7 +523,7 @@ class SymbolicShapeInference:
 
     def _update_computed_dims(self, new_sympy_shape):
         """Update computed dimensions with new sympy shape.
-        
+
         Args:
             new_sympy_shape: New sympy shape to process
         """
@@ -541,7 +541,7 @@ class SymbolicShapeInference:
 
     def _onnx_infer_single_node(self, node):
         """Run ONNX shape inference for a single node.
-        
+
         Args:
             node: The ONNX node to infer
         """
@@ -594,12 +594,12 @@ class SymbolicShapeInference:
 
     def _onnx_infer_subgraph(self, node, subgraph, use_node_input=True):
         """Run ONNX shape inference for a subgraph.
-        
+
         Args:
             node: The parent node containing the subgraph
             subgraph: The subgraph to infer
             use_node_input: Whether to use node input for subgraph
-            
+
         Returns:
             SymbolicShapeInference instance for the subgraph
         """
@@ -651,12 +651,12 @@ class SymbolicShapeInference:
 
     def _get_int_values(self, node, broadcast=False, input_idx=None):
         """Get integer values from node inputs.
-        
+
         Args:
             node: The ONNX node
             broadcast: Whether to broadcast values to same length
             input_idx: If specified, only process these input indices. Otherwise process all inputs.
-            
+
         Returns:
             List of integer values from inputs
         """
@@ -694,7 +694,7 @@ class SymbolicShapeInference:
 
     def _compute_on_sympy_data(self, node, op_func, input_indices=None):
         """Compute symbolic data using the provided operation function.
-        
+
         Args:
             node: The ONNX node
             op_func: Function to apply on the input values
@@ -718,7 +718,7 @@ class SymbolicShapeInference:
 
     def _pass_on_sympy_data(self, node):
         """Pass sympy data from first input to output unchanged.
-        
+
         Args:
             node: The ONNX node
         """
@@ -727,7 +727,7 @@ class SymbolicShapeInference:
 
     def _pass_on_shape_and_type(self, node):
         """Pass shape and type from first input to output.
-        
+
         Args:
             node: The ONNX node
         """
@@ -738,11 +738,11 @@ class SymbolicShapeInference:
 
     def _new_symbolic_dim(self, prefix, dim):
         """Create a new symbolic dimension.
-        
+
         Args:
             prefix: Prefix for the symbolic dimension name
             dim: Dimension index
-            
+
         Returns:
             New symbolic dimension
         """
@@ -756,12 +756,12 @@ class SymbolicShapeInference:
 
     def _new_symbolic_dim_from_output(self, node, out_idx=0, dim=0):
         """Create a new symbolic dimension based on node output.
-        
+
         Args:
             node: The ONNX node
             out_idx: Output index
             dim: Dimension index
-            
+
         Returns:
             New symbolic dimension
         """
@@ -771,12 +771,12 @@ class SymbolicShapeInference:
 
     def _new_symbolic_shape(self, rank, node, out_idx=0):
         """Create a new symbolic shape with given rank.
-        
+
         Args:
             rank: Number of dimensions
             node: The ONNX node
             out_idx: Output index
-            
+
         Returns:
             List of symbolic dimensions forming the shape
         """
@@ -784,10 +784,10 @@ class SymbolicShapeInference:
 
     def _compute_conv_pool_shape(self, node):
         """Compute output shape for convolution and pooling operations.
-        
+
         Args:
             node: The ONNX node
-            
+
         Returns:
             Computed sympy shape
         """
@@ -854,7 +854,7 @@ class SymbolicShapeInference:
 
     def _check_merged_dims(self, dims, allow_broadcast=True):
         """Check and suggest merging dimensions if needed.
-        
+
         Args:
             dims: List of dimensions to check
             allow_broadcast: Whether to allow broadcasting rules
@@ -866,7 +866,7 @@ class SymbolicShapeInference:
 
     def _compute_matmul_shape(self, node, output_dtype=None):
         """Compute output shape for matrix multiplication.
-        
+
         Args:
             node: The ONNX node
             output_dtype: Output data type (inferred if None)
@@ -1536,7 +1536,7 @@ class SymbolicShapeInference:
 
     def _infer_Split_Common(self, node, make_value_info_func):
         """Common inference logic for Split operations.
-        
+
         Args:
             node: The ONNX node
             make_value_info_func: Function to create value info
@@ -1706,7 +1706,7 @@ class SymbolicShapeInference:
 
     def _propagate_shape_and_type(self, node, input_index=0, output_index=0):
         """Pass shape and type from input to output.
-        
+
         Args:
             node: The ONNX node
             input_index: Index of the input to copy shape and type from
@@ -1719,10 +1719,10 @@ class SymbolicShapeInference:
 
     def _infer_impl(self, start_sympy_data=None):
         """Main implementation of symbolic shape inference.
-        
+
         Args:
             start_sympy_data: Initial symbolic data to start with
-            
+
         Returns:
             True if all shapes were successfully inferred, False otherwise
         """
@@ -1909,17 +1909,17 @@ class SymbolicShapeInference:
     @staticmethod
     def infer_shapes(in_mp, int_max=2**31 - 1, auto_merge=False, guess_output_rank=False, verbose=0):
         """Perform symbolic shape inference on an ONNX model.
-        
+
         Args:
             in_mp: Input model proto
             int_max: Maximum integer value for boundless operations
             auto_merge: Whether to automatically merge symbolic dimensions
             guess_output_rank: Whether to guess output rank for unknown operations
             verbose: Verbosity level
-            
+
         Returns:
             Model proto with inferred shapes
-            
+
         Raises:
             Exception: If symbolic shape inference is incomplete
         """
@@ -1937,7 +1937,7 @@ class SymbolicShapeInference:
 
 def parse_arguments():
     """Parse command line arguments for the shape inference tool.
-    
+
     Returns:
         Parsed arguments
     """

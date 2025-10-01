@@ -26,12 +26,12 @@ class PureMaxPool2D(ONNXForward):
     @staticmethod
     def forward_can_be_applied(node: ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
         """Check if this implementation can be applied to the given node.
-        
+
         Args:
             node: The MaxPool ONNX node
             state: The SDFG state containing the node
             sdfg: The parent SDFG
-            
+
         Returns:
             True if the implementation can be applied, False otherwise
         """
@@ -66,12 +66,12 @@ class PureMaxPool2D(ONNXForward):
     @staticmethod
     def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[nodes.Node, SDFG]:
         """Generate the forward pass implementation for MaxPool2D.
-        
+
         Args:
             node: The MaxPool ONNX node
             state: The SDFG state containing the node
             sdfg: The parent SDFG
-            
+
         Returns:
             A nested SDFG implementing the MaxPool operation
         """
@@ -129,7 +129,7 @@ class PureMaxPool2D(ONNXForward):
                                 for (int hy = 0; hy < {filter_hy}; hy++) {{
                                     int sx = hx + out_x * {stride_x} - {pad_x};
                                     int sy = hy + out_y * {stride_y} - {pad_y};
-                                    
+
                                     if (0 <= sx && sx < {input_size_x} && 0 <= sy && sy < {input_size_y}) {{
                                         float input_val = __X[b * {X.strides[0]} + c * {X.strides[1]} + sx * {X.strides[2]} + sy * {X.strides[3]}];
                                         float& output_val = __Y[b * {Y.strides[0]} + c * {Y.strides[1]} + out_x * {Y.strides[2]} + out_y * {Y.strides[3]}];
@@ -158,12 +158,12 @@ class PureConv2D(ONNXForward):
     @staticmethod
     def forward_can_be_applied(node: ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
         """Check if this implementation can be applied to the given node.
-        
+
         Args:
             node: The Conv ONNX node
             state: The SDFG state containing the node
             sdfg: The parent SDFG
-            
+
         Returns:
             True if the implementation can be applied, False otherwise
         """
@@ -223,12 +223,12 @@ class PureConv2D(ONNXForward):
     @staticmethod
     def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[nodes.Node, SDFG]:
         """Generate the forward pass implementation for Conv2D.
-        
+
         Args:
             node: The Conv ONNX node
             state: The SDFG state containing the node
             sdfg: The parent SDFG
-            
+
         Returns:
             A nested SDFG implementing the Conv operation
         """
@@ -318,21 +318,21 @@ class PureConv2D(ONNXForward):
                 // Each group processes a subset of input/output channels
                 int in_channel_start = g * {channels_per_group};
                 int out_channel_start = g * {filters_per_group};
-                
+
                 for (int m = 0; m < {filters_per_group}; m++) {{
                     int out_channel = out_channel_start + m;
-                    
+
                     for (int out_x = 0; out_x < {output_size_x}; out_x++) {{
                         for (int out_y = 0; out_y < {output_size_y}; out_y++) {{
                             // Only convolve with channels in the same group
                             for (int c = 0; c < {channels_per_group}; c++) {{
                                 int in_channel = in_channel_start + c;
-                                
+
                                 for (int hx = 0; hx < {filter_hx}; hx++) {{
                                     for (int hy = 0; hy < {filter_hy}; hy++) {{
                                         int sx = hx + out_x * {stride_x} - {pad_x};
                                         int sy = hy + out_y * {stride_y} - {pad_y};
-                                        
+
                                         if (0 <= sx && sx < {input_size_x} && 0 <= sy && sy < {input_size_y}) {{
                                             // Note: Weight tensor layout for grouped conv:
                                             // [num_filters, channels_per_group, filter_hx, filter_hy]
@@ -386,12 +386,12 @@ class PureBatchNormalization(ONNXForward):
     @staticmethod
     def forward_can_be_applied(node: ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
         """Check if this implementation can be applied to the given node.
-        
+
         Args:
             node: The BatchNormalization ONNX node
             state: The SDFG state containing the node
             sdfg: The parent SDFG
-            
+
         Returns:
             True if the implementation can be applied, False otherwise
         """
@@ -418,12 +418,12 @@ class PureBatchNormalization(ONNXForward):
     @staticmethod
     def forward(node: ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[nodes.Node, SDFG]:
         """Generate the forward pass implementation for BatchNormalization.
-        
+
         Args:
             node: The BatchNormalization ONNX node
             state: The SDFG state containing the node
             sdfg: The parent SDFG
-            
+
         Returns:
             A nested SDFG implementing the BatchNormalization operation
         """
@@ -510,12 +510,12 @@ class PureGlobalAveragePool(ONNXForward):
     @staticmethod
     def forward_can_be_applied(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> bool:
         """Check if this implementation can be applied to the given node.
-        
+
         Args:
             node: The GlobalAveragePool ONNX node
             state: The SDFG state containing the node
             sdfg: The parent SDFG
-            
+
         Returns:
             Always True for this implementation
         """
@@ -524,12 +524,12 @@ class PureGlobalAveragePool(ONNXForward):
     @staticmethod
     def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
         """Generate the forward pass implementation for GlobalAveragePool.
-        
+
         Args:
             node: The GlobalAveragePool ONNX node
             state: The SDFG state containing the node
             sdfg: The parent SDFG
-            
+
         Returns:
             A nested SDFG implementing the GlobalAveragePool operation
         """

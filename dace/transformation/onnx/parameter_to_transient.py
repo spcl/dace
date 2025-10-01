@@ -10,8 +10,6 @@ from dace.libraries.onnx.converters import clean_onnx_name
 from dace.libraries.torch import dlpack
 from dace.frontend.python.module import DaceModule
 
-
-
 log = logging.getLogger(__name__)
 
 
@@ -30,29 +28,22 @@ def parameter_to_transient(dace_module: DaceModule, parameter_path: str):
     dace_module.dace_model.inputs.remove(parameter_path)
 
     # the the access node for this array of this array
-    cands = [(node, parent)
-             for (node, parent) in dace_module.sdfg.all_nodes_recursive()
+    cands = [(node, parent) for (node, parent) in dace_module.sdfg.all_nodes_recursive()
              if isinstance(node, nodes.AccessNode) and node.data == array_name]
 
     if len(cands) == 0:
-        log.warning(
-            f"Could not find access node with name '{array_name}', skipping parameter to transient",
-        )
+        log.warning(f"Could not find access node with name '{array_name}', skipping parameter to transient", )
         return
 
     if len(cands) != 1:
-        raise ValueError(
-            "parameter_to_transient does not work when the target array has multiple AccessNodes"
-        )
+        raise ValueError("parameter_to_transient does not work when the target array has multiple AccessNodes")
 
     if array_name not in dace_module.sdfg.arrays:
         raise ValueError(f"Could not find parameter {array_name} in sdfg.")
 
-    if dace_module.sdfg.arrays[
-            array_name].storage is dtypes.StorageType.GPU_Global:
+    if dace_module.sdfg.arrays[array_name].storage is dtypes.StorageType.GPU_Global:
         dace_module.sdfg.arrays[array_name].transient = True
-        dace_module.sdfg.arrays[
-            array_name].lifetime = dtypes.AllocationLifetime.Persistent
+        dace_module.sdfg.arrays[array_name].lifetime = dtypes.AllocationLifetime.Persistent
         gpu_array_name = array_name
     else:
 
@@ -60,23 +51,18 @@ def parameter_to_transient(dace_module: DaceModule, parameter_path: str):
         state: dace.SDFGState
         cand, state = cands[0]
         if state.out_degree(cand) != 1:
-            raise ValueError(
-                f"expected one out edge coming out of {cand}, found {state.out_degree(cand)}"
-            )
+            raise ValueError(f"expected one out edge coming out of {cand}, found {state.out_degree(cand)}")
         _, _, dst_node, _, _ = state.out_edges(cand)[0]
         if (not isinstance(dst_node, nodes.AccessNode)
-                or dace_module.sdfg.arrays[dst_node.data].storage
-                is not dtypes.StorageType.GPU_Global):
-            raise ValueError(
-                f"parameter_to_transient only works for arrays that are copied to GPU_Global arrays,"
-                f" but array {array_name} was connected to {dst_node}")
+                or dace_module.sdfg.arrays[dst_node.data].storage is not dtypes.StorageType.GPU_Global):
+            raise ValueError(f"parameter_to_transient only works for arrays that are copied to GPU_Global arrays,"
+                             f" but array {array_name} was connected to {dst_node}")
 
         gpu_array_name = dst_node.data
 
         # since it is parsable, proceed with the transformation
         dace_module.sdfg.arrays[gpu_array_name].transient = True
-        dace_module.sdfg.arrays[
-            gpu_array_name].lifetime = dtypes.AllocationLifetime.Persistent
+        dace_module.sdfg.arrays[gpu_array_name].lifetime = dtypes.AllocationLifetime.Persistent
 
         # remove the CPU node
         state.remove_node(cand)
@@ -90,15 +76,11 @@ def parameter_to_transient(dace_module: DaceModule, parameter_path: str):
         struct_entry_name = f'__{param_sdfg.sdfg_id}_{gpu_array_name}'
 
         if not hasattr(struct, struct_entry_name):
-            raise ValueError(
-                f"Could not parse parameter {gpu_array_name} from state_struct."
-            )
+            raise ValueError(f"Could not parse parameter {gpu_array_name} from state_struct.")
 
         ptr = getattr(struct, struct_entry_name)
         # copy the data into the torch parameter tensor
-        torch_tensor = dlpack.array_to_torch_tensor(
-            ptr, param_sdfg.arrays[gpu_array_name])
+        torch_tensor = dlpack.array_to_torch_tensor(ptr, param_sdfg.arrays[gpu_array_name])
         torch_tensor[:] = pt_tensor
 
-    dace_module.post_compile_hooks["init_" +
-                                   pt_weight_name] = post_compile_hook
+    dace_module.post_compile_hooks["init_" + pt_weight_name] = post_compile_hook

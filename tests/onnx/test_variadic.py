@@ -42,4 +42,5 @@ def test_sum(sdfg_name: str):
 
     numpy_result = A + B + C
 
-    assert np.allclose(result, numpy_result), f"Variadic sum mismatch: max diff = {np.max(np.abs(result - numpy_result))}"
+    assert np.allclose(result,
+                       numpy_result), f"Variadic sum mismatch: max diff = {np.max(np.abs(result - numpy_result))}"

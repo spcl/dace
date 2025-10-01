@@ -56,9 +56,8 @@ def get_arglist(module: 'dace.frontend.python.module.DaceModule') -> Tuple[List[
 
 
 def compile_and_init_sdfgs(
-        module: 'dace.frontend.python.module.DaceModule',
-        dummy_inputs) -> Union[Tuple[CompiledSDFG, torch.Tensor],
-                               Tuple[CompiledSDFG, torch.Tensor, CompiledSDFG, torch.Tensor]]:
+    module: 'dace.frontend.python.module.DaceModule', dummy_inputs
+) -> Union[Tuple[CompiledSDFG, torch.Tensor], Tuple[CompiledSDFG, torch.Tensor, CompiledSDFG, torch.Tensor]]:
     """
     Compile SDFGs and initialize them using the provided dummy inputs.
 

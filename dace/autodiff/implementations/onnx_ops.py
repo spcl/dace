@@ -82,12 +82,8 @@ class DefaultEinsumBackward(BackwardImplementation):
         return pure_implementations.PureEinsum.forward_can_be_applied(node, state, sdfg)
 
     @staticmethod
-    def backward(
-        forward_node: nd.Node,
-        context: BackwardContext,
-        given_gradients: List[Optional[str]],
-        required_gradients: List[Optional[str]]
-    ) -> Tuple[nd.Node, BackwardResult]:
+    def backward(forward_node: nd.Node, context: BackwardContext, given_gradients: List[Optional[str]],
+                 required_gradients: List[Optional[str]]) -> Tuple[nd.Node, BackwardResult]:
 
         nsdfg = dace.SDFG(forward_node.label + "_backward")
         nstate = nsdfg.add_state()
@@ -429,12 +425,8 @@ class DefaultLogSoftmaxBackward(BackwardImplementation):
     """
 
     @staticmethod
-    def backward(
-        forward_node: nd.Node,
-        context: BackwardContext,
-        given_gradients: List[Optional[str]],
-        required_gradients: List[Optional[str]]
-    ) -> Tuple[nd.Node, BackwardResult]:
+    def backward(forward_node: nd.Node, context: BackwardContext, given_gradients: List[Optional[str]],
+                 required_gradients: List[Optional[str]]) -> Tuple[nd.Node, BackwardResult]:
 
         dim = forward_node.axis
         output_shape = butils.forward_out_desc_with_name(forward_node, context, "output").shape
@@ -473,12 +465,8 @@ class PyTorchConvBackward(BackwardImplementation):
         return len(X_desc.shape) == 4
 
     @staticmethod
-    def backward(
-        forward_node: nd.Node,
-        context: BackwardContext,
-        given_gradients: List[Optional[str]],
-        required_gradients: List[Optional[str]]
-    ) -> Tuple[nd.Node, BackwardResult]:
+    def backward(forward_node: nd.Node, context: BackwardContext, given_gradients: List[Optional[str]],
+                 required_gradients: List[Optional[str]]) -> Tuple[nd.Node, BackwardResult]:
 
         nsdfg = dace.SDFG(forward_node.label + "_backward")
         X_desc = butils.forward_in_desc_with_name(forward_node, context, "X")
@@ -490,10 +478,8 @@ class PyTorchConvBackward(BackwardImplementation):
         elif str(T) == 'double':
             pytorch_dtype = 'kDouble'
         else:
-            raise ValueError(
-                f"PyTorch backward conv expansion supports only float and double tensors, got {str(T)}. "
-                f"Supported types: float, double"
-            )
+            raise ValueError(f"PyTorch backward conv expansion supports only float and double tensors, got {str(T)}. "
+                             f"Supported types: float, double")
 
         # setup gradient arrays
         result = BackwardResult.empty()
@@ -542,12 +528,12 @@ class PyTorchConvBackward(BackwardImplementation):
             at::Tensor dy = at::from_blob(_dY, x_shape, x_strides, [](void*){{}}, at::TensorOptions().device(at::kCUDA).dtype(at::{pytorch_dtype}).requires_grad(false));
             at::Tensor dw = at::from_blob(_dW, w_shape, w_strides, [](void*){{}}, at::TensorOptions().device(at::kCUDA).dtype(at::{pytorch_dtype}).requires_grad(false));
             at::Tensor dx = at::from_blob(_dX, x_shape, x_strides, [](void*){{}}, at::TensorOptions().device(at::kCUDA).dtype(at::{pytorch_dtype}).requires_grad(false));
-            
+
             std::vector<int64_t> kernel_shape = {{ {", ".join(map(str, forward_node.kernel_shape))} }};
             std::vector<int64_t> conv_strides = {{ {", ".join(map(str, forward_node.strides))} }};
             std::vector<int64_t> padding = {{ {", ".join(map(str, forward_node.pads[::2]))} }};
             std::vector<int64_t> dilation = {{ {", ".join(map(str, forward_node.dilations))} }};
-            
+
             at::thnn_conv_depthwise2d_backward_out(dx, dw, dy, x, w, kernel_shape, conv_strides, padding, dilation);
         """
 
@@ -590,12 +576,8 @@ class PureGlobalAveragePoolingBackward(BackwardImplementation):
         return len(in_desc_with_name(node, state, sdfg, "X").shape) == 4
 
     @staticmethod
-    def backward(
-        forward_node: nd.Node,
-        context: BackwardContext,
-        given_gradients: List[Optional[str]],
-        required_gradients: List[Optional[str]]
-    ) -> Tuple[nd.Node, BackwardResult]:
+    def backward(forward_node: nd.Node, context: BackwardContext, given_gradients: List[Optional[str]],
+                 required_gradients: List[Optional[str]]) -> Tuple[nd.Node, BackwardResult]:
         desc = butils.forward_in_desc_with_name(forward_node, context, "X")
         N, C, H, W = desc.shape
         dtype = desc.dtype
@@ -620,12 +602,8 @@ class DefaultTransposeBackward(BackwardImplementation):
     """
 
     @staticmethod
-    def backward(
-        forward_node: nd.Node,
-        context: BackwardContext,
-        given_gradients: List[Optional[str]],
-        required_gradients: List[Optional[str]]
-    ) -> Tuple[nd.Node, BackwardResult]:
+    def backward(forward_node: nd.Node, context: BackwardContext, given_gradients: List[Optional[str]],
+                 required_gradients: List[Optional[str]]) -> Tuple[nd.Node, BackwardResult]:
         inv_perm = tuple(np.argsort(forward_node.perm))
 
         node = donnx.ONNXTranspose(forward_node.name + "_backward", perm=inv_perm)
@@ -647,12 +625,8 @@ class WhereBackward(BackwardImplementation):
     """
 
     @staticmethod
-    def backward(
-        forward_node: nd.Node,
-        context: BackwardContext,
-        given_gradients: List[Optional[str]],
-        required_gradients: List[Optional[str]]
-    ) -> Tuple[nd.Node, BackwardResult]:
+    def backward(forward_node: nd.Node, context: BackwardContext, given_gradients: List[Optional[str]],
+                 required_gradients: List[Optional[str]]) -> Tuple[nd.Node, BackwardResult]:
         # condition, X, Y -> Output
         # Get condition descriptor for shape information
         _ = butils.forward_in_desc_with_name(forward_node, context, "condition")
@@ -692,12 +666,8 @@ class DefaultLayerNormalizationBackward(BackwardImplementation):
     """
 
     @staticmethod
-    def backward(
-        forward_node: nd.Node,
-        context: BackwardContext,
-        given_gradients: List[Optional[str]],
-        required_gradients: List[Optional[str]]
-    ) -> Tuple[nd.Node, BackwardResult]:
+    def backward(forward_node: nd.Node, context: BackwardContext, given_gradients: List[Optional[str]],
+                 required_gradients: List[Optional[str]]) -> Tuple[nd.Node, BackwardResult]:
         # Create new SDFG
         nsdfg = dace.SDFG(forward_node.label + "_backward")
         nstate = nsdfg.add_state()
@@ -1060,12 +1030,8 @@ class DefaultReduceSumBackward(BackwardImplementation):
         return True
 
     @staticmethod
-    def backward(
-        forward_node: nd.Node,
-        context: BackwardContext,
-        given_gradients: List[Optional[str]],
-        required_gradients: List[Optional[str]]
-    ) -> Tuple[nd.Node, BackwardResult]:
+    def backward(forward_node: nd.Node, context: BackwardContext, given_gradients: List[Optional[str]],
+                 required_gradients: List[Optional[str]]) -> Tuple[nd.Node, BackwardResult]:
 
         # The backward pass of a reduction is a broadcast.
         # We use ONNXExpand to perform the broadcast.
@@ -1108,10 +1074,8 @@ class DefaultReduceSumBackward(BackwardImplementation):
             unsqueezed_shape = []
             axes = []
             if len(in_shape) < len(out_shape):
-                raise ValueError(
-                    f"Input shape {in_shape} has fewer dimensions than output shape {out_shape}. "
-                    f"This is unexpected for a ReduceSum operation."
-                )
+                raise ValueError(f"Input shape {in_shape} has fewer dimensions than output shape {out_shape}. "
+                                 f"This is unexpected for a ReduceSum operation.")
             if len(in_shape) > len(out_shape):
                 # This assumes that non-reduced dimensions are preserved in order.
                 out_shape_idx = 0
@@ -1125,10 +1089,8 @@ class DefaultReduceSumBackward(BackwardImplementation):
 
             # If shapes are equal, it's a no-op reduction and axes is empty.
             if (not axes) != (len(in_shape) == len(out_shape)):
-                raise ValueError(
-                    f"Inconsistent state: axes={axes}, input_shape={in_shape}, output_shape={out_shape}. "
-                    f"For equal shapes, axes should be empty."
-                )
+                raise ValueError(f"Inconsistent state: axes={axes}, input_shape={in_shape}, output_shape={out_shape}. "
+                                 f"For equal shapes, axes should be empty.")
 
             if 'axes' in forward_node.in_connectors:
                 # The axes are a dynamic input to the forward node. Pass them to the backward node.
