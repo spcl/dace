@@ -659,7 +659,6 @@ def register_and_compile_torch_extension(module: 'dace.frontend.python.module.Da
         ],
         extra_ldflags=[
             f'-L{conda_lib_path}',
-            '-lcblas',
         ],
         is_python_module=False,
     )
