@@ -320,8 +320,8 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
         if not sdfg.arrays[array_name].transient:
             return False
 
-        # Views are not supported
-        if isinstance(sdfg.arrays[array_name], dt.View):
+        # Views and References are not supported
+        if isinstance(sdfg.arrays[array_name], dt.View) or isinstance(sdfg.arrays[array_name], dt.Reference):
             return False
 
         # Loop step expression must be constant.
