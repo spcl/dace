@@ -629,12 +629,15 @@ def register_and_compile_torch_extension(module: 'dace.frontend.python.module.Da
                          environments=environments)
     torch_module_build_path = os.path.join('.dacecache', f"torch_{compiled.sdfg.name}")
 
+    parts = os.path.normpath(compiled.filename).split(os.sep)
+    sdfg_folder_name = parts[parts.index('.dacecache') + 1]
+    backward_sdfg_folder_name = f"{compiled.sdfg.name}_backward_{sdfg_folder_name.removeprefix(compiled.sdfg.name + '_')}"
     compiler.generate_program_folder(None, [program], torch_module_build_path)
-    include_path = os.path.abspath(os.path.join('.dacecache', compiled.sdfg.name, "include"))
-    include_path_bwd = os.path.abspath(os.path.join('.dacecache', f"{compiled.sdfg.name}_backward", "include"))
+    include_path = os.path.abspath(os.path.join('.dacecache', sdfg_folder_name, "include"))
+    include_path_bwd = os.path.abspath(os.path.join('.dacecache', backward_sdfg_folder_name, "include"))
     dace_include_path = os.path.abspath(os.path.join(os.path.dirname(dace.__file__), "runtime", "include"))
-    code_path = os.path.join('.dacecache', compiled.sdfg.name, "src", "cpu", f"{compiled.sdfg.name}.cpp")
-    code_path_bwd = os.path.join('.dacecache', f"{compiled.sdfg.name}_backward", "src", "cpu",
+    code_path = os.path.join('.dacecache', sdfg_folder_name, "src", "cpu", f"{compiled.sdfg.name}.cpp")
+    code_path_bwd = os.path.join('.dacecache', backward_sdfg_folder_name, "src", "cpu",
                                  f"{compiled.sdfg.name}_backward.cpp")
     torch_code_path = os.path.join('.dacecache', f"torch_{compiled.sdfg.name}", "src", "cpu",
                                    f"torch_{compiled.sdfg.name}.cpp")
