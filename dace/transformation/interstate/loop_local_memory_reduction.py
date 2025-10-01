@@ -2,6 +2,7 @@
 
 import sympy as sp
 from dace import sdfg as sd, symbolic, properties
+from dace import data as dt
 from dace.sdfg import utils as sdutil
 from dace.sdfg.state import ControlFlowRegion, LoopRegion, ConditionalBlock
 from dace.data import Scalar
@@ -172,9 +173,14 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
         return (itervar not in defined_syms and step.free_symbols.isdisjoint(defined_syms)
                 and step.free_symbols.isdisjoint({itervar}) and resolved_step is not None), resolved_step
 
-    def _get_K_values(self, array_name: str, read_indices: list[list[Union[tuple, None]]],
-                      write_indices: list[list[Union[tuple,
-                                                     None]]], step: int, sdfg: sd.SDFG) -> list[Union[int, None]]:
+    def _get_K_values(
+        self,
+        array_name: str,
+        read_indices: list[list[Union[tuple, None]]],
+        write_indices: list[list[Union[tuple, None]]],
+        step: int,
+        sdfg: sd.SDFG,
+    ) -> list[Union[int, None]]:
         k_values = []
         max_indices = self._get_max_indices_before_loop(array_name, sdfg)
 
@@ -205,13 +211,13 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
             a = dim_read_indices[0][0] * step
             if a >= 1:
                 span = (write_ub - read_lb) / a
-                cond = write_lb > read_ub  # At least one write index must be higher than all read indices
+                cond = (write_lb > read_ub)  # At least one write index must be higher than all read indices
             if a == 0:
                 span = len(dim_read_indices + dim_write_indices)
-                cond = write_lb > read_ub  # At least one write index must be higher than all read indices
+                cond = (write_lb > read_ub)  # At least one write index must be higher than all read indices
             if a <= -1:
                 span = (read_ub - write_ub) / (-a)
-                cond = write_ub < read_lb  # At least one write index must be lower than all read indices
+                cond = (write_ub < read_lb)  # At least one write index must be lower than all read indices
 
             # If we have a span of one, it's enough that reads happen after writes in the loop.
             if span == 0:
@@ -222,6 +228,7 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
             # Take maximum from previous accesses into account
             try:
                 k = max(span, max_indices[dim])
+                not cond  # XXX: Ensure condition can be evaluated
             except TypeError:
                 k_values.append(None)
                 continue
@@ -311,6 +318,10 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
     def _can_apply_for_array(self, array_name: str, sdfg: sd.SDFG) -> bool:
         # Must be transient (otherwise it's observable)
         if not sdfg.arrays[array_name].transient:
+            return False
+
+        # Views are not supported
+        if isinstance(sdfg.arrays[array_name], dt.View):
             return False
 
         # Loop step expression must be constant.
@@ -446,13 +457,15 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
 
         # If the new shape is a single element, we can replace the array with a scalar.
         if all(s == 1 for s in new_shape):
-            sdfg.arrays[array_name] = Scalar(dtype=array.dtype,
-                                             transient=array.transient,
-                                             storage=array.storage,
-                                             allow_conflicts=array.allow_conflicts,
-                                             location=array.location,
-                                             lifetime=array.lifetime,
-                                             debuginfo=array.debuginfo)
+            sdfg.arrays[array_name] = Scalar(
+                dtype=array.dtype,
+                transient=array.transient,
+                storage=array.storage,
+                allow_conflicts=array.allow_conflicts,
+                location=array.location,
+                lifetime=array.lifetime,
+                debuginfo=array.debuginfo,
+            )
             for edge in read_edges:
                 edge.data.src_subset = Range([(0, 0, 1)])
             for edge in write_edges:
