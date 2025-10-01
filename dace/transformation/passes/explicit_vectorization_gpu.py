@@ -10,42 +10,72 @@ from dace.transformation.passes.explicit_vectorization import ExplicitVectorizat
 
 class ExplicitVectorizationPipelineGPU(ppl.Pipeline):
     _gpu_global_code = """
-__host__ __device__ __forceinline__ void vector_mult(double * __restrict__ c, const double * __restrict__ a, const double * __restrict__ b) {{
-    #pragma unroll
+template<typename T>
+__host__ __device__ __forceinline__ void vector_mult(T * __restrict__ c, const T * __restrict__ a, const T * __restrict__ b) {{
+    #pragma omp unroll
     for (int i = 0; i < {vector_width}; i++) {{
         c[i] = a[i] * b[i];
     }}
 }}
-__host__ __device__ __forceinline__ void vector_mult(double * __restrict__ b, const double * __restrict__ a, const double constant) {{
-    double cReg[{vector_width}];
-    #pragma unroll
+
+template<typename T>
+__host__ __device__ __forceinline__ void vector_mult_w_scalar(T * __restrict__ b, const T * __restrict__ a, const T constant) {{
+    T cReg[{vector_width}];
+    #pragma omp unroll
     for (int i = 0; i < {vector_width}; i++) {{
         cReg[i] = constant;
     }}
-    #pragma unroll
+    #pragma omp unroll
     for (int i = 0; i < {vector_width}; i++) {{
         b[i] = a[i] * cReg[i];
     }}
 }}
-__host__ __device__ __forceinline__ void vector_add(double * __restrict__ c, const double * __restrict__ a, const double * __restrict__ b) {{
-    #pragma unroll
+
+template<typename T>
+__host__ __device__ __forceinline__ void vector_add(T * __restrict__ c, const T * __restrict__ a, const T * __restrict__ b) {{
+    #pragma omp unroll
     for (int i = 0; i < {vector_width}; i++) {{
         c[i] = a[i] + b[i];
     }}
 }}
-__host__ __device__ __forceinline__ void vector_add(double * __restrict__ b, const double * __restrict__ a, const double constant) {{
-    double cReg[{vector_width}];
-    #pragma unroll
+
+template<typename T>
+__host__ __device__ __forceinline__ void vector_add_w_scalar(T * __restrict__ b, const T * __restrict__ a, const T constant) {{
+    T cReg[{vector_width}];
+    #pragma omp unroll
     for (int i = 0; i < {vector_width}; i++) {{
         cReg[i] = constant;
     }}
-    #pragma unroll
+    #pragma omp unroll
     for (int i = 0; i < {vector_width}; i++) {{
         b[i] = a[i] + cReg[i];
     }}
 }}
-__host__ __device__ __forceinline__ void vector_copy(double * __restrict__ dst, const double * __restrict__ src) {{
-    #pragma unroll
+
+template<typename T>
+__host__ __device__ __forceinline__ void vector_div(T * __restrict__ c, const T * __restrict__ a, const T * __restrict__ b) {{
+    #pragma omp unroll
+    for (int i = 0; i < {vector_width}; i++) {{
+        c[i] = a[i] / b[i];
+    }}
+}}
+
+template<typename T>
+__host__ __device__ __forceinline__ void vector_div_w_scalar(T * __restrict__ b, const T * __restrict__ a, const T constant) {{
+    T cReg[{vector_width}];
+    #pragma omp unroll
+    for (int i = 0; i < {vector_width}; i++) {{
+        cReg[i] = constant;
+    }}
+    #pragma omp unroll
+    for (int i = 0; i < {vector_width}; i++) {{
+        b[i] = a[i] / cReg[i];
+    }}
+}}
+
+template<typename T>
+__host__ __device__ __forceinline__ void vector_copy(T * __restrict__ dst, const T * __restrict__ src) {{
+    #pragma omp unroll
     for (int i = 0; i < {vector_width}; i++) {{
         dst[i] = src[i];
     }}

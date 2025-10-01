@@ -9,14 +9,17 @@ from dace.transformation.passes.explicit_vectorization import ExplicitVectorizat
 
 class ExplicitVectorizationPipelineCPU(ppl.Pipeline):
     _cpu_global_code = """
-inline void vector_mult(double * __restrict__ c, const double * __restrict__ a, const double * __restrict__ b) {{
+template<typename T>
+inline void vector_mult(T * __restrict__ c, const T * __restrict__ a, const T * __restrict__ b) {{
     #pragma omp unroll
     for (int i = 0; i < {vector_width}; i++) {{
         c[i] = a[i] * b[i];
     }}
 }}
-inline void vector_mult_w_scalar(double * __restrict__ b, const double * __restrict__ a, const double constant) {{
-    double cReg[{vector_width}];
+
+template<typename T>
+inline void vector_mult_w_scalar(T * __restrict__ b, const T * __restrict__ a, const T constant) {{
+    T cReg[{vector_width}];
     #pragma omp unroll
     for (int i = 0; i < {vector_width}; i++) {{
         cReg[i] = constant;
@@ -26,14 +29,18 @@ inline void vector_mult_w_scalar(double * __restrict__ b, const double * __restr
         b[i] = a[i] * cReg[i];
     }}
 }}
-inline void vector_add(double * __restrict__ c, const double * __restrict__ a, const double * __restrict__ b) {{
+
+template<typename T>
+inline void vector_add(T * __restrict__ c, const T * __restrict__ a, const T * __restrict__ b) {{
     #pragma omp unroll
     for (int i = 0; i < {vector_width}; i++) {{
         c[i] = a[i] + b[i];
     }}
 }}
-inline void vector_add_w_scalar(double * __restrict__ b, const double * __restrict__ a, const double constant) {{
-    double cReg[{vector_width}];
+
+template<typename T>
+inline void vector_add_w_scalar(T * __restrict__ b, const T * __restrict__ a, const T constant) {{
+    T cReg[{vector_width}];
     #pragma omp unroll
     for (int i = 0; i < {vector_width}; i++) {{
         cReg[i] = constant;
@@ -43,7 +50,30 @@ inline void vector_add_w_scalar(double * __restrict__ b, const double * __restri
         b[i] = a[i] + cReg[i];
     }}
 }}
-inline void vector_copy(double * __restrict__ dst, const double * __restrict__ src) {{
+
+template<typename T>
+inline void vector_div(T * __restrict__ c, const T * __restrict__ a, const T * __restrict__ b) {{
+    #pragma omp unroll
+    for (int i = 0; i < {vector_width}; i++) {{
+        c[i] = a[i] / b[i];
+    }}
+}}
+
+template<typename T>
+inline void vector_div_w_scalar(T * __restrict__ b, const T * __restrict__ a, const T constant) {{
+    T cReg[{vector_width}];
+    #pragma omp unroll
+    for (int i = 0; i < {vector_width}; i++) {{
+        cReg[i] = constant;
+    }}
+    #pragma omp unroll
+    for (int i = 0; i < {vector_width}; i++) {{
+        b[i] = a[i] / cReg[i];
+    }}
+}}
+
+template<typename T>
+inline void vector_copy(T * __restrict__ dst, const T * __restrict__ src) {{
     #pragma omp unroll
     for (int i = 0; i < {vector_width}; i++) {{
         dst[i] = src[i];
@@ -63,8 +93,10 @@ inline void vector_copy(double * __restrict__ dst, const double * __restrict__ s
                 templates={
                     "*": "vector_mult({lhs}, {rhs1}, {rhs2});",
                     "+": "vector_add({lhs}, {rhs1}, {rhs2});",
+                    "/": "vector_div({lhs}, {rhs1}, {rhs2});",
                     "=": "vector_copy({lhs}, {rhs1});",
                     "c+": "vector_add_w_scalar({lhs}, {rhs1}, {constant});",
+                    "c/": "vector_div_w_scalar({lhs}, {rhs1}, {constant});",
                     "c*": "vector_mult_w_scalar({lhs}, {rhs1}, {constant});",
                 },
                 vector_width=vector_width,

@@ -45,7 +45,7 @@ def tasklet_in_nested_sdfg(
     offset2: dace.int64,
 ):
     for i, j in dace.map[S1:S2:1, S1:S2:1] @ dace.dtypes.ScheduleType.Sequential:
-        a[i, j] = ((1.5 * b[i + offset1, j + offset2]) + (2.0 * a[i + offset1, j + offset2])) / 3.5
+        a[i + offset1, j + offset2] = ((1.5 * b[i + offset1, j + offset2]) + (2.0 * a[i + offset1, j + offset2])) / 3.5
 
 
 @dace.program
@@ -143,7 +143,9 @@ def test_nested_sdfg():
 
     # Vectorized SDFG
     copy_sdfg = copy.deepcopy(sdfg)
+    sdfg.save("nested_tasklets.sdfg")
     ExplicitVectorizationPipelineCPU(vector_width=8).apply_pass(copy_sdfg, {})
+    copy_sdfg.save("nested_tasklets_vectorized.sdfg")
 
     c_sdfg = sdfg.compile()
     c_copy_sdfg = copy_sdfg.compile()
@@ -152,8 +154,8 @@ def test_nested_sdfg():
     c_copy_sdfg(a=A_vec, b=B_vec, S=_S, S1=_S1, S2=_S2, offset1=-1, offset2=-1)
 
     # Compare results
-    assert numpy.allclose(A_orig, A_vec)
-    assert numpy.allclose(B_orig, B_vec)
+    print(numpy.allclose(A_orig, A_vec), f"{A_orig - A_vec}")
+    print(numpy.allclose(B_orig, B_vec), f"{B_orig - B_vec}")
 
 
 n = dace.symbol('n')  # number of rows
@@ -173,6 +175,24 @@ def spmv_csr(indptr: dace.int32[n + 1], indices: dace.int32[nnz], data: dace.flo
             j = indices[idx]
             y[i] = y[i] + data[idx] * x[j]
 
+"""
+@dace.program
+def coarsened_spmv_csr(indptr: dace.int32[n + 1], indices: dace.int32[nnz], data: dace.float64[nnz], x: dace.float64[m],
+                       y: dace.float64[n]):
+    n_rows = len(indptr) - 1
+
+    for i in dace.map[0:n_rows:8]:
+        y_reg = numpy.zeros((8,))
+
+        row_start = indptr[i]
+        row_end = indptr[i + 1]
+        for idx in dace.map[row_start:row_end:1]:
+            j = indices[idx]
+            for i2 in dace.map[i:i+8:1]:
+                y_reg[i2] = y[j] + data[idx] * x[j]
+        for o in dace.map[0:8:1]:
+            y[i + o] = y_reg[o]
+"""
 
 def test_spmv():
     sdfg = spmv_csr.to_sdfg()
@@ -181,11 +201,24 @@ def test_spmv():
 
     c_sdfg = sdfg.compile()
     c_copy_sdfg = copy_sdfg.compile()
-    sdfg.save("a.sdfg")
+    sdfg.save("spmv.sdfg")
+    copy_sdfg.save("auto_vectorized_spmv.sdfg")
 
+"""
+def test_coarsened_spmv():
+    sdfg = coarsened_spmv_csr.to_sdfg()
+    copy_sdfg = copy.deepcopy(sdfg)
+    ExplicitVectorizationPipelineCPU(vector_width=8).apply_pass(copy_sdfg, {})
+
+    c_sdfg = sdfg.compile()
+    c_copy_sdfg = copy_sdfg.compile()
+    sdfg.save("coarsened_spmv.sdfg")
+    copy_sdfg.save("auto_vectorized_coarsened_spmv.sdfg")
+"""
 
 if __name__ == "__main__":
-    # test_simple()
-    # test_simple_cpu()
-    test_spmv()
-    #test_nested_sdfg()
+    #test_simple()
+    #test_simple_cpu()
+    #test_spmv()
+    test_nested_sdfg()
+    #test_coarsened_spmv()

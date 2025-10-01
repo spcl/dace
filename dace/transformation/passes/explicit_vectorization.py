@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
 import copy
+
 import dace
 import ast
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
@@ -71,19 +72,23 @@ class ExplicitVectorization(ppl.Pass):
         MapTiling.apply_to(
             sdfg=state.parent_graph.sdfg,
             map_entry=inner_map_entry,
-            options={"tile_sizes": tile_sizes},
+            options={"tile_sizes": tile_sizes, "skew": False},
         )
         new_inner_map = inner_map_entry
         new_inner_map.schedule = dace.dtypes.ScheduleType.Sequential
         old_inner_map = state.entry_node(new_inner_map)
 
         (b, e, s) = new_inner_map.map.range[0]
-        assert (
-            e - b + 1
-        ).approx == self.vector_width, f"MapTiling should have created a map with range of size {self.vector_width}, found {(e - b + 1)}"
+        assert len(new_inner_map.map.range) == 1
+        try:
+            int_size = int(e + 1 -b)
+        except:
+            int_size = None
+        assert (int_size is not None and int_size == self.vector_width) or (e - b + 1).approx  == self.vector_width, f"MapTiling should have created a map with range of size {self.vector_width}, found {(e - b + 1)}"
         assert s == 1, f"MapTiling should have created a map with stride 1, found {s}"
         # Vector the range by for example making [0:4:1] to [0:4:4]
-        new_inner_map.map.range = dace.subsets.Range([(0, self.vector_width - 1, self.vector_width)])
+        assert e == b + self.vector_width - 1 or e.approx == b + self.vector_width - 1, f"(b,e,s): ({b}, {e}, {s}), b + vector = {b + self.vector_width - 1}"
+        new_inner_map.map.range = dace.subsets.Range([(b, b + self.vector_width - 1, self.vector_width)])
 
         # Need to check that all tasklets within the map are vectorizable
         nodes = state.all_nodes_between(new_inner_map, state.exit_node(new_inner_map))
@@ -115,6 +120,8 @@ class ExplicitVectorization(ppl.Pass):
         if has_single_nested_sdfg:
             nsdfg_node = next(iter(nodes))
             add_copies_before_and_after_nsdfg(state, nsdfg_node, None, self.vector_input_storage)
+            fix_nsdfg_connector_array_shapes_mismatch(state, nsdfg_node)
+            check_nsdfg_connector_array_shapes_match(state, nsdfg_node)
             self._vectorize_nested_sdfg(state, nsdfg_node)
 
     def _vectorize_nested_sdfg(self, state: dace.SDFGState, nsdfg: dace.nodes.NestedSDFG):
@@ -183,6 +190,36 @@ class ExplicitVectorization(ppl.Pass):
                         scalar_to_vector_conversions.add(dst)
                     scalar_to_vector_width_arrays.add(f"{dst}")
 
+        # All transient scalars should be made into vectors
+        for arr_name in copy.deepcopy(inner_sdfg.arrays):
+            arr = inner_sdfg.arrays[arr_name]
+            if ( isinstance(arr, dace.data.Scalar) or ( isinstance(arr, dace.data.Array) and arr.shape == (1,) ) ) and arr.transient is True:
+                inner_sdfg.remove_data(arr_name, validate=False)
+                inner_sdfg.add_array(
+                    name=arr_name,
+                    shape=(self.vector_width,),
+                    dtype=arr.dtype,
+                    storage=arr.storage,
+                    location=arr.location,
+                    transient=True,
+                )
+                scalar_to_vector_width_arrays.add(arr_name)
+
+
+        # Get all scalars used in interstate edge assignments
+        # They might need to be replaced with vector width arrays
+        # These need to be also added to the candidate arrays
+        interstate_edge_rhs_scalars = set()
+        for edge in inner_sdfg.all_interstate_edges():
+            free_syms = edge.data.free_symbols
+            for k in edge.data.assignments:
+                free_syms -= {k}
+            scalar_free_syms = set()
+            for k in free_syms:
+                if k in inner_sdfg.arrays and isinstance(inner_sdfg.arrays[k], dace.data.Scalar):
+                    scalar_free_syms.add(k)
+            interstate_edge_rhs_scalars = interstate_edge_rhs_scalars.union(scalar_free_syms)
+
         # Handle indirect copies
         # Go through states find A[idx] pattern in any memlet
         expanded_symbols = set()
@@ -194,7 +231,7 @@ class ExplicitVectorization(ppl.Pass):
                     non_expanded_free_symbols = free_symbols - expanded_symbols
                     expanded_symbols = expanded_symbols.union(free_symbols)
                     self._expand_interstate_assignments(inner_sdfg, non_expanded_free_symbols,
-                                                        scalar_to_vector_width_arrays)
+                                                        scalar_to_vector_width_arrays.union(interstate_edge_rhs_scalars))
 
                     # Create a packed copy
                     # If it is a source node (no in edges, copy in), otherwise replace with the packed data
@@ -240,14 +277,13 @@ class ExplicitVectorization(ppl.Pass):
         # If a state has a sink that is a scalar that has to be made into a vector array
         # We need to reduce it back to a scalar at the end of the day, do it here
         # First get input nodes and reduction types:
-
         for state in inner_sdfg.all_states():
             reduction_map: Dict[str, str] = dict()
             for edge in state.edges():
                 src_node: dace.nodes.AccessNode = edge.src
                 if isinstance(src_node, dace.nodes.AccessNode) and state.in_degree(src_node) == 0:
-                    src_arr: dace.data.Array = state.sdfg.arrays[src_node.data]
-                    if isinstance(src_arr, dace.data.Scalar):
+                    src_arr: dace.data.Data = state.sdfg.arrays[src_node.data]
+                    if isinstance(src_arr, dace.data.Scalar) or (isinstance(src_arr, dace.data.Array) and src_arr.shape == (1,)):
                         assert isinstance(edge.dst, dace.nodes.Tasklet)
                         t: dace.nodes.Tasklet = edge.dst
                         op_str = get_op(t.code.as_string)
@@ -258,7 +294,7 @@ class ExplicitVectorization(ppl.Pass):
                     dst_node: dace.nodes.AccessNode = edge.dst
                     if isinstance(dst_node, dace.nodes.AccessNode) and state.out_degree(dst_node) == 0:
                         dst_arr: dace.data.Array = state.sdfg.arrays[dst_node.data]
-                        if isinstance(dst_arr, dace.data.Scalar):
+                        if isinstance(dst_arr, dace.data.Scalar) and dst_arr.transient is False:
                             old_data = f"{edge.data.data}"
                             dst_node.data = f"{edge.data.data}_vec"
                             vec_data = dst_node.data
@@ -276,6 +312,7 @@ class ExplicitVectorization(ppl.Pass):
                             dst_access = state.add_access(old_data)
                             modified_nodes.add(dst_access)
                             print(reduction_map)
+                            state.sdfg.save("x.sdfg")
                             assert len(reduction_map) == 1
                             reduction_op = next(iter(reduction_map.values()))
                             nt = state.add_tasklet(
@@ -296,7 +333,22 @@ class ExplicitVectorization(ppl.Pass):
                             nt.add_out_connector("_out")
                             edge.data.data = vec_data
 
+        # If we still have a scalar sink node that is not transient we need to de-duplicate writes
+        for state in inner_sdfg.all_states():
+            for node in state.nodes():
+                if state.out_degree(node) == 0:
+                    arr = state.sdfg.arrays[node.data]
+                    if (arr.transient is False and (isinstance(arr, dace.data.Scalar) or
+                        isinstance(arr, dace.data.Array) and arr.shape == (1,))):
+                        raise Exception("At this point of the pass, no write to non-transient scalar sinks should remain")
+                    if arr.transient is False and (isinstance(arr, dace.data.Array) and (arr.shape != (1,) or arr.shape != (self.vector_width,))):
+                        touched_nodes, touched_edges = duplicate_access(state, node, self.vector_width)
+                        modified_edges = modified_edges.union(touched_edges)
+                        modified_nodes = modified_nodes.union(touched_nodes)
+
         # Now go through all edges and replace their subsets
+        print("Scalar to vector width arrays:", scalar_to_vector_width_arrays)
+        print("Array that need to be packed:", arrays_need_to_be_packed)
         for state in inner_sdfg.all_states():
             edges_to_replace = set()
 
@@ -340,9 +392,27 @@ class ExplicitVectorization(ppl.Pass):
                         # we need to have j0 = k1[0] + k2[0], j1 = k1[1] + k2[1], ...
                         vcopy = copy.deepcopy(v)
                         nv = vcopy
+                        print("Candidate Arrays:", candidate_arrays)
                         for ca in candidate_arrays:
                             assert ca in sdfg.arrays
-                            nv = nv.replace(ca, f"{ca}[{i}]")
+                            ca_data = sdfg.arrays[ca]
+                            print("Candidate Array Name:", ca, "Candidate Array:", ca_data)
+                            if isinstance(ca_data, dace.data.Scalar) or (isinstance(ca_data, dace.data.Array) and ca_data.shape == (1,)):
+                                ca_scl = ca_data
+                                assert ca_scl.transient
+                                sdfg.remove_data(ca, validate=False)
+                                sdfg.add_array(
+                                    name=ca,
+                                    shape=(self.vector_width,),
+                                    dtype=ca_scl.dtype,
+                                    storage=ca_scl.storage,
+                                    location=ca_scl.location,
+                                    transient=True,
+                                    lifetime=ca_scl.lifetime,
+                                    find_new_name=False,
+                                )
+                            #nv = nv.replace(ca, f"{ca}[{i}]")
+                            nv = split_in_token(nv, ca, f"{ca}[{i}]")
                         new_assignments[f"{k}{i}"] = nv
                     duplicated_symbols.add(k)
                     syms_to_rm.add(k)
@@ -404,20 +474,6 @@ class ExplicitVectorization(ppl.Pass):
                 )
                 state.remove_edge(edge)
                 state.add_edge(edge.src, edge.src_conn, edge.dst, edge.dst_conn, new_memlet)
-
-    def _get_vector_templates(self, rhs1: str, rhs2: str, lhs: str, constant: Union[str, None], op: str):
-        if rhs2 is None:
-            if constant is None:
-                new_code = self.templates[op].format(rhs1=rhs1, lhs=lhs, op=op, vector_width=self.vector_width)
-            else:
-                new_code = self.templates[op].format(rhs1=rhs1,
-                                                     constant=constant,
-                                                     lhs=lhs,
-                                                     op=op,
-                                                     vector_width=self.vector_width)
-        else:
-            new_code = self.templates[op].format(rhs1=rhs1, rhs2=rhs2, lhs=lhs, op=op, vector_width=self.vector_width)
-        return new_code
 
     def _extend_memlets(self, state: SDFGState, map_entry: dace.nodes.MapEntry):
         nodes = list(state.all_nodes_between(map_entry, state.exit_node(map_entry)))
@@ -488,7 +544,9 @@ class ExplicitVectorization(ppl.Pass):
                 if isinstance(in_edge.src, dace.nodes.AccessNode):
                     input_types.add(type(state.sdfg.arrays[in_edge.src.data]))
                 else:
-                    raise Exception(f"Unsupported Type for in_edge.src got type {type(in_edge.src)}, need AccessNode")
+                    if in_edge.data is not None:
+                        print(in_edge.data, in_edge.data is None)
+                        raise Exception(f"Unsupported Type for in_edge.src got type {type(in_edge.src)}, need AccessNode ({in_edge.data})")
             if not isinstance(in_edge.src, dace.nodes.MapEntry):
                 in_edges += state.in_edges(in_edge.src)
             else:
@@ -499,7 +557,8 @@ class ExplicitVectorization(ppl.Pass):
                 if isinstance(out_edge.dst, dace.nodes.AccessNode):
                     output_types.add(type(state.sdfg.arrays[out_edge.dst.data]))
                 else:
-                    raise Exception(f"Unsupported Type for out_edge.dst got type {type(out_edge.dst)}, need AccessNode")
+                    if out_edge.data is not None:
+                        raise Exception(f"Unsupported Type for out_edge.dst got type {type(out_edge.dst)}, need AccessNode ({in_edge.data})")
             if not isinstance(out_edge.dst, dace.nodes.MapExit):
                 out_edges = state.out_edges(out_edge.dst)
             else:
@@ -523,84 +582,9 @@ class ExplicitVectorization(ppl.Pass):
     def _replace_tasklets_from_node_list(self, state: SDFGState, nodes: Iterable[dace.nodes.Node]):
         for node in nodes:
             if isinstance(node, dace.nodes.Tasklet):
-                # Replace the code of the tasklet with vectorized code
-                # For example:
-                # a = b * c;  ->  for (int i = 0; i < 4; i++) { a[i] = b[i] * c[i]; }
-                # Only accepted no op is a = b
-                if len(node.in_connectors) == 1 and len(node.out_connectors) == 1:
-                    in_conn = next(iter(node.in_connectors.keys()))
-                    out_conn = next(iter(node.out_connectors.keys()))
-                    has_constant = False
-                    constant = None
-                    try:
-                        constant = extract_constant(node.code.as_string)
-                        has_constant = True
-                    except Exception as e:
-                        pass
-                    is_assignment = node.code.as_string == f"{out_conn} = {in_conn};" or node.code.as_string == f"{out_conn} = {in_conn}"
-                    if is_assignment:
-                        rhs1 = list(node.in_connectors.keys())[0]
-                        op = "="
-                        lhs = next(iter(node.out_connectors.keys()))
-                        node.code = properties.CodeBlock(code=self._get_vector_templates(rhs1=rhs1,
-                                                                                         rhs2=None,
-                                                                                         constant=None,
-                                                                                         lhs=lhs,
-                                                                                         op=op),
-                                                         language=dace.Language.CPP)
-                    else:
-                        if has_constant:
-                            op = extract_single_op(node.code.as_string)
-                            op = f"c{op}"
-                            rhs1 = list(node.in_connectors.keys())[0]
-                            lhs = next(iter(node.out_connectors.keys()))
-                            node.code = properties.CodeBlock(code=self._get_vector_templates(rhs1=rhs1,
-                                                                                             rhs2=None,
-                                                                                             constant=constant,
-                                                                                             lhs=lhs,
-                                                                                             op=op),
-                                                             language=dace.Language.CPP)
-                        else:
-                            op = extract_single_op(node.code.as_string)
-                            rhs1 = list(node.in_connectors.keys())[0]
-                            rhs2 = rhs1
-                            lhs = next(iter(node.out_connectors.keys()))
-                            node.code = properties.CodeBlock(code=self._get_vector_templates(rhs1=rhs1,
-                                                                                             rhs2=rhs2,
-                                                                                             constant=None,
-                                                                                             lhs=lhs,
-                                                                                             op=op),
-                                                             language=dace.Language.CPP)
-                else:
-                    assert len(node.in_connectors) == 2 or len(
-                        node.in_connectors
-                    ) == 0, f"Only support tasklets with 2 inputs (binary ops) or 0 inputs (unary ops), found {node.in_connectors} in tasklet {node} in state {state}"
-                    assert len(
-                        node.out_connectors
-                    ) == 1, f"Only support tasklets with 1 output, found {node.out_connectors} in tasklet {node} in state {state}"
-                    op = extract_single_op(node.code.as_string)
-                    rhs1, rhs2 = list(node.in_connectors.keys())
-                    lhs = next(iter(node.out_connectors.keys()))
-                    # If one of them is a scalar we need to call to constant template
-                    scalars, arrays = get_scalar_and_array_arguments(state, node)
-                    assert len(scalars) + len(arrays) == 2
-                    if len(arrays) == 2 and len(scalars) == 0:
-                        node.code = properties.CodeBlock(code=self._get_vector_templates(rhs1=rhs1,
-                                                                                         rhs2=rhs2,
-                                                                                         lhs=lhs,
-                                                                                         constant=None,
-                                                                                         op=op),
-                                                         language=dace.Language.CPP)
-                    elif len(scalars) == 1 and len(arrays) == 1:
-                        node.code = properties.CodeBlock(code=self._get_vector_templates(rhs1=next(iter(arrays)),
-                                                                                         rhs2=None,
-                                                                                         lhs=lhs,
-                                                                                         constant=next(iter(scalars)),
-                                                                                         op="c" + op),
-                                                         language=dace.Language.CPP)
-                    elif len(scalars) == 2:
-                        state.sdfg.save("hmm.sdfg")
-                        raise Exception("Hmm, check? SDFG saved as hmm.sdfg")
+                tasklet_info = classify_tasklet(state, node)
+                print("Tasklet:", node, " has info:", tasklet_info)
+                instantiate_tasklet_from_info(state, node, tasklet_info, self.vector_width, self.templates)
 
     def _offset_memlets(self, state: SDFGState, map_entry: dace.nodes.MapEntry, offsets: List[dace.symbolic.SymExpr],
                         dataname: str, vectorization_number: int):
@@ -697,86 +681,10 @@ class ExplicitVectorization(ppl.Pass):
         for dataname, offsets in data_and_offsets:
             self._offset_memlets(state, map_entry, offsets, dataname, vectorization_number)
 
-    def _check_stride(self, sdfg: dace.SDFG):
-        stride_type = None
-
-        for arr, desc in sdfg.arrays.items():
-            if not isinstance(desc, dace.data.Array):
-                continue
-
-            # Check unit stride exists
-            has_unit_stride = desc.strides[0] == 1 or desc.strides[-1] == 1
-            assert has_unit_stride, f"Array {arr} needs unit stride in first or last dimension: {desc.strides}"
-
-            # Determine stride type
-            current_type = "F" if desc.strides[0] == 1 else "C"
-
-            # Consistency check
-            if stride_type is None:
-                stride_type = current_type
-            elif stride_type != current_type:
-                raise ValueError("All arrays must have consistent stride ordering (all F or all C)")
-
-        return stride_type
-
-    def _check_last_dim_of_map_is_contigupus_access(self, sdfg: dace.SDFG):
-        checked_map_entries = set()
-        for state in sdfg.all_states():
-            for node in state.nodes():
-                # Ensure we work with innermost maps by skipping maps and getting parent nodes of tasklets and such
-                if isinstance(node, dace.nodes.MapEntry) or isinstance(node, dace.nodes.MapExit):
-                    continue
-
-                # Ensure all tasklets have parent maps
-                map_entry = state.scope_dict()[node]
-                if map_entry is None:
-                    if isinstance(node, dace.nodes.Tasklet):
-                        raise ValueError(
-                            f"All nodes must be within a map, found node {node} outside of any map in state {state}.")
-                    else:
-                        continue
-                else:
-                    if not isinstance(map_entry, dace.nodes.MapEntry):
-                        raise ValueError(
-                            f"Parent scope of node {node} is not a map, found {map_entry} in state {state}.")
-                    assert map_entry is not None
-                    checked_map_entries.add(map_entry)
-
-                # If we have checked a map entry (and nodes within its body) then skip it
-                if map_entry not in checked_map_entries:
-                    assert isinstance(map_entry, dace.nodes.MapEntry
-                                      ), f"Parent scope of node {node} is not a map, returned value is {map_entry}."
-                    nodes = list(state.all_nodes_between(map_entry, state.exit_node(map_entry)))
-                    edges = state.all_edges(*nodes)
-                    for edge in edges:
-                        memlet: dace.memlet.Memlet = edge.data
-                        free_symbols = memlet.subset.free_symbols
-                        last_param = list(map_entry.map.params)[-1]
-                        if last_param not in free_symbols:
-                            raise ValueError(
-                                f"Last map parameter {last_param} must be in the memlet {memlet}, not in this case - edge: {edge}, state: {state}"
-                            )
-
-    def _has_maps(self, sdfg: dace.SDFG):
-        for n, g in sdfg.all_nodes_recursive():
-            if isinstance(n, dace.nodes.MapEntry):
-                return True
-        return False
-
-    def _is_innermost_map(self, map_entry: dace.nodes.MapEntry, state: SDFGState) -> bool:
-        nodes_between = state.all_nodes_between(map_entry, state.exit_node(map_entry))
-        if any({isinstance(node, dace.nodes.MapEntry) for node in nodes_between}):
-            return False
-        for node in nodes_between:
-            if isinstance(node, dace.nodes.NestedSDFG):
-                has_maps = has_maps(node.sdfg)
-                if has_maps:
-                    return False
-        return True
-
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Set[str]]]:
-        self._stride_type = self._check_stride(sdfg)
-        self._check_last_dim_of_map_is_contigupus_access(sdfg)
+        stride_type = assert_strides_are_packed_C_or_packed_Fortran(sdfg)
+        self._stride_type = stride_type
+        assert_last_dim_of_maps_are_contigous_accesses(sdfg)
         assert_maps_consist_of_single_nsdfg_or_no_nsdfg(sdfg)
 
         if self.vector_input_storage != self.vector_output_storage:
