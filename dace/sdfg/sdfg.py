@@ -2525,7 +2525,7 @@ class SDFG(ControlFlowRegion):
 
         # Pickle the SDFG and arguments
         with tempfile.NamedTemporaryFile(mode='wb', delete=False) as f:
-            pickle.dump({'sdfg': self, 'args': args, 'kwargs': kwargs}, f)
+            pickle.dump({'sdfg': self, 'args': args, 'kwargs': kwargs, 'build_folder': self.build_folder}, f)
             temp_path = f.name
 
         # Call the SDFG in a separate process
@@ -2535,6 +2535,7 @@ import pickle
 with open(r"{temp_path}", "rb") as f:
     data = pickle.load(f)
 sdfg = data['sdfg']
+sdfg.build_folder = data['build_folder']
 sdfg(*data['args'], **data['kwargs'])
 
 with open(r"{temp_path}", "wb") as f:
