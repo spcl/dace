@@ -725,15 +725,19 @@ def test_cloudsc():
         zfoeewmt = dace.define_local([100000], dace.float64)
         zlevap = dace.define_local([100000], dace.float64)
 
-        for jk in range(0, 100000):
+        zfoeewmt[1] = 0.0
+        zlevap[0] = pap[0]
+        zlevap[1] = pap[1]
+
+        for jk in range(2, 100000):
             ztp1[jk] = pt[jk] + ptsphy * tendency_tmp_t[jk]
             zfoeewmt[jk] = min(
                 ((r2es * ((min(1.0, ((max(rtice, min(rtwat, ztp1[jk])) - rtice) * rtwat_rtice_r)**2)) *
                           ((r3les * (ztp1[jk] - rtt)) / (ztp1[jk] - r4les)) +
                           (1.0 - (min(1.0, ((max(rtice, min(rtwat, ztp1[jk])) - rtice) * rtwat_rtice_r)**2))) *
                           ((r3ies * (ztp1[jk] - rtt)) / (ztp1[jk] - r4ies))))) / pap[jk], 0.5)
-            zlevap[jk] = max(zqx, 0.0)
-            zsolqa[jk] = zsolqa[jk] + zlevap[jk] * zlevap[jk]
+            zlevap[jk] = zfoeewmt[jk - 1] + max(zqx, 0.0)
+            zsolqa[jk] = zsolqa[jk] + zlevap[jk - 1] * zlevap[jk - 2]
 
     sdfg = tester.to_sdfg(simplify=True)
     check_transformation(sdfg, 1)
