@@ -42,7 +42,7 @@ def test_onnx_return_scalars(sdfg_name: str):
         [axes_constant]  # initializers (constants)
     )
 
-    model_def = helper.make_model(graph_def)
+    model_def = helper.make_model(graph_def, ir_version=10, opset_imports=[helper.make_opsetid('', 13)])
 
     checker.check_model(model_def)
 
