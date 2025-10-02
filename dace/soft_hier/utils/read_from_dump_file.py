@@ -1,3 +1,4 @@
+import dace
 import struct
 from typing import Dict, List
 from dace.soft_hier.utils.interleave_handler import InterleaveHandler
@@ -7,6 +8,7 @@ def get_address_and_read_from_file(i: int,
                                    j: int,
                                    interleave_handler: InterleaveHandler,
                                    array_name: str,
+                                   array: dace.data.Data,
                                    element_size_in_bytes: int,
                                    dtype: str,
                                    parsed_sections: Dict[str, Dict[int, List[str]]],
@@ -54,13 +56,17 @@ def get_address_and_read_from_file(i: int,
 
     tile_id_i = i // tileM
     tile_id_j = j // tileK
+    num_tiles_j = split_scheme[1]
     tile_offset_i = i % tileM
-    tile_offset_j = j % tileK  # Note: This should probably be j % tileK, not i % tileK
+    tile_offset_j = j % tileK
+    linearized_tile_id = tile_id_i * num_tiles_j + tile_id_j
+    tiles_before_me = placement_scheme[0:linearized_tile_id]
 
     if debug_print:
         print(f"Element position ({i}, {j}) maps to:")
         print(f"  - Tile ID: ({tile_id_i}, {tile_id_j})")
         print(f"  - Offset within tile: ({tile_offset_i}, {tile_offset_j})")
+        print(f"  - Linearited tile id: ({linearized_tile_id})")
 
     # Get tile id (used to access the channel)
     numTilesM, numTilesK = split_scheme
@@ -72,18 +78,12 @@ def get_address_and_read_from_file(i: int,
         print(f"Linearized tile ID: {tile_id_j} + {tile_id_i} * {numTilesK} = {linearized_tile_id}")
 
     channel_id = placement_scheme[linearized_tile_id]
+    tiles_before_me_on_the_same_channel = len([tid for tid in tiles_before_me if tid == channel_id])
 
     if debug_print:
         print(f"Placement scheme maps tile {linearized_tile_id} to channel {channel_id}")
-
-    # Get number of tiles before our tile
-    # Tiles are placed round-robin to channels, this means we can compute
-    tiles_before_me = linearized_tile_id // num_channels
-
-    if debug_print:
-        print(
-            f"Tiles placed before this tile on channel {channel_id}: {linearized_tile_id} // {num_channels} = {tiles_before_me}"
-        )
+        print(f"Tiles of the same array before me on the channel: {tiles_before_me_on_the_same_channel}")
+        print(f"Tile placement scheme until this tile: {tiles_before_me}")
 
     # Get Block ID (for block size [blockM, blockK]):
     blockM, blockK = block_shape
@@ -175,7 +175,7 @@ def get_address_and_read_from_file(i: int,
         print(f"\n--- STEP 5: DATA RETRIEVAL ---")
         print(f"Reading from channel {channel_id}, lines {line_id} to {line_id + lines_needed - 1}")
 
-    line_contents = parsed_sections[array_name][channel_id][line_id:line_id + lines_needed]
+    line_contents = parsed_sections[array_name][channel_id][tiles_before_me_on_the_same_channel][line_id:line_id + lines_needed]
 
     if debug_print:
         print(f"Raw line contents (hex): {line_contents}")
