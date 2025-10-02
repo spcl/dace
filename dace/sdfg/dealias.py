@@ -129,7 +129,6 @@ def find_readable_connector_names_for_nested_sdfgs(sdfg: dace.SDFG):
                 # If data / access nodes are not manually changed before hand
                 # Dace will try to assign to scalars from a symbolic value and crash the thing
                 replace_dict = (input_repldict | output_repldict)
-                print(replace_dict)
                 added_arrays: Set[str] = set()
                 for dst_name, src_name in replace_dict.items():
                     desc: dace.data.Data = node.sdfg.arrays[dst_name]
