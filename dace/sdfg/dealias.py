@@ -146,3 +146,8 @@ def find_readable_connector_names_for_nested_sdfgs(sdfg: dace.SDFG):
                             inner_node.data = replace_dict[inner_node.data]
 
                 node.sdfg.replace_dict(repldict=replace_dict)
+
+    for state in sdfg.all_states():
+        for node in state.nodes():
+            if isinstance(node, dace.nodes.NestedSDFG):
+                find_readable_connector_names_for_nested_sdfgs(node.sdfg)
