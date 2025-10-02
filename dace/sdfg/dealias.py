@@ -6,7 +6,6 @@ from typing import Set, Dict
 from dace.sdfg.graph import MultiConnectorEdge
 from dace import SDFGState
 
-FULL_VIEW_SUFFIX = "fullview"
 SLICE_SUFFIX = "slice"
 
 
@@ -35,7 +34,7 @@ def _get_new_connector_name(edge: MultiConnectorEdge, repldict: Dict[str, str], 
 
     combined_repldict = repldict | other_repldict
 
-    array_name = set(nested_sdfg.arrays.keys()).union(combined_repldict.values())
+    array_name = set(nested_sdfg.arrays.keys()).union(combined_repldict.values()).union(nested_sdfg.symbols)
     if is_complete_subset:
         candidate_name = dace.data.find_new_name(edge.data.data, array_name)
         return candidate_name
@@ -80,6 +79,7 @@ def find_readable_connector_names_for_nested_sdfgs(sdfg: dace.SDFG):
                 # In this case we need not map them to A twice but to A_slice1, A_slice2
                 input_repldict = dict()
                 output_repldict = dict()
+
                 for in_edge in in_edges:
                     # Skip "__return"
                     if in_edge.data is not None and in_edge.data.data == "__return":
@@ -93,9 +93,21 @@ def find_readable_connector_names_for_nested_sdfgs(sdfg: dace.SDFG):
                     if out_edge.data is not None and out_edge.data.data == "__return":
                         continue
                     if out_edge.data is not None and out_edge.data.data != out_edge.src_conn:
-                        new_connector = _get_new_connector_name(out_edge, output_repldict, input_repldict, state,
-                                                                node.sdfg)
-                        output_repldict[out_edge.src_conn] = new_connector
+                        # If the name exists in the input_repldcit reuse
+                        # to avoid having input dict having a name that is a subset
+                        if out_edge.src_conn in input_repldict:
+                            new_connector = input_repldict[out_edge.src_conn]
+                            output_repldict[out_edge.src_conn] = new_connector
+                        else:
+                            new_connector = _get_new_connector_name(out_edge, output_repldict, input_repldict, state,
+                                                                    node.sdfg)
+                            output_repldict[out_edge.src_conn] = new_connector
+                print("input_repldict:", input_repldict)
+                print("output_repldict:", output_repldict)
+                # Correction:
+                # Consider the example:
+                # input_repldict: {'b': 'always_read'}
+                # output_repldict: {'b': 'always_read_0'}
 
                 # Replace connectors rm tmpxceX connector with A
                 for dst_name in set(input_repldict.keys()):
