@@ -26,7 +26,7 @@ from dace.libraries.torch import dispatchers
 from dace.autodiff import torch as torch_autodiff
 from dace.autodiff.library import library as autodiff_library
 from dace.libraries.onnx import ONNXModel
-from dace.util import find_str_not_in_set, auto_optimize as auto_opt
+from dace.util import find_str_not_in_set, auto_optimize_onnx as auto_opt
 
 log = logging.getLogger(__name__)
 

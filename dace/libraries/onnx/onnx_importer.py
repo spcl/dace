@@ -67,7 +67,7 @@ from dace.codegen import compiled_sdfg
 from dace.frontend.python import parser
 from dace.sdfg import utils as sdfg_utils
 from dace.symbolic import pystr_to_symbolic
-from dace.util import auto_optimize as auto_opt
+from dace.util import auto_optimize_onnx as auto_opt
 from dace.util import expand_onnx_nodes as onnx_node_expander
 from dace.util import is_cuda
 

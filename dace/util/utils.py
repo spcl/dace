@@ -163,6 +163,8 @@ def expand_nodes(sdfg: dace.SDFG, predicate: Callable[[nd.Node], bool]):
         :param sdfg: the sdfg to expand nodes on.
         :param predicate: a predicate that will be called to check if a node should be expanded.
     """
+    if sdfg is None:
+        return
     states = list(sdfg.states())
     while len(states) > 0:
         state = states.pop()
@@ -184,8 +186,7 @@ def expand_nodes(sdfg: dace.SDFG, predicate: Callable[[nd.Node], bool]):
             states.append(state)  # Nodes have changed. Check state again
 
 
-# TODO: Remove this auto-opt pass or rename it to be specific to ONNX
-def auto_optimize(sdfg: dace.SDFG, cuda, simplify=False, fold_constants=True):
+def auto_optimize_onnx(sdfg: dace.SDFG, cuda, simplify=False, fold_constants=True):
     """ Automatically optimize ``sdfg``.
 
         :param sdfg: the sdfg to optimize (inplace).
