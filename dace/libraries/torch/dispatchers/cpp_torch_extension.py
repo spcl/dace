@@ -1,10 +1,12 @@
 """Code generation for PyTorch C++ dispatched operators."""
 import copy
 import dataclasses
+from distutils import sysconfig
 import itertools
 import logging
 import operator
 import os
+import sys
 from typing import List, Tuple, Callable, Optional, Dict, Union
 
 import dace.library
@@ -648,7 +650,7 @@ def register_and_compile_torch_extension(module: 'dace.frontend.python.module.Da
         os.path.join(os.path.dirname(dace.__file__), "libraries", "onnx", "include"))
     dace_include_path_blas = os.path.abspath(
         os.path.join(os.path.dirname(dace.__file__), "libraries", "blas", "include"))
-    conda_lib_path = os.path.abspath(os.getenv("CONDA_PREFIX") + "/lib")
+
     torch.utils.cpp_extension.load(
         name=libname,
         sources=sources,
@@ -659,9 +661,6 @@ def register_and_compile_torch_extension(module: 'dace.frontend.python.module.Da
             dace_include_path,
             dace_include_path_blas,
             dace_include_path_onnx,
-        ],
-        extra_ldflags=[
-            f'-L{conda_lib_path}',
         ],
         is_python_module=False,
     )
