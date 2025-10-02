@@ -19,6 +19,7 @@ class HardwareConfig:
                  hbm_addr_base="0xc0000000",
                  hbm_addr_space="0x04000000",
                  tcdm_size="0x00100000",
+                 cluster_zomem_size="0x00100000",
                  redmule_ce_height=64,
                  redmule_ce_width=64,
                  redmule_ce_pipe=1,
@@ -34,6 +35,7 @@ class HardwareConfig:
         self.hbm_addr_base = hbm_addr_base
         self.hbm_addr_space = hbm_addr_space
         self.tcdm_size = tcdm_size
+        self.cluster_zomem_size = cluster_zomem_size
         self.redmule_ce_height = redmule_ce_height
         self.redmule_ce_width = redmule_ce_width
         self.redmule_ce_pipe = redmule_ce_pipe
@@ -45,6 +47,7 @@ class HardwareConfig:
         self.dtype_output = dtype_output
         self.dace_input_type = dace_input_type
         self.dace_output_type = dace_output_type
+        
 
 
 def _get_gvsoc_path() -> str:
@@ -142,9 +145,9 @@ def _read_hbm_to_numpy(array_name: str, array: dace.data.Data, handler: Interlea
                                                           element_size_in_bytes=element_bytes,
                                                           dtype=dtype,
                                                           parsed_sections=parsed,
-                                                          debug_print=True,
-                                                          debug_i=258,
-                                                          debug_j=258)
+                                                          debug_print=False,
+                                                          debug_i=None,
+                                                          debug_j=None)
 
 
 def compare(hardware_config: HardwareConfig,
@@ -171,6 +174,7 @@ def compare(hardware_config: HardwareConfig,
             'execution_time_ns': int (if available)
         }
     """
+    all_match = True
     print("=" * 80)
     print("STEP 5: Compare Results")
     print("=" * 80)
@@ -243,6 +247,7 @@ def compare(hardware_config: HardwareConfig,
 def setup_architecture(hw_config: HardwareConfig):
     generate_arg_cfg(
         cluster_tcdm_size=hex(hw_config.tcdm_size),
+        cluster_zomem_size=hex(hw_config.cluster_zomem_size),
         num_cluster_x=hw_config.hardware_thread_group_dims[0],
         num_cluster_y=hw_config.hardware_thread_group_dims[1],
         redmule_ce_height=hw_config.redmule_ce_height,
@@ -293,7 +298,7 @@ def run_e2e_verification(hw_config: HardwareConfig,
     sdfg_data = copy.deepcopy(data)
 
     # Step 3 Run Numpy reference
-    numpy_fn()
+    data["C"] = numpy_fn()
 
     # Step 4 Run SoftHier simulator
     ret_dict = sdfg_fn()
