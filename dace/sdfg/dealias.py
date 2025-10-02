@@ -1,6 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-import copy
 from typing import Set, Dict
 
 from dace.sdfg.graph import MultiConnectorEdge
@@ -34,7 +33,9 @@ def _get_new_connector_name(edge: MultiConnectorEdge, repldict: Dict[str, str], 
 
     combined_repldict = repldict | other_repldict
 
-    array_name = set(nested_sdfg.arrays.keys()).union(combined_repldict.values()).union(nested_sdfg.symbols)
+    # Having the same name as outside triggers some bugs with schedule trees
+    array_name = set(nested_sdfg.arrays.keys()).union(combined_repldict.values()).union(nested_sdfg.symbols).union(
+        state.sdfg.arrays.keys())
     if is_complete_subset:
         candidate_name = dace.data.find_new_name(edge.data.data, array_name)
         return candidate_name
