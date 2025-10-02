@@ -4,7 +4,7 @@ import shutil
 import numpy as np
 import dace
 import os
-from typing import Callable, Dict, Any, List, Iterable
+from typing import Callable, Dict, Any, List, Iterable, Tuple
 from dace.soft_hier.utils.read_from_dump_file import get_address_and_read_from_file
 from dace.soft_hier.utils.interleave_handler import InterleaveHandler
 import subprocess
@@ -16,9 +16,9 @@ class HardwareConfig:
 
     def __init__(self,
                  hardware_thread_group_dims=(2, 2),
-                 hbm_addr_base=0xc0000000,
-                 hbm_addr_space=0x04000000,
-                 tcdm_size=0x00100000,
+                 hbm_addr_base="0xc0000000",
+                 hbm_addr_space="0x04000000",
+                 tcdm_size="0x00100000",
                  redmule_ce_height=64,
                  redmule_ce_width=64,
                  redmule_ce_pipe=1,
@@ -89,7 +89,7 @@ def setup_environment():
     os.environ["SOFTHIER_INSTALL_PATH"] = f"{GVSOC_PATH}/soft_hier/flex_cluster_sdk/runtime/"
 
 
-def _parse_hbm_dump(filepath: str, num_channels: int, array_names: Iterable[str]) -> Dict[str, Dict[int, List[str]]]:
+def _parse_hbm_dump(filepath: str, num_channels: int, array_names_and_data: Iterable[Tuple[str, dace.data.Data]]) -> Dict[str, Dict[int, List[str]]]:
     """Parse HBM dump file into structured format"""
     sections: Dict[int, List[str]] = {}
     section_id = -1
@@ -106,20 +106,29 @@ def _parse_hbm_dump(filepath: str, num_channels: int, array_names: Iterable[str]
             elif line.startswith("0x"):
                 sections[section_id].append(line)
 
+    array_names_and_data_sorted = sorted(array_names_and_data, key= lambda x:x[0])
+    tiles_of_channel = dict()
+    for arr_name, arr in array_names_and_data_sorted:
+        tiles_of_channel[arr_name] = dict()
+        for i in range(num_channels):
+            tiles_of_channel[arr_name][i] = len([j for j in arr.hbm_placement_scheme if j == i])
+
     # Re-arrange into dictionary structure
     parsed = {}
-    for i, name in enumerate(sorted(array_names)):
+    for i, (name, data) in enumerate(array_names_and_data_sorted):
         parsed[name] = {}
         for j in range(num_channels):
-            offset = i * num_channels + j
-            if offset in sections:
-                parsed[name][j] = sections[offset]
+            parsed[name][j] = {}
+            for k in range(tiles_of_channel[name][j]):
+                offset = i * num_channels + j * tiles_of_channel[name][j]
+                if offset in sections:
+                    parsed[name][j][k] = sections[offset]
 
     return parsed
 
 
-def _read_hbm_to_numpy(array_name: str, handler: InterleaveHandler, element_bytes: int, dtype: str,
-                       parsed: Dict[str, Dict[int, List[str]]], buffer: np.ndarray) -> None:
+def _read_hbm_to_numpy(array_name: str, array: dace.data.Data, handler: InterleaveHandler, element_bytes: int, dtype: str,
+                       parsed: Dict[str, Dict[int, Dict[int, List[str]]]], buffer: np.ndarray) -> None:
     """Read HBM data into NumPy array"""
     assert len(buffer.shape) == 2
 
@@ -129,15 +138,20 @@ def _read_hbm_to_numpy(array_name: str, handler: InterleaveHandler, element_byte
                                                           j=j,
                                                           interleave_handler=handler,
                                                           array_name=array_name,
+                                                          array=array,
                                                           element_size_in_bytes=element_bytes,
                                                           dtype=dtype,
-                                                          parsed_sections=parsed)
+                                                          parsed_sections=parsed,
+                                                          debug_print=True,
+                                                          debug_i=258,
+                                                          debug_j=258)
 
 
 def compare(hardware_config: HardwareConfig,
             numpy_results: Dict[str, np.ndarray],
             sdfg_results: Dict[str, Any],
             interleave_handlers: Dict[str, InterleaveHandler],
+            sdfg: dace.SDFG,
             tolerance: float = 1e-5) -> Dict[str, Any]:
     """
     Step 5: Compare NumPy reference with SDFG results
@@ -168,8 +182,13 @@ def compare(hardware_config: HardwareConfig,
         print(f"Warning: Dump file not found at {dump_path}")
         return {'all_match': False, 'details': {}}
 
+    # SDFG data is needed for the access
     details = dict()
-    parsed = _parse_hbm_dump(dump_path, hardware_config.num_hbm_channels, numpy_results.keys())
+    numpy_result_names = numpy_results.keys()
+    d = list()
+    for name in numpy_result_names:
+        d.append((name, sdfg.arrays[name]))
+    parsed = _parse_hbm_dump(dump_path, hardware_config.num_hbm_channels, d)
     for name in numpy_results:
         numpy_array = numpy_results[name]
         sdfg_array = sdfg_results[name]
@@ -178,7 +197,7 @@ def compare(hardware_config: HardwareConfig,
         element_size = numpy_array.dtype.itemsize
         dtype_str = str(numpy_array.dtype).replace('numpy.', '')
 
-        _read_hbm_to_numpy(name, handler, element_size, dtype_str, parsed, sdfg_array)
+        _read_hbm_to_numpy(name, sdfg.arrays[name], handler, element_size, dtype_str, parsed, sdfg_array)
 
         # Compare
         diff = np.abs(sdfg_array - numpy_array)
@@ -205,11 +224,12 @@ def compare(hardware_config: HardwareConfig,
 
         # dump with 3 decimal places
         with open(f"array_dump_{name}_sdfg.txt", "w") as f:
-            np.savetxt(f, sdfg_array, fmt="%.3f", header="SDFG array")
+            np.savetxt(f, sdfg_array, fmt="%03d")
         with open(f"array_dump_{name}_numpy.txt", "w") as f:
-            np.savetxt(f, numpy_array, fmt="%.3f", header="NumPy array")
+            np.savetxt(f, sdfg_array, fmt="%03d")
         with open(f"array_dump_{name}_diff.txt", "w") as f:
-            np.savetxt(f, diff, fmt="%.3f", header="Difference (SDFG - NumPy)")
+            np.savetxt(f, sdfg_array, fmt="%03d")
+
 
     print()
     print("=" * 80)
@@ -276,9 +296,10 @@ def run_e2e_verification(hw_config: HardwareConfig,
     numpy_fn()
 
     # Step 4 Run SoftHier simulator
-    sdfg_fn()
+    ret_dict = sdfg_fn()
+    sdfg = ret_dict["sdfg"]
 
     # Step 5 Compare Data
-    comparison = compare(hw_config, numpy_data, sdfg_data, interleave_handlers, tolerance)
+    comparison = compare(hw_config, numpy_data, sdfg_data, interleave_handlers, sdfg, tolerance)
 
     return comparison['all_match']

@@ -1858,12 +1858,23 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
             if arr.storage != dace.dtypes.StorageType.SoftHier_HBM:
                 continue
 
+            HBM_NUM_CHANNELS = dace.config.Config.get("backend", "softhier", "HBM_NUM_CHANNELS")
+            tiles_of_channel_list = []
+            for i in range(int(HBM_NUM_CHANNELS)):
+                tiles_of_channel_list.append(str(len([j for j in arr.hbm_placement_scheme if j == i])))
+            tiles_per_channel_initializer_list = "{" + ", ".join(tiles_of_channel_list)  + "};"
+
+            dump_str += f"unsigned long tiles_per_channel_{arr_name}[] = {tiles_per_channel_initializer_list}\n"
             dump_str += "for (int i = 0; i < HBM_NUM_CHANNELS; i++){\n"
             dump_str += f'//printf("Dumping file: %s \\n", {arr_name});\n'
             #dump_str += f"static_assert(sizeof({arr.dtype.ctype}) == 2);\n"
-            dump_str += f"flex_dump_hbm({arr_name} + (i * HBM_ADDRESS_SPACE), {arr_name}_tile_width * {arr_name}_tile_height * sizeof({arr.dtype.ctype}));\n"
+            dump_str += f"unsigned long tile_size = {arr_name}_tile_width * {arr_name}_tile_height * sizeof({arr.dtype.ctype});"
+            dump_str += f"unsigned long num_tiles = tiles_per_channel_{arr_name}[i];"
+            dump_str += "for (int j = 0; j < num_tiles; j++){\n"
+            dump_str += f"flex_dump_hbm({arr_name} + (i * HBM_ADDRESS_SPACE) + (j * tile_size), tile_size);\n"
             dump_str += f'//printf("Dumped file: %s. Renaming dump file.\\n", {arr_name});\n'
             dump_str += f'//printf("Dumping file: %s \\n", {arr_name});\n'
+            dump_str += "}\n"
             dump_str += "}\n"
 
         dump_str += "}\n"
