@@ -7,6 +7,7 @@ from dace.transformation.passes.tasklet_preprocessing_passes import IntegerPower
 from dace.transformation.passes import InlineSDFGs
 from dace.transformation.passes.explicit_vectorization import ExplicitVectorization
 
+
 class ExplicitVectorizationPipelineCPU(ppl.Pipeline):
     _cpu_global_code = """
 template<typename T>

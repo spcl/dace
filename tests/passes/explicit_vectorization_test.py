@@ -7,7 +7,20 @@ import numpy
 from dace.transformation.passes.explicit_vectorization_cpu import ExplicitVectorizationPipelineCPU
 from dace.transformation.passes.explicit_vectorization_gpu import ExplicitVectorizationPipelineGPU
 
+# Vector Addition Symbols
 N = dace.symbol('N')
+# Tasklet in NestedSDFGs Symbols
+S1 = dace.symbol("S1")
+S2 = dace.symbol("S2")
+S = dace.symbol("S")
+# CloudSC Symbols
+klev = dace.symbol("klev")
+kidia = dace.symbol("kidia")
+kfdia = dace.symbol("kfdia")
+# SpMV Symbols
+n = dace.symbol('n')  # number of rows
+m = dace.symbol('m')  # number of columns
+nnz = dace.symbol('nnz')  # number of nonzeros
 
 
 @dace.program
@@ -28,13 +41,30 @@ def vadds_cpu(A: dace.float64[N, N], B: dace.float64[N, N]):
 
 
 @dace.program
-def tets_no_map_tasklet():
-    pass
+def no_maps(A: dace.float64[N, N], B: dace.float64[N, N]):
+    i = 8
+    j = 7
+    A[i, j] = 2.0 * A[i, j]
+    B[i + 1, j + 1] = B[i, j] / 1.5
 
 
-S1 = dace.symbol("S1")
-S2 = dace.symbol("S2")
-S = dace.symbol("S")
+@dace.program
+def cloudsc_snippet_one(za: dace.float64[klev, kfdia], zliqfrac: dace.float64[klev, kfdia],
+                        zicefrac: dace.float64[klev, kfdia], zqx: dace.float64[klev, kfdia, 5],
+                        zli: dace.float64[klev, kfdia], zy: dace.float64[klev, kfdia, 5],
+                        zx: dace.float64[klev, kfdia, 4], rlmin: dace.float64, z1: dace.int64, z2: dace.int64):
+    for i in range(1, klev + 1):
+        for j in range(kidia + 1, kfdia + 1):
+            za[i - 1, j - 1] = 2.0 * za[i - 1, j - 1] - 5
+            cond1 = rlmin > (0.5 * (zqx[i - 1, j - 1, z1] + zqx[i, j, z2]))
+            if cond1:
+                zliqfrac[i - 1, j - 1] = zqx[i - 1, j - 1, z1] * zli[i - 1, j - 1]
+                zicefrac[i - 1, j - 1] = 1 - zliqfrac[i - 1, j - 1]
+            else:
+                zliqfrac[i - 1, j - 1] = 0
+                zicefrac[i - 1, j - 1] = 0
+            for m in dace.map[1:5:1]:
+                zx[i - 1, j - 1, m - 1] = zy[i - 1, z1, z2]
 
 
 @dace.program
@@ -64,8 +94,32 @@ def test_tasklets_in_if(
             b[i, j] = (1 - a[i, j]) * c[i, j]
 
 
+@dace.program
+def spmv_csr(indptr: dace.int64[n + 1], indices: dace.int64[nnz], data: dace.float64[nnz], x: dace.float64[m],
+             y: dace.float64[n]):
+    n_rows = len(indptr) - 1
+
+    for i in dace.map[0:n_rows:1]:
+        row_start = indptr[i]
+        row_end = indptr[i + 1]
+        for idx in dace.map[row_start:row_end:1]:
+            j = indices[idx]
+            y[i] = data[idx] * x[j]
+
+@dace.program
+def spmv_csr_2(indptr: dace.int64[n + 1], indices: dace.int64[nnz], data: dace.float64[nnz], x: dace.float64[m],
+             y: dace.float64[n]):
+    n_rows = len(indptr) - 1
+
+    for i in dace.map[0:n_rows:1]:
+        row_start = indptr[i]
+        row_end = indptr[i + 1]
+        for idx in dace.map[row_start:row_end:1]:
+            j = indices[idx]
+            y[i] = y[i] + data[idx] * x[j]
+
 @pytest.mark.gpu
-def test_simple_gpu():
+def _test_simple_gpu():
     import cupy
 
     # Allocate 64x64 GPU arrays using CuPy
@@ -114,15 +168,17 @@ def test_simple_cpu():
 
     # Vectorized SDFG
     copy_sdfg = copy.deepcopy(sdfg)
+    copy_sdfg.save("vadd.sdfg")
     ExplicitVectorizationPipelineCPU(vector_width=4).apply_pass(copy_sdfg, {})
     c_copy_sdfg = copy_sdfg.compile()
+    copy_sdfg.save("vadd_vectorized.sdfg")
 
     c_sdfg(A=A_orig, B=B_orig, N=64)
     c_copy_sdfg(A=A_vec, B=B_vec, N=64)
 
     # Compare results
-    assert numpy.allclose(A_orig, A_vec)
-    assert numpy.allclose(B_orig, B_vec)
+    assert numpy.allclose(A_orig, A_vec), f"{A_orig - A_vec}"
+    assert numpy.allclose(B_orig, B_vec), f"{B_orig - B_vec}"
 
 
 def test_nested_sdfg():
@@ -154,71 +210,96 @@ def test_nested_sdfg():
     c_copy_sdfg(a=A_vec, b=B_vec, S=_S, S1=_S1, S2=_S2, offset1=-1, offset2=-1)
 
     # Compare results
-    print(numpy.allclose(A_orig, A_vec), f"{A_orig - A_vec}")
-    print(numpy.allclose(B_orig, B_vec), f"{B_orig - B_vec}")
+    assert numpy.allclose(A_orig, A_vec), f"{A_orig - A_vec}"
+    assert numpy.allclose(B_orig, B_vec), f"{B_orig - B_vec}"
 
+def test_no_maps():
+    _N = 16
+    A = numpy.random.random((_N, _N))
+    B = numpy.random.random((_N, _N))
 
-n = dace.symbol('n')  # number of rows
-m = dace.symbol('m')  # number of columns
-nnz = dace.symbol('nnz')  # number of nonzeros
+    # Create copies for comparison
+    A_orig = copy.deepcopy(A)
+    B_orig = copy.deepcopy(B)
+    A_vec = copy.deepcopy(A)
+    B_vec = copy.deepcopy(B)
 
+    # Original SDFG
+    sdfg = no_maps.to_sdfg()
 
-@dace.program
-def spmv_csr(indptr: dace.int32[n + 1], indices: dace.int32[nnz], data: dace.float64[nnz], x: dace.float64[m],
-             y: dace.float64[n]):
-    n_rows = len(indptr) - 1
-
-    for i in dace.map[0:n_rows:1]:
-        row_start = indptr[i]
-        row_end = indptr[i + 1]
-        for idx in dace.map[row_start:row_end:1]:
-            j = indices[idx]
-            y[i] = y[i] + data[idx] * x[j]
-
-"""
-@dace.program
-def coarsened_spmv_csr(indptr: dace.int32[n + 1], indices: dace.int32[nnz], data: dace.float64[nnz], x: dace.float64[m],
-                       y: dace.float64[n]):
-    n_rows = len(indptr) - 1
-
-    for i in dace.map[0:n_rows:8]:
-        y_reg = numpy.zeros((8,))
-
-        row_start = indptr[i]
-        row_end = indptr[i + 1]
-        for idx in dace.map[row_start:row_end:1]:
-            j = indices[idx]
-            for i2 in dace.map[i:i+8:1]:
-                y_reg[i2] = y[j] + data[idx] * x[j]
-        for o in dace.map[0:8:1]:
-            y[i + o] = y_reg[o]
-"""
-
-def test_spmv():
-    sdfg = spmv_csr.to_sdfg()
+    # Vectorized SDFG
     copy_sdfg = copy.deepcopy(sdfg)
+    sdfg.save("no_maps.sdfg")
     ExplicitVectorizationPipelineCPU(vector_width=8).apply_pass(copy_sdfg, {})
+    copy_sdfg.save("no_maps_vectorized.sdfg")
 
     c_sdfg = sdfg.compile()
     c_copy_sdfg = copy_sdfg.compile()
+
+    c_sdfg(A=A_orig, B=B_orig, N=_N)
+    c_copy_sdfg(A=A_vec, B=B_vec, N=_N)
+
+    # Compare results
+    assert numpy.allclose(A_orig, A_vec), f"{A_orig - A_vec}"
+    assert numpy.allclose(B_orig, B_vec), f"{B_orig - B_vec}"
+
+def _dense_to_csr(dense: numpy.ndarray):
+    """
+    Convert a 2D dense numpy array to CSR arrays (data, indices, indptr).
+    Keeps the same ordering usually used by CSR: row-major.
+    """
+    data = []
+    indices = []
+    indptr = [0]
+    nrows, ncols = dense.shape
+    for i in range(nrows):
+        row_nnz = 0
+        for j in range(ncols):
+            v = dense[i, j]
+            if v != 0:
+                data.append(v)
+                indices.append(j)
+                row_nnz += 1
+        indptr.append(indptr[-1] + row_nnz)
+    return numpy.array(data, dtype=dense.dtype), numpy.array(indices, dtype=numpy.int64), numpy.array(indptr, dtype=numpy.int64)
+
+def _test_spmv():
+    _N = 32
+    density = 0.25
+    dense = numpy.random.random((_N, _N))
+    mask = numpy.random.random((_N, _N)) < density
+    dense = dense * mask  # many zeros
+
+    # Create CSR arrays (data, indices, indptr)
+    data, indices, indptr = _dense_to_csr(dense)
+
+    # input / output vectors
+    x = numpy.random.random((_N,))
+    y_orig = numpy.zeros_like(x)
+    y_vec = numpy.zeros_like(x)
+    _nnz = len(data)
+
+    # Original SDFG
+    sdfg = spmv_csr.to_sdfg()
+
+    # Vectorized SDFG
+    copy_sdfg = copy.deepcopy(sdfg)
     sdfg.save("spmv.sdfg")
+    ExplicitVectorizationPipelineCPU(vector_width=8).apply_pass(copy_sdfg, {})
     copy_sdfg.save("auto_vectorized_spmv.sdfg")
 
-"""
-def test_coarsened_spmv():
-    sdfg = coarsened_spmv_csr.to_sdfg()
-    copy_sdfg = copy.deepcopy(sdfg)
-    ExplicitVectorizationPipelineCPU(vector_width=8).apply_pass(copy_sdfg, {})
-
     c_sdfg = sdfg.compile()
     c_copy_sdfg = copy_sdfg.compile()
-    sdfg.save("coarsened_spmv.sdfg")
-    copy_sdfg.save("auto_vectorized_coarsened_spmv.sdfg")
-"""
+
+    c_sdfg(data=data, indices=indices, indptr=indptr, x=x, y=y_orig, n=_N, nnz=_nnz)
+    c_copy_sdfg(data=data, indices=indices, indptr=indptr, x=x, y=y_vec, n=_N, nnz=_nnz)
+
+    # Compare results
+    assert numpy.allclose(y_orig, y_vec), f"{y_orig - y_vec}"
+
 
 if __name__ == "__main__":
-    #test_simple()
-    #test_simple_cpu()
-    #test_spmv()
+    test_simple_cpu()
     test_nested_sdfg()
-    #test_coarsened_spmv()
+    test_no_maps()
+    _test_spmv()

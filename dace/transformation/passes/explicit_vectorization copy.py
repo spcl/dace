@@ -134,13 +134,13 @@ class ExplicitVectorization(ppl.Pass):
     def _vectorize_nested_sdfg(self, state: dace.SDFGState, nsdfg: dace.nodes.NestedSDFG, vector_map_param: str):
         inner_sdfg: dace.SDFG = nsdfg.sdfg
         # Imagine the case where
-        # On vectorization of interstate edges (Step 3):
         # We do A[idx[i]]
         # DaCe generates this as | State 1 | -(sym = idx[i])-> | State 2 code = A[sym] ... |
         # This means when we vectorize access to 8 elements then we need to access:
         # idx[i:i+8]
         # And access A accordingly: A[idx[i], idx[i+1], ..., idx[i+8]]
         # Since we can't improve this we need to load the individual sym1, sym2, ..., sym8 individually
+        # And populate A manually too.
 
         # First we track which inputs have the shape of the vector unit
         # We can copy all of them in the state e.g. idx[i:i+8]
@@ -152,7 +152,7 @@ class ExplicitVectorization(ppl.Pass):
         # Any time we find a load from A[sym] we need to expand load to sym1, sym2, sym3, sym4 (need to find the sym assignment before)
         # and extend that state
 
-        # Step 1. Analyze
+        # Step 1: Analyze
         # 1.1. Detect input and output shapes
         # 1.2 Make all data within the nested SDFG match the connector shapes. All transient arrays should match the vector unit shape
         # 1.3 Detect sink and source scalars (non-transient scalar access nodes without out_edges or without in_edges)
@@ -160,10 +160,10 @@ class ExplicitVectorization(ppl.Pass):
         # 1.5 Scalar sinks are supported as they can be de-duplicated when writing, track them
 
         # After replacing all arrays to match, vectorize:
-        # Step 2. Replace all memlet subsets and names
-        # Step 3. Duplicate all interstate symbols to respect lane-ids
-        # Step 4. Replace all tasklets to use vectorized types
-        # Step 5. For all scalar sink nodes de-duplicate writes
+        # 2. Replace all memlet subsets and names
+        # 3. Duplicate all interstate symbols to respect lane-ids
+        # 4. Replace all tasklets to use vectorized types
+        # 5. For all scalar sink nodes de-duplicate writes
 
         modified_edges = set()
         modified_nodes = set()
