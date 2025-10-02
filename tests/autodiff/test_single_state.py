@@ -1,5 +1,9 @@
 import numpy as np
 import pytest
+
+pytest.importorskip("onnx", reason="ONNX not installed. Please install with: pip install dace[ml]")
+pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
+
 import torch
 
 import dace
@@ -609,5 +613,4 @@ def test_reshape_reuse_in_same_state():
 
 
 if __name__ == "__main__":
-    import pytest
     pytest.main([__file__, "-v"])

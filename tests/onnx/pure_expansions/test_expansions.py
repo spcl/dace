@@ -1,17 +1,17 @@
-import copy
-
-import numpy as np
-import torch
 import pytest
+
+pytest.importorskip("onnx", reason="ONNX not installed. Please install with: pip install dace[ml]")
+pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
+
+import copy
+import numpy as np
 
 import dace
 from dace import transformation, data as dt
-import dace.transformation.interstate
 from dace.libraries import blas
 import dace.library
 
 import dace.libraries.onnx as donnx
-import dace.libraries.onnx.converters as converters
 from dace.util import utils
 
 
@@ -68,7 +68,7 @@ def test_cast_int_to_float(sdfg_name):
     access_result = state.add_access("__return")
 
     op_node = donnx.ONNXCast("Cast")
-    op_node.to = converters.typeclass_to_onnx_tensor_type_int(dace.float32)
+    op_node.to = donnx.converters.typeclass_to_onnx_tensor_type_int(dace.float32)
 
     state.add_node(op_node)
     state.add_edge(access_X, None, op_node, "input", sdfg.make_array_memlet("X"))
@@ -99,7 +99,7 @@ def test_cast_float_to_int(sdfg_name):
     access_result = state.add_access("__return")
 
     op_node = donnx.ONNXCast("Cast")
-    op_node.to = converters.typeclass_to_onnx_tensor_type_int(dace.int32)
+    op_node.to = donnx.converters.typeclass_to_onnx_tensor_type_int(dace.int32)
 
     state.add_node(op_node)
     state.add_edge(access_X, None, op_node, "input", sdfg.make_array_memlet("X"))
@@ -130,7 +130,7 @@ def test_cast_float_to_long(sdfg_name):
     access_result = state.add_access("__return")
 
     op_node = donnx.ONNXCast("Cast")
-    op_node.to = converters.typeclass_to_onnx_tensor_type_int(dace.int64)
+    op_node.to = donnx.converters.typeclass_to_onnx_tensor_type_int(dace.int64)
 
     state.add_node(op_node)
     state.add_edge(access_X, None, op_node, "input", sdfg.make_array_memlet("X"))

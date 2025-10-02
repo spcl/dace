@@ -1,4 +1,6 @@
 import pytest
+
+pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
 import torch
 from transformers import BertConfig
 from transformers.models.bert.modeling_bert import BertLayer
@@ -40,5 +42,4 @@ def test_bert_encoder_backward(sdfg_name):
 
 
 if __name__ == "__main__":
-    import pytest
     pytest.main([__file__, "-v"])

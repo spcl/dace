@@ -1,5 +1,9 @@
 import numpy as np
 import pytest
+
+pytest.importorskip("onnx", reason="ONNX not installed. Please install with: pip install dace[ml]")
+pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
+
 import torch
 
 import dace
@@ -160,3 +164,10 @@ def test_view_forwarding():
 
     return (SDFGBackwardRunner(outer_sdfg, "__return", simplify=False), torch_func,
             dict(inp1=np.random.rand(9).astype(np.float64), bias=np.random.rand(3).astype(np.float64)))
+
+
+if __name__ == "__main__":
+    test_nested()
+    test_nested_forwarding()
+    test_triple_nested_forwarding()
+    test_view_forwarding()

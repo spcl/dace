@@ -1,5 +1,7 @@
 from typing import Literal, Union
 import pytest
+
+pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
 import torch
 from torch import nn
 from dace.frontend.python.module import DaceModule
@@ -57,5 +59,4 @@ def test_dropout_bwd(p: Union[float, Literal[0]]):
 
 
 if __name__ == "__main__":
-    import pytest
     pytest.main([__file__, "-v"])

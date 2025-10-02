@@ -23,8 +23,14 @@ Implementation Categories
 """
 
 import dace.autodiff.implementations.dace_library_nodes
-import dace.autodiff.implementations.onnx_ops
 from dace.autodiff.implementations.dace_nodes import DaceNodeBackwardImplementations
+
+# ONNX ops are optional
+try:
+    import dace.autodiff.implementations.onnx_ops
+except ImportError:
+    # ONNX backward implementations not available
+    pass
 
 __all__ = [
     "DaceNodeBackwardImplementations",

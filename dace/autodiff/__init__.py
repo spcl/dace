@@ -27,14 +27,20 @@ Key Features
 from .base_abc import BackwardImplementation, BackwardContext, BackwardResult, AutoDiffException
 from .backward_pass_generator import BackwardPassGenerator
 from .autodiff import add_backward_pass
-from .torch import make_backward_function
+
+try:
+    from .torch import make_backward_function
+    TORCH_INTEGRATION_AVAILABLE = True
+except ImportError:
+    make_backward_function = None
+    TORCH_INTEGRATION_AVAILABLE = False
+
 import sys
 from . import library
 
 __all__ = [
     # Main API
     "add_backward_pass",
-    "make_backward_function",
     # Core classes
     "BackwardPassGenerator",
     "BackwardContext",
@@ -46,3 +52,6 @@ __all__ = [
     # Submodules
     "library",
 ]
+
+if TORCH_INTEGRATION_AVAILABLE:
+    __all__.append("make_backward_function")

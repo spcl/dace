@@ -53,13 +53,30 @@ from itertools import chain, repeat
 from typing import Any, Callable, Dict, List, Optional, OrderedDict, Tuple, Union
 
 import numpy as np
-import torch
 
-import onnx
-import onnx.checker
-from onnx import numpy_helper
+# PyTorch is optional (only needed for tensor conversion features)
+try:
+    import torch
+    TORCH_AVAILABLE = True
+except ImportError:
+    torch = None
+    TORCH_AVAILABLE = False
 
-import onnxsim
+# ONNX is mandatory for this module
+try:
+    import onnx
+    import onnx.checker
+    from onnx import numpy_helper
+except ImportError as e:
+    raise ImportError("ONNX library is required. Install with: pip install dace[ml]") from e
+
+# onnxsim is optional (only needed for model simplification)
+try:
+    import onnxsim
+    ONNXSIM_AVAILABLE = True
+except ImportError:
+    onnxsim = None
+    ONNXSIM_AVAILABLE = False
 
 import dace
 from dace import SDFG, SDFGState, data as dt, dtypes, nodes
@@ -79,22 +96,26 @@ from dace.libraries.onnx.shape_inference import shape_inference
 log = logging.getLogger(__name__)
 
 #: Mapping from NumPy dtypes to PyTorch dtypes for tensor conversion
-numpy_to_torch_dtype_dict = {
-    np.bool_: torch.bool,
-    np.uint8: torch.uint8,
-    np.int8: torch.int8,
-    np.int16: torch.int16,
-    np.int32: torch.int32,
-    np.int64: torch.int64,
-    np.float16: torch.float16,
-    np.float32: torch.float32,
-    np.float64: torch.float64,
-    np.complex64: torch.complex64,
-    np.complex128: torch.complex128
-}
+if TORCH_AVAILABLE:
+    numpy_to_torch_dtype_dict = {
+        np.bool_: torch.bool,
+        np.uint8: torch.uint8,
+        np.int8: torch.int8,
+        np.int16: torch.int16,
+        np.int32: torch.int32,
+        np.int64: torch.int64,
+        np.float16: torch.float16,
+        np.float32: torch.float32,
+        np.float64: torch.float64,
+        np.complex64: torch.complex64,
+        np.complex128: torch.complex128
+    }
 
-#: Reverse mapping from PyTorch dtypes to NumPy dtypes
-torch_to_numpy_dtype_dict = {v: k for k, v in numpy_to_torch_dtype_dict.items()}
+    #: Reverse mapping from PyTorch dtypes to NumPy dtypes
+    torch_to_numpy_dtype_dict = {v: k for k, v in numpy_to_torch_dtype_dict.items()}
+else:
+    numpy_to_torch_dtype_dict = {}
+    torch_to_numpy_dtype_dict = {}
 
 
 def _nested_HasField(obj, full_attr: str) -> bool:
@@ -142,12 +163,16 @@ def simplify_onnx_model(model: onnx.ModelProto, auto_merge: bool) -> onnx.ModelP
         The simplified ONNX model.
 
     Raises:
+        ImportError: If onnxsim is not installed.
         RuntimeError: If onnx-simplifier optimizations fail validation.
 
     Note:
         Batch normalization fusion is skipped (skip_fuse_bn=True) to maintain
         numerical accuracy and allow separate optimization strategies.
     """
+    if not ONNXSIM_AVAILABLE:
+        raise ImportError("onnxsim is required for model simplification. Install with: pip install dace[ml]")
+
     model, check = onnxsim.simplify(model, skip_fuse_bn=True)
 
     if not check:

@@ -75,9 +75,10 @@ setup(name='dace',
       install_requires=[
           'numpy', 'networkx >= 2.5', 'astunparse', 'sympy >= 1.9', 'pyyaml', 'ply', 'fparser >= 0.1.3', 'aenum >= 3.1',
           'dataclasses; python_version < "3.7"', 'pyreadline;platform_system=="Windows"',
-          'typing-compat; python_version < "3.8"', 'packaging', 'onnx', 'torch', 'onnxsim', 'protobuf', 'ninja'
+          'typing-compat; python_version < "3.8"', 'packaging'
       ] + cmake_requires,
       extras_require={
+          'ml': ['onnx', 'torch', 'onnxsim', 'protobuf', 'ninja'],
           'testing': [
               'coverage', 'pytest-cov', 'scipy', 'absl-py', 'opt_einsum', 'pymlir', 'click', 'ipykernel', 'nbconvert',
               'pytest-timeout', 'transformers == 4.50', 'jax', 'efficientnet_pytorch'

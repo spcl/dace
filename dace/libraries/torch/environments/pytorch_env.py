@@ -1,6 +1,10 @@
 import os
 
-import torch.utils.cpp_extension
+try:
+    import torch.utils.cpp_extension
+except ImportError as e:
+    raise ImportError("PyTorch is required for torch integration. Install with: pip install dace[ml]") from e
+
 import dace.library
 
 from dace.util import platform_library_name

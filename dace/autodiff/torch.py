@@ -6,14 +6,21 @@ from dace import data as dt
 
 from dace.autodiff.backward_pass_generator import BackwardPassGenerator
 from dace.autodiff.base_abc import AutoDiffException, BackwardResult
-from dace.libraries.onnx.converters import clean_onnx_name
-from dace.libraries.onnx.onnx_importer import ONNXModel
+
+try:
+    from dace.libraries.onnx.converters import clean_onnx_name
+    from dace.libraries.onnx.onnx_importer import ONNXModel
+    ONNX_AVAILABLE = True
+except ImportError:
+    ONNX_AVAILABLE = False
+    clean_onnx_name = None
+    ONNXModel = None
 
 log = logging.getLogger(__name__)
 
 
 def make_backward_function(
-    model: ONNXModel,
+    model,  # ONNXModel type hint removed for optional import
     required_grads: List[str],
 ) -> Tuple[dace.SDFG, dace.SDFG, BackwardResult, Dict[str, dt.Data]]:
     """ Convert an ONNXModel to a PyTorch differentiable function. This method should not be used on its own.
@@ -24,6 +31,8 @@ def make_backward_function(
         :return: A 4-tuple of forward SDFG, backward SDFG, backward result, and input arrays for
                  backward pass (as mapping of names to DaCe data descriptors).
     """
+    if not ONNX_AVAILABLE:
+        raise ImportError("make_backward_function requires ONNX. Install with: pip install dace[ml]")
 
     if len(model.sdfg.nodes()) != 1:
         raise AutoDiffException("Expected to find exactly one SDFGState, found {}".format(len(model.sdfg.nodes())))

@@ -35,8 +35,15 @@ from dace.sdfg import SDFG, SDFGState, state as dstate, utils as dace_utils
 from dace.sdfg.state import LoopRegion
 from dace.memlet import Memlet
 from dace.util import find_str_not_in_set
-from dace.libraries.onnx.forward_implementation_abc import ONNXForward
-from dace.libraries.onnx.nodes.onnx_op import ONNXOp
+
+try:
+    from dace.libraries.onnx.forward_implementation_abc import ONNXForward
+    from dace.libraries.onnx.nodes.onnx_op import ONNXOp
+    ONNX_AVAILABLE = True
+except ImportError:
+    ONNXForward = None
+    ONNXOp = None
+    ONNX_AVAILABLE = False
 
 # Autodiff imports
 from dace.autodiff.base_abc import (BackwardContext, BackwardResult, AutoDiffException, find_backward_implementation,
@@ -787,7 +794,8 @@ class BackwardPassGenerator:
             if isinstance(node, nodes.AccessNode):
                 out_edges = state.out_edges(node)
                 if out_edges and all(
-                        isinstance(edge.dst, ONNXOp) and edge.dst_conn in attribute_to_remove for edge in out_edges):
+                        ONNX_AVAILABLE and isinstance(edge.dst, ONNXOp) and edge.dst_conn in attribute_to_remove
+                        for edge in out_edges):
                     nodes_list.remove(node)
 
     def _remove_maps_without_input_connectors(self, nodes_list: List[nodes.Node], state: SDFGState) -> None:
@@ -1255,7 +1263,7 @@ class BackwardPassGenerator:
                     continue
 
                 # Only check others if we didn't break out of the above loop
-                if isinstance(node, ONNXOp):
+                if ONNX_AVAILABLE and isinstance(node, ONNXOp):
                     impls = ONNXForward.registered_implementations(node.schema.name)
 
                     # Order the implementations so that implementations containing "pure" are tried first
@@ -1273,7 +1281,7 @@ class BackwardPassGenerator:
                 # This could later on be changed to check if the expansion is differentiable and if not, move
                 # on to the next expansion. For now we will just apply the first one that matches, prioritizing ones that
                 # have "pure" in the name
-                if isinstance(node, nodes.LibraryNode) and not isinstance(node, ONNXOp):
+                if isinstance(node, nodes.LibraryNode) and not (ONNX_AVAILABLE and isinstance(node, ONNXOp)):
                     # Try to select an expansion
                     if hasattr(node, "implementations"):
                         implementations = node.implementations

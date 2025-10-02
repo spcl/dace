@@ -1,4 +1,6 @@
 import pytest
+
+pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
 import torch
 import numpy as np
 from dace.transformation.dataflow import TrivialMapElimination
@@ -103,5 +105,4 @@ def test_fast_mb(use_cpp_dispatcher: bool):
 
 
 if __name__ == "__main__":
-    import pytest
     pytest.main([__file__, "-v"])

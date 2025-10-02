@@ -2,11 +2,13 @@
 Regression tests for BERT subgraphs
 """
 import os
+import pytest
+
+pytest.importorskip("onnx", reason="ONNX not installed. Please install with: pip install dace[ml]")
+pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
 
 import onnx
-import pytest
 import torch
-
 from dace.libraries.onnx import ONNXModel
 
 data_directory = os.path.join(os.path.dirname(__file__), "onnx_files")
@@ -42,5 +44,4 @@ def test_save_transients(sdfg_name: str):
 
 
 if __name__ == "__main__":
-    import pytest
     pytest.main([__file__, "-v"])

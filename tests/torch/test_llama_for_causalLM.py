@@ -1,4 +1,6 @@
 import pytest
+
+pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
 import torch
 import torch.nn as nn
 import numpy as np
@@ -94,5 +96,4 @@ def test_llama_model(sdfg_name: str):
 
 
 if __name__ == "__main__":
-    import pytest
     pytest.main([__file__, "-v"])

@@ -12,6 +12,11 @@ The main exports are environment classes that define the PyTorch runtime
 dependencies and configuration for code generation.
 """
 
-from .environments import PyTorch, PyTorchCUDA
-
-__all__ = ["PyTorch", "PyTorchCUDA"]
+try:
+    from .environments import PyTorch, PyTorchCUDA
+    __all__ = ["PyTorch", "PyTorchCUDA"]
+except ImportError:
+    # PyTorch not available
+    PyTorch = None
+    PyTorchCUDA = None
+    __all__ = []

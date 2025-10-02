@@ -146,8 +146,11 @@ def expand_onnx_nodes(sdfg: dace.SDFG, predicate: Optional[Callable[[nd.Node], b
         :param sdfg: the sdfg to expand nodes on.
         :param predicate: a predicate that will be called to check if a node should be expanded.
     """
-    # avoid import loop
-    from dace.libraries.onnx.nodes.onnx_op import ONNXOp
+
+    try:
+        from dace.libraries.onnx.nodes.onnx_op import ONNXOp  # avoid import loop
+    except ImportError:
+        raise ImportError("expand_onnx_nodes requires ONNX. Install with: pip install dace[ml]")
 
     if predicate is None:
         new_predicate = lambda n: isinstance(n, (ONNXOp, blas.MatMul))
@@ -194,8 +197,11 @@ def auto_optimize_onnx(sdfg: dace.SDFG, cuda, simplify=False, fold_constants=Tru
         :param simplify: whether to apply simplification transformations to the sdfg after optimization.
         :param fold_constants: whether to apply constant folding.
     """
-    # avoid import loop
-    from dace.transformation.onnx import ConstantFolding
+
+    try:
+        from dace.transformation.onnx import ConstantFolding  # avoid import loop
+    except ImportError:
+        raise ImportError("auto_optimize_onnx requires ONNX. Install with: pip install dace[ml]")
 
     log.debug("Applying automatic optimizations")
     if fold_constants:

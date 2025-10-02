@@ -3,16 +3,32 @@
 
 import inspect
 from functools import wraps
-from typing import Any, Callable, Deque, Dict, List, Generator, Optional, Tuple, TypeVar, Union, overload
+from typing import Any, Callable, Deque, Dict, List, Generator, Optional, Tuple, TypeVar, Union, overload, TYPE_CHECKING
 
 from dace import dtypes
 from dace.dtypes import paramdec
 from dace.frontend.python import ndloop, parser, tasklet_runner
 
-# register the onnx transformations
-import dace.transformation.onnx
-from dace.frontend.python.module import DaceModule
-import torch
+# register the onnx transformations (optional)
+try:
+    import dace.transformation.onnx
+except ImportError:
+    pass  # ONNX transformations not available
+
+try:
+    from dace.frontend.python.module import DaceModule
+except ImportError:
+    DaceModule = None  # PyTorch/ONNX not available
+
+try:
+    import torch
+except ImportError:
+    torch = None  # PyTorch not available
+
+# For type checking only
+if TYPE_CHECKING:
+    if torch is not None:
+        from torch import Tensor
 
 #############################################
 
@@ -196,7 +212,7 @@ def method(f: F,
 @paramdec
 def module(
         moduleclass,
-        dummy_inputs: Optional[Tuple[torch.Tensor]] = None,  # type: ignore TODO: add torch import
+        dummy_inputs: Optional[Tuple['torch.Tensor']] = None,  # type: ignore
         cuda: Optional[bool] = None,
         training: bool = False,
         backward=False,
@@ -206,7 +222,7 @@ def module(
         auto_optimize: bool = True,
         sdfg_name: Optional[str] = None,
         compile_torch_extension: bool = True,
-        debug_transients: bool = False) -> DaceModule:
+        debug_transients: bool = False) -> 'DaceModule':
     """ Decorator to apply on a definition of a ``torch.nn.Module`` to
         convert it to a data-centric module upon construction.
 

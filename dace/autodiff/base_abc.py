@@ -9,7 +9,13 @@ import typing
 import dace.registry
 from dace.sdfg import SDFG, SDFGState, nodes as nd
 import dace.transformation.transformation as xf
-from dace.libraries.onnx.nodes.onnx_op import ONNXOp
+
+try:
+    from dace.libraries.onnx.nodes.onnx_op import ONNXOp
+    ONNX_AVAILABLE = True
+except ImportError:
+    ONNXOp = None
+    ONNX_AVAILABLE = False
 
 log = logging.getLogger(__name__)
 
@@ -120,16 +126,17 @@ def find_backward_implementation(forward_sdfg: SDFG, forward_state: SDFGState,
         if "name" not in args:
             raise ValueError(f"Expected name in arguments of implementation {impl}.")
 
-        if "node_type" in args and isinstance(node, args["node_type"]) or (isinstance(node, ONNXOp) and "op" in args
+        if "node_type" in args and isinstance(node, args["node_type"]) or (ONNX_AVAILABLE and isinstance(node, ONNXOp)
+                                                                           and "op" in args
                                                                            and node.schema.name == args["op"]):
 
             if impl.backward_can_be_applied(node, forward_state, forward_sdfg):
                 valid_impls.append((args["name"], impl))
 
-    if isinstance(node, ONNXOp) and node.backward_implementation:
+    if ONNX_AVAILABLE and isinstance(node, ONNXOp) and node.backward_implementation:
 
         implementation = node.backward_implementation
-    elif isinstance(node, ONNXOp) and node.default_backward_implementation:
+    elif ONNX_AVAILABLE and isinstance(node, ONNXOp) and node.default_backward_implementation:
         implementation = node.default_backward_implementation
     else:
         implementation = None

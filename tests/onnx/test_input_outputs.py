@@ -6,7 +6,9 @@ Testing input and output combinations for onnx Ops
 | Scalar CPU     | Shape     |
 | Array CPU      | Add       |
 """
-import types
+import pytest
+
+pytest.importorskip("onnx", reason="ONNX not installed. Please install with: pip install dace[ml]")
 
 import numpy as np
 import pytest
@@ -216,5 +218,4 @@ def test_add(scalars: bool, simplify: bool, sdfg_name: str):
 
 
 if __name__ == "__main__":
-    import pytest
     pytest.main([__file__, "-v"])

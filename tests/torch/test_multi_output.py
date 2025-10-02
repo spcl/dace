@@ -1,4 +1,6 @@
 import pytest
+
+pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
 import torch
 from torch import nn
 

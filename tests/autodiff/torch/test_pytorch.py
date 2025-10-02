@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 import copy
 
+pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

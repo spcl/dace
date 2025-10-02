@@ -3,6 +3,8 @@ import copy
 import pytest
 
 import numpy as np
+
+pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
 import torch
 from torch import nn, optim
 from transformers import BertConfig

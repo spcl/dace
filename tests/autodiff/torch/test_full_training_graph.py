@@ -3,6 +3,8 @@ import copy
 import pytest
 
 import numpy as np
+
+pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
 import torch
 
 import dace
@@ -211,5 +213,4 @@ def test_two_backward_passes_accumulate():
 
 
 if __name__ == "__main__":
-    import pytest
     pytest.main([__file__, "-v"])

@@ -3,6 +3,10 @@ Batch Norm is the only op that has a shared name between inputs and outputs. Tes
 """
 
 import pytest
+
+pytest.importorskip("onnx", reason="ONNX not installed. Please install with: pip install dace[ml]")
+pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
+
 import numpy as np
 import torch
 from torch import nn
@@ -101,5 +105,4 @@ def test_bn_in_import():
 
 
 if __name__ == "__main__":
-    import pytest
     pytest.main([__file__, "-v"])

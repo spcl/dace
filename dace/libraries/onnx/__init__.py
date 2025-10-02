@@ -22,11 +22,25 @@ strategy for ONNX operations.
 
 from dace.library import register_library, _DACE_REGISTERED_LIBRARIES
 
-# Import all dynamically registered ONNX nodes (ONNXOp, ONNXEinsum, etc.)
-# This star import is necessary to expose all ONNX operation classes
-from .nodes import *
-from .schema import onnx_representation, ONNXAttributeType, ONNXAttribute, ONNXTypeConstraint, ONNXParameterType, ONNXSchema, ONNXParameter
-from .onnx_importer import ONNXModel
+try:
+    # Import all dynamically registered ONNX nodes (ONNXOp, ONNXEinsum, etc.)
+    # This star import is necessary to expose all ONNX operation classes
+    from .nodes import *
+    from .schema import onnx_representation, ONNXAttributeType, ONNXAttribute, ONNXTypeConstraint, ONNXParameterType, ONNXSchema, ONNXParameter
+    from .onnx_importer import ONNXModel
 
-register_library(__name__, "dace.libraries.onnx")
-_DACE_REGISTERED_LIBRARIES["dace.libraries.onnx"].default_implementation = "pure"
+    register_library(__name__, "dace.libraries.onnx")
+    _DACE_REGISTERED_LIBRARIES["dace.libraries.onnx"].default_implementation = "pure"
+
+    ONNX_AVAILABLE = True
+except ImportError:
+    # ONNX library not available
+    ONNXModel = None
+    onnx_representation = None
+    ONNXAttributeType = None
+    ONNXAttribute = None
+    ONNXTypeConstraint = None
+    ONNXParameterType = None
+    ONNXSchema = None
+    ONNXParameter = None
+    ONNX_AVAILABLE = False

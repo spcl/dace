@@ -2,13 +2,16 @@
 Test a full model including indexing and input preparation. The model also includes lots of symbolic dimensions.
 """
 
+import pytest
+
+pytest.importorskip("onnx", reason="ONNX not installed. Please install with: pip install dace[ml]")
+pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
+pytest.importorskip("onnxsim", reason="ONNX Simplifier not installed. Please install with: pip install dace[ml]")
 import os
 
 import onnx
 import onnxsim
 import pathlib
-import pytest
-import numpy as np
 import urllib
 
 import torch
