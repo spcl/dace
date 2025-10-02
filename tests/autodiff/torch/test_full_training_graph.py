@@ -59,7 +59,7 @@ def test_parse_backward_simple():
     sdfg.expand_library_nodes()
     sdfg.validate()
 
-    result = train_step(x.clone(), dy.clone())
+    result = sdfg(x.clone(), dy.clone())
     tensors_close('x.grad', dy.reshape(10, 1).expand(10, 5), result)
 
 
@@ -79,7 +79,7 @@ def test_parse_backward_scalar():
     sdfg.expand_library_nodes()
     sdfg.validate()
 
-    result = train_step(x.clone())
+    result = sdfg(x.clone())
     tensors_close('x.grad', 1, result)
 
 
@@ -112,7 +112,7 @@ def test_parse_backward_with_forwarding():
     sdfg.expand_library_nodes()
     sdfg.validate()
 
-    result = train_step(x.clone())
+    result = sdfg(x.clone())
     expected = torch_fn(x.clone())
     tensors_close('x.grad', expected, result)
 
@@ -159,7 +159,7 @@ def test_two_backward_passes():
     x2 = torch.randn(5, dtype=torch.float64)
     dy = torch.randn(10, dtype=torch.float64)
 
-    r1, r2 = train_step(x1.clone(), x2.clone(), dy.clone())
+    r1, r2 = sdfg(x1.clone(), x2.clone(), dy.clone())
     ex_1, ex_2 = torch_fn(x1.clone(), x2.clone(), dy.clone())
     tensors_close('x2.grad', ex_2, r2)
     tensors_close('x1.grad', ex_1, r1)
@@ -204,7 +204,7 @@ def test_two_backward_passes_accumulate():
     x1 = torch.randn(10, 5, dtype=torch.float64)
     dy = torch.randn(10, dtype=torch.float64)
 
-    result = train_step(x1.clone(), dy.clone())
+    result = sdfg(x1.clone(), dy.clone())
     expected = torch_fn(x1.clone(), dy.clone())
 
     tensors_close('x.grad', expected, result)
