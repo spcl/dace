@@ -6,6 +6,7 @@ from dace.sdfg.graph import MultiConnectorEdge
 from dace import SDFGState
 
 SLICE_SUFFIX = "slice"
+FULLVIEW_SUFFIX = "view"
 
 
 def _get_new_connector_name(edge: MultiConnectorEdge, repldict: Dict[str, str], other_repldict: Dict[str, str],
@@ -37,7 +38,7 @@ def _get_new_connector_name(edge: MultiConnectorEdge, repldict: Dict[str, str], 
     array_name = set(nested_sdfg.arrays.keys()).union(combined_repldict.values()).union(nested_sdfg.symbols).union(
         state.sdfg.arrays.keys())
     if is_complete_subset:
-        candidate_name = dace.data.find_new_name(edge.data.data, array_name)
+        candidate_name = dace.data.find_new_name(f"{edge.data.data}_{FULLVIEW_SUFFIX}", array_name)
         return candidate_name
     else:
         candidate_name = dace.data.find_new_name(f"{edge.data.data}_{SLICE_SUFFIX}", array_name)
