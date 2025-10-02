@@ -123,7 +123,7 @@ def _parse_hbm_dump(filepath: str, num_channels: int, array_names_and_data: Iter
         for j in range(num_channels):
             parsed[name][j] = {}
             for k in range(tiles_of_channel[name][j]):
-                offset = i * num_channels + j * tiles_of_channel[name][j]
+                offset = i * num_channels + j * tiles_of_channel[name][j] + k
                 if offset in sections:
                     parsed[name][j][k] = sections[offset]
 
