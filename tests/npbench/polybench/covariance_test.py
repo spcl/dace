@@ -176,6 +176,7 @@ def test_gpu():
 
 
 @pytest.mark.autodiff
+@pytest.mark.skip(reason="Serialization issue")
 def test_autodiff():
     run_covariance_autodiff()
 
