@@ -59,12 +59,10 @@ def find_readable_connector_names_for_nested_sdfgs(sdfg: dace.SDFG):
     Args:
         sdfg (dace.SDFG): Modified in-place.
     """
-    recurse_in: Set[dace.nodes.NestedSDFG] = set()
 
     for state in sdfg.all_states():
         for node in state.nodes():
             if isinstance(node, dace.nodes.NestedSDFG):
-                recurse_in.add(node)
 
                 in_edges = state.in_edges(node)
                 out_edges = state.out_edges(node)
