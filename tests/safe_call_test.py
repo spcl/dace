@@ -29,6 +29,27 @@ def test_oob():
     assert caught, "Exception not raised!"
 
 
+def test_oob_precompiled():
+    sdfg = indirect_access.to_sdfg()
+
+    A = np.zeros((5, ), dtype=np.float64)
+    B = np.array([1, 2, 3, 4, 5], dtype=np.float64)
+    obj = sdfg.compile()
+    obj.safe_call(A, B, 5)
+    assert np.allclose(A, B + 1), "Output is not forwarded correctly!"
+
+    # This should raise an exception, but not crash
+    A = np.zeros((5, ), dtype=np.float64)
+    B = np.array([1, 2, 3, 4, 5], dtype=np.float64)
+    caught = False
+    try:
+        obj.safe_call(A, B, 6400)
+        caught = False
+    except Exception as e:
+        caught = True
+    assert caught, "Exception not raised!"
+
+
 def test_instrumentation():
     sdfg = indirect_access.to_sdfg()
     sdfg.instrument = dace.InstrumentationType.Timer
@@ -41,12 +62,35 @@ def test_instrumentation():
     assert sdfg.get_latest_report() is not None, "Report not generated!"
 
 
+def test_instrumentation_precompiled():
+    sdfg = indirect_access.to_sdfg()
+    sdfg.instrument = dace.InstrumentationType.Timer
+
+    A = np.zeros((5, ), dtype=np.float64)
+    B = np.array([1, 2, 3, 4, 5], dtype=np.float64)
+    obj = sdfg.compile()
+    obj.safe_call(A, B, 5)
+    assert np.allclose(A, B + 1), "Output is not forwarded correctly!"
+
+    assert sdfg.get_latest_report() is not None, "Report not generated!"
+
+
 def test_kwargs():
     sdfg = indirect_access.to_sdfg()
 
     A = np.zeros((5, ), dtype=np.float64)
     B = np.array([1, 2, 3, 4, 5], dtype=np.float64)
     sdfg.safe_call(A=A, B=B, ub=5)
+    assert np.allclose(A, B + 1), "Output is not forwarded correctly!"
+
+
+def test_kwargs_precompiled():
+    sdfg = indirect_access.to_sdfg()
+
+    A = np.zeros((5, ), dtype=np.float64)
+    B = np.array([1, 2, 3, 4, 5], dtype=np.float64)
+    obj = sdfg.compile()
+    obj.safe_call(A=A, B=B, ub=5)
     assert np.allclose(A, B + 1), "Output is not forwarded correctly!"
 
 
@@ -66,8 +110,29 @@ def test_symbols():
     assert np.allclose(A, B + 1), "Output is not forwarded correctly!"
 
 
+def test_symbols_precompiled():
+    N = dace.symbol('N')
+
+    @dace.program
+    def indirect_access_sym(A: dace.float64[N], B: dace.float64[N]):
+        for i in range(N):
+            A[i] = B[i] + 1
+
+    sdfg = indirect_access_sym.to_sdfg()
+    obj = sdfg.compile()
+
+    A = np.zeros((5, ), dtype=np.float64)
+    B = np.array([1, 2, 3, 4, 5], dtype=np.float64)
+    obj.safe_call(A=A, B=B, N=5)
+    assert np.allclose(A, B + 1), "Output is not forwarded correctly!"
+
+
 if __name__ == "__main__":
     test_oob()
+    test_oob_precompiled()
     test_instrumentation()
+    test_instrumentation_precompiled()
     test_kwargs()
+    test_kwargs_precompiled()
     test_symbols()
+    test_symbols_precompiled()

@@ -2518,48 +2518,18 @@ class SDFG(ControlFlowRegion):
             return binaryobj(*args, **kwargs)
 
     def safe_call(self, *args, **kwargs):
-        """ Invokes an SDFG in a separate process to avoid crashes in the main process,
-            generating and compiling code if necessary.
-            Raises an exception if the SDFG execution fails.
         """
+        Invokes an SDFG in a separate process to avoid crashes in the main process,generating and compiling code if necessary.
+        Raises an exception if the SDFG execution fails.
+        """
+        with hooks.invoke_sdfg_call_hooks(self) as sdfg:
+            binaryobj = sdfg.compile()
 
-        # Pickle the SDFG and arguments
-        with tempfile.NamedTemporaryFile(mode='wb', delete=False) as f:
-            pickle.dump({'sdfg': self, 'args': args, 'kwargs': kwargs, 'build_folder': self.build_folder}, f)
-            temp_path = f.name
+            # Verify passed arguments (if enabled)
+            if Config.get_bool('frontend', 'check_args'):
+                sdfg.argument_typecheck(args, kwargs)
 
-        # Call the SDFG in a separate process
-        result = subprocess.run([
-            sys.executable, '-c', f'''
-import pickle
-with open(r"{temp_path}", "rb") as f:
-    data = pickle.load(f)
-sdfg = data['sdfg']
-sdfg.build_folder = data['build_folder']
-sdfg(*data['args'], **data['kwargs'])
-
-with open(r"{temp_path}", "wb") as f:
-    pickle.dump({{
-        'args': data['args'],
-        'kwargs': data['kwargs']
-    }}, f)
-             '''
-        ])
-
-        # Receive the result
-        with open(temp_path, 'rb') as f:
-            data = pickle.load(f)
-            for i in range(len(args)):
-                if hasattr(args[i], '__setitem__'):
-                    args[i].__setitem__(slice(None), data['args'][i])
-            for k in kwargs:
-                if hasattr(kwargs[k], '__setitem__'):
-                    kwargs[k].__setitem__(slice(None), data['kwargs'][k])
-
-        # Clean up
-        os.remove(temp_path)
-        if result.returncode != 0:
-            raise RuntimeError(f'SDFG execution failed with return code {result.returncode}.')
+            return binaryobj.safe_call(*args, **kwargs)
 
     def fill_scope_connectors(self):
         """ Fills missing scope connectors (i.e., "IN_#"/"OUT_#" on entry/exit
