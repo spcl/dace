@@ -102,12 +102,6 @@ def find_readable_connector_names_for_nested_sdfgs(sdfg: dace.SDFG):
                             new_connector = _get_new_connector_name(out_edge, output_repldict, input_repldict, state,
                                                                     node.sdfg)
                             output_repldict[out_edge.src_conn] = new_connector
-                print("input_repldict:", input_repldict)
-                print("output_repldict:", output_repldict)
-                # Correction:
-                # Consider the example:
-                # input_repldict: {'b': 'always_read'}
-                # output_repldict: {'b': 'always_read_0'}
 
                 # Replace connectors rm tmpxceX connector with A
                 for dst_name in set(input_repldict.keys()):
