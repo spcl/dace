@@ -177,8 +177,6 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
             # find lower_subsets
             for out_edge in graph.out_edges(node):
-                if out_edge.data.is_empty():
-                    continue
                 if out_edge.dst in map_entries:
                     for oedge in graph.out_edges(out_edge.dst):
                         if oedge.src_conn and oedge.src_conn[3:] == out_edge.dst_conn[2:]:
@@ -298,8 +296,6 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         access_set = None
                         for node in container_dict[node_data]:
                             for e in graph.out_edges(node):
-                                if e.data.is_empty():
-                                    continue
                                 if e.dst in map_entries:
                                     # get corresponding inner memlet and join its subset to our access set
                                     for oe in graph.out_edges(e.dst):
@@ -497,14 +493,12 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 assert other_subset.dims() == subset_length
 
         for out_edge in graph.out_edges(node):
-            if out_edge.data.is_empty():
-                continue
             if out_edge.dst in map_entries:
                 for other_edge in graph.out_edges(out_edge.dst):
                     if other_edge.src_conn and other_edge.src_conn[3:] == out_edge.dst_conn[2:]:
                         other_subset = other_edge.data.subset \
-                                    if other_edge.data.data == node.data \
-                                    else other_edge.data.other_subset
+                                       if other_edge.data.data == node.data \
+                                       else other_edge.data.other_subset
                         for (idx, (ssbs1, ssbs2)) in enumerate(zip(out_edge.data.subset, other_subset)):
                             if ssbs1 != ssbs2:
                                 variant_dimensions.add(idx)
@@ -852,12 +846,9 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             # handle inputs
             # TODO: dynamic map range -- this is fairly unrealistic in such a setting
             for edge in graph.in_edges(map_entry):
-                if edge.data.is_empty():
-                    continue
                 src = edge.src
                 out_edges = [
-                    e for e in graph.out_edges(map_entry)
-                    if (e.src_conn and e.dst_conn and e.src_conn[3:] == edge.dst_conn[2:])
+                    e for e in graph.out_edges(map_entry) if (e.src_conn and e.src_conn[3:] == edge.dst_conn[2:])
                 ]
 
                 if src in in_nodes:

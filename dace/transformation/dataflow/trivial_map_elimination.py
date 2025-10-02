@@ -104,14 +104,5 @@ class TrivialMapElimination(transformation.SingleStateTransformation):
                     if outer_entry is not None:
                         graph.add_edge(outer_entry, None, edge.src, None, Memlet())
 
-        # If there were any empty in edges to the map entry, redirect them to the tasklet
-        # TODO: Fix this hack
-        for edge in graph.in_edges(map_entry):
-            if edge.data.is_empty():
-                # Get the first tasklet in the map
-                tasklet = graph.out_edges(map_entry)[0].dst
-                if not isinstance(tasklet, nodes.Tasklet):
-                    continue
-                graph.add_edge(edge.src, None, tasklet, None, edge.data)
         # Remove map
         graph.remove_nodes_from([map_entry, map_exit])
