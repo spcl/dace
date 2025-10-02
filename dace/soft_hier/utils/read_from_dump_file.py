@@ -17,7 +17,7 @@ def get_address_and_read_from_file(i: int,
                                    debug_j: int = None):
 
     # Only print debug info for specific elements
-    if debug_print:
+    if not debug_print:
         if debug_i is None or debug_j is None:
             debug_print = False
         else:
