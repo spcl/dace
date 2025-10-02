@@ -642,15 +642,15 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
             # result_alloc.write('DACE_ACL_CHECK(aclrtMalloc((void**)&%s, %s));\n' %
             #                     ( dataname, arrsize_malloc))
             result_alloc.write(f"{dataname} = {self.tcdm_offset};\n")
-            # if node.setzero:
-            #     result_alloc.write('// DACE_ACL_CHECK(aclrtMemset(%s, 0, %s));\n' % ( dataname, arrsize_malloc))
-            #     result_alloc.write(f'''
-            #         if(flex_is_dm_core())
-            #         {{
-            #             flex_dma_async_1d(local({dataname}), zomem(0), {total_size});
-            #             flex_dma_async_wait_all();
-            #         }}
-            #     ''')
+            if node.setzero:
+                result_alloc.write(f'''
+                    if(flex_is_dm_core())
+                    {{
+                        flex_dma_async_1d(local({dataname}), zomem(0), {total_size});
+                        flex_dma_async_wait_all();
+                    }}
+                    flex_intra_cluster_sync();
+                ''')
             if isinstance(nodedesc, dt.Array) and nodedesc.start_offset != 0:
                 result_alloc.write(f'{dataname} += {cpp.sym2cpp(nodedesc.start_offset)};\n')
             self.tcdm_offset += total_size
@@ -1883,10 +1883,14 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                 '''
             uint32_t eoc_val = 0;
             flex_global_barrier_xy();
-            flex_timer_start();
+            if (flex_get_cluster_id() == 0 && flex_get_core_id()) {{
+                flex_timer_start();
+            }} 
             {kname}({kargs});
             flex_global_barrier_xy();
-            flex_timer_end();
+            if (flex_get_cluster_id() == 0 && flex_get_core_id()) {{
+                flex_timer_end();
+            }} 
             flex_intra_cluster_sync();
             flex_global_barrier_xy();
             {dump_str}
