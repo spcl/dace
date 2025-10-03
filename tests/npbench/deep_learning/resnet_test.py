@@ -284,7 +284,7 @@ def run_resnet_autodiff():
         return np.sum(x)
 
     # Add the backward pass to the SDFG
-    sdfg = autodiff_kernel.to_sdfg()
+    sdfg = autodiff_kernel.to_sdfg(simplify=True)
     add_backward_pass(sdfg=sdfg, inputs=["input"], outputs=["__return"])
 
     sdfg(input,
