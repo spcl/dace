@@ -1304,8 +1304,11 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                     # callsite_stream.write("if (flex_is_dm_core())")
                     callsite_stream.write("{")
                     if is_broadcast:
+                        # callsite_stream.write(
+                        #     f"flex_dma_async_broadcast(dace_remote_xy({pos_x_end-pos_x_step+1},{pos_y_end-pos_y_step+1},{dst_expr},{self._soft_hier_dims[0]}), local({src_expr}), {dst_size}, 3, 3);"
+                        # )
                         callsite_stream.write(
-                            f"flex_dma_async_broadcast(dace_remote_xy({pos_x_end-pos_x_step+1},{pos_y_end-pos_y_step+1},{dst_expr},{self._soft_hier_dims[0]}), local({src_expr}), {dst_size}, 3, 3);"
+                            f"flex_dma_async_broadcast(({dst_expr}), ({src_expr}), {dst_size}, {(pos_x_end - pos_x_start) ^ (self._soft_hier_dims[0] - 1)}, {(pos_y_end - pos_y_start) ^ (self._soft_hier_dims[0] - 1)});"
                         )
                     else:
                         callsite_stream.write(
