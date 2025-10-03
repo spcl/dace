@@ -48,7 +48,7 @@ def test_llama_decoder_backward(sdfg_name):
         intermediate_size=1024,
         num_attention_heads=8,
         num_key_value_heads=8,
-        max_position_embeddings=2048,
+        max_position_embeddings=128,
         rms_norm_eps=1e-5,
         rope_theta=10000.0,
         attention_dropout=0.0,

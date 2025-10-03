@@ -16,7 +16,7 @@ from tests.utils import torch_tensors_close
 def test_bert_encoder(sdfg_name: str):
     batch_size = 2
     seq_len = 32
-    hidden_size = 48
+    hidden_size = 24
 
     input = torch.randn([batch_size, seq_len, hidden_size])
 

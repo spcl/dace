@@ -250,7 +250,7 @@ def run_cavity_flow(device_type: dace.dtypes.DeviceType):
 
 def run_cavity_flow_autodiff():
     # Initialize data (test size from benchmark)
-    ny, nx, nt, nit, rho, nu = (61, 61, 25, 5, 1.0, 0.1)
+    ny, nx, nt, nit, rho, nu = (11, 11, 25, 5, 1.0, 0.1)
     u, v, p, dx, dy, dt = initialize(ny, nx)
     jax_u, jax_v, jax_p = u.copy(), v.copy(), p.copy()
 

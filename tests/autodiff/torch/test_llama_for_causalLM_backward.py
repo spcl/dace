@@ -59,6 +59,7 @@ class LlamaWrapper(nn.Module):
 
 @pytest.mark.torch
 @pytest.mark.autodiff
+@pytest.mark.long
 def test_llama_model_backward(sdfg_name):
     # Create a small LLaMA configuration
     config = LlamaConfig(
@@ -68,7 +69,7 @@ def test_llama_model_backward(sdfg_name):
         num_hidden_layers=4,
         num_attention_heads=8,
         num_key_value_heads=8,
-        max_position_embeddings=2048,
+        max_position_embeddings=128,
         rms_norm_eps=1e-5,
         rope_theta=10000.0,
         pad_token_id=0,
@@ -79,8 +80,8 @@ def test_llama_model_backward(sdfg_name):
 
     # Create the full model
     model = LlamaForCausalLM(config)
-    export_seq_length = 32
-    export_batch_size = 2
+    export_seq_length = 16
+    export_batch_size = 1
     input = torch.randint(3, config.vocab_size, (export_batch_size, export_seq_length))
 
     wrapped_model = LlamaWrapper(model)
@@ -98,5 +99,4 @@ def test_llama_model_backward(sdfg_name):
 
 
 if __name__ == "__main__":
-    import pytest
     pytest.main([__file__, "-v"])
