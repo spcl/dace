@@ -280,10 +280,10 @@ def test_lift_previously_illegal_for_loop():
 
 
 if __name__ == '__main__':
-    # test_lift_regular_for_loop()
-    # test_lift_loop_llvm_canonical(True)
-    # test_lift_loop_llvm_canonical(False)
+    test_lift_regular_for_loop()
+    test_lift_loop_llvm_canonical(True)
+    test_lift_loop_llvm_canonical(False)
     test_lift_loop_llvm_canonical_while()
-    # test_do_while()
-    # test_inverted_loop_with_additional_increment_assignment()
-    # test_lift_previously_illegal_for_loop()
+    test_do_while()
+    test_inverted_loop_with_additional_increment_assignment()
+    test_lift_previously_illegal_for_loop()
