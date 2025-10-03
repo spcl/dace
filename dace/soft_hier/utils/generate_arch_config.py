@@ -4,7 +4,7 @@
 def generate_arg_cfg(output_path="generated_arch.py",
                      num_cluster_x=4,
                      num_cluster_y=4,
-                     num_core_per_cluster=2,
+                     num_core_per_cluster=3,
                      cluster_tcdm_bank_width=32,
                      cluster_tcdm_bank_nb=128,
                      cluster_tcdm_base="0x00000000",
