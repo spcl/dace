@@ -120,10 +120,23 @@ def _parse_hbm_dump(filepath: str, num_channels: int, array_names_and_data: Iter
     parsed = {}
     for i, (name, data) in enumerate(array_names_and_data_sorted):
         parsed[name] = {}
+        
         for j in range(num_channels):
             parsed[name][j] = {}
             for k in range(tiles_of_channel[name][j]):
-                offset = i * num_channels + j * tiles_of_channel[name][j] + k
+                # calculate how many sections before me of different arrays
+                sections_before_me = 0
+                for ii in range(i):
+                    other_name, other_data = array_names_and_data_sorted[ii]
+                    sections_before_me += sum(tiles_of_channel[other_name].values())
+
+                # calculate how many sections before me of the same array on the different channels
+                tiles_before_me_on_the_different_channel = 0
+                for jj in range(j):
+                    tiles_before_me_on_the_different_channel += tiles_of_channel[name][jj]
+                
+                offset = sections_before_me + tiles_before_me_on_the_different_channel + k
+
                 if offset in sections:
                     parsed[name][j][k] = sections[offset]
 
