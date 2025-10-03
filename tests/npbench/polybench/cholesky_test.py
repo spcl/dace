@@ -130,7 +130,7 @@ def run_cholesky(device_type: dace.dtypes.DeviceType):
 
 def run_cholesky_autodiff():
     # Initialize data (polybench mini size)
-    N = sizes["mini"]
+    N = 20
     A = init_data(N)
     A_jax = jnp.copy(A)
 
@@ -145,7 +145,7 @@ def run_cholesky_autodiff():
         return np.sum(A)
 
     # Add the backward pass to the SDFG
-    sdfg = autodiff_kernel.to_sdfg()
+    sdfg = autodiff_kernel.to_sdfg(simplify=True)
     add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"])
     sdfg(A, N=N, gradient_A=gradient_A, gradient___return=gradient___return)
 
