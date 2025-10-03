@@ -13,14 +13,12 @@ import networkx as nx
 def test_frontend_reference():
     N = dace.symbol('N')
     M = dace.symbol('M')
-    mystruct = dace.data.Structure(
-        members={
-            "data": dace.data.Array(dace.float32, (N, M), strides=(1, N)),
-            "arrA": dace.data.ArrayReference(dace.float32, (N,)),
-            "arrB": dace.data.ArrayReference(dace.float32, (N,)),
-        },
-        name="MyStruct"
-    )
+    mystruct = dace.data.Structure(members={
+        "data": dace.data.Array(dace.float32, (N, M), strides=(1, N)),
+        "arrA": dace.data.ArrayReference(dace.float32, (N, )),
+        "arrB": dace.data.ArrayReference(dace.float32, (N, )),
+    },
+                                   name="MyStruct")
 
     @dace.program
     def init_prog(mydat: mystruct, fill_value: int) -> None:
