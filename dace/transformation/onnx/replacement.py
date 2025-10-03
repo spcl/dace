@@ -1,4 +1,5 @@
 """ General class for pattern replacement transformations. """
+import abc
 import dace
 from dace import registry, nodes, data as dt
 from dace.transformation import transformation, helpers as xfh
@@ -59,13 +60,15 @@ def onnx_constant_or_none(sdfg: dace.SDFG, node_or_name: Union[nodes.AccessNode,
     return cten.item() if cten.numel() == 1 else cten.tolist()
 
 
-class ReplacementTransformation(transformation.SingleStateTransformation):
+class ReplacementTransformation(transformation.SingleStateTransformation, abc.ABC):
 
     @classmethod
+    @abc.abstractmethod
     def pattern(cls) -> gr.OrderedDiGraph[nodes.Node, dace.Memlet]:
         """ Returns a pattern to match as a directed graph. """
         raise NotImplementedError
 
+    @abc.abstractmethod
     def replacement(self, subgraph: List[nodes.Node], sdfg: dace.SDFG,
                     state: dace.SDFGState) -> Tuple[nodes.Node, Dict[str, Tuple[nodes.Node, Union[str, dt.Data]]]]:
         """
