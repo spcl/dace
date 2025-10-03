@@ -440,6 +440,8 @@ class SoftHierCodeGen(TargetCodeGenerator):
 #include "flex_dump.h"
 #define floor(x) ((x))
 #define Mod(x, y) ((x) % (y))
+#define dace_cluster_index(x,y,dim_x)         ((y)*(dim_x)+(x))
+#define dace_remote_xy(x,y,offset,dim_x)       (ARCH_CLUSTER_TCDM_REMOTE+dace_cluster_index(x,y,dim_x)*ARCH_CLUSTER_TCDM_SIZE+offset)
 {file_header}
 
 static const uint64_t HBM_ADDRESS_SPACE = {hbm_address_space};
@@ -1303,7 +1305,7 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                     callsite_stream.write("{")
                     if is_broadcast:
                         callsite_stream.write(
-                            f"flex_dma_async_1d_broadcast(dace_remote_xy({pos_x_end-pos_x_step+1},{pos_y_end-pos_y_step+1},{dst_expr},{self._soft_hier_dims[0]}), local({src_expr}), {dst_size});"
+                            f"flex_dma_async_broadcast(dace_remote_xy({pos_x_end-pos_x_step+1},{pos_y_end-pos_y_step+1},{dst_expr},{self._soft_hier_dims[0]}), local({src_expr}), {dst_size}, 3, 3);"
                         )
                     else:
                         callsite_stream.write(
@@ -1894,12 +1896,12 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                 '''
             uint32_t eoc_val = 0;
             flex_global_barrier_xy();
-            if (flex_get_cluster_id() == 0 && flex_get_core_id()) {{
+            if (flex_get_cluster_id() == 0 && flex_get_core_id() == 0) {{
                 flex_timer_start();
             }} 
             {kname}({kargs});
             flex_global_barrier_xy();
-            if (flex_get_cluster_id() == 0 && flex_get_core_id()) {{
+            if (flex_get_cluster_id() == 0 && flex_get_core_id() == 0) {{
                 flex_timer_end();
             }} 
             flex_intra_cluster_sync();

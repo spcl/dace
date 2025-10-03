@@ -33,14 +33,14 @@ def get_address_and_read_from_file(i: int,
     split_scheme = interleave_handler.split_scheme
     placement_scheme = interleave_handler.placement_scheme
     tiling_shape = interleave_handler.tiling_shape
-    num_channels = interleave_handler.num_channels
+    # num_channels = interleave_handler.num_channels
 
     if debug_print:
         print(f"Configuration:")
         print(f"  - Block shape: {block_shape}")
         print(f"  - Tiling shape: {tiling_shape}")
         print(f"  - Split scheme: {split_scheme}")
-        print(f"  - Number of channels: {num_channels}")
+        # print(f"  - Number of channels: {num_channels}")
         print(f"  - Element size: {element_size_in_bytes} bytes")
         print(f"  - Data type: {dtype}")
         print(f"  - Array name: {array_name}")
