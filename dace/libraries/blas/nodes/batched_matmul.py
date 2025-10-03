@@ -136,16 +136,16 @@ class ExpandBatchedMatMulMKL(ExpandTransformation):
         MKL_INT ldb_array[group_count] = {{ {ldb} }};
         MKL_INT ldc_array[group_count] = {{ {ldc} }};
 
-        const {dtype}** A = new const {dtype}*[{BATCH}];
-        const {dtype}** B = new const {dtype}*[{BATCH}];
-        {dtype}** C = new {dtype}*[{BATCH}];
+        const {dtype}** A_ptr = new const {dtype}*[{BATCH}];
+        const {dtype}** B_ptr = new const {dtype}*[{BATCH}];
+        {dtype}**       C_ptr = new {dtype}*[{BATCH}];
         for (int __ib = 0; __ib < {BATCH}; __ib++) {{
-            A[__ib] = (({dtype}*){x}) + __ib*{stride_a};
-            B[__ib] = (({dtype}*){y}) + __ib*{stride_b};
-            C[__ib] = (({dtype}*)_c) + __ib*{stride_c};
+            A_ptr[__ib] = (({dtype}*){x}) + __ib*{stride_a};
+            B_ptr[__ib] = (({dtype}*){y}) + __ib*{stride_b};
+            C_ptr[__ib] = (({dtype}*)_c) + __ib*{stride_c};
         }}
 
-        {prefix}gemm_batch(transa, transb, m_array, n_array, k_array, alpha_array, A, lda_array, B, ldb_array, beta_array, C, ldc_array, &group_count, group_sizes);'''.format_map(
+        {prefix}gemm_batch(transa, transb, m_array, n_array, k_array, alpha_array, A_ptr, lda_array, B_ptr, ldb_array, beta_array, C_ptr, ldc_array, &group_count, group_sizes);'''.format_map(
             opt)
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
