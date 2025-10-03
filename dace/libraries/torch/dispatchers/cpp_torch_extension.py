@@ -12,6 +12,8 @@ from typing import List, Tuple, Callable, Optional, Dict, Union
 import dace.library
 import numpy as np
 import torch
+import hashlib, operator
+from torch.utils.cpp_extension import load as torch_load
 import dace
 from dace import dtypes as dt, data
 from dace.codegen import targets, compiler
@@ -579,6 +581,15 @@ TORCH_LIBRARY(dace_{fwd_sdfg.name}, m) {{
 """
 
 
+def _torch_ext_root() -> str:
+    """Resolve the torch extensions root without using private PyTorch APIs."""
+    env = os.environ.get("TORCH_EXTENSIONS_DIR")
+    if env:
+        return env
+
+    return os.path.join(os.path.expanduser("~"), ".cache", "torch_extensions")
+
+
 def register_and_compile_torch_extension(module: 'dace.frontend.python.module.DaceModule',
                                          dummy_inputs) -> DaCeMLTorchFunction:
     """Get a torch callable for the module. This will compile the SDFG, compile a PyTorch C++ operator, register it
@@ -601,74 +612,84 @@ def register_and_compile_torch_extension(module: 'dace.frontend.python.module.Da
     }
     if module.backward:
         compiled, handle_ptr, compiled_bwd, bwd_handle_ptr = compile_and_init_sdfgs(module, dummy_inputs)
-
-        compiled_sdfgs = [compiled, compiled_bwd]
-        ptrs = [handle_ptr, bwd_handle_ptr]
+        compiled_sdfgs = [compiled, compiled_bwd] if compiled_bwd is not None else [compiled]
+        ptrs = [handle_ptr, bwd_handle_ptr] if compiled_bwd is not None else [handle_ptr]
         if compiled_bwd is not None:
             environments.add(get_env_for_sdfg(compiled_bwd).full_class_path())
             bwd_sdfg = compiled_bwd.sdfg
             code = code_for_backward_function(module, compiled.sdfg, bwd_sdfg, module._ad_result, module._ad_inp_arrs)
         else:
             bwd_sdfg = module.backward_sdfg
-            compiled_sdfgs = [compiled]
-            ptrs = [handle_ptr]
             code = code_for_module(module, compiled)
     else:
         compiled, handle_ptr = compile_and_init_sdfgs(module, dummy_inputs)
+        compiled_sdfgs = [compiled]
         ptrs = [handle_ptr]
         code = code_for_module(module, compiled)
-        compiled_sdfgs = [compiled]
+
     environments.add(get_env_for_sdfg(compiled).full_class_path())
     code = indent_code(code)
 
-    # Build the PyTorch module
-    libname = f"torch_{compiled.sdfg.name}"
-    program = CodeObject(libname,
+    # ---------- Build the PyTorch module ----------
+    base_libname = f"torch_{compiled.sdfg.name}"
+    program = CodeObject(base_libname,
                          code,
                          "cpp",
                          targets.cpu.CPUCodeGen,
                          f"Torch{module.sdfg_name}",
                          environments=environments)
-    torch_module_build_path = os.path.join('.dacecache', f"torch_{compiled.sdfg.name}")
 
+    torch_module_build_path = os.path.join('.dacecache', base_libname)
     parts = os.path.normpath(compiled.filename).split(os.sep)
     sdfg_folder_name = parts[parts.index('.dacecache') + 1]
-    backward_sdfg_folder_name = f"{compiled.sdfg.name}_backward_{sdfg_folder_name.removeprefix(compiled.sdfg.name + '_')}"
+
+    # Treat the case where a hash is added to the SDFG folder dir
+    backward_sdfg_folder_name = f"{compiled.sdfg.name}_backward_{sdfg_folder_name.removeprefix(compiled.sdfg.name + '_')}" if sdfg_folder_name != compiled.sdfg.name else f"{compiled.sdfg.name}_backward"
     compiler.generate_program_folder(None, [program], torch_module_build_path)
+
     include_path = os.path.abspath(os.path.join('.dacecache', sdfg_folder_name, "include"))
     include_path_bwd = os.path.abspath(os.path.join('.dacecache', backward_sdfg_folder_name, "include"))
     dace_include_path = os.path.abspath(os.path.join(os.path.dirname(dace.__file__), "runtime", "include"))
+    dace_include_onnx = os.path.abspath(os.path.join(os.path.dirname(dace.__file__), "libraries", "onnx", "include"))
+    dace_include_blas = os.path.abspath(os.path.join(os.path.dirname(dace.__file__), "libraries", "blas", "include"))
+
     code_path = os.path.join('.dacecache', sdfg_folder_name, "src", "cpu", f"{compiled.sdfg.name}.cpp")
     code_path_bwd = os.path.join('.dacecache', backward_sdfg_folder_name, "src", "cpu",
                                  f"{compiled.sdfg.name}_backward.cpp")
-    torch_code_path = os.path.join('.dacecache', f"torch_{compiled.sdfg.name}", "src", "cpu",
-                                   f"torch_{compiled.sdfg.name}.cpp")
-    sources = [code_path, torch_code_path]
-    if os.path.exists(code_path_bwd):
-        sources.append(code_path_bwd)
-    dace_include_path_onnx = os.path.abspath(
-        os.path.join(os.path.dirname(dace.__file__), "libraries", "onnx", "include"))
-    dace_include_path_blas = os.path.abspath(
-        os.path.join(os.path.dirname(dace.__file__), "libraries", "blas", "include"))
+    torch_code_path = os.path.join('.dacecache', base_libname, "src", "cpu", f"{base_libname}.cpp")
 
-    torch.utils.cpp_extension.load(
-        name=libname,
+    sources = [p for p in [code_path, torch_code_path, code_path_bwd] if os.path.exists(p)]
+
+    pid = os.getpid()
+    salt = hashlib.sha1(("".join(sources)).encode("utf-8")).hexdigest()[:8]
+    base_libname = f"torch_{compiled.sdfg.name}"
+    unique_name = f"{base_libname}_p{pid}_{salt}"
+
+    build_root = _torch_ext_root()  # <- uses our helper
+    unique_build_dir = os.path.join(build_root, unique_name)
+    os.makedirs(unique_build_dir, exist_ok=True)
+
+    # We pass unique name + unique build directory to avoid FileBaton contention
+    torch_load(
+        name=unique_name,
         sources=sources,
+        build_directory=unique_build_dir,
         extra_cflags=["-g"],
         extra_include_paths=[
-            include_path,
-            include_path_bwd,
-            dace_include_path,
-            dace_include_path_blas,
-            dace_include_path_onnx,
+            p for p in {
+                include_path,
+                include_path_bwd if os.path.exists(include_path_bwd) else None,
+                dace_include_path,
+                dace_include_blas,
+                dace_include_onnx,
+            } if p
         ],
         is_python_module=False,
     )
 
     torch_function = operator.attrgetter(f"dace_{compiled.sdfg.name}.{compiled.sdfg.name}")(torch.ops)
 
-    result = DaCeMLTorchFunction(function=torch_function, compiled_sdfgs=compiled_sdfgs, ptr=ptrs)
-    return result
+    return DaCeMLTorchFunction(function=torch_function, compiled_sdfgs=compiled_sdfgs, ptr=ptrs)
 
 
 def get_env_for_sdfg(compiled: CompiledSDFG):
