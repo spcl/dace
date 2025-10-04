@@ -231,9 +231,8 @@ class ExplicitVectorization(ppl.Pass):
             for node in state.nodes():
                 if isinstance(node, dace.nodes.AccessNode):
                     arr = state.sdfg.arrays[node.data]
-                    if (arr.transient is False and (
-                        isinstance(arr, dace.data.Scalar) or isinstance(arr, dace.data.Array) and arr.shape == (1,)
-                        )):
+                    if (arr.transient is False and
+                        (isinstance(arr, dace.data.Scalar) or isinstance(arr, dace.data.Array) and arr.shape == (1, ))):
                         scalar_outputs.add(node.data)
 
         # Get all scalars used in interstate edge assignments
@@ -375,24 +374,6 @@ class ExplicitVectorization(ppl.Pass):
 
         # If we still have a scalar sink node that is not transient we need to de-duplicate writes
 
-        for state in inner_sdfg.all_states():
-            for node in state.nodes():
-                if state.out_degree(node) == 0:
-                    arr = state.sdfg.arrays[node.data]
-                    if (arr.transient is False and
-                        (isinstance(arr, dace.data.Scalar) or isinstance(arr, dace.data.Array) and arr.shape == (1, ))):
-                        # If it is a reduction tasklet + number of edges matching vector unit it is ok
-                        srcs = {ie.src for ie in state.in_edges(node)}
-                        if not (len(srcs) == 1 and state.in_degree(next(iter(srcs))) == self.vector_width and isinstance(next(iter(srcs)), dace.nodes.Tasklet)):
-                            raise Exception(
-                                "At this point of the pass, no write to non-transient scalar sinks should remain")
-                    if arr.transient is False and (isinstance(arr, dace.data.Array) and
-                                                   (arr.shape != (1, ) or arr.shape != (self.vector_width, ))):
-                        touched_nodes, touched_edges = duplicate_access(state, node, self.vector_width)
-                        modified_edges = modified_edges.union(touched_edges)
-                        modified_nodes = modified_nodes.union(touched_nodes)
-                        modified_sinks += 1
-
         # Now go through all edges and replace their subsets
         print("Scalar to vector width arrays:", scalar_to_vector_width_arrays)
         print("Array that need to be packed:", arrays_need_to_be_packed)
@@ -457,6 +438,7 @@ class ExplicitVectorization(ppl.Pass):
                             print("Candidate Array Name:", ca, "Candidate Array:", ca_data)
                             if isinstance(ca_data, dace.data.Scalar) or (isinstance(ca_data, dace.data.Array)
                                                                          and ca_data.shape == (1, )):
+                                assert False, "Should have replaced them beforehand"
                                 ca_scl = ca_data
                                 assert ca_scl.transient
                                 sdfg.remove_data(ca, validate=False)

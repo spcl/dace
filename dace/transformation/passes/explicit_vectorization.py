@@ -125,11 +125,12 @@ class ExplicitVectorization(ppl.Pass):
         # If the inner node is a NestedSDFG we need to vectorize that too
         if has_single_nested_sdfg:
             nsdfg_node = next(iter(nodes))
-            add_copies_before_and_after_nsdfg(state, nsdfg_node, (self.vector_width, ), self.vector_input_storage)
+            state.sdfg.save("x0.sdfg")
             fix_nsdfg_connector_array_shapes_mismatch(state, nsdfg_node)
             check_nsdfg_connector_array_shapes_match(state, nsdfg_node)
-            #add_symbol_with_value(state, nsdfg_node, {"lane_id": f"({lane_base} % {self.vector_width})"})
             self._vectorize_nested_sdfg(state, nsdfg_node, vector_map_param)
+            add_copies_before_and_after_nsdfg(state, nsdfg_node, (self.vector_width, ), self.vector_input_storage)
+            state.sdfg.save("x6.sdfg")
 
     def _vectorize_nested_sdfg(self, state: dace.SDFGState, nsdfg: dace.nodes.NestedSDFG, vector_map_param: str):
         inner_sdfg: dace.SDFG = nsdfg.sdfg
@@ -154,116 +155,160 @@ class ExplicitVectorization(ppl.Pass):
 
         # Step 1. Analyze
         # 1.1. Detect input and output shapes
-        # 1.2 Make all data within the nested SDFG match the connector shapes. All transient arrays should match the vector unit shape
-        # 1.3 Detect sink and source scalars (non-transient scalar access nodes without out_edges or without in_edges)
-        # 1.4 Scalar sources are not supported (because duplicating input scalar data results in a different program), raise Error
-        # 1.5 Scalar sinks are supported as they can be de-duplicated when writing, track them
+        # 1.1.1 Make all non-transient data within the nested SDFG match the connector shapes.
+        # 1.1.2 All transient arrays should match the vector unit shape
+        # 1.2 Detect sink and source scalars (non-transient scalar access nodes without out_edges or without in_edges)
+        # 1.3 Scalar sources are not supported (because duplicating input scalar data results in a different program), raise Error
+        # 1.3.1 Unless has flops in that case we can move it, if it involved in the last floating point operation
+        # 1.4 Scalar sinks are supported as they can be de-duplicated when writing, track them
+        # 1.5 Detect indirect accesses that need a packed intermediate storage
 
         # After replacing all arrays to match, vectorize:
-        # Step 2. Replace all memlet subsets and names
-        # Step 3. Duplicate all interstate symbols to respect lane-ids
-        # Step 4. Replace all tasklets to use vectorized types
-        # Step 5. For all scalar sink nodes de-duplicate writes
+        # Step 2. Duplicate all interstate symbols to respect lane-ids
+        # 2.1 Generate packed loads
+        # Step 3. For all scalar sink nodes de-duplicate writes
+        # Step 4. Replace all memlet subsets and names
+        # Step 5. Replace all tasklets to use vectorized types
 
+        # 1.1.1
+        fix_nsdfg_connector_array_shapes_mismatch(state, nsdfg)
+        # 1.1.2
+        transient_arrays = {arr_name for arr_name, arr in inner_sdfg.arrays.items() if arr.transient}
+        print("Transient arrays:", transient_arrays)
+        replace_arrays_with_new_shape(inner_sdfg, transient_arrays, (self.vector_width, ))
+        inner_sdfg.reset_cfg_list()
+
+        vector_width_arrays = {
+            arr_name
+            for arr_name, arr in inner_sdfg.arrays.items()
+            if isinstance(arr, dace.data.Array) and arr.shape == (self.vector_width, )
+        }
+        scalars = {
+            arr_name
+            for arr_name, arr in inner_sdfg.arrays.items()
+            if isinstance(arr, dace.data.Scalar) or (isinstance(arr, dace.data.Array) and arr.shape == (1, ))
+        }
+        print(f"Inner SDFG now has following vector-width arrays: {vector_width_arrays}")
+        print(f"Inner SDFG now has following scalars: {scalars}")
+        state.sdfg.save("x1.sdfg")
+
+        # 1.2
+        scalar_source_nodes: List[Tuple[dace.SDFGState,
+                                        dace.nodes.AccessNode]] = get_scalar_source_nodes(inner_sdfg, True)
+        scalar_sink_nodes: List[Tuple[dace.SDFGState, dace.nodes.AccessNode]] = get_scalar_sink_nodes(inner_sdfg, True)
+        print(scalar_source_nodes, scalar_sink_nodes)
+
+        # 1.3 and 1.3.1
+        if len(scalar_source_nodes) > 1 and len(scalar_sink_nodes) > 1:
+            raise Exception("Pass can't handle more than one scalar sink and source nodes in the NestedSDFG"
+                            f"Scalar source nodes: {scalar_source_nodes}"
+                            f"Scalar sink nodes: {scalar_sink_nodes}")
+        elif len(scalar_source_nodes) == 1 and len(scalar_sink_nodes) == 1:
+            move_out_reduction(scalar_source_nodes, state, nsdfg, inner_sdfg, self.vector_width)
+            # This changes scalar sink and source nodes
+            inner_sdfg.reset_cfg_list()
+            scalar_source_nodes: List[Tuple[dace.SDFGState,
+                                            dace.nodes.AccessNode]] = get_scalar_source_nodes(inner_sdfg, True)
+            scalar_sink_nodes: List[Tuple[dace.SDFGState,
+                                          dace.nodes.AccessNode]] = get_scalar_sink_nodes(inner_sdfg, True)
+
+        state.sdfg.save("x2.sdfg")
+
+        if len(scalar_source_nodes) > 0 and len(scalar_sink_nodes) > 0:
+            raise Exception(
+                f"Pass tried to lift a reduction within the nested SDFG to enable auto-vectorization but failed. remainign sink nodes: {scalar_sink_nodes}, remaining scalar source nodes: {scalar_source_nodes}"
+            )
+        # No scalar sink nodes should be left
+
+        # 1.5
+        non_scalar_non_vector_width_arrays = {
+            (arr_name + "_packed", (self.vector_width, ), self.vector_input_storage, arr.dtype)
+            for arr_name, arr in inner_sdfg.arrays.items()
+            if isinstance(arr, dace.data.Array) and (arr.shape != (1, ) and arr.shape != (self.vector_width, ))
+        }
+        array_accessed_to_be_packed = {
+            arr_name[:-len("_packed")]
+            for arr_name, _, _, _ in non_scalar_non_vector_width_arrays
+        }
+        add_transient_arrays_from_list(inner_sdfg, non_scalar_non_vector_width_arrays)
+
+        modified_nodes: Set[dace.nodes.Node] = set()
+        modified_edges: Set[Edge[Memlet]] = set()
+
+        # 2 and 2.1
+        inner_sdfg.save("x1.sdfg")
+        new_mn, new_me = self._generate_loads_to_packed_storage(inner_sdfg, array_accessed_to_be_packed,
+                                                                vector_width_arrays)
+        modified_nodes = modified_nodes.union(new_mn)
+        modified_edges = modified_edges.union(new_me)
+
+        inner_sdfg.save("x2.sdfg")
+
+        # 3
+        check_writes_to_scalar_sinks_happen_through_assign_tasklets(inner_sdfg, scalar_sink_nodes)
+        new_mn, new_me = self._duplicate_unstructured_writes(inner_sdfg)
+        modified_nodes = modified_nodes.union(new_mn)
+        modified_edges = modified_edges.union(new_me)
+
+        inner_sdfg.save("x3.sdfg")
+
+        # 4
+        for state in inner_sdfg.all_states():
+            # Skip the data data that are still scalar and source nodes
+            scalar_source_data = {n.data for s, n in scalar_source_nodes}
+            edges_to_replace = {
+                e
+                for e in state.edges()
+                if e not in modified_edges and e.data is not None and e.data.data not in scalar_source_data
+            }
+            old_subset = dace.subsets.Range([(0, 0, 1)])
+            new_subset = dace.subsets.Range([(0, self.vector_width - 1, 1)])
+            replace_memlet_expression(state, edges_to_replace, old_subset, new_subset, True, modified_edges)
+
+        state.sdfg.save("x4.sdfg")
+
+        # 5
+        for state in inner_sdfg.all_states():
+            nodes = {n for n in state.nodes() if n not in modified_nodes}
+            self._replace_tasklets_from_node_list(state, nodes, vector_map_param)
+
+        state.sdfg.save("x5.sdfg")
+
+    def _duplicate_unstructured_writes(self, inner_sdfg: dace.SDFG):
         modified_edges = set()
         modified_nodes = set()
-        arrays_need_to_be_packed = set()
-        scalar_to_vector_width_arrays = set()
-        src_dst_size = set()
-
-        for ie in state.in_edges(nsdfg):
-            src_dst_size.add((ie.data.data, ie.dst_conn, ie.data.volume))
-
-        # Handle copy-in and creating of packed data types
-        for src, dst, size in src_dst_size:
-            print(src, dst, size, self.vector_width)
-            if size != 1 and size != self.vector_width:
-                inner_sdfg.add_array(
-                    name=f"{dst}_packed",
-                    shape=(self.vector_width, ),
-                    dtype=inner_sdfg.arrays[dst].dtype,
-                    transient=True,
-                )
-                arrays_need_to_be_packed.add(dst)
-            elif size == self.vector_width:
-                # No need to add vectorized arrays, they have been copied in front of the SDFG
-                scalar_to_vector_width_arrays.add(f"{dst}")
-
-        # If dst is a scalar but input is vector_width length then replace the scalar with an array
-        # Keep a track what has been replaced from a scalar to an array
-        scalar_to_vector_conversions = set()
-        for src, dst, size in src_dst_size:
-            dst_arr = inner_sdfg.arrays[dst]
-            src_arr = state.sdfg.arrays[src]
-            if size != dst_arr.total_size:
-                if size == self.vector_width:
-                    assert dst_arr.total_size == 1 and isinstance(dst_arr, dace.data.Scalar)
-                    inner_sdfg.remove_data(dst, validate=False)
-                    inner_sdfg.add_array(name=dst,
-                                         shape=(self.vector_width, ),
-                                         storage=self.vector_input_storage,
-                                         dtype=dst_arr.dtype,
-                                         transient=False,
-                                         lifetime=dst_arr.lifetime)
-                    if dst_arr.total_size == 1 and isinstance(dst_arr, dace.data.Scalar):
-                        scalar_to_vector_conversions.add(dst)
-                    scalar_to_vector_width_arrays.add(f"{dst}")
-
-        # All transient scalars should be made into vectors
-        for arr_name in copy.deepcopy(inner_sdfg.arrays):
-            arr = inner_sdfg.arrays[arr_name]
-            if (isinstance(arr, dace.data.Scalar) or
-                (isinstance(arr, dace.data.Array) and arr.shape == (1, ))) and arr.transient is True:
-                inner_sdfg.remove_data(arr_name, validate=False)
-                inner_sdfg.add_array(
-                    name=arr_name,
-                    shape=(self.vector_width, ),
-                    dtype=arr.dtype,
-                    storage=arr.storage,
-                    location=arr.location,
-                    transient=True,
-                )
-                scalar_to_vector_width_arrays.add(arr_name)
-
-        #raise Exception("Arrays need to packed:", arrays_need_to_be_packed, "Scalar to vector width:", scalar_to_vector_width_arrays)
-        scalar_outputs = set()
         for state in inner_sdfg.all_states():
             for node in state.nodes():
-                if isinstance(node, dace.nodes.AccessNode):
+                if state.out_degree(node) == 0:
                     arr = state.sdfg.arrays[node.data]
-                    if (arr.transient is False and (
-                        isinstance(arr, dace.data.Scalar) or isinstance(arr, dace.data.Array) and arr.shape == (1,)
-                        )):
-                        scalar_outputs.add(node.data)
+                    if (arr.transient is False and
+                        (isinstance(arr, dace.data.Scalar) or isinstance(arr, dace.data.Array) and arr.shape == (1, ))):
+                        # If it is a reduction tasklet + number of edges matching vector unit it is ok
+                        srcs = {ie.src for ie in state.in_edges(node)}
+                        if not (len(srcs) == 1 and state.in_degree(next(iter(srcs))) == self.vector_width
+                                and isinstance(next(iter(srcs)), dace.nodes.Tasklet)):
+                            raise Exception(
+                                "At this point of the pass, no write to non-transient scalar sinks should remain")
+                    if arr.transient is False and (isinstance(arr, dace.data.Array) and
+                                                   (arr.shape != (1, ) and arr.shape != (self.vector_width, ))):
+                        touched_nodes, touched_edges = duplicate_access(state, node, self.vector_width)
+                        modified_edges = modified_edges.union(touched_edges)
+                        modified_nodes = modified_nodes.union(touched_nodes)
+        return modified_nodes, modified_edges
 
-        # Get all scalars used in interstate edge assignments
-        # They might need to be replaced with vector width arrays
-        # These need to be also added to the candidate arrays
-        interstate_edge_rhs_scalars = set()
-        for edge in inner_sdfg.all_interstate_edges():
-            free_syms = edge.data.free_symbols
-            for k in edge.data.assignments:
-                free_syms -= {k}
-            scalar_free_syms = set()
-            for k in free_syms:
-                if k in inner_sdfg.arrays and isinstance(inner_sdfg.arrays[k], dace.data.Scalar):
-                    scalar_free_syms.add(k)
-            interstate_edge_rhs_scalars = interstate_edge_rhs_scalars.union(scalar_free_syms)
-
-        inner_sdfg.save("x1.sdfg")
-        # Handle indirect copies
-        # Go through states find A[idx] pattern in any memlet
+    def _generate_loads_to_packed_storage(self, sdfg: dace.SDFG, array_accessed_to_be_packed: Set[str],
+                                          candidate_arrays: Set[str]) -> Tuple[Set[dace.nodes.Node], Set[Edge[Memlet]]]:
+        modified_nodes: Set[dace.nodes.Node] = set()
+        modified_edges: Set[Edge[Memlet]] = set()
         expanded_symbols = set()
-        for state in inner_sdfg.all_states():
+        for state in sdfg.all_states():
             for edge in state.edges():
-                if edge.data is not None and edge.data.data in arrays_need_to_be_packed:
+                if edge.data is not None and edge.data.data in array_accessed_to_be_packed:
                     free_symbols = edge.data.free_symbols
                     # Look for the assignments in the interstate edges and expand them
                     non_expanded_free_symbols = free_symbols - expanded_symbols
                     expanded_symbols = expanded_symbols.union(free_symbols)
-                    self._expand_interstate_assignments(
-                        inner_sdfg, non_expanded_free_symbols,
-                        scalar_to_vector_width_arrays.union(interstate_edge_rhs_scalars))
+                    self._expand_interstate_assignments(sdfg, non_expanded_free_symbols, candidate_arrays)
 
                     # Create a packed copy
                     # If it is a source node (no in edges, copy in), otherwise replace with the packed data
@@ -299,134 +344,19 @@ class ExplicitVectorization(ppl.Pass):
                                                 ))
                             e2 = state.add_edge(at, "_out", src_node, None, dace.memlet.Memlet(f"{src_node.data}[{i}]"))
                             modified_nodes.add(at)
+                            if isinstance(e1, dace.nodes.Node):
+                                assert False
+                            if isinstance(e2, dace.nodes.Node):
+                                assert False
                             modified_edges.add(e1)
                             modified_edges.add(e2)
 
                         # Now update the subset
                         edge.data = dace.memlet.Memlet(expr=f"{src_node.data}[0:{self.vector_width}]")
+                        if isinstance(edge, dace.nodes.Node):
+                            assert False
                         modified_edges.add(edge)
-
-        inner_sdfg.save("x2.sdfg")
-
-        # If a state has a sink that is a scalar that has to be made into a vector array
-        # We need to reduce it back to a scalar at the end of the day, do it here
-        # First get input nodes and reduction types:
-        sink_scalars = len(scalar_outputs)
-        modified_sinks = 0
-        for state in inner_sdfg.all_states():
-            reduction_map: Dict[str, str] = dict()
-            for edge in state.edges():
-                src_node: dace.nodes.AccessNode = edge.src
-                if isinstance(src_node, dace.nodes.AccessNode) and state.in_degree(src_node) == 0:
-                    src_arr: dace.data.Data = state.sdfg.arrays[src_node.data]
-                    if isinstance(src_arr, dace.data.Scalar) or (isinstance(src_arr, dace.data.Array)
-                                                                 and src_arr.shape == (1, )):
-                        assert isinstance(edge.dst, dace.nodes.Tasklet)
-                        t: dace.nodes.Tasklet = edge.dst
-                        op_str = get_op(t.code.as_string)
-                        reduction_map[src_node.data] = op_str
-
-            for edge in state.edges():
-                if edge.data is not None:
-                    dst_node: dace.nodes.AccessNode = edge.dst
-                    if isinstance(dst_node, dace.nodes.AccessNode) and state.out_degree(dst_node) == 0:
-                        dst_arr: dace.data.Array = state.sdfg.arrays[dst_node.data]
-                        if isinstance(dst_arr, dace.data.Scalar) and dst_arr.transient is False:
-                            old_data = f"{edge.data.data}"
-                            dst_node.data = f"{edge.data.data}_vec"
-                            vec_data = dst_node.data
-                            edge.dst.data = vec_data
-                            edge.data = dace.memlet.Memlet(expr=f"{old_data}[0:{self.vector_width}]", )
-                            if vec_data not in state.sdfg.arrays:
-                                orig_scalar = state.sdfg.arrays[old_data]
-                                state.sdfg.add_array(name=vec_data,
-                                                     shape=(self.vector_width, ),
-                                                     dtype=orig_scalar.dtype,
-                                                     storage=orig_scalar.storage,
-                                                     transient=True,
-                                                     lifetime=orig_scalar.lifetime)
-                            modified_edges.add(edge)
-                            dst_access = state.add_access(old_data)
-                            modified_nodes.add(dst_access)
-                            assert len(reduction_map) == 1
-                            reduction_op = next(iter(reduction_map.values()))
-                            nt = state.add_tasklet(
-                                name="sum_up",
-                                inputs={f"_in{i}"
-                                        for i in range(0, self.vector_width)},
-                                outputs={"_out"},
-                                code="_out = " +
-                                f" {reduction_op} ".join([f"_in{i}" for i in range(0, self.vector_width)]))
-                            modified_nodes.add(nt)
-                            for i in range(0, self.vector_width):
-                                e1 = state.add_edge(edge.dst, None, nt, f"_in{i}",
-                                                    dace.memlet.Memlet(expr=f"{vec_data}[{i}]"))
-                                nt.add_in_connector(f"_in{i}")
-                                modified_edges.add(e1)
-                            e2 = state.add_edge(nt, "_out", dst_access, None, dace.memlet.Memlet(expr=f"{old_data}[0]"))
-                            modified_edges.add(e2)
-                            nt.add_out_connector("_out")
-                            edge.data.data = vec_data
-
-        assert modified_sinks == sink_scalars, f"Initially detected {sink_scalars} sink scalars that need to have a reduction, but modified {modified_sinks}"
-        #raise Exception(f"Initially detected {sink_scalars} sink scalars that need to have a reduction, but modified {modified_sinks}")
-
-        inner_sdfg.save("x3.sdfg")
-
-        # If we still have a scalar sink node that is not transient we need to de-duplicate writes
-
-        for state in inner_sdfg.all_states():
-            for node in state.nodes():
-                if state.out_degree(node) == 0:
-                    arr = state.sdfg.arrays[node.data]
-                    if (arr.transient is False and
-                        (isinstance(arr, dace.data.Scalar) or isinstance(arr, dace.data.Array) and arr.shape == (1, ))):
-                        # If it is a reduction tasklet + number of edges matching vector unit it is ok
-                        srcs = {ie.src for ie in state.in_edges(node)}
-                        if not (len(srcs) == 1 and state.in_degree(next(iter(srcs))) == self.vector_width and isinstance(next(iter(srcs)), dace.nodes.Tasklet)):
-                            raise Exception(
-                                "At this point of the pass, no write to non-transient scalar sinks should remain")
-                    if arr.transient is False and (isinstance(arr, dace.data.Array) and
-                                                   (arr.shape != (1, ) or arr.shape != (self.vector_width, ))):
-                        touched_nodes, touched_edges = duplicate_access(state, node, self.vector_width)
-                        modified_edges = modified_edges.union(touched_edges)
-                        modified_nodes = modified_nodes.union(touched_nodes)
-                        modified_sinks += 1
-
-        # Now go through all edges and replace their subsets
-        print("Scalar to vector width arrays:", scalar_to_vector_width_arrays)
-        print("Array that need to be packed:", arrays_need_to_be_packed)
-        for state in inner_sdfg.all_states():
-            edges_to_replace = set()
-
-            for edge in state.edges():
-                if edge.data is not None:
-                    if edge not in modified_edges:
-                        src_node: dace.nodes.Node = edge.src
-                        if state.in_degree(src_node) == 0:
-                            if src_node.data not in scalar_to_vector_width_arrays and src_node not in arrays_need_to_be_packed:
-                                continue
-                        edges_to_replace.add(edge)
-
-            old_subset = dace.subsets.Range([(0, 0, 1)])
-            new_subset = dace.subsets.Range([(0, self.vector_width - 1, 1)])
-            replace_memlet_expression(state, edges_to_replace, old_subset, new_subset, True)
-
-        # Now replace tasklets
-        for state in inner_sdfg.all_states():
-            nodes = {n for n in state.nodes() if n not in modified_nodes}
-            self._replace_tasklets_from_node_list(state, nodes, vector_map_param)
-
-        inner_sdfg.save("x4.sdfg")
-
-        for arr_name in arrays_need_to_be_packed:
-            # Not both should in array
-            assert arr_name + "_packed" in inner_sdfg.arrays or arr_name + "_vec" in inner_sdfg.arrays
-            assert not (arr_name + "_packed" in inner_sdfg.arrays and arr_name + "_vec" in inner_sdfg.arrays)
-            if arr_name + "_packed" in inner_sdfg.arrays:
-                assert inner_sdfg.arrays[arr_name + "_packed"].transient is True
-            if arr_name + "_vec" in inner_sdfg.arrays:
-                assert inner_sdfg.arrays[arr_name + "_vec"].transient is True
+        return modified_nodes, modified_edges
 
     def _expand_interstate_assignments(self, sdfg: dace.SDFG, syms: Set[str], candidate_arrays: Set[str]):
         duplicated_symbols = set()

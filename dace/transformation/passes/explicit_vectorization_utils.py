@@ -6,10 +6,13 @@ import dace
 import ast
 from typing import Dict, Iterable, Set, Tuple, Union
 from dace import SDFGState
+from dace import Any
+from dace import List
 from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg.graph import Edge
 from enum import Enum
+import dace.sdfg.utils as sdutil
 
 
 def repl_subset(subset: dace.subsets.Range, repl_dict: Dict[str, str]) -> dace.subsets.Range:
@@ -40,7 +43,8 @@ def repl_subset_to_symbol_offset(subset: dace.subsets.Range, symbol_offset: str)
 
 
 def replace_memlet_expression(state: SDFGState, edges: Iterable[Edge[Memlet]], old_subset_expr: dace.subsets.Range,
-                              new_subset_expr: dace.subsets.Range, repl_scalars_with_arrays: bool) -> Set[str]:
+                              new_subset_expr: dace.subsets.Range, repl_scalars_with_arrays: bool,
+                              edges_to_skip: Set[Edge[Memlet]]) -> Set[str]:
     arr_dim = [((e + 1 - b) // s) for (b, e, s) in new_subset_expr]
 
     for edge in edges:
@@ -48,6 +52,8 @@ def replace_memlet_expression(state: SDFGState, edges: Iterable[Edge[Memlet]], o
         dst_node: dace.nodes.Node = edge.dst
 
         if edge.data is not None and edge.data.subset == old_subset_expr:
+            if edge in edges_to_skip:
+                raise Exception("AA")
             if repl_scalars_with_arrays:
                 for data_node in [src_node, dst_node]:
                     if isinstance(data_node, dace.nodes.AccessNode):
@@ -170,6 +176,29 @@ def to_ints(sym_epxr: dace.symbolic.SymExpr):
         return None
 
 
+def get_vector_max_access_ranges(state: SDFGState, node: dace.nodes.NestedSDFG):
+    sdict = state.scope_dict()
+    vmap = sdict[node]
+    v_params_and_begins = dict()
+    v_params_and_begins_rev = dict()
+    d_params_and_begins = dict()
+    d_params_and_ends = dict()
+    d_params_and_begins_rev = dict()
+    for p, (b, e, s) in zip(vmap.map.params, vmap.map.range):
+        v_params_and_begins[p] = str(b)
+        v_params_and_begins_rev[str(b)] = p
+    dmap = sdict[vmap]
+    for p, (b, e, s) in zip(dmap.map.params, dmap.map.range):
+        d_params_and_begins[p] = str(b)
+        d_params_and_begins_rev[str(b)] = p
+        d_params_and_ends[p] = str(e)
+
+    param_ends = dict()
+    for p in vmap.map.params:
+        param_ends[p] = d_params_and_ends[v_params_and_begins[p]]
+    return param_ends
+
+
 def add_copies_before_and_after_nsdfg(
     state: SDFGState,
     nsdfg_node: dace.nodes.NestedSDFG,
@@ -185,6 +214,12 @@ def add_copies_before_and_after_nsdfg(
             if (required_shape is None or subset_lengths == required_shape or subset_lengths_packed == required_shape):
                 # Insert copy
                 orig_arr = state.sdfg.arrays[in_data_name]
+                if orig_arr.storage == copy_to_storage:
+                    continue
+                if orig_arr.transient is True and orig_arr.storage == dace.dtypes.StorageType.Default:
+                    orig_arr.storage = copy_to_storage
+                    continue
+
                 if f"{in_data_name}_vec" not in state.sdfg.arrays:
                     arr_name, arr = state.sdfg.add_array(name=f"{in_data_name}_vec",
                                                          shape=subset_lengths,
@@ -193,12 +228,24 @@ def add_copies_before_and_after_nsdfg(
                                                          transient=True,
                                                          find_new_name=False,
                                                          storage=copy_to_storage)
+                    arr.setzero = True
                 else:
                     arr_name = f"{in_data_name}_vec"
                     assert state.sdfg.arrays[arr_name].storage == copy_to_storage
                 arr_access = state.add_access(arr_name)
                 state.remove_edge(ie)
-                state.add_edge(ie.src, ie.src_conn, arr_access, None, copy.deepcopy(ie.data))
+
+                # Impl. proper min
+                params_and_end_ranges = get_vector_max_access_ranges(state, nsdfg_node)
+                nrange_list = []
+                assert len(params_and_end_ranges) == 1
+                max_range = next(iter(params_and_end_ranges.values()))
+                for (b, e, s) in ie.data.subset:
+                    ne = dace.symbolic.SymExpr(f"Min({e}, {max_range})")
+                    nrange_list.append((b, ne, s))
+                nmemlet = dace.memlet.Memlet(data=ie.data.data, subset=dace.subsets.Range(nrange_list))
+
+                state.add_edge(ie.src, ie.src_conn, arr_access, None, nmemlet)
                 full_subset_str = ", ".join([f"{0}:{sl}" for sl in subset_lengths])
                 state.add_edge(arr_access, None, nsdfg_node, nsdfg_data_name,
                                dace.memlet.Memlet(f"{arr_name}[{full_subset_str}]"))
@@ -211,6 +258,12 @@ def add_copies_before_and_after_nsdfg(
             if (required_shape is None or subset_lengths == required_shape or subset_lengths_packed == required_shape):
                 # Insert copy
                 orig_arr = state.sdfg.arrays[out_data_name]
+                if orig_arr.storage == copy_to_storage:
+                    continue
+                if orig_arr.transient is True and orig_arr.storage == dace.dtypes.StorageType.Default:
+                    orig_arr.storage = copy_to_storage
+                    continue
+
                 if f"{out_data_name}_vec" not in state.sdfg.arrays:
                     arr_name, arr = state.sdfg.add_array(name=f"{out_data_name}_vec",
                                                          shape=subset_lengths,
@@ -219,6 +272,7 @@ def add_copies_before_and_after_nsdfg(
                                                          transient=True,
                                                          find_new_name=False,
                                                          storage=copy_to_storage)
+                    arr.setzero = True
                 else:
                     arr_name = f"{out_data_name}_vec"
                     assert state.sdfg.arrays[arr_name].storage == copy_to_storage
@@ -227,6 +281,15 @@ def add_copies_before_and_after_nsdfg(
                 full_subset_str = ", ".join([f"{0}:{sl}" for sl in subset_lengths])
                 state.add_edge(nsdfg_node, nsdfg_data_name, arr_access, None,
                                dace.memlet.Memlet(f"{arr_name}[{full_subset_str}]"))
+
+                params_and_end_ranges = get_vector_max_access_ranges(state, nsdfg_node)
+                nrange_list = []
+                assert len(params_and_end_ranges) == 1
+                max_range = next(iter(params_and_end_ranges.values()))
+                for (b, e, s) in ie.data.subset:
+                    ne = dace.symbolic.SymExpr(f"Min({e}, {max_range})")
+                    nrange_list.append((b, ne, s))
+                nmemlet = dace.memlet.Memlet(data=ie.data.data, subset=dace.subsets.Range(nrange_list))
                 state.add_edge(arr_access, None, oe.dst, oe.dst_conn, copy.deepcopy(oe.data))
 
 
@@ -275,11 +338,13 @@ def assert_strides_are_packed_C_or_packed_Fortran(sdfg: dace.SDFG) -> Union[str,
 
     return stride_type
 
+
 def find_state_of_nsdfg_node(root_sdfg: dace.SDFG, nsdfg_node: dace.nodes.NestedSDFG) -> dace.SDFGState:
     for n, g in root_sdfg.all_nodes_recursive():
         if n == nsdfg_node:
             return root_sdfg
     raise Exception(f"State of the nsdfg node ({nsdfg_node}) not found in the root SDFG ({root_sdfg.label})")
+
 
 def assert_last_dim_of_maps_are_contigous_accesses(sdfg: dace.SDFG):
     checked_map_entries = set()
@@ -300,7 +365,9 @@ def assert_last_dim_of_maps_are_contigous_accesses(sdfg: dace.SDFG):
                     parent_state = find_state_of_nsdfg_node(sdfg, node)
                     parent_scope = parent_state.scope_dict()[parent_nsdfg]
                     if parent_scope is None or (not isinstance(parent_scope, dace.nodes.MapEntry)):
-                        raise Exception(f"No NSDFGs that are not within Map scopes should be left, check {parent_nsdfg} in state {parent_state}. Call inlineSDFG")
+                        raise Exception(
+                            f"No NSDFGs that are not within Map scopes should be left, check {parent_nsdfg} in state {parent_state}. Call inlineSDFG"
+                        )
                 else:
                     continue
             else:
@@ -665,7 +732,9 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         data_name = data_edge.data.data
         data = state.sdfg.arrays[data_name]
         if data.transient is False:
-            raise Exception(f"Array-Scalar tasklet is not currenlty supported by auto vectorization if input scalar is non-transient. Try to re-write the kernel it happens at {node}, state:{state}")
+            raise Exception(
+                f"Array-Scalar tasklet is not currenlty supported by auto vectorization if input scalar is non-transient. Try to re-write the kernel it happens at {node}, state:{state}"
+            )
         return
 
     if ttype == TaskletType.SCALAR_SCALAR:
@@ -717,6 +786,9 @@ def duplicate_access(state: dace.SDFGState, node: dace.nodes.AccessNode,
     packed_access = state.add_access(f"{node.data}_packed")
     touched_nodes.add(packed_access)
     state.remove_edge(ie)
+    if isinstance(ie, dace.nodes.Node):
+        assert False
+    touched_edges.add(ie)
     if f"{node.data}_packed" not in state.sdfg.arrays:
         dst_arr = state.sdfg.arrays[node.data]
         state.sdfg.add_array(name=f"{node.data}_packed",
@@ -733,20 +805,28 @@ def duplicate_access(state: dace.SDFGState, node: dace.nodes.AccessNode,
                              may_alias=False)
     e = state.add_edge(ie.src, ie.src_conn, packed_access, None,
                        dace.memlet.Memlet(f"{node.data}_packed[0:{vector_width}]"))
+    if isinstance(e, dace.nodes.Node):
+        assert False
     touched_edges.add(e)
 
     for i in range(vector_width):
-        t = state.add_tasklet(name=f"a{i}", inputs={"_in"}, outputs={"_out"}, code="_out = _in")
+        t = state.add_tasklet(name=f"a_{i}", inputs={"_in"}, outputs={"_out"}, code="_out = _in")
         touched_nodes.add(t)
         t.add_in_connector("_in")
         t.add_out_connector("_out")
-        e = state.add_edge(packed_access, None, t, "_in", dace.memlet.Memlet(f"{node.data}_packed[{i}]"))
-        touched_edges.add(e)
+        e1 = state.add_edge(
+            packed_access, None, t, "_in",
+            dace.memlet.Memlet(data=node.data + "_packed", subset=dace.subsets.Range([(str(i), str(i), 1)])))
+        if isinstance(e1, dace.nodes.Node):
+            assert False
+        touched_edges.add(e1)
 
         new_subset = repl_subset_to_symbol_offset(ie.data.subset, str(i))
 
-        e = state.add_edge(t, "_out", ie.dst, None, dace.memlet.Memlet(data=node.data, subset=new_subset))
-        touched_edges.add(e)
+        e2 = state.add_edge(t, "_out", ie.dst, None, dace.memlet.Memlet(data=node.data, subset=new_subset))
+        if isinstance(e2, dace.nodes.Node):
+            assert False
+        touched_edges.add(e2)
 
     return touched_nodes, touched_edges
 
@@ -769,3 +849,240 @@ def add_symbol_with_value(state: dace.SDFGState, nsdfg: dace.nodes.NestedSDFG,
             assert free_sym_str in symbols_defined_at, f"{free_sym_str} of {v} is not in symbols defined at the scope: {symbols_defined_at}."
             inner_sdfg.add_symbol(free_sym_str, symbols_defined_at[free_sym_str], False)
             nsdfg.symbol_mapping[free_sym_str] = free_sym_str
+
+
+def replace_arrays_with_new_shape(sdfg: dace.SDFG, array_namelist: Set[str], new_shape: Tuple[Any]) -> None:
+    for arr_name in array_namelist:
+        arr = sdfg.arrays[arr_name]
+        sdfg.remove_data(arr_name, validate=False)
+        sdfg.add_array(name=arr_name,
+                       shape=new_shape,
+                       storage=arr.storage,
+                       dtype=arr.dtype,
+                       location=arr.location,
+                       transient=arr.transient,
+                       lifetime=arr.lifetime,
+                       debuginfo=arr.debuginfo,
+                       allow_conflicts=arr.allow_conflicts,
+                       find_new_name=False,
+                       alignment=arr.alignment,
+                       may_alias=arr.may_alias)
+
+
+def copy_arrays_with_a_new_shape(sdfg: dace.SDFG, array_namelist: Set[str], new_shape: Tuple[Any],
+                                 name_suffix: str) -> None:
+    for arr_name in array_namelist:
+        arr = sdfg.arrays[arr_name]
+        sdfg.add_array(name=arr_name + name_suffix,
+                       shape=new_shape,
+                       storage=arr.storage,
+                       dtype=arr.dtype,
+                       location=arr.location,
+                       transient=arr.transient,
+                       lifetime=arr.lifetime,
+                       debuginfo=arr.debuginfo,
+                       allow_conflicts=arr.allow_conflicts,
+                       find_new_name=False,
+                       alignment=arr.alignment,
+                       may_alias=arr.may_alias)
+
+
+def get_scalar_source_nodes(sdfg: dace.SDFG,
+                            non_transient_only: bool) -> List[Tuple[dace.SDFGState, dace.nodes.AccessNode]]:
+    source_nodes = list()
+    for state in sdfg.all_states():
+        for node in state.nodes():
+            if (isinstance(node, dace.nodes.AccessNode) and state.in_degree(node) == 0):
+                arr = state.sdfg.arrays[node.data]
+                if isinstance(arr, dace.data.Scalar) or (isinstance(arr, dace.data.Array) and arr.shape == (1, )):
+                    if non_transient_only is False or arr.transient is False:
+                        source_nodes.append((state, node))
+    return source_nodes
+
+
+def get_scalar_sink_nodes(sdfg: dace.SDFG,
+                          non_transient_only: bool) -> List[Tuple[dace.SDFGState, dace.nodes.AccessNode]]:
+    sink_nodes = list()
+    for state in sdfg.all_states():
+        for node in state.nodes():
+            if (isinstance(node, dace.nodes.AccessNode) and state.out_degree(node) == 0):
+                arr = state.sdfg.arrays[node.data]
+                if isinstance(arr, dace.data.Scalar) or isinstance(arr, dace.data.Array) and arr.shape == (1, ):
+                    if non_transient_only is False or arr.transient is False:
+                        sink_nodes.append((state, node))
+    return sink_nodes
+
+
+def add_transient_arrays_from_list(sdfg: dace.SDFG, arr_name_shape_storage_dtype: Iterable[Tuple[str, Any, Any,
+                                                                                                 Any]]) -> None:
+    for arr_name, shape, storage, dtype in arr_name_shape_storage_dtype:
+        sdfg.add_array(
+            name=arr_name,
+            shape=shape,
+            storage=storage,
+            dtype=dtype,
+            transient=True,
+            find_new_name=False,
+        )
+
+
+def is_assignment_tasklet(node: dace.nodes.Tasklet) -> bool:
+    if (len(node.in_connectors) == 1 and len(node.out_connectors) == 1):
+        in_conn = next(iter(node.in_connectors.keys()))
+        out_conn = next(iter(node.out_connectors.keys()))
+
+        return (node.code.as_string == f"{out_conn} = {in_conn}" or node.code.as_string == f"{out_conn} = {in_conn};")
+    return False
+
+
+def check_writes_to_scalar_sinks_happen_through_assign_tasklets(sdfg: dace.SDFG,
+                                                                scalar_sink_nodes: List[Tuple[dace.SDFGState,
+                                                                                              dace.nodes.AccessNode]]):
+    for state, sink_node in scalar_sink_nodes:
+        in_edges = state.in_edges(sink_node)
+        if len(in_edges) != "1":
+            raise Exception("All scalar sink nodes should have at max 1 incoming edge")
+        in_edge = in_edges[0]
+        src = in_edge.src
+        if not (isinstance(src, dace.nodes.Tasklet) and is_assignment_tasklet(src)):
+            raise Exception("All write to scalar should happen through an assignment tasklet")
+
+
+def only_one_flop_after_source(state: dace.SDFGState, node: dace.nodes.AccessNode):
+    nodes_to_check = [node]
+    tasklets_with_flops = 0
+    checked_nodes = []
+
+    while nodes_to_check:
+        cur_node = nodes_to_check.pop(0)
+        checked_nodes.append(cur_node)
+        if isinstance(cur_node, dace.nodes.Tasklet) and not is_assignment_tasklet(cur_node):
+            tasklets_with_flops += 1
+        nodes_to_check += [e.dst for e in state.out_edges(cur_node)]
+        if tasklets_with_flops > 1:
+            return False, []
+
+    return tasklets_with_flops <= 1, checked_nodes
+
+
+def input_is_zero_and_transient_accumulator(state: dace.SDFGState, nsdfg: dace.nodes.NestedSDFG,
+                                            inner_state: dace.SDFGState, source_node: dace.nodes.AccessNode,
+                                            sink_node: dace.nodes.AccessNode):
+    # Make sure the data of in and out edges refer to the same name
+    sink_data = sink_node.data
+    source_data = source_node.data
+    sink_connector = nsdfg.out_connectors[sink_data]
+    source_connector = nsdfg.in_connectors[source_data]
+    sink_edges = state.out_edges_by_connector(nsdfg, sink_data)
+    source_edges = state.in_edges_by_connector(nsdfg, source_data)
+
+    out_source_datas = {ie.data.data for ie in source_edges if ie.data is not None}
+    out_sink_datas = {oe.data.data for oe in sink_edges if oe.data is not None}
+    if len(out_sink_datas) != 1:
+        return False, ""
+    if len(out_source_datas) != 1:
+        return False, ""
+    out_sink_data = out_sink_datas.pop()
+    out_source_data = out_source_datas.pop()
+
+    if out_source_data != out_sink_data:
+        return False, ""
+
+    # Find the first access node of the source node outside
+    source_edges = list(state.in_edges_by_connector(nsdfg, source_data))
+    assert len(source_edges) == 1, f"{source_edges} for in connector {source_data} of {nsdfg}"
+    source_edge = source_edges[0]
+    mpath = state.memlet_path(source_edge)
+    src_acc_node = mpath[0].src
+    if not isinstance(src_acc_node, dace.nodes.AccessNode):
+        print(f"{src_acc_node} of the memlet path {mpath} is not an access node")
+        return False, ""
+
+    # Ensure the access node directly connects to a memset-0 tasklet
+    if state.in_degree(src_acc_node) != 1:
+        print(f"In degree of {src_acc_node} not one")
+        return False, ""
+
+    in_tasklet = state.in_edges(src_acc_node)[0].src
+    if not isinstance(in_tasklet, dace.nodes.Tasklet):
+        print(f"In neighbor {in_tasklet} is not a tasklet")
+        return False, ""
+
+    code_str = in_tasklet.code.as_string
+    if len(in_tasklet.out_connectors) != 1:
+        return False, ""
+    out_conn = next(iter(in_tasklet.out_connectors))
+    if not (code_str.strip() != f"{out_conn} = 0" or code_str.strip() != f"{out_conn} = 0;"):
+        return False, ""
+
+    # If all true return true and accumulator name
+    return True, src_acc_node.data
+
+
+def replace_all_access_subsets(state: dace.SDFGState, name: str, new_subset_expr: str):
+    for edge in state.edges():
+        if edge.data is not None and edge.data.data == name:
+            nm = dace.memlet.Memlet(expr=f"{name}[{new_subset_expr}]")
+            edge.data = nm
+
+
+def expand_assignment_tasklets(state: dace.SDFGState, name: str, vector_length: int):
+    for e in state.edges():
+        if (isinstance(e.dst, dace.nodes.AccessNode) and e.dst.data == name and isinstance(e.src, dace.nodes.Tasklet)):
+            code = e.src.code
+            in_conns = e.src.in_connectors
+            out_conns = e.src.out_connectors
+            if len(in_conns) != 0:
+                assert False, "Non-assignemnt taskelt found for accumulator, unsupported case"
+            assert len(out_conns) == 1, f"{out_conns}"
+            out_conn = next(iter(out_conns))
+            assert code.language == dace.dtypes.Language.Python
+            assert code.as_string.startswith(f"{out_conn} =")
+            rhs = code.as_string.split("=")[-1].strip()
+            ncode_str = "\n".join([f"{out_conn}[{i}] = {rhs}" for i in range(vector_length)])
+            e.src.code = dace.properties.CodeBlock(ncode_str)
+
+
+def reduce_before_use(state: dace.SDFGState, name: str, vector_width: int, op: str):
+    # Any time a tasklet reads name[0:vector_length] then we need to reduce it before
+    # In a reduction tasklet
+    for edge in state.edges():
+        dst = edge.dst
+        src = edge.src
+        if isinstance(dst, dace.nodes.Tasklet) and edge.data is not None and edge.data.data == name:
+            arr = state.sdfg.arrays[name]
+            state.sdfg.add_scalar(name=name + "_scl",
+                                  dtype=arr.dtype,
+                                  storage=arr.storage,
+                                  transient=True,
+                                  lifetime=arr.lifetime)
+            an = state.add_access(name + "_scl")
+            t = state.add_tasklet(name=f"scalarize_{name}",
+                                  inputs={"_in"},
+                                  outputs={"_out"},
+                                  code="_out =" + f" {op} ".join([f"_in[{i}]" for i in range(vector_width)]))
+            t.add_in_connector("_in")
+            t.add_out_connector("_out")
+            state.add_edge(src, None, t, "_in", copy.deepcopy(edge.data))
+            state.add_edge(t, "_out", an, None, dace.memlet.Memlet(f"{name}_scl[0]"))
+            state.add_edge(an, None, edge.dst, edge.dst_conn, dace.memlet.Memlet(f"{name}_scl[0]"))
+
+            state.remove_edge(edge)
+
+
+def move_out_reduction(scalar_source_nodes, state: dace.SDFGState, nsdfg: dace.nodes.NestedSDFG, inner_sdfg: dace.SDFG,
+                       vector_width):
+    num_flops, node_path = only_one_flop_after_source(scalar_source_nodes[0][0], scalar_source_nodes[0][1])
+    is_inout_accumulator, accumulator_name = input_is_zero_and_transient_accumulator(
+        state, nsdfg, scalar_source_nodes[0][0], scalar_source_nodes[0][1], node_path[-1])
+    op = extract_single_op(node_path[1].code.as_string)
+    print(is_inout_accumulator, num_flops, accumulator_name)
+    if num_flops <= 1 and is_inout_accumulator:
+        source_data = scalar_source_nodes[0][1].data
+        sink_data = node_path[-1].data
+        print("Source data", source_data, "Sink data", sink_data)
+        replace_arrays_with_new_shape(inner_sdfg, {source_data, sink_data}, (vector_width, ))
+        replace_arrays_with_new_shape(state.sdfg, {accumulator_name}, (vector_width, ))
+        replace_all_access_subsets(state, accumulator_name, f"0:{vector_width}")
+        expand_assignment_tasklets(state, accumulator_name, vector_width)
+        reduce_before_use(state, accumulator_name, vector_width, op)
