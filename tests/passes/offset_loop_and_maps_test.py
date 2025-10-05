@@ -2,6 +2,7 @@
 import copy
 import dace
 import numpy
+from dace import ControlFlowRegion
 from dace.properties import CodeBlock
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.offset_loop_and_maps import OffsetLoopsAndMaps
@@ -69,21 +70,18 @@ def _cloudsc_snippet_one_within_if(za: dace.float64[klev, kfdia], zliqfrac: dace
 
 
 def _get_symbol_use_in_tasklet_sdfg():
-
-    @dace.program
-    def _symbol_use_in_tasklet(A: dace.float64[N]):
-        for i in range(1, N):
-            scl = i + 1
-            A[scl] = A[i]
-
-    sdfg = _symbol_use_in_tasklet.to_sdfg()
-    states = list(sdfg.all_states())
-    assert len(states) == 1
-    state: dace.SDFGState = states[0]
-
-    # Remove dummy nodes I used to get an SDFG with a Loop region fast
-    for node in state.nodes():
-        state.remove_node(node)
+    sdfg = dace.SDFG("symbol_use_in_tasklet_sdfg")
+    sdfg.add_array("A", (N, ), dace.float64, dace.dtypes.StorageType.Default)
+    lr = LoopRegion(label="loop1",
+                    loop_var="i",
+                    condition_expr="i < N",
+                    initialize_expr="i = 0",
+                    update_expr="i = i + 1",
+                    sdfg=sdfg)
+    cfg = ControlFlowRegion(label="loop1_cfg1", sdfg=sdfg, parent=lr)
+    sdfg.add_node(lr, is_start_block=True)
+    lr.add_node(cfg, is_start_block=True)
+    state = cfg.add_state(label="main", is_start_block=True)
 
     t_offset = state.add_tasklet(name="create_scl", inputs={}, outputs={"_out"}, code="_out = i - 1")
     t_assign = state.add_tasklet(name="assign", inputs={"_in"}, outputs={"_out"}, code="_out = _in")
@@ -189,8 +187,6 @@ def test_loop_offsetting():
     assert regions["i"] == "0", f"Expected 0 but got {regions['i']}"
     assert regions["j"] == "kidia", f"Expected kidia but got {regions['j']}"
     copy_sdfg.validate()
-    sdfg.save("before.sdfg")
-    copy_sdfg.save("after.sdfg")
     _run_and_compare(sdfg, copy_sdfg, ["za", "zliqfrac", "zicefrac", "zx"])
 
 
