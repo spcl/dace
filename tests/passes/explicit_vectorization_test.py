@@ -75,7 +75,27 @@ def tasklet_in_nested_sdfg(
     offset2: dace.int64,
 ):
     for i, j in dace.map[S1:S2:1, S1:S2:1] @ dace.dtypes.ScheduleType.Sequential:
+        # Complicated NestedSDFG with offset1 and offset2 in the NestedSDFG as symbols
         a[i + offset1, j + offset2] = ((1.5 * b[i + offset1, j + offset2]) + (2.0 * a[i + offset1, j + offset2])) / 3.5
+
+
+@dace.program
+def tasklet_in_nested_sdfg_2(
+    a: dace.float64[S, S],
+    b: dace.float64[S, S],
+    offset1: dace.int64,
+    offset2: dace.int64,
+):
+    # If a scalar is always added to a map param
+    # Then move the scalar to the loop like this
+    #for i, j in dace.map[S1:S2:1, S1:S2:1] @ dace.dtypes.ScheduleType.Sequential:
+    #    a[i + offset1, j + offset2] = (
+    #        (1.5 * b[i + offset1, j + offset2]) +
+    #        (2.0 * a[i + offset1, j + offset2])
+    #    ) / 3.5
+    for i, j in dace.map[S1 - offset1:S2 - offset1:1,
+                         S1 - offset2:S2 - offset2:1] @ dace.dtypes.ScheduleType.Sequential:
+        a[i, j] = ((1.5 * b[i, j]) + (2.0 * a[i, j])) / 3.5
 
 
 @dace.program
@@ -102,21 +122,27 @@ def spmv_csr(indptr: dace.int64[n + 1], indices: dace.int64[nnz], data: dace.flo
     for i in dace.map[0:n_rows:1]:
         row_start = indptr[i]
         row_end = indptr[i + 1]
+        tmp = 0.0
         for idx in dace.map[row_start:row_end:1]:
             j = indices[idx]
-            y[i] = data[idx] * x[j]
+            tmp = tmp + data[idx] * x[j]
+        y[i] = tmp
+
 
 @dace.program
 def spmv_csr_2(indptr: dace.int64[n + 1], indices: dace.int64[nnz], data: dace.float64[nnz], x: dace.float64[m],
-             y: dace.float64[n]):
+               y: dace.float64[n]):
     n_rows = len(indptr) - 1
 
     for i in dace.map[0:n_rows:1]:
         row_start = indptr[i]
         row_end = indptr[i + 1]
+        tmp = 0.0
         for idx in dace.map[row_start:row_end:1]:
             j = indices[idx]
-            y[i] = y[i] + data[idx] * x[j]
+            tmp = tmp + data[idx] * x[j]
+        y[i] = tmp
+
 
 @pytest.mark.gpu
 def _test_simple_gpu():
@@ -213,6 +239,7 @@ def test_nested_sdfg():
     assert numpy.allclose(A_orig, A_vec), f"{A_orig - A_vec}"
     assert numpy.allclose(B_orig, B_vec), f"{B_orig - B_vec}"
 
+
 def test_no_maps():
     _N = 16
     A = numpy.random.random((_N, _N))
@@ -243,6 +270,7 @@ def test_no_maps():
     assert numpy.allclose(A_orig, A_vec), f"{A_orig - A_vec}"
     assert numpy.allclose(B_orig, B_vec), f"{B_orig - B_vec}"
 
+
 def _dense_to_csr(dense: numpy.ndarray):
     """
     Convert a 2D dense numpy array to CSR arrays (data, indices, indptr).
@@ -261,9 +289,26 @@ def _dense_to_csr(dense: numpy.ndarray):
                 indices.append(j)
                 row_nnz += 1
         indptr.append(indptr[-1] + row_nnz)
-    return numpy.array(data, dtype=dense.dtype), numpy.array(indices, dtype=numpy.int64), numpy.array(indptr, dtype=numpy.int64)
+    return numpy.array(data, dtype=dense.dtype), numpy.array(indices, dtype=numpy.int64), numpy.array(indptr,
+                                                                                                      dtype=numpy.int64)
 
-def _test_spmv():
+
+def trim_to_multiple_of_8(dense: numpy.ndarray) -> numpy.ndarray:
+    """
+    For each row in the dense matrix, drop (set to zero) the last few nonzeros
+    so that the number of nonzeros becomes a multiple of 8.
+    """
+    A = dense.copy()
+    for i in range(A.shape[0]):
+        nz_idx = numpy.flatnonzero(A[i])
+        excess = len(nz_idx) % 8
+        if excess:
+            # zero out the last 'excess' nonzeros
+            A[i, nz_idx[-excess:]] = 0
+    return A
+
+
+def test_spmv():
     _N = 32
     density = 0.25
     dense = numpy.random.random((_N, _N))
@@ -271,10 +316,11 @@ def _test_spmv():
     dense = dense * mask  # many zeros
 
     # Create CSR arrays (data, indices, indptr)
+    dense = trim_to_multiple_of_8(dense)
     data, indices, indptr = _dense_to_csr(dense)
 
     # input / output vectors
-    x = numpy.random.random((_N,))
+    x = numpy.random.random((_N, ))
     y_orig = numpy.zeros_like(x)
     y_vec = numpy.zeros_like(x)
     _nnz = len(data)
@@ -299,7 +345,7 @@ def _test_spmv():
 
 
 if __name__ == "__main__":
-    test_simple_cpu()
     test_nested_sdfg()
+    test_simple_cpu()
     test_no_maps()
-    _test_spmv()
+    test_spmv()
