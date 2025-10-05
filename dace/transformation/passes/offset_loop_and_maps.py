@@ -1,8 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from typing import Dict, Optional, Set
-import sympy
-from sympy.printing.pycode import pycode
 from dace import SDFG
 from dace import properties
 from dace import Union
@@ -13,20 +11,21 @@ from dace.transformation import pass_pipeline as ppl, transformation
 from dace.sdfg.nodes import CodeBlock
 import ast
 import dace.sdfg.utils as sdutil
-from sympy import re, symbols, simplify
 from sympy.core.relational import Relational
 import re
+import sympy
+from sympy import printing
 
 
 def _safe_simplify(expr: dace.symbolic.SymExpr) -> dace.symbolic.SymExpr:
     # If it’s a relational (<, >, <=, >=, ==, !=)
     if isinstance(expr, Relational):
-        lhs = simplify(expr.lhs)
-        rhs = simplify(expr.rhs)
+        lhs = sympy.simplify(expr.lhs)
+        rhs = sympy.simplify(expr.rhs)
         # Recreate the relation with the same operator
         return expr.func(lhs, rhs)
     else:
-        return simplify(expr)
+        return sympy.simplify(expr)
 
 
 def _get_expr_from_str(expr: str) -> dace.symbolic.SymExpr:
@@ -56,7 +55,7 @@ def _token_based_repl_in_tasklet(tasklet: dace.nodes.Tasklet, old_var: str, new_
         try:
             sym_expr = dace.symbolic.SymExpr(stripped_rhs).subs({old_var: new_expr})
             simplified_expr = _safe_simplify(sym_expr)
-            py_code = pycode(simplified_expr)
+            py_code = printing.pycode(simplified_expr)
             tasklet.code = CodeBlock(lhs.strip() + " = " + py_code, tasklet.language)
         except Exception as e:
             new_code = _split_and_repl(rhs, old_var, new_expr)
@@ -168,7 +167,6 @@ class OffsetLoopsAndMaps(ppl.Pass):
 
     def _add_to_rhs(self, expr: str, add_expr: dace.symbolic.SymExpr, sdfg: dace.SDFG) -> str:
         """Add an expression to the right-hand side of a comparison."""
-        #try:
         tree = ast.parse(expr, mode="eval")
         comparison = tree.body
 
@@ -177,7 +175,7 @@ class OffsetLoopsAndMaps(ppl.Pass):
 
         # Modify the first comparator by adding the expression
         original_rhs = comparison.comparators[0]
-        add_expr_ast = ast.parse(pycode(add_expr), mode="eval").body
+        add_expr_ast = ast.parse(printing.pycode(add_expr), mode="eval").body
 
         comparison.comparators[0] = ast.BinOp(left=original_rhs, op=ast.Add(), right=add_expr_ast)
 
@@ -186,10 +184,7 @@ class OffsetLoopsAndMaps(ppl.Pass):
         # Fix some sign and binary op clashes
         str_expr = str_expr.replace("+ -", "- ").replace("- -", "+ ")
         sym_expr = _safe_simplify(_get_expr_from_str(str_expr))
-        return pycode(sym_expr)
-
-        #except Exception as e:
-        #    raise ValueError(f"Failed to process expression '{expr}': {e}")
+        return printing.pycode(sym_expr)
 
     def _apply(self, cfg: dace.ControlFlowRegion):
         for node in cfg.nodes():
@@ -201,7 +196,7 @@ class OffsetLoopsAndMaps(ppl.Pass):
                 if self.begin_expr is None or _get_expr_from_str(init_rhs) == _get_expr_from_str(self.begin_expr):
                     init_expr_str = f"(({init_rhs}) + {self.offset_expr})"
                     init_expr = _get_expr_from_str(init_expr_str).simplify()
-                    new_init_statement = pycode(init_expr)
+                    new_init_statement = printing.pycode(init_expr)
                     node.init_statement = CodeBlock(f"{init_lhs} = {new_init_statement}")
                     new_loop_condition = self._add_to_rhs(node.loop_condition.as_string,
                                                           _get_expr_from_str(self.offset_expr), cfg.sdfg)
@@ -223,7 +218,7 @@ class OffsetLoopsAndMaps(ppl.Pass):
                                 has_matches = True
                                 new_range_list.append((b + _get_expr_from_str(self.offset_expr),
                                                        e + _get_expr_from_str(self.offset_expr), s))
-                                repldict[param] = f"({param} - {pycode(_get_expr_from_str(self.offset_expr))})"
+                                repldict[param] = f"({param} - {printing.pycode(_get_expr_from_str(self.offset_expr))})"
                             else:
                                 new_range_list.append((b, e, s))
 
@@ -274,7 +269,8 @@ class OffsetLoopsAndMaps(ppl.Pass):
                                     if any(s in ie.src.in_connectors for s in expr_set):
                                         write_expr_dict[scalar_name].add("?")
                                     else:
-                                        if len(expr_set) == 1 and pycode(sym_expr) == next(iter(expr_set)).strip():
+                                        if len(expr_set) == 1 and printing.pycode(sym_expr) == next(
+                                                iter(expr_set)).strip():
                                             write_expr_dict[scalar_name] = write_expr_dict[scalar_name].union(expr_set)
                                         else:
                                             write_expr_dict[scalar_name] = write_expr_dict[scalar_name].union("?")
@@ -296,7 +292,6 @@ class OffsetLoopsAndMaps(ppl.Pass):
             if len(expr_set) == 1:
                 expr = expr_set.pop()
                 if expr != "?":
-                    #print(f"Specialize {scalar_name} to {expr} as the write expression set is detected to: {expr}")
                     for state in sdfg.all_states():
                         for node in state.nodes():
                             if isinstance(node, dace.nodes.AccessNode) and node.data == scalar_name and isinstance(
@@ -314,12 +309,6 @@ class OffsetLoopsAndMaps(ppl.Pass):
                                     state.remove_edge(oe)
                                 state.remove_node(node)
                     sdutil.specialize_scalar(sdfg, scalar_name, expr)
-                else:
-                    #print(f"Do not specialize {scalar_name} as the write expression set is detected as unknown: {expr}")
-                    pass
-            else:
-                #print(f"Do not specialize {scalar_name} as the write expression set cardinality is not 1: {expr_set}")
-                pass
 
         sdfg.validate()
 
