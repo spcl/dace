@@ -3,8 +3,9 @@
 
 from copy import deepcopy as dc
 import itertools
-from typing import Dict, List
+from typing import Dict, List, Set
 
+import dace
 from dace import Memlet, symbolic, dtypes, subsets
 from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge
@@ -16,6 +17,12 @@ from dace.properties import make_properties
 from dace import data
 from dace.sdfg.state import LoopRegion, ReturnBlock, StateSubgraphView
 
+import ast
+from dace.memlet import MemletTree
+from dace.properties import CodeBlock
+from dace.sdfg.utils import ConditionalBlock, LoopRegion
+from typing import Set
+import re
 
 @make_properties
 @transformation.explicit_cf_compatible
@@ -326,6 +333,17 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                 if isinstance(node, nodes.NestedSDFG):
                     node.sdfg.parent_sdfg = sdfg
                     node.sdfg.parent_nsdfg_node = node
+                    # Check for missing symbols, if so, try updating them using the symbol mapping
+                    missing_symbols = get_missing_symbols(node)
+                    for ms in missing_symbols:
+                        node.symbol_mapping[ms] = ms
+                    # Check for unused data in the new NestedSDFGs
+                    for arr_name in list(node.sdfg.arrays.keys()):
+                        if not array_is_used_in_the_sdfg(node.sdfg, arr_name):
+                            if arr_name in nsdfg.in_connectors or arr_name in nsdfg.out_connectors:
+                                remove_array_from_connectors(nstate, node, arr_name)
+                            node.sdfg.remove_data(arr_name)
+
 
         #######################################################
         # Remove nested SDFG and state
@@ -334,3 +352,82 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         sdfg.reset_cfg_list()
 
         return nsdfg.nodes()
+
+def get_missing_symbols(nsdfg_node: dace.nodes.NestedSDFG) -> Set[str]:
+    nsdfg = nsdfg_node.sdfg
+    connectors = nsdfg_node.in_connectors.keys() | nsdfg_node.out_connectors.keys()
+    symbols = set(k for k in nsdfg.used_symbols(all_symbols=False) if k not in connectors)
+    missing_symbols = [s for s in symbols if s not in nsdfg_node.symbol_mapping]
+    return set(missing_symbols)
+
+def array_is_used_in_the_sdfg(sdfg: dace.SDFG, arr_name: str):
+    # Check access nodes
+    for state in sdfg.all_states():
+        for node in state.nodes():
+            if isinstance(node, dace.nodes.AccessNode) and node.data == arr_name:
+                return True
+    # Check edges
+    for edge in sdfg.all_interstate_edges():
+        for k, v in edge.data.assignments.items():
+            if k == arr_name or arr_name in v:
+                return True
+    # If
+    for node in sdfg.all_control_flow_blocks():
+        if isinstance(node, ConditionalBlock):
+            for cond, body in node.branches:
+                code_str = ""
+                if cond is not None:
+                    for code in cond.code:
+                        if isinstance(code, list):
+                            code_str = " ".join({str(s) for s.as_string in code})
+                        elif isinstance(code, str):
+                            code_str = code
+                        elif isinstance(code, CodeBlock):
+                            code_str = code.as_string
+                        elif isinstance(code, ast.Expr):
+                            code_str = ast.unparse(code)
+                        else:
+                            raise Exception(f"Unhandled case: type: {type(code)}")
+                if arr_name in {s.strip() for s in re.split(r'[()\[\]\s]+', code_str) if code_str is not None}:
+                    return True
+    # Loop
+    for node in sdfg.all_control_flow_regions():
+        if isinstance(node, LoopRegion):
+            if arr_name in {s.strip() for s in re.split(r'[()\[\]\s]+',node.loop_condition.as_string)}:
+                return True
+            if arr_name in {s.strip() for s in re.split(r'[()\[\]\s]+',node.init_statement.as_string)}:
+                return True
+
+    return False
+
+def remove_array_from_connectors(parent_state: dace.SDFGState, nsdfg: dace.nodes.NestedSDFG, arr_name: str):
+    def _rm_memlet_tree(parent_state: dace.SDFGState, memlet_tree: MemletTree):
+        for tree_node in memlet_tree.traverse_children(True):
+            edge = tree_node.edge
+            parent_state.remove_edge(edge)
+            if edge.src_conn is not None:
+                edge.src.remove_out_connector(edge.src_conn)
+            if edge.dst_conn is not None:
+                edge.dst.remove_in_connector(edge.dst_conn)
+            if parent_state.degree(edge.src) == 0:
+                parent_state.remove_node(edge.src)
+            if parent_state.degree(edge.dst) == 0:
+                parent_state.remove_node(edge.dst)
+
+    if arr_name in nsdfg.in_connectors:
+        memlet_trees: Set[MemletTree] = set()
+        for ie in parent_state.in_edges_by_connector(nsdfg, arr_name):
+            mtree = parent_state.memlet_tree(ie)
+            memlet_trees.add(mtree)
+        assert len(memlet_trees) == 1
+        memlet_tree = memlet_trees.pop()
+        _rm_memlet_tree(parent_state, memlet_tree)
+
+    if arr_name in nsdfg.out_connectors:
+        memlet_trees: Set[MemletTree] = set()
+        for oe in parent_state.out_edges_by_connector(nsdfg, arr_name):
+            mtree = parent_state.memlet_tree(oe)
+            memlet_trees.add(mtree)
+        assert len(memlet_trees) == 1
+        memlet_tree = memlet_trees.pop()
+        _rm_memlet_tree(parent_state, memlet_tree)

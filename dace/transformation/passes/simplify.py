@@ -122,6 +122,7 @@ class SimplifyPass(ppl.FixedPointPipeline):
                               'for more information.')
                 return None
 
+        print(f"Apply subpass: {p}")
         if type(p) in _nonrecursive_passes:  # If pass needs to run recursively, do so and modify return value
             ret: Dict[int, Any] = {}
             for sd in sdfg.all_sdfgs_recursive():

@@ -151,6 +151,7 @@ def try_to_add_missing_arrays_to_nsdfgs(sdfg: dace.SDFG):
                                 arr_name,
                                 dace.memlet.Memlet.from_array(arr_name, state.sdfg.arrays[arr_name])
                             )
+
                             if array_is_written_to_in_the_sdfg(node.sdfg, arr_name):
                                 print(f"{arr_name} is written to too, add to parent nSDFG's out connectors")
                                 node.add_out_connector(arr_name, force=True)
@@ -216,6 +217,44 @@ def add_missing_symbols_to_symbol_maps_of_nsdfgs(sdfg: dace.SDFG):
 
     for nsdfg in nsdfgs:
         add_missing_symbols_to_symbol_maps_of_nsdfgs(nsdfg)
+
+
+def try_fix_mismatching_inout_connectors(sdfg: dace.SDFG):
+    for state in sdfg.all_states():
+        for node in state.nodes():
+            if isinstance(node, dace.nodes.NestedSDFG):
+                in_conns = set(node.in_connectors.keys())
+                out_conns = set(node.out_connectors.keys())
+                inout_conns = in_conns.intersection(out_conns)
+
+                for inout_conn in inout_conns:
+                    ies = list(state.in_edges_by_connector(node, inout_conn))
+                    oes = list(state.out_edges_by_connector(node, inout_conn))
+                    if len(ies) != 1 or len(oes) != 1:
+                        continue
+
+                    ie = ies[0]
+                    oe = oes[0]
+
+                    if ie.data != oe.data:
+                        if (isinstance(state.sdfg.arrays[ie.data.data], dace.data.View) and
+                            not (isinstance(state.sdfg.arrays[oe.data.data], dace.data.View))):
+                            an = state.add_access(ie.data.data)
+                            state.add_edge(
+                                node,
+                                oe.src_conn,
+                                an,
+                                None,
+                                copy.deepcopy(ie.data.data)
+                            )
+                            state.add_edge(
+                                an,
+                                "views",
+                                oe.dst,
+                                oe.dst_conn,
+                                copy.deepcopy(oe.data)
+                            )
+                            state.remove_edge(oe)
 
 def find_access_in_destinations(substate, substate_destinations, name):
     wv = None
@@ -1746,7 +1785,7 @@ class AST_translator:
             from dace.transformation.pass_pipeline import FixedPointPipeline
             FixedPointPipeline([LiftStructViews()]).apply_pass(new_sdfg, {})
 
-            new_sdfg.simplify(verbose=True)
+            new_sdfg.simplify(verbose=True, validate_all=True)
 
         else:
             internal_sdfg.path = self.sdfg_path + new_sdfg.name + ".sdfg"
@@ -3491,6 +3530,7 @@ def create_sdfg_from_internal_ast(own_ast: ast_components.InternalFortranAst, pr
         add_missing_symbols_to_symbol_maps_of_nsdfgs(g)
         try_to_add_missing_arrays_to_nsdfgs(g)
         prune_unnused_arrays_from_nsdfgs(g)
+        try_fix_mismatching_inout_connectors(g)
         g.save("tmp2.sdfgz", compress=True)
         g.validate()
         from dace.transformation.passes.lift_struct_views import LiftStructViews
