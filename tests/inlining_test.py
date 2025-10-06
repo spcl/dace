@@ -1315,8 +1315,7 @@ def _make_nested_control_flow_blocks_sdfg(level: int, size: int) -> dace.SDFG:
     C, _ = sdfg.add_array("C", [size], dace.float64)
 
     if_region = _make_nested_if_region(sdfg, 2)
-    sdfg.add_node(if_region, ensure_unique_name=True)
-    sdfg.add_state_before(if_region, "entry_state", is_start_block=True)
+    sdfg.add_node(if_region, ensure_unique_name=True, is_start_block=True)
     state = sdfg.add_state_after(if_region)
 
     level -= 1
