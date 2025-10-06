@@ -3307,6 +3307,8 @@ def create_sdfg_from_internal_ast(own_ast: ast_components.InternalFortranAst, pr
                                   normalize_offsets=cfg.normalize_offsets,
                                   do_not_make_internal_variables_argument=True)
         g = SDFG(ep)
+        from dace.sdfg.dealias import find_readable_connector_names_for_nested_sdfgs
+        find_readable_connector_names_for_nested_sdfgs(g)
         ast2sdfg.functions_and_subroutines = ast_transforms.FindFunctionAndSubroutines.from_node(program).names
         ast2sdfg.structures = program.structures
         ast2sdfg.placeholders = program.placeholders

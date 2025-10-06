@@ -427,6 +427,7 @@ class RedundantArray(pm.SingleStateTransformation):
                             # Cannot safely remove node without modifying strides and correctness
                             return False
 
+        raise Exception(in_array, out_array)
         return True
 
     def _make_view(self, sdfg: SDFG, graph: SDFGState, in_array: nodes.AccessNode, out_array: nodes.AccessNode,
@@ -929,6 +930,7 @@ class RedundantSecondArray(pm.SingleStateTransformation):
                             # Cannot safely remove node without modifying strides and correctness
                             return False
 
+        raise Exception(in_array, out_array)
         return True
 
     def apply(self, graph: SDFGState, sdfg: SDFG):
@@ -1109,6 +1111,13 @@ class SqueezeViewRemove(pm.SingleStateTransformation):
         if astrides != vstrides:
             return False
 
+        # If destination node is nsdfg and view connects to an inout connector, then skip
+        for e in state.memlet_path(vedge):
+            if isinstance(e.dst, nodes.NestedSDFG):
+                dst_conn = e.dst_conn
+                if dst_conn in e.dst.out_connectors:
+                    return False
+
         return True
 
     def apply(self, state: SDFGState, sdfg: SDFG):
@@ -1187,6 +1196,13 @@ class UnsqueezeViewRemove(pm.SingleStateTransformation):
         astrides = tuple(s for i, s in enumerate(out_desc.strides) if i in asqdims)
         if astrides != vstrides:
             return False
+
+        # If source node is nsdfg and view connects to an inout connector, then skip
+        for e in state.memlet_path(vedge):
+            if isinstance(e.src, nodes.NestedSDFG):
+                src_conn = e.src_conn
+                if src_conn in e.src.in_connectors:
+                    return False
 
         return True
 
@@ -1316,6 +1332,13 @@ class RedundantReadSlice(pm.SingleStateTransformation):
             tmp.squeeze()
             if not _subset_has_shape(tmp, out_shape):
                 return False
+
+        for e in graph.out_edges(out_array):
+            for sink in graph.memlet_tree(e).leaves():
+                sink_node = sink.dst
+                sink_conn = sink.dst_conn
+                if isinstance(sink_node, nodes.NestedSDFG):
+                    return False
 
         if not permissive:
             # Ensure the view is not an input to a library node, where it may change the behavior, and similarly is not
@@ -1468,6 +1491,12 @@ class RedundantWriteSlice(pm.SingleStateTransformation):
             if not _subset_has_shape(tmp, in_shape):
                 return False
 
+        for source in graph.memlet_tree(e).leaves():
+            source_node = source.src
+            source_conn = source.src_conn
+            if isinstance(source_node, nodes.NestedSDFG):
+                return False
+
         if not permissive:
             # Ensure the view is not an output from a library node, where it may change the behavior, and similarly is
             # not being used to change the strides for a nested SDFG.
@@ -1478,11 +1507,21 @@ class RedundantWriteSlice(pm.SingleStateTransformation):
                     if isinstance(source_node, nodes.LibraryNode):
                         return False
                     if isinstance(source_node, nodes.NestedSDFG):
-                        if source_conn in source_node.sdfg.arrays and isinstance(in_desc, data.ArrayView):
+                        if source_conn in source_node.sdfg.arrays and isinstance(in_desc, (data.ArrayView, data.Array)):
                             ndesc = source_node.sdfg.arrays[source_conn]
                             if ndesc.strides != in_desc.strides or ndesc.dtype != in_desc.dtype:
                                 return False
 
+
+        for e in graph.in_edges(in_array):
+            for source in graph.memlet_path(e):
+                source_node = source.src
+                source_conn = source.src_conn
+                if isinstance(source_node, nodes.NestedSDFG):
+                    raise Exception("X1")
+                    return False
+        
+        raise Exception("X3")
         return True
 
     def apply(self, graph, sdfg):
@@ -1575,14 +1614,27 @@ class RemoveSliceView(pm.SingleStateTransformation):
         is_src: bool
         if view_edge.dst is self.view:
             viewed = state.memlet_path(view_edge)[0].src
+            # Get a view out edge, and the destination node of that view
+            dst_node = state.memlet_path(state.out_edges(self.view)[0])[-1].dst
             non_view_edges = state.out_edges(self.view)
             subset = view_edge.data.get_src_subset(view_edge, state)
             is_src = True
+            # Do not touch if the view leads to a NestedSDFG
+            print("IS_SRC", viewed, self.view, dst_node, state.memlet_path(view_edge), isinstance(dst_node, nodes.NestedSDFG))
+            if isinstance(dst_node, nodes.NestedSDFG):
+                return False
         else:
             viewed = state.memlet_path(view_edge)[-1].dst
+            # Get a view source edge, and the source node of that view
+            src_node = state.memlet_path(state.in_edges(self.view)[0])[0].src
             non_view_edges = state.in_edges(self.view)
             subset = view_edge.data.get_dst_subset(view_edge, state)
             is_src = False
+            print("IS_DST", viewed, self.view, src_node, state.memlet_path(view_edge), isinstance(src_node, nodes.NestedSDFG))
+            # Do not touch if the view comes from a NestedSDFG
+            if isinstance(src_node, nodes.NestedSDFG):
+                return False
+
 
         if subset is None:
             # `subset = None` means the entire viewed data container is used
@@ -1615,6 +1667,7 @@ class RemoveSliceView(pm.SingleStateTransformation):
         if sdutil.map_view_to_array(desc, vdesc, subset) is None:
             return False
 
+        raise Exception(self.view, is_src, dst_node if is_src else src_node)
         return True
 
     def apply(self, state: SDFGState, sdfg: SDFG):

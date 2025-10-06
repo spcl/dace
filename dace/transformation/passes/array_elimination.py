@@ -167,7 +167,7 @@ class ArrayElimination(ppl.Pass):
         removed_nodes: Set[nodes.AccessNode] = set()
         xforms = [RemoveSliceView()]
         state_id = state.block_id
-
+        i = 0
         for nodeset in access_nodes.values():
             for anode in list(nodeset):
                 for xform in xforms:
@@ -180,6 +180,9 @@ class ArrayElimination(ppl.Pass):
                         xform.apply(state, sdfg)
                         removed_nodes.add(anode)
                         nodeset.remove(anode)
+                        i += 1
+                        sdfg.save(f"array_elim_rrv_{i}.sdfg")
+                        sdfg.validate()
         return removed_nodes
 
     def remove_redundant_copies(self, sdfg: SDFG, state: SDFGState, removable_data: Set[str],
@@ -200,6 +203,7 @@ class ArrayElimination(ppl.Pass):
 
         # Try the different redundant copy/view transformations on the node
         removed = {1}
+        i = 0
         while removed:
             removed = set()
             for aname in removable_data:
@@ -216,6 +220,7 @@ class ArrayElimination(ppl.Pass):
                         succ = state.successors(anode)[0]
                         if isinstance(succ, nodes.AccessNode):
                             for xform in xforms_first:
+                                print(f"Apply: {xform}")
                                 # Quick path to setup match
                                 candidate = {type(xform).in_array: anode, type(xform).out_array: succ}
                                 xform.setup_match(sdfg,
@@ -232,6 +237,9 @@ class ArrayElimination(ppl.Pass):
                                         continue
                                     removed_nodes.add(anode)
                                     removed.add(anode)
+                                    i += 1
+                                    sdfg.save(f"array_elim_rrc_{i}.sdfg")
+                                    sdfg.validate()
                                     break
 
                     if anode in removed_nodes:  # Node was removed, skip second check
@@ -241,6 +249,7 @@ class ArrayElimination(ppl.Pass):
                         pred = state.predecessors(anode)[0]
                         if isinstance(pred, nodes.AccessNode):
                             for xform in xforms_second:
+                                print(f"Apply: {xform}")
                                 # Quick path to setup match
                                 candidate = {type(xform).in_array: pred, type(xform).out_array: anode}
                                 xform.setup_match(sdfg,
@@ -257,6 +266,9 @@ class ArrayElimination(ppl.Pass):
                                         continue
                                     removed_nodes.add(anode)
                                     removed.add(anode)
+                                    i += 1
+                                    sdfg.save(f"array_elim_rrc_{i}.sdfg")
+                                    sdfg.validate()
                                     break
 
         return removed_nodes
