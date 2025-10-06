@@ -206,7 +206,8 @@ class GPUTXMarkersProvider(InstrumentationProvider):
             return
         self.print_range_pop(callsite_stream)
 
-    def on_allocation_begin(self, sdfg: SDFG, scope: Union[nodes.EntryNode, SDFGState, SDFG], stream: CodeIOStream) -> None:
+    def on_allocation_begin(self, sdfg: SDFG, scope: Union[nodes.EntryNode, SDFGState, SDFG],
+                            stream: CodeIOStream) -> None:
         if sdfg.instrument != dtypes.InstrumentationType.GPU_TX_MARKERS:
             return
         # We only want to instrument allocations at the SDFG or state level
@@ -217,7 +218,8 @@ class GPUTXMarkersProvider(InstrumentationProvider):
             return
         self.print_range_push(f'alloc_{sdfg.name}', sdfg, stream)
 
-    def on_allocation_end(self, sdfg: SDFG, scope: Union[nodes.EntryNode, SDFGState, SDFG], stream: CodeIOStream) -> None:
+    def on_allocation_end(self, sdfg: SDFG, scope: Union[nodes.EntryNode, SDFGState, SDFG],
+                          stream: CodeIOStream) -> None:
         if sdfg.instrument != dtypes.InstrumentationType.GPU_TX_MARKERS:
             return
         # We only want to instrument allocations at the SDFG or state level
@@ -228,7 +230,8 @@ class GPUTXMarkersProvider(InstrumentationProvider):
             return
         self.print_range_pop(stream)
 
-    def on_deallocation_begin(self, sdfg: SDFG, scope: Union[nodes.EntryNode, SDFGState, SDFG], stream: CodeIOStream) -> None:
+    def on_deallocation_begin(self, sdfg: SDFG, scope: Union[nodes.EntryNode, SDFGState, SDFG],
+                              stream: CodeIOStream) -> None:
         if sdfg.instrument != dtypes.InstrumentationType.GPU_TX_MARKERS:
             return
         # We only want to instrument allocations at the SDFG or state level
@@ -239,7 +242,8 @@ class GPUTXMarkersProvider(InstrumentationProvider):
             return
         self.print_range_push(f'dealloc_{sdfg.name}', sdfg, stream)
 
-    def on_deallocation_end(self, sdfg: SDFG, scope: Union[nodes.EntryNode, SDFGState, SDFG], stream: CodeIOStream) -> None:
+    def on_deallocation_end(self, sdfg: SDFG, scope: Union[nodes.EntryNode, SDFGState, SDFG],
+                            stream: CodeIOStream) -> None:
         if sdfg.instrument != dtypes.InstrumentationType.GPU_TX_MARKERS:
             return
         # We only want to instrument allocations at the SDFG or state level
