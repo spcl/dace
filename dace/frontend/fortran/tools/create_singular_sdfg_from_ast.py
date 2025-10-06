@@ -18,6 +18,7 @@ from dace.frontend.fortran.fortran_parser import (
 )
 from dace.frontend.fortran.tools.helpers import find_all_f90_files
 
+from dace.frontend.fortran.fix_utils import *
 
 def main():
     argp = argparse.ArgumentParser()
@@ -115,8 +116,12 @@ def main():
     # Save once simplifying, in case simplification fails.
     g.save(output_sdfg, compress=output_sdfg.endswith(".sdfgz"))
     g.validate()
-    g.simplify(validate=True, validate_all=True)
+    g.simplify(validate=False)
     # Save once before compiling, in case compilation fails.
+    add_missing_symbols_to_symbol_maps_of_nsdfgs(g)
+    try_to_add_missing_arrays_to_nsdfgs(g)
+    prune_unnused_arrays_from_nsdfgs(g)
+    try_fix_mismatching_inout_connectors(g)
     g.save(output_sdfg, compress=output_sdfg.endswith(".sdfgz"))
     g.validate()
     g.compile()
