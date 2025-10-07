@@ -153,6 +153,8 @@ def try_to_add_missing_arrays_to_nsdfgs(sdfg: dace.SDFG):
                         #if array_is_used_in_the_sdfg(node.sdfg, arr_name):
                         # Add to input
                         if arr_name not in node.in_connectors and arr_name not in node.out_connectors:
+                            assert state.scope_dict()[node] is None, f"Parent scopes are not supported by this function"
+
                             print(f"Add {arr_name} to parent nSDFG's in connectors")
                             node.add_in_connector(arr_name, force=True)
                             an = state.add_access(arr_name)
@@ -185,7 +187,6 @@ def try_to_add_missing_arrays_to_nsdfgs(sdfg: dace.SDFG):
                                     None,
                                     dace.memlet.Memlet.from_array(arr_name, state.sdfg.arrays[arr_name])
                                 )
-
 
     for state in sdfg.all_states():
         for node in state.nodes():
