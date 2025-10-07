@@ -680,7 +680,7 @@ if(DACE_ENABLE_SOFTHIER)
       # COMMAND ${CMAKE_SHCC_COMPILER} -I ${SOFTHIER_INSTALL_PATH}/include -I ${SOFTHIER_INCLUDE_DIRS} -T ${SHCC_LINKER_SCRIPT} -nostartfiles -mabi=ilp32d -mcmodel=medany -march=rv32imafd -g -O3 -ffast-math -fno-builtin-printf -fno-common -ffunction-sections -Wl,--gc-sections -o ${SOFTHIER_SW_BUILD_PATH}/softhier.elf ${SOFTHIER_INSTALL_PATH}/flex_start.s -x c ${DACE_SOFTHIER_FILES}
       # COMMAND ${CMAKE_SHCC_COMPILER} -I ${SOFTHIER_INSTALL_PATH}/include -I ${SOFTHIER_INCLUDE_DIRS} -T ${SHCC_LINKER_SCRIPT} -nostartfiles -mabi=ilp32d -mcmodel=medany -march=rv32imafd -g -O3 -ffast-math -fno-builtin-printf -fno-common -ffunction-sections -Wl,--gc-sections -o ${CMAKE_BINARY_DIR}/../../softhier.elf ${SOFTHIER_INSTALL_PATH}/flex_start.s -x c ${DACE_SOFTHIER_FILES}
       COMMAND cp ${DACE_SOFTHIER_FILES} ${DACE_SOFTHIER_FILES}.c
-      COMMAND ${CMAKE_SHCC_COMPILER} -I ${SOFTHIER_INSTALL_PATH}/include -I ${SOFTHIER_INCLUDE_DIRS} -T ${SHCC_LINKER_SCRIPT} -nostartfiles -mabi=ilp32d -mcmodel=medlow -march=rv32imafd -g -O3 -ffast-math -fno-builtin-printf -fno-common -ffunction-sections -Wl,--gc-sections -o ${CMAKE_BINARY_DIR}/../../softhier.elf ${SOFTHIER_INSTALL_PATH}/flex_start.s ${DACE_SOFTHIER_FILES}.c
+      COMMAND ${CMAKE_SHCC_COMPILER} -I ${SOFTHIER_INCLUDE_DIRS} -T ${SHCC_LINKER_SCRIPT} -nostartfiles -mabi=ilp32d -mcmodel=medlow -march=rv32imafd_zfh -g -O3 -ffast-math -fno-builtin -fno-tree-vectorize -fno-common -ffunction-sections -Wl,--gc-sections -o ${CMAKE_BINARY_DIR}/../../softhier.elf ${SOFTHIER_INSTALL_PATH}/flex_start.s ${DACE_SOFTHIER_FILES}.c
       COMMAND chmod +x ${CMAKE_BINARY_DIR}/../../dace.sh
       COMMENT "Generating softhier.elf"
   )
