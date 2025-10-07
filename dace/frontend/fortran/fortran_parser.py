@@ -1529,7 +1529,8 @@ class AST_translator:
                                               transient=False,
                                               strides=array_in_global.strides,
                                               offset=array_in_global.offset)
-
+                
+                # TODO HERE
                 if first:
                     first = False
                 else:
@@ -1570,10 +1571,15 @@ class AST_translator:
             self.translate(node.execution_part, new_sdfg, new_sdfg)
 
             new_sdfg.reset_cfg_list()
+            new_sdfg.validate()
             new_sdfg.apply_transformations_repeated(IntrinsicSDFGTransformation)
             from dace.transformation.passes.lift_struct_views import LiftStructViews
             from dace.transformation.pass_pipeline import FixedPointPipeline
+            new_sdfg.validate()
+
             FixedPointPipeline([LiftStructViews()]).apply_pass(new_sdfg, {})
+            new_sdfg.validate()
+
 
             new_sdfg.simplify(verbose=True, validate_all=True)
 
@@ -3307,8 +3313,6 @@ def create_sdfg_from_internal_ast(own_ast: ast_components.InternalFortranAst, pr
                                   normalize_offsets=cfg.normalize_offsets,
                                   do_not_make_internal_variables_argument=True)
         g = SDFG(ep)
-        from dace.sdfg.dealias import find_readable_connector_names_for_nested_sdfgs
-        find_readable_connector_names_for_nested_sdfgs(g)
         ast2sdfg.functions_and_subroutines = ast_transforms.FindFunctionAndSubroutines.from_node(program).names
         ast2sdfg.structures = program.structures
         ast2sdfg.placeholders = program.placeholders
@@ -3321,9 +3325,9 @@ def create_sdfg_from_internal_ast(own_ast: ast_components.InternalFortranAst, pr
         g.save("tmp1.sdfgz", compress=True)
         add_missing_symbols_to_symbol_maps_of_nsdfgs(g)
         try_to_add_missing_arrays_to_nsdfgs(g)
-        prune_unnused_arrays_from_nsdfgs(g)
-        try_fix_mismatching_inout_connectors(g)
-        g.save("tmp2.sdfgz", compress=True)
+        #prune_unnused_arrays_from_nsdfgs(g)
+        #try_fix_mismatching_inout_connectors(g)
+        #g.save("tmp2.sdfgz", compress=True)
         g.validate()
         from dace.transformation.passes.lift_struct_views import LiftStructViews
         from dace.transformation.pass_pipeline import FixedPointPipeline

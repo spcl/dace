@@ -116,12 +116,12 @@ def main():
     # Save once simplifying, in case simplification fails.
     g.save(output_sdfg, compress=output_sdfg.endswith(".sdfgz"))
     g.validate()
-    g.simplify(validate=False)
+    g.simplify(validate=True, validate_all=True)
     # Save once before compiling, in case compilation fails.
-    add_missing_symbols_to_symbol_maps_of_nsdfgs(g)
-    try_to_add_missing_arrays_to_nsdfgs(g)
-    prune_unnused_arrays_from_nsdfgs(g)
-    try_fix_mismatching_inout_connectors(g)
+    # add_missing_symbols_to_symbol_maps_of_nsdfgs(g)
+    # try_to_add_missing_arrays_to_nsdfgs(g)
+    # prune_unnused_arrays_from_nsdfgs(g)
+    # try_fix_mismatching_inout_connectors(g)
     g.save(output_sdfg, compress=output_sdfg.endswith(".sdfgz"))
     g.validate()
     g.compile()

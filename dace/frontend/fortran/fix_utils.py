@@ -82,7 +82,7 @@ def remove_array_from_connectors(parent_state: dace.SDFGState, nsdfg: dace.nodes
         _rm_memlet_tree(parent_state, memlet_tree)
 
     if arr_name in nsdfg.out_connectors:
-        memlet_trees: Set[MemletTree] = set()
+        memlet_trees: Set[dace.memlet.MemletTree] = set()
         for oe in parent_state.out_edges_by_connector(nsdfg, arr_name):
             mtree = parent_state.memlet_tree(oe)
             memlet_trees.add(mtree)

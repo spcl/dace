@@ -427,7 +427,6 @@ class RedundantArray(pm.SingleStateTransformation):
                             # Cannot safely remove node without modifying strides and correctness
                             return False
 
-        raise Exception(in_array, out_array)
         return True
 
     def _make_view(self, sdfg: SDFG, graph: SDFGState, in_array: nodes.AccessNode, out_array: nodes.AccessNode,
@@ -930,7 +929,6 @@ class RedundantSecondArray(pm.SingleStateTransformation):
                             # Cannot safely remove node without modifying strides and correctness
                             return False
 
-        raise Exception(in_array, out_array)
         return True
 
     def apply(self, graph: SDFGState, sdfg: SDFG):
@@ -1512,16 +1510,6 @@ class RedundantWriteSlice(pm.SingleStateTransformation):
                             if ndesc.strides != in_desc.strides or ndesc.dtype != in_desc.dtype:
                                 return False
 
-
-        for e in graph.in_edges(in_array):
-            for source in graph.memlet_path(e):
-                source_node = source.src
-                source_conn = source.src_conn
-                if isinstance(source_node, nodes.NestedSDFG):
-                    raise Exception("X1")
-                    return False
-        
-        raise Exception("X3")
         return True
 
     def apply(self, graph, sdfg):
@@ -1667,7 +1655,6 @@ class RemoveSliceView(pm.SingleStateTransformation):
         if sdutil.map_view_to_array(desc, vdesc, subset) is None:
             return False
 
-        raise Exception(self.view, is_src, dst_node if is_src else src_node)
         return True
 
     def apply(self, state: SDFGState, sdfg: SDFG):
