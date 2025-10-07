@@ -1308,7 +1308,7 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                         #     f"flex_dma_async_broadcast(dace_remote_xy({pos_x_end-pos_x_step+1},{pos_y_end-pos_y_step+1},{dst_expr},{self._soft_hier_dims[0]}), local({src_expr}), {dst_size}, 3, 3);"
                         # )
                         callsite_stream.write(
-                            f"flex_dma_async_broadcast(({dst_expr}), ({src_expr}), {dst_size}, {(pos_x_end - pos_x_start) ^ (self._soft_hier_dims[0] - 1)}, {(pos_y_end - pos_y_start) ^ (self._soft_hier_dims[0] - 1)});"
+                            f"flex_dma_async_broadcast(({dst_expr}), ({src_expr}), {dst_size}, {((pos_x_end - pos_x_start) ^ (self._soft_hier_dims[0] - 1)) | (pos_x_step - 1)}, {((pos_y_end - pos_y_start) ^ (self._soft_hier_dims[0] - 1)) | (pos_y_step - 1)});"
                         )
                     else:
                         callsite_stream.write(
@@ -1853,9 +1853,10 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 
         # Just dump the whole HBM address space
         dump_str = ""
-        dump_str += "flex_dump_open();\n"
+        # dump_str += "flex_dump_open();\n"
         dump_str += '//printf("Start dumping arrays");\n'
         dump_str += "//Print Out the input and output-arrays\nif (flex_is_dm_core() && flex_get_cluster_id() == 0)\n{\n"
+        dump_str += "flex_dump_open();\n"
         dump_str += '//printf("Start dumping arrays on dm_core / cluster_id == 0");\n'
         for arr_name, arr in sdfg.arrays.items():
             if arr.transient is True:
@@ -1882,9 +1883,10 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
             dump_str += "}\n"
             dump_str += "}\n"
 
+        dump_str += "flex_dump_close();\n"
         dump_str += "}\n"
         dump_str += "flex_intra_cluster_sync();\n"
-        dump_str += "flex_dump_close();\n"
+        
 
         # Prepare an empty-grid check for runtime grids
 
