@@ -82,7 +82,6 @@ class DefaultSharedMemorySync(ppl.Pass):
         # 4. Insert synchronization after collaborative shared memory writes
         self.insert_synchronization_after_nodes(collaborative_smem_copies)
 
-
     def is_collaborative_smem_write(self, node: AccessNode, state: SDFGState) -> bool:
         """
         Determine whether the given AccessNode corresponds to a collaborative
@@ -105,11 +104,16 @@ class DefaultSharedMemorySync(ppl.Pass):
         if node.desc(state).storage != dtypes.StorageType.GPU_Shared:
             return False
         
-        # 2. No writes to the shared memory - skip
-        if state.in_degree(node) == 0:
-            return False 
+        # 2. To my knowledge, it is not a collaborative write if the result comes from a ThreadBlock map.
+        if all(isinstance(pred, MapExit) and pred.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock 
+               for pred in state.predecessors(node)):
+            return False
         
-        # 3. It is a collaborative copy if it is within a kernel but not within a GPU_ThreadBlock map
+        # 3. If all in edges are empty, there is no write - and no sync necessary
+        if all(edge.data.is_empty() for edge in state.in_edges(node)):
+            return False
+        
+        # 4. It is a collaborative copy if it is within a kernel but not within a GPU_ThreadBlock map
         if (not gpu_utils.is_within_schedule_types(state, node, [dtypes.ScheduleType.GPU_Device]) 
             or gpu_utils.is_within_schedule_types(state, node, [dtypes.ScheduleType.GPU_ThreadBlock])):
             return False
