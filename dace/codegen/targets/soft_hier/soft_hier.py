@@ -974,7 +974,7 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
             callsite_stream.write(
                 f"const uint32_t total_block_index = num_blocks_in_previous_tiles_in_channel + block_index;")
             callsite_stream.write(
-                f"const uint64_t block_addr = {src_name}_base + channel_id * (uint64_t)ARCH_HBM_NODE_ADDR_SPACE + total_block_index * {block_height} * {block_width} * {data_size};"
+                f"const uint64_t block_addr = {src_name}_base + (uint64_t)((uint64_t)channel_id * (uint64_t)ARCH_HBM_NODE_ADDR_SPACE) + (uint64_t)(total_block_index * {block_height} * {block_width} * {data_size});"
             )
             funcname = "flex_dma_async_1d"
             if is_load:
