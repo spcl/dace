@@ -127,7 +127,6 @@ def test_axpy_fpga_stream():
     return run_test(configs, "fpga_stream")
 '''
 
-
 if __name__ == "__main__":
 
     cmdParser = argparse.ArgumentParser(allow_abbrev=False)
