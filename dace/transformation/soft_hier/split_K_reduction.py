@@ -104,9 +104,10 @@ class SplitKReduction(transformation.SingleStateTransformation):
         graph.remove_edge(edge_to_replace)
         reduction_tasklet_str = ""
         reduction_tasklet_str += f"if ({reduce_cond} && flex_is_dm_core()) {{\n"
-        reduction_tasklet_str += (f"    flex_dma_async_1d_reduction(local(_in_accumulator), "
-                                  f"dace_remote_xy(gi+{kg_m-1-kg_oi},gj+{kg_n-1-kg_oj},_in_accumulator,{npe_x}), "
-                                  f"{accumulator_size}, COLLECTIVE_REDADD_FP_16);\n")
+        reduction_tasklet_str += (f"    flex_dma_async_reduction(_in_accumulator, "
+                                  f"_in_accumulator, "
+                                  f"{accumulator_size}, COLLECTIVE_REDADD_UINT_16, "
+                                  f"{(npe_x-1)^(kg_m-1)}, {(npe_y-1)^(kg_n-1)});\n")
 
         reduction_tasklet_str += "    bare_dma_wait_all(); \n"
         reduction_tasklet_str += f"}}\n"
@@ -158,7 +159,7 @@ class SplitKReduction(transformation.SingleStateTransformation):
         cb_hbm_an = store_state.add_access(global_hbm.data)
         store_state.add_edge(cb_acc_an, None, cb_hbm_an, None, Memlet(f"{global_hbm.data}"))
 
-        nested_sdfg = graph.add_nested_sdfg(nsdfg, None, inputs={"accumulator"}, outputs={"C"})
+        nested_sdfg = graph.add_nested_sdfg(nsdfg, inputs={"accumulator"}, outputs={"C"})
         nsdfg_in_edge = graph.add_edge(new_acc_an, None, nested_sdfg, "accumulator", Memlet(f"{accumulator.data}"))
 
         nsdfg_out_edge = graph.add_edge(nested_sdfg, "C", edge_to_replace.dst, edge_to_replace.dst_conn,
