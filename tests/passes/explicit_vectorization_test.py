@@ -99,7 +99,7 @@ def tasklet_in_nested_sdfg_2(
 
 
 @dace.program
-def test_tasklets_in_if(
+def tasklets_in_if(
     a: dace.float64[S, S],
     b: dace.float64[S, S],
     d: dace.float64[S, S],
@@ -111,8 +111,23 @@ def test_tasklets_in_if(
                 b[i, j] = b[i, j] + d[i, j]
             else:
                 b[i, j] = b[i, j] - d[i, j]
-            b[i, j] = (1 - a[i, j]) * c[i, j]
+            b[i, j] = (1 - a[i, j]) * c
 
+@dace.program
+def tasklets_in_if_two(
+    a: dace.float64[S, S],
+    b: dace.float64,
+    c: dace.float64[S, S],
+    d: dace.float64[S, S],
+    e: dace.float64[S, S],
+    f: dace.float64,
+):
+    for i in dace.map[0:S-1:1]:
+        for j in dace.map[0:S-1:1]:
+            if a[i, j] + a[i + 1, j + 1] < b:
+                g = f * a[i, j]
+                d[i, j] = c[i, j] * g
+                e[i, j] = d[i, j] * 2.0 - a[i, j]
 
 @dace.program
 def spmv_csr(indptr: dace.int64[n + 1], indices: dace.int64[nnz], data: dace.float64[nnz], x: dace.float64[m],
@@ -271,6 +286,83 @@ def test_no_maps():
     assert numpy.allclose(B_orig, B_vec), f"{B_orig - B_vec}"
 
 
+def test_tasklets_in_if():
+    _S = 64
+    A = numpy.random.random((_S, _S))
+    B = numpy.random.random((_S, _S))
+
+    # Create copies for comparison
+    A_orig = copy.deepcopy(A)
+    B_orig = copy.deepcopy(B)
+    A_vec = copy.deepcopy(A)
+    B_vec = copy.deepcopy(B)
+
+    # Original SDFG
+    sdfg = tasklets_in_if.to_sdfg()
+
+    # Vectorized SDFG
+    copy_sdfg = copy.deepcopy(sdfg)
+    sdfg.save("nested_tasklets.sdfg")
+    ExplicitVectorizationPipelineCPU(vector_width=8).apply_pass(copy_sdfg, {})
+    copy_sdfg.save("nested_tasklets_vectorized.sdfg")
+
+    c_sdfg = sdfg.compile()
+    c_copy_sdfg = copy_sdfg.compile()
+
+    c_sdfg(a=A_orig, b=B_orig, S=_S)
+    c_copy_sdfg(a=A_vec, b=B_vec, S=_S)
+
+    # Compare results
+    assert numpy.allclose(A_orig, A_vec), f"{A_orig - A_vec}"
+    assert numpy.allclose(B_orig, B_vec), f"{B_orig - B_vec}"
+
+
+def test_tasklets_in_if_two():
+    _S = 64
+    A = numpy.random.random((_S, _S))
+    B = numpy.random.random((1,))
+    C = numpy.random.random((_S, _S))
+    D = numpy.random.random((_S, _S))
+    E = numpy.random.random((_S, _S))
+    F = numpy.random.random((1,))
+
+    # Create copies for comparison
+    A_orig = copy.deepcopy(A)
+    B_orig = copy.deepcopy(B)
+    C_orig = copy.deepcopy(C)
+    D_orig = copy.deepcopy(D)
+    E_orig = copy.deepcopy(E)
+    F_orig = copy.deepcopy(F)
+    A_vec = copy.deepcopy(A)
+    B_vec = copy.deepcopy(B)
+    C_vec = copy.deepcopy(C)
+    D_vec = copy.deepcopy(D)
+    E_vec = copy.deepcopy(E)
+    F_vec = copy.deepcopy(F)
+
+    # Original SDFG
+    sdfg = tasklets_in_if.to_sdfg()
+
+    # Vectorized SDFG
+    copy_sdfg = copy.deepcopy(sdfg)
+    sdfg.save("nested_tasklets.sdfg")
+    ExplicitVectorizationPipelineCPU(vector_width=8).apply_pass(copy_sdfg, {})
+    copy_sdfg.save("nested_tasklets_vectorized.sdfg")
+
+    c_sdfg = sdfg.compile()
+    c_copy_sdfg = copy_sdfg.compile()
+
+    c_sdfg(a=A_orig, b=B_orig, c=C_orig, d=D_orig, e=E_orig, f=F_orig, S=_S)
+    c_copy_sdfg(a=A_vec, b=B_vec, c=C_vec, d=D_vec, e=E_vec, f=F_vec, S=_S)
+
+    # Compare results
+    assert numpy.allclose(A_orig, A_vec), f"{A_orig - A_vec}"
+    assert numpy.allclose(B_orig, B_vec), f"{B_orig - B_vec}"
+    assert numpy.allclose(C_orig, C_vec), f"{C_orig - C_vec}"
+    assert numpy.allclose(D_orig, D_vec), f"{D_orig - D_vec}"
+    assert numpy.allclose(E_orig, E_vec), f"{E_orig - E_vec}"
+    assert numpy.allclose(F_orig, F_vec), f"{F_orig - F_vec}"
+
 def _dense_to_csr(dense: numpy.ndarray):
     """
     Convert a 2D dense numpy array to CSR arrays (data, indices, indptr).
@@ -345,7 +437,9 @@ def test_spmv():
 
 
 if __name__ == "__main__":
-    test_nested_sdfg()
-    test_simple_cpu()
-    test_no_maps()
-    test_spmv()
+    test_tasklets_in_if()
+    test_tasklets_in_if_two()
+    #test_nested_sdfg()
+    #test_simple_cpu()
+    #test_no_maps()
+    #test_spmv()
