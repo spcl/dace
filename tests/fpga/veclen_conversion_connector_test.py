@@ -6,8 +6,8 @@ from dace.fpga_testing import fpga_test
 
 
 #TODO: Investigate and re-enable if possible.
-@fpga_test()
 @pytest.mark.skip(reason="Unexplained CI Regression")
+@fpga_test()
 def test_veclen_conversion_connector():
 
     size = 128
