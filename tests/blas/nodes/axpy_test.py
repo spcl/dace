@@ -2,6 +2,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
 import numpy as np
+import pytest
 
 import argparse
 import scipy
@@ -112,20 +113,20 @@ def stream_fpga_graph(veclen, precision, test_case, expansion):
     return sdfg
 
 
-'''
-XXX: phschaad, 7.10.2025: Disabled due to unexplained segfaults in CI, which cause blocks in development.
-TODO: Investigate and re-enable if possible.
+# TODO: Investigate and re-enable if possible.
 @fpga_test()
+@pytest.mark.skip(reason="Unexplained CI Regression")
 def test_axpy_fpga_array():
     configs = [(0.5, 1, dace.float32), (1.0, 4, dace.float64)]
     return run_test(configs, "fpga_array")
 
 
+# TODO: Investigate and re-enable if possible.
 @fpga_test()
+@pytest.mark.skip(reason="Unexplained CI Regression")
 def test_axpy_fpga_stream():
     configs = [(0.5, 1, dace.float32), (1.0, 4, dace.float64)]
     return run_test(configs, "fpga_stream")
-'''
 
 if __name__ == "__main__":
 
@@ -135,11 +136,10 @@ if __name__ == "__main__":
 
     args = cmdParser.parse_args()
 
-    #if args.target == "fpga":
-    #    test_axpy_fpga_array(None)
-    #    test_axpy_fpga_stream(None)
-    #elif args.target == "pure":
-    if args.target == "pure":
+    if args.target == "fpga":
+        test_axpy_fpga_array(None)
+        test_axpy_fpga_stream(None)
+    elif args.target == "pure":
         test_pure()
     else:
         raise RuntimeError(f"Unknown target \"{args.target}\".")

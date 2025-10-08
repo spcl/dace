@@ -1,11 +1,13 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
+import pytest
 from veclen_conversion_test import make_sdfg
 from dace.fpga_testing import fpga_test
-'''
-XXX: phschaad, 7.10.2025: Disabled due to unexplained segfaults in CI, which cause blocks in development.
-TODO: Investigate and re-enable if possible.
+
+
+#TODO: Investigate and re-enable if possible.
 @fpga_test()
+@pytest.mark.skip(reason="Unexplained CI Regression")
 def test_veclen_conversion_connector():
 
     size = 128
@@ -35,4 +37,3 @@ def test_veclen_conversion_connector():
 
 if __name__ == "__main__":
     test_veclen_conversion_connector()
-'''
