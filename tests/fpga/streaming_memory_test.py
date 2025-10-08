@@ -549,8 +549,8 @@ def test_mem_buffer_vec_add_mixed_int():
 
 
 # TODO: Investigate and re-enable if possible.
-@xilinx_test()
 @pytest.mark.skip(reason="Unexplained CI Regression")
+@xilinx_test()
 def test_mem_buffer_mat_add():
     # Make SDFG
     sdfg: dace.SDFG = matadd_streaming.to_sdfg()
@@ -632,8 +632,8 @@ def test_mem_buffer_tensor_add():
 
 
 # TODO: Investigate and re-enable if possible.
-@xilinx_test()
 @pytest.mark.skip(reason="Unexplained CI Regression")
+@xilinx_test()
 def test_mem_buffer_multistream():
     # Make SDFG
     sdfg: dace.SDFG = matadd_multistream.to_sdfg()
@@ -665,8 +665,8 @@ def test_mem_buffer_multistream():
 
 
 # TODO: Investigate and re-enable if possible.
-@xilinx_test()
 @pytest.mark.skip(reason="Unexplained CI Regression")
+@xilinx_test()
 def test_mem_buffer_multistream_with_deps():
     # Make SDFG
     sdfg: dace.SDFG = streamingcomp.to_sdfg()
@@ -721,8 +721,8 @@ def test_mem_buffer_mat_mul():
 
 
 # TODO: Investigate and re-enable if possible.
-@xilinx_test()
 @pytest.mark.skip(reason="Unexplained CI Regression")
+@xilinx_test()
 def test_mem_buffer_map_order():
     # Make SDFG
     sdfg: dace.SDFG = maporder_streaming.to_sdfg()
