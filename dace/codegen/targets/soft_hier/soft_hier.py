@@ -1291,6 +1291,8 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                 # check whether it is a broadcast
                 (pos_x_start, pos_x_end, pos_x_step) = pos_x_range[0]
                 (pos_y_start, pos_y_end, pos_y_step) = pos_y_range[0]
+                (dim_x_hw, dim_y_hw) = Config.get("backend", "softhier", "HW_THREAD_GROUP_DIMS")
+                (dim_x_dace, dim_y_dace) = Config.get("backend", "softhier", "DACE_THREAD_GROUP_DIMS")
                 is_broadcast = False
                 if src_subset[-3] == dst_subset[-3] and pos_x_range.num_elements() == 1 and pos_y_range.num_elements(
                 ) == 1:
@@ -1307,9 +1309,26 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                         # callsite_stream.write(
                         #     f"flex_dma_async_broadcast(dace_remote_xy({pos_x_end-pos_x_step+1},{pos_y_end-pos_y_step+1},{dst_expr},{self._soft_hier_dims[0]}), local({src_expr}), {dst_size}, 3, 3);"
                         # )
-                        callsite_stream.write(
-                            f"flex_dma_async_broadcast(({dst_expr}), ({src_expr}), {dst_size}, {((pos_x_end - pos_x_start) ^ (self._soft_hier_dims[0] - 1)) | (pos_x_step - 1)}, {((pos_y_end - pos_y_start) ^ (self._soft_hier_dims[0] - 1)) | (pos_y_step - 1)});"
-                        )
+                        callsite_stream.write(f"// broadcast software core {self._soft_hier_dims}\n")
+                        callsite_stream.write(f"// broadcast hardware core {dim_x_hw} x {dim_y_hw}\n")
+                        callsite_stream.write(f"// broadcast dace core {dim_x_dace} x {dim_y_dace}\n")
+                        if (dim_x_dace, dim_y_dace) == (dim_x_hw, dim_y_hw):
+                            callsite_stream.write(
+                                f"flex_dma_async_broadcast(({dst_expr}), ({src_expr}), {dst_size}, {((pos_x_end - pos_x_start) ^ (self._soft_hier_dims[0] - 1)) | (pos_x_step - 1)}, {((pos_y_end - pos_y_start) ^ (self._soft_hier_dims[1] - 1)) | (pos_y_step - 1)});"
+                            )
+                        else:
+                            mask_dace_x = ((pos_x_end - pos_x_start) ^ (dim_x_dace - 1)) | (pos_x_step - 1)
+                            mask_dace_y = ((pos_y_end - pos_y_start) ^ (dim_y_dace - 1)) | (pos_y_step - 1)
+                            full_mask = mask_dace_y << (((int)(dim_x_dace)).bit_length() - 1) | (mask_dace_x & (dim_x_dace - 1))
+                            mask_hw_x = full_mask & (dim_x_hw - 1)
+                            mask_hw_y = (full_mask >> (((int)(dim_x_hw)).bit_length() - 1)) & (dim_y_hw - 1)
+                            callsite_stream.write(f"// mask_hw_x = {mask_hw_x} mask_hw_y = {mask_hw_y}\n")
+                            callsite_stream.write(
+                                f"flex_dma_async_broadcast(({dst_expr}), ({src_expr}), {dst_size}, {mask_hw_x}, {mask_hw_y});"
+                            )
+                            callsite_stream.write(
+                                f"// TEST"
+                            )
                     else:
                         callsite_stream.write(
                             f"bare_dma_start_1d(dace_remote_xy({pos_x},{pos_y},{dst_expr},{self._soft_hier_dims[0]}), local({src_expr}), {dst_size});"

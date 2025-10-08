@@ -16,6 +16,7 @@ class HardwareConfig:
 
     def __init__(self,
                  hardware_thread_group_dims=(2, 2),
+                 dace_thread_group_dims=None,
                  hbm_addr_base="0xc0000000",
                  hbm_addr_space="0x04000000",
                  tcdm_size="0x00100000",
@@ -32,6 +33,11 @@ class HardwareConfig:
                  dace_input_type=dace.uint16,
                  dace_output_type=dace.uint16):
         self.hardware_thread_group_dims = hardware_thread_group_dims
+        if dace_thread_group_dims is None:
+            self.dace_thread_group_dims = hardware_thread_group_dims
+        else:
+            if dace_thread_group_dims[0]*dace_thread_group_dims[1] != hardware_thread_group_dims[0]*hardware_thread_group_dims[1]:
+                raise ValueError("Product of dace_thread_group_dims must equal product of hardware_thread_group_dims") 
         self.hbm_addr_base = hbm_addr_base
         self.hbm_addr_space = hbm_addr_space
         self.tcdm_size = tcdm_size
@@ -289,6 +295,9 @@ def setup_dace_config(hw_config: HardwareConfig):
     dace.config.Config.set("backend", "softhier", "HBM_ADDRESS_SPACE", value=str(hw_config.hbm_addr_space))
     dace.config.Config.set("backend", "softhier", "HBM_ADDRESS_BASE", value=str(hw_config.hbm_addr_base))
     dace.config.Config.set("backend", "softhier", "HBM_NUM_CHANNELS", value=int(hw_config.num_hbm_channels))
+    dace.config.Config.set("backend", "softhier", "HW_THREAD_GROUP_DIMS", value=hw_config.hardware_thread_group_dims)
+    dace.config.Config.set("backend", "softhier", "DACE_THREAD_GROUP_DIMS", value=hw_config.dace_thread_group_dims)
+    
 
 
 def setup_hw_env_dace(hw_config: HardwareConfig):

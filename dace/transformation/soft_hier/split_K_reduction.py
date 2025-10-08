@@ -13,6 +13,7 @@ from dace.properties import make_properties, Property, SymbolicProperty, CodeBlo
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
 from dace.sdfg.state import LoopRegion, ConditionalBlock, ControlFlowRegion
 from dace.codegen.targets.cpp import sym2cpp
+from dace.config import Config
 
 
 @make_properties
@@ -102,12 +103,23 @@ class SplitKReduction(transformation.SingleStateTransformation):
 
         edge_to_replace.data.wcr = None
         graph.remove_edge(edge_to_replace)
+        (dim_x_hw, dim_y_hw) = Config.get("backend", "softhier", "HW_THREAD_GROUP_DIMS")
+        (dim_x_dace, dim_y_dace) = Config.get("backend", "softhier", "DACE_THREAD_GROUP_DIMS")
+        if (dim_x_dace, dim_y_dace) == (dim_x_hw, dim_y_hw):
+            mask_x = (npe_x-1)^(kg_m-1)
+            mask_y = (npe_y-1)^(kg_n-1)
+        else:
+            mask_dace_x = (dim_x_dace-1)^(kg_m-1)
+            mask_dace_y = (dim_y_dace-1)^(kg_n-1)
+            full_mask = mask_dace_y << (((int)(dim_x_dace)).bit_length() - 1) | (mask_dace_x & (dim_x_dace - 1))
+            mask_x = full_mask & (dim_x_hw - 1)
+            mask_y = (full_mask >> (((int)(dim_x_hw)).bit_length() - 1)) & (dim_y_hw - 1)
         reduction_tasklet_str = ""
         reduction_tasklet_str += f"if ({reduce_cond} && flex_is_dm_core()) {{\n"
         reduction_tasklet_str += (f"    flex_dma_async_reduction(_in_accumulator, "
                                   f"_in_accumulator, "
                                   f"{accumulator_size}, COLLECTIVE_REDADD_UINT_16, "
-                                  f"{(npe_x-1)^(kg_m-1)}, {(npe_y-1)^(kg_n-1)});\n")
+                                  f"{mask_x}, {mask_y});\n")
 
         reduction_tasklet_str += "    bare_dma_wait_all(); \n"
         reduction_tasklet_str += f"}}\n"
