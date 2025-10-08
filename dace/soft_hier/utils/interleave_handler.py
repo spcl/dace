@@ -237,8 +237,8 @@ class InterleaveHandler:
             kg_j = k_group_index // (dim_x_dace // k_dim_x)
             kg_oi = k_group_offset % k_dim_x
             kg_oj = k_group_offset // k_dim_x
-            pi_dace = kg_oi + kg_i * k_dim_x
-            pj_dace = kg_oj + kg_j * k_dim_y
+            pi_dace = (kg_oi + kg_i * k_dim_x) % dim_x_dace
+            pj_dace = (kg_oj + kg_j * k_dim_y) % dim_y_dace
             pi_index = pj_dace * dim_x_dace + pi_dace
             pi_real = pi_index % dim_x
             pj_real = pi_index // dim_x
