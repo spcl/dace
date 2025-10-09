@@ -1,5 +1,8 @@
 import dace
 
+from dace.sdfg.state import ConditionalBlock
+from dace.transformation.interstate.fuse_branches import FuseBranches
+
 N = dace.symbol("N")
 
 @dace.program
@@ -48,8 +51,17 @@ def branch_dependent_value_write_two(
         c[i, j] = max(0, b[i, j])
         d[i, j] = max(0, d[i, j])
 
-
+def apply_recursive(sdfg: dace.SDFG, xform):
+    sdfg.apply_transformations_repeated(xform)
+    for s in sdfg.all_states():
+        for n in s.nodes():
+            if isinstance(n, dace.nodes.NestedSDFG):
+                apply_recursive(n.sdfg, xform)
 
 if __name__ == "__main__":
     sdfg = branch_dependent_value_write.to_sdfg()
+
+    for n, g in sdfg.all_nodes_recursive():
+        if isinstance(n, ConditionalBlock):
+            FuseBranches().can_be_applied_to(g.sdfg, conditional=n)
     sdfg.save("c.sdfg")
