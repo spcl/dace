@@ -10,6 +10,9 @@ from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory, StreamingComposition
 from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
 from dace.config import set_temporary
+from dace.autodiff import add_backward_pass
+import jax
+import jax.numpy as jnp
 
 # Data set sizes
 # N
@@ -43,6 +46,13 @@ def initialize(N, datatype=np.float64):
     z = np.fromfunction(lambda i: ((i + 1) / fn) / 9.0, (N, ), dtype=datatype)
 
     return alpha, beta, A, u1, v1, u2, v2, w, x, y, z
+
+
+def gemver_jax_kernel(alpha, beta, A, u1, v1, u2, v2, w, x, y, z):
+    A += jnp.outer(u1, v1) + jnp.outer(u2, v2)
+    x += beta * y @ A + z
+    w += alpha * A @ x
+    return jnp.sum(w)
 
 
 def run_gemver(device_type: dace.dtypes.DeviceType):
@@ -86,6 +96,51 @@ def run_gemver(device_type: dace.dtypes.DeviceType):
     return sdfg
 
 
+def run_gemver_autodiff():
+    # Initialize data (polybench mini size)
+    N = sizes["mini"]
+    alpha, beta, A, u1, v1, u2, v2, w, x, y, z = initialize(N)
+    A_jax, u1_jax, v1_jax, u2_jax, v2_jax, w_jax, x_jax, y_jax, z_jax = map(np.copy, (A, u1, v1, u2, v2, w, x, y, z))
+
+    # Initialize gradient computation data
+    gradient_A = np.zeros_like(A)
+    gradient___return = np.ones((1, ), dtype=np.float64)
+
+    # Define sum reduction for the output
+    @dc.program
+    def autodiff_kernel(alpha: dc.float64, beta: dc.float64, A: dc.float64[N, N], u1: dc.float64[N], v1: dc.float64[N],
+                        u2: dc.float64[N], v2: dc.float64[N], w: dc.float64[N], x: dc.float64[N], y: dc.float64[N],
+                        z: dc.float64[N]):
+        gemver_kernel(alpha, beta, A, u1, v1, u2, v2, w, x, y, z)
+        return np.sum(w)
+
+    # Add the backward pass to the SDFG
+    sdfg = autodiff_kernel.to_sdfg()
+    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"])
+    sdfg(alpha,
+         beta,
+         A,
+         np.copy(u1),
+         v1,
+         u2,
+         v2,
+         w,
+         x,
+         y,
+         z,
+         N=N,
+         gradient_A=gradient_A,
+         gradient___return=gradient___return)
+
+    # Enable float64 support
+    jax.config.update("jax_enable_x64", True)
+
+    # Numerically validate vs JAX
+    jax_grad = jax.jit(jax.grad(gemver_jax_kernel, argnums=2))
+    jax_grad_A = jax_grad(alpha, beta, A_jax, u1_jax, v1_jax, u2_jax, v2_jax, w_jax, x_jax, y_jax, z_jax)
+    np.testing.assert_allclose(gradient_A, jax_grad_A)
+
+
 def test_cpu():
     run_gemver(dace.dtypes.DeviceType.CPU)
 
@@ -93,6 +148,11 @@ def test_cpu():
 @pytest.mark.gpu
 def test_gpu():
     run_gemver(dace.dtypes.DeviceType.GPU)
+
+
+@pytest.mark.autodiff
+def test_autodiff():
+    run_gemver_autodiff()
 
 
 @fpga_test(assert_ii_1=False)
