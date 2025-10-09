@@ -15,6 +15,7 @@ from dace.config import Config
 from dace.frontend.python import (newast, common as pycommon, cached_program, preprocessing)
 from dace.sdfg import SDFG, utils as sdutils
 from dace.data import create_datadescriptor, Data
+from dace.sdfg.dealias import dealias
 
 try:
     from typing import get_origin, get_args
@@ -285,6 +286,8 @@ class DaceProgram(pycommon.SDFGConvertible):
         if use_cache:
             # Add to cache
             self._cache.add(cachekey, sdfg, None)
+
+        dealias(sdfg)
 
         return sdfg
 
