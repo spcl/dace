@@ -1,5 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, Optional
 
 import warnings
 

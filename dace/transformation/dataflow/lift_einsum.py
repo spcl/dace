@@ -1,4 +1,4 @@
-# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import ast
 from typing import Dict
@@ -96,8 +96,12 @@ class LiftEinsum(xf.SingleStateTransformation):
             expected *= pystr_to_symbolic(iconn)
         if symexpr != expected:
             # alpha != 1
-            ratio = symexpr / expected
-            if not ratio.is_Number and not isinstance(ratio, symbolic.symbol):
+            try:
+                ratio = symexpr / expected
+                if not ratio.is_Number and not isinstance(ratio, symbolic.symbol):
+                    return False
+            except TypeError:
+                # Tasklet code is an expression that results in a symbolic expression after division.
                 return False
         # End of tasklet content check
 

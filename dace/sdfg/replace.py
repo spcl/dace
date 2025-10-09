@@ -1,4 +1,4 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains functionality to perform find-and-replace of symbols in SDFGs. """
 
 import re
@@ -217,16 +217,17 @@ def replace_properties(node: Any, symrepl: Dict[symbolic.SymbolicType, symbolic.
     replace_properties_dict(node, {name: new_name}, symrepl)
 
 
-def replace_datadesc_names(sdfg: 'dace.SDFG', repl: Dict[str, str]):
+def replace_datadesc_names(sdfg: 'dace.SDFG', repl: Dict[str, str], skip_repository: bool = False):
     """ Reduced form of replace which only replaces data descriptor names. """
     # Replace in descriptor repository
-    for aname, aval in list(sdfg.arrays.items()):
-        if aname in repl:
-            del sdfg.arrays[aname]
-            sdfg.arrays[repl[aname]] = aval
-            if aname in sdfg.constants_prop:
-                sdfg.constants_prop[repl[aname]] = sdfg.constants_prop[aname]
-                del sdfg.constants_prop[aname]
+    if not skip_repository:
+        for aname, aval in list(sdfg.arrays.items()):
+            if aname in repl:
+                del sdfg.arrays[aname]
+                sdfg.arrays[repl[aname]] = aval
+                if aname in sdfg.constants_prop:
+                    sdfg.constants_prop[repl[aname]] = sdfg.constants_prop[aname]
+                    del sdfg.constants_prop[aname]
 
     for cf in sdfg.all_control_flow_regions():
         # Replace in interstate edges

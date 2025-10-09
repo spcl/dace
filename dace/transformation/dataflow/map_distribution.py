@@ -612,7 +612,11 @@ class StencilOperation(pm.SingleStateTransformation):
         for desc, accesses in outputs.items():
             if isinstance(desc, (dace.data.Array, dace.data.View)):
                 for a in accesses:
-                    if a.num_elements() > 1:
+                    try:
+                        if a.num_elements() > 1:
+                            return False
+                    except TypeError:
+                        # In case num_elements cannot be determined (e.g., due to symbols)
                         return False
                     indices = a.min_element()
                     unmatched_indices = set(params)
