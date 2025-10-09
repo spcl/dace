@@ -442,16 +442,29 @@ class Graph(Generic[NodeT, EdgeT]):
 
 @dace.serialize.serializable
 class SubgraphView(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
+    """
+    :note: Modification of the full graph are not reflected in the output of `nodes()`
+        or any other node related function. However, changes that affects the edges
+        will be reflected in the output of `edges()` and in other edge related functions.
+    """
 
     def __init__(self, graph: Graph[NodeT, EdgeT], subgraph_nodes: Sequence[NodeT]):
         super().__init__()
         self._graph = graph
-        self._subgraph_nodes = list(sorted(subgraph_nodes, key=lambda n: graph.node_id(n)))
+        # Is there an inherent reason why the nodes are in the same relative order than
+        #  in their source graph. If there is no reason we can even drop the `sorted()`
+        #  and store them in a `set`. Note as of Pathon 3.6, `dict` is ordered.
+        self._subgraph_nodes = {n: None for n in sorted(subgraph_nodes, key=lambda n: graph.node_id(n))}
 
-    def nodes(self) -> Sequence[NodeT]:
-        return self._subgraph_nodes
+    def nodes(self) -> List[NodeT]:
+        # TODO: The `Graph` interface defines that `nodes()` returns an `Iterable`, but here
+        #   it was "promoted" to a `Sequence`. Figuring out if we can go back to an `Interable`
+        #   and get rid of the `list` creation. The same applies to `edges()`.
+        return list(self._subgraph_nodes.keys())
 
     def edges(self) -> List[Edge[EdgeT]]:
+        # NOTE: If the edge or node structure in the containing graph changes then the output of
+        #   this function changes as well, while the output of `self.nodes()` is not affected.
         return [e for e in self._graph.edges() if e.src in self._subgraph_nodes and e.dst in self._subgraph_nodes]
 
     def in_edges(self, node: NodeT) -> List[Edge[EdgeT]]:
@@ -489,32 +502,31 @@ class SubgraphView(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
     def remove_edge(self, edge):
         raise PermissionError
 
-    def edges_between(self, source, destination):
-        if source not in self._subgraph_nodes or \
-           destination not in self._subgraph_nodes:
+    def edges_between(self, source, destination) -> Iterable[Edge[EdgeT]]:
+        if not (source in self._subgraph_nodes and destination in self._subgraph_nodes):
             raise NodeNotFoundError
         return self._graph.edges_between(source, destination)
 
-    def in_degree(self, node):
+    def in_degree(self, node) -> int:
         return len(self.in_edges(node))
 
-    def out_degree(self, node):
+    def out_degree(self, node) -> int:
         return len(self.out_edges(node))
 
-    def number_of_nodes(self):
+    def number_of_nodes(self) -> int:
         return len(self._subgraph_nodes)
 
-    def number_of_edges(self):
+    def number_of_edges(self) -> int:
         return len(self.edges())
 
-    def is_directed(self):
+    def is_directed(self) -> bool:
         return self._graph.is_directed()
 
-    def is_multigraph(self):
+    def is_multigraph(self) -> bool:
         return self._graph.is_multigraph()
 
     @property
-    def graph(self):
+    def graph(self) -> Graph[NodeT, EdgeT]:
         return self._graph
 
 
@@ -728,7 +740,11 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
 
     def has_cycles(self) -> bool:
         try:
-            nx.find_cycle(self._nx, self.source_nodes())
+            sources = self.source_nodes()
+            if len(sources) == 0:
+                nx.find_cycle(self._nx)
+            else:
+                nx.find_cycle(self._nx, sources)
             return True
         except nx.NetworkXNoCycle:
             return False

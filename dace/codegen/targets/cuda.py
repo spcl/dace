@@ -24,7 +24,7 @@ from dace.codegen.targets.target import IllegalCopy, TargetCodeGenerator, make_a
 from dace.config import Config
 from dace.frontend import operations
 from dace.sdfg import (SDFG, ScopeSubgraphView, SDFGState, has_dynamic_map_inputs, is_array_stream_view,
-                       is_devicelevel_gpu, nodes, scope_contains_scope)
+                       is_devicelevel_gpu, nodes, scope_contains_scope, memlet_utils)
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
@@ -154,7 +154,6 @@ class CUDACodeGen(TargetCodeGenerator):
                                       target_type=target_type)
 
         # Find GPU<->GPU strided copies that cannot be represented by a single copy command
-        from dace.transformation.dataflow import CopyToMap
         for e, state in list(sdfg.all_edges_recursive()):
             if isinstance(e.src, nodes.AccessNode) and isinstance(e.dst, nodes.AccessNode) and (not e.data.is_empty()):
                 nsdfg = state.parent
@@ -200,14 +199,17 @@ class CUDACodeGen(TargetCodeGenerator):
                         if src_strides[-1] == 1 and dst_strides[-1] == 1:
                             continue
 
-                    # Turn unsupported copy to a map
+                    if not Config.get('compiler', 'cuda', 'allow_implicit_memlet_to_map'):
+                        raise RuntimeError(
+                            f'Tried to implicitly convert edge "{e}" into a Map, but this is not allowed.')
+
                     try:
-                        CopyToMap.apply_to(nsdfg,
-                                           save=False,
-                                           annotate=False,
-                                           a=e.src,
-                                           b=e.dst,
-                                           options={"ignore_strides": True})
+                        memlet_utils.memlet_to_map(
+                            edge=e,
+                            state=state,
+                            sdfg=nsdfg,
+                            ignore_strides=True,
+                        )
                     except ValueError:  # If transformation doesn't match, continue normally
                         continue
 
@@ -249,6 +251,12 @@ class CUDACodeGen(TargetCodeGenerator):
             if self.backend != 'cuda':
                 raise ValueError(f'Backend "{self.backend}" does not support the memory pool allocation hint')
 
+            # Keep only global arrays
+            pooled = filter(
+                lambda aname: sdfg.arrays[aname].lifetime in
+                (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.
+                 External), pooled)
+
             # Lazily compute reachability and access nodes
             if reachability is None:
                 reachability = ap.StateReachability().apply_pass(top_sdfg, {})
@@ -256,7 +264,7 @@ class CUDACodeGen(TargetCodeGenerator):
 
             reachable = reachability[sdfg.cfg_id]
             access_sets = access_nodes[sdfg.cfg_id]
-            for state in sdfg.nodes():
+            for state in sdfg.states():
                 # Find all data descriptors that will no longer be used after this state
                 last_state_arrays: Set[str] = set(
                     s for s in access_sets
@@ -761,7 +769,15 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             return
 
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
-            if not nodedesc.pool:  # If pooled, will be freed somewhere else
+            if nodedesc.pool:
+                if (sdfg, dataname) not in self.pool_release:  # If pooled, will be freed somewhere else
+                    cudastream = getattr(node, '_cuda_stream', 'nullptr')
+                    if cudastream != 'nullptr':
+                        cudastream = f'__state->gpu_context->streams[{cudastream}]'
+                    callsite_stream.write(
+                        f'DACE_GPU_CHECK(%sFreeAsync(%s, %s));\n' % (self.backend, dataname, cudastream), cfg, state_id,
+                        node)
+            else:
                 callsite_stream.write('DACE_GPU_CHECK(%sFree(%s));\n' % (self.backend, dataname), cfg, state_id, node)
         elif nodedesc.storage == dtypes.StorageType.CPU_Pinned:
             callsite_stream.write('DACE_GPU_CHECK(%sFreeHost(%s));\n' % (self.backend, dataname), cfg, state_id, node)
@@ -2339,6 +2355,9 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                     f'auto {scope_map.params[0]} = {scope_map.range[0][0]} + {dynmap_step} * {dynmap_var};', cfg,
                     state_id, scope_entry)
 
+            # Emit internal array allocation (deallocation handled at MapExit)
+            self._frame.allocate_arrays_in_scope(sdfg, cfg, scope_entry, function_stream, callsite_stream)
+
         elif scope_map.schedule == dtypes.ScheduleType.GPU_Device:
             dfg_kernel = self._kernel_state.scope_subgraph(self._kernel_map)
             grid_dims, block_dims, has_tbmap, has_dtbmap, extra_gdim_offsets = self.get_kernel_dimensions(dfg_kernel)
@@ -2458,6 +2477,10 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                                                   varname=varname,
                                                   expr=expr,
                                               ), cfg, state_id, node)
+
+                # Emit internal array allocation here for GPU_ThreadBlock (deallocation handled at MapExit)
+                self._frame.allocate_arrays_in_scope(sdfg, cfg, scope_entry, function_stream, callsite_stream)
+
             else:  # Device map in Device map
                 brange = subsets.Range(scope_map.range[::-1])
                 kdims = brange.size()
@@ -2483,6 +2506,9 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                     expr = _topy(tidx[i]).replace('__DAPT%d' % i, block_expr)
                     callsite_stream.write('int %s = %s;' % (varname, expr), cfg, state_id, scope_entry)
                     self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, 'int')
+
+                # Emit internal array allocation (deallocation handled at MapExit)
+                self._frame.allocate_arrays_in_scope(sdfg, cfg, scope_entry, function_stream, callsite_stream)
 
                 # Generate conditions for this subgrid's execution using min and max
                 # element, e.g. skipping out-of-bounds threads
@@ -2521,9 +2547,6 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         else:
             for dim in range(len(scope_map.range)):
                 callsite_stream.write('{', cfg, state_id, scope_entry)
-
-        # Emit internal array allocation (deallocation handled at MapExit)
-        self._frame.allocate_arrays_in_scope(sdfg, cfg, scope_entry, function_stream, callsite_stream)
 
         # Generate all index arguments for block
         if scope_map.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
@@ -2566,6 +2589,9 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                     expr = _topy(tidx[i]).replace('__DAPT%d' % i, block_expr)
                     callsite_stream.write('int %s = %s;' % (varname, expr), cfg, state_id, scope_entry)
                     self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, 'int')
+
+            # Emit internal array allocation here (deallocation handled at MapExit)
+            self._frame.allocate_arrays_in_scope(sdfg, cfg, scope_entry, function_stream, callsite_stream)
 
             # Generate conditions for this block's execution using min and max
             # element, e.g. skipping out-of-bounds threads in trailing block

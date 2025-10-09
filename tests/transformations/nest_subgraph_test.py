@@ -1,8 +1,7 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-from dace.codegen import control_flow as cf
+from dace.sdfg.analysis.schedule_tree import sdfg_to_tree, treenodes as tn
 from dace.transformation.helpers import nest_state_subgraph, nest_sdfg_subgraph, nest_sdfg_control_flow
-from dace.sdfg import utils
 from dace.sdfg.graph import SubgraphView
 from dace.sdfg.state import StateSubgraphView
 import numpy as np
@@ -68,17 +67,17 @@ def test_symbolic_return():
 
     sdfg = symbolic_return.to_sdfg()
 
-    cft = cf.structured_control_flow_tree(sdfg, None)
+    stree = sdfg_to_tree.as_schedule_tree(sdfg)
     for_scope = None
-    for i, child in enumerate(cft.children):
-        if isinstance(child, (cf.GeneralLoopScope)):
+    for i, child in enumerate(stree.children):
+        if isinstance(child, tn.LoopScope):
             for_scope = child
             break
     assert for_scope
 
-    assert i < len(cft.children) - 1
-    exit_scope = cft.children[i + 1]
-    assert isinstance(exit_scope, cf.BasicCFBlock)
+    assert i < len(stree.children) - 1
+    exit_scope = stree.children[i + 1]
+    assert isinstance(exit_scope, (tn.AssignNode, tn.TaskletNode))
 
     states = for_scope.loop.nodes()
 

@@ -17,6 +17,7 @@ from dace import dtypes
 
 DEFAULT_SYMBOL_TYPE = dtypes.int32
 _NAME_TOKENS = re.compile(r'[a-zA-Z_][a-zA-Z_0-9]*')
+_FUNCTION_CALL = re.compile(r'(\w+)\[([^\[\]]+)\]')
 
 # NOTE: Up to (including) version 1.8, sympy.abc._clash is a dictionary of the
 # form {'N': sympy.abc.N, 'I': sympy.abc.I, 'pi': sympy.abc.pi}
@@ -1314,6 +1315,9 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
         'IfExpr': IfExpr,
         'Mod': sympy.Mod,
         'Attr': Attr,
+        'id': sympy.Symbol('id'),
+        'diag': sympy.Symbol('diag'),
+        'jn': sympy.Symbol('jn'),
     }
     # _clash1 enables all one-letter variables like N as symbols
     # _clash also allows pi, beta, zeta and other common greek letters
@@ -1330,9 +1334,17 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
         return sympy_to_dace(sympy.sympify(expr, locals, evaluate=simplify), symbol_map)
     except (TypeError, sympy.SympifyError):  # Symbol object is not subscriptable
         # Replace subscript expressions with function calls
+        orig_expr = expr
         expr = expr.replace('[', '(')
         expr = expr.replace(']', ')')
-        return sympy_to_dace(sympy.sympify(expr, locals, evaluate=simplify), symbol_map)
+        try:
+            return sympy_to_dace(sympy.sympify(expr, locals, evaluate=simplify), symbol_map)
+        except TypeError:  # Symbol object is not subscriptable
+            # Replace instances of "xxx[yyy]" with subscript(xxx, yyy)
+            expr = orig_expr
+            while _FUNCTION_CALL.search(expr):
+                expr = _FUNCTION_CALL.sub(r'subscript(\1, \2)', expr)
+            return sympy_to_dace(sympy.sympify(expr, locals, evaluate=simplify), symbol_map)
 
 
 @lru_cache(maxsize=2048)
@@ -1507,7 +1519,11 @@ def safe_replace(mapping: Dict[Union[SymbolicType, str], Union[SymbolicType, str
 
         # Constant
         try:
-            float(v)
+            # NOTE: we could also write `float(v)` to test for constants, however, this is
+            #   relatively slow. It is faster to transform the symbol `v` into a string and
+            #   then check if that is a constant by converting it to a `float` (under the
+            #   assumption that we have nothing higher than a `float`).
+            float(str(v))
             repl[k] = v
             continue
         except (TypeError, ValueError, AttributeError):

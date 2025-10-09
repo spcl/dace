@@ -246,7 +246,7 @@ def test_dde_inout(libnode):
                 a[i] = b[i + 1] + 1
 
         nsdfg = nested.to_sdfg(simplify=False)
-        node = state.add_nested_sdfg(nsdfg, None, {'b'}, {'a', 'b'})
+        node = state.add_nested_sdfg(nsdfg, {'b'}, {'a', 'b'})
         outconn = 'b'
     else:
         node = dace.nodes.LibraryNode('tester')  # Library node without side effects
