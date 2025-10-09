@@ -10,6 +10,7 @@ import pytest
 import ast
 
 example_expressions = [
+    "out_ci = 5 * in_ci + 4",
     "cfl_w_limit_out = (0.85 / dtime_0_in)",
     "z_w_con_c_out_0 = 0.0",
     "p_diag_out_w_concorr_c_0 = ((p_metrics_0_in_wgtfac_c_0 * z_w_concorr_mc_0_in_0) + ((1.0 - p_metrics_1_in_wgtfac_c_0) * z_w_concorr_mc_1_in_0))",
@@ -52,6 +53,8 @@ def _generate_single_tasklet_sdfg(expression_str: str) -> dace.SDFG:
 
     assert len(lhs_vars) == 1, f"{lhs_vars} = {rhs_vars}"
     for var in lhs_vars + rhs_vars:
+        if var + "_ARR" in sdfg.arrays:
+            continue
         sdfg.add_array(name=var + "_ARR", shape=(1, ), dtype=dace.float64)
 
     state = sdfg.add_state(label="main")
