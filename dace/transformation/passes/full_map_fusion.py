@@ -1,9 +1,7 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, Optional
 
-import warnings
-
-from dace import SDFG, SDFGState, properties, transformation
+from dace import SDFG, properties, transformation
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow import MapFusion
 from dace.transformation.passes import analysis as ap, pattern_matching as pmp
