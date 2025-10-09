@@ -47,3 +47,9 @@ def branch_dependent_value_write_two(
         # can be simplified as (if detected): d[i, j] = (2.2 - 1.4 * mask[i,j])
         c[i, j] = max(0, b[i, j])
         d[i, j] = max(0, d[i, j])
+
+
+
+if __name__ == "__main__":
+    sdfg = branch_dependent_value_write.to_sdfg()
+    sdfg.save("c.sdfg")
