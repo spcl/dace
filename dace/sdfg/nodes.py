@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes implementing the different types of nodes of the stateful
     dataflow multigraph representation. """
 
@@ -11,14 +11,12 @@ import dace.serialize
 from typing import Any, Dict, Optional, Set, Union
 from dace.config import Config
 from dace.sdfg import graph
-from dace.frontend.python.astutils import unparse, rname
-from dace.properties import (EnumProperty, Property, CodeProperty, LambdaProperty, RangeProperty, DebugInfoProperty,
-                             SetProperty, make_properties, indirect_properties, DataProperty, SymbolicProperty,
-                             ListProperty, SDFGReferenceProperty, DictProperty, LibraryImplementationProperty,
-                             CodeBlock)
-from dace.frontend.operations import detect_reduction_type
+from dace.frontend.python.astutils import rname
+from dace.properties import (EnumProperty, Property, CodeProperty, RangeProperty, DebugInfoProperty, SetProperty,
+                             make_properties, indirect_properties, DataProperty, SymbolicProperty, ListProperty,
+                             SDFGReferenceProperty, DictProperty, LibraryImplementationProperty, CodeBlock)
 from dace.symbolic import issymbolic, pystr_to_symbolic
-from dace import data, subsets as sbs, dtypes
+from dace import subsets as sbs, dtypes
 import pydoc
 import warnings
 
@@ -280,9 +278,11 @@ class AccessNode(Node):
 
     instrument = EnumProperty(dtype=dtypes.DataInstrumentationType,
                               desc="Instrument data contents at this access",
-                              default=dtypes.DataInstrumentationType.No_Instrumentation)
+                              default=dtypes.DataInstrumentationType.No_Instrumentation,
+                              category='Instrumentation')
     instrument_condition = CodeProperty(desc="Condition under which to trigger the instrumentation",
-                                        default=CodeBlock("1", language=dtypes.Language.CPP))
+                                        default=CodeBlock("1", language=dtypes.Language.CPP),
+                                        category='Instrumentation')
 
     def __init__(self, data, debuginfo=None):
         super(AccessNode, self).__init__()
@@ -401,7 +401,8 @@ class Tasklet(CodeNode):
 
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
                               desc="Measure execution statistics with given method",
-                              default=dtypes.InstrumentationType.No_Instrumentation)
+                              default=dtypes.InstrumentationType.No_Instrumentation,
+                              category='Instrumentation')
     side_effects = Property(dtype=bool,
                             allow_none=True,
                             default=None,
@@ -604,7 +605,8 @@ class NestedSDFG(CodeNode):
 
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
                               desc="Measure execution statistics with given method",
-                              default=dtypes.InstrumentationType.No_Instrumentation)
+                              default=dtypes.InstrumentationType.No_Instrumentation,
+                              category='Instrumentation')
 
     no_inline = Property(dtype=bool,
                          desc="If True, this nested SDFG will not be inlined during "
@@ -963,7 +965,8 @@ class Map(object):
 
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
                               desc="Measure execution statistics with given method",
-                              default=dtypes.InstrumentationType.No_Instrumentation)
+                              default=dtypes.InstrumentationType.No_Instrumentation,
+                              category='Instrumentation')
 
     omp_num_threads = Property(dtype=int,
                                default=0,
@@ -1212,7 +1215,8 @@ class Consume(object):
 
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
                               desc="Measure execution statistics with given method",
-                              default=dtypes.InstrumentationType.No_Instrumentation)
+                              default=dtypes.InstrumentationType.No_Instrumentation,
+                              category='Instrumentation')
 
     def as_map(self):
         """ Compatibility function that allows to view the consume as a map,

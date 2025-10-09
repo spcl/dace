@@ -1,4 +1,4 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """ Helper functions used by the work depth analysis. """
 
 from dace import SDFG, SDFGState, nodes
@@ -30,7 +30,7 @@ def ids_to_string(cfg_id, state_id=-1, node_id=-1, edge_id=-1):
             str(edge_id))
 
 
-def get_uuid(element, state=None):
+def get_uuid(element, state: Optional[SDFGState] = None):
     if isinstance(element, SDFG):
         return ids_to_string(element.cfg_id)
     elif isinstance(element, SDFGState):
