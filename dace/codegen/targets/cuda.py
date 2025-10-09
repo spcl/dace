@@ -30,6 +30,7 @@ from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
 from dace.transformation import helpers as xfh
 from dace.transformation.passes import analysis as ap
+from dace.transformation.dataflow.add_threadblock_map import AddThreadBlockMap
 
 if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
@@ -84,6 +85,10 @@ class CUDACodeGen(TargetCodeGenerator):
         self._global_sdfg: SDFG = sdfg
         self._toplevel_schedule = None
         self._arglists: Dict[nodes.MapEntry, Dict[str, dt.Data]] = {}
+        """
+        # Keep track of which kernels got a threadBlock map inserted
+        self._kernels_with_inserted_tb_maps: Set[nodes.MapEntry] = set()
+        """
 
         # Keep track of current "scope entry/exit" code streams for extra
         # code generation
@@ -152,6 +157,21 @@ class CUDACodeGen(TargetCodeGenerator):
                                       CUDACodeGen,
                                       'CUDA',
                                       target_type=target_type)
+
+        # TODO: Below implementation is a bit wasteful to iterate over all nodes.
+        # Better: Do this in a dedicated pass and do not e.g. recurse further into
+        # a GPU_Device-scheduled map.
+        # Identify kernels with inserted GPU_ThreadBlock-scheduled maps
+        old_nodes = set(node for node, _ in sdfg.all_nodes_recursive())
+
+        sdfg.apply_transformations_once_everywhere(AddThreadBlockMap, )
+
+        new_nodes = set(node for node, _ in sdfg.all_nodes_recursive()) - old_nodes
+
+        self._kernels_with_inserted_tb_maps = {
+            n
+            for n in new_nodes if isinstance(n, nodes.MapEntry) and n.schedule == dtypes.ScheduleType.GPU_Device
+        }
 
         # Find GPU<->GPU strided copies that cannot be represented by a single copy command
         for e, state in list(sdfg.all_edges_recursive()):
@@ -2054,8 +2074,18 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
             if len(detected_block_sizes) > 1:
 
-                # Error when both gpu_block_size and thread-block maps were defined and conflict
-                if kernelmap_entry.map.gpu_block_size is not None:
+                # Raise an error if user has manually explicitly  defined both, the gpu_block_size and explicitly
+                # threadBlock maps with conflicting block sizes.
+                # NOTE: Conflicting block sizes from the 'AddThreadBlockMap' transformation are allowed.
+                # For example, if the user sets `gpu_block_size = [13, 5, 12]` on a 2D GPU_Device map
+                # without an inner thread-block map, the transformation inserts one with inferred
+                # size [13, 5, 1] (missing dimension padded with 1). Since the maximum matches the
+                # user-defined size, this is valid.
+                preset_block_size = kernelmap_entry.map.gpu_block_size
+                conflicting_block_sizes = (preset_block_size is not None
+                                           and not kernelmap_entry in self._kernels_with_inserted_tb_maps)
+
+                if conflicting_block_sizes:
                     raise ValueError('Both the `gpu_block_size` property and internal thread-block '
                                      'maps were defined with conflicting sizes for kernel '
                                      f'"{kernelmap_entry.map.label}" (sizes detected: {detected_block_sizes}). '
