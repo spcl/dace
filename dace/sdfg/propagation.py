@@ -1263,6 +1263,43 @@ def propagate_memlets_scope(sdfg, state, scopes, propagate_entry=True, propagate
         next_scopes = set()
 
 
+def propagate_memlets_map_scope(sdfg: 'SDFG', state: 'SDFGState', map_entry: nodes.MapEntry) -> None:
+    """Propagate Memlets from the given Map outside.
+
+    The main difference to `propagate_memlets_scope()` is that this function operates on Maps
+    instead of `ScopeTree` it is thus much more accessible.
+    The function will first propagate the Memlets of the nested SDFGs that are enclosed by the
+    Map. Then the propagation will start bit only for those Melets that starts with `map_entry`.
+
+    :param sdfg: The SDFG in which the scopes reside.
+    :param state: The SDFG state in which the scopes reside.
+    :param map_entry: Defining the Map scope to which propagation should be restricted.
+    """
+    if not isinstance(map_entry, nodes.MapEntry):
+        raise TypeError(
+            f'A MapEntry node must be passed to the `propagate_memlets_map_scope()` function not a `{type(map_entry).__name__}`.'
+        )
+
+    # This code is an adapted version of `propagate_memlet_state()` and as there we
+    #  propagate the Memlets of nested SDFGs, but we restrict ourselves to the
+    #  ones that are inside the scope we are in.
+    nodes_in_scope = list(state.scope_subgraph(map_entry).nodes())
+    for node in nodes_in_scope:
+        if isinstance(node, nodes.NestedSDFG):
+            propagate_memlets_sdfg(node.sdfg)
+            propagate_memlets_nested_sdfg(sdfg, state, node)
+
+    # In `propagate_memlet_state()` we would start the propagation from all lowest scopes. Here,
+    #  however, we restrict ourselves to the scopes that are enclosed by `map_entry`.
+    contained_leaf_scopes = [scope_leaf for scope_leaf in state.scope_leaves() if scope_leaf.entry in nodes_in_scope]
+    assert len(contained_leaf_scopes) > 0
+    propagate_memlets_scope(
+        sdfg,
+        state,
+        contained_leaf_scopes,
+    )
+
+
 def _propagate_node(dfg_state, node):
     if isinstance(node, nodes.EntryNode):
         internal_edges = [e for e in dfg_state.out_edges(node) if e.src_conn and e.src_conn.startswith('OUT_')]
@@ -1533,11 +1570,11 @@ def propagate_subset(memlets: List[Memlet],
     return new_memlet
 
 
-def _freesyms(expr):
+def _freesyms(expr) -> Set:
     """
     Helper function that either returns free symbols for sympy expressions
     or an empty set if constant.
     """
     if isinstance(expr, sympy.Basic):
         return expr.free_symbols
-    return {}
+    return set()

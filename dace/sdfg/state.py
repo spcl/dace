@@ -9,8 +9,9 @@ from dataclasses import dataclass
 import inspect
 import itertools
 import warnings
-from typing import (TYPE_CHECKING, Any, AnyStr, Callable, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Union,
-                    overload)
+import sympy
+from typing import (TYPE_CHECKING, Any, AnyStr, Callable, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Type,
+                    Union, overload)
 
 import dace
 from dace.frontend.python import astutils
@@ -340,6 +341,7 @@ class BlockGraphView(object):
 class DataflowGraphView(BlockGraphView, abc.ABC):
 
     def __init__(self, *args, **kwargs):
+        # Ensure that the cache for the scope related function exists.
         self._clear_scopedict_cache()
 
     ###################################################################
@@ -542,10 +544,15 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         self._scope_tree_cached = None
         self._scope_leaves_cached = None
 
-    def scope_tree(self) -> Dict[Any, 'dace.sdfg.scope.ScopeTree']:
+    def scope_tree(self) -> Dict[Union[None, nd.Node], 'dace.sdfg.scope.ScopeTree']:
+        """Get the scope trees.
+
+        :note: That the result is cached inside the state, thus it is not allowed to modify the returned value.
+            However, the `ScopeTree` can be safely shallow copied.
+        """
         from dace.sdfg.scope import ScopeTree
 
-        if (hasattr(self, '_scope_tree_cached') and self._scope_tree_cached is not None):
+        if self._scope_tree_cached is not None:
             return copy.copy(self._scope_tree_cached)
 
         sdp = self.scope_dict()
@@ -573,15 +580,28 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         return copy.copy(self._scope_tree_cached)
 
     def scope_leaves(self) -> List['dace.sdfg.scope.ScopeTree']:
-        if (hasattr(self, '_scope_leaves_cached') and self._scope_leaves_cached is not None):
+        """Return the list of scope leaves.
+
+        :note: That the result is cached inside the state, thus it is not allowed to modify the returned value.
+            However, the `ScopeTree` can be safely shallow copied.
+        """
+        if self._scope_leaves_cached is not None:
             return copy.copy(self._scope_leaves_cached)
+
         st = self.scope_tree()
         self._scope_leaves_cached = [scope for scope in st.values() if len(scope.children) == 0]
         return copy.copy(self._scope_leaves_cached)
 
-    def scope_dict(self, return_ids: bool = False, validate: bool = True) -> Dict[nd.Node, Union['SDFGState', nd.Node]]:
+    def scope_dict(self,
+                   return_ids: bool = False,
+                   validate: bool = True) -> Dict[nd.Node, Union['SDFGState', nd.Node, None]]:
+        """
+        Return the scope dict, i.e. map every node inside the state to its enclosing scope or `None` if at global scope.
+
+        :note: The result is cached inside the state, but the returned `dict` is only shallow copied.
+        """
         from dace.sdfg.scope import _scope_dict_inner, _scope_dict_to_ids
-        result = None
+
         result = copy.copy(self._scope_dict_toparent_cached)
 
         if result is None:
@@ -613,10 +633,18 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
 
     def scope_children(self,
                        return_ids: bool = False,
-                       validate: bool = True) -> Dict[Union[nd.Node, 'SDFGState'], List[nd.Node]]:
+                       validate: bool = True) -> Dict[Union[nd.Node, 'SDFGState', None], List[nd.Node]]:
+        """For every scope node returns the list of nodes that are inside that scope.
+
+        The global scope is denoted by `None`. It is essentially the inversion of `scope_dict`.
+
+        :note: The result is cached inside the state thus it is not allowed to modify the returned values.
+        """
         from dace.sdfg.scope import _scope_dict_inner, _scope_dict_to_ids
+
         result = None
         if self._scope_dict_tochildren_cached is not None:
+            # NOTE: Why do we shallow copy the `dict` but not the lists?
             result = copy.copy(self._scope_dict_tochildren_cached)
 
         if result is None:
@@ -626,16 +654,16 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
 
             # Sanity checks
             if validate and len(eq) != 0:
-                cycles = self.find_cycles()
+                cycles = list(self.find_cycles())
                 if cycles:
-                    raise ValueError('Found cycles in state %s: %s' % (self.label, list(cycles)))
+                    raise ValueError('Found cycles in state %s: %s' % (self.label, cycles))
                 raise RuntimeError("Leftover nodes in queue: {}".format(eq))
 
             entry_nodes = set(n for n in self.nodes() if isinstance(n, nd.EntryNode)) | {None}
             if (validate and len(result) != len(entry_nodes)):
-                cycles = self.find_cycles()
+                cycles = list(self.find_cycles())
                 if cycles:
-                    raise ValueError('Found cycles in state %s: %s' % (self.label, list(cycles)))
+                    raise ValueError('Found cycles in state %s: %s' % (self.label, cycles))
                 raise RuntimeError("Some nodes were not processed: {}".format(entry_nodes - result.keys()))
 
             # Cache result
@@ -1063,7 +1091,7 @@ class ControlGraphView(BlockGraphView, abc.ABC):
     def entry_node(self, node: nd.Node) -> Optional[nd.EntryNode]:
         for block in self.nodes():
             if node in block.nodes():
-                return block.exit_node(node)
+                return block.entry_node(node)
         return None
 
     def exit_node(self, entry_node: nd.EntryNode) -> Optional[nd.ExitNode]:
@@ -1595,7 +1623,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         from dace.sdfg import SDFG
         arrays = set(n.data for n in self.data_nodes())
         sdfg = SDFG(self.label)
-        sdfg._arrays = {k: self.sdfg.arrays[k] for k in arrays}
+        sdfg._arrays = dace.sdfg.NestedDict({k: self.sdfg.arrays[k] for k in arrays})
         sdfg.add_node(self)
 
         return sdfg._repr_html_()
@@ -1755,23 +1783,47 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
     def add_nested_sdfg(
         self,
         sdfg: Optional['SDFG'],
-        parent,
         inputs: Union[Set[str], Dict[str, dtypes.typeclass]],
         outputs: Union[Set[str], Dict[str, dtypes.typeclass]],
         symbol_mapping: Dict[str, Any] = None,
         name=None,
         schedule=dtypes.ScheduleType.Default,
-        location=None,
-        debuginfo=None,
+        location: Optional[Dict[str, symbolic.SymbolicType]] = None,
+        debuginfo: Optional[dtypes.DebugInfo] = None,
         external_path: Optional[str] = None,
     ):
-        """ Adds a nested SDFG to the SDFG state. """
+        """
+        Adds a nested SDFG to the SDFG state.
+
+        :param sdfg: The SDFG to nest. Can be None if ``external_path`` is provided.
+        :param inputs: Input connectors of the nested SDFG. Can be a set of connector names
+                       (types will be auto-detected) or a dict mapping connector names to data types.
+        :param outputs: Output connectors of the nested SDFG. Can be a set of connector names
+                        (types will be auto-detected) or a dict mapping connector names to data types.
+        :param symbol_mapping: A dictionary mapping nested SDFG symbol names to expressions in the
+                               parent SDFG's scope. If None, symbols are mapped to themselves.
+        :param name: Name of the nested SDFG node. If None, uses the nested SDFG's label.
+        :param schedule: Schedule type for the nested SDFG node. Defaults to ``ScheduleType.Default``. This argument
+                         is deprecated and will be removed in the future.
+        :param location: Execution location descriptor for the nested SDFG.
+        :param debuginfo: Debug information for the nested SDFG node.
+        :param external_path: Path to an external SDFG file. Used when ``sdfg`` parameter is None.
+        :return: The created NestedSDFG node.
+        :raises ValueError: If neither sdfg nor external_path is provided, or if required symbols
+                           are missing from the symbol mapping.
+        """
         if name is None:
             name = sdfg.label
         debuginfo = _getdebuginfo(debuginfo or self._default_lineinfo)
 
         if sdfg is None and external_path is None:
             raise ValueError('Neither an SDFG nor an external SDFG path has been provided')
+
+        if schedule != dtypes.ScheduleType.Default:
+            warnings.warn(
+                "The 'schedule' argument is deprecated and will be removed in the future.",
+                DeprecationWarning,
+            )
 
         if sdfg is not None:
             sdfg.parent = self
@@ -1809,9 +1861,9 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
 
             # Validate missing symbols
             missing_symbols = [s for s in symbols if s not in symbol_mapping]
-            if missing_symbols and parent:
+            if missing_symbols and self.sdfg is not None:
                 # If symbols are missing, try to get them from the parent SDFG
-                parent_mapping = {s: s for s in missing_symbols if s in parent.symbols}
+                parent_mapping = {s: s for s in missing_symbols if s in self.sdfg.symbols}
                 symbol_mapping.update(parent_mapping)
                 s.symbol_mapping = symbol_mapping
                 missing_symbols = [s for s in symbols if s not in symbol_mapping]
@@ -2593,6 +2645,33 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                         continue
                     edge._dst_conn = "IN_" + str(conn_to_data[edge.data.data])
                     node.add_in_connector(edge.dst_conn)
+
+    def expand_library_node(self, node: nd.LibraryNode, implementation: str, **expansion_kwargs) -> str:
+        """
+        Expand a library node with a specific implementation.
+
+        This is a convenience method that provides a clean interface for expanding
+        library nodes from the state level. It automatically handles validation
+        and calls the library node's expand method.
+
+        :param node: The library node to expand
+        :param implementation: The implementation to use for expansion
+        :param expansion_kwargs: Additional keyword arguments for expansion
+        :return: The name of the expanded implementation
+
+        Example:
+            result = state.expand_library_node(gemm_node, 'MKL')
+        """
+        # Check that the node is actually in this state
+        if node not in self.nodes():
+            raise ValueError(f"Node {node} is not in this state")
+
+        # Check that implementation exists
+        if implementation not in node.implementations:
+            raise KeyError(f"Unknown implementation for node {type(node).__name__}: {implementation}")
+
+        # Use the new expand interface
+        return node.expand(self, implementation, **expansion_kwargs)
 
 
 @make_properties
@@ -3393,6 +3472,161 @@ class LoopRegion(ControlFlowRegion):
 
         return True, (init_state, guard_state, end_state)
 
+    def can_normalize(self) -> Tuple[bool, bool]:
+        """
+        Checks if the loop region can be normalized, meaning that it starts from 0 and increments by 1.
+
+        :return: A tuple of two booleans indicating if the loop init and step can be normalized.
+        """
+
+        # Avoid cyclic import
+        from dace.transformation.passes.analysis import loop_analysis
+
+        # If loop information cannot be determined, we cannot normalize
+        start = loop_analysis.get_init_assignment(self)
+        step = loop_analysis.get_loop_stride(self)
+        itervar = self.loop_variable
+        if start is None or step is None or itervar is None:
+            return False, False
+
+        # If we cannot symbolically match the loop condition, we cannot normalize
+        condition = symbolic.pystr_to_symbolic(self.loop_condition.as_string)
+        itersym = symbolic.pystr_to_symbolic(itervar)
+        a = sympy.Wild('a')
+        if (condition.match(itersym < a) is None and condition.match(itersym <= a) is None
+                and condition.match(itersym > a) is None and condition.match(itersym >= a) is None):
+            return False, False
+
+        # Get a list of all defined symbols in the loop body
+        defined_syms = set()
+        for edge, _ in self.all_edges_recursive():
+            if isinstance(edge.data, dace.InterstateEdge):
+                defined_syms.update(edge.data.assignments.keys())
+
+        # Check if we can normalize loop init
+        # Iteration variable not altered in the loop body and Init is not zero
+        can_norm_init = (itervar not in defined_syms and symbolic.resolve_symbol_to_constant(start, self.sdfg) != 0)
+
+        # Check if we can normalize loop step
+        # Iteration variable not altered in the loop body, increment not altered in body, step does not contain iteration variable, and Step is not one
+        step_free_syms = set([str(s) for s in step.free_symbols])
+        can_norm_step = (itervar not in defined_syms and step_free_syms.isdisjoint(defined_syms)
+                         and step_free_syms.isdisjoint({itervar})
+                         and symbolic.resolve_symbol_to_constant(step, self.sdfg) != 1)
+
+        # Return the results
+        return can_norm_init, can_norm_step
+
+    def normalize(self) -> bool:
+        """
+        Normalizes the loop region, meaning that it starts from 0 and increments by 1, if possible.
+        Partially normalizes if only one of the two is possible.
+
+        :return: True if the loop was normalized, False otherwise.
+        """
+
+        # Avoid cyclic import
+        from dace.transformation.passes.analysis import loop_analysis
+
+        # Check if the loop can be normalized
+        norm_init, norm_step = self.can_normalize()
+        if not (norm_init or norm_step):
+            return False
+
+        start = loop_analysis.get_init_assignment(self)
+        step = loop_analysis.get_loop_stride(self)
+        itervar = self.loop_variable
+
+        # Create the conversion expression
+        if norm_init and norm_step:
+            val = f"{itervar} * {step} + {start}"
+        elif norm_init:
+            val = f"{itervar} + {start}"
+        elif norm_step:
+            val = f"{itervar} * {step}"
+
+        # Replace each occurrence of the old iteration variable with the new one in the loop body, but not in the loop header
+        new_iter = self.sdfg.find_new_symbol(f"{itervar}_norm")
+        old_loop_init = copy.deepcopy(self.init_statement)
+        old_loop_cond = copy.deepcopy(self.loop_condition)
+        old_loop_step = copy.deepcopy(self.update_statement)
+
+        self.replace_dict({itervar: new_iter}, replace_keys=False)
+        self.init_statement = old_loop_init
+        self.loop_condition = old_loop_cond
+        self.update_statement = old_loop_step
+
+        # Add new state before the loop to compute the new iteration symbol
+        start_state = self.start_block
+        self.add_state_before(start_state, is_start_block=True, assignments={new_iter: val})
+
+        # Adjust loop header
+        if norm_init:
+            self.init_statement = CodeBlock(f"{itervar} = 0")
+        if norm_step:
+            self.update_statement = CodeBlock(f"{itervar} = {itervar} + 1")
+
+        # Compute new condition
+        condition = symbolic.pystr_to_symbolic(self.loop_condition.as_string)
+        itersym = symbolic.pystr_to_symbolic(itervar)
+
+        # Find condition by matching expressions
+        end: Optional[sympy.Expr] = None
+        a = sympy.Wild('a')
+        op = ''
+        match = condition.match(itersym < a)
+        if match:
+            op = '<'
+            end = match[a]
+        if end is None:
+            match = condition.match(itersym <= a)
+            if match:
+                op = '<='
+                end = match[a]
+        if end is None:
+            match = condition.match(itersym > a)
+            if match:
+                op = '>'
+                end = match[a]
+        if end is None:
+            match = condition.match(itersym >= a)
+            if match:
+                op = '>='
+                end = match[a]
+        if len(op) == 0:
+            raise ValueError('Cannot match loop condition for loop normalization')
+
+        # Invert the operator for reverse loops
+        is_reverse = step < 0
+        if is_reverse:
+            if op == '<':
+                op = '>='
+            elif op == '<=':
+                op = '>'
+            elif op == '>':
+                op = '<='
+            elif op == '>=':
+                op = '<'
+
+            # swap start and end
+            start, end = end, start
+
+            # negate step
+            step = -step
+
+        if norm_init and norm_step:
+            new_condition = f"{itersym} {op} (({end}) - ({start})) / {step}"
+        elif norm_init:
+            new_condition = f"{itersym} {op} ({end}) - ({start})"
+        elif norm_step:
+            new_condition = f"{itersym} {op} ({end}) / {step}"
+
+        if is_reverse:
+            new_condition = f"{new_condition} + 1"
+
+        self.loop_condition = CodeBlock(new_condition)
+        return True
+
     def get_meta_codeblocks(self):
         codes = [self.loop_condition]
         if self.init_statement:
@@ -3548,7 +3782,9 @@ class ConditionalBlock(AbstractControlFlowRegion):
     def branches(self) -> List[Tuple[Optional[CodeBlock], ControlFlowRegion]]:
         return self._branches
 
-    def add_branch(self, condition: Optional[CodeBlock], branch: ControlFlowRegion):
+    def add_branch(self, condition: Optional[Union[CodeBlock, str]], branch: ControlFlowRegion):
+        if condition is not None and not isinstance(condition, CodeBlock):
+            condition = CodeBlock(condition)
         self._branches.append([condition, branch])
         branch.parent_graph = self
         branch.sdfg = self.sdfg
@@ -3734,6 +3970,14 @@ class ConditionalBlock(AbstractControlFlowRegion):
 
     def all_edges(self, _: 'ControlFlowBlock') -> List[Edge['dace.sdfg.InterstateEdge']]:
         return []
+
+
+@make_properties
+class UnstructuredControlFlow(ControlFlowRegion):
+    """ Special control flow region to represent a region of unstructured control flow. """
+
+    def __repr__(self):
+        return f'UnstructuredCF ({self.label})'
 
 
 @make_properties

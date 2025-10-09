@@ -341,11 +341,19 @@ class InlineSDFG(transformation.SingleStateTransformation):
         for node in nstate.nodes():
             if isinstance(node, nodes.LibraryNode):
                 for ie in nstate.in_edges(node):
-                    if isinstance(ie.src, nodes.AccessNode) and ie.src.data in inputs:
-                        reshapes.add(ie.src.data)
+                    root = nstate.memlet_tree(ie).root().edge
+                    if isinstance(root.src, nodes.AccessNode) and root.src.data in inputs:
+                        ndesc = nsdfg.arrays[root.src.data]
+                        outer_desc = sdfg.arrays[inputs[root.src.data].data.data]
+                        if ndesc.shape != outer_desc.shape or ndesc.strides != outer_desc.strides:
+                            reshapes.add(root.src.data)
                 for oe in nstate.out_edges(node):
-                    if isinstance(oe.dst, nodes.AccessNode) and oe.dst.data in outputs:
-                        reshapes.add(oe.dst.data)
+                    root = nstate.memlet_tree(oe).root().edge
+                    if isinstance(root.dst, nodes.AccessNode) and root.dst.data in outputs:
+                        ndesc = nsdfg.arrays[root.dst.data]
+                        outer_desc = sdfg.arrays[outputs[root.dst.data].data.data]
+                        if ndesc.shape != outer_desc.shape or ndesc.strides != outer_desc.strides:
+                            reshapes.add(root.dst.data)
 
         # All transients become transients of the parent (if data already
         # exists, find new name)
@@ -1348,7 +1356,7 @@ class NestSDFG(transformation.MultiStateTransformation):
                 nested_sdfg.symbols[s] = type
 
         # Add the nested SDFG to the parent state and connect it
-        nested_node = outer_state.add_nested_sdfg(nested_sdfg, outer_sdfg, set(inputs.values()), set(outputs.values()))
+        nested_node = outer_state.add_nested_sdfg(nested_sdfg, set(inputs.values()), set(outputs.values()))
 
         for key, val in inputs.items():
             arrnode = outer_state.add_read(key)

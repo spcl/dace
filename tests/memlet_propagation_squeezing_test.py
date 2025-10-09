@@ -32,8 +32,7 @@ def make_sdfg(squeeze, name):
     nsdfg.add_loop(None, nstate, None, 'i', '0', 'i < N - 2', 'i + 1')
 
     # Connect nested SDFG to toplevel one
-    nsdfg_node = state.add_nested_sdfg(nsdfg,
-                                       None, {}, {'a1', 'a2'} if squeeze else {'a'},
+    nsdfg_node = state.add_nested_sdfg(nsdfg, {}, {'a1', 'a2'} if squeeze else {'a'},
                                        symbol_mapping=dict(j='j', N='N', M='M'))
     state.add_nedge(me, nsdfg_node, dace.Memlet())
     # Add outer memlet that is overapproximated

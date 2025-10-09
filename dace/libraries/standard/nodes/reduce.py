@@ -1,28 +1,22 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """ File defining the reduction library node. """
 
 import ast
 from copy import deepcopy as dcpy
 import dace
-import itertools
 import functools
 import platform
 import dace.serialize
 import dace.library
-from typing import Any, Dict, Set
-from dace.config import Config
 from dace.sdfg import SDFG, SDFGState, devicelevel_block_size, propagation
 from dace.sdfg import graph
 from dace.frontend.python.astutils import unparse
-from dace.properties import (Property, CodeProperty, LambdaProperty, RangeProperty, DebugInfoProperty, SetProperty,
-                             make_properties, indirect_properties, DataProperty, SymbolicProperty, ListProperty,
-                             SDFGReferenceProperty, DictProperty, LibraryImplementationProperty)
+from dace.properties import Property, LambdaProperty, ListProperty
 from dace.frontend.operations import detect_reduction_type
-from dace import data, subsets as sbs, dtypes
-from dace import registry, subsets
-import pydoc
+from dace import dtypes
+from dace import subsets
 import warnings
-from dace.sdfg import nodes, scope
+from dace.sdfg import scope
 from dace.transformation import transformation as pm
 from dace.symbolic import symstr, issymbolic
 from dace.libraries.standard.environments.cuda import CUDA
@@ -441,7 +435,7 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
         redtype = detect_reduction_type(node.wcr)
 
         node_id = state.node_id(node)
-        state_id = sdfg.node_id(state)
+        state_id = state.parent_graph.node_id(state)
         idstr = '{sdfg}_{state}_{node}'.format(sdfg=sdfg.name, state=state_id, node=node_id)
 
         if node.out_connectors:
@@ -465,7 +459,7 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
             DACE_HDFI T operator()(const T &{arg1}, const T &{arg2}) const {{
                 {contents}
             }}
-        }};""".format(id=idstr, arg1=arg1, arg2=arg2, contents=body), sdfg, state_id, node_id)
+        }};""".format(id=idstr, arg1=arg1, arg2=arg2, contents=body), state.parent_graph, state_id, node_id)
             reduce_op = ', __reduce_' + idstr + '(), ' + symstr(node.identity)
         elif redtype in ExpandReduceCUDADevice._SPECIAL_RTYPES:
             reduce_op = ''
@@ -521,7 +515,7 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
             """
             void *__cub_storage_{sdfg}_{state}_{node} = NULL;
             size_t __cub_ssize_{sdfg}_{state}_{node} = 0;
-        """.format(sdfg=sdfg.name, state=state_id, node=node_id), sdfg, state_id, node)
+        """.format(sdfg=sdfg.name, state=state_id, node=node_id), state.parent_graph, state_id, node)
 
         if reduce_all_axes:
             reduce_type = 'DeviceReduce'
@@ -563,11 +557,11 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
            redop=reduce_op,
            intype=input_data.dtype.ctype,
            outtype=output_data.dtype.ctype,
-           kname=kname), sdfg, state_id, node)
+           kname=kname), state.parent_graph, state_id, node)
 
         cuda_exitcode.write(
-            'cudaFree(__cub_storage_{sdfg}_{state}_{node});'.format(sdfg=sdfg.name, state=state_id, node=node_id), sdfg,
-            state_id, node)
+            'cudaFree(__cub_storage_{sdfg}_{state}_{node});'.format(sdfg=sdfg.name, state=state_id, node=node_id),
+            state.parent_graph, state_id, node)
 
         # Write reduction function definition
         cuda_globalcode.write("""
@@ -593,7 +587,7 @@ DACE_EXPORTED void __dace_reduce_{id}({intype} *input, {outtype} *output, {reduc
         """.format(id=idstr,
                    reduce_range_def=reduce_range_def,
                    intype=input_data.dtype.ctype,
-                   outtype=output_data.dtype.ctype), sdfg, state_id, node)
+                   outtype=output_data.dtype.ctype), state.parent_graph, state_id, node)
 
         # Call reduction function where necessary
         host_localcode.write('__dace_reduce_{id}(_in, _out, {reduce_range_call}, __dace_current_stream);'.format(
@@ -652,7 +646,7 @@ class ExpandReduceCUDABlock(pm.ExpandTransformation):
         redtype = detect_reduction_type(node.wcr)
 
         node_id = state.node_id(node)
-        state_id = sdfg.node_id(state)
+        state_id = state.parent_graph.node_id(state)
         idstr = '{sdfg}_{state}_{node}'.format(sdfg=sdfg.name, state=state_id, node=node_id)
 
         # Obtain some SDFG-related information
@@ -679,7 +673,7 @@ class ExpandReduceCUDABlock(pm.ExpandTransformation):
             DACE_HDFI T operator()(const T &{arg1}, const T &{arg2}) const {{
                 {contents}
             }}
-        }};""".format(id=idstr, arg1=arg1, arg2=arg2, contents=body), sdfg, state_id, node_id)
+        }};""".format(id=idstr, arg1=arg1, arg2=arg2, contents=body), state.parent_graph, state_id, node_id)
             reduce_op = ', __reduce_' + idstr + '(), ' + symstr(node.identity)
         elif redtype in ExpandReduceCUDADevice._SPECIAL_RTYPES:
             reduce_op = ''
@@ -820,7 +814,8 @@ class ExpandReduceCUDABlockAll(pm.ExpandTransformation):
         }
 
         local_storage = InLocalStorage()
-        local_storage.setup_match(sdfg, sdfg.cfg_id, sdfg.nodes().index(state), in_local_storage_subgraph, 0)
+        state_id = state.block_id
+        local_storage.setup_match(sdfg, state.parent_graph.cfg_id, state_id, in_local_storage_subgraph, 0)
 
         local_storage.array = in_edge.data.data
         local_storage.apply(graph, sdfg)
@@ -828,7 +823,7 @@ class ExpandReduceCUDABlockAll(pm.ExpandTransformation):
         sdfg.data(in_transient.data).storage = dtypes.StorageType.Register
 
         local_storage = OutLocalStorage()
-        local_storage.setup_match(sdfg, sdfg.cfg_id, sdfg.nodes().index(state), out_local_storage_subgraph, 0)
+        local_storage.setup_match(sdfg, state.parent_graph.cfg_id, state_id, out_local_storage_subgraph, 0)
         local_storage.array = out_edge.data.data
         local_storage.apply(graph, sdfg)
         out_transient = local_storage._data_node
@@ -875,7 +870,7 @@ class ExpandReduceCUDABlockAll(pm.ExpandTransformation):
         # itself and expand again.
         reduce_node.implementation = 'CUDA (block)'
         sub_expansion = ExpandReduceCUDABlock()
-        sub_expansion.setup_match(sdfg, sdfg.cfg_id, sdfg.node_id(state), {}, 0)
+        sub_expansion.setup_match(sdfg, state.parent_graph.cfg_id, state_id, {}, 0)
         return sub_expansion.expansion(node=node, state=state, sdfg=sdfg)
         #return reduce_node.expand(sdfg, state)
 
@@ -1475,7 +1470,7 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
             r = nstate.add_read('_in')
             w = nstate.add_write('_out')
 
-            actual_nested_sdfg = nstate.add_nested_sdfg(nested_sdfg, nsdfg, {'s_mem', '_in'}, {'s_mem'})
+            actual_nested_sdfg = nstate.add_nested_sdfg(nested_sdfg, {'s_mem', '_in'}, {'s_mem'})
 
             inner_in = real_state.add_access('_in')
             inner_smem = real_state.add_access('s_mem')

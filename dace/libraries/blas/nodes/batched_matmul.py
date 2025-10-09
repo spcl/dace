@@ -93,7 +93,8 @@ class ExpandBatchedMatMulMKL(ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
-        (_, adesc, ashape, astrides, _, _), (_, bdesc, bshape, bstrides, _, _), _ = _get_matmul_operands(node, state, sdfg)
+        (_, adesc, ashape, astrides, _, _), (_, bdesc, bshape, bstrides, _,
+                                             _), _ = _get_matmul_operands(node, state, sdfg)
         cdesc: dt.Array = sdfg.arrays[state.out_edges(node)[0].data.data]
         check_access(dtypes.ScheduleType.CPU_Multicore, adesc, bdesc, cdesc)
         dtype = cdesc.dtype.base_type
@@ -167,7 +168,8 @@ class ExpandBatchedMatMulOpenBLAS(ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
-        (_, adesc, ashape, astrides, _, _), (_, bdesc, bshape, bstrides, _, _), _ = _get_matmul_operands(node, state, sdfg)
+        (_, adesc, ashape, astrides, _, _), (_, bdesc, bshape, bstrides, _,
+                                             _), _ = _get_matmul_operands(node, state, sdfg)
         cdesc = sdfg.arrays[state.out_edges(node)[0].data.data]
         check_access(dtypes.ScheduleType.CPU_Multicore, adesc, bdesc, cdesc)
         dtype = cdesc.dtype.base_type

@@ -26,7 +26,7 @@ from dace.frontend.python.astutils import rname
 from dace.frontend.python import nested_call, replacements, preprocessing
 from dace.frontend.python.memlet_parser import DaceSyntaxError, parse_memlet, ParseMemlet, inner_eval_ast, MemletExpr
 from dace.sdfg import nodes
-from dace.sdfg.propagation import propagate_memlet, propagate_subset, propagate_states
+from dace.sdfg.propagation import propagate_memlet, propagate_subset, propagate_states, align_memlet
 from dace.memlet import Memlet
 from dace.properties import LambdaProperty, CodeBlock
 from dace.sdfg import SDFG, SDFGState
@@ -40,9 +40,10 @@ import sympy
 
 numpy_version = numpy.lib.NumpyVersion(numpy.__version__)
 
-# register replacements in oprepo
+# The following line registers replacements in oprepo
 import dace.frontend.python.replacements
-from dace.frontend.python.replacements import _sym_type, broadcast_to, broadcast_together
+
+from dace.frontend.python.replacements.utils import sym_type, broadcast_to, broadcast_together
 
 # Type hints
 Size = Union[int, dace.symbolic.symbol]
@@ -109,6 +110,24 @@ augassign_ops = {
     'BitAnd': '&'
 }
 
+# Mappings for determining variable name based on operator
+_UNOP_TO_NAME = {ast.UAdd: 'pos', ast.USub: 'neg', ast.Not: 'not', ast.Invert: 'inv'}
+_BINOP_TO_NAME = {
+    ast.Add: 'plus',
+    ast.Sub: 'minus',
+    ast.Mult: 'times',
+    ast.Div: 'div',
+    ast.FloorDiv: 'floordiv',
+    ast.Mod: 'mod',
+    ast.Pow: 'pow',
+    ast.LShift: 'lshift',
+    ast.RShift: 'rshift',
+    ast.BitOr: 'bitor',
+    ast.BitXor: 'bitxor',
+    ast.BitAnd: 'bitand',
+    ast.MatMult: 'matmul',
+}
+
 
 class AddTransientMethods(object):
     """ A management singleton for methods that add transient data to SDFGs. """
@@ -130,45 +149,46 @@ def specifies_datatype(func: Callable[[Any, data.Data, Any], Tuple[str, data.Dat
 
 
 @specifies_datatype(datatype=data.Scalar)
-def _method(sdfg: SDFG, sample_data: data.Scalar, dtype: dtypes.typeclass):
-    name = sdfg.temp_data_name()
-    _, new_data = sdfg.add_scalar(name, dtype, transient=True)
+def _method(pv: 'ProgramVisitor', sdfg: SDFG, sample_data: data.Scalar, dtype: dtypes.typeclass):
+    name = pv.get_target_name()
+    name, new_data = sdfg.add_scalar(name, dtype, transient=True, find_new_name=True)
     return name, new_data
 
 
 @specifies_datatype(datatype=data.Array)
-def _method(sdfg: SDFG, sample_data: data.Array, dtype):
-    name, new_data = sdfg.add_temp_transient_like(sample_data, dtype=dtype)
+def _method(pv: 'ProgramVisitor', sdfg: SDFG, sample_data: data.Array, dtype):
+    name, new_data = sdfg.add_temp_transient_like(sample_data, dtype=dtype, name=pv.get_target_name())
     return name, new_data
 
 
 @specifies_datatype(datatype=data.View)
-def _method(sdfg: SDFG, sample_data: data.View, dtype):
-    name, new_data = sdfg.add_temp_transient(sample_data.shape, dtype)
+def _method(pv: 'ProgramVisitor', sdfg: SDFG, sample_data: data.View, dtype):
+    name, new_data = sdfg.add_transient(pv.get_target_name(), sample_data.shape, dtype, find_new_name=True)
     return name, new_data
 
 
 @specifies_datatype(datatype=data.Stream)
-def _method(sdfg: SDFG, sample_data: data.Stream, dtype):
-    name = sdfg.temp_data_name()
-    new_data = sdfg.add_stream(name,
-                               dtype,
-                               buffer_size=sample_data.buffer_size,
-                               shape=sample_data.shape,
-                               transient=True)
+def _method(pv: 'ProgramVisitor', sdfg: SDFG, sample_data: data.Stream, dtype):
+    name = pv.get_target_name()
+    name, new_data = sdfg.add_stream(name,
+                                     dtype,
+                                     buffer_size=sample_data.buffer_size,
+                                     shape=sample_data.shape,
+                                     transient=True,
+                                     find_new_name=True)
     return name, new_data
 
 
-def _add_transient_data(sdfg: SDFG, sample_data: data.Data, dtype: dtypes.typeclass = None):
+def _add_transient_data(pv: 'ProgramVisitor', sdfg: SDFG, sample_data: data.Data, dtype: dtypes.typeclass = None):
     """ Adds to the sdfg transient data of the same dtype, shape and other
         parameters as sample_data. """
     func = AddTransientMethods.get(type(sample_data))
     if func is None:
         raise NotImplementedError
     if dtype is None:
-        return func(sdfg, sample_data, sample_data.dtype)
+        return func(pv, sdfg, sample_data, sample_data.dtype)
     else:
-        return func(sdfg, sample_data, dtype)
+        return func(pv, sdfg, sample_data, dtype)
 
 
 def _is_equivalent(first: data.Data, second: data.Data):
@@ -633,7 +653,7 @@ class TaskletTransformer(ExtNodeTransformer):
     """
 
     def __init__(self,
-                 visitor,
+                 visitor: 'ProgramVisitor',
                  defined,
                  sdfg: SDFG,
                  state: SDFGState,
@@ -738,7 +758,7 @@ class TaskletTransformer(ExtNodeTransformer):
         elif target:
             var_name = "__tmp_{l}_{c}".format(l=target.lineno, c=target.col_offset)
         else:
-            var_name = self.sdfg.temp_data_name()
+            var_name = self.visitor._get_name_from_node(target)
 
         parent_name = self.scope_vars[name]
         parent_array = self.scope_arrays[parent_name]
@@ -824,11 +844,11 @@ class TaskletTransformer(ExtNodeTransformer):
         if arr_type is None:
             arr_type = type(parent_array)
         if arr_type == data.Scalar:
-            self.sdfg.add_scalar(var_name, dtype)
+            var_name, _ = self.sdfg.add_scalar(var_name, dtype, find_new_name=True)
         elif issubclass(arr_type, data.Array):
-            self.sdfg.add_array(var_name, shape, dtype, strides=strides)
+            var_name, _ = self.sdfg.add_array(var_name, shape, dtype, strides=strides, find_new_name=True)
         elif arr_type == data.Stream:
-            self.sdfg.add_stream(var_name, dtype)
+            var_name, _ = self.sdfg.add_stream(var_name, dtype, find_new_name=True)
         else:
             raise NotImplementedError("Data type {} is not implemented".format(arr_type))
 
@@ -1093,7 +1113,6 @@ class ProgramVisitor(ExtNodeVisitor):
                  annotated_types: Dict[str, data.Data] = None,
                  closure: SDFGClosure = None,
                  nested: bool = False,
-                 tmp_idx: int = 0,
                  simplify: Optional[bool] = None):
         """ ProgramVisitor init method
 
@@ -1111,7 +1130,6 @@ class ProgramVisitor(ExtNodeVisitor):
 
         Keyword Arguments:
             nested {bool} -- True, if SDFG is nested (default: {False})
-            tmp_idx {int} -- First idx for tmp transient names (default: {0})
         """
 
         self.filename = filename
@@ -1154,7 +1172,6 @@ class ProgramVisitor(ExtNodeVisitor):
                 for sym in arr.free_symbols:
                     if sym.name not in self.sdfg.symbols:
                         self.sdfg.add_symbol(sym.name, sym.dtype)
-        self.sdfg._temp_transients = tmp_idx
         self.cfg_target = self.sdfg
         self.current_state = self.sdfg.add_state('init', is_start_block=True)
         self.last_block = self.current_state
@@ -1163,6 +1180,8 @@ class ProgramVisitor(ExtNodeVisitor):
         self.inputs: DependencyType = {}
         self.outputs: DependencyType = {}
         self.current_lineinfo = dtypes.DebugInfo(line_offset, col_offset, line_offset, col_offset, filename)
+        self.current_ast_stack: List[ast.AST] = []
+        self.default_output_index: int = 0
 
         self.modules = {k: v.__name__ for k, v in self.globals.items() if dtypes.ismodule(v)}
 
@@ -1209,7 +1228,10 @@ class ProgramVisitor(ExtNodeVisitor):
         if hasattr(node, 'lineno'):
             self.current_lineinfo = dtypes.DebugInfo(node.lineno, node.col_offset, node.lineno, node.col_offset,
                                                      self.filename)
-        return super().visit(node)
+        self.current_ast_stack.append(node)
+        result = super().visit(node)
+        self.current_ast_stack.pop()
+        return result
 
     def parse_program(self, program: ast.FunctionDef, is_tasklet: bool = False):
         """ Parses a DaCe program or tasklet
@@ -1267,7 +1289,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     return_state.add_nedge(r, w, Memlet(vname))
                 else:
                     # Other cases can be replaced with return value directly
-                    self.sdfg.replace(arrname, vname)
+                    replace_datadesc_names(self.sdfg, {arrname: vname})
                     for k, (v, m) in self.views.items():
                         if v == arrname:
                             m.data = vname
@@ -1354,6 +1376,140 @@ class ProgramVisitor(ExtNodeVisitor):
             pass
 
         return result
+
+    def get_target_name(self, output_index: Optional[int] = None, default: Optional[str] = None) -> str:
+        """
+        A heuristic that returns a human-readable name of the current assignment target or expression,
+        in a way that is closest to the original Python code.
+        For example, calling this method in the replacement of ``np.zeros`` would return
+        ``res`` for ``res = np.zeros((10, 10))``, or ``sqrt_a_plus_b`` for ``output = np.sqrt(a + b) + c``
+        and the replacement of ``sqrt``.
+
+        THIS METHOD IS ONLY VALID WHEN CALLED DURING PARSING.
+
+        :param output_index: The index of the output in the arguments to find a name for (if the result is a tuple).
+        :param default: A default name to return if no target can be determined. If not given, uses ``temp_data_name``.
+        :return: A string representing the target name.
+        """
+        if not self.current_ast_stack:
+            warnings.warn("get_target_name() called without a current AST node. Returning placeholder name.",
+                          UserWarning)
+            return default or self.sdfg.temp_data_name()
+
+        output_index = output_index if output_index is not None else self.default_output_index
+
+        current_ast_node = self.current_ast_stack[-1]
+
+        # If the current AST node is a direct descendant of an assignment,
+        # return the name of the left-hand side of the assignment.
+        if len(self.current_ast_stack) > 1 and isinstance(self.current_ast_stack[-2], ast.Assign):
+            target = self.current_ast_stack[-2].targets[0]
+            if isinstance(target, ast.Tuple) and len(target.elts) > output_index:
+                candidate = self._get_name_from_node(target.elts[output_index])
+            elif isinstance(target, (ast.Name, ast.Subscript, ast.Attribute)):
+                candidate = self._get_name_from_node(target)
+
+            # If candidate appears in right-hand side (use ast.walk), skip
+            if candidate and not any(candidate == self._get_name_from_node(n) for n in ast.walk(current_ast_node)):
+                return candidate
+
+        # If the current AST node is a variable name, return the name of the variable.
+        if isinstance(current_ast_node, ast.Name):
+            return current_ast_node.id
+
+        # If the current AST node is an expression (e.g., a binary operation),
+        # return the operands concatenated with the operator, e.g., "not_a", "a_times_b"
+        if isinstance(current_ast_node, ast.UnaryOp):
+            op_name = _UNOP_TO_NAME.get(type(current_ast_node.op), 'unop')
+            operand_name = self._get_name_from_node(current_ast_node.operand)
+            result = f"{op_name}_{operand_name}"
+            if dtypes.validate_name(result):
+                return result
+
+        if isinstance(current_ast_node, ast.BinOp):
+            op_name = _BINOP_TO_NAME.get(type(current_ast_node.op), 'binop')
+            left_name = self._get_name_from_node(current_ast_node.left)
+            right_name = self._get_name_from_node(current_ast_node.right)
+            result = f"{left_name}_{op_name}_{right_name}"
+            if dtypes.validate_name(result):
+                return result
+
+        # Otherwise, if the current AST node is a function call,
+        # return the name of the function followed by its arguments concatenated with underscores.
+        if isinstance(current_ast_node, ast.Call):
+            func_name = self._get_name_from_node(current_ast_node.func)
+            # Handle method calls
+            if isinstance(current_ast_node.func, ast.Attribute):
+                func_name = current_ast_node.func.attr
+
+            # Get argument names
+            arg_names = []
+            for arg in current_ast_node.args[:3]:  # Limit to first 3 args to avoid overly long names
+                arg_names.append(self._get_name_from_node(arg))
+
+            if arg_names:
+                result = f"{func_name}_{'_'.join(arg_names)}"
+            else:
+                result = func_name
+
+            if dtypes.validate_name(result):
+                return result
+
+        # If all else fails, try to see if unparsing yields a valid name.
+        unparsed_node = astutils.unparse(current_ast_node)
+        if dtypes.validate_name(unparsed_node):
+            return unparsed_node
+
+        # If the name is invalid, use temp_data_name (__tmp*)
+        return default or self.sdfg.temp_data_name()
+
+    def _get_name_from_node(self, node: ast.AST) -> str:
+        """Helper method to extract a simple name from an AST node."""
+        if isinstance(node, ast.Name):
+            return node.id
+        elif isinstance(node, ast.Constant):
+            # For constants, return a descriptive name
+            val = node.value
+            if isinstance(val, (int, float)):
+                return str(val).replace('.', '_').replace('-', 'neg')
+            elif isinstance(val, str):
+                # Sanitize string constants
+                return ''.join(c if c.isalnum() else '_' for c in val[:10])
+            else:
+                return 'const'
+        elif isinstance(node, ast.Attribute):
+            return node.attr
+        elif isinstance(node, ast.Subscript):
+            base = self._get_name_from_node(node.value)
+            return f"{base}_slice"
+        elif isinstance(node, ast.BinOp):
+            # Recursively handle nested operations
+            left = self._get_name_from_node(node.left)
+            right = self._get_name_from_node(node.right)
+            return f"{left}_{right}"
+        else:
+            # For complex nodes, try to unparse if short enough
+            try:
+                unparsed = ast.unparse(node)
+                if len(unparsed) <= 10 and unparsed.isidentifier():
+                    return unparsed
+            except:
+                pass
+            return 'expr'
+
+    def add_temp_transient(self, *args, output_index=None, **kwargs) -> Tuple[str, data.Data]:
+        """
+        Helper shorthand method to add a transient array to the SDFG with a heuristically-generated name.
+        Takes the same arguments as ``SDFG.add_temp_transient()``.
+
+        :param args: Positional arguments for the transient array.
+        :param output_index: The index of the output in the arguments to find a name for (if the result is a tuple).
+        :param kwargs: Keyword arguments for the transient array.
+        :return: A tuple of the name and the data descriptor of the transient array.
+        """
+        kwargs['find_new_name'] = True
+        name = self.get_target_name(output_index)
+        return self.sdfg.add_transient(name, *args, **kwargs)
 
     def _on_block_added(self, block: ControlFlowBlock):
         if self.last_block is not None and self.last_cfg_target == self.cfg_target:
@@ -1453,8 +1609,7 @@ class ProgramVisitor(ExtNodeVisitor):
                             map_symbols=map_symbols,
                             annotated_types=self.annotated_types,
                             closure=self.closure,
-                            nested=True,
-                            tmp_idx=self.sdfg._temp_transients + 1)
+                            nested=True)
 
         try:
             return pv.parse_program(node, is_tasklet)
@@ -1579,7 +1734,6 @@ class ProgramVisitor(ExtNodeVisitor):
                                                                   extra_map_symbols=map_symbols)
 
             internal_node = state.add_nested_sdfg(sdfg,
-                                                  self.sdfg,
                                                   set(inputs.keys()),
                                                   set(outputs.keys()),
                                                   debuginfo=self.current_lineinfo)
@@ -1604,12 +1758,12 @@ class ProgramVisitor(ExtNodeVisitor):
         else:
             raise DaceSyntaxError(self, node, 'Unsupported function decorator')
 
-    def _inject_consume_memlets(self, dec, entry, inputs, internal_node, sdfg, state, stream_elem, stream_name):
+    def _inject_consume_memlets(self, dec, entry, inputs, internal_node, sdfg: SDFG, state, stream_elem, stream_name):
         """ Inject stream inputs to subgraph when creating a consume scope. """
 
         # Inject element to internal SDFG arrays
-        ntrans = sdfg.temp_data_name()
-        sdfg.add_array(ntrans, [1], self.sdfg.arrays[stream_name].dtype)
+        ntrans = f'consume_{stream_name}'
+        ntrans, _ = sdfg.add_array(ntrans, [1], self.sdfg.arrays[stream_name].dtype, find_new_name=True)
         internal_memlet = dace.Memlet.simple(ntrans, subsets.Indices([0]))
         external_memlet = dace.Memlet.simple(stream_name, subsets.Indices([0]), num_accesses=-1)
 
@@ -1993,14 +2147,20 @@ class ProgramVisitor(ExtNodeVisitor):
                 if isinstance(memlet_or_node, nodes.Tasklet):
                     tasklet: nodes.Tasklet = memlet_or_node
                     # Create a code->code node
-                    new_scalar = self.sdfg.temp_data_name()
+                    new_scalar = tasklet.label
                     if isinstance(internal_node, nodes.NestedSDFG):
                         dtype = internal_node.sdfg.arrays[conn].dtype
                     else:
                         raise SyntaxError('Cannot determine connector type for tasklet input dependency')
-                    self.sdfg.add_scalar(new_scalar, dtype, transient=True)
+                    if conn in tasklet.out_connectors:
+                        tasklet_conn = conn
+                    else:
+                        assert len(tasklet.out_connectors
+                                   ) == 1, "Input tasklet to nested SDFG must have exactly one output connector"
+                        tasklet_conn = next(iter(tasklet.out_connectors.keys()))
+                    new_scalar, _ = self.sdfg.add_scalar(new_scalar, dtype, transient=True, find_new_name=True)
                     accessnode = state.add_access(new_scalar)
-                    state.add_edge(tasklet, conn, accessnode, None, dace.Memlet.simple(new_scalar, '0'))
+                    state.add_edge(tasklet, tasklet_conn, accessnode, None, dace.Memlet.simple(new_scalar, '0'))
                     state.add_edge(accessnode, None, internal_node, conn, dace.Memlet.simple(new_scalar, '0'))
                     if entry_node is not None:
                         state.add_edge(entry_node, None, tasklet, None, dace.Memlet())
@@ -2289,11 +2449,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 node,
                 extra_symbols=self._symbols_from_params(params, map_inputs),
                 extra_map_symbols=self._symbols_from_params(params, map_inputs))
-            tasklet = state.add_nested_sdfg(body,
-                                            self.sdfg,
-                                            inputs.keys(),
-                                            outputs.keys(),
-                                            debuginfo=self.current_lineinfo)
+            tasklet = state.add_nested_sdfg(body, inputs.keys(), outputs.keys(), debuginfo=self.current_lineinfo)
             self._add_nested_symbols(tasklet)
             self._add_dependencies(state, tasklet, me, mx, inputs, outputs, map_inputs, symbols)
         elif iterator == 'range':
@@ -2339,7 +2495,7 @@ class ProgramVisitor(ExtNodeVisitor):
                                       "".format(sym_name))
                         break
             else:
-                self.sdfg.add_symbol(sym_name, sym_obj.dtype)
+                sym_name = self.sdfg.add_symbol(sym_name, sym_obj.dtype, find_new_name=True)
 
             extra_syms = {sym_name: sym_obj}
 
@@ -2783,7 +2939,12 @@ class ProgramVisitor(ExtNodeVisitor):
                     memlet.other_subset = op_subset
                     if op:
                         memlet.wcr = LambdaProperty.from_string('lambda x, y: x {} y'.format(op))
-                    state.add_nedge(op1, op2, memlet)
+                    if isinstance(self.sdfg.arrays[target_name], data.Reference):
+                        e = state.add_edge(op1, None, op2, 'set', memlet)
+                        # Align memlet to referenced array
+                        e.data = align_memlet(state, e, dst=False)
+                    else:
+                        state.add_nedge(op1, op2, memlet)
             else:
                 memlet = Memlet("{a}[{s}]".format(a=target_name,
                                                   s=','.join(['__i%d' % i for i in range(len(target_subset))])))
@@ -3081,19 +3242,19 @@ class ProgramVisitor(ExtNodeVisitor):
         elif target:
             var_name = "__tmp_{l}_{c}_{a}".format(l=target.lineno, c=target.col_offset, a=access_type)
         else:
-            var_name = self.sdfg.temp_data_name()
+            var_name = self.get_target_name()
 
         parent_name = self.scope_vars[name]
         parent_array = self.scope_arrays[parent_name]
 
         has_indirection = (_subset_has_indirection(rng, self) or _subset_is_local_symbol_dependent(rng, self))
+        strides = list(parent_array.strides)
         if has_indirection:
             # squeezed_rng = list(range(len(rng)))
             shape = parent_array.shape
-            # strides = [parent_array.strides[d] for d in squeezed_rng]
             # # TODO: Why is squeezed_rng an index in the first place?
             # squeezed_rng = subsets.Range([(i, i, 1) for i in squeezed_rng])
-            squeezed_rng = subsets.Range.from_array(parent_array)
+            nested_rng = subsets.Range.from_array(parent_array)
             non_squeezed = list(range(len(rng)))
         else:
             ignore_indices = []
@@ -3149,6 +3310,14 @@ class ProgramVisitor(ExtNodeVisitor):
             non_squeezed = squeezed_rng.squeeze(ignore_indices)
             # TODO: Need custom shape computation here
             shape = squeezed_rng.size()
+            nested_rng = subsets.Range([(0, s - 1, 1) for s in shape])
+            for i, r in enumerate(rng.ranges):
+                if i in ignore_indices:
+                    continue
+                _, _, step = r
+                if (step < 0) == True:
+                    step = -step
+                strides[i] *= step
             for i, sr in zip(ignore_indices, sym_rng):
                 iMin, iMax, step = sr.ranges[0]
                 if (step < 0) == True:
@@ -3158,6 +3327,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 shape[sqz_idx] = ts * sympy.ceiling(((iMax.approx if isinstance(iMax, symbolic.SymExpr) else iMax) + 1 -
                                                      (iMin.approx if isinstance(iMin, symbolic.SymExpr) else iMin)) /
                                                     (step.approx if isinstance(step, symbolic.SymExpr) else step))
+                nested_rng.ranges[sqz_idx] = squeezed_rng[sqz_idx]
         dtype = parent_array.dtype
 
         if arr_type is None:
@@ -3166,21 +3336,21 @@ class ProgramVisitor(ExtNodeVisitor):
             if arr_type not in (data.Stream, data.Structure) and (shape == [1] or shape == (1, )):
                 arr_type = data.Scalar
         if arr_type == data.Scalar:
-            self.sdfg.add_scalar(var_name, dtype)
+            var_name, _ = self.sdfg.add_scalar(var_name, dtype, find_new_name=True)
         elif issubclass(arr_type, data.Array):
             if non_squeezed:
-                strides = [parent_array.strides[d] for d in non_squeezed]
+                strides = [strides[d] for d in non_squeezed]
             else:
                 strides = [1]
-            self.sdfg.add_array(var_name, shape, dtype, strides=strides)
+            var_name, _ = self.sdfg.add_array(var_name, shape, dtype, strides=strides, find_new_name=True)
         elif arr_type == data.Stream:
-            self.sdfg.add_stream(var_name, dtype)
+            var_name, _ = self.sdfg.add_stream(var_name, dtype, find_new_name=True)
         elif arr_type == data.Structure:
-            self.sdfg.add_datadesc(var_name, copy.deepcopy(parent_array))
+            var_name = self.sdfg.add_datadesc(var_name, copy.deepcopy(parent_array), find_new_name=True)
         else:
             raise NotImplementedError("Data type {} is not implemented".format(arr_type))
 
-        self.accesses[(name, rng, access_type)] = (var_name, squeezed_rng)
+        self.accesses[(name, rng, access_type)] = (var_name, nested_rng)
 
         inner_indices = set(non_squeezed)
 
@@ -3206,7 +3376,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 self.outputs[var_name] = (state, new_memlet, inner_indices)
 
         self.variables[var_name] = var_name
-        return (var_name, squeezed_rng)
+        return (var_name, nested_rng)
 
     def _add_read_access(self,
                          name: str,
@@ -3281,9 +3451,10 @@ class ProgramVisitor(ExtNodeVisitor):
             storage = dtypes.StorageType.Default
             type_name = rname(node.annotation)
             warnings.warn('typeclass {} is not supported'.format(type_name))
-        if node.value is None and dtype is not None:  # Annotating type without assignment
+        if dtype is not None:
             self.annotated_types[rname(node.target)] = dtype
-            return
+            if node.value is None:  # Annotating type without assignment
+                return
         results = self._visit_assign(node, node.target, None, dtype=dtype)
         if storage != dtypes.StorageType.Default:
             self.sdfg.arrays[results[0][0]].storage = storage
@@ -3293,14 +3464,27 @@ class ProgramVisitor(ExtNodeVisitor):
         elts = None
         results = None
         if isinstance(node_target, (ast.Tuple, ast.List)):
-            elts = node_target.elts
+            elts = list(node_target.elts)
         else:
             elts = [node_target]
 
+        # Unpack remaining tuples in left-hand side
+        tuple_found = True
+        while tuple_found:
+            tuple_found = False
+            for i, target in enumerate(elts):
+                if isinstance(target, (ast.Tuple, ast.List)):
+                    # Extend elts with the elements of the tuple/list
+                    elts = elts[:i] + target.elts + elts[i + 1:]
+                    tuple_found = True
+                    break
+
         results = []
         if isinstance(node.value, (ast.Tuple, ast.List)):
-            for n in node.value.elts:
+            for i, n in enumerate(node.value.elts):
+                self.default_output_index = i
                 results.extend(self._gettype(n))
+            self.default_output_index = 0
         else:
             rval = self._gettype(node.value)
             if (len(elts) > 1 and len(rval) == 1 and rval[0][1] == data.Array and rval[0][0] in self.sdfg.arrays
@@ -3435,6 +3619,10 @@ class ProgramVisitor(ExtNodeVisitor):
                     self, target, f'Cannot assign value to global attribute or field "{name}". '
                     'Please define it prior to calling the function/method.')
 
+            # Special case: Assignment is not necessary as the target name is used in the internal expression
+            if true_name == result and op is None:
+                continue
+
             if (not is_return and isinstance(target, ast.Name) and true_name and not op
                     and not isinstance(true_array, data.Scalar) and not (true_array.shape == (1, ))):
                 if true_name in self.views:
@@ -3487,18 +3675,18 @@ class ProgramVisitor(ExtNodeVisitor):
                     if result in self.sdfg.symbols:
                         rtype = self.sdfg.symbols[result]
                     elif symbolic.issymbolic(result):
-                        rtype = _sym_type(result)
+                        rtype = sym_type(result)
                     else:
                         rtype = type(result)
                     if name.startswith('__return'):
-                        true_name, new_data = self.sdfg.add_temp_transient([1], rtype)
+                        true_name, new_data = self.add_temp_transient([1], rtype)
                     else:
-                        true_name = self.sdfg.temp_data_name()
+                        true_name = name
                         if dtype:
                             ttype = dtype
                         else:
                             ttype = rtype
-                        _, new_data = self.sdfg.add_scalar(true_name, ttype, transient=True)
+                        true_name, new_data = self.sdfg.add_scalar(true_name, ttype, transient=True, find_new_name=True)
                     self.variables[name] = true_name
                     defined_vars[name] = true_name
                 if any(result in x for x in [self.sdfg._pgrids, self.sdfg._rdistrarrays, self.sdfg._subarrays]):
@@ -3512,7 +3700,13 @@ class ProgramVisitor(ExtNodeVisitor):
                 elif isinstance(result, str) and result in self.sdfg.arrays:
                     result_data = self.sdfg.arrays[result]
                     if (name.startswith('__return') and isinstance(result_data, data.Scalar)):
-                        true_name, new_data = self.sdfg.add_temp_transient([1], result_data.dtype)
+                        true_name, new_data = self.add_temp_transient([1], result_data.dtype)
+                        self.variables[name] = true_name
+                        defined_vars[name] = true_name
+                    elif name in self.annotated_types and isinstance(self.annotated_types[name], data.Reference):
+                        desc = copy.deepcopy(self.annotated_types[name])
+                        desc.transient = True
+                        true_name = self.sdfg.add_datadesc(name, desc, find_new_name=True)
                         self.variables[name] = true_name
                         defined_vars[name] = true_name
                     elif (not name.startswith('__return')
@@ -3530,7 +3724,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         defined_vars[name] = true_name
                         continue
                     elif not result_data.transient or result in self.sdfg.constants_prop:
-                        true_name, new_data = _add_transient_data(self.sdfg, result_data, dtype)
+                        true_name, new_data = _add_transient_data(self, self.sdfg, result_data, dtype)
                         self.variables[name] = true_name
                         defined_vars[name] = true_name
                     else:
@@ -3662,7 +3856,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     with_wcr = True
                     # WCR not needed in the assignment edge any longer.
                     op = None
-                tmp = self.sdfg.temp_data_name()
+                tmp = self.sdfg._find_new_name(self.get_target_name())
                 ind_name = add_indirection_subgraph(self.sdfg,
                                                     output_indirection,
                                                     None,
@@ -3683,7 +3877,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     self._add_state('rslice_%s_%d' % (new_name, node.lineno))
                     rnode = self.current_state.add_read(new_name, debuginfo=self.current_lineinfo)
                     memlet = Memlet.simple(new_name, str(rng))
-                    tmp = self.sdfg.temp_data_name()
+                    tmp = self.sdfg._find_new_name(self.get_target_name())
                     ind_name = add_indirection_subgraph(self.sdfg, self.current_state, rnode, None, memlet, tmp, self)
                     rtarget = ind_name
                 else:
@@ -4078,46 +4272,12 @@ class ProgramVisitor(ExtNodeVisitor):
         for arg in args_to_remove:
             args.remove(arg)
 
-        # Refresh temporary transient counter of the nested SDFG
-        sdfg.refresh_temp_transients()
-
         # Change connector names
         updated_args = []
-        arrays_before = list(sdfg.arrays.items())
         names_to_replace: Dict[str, str] = {}
         for i, (conn, arg) in enumerate(args):
-            if (conn in self.scope_vars or conn in self.sdfg.arrays or conn in self.sdfg.symbols):
-                if self.sdfg._temp_transients > sdfg._temp_transients:
-                    new_conn = self.sdfg.temp_data_name()
-                else:
-                    new_conn = sdfg.temp_data_name()
-                # warnings.warn("Renaming nested SDFG connector {c} to "
-                #               "{n}".format(c=conn, n=new_conn))
-                names_to_replace[conn] = new_conn
-                updated_args.append((new_conn, arg))
-                # Rename the connector's Views
-                for arrname, array in arrays_before:
-                    if (isinstance(array, data.View) and len(arrname) > len(conn)
-                            and arrname[:len(conn) + 1] == f'{conn}_'):
-                        new_name = f'{new_conn}{arrname[len(conn):]}'
-                        names_to_replace[arrname] = new_name
-            else:
-                updated_args.append((conn, arg))
+            updated_args.append((conn, arg))
         args = updated_args
-
-        # Change transient names
-        arrays_before = list(sdfg.arrays.items())
-        for arrname, array in arrays_before:
-            if array.transient and arrname[:5] == '__tmp':
-                if int(arrname[5:]) < self.sdfg._temp_transients:
-                    if self.sdfg._temp_transients > sdfg._temp_transients:
-                        new_name = self.sdfg.temp_data_name()
-                    else:
-                        new_name = sdfg.temp_data_name()
-                    names_to_replace[arrname] = new_name
-        self.sdfg._temp_transients = max(self.sdfg._temp_transients, sdfg._temp_transients)
-        sdfg._temp_transients = self.sdfg._temp_transients
-        replace_datadesc_names(sdfg, names_to_replace)
 
         # TODO: This workaround needs to be formalized (pass-by-assignment)
         slice_state = None
@@ -4143,8 +4303,8 @@ class ProgramVisitor(ExtNodeVisitor):
         # Handle scalar inputs to nested SDFG calls
         for conn, arg in args:
             if ((not isinstance(arg, str) or arg not in self.sdfg.arrays) and conn not in mapping.keys() | symbols):
-                argdict[conn] = state.add_tasklet('scalar', {}, {conn},
-                                                  '%s = %s' % (conn, arg),
+                argdict[conn] = state.add_tasklet('scalar', {}, {'__out'},
+                                                  f'__out = {arg}',
                                                   debuginfo=self.current_lineinfo)
 
         # Handle scalar inputs that become symbols in the nested SDFG
@@ -4178,9 +4338,12 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Add closure to global inputs/outputs (e.g., if processed as part of a map)
         for arrname in closure_arrays.keys():
-            if arrname not in names_to_replace:
+            if not (arrname in inputs or arrname in outputs) and arrname not in names_to_replace:
                 continue
-            narrname = names_to_replace[arrname]
+            if arrname in names_to_replace:
+                narrname = names_to_replace[arrname]
+            else:
+                narrname = arrname
 
             if narrname in inputs:
                 self.inputs[arrname] = (state, inputs[narrname], [])
@@ -4289,12 +4452,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 if strides and (strides[-1] != 1 or sdfg.arrays[a].strides[-1] != 1):
                     warnings.warn(f'Incompatible strides: inner {sdfg.arrays[a].strides} - outer {strides}')
 
-        nsdfg = state.add_nested_sdfg(sdfg,
-                                      self.sdfg,
-                                      inputs.keys(),
-                                      outputs.keys(),
-                                      mapping,
-                                      debuginfo=self.current_lineinfo)
+        nsdfg = state.add_nested_sdfg(sdfg, inputs.keys(), outputs.keys(), mapping, debuginfo=self.current_lineinfo)
         self._add_nested_symbols(nsdfg)
         inputs = {k: (state, v, set()) for k, v in inputs.items()}
         outputs = {k: (state, v, set()) for k, v in outputs.items()}
@@ -4426,7 +4584,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 # TODO: Use a meaningful exception
                 pass
             return_type = data.create_datadescriptor(return_type)
-            aname, _ = self.sdfg.add_temp_transient_like(return_type)
+            aname, _ = self.sdfg.add_temp_transient_like(return_type, name=self._get_name_from_node(parent.target))
             return_names = [aname]
             outargs.extend(return_names)
             allargs.extend([f'__out_{n}' for n in return_names])
@@ -4458,18 +4616,19 @@ class ProgramVisitor(ExtNodeVisitor):
                     tarr = defined_arrays[tname]
                     if isinstance(t, ast.Subscript):
                         dtype, shape = self.visit_Subscript(copy.deepcopy(t), True)
-                        n, arr = self.sdfg.add_temp_transient(shape, dtype)
+                        n = name + '_slice'
+                        n, arr = self.sdfg.add_transient(n, shape, dtype, find_new_name=True)
                     else:
                         if isinstance(tarr, data.Scalar):
-                            n, arr = self.sdfg.add_scalar(self.sdfg.temp_data_name(), tarr.dtype, transient=True)
+                            n, arr = self.sdfg.add_scalar(name, tarr.dtype, transient=True, find_new_name=True)
                         else:
-                            n, arr = self.sdfg.add_temp_transient_like(tarr)
+                            n, arr = self.sdfg.add_temp_transient_like(tarr, name=name)
                 elif name in self.annotated_types:
                     dtype = self.annotated_types[name]
                     if isinstance(dtype, data.Data):
-                        n, arr = self.sdfg.add_temp_transient_like(dtype)
+                        n, arr = self.sdfg.add_temp_transient_like(dtype, name=name)
                     elif isinstance(dtype, dtypes.typeclass):
-                        n, arr = self.sdfg.add_temp_transient((1, ), dtype)
+                        n, arr = self.sdfg.add_transient(name, (1, ), dtype, find_new_name=True)
                     else:
                         n, arr = self.sdfg.add_scalar(name, dtypes.pyobject(), transient=True, find_new_name=True)
                 else:
@@ -4797,7 +4956,19 @@ class ProgramVisitor(ExtNodeVisitor):
             result = result[1]
 
         if not isinstance(result, (tuple, list)):
-            return [result]
+            result = [result]
+
+        # Register input/output data containers
+        for res in result:
+            try:
+                if res in self.inputs and res not in self.outputs:
+                    # Mark the container as an output of the SDFG
+                    self.outputs[res] = (self.last_block, *self.inputs[res][1:])
+            except TypeError:
+                # This error may occur if `res` is not hashable, for example a slice in Python 3.9.
+                # Such results are not containers and nothing needs to be done about them, so we can ignore the error.
+                pass
+
         return result
 
     # Used for memlet expressions outside of tasklets, otherwise ignored
@@ -5227,9 +5398,31 @@ class ProgramVisitor(ExtNodeVisitor):
                 strides = None
 
             if is_index:
-                tmp = self.sdfg.temp_data_name()
-                tmp, tmparr = self.sdfg.add_scalar(tmp, arrobj.dtype, arrobj.storage, transient=True)
+                tmp = self.get_target_name(default=f'{array}_index')
+                tmp, tmparr = self.sdfg.add_scalar(tmp,
+                                                   arrobj.dtype,
+                                                   arrobj.storage,
+                                                   transient=True,
+                                                   find_new_name=True)
             else:
+                for i in range(len(other_subset.ranges)):
+                    rb, re, rs = other_subset.ranges[i]
+                    if (rs < 0) == True:
+                        raise DaceSyntaxError(
+                            self, node, 'Negative strides are not supported in subscripts. '
+                            'Please use a Map scope to express this operation.')
+                    re = re - rb
+                    rb = 0
+                    if rs != 1:
+                        # NOTE: We use the identity floor(A/B) = ceiling((A + 1) / B) - 1
+                        # because Range.size() uses the ceiling method and that way we avoid
+                        # false negatives when testing the equality of data shapes.
+                        # re = re // rs
+                        re = sympy.ceiling((re + 1) / rs) - 1
+                        strides[i] *= rs
+                        rs = 1
+                    other_subset.ranges[i] = (rb, re, rs)
+
                 tmp, tmparr = self.sdfg.add_view(array,
                                                  other_subset.size(),
                                                  arrobj.dtype,
@@ -5487,10 +5680,15 @@ class ProgramVisitor(ExtNodeVisitor):
         other_subset.squeeze()
         if _subset_has_indirection(rng, self):
             memlet = Memlet.simple(array, rng)
-            tmp = self.sdfg.temp_data_name()
+            tmp = self.sdfg._find_new_name(f'{arrname}_indirect_slice')
             tmp = add_indirection_subgraph(self.sdfg, self.current_state, rnode, None, memlet, tmp, self)
         else:
-            tmp, tmparr = self.sdfg.add_temp_transient(other_subset.size(), arrobj.dtype, arrobj.storage)
+            tmp = self.sdfg._find_new_name(f'{arrname}_slice')
+            tmp, tmparr = self.sdfg.add_transient(tmp,
+                                                  other_subset.size(),
+                                                  arrobj.dtype,
+                                                  arrobj.storage,
+                                                  find_new_name=True)
             wnode = self.current_state.add_write(tmp, debuginfo=self.current_lineinfo)
             self.current_state.add_nedge(
                 rnode, wnode, Memlet.simple(array, rng, num_accesses=rng.num_elements(), other_subset_str=other_subset))
@@ -5727,7 +5925,7 @@ class ProgramVisitor(ExtNodeVisitor):
             aname, expr)
 
         # Create an output array with the right shape
-        outname, _ = self.sdfg.add_temp_transient(output_shape, idesc.dtype)
+        outname, _ = self.add_temp_transient(output_shape, idesc.dtype)
         output_memlet.data = outname
 
         # Make slice subgraph - a mapped tasklet with the proper dimensions

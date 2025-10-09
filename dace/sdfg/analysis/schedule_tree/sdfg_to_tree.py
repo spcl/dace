@@ -1,12 +1,12 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 from collections import defaultdict
 import copy
 from typing import Dict, List, Optional, Set
 import dace
 from dace import data, subsets, symbolic
-from dace.codegen import control_flow as cf
 from dace.sdfg.sdfg import InterstateEdge, SDFG
-from dace.sdfg.state import ControlFlowBlock, SDFGState
+from dace.sdfg.state import (ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, ReturnBlock, SDFGState,
+                             UnstructuredControlFlow)
 from dace.sdfg import utils as sdutil, graph as gr, nodes as nd
 from dace.sdfg.replace import replace_datadesc_names
 from dace.frontend.python.astutils import negate_expr
@@ -59,14 +59,15 @@ def dealias_sdfg(sdfg: SDFG):
                 if parent_name == name or parent_name in nsdfg.arrays:
                     continue
                 assert parent_name in parent_sdfg.arrays
-                replacements[name] = parent_name
-                parent_edges[name] = edge
-                if parent_name in inv_replacements:
-                    inv_replacements[parent_name].append(name)
-                    to_unsqueeze.add(parent_name)
-                else:
-                    inv_replacements[parent_name] = [name]
-                break
+                if parent_name != name:
+                    replacements[name] = parent_name
+                    parent_edges[name] = edge
+                    if parent_name in inv_replacements:
+                        inv_replacements[parent_name].append(name)
+                        to_unsqueeze.add(parent_name)
+                    else:
+                        inv_replacements[parent_name] = [name]
+                    break
 
         if to_unsqueeze:
             for parent_name in to_unsqueeze:
@@ -548,7 +549,7 @@ def prepare_schedule_tree_edges(state: SDFGState) -> Dict[gr.MultiConnectorEdge[
     return result, scope_to_edges
 
 
-def state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
+def _state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
     """
     Use scope-aware topological sort to get nodes by scope and return the schedule tree of this state.
 
@@ -564,7 +565,7 @@ def state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
     edges_to_ignore = set()
 
     # Handle all unscoped edges to generate output views
-    views = _generate_views_in_scope(scope_to_edges[None], edge_to_stree, sdfg, state)
+    views = _generate_views_in_scope(scope_to_edges[None], edge_to_stree)
     result.extend(views)
 
     scopes: List[List[tn.ScheduleTreeNode]] = []
@@ -579,7 +580,7 @@ def state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
                     edges_to_ignore.add(e)
 
             # Handle all scoped edges to generate (views)
-            views = _generate_views_in_scope(scope_to_edges[node], edge_to_stree, sdfg, state)
+            views = _generate_views_in_scope(scope_to_edges[node], edge_to_stree)
             result.extend(views)
 
             # Create scope node and add to stack
@@ -670,9 +671,104 @@ def state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
     return result
 
 
-def _generate_views_in_scope(edges: List[gr.MultiConnectorEdge[Memlet]],
-                             edge_to_stree: Dict[gr.MultiConnectorEdge[Memlet], tn.ScheduleTreeNode], sdfg: SDFG,
-                             state: SDFGState) -> List[tn.ScheduleTreeNode]:
+def _isedge_schedule_tree(graph: ControlFlowRegion,
+                          edge: gr.Edge[InterstateEdge],
+                          emit_goto_for_successors: bool = False) -> List[tn.ScheduleTreeNode]:
+    result: List[tn.ScheduleTreeNode] = []
+    for aname, aval in edge.data.assignments.items():
+        assign_node = tn.AssignNode(name=aname, value=CodeBlock(aval), edge=InterstateEdge(assignments={aname: aval}))
+        result.append(assign_node)
+
+    edge_body: List[tn.ScheduleTreeNode] = []
+    if emit_goto_for_successors:
+        goto_node = tn.GotoNode(target=edge.dst.label)
+        edge_body.append(goto_node)
+
+    if edge.data.is_unconditional():
+        result.extend(edge_body)
+    else:
+        # The edge carries a condition, thus the successor is not necessarily executed.
+        if emit_goto_for_successors:
+            # This indicates that we are in unstructured control flow, so a goto for all successors is placed
+            # regardless. No goto needs to be placed for the exit.
+            state_if_node = tn.StateIfScope(condition=edge.data.condition, children=edge_body)
+        else:
+            # If not emitting gotos for successors, this indicates that we are in structured control flow. In this case,
+            # rather than hiding any successors behind a condition, we create a return / exit goto node that is executed
+            # if the inverse of the condition holds, i.e., the successor is NOT executed.
+            exit_goto = tn.GotoNode(target=None)
+            state_if_node = tn.StateIfScope(condition=CodeBlock(negate_expr(edge.data.condition)), children=[exit_goto])
+        result.append(state_if_node)
+
+    return result
+
+
+def _block_schedule_tree(block: ControlFlowBlock) -> List[tn.ScheduleTreeNode]:
+    if isinstance(block, ControlFlowRegion):
+        children: List[tn.ScheduleTreeNode] = []
+        if isinstance(block.start_block, SDFGState):
+            first_state_node = tn.StateLabel(state=block.start_block)
+            children.append(first_state_node)
+
+        if isinstance(block, UnstructuredControlFlow) or any(block.out_degree(n) > 1 for n in block.nodes()):
+            # This control flow graph contains multiple outgoing edges from a single node, which indicates
+            # unstructured control flow. This is represented through a GBlock that wraps everything.
+            subnodes: List[tn.ScheduleTreeNode] = []
+            processed_edges: Set[gr.Edge[InterstateEdge]] = set()
+            for n in block.nodes():
+                subnodes.extend(_block_schedule_tree(n))
+                for oe in block.out_edges(n):
+                    if oe not in processed_edges:
+                        subnodes.extend(_isedge_schedule_tree(block, oe, emit_goto_for_successors=True))
+                        processed_edges.add(oe)
+            gblock = tn.GBlock(children=subnodes)
+            children = [gblock]
+        else:
+            # No unstructured control flow present - traverse in a linear fashion.
+            pivot = block.start_block
+            while pivot is not None:
+                children.extend(_block_schedule_tree(pivot))
+                oedges = block.out_edges(pivot)
+                if len(oedges) == 1:
+                    pivot = oedges[0].dst
+                    children.extend(_isedge_schedule_tree(block, oedges[0], emit_goto_for_successors=False))
+                else:
+                    pivot = None
+
+        if isinstance(block, LoopRegion):
+            # If this is a loop region, wrap everything in a LoopScope node.
+            loop_node = tn.LoopScope(loop=block, children=children)
+            return [loop_node]
+        return children
+    elif isinstance(block, ConditionalBlock):
+        result: List[tn.ScheduleTreeNode] = []
+        if_node = tn.IfScope(condition=block.branches[0][0], children=_block_schedule_tree(block.branches[0][1]))
+        result.append(if_node)
+        for cond, branch_body in block.branches[1:]:
+            if cond is not None:
+                elif_node = tn.ElifScope(condition=cond, children=_block_schedule_tree(branch_body))
+                result.append(elif_node)
+            else:
+                else_node = tn.ElseScope(children=_block_schedule_tree(branch_body))
+                result.append(else_node)
+        return result
+    elif isinstance(block, SDFGState):
+        return _state_schedule_tree(block)
+    elif isinstance(block, ReturnBlock):
+        # For return blocks, add a goto node to the end of the schedule tree.
+        # NOTE: Return blocks currently always exit the entire SDFG context they are contained in, meaning that the exit
+        # goto has target=None. However, in the future we want to adapt Return blocks to be able to return only a
+        # function region, if contained inside of one - in which case the target will need to be changed to NOT exit the
+        # entire SDFG.
+        goto_node = tn.GotoNode(target=None)
+        return [goto_node]
+    else:
+        raise tn.UnsupportedScopeException(type(block).__name__)
+
+
+def _generate_views_in_scope(
+        edges: List[gr.MultiConnectorEdge[Memlet]],
+        edge_to_stree: Dict[gr.MultiConnectorEdge[Memlet], tn.ScheduleTreeNode]) -> List[tn.ScheduleTreeNode]:
     """
     Generates all view and reference set edges in the correct order. This function is intended to be used
     at the beginning of a scope.
@@ -732,186 +828,16 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
     xfh.replace_code_to_code_edges(sdfg)
 
     if toplevel:  # Top-level SDFG preparation (only perform once)
-        dealias_sdfg(sdfg)
         # Handle name collisions (in arrays, state labels, symbols)
         remove_name_collisions(sdfg)
+        # Ensure no arrays alias in SDFG tree
+        dealias_sdfg(sdfg)
 
     #############################
 
-    # Create initial tree from CFG
-    cfg: cf.ControlFlow = cf.structured_control_flow_tree_with_regions(sdfg, lambda _: '')
-
-    def transition_totree(node: cf.ControlFlow, parent: cf.GeneralBlock,
-                          block: ControlFlowBlock) -> List[tn.ScheduleTreeNode]:
-        result: List[tn.ScheduleTreeNode] = []
-        for e in block.parent_graph.out_edges(block):
-            edge_body = []
-
-            if e not in parent.assignments_to_ignore:
-                for aname, aval in e.data.assignments.items():
-                    assign_node = tn.AssignNode(name=aname,
-                                                value=CodeBlock(aval),
-                                                edge=InterstateEdge(assignments={aname: aval}))
-                    assign_node.sdfg = block.sdfg
-                    edge_body.append(assign_node)
-
-            if not parent.sequential:
-                if e not in parent.gotos_to_ignore:
-                    goto_node = tn.GotoNode(target=e.dst.label)
-                    goto_node.sdfg = block.sdfg
-                    edge_body.append(goto_node)
-                else:
-                    if e in parent.gotos_to_break:
-                        break_node = tn.BreakNode()
-                        break_node.sdfg = block.sdfg
-                        edge_body.append(break_node)
-                    elif e in parent.gotos_to_continue:
-                        continue_node = tn.ContinueNode()
-                        continue_node.sdfg = block.sdfg
-                        edge_body.append(continue_node)
-            else:
-                # If the next state is not the expected target (loop-back edge, next state),
-                # emit goto
-                expected_transition = False
-                if isinstance(parent, (cf.ForScope, cf.WhileScope)) and e.dst is parent.guard:
-                    expected_transition = True
-                elif isinstance(parent, cf.DoWhileScope) and e.dst is parent.body[0]:
-                    expected_transition = True
-                else:
-                    next_block = cf.find_next_block(node)
-                    # Next state in block or first state in next CF block
-                    if next_block is not None:
-                        if isinstance(next_block, cf.GeneralLoopScope):  # Special case for control flow regions
-                            if e.dst is next_block.loop:
-                                expected_transition = True
-                        elif next_block.first_block is e.dst:
-                            expected_transition = True
-
-                if not expected_transition and e not in parent.gotos_to_ignore:
-                    goto_node = tn.GotoNode(target=e.dst.label)
-                    goto_node.sdfg = block.sdfg
-                    edge_body.append(goto_node)
-
-            if e not in parent.gotos_to_ignore and not e.data.is_unconditional():
-                if sdfg.out_degree(block) == 1 and parent.sequential:
-                    # Conditional state in sequential block! Add "if not condition goto exit"
-                    state_if_node = tn.StateIfScope(condition=CodeBlock(negate_expr(e.data.condition)),
-                                                    children=[tn.GotoNode(target=None)])
-                    state_if_node.sdfg = block.sdfg
-                    result.append(state_if_node)
-                    result.extend(edge_body)
-                else:
-                    # Add "if condition" with the body above
-                    state_if_node = tn.StateIfScope(condition=e.data.condition, children=edge_body) 
-                    state_if_node.sdfg = block.sdfg
-                    result.append(state_if_node)
-            else:
-                result.extend(edge_body)
-        return result
-
-    # Traverse said tree (also into states) to create the schedule tree
-    def totree(node: cf.ControlFlow, parent: cf.GeneralBlock = None) -> List[tn.ScheduleTreeNode]:
-        result: List[tn.ScheduleTreeNode] = []
-        if isinstance(node, cf.GeneralBlock):
-            subnodes: List[tn.ScheduleTreeNode] = []
-            for n in node.elements:
-                subnodes.extend(totree(n, node))
-            if not node.sequential:
-                # Nest in general block
-                gblock = tn.GBlock(children=subnodes)
-                gblock.sdfg = node.first_block.sdfg
-                result = [gblock]
-            else:
-                # Use the sub-nodes directly
-                result = subnodes
-
-        elif isinstance(node, cf.BasicCFBlock):
-            result = state_schedule_tree(node.state)
-
-            # Add interstate assignments unrelated to structured control flow
-            if parent is not None:
-                result.extend(transition_totree(node, parent, node.state))
-        elif isinstance(node, cf.ForScope):
-            for_node = tn.ForScope(header=node, children=totree(node.body))
-            for_node = node.first_block.sdfg
-            result.append(for_node)
-        elif isinstance(node, cf.IfScope):
-            if_node = tn.IfScope(condition=node.condition, children=totree(node.body))
-            if_node.sdfg = node.first_block.sdfg
-            result.append(if_node)
-            if node.orelse is not None:
-                else_node = tn.ElseScope(children=totree(node.orelse))
-                else_node.sdfg = node.first_block.sdfg
-                result.append(else_node)
-        elif isinstance(node, cf.IfElseChain):
-            # Add "if" for the first condition, "elif"s for the rest
-            if_node = tn.IfScope(condition=node.body[0][0], children=totree(node.body[0][1]))
-            if_node.sdfg = node.first_block.sdfg
-            result.append(if_node)
-            for cond, body in node.body[1:]:
-                elif_node = tn.ElifScope(condition=cond, children=totree(body))
-                elif_node.sdfg = node.first_block.sdfg
-                result.append(elif_node)
-            # "else goto exit"
-            goto_node = tn.GotoNode(target=None)
-            goto_node.sdfg = node.first_block.sdfg
-            else_node = tn.ElseScope(children=[goto_node])
-            else_node.sdfg = node.first_block.sdfg
-            result.append(else_node)
-        elif isinstance(node, cf.WhileScope):
-            while_node = tn.WhileScope(header=node, children=totree(node.body))
-            while_node.sdfg = node.first_block.sdfg
-            result.append(while_node)
-        elif isinstance(node, cf.DoWhileScope):
-            do_while_node = tn.DoWhileScope(header=node, children=totree(node.body))
-            do_while_node.sdfg = node.sdfg
-            result.append(do_while_node)
-        elif isinstance(node, cf.GeneralLoopScope):
-            loop_node = tn.GeneralLoopScope(header=node, children=totree(node.body))
-            loop_node.sdfg = node.loop.sdfg
-            result.append(loop_node)
-
-            # Add interstate assignments unrelated to structured control flow
-            if parent is not None:
-                result.extend(transition_totree(node, parent, node.loop))
-        elif isinstance(node, cf.GeneralConditionalScope):
-            if_node = tn.IfScope(condition=node.conditional.branches[0][0],
-                                 children=totree(node.branch_bodies[0][1]),
-                                 cond_block=node.conditional)
-            if_node.sdfg = node.conditional.sdfg
-            result.append(if_node)
-            for i, (cond, _) in enumerate(node.conditional.branches[1:]):
-                if cond is not None:
-                    elif_node = tn.ElifScope(condition=cond, children=totree(node.branch_bodies[i][1]))
-                    elif_node.sdfg = node.conditional.sdfg
-                    result.append(elif_node)
-                else:
-                    else_node = tn.ElseScope(children=totree(node.branch_bodies[i][1]))
-                    else_node.sdfg = node.conditional.sdfg
-                    result.append(else_node)
-
-            # Add interstate assignments unrelated to structured control flow
-            if parent is not None:
-                result.extend(transition_totree(node, parent, node.conditional))
-        elif isinstance(node, cf.ReturnCFBlock):
-            goto_node = tn.GotoNode(target=None)
-            goto_node.sdfg = node.block.sdfg
-            result.append(goto_node)
-        else:
-            # e.g., "SwitchCaseScope"
-            raise tn.UnsupportedScopeException(type(node).__name__)
-
-        if node.first_block is not None:
-            first_state_node = tn.StateLabel(state=node.first_block)
-            first_state_node.sdfg = node.first_block.sdfg
-            result = [first_state_node] + result
-
-        return result
-
-    # Recursive traversal of the control flow tree
-    result = tn.ScheduleTreeScope(children=totree(cfg))
-    tn.validate_has_no_other_node_types(result)
+    result = tn.ScheduleTreeScope(children=_block_schedule_tree(sdfg))
     result.sdfg = sdfg
+    tn.validate_has_no_other_node_types(result)
 
     # Clean up tree
     stpasses.remove_unused_and_duplicate_labels(result)

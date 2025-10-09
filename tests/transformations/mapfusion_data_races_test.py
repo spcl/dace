@@ -3,7 +3,7 @@ import dace
 import numpy as np
 
 from dace import nodes
-from dace.transformation.dataflow import MapFusion
+from dace.transformation.dataflow import MapFusionVertical
 from dace.transformation.auto.auto_optimize import greedy_fuse
 
 N = dace.symbol('N')
@@ -50,14 +50,14 @@ def rw_data_race_4(A: dace.float64[20], B: dace.float64[20]):
 
 def test_rw_data_race():
     sdfg = rw_data_race.to_sdfg(simplify=True)
-    sdfg.apply_transformations_repeated(MapFusion)
+    sdfg.apply_transformations_repeated(MapFusionVertical)
     map_entry_nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
     assert (len(map_entry_nodes) > 1)
 
 
 def test_rw_data_race_2_mf():
     sdfg = rw_data_race_2.to_sdfg(simplify=True)
-    nb_applied = sdfg.apply_transformations_repeated(MapFusion)
+    nb_applied = sdfg.apply_transformations_repeated(MapFusionVertical)
     map_entry_nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
     assert nb_applied > 0
     assert (len(map_entry_nodes) > 1)
@@ -79,7 +79,7 @@ def test_rw_data_race_3_sgf():
 
 def test_rw_data_race_3_mf():
     sdfg = rw_data_race_3.to_sdfg(simplify=True)
-    nb_applied = sdfg.apply_transformations_repeated(MapFusion)
+    nb_applied = sdfg.apply_transformations_repeated(MapFusionVertical)
     map_entry_nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
     assert (len(map_entry_nodes) > 1)
     assert nb_applied > 0
@@ -89,7 +89,7 @@ def test_rw_data_race_4_mf():
     # It is technically possible to fuse it, because there is only a point wise dependency.
     #  However, it is very hard to detect and handle correct.
     sdfg = rw_data_race_4.to_sdfg(simplify=True)
-    sdfg.apply_transformations_repeated(MapFusion)
+    sdfg.apply_transformations_repeated(MapFusionVertical)
     map_entry_nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
     assert (len(map_entry_nodes) >= 1)
 

@@ -9,6 +9,7 @@ import numpy as np
 
 import dace
 from dace import dtypes, subsets, symbolic
+from dace.data import _prod as prod
 from dace.sdfg.nodes import AccessNode
 from dace.sdfg import SDFG, SDFGState, InterstateEdge
 from dace.memlet import Memlet
@@ -159,19 +160,14 @@ def create_batch_gemm_sdfg(dtype, strides, alpha, beta):
     return sdfg
 
 
-def prod(iterable):
-    return reduce(lambda x, y: x * y, iterable, 1)
-
-
-@oprepo.replaces('numpy.einsum')
-def create_einsum_sdfg(pv: 'dace.frontend.python.newast.ProgramVisitor',
-                       sdfg: SDFG,
+def create_einsum_sdfg(sdfg: SDFG,
                        state: SDFGState,
-                       einsum_string: StringLiteral,
+                       einsum_string: str,
                        *arrays: str,
                        dtype: Optional[dtypes.typeclass] = None,
                        optimize: bool = False,
                        output: Optional[str] = None,
+                       output_name: Optional[str] = None,
                        alpha: Optional[symbolic.SymbolicType] = 1.0,
                        beta: Optional[symbolic.SymbolicType] = 0.0):
     return _create_einsum_internal(sdfg,
@@ -181,6 +177,7 @@ def create_einsum_sdfg(pv: 'dace.frontend.python.newast.ProgramVisitor',
                                    dtype=dtype,
                                    optimize=optimize,
                                    output=output,
+                                   output_name=output_name,
                                    alpha=alpha,
                                    beta=beta)[0]
 
@@ -205,6 +202,7 @@ def _create_einsum_internal(sdfg: SDFG,
                             dtype: Optional[dtypes.typeclass] = None,
                             optimize: bool = False,
                             output: Optional[str] = None,
+                            output_name: Optional[str] = None,
                             nodes: Optional[Dict[str, AccessNode]] = None,
                             init_output: bool = None,
                             alpha: Optional[symbolic.SymbolicType] = None,
@@ -265,6 +263,7 @@ def _create_einsum_internal(sdfg: SDFG,
                                                           dtype=dtype,
                                                           optimize=False,
                                                           output=None,
+                                                          output_name=output_name,
                                                           nodes=input_nodes,
                                                           init_output=init_output,
                                                           alpha=alpha,
@@ -283,7 +282,10 @@ def _create_einsum_internal(sdfg: SDFG,
 
     if output is None:
         dtype = dtype or sdfg.arrays[arrays[0]].dtype
-        output, odesc = sdfg.add_temp_transient(output_shape, dtype)
+        if output_name is None:
+            output, odesc = sdfg.add_temp_transient(output_shape, dtype)
+        else:
+            output, odesc = sdfg.add_transient(output_name, output_shape, dtype, find_new_name=True)
         to_init = True
     else:
         odesc = sdfg.arrays[output]
@@ -399,14 +401,15 @@ def _create_einsum_internal(sdfg: SDFG,
         if symbolic.equal_valued(1, strides['sCM']):
             strides['sCM'], strides['sCN'] = strides['sCN'], strides['sCM']
             strides['M'], strides['N'] = strides['N'], strides['M']
-            (strides['sAM'], strides['sAK'], strides['sAB'], strides['sBK'], strides['sBN'], strides['sBB']) = \
-                (strides['sBN'], strides['sBK'], strides['sBB'], strides['sAK'], strides['sAM'], strides['sAB'])
+            (strides['sAM'], strides['sAK'], strides['sAB'], strides['sBK'], strides['sBN'],
+             strides['sBB']) = (strides['sBN'], strides['sBK'], strides['sBB'], strides['sAK'], strides['sAM'],
+                                strides['sAB'])
             a, b = b, a
 
         # Create nested SDFG for GEMM
         nsdfg = create_batch_gemm_sdfg(dtype, strides, alpha, beta)
 
-        nsdfg_node = state.add_nested_sdfg(nsdfg, None, {'X', 'Y'}, {'Z'}, strides)
+        nsdfg_node = state.add_nested_sdfg(nsdfg, {'X', 'Y'}, {'Z'}, strides)
         state.add_edge(a, None, nsdfg_node, 'X', Memlet.from_array(a.data, a.desc(sdfg)))
         state.add_edge(b, None, nsdfg_node, 'Y', Memlet.from_array(b.data, b.desc(sdfg)))
         state.add_edge(nsdfg_node, 'Z', c, None, Memlet.from_array(c.data, c.desc(sdfg)))

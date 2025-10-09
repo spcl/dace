@@ -1,4 +1,4 @@
-# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """ Various utility functions to create, traverse, and modify SDFGs. """
 
 import collections
@@ -20,6 +20,7 @@ from dace.sdfg import nodes as nd, graph as gr, propagation
 from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs
 from dace.cli.progress import optional_progressbar
 from typing import Any, Callable, Dict, Generator, List, Optional, Set, Sequence, Tuple, Type, Union
+from dace.properties import CodeBlock
 
 
 def node_path_graph(*args) -> gr.OrderedDiGraph:
@@ -172,6 +173,64 @@ def dfs_topological_sort(G, sources=None, condition=None, reverse=False):
                         stack.append((child, iter(neighbors(child))))
             except StopIteration:
                 stack.pop()
+
+
+def _find_nodes_impl(
+    node_to_start: Node,
+    state: SDFGState,
+    forward: bool,
+    seen: Optional[Set[Node]],
+) -> Set[Node]:
+    to_scan: List[Node] = [node_to_start]
+    scanned_nodes: Set[Node] = set() if seen is None else seen
+    if forward:
+        get_edges = state.out_edges
+        get_node = lambda e: e.dst
+    else:
+        get_edges = state.in_edges
+        get_node = lambda e: e.src
+    while len(to_scan) != 0:
+        node_to_scan = to_scan.pop()
+        if node_to_scan in scanned_nodes:
+            continue
+        to_scan.extend(get_node(edge) for edge in get_edges(node_to_scan) if get_node(edge) not in scanned_nodes)
+        scanned_nodes.add(node_to_scan)
+    return scanned_nodes
+
+
+def find_downstream_nodes(node_to_start: Node, state: SDFGState, seen: Optional[Set[Node]] = None) -> Set[Node]:
+    """Find all downstream nodes of `node_to_start`.
+
+    The function will explore the state, similar to a BFS, just that the order in which the nodes of
+    the dataflow is explored is unspecific. It is possible to pass a `set` of nodes that should be
+    considered as already visited. It is important that the function will return the set of found
+    nodes. In case `seen` was passed that `set` will be updated in place and be returned.
+
+    :param node_to_start: Where to start the exploration of the state.
+    :param state: The state on which we operate on.
+    :param seen: The set of already seen nodes.
+
+    :note: See also `find_upstream_nodes()` in case the dataflow should be explored in the reverse direction.
+    """
+    return _find_nodes_impl(node_to_start=node_to_start, state=state, seen=seen, forward=True)
+
+
+def find_upstream_nodes(node_to_start: Node, state: SDFGState, seen: Optional[Set[Node]] = None) -> Set[Node]:
+    """Find all upstream nodes of `node_to_start`.
+
+    The function will explore the state, similar to a BFS, just that the order in which the nodes of
+    the dataflow is explored is unspecific. It is possible to pass a `set` of nodes that should be
+    considered as already visited. It is important that the function will return the set of found
+    nodes. In case `seen` was passed that `set` will be updated in place and be returned.
+
+    The main difference to `find_downstream_nodes()` is that the dataflow is traversed in reverse
+    order or "against the flow".
+
+    :param node_to_start: Where to start the exploration of the state.
+    :param state: The state on which we operate on.
+    :param seen: The set of already seen nodes.
+    """
+    return _find_nodes_impl(node_to_start=node_to_start, state=state, seen=seen, forward=False)
 
 
 class StopTraversal(Exception):
@@ -807,24 +866,32 @@ def get_all_view_edges(state: SDFGState, view: nd.AccessNode) -> List[gr.MultiCo
     if existent, else None
     """
     sdfg = state.sdfg
-    node = view
-    desc = sdfg.arrays[node.data]
+    previous_node = view
     result = []
+
+    desc = sdfg.arrays[previous_node.data]
+    forward = None
     while isinstance(desc, dt.View):
-        edge = get_view_edge(state, node)
+        edge = get_view_edge(state, previous_node)
         if edge is None:
             break
-        old_node = node
-        if edge.dst is view:
-            node = edge.src
+
+        if forward is None:
+            forward = edge.src is previous_node
+
+        if forward:
+            next_node = edge.dst
         else:
-            node = edge.dst
-        if node is old_node:
+            next_node = edge.src
+
+        if previous_node is next_node:
             break
-        if not isinstance(node, nd.AccessNode):
+        if not isinstance(next_node, nd.AccessNode):
             break
-        desc = sdfg.arrays[node.data]
+        desc = sdfg.arrays[next_node.data]
         result.append(edge)
+        previous_node = next_node
+
     return result
 
 
@@ -1582,7 +1649,7 @@ def _tswds_cf_region(
             if edge.src not in visited:
                 visited.add(edge.src)
                 if isinstance(edge.src, SDFGState):
-                    yield from _tswds_state(sdfg, edge.src, {}, recursive)
+                    yield from _tswds_state(sdfg, edge.src, symbols, recursive)
                 elif isinstance(edge.src, AbstractControlFlowRegion):
                     yield from _tswds_cf_region(sdfg, edge.src, symbols, recursive)
 
@@ -2007,13 +2074,15 @@ def get_control_flow_block_dominators(sdfg: SDFG,
             idom = {}
         for cfg in sdfg.all_control_flow_regions(parent_first=True):
             if isinstance(cfg, ConditionalBlock):
-                continue
-            sinks = cfg.sink_nodes()
-            if len(sinks) > 1:
-                added_sinks[cfg] = cfg.add_state()
-                for s in sinks:
-                    cfg.add_edge(s, added_sinks[cfg], InterstateEdge())
-            idom.update(nx.immediate_dominators(cfg.nx, cfg.start_block))
+                for _, b in cfg.branches:
+                    idom[b] = cfg
+            else:
+                sinks = cfg.sink_nodes()
+                if len(sinks) > 1:
+                    added_sinks[cfg] = cfg.add_state()
+                    for s in sinks:
+                        cfg.add_edge(s, added_sinks[cfg], InterstateEdge())
+                idom.update(nx.immediate_dominators(cfg.nx, cfg.start_block))
         # Compute the transitive relationship of immediate dominators:
         # - For every start state in a control flow region, the immediate dominator is the immediate dominator of the
         #   parent control flow region.
@@ -2056,28 +2125,33 @@ def get_control_flow_block_dominators(sdfg: SDFG,
 
         for cfg in sdfg.all_control_flow_regions(parent_first=True):
             if isinstance(cfg, ConditionalBlock):
-                continue
-            # Get immediate post-dominators
-            sink_nodes = cfg.sink_nodes()
-            if len(sink_nodes) > 1:
-                sink = cfg.add_state()
-                added_sinks[cfg] = sink
-                sinks_per_cfg[cfg] = sink
-                for snode in sink_nodes:
-                    cfg.add_edge(snode, sink, dace.InterstateEdge())
-            elif len(sink_nodes) == 0:
-                return None
+                sinks_per_cfg[cfg] = cfg
+                for _, b in cfg.branches:
+                    ipostdom[b] = cfg
             else:
-                sink = sink_nodes[0]
-                sinks_per_cfg[cfg] = sink
-            ipostdom.update(nx.immediate_dominators(cfg._nx.reverse(), sink))
+                # Get immediate post-dominators
+                sink_nodes = cfg.sink_nodes()
+                if len(sink_nodes) > 1:
+                    sink = cfg.add_state()
+                    added_sinks[cfg] = sink
+                    sinks_per_cfg[cfg] = sink
+                    for snode in sink_nodes:
+                        cfg.add_edge(snode, sink, dace.InterstateEdge())
+                elif len(sink_nodes) == 0:
+                    return None
+                else:
+                    sink = sink_nodes[0]
+                    sinks_per_cfg[cfg] = sink
+                ipostdom.update(nx.immediate_dominators(cfg._nx.reverse(), sink))
 
         # Compute the transitive relationship of immediate postdominators, similar to how it works for immediate
         # dominators, but inverse.
         for k, _ in ipostdom.items():
-            if k.parent_graph is not sdfg and k is sinks_per_cfg[k.parent_graph]:
+            if k.parent_graph is not sdfg and (k is sinks_per_cfg[k.parent_graph]
+                                               or isinstance(k.parent_graph, ConditionalBlock)):
                 next_pdom = ipostdom[k.parent_graph]
-                while next_pdom.parent_graph is not sdfg and next_pdom is sinks_per_cfg[next_pdom.parent_graph]:
+                while next_pdom.parent_graph is not sdfg and (next_pdom is sinks_per_cfg[next_pdom.parent_graph]
+                                                              or isinstance(next_pdom.parent_graph, ConditionalBlock)):
                     next_pdom = ipostdom[next_pdom.parent_graph]
                 ipostdom[k] = next_pdom
         changed = True
@@ -2244,3 +2318,330 @@ def get_control_flow_block_dominators_f2dace(sdfg: SDFG,
 
         if all_postdom is not None:
             all_postdom.update(cfg_analysis.all_dominators(sdfg, ipostdom))
+
+
+def set_nested_sdfg_parent_references(sdfg: SDFG):
+    """
+    Sets the parent_sdfg attribute for all NestedSDFGs recursively.
+    """
+    sdfg.reset_cfg_list()
+    for state in sdfg.all_states():
+        for node in state.nodes():
+            if isinstance(node, NestedSDFG):
+                node.sdfg.parent_sdfg = sdfg
+                set_nested_sdfg_parent_references(node.sdfg)
+
+
+def get_used_data(scope: Union[ControlFlowRegion, SDFGState, nd.MapEntry, nd.NestedSDFG],
+                  parent_state: Union[SDFGState, None] = None) -> Set[str]:
+    """
+    Returns a set of all data names that are used in the given control flow region, state, map entry or nested SDFG node.
+    Data is considered used if there is an access node within the scope to data or it appears in an interstate edge.
+
+    :param cfg: The control flow region, state, or map entry node to check.
+    :param parent_state: The parent state of the scope, used only for MapEntry nodes. Can't be None if scope is a MapEntry.
+    :return: A set of used data names.
+    """
+    if isinstance(scope, SDFGState) or isinstance(scope, ControlFlowRegion):
+        read_data, write_data = scope.read_and_write_sets()
+        return read_data.union(write_data)
+    elif isinstance(scope, nd.NestedSDFG):
+        read_data, write_data = scope.sdfg.read_and_write_sets()
+        return read_data.union(write_data)
+    elif isinstance(scope, nd.MapEntry):
+        assert parent_state is not None, "parent_state must be provided for MapEntry nodes"
+        state: SDFGState = parent_state
+        # How can data be accessed in an SDFG?:
+        # Read interstate edges or access nodes using memlets
+        # Written to access nodes using memlets
+        # For map inputs the data might be not directly coming through an access node,
+        # need to check the edges too
+        #
+        # To get all used data, within a state iterate access nodes
+        # If data is passed to a nested SDFG (even if it is only used on an interstate edge),
+        # the access node must be present in the parent graph.
+        used_data = set()
+
+        # All data used in the NestedSDFGs need to be connected through access nodes
+        for node in state.all_nodes_between(scope, state.exit_node(scope)):
+            if isinstance(node, nd.AccessNode):
+                used_data.add(node.data)
+        # Need to consider map inputs and outputs too
+        for ie in state.in_edges(scope):
+            if ie.data is not None and ie.data.data is not None:
+                used_data.add(ie.data.data)
+        for oe in state.out_edges(scope):
+            if oe.data is not None and oe.data.data is not None:
+                used_data.add(oe.data.data)
+
+        return used_data
+    else:
+        raise Exception("Unsupported scope type for get_constant_data: {}".format(type(scope)))
+
+
+def get_constant_data(scope: Union[ControlFlowRegion, SDFGState, nd.NestedSDFG, nd.MapEntry],
+                      parent_state: Union[SDFGState, None] = None) -> Set[str]:
+    """
+    Returns a set of all constant data in the given control flow region, state, or with the map scope.
+    Data is considered constant if there is any incoming edge to an access node of the data.
+    Due to the semantics of SDFG, if a nested SDFG writes to the data container it needs to be
+    visible in the parent graph as well, so the function does not need to be recursive.
+
+    :param cfg: The control flow region, state or a map entry node to check.
+    :param parent_state: The parent_state of the scope, used only for MapEntry nodes.
+    :return: A set of constant data names.
+    """
+
+    def _incoming_memlet(state: SDFGState, node: nd.AccessNode) -> bool:
+        return (state.in_degree(node) > 0 and any([e.data is not None for e in state.in_edges(node)]))
+
+    if isinstance(scope, (SDFGState, ControlFlowRegion)):
+        read_data, write_data = scope.read_and_write_sets()
+        return read_data - write_data
+    elif isinstance(scope, nd.NestedSDFG):
+        read_data, write_data = scope.sdfg.read_and_write_sets()
+        return read_data - write_data
+    elif isinstance(scope, nd.MapEntry):
+        state: SDFGState = parent_state
+
+        # Which data are const:
+        # All access nodes that have no incoming edges
+        used_data = set()
+        written_data = set()
+
+        # All data used in the NestedSDFGs need to be connected through access nodes
+        for node in state.all_nodes_between(scope, state.exit_node(scope)):
+            if isinstance(node, nd.AccessNode):
+                # Either no incoming edge, or no incoming edge has a Memlet (dependency edge only)
+                if _incoming_memlet(state, node):
+                    written_data.add(node.data)
+
+        # Need to consider map inputs and outputs too
+        for ie in state.in_edges(scope):
+            if ie.data is not None and ie.data.data is not None:
+                used_data.add(ie.data.data)
+        for oe in state.out_edges(state.exit_node(scope)):
+            if oe.data is not None and oe.data.data is not None:
+                written_data.add(oe.data.data)
+            used_data.add(oe.data.data)
+
+        return used_data - written_data
+    else:
+        raise Exception("Unsupported scope type for get_constant_data: {}".format(type(scope)))
+
+
+def get_used_symbols(
+    scope: Union[SDFG, ControlFlowRegion, SDFGState, nd.MapEntry, nd.NestedSDFG],
+    parent_state: Union[SDFGState, None] = None,
+    include_symbols_for_offset_calculations: bool = False,
+) -> Set[str]:
+    """
+    Returns a set of all used symbols, that have been defined by the scope or were already defined for the duration of the
+    scope in the given control flow region, state, or with the map scope.
+
+    :param cfg: The control flow region, state or a map entry node to check.
+    :param parent_state: The parent graph of the scope, used only for MapEntry nodes.
+    :return: A set of symbol names.
+    """
+    return _get_used_symbols_impl(scope=scope,
+                                  constant_syms_only=False,
+                                  parent_state=parent_state,
+                                  include_symbols_for_offset_calculations=include_symbols_for_offset_calculations)
+
+
+def get_constant_symbols(scope: Union[SDFG, ControlFlowRegion, SDFGState, nd.MapEntry, nd.NestedSDFG],
+                         parent_state: Union[SDFGState, None] = None,
+                         include_symbols_for_offset_calculations: bool = False) -> Set[str]:
+    """
+    Returns a set of all constant symbols in the given control flow region, state, or with the map scope,
+    which have been defined by the scope (e.g. map) or defined for the duration of the scope.
+    A symbol is considered constant if no interstate edge within the scope writes to it.
+
+    :param cfg: The control flow region, state or a map entry node to check.
+    :param parent_state: The parent graph of the scope, used only for MapEntry nodes.
+    :return: A set of constant symbol names.
+    """
+    return _get_used_symbols_impl(scope=scope,
+                                  constant_syms_only=True,
+                                  parent_state=parent_state,
+                                  include_symbols_for_offset_calculations=include_symbols_for_offset_calculations)
+
+
+def _get_used_symbols_impl(scope: Union[SDFG, ControlFlowRegion, SDFGState, nd.MapEntry,
+                                        nd.NestedSDFG], constant_syms_only: bool, parent_state: Union[SDFGState, None],
+                           include_symbols_for_offset_calculations: bool) -> Set[str]:
+    """
+    Returns a set of all constant symbols in the given control flow region, state, or with the map scope.
+    A symbol is considered constant if no interstate edge writes to it.
+
+    :param cfg: The control flow region, state or a map entry node to check.
+    :param parent_state: The parent graph of the scope, used only for MapEntry nodes.
+    :return: A set of constant symbol names.
+    """
+
+    def _get_assignments(cfg: Union[ControlFlowRegion, SDFG]) -> Set[str]:
+        written_symbols = set()
+        for edge in cfg.all_interstate_edges():
+            if edge.data is not None:
+                written_symbols = written_symbols.union(edge.data.assignments.keys())
+        return written_symbols
+
+    offset_symbols = set()
+    if include_symbols_for_offset_calculations:
+        used_data = get_used_data(scope=scope, parent_state=parent_state)
+        for data in used_data:
+            parent_graph = parent_state if isinstance(scope, nd.MapEntry) else scope
+            if data in parent_graph.sdfg.arrays:
+                desc = parent_graph.sdfg.arrays[data]
+                offset_symbols.update(str(sym) for sym in desc.free_symbols)
+
+    if isinstance(scope, SDFGState):
+        symbols = scope.used_symbols(all_symbols=False)
+        # Since no symbol can change within a state we are good to go
+        return offset_symbols | symbols
+    elif isinstance(scope, (SDFG, ControlFlowRegion)):
+        # Need to get all used symbols within the SDFG or CFG
+        used_symbols = scope.used_symbols(all_symbols=False)
+        # Get all symbols that are written to
+        written_symbols = _get_assignments(scope)
+        if constant_syms_only:
+            return (offset_symbols | used_symbols) - written_symbols
+        else:
+            return offset_symbols | used_symbols
+    elif isinstance(scope, nd.NestedSDFG):
+        used_symbols = scope.sdfg.used_symbols(all_symbols=False)
+        # Can't pass them as const if they are written to in the nested SDFG
+        written_symbols = _get_assignments(scope.sdfg)
+        if constant_syms_only:
+            return (offset_symbols | used_symbols) - written_symbols
+        else:
+            return offset_symbols | used_symbols
+    elif isinstance(scope, nd.MapEntry):
+        used_symbols = scope.used_symbols_within_scope(parent_state=parent_state)
+        return offset_symbols | used_symbols
+    else:
+        raise Exception("Unsupported scope type for get_constant_data: {}".format(type(scope)))
+
+
+def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: str, scalar_val: Union[float, int, str]):
+    # This function replaces a scalar with the name <scalar_name> with a constant
+    # A scalar can appear on:
+    # 1. Interstate Edge
+    # -> For 1: Replace occurence on the interstate edge with scalar_name
+    # 2. Dynamic Input to a Map
+    # -> For 2: Rm. dynamic in connector, remove the edge and the node if the degree is None
+    # 3. Access Node
+    # -> If access node is used then e.g. [scalar] -> [tasklet]
+    # -> then [tasklet(assign const value)] -> [access node] -> [tasklet]
+
+    def repl_code_block_or_str(input: Union[CodeBlock, str], src: str, dst: str):
+        if isinstance(input, CodeBlock):
+            return CodeBlock(input.as_string.replace(src, dst))
+        else:
+            return input.replace(src, dst)
+
+    # If we are the root SDFG then we need can't remove non-transient scalar (but will just not use it)
+    # For nestedSDFGs we will remove
+    if root != sdfg:
+        if scalar_name in sdfg.arrays:
+            sdfg.remove_data(scalar_name, validate=False)
+
+        if scalar_name in sdfg.symbols:
+            sdfg.remove_symbol(scalar_name)
+
+    nsdfgs = set()
+    c = 0
+    for state in sdfg.all_states():
+        # Check dynamic inputs
+        for e in state.edges():
+            if e not in state.edges():
+                continue
+            if e.data is None or e.data.data != scalar_name:
+                continue
+
+            # Now we know we have an edge where memlet.data is the scalar
+
+            src = e.src
+            dst = e.dst
+
+            assert e.data.data == scalar_name
+
+            if isinstance(e.dst, nd.Tasklet):
+                assign_tasklet = state.add_tasklet(f"assign_{scalar_name}",
+                                                   inputs={},
+                                                   outputs={"_out"},
+                                                   code=f"_out = {scalar_val}")
+                tmp_name = f"__tmp_{scalar_name}_{c}"
+                c += 1
+                copydesc = copy.deepcopy(sdfg.arrays[scalar_name])
+                copydesc.transient = True
+                copydesc.storage = dace.StorageType.Register
+                sdfg.add_datadesc(tmp_name, copydesc)
+                scl_an = state.add_access(tmp_name)
+                state.remove_edge(e)
+                state.add_edge(assign_tasklet, "_out", scl_an, None, dace.memlet.Memlet.from_array(tmp_name, copydesc))
+                state.add_edge(scl_an, None, dst, e.dst_conn, dace.memlet.Memlet.from_array(tmp_name, copydesc))
+                if e.src_conn is not None:
+                    src.remove_out_connector(e.src_conn)
+            else:
+                state.remove_edge(e)
+                if e.src_conn is not None:
+                    src.remove_out_connector(e.src_conn)
+                if e.dst_conn is not None:
+                    dst.remove_in_connector(e.dst_conn)
+
+            if state.out_degree(src) == 0:
+                if isinstance(src, nd.MapEntry):
+                    # Add a dep edge, to not invalidate the map
+                    state.add_edge(src, None, dst, None, dace.memlet.Memlet())
+                else:
+                    if state.degree(src) == 0:
+                        state.remove_node(src)
+            if state.in_degree(dst) == 0:
+                if isinstance(dst, nd.MapExit):
+                    state.add_edge(src, None, dst, None, dace.memlet.Memlet())
+                else:
+                    if state.degree(dst) == 0:
+                        state.remove_node(dst)
+
+        for node in state.nodes():
+            if isinstance(node, nd.MapEntry):
+                new_range_list = []
+
+                for (b, e, s) in node.map.range:
+                    _b = b.subs(scalar_name, scalar_val)
+                    _e = e.subs(scalar_name, scalar_val)
+                    _s = s.subs(scalar_name, scalar_val)
+                    new_range_list.append((_b, _e, _s))
+                node.map.range = dace.subsets.Range(new_range_list)
+            elif isinstance(node, nd.NestedSDFG):
+                nsdfgs.add(node.sdfg)
+
+    # Replace on for CFGs as
+    for cfg in sdfg.all_control_flow_regions():
+        if isinstance(cfg, LoopRegion):
+            cfg.loop_condition = repl_code_block_or_str(cfg.loop_condition, scalar_name, str(scalar_val))
+            cfg.init_statement = repl_code_block_or_str(cfg.init_statement, scalar_name, str(scalar_val))
+            cfg.update_statement = repl_code_block_or_str(cfg.update_statement, scalar_name, str(scalar_val))
+            assert cfg.loop_variable != scalar_name, (
+                f"Loop variable {cfg.loop_variable} cannot be the same as the scalar {scalar_name}")
+        if isinstance(cfg, ConditionalBlock):
+            for i, (n_cond, n_body) in enumerate(cfg.branches):
+                if n_cond is not None:
+                    cfg.branches[0] = (repl_code_block_or_str(n_cond, scalar_name, str(scalar_val)), n_body)
+
+    for edge in sdfg.all_interstate_edges(recursive=True):
+        edge.data.replace_dict({f"{scalar_name}": f"{scalar_val}"})
+
+    if root != sdfg:
+        if scalar_name in sdfg.parent_nsdfg_node.symbol_mapping:
+            del sdfg.parent_nsdfg_node.symbol_mapping[scalar_name]
+
+    for nsdfg in nsdfgs:
+        _specialize_scalar_impl(root, nsdfg, scalar_name, scalar_val)
+
+
+def specialize_scalar(sdfg: 'dace.SDFG', scalar_name: str, scalar_val: Union[float, int, str]):
+    assert isinstance(scalar_name, str)
+    assert isinstance(scalar_val, (float, int, str))
+    _specialize_scalar_impl(sdfg, sdfg, scalar_name, scalar_val)

@@ -4,7 +4,7 @@
 
 import copy
 import warnings
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple, Sequence
 
 import networkx as nx
 from networkx.exception import NetworkXError, NodeNotFound
@@ -20,10 +20,14 @@ from dace.transformation import transformation as pm
 # Helper methods #############################################################
 
 
+def _subset_has_shape(subset: subsets.Subset, shape: Sequence[int]) -> bool:
+    return len(subset.size()) == len(shape) and all(m == a for m, a in zip(subset.size(), shape))
+
+
 def _validate_subsets(edge: graph.MultiConnectorEdge,
                       arrays: Dict[str, data.Data],
                       src_name: str = None,
-                      dst_name: str = None) -> Tuple[subsets.Subset]:
+                      dst_name: str = None) -> Tuple[subsets.Subset, ...]:
     """ Extracts and validates src and dst subsets from the edge. """
 
     # Find src and dst names
@@ -236,7 +240,7 @@ class RedundantArray(pm.SingleStateTransformation):
             subset = copy.deepcopy(a1_subset)
             subset.squeeze()
             shape = [sz for sz in in_desc.shape if sz != 1]
-            if any(m != a for m, a in zip(subset.size(), shape)):
+            if not _subset_has_shape(subset, shape):
                 return False
 
             # NOTE: Library node check
@@ -496,7 +500,7 @@ class RedundantArray(pm.SingleStateTransformation):
         # A reshaping Memlet must read the whole source array and write the whole destination array.
         src_subset, dst_subset = _validate_subsets(edge, sdfg.arrays)
         for subset, shape in zip([dst_subset, src_subset], [dst_desc.shape, src_desc.shape]):
-            if not all(sssize == arraysize for sssize, arraysize in zip(subset.size(), shape)):
+            if not _subset_has_shape(subset, shape):
                 return False
 
         return True
@@ -565,8 +569,7 @@ class RedundantArray(pm.SingleStateTransformation):
         # 3. The memlet does not cover the removed array; or
         # 4. Dimensions are mismatching (all dimensions are popped);
         # create a view.
-        if (reduction or len(a_dims_to_pop) == len(in_desc.shape)
-                or any(m != a for m, a in zip(a1_subset.size(), in_desc.shape))):
+        if reduction or len(a_dims_to_pop) == len(in_desc.shape) or not _subset_has_shape(a1_subset, in_desc.shape):
             self._make_view(sdfg, graph, in_array, out_array, e1, b_subset, b_dims_to_pop)
             return in_array
 
@@ -747,7 +750,7 @@ class RedundantSecondArray(pm.SingleStateTransformation):
             subset = copy.deepcopy(b1_subset)
             subset.squeeze()
             shape = [sz for sz in out_desc.shape if sz != 1]
-            if any(m != a for m, a in zip(subset.size(), shape)):
+            if not _subset_has_shape(subset, shape):
                 return False
 
             # NOTE: Library node check
@@ -954,7 +957,7 @@ class RedundantSecondArray(pm.SingleStateTransformation):
                 b_dims_to_pop = find_dims_to_pop(b_size, a_size)
 
         # If the src subset does not cover the removed array, create a view.
-        if a_subset and any(m != a for m, a in zip(a_subset.size(), out_desc.shape)):
+        if a_subset and not _subset_has_shape(a_subset, out_desc.shape):
             # NOTE: We do not want to create another view, if the immediate
             # successors of out_array are views as well. We just remove it.
             out_successors_desc = [
@@ -1310,9 +1313,7 @@ class RedundantReadSlice(pm.SingleStateTransformation):
         for subset in (a_subset, v_subset):
             tmp = copy.deepcopy(subset)
             tmp.squeeze()
-            if len(tmp) != len(out_shape):
-                return False
-            if any(m != a for m, a in zip(tmp.size(), out_shape)):
+            if not _subset_has_shape(tmp, out_shape):
                 return False
 
         if not permissive:
@@ -1463,9 +1464,7 @@ class RedundantWriteSlice(pm.SingleStateTransformation):
         for subset in (a_subset, v_subset):
             tmp = copy.deepcopy(subset)
             tmp.squeeze()
-            if len(tmp) != len(in_shape):
-                return False
-            if any(m != a for m, a in zip(tmp.size(), in_shape)):
+            if not _subset_has_shape(tmp, in_shape):
                 return False
 
         if not permissive:
