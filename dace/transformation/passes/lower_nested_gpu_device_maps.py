@@ -58,7 +58,7 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
             state.remove_edge(e)
         for e in state.out_edges(map_exit):
             state.remove_edge(e)
-        
+
         state.remove_node(map_entry)
         state.remove_node(map_exit)
 
@@ -76,20 +76,13 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
         # Inputs -> Map (range)[MapNodes] -> Outputs need to become
         inner_sdfg = SDFG(name=f"if_of_nested_{map_entry.label}")
 
-        if_bound_check = ConditionalBlock(
-            label=f"bound_check_{map_entry.label}",
-            sdfg=inner_sdfg,
-            parent=inner_sdfg
-        )
+        if_bound_check = ConditionalBlock(label=f"bound_check_{map_entry.label}", sdfg=inner_sdfg, parent=inner_sdfg)
         inner_sdfg.add_node(if_bound_check)
 
-        if_body = ControlFlowRegion(
-            label=f"body_{map_entry.label}",
-            sdfg=inner_sdfg,
-            parent=if_bound_check
-        )
+        if_body = ControlFlowRegion(label=f"body_{map_entry.label}", sdfg=inner_sdfg, parent=if_bound_check)
 
-        bound_check = " and ".join([f"({p} >= {b} and {p} <= {e})" for p, (b, e, s) in zip(map_entry.map.params, map_entry.map.range)])
+        bound_check = " and ".join(
+            [f"({p} >= {b} and {p} <= {e})" for p, (b, e, s) in zip(map_entry.map.params, map_entry.map.range)])
         if_bound_check.add_branch(
             condition=CodeBlock(bound_check),
             branch=if_body,
@@ -118,38 +111,16 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
         # Connect nsdfg
         for ie in map_in_edges:
             if ie.data.data is not None:
-                state.add_edge(
-                    ie.src,
-                    ie.src_conn,
-                    nsdfg,
-                    ie.data.data,
-                    dace.memlet.Memlet.from_array(ie.data.data, state.sdfg.arrays[ie.data.data])
-                )
+                state.add_edge(ie.src, ie.src_conn, nsdfg, ie.data.data,
+                               dace.memlet.Memlet.from_array(ie.data.data, state.sdfg.arrays[ie.data.data]))
             else:
-                state.add_edge(
-                    ie.src,
-                    None,
-                    nsdfg,
-                    None,
-                    dace.memlet.Memlet(None)
-                )
+                state.add_edge(ie.src, None, nsdfg, None, dace.memlet.Memlet(None))
         for oe in map_out_edges:
             if oe.data.data is not None:
-                state.add_edge(
-                    nsdfg,
-                    oe.data.data,
-                    oe.dst,
-                    oe.dst_conn,
-                    dace.memlet.Memlet.from_array(oe.data.data, state.sdfg.arrays[oe.data.data])
-                )
+                state.add_edge(nsdfg, oe.data.data, oe.dst, oe.dst_conn,
+                               dace.memlet.Memlet.from_array(oe.data.data, state.sdfg.arrays[oe.data.data]))
             else:
-                state.add_edge(
-                    nsdfg,
-                    None,
-                    oe.dst,
-                    None,
-                    dace.memlet.Memlet(None)
-                )
+                state.add_edge(nsdfg, None, oe.dst, None, dace.memlet.Memlet(None))
 
         for data_name in inputs.union(outputs):
             if data_name not in inner_sdfg.arrays:
@@ -169,33 +140,17 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
             if_body_state.add_node(v)
         for e in map_inner_edges:
             if e.src in node_map and e.dst in node_map:
-                if_body_state.add_edge(
-                    node_map[e.src],
-                    e.src_conn,
-                    node_map[e.dst],
-                    e.dst_conn,
-                    copy.deepcopy(e.data)
-                )
+                if_body_state.add_edge(node_map[e.src], e.src_conn, node_map[e.dst], e.dst_conn, copy.deepcopy(e.data))
             elif e.src in node_map and e.dst not in node_map:
                 # Src was the map entry
                 if e.data.data is not None:
-                    if_body_state.add_edge(
-                        node_map[e.src],
-                        e.src_conn,
-                        if_body_state.add_access(e.data.data),
-                        None,
-                        copy.deepcopy(e.data)
-                    )
+                    if_body_state.add_edge(node_map[e.src], e.src_conn, if_body_state.add_access(e.data.data), None,
+                                           copy.deepcopy(e.data))
             elif e.dst in node_map and e.src not in node_map:
                 # Dst was the map exit
                 if e.data.data is not None:
-                    if_body_state.add_edge(
-                        if_body_state.add_access(e.data.data),
-                        None,
-                        node_map[e.dst],
-                        e.dst_conn,
-                        copy.deepcopy(e.data)
-                    )
+                    if_body_state.add_edge(if_body_state.add_access(e.data.data), None, node_map[e.dst], e.dst_conn,
+                                           copy.deepcopy(e.data))
             else:
                 assert False
 
@@ -205,14 +160,13 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
         sdutil.set_nested_sdfg_parent_references(state.sdfg)
         state.sdfg.reset_cfg_list()
 
-
     def _move_dev_maps_in_sdfg_to_ifs(self, sdfg: SDFG):
         for state in sdfg.all_states():
             for node in state.nodes():
                 if isinstance(node, dace.nodes.MapEntry) and node.map.schedule == dace.dtypes.ScheduleType.GPU_Device:
                     # Nested GPU Device map move the map to an If
-                    # Move the body of the map to an If 
-                     self._move_map_to_if(state, node)
+                    # Move the body of the map to an If
+                    self._move_map_to_if(state, node)
 
     def _get_device_map_parents(self, state: SDFGState, cur_map: dace.nodes.MapEntry, gpu_dev_map: dace.nodes.MapEntry):
         sdict = state.scope_dict()
@@ -223,7 +177,11 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
             if cur_parent is not None:
                 parents.append(cur_parent)
 
-        num_dev_maps = len({k for k in parents if isinstance(k, dace.nodes.MapEntry) and k.map.schedule == dace.dtypes.ScheduleType.GPU_Device})
+        num_dev_maps = len({
+            k
+            for k in parents
+            if isinstance(k, dace.nodes.MapEntry) and k.map.schedule == dace.dtypes.ScheduleType.GPU_Device
+        })
         if gpu_dev_map is not None:
             assert gpu_dev_map in parents, f"{gpu_dev_map} not in {parents}"
 
@@ -231,13 +189,19 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
 
     def _get_next_level_maps(self, state: SDFGState, gpu_dev_map: dace.nodes.MapEntry):
         # Gets all the maps of the next depth
-        # If inside same nsdfg, then it means no parent 
-        gpu_maps_between = {(state, n) for n in state.all_nodes_between(gpu_dev_map, state.exit_node(gpu_dev_map))
-                        if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.dtypes.ScheduleType.GPU_Device}
-
+        # If inside same nsdfg, then it means no parent
+        gpu_maps_between = {
+            (state, n)
+            for n in state.all_nodes_between(gpu_dev_map, state.exit_node(gpu_dev_map))
+            if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.dtypes.ScheduleType.GPU_Device
+        }
 
         if len(gpu_maps_between) == 0:
-            all_nsdfgs = {n for n in state.all_nodes_between(gpu_dev_map, state.exit_node(gpu_dev_map)) if isinstance(n, dace.nodes.NestedSDFG)}
+            all_nsdfgs = {
+                n
+                for n in state.all_nodes_between(gpu_dev_map, state.exit_node(gpu_dev_map))
+                if isinstance(n, dace.nodes.NestedSDFG)
+            }
 
             # While candidates are zero increase depth
             # Iterate the graphs one by one if we have a lot of GPU device maps in the NestedSDFG
@@ -251,7 +215,9 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
                         for node in state.nodes():
                             if isinstance(node, dace.nodes.MapEntry):
                                 next_level_map_candidates.add((state, node))
-                        new_all_nsdfgs = new_all_nsdfgs.union({n for n in state.nodes() if isinstance(n, dace.nodes.NestedSDFG)})
+                        new_all_nsdfgs = new_all_nsdfgs.union(
+                            {n
+                             for n in state.nodes() if isinstance(n, dace.nodes.NestedSDFG)})
                 return new_all_nsdfgs, next_level_map_candidates
 
             all_nsdfgs, next_level_map_candidates = collect_map_candidates_and_new_nsdfg(all_nsdfgs)
@@ -263,10 +229,14 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
                 if len(all_nsdfgs) == 0:
                     break
 
-            next_level_maps = {(state, m) for (state, m) in next_level_map_candidates if self._get_device_map_parents(state, m, None) == 0}
+            next_level_maps = {(state, m)
+                               for (state, m) in next_level_map_candidates
+                               if self._get_device_map_parents(state, m, None) == 0}
             return next_level_maps
         else:
-            next_level_maps = {(state, m) for (state, m) in gpu_maps_between if self._get_device_map_parents(state, m, gpu_dev_map) == 1}
+            next_level_maps = {(state, m)
+                               for (state, m) in gpu_maps_between
+                               if self._get_device_map_parents(state, m, gpu_dev_map) == 1}
             return next_level_maps
 
     def _apply(self, sdfg: SDFG) -> int:
@@ -274,11 +244,9 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
         for state in sdfg.all_states():
             parentless_device_maps: Set[dace.nodes.MapEntry] = set()
             for node in state.nodes():
-                if (isinstance(node, dace.nodes.MapEntry) and
-                    node.map.schedule == dace.dtypes.ScheduleType.GPU_Device and
-                    state.scope_dict()[node] is None
-                    ):
-                        parentless_device_maps.add(node)
+                if (isinstance(node, dace.nodes.MapEntry) and node.map.schedule == dace.dtypes.ScheduleType.GPU_Device
+                        and state.scope_dict()[node] is None):
+                    parentless_device_maps.add(node)
 
             for gpu_dev_map in parentless_device_maps:
                 next_level_maps = self._get_next_level_maps(state, gpu_dev_map)
@@ -287,7 +255,8 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
                 # Collect all the ranges to build the union of the ranges later
                 for map_state, nested_gpu_map in next_level_maps:
                     if not self._no_further_nested_gpu_dev_maps(map_state, nested_gpu_map):
-                        raise NotImplementedError("Multiple levels of nestedness in GPU Device Maps are not supported by the pass")
+                        raise NotImplementedError(
+                            "Multiple levels of nestedness in GPU Device Maps are not supported by the pass")
 
                     for p, range in zip(nested_gpu_map.map.params, nested_gpu_map.map.range):
                         if p not in nested_map_params_and_ranges:
@@ -295,30 +264,26 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
                         nested_map_params_and_ranges[p].append(range)
 
                 # Build the union of the collected ranges
-                new_ranges_to_add = {p: dace.subsets.Range([(0,0,1)]) for p in nested_map_params_and_ranges}
+                new_ranges_to_add = {p: dace.subsets.Range([(0, 0, 1)]) for p in nested_map_params_and_ranges}
                 for p, ranges in nested_map_params_and_ranges.items():
                     for map_range in ranges:
                         old_b, old_e, old_s = map_range
                         assert isinstance(new_ranges_to_add[p], dace.subsets.Range)
                         assert len(new_ranges_to_add[p]) == 1
                         cur_b, cur_e, cur_s = new_ranges_to_add[p][0]
-                        new_ranges_to_add[p] = dace.subsets.Range(
-                            [(
-                            sympy.Min(old_b, cur_b).simplify(),
-                            sympy.Max(old_e, cur_e).simplify(),
-                            1
-                            ),]
-                        )
+                        new_ranges_to_add[p] = dace.subsets.Range([
+                            (sympy.Min(old_b, cur_b).simplify(), sympy.Max(old_e, cur_e).simplify(), 1),
+                        ])
 
                 # Append the new dimensions
                 new_range_list = []
-                for (b,e,s) in gpu_dev_map.map.range:
-                    new_range_list.append((b,e,s))
+                for (b, e, s) in gpu_dev_map.map.range:
+                    new_range_list.append((b, e, s))
                 for k, v in new_ranges_to_add.items():
                     gpu_dev_map.map.params.append(k)
                     assert len(v) == 1
-                    (b,e,s) = v[0]
-                    new_range_list.append((b,e,s))
+                    (b, e, s) = v[0]
+                    new_range_list.append((b, e, s))
                 gpu_dev_map.map.range = dace.subsets.Range(new_range_list)
 
                 for map_state, inner_gpu_map in next_level_maps:
@@ -336,23 +301,31 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
         nodes = set(state.all_nodes_between(map_entry, state.exit_node(map_entry)))
         for node in nodes:
             if isinstance(node, dace.nodes.NestedSDFG):
-                nodes = nodes.union({n for n,g in node.sdfg.all_nodes_recursive()})
-        return not any({n for n in nodes if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.dtypes.ScheduleType.GPU_Device})
+                nodes = nodes.union({n for n, g in node.sdfg.all_nodes_recursive()})
+        return not any({
+            n
+            for n in nodes
+            if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.dtypes.ScheduleType.GPU_Device
+        })
 
     def _assert_no_nested_gpu_device_maps(self, sdfg: SDFG):
         for state in sdfg.all_states():
             parentless_device_maps = set()
             for node in state.nodes():
-                if (isinstance(node, dace.nodes.MapEntry) and
-                    node.map.schedule == dace.dtypes.ScheduleType.GPU_Device and
-                    state.scope_dict()[node] is None
-                    ):
-                        parentless_device_maps.add(node)
+                if (isinstance(node, dace.nodes.MapEntry) and node.map.schedule == dace.dtypes.ScheduleType.GPU_Device
+                        and state.scope_dict()[node] is None):
+                    parentless_device_maps.add(node)
 
             for gpu_dev_map in parentless_device_maps:
-                assert self._no_further_nested_gpu_dev_maps(state, gpu_dev_map), f"There are nested GPU Device maps left after applying the pass (implementation error of the pass)"
+                assert self._no_further_nested_gpu_dev_maps(
+                    state, gpu_dev_map
+                ), f"There are nested GPU Device maps left after applying the pass (implementation error of the pass)"
 
-    def apply_pass(self, sdfg: SDFG, _,) -> None:
+    def apply_pass(
+        self,
+        sdfg: SDFG,
+        _,
+    ) -> None:
         num_applied = self._apply(sdfg)
         while num_applied > 0:
             num_applied = self._apply(sdfg)
