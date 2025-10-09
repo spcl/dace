@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Tests for numpy advanced indexing syntax. See also:
 https://numpy.org/devdocs/reference/arrays.indexing.html
@@ -433,7 +433,6 @@ def test_multidim_tuple_multidim_index():
         indexing_test.to_sdfg()
 
 
-@pytest.mark.skip("Combined basic and advanced indexing with writes is not supported")
 def test_multidim_tuple_multidim_index_write():
     with pytest.raises(IndexError, match='could not be broadcast together'):
 
@@ -483,7 +482,6 @@ def test_combining_basic_and_advanced_indexing():
     assert np.allclose(res, ref)
 
 
-@pytest.mark.skip("Combined basic and advanced indexing with writes is not supported")
 def test_combining_basic_and_advanced_indexing_write():
 
     @dace.program
@@ -577,9 +575,9 @@ if __name__ == '__main__':
     test_multidim_tuple_index(True)
     test_multidim_tuple_index_longer()
     test_multidim_tuple_multidim_index()
-    # test_multidim_tuple_multidim_index_write()
+    test_multidim_tuple_multidim_index_write()
     test_advanced_index_broadcasting()
     test_combining_basic_and_advanced_indexing()
-    # test_combining_basic_and_advanced_indexing_write()
+    test_combining_basic_and_advanced_indexing_write()
     test_combining_basic_and_advanced_indexing_with_newaxes()
     test_combining_basic_and_advanced_indexing_with_newaxes_2()
