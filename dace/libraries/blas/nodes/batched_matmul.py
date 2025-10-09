@@ -148,8 +148,7 @@ class ExpandBatchedMatMulMKL(ExpandTransformation):
         delete[] __mkl_BMM_A;
         delete[] __mkl_BMM_B;
         delete[] __mkl_BMM_C;
-        '''.format_map(
-            opt)
+        '''.format_map(opt)
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
