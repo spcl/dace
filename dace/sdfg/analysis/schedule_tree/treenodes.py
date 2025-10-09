@@ -22,6 +22,7 @@ class UnsupportedScopeException(Exception):
 @dataclass
 class ScheduleTreeNode:
     parent: Optional['ScheduleTreeScope'] = field(default=None, init=False, repr=False)
+    sdfg: Optional['SDFG'] = field(default=None, init=False, repr=False)
 
     def as_string(self, indent: int = 0):
         return indent * INDENTATION + 'UNSUPPORTED'
@@ -177,6 +178,7 @@ class IfScope(ControlFlowScope):
     If branch scope.
     """
     condition: CodeBlock
+    cond_block: Optional[ConditionalBlock]
 
     def as_string(self, indent: int = 0):
         result = indent * INDENTATION + f'if {self.condition.as_string}:\n'

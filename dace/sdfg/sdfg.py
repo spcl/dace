@@ -1,4 +1,4 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 import collections
 import copy
@@ -26,7 +26,7 @@ from dace.sdfg import nodes as nd
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, SDFGState, ControlFlowRegion
 from dace.distr_types import ProcessGrid, SubArray, RedistrArray
 from dace.dtypes import validate_name
-from dace.properties import (DebugInfoProperty, EnumProperty, ListProperty, make_properties, Property, CodeProperty,
+from dace.properties import (DebugInfoProperty, EnumProperty, ListProperty, SDFGReferenceProperty, make_properties, Property, CodeProperty,
                              TransformationHistProperty, OptionalSDFGReferenceProperty, DictProperty, CodeBlock)
 from typing import BinaryIO
 
@@ -128,13 +128,32 @@ def memlets_in_ast(node: ast.AST, arrays: Dict[str, dt.Data]) -> List[mm.Memlet]
     :return: A list of Memlet objects in the order they appear in the AST.
     """
     result: List[mm.Memlet] = []
+    ignore = set()
 
+    parnode = None
     for subnode in ast.walk(node):
+        if subnode in ignore:
+            continue
+
         if isinstance(subnode, ast.Subscript):
             data = astutils.rname(subnode.value)
             data, slc = astutils.subscript_to_slice(subnode, arrays)
             subset = sbs.Range(slc)
             result.append(mm.Memlet(data=data, subset=subset))
+            if isinstance(subnode.value, ast.Name):
+                ignore.add(subnode.value)
+        elif isinstance(subnode, ast.Name):
+            data = astutils.rname(subnode)
+            if data in arrays:
+                result.append(mm.Memlet(data=data, subset=sbs.Range.from_string('0')))
+        elif isinstance(subnode, ast.Attribute):
+            data = astutils.rname(subnode)
+            if data in arrays:
+                ignore.add(subnode.value)
+                if parnode is None or not isinstance(parnode, ast.Subscript):
+                    result.append(mm.Memlet(data=data, subset=sbs.Range.from_string('0')))
+
+        parnode = subnode
 
     return result
 
@@ -560,6 +579,7 @@ class SDFG(ControlFlowRegion):
         self._num = 0
 
         self._sdfg = self
+        self._dataflow_proxy_graphs = {}
 
     def __deepcopy__(self, memo):
         cls = self.__class__
@@ -628,6 +648,12 @@ class SDFG(ControlFlowRegion):
         if is_root:
             tmp['dace_version'] = dace.__version__
 
+        if self._dataflow_proxy_graphs:
+            proxy_res = {}
+            for k, v in self._dataflow_proxy_graphs.items():
+                proxy_res[k] = v.to_json()
+            tmp['attributes']['dataflow_proxy_graphs'] = proxy_res
+
         return tmp
 
     @classmethod
@@ -650,6 +676,10 @@ class SDFG(ControlFlowRegion):
 
         dace.serialize.set_properties_from_json(ret, json_obj, ignore_properties={'constants_prop', 'name', 'hash'})
 
+        if 'dataflow_proxy_graphs' in attrs:
+            for k, v in attrs['dataflow_proxy_graphs'].items():
+                ret._dataflow_proxy_graphs[int(k)] = dace.serialize.from_json(v)
+
         nodelist = []
         for n in nodes:
             nci = copy.copy(context)
@@ -666,6 +696,7 @@ class SDFG(ControlFlowRegion):
         if 'start_block' in json_obj:
             ret._start_block = json_obj['start_block']
 
+        ret.reset_cfg_list()
         return ret
 
     def hash_sdfg(self, jsondict: Optional[Dict[str, Any]] = None) -> str:
@@ -1654,6 +1685,8 @@ class SDFG(ControlFlowRegion):
         """
         filename = os.path.expanduser(filename)
 
+        if filename.endswith('.sdfgz'):
+            compress = True
         if compress:
             fileopen = lambda file, mode: gzip.open(file, mode + 't')
         else:

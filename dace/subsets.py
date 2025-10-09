@@ -1,6 +1,7 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+from copy import deepcopy
 import dace.serialize
-from dace import data, symbolic, dtypes
+from dace import symbolic
 import re
 import sympy as sp
 from functools import reduce
@@ -35,10 +36,19 @@ def bounding_box_cover_exact(subset_a, subset_b, approximation=False) -> bool:
     :param subset_b: The second subset, the one that should be convered.
     :param approximation: If `True` then use the approximated bounds.
     """
-    min_elements_a = subset_a.min_element_approx() if approximation else subset_a.min_element()
-    max_elements_a = subset_a.max_element_approx() if approximation else subset_a.max_element()
-    min_elements_b = subset_b.min_element_approx() if approximation else subset_b.min_element()
-    max_elements_b = subset_b.max_element_approx() if approximation else subset_b.max_element()
+    p_subset_a = subset_a
+    p_subset_b = subset_b
+    if isinstance(subset_a, SubsetUnion):
+        p_subset_a = subset_a.to_bounding_box_subset()
+    if isinstance(subset_b, SubsetUnion):
+        p_subset_b = subset_b.to_bounding_box_subset()
+    if p_subset_a is None or p_subset_b is None:
+        raise TypeError()
+
+    min_elements_a = subset_a.min_element_approx() if approximation else p_subset_a.min_element()
+    max_elements_a = subset_a.max_element_approx() if approximation else p_subset_a.max_element()
+    min_elements_b = subset_b.min_element_approx() if approximation else p_subset_b.min_element()
+    max_elements_b = subset_b.max_element_approx() if approximation else p_subset_b.max_element()
 
     # Covering only make sense if the two subsets have the same number of dimensions.
     if len(min_elements_a) != len(min_elements_b):
@@ -901,35 +911,111 @@ class Range(Subset):
                               rs.subs(repl_dict) if symbolic.issymbolic(rs) else rs)
             self.tile_sizes[i] = (ts.subs(repl_dict) if symbolic.issymbolic(ts) else ts)
 
-    def intersects(self, other: 'Range'):
+    def intersection(self, other: 'Range') -> Optional['Range']:
         type_error = False
+        expected_length = len(self.ranges)
+        if expected_length != len(other.ranges):
+            raise ValueError('Unable to compute the intersection of different length ranges.')
+
+        intersected_ranges = []
         for i, (rng, orng) in enumerate(zip(self.ranges, other.ranges)):
             if (rng[2] != 1 or orng[2] != 1 or self.tile_sizes[i] != 1 or other.tile_sizes[i] != 1):
                 # TODO: This function does not consider strides or tiles
-                return None
+                raise NotImplementedError('This function does not yet consider strides or tiles')
 
             # Special case: ranges match
-            if rng[0] == orng[0] or rng[1] == orng[1]:
+            if rng[0] == orng[0] and rng[1] == orng[1]:
+                intersected_ranges.append(rng)
                 continue
 
             # Since conditions can be indeterminate, we check them separately
             # for being False, then make a check that may raise a TypeError
             cond1 = (rng[0] <= orng[1])
             cond2 = (orng[0] <= rng[1])
+            cond3 = (rng[0] <= orng[0])
+            cond4 = (rng[1] <= orng[1])
             # NOTE: We have to use the "==" operator because of SymPy returning
             #       a special boolean type!
             try:
                 if cond1 == False or cond2 == False:
-                    return False
+                    return None
                 if not (cond1 and cond2):
-                    return False
+                    return None
+
+                if cond3 == True:
+                    rng_start = orng[0]
+                else:
+                    rng_start = rng[0]
+                if cond4 == True:
+                    rng_end = rng[1]
+                else:
+                    rng_end = orng[1]
+                intersected_ranges.append([rng_start, rng_end, rng[2]])
             except TypeError:  # cannot determine truth value of Relational
                 type_error = True
 
         if type_error:
             raise TypeError("cannot determine truth value of Relational")
 
-        return True
+        if len(intersected_ranges) != expected_length:
+            return None
+
+        return Range(intersected_ranges)
+
+    def intersects(self, other: 'Range') -> Union[bool, None]:
+        try:
+            intersection = self.intersection(other)
+            return intersection is not None
+        except TypeError:
+            return None
+
+    def difference(self, other: 'Range') -> Subset:
+        isect = self.intersection(other)
+        if isect is None:
+            return self
+        diff_ranges = [[]]
+        dims_cleared = []
+        for i, (r1, r2) in enumerate(zip(self.ranges, isect.ranges)):
+            if r2[0] == r1[0]:
+                # Intersection over the start of the current range.
+                if r2[1] == r1[1]:
+                    for dr in diff_ranges:
+                        dr.append(r1)
+                    dims_cleared.append(True)
+                else:
+                    for dr in diff_ranges:
+                        dr.append((r2[1] + self.ranges[i][2], r1[1], r1[2]))
+                    dims_cleared.append(False)
+            elif r2[1] == r1[1]:
+                # Intersection over the end of the current range.
+                if r2[0] == r1[0]:
+                    for dr in diff_ranges:
+                        dr.append(r1)
+                    dims_cleared.append(True)
+                else:
+                    for dr in diff_ranges:
+                        dr.append((r1[0], r2[0] - self.ranges[i][2], r1[2]))
+                    dims_cleared.append(False)
+            else:
+                # Intersection completely contained inside the current range, split into subset union is necessary.
+                split_left = (r1[0], r2[0] - self.ranges[i][2], r1[2])
+                split_right = (r2[1] + self.ranges[i][2], r1[1], r1[2])
+                for dr in diff_ranges:
+                    dr.append(split_left)
+                dr_copy = deepcopy(diff_ranges)
+                for dr in dr_copy:
+                    dr[-1] = split_right
+                    diff_ranges.append(dr)
+                dims_cleared.append(False)
+        if all(dims_cleared):
+            return Range([])
+        elif len(diff_ranges) == 1:
+            return Range(diff_ranges[0])
+        else:
+            subset_list = []
+            for dr in diff_ranges:
+                subset_list.append(Range(dr))
+            return SubsetUnion(subset_list)
 
 
 @dace.serialize.serializable
@@ -1191,26 +1277,52 @@ class Indices(Subset):
             return self
         return None
 
-
+@dace.serialize.serializable
 class SubsetUnion(Subset):
     """
     Wrapper subset type that stores multiple Subsets in a list.
     """
 
-    def __init__(self, subset):
-        self.subset_list: list[Subset] = []
-        if isinstance(subset, SubsetUnion):
-            self.subset_list = subset.subset_list
-        elif isinstance(subset, list):
-            for subset in subset:
-                if not subset:
-                    break
-                if isinstance(subset, (Range, Indices)):
-                    self.subset_list.append(subset)
-                else:
-                    raise NotImplementedError
-        elif isinstance(subset, (Range, Indices)):
-            self.subset_list = [subset]
+    subset_list: List[Range]
+
+    def __init__(self, subset: Optional[Subset] = None):
+        self.subset_list = []
+        if subset is not None:
+            if isinstance(subset, SubsetUnion):
+                self.subset_list = subset.subset_list
+            elif isinstance(subset, list):
+                for subset in subset:
+                    if not subset:
+                        break
+                    if isinstance(subset, Range):
+                        self.subset_list.append(subset)
+                    elif isinstance(subset, Indices):
+                        self.subset_list.append(Range.from_indices(subset))
+                    elif isinstance(subset, SubsetUnion):
+                        self.subset_list.extend(subset.subset_list)
+                    else:
+                        raise NotImplementedError
+            elif isinstance(subset, (Range, Indices)):
+                self.subset_list = [subset]
+
+    def offset(self, other, negative, indices=None, offset_end=True):
+        for subs in self.subset_list:
+            subs.offset(other, negative, indices, offset_end)
+
+    def offset_new(self, other, negative, indices=None, offset_end=True):
+        new_subsets = []
+        for subs in self.subset_list:
+            new_subsets.append(subs.offset_new(other, negative, indices, offset_end))
+        return SubsetUnion(new_subsets)
+
+    def unsqueeze(self, axes: Sequence[int]) -> List[List[int]]:
+        result = []
+        for subs in self.subset_list:
+            if isinstance(subs, Range):
+                result.append(subs.unsqueeze(axes))
+            else:
+                result.append([])
+        return result
 
     def covers(self, other):
         """
@@ -1256,6 +1368,37 @@ class SubsetUnion(Subset):
             string += subset.__str__()
         return string
 
+    def __len__(self):
+        return len(self.subset_list[0])
+
+    def __getitem__(self, key):
+        dim_ranges = []
+        for subs in self.subset_list:
+            dim_ranges.append(Range([subs[key]]))
+        return SubsetUnion(dim_ranges)
+
+    def to_json(self):
+        ret = []
+
+        for sbs in self.subset_list:
+            ret.append(sbs.to_json())
+
+        return {'type': 'SubsetUnion', 'subset_list': ret}
+
+    @staticmethod
+    def from_json(obj, context=None):
+        if not isinstance(obj, dict):
+            raise TypeError("Expected dict, got {}".format(type(obj)))
+        if obj['type'] != 'SubsetUnion':
+            raise TypeError("from_json of class \"SubsetUnion\" called on json "
+                            "with type %s (expected 'SubsetUnion')" % obj['type'])
+
+        subset_list = []
+        for r in obj['subset_list']:
+            subset_list.append(Range.from_json(r, context))
+
+        return SubsetUnion(subset_list)
+    
     def dims(self):
         if not self.subset_list:
             return 0
@@ -1267,11 +1410,73 @@ class SubsetUnion(Subset):
             if isinstance(other, SubsetUnion):
                 self.subset_list += other.subset_list
             elif isinstance(other, Indices) or isinstance(other, Range):
-                self.subset_list.append(other)
+                if not other in self.subset_list:
+                    self.subset_list.append(other)
             else:
                 raise TypeError
         except TypeError:  # cannot determine truth value of Relational
             return None
+
+    def intersection(self, other: Subset) -> 'SubsetUnion':
+        if isinstance(other, SubsetUnion):
+            intersections = []
+            for subs in self.subset_list:
+                for osubs in other.subset_list:
+                    isect = intersection(subs, osubs)
+                    if isect is not None:
+                        intersections.append(isect)
+            if intersections:
+                return SubsetUnion(intersections)
+        elif isinstance(other, (Indices, Range)):
+            intersections = []
+            for subs in self.subset_list:
+                isect = intersection(subs, other)
+                if isect is not None:
+                    intersections.append(isect)
+            if intersections:
+                return SubsetUnion(intersections)
+        else:
+            raise TypeError
+
+    def intersects(self, other: Subset) -> Union[bool, None]:
+        try:
+            return self.intersection(other) is not None
+        except TypeError:
+            return None
+
+    def difference(self, other: Subset) -> 'SubsetUnion':
+        try:
+            if isinstance(other, SubsetUnion):
+                differences = []
+                for subs in self.subset_list:
+                    sub_diff = subs
+                    for osubs in other.subset_list:
+                        sub_diff = difference(sub_diff, osubs)
+                    if sub_diff is not None:
+                        if isinstance(sub_diff, SubsetUnion):
+                            for s in sub_diff.subset_list:
+                                differences.append(s)
+                        else:
+                            differences.append(sub_diff)
+                if differences:
+                    return SubsetUnion(differences)
+            elif isinstance(other, (Indices, Range)):
+                differences = []
+                for subs in self.subset_list:
+                    diff = difference(subs, other)
+                    if diff is not None:
+                        if isinstance(diff, SubsetUnion):
+                            for sub_diff in diff.subset_list:
+                                differences.append(sub_diff)
+                        else:
+                            differences.append(diff)
+                if differences:
+                    return SubsetUnion(differences)
+            else:
+                raise TypeError
+        except TypeError:
+            return None
+        pass
 
     @property
     def free_symbols(self) -> Set[str]:
@@ -1295,6 +1500,24 @@ class SubsetUnion(Subset):
                 continue
 
         return min
+
+    def to_bounding_box_subset(self) -> Union[Range, None]:
+        min_elem = [None] * len(self)
+        max_elem = [None] * len(self)
+        for subs in self.subset_list:
+            for i, rng in enumerate(subs):
+                try:
+                    if min_elem[i] is None or rng[0] < min_elem[i]:
+                        min_elem[i] = rng[0]
+                    if max_elem[i] is None or rng[1] > max_elem[i]:
+                        max_elem[i] = rng[1]
+                except:
+                    return None
+        if any([x is None for x in min_elem]) or any([x is None for x in max_elem]):
+            return None
+
+        new_rngs = [(mini, maxi, 1) for mini, maxi in zip(min_elem, max_elem)]
+        return Range(new_rngs)
 
 
 def _union_special_cases(arb: symbolic.SymbolicType, brb: symbolic.SymbolicType, are: symbolic.SymbolicType,
@@ -1363,13 +1586,11 @@ def bounding_box_union(subset_a: Subset, subset_b: Subset) -> Range:
 
 def union(subset_a: Subset, subset_b: Subset) -> Subset:
     """ Compute the union of two Subset objects.
-        If the subsets are not of the same type, degenerates to bounding-box
-        union.
+        If the subsets are not of the same type, degenerates to bounding-box union.
 
         :param subset_a: The first subset.
         :param subset_b: The second subset.
-        :return: A Subset object whose size is at least the union of the two
-                 inputs. If union failed, returns None.
+        :return: A Subset object whose size is at least the union of the two inputs. If union failed, returns None.
     """
     try:
 
@@ -1446,6 +1667,40 @@ def intersects(subset_a: Subset, subset_b: Subset) -> Union[bool, None]:
             subset_b = Range.from_indices(subset_b)
         if type(subset_a) is type(subset_b):
             return subset_a.intersects(subset_b)
+        elif isinstance(subset_a, SubsetUnion):
+            return subset_a.intersects(subset_b)
+        elif isinstance(subset_b, SubsetUnion):
+            return subset_b.intersects(subset_a)
         return None
     except TypeError:  # cannot determine truth value of Relational
         return None
+
+def intersection(subset_a: Subset, subset_b: Subset) -> Optional[Subset]:
+    if subset_a is None or subset_b is None:
+        return None
+    if isinstance(subset_a, Indices):
+        subset_a = Range.from_indices(subset_a)
+    if isinstance(subset_b, Indices):
+        subset_b = Range.from_indices(subset_b)
+    if type(subset_a) is type(subset_b):
+        return subset_a.intersection(subset_b)
+    elif isinstance(subset_a, SubsetUnion):
+        return subset_a.intersection(subset_b)
+    elif isinstance(subset_b, SubsetUnion):
+        return subset_b.intersection(subset_a)
+    return None
+
+def difference(subset_a: Subset, subset_b: Subset) -> Optional[Subset]:
+    if subset_a is None or subset_b is None:
+        return None
+    if isinstance(subset_a, Indices):
+        subset_a = Range.from_indices(subset_a)
+    if isinstance(subset_b, Indices):
+        subset_b = Range.from_indices(subset_b)
+    if type(subset_a) is type(subset_b):
+        return subset_a.difference(subset_b)
+    elif isinstance(subset_a, SubsetUnion):
+        return subset_a.difference(subset_b)
+    elif isinstance(subset_b, SubsetUnion):
+        return subset_b.difference(subset_a)
+    return None

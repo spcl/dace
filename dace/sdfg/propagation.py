@@ -747,7 +747,7 @@ def propagate_states(sdfg: 'SDFG', concretize_dynamic_unbounded: bool = False) -
     if sdfg.using_explicit_control_flow:
         # Avoid cyclic imports
         from dace.transformation.pass_pipeline import Pipeline
-        from dace.transformation.passes.analysis import StatePropagation
+        from dace.transformation.passes.analysis.propagation import StatePropagation
 
         state_prop_pipeline = Pipeline([StatePropagation()])
         state_prop_pipeline.apply_pass(sdfg, {})
@@ -1493,24 +1493,48 @@ def propagate_subset(memlets: List[Memlet],
         else:
             subset = md.subset
 
-        for pclass in MemletPattern.extensions():
-            pattern = pclass()
-            if pattern.can_be_applied([subset], variable_context, rng, [md]):
-                tmp_subset = pattern.propagate(arr, [subset], rng)
-                break
+        if isinstance(subset, subsets.SubsetUnion):
+            tmp_subset_list = []
+            for sub in subset.subset_list:
+                for pclass in MemletPattern.extensions():
+                    pattern = pclass()
+                    if pattern.can_be_applied([sub], variable_context, rng, [md]):
+                        sub_tmp_subset = pattern.propagate(arr, [sub], rng)
+                        break
+                else:
+                    # No patterns found. Emit a warning and propagate the entire
+                    # array whenever symbols are used
+                    warnings.warn('Cannot find appropriate memlet pattern to '
+                                'propagate %s through %s' % (str(sub), str(rng)))
+                    entire_array = subsets.Range.from_array(arr)
+                    paramset = set(map(str, params))
+                    # Fill in the entire array only if one of the parameters appears in the
+                    # free symbols list of the subset dimension
+                    sub_tmp_subset = subsets.Range([
+                        ea if any(set(map(str, _freesyms(sd))) & paramset for sd in s) else s
+                        for s, ea in zip(sub, entire_array)
+                    ])
+                tmp_subset_list.append(sub_tmp_subset)
+            tmp_subset = subsets.SubsetUnion(tmp_subset_list)
         else:
-            # No patterns found. Emit a warning and propagate the entire
-            # array whenever symbols are used
-            warnings.warn('Cannot find appropriate memlet pattern to '
-                          'propagate %s through %s' % (str(subset), str(rng)))
-            entire_array = subsets.Range.from_array(arr)
-            paramset = set(map(str, params))
-            # Fill in the entire array only if one of the parameters appears in the
-            # free symbols list of the subset dimension
-            tmp_subset = subsets.Range([
-                ea if any(set(map(str, _freesyms(sd))) & paramset for sd in s) else s
-                for s, ea in zip(subset, entire_array)
-            ])
+            for pclass in MemletPattern.extensions():
+                pattern = pclass()
+                if pattern.can_be_applied([subset], variable_context, rng, [md]):
+                    tmp_subset = pattern.propagate(arr, [subset], rng)
+                    break
+            else:
+                # No patterns found. Emit a warning and propagate the entire
+                # array whenever symbols are used
+                warnings.warn('Cannot find appropriate memlet pattern to '
+                            'propagate %s through %s' % (str(subset), str(rng)))
+                entire_array = subsets.Range.from_array(arr)
+                paramset = set(map(str, params))
+                # Fill in the entire array only if one of the parameters appears in the
+                # free symbols list of the subset dimension
+                tmp_subset = subsets.Range([
+                    ea if any(set(map(str, _freesyms(sd))) & paramset for sd in s) else s
+                    for s, ea in zip(subset, entire_array)
+                ])
 
         # Union edges as necessary
         if new_subset is None:

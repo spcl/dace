@@ -736,6 +736,9 @@ class InlineSDFG(transformation.SingleStateTransformation):
             for inner_edge in inner_edges:
                 if inner_edge in edges_to_ignore:
                     new_memlet = inner_edge.data
+                elif inner_edge.data.data != top_edge.data.data and '.' in inner_edge.data.data and '.'.join(
+                        inner_edge.data.data.split('.')[:-1]) == top_edge.data.data:
+                    new_memlet = inner_edge.data
                 else:
                     new_memlet = helpers.unsqueeze_memlet(inner_edge.data, top_edge.data)
                 if inputs:

@@ -20,7 +20,7 @@ from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import scope as sdscope
 from dace.sdfg import utils
 from dace.sdfg.analysis import cfg as cfg_analysis
-from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion
+from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.analysis import StateReachability, loop_analysis
 
 
@@ -549,18 +549,23 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             array_names = sdfg.arrays.keys(
             )  #set(k for k, v in sdfg.arrays.items() if v.lifetime == dtypes.AllocationLifetime.Scope)
             # Iterate topologically to get state-order
-            for state in cfg_analysis.blockorder_topological_sort(sdfg, ignore_nonstate_blocks=True):
-                for node in state.data_nodes():
-                    if node.data not in array_names:
-                        continue
-                    instances[node.data].append((state, node))
+            for block in cfg_analysis.blockorder_topological_sort(sdfg, ignore_nonstate_blocks=False):
+                if isinstance(block, SDFGState):
+                    for node in block.data_nodes():
+                        if node.data not in array_names:
+                            continue
+                        instances[node.data].append((block, node))
+                elif isinstance(block, AbstractControlFlowRegion):
+                    block_fsyms = block.used_symbols(all_symbols=True, with_contents=False)
+                    for block_array in block_fsyms & array_names:
+                        instances[block_array].append((block, nodes.AccessNode(block_array)))
 
                 # Look in the surrounding edges for usage
                 edge_fsyms: Set[str] = set()
-                for e in state.parent_graph.all_edges(state):
+                for e in block.parent_graph.all_edges(block):
                     edge_fsyms |= e.data.free_symbols
                 for edge_array in edge_fsyms & array_names:
-                    instances[edge_array].append((state, nodes.AccessNode(edge_array)))
+                    instances[edge_array].append((block, nodes.AccessNode(edge_array)))
             #############################################
 
             access_instances[sdfg.cfg_id] = instances

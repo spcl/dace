@@ -146,8 +146,20 @@ class Memlet(object):
 
     @staticmethod
     def from_memlet(memlet: 'Memlet') -> 'Memlet':
-        sbs = subsets.Range(memlet.subset.ndrange()) if memlet.subset is not None else None
-        osbs = subsets.Range(memlet.other_subset.ndrange()) if memlet.other_subset is not None else None
+        if memlet.subset is not None:
+            if isinstance(memlet.subset, subsets.SubsetUnion):
+                sbs = subsets.SubsetUnion(memlet.subset.subset_list)
+            else:
+                sbs = subsets.Range(memlet.subset.ndrange())
+        else:
+            sbs = None
+        if memlet.other_subset is not None:
+            if isinstance(memlet.other_subset, subsets.SubsetUnion):
+                osbs = subsets.SubsetUnion(memlet.other_subset.subset_list)
+            else:
+                osbs = subsets.Range(memlet.other_subset.ndrange())
+        else:
+            osbs = None
         result = Memlet(data=memlet.data,
                         subset=sbs,
                         other_subset=osbs,

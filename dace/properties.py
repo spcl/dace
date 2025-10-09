@@ -1118,6 +1118,8 @@ class SubsetProperty(Property):
             return sbs.Range.ndslice_to_string(val)
         elif isinstance(val, sbs.Indices):
             return sbs.Indices.__str__(val)
+        elif isinstance(val, sbs.SubsetUnion):
+            return sbs.SubsetUnion.__str__(val)
         elif val is None:
             return 'None'
         raise TypeError

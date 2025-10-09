@@ -236,6 +236,9 @@ class StatePass(Pass):
 
     CATEGORY: str = 'Helper'
 
+    top_down = properties.Property(dtype=bool, default=False,
+                                   desc='Whether or not to apply top down (i.e., parents before children)')
+
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[SDFGState, Optional[Any]]]:
         """
         Applies the pass to states of the given SDFG by calling ``apply`` on each state.
@@ -248,11 +251,14 @@ class StatePass(Pass):
                  if nothing was returned.
         """
         result = {}
-        for sd in sdfg.all_sdfgs_recursive():
-            for state in sd.nodes():
-                retval = self.apply(state, pipeline_results)
-                if retval is not None:
-                    result[state] = retval
+        for cfr in sdfg.all_control_flow_regions(recursive=True, parent_first=self.top_down):
+            if isinstance(cfr, ConditionalBlock):
+                continue
+            for state in cfr.nodes():
+                if isinstance(state, SDFGState):
+                    retval = self.apply(state, pipeline_results)
+                    if retval is not None:
+                        result[state] = retval
 
         if not result:
             return None

@@ -1294,6 +1294,8 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
         'var': sympy.Symbol('var'),
         'root': sympy.Symbol('root'),
         'arg': sympy.Symbol('arg'),
+        'id': sympy.Symbol('id'),
+        'diag': sympy.Symbol('diag'),
         'Is': Is,
         'IsNot': IsNot,
         'BitwiseAnd': bitwise_and,

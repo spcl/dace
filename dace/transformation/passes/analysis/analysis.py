@@ -2,21 +2,25 @@
 
 from collections import defaultdict, deque
 from dataclasses import dataclass
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
-import sympy
-
-from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion
-from dace.subsets import Range
-from dace.transformation import pass_pipeline as ppl, transformation
-from dace import SDFG, SDFGState, properties, InterstateEdge, Memlet, data as dt, symbolic
-from dace.sdfg.graph import Edge
-from dace.sdfg import nodes as nd, utils as sdutil
-from dace.sdfg.analysis import cfg as cfg_analysis
-from dace.sdfg.propagation import align_memlet
-from typing import Dict, Iterable, List, Set, Tuple, Any, Optional, Union
 import networkx as nx
+import sympy
 from networkx.algorithms import shortest_paths as nxsp
 
+from dace import SDFG, InterstateEdge, Memlet, SDFGState
+from dace import data as dt
+from dace import properties, symbolic
+from dace.sdfg import nodes as nd
+from dace.sdfg import utils as sdutil
+from dace.sdfg.analysis import cfg as cfg_analysis
+from dace.sdfg.graph import Edge
+from dace.sdfg.propagation import align_memlet
+from dace.sdfg.state import (AbstractControlFlowRegion, ConditionalBlock,
+                             ControlFlowBlock, ControlFlowRegion, LoopRegion)
+from dace.subsets import Range
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.transformation.passes.analysis import loop_analysis
 
 WriteScopeDict = Dict[str, Dict[Optional[Tuple[SDFGState, nd.AccessNode]],
@@ -111,6 +115,8 @@ class ControlFlowBlockReachability(ppl.Pass):
         :return: For each control flow region, a dictionary mapping each control flow block to its other reachable
                  control flow blocks.
         """
+        top_sdfg.reset_cfg_list()
+
         single_level_reachable: Dict[int, Dict[ControlFlowBlock,
                                                Set[ControlFlowBlock]]] = defaultdict(lambda: defaultdict(set))
         for cfg in top_sdfg.all_control_flow_regions(recursive=True):
@@ -981,11 +987,23 @@ class StatePropagation(ppl.ControlFlowRegionPass):
             if isinstance(region, SDFG):
                 # The root SDFG is executed exactly once, any other, nested SDFG is executed as many times as the parent
                 # state is.
+                # TODO: Not quite true for NSDFGs: needs to consider how often the NSDFG is executed based on how often
+                # the parent state is executed AND how often any map is executed in which the NSDFG resides.
                 if region is region.root_sdfg:
                     region.executions = 1
                     region.dynamic_executions = False
-                elif region.parent:
-                    region.executions = region.parent.executions
+                elif region.parent and region.parent_nsdfg_node:
+                    region_execs = region.parent.executions
+                    scope_dict = region.parent.scope_dict()
+                    par_scope = scope_dict[region.parent_nsdfg_node]
+                    while par_scope is not None and par_scope is not region.parent:
+                        if not isinstance(par_scope, nd.MapEntry):
+                            raise NotImplementedError()
+                        map_obj = par_scope.map
+                        n_map_execs = map_obj.range.num_elements_exact()
+                        region_execs = region_execs * n_map_execs
+                        par_scope = scope_dict[par_scope]
+                    region.executions = region_execs
                     region.dynamic_executions = region.parent.dynamic_executions
 
             # Clear existing annotations.
@@ -1016,26 +1034,40 @@ class StatePropagation(ppl.ControlFlowRegionPass):
                         blk.ranges[str(region.loop_variable)] = Range([rng])
 
                     # Get surrounding iteration variables for the case of nested loops.
-                    itvar_stack = []
-                    par = region.parent_graph
-                    while par is not None and not isinstance(par, SDFG):
-                        if isinstance(par, LoopRegion) and par.loop_variable:
-                            itvar_stack.append(par.loop_variable)
-                        par = par.parent_graph
+                    #itvar_stack = []
+                    #par = region.parent_graph
+                    #while par is not None and not isinstance(par, SDFG):
+                    #    if isinstance(par, LoopRegion) and par.loop_variable:
+                    #        itvar_stack.append(par.loop_variable)
+                    #    par = par.parent_graph
 
                     # Calculate the number of loop executions.
                     # This resolves ranges based on the order of iteration variables from surrounding loops.
-                    loop_executions = sympy.ceiling(((stop + 1) - start) / stride)
-                    for outer_itvar_string in itvar_stack:
-                        outer_range = region.ranges[outer_itvar_string]
-                        outer_start = outer_range[0][0]
-                        outer_stop = outer_range[0][1]
-                        outer_stride = outer_range[0][2]
-                        outer_itvar = symbolic.pystr_to_symbolic(outer_itvar_string)
-                        exec_repl = loop_executions.subs({outer_itvar: (outer_itvar * outer_stride + outer_start)})
-                        sum_rng = (outer_itvar, 0, sympy.ceiling((outer_stop - outer_start) / outer_stride))
-                        loop_executions = sympy.Sum(exec_repl, sum_rng)
-                    starting_execs = loop_executions.doit()
+                    if start == stop:
+                        loop_executions = sympy.sympify(1)
+                    else:
+                        # This inequality needs to be checked exactly like this due to constraints in sympy/symbolic
+                        # expressions, do not simplify!
+                        if (stride < 0) == True:
+                            loop_executions = sympy.ceiling((start - (stop - 1)) / (stride * -1))
+                        else:
+                            loop_executions = sympy.ceiling(((stop + 1) - start) / stride)
+                        '''
+                        loop_executions = sympy.ceiling(sympy.Abs((start - stop) / stride))
+                        exec_fsyms = loop_executions.free_symbols
+                        for fsym in exec_fsyms:
+                            loop_executions = sympy.refine(loop_executions, sympy.Q.positive(fsym))
+                            '''
+                    #for outer_itvar_string in itvar_stack:
+                    #    outer_range = region.ranges[outer_itvar_string]
+                    #    outer_start = outer_range[0][0]
+                    #    outer_stop = outer_range[0][1]
+                    #    outer_stride = outer_range[0][2]
+                    #    outer_itvar = symbolic.pystr_to_symbolic(outer_itvar_string)
+                    #    exec_repl = loop_executions.subs({outer_itvar: (outer_itvar * outer_stride + outer_start)})
+                    #    sum_rng = (outer_itvar, 0, sympy.ceiling((outer_stop - outer_start) / outer_stride))
+                    #    loop_executions = sympy.Sum(exec_repl, sum_rng)
+                    starting_execs = loop_executions.doit() * starting_execs
                     starting_dynamic = region.dynamic_executions
                 else:
                     starting_execs = 0

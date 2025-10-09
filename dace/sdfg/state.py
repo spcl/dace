@@ -1,10 +1,11 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes of a single SDFG state and dataflow subgraphs. """
 
 import ast
 import abc
 import collections
 import copy
+from dataclasses import dataclass
 import inspect
 import itertools
 import warnings
@@ -22,8 +23,8 @@ from dace import memlet as mm
 from dace import serialize
 from dace import subsets as sbs
 from dace import symbolic
-from dace.properties import (CodeBlock, DebugInfoProperty, DictProperty, EnumProperty, Property, SubsetProperty,
-                             SymbolicProperty, CodeProperty, make_properties)
+from dace.properties import (CodeBlock, DataProperty, DebugInfoProperty, DictProperty, EnumProperty, ListProperty,
+                             Property, SubsetProperty, SymbolicProperty, CodeProperty, make_properties)
 from dace.sdfg import nodes as nd
 from dace.sdfg.graph import (MultiConnectorEdge, NodeNotFoundError, OrderedMultiDiConnectorGraph, SubgraphView,
                              OrderedDiGraph, Edge, generate_element_id)
@@ -324,7 +325,9 @@ class BlockGraphView(object):
     @abc.abstractmethod
     def replace_dict(self,
                      repl: Dict[str, str],
-                     symrepl: Optional[Dict[symbolic.SymbolicType, symbolic.SymbolicType]] = None):
+                     symrepl: Optional[Dict[symbolic.SymbolicType, symbolic.SymbolicType]] = None,
+                     replace_in_graph: bool = True,
+                     replace_keys: bool = False):
         """
         Finds and replaces all occurrences of a set of symbols or arrays in this graph.
 
@@ -1031,7 +1034,9 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
 
     def replace_dict(self,
                      repl: Dict[str, str],
-                     symrepl: Optional[Dict[symbolic.SymbolicType, symbolic.SymbolicType]] = None):
+                     symrepl: Optional[Dict[symbolic.SymbolicType, symbolic.SymbolicType]] = None,
+                     replace_in_graph: bool = True,
+                     replace_keys: bool = False):
         from dace.sdfg.replace import replace_dict
         replace_dict(self, repl, symrepl)
 
@@ -1204,8 +1209,69 @@ class ControlGraphView(BlockGraphView, abc.ABC):
                 edge.data.replace_dict(repl, replace_keys=replace_keys)
 
             # Replace in states
-            for state in self.nodes():
-                state.replace_dict(repl, symrepl)
+            for block in self.nodes():
+                block.replace_dict(repl, symrepl, replace_in_graph, replace_keys)
+
+
+@dataclass(unsafe_hash=True)
+@make_properties
+class GlobalDepAccessEntry:
+
+    node_id: int = Property(dtype=int, allow_none=True,
+                            desc=('ID of the node describing the access (access node, or CFG block). ' +
+                                  'None if the access is on an interstate edge or meta access.'))
+    edge_id: int = Property(dtype=int, allow_none=True,
+                            desc='ID of the edge for the access. None if the access node is a CFG block.')
+
+    def __init__(self, node_id: int = None, edge_id: int = None):
+        self.node_id = node_id
+        self.edge_id = edge_id
+
+    def to_json(self, parent=None) -> Dict[str, Any]:
+        props = serialize.all_properties_to_json(self)
+        return {
+            'type': 'GlobalDepAccessEntry',
+            **props
+        }
+
+    @staticmethod
+    def from_json(json_obj: Dict[str, Any], context: Dict[str, Any] = None) -> 'GlobalDepAccessEntry':
+        ret = GlobalDepAccessEntry()
+        context = context or {}
+        serialize.set_properties_from_json(ret, json_obj, context=context, ignore_properties={'type'})
+        return ret
+
+
+@dataclass(unsafe_hash=True)
+@make_properties
+class GlobalDepDataRecord:
+
+    subset: Subset = SubsetProperty(desc='Subset of the data involved in the dependency entry', allow_none=True)
+    dynamic: bool = Property(dtype=bool, default=False)
+    volume: symbolic.SymExpr = SymbolicProperty(default=0)
+    accesses: List[GlobalDepAccessEntry] = ListProperty(element_type=GlobalDepAccessEntry,
+                                                        desc='Accesses involved in this dependency')
+
+    def __init__(self, subset: Subset = None, dynamic: bool = False, volume: symbolic.SymExpr = 0,
+                 accesses: List[GlobalDepAccessEntry] = None):
+        self.subset = subset
+        self.dynamic = dynamic
+        self.volume = volume
+        self.accesses = accesses if accesses is not None else []
+
+    @staticmethod
+    def from_json(json_obj: Dict[str, Any], context: Dict[str, Any] = None) -> 'GlobalDepDataRecord':
+        ret = GlobalDepDataRecord()
+        context = context or {}
+        serialize.set_properties_from_json(ret, json_obj, context=context, ignore_properties={'type'})
+        return ret
+
+    def to_json(self, parent=None) -> Dict[str, Any]:
+        props = serialize.all_properties_to_json(self)
+        return {
+            'type': 'GlobalDepDataRecord',
+            **props
+        }
 
 
 @make_properties
@@ -1233,6 +1299,11 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
     _sdfg: Optional['SDFG'] = None
     _parent_graph: Optional['ControlFlowRegion'] = None
 
+    certain_reads: Dict[str, GlobalDepDataRecord] = DictProperty(key_type=str, value_type=GlobalDepDataRecord)
+    possible_reads: Dict[str, GlobalDepDataRecord] = DictProperty(key_type=str, value_type=GlobalDepDataRecord)
+    certain_writes: Dict[str, GlobalDepDataRecord] = DictProperty(key_type=str, value_type=GlobalDepDataRecord)
+    possible_writes: Dict[str, GlobalDepDataRecord] = DictProperty(key_type=str, value_type=GlobalDepDataRecord)
+
     def __init__(self, label: str = '', sdfg: Optional['SDFG'] = None, parent: Optional['ControlFlowRegion'] = None):
         super(ControlFlowBlock, self).__init__()
         self._label = label
@@ -1243,6 +1314,10 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
         self.pre_conditions = {}
         self.post_conditions = {}
         self.invariant_conditions = {}
+        self.certain_reads = {}
+        self.possible_reads = {}
+        self.certain_writes = {}
+        self.possible_writes = {}
 
         self.guid = generate_element_id(self)
 
@@ -2802,7 +2877,8 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
 
             # Redirect all edges to the region to the internal start state.
             for b_edge in parent.in_edges(self):
-                parent.add_edge(b_edge.src, self.start_block, b_edge.data)
+                dst = block_to_state_map[self.start_block] if self.start_block in block_to_state_map else self.start_block
+                parent.add_edge(b_edge.src, dst, b_edge.data)
                 parent.remove_edge(b_edge)
 
             end_state = None
@@ -3230,6 +3306,8 @@ class LoopRegion(ControlFlowRegion):
                                        'of an iteration) if the condition no longer holds.')
     loop_variable = Property(dtype=str, default='', desc='The loop variable, if given')
 
+    _carry_dependencies_moredata: Dict[str, Dict[GlobalDepDataRecord, GlobalDepDataRecord]]
+
     def __init__(self,
                  label: str,
                  condition_expr: Optional[Union[str, CodeBlock]] = None,
@@ -3268,6 +3346,8 @@ class LoopRegion(ControlFlowRegion):
         self.loop_variable = loop_var or ''
         self.inverted = inverted
         self.update_before_condition = update_before_condition
+
+        self._carry_dependencies_moredata = {}
 
     def inline(self, lower_returns: bool = False) -> Tuple[bool, Any]:
         """
@@ -3637,7 +3717,7 @@ class LoopRegion(ControlFlowRegion):
         from dace.sdfg.replace import replace_properties_dict
         replace_properties_dict(self, repl, symrepl)
 
-        super().replace_dict(repl, symrepl, replace_in_graph)
+        super().replace_dict(repl, symrepl, replace_in_graph, replace_keys)
 
     def add_break(self, label=None) -> BreakBlock:
         label = self._ensure_unique_block_name(label)
@@ -3766,7 +3846,7 @@ class ConditionalBlock(AbstractControlFlowRegion):
             replace_properties_dict(self, repl, symrepl)
 
         for cond, region in self._branches:
-            region.replace_dict(repl, symrepl, replace_in_graph)
+            region.replace_dict(repl, symrepl, replace_in_graph, replace_keys)
             if cond is not None:
                 replace_in_codeblock(cond, repl)
 

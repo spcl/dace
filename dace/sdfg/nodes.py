@@ -5,6 +5,8 @@
 import ast
 from copy import deepcopy as dcpy
 from collections.abc import KeysView
+
+from matplotlib import category
 import dace
 import itertools
 import dace.serialize
@@ -280,9 +282,11 @@ class AccessNode(Node):
 
     instrument = EnumProperty(dtype=dtypes.DataInstrumentationType,
                               desc="Instrument data contents at this access",
-                              default=dtypes.DataInstrumentationType.No_Instrumentation)
+                              default=dtypes.DataInstrumentationType.No_Instrumentation,
+                              category='Instrumentation')
     instrument_condition = CodeProperty(desc="Condition under which to trigger the instrumentation",
-                                        default=CodeBlock("1", language=dtypes.Language.CPP))
+                                        default=CodeBlock("1", language=dtypes.Language.CPP),
+                                        category='Instrumentation')
 
     def __init__(self, data, debuginfo=None):
         super(AccessNode, self).__init__()

@@ -1,4 +1,4 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """ Analyses the operational intensity of an input SDFG. Can be used as a Python script
 or from the VS Code extension. """
 

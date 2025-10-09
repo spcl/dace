@@ -277,7 +277,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         repldict.update(transients)
         repldict.update({k: v.data.data for k, v in itertools.chain(inputs.items(), outputs.items())})
 
-        symbolic.safe_replace(repldict, lambda m: replace_datadesc_names(nsdfg, m), value_as_string=True)
+        symbolic.safe_replace(repldict, lambda m: replace_datadesc_names(nsdfg, m, skip_repository=True),
+                              value_as_string=True)
 
         # Make unique names for states
         statenames = set(s.label for s in sdfg.states())

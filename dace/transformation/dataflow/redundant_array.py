@@ -12,7 +12,6 @@ from networkx.exception import NetworkXError, NodeNotFound
 from dace import data, dtypes
 from dace import memlet as mm
 from dace import subsets, symbolic
-from dace.config import Config
 from dace.sdfg import SDFG, SDFGState, graph, nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import helpers
@@ -1696,6 +1695,104 @@ class RemoveSliceView(pm.SingleStateTransformation):
             new_subset[adim] = (rb, re, rs)
 
         return subsets.Range(new_subset)
+
+
+class RemoveRedundantStructureView(pm.SingleStateTransformation):
+
+    view = pm.PatternNode(nodes.AccessNode)
+
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.view)]
+
+    def can_be_applied(self, state: SDFGState, _: int, sdfg: SDFG, permissive=False):
+        desc = self.view.desc(sdfg)
+
+        # Ensure structure view.
+        if not isinstance(desc, data.StructureView):
+            return False
+
+        # Get viewed node and non-viewed edges
+        view_edge = sdutil.get_view_edge(state, self.view)
+        if view_edge is None:
+            return False
+
+        # Gather metadata
+        viewed: nodes.AccessNode
+        if view_edge.dst is self.view:
+            viewed = state.memlet_path(view_edge)[0].src
+            subset = view_edge.data.get_src_subset(view_edge, state)
+        else:
+            viewed = state.memlet_path(view_edge)[-1].dst
+            subset = view_edge.data.get_dst_subset(view_edge, state)
+
+        if subset is None:
+            # `subset = None` means the entire viewed data container is used
+            subset = subsets.Range.from_array(viewed.desc(sdfg))
+
+        vdesc = viewed.desc(sdfg)
+
+        # It's only redundant if we are viewing the same structure.
+        if not isinstance(vdesc, (data.Structure, data.StructureView)):
+            return False
+        # If descriptor type changed, bail
+        if vdesc.dtype != desc.dtype:
+            return False
+
+        if str(subset) != '0':
+            return False
+
+        if sdutil.map_view_to_array(desc, vdesc, subset) is None:
+            return False
+
+        return True
+
+    def apply(self, state: SDFGState, sdfg: SDFG):
+        # Get viewed node and non-viewed edges
+        view_edge = sdutil.get_view_edge(state, self.view)
+
+        # Gather metadata
+        viewed: nodes.AccessNode
+        non_view_edges: List[graph.MultiConnectorEdge[mm.Memlet]]
+        subset: subsets.Range
+        is_src: bool
+        if view_edge.dst is self.view:
+            viewed = state.memlet_path(view_edge)[0].src
+            non_view_edges = state.out_edges(self.view)
+            subset = view_edge.data.get_src_subset(view_edge, state)
+            is_src = True
+        else:
+            viewed = state.memlet_path(view_edge)[-1].dst
+            non_view_edges = state.in_edges(self.view)
+            subset = view_edge.data.get_dst_subset(view_edge, state)
+            is_src = False
+
+        if subset is None:
+            # `subset = None` means the entire viewed data container is used
+            subset = subsets.Range.from_array(viewed.desc(sdfg))
+
+        # Update edges
+        for edge in non_view_edges:
+            # Update all memlets in tree
+            for e in state.memlet_tree(edge):
+                if e.data.data is None:
+                    continue
+                parts = e.data.data.split('.')
+                root_data = parts[0]
+                if root_data == self.view.data:
+                    e.data.data = viewed.data + '.' + '.'.join(parts[1:])
+                else:  # The memlet points to the other side, use ``other_subset``
+                    e.data.other_subset = copy.deepcopy(subset)
+
+            # Remove edge directly adjacent to view and reconnect
+            state.remove_edge(edge)
+            if is_src:
+                state.add_edge(view_edge.src, view_edge.src_conn, edge.dst, edge.dst_conn, edge.data)
+            else:
+                state.add_edge(edge.src, edge.src_conn, view_edge.dst, view_edge.dst_conn, edge.data)
+
+        # Remove view node
+        state.remove_node(self.view)
 
 
 class RemoveIntermediateWrite(pm.SingleStateTransformation):

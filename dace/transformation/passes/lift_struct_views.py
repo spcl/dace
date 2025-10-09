@@ -15,6 +15,8 @@ from dace import data as dt
 from dace import dtypes
 
 import sys
+
+from dace.transformation.transformation import explicit_cf_compatible
 from typing import Literal
 
 dirtype = Literal['in', 'out']
@@ -345,6 +347,7 @@ def _data_containers_in_ast(node: ast.AST, arrnames: Set[str]) -> Set[str]:
     return result
 
 
+@explicit_cf_compatible
 class LiftStructViews(ppl.Pass):
     """
     Lift direct accesses to struct members to accesses to views pointing to that struct member.
@@ -358,10 +361,10 @@ class LiftStructViews(ppl.Pass):
     CATEGORY: str = 'Optimization Preparation'
 
     def modifies(self) -> ppl.Modifies:
-        return ppl.Modifies.Descriptors | ppl.Modifies.AccessNodes | ppl.Modifies.Tasklets | ppl.Modifies.Memlets
+        return ppl.Modifies.Descriptors | ppl.Modifies.AccessNodes | ppl.Modifies.Tasklets | ppl.Modifies.Memlets | ppl.Modifies.CFG
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
-        return modified & ppl.Modifies.AccessNodes & ppl.Modifies.Tasklets & ppl.Modifies.Memlets
+        return modified & ppl.Modifies.AccessNodes & ppl.Modifies.Tasklets & ppl.Modifies.Memlets & ppl.Modifies.CFG
 
     def depends_on(self):
         return {}
@@ -421,6 +424,51 @@ class LiftStructViews(ppl.Pass):
                         result[data].update(visitor.views_constructed)
                         lifted_something = True
         return lifted_something
+
+    def _lift_access_node(self, state: SDFGState, data_node: nd.AccessNode, result: Dict[str, Set[str]]) -> bool:
+        parts = data_node.data.split('.')
+        if not len(parts) >= 2:
+            return False
+        root_container = parts[0]
+        struct = state.sdfg.arrays[root_container]
+        if isinstance(struct, (dt.Structure, dt.StructureView)):
+            view_name = 'v_' + '.'.join(parts)
+            try:
+                view = state.sdfg.arrays[view_name]
+            except KeyError:
+                view = dt.View.view(struct.members[parts[1]])
+                view_name = state.sdfg.add_datadesc(view_name, view, find_new_name=True)
+
+            if state.in_degree(data_node) > 0:
+                view_node = state.add_access(view_name)
+                for ie in state.in_edges(data_node):
+                    ie.data.data = view_name
+                    state.add_edge(ie.src, ie.src_conn, view_node, None, Memlet.from_memlet(ie.data))
+                    for path_edge in state.memlet_path(ie):
+                        if path_edge is ie:
+                            continue
+                        if path_edge.data.data == data_node.data:
+                            path_edge.data.data = view_name
+                    state.remove_edge(ie)
+                state.add_edge(view_node, 'views', data_node, None,
+                               Memlet.from_array(root_container + '.' + parts[1], struct.members[parts[1]]))
+            if state.out_degree(data_node) > 0:
+                view_node = state.add_access(view_name)
+                for oe in state.out_edges(data_node):
+                    oe.data.data = view_name
+                    state.add_edge(view_node, None, oe.dst, oe.dst_conn, Memlet.from_memlet(oe.data))
+                    for path_edge in state.memlet_path(oe):
+                        if path_edge is oe:
+                            continue
+                        if path_edge.data.data == data_node.data:
+                            path_edge.data.data = view_name
+                    state.remove_edge(oe)
+                state.add_edge(data_node, None, view_node, 'views',
+                               Memlet.from_array(root_container + '.' + parts[1], struct.members[parts[1]]))
+            result[data_node.data] = view_name
+            data_node.data = root_container
+            return True
+        return False
 
     def _lift_tasklet(self, state: SDFGState, data_node: nd.AccessNode, tasklet: nd.Tasklet,
                       edge: MultiConnectorEdge[Memlet], data: dt.Structure, connector: str,
@@ -485,6 +533,8 @@ class LiftStructViews(ppl.Pass):
                                                                  'out')
                                         result[node.data].update(res)
                                         lifted_something_this_round = True
+                            elif '.' in node.data:
+                                lifted_something_this_round |= self._lift_access_node(block, node, result)
                 for edge in cfg.edges():
                     lifted_something_this_round |= self._lift_isedge(cfg, edge, result)
 

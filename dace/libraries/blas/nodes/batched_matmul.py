@@ -145,7 +145,12 @@ class ExpandBatchedMatMulMKL(ExpandTransformation):
             C[__ib] = (({dtype}*)_c) + __ib*{stride_c};
         }}
 
-        {prefix}gemm_batch(transa, transb, m_array, n_array, k_array, alpha_array, A, lda_array, B, ldb_array, beta_array, C, ldc_array, &group_count, group_sizes);'''.format_map(
+        {prefix}gemm_batch(transa, transb, m_array, n_array, k_array, alpha_array, A, lda_array, B, ldb_array, beta_array, C, ldc_array, &group_count, group_sizes);
+        
+        delete[] A;
+        delete[] B;
+        delete[] C;
+        '''.format_map(
             opt)
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,

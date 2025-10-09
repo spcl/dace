@@ -1,7 +1,7 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 from collections import defaultdict
 import copy
-from typing import Dict, List, Set
+from typing import Dict, List, Optional, Set
 import dace
 from dace import data, subsets, symbolic
 from dace.sdfg.sdfg import InterstateEdge, SDFG
@@ -56,6 +56,8 @@ def dealias_sdfg(sdfg: SDFG):
                 continue
             for edge in parent_state.edges_by_connector(parent_node, name):
                 parent_name = edge.data.data
+                if parent_name == name or parent_name in nsdfg.arrays:
+                    continue
                 assert parent_name in parent_sdfg.arrays
                 if parent_name != name:
                     replacements[name] = parent_name
@@ -165,6 +167,68 @@ def dealias_sdfg(sdfg: SDFG):
                     e._src_conn = replacements[e.src_conn]
                 elif e.dst_conn in replacements:
                     e._dst_conn = replacements[e.dst_conn]
+
+            '''
+            if struct_outside_replacements:
+                p_scope = parent_state.scope_dict()[parent_node]
+                in_map = not isinstance(p_scope, SDFGState)
+                for k, val in struct_outside_replacements.items():
+                    needs_input = k in parent_node.in_connectors
+                    needs_output = k in parent_node.out_connectors
+                    root_container = val.split('.')[0]
+                    if (root_container not in nsdfg.arrays or
+                        (needs_input and root_container not in parent_node.in_connectors) or
+                        (needs_output and root_container not in parent_node.out_connectors)):
+                        nsdfg.add_datadesc(root_container, parent_sdfg.arrays[root_container])
+                        if needs_input:
+                            parent_node.add_in_connector(root_container, parent_sdfg.arrays[root_container].dtype,
+                                                         force=True)
+                            read = parent_state.add_access(root_container)
+                            if in_map:
+                                parent_state.add_memlet_path(read, p_scope, parent_node,
+                                                             memlet=Memlet(expr=root_container + '[0]'),
+                                                             dst_conn=root_container,
+                                                             propagate=False)
+                            else:
+                                parent_state.add_memlet_path(read, parent_node,
+                                                             memlet=Memlet(expr=root_container + '[0]'),
+                                                             dst_conn=root_container,
+                                                             propagate=False)
+                        if needs_output:
+                            parent_node.add_out_connector(root_container, parent_sdfg.arrays[root_container].dtype,
+                                                          force=True)
+                            write = parent_state.add_access(root_container)
+                            if in_map:
+                                parent_state.add_memlet_path(parent_node, p_scope, write,
+                                                             memlet=Memlet(expr=root_container + '[0]'),
+                                                             src_conn=root_container,
+                                                             propagate=False)
+                            else:
+                                parent_state.add_memlet_path(parent_node, write,
+                                                             memlet=Memlet(expr=root_container + '[0]'),
+                                                             src_conn=root_container,
+                                                             propagate=False)
+                    else:
+                        continue
+                replacements = struct_outside_replacements
+                symbolic.safe_replace(replacements, lambda d: replace_datadesc_names(nsdfg, d, True),
+                                      value_as_string=True)
+                for k in struct_outside_replacements.keys():
+                    del nsdfg.arrays[k]
+                parent_node.in_connectors = {
+                    replacements[c] if c in replacements else c: t
+                    for c, t in parent_node.in_connectors.items()
+                }
+                parent_node.out_connectors = {
+                    replacements[c] if c in replacements else c: t
+                    for c, t in parent_node.out_connectors.items()
+                }
+                for e in parent_state.all_edges(parent_node):
+                    if e.src_conn in replacements:
+                        e._src_conn = replacements[e.src_conn]
+                    elif e.dst_conn in replacements:
+                        e._dst_conn = replacements[e.dst_conn]
+                        '''
 
 
 def normalize_memlet(sdfg: SDFG, state: SDFGState, original: gr.MultiConnectorEdge[Memlet], data: str) -> Memlet:
@@ -350,6 +414,7 @@ def _make_view_node(state: SDFGState, edge: gr.MultiConnectorEdge[Memlet], view_
                             memlet=normalized,
                             src_desc=sdfg.arrays[viewed_name],
                             view_desc=sdfg.arrays[view_name])
+    view_node.sdfg = state.sdfg
     return view_node
 
 
@@ -443,6 +508,7 @@ def prepare_schedule_tree_edges(state: SDFGState) -> Dict[gr.MultiConnectorEdge[
                                           memlet=e.data,
                                           src_desc=src_desc,
                                           ref_desc=sdfg.arrays[e.dst.data])
+                result[e].sdfg = state.sdfg
                 scope = state.entry_node(e.dst if mtree.downwards else e.src)
                 scope_to_edges[scope].append(e)
                 continue
@@ -475,6 +541,7 @@ def prepare_schedule_tree_edges(state: SDFGState) -> Dict[gr.MultiConnectorEdge[
                 target_name = innermost_node.data
                 new_memlet = normalize_memlet(sdfg, state, e, outermost_node.data)
                 result[e] = tn.CopyNode(target=target_name, memlet=new_memlet)
+            result[e].sdfg = state.sdfg
 
             scope = state.entry_node(e.dst if mtree.downwards else e.src)
             scope_to_edges[scope].append(e)
@@ -520,6 +587,7 @@ def _state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
             scopes.append(result)
             subnodes = []
             scope_node: tn.DataflowScope = NODE_TO_SCOPE_TYPE[type(node)](state=state, node=node, children=subnodes)
+            scope_node.sdfg = state.sdfg
             result.append(scope_node)
             result = subnodes
         elif isinstance(node, dace.nodes.ExitNode):
@@ -558,6 +626,7 @@ def _state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
                                               memlet=e.data,
                                               src_desc=sdfg.arrays[e.data.data],
                                               view_desc=node.sdfg.arrays[conn])
+                        nview_node.sdfg = node.sdfg
                         result.append(nview_node)
                         generated_nviews.add(conn)
 
@@ -570,6 +639,7 @@ def _state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
             in_memlets = {e.dst_conn: e.data for e in state.in_edges(node) if e.dst_conn}
             out_memlets = {e.src_conn: e.data for e in state.out_edges(node) if e.src_conn}
             tasklet_node = tn.TaskletNode(node=node, in_memlets=in_memlets, out_memlets=out_memlets)
+            tasklet_node.sdfg = state.sdfg
             result.append(tasklet_node)
         elif isinstance(node, dace.nodes.LibraryNode):
             # NOTE: LibraryNodes do not necessarily have connectors
@@ -582,6 +652,7 @@ def _state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
             else:
                 out_memlets = set([e.data for e in state.out_edges(node)])
             libnode = tn.LibraryCall(node=node, in_memlets=in_memlets, out_memlets=out_memlets)
+            libnode.sdfg = state.sdfg
             result.append(libnode)
         elif isinstance(node, dace.nodes.AccessNode):
             # If one of the neighboring edges has a schedule tree node attached to it, use that
@@ -765,6 +836,7 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
     #############################
 
     result = tn.ScheduleTreeScope(children=_block_schedule_tree(sdfg))
+    result.sdfg = sdfg
     tn.validate_has_no_other_node_types(result)
 
     # Clean up tree

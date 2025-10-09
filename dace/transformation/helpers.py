@@ -7,7 +7,7 @@ from networkx import MultiDiGraph
 
 from dace.properties import CodeBlock
 from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, ReturnBlock
-from dace.subsets import Range, Subset, union
+from dace.subsets import Range, Subset, SubsetUnion, union
 import dace.subsets as subsets
 from typing import Dict, Iterable, List, Optional, Tuple, Set, Union
 
@@ -1029,8 +1029,13 @@ def unsqueeze_memlet(internal_memlet: Memlet,
                              'External memlet: %s\nInternal memlet: %s' % (external_memlet, internal_memlet))
         original_minima = external_memlet.subset.min_element()
         for i in set(range(len(original_minima))):
-            rb, re, rs = result.subset.ranges[i]
-            result.subset.ranges[i] = (original_minima[i], re, rs)
+            if isinstance(result.subset, SubsetUnion):
+                for subs in result.subset.subset_list:
+                    rb, re, rs = subs.ranges[i]
+                    subs.ranges[i] = (original_minima[i], re, rs)
+            else:
+                rb, re, rs = result.subset.ranges[i]
+                result.subset.ranges[i] = (original_minima[i], re, rs)
     # TODO: Offset rest of memlet according to other_subset
     if external_memlet.other_subset is not None:
         raise NotImplementedError
