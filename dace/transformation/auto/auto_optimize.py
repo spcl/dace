@@ -452,6 +452,7 @@ def set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType, blocklist: L
 
 
 def _check_size_changes(desc: dt.Array, nsdfg: SDFG) -> bool:
+
     def sym_changes(sym: str, pivot: SDFG) -> bool:
         for isedge in pivot.all_interstate_edges():
             if sym in isedge.data.assignments:

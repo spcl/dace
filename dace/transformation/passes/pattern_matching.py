@@ -115,7 +115,7 @@ class PatternMatchAndApply(ppl.Pass):
             # Find only the first match
             try:
                 match = next(m for m in match_patterns(
-                    sdfg, [xform], metadata=self._metadata, permissive=self.permissive, states=self.states))
+                        sdfg, [xform], metadata=self._metadata, permissive=self.permissive, states=self.states))
             except StopIteration:
                 continue
 

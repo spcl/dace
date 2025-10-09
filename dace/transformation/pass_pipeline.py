@@ -235,7 +235,8 @@ class StatePass(Pass):
 
     CATEGORY: str = 'Helper'
 
-    top_down = properties.Property(dtype=bool, default=False,
+    top_down = properties.Property(dtype=bool,
+                                   default=False,
                                    desc='Whether or not to apply top down (i.e., parents before children)')
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[SDFGState, Optional[Any]]]:
