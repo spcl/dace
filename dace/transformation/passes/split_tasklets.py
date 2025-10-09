@@ -71,6 +71,31 @@ def to_ssa(code):
     return ssa.stmts
 
 
+class VarCollector(ast.NodeVisitor):
+
+    def __init__(self):
+        self.vars = set()
+
+    def visit_Name(self, node):
+        # only collect plain variable names
+        self.vars.add(node.id)
+
+    def visit_Attribute(self, node):
+        # don't collect attributes like `dace.int64`
+        self.generic_visit(node)
+
+
+def _get_vars(ssa_line: str):
+    lhs, rhs = ssa_line.split('=', 1)
+    lhs_var = lhs.strip()
+
+    tree = ast.parse(rhs.strip(), mode="eval")
+    collector = VarCollector()
+    collector.visit(tree)
+
+    return [lhs_var], list(collector.vars)
+
+
 @transformation.explicit_cf_compatible
 class SplitTasklets(ppl.Pass):
     CATEGORY: str = 'Optimization Preparation'
@@ -85,12 +110,6 @@ class SplitTasklets(ppl.Pass):
         return {}
 
     tmp_access_identifier = "_split_"
-
-    def _get_vars(self, ssa_line: str):
-        lhs, rhs = ssa_line.split('=', 1)
-        lhs_var = lhs.strip()
-        rhs_vars = re.findall(r'\b[a-zA-Z_]\w*\b', rhs)
-        return [lhs_var], rhs_vars
 
     def apply_pass(self, sdfg: SDFG, pipeline_results) -> Optional[Dict[str, Set[str]]]:
         split_access_counter = 0
@@ -108,7 +127,7 @@ class SplitTasklets(ppl.Pass):
                         continue
                     if ie.data.data is None:
                         continue
-                    input_types.add(sdfg.arrays[ie.data.data].dtype)
+                    input_types.add(g.sdfg.arrays[ie.data.data].dtype)
                 # It is complicated to split a tasklet with mixed precision input
                 # Need to bookkeep the mapping of intermediate results to precision
                 if len(input_types) > 1 or len(input_types) == 0:
@@ -131,17 +150,20 @@ class SplitTasklets(ppl.Pass):
         # For the case a tasklet goes to a taskelt that needs to be split
         # If we have t1 -> t2 but then split t1 to (t1.1, t1.2) -> t2
         # For each tasklet we split we need to track the new input and output maps
-
         for tasklet, state, ssa_statements, input_type in tasklets_to_split:
             assert isinstance(state, dace.SDFGState)
             assert isinstance(tasklet, dace.nodes.Tasklet)
+            assert tasklet in state.nodes()
             tasklet_input_edges = state.in_edges(tasklet)
             tasklet_output_edges = state.out_edges(tasklet)
 
+            tasklet_in_degree = state.in_degree(tasklet)
+            tasklet_in_edges = state.in_edges(tasklet)
+            tasklet_out_degree = state.out_degree(tasklet)
             state.remove_node(tasklet)
             added_tasklets = list()
             for i, ssa_statement in enumerate(ssa_statements):  # Since SSA we are going to add in a line
-                lhs_vars, rhs_vars = self._get_vars(ssa_statement)
+                lhs_vars, rhs_vars = _get_vars(ssa_statement)
                 assert len(lhs_vars) == 1
                 t = state.add_tasklet(
                     name=f"{tasklet.name}_split_{i}",
@@ -161,17 +183,35 @@ class SplitTasklets(ppl.Pass):
                 # First do inputs
                 if i == 0:  # First new tasklet
                     # The inputs should be available in the input data
+                    # This might not be matched if a symbol is used in the tasklet
+                    # for example X = dace.float64(symbol)
+                    matched_in_conns = set()
                     for in_conn in t.in_connectors:
                         matching_in_edges = {ie for ie in tasklet_input_edges if ie.dst_conn == in_conn}
-                        assert len(matching_in_edges) == 1
-                        matching_in_edge = next(iter(matching_in_edges))
+                        assert len(
+                            matching_in_edges
+                        ) <= 1, f"Required 1 matching in edge always, found: {matching_in_edges}, original tasklet code: {tasklet.code.as_string}, current tasklet code: {t.code.as_string}"
 
-                        state.add_edge(matching_in_edge.src, matching_in_edge.src_conn, t, in_conn,
-                                       copy.deepcopy(matching_in_edge.data))
+                        if len(matching_in_edges) > 0:
+                            matching_in_edge = next(iter(matching_in_edges))
+
+                            state.add_edge(matching_in_edge.src, matching_in_edge.src_conn, t, in_conn,
+                                           copy.deepcopy(matching_in_edge.data))
+                            matched_in_conns.add(in_conn)
+
+                    for in_conn in list(t.in_connectors.keys()):
+                        if in_conn not in matched_in_conns:
+                            t.remove_in_connector(in_conn)
+
+                    # dace.float64(symbol) has no sources after split,
+                    # but if we for example inside a map we need to add a dependency edge
+                    if len(matched_in_conns) == 0 and tasklet_in_degree > 0:
+                        for ie in tasklet_in_edges:
+                            state.add_edge(ie.src, None, t, None, dace.memlet.Memlet(None))
                 else:
                     # Input comes from transient accesses (each unique and needs to be added to the SDFG)
                     # or from the unused in edges
-                    for in_conn in t.in_connectors:
+                    for in_conn in t.in_connectors.keys():
                         matching_in_edges = {ie for ie in tasklet_input_edges if ie.dst_conn == in_conn}
                         if len(matching_in_edges) == 0:
                             array_name = f"{in_conn}{self.tmp_access_identifier}{split_access_counter}"
@@ -186,7 +226,8 @@ class SplitTasklets(ppl.Pass):
                                 added_accesses[array_name] = state.add_access(array_name)
                             state.add_edge(
                                 added_accesses[array_name], None, t, in_conn,
-                                dace.memlet.Memlet.from_array(dataname=array_name, datadesc=sdfg.arrays[array_name]))
+                                dace.memlet.Memlet.from_array(dataname=array_name,
+                                                              datadesc=state.sdfg.arrays[array_name]))
                         else:
                             assert len(matching_in_edges) == 1
                             matching_in_edge = next(iter(matching_in_edges))
@@ -217,8 +258,9 @@ class SplitTasklets(ppl.Pass):
                         assert array_name not in added_accesses
                         added_accesses[array_name] = state.add_access(array_name)
                     state.sdfg.save("x.sdfgz", compress=True)
-                    state.add_edge(t, out_conn, added_accesses[array_name], None,
-                                   dace.memlet.Memlet.from_array(dataname=array_name, datadesc=sdfg.arrays[array_name]))
+                    state.add_edge(
+                        t, out_conn, added_accesses[array_name], None,
+                        dace.memlet.Memlet.from_array(dataname=array_name, datadesc=state.sdfg.arrays[array_name]))
 
             split_access_counter += 1
 
