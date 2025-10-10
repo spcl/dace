@@ -113,6 +113,7 @@ def tasklets_in_if(
                 b[i, j] = b[i, j] - d[i, j]
             b[i, j] = (1 - a[i, j]) * c
 
+
 @dace.program
 def tasklets_in_if_two(
     a: dace.float64[S, S],
@@ -122,12 +123,13 @@ def tasklets_in_if_two(
     e: dace.float64[S, S],
     f: dace.float64,
 ):
-    for i in dace.map[0:S-1:1]:
-        for j in dace.map[0:S-1:1]:
+    for i in dace.map[0:S - 1:1]:
+        for j in dace.map[0:S - 1:1]:
             if a[i, j] + a[i + 1, j + 1] < b:
                 g = f * a[i, j]
                 d[i, j] = c[i, j] * g
                 e[i, j] = d[i, j] * 2.0 - a[i, j]
+
 
 @dace.program
 def spmv_csr(indptr: dace.int64[n + 1], indices: dace.int64[nnz], data: dace.float64[nnz], x: dace.float64[m],
@@ -320,11 +322,11 @@ def test_tasklets_in_if():
 def test_tasklets_in_if_two():
     _S = 64
     A = numpy.random.random((_S, _S))
-    B = numpy.random.random((1,))
+    B = numpy.random.random((1, ))
     C = numpy.random.random((_S, _S))
     D = numpy.random.random((_S, _S))
     E = numpy.random.random((_S, _S))
-    F = numpy.random.random((1,))
+    F = numpy.random.random((1, ))
 
     # Create copies for comparison
     A_orig = copy.deepcopy(A)
@@ -362,6 +364,7 @@ def test_tasklets_in_if_two():
     assert numpy.allclose(D_orig, D_vec), f"{D_orig - D_vec}"
     assert numpy.allclose(E_orig, E_vec), f"{E_orig - E_vec}"
     assert numpy.allclose(F_orig, F_vec), f"{F_orig - F_vec}"
+
 
 def _dense_to_csr(dense: numpy.ndarray):
     """

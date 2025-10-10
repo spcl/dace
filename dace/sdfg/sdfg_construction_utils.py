@@ -10,17 +10,15 @@ from dace.sdfg.state import ConditionalBlock, LoopRegion
 def replace_length_one_arrays_with_scalars(sdfg: dace.SDFG, recursive: bool = True):
     scalarized_arrays = set()
     for arr_name, arr in [(k, v) for k, v in sdfg.arrays.items()]:
-        if isinstance(arr, dace.data.Array) and arr.shape == (1,):
+        if isinstance(arr, dace.data.Array) and arr.shape == (1, ):
             sdfg.remove_data(arr_name, False)
-            sdfg.add_scalar(
-                name=arr_name,
-                dtype=arr.dtype,
-                storage=arr.storage,
-                transient=arr.transient,
-                lifetime=arr.lifetime,
-                debuginfo=arr.debuginfo,
-                find_new_name=False
-            )
+            sdfg.add_scalar(name=arr_name,
+                            dtype=arr.dtype,
+                            storage=arr.storage,
+                            transient=arr.transient,
+                            lifetime=arr.lifetime,
+                            debuginfo=arr.debuginfo,
+                            find_new_name=False)
             scalarized_arrays.add(arr_name)
 
     # Replace [0] accesses of scalars (formerly array ones) on interstate edges
@@ -44,16 +42,19 @@ def replace_length_one_arrays_with_scalars(sdfg: dace.SDFG, recursive: bool = Tr
                 for scalar_name in scalarized_arrays:
                     if f"{scalar_name}[0]" in nlc:
                         nlc = nlc.replace(f"{scalar_name}[0]", scalar_name)
-                cond = CodeBlock(nlc, cond.language  if isinstance(cond, CodeBlock) else dace.dtypes.Language.Python)
+                cond = CodeBlock(nlc, cond.language if isinstance(cond, CodeBlock) else dace.dtypes.Language.Python)
 
     # Replace [0] accesses of scalars (formerly array ones) on LoopRegions
     for node in sdfg.all_control_flow_regions():
         if isinstance(node, LoopRegion):
-            nlc = node.loop_condition.as_string if isinstance(node.loop_condition, CodeBlock) else str(node.loop_condition)
+            nlc = node.loop_condition.as_string if isinstance(node.loop_condition, CodeBlock) else str(
+                node.loop_condition)
             for scalar_name in scalarized_arrays:
                 if f"{scalar_name}[0]" in nlc:
                     nlc = nlc.replace(f"{scalar_name}[0]", scalar_name)
-            node.loop_condition = CodeBlock(nlc, node.loop_condition.language if isinstance(node.loop_condition, CodeBlock) else dace.dtypes.Language.Python)
+            node.loop_condition = CodeBlock(
+                nlc, node.loop_condition.language
+                if isinstance(node.loop_condition, CodeBlock) else dace.dtypes.Language.Python)
 
     if recursive:
         for state in sdfg.all_states():
@@ -95,12 +96,13 @@ def array_is_used_in_the_sdfg(sdfg: dace.SDFG, arr_name: str):
     # Loop
     for node in sdfg.all_control_flow_regions():
         if isinstance(node, LoopRegion):
-            if arr_name in {s.strip() for s in re.split(r'[()\[\]\s]+',node.loop_condition.as_string)}:
+            if arr_name in {s.strip() for s in re.split(r'[()\[\]\s]+', node.loop_condition.as_string)}:
                 return True
-            if arr_name in {s.strip() for s in re.split(r'[()\[\]\s]+',node.init_statement.as_string)}:
+            if arr_name in {s.strip() for s in re.split(r'[()\[\]\s]+', node.init_statement.as_string)}:
                 return True
 
     return False
+
 
 def array_is_written_to_in_the_sdfg(sdfg: dace.SDFG, arr_name: str):
     for state in sdfg.all_states():
@@ -112,7 +114,9 @@ def array_is_written_to_in_the_sdfg(sdfg: dace.SDFG, arr_name: str):
                         return True
     return False
 
+
 def remove_array_from_connectors(parent_state: dace.SDFGState, nsdfg: dace.nodes.NestedSDFG, arr_name: str):
+
     def _rm_memlet_tree(parent_state: dace.SDFGState, memlet_tree: dace.memlet.MemletTree):
         for tree_node in memlet_tree.traverse_children(True):
             edge = tree_node.edge
@@ -144,6 +148,7 @@ def remove_array_from_connectors(parent_state: dace.SDFGState, nsdfg: dace.nodes
         memlet_tree = memlet_trees.pop()
         _rm_memlet_tree(parent_state, memlet_tree)
 
+
 def try_to_add_missing_arrays_to_nsdfgs(sdfg: dace.SDFG):
     for state in sdfg.all_states():
         for node in state.nodes():
@@ -158,19 +163,14 @@ def try_to_add_missing_arrays_to_nsdfgs(sdfg: dace.SDFG):
                             print(f"Add {arr_name} to parent nSDFG's in connectors")
                             node.add_in_connector(arr_name, force=True)
                             an = state.add_access(arr_name)
-                            
+
                             if arr_name in node.sdfg.arrays and arr_name not in state.sdfg.arrays:
                                 print(f"Adding {arr_name} desc to parent SDFG because it is not available there")
                                 cpdesc = copy.deepcopy(node.sdfg.arrays[arr_name])
                                 state.sdfg.add_datadesc(arr_name, cpdesc)
 
-                            state.add_edge(
-                                an,
-                                None,
-                                node,
-                                arr_name,
-                                dace.memlet.Memlet.from_array(arr_name, state.sdfg.arrays[arr_name])
-                            )
+                            state.add_edge(an, None, node, arr_name,
+                                           dace.memlet.Memlet.from_array(arr_name, state.sdfg.arrays[arr_name]))
 
                             if array_is_written_to_in_the_sdfg(node.sdfg, arr_name):
                                 print(f"{arr_name} is written to too, add to parent nSDFG's out connectors")
@@ -180,20 +180,17 @@ def try_to_add_missing_arrays_to_nsdfgs(sdfg: dace.SDFG):
                                 if arr_name in node.sdfg.arrays and arr_name not in state.sdfg.arrays:
                                     cpdesc = copy.deepcopy(node.sdfg.arrays[arr_name])
                                     state.sdfg.add_datadesc(arr_name, cpdesc)
-                                state.add_edge(
-                                    node,
-                                    arr_name,
-                                    an,
-                                    None,
-                                    dace.memlet.Memlet.from_array(arr_name, state.sdfg.arrays[arr_name])
-                                )
+                                state.add_edge(node, arr_name, an, None,
+                                               dace.memlet.Memlet.from_array(arr_name, state.sdfg.arrays[arr_name]))
 
     for state in sdfg.all_states():
         for node in state.nodes():
             if isinstance(node, dace.nodes.NestedSDFG):
                 try_to_add_missing_arrays_to_nsdfgs(node.sdfg)
 
+
 def prune_unnused_arrays_from_nsdfgs(sdfg: dace.SDFG):
+
     def _arr_in_connectors(nsdfg: dace.nodes.NestedSDFG, arr_name: str):
         return arr_name in nsdfg.in_connectors or arr_name in nsdfg.out_connectors
 
@@ -212,6 +209,7 @@ def prune_unnused_arrays_from_nsdfgs(sdfg: dace.SDFG):
         for node in state.nodes():
             if isinstance(node, dace.nodes.NestedSDFG):
                 prune_unnused_arrays_from_nsdfgs(node.sdfg)
+
 
 def get_missing_symbols(nsdfg_node: dace.nodes.NestedSDFG) -> Set[str]:
     nsdfg = nsdfg_node.sdfg

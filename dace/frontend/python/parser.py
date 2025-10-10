@@ -287,8 +287,6 @@ class DaceProgram(pycommon.SDFGConvertible):
             # Add to cache
             self._cache.add(cachekey, sdfg, None)
 
-        dealias(sdfg)
-
         return sdfg
 
     def __sdfg__(self, *args, **kwargs) -> SDFG:
