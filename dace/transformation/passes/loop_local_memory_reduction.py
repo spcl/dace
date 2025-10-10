@@ -7,18 +7,19 @@ from dace.sdfg import utils as sdutil
 from dace.sdfg.state import ControlFlowRegion, LoopRegion, ConditionalBlock
 from dace.data import Scalar
 from dace.transformation import transformation as xf
+from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import loop_analysis, StateReachability
 from dace.symbolic import pystr_to_symbolic, issymbolic
 from dace.subsets import Range
 import copy
-from typing import Union
+from typing import Union, Set, Optional
 
 
 @properties.make_properties
 @xf.explicit_cf_compatible
-class LoopLocalMemoryReduction(xf.MultiStateTransformation):
+class LoopLocalMemoryReduction(ppl.Pass):
     """
-    This transformation replaces thread-local array accesses in a loop with a modulo-indexed access to reduce memory footprint.
+    This pass replaces thread-local array accesses in a loop with a modulo-indexed access to reduce memory footprint.
     Example:
 
       for i in range(2, N):
@@ -82,12 +83,10 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
       - Step > 1
 
     Does not work with:
-      - Non-linear index expressions (a*i + b)
+      - Non-linear index expressions (i.e. expression NOT in the form of a*i + b)
       - Non-linear and non-constant step expressions
       - Indirect accesses
     """
-
-    loop = xf.PatternNode(LoopRegion)
 
     bitmask_indexing = properties.Property(
         dtype=bool,
@@ -102,28 +101,43 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
         "Whether or not to round up the reduced memory size to the next power of two (enables bitmasking instead of modulo).",
     )
 
-    @classmethod
-    def expressions(cls):
-        return [sdutil.node_path_graph(cls.loop)]
+    num_applications = 0  # To track number of applications for testing
 
-    def annotates_memlets(self) -> bool:
-        return True
 
-    def can_be_applied(self, graph: ControlFlowRegion, expr_index, sdfg: sd.SDFG, permissive=False):
-        arrays = set(acc_node.data for acc_node in self.loop.data_nodes())
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Edges | ppl.Modifies.Descriptors
+
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        # If anything was modified, reapply
+        return modified != ppl.Modifies.Nothing
+    
+
+    def apply_pass(self, sdfg: sd.SDFG, _) -> Optional[Set[str]]:
+        self.num_applications = 0
         self.can_reach = StateReachability().apply_pass(sdfg, {})
-        return any(self._can_apply_for_array(arr, sdfg) for arr in arrays)
 
-    def apply(self, graph: ControlFlowRegion, sdfg: sd.SDFG):
-        arrays = set(acc_node.data for acc_node in self.loop.data_nodes())
-        for arr in arrays:
-            if self._can_apply_for_array(arr, sdfg):
-                self._apply_for_array(arr, sdfg)
+        for node, _ in sdfg.all_nodes_recursive():
+            if isinstance(node, LoopRegion):
+                # Loop step expression must be constant.
+                if not self._has_constant_loop_expressions(sdfg, node):
+                  continue 
 
-    def _get_edge_indices(self, subset: Range) -> list[Union[tuple, None]]:
+                arrays = set(acc_node.data for acc_node in node.data_nodes())
+                write_states = {}
+                for st in node.all_states():
+                    for an in st.data_nodes():
+                        if st.in_degree(an) > 0:
+                            write_states.setdefault(an.data, set()).add(st)
+
+                for arr in arrays:
+                    self._apply_for_array(arr, sdfg, node, write_states)
+
+
+    def _get_edge_indices(self, subset: Range, loop: LoopRegion) -> list[Union[tuple, None]]:
         # list of tuples of (a, b) for a*i + b, None if cannot be determined
         indices = list()
-        itervar = self.loop.loop_variable
+        itervar = loop.loop_variable
         itersym = symbolic.pystr_to_symbolic(itervar)
         a = sp.Wild("a", exclude=[itersym])
         b = sp.Wild("b", exclude=[itersym])
@@ -138,40 +152,40 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
         return indices
 
     def _get_read_write_indices(
-            self, array_name: str) -> tuple[list[list[Union[tuple, None]]], list[list[Union[tuple, None]]]]:
+            self, array_name: str, loop: LoopRegion) -> tuple[list[list[Union[tuple, None]]], list[list[Union[tuple, None]]]]:
         # list of list of tuples of (a, b) for a*i + b
         read_indices = list()
         write_indices = list()
 
-        access_nodes = set(an for an in self.loop.data_nodes() if an.data == array_name)
-        read_edges = set(e for an in access_nodes for st in self.loop.all_states() if an in st.data_nodes()
+        access_nodes = set(an for an in loop.data_nodes() if an.data == array_name)
+        read_edges = set(e for an in access_nodes for st in loop.all_states() if an in st.data_nodes()
                          for e in st.out_edges(an))
-        write_edges = set(e for an in access_nodes for st in self.loop.all_states() if an in st.data_nodes()
+        write_edges = set(e for an in access_nodes for st in loop.all_states() if an in st.data_nodes()
                           for e in st.in_edges(an))
 
         for edge in read_edges:
-            eri = self._get_edge_indices(edge.data.src_subset)
+            eri = self._get_edge_indices(edge.data.src_subset, loop)
             read_indices.append(eri)
 
         for edge in write_edges:
-            ewi = self._get_edge_indices(edge.data.dst_subset)
+            ewi = self._get_edge_indices(edge.data.dst_subset, loop)
             write_indices.append(ewi)
 
         return read_indices, write_indices
 
-    def _has_constant_loop_expressions(self, sdfg: sd.SDFG) -> tuple[bool, Union[int, None]]:
-        itervar = self.loop.loop_variable
-        step = loop_analysis.get_loop_stride(self.loop)
+    def _has_constant_loop_expressions(self, sdfg: sd.SDFG, loop: LoopRegion) -> tuple[bool, Union[int, None]]:
+        itervar = loop.loop_variable
+        step = loop_analysis.get_loop_stride(loop)
         if step is None:
-            return False, None
+            return False
 
         defined_syms = set()
-        for edge in self.loop.all_interstate_edges():
+        for edge in loop.all_interstate_edges():
             defined_syms.update(edge.data.assignments.keys())
 
         resolved_step = symbolic.resolve_symbol_to_constant(step, sdfg)
         return (itervar not in defined_syms and step.free_symbols.isdisjoint(defined_syms)
-                and step.free_symbols.isdisjoint({itervar}) and resolved_step is not None), resolved_step
+                and step.free_symbols.isdisjoint({itervar}) and resolved_step is not None)
 
     def _get_K_values(
         self,
@@ -180,9 +194,10 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
         write_indices: list[list[Union[tuple, None]]],
         step: int,
         sdfg: sd.SDFG,
+        loop: LoopRegion,
     ) -> list[Union[int, None]]:
         k_values = []
-        max_indices = self._get_max_indices_before_loop(array_name, sdfg)
+        max_indices = self._get_max_indices_before_loop(array_name, sdfg, loop)
 
         # For each dimension
         for dim in range(len(read_indices[0])):
@@ -222,13 +237,13 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
             # If we have a span of one, it's enough that reads happen after writes in the loop.
             if span == 0:
                 cond = all(
-                    st.in_degree(an) > 0 and st.out_degree(an) > 0 for st in self.loop.all_states()
+                    st.in_degree(an) > 0 and st.out_degree(an) > 0 for st in loop.all_states()
                     for an in st.data_nodes() if an.data == array_name)
 
             # Take maximum from previous accesses into account
             try:
                 k = max(span, max_indices[dim])
-                not cond  # XXX: Ensure condition can be evaluated
+                not cond  # XXX: This ensures the condition can be evaluated. Do not remove.
             except TypeError:
                 k_values.append(None)
                 continue
@@ -254,11 +269,11 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
                 k_values.append(k + 1)  # +1 because k is the highest index accessed, so size is k+1
         return k_values
 
-    def _write_is_loop_local(self, array_name: str, write_indices: list[list[tuple]], sdfg: sd.SDFG) -> bool:
+    def _write_is_loop_local(self, array_name: str, write_indices: list[list[tuple]], sdfg: sd.SDFG, loop: LoopRegion) -> bool:
         # The (overapproximated) written subset must be written before read or not read at all.
         # TODO: This is overly conservative. Just checks if there are access nodes after the loop.
 
-        loop_states = set(self.loop.all_states())
+        loop_states = set(loop.all_states())
         for k1, v1 in self.can_reach.items():
             for k2, v2 in v1.items():
                 if k2 not in loop_states:
@@ -269,9 +284,9 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
                         return False
         return True
 
-    def _get_max_indices_before_loop(self, array_name: str, sdfg: sd.SDFG) -> list[int]:
+    def _get_max_indices_before_loop(self, array_name: str, sdfg: sd.SDFG, loop: LoopRegion) -> list[int]:
         # Collect all read and write subsets of the array before the loop.
-        loop_states = set(self.loop.all_states())
+        loop_states = set(loop.all_states())
         subsets = set()
         for k1, v1 in self.can_reach.items():
             for k2, v2 in v1.items():
@@ -315,74 +330,63 @@ class LoopLocalMemoryReduction(xf.MultiStateTransformation):
                 indices.append(max_index)
         return indices
 
-    def _can_apply_for_array(self, array_name: str, sdfg: sd.SDFG) -> bool:
+    def _apply_for_array(self, array_name: str, sdfg: sd.SDFG, loop: LoopRegion, write_states: dict[str, set[sd.SDFGState]]) -> bool:
         # Must be transient (otherwise it's observable)
         if not sdfg.arrays[array_name].transient:
-            return False
+            return 
 
         # Views and References are not supported
         if isinstance(sdfg.arrays[array_name], dt.View) or isinstance(sdfg.arrays[array_name], dt.Reference):
-            return False
-
-        # Loop step expression must be constant.
-        has_const_loop_expr, step = self._has_constant_loop_expressions(sdfg)
-        if not has_const_loop_expr:
-            return False
+            return 
 
         # There needs to be at least one read and one write.
-        read_indices, write_indices = self._get_read_write_indices(array_name)
+        read_indices, write_indices = self._get_read_write_indices(array_name, loop)
         if not read_indices or not write_indices:
-            return False
+            return 
 
         # All read and write indices must be linear combinations of the loop variable. I.e. a*i + b, where a and b are constants.
         if any(i is None for il in read_indices + write_indices for i in il):
-            return False
+            return 
 
         # The scaling factor a must be the same for all indices if a != 0.
         a_values = set(i[0] for il in read_indices + write_indices for i in il if i[0] != 0)
         if len(a_values) > 1:
-            return False
+            return 
         if len(a_values) == 0:
             a_values.add(0)
 
         # The offset b must be multiple of a if a != 0.
+        step = symbolic.resolve_symbol_to_constant(loop_analysis.get_loop_stride(loop), sdfg)
         a = a_values.pop() * step
         if a != 0 and any(i[1] % a != 0 for il in read_indices + write_indices for i in il if i[0] != 0):
-            return False
+            return 
 
         # All constants (a == 0) must be in the same dimension.
         for dim in range(len(read_indices[0])):
             if any(il[dim][0] == 0 for il in read_indices) and any(il[dim][0] != 0 for il in read_indices):
-                return False
+                return 
             if any(il[dim][0] == 0 for il in write_indices) and any(il[dim][0] != 0 for il in write_indices):
-                return False
+                return 
 
         # None of the write accesses must be within a conditional block. Reads are ok.
-        for st in self.loop.all_states():
-            for an in st.data_nodes():
-                if an.data == array_name and st.in_degree(an) > 0:
-                    pgraph = st.parent_graph
-                    while pgraph is not None and pgraph != self.loop:
-                        if isinstance(pgraph, ConditionalBlock):
-                            return False
-                        pgraph = pgraph.parent_graph
+        for st in write_states.get(array_name, set()):
+          pgraph = st.parent_graph
+          while pgraph is not None and pgraph != loop:
+              if isinstance(pgraph, ConditionalBlock):
+                  return
+              pgraph = pgraph.parent_graph
 
         # Outside of the loop, the written subset of the array must be written before read or not read at all.
-        if not self._write_is_loop_local(array_name, write_indices, sdfg):
-            return False
+        if not self._write_is_loop_local(array_name, write_indices, sdfg, loop):
+            return
 
         # A K value must be found for at least one dimension.
-        Ks = self._get_K_values(array_name, read_indices, write_indices, step, sdfg)
+        Ks = self._get_K_values(array_name, read_indices, write_indices, step, sdfg, loop)
         if all(k is None for k in Ks):
-            return False
+            return
 
-        # Otherwise, we can apply the transformation.
-        return True
-
-    def _apply_for_array(self, array_name: str, sdfg: sd.SDFG):
-        read_indices, write_indices = self._get_read_write_indices(array_name)
-        _, step = self._has_constant_loop_expressions(sdfg)
-        Ks = self._get_K_values(array_name, read_indices, write_indices, step, sdfg)
+        ### Otherwise, we can apply the transformation.
+        self.num_applications += 1
 
         # Replace all read and write edges in the loop with modulo accesses.
         read_edges = set(e for st in sdfg.all_states() for an in st.data_nodes() if an.data == array_name

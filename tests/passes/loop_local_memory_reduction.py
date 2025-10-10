@@ -5,7 +5,7 @@ import numpy as np
 import copy
 import dace
 from dace.sdfg.state import LoopRegion, CodeBlock
-from dace.transformation.interstate import LoopLocalMemoryReduction
+from dace.transformation.passes import LoopLocalMemoryReduction
 from typing import Any, Dict
 
 
@@ -14,7 +14,12 @@ def check_transformation_option(orig_sdfg: dace.SDFG, N: int, options: Dict[str,
     # Apply and validate
     orig_sdfg.validate()
     llmr_sdfg = copy.deepcopy(orig_sdfg)
-    apps = llmr_sdfg.apply_transformations_repeated(LoopLocalMemoryReduction, options=options)
+
+    llmr = LoopLocalMemoryReduction()
+    llmr.bitmask_indexing = options["bitmask_indexing"]
+    llmr.next_power_of_two = options["next_power_of_two"]
+    llmr.apply_pass(llmr_sdfg, {})
+    apps = llmr.num_applications
     assert apps >= N, f"Expected at least {N} applications, got {apps} with options {options}"
     llmr_sdfg.validate()
 
