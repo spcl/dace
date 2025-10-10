@@ -2830,8 +2830,6 @@ def test_map_fusion_multiple_top_level_connections(strict_dataflow: bool):
     ref, res = make_sdfg_args(sdfg)
     compile_and_run_sdfg(sdfg, **ref)
 
-    # Here it is possible to apply the fusion, because the nested SDFG does not need
-    #  to know the size.
     apply_fusion(
         sdfg,
         removed_maps=1,
@@ -2922,8 +2920,6 @@ def test_map_fusion_multiple_top_level_connections_with_shared_intermediate(stri
     ref, res = make_sdfg_args(sdfg)
     compile_and_run_sdfg(sdfg, **ref)
 
-    # Here it is possible to apply the fusion, because the nested SDFG does not need
-    #  to know the size.
     apply_fusion(
         sdfg,
         removed_maps=1,
@@ -3067,8 +3063,8 @@ def test_map_fusion_multiple_top_level_connections_multi_producer(strict_dataflo
     ref, res = make_sdfg_args(sdfg)
     compile_and_run_sdfg(sdfg, **ref)
 
-    # Here it is possible to apply the fusion, because the nested SDFG does not need
-    #  to know the size.
+    # The transformation can not apply because there are multiple edges between
+    #  `first_map_exit` and intermediate are not yet supported.
     apply_fusion(
         sdfg,
         removed_maps=1,

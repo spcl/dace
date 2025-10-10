@@ -446,12 +446,6 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         # Set of intermediate nodes that we have already processed.
         processed_inter_nodes: Set[nodes.Node] = set()
 
-        debug = False
-        for oedge in state.out_edges(first_map_exit):
-            dnode = oedge.dst
-            if isinstance(dnode, nodes.AccessNode) and dnode.data == "__tmp9":
-                debug = True
-
         # Now scan all output edges of the first exit and classify them
         for out_edge in state.out_edges(first_map_exit):
             intermediate_node: nodes.Node = out_edge.dst
@@ -587,11 +581,11 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                         if i < j and psbs1.intersects(psbs2):
                             return None
 
-            # We now determine the consumers of the intermediate node. For this we are
-            #  looking at the edges that leave the node and enter the second Map.
-            #  This means that we ignore the actual consumer, which are inside the
+            # We now determine the consumers of the intermediate node. For this, we
+            #  look at the edges that leave the node and enter the second Map.
+            #  This means that we ignore the actual consumer, who are inside the
             #  second Map scope. Instead we are only looking at the subset that the
-            #  second Map consumes. Note that we allows that the second Map is found
+            #  second Map consumes. Note that we allow the second Map to be found
             #  multiple times.
             found_second_map = False
             for intermediate_consumer_edge in state.out_edges(intermediate_node):
@@ -612,7 +606,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     return None
 
                 # Now we look at all edges that leave the second MapEntry, i.e., the
-                #  edges that feeds the data to the actual consumers and define what is
+                #  edges that feed the data to the actual consumers and define what is
                 #  read inside the Map scope.
                 # NOTE1: The subset still uses the old iteration variables.
                 # NOTE2: In case of consumer Memlet we explicitly allow dynamic Memlets.
@@ -1443,11 +1437,11 @@ class MapFusionVertical(transformation.SingleStateTransformation):
 
         # If the data is used (read/write) by more than one entity then it is shared (in this
         #  state) and we do not have to scan the whole SDFG.
-        # NOTE: We can not use `state.{in, out}_degree(data) > 1` because we allow that there
-        #   are multiple connections between the intermediates and the Maps, thus we have to
+        # NOTE: We cannot use `state.{in, out}_degree(data) > 1` because we allow
+        #   multiple connections between the intermediates and the Maps, thus we have to
         #   look at all adjacent nodes.
         # NOTE: We have to do these checks before we consult the pipeline results or perform a
-        #   scan, because the `FindSingleUseData` pass and the scan, ignores the degree and we
+        #   scan, because the `FindSingleUseData` pass and the scan, ignore the degree, and we
         #   need to check for "shared data" within the state separately.
         unique_sources = {iedge.src for iedge in state.in_edges(data)}
         if len(unique_sources) > 1:
@@ -1495,7 +1489,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         :param sdfg: The SDFG for which the set of shared data should be computed.
         """
 
-        # These checks ensures that this function is not called directly.
+        # These checks ensure that this function is not called directly.
         assert data.desc(sdfg).transient
         assert len({iedge.src for iedge in state.in_edges(data)}) <= 1
         assert len({oedge.dst for oedge in state.out_edges(data)}) <= 1
