@@ -103,15 +103,12 @@ class LoopLocalMemoryReduction(ppl.Pass):
 
     num_applications = 0  # To track number of applications for testing
 
-
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Edges | ppl.Modifies.Descriptors
-
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         # If anything was modified, reapply
         return modified != ppl.Modifies.Nothing
-    
 
     def apply_pass(self, sdfg: sd.SDFG, _) -> Optional[Set[str]]:
         self.num_applications = 0
@@ -121,7 +118,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
             if isinstance(node, LoopRegion):
                 # Loop step expression must be constant.
                 if not self._has_constant_loop_expressions(sdfg, node):
-                  continue 
+                    continue
 
                 arrays = set(acc_node.data for acc_node in node.data_nodes())
                 write_states = {}
@@ -132,7 +129,6 @@ class LoopLocalMemoryReduction(ppl.Pass):
 
                 for arr in arrays:
                     self._apply_for_array(arr, sdfg, node, write_states)
-
 
     def _get_edge_indices(self, subset: Range, loop: LoopRegion) -> list[Union[tuple, None]]:
         # list of tuples of (a, b) for a*i + b, None if cannot be determined
@@ -152,7 +148,8 @@ class LoopLocalMemoryReduction(ppl.Pass):
         return indices
 
     def _get_read_write_indices(
-            self, array_name: str, loop: LoopRegion) -> tuple[list[list[Union[tuple, None]]], list[list[Union[tuple, None]]]]:
+            self, array_name: str,
+            loop: LoopRegion) -> tuple[list[list[Union[tuple, None]]], list[list[Union[tuple, None]]]]:
         # list of list of tuples of (a, b) for a*i + b
         read_indices = list()
         write_indices = list()
@@ -269,7 +266,8 @@ class LoopLocalMemoryReduction(ppl.Pass):
                 k_values.append(k + 1)  # +1 because k is the highest index accessed, so size is k+1
         return k_values
 
-    def _write_is_loop_local(self, array_name: str, write_indices: list[list[tuple]], sdfg: sd.SDFG, loop: LoopRegion) -> bool:
+    def _write_is_loop_local(self, array_name: str, write_indices: list[list[tuple]], sdfg: sd.SDFG,
+                             loop: LoopRegion) -> bool:
         # The (overapproximated) written subset must be written before read or not read at all.
         # TODO: This is overly conservative. Just checks if there are access nodes after the loop.
 
@@ -330,28 +328,29 @@ class LoopLocalMemoryReduction(ppl.Pass):
                 indices.append(max_index)
         return indices
 
-    def _apply_for_array(self, array_name: str, sdfg: sd.SDFG, loop: LoopRegion, write_states: dict[str, set[sd.SDFGState]]) -> bool:
+    def _apply_for_array(self, array_name: str, sdfg: sd.SDFG, loop: LoopRegion,
+                         write_states: dict[str, set[sd.SDFGState]]) -> bool:
         # Must be transient (otherwise it's observable)
         if not sdfg.arrays[array_name].transient:
-            return 
+            return
 
         # Views and References are not supported
         if isinstance(sdfg.arrays[array_name], dt.View) or isinstance(sdfg.arrays[array_name], dt.Reference):
-            return 
+            return
 
         # There needs to be at least one read and one write.
         read_indices, write_indices = self._get_read_write_indices(array_name, loop)
         if not read_indices or not write_indices:
-            return 
+            return
 
         # All read and write indices must be linear combinations of the loop variable. I.e. a*i + b, where a and b are constants.
         if any(i is None for il in read_indices + write_indices for i in il):
-            return 
+            return
 
         # The scaling factor a must be the same for all indices if a != 0.
         a_values = set(i[0] for il in read_indices + write_indices for i in il if i[0] != 0)
         if len(a_values) > 1:
-            return 
+            return
         if len(a_values) == 0:
             a_values.add(0)
 
@@ -359,22 +358,22 @@ class LoopLocalMemoryReduction(ppl.Pass):
         step = symbolic.resolve_symbol_to_constant(loop_analysis.get_loop_stride(loop), sdfg)
         a = a_values.pop() * step
         if a != 0 and any(i[1] % a != 0 for il in read_indices + write_indices for i in il if i[0] != 0):
-            return 
+            return
 
         # All constants (a == 0) must be in the same dimension.
         for dim in range(len(read_indices[0])):
             if any(il[dim][0] == 0 for il in read_indices) and any(il[dim][0] != 0 for il in read_indices):
-                return 
+                return
             if any(il[dim][0] == 0 for il in write_indices) and any(il[dim][0] != 0 for il in write_indices):
-                return 
+                return
 
         # None of the write accesses must be within a conditional block. Reads are ok.
         for st in write_states.get(array_name, set()):
-          pgraph = st.parent_graph
-          while pgraph is not None and pgraph != loop:
-              if isinstance(pgraph, ConditionalBlock):
-                  return
-              pgraph = pgraph.parent_graph
+            pgraph = st.parent_graph
+            while pgraph is not None and pgraph != loop:
+                if isinstance(pgraph, ConditionalBlock):
+                    return
+                pgraph = pgraph.parent_graph
 
         # Outside of the loop, the written subset of the array must be written before read or not read at all.
         if not self._write_is_loop_local(array_name, write_indices, sdfg, loop):
