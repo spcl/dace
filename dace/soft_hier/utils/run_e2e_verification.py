@@ -31,7 +31,10 @@ class HardwareConfig:
                  dtype_input=np.uint16,
                  dtype_output=np.uint16,
                  dace_input_type=dace.uint16,
-                 dace_output_type=dace.uint16):
+                 dace_output_type=dace.uint16,
+                 test_mode='functional',  # 'functional' or 'perf_only'
+                 skip_build_hw=False
+                 ):
         self.hardware_thread_group_dims = hardware_thread_group_dims
         if dace_thread_group_dims is None:
             self.dace_thread_group_dims = hardware_thread_group_dims
@@ -53,7 +56,8 @@ class HardwareConfig:
         self.dtype_output = dtype_output
         self.dace_input_type = dace_input_type
         self.dace_output_type = dace_output_type
-        
+        self.test_mode = test_mode
+        self.skip_build_hw = skip_build_hw
 
 
 def _get_gvsoc_path() -> str:
@@ -297,11 +301,13 @@ def setup_dace_config(hw_config: HardwareConfig):
     dace.config.Config.set("backend", "softhier", "HBM_NUM_CHANNELS", value=int(hw_config.num_hbm_channels))
     dace.config.Config.set("backend", "softhier", "HW_THREAD_GROUP_DIMS", value=hw_config.hardware_thread_group_dims)
     dace.config.Config.set("backend", "softhier", "DACE_THREAD_GROUP_DIMS", value=hw_config.dace_thread_group_dims)
+    dace.config.Config.set("backend", "softhier", "TEST_MODE", value=hw_config.test_mode)
     
 
 
 def setup_hw_env_dace(hw_config: HardwareConfig):
-    setup_architecture(hw_config)
+    if not hw_config.skip_build_hw:
+        setup_architecture(hw_config)
     setup_environment()
     setup_dace_config(hw_config)
 
@@ -320,13 +326,16 @@ def run_e2e_verification(hw_config: HardwareConfig,
     sdfg_data = copy.deepcopy(data)
 
     # Step 3 Run Numpy reference
-    data["C"] = numpy_fn()
+    if hw_config.test_mode == 'functional':
+        data["C"] = numpy_fn()
 
     # Step 4 Run SoftHier simulator
     ret_dict = sdfg_fn()
     sdfg = ret_dict["sdfg"]
 
     # Step 5 Compare Data
-    comparison = compare(hw_config, numpy_data, sdfg_data, interleave_handlers, sdfg, tolerance)
-
-    return comparison['all_match']
+    if hw_config.test_mode == 'perf_only':
+        return {'all_match': True, 'details': {}, 'execution_time_ns': ret_dict.get('execution_time_ns', None)}
+    elif hw_config.test_mode == 'functional':
+        comparison = compare(hw_config, numpy_data, sdfg_data, interleave_handlers, sdfg, tolerance)
+        return comparison['all_match']
