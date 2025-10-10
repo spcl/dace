@@ -117,13 +117,14 @@ def run_and_compare(
     sdfg.validate()
     out_no_fuse = {k: v.copy() for k, v in arrays.items()}
     sdfg(**out_no_fuse)
-
+    sdfg.save(sdfg.label + "_before.sdfg")
     # Apply transformation
     apply_fuse_branches(sdfg, 2)
 
     # Run SDFG version (with transformation)
     out_fused = {k: v.copy() for k, v in arrays.items()}
     sdfg(**out_fused)
+    sdfg.save(sdfg.label + "_after.sdfg")
 
     branch_code = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     assert len(

@@ -89,12 +89,12 @@ def test_thread_specialization_noncontiguous_blocks(block_size):
 
     sdfg = thread_specialization.to_sdfg()
     sdfg.apply_gpu_transformations()
-    sdfg.save("x.sdfg")
 
     # Ensure all nested maps set grid dimensions
     for n, _ in sdfg.all_nodes_recursive():
         if isinstance(n, dace.nodes.MapEntry):
             n.schedule = dace.ScheduleType.GPU_Device
+    sdfg.save("x1.sdfg")
 
     a = np.random.rand(128, 64)
     expected = np.copy(a)
@@ -108,6 +108,8 @@ def test_thread_specialization_noncontiguous_blocks(block_size):
         if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.dtypes.ScheduleType.GPU_Device
     })
     assert num_device_maps == 1
+    sdfg.save("x2.sdfg")
+
 
     if block_size is not None:
         with dace.config.set_temporary('compiler', 'cuda', 'default_block_size', value=block_size):

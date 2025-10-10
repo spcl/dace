@@ -1,6 +1,8 @@
 import copy
 from sympy import pycode
 import re
+
+import sympy
 import dace
 from dace import properties, transformation
 from dace.properties import CodeBlock
@@ -298,8 +300,10 @@ class FuseBranches(transformation.MultiStateTransformation):
                     lhs, rhs = node.code.as_string.split("=")
                     lhs = lhs.strip()
                     rhs = rhs.strip()
-                    code = dace.symbolic.SymExpr(rhs)
-                    code = code.subs(ie.dst_conn, rhs_str)
+                    rhs_expr = dace.symbolic.SymExpr(rhs)
+                    code = sympy.nsimplify(rhs_expr)
+                    # Use rational until the very end and then call evalf to get rational to flaot to avoid accumulating errors
+                    code = sympy.nsimplify(code.subs(ie.dst_conn, rhs_str)).evalf()
                     new_code_str = lhs + " = " + pycode(code)
                     node.code = CodeBlock(new_code_str)
 
@@ -328,7 +332,6 @@ class FuseBranches(transformation.MultiStateTransformation):
                 n for n in new_state.nodes()
                 if isinstance(n, dace.nodes.AccessNode) and n.data == dst_data and new_state.in_degree(n) == 0
             ]
-            print(source_nodes)
 
             ies = cond_prep_state.in_edges(assign_tasklet)
 
@@ -358,20 +361,13 @@ class FuseBranches(transformation.MultiStateTransformation):
             cond_prep_state.remove_node(assign_tasklet)
 
             # If no nodes inside the state and if it only connects to the new state and has no interstate assignments we can delete it
-            graph.sdfg.save("x3.5.sdfg")
             if len(cond_prep_state.nodes()) == 0:
-                print(len(cond_prep_state.nodes()), graph.out_degree(cond_prep_state),
-                      {new_state} == {e.dst
-                                      for e in graph.out_edges(cond_prep_state)}, {new_state},
-                      {e.dst
-                       for e in graph.out_edges(cond_prep_state)})
                 if graph.out_degree(cond_prep_state) == 1 and {new_state
                                                                } == {e.dst
                                                                      for e in graph.out_edges(cond_prep_state)}:
                     oes = graph.out_edges(cond_prep_state)
                     ies = graph.in_edges(cond_prep_state)
                     all_assignments = [oe.data.assignments for oe in oes]
-                    print(all_assignments)
                     if all({d == dict() for d in all_assignments}):
                         graph.remove_node(cond_prep_state)
                         for ie in ies:
