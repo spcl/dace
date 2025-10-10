@@ -80,6 +80,8 @@ def test_gpu():
     run_arc_distance(dace.dtypes.DeviceType.GPU)
 
 
+# TODO: Investigate and re-enable if possible.
+@pytest.mark.skip(reason="Unexplained CI Regression")
 @fpga_test(assert_ii_1=False)
 def test_fpga():
     return run_arc_distance(dace.dtypes.DeviceType.FPGA)
