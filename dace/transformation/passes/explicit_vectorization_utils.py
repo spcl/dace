@@ -233,9 +233,9 @@ def add_copies_before_and_after_nsdfg(
                     arr_name = f"{in_data_name}_vec"
                     assert state.sdfg.arrays[arr_name].storage == copy_to_storage
                 arr_access = state.add_access(arr_name)
-                state.remove_edge(ie)
 
                 # Impl. proper min
+                state.sdfg.save("x.sdfg")
                 params_and_end_ranges = get_vector_max_access_ranges(state, nsdfg_node)
                 nrange_list = []
                 assert len(params_and_end_ranges) == 1
@@ -249,6 +249,10 @@ def add_copies_before_and_after_nsdfg(
                 full_subset_str = ", ".join([f"{0}:{sl}" for sl in subset_lengths])
                 state.add_edge(arr_access, None, nsdfg_node, nsdfg_data_name,
                                dace.memlet.Memlet(f"{arr_name}[{full_subset_str}]"))
+
+                # Remove only after adding to avoid disconnecting the component
+                state.remove_edge(ie)
+
     for oe in state.out_edges(nsdfg_node):
         if oe.data is not None:
             out_data_name: str = oe.data.data
@@ -277,7 +281,7 @@ def add_copies_before_and_after_nsdfg(
                     arr_name = f"{out_data_name}_vec"
                     assert state.sdfg.arrays[arr_name].storage == copy_to_storage
                 arr_access = state.add_access(arr_name)
-                state.remove_edge(oe)
+
                 full_subset_str = ", ".join([f"{0}:{sl}" for sl in subset_lengths])
                 state.add_edge(nsdfg_node, nsdfg_data_name, arr_access, None,
                                dace.memlet.Memlet(f"{arr_name}[{full_subset_str}]"))
@@ -291,6 +295,9 @@ def add_copies_before_and_after_nsdfg(
                     nrange_list.append((b, ne, s))
                 nmemlet = dace.memlet.Memlet(data=ie.data.data, subset=dace.subsets.Range(nrange_list))
                 state.add_edge(arr_access, None, oe.dst, oe.dst_conn, copy.deepcopy(oe.data))
+
+                # Remove only after adding to avoid disconnecting the component
+                state.remove_edge(oe)
 
 
 def get_op(expr_str: str):
@@ -492,6 +499,7 @@ def extract_non_connector_syms_from_tasklet(node: dace.nodes.Tasklet) -> Set[str
 
 class TaskletType(Enum):
     ARRAY_ARRAY_ASSIGNMENT = "array_array_assignment"  # a = b
+    ARRAY_SYMBOL_ASSIGNMENT = "array_symbol_assignment"  # a = sym
     SCALAR_SYMBOL = "scalar_symbol"  # a = scalar op sym
     ARRAY_SYMBOL = "array_symbol"  # a = array op sym
     ARRAY_SCALAR = "array_scalar"  # a = array op scalar
@@ -615,15 +623,21 @@ def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
     # Zero-input (symbol-only) tasklets: decide by lhs storage type
     if n_in == 0:
         free_syms = extract_non_connector_syms_from_tasklet(node)
-        assert len(free_syms) == 2
-        free_sym1, free_sym2 = free_syms[0:2]
-        info_dict.update({
-            "type": TaskletType.SYMBOL_SYMBOL,
-            "constant1": free_sym1,
-            "constant2": free_sym2,
-            "op": extract_single_op(code_str)
-        })
-        return info_dict
+        assert len(free_syms) == 2 or len(free_syms) == 1, f"{str(free_syms)}"
+        if len(free_syms) == 2:
+            free_sym1 = free_syms.pop()
+            free_sym2 = free_syms.pop()
+            info_dict.update({
+                "type": TaskletType.SYMBOL_SYMBOL,
+                "constant1": free_sym1,
+                "constant2": free_sym2,
+                "op": extract_single_op(code_str)
+            })
+            return info_dict
+        elif len(free_syms) == 1:
+            free_sym1 = free_syms.pop()
+            info_dict.update({"type": TaskletType.ARRAY_SYMBOL_ASSIGNMENT, "constant1": free_sym1, "op": "="})
+            return info_dict
 
     raise NotImplementedError("Unhandled case in detect tasklet type")
 
@@ -698,6 +712,15 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
     if ttype == TaskletType.ARRAY_ARRAY_ASSIGNMENT:
         # use direct template with op "="
         set_template(rhs1, None, None, lhs, "=")
+        return
+
+    # 1) ARRAY-SYMBOL assignment: a = sym
+    if ttype == TaskletType.ARRAY_SYMBOL_ASSIGNMENT:
+        code_lines = []
+        for i in range(vw):
+            # If detect inner symbol used we need to correctly offset it to have + lane_id
+            code_lines.append(f"{lhs}[{i}] = {c1}_{i};")
+        node.code = dace.properties.CodeBlock(code="\n".join(code_lines) + "\n", language=dace.Language.CPP)
         return
 
     # 2) Single-input with constant: array or scalar combined with a symbol/constant

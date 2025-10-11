@@ -7,15 +7,16 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.interstate import fuse_branches
 
+
 @properties.make_properties
 @explicit_cf_compatible
 class FuseBranchesPass(ppl.Pass):
+
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return (modified & ppl.Modifies.CFG)
-
 
     def _get_nestedness_of_conditional_blocks(self, cfg: ControlFlowRegion, current_depth: int) -> int:
         if isinstance(cfg, SDFGState):
@@ -23,14 +24,16 @@ class FuseBranchesPass(ppl.Pass):
 
         for node in cfg.nodes():
             if isinstance(node, ConditionalBlock):
-                return max([self._get_nestedness_of_conditional_blocks(body, current_depth + 1) for cond, body in node.branches])
+                return max([
+                    self._get_nestedness_of_conditional_blocks(body, current_depth + 1) for cond, body in node.branches
+                ])
             elif isinstance(node, SDFGState):
                 return current_depth
             else:
-                return max([self._get_nestedness_of_conditional_blocks(body, current_depth) for cond, body in node.branches])
+                return max(
+                    [self._get_nestedness_of_conditional_blocks(body, current_depth) for cond, body in node.branches])
 
         raise Exception("?")
-
 
     def _apply_fuse_branches(self, sdfg: dace.SDFG):
         """Apply FuseBranches transformation to all eligible conditionals."""
@@ -50,7 +53,6 @@ class FuseBranchesPass(ppl.Pass):
             for node in state.nodes():
                 if isinstance(node, dace.nodes.NestedSDFG):
                     self._apply_fuse_branches(node.sdfg)
-
 
     def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
         self._apply_fuse_branches(sdfg)
