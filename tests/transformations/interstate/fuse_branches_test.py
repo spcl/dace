@@ -1,7 +1,9 @@
 import numpy as np
 import dace
+import pytest
 from dace.sdfg.state import ConditionalBlock
-import dace.transformation.interstate.fuse_branches as fuse_branches
+from dace.transformation.interstate import fuse_branches
+from dace.transformation.passes import fuse_branches_pass
 
 N = 8
 
@@ -110,6 +112,7 @@ def apply_fuse_branches(sdfg, nestedness: int = 1):
 def run_and_compare(
     program,
     num_expected_branches,
+    use_pass,
     **arrays,
 ):
     # Run SDFG version (no transformation)
@@ -119,7 +122,10 @@ def run_and_compare(
     sdfg(**out_no_fuse)
     sdfg.save(sdfg.label + "_before.sdfg")
     # Apply transformation
-    apply_fuse_branches(sdfg, 2)
+    if use_pass:
+        fuse_branches_pass.FuseBranchesPass().apply_pass(sdfg, {})
+    else:
+        apply_fuse_branches(sdfg, 2)
 
     # Run SDFG version (with transformation)
     out_fused = {k: v.copy() for k, v in arrays.items()}
@@ -135,58 +141,65 @@ def run_and_compare(
         np.testing.assert_allclose(out_no_fuse[name], out_fused[name], atol=1e-12)
 
 
-def test_branch_dependent_value_write():
+@pytest.mark.parametrize("use_pass_flag", [True, False])
+def test_branch_dependent_value_write(use_pass_flag):
     a = np.random.rand(N, N)
     b = np.random.rand(N, N)
     c = np.zeros((N, N))
     d = np.zeros((N, N))
-    run_and_compare(branch_dependent_value_write, 0, a=a, b=b, c=c, d=d)
+    run_and_compare(branch_dependent_value_write, 0, use_pass_flag, a=a, b=b, c=c, d=d)
 
 
-def test_branch_dependent_value_write_two():
+@pytest.mark.parametrize("use_pass_flag", [True, False])
+def test_branch_dependent_value_write_two(use_pass_flag):
     a = np.random.choice([0.0, 3.0], size=(N, N))
     b = np.zeros((N, N))
     c = np.zeros((N, N))
     d = np.zeros((N, N))
-    run_and_compare(branch_dependent_value_write_two, 0, a=a, b=b, c=c, d=d)
+    run_and_compare(branch_dependent_value_write_two, 0, use_pass_flag, a=a, b=b, c=c, d=d)
 
 
-def test_branch_dependent_value_write_single_branch():
+@pytest.mark.parametrize("use_pass_flag", [True, False])
+def test_branch_dependent_value_write_single_branch(use_pass_flag):
     a = np.random.choice([0.0, 3.0], size=(N, N))
     b = np.random.randn(N, N)
     d = np.zeros((N, N))
-    run_and_compare(branch_dependent_value_write_single_branch, 0, a=a, b=b, d=d)
+    run_and_compare(branch_dependent_value_write_single_branch, 0, use_pass_flag, a=a, b=b, d=d)
 
 
-def test_complicated_if():
+@pytest.mark.parametrize("use_pass_flag", [True, False])
+def test_complicated_if(use_pass_flag):
     a = np.random.choice([0.0, 3.0], size=(N, N))
     b = np.random.randn(N, N)
     d = np.zeros((N, N))
-    run_and_compare(complicated_if, 0, a=a, b=b, d=d)
+    run_and_compare(complicated_if, 0, use_pass_flag, a=a, b=b, d=d)
 
 
-def test_multi_state_branch_body():
+@pytest.mark.parametrize("use_pass_flag", [True, False])
+def test_multi_state_branch_body(use_pass_flag):
     a = np.random.choice([0.0, 3.0], size=(N, N))
     b = np.random.randn(N, N)
     c = np.random.randn(N, N)
     d = np.zeros((N, N))
     s = np.zeros((1, )).astype(np.int64)
-    run_and_compare(multi_state_branch_body, 1, a=a, b=b, c=c, d=d, s=s[0])
+    run_and_compare(multi_state_branch_body, 1, use_pass_flag, a=a, b=b, c=c, d=d, s=s[0])
 
 
-def test_nested_if():
+@pytest.mark.parametrize("use_pass_flag", [True, False])
+def test_nested_if(use_pass_flag):
     a = np.random.choice([0.0, 3.0], size=(N, N))
     b = np.random.randn(N, N)
     c = np.zeros((N, N))
     d = np.zeros((N, N))
     s = np.zeros((1, )).astype(np.int64)
-    run_and_compare(nested_if, 0, a=a, b=b, c=c, d=d, s=s[0])
+    run_and_compare(nested_if, 0, use_pass_flag, a=a, b=b, c=c, d=d, s=s[0])
 
 
 if __name__ == "__main__":
-    test_branch_dependent_value_write()
-    test_branch_dependent_value_write_two()
-    test_branch_dependent_value_write_single_branch()
-    test_complicated_if()
-    test_multi_state_branch_body()
-    test_nested_if()
+    for use_pass_flag in [True, False]:
+        test_branch_dependent_value_write(use_pass_flag)
+        test_branch_dependent_value_write_two(use_pass_flag)
+        test_branch_dependent_value_write_single_branch(use_pass_flag)
+        test_complicated_if(use_pass_flag)
+        test_multi_state_branch_body(use_pass_flag)
+        test_nested_if(use_pass_flag)

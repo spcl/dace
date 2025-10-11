@@ -63,6 +63,80 @@ def interstate_index_to_subset_str(expr: str) -> str:
     return re.sub(pattern, replacer, expr)
 
 
+def symbol_is_used(cfg: ControlFlowRegion, symbol_name: str) -> bool:
+    # Symbol can be read on an interstate edge, appear in a conditional block's conditions, loop regions condition / update
+    # Appear in shape of an array, in the expression of maps or in taskelts, passed to nested SDFGs
+
+    # Interstate edge reads
+    for e in cfg.all_interstate_edges():
+        for v in e.data.assignments.values():
+            if token_match(v, symbol_name):
+                return True
+
+    # Conditional Block
+    for cb in cfg.all_control_flow_blocks():
+        if isinstance(cb, ConditionalBlock):
+            for cond, _ in cb.branches:
+                if cond is None:
+                    continue
+                if token_match(cond.as_string, symbol_name):
+                    return True
+
+    # Loop
+    for lr in cfg.all_control_flow_regions():
+        if isinstance(lr, LoopRegion):
+            if token_match(f"{lr.init_statement} {lr.update_statement} {lr.loop_condition}", symbol_name):
+                return True
+
+    # Arrays
+    for arr in cfg.sdfg.arrays.values():
+        for dim, stride in zip(arr.shape, arr.strides):
+            if token_match(f"{dim} {stride}", symbol_name):
+                return True
+
+    # Maps
+    for state in cfg.all_states():
+        for node in state.nodes():
+            if isinstance(node, dace.nodes.MapEntry):
+                for (b, e, s) in node.map.range:
+                    if token_match(f"{b} {e} {s}", symbol_name):
+                        return True
+
+    # Takslets
+    for state in cfg.all_states():
+        for node in state.nodes():
+            if isinstance(node, dace.nodes.Tasklet):
+                if token_match(node.code.as_string, symbol_name):
+                    return True
+
+    # NestedSDFGs (symbol mapping)
+    for state in cfg.all_states():
+        for node in state.nodes():
+            if isinstance(node, dace.nodes.NestedSDFG):
+                for v in node.symbol_mapping.values():
+                    if token_match(str(v), symbol_name):
+                        return True
+
+    return False
+
+
+def remove_symbol_assignments(graph: ControlFlowRegion, sym_name: str):
+    for e in graph.all_interstate_edges():
+        new_assignments = dict()
+        for k, v in e.data.assignments.items():
+            if k != sym_name:
+                new_assignments[k] = v
+        e.data.assignments = new_assignments
+
+
+def remove_node_redirect_in_edges_to(parent_graph: ControlFlowRegion, node: ControlFlowRegion,
+                                     new_dst: ControlFlowRegion):
+    ies = parent_graph.in_edges(node)
+    parent_graph.remove_node(node)
+    for ie in ies:
+        parent_graph.add_edge(ie.src, new_dst, copy.deepcopy(ie.data))
+
+
 @properties.make_properties
 @dace.transformation.explicit_cf_compatible
 class FuseBranches(transformation.MultiStateTransformation):
