@@ -6,6 +6,7 @@ from dace.transformation.passes.split_tasklets import SplitTasklets
 from dace.transformation.passes.tasklet_preprocessing_passes import IntegerPowerToMult, RemoveFPTypeCasts, RemoveIntTypeCasts
 from dace.transformation.passes import InlineSDFGs
 from dace.transformation.passes.explicit_vectorization import ExplicitVectorization
+from dace.transformation.passes.fuse_branches_pass import FuseBranchesPass
 
 
 class ExplicitVectorizationPipelineGPU(ppl.Pipeline):
@@ -84,6 +85,7 @@ __host__ __device__ __forceinline__ void vector_copy(T * __restrict__ dst, const
 
     def __init__(self, vector_width):
         passes = [
+            FuseBranchesPass(),
             RemoveFPTypeCasts(),
             RemoveIntTypeCasts(),
             IntegerPowerToMult(),

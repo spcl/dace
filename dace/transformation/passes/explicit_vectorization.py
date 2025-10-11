@@ -267,6 +267,13 @@ class ExplicitVectorization(ppl.Pass):
 
         state.sdfg.save("x4.sdfg")
 
+        # Extend interstate edges for all symbols used in tasklets / or interstate edges that access vectorized data
+        # TODO
+        for state in inner_sdfg.all_states():
+            nodes = {n for n in state.nodes() if n not in modified_nodes}
+            #self._expand_interstate_assignments(inner_sdfg, syms, )
+            pass
+
         # 5
         for state in inner_sdfg.all_states():
             nodes = {n for n in state.nodes() if n not in modified_nodes}
