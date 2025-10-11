@@ -1,18 +1,15 @@
 import copy
 from sympy import pycode
 import re
-
 import sympy
 import dace
 from dace import properties, transformation
 from dace.properties import CodeBlock
 from dace.sdfg.sdfg import SDFG
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 import dace.sdfg.utils as sdutil
 import dace.sdfg.construction_utils as cutil
 from typing import Tuple, Set, Union
-
-from dace.transformation.interstate.state_fusion import StateFusion
 
 
 def extract_bracket_content(s: str):
@@ -40,6 +37,16 @@ def token_replace(code: str, src: str, dst: str) -> str:
 
     # Recombine everything
     return ''.join(tokens).strip()
+
+
+def token_match(string_to_check: str, pattern_str: str) -> str:
+    # Split while keeping delimiters
+    tokens = re.split(r'([()\[\]])', string_to_check)
+
+    # Replace tokens that exactly match src
+    tokens = {token.strip() for token in tokens}
+
+    return pattern_str in tokens
 
 
 def interstate_index_to_subset_str(expr: str) -> str:
@@ -582,9 +589,30 @@ class FuseBranches(transformation.MultiStateTransformation):
             new_state.remove_node(state1_in_new_state_write_access)
 
             self._try_simplify_combine_tasklet(new_state, combine_tasklet)
-        graph.sdfg.save("x1.sdfg")
+
+        # If the symbol is not used anymore
+        conditional_strs = {cond.as_string for cond, _ in self.conditional.branches if cond is not None}
+        conditional_symbols = set()
         graph.remove_node(self.conditional)
-        graph.sdfg.save("x2.sdfg")
+
+        for cond_str in conditional_strs:
+            conditional_symbols = conditional_symbols.union(
+                {str(s)
+                 for s in dace.symbolic.SymExpr(cond_str).free_symbols})
+
+        for sym_name in conditional_symbols:
+            if not symbol_is_used(graph, sym_name):
+                remove_symbol_assignments(graph, sym_name)
+                if isinstance(graph, dace.SDFG):
+                    graph.remove_symbol(sym_name)
+                    if graph.parent_nsdfg_node is not None:
+                        if sym_name in graph.parent_nsdfg_node.symbol_mapping:
+                            del graph.parent_nsdfg_node.symbol_mapping[sym_name]
+
+        for ie in graph.in_edges(new_state):
+            # If ie.src is empty and ie.data.assignments is empty remove ie.src
+            if len(ie.data.assignments) == 0 and isinstance(ie.src, dace.SDFGState) and len(ie.src.nodes()) == 0:
+                remove_node_redirect_in_edges_to(graph, ie.src, new_state)
+
         self._try_fuse(graph, new_state, cond_prep_state)
-        graph.sdfg.save("x3.sdfg")
         graph.sdfg.validate()
