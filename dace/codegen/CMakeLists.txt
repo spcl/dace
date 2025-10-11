@@ -57,7 +57,8 @@ foreach(DACE_FILE ${DACE_FILES})
   # Make the path absolute
   set(DACE_FILE ${DACE_SRC_DIR}/${DACE_FILE})
   # Now treat the file according to the deduced target
-  if(${DACE_FILE_TARGET} STREQUAL "cuda")
+  # previous: if(${DACE_FILE_TARGET} STREQUAL "cuda"). Needed to work with experimental
+  if(${DACE_FILE_TARGET} STREQUAL "experimental_cuda" OR ${DACE_FILE_TARGET} STREQUAL "cuda")
     if(${DACE_FILE_TARGET_TYPE} MATCHES "hip")
       set(DACE_ENABLE_HIP ON)
       set(DACE_HIP_FILES ${DACE_HIP_FILES} ${DACE_FILE})

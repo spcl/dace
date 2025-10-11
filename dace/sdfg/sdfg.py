@@ -502,6 +502,8 @@ class SDFG(ControlFlowRegion):
                                            default=False,
                                            desc="Whether the SDFG contains explicit control flow constructs")
 
+    metadata = Property(dtype=dict, desc="Metada attached to the SDFG", default=None, allow_none=True)
+
     def __init__(self,
                  name: str,
                  constants: Dict[str, Tuple[dt.Data, Any]] = None,
@@ -593,6 +595,9 @@ class SDFG(ControlFlowRegion):
             fixed = FixNestedSDFGReferences().apply_pass(result, {})
             if fixed:
                 warnings.warn(f'Fixed {fixed} nested SDFG parent references during deep copy.')
+
+        # copy metadata
+        result._metadata = copy.deepcopy(self._metadata, memo)
 
         return result
 

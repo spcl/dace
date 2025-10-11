@@ -76,6 +76,7 @@ class ScheduleType(aenum.AutoNumberEnum):
     Snitch = ()
     Snitch_Multicore = ()
     FPGA_Multi_Pumped = ()  #: Used for double pumping
+    GPU_Warp = ()
 
 
 # A subset of GPU schedule types
@@ -84,6 +85,19 @@ GPU_SCHEDULES = [
     ScheduleType.GPU_ThreadBlock,
     ScheduleType.GPU_ThreadBlock_Dynamic,
     ScheduleType.GPU_Persistent,
+]
+
+# A subset of GPU schedule types for ExperimentalCUDACodeGen
+GPU_SCHEDULES_EXPERIMENTAL_CUDACODEGEN = [
+    ScheduleType.GPU_Device,
+    ScheduleType.GPU_ThreadBlock,
+    ScheduleType.GPU_Warp,
+]
+
+# A subset of on-GPU storage types for ExperimentalCUDACodeGen
+GPU_MEMORY_STORAGES_EXPERIMENTAL_CUDACODEGEN = [
+    StorageType.GPU_Global,
+    StorageType.GPU_Shared,
 ]
 
 # A subset of CPU schedule types
@@ -203,7 +217,8 @@ SCOPEDEFAULT_STORAGE = {
     ScheduleType.GPU_ThreadBlock_Dynamic: StorageType.Register,
     ScheduleType.FPGA_Device: StorageType.FPGA_Global,
     ScheduleType.SVE_Map: StorageType.CPU_Heap,
-    ScheduleType.Snitch: StorageType.Snitch_TCDM
+    ScheduleType.Snitch: StorageType.Snitch_TCDM,
+    ScheduleType.GPU_Warp: StorageType.Register,
 }
 
 # Maps from ScheduleType to default ScheduleType for sub-scopes
@@ -224,7 +239,8 @@ SCOPEDEFAULT_SCHEDULE = {
     ScheduleType.FPGA_Multi_Pumped: ScheduleType.FPGA_Device,
     ScheduleType.SVE_Map: ScheduleType.Sequential,
     ScheduleType.Snitch: ScheduleType.Snitch,
-    ScheduleType.Snitch_Multicore: ScheduleType.Snitch_Multicore
+    ScheduleType.Snitch_Multicore: ScheduleType.Snitch_Multicore,
+    ScheduleType.GPU_Warp: ScheduleType.Sequential,
 }
 
 # Maps from StorageType to a preferred ScheduleType for helping determine schedules.
@@ -1257,6 +1273,7 @@ complex64 = typeclass(numpy.complex64)
 complex128 = typeclass(numpy.complex128)
 string = stringtype()
 MPI_Request = opaque('MPI_Request')
+gpuStream_t = opaque('gpuStream_t')
 
 
 @undefined_safe_enum
@@ -1277,6 +1294,7 @@ class Typeclasses(aenum.AutoNumberEnum):
     float64 = float64
     complex64 = complex64
     complex128 = complex128
+    gpuStream_t = gpuStream_t
 
 
 _bool = bool

@@ -619,7 +619,70 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                     block.replace_meta_accesses({devicename: hostname})
 
         # Step 9: Simplify
-        if not self.simplify:
+        if self.simplify:
+            sdfg.simplify()
+
+        ########################################################################
+        # In case the ExperimentalCUDACodeGen is selected, we handle, for backwards
+        # compatibility, the use of in-kernel, transient GPU_Global stored array here.
+        from dace.config import Config
+        if not Config.get('compiler', 'cuda', 'implementation') == 'experimental':
             return
 
-        sdfg.simplify()
+        # import needed modules
+        from dace.transformation import helpers
+        from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel
+        import warnings
+
+        # Detect transient GPU_Global arrays inside GPU_Device-scheduled maps
+        transients_in_kernels: Set[Tuple[str, data.Array, nodes.MapEntry]] = set()
+        transient_outside_kernels: Set[Tuple[str, data.Array]] = set()
+
+        for node, parent in sdfg.all_nodes_recursive():
+            # ---------- Consider only transient GPU_Global arrays -------
+            if not isinstance(node, nodes.AccessNode):
+                continue
+
+            desc = node.desc(parent)
+            if not isinstance(desc, data.Array):
+                continue
+            if not desc.transient:
+                continue
+            if desc.storage != dtypes.StorageType.GPU_Global:
+                continue
+
+            #------- Check whether transient/access node occurs within a kernel --------
+            in_kernel = False
+            parent_map_info = helpers.get_parent_map(state=parent, node=node)
+            while parent_map_info is not None:
+                map_entry, map_state = parent_map_info
+                if (isinstance(map_entry, nodes.MapEntry) and map_entry.map.schedule == dtypes.ScheduleType.GPU_Device):
+                    in_kernel = True
+                    break
+                parent_map_info = helpers.get_parent_map(map_state, map_entry)
+
+            if in_kernel:
+                transients_in_kernels.add((node.data, desc, map_entry))
+            else:
+                transient_outside_kernels.add((node.data, desc))
+
+        # Skip transients that are used outside of GPU kernels, unless a separate, strictly kernel-local
+        # transient with the same name exists inside a kernel. In such cases, 'MoveArrayOutOfKernel' is
+        # still applied to the local one, and naming conflicts are handled automatically.
+        transient_defined_inside_kernel: Set[Tuple[str, nodes.MapEntry]] = set()
+        for data_name, array_desc, kernel_entry in transients_in_kernels:
+            if (data_name, array_desc) in transient_outside_kernels:
+                continue
+            else:
+                transient_defined_inside_kernel.add((data_name, kernel_entry))
+
+        # Apply the pass and warn the user of its use
+        for data_name, kernel_entry in transient_defined_inside_kernel:
+            warnings.warn(
+                f"Transient array '{data_name}' with storage type GPU_Global detected inside kernel {kernel_entry}. "
+                "GPU_Global memory cannot be allocated within GPU kernels, so this usage is semantically invalid. "
+                "As a best-effort fix, the array will be lifted outside the kernel as a non-transient GPU_Global array. "
+                "Any naming conflicts are resolved automatically. "
+                "Please avoid this pattern, as it is strongly discouraged and may lead to undefined behavior. "
+                "Note that this fix provides no guarantees, especially for unusual or complex use cases.")
+            MoveArrayOutOfKernel().apply_pass(sdfg, kernel_entry, data_name)
