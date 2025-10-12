@@ -299,6 +299,7 @@ class ExplicitVectorization(ppl.Pass):
         for state in inner_sdfg.all_states():
             nodes = {n for n in state.nodes() if n not in modified_nodes}
             self._replace_tasklets_from_node_list(state, nodes, vector_map_param)
+            modified_nodes = modified_nodes.union(nodes)
 
         for state in inner_sdfg.all_states():
             vector_tasklets = {n for n in state.nodes() if n in modified_nodes and isinstance(n, dace.nodes.Tasklet)}
@@ -307,7 +308,10 @@ class ExplicitVectorization(ppl.Pass):
                     if e.data.data is not None:
                         if state.sdfg.arrays[e.data.data].dtype != self.vector_op_numeric_type:
                             state.sdfg.arrays[e.data.data].dtype = self.vector_op_numeric_type
-
+            for e in {_e for _e in state.edges() if _e in modified_edges}:
+                if e.data.data is not None:
+                    if state.sdfg.arrays[e.data.data].dtype != self.vector_op_numeric_type:
+                        state.sdfg.arrays[e.data.data].dtype = self.vector_op_numeric_type
         state.sdfg.save("x5.sdfg")
 
     def _duplicate_unstructured_writes(self, inner_sdfg: dace.SDFG):

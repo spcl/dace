@@ -110,7 +110,6 @@ def test_thread_specialization_noncontiguous_blocks(block_size):
     assert num_device_maps == 1
     sdfg.save("x2.sdfg")
 
-
     if block_size is not None:
         with dace.config.set_temporary('compiler', 'cuda', 'default_block_size', value=block_size):
             sdfg(a)

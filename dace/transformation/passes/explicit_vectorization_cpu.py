@@ -73,6 +73,20 @@ inline void vector_sub_w_scalar(T * __restrict__ b, const T * __restrict__ a, co
         b[i] = a[i] - cReg[i];
     }}
 }}
+
+template<typename T>
+inline void vector_sub_w_scalar_c(T * __restrict__ b, const T constant, const T * __restrict__ a) {{
+    T cReg[{vector_width}];
+    #pragma omp unroll
+    for (int i = 0; i < {vector_width}; i++) {{
+        cReg[i] = constant;
+    }}
+    #pragma omp unroll
+    for (int i = 0; i < {vector_width}; i++) {{
+        b[i] = cReg[i] - a[i];
+    }}
+}}
+
 template<typename T>
 inline void vector_div(T * __restrict__ c, const T * __restrict__ a, const T * __restrict__ b) {{
     #pragma omp unroll
@@ -91,6 +105,19 @@ inline void vector_div_w_scalar(T * __restrict__ b, const T * __restrict__ a, co
     #pragma omp unroll
     for (int i = 0; i < {vector_width}; i++) {{
         b[i] = a[i] / cReg[i];
+    }}
+}}
+
+template<typename T>
+inline void vector_div_w_scalar_c(T * __restrict__ b, const T constant, const T * __restrict__ a) {{
+    T cReg[{vector_width}];
+    #pragma omp unroll
+    for (int i = 0; i < {vector_width}; i++) {{
+        cReg[i] = constant;
+    }}
+    #pragma omp unroll
+    for (int i = 0; i < {vector_width}; i++) {{
+        b[i] = cReg[i] / a[i];
     }}
 }}
 
@@ -123,6 +150,8 @@ inline void vector_copy(T * __restrict__ dst, const T * __restrict__ src) {{
                     "c/": "vector_div_w_scalar({lhs}, {rhs1}, {constant});",
                     "c*": "vector_mult_w_scalar({lhs}, {rhs1}, {constant});",
                     "c-": "vector_sub_w_scalar({lhs}, {rhs1}, {constant});",
+                    "/c": "vector_div_w_scalar_c({lhs}, {constant}, {rhs1});",
+                    "-c": "vector_sub_w_scalar_c({lhs}, {constant}, {rhs1});",
                 },
                 vector_width=vector_width,
                 vector_input_storage=dace.dtypes.StorageType.Register,

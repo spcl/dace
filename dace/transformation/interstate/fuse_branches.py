@@ -41,7 +41,7 @@ def token_replace(code: str, src: str, dst: str) -> str:
 
 def token_match(string_to_check: str, pattern_str: str) -> str:
     # Split while keeping delimiters
-    tokens = re.split(r'([()\[\]])', string_to_check)
+    tokens = re.split(r'(\s+|[()\[\]])', string_to_check)
 
     # Replace tokens that exactly match src
     tokens = {token.strip() for token in tokens}
@@ -493,9 +493,12 @@ class FuseBranches(transformation.MultiStateTransformation):
                     break
 
         if cond_assignment is None:
-            assert just_var is False
-            cond_assignment = pycode(cond_code_symexpr)
-            cond_var = f"_if_cond_{self.conditional.label}"
+            if just_var is False:
+                cond_assignment = cond_var
+                cond_var = f"_if_cond_{self.conditional.label}"
+            else:
+                cond_assignment = pycode(cond_code_symexpr)
+                cond_var = f"_if_cond_{self.conditional.label}"
         assert cond_assignment is not None
 
         return cond_var, cond_assignment
@@ -569,15 +572,21 @@ class FuseBranches(transformation.MultiStateTransformation):
             read_sets0, write_sets0 = state0.read_and_write_sets()
             joint_writes = write_sets0
 
+            #print(joint_writes)
+            #raise Exception(joint_writes)
+            new_joint_writes = copy.deepcopy(joint_writes)
             for write in joint_writes:
                 state0_write_accesses = {
                     n
-                    for n in state0.nodes()
-                    if isinstance(n, dace.nodes.AccessNode) and n.data == write and state0.in_degree(n) > 0
+                    for n in state0.nodes() if isinstance(n, dace.nodes.AccessNode) and n.data == write
+                    and state0.in_degree(n) > 0 and state0.out_degree(n) == 0
                 }
                 state0_write_accesses_in_new_state = {state0_to_new_state_node_map[n] for n in state0_write_accesses}
 
-                assert len(state0_write_accesses_in_new_state) == 1
+                assert len(state0_write_accesses_in_new_state) <= 1
+                if len(state0_write_accesses_in_new_state) != 1:
+                    new_joint_writes.remove(write)
+                    continue
 
                 state0_in_new_state_write_access = state0_write_accesses_in_new_state.pop()
 
@@ -590,6 +599,7 @@ class FuseBranches(transformation.MultiStateTransformation):
             # Copy over all identify writes
             state1_to_new_state_node_map = cutil.copy_state_contents(state1, new_state)
             read_sets0, write_sets1 = state1.read_and_write_sets()
+            joint_writes = new_joint_writes
 
         graph.add_node(new_state)
         for ie in graph.in_edges(self.conditional):
@@ -686,14 +696,16 @@ class FuseBranches(transformation.MultiStateTransformation):
                 {str(s)
                  for s in dace.symbolic.SymExpr(cond_str).free_symbols})
 
+        # Then name says symbols but could be an array too
         for sym_name in conditional_symbols:
             if not symbol_is_used(graph, sym_name):
                 remove_symbol_assignments(graph, sym_name)
                 if isinstance(graph, dace.SDFG):
-                    graph.remove_symbol(sym_name)
-                    if graph.parent_nsdfg_node is not None:
-                        if sym_name in graph.parent_nsdfg_node.symbol_mapping:
-                            del graph.parent_nsdfg_node.symbol_mapping[sym_name]
+                    if sym_name in graph.symbols:
+                        graph.remove_symbol(sym_name)
+                        if graph.parent_nsdfg_node is not None:
+                            if sym_name in graph.parent_nsdfg_node.symbol_mapping:
+                                del graph.parent_nsdfg_node.symbol_mapping[sym_name]
 
         for ie in graph.in_edges(new_state):
             # If ie.src is empty and ie.data.assignments is empty remove ie.src
