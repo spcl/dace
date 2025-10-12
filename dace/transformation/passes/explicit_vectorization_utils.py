@@ -176,7 +176,11 @@ def is_innermost_map(map_entry: dace.nodes.MapEntry, state: SDFGState) -> bool:
 def assert_maps_consist_of_single_nsdfg_or_no_nsdfg(sdfg: dace.SDFG):
     for n, g in sdfg.all_nodes_recursive():
         if isinstance(n, dace.nodes.MapEntry):
-            all_nodes = g.all_nodes_between(n, g.exit_node(n))
+            all_nodes = {
+                k
+                for k in g.all_nodes_between(n, g.exit_node(n))
+                if not isinstance(k, (dace.nodes.MapEntry, dace.nodes.MapExit))
+            }
             assert (len(all_nodes) == 1 and isinstance(next(iter(all_nodes)), dace.nodes.NestedSDFG)) or (len(
                 {_n
                  for _n in all_nodes if isinstance(_n, dace.nodes.NestedSDFG)}) == 0)
@@ -784,13 +788,13 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         # array op scalar -> use constant template (prefix op with 'c')
         # note: info stores rhs1 as the array name and constant1 as the scalar name
         set_template(rhs1, None, c1, lhs, "c" + op)
-        data_edge = state.in_edges_by_connector(node, rhs1)[0]
+        data_edge = next(iter(state.in_edges_by_connector(node, rhs1)))
         data_name = data_edge.data.data
         data = state.sdfg.arrays[data_name]
-        if data.transient is False:
-            raise Exception(
-                f"Array-Scalar tasklet is not currenlty supported by auto vectorization if input scalar is non-transient. Try to re-write the kernel it happens at {node}, state:{state}"
-            )
+        #if data.transient is False:
+        #    raise Exception(
+        #        f"Array-Scalar tasklet is not currenlty supported by auto vectorization if input scalar is non-transient. Try to re-write the kernel. It happens at {node}, state:{state}"
+        #    )
         return
 
     if ttype == TaskletType.SCALAR_SCALAR:

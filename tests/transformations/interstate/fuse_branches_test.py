@@ -98,6 +98,27 @@ def complicated_if(
         d[i, j] = b[i, j] + a[i, j]  # ensure d is always written for comparison
 
 
+S = 8
+S1 = 0
+S2 = 8
+
+
+@dace.program
+def tasklets_in_if(
+    a: dace.float64[S, S],
+    b: dace.float64[S, S],
+    d: dace.float64[S, S],
+    c: dace.float64,
+):
+    for i in dace.map[S1:S2:1]:
+        for j in dace.map[S1:S2:1]:
+            if a[i, j] > c:
+                b[i, j] = b[i, j] + d[i, j]
+            else:
+                b[i, j] = b[i, j] - d[i, j]
+            b[i, j] = (1 - a[i, j]) * c
+
+
 def apply_fuse_branches(sdfg, nestedness: int = 1):
     """Apply FuseBranches transformation to all eligible conditionals."""
     # Pattern matching with conditional branches to not work (9.10.25), avoid it
@@ -195,6 +216,15 @@ def test_nested_if(use_pass_flag):
     run_and_compare(nested_if, 0, use_pass_flag, a=a, b=b, c=c, d=d, s=s[0])
 
 
+@pytest.mark.parametrize("use_pass_flag", [True, False])
+def test_tasklets_in_if(use_pass_flag):
+    a = np.random.choice([0.0, 3.0], size=(N, N))
+    b = np.random.randn(N, N)
+    c = np.zeros((1, ))
+    d = np.zeros((N, N))
+    run_and_compare(tasklets_in_if, 0, use_pass_flag, a=a, b=b, d=d, c=c[0])
+
+
 if __name__ == "__main__":
     for use_pass_flag in [True, False]:
         test_branch_dependent_value_write(use_pass_flag)
@@ -203,3 +233,4 @@ if __name__ == "__main__":
         test_complicated_if(use_pass_flag)
         test_multi_state_branch_body(use_pass_flag)
         test_nested_if(use_pass_flag)
+        test_tasklets_in_if(use_pass_flag)
