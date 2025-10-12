@@ -46,6 +46,7 @@ class FuseBranchesPass(ppl.Pass):
         for _ in range(nestedness):
             for node in sdfg.all_control_flow_blocks():
                 if isinstance(node, ConditionalBlock):
+                    #print(node, t.can_be_applied_to(node.parent_graph, conditional=node))
                     if t.can_be_applied_to(node.parent_graph, conditional=node):
                         t.apply_to(node.parent_graph.sdfg, conditional=node)
 
