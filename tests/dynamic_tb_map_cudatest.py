@@ -39,7 +39,6 @@ def test_dynamic_map():
                 and node[0].schedule == dace.dtypes.ScheduleType.Sequential:
             node[0].schedule = dace.dtypes.ScheduleType.GPU_ThreadBlock_Dynamic
 
-
     sdfg.save("tblock_dynamic.sdfg")
 
     # Fill input data

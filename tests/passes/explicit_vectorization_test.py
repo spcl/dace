@@ -41,6 +41,30 @@ def vadds_cpu(A: dace.float64[N, N], B: dace.float64[N, N]):
 
 
 @dace.program
+def vsubs_cpu(A: dace.float64[N, N], B: dace.float64[N, N]):
+    for i, j in dace.map[0:N, 0:N]:
+        A[i, j] = A[i, j] - B[i, j]
+
+
+@dace.program
+def vsubs_two_cpu(A: dace.float64[N, N], B: dace.float64[N, N]):
+    for i, j in dace.map[0:N, 0:N]:
+        A[i, j] = B[i, j] - A[i, j]
+
+
+@dace.program
+def v_const_subs_cpu(A: dace.float64[N, N]):
+    for i, j in dace.map[0:N, 0:N]:
+        A[i, j] = A[i, j] - 1.0
+
+
+@dace.program
+def v_const_subs_two_cpu(A: dace.float64[N, N]):
+    for i, j in dace.map[0:N, 0:N]:
+        A[i, j] = 1.0 - A[i, j]
+
+
+@dace.program
 def unsupported_op(A: dace.float64[N, N], B: dace.float64[N, N]):
     for i, j in dace.map[0:N, 0:N]:
         A[i, j] = B[i, j] > 0.0
@@ -111,8 +135,8 @@ def tasklets_in_if(
     d: dace.float64[S, S],
     c: dace.float64,
 ):
-    for i in dace.map[S1:S2:1]:
-        for j in dace.map[S1:S2:1]:
+    for i in dace.map[0:S:1]:
+        for j in dace.map[0:S:1]:
             if a[i, j] > c:
                 b[i, j] = b[i, j] + d[i, j]
             else:
@@ -129,12 +153,10 @@ def tasklets_in_if_two(
     e: dace.float64[S, S],
     f: dace.float64,
 ):
-    for i in dace.map[0:S - 1:1]:
-        for j in dace.map[0:S - 1:1]:
-            if a[i, j] + a[i + 1, j + 1] < b:
-                g = f * a[i, j]
-                d[i, j] = c[i, j] * g
-                e[i, j] = d[i, j] * 2.0 - a[i, j]
+    for i in dace.map[0:S:1]:
+        for j in dace.map[0:S:1]:
+            if a[i, j] < b:
+                e[i, j] = (c[i, j] * f * a[i, j] * 2.0) - a[i, j]
 
 
 @dace.program
@@ -167,131 +189,166 @@ def spmv_csr_2(indptr: dace.int64[n + 1], indices: dace.int64[nnz], data: dace.f
         y[i] = tmp
 
 
-@pytest.mark.gpu
-def _test_simple_gpu():
-    import cupy
+def run_vectorization_test(dace_func,
+                           arrays,
+                           params,
+                           vector_width=8,
+                           simplify=True,
+                           skip_simplify=None,
+                           save_sdfgs=False,
+                           sdfg_name=None):
+    """
+    Run vectorization test and compare results.
 
-    # Allocate 64x64 GPU arrays using CuPy
-    A_gpu = cupy.random.random((64, 64), dtype=cupy.float64)
-    B_gpu = cupy.random.random((64, 64), dtype=cupy.float64)
-
+    Args:
+        dace_func: DaCe program function to test
+        arrays: Dict of numpy arrays (will be copied internally)
+        params: Dict of additional parameters to pass to compiled functions
+        vector_width: Vector width for vectorization
+        simplify: Whether to simplify the SDFG
+        skip_simplify: Set of passes to skip during simplification
+        save_sdfgs: Whether to save SDFGs to disk
+        sdfg_name: Base name for saved SDFGs
+    """
     # Create copies for comparison
-    A_orig = cupy.copy(A_gpu)
-    B_orig = cupy.copy(B_gpu)
-    A_vec = cupy.copy(A_gpu)
-    B_vec = cupy.copy(B_gpu)
+    arrays_orig = {k: copy.deepcopy(v) for k, v in arrays.items()}
+    arrays_vec = {k: copy.deepcopy(v) for k, v in arrays.items()}
 
     # Original SDFG
-    sdfg = vadds_gpu.to_sdfg()
+    sdfg = dace_func.to_sdfg(simplify=False)
+    if simplify:
+        sdfg.simplify(validate=True, validate_all=True, skip=skip_simplify or set())
+    if save_sdfgs and sdfg_name:
+        sdfg.save(f"{sdfg_name}.sdfg")
     c_sdfg = sdfg.compile()
 
     # Vectorized SDFG
     copy_sdfg = copy.deepcopy(sdfg)
-    ExplicitVectorizationPipelineGPU(vector_width=4).apply_pass(copy_sdfg, {})
+    ExplicitVectorizationPipelineCPU(vector_width=vector_width).apply_pass(copy_sdfg, {})
+    if save_sdfgs and sdfg_name:
+        copy_sdfg.save(f"{sdfg_name}_vectorized.sdfg")
     c_copy_sdfg = copy_sdfg.compile()
 
-    c_sdfg(A=A_orig, B=B_orig, N=64)
-    c_copy_sdfg(A=A_vec, B=B_vec, N=64)
+    # Run both
+    c_sdfg(**arrays_orig, **params)
+    c_copy_sdfg(**arrays_vec, **params)
 
     # Compare results
-    assert cupy.allclose(A_orig, A_vec)
-    assert cupy.allclose(B_orig, B_vec)
+    for name in arrays.keys():
+        assert numpy.allclose(arrays_orig[name], arrays_vec[name]), \
+            f"{name} Diff: {arrays_orig[name] - arrays_vec[name]}"
+
+
+def test_vsubs_cpu():
+    N = 64
+    A = numpy.random.random((N, N))
+    B = numpy.random.random((N, N))
+
+    run_vectorization_test(
+        dace_func=vsubs_cpu,
+        arrays={
+            'A': A,
+            'B': B
+        },
+        params={'N': N},
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name="vsubs_one",
+    )
+
+
+def test_vsubs_two_cpu():
+    N = 64
+    A = numpy.random.random((N, N))
+    B = numpy.random.random((N, N))
+
+    run_vectorization_test(
+        dace_func=vsubs_two_cpu,
+        arrays={
+            'A': A,
+            'B': B
+        },
+        params={'N': N},
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name="vsubs_two",
+    )
+
+
+def test_v_const_subs_cpu():
+    N = 64
+    A = numpy.random.random((N, N))
+
+    run_vectorization_test(
+        dace_func=v_const_subs_cpu,
+        arrays={'A': A},
+        params={'N': N},
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name="v_const_subs_one",
+    )
+
+
+def test_v_const_subs_two_cpu():
+    N = 64
+    A = numpy.random.random((N, N))
+
+    run_vectorization_test(
+        dace_func=v_const_subs_two_cpu,
+        arrays={'A': A},
+        params={'N': N},
+        vector_width=8,
+        sdfg_name="v_const_subs_two",
+        save_sdfgs=True,
+    )
 
 
 def test_simple_cpu():
-    import numpy
+    A = numpy.random.random((64, 64))
+    B = numpy.random.random((64, 64))
 
-    # Allocate 64x64 CPU arrays using NumPy
-    A_cpu = numpy.random.random((64, 64))
-    B_cpu = numpy.random.random((64, 64))
-
-    # Create copies for comparison
-    A_orig = A_cpu.copy()
-    B_orig = B_cpu.copy()
-    A_vec = A_cpu.copy()
-    B_vec = B_cpu.copy()
-
-    # Original SDFG
-    sdfg = vadds_cpu.to_sdfg()
-    c_sdfg = sdfg.compile()
-
-    # Vectorized SDFG
-    copy_sdfg = copy.deepcopy(sdfg)
-    ExplicitVectorizationPipelineCPU(vector_width=4).apply_pass(copy_sdfg, {})
-    c_copy_sdfg = copy_sdfg.compile()
-
-    c_sdfg(A=A_orig, B=B_orig, N=64)
-    c_copy_sdfg(A=A_vec, B=B_vec, N=64)
-
-    # Compare results
-    assert numpy.allclose(A_orig, A_vec), f"{A_orig - A_vec}"
-    assert numpy.allclose(B_orig, B_vec), f"{B_orig - B_vec}"
+    run_vectorization_test(
+        dace_func=vadds_cpu,
+        arrays={
+            'A': A,
+            'B': B
+        },
+        params={'N': 64},
+        vector_width=4,
+        sdfg_name="simple_cpu",
+        save_sdfgs=True,
+    )
 
 
 def test_unsupported_op():
-    import numpy
+    A = numpy.random.random((64, 64))
+    B = numpy.random.random((64, 64))
 
-    # Allocate 64x64 CPU arrays using NumPy
-    A_cpu = numpy.random.random((64, 64))
-    B_cpu = numpy.random.random((64, 64))
-
-    # Create copies for comparison
-    A_orig = A_cpu.copy()
-    B_orig = B_cpu.copy()
-    A_vec = A_cpu.copy()
-    B_vec = B_cpu.copy()
-
-    # Original SDFG
-    sdfg = unsupported_op.to_sdfg(simplify=False)
-    sdfg.simplify(validate=True, validate_all=True, skip={"ScalarToSymbolPromotion"})
-    sdfg.save("unsupported_op.sdfg")
-    c_sdfg = sdfg.compile()
-
-    # Vectorized SDFG
-    copy_sdfg = copy.deepcopy(sdfg)
-    ExplicitVectorizationPipelineCPU(vector_width=4).apply_pass(copy_sdfg, {})
-    copy_sdfg.save("unsupported_op_vectorized.sdfg")
-    c_copy_sdfg = copy_sdfg.compile()
-
-    c_sdfg(A=A_orig, B=B_orig, N=64)
-    c_copy_sdfg(A=A_vec, B=B_vec, N=64)
-
-    # Compare results
-    assert numpy.allclose(A_orig, A_vec), f"{A_orig - A_vec}"
-    assert numpy.allclose(B_orig, B_vec), f"{B_orig - B_vec}"
+    run_vectorization_test(dace_func=unsupported_op,
+                           arrays={
+                               'A': A,
+                               'B': B
+                           },
+                           params={'N': 64},
+                           vector_width=4,
+                           skip_simplify={"ScalarToSymbolPromotion"},
+                           save_sdfgs=True,
+                           sdfg_name="unsupported_op")
 
 
 def test_unsupported_op_two():
-    import numpy
+    A = numpy.random.random((64, 64))
+    B = numpy.random.random((64, 64))
 
-    # Allocate 64x64 CPU arrays using NumPy
-    A_cpu = numpy.random.random((64, 64))
-    B_cpu = numpy.random.random((64, 64))
-
-    # Create copies for comparison
-    A_orig = A_cpu.copy()
-    B_orig = B_cpu.copy()
-    A_vec = A_cpu.copy()
-    B_vec = B_cpu.copy()
-
-    # Original SDFG
-    sdfg = unsupported_op.to_sdfg(simplify=False)
-    sdfg.simplify(validate=True, validate_all=True, skip={})
-    sdfg.save("unsupported_op.sdfg")
-    c_sdfg = sdfg.compile()
-
-    # Vectorized SDFG
-    copy_sdfg = copy.deepcopy(sdfg)
-    ExplicitVectorizationPipelineCPU(vector_width=4).apply_pass(copy_sdfg, {})
-    copy_sdfg.save("unsupported_op_vectorized.sdfg")
-    c_copy_sdfg = copy_sdfg.compile()
-
-    c_sdfg(A=A_orig, B=B_orig, N=64)
-    c_copy_sdfg(A=A_vec, B=B_vec, N=64)
-
-    # Compare results
-    assert numpy.allclose(A_orig, A_vec), f"{A_orig - A_vec}"
-    assert numpy.allclose(B_orig, B_vec), f"{B_orig - B_vec}"
+    run_vectorization_test(dace_func=unsupported_op,
+                           arrays={
+                               'A': A,
+                               'B': B
+                           },
+                           params={'N': 64},
+                           vector_width=4,
+                           save_sdfgs=True,
+                           sdfg_name="unsupported_op")
 
 
 def test_nested_sdfg():
@@ -301,30 +358,21 @@ def test_nested_sdfg():
     A = numpy.random.random((_S, _S))
     B = numpy.random.random((_S, _S))
 
-    # Create copies for comparison
-    A_orig = copy.deepcopy(A)
-    B_orig = copy.deepcopy(B)
-    A_vec = copy.deepcopy(A)
-    B_vec = copy.deepcopy(B)
-
-    # Original SDFG
-    sdfg = tasklet_in_nested_sdfg.to_sdfg()
-
-    # Vectorized SDFG
-    copy_sdfg = copy.deepcopy(sdfg)
-    sdfg.save("nested_tasklets.sdfg")
-    ExplicitVectorizationPipelineCPU(vector_width=8).apply_pass(copy_sdfg, {})
-    copy_sdfg.save("nested_tasklets_vectorized.sdfg")
-
-    c_sdfg = sdfg.compile()
-    c_copy_sdfg = copy_sdfg.compile()
-
-    c_sdfg(a=A_orig, b=B_orig, S=_S, S1=_S1, S2=_S2, offset1=-1, offset2=-1)
-    c_copy_sdfg(a=A_vec, b=B_vec, S=_S, S1=_S1, S2=_S2, offset1=-1, offset2=-1)
-
-    # Compare results
-    assert numpy.allclose(A_orig, A_vec), f"{A_orig - A_vec}"
-    assert numpy.allclose(B_orig, B_vec), f"{B_orig - B_vec}"
+    run_vectorization_test(dace_func=tasklet_in_nested_sdfg,
+                           arrays={
+                               'a': A,
+                               'b': B
+                           },
+                           params={
+                               'S': _S,
+                               'S1': _S1,
+                               'S2': _S2,
+                               'offset1': -1,
+                               'offset2': -1
+                           },
+                           vector_width=8,
+                           save_sdfgs=True,
+                           sdfg_name="nested_tasklets")
 
 
 def test_no_maps():
@@ -332,30 +380,15 @@ def test_no_maps():
     A = numpy.random.random((_N, _N))
     B = numpy.random.random((_N, _N))
 
-    # Create copies for comparison
-    A_orig = copy.deepcopy(A)
-    B_orig = copy.deepcopy(B)
-    A_vec = copy.deepcopy(A)
-    B_vec = copy.deepcopy(B)
-
-    # Original SDFG
-    sdfg = no_maps.to_sdfg()
-
-    # Vectorized SDFG
-    copy_sdfg = copy.deepcopy(sdfg)
-    sdfg.save("no_maps.sdfg")
-    ExplicitVectorizationPipelineCPU(vector_width=8).apply_pass(copy_sdfg, {})
-    copy_sdfg.save("no_maps_vectorized.sdfg")
-
-    c_sdfg = sdfg.compile()
-    c_copy_sdfg = copy_sdfg.compile()
-
-    c_sdfg(A=A_orig, B=B_orig, N=_N)
-    c_copy_sdfg(A=A_vec, B=B_vec, N=_N)
-
-    # Compare results
-    assert numpy.allclose(A_orig, A_vec), f"{A_orig - A_vec}"
-    assert numpy.allclose(B_orig, B_vec), f"{B_orig - B_vec}"
+    run_vectorization_test(dace_func=no_maps,
+                           arrays={
+                               'A': A,
+                               'B': B
+                           },
+                           params={'N': _N},
+                           vector_width=8,
+                           save_sdfgs=True,
+                           sdfg_name="no_maps")
 
 
 def test_tasklets_in_if():
@@ -365,19 +398,10 @@ def test_tasklets_in_if():
     D = numpy.random.random((_S, _S))
     C = numpy.random.random((1, ))
 
-    # Create copies for comparison
-    A_orig = copy.deepcopy(A)
-    B_orig = copy.deepcopy(B)
-    A_vec = copy.deepcopy(A)
-    B_vec = copy.deepcopy(B)
-    C_orig = copy.deepcopy(C)
-    D_orig = copy.deepcopy(D)
-    C_vec = copy.deepcopy(C)
-    D_vec = copy.deepcopy(D)
-    # Original SDFG
-    sdfg = tasklets_in_if.to_sdfg()
+    arrays_orig = {'a': copy.deepcopy(A), 'b': copy.deepcopy(B), 'c': copy.deepcopy(C), 'd': copy.deepcopy(D)}
+    arrays_vec = {'a': copy.deepcopy(A), 'b': copy.deepcopy(B), 'c': copy.deepcopy(C), 'd': copy.deepcopy(D)}
 
-    # Vectorized SDFG
+    sdfg = tasklets_in_if.to_sdfg()
     copy_sdfg = copy.deepcopy(sdfg)
     sdfg.save("nested_tasklets_in_if.sdfg")
     ExplicitVectorizationPipelineCPU(vector_width=8).apply_pass(copy_sdfg, {})
@@ -386,14 +410,13 @@ def test_tasklets_in_if():
     c_sdfg = sdfg.compile()
     c_copy_sdfg = copy_sdfg.compile()
 
-    c_sdfg(a=A_orig, b=B_orig, c=C_orig[0], d=D_orig, S=_S, S1=0, S2=64)
-    c_copy_sdfg(a=A_vec, b=B_vec, c=C_vec[0], d=D_vec, S=_S, S1=0, S2=64)
+    c_sdfg(a=arrays_orig['a'], b=arrays_orig['b'], c=arrays_orig['c'][0], d=arrays_orig['d'], S=_S)
+    c_copy_sdfg(a=arrays_vec['a'], b=arrays_vec['b'], c=arrays_vec['c'][0], d=arrays_vec['d'], S=_S)
 
-    # Compare results
-    assert numpy.allclose(A_orig, A_vec), f"A Diff: {A_orig - A_vec}"
-    assert numpy.allclose(B_orig, B_vec), f"B Diff: {B_orig - B_vec}"
-    assert numpy.allclose(C_orig, C_vec), f"C Diff: {C_orig - C_vec}"
-    assert numpy.allclose(D_orig, D_vec), f"D Diff: {D_orig - D_vec}"
+    assert numpy.allclose(arrays_orig['a'], arrays_vec['a']), f"A Diff: {arrays_orig['a'] - arrays_vec['a']}"
+    assert numpy.allclose(arrays_orig['b'], arrays_vec['b']), f"B Diff: {arrays_orig['b'] - arrays_vec['b']}"
+    assert numpy.allclose(arrays_orig['c'], arrays_vec['c']), f"C Diff: {arrays_orig['c'] - arrays_vec['c']}"
+    assert numpy.allclose(arrays_orig['d'], arrays_vec['d']), f"D Diff: {arrays_orig['d'] - arrays_vec['d']}"
 
 
 def test_tasklets_in_if_two():
@@ -405,24 +428,25 @@ def test_tasklets_in_if_two():
     E = numpy.random.random((_S, _S))
     F = numpy.random.random((1, ))
 
-    # Create copies for comparison
-    A_orig = copy.deepcopy(A)
-    B_orig = copy.deepcopy(B)
-    C_orig = copy.deepcopy(C)
-    D_orig = copy.deepcopy(D)
-    E_orig = copy.deepcopy(E)
-    F_orig = copy.deepcopy(F)
-    A_vec = copy.deepcopy(A)
-    B_vec = copy.deepcopy(B)
-    C_vec = copy.deepcopy(C)
-    D_vec = copy.deepcopy(D)
-    E_vec = copy.deepcopy(E)
-    F_vec = copy.deepcopy(F)
+    arrays_orig = {
+        'a': copy.deepcopy(A),
+        'b': copy.deepcopy(B),
+        'c': copy.deepcopy(C),
+        'd': copy.deepcopy(D),
+        'e': copy.deepcopy(E),
+        'f': copy.deepcopy(F)
+    }
+    arrays_vec = {
+        'a': copy.deepcopy(A),
+        'b': copy.deepcopy(B),
+        'c': copy.deepcopy(C),
+        'd': copy.deepcopy(D),
+        'e': copy.deepcopy(E),
+        'f': copy.deepcopy(F)
+    }
 
-    # Original SDFG
-    sdfg = tasklets_in_if.to_sdfg()
-
-    # Vectorized SDFG
+    sdfg = tasklets_in_if_two.to_sdfg(simplify=False)
+    sdfg.simplify(skip=["ScalarToSymbolPromotion"])
     copy_sdfg = copy.deepcopy(sdfg)
     sdfg.save("nested_tasklets.sdfg")
     ExplicitVectorizationPipelineCPU(vector_width=8).apply_pass(copy_sdfg, {})
@@ -431,16 +455,27 @@ def test_tasklets_in_if_two():
     c_sdfg = sdfg.compile()
     c_copy_sdfg = copy_sdfg.compile()
 
-    c_sdfg(a=A_orig, b=B_orig, c=C_orig, d=D_orig, e=E_orig, f=F_orig, S=_S)
-    c_copy_sdfg(a=A_vec, b=B_vec, c=C_vec, d=D_vec, e=E_vec, f=F_vec, S=_S)
+    c_sdfg(a=arrays_orig['a'],
+           b=arrays_orig['b'][0],
+           c=arrays_orig['c'],
+           d=arrays_orig['d'],
+           e=arrays_orig['e'],
+           f=arrays_orig['f'][0],
+           S=_S)
+    c_copy_sdfg(a=arrays_vec['a'],
+                b=arrays_vec['b'][0],
+                c=arrays_vec['c'],
+                d=arrays_vec['d'],
+                e=arrays_vec['e'],
+                f=arrays_vec['f'][0],
+                S=_S)
 
-    # Compare results
-    assert numpy.allclose(A_orig, A_vec), f"{A_orig - A_vec}"
-    assert numpy.allclose(B_orig, B_vec), f"{B_orig - B_vec}"
-    assert numpy.allclose(C_orig, C_vec), f"{C_orig - C_vec}"
-    assert numpy.allclose(D_orig, D_vec), f"{D_orig - D_vec}"
-    assert numpy.allclose(E_orig, E_vec), f"{E_orig - E_vec}"
-    assert numpy.allclose(F_orig, F_vec), f"{F_orig - F_vec}"
+    assert numpy.allclose(arrays_orig['a'], arrays_vec['a']), f"{arrays_orig['a'] - arrays_vec['a']}"
+    assert numpy.allclose(arrays_orig['b'], arrays_vec['b']), f"{arrays_orig['b'] - arrays_vec['b']}"
+    assert numpy.allclose(arrays_orig['c'], arrays_vec['c']), f"{arrays_orig['c'] - arrays_vec['c']}"
+    assert numpy.allclose(arrays_orig['d'], arrays_vec['d']), f"{arrays_orig['d'] - arrays_vec['d']}"
+    assert numpy.allclose(arrays_orig['e'], arrays_vec['e']), f"{arrays_orig['e'] - arrays_vec['e']}"
+    assert numpy.allclose(arrays_orig['f'], arrays_vec['f']), f"{arrays_orig['f'] - arrays_vec['f']}"
 
 
 def _dense_to_csr(dense: numpy.ndarray):
@@ -517,11 +552,15 @@ def test_spmv():
 
 
 if __name__ == "__main__":
-    #test_unsupported_op()
-    #test_unsupported_op_two()
+    test_vsubs_cpu()
+    test_vsubs_two_cpu()
+    test_v_const_subs_cpu()
+    test_v_const_subs_two_cpu()
+    test_unsupported_op()
+    test_unsupported_op_two()
     test_tasklets_in_if()
-    #test_tasklets_in_if_two()
-    #test_nested_sdfg()
-    #test_simple_cpu()
-    #test_no_maps()
-    #test_spmv()
+    test_tasklets_in_if_two()
+    test_nested_sdfg()
+    test_simple_cpu()
+    test_no_maps()
+    test_spmv()

@@ -428,6 +428,16 @@ def token_replace(code: str, src: str, dst: str) -> str:
     return ''.join(tokens).strip()
 
 
+def token_match(string_to_check: str, pattern_str: str) -> str:
+    # Split while keeping delimiters
+    tokens = re.split(r'(\s+|[()\[\]])', string_to_check)
+
+    # Replace tokens that exactly match src
+    tokens = {token.strip() for token in tokens}
+
+    return pattern_str in tokens
+
+
 def check_nsdfg_connector_array_shapes_match(parent_state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG):
     for ie in parent_state.in_edges(nsdfg_node):
         if ie.data is not None:
@@ -523,6 +533,54 @@ class TaskletType(Enum):
     ARRAY_ARRAY = "array_array"  # a = array1 op array2
     SCALAR_SCALAR = "scalar_scalar"  # a = scalar1 op scalar2
     SYMBOL_SYMBOL = "symbol_symbol"  # a = symbol1 op symbol2
+
+
+import ast
+
+
+class IntToFloatTransformer(ast.NodeTransformer):
+
+    def visit_Constant(self, node):
+        if isinstance(node.value, int):
+            # Replace integer with float node
+            return ast.Constant(value=float(node.value))
+        return node
+
+    def visit_Num(self, node):  # For older Python versions (<3.8)
+        if isinstance(node.n, int):
+            return ast.copy_location(ast.Constant(value=float(node.n)), node)
+        return node
+
+
+def ints_to_floats(code_str):
+    tree = ast.parse(code_str)
+    new_tree = IntToFloatTransformer().visit(tree)
+    ast.fix_missing_locations(new_tree)
+    return ast.unparse(new_tree)
+
+
+def get_rhs_order(code_str: str, op_str: str, rhs1: str, rhs2: str) -> List[str]:
+    splits = ints_to_floats(code_str).split(op_str)
+    assert len(splits) == 2, f"{code_str} split at {op_str} becomes {splits}, length is not 2"
+    left, right = splits[0], splits[1]
+
+    rhs1_in_left = token_match(left, str(rhs1))
+    rhs1_in_right = token_match(right, str(rhs1))
+    rhs2_in_left = token_match(left, str(rhs2))
+    rhs2_in_right = token_match(right, str(rhs2))
+
+    assert rhs1_in_left or rhs1_in_right
+    assert not (rhs1_in_left and rhs1_in_right)
+    assert rhs2_in_left or rhs2_in_right, f"{rhs2} not found in tokens `{left}` or `{right}`"
+    assert not (rhs2_in_left and rhs2_in_right)
+
+    if rhs1_in_left:
+        assert rhs2_in_right
+        return [rhs1, rhs2]
+    elif rhs2_in_left:
+        assert rhs1_in_right
+        return [rhs2, rhs1]
+    assert False
 
 
 def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
@@ -691,6 +749,7 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
     c2 = info.get("constant2")
     op = info.get("op")
     vw = vector_width
+    is_commutative = op in {"+", "*", "c+", "c*"}
 
     def _str_to_float_or_str(s: Union[int, float, str, None]):
         if s is None:
@@ -701,18 +760,89 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
             return s
 
     def _get_vector_templates(rhs1: str, rhs2: str, lhs: str, constant: Union[str, None], op: str):
+        s = ",".join([str(s) for s in [op, rhs1, rhs2, lhs, constant]])
+        print(s)
         if op in templates:
             if rhs2 is None:
                 if constant is None:
-                    new_code = templates[op].format(rhs1=rhs1, lhs=lhs, op=op, vector_width=vector_width)
+                    if is_commutative:
+                        new_code = templates[op].format(rhs1=rhs1, lhs=lhs, op=op, vector_width=vector_width)
+                    else:
+                        if op == "=":
+                            new_code = templates[op].format(rhs1=rhs1, lhs=lhs, op=op, vector_width=vector_width)
+                        else:
+                            rhs_order = get_rhs_order(node.code.as_string, op, rhs1, rhs2)
+                            print(
+                                f"Op {op} is not commutative, rhs order is {rhs_order} for node {node} ({node.code.as_string})"
+                            )
+                            if rhs_order == [rhs1, rhs2]:
+                                new_code = templates[op].format(rhs1=rhs1, lhs=lhs, op=op, vector_width=vector_width)
+                            elif rhs_order == [rhs2, rhs1]:
+                                new_code = templates[op[1:] + "c"].format(rhs1=rhs1,
+                                                                          lhs=lhs,
+                                                                          op=op,
+                                                                          vector_width=vector_width)
+                            else:
+                                raise Exception("???")
                 else:
-                    new_code = templates[op].format(rhs1=rhs1,
-                                                    constant=_str_to_float_or_str(constant),
-                                                    lhs=lhs,
-                                                    op=op,
-                                                    vector_width=vector_width)
+                    if is_commutative:
+                        new_code = templates[op].format(rhs1=rhs1,
+                                                        constant=_str_to_float_or_str(constant),
+                                                        lhs=lhs,
+                                                        op=op,
+                                                        vector_width=vector_width)
+                    else:
+                        if op == "=" or op == "c=":
+                            new_code = templates[op].format(rhs1=rhs1,
+                                                            constant=_str_to_float_or_str(constant),
+                                                            lhs=lhs,
+                                                            op=op,
+                                                            vector_width=vector_width)
+                        else:
+                            rhs_order = get_rhs_order(node.code.as_string, op[1:], rhs1, constant)
+                            print(
+                                f"Op {op} is not commutative, rhs order is {rhs_order} for node {node} ({node.code.as_string})"
+                            )
+                            if rhs_order == [rhs1, constant]:
+                                new_code = templates[op].format(rhs1=rhs1,
+                                                                constant=_str_to_float_or_str(constant),
+                                                                lhs=lhs,
+                                                                op=op,
+                                                                vector_width=vector_width)
+                            elif rhs_order == [constant, rhs1]:
+                                new_code = templates[op[1:] + "c"].format(rhs1=rhs1,
+                                                                          constant=_str_to_float_or_str(constant),
+                                                                          lhs=lhs,
+                                                                          op=op,
+                                                                          vector_width=vector_width)
+                            else:
+                                raise Exception("???")
             else:
-                new_code = templates[op].format(rhs1=rhs1, rhs2=rhs2, lhs=lhs, op=op, vector_width=vector_width)
+                if is_commutative:
+                    new_code = templates[op].format(rhs1=rhs1, rhs2=rhs2, lhs=lhs, op=op, vector_width=vector_width)
+                else:
+                    if op == "=":
+                        new_code = templates[op].format(rhs1=rhs1, rhs2=rhs2, lhs=lhs, op=op, vector_width=vector_width)
+                    else:
+                        assert constant is None
+                        rhs_order = get_rhs_order(node.code.as_string, op, rhs1, rhs2)
+                        print(
+                            f"Op {op} is not commutative, rhs order is {rhs_order} for node {node} ({node.code.as_string})"
+                        )
+                        if rhs_order == [rhs1, rhs2]:
+                            new_code = templates[op].format(rhs1=rhs_order[0],
+                                                            rhs2=rhs_order[1],
+                                                            lhs=lhs,
+                                                            op=op,
+                                                            vector_width=vector_width)
+                        elif rhs_order == [rhs2, rhs1]:
+                            new_code = templates[op].format(rhs1=rhs_order[0],
+                                                            rhs2=rhs_order[1],
+                                                            lhs=lhs,
+                                                            op=op,
+                                                            vector_width=vector_width)
+                        else:
+                            raise Exception("???")
         else:
             print(f"Operator `{op}` is not in supported ops `{set(templates.keys())}`")
             print(f"Generating fall-back scalar code")
@@ -721,16 +851,35 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
             else:
                 comparison_set_suffix = ""
             if constant is not None:
+                rhs_order = get_rhs_order(node.code.as_string, op[1:], rhs1, constant)
                 assert op.startswith("c")
-                op = op[1:]
-                code_str = ""
-                for i in range(vector_width):
-                    code_str += f"{lhs}[{i}] = ({rhs1}[{i}] {op} {constant}){comparison_set_suffix};\n"
+                if rhs_order == [rhs1, constant]:
+                    op = op[1:]
+                    code_str = ""
+                    for i in range(vector_width):
+                        code_str += f"{lhs}[{i}] = ({rhs1}[{i}] {op} {constant}){comparison_set_suffix};\n"
+                elif rhs_order == [constant, rhs1]:
+                    op = op[1:]
+                    code_str = ""
+                    for i in range(vector_width):
+                        code_str += f"{lhs}[{i}] = ({constant} {op} {rhs1}[{i}]){comparison_set_suffix};\n"
+                else:
+                    raise Exception("???")
             else:
-                op = op
-                code_str = ""
-                for i in range(vector_width):
-                    code_str += f"{lhs}[{i}] = ({rhs1}[{i}] {op} {rhs2}[{i}]){comparison_set_suffix};\n"
+                rhs_order = get_rhs_order(node.code.as_string, op, rhs1, constant)
+                assert op.startswith("c")
+                if rhs_order == [rhs1, rhs2]:
+                    op = op
+                    code_str = ""
+                    for i in range(vector_width):
+                        code_str += f"{lhs}[{i}] = ({rhs1}[{i}] {op} {rhs2}[{i}]){comparison_set_suffix};\n"
+                elif rhs_order == [rhs2, rhs1]:
+                    op = op
+                    code_str = ""
+                    for i in range(vector_width):
+                        code_str += f"{lhs}[{i}] = ({rhs2}[{i}] {op} {rhs1}[{i}]){comparison_set_suffix};\n"
+                else:
+                    raise Exception("???")
             new_code = code_str
         return new_code
 
@@ -770,11 +919,22 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         # rhs1 is a scalar, constant1 is the symbol -> generate explicit per-lane assignments
         # e.g., for i in 0..vw-1: lhs[i] = rhs1 op constant1;
         code_lines = []
-        for i in range(vw):
-            # If detect inner symbol used we need to correctly offset it to have + lane_id
-            expr_str = f"({rhs1} {op} {c1})"
-            corrected_expr_str = offset_symbol_in_expression(expr_str, vector_map_param, i)
-            code_lines.append(f"{lhs}[{i}] = {corrected_expr_str};")
+        # Depending on if the symbol is inside the SDFG or not two approaches might be necessary
+
+        available_symbols = state.symbols_defined_at(node)
+        if str(c1) in available_symbols:
+            # This means we need to add lane id
+            for i in range(vw):
+                # If detect inner symbol used we need to correctly offset it to have + lane_id
+                expr_str = f"({rhs1} {op} {c1})"
+                corrected_expr_str = offset_symbol_in_expression(expr_str, vector_map_param, i)
+                code_lines.append(f"{lhs}[{i}] = {corrected_expr_str};")
+        else:
+            # This means we need to access by offset
+            for i in range(vw):
+                # If detect inner symbol used we need to correctly offset it to have + lane_id
+                code_lines.append(f"{lhs}[{i}] = ({rhs1} {op} {c1}{i});")
+
         node.code = dace.properties.CodeBlock(code="\n".join(code_lines) + "\n", language=dace.Language.CPP)
         return
 

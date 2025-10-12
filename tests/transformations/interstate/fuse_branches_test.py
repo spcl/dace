@@ -23,6 +23,10 @@ def branch_dependent_value_write(
             c[i, j] = 0.0
             d[i, j] = 0.0
 
+        f_cond = 1.0 if (a[i, j] > 0.5) else 0.0
+        c[i, j] = (a[i, j] * b[i, j]) * f_cond
+        d[i, j] = (1.0 - c[i, j]) * (1.0 - f_cond)
+
 
 @dace.program
 def branch_dependent_value_write_two(
@@ -83,6 +87,18 @@ def branch_dependent_value_write_single_branch(
     for i, j in dace.map[0:N:1, 0:N:1]:
         if a[i, j] < 0.65:
             b[i, j] = 0.0
+        d[i, j] = b[i, j] + a[i, j]  # ensure d is always written for comparison
+
+
+@dace.program
+def branch_dependent_value_write_single_branch_nonzero_write(
+    a: dace.float64[N, N],
+    b: dace.float64[N, N],
+    d: dace.float64[N, N],
+):
+    for i, j in dace.map[0:N:1, 0:N:1]:
+        if a[i, j] < 0.65:
+            b[i, j] = 1.2 * a[i, j]
         d[i, j] = b[i, j] + a[i, j]  # ensure d is always written for comparison
 
 
@@ -225,11 +241,20 @@ def test_tasklets_in_if(use_pass_flag):
     run_and_compare(tasklets_in_if, 0, use_pass_flag, a=a, b=b, d=d, c=c[0])
 
 
+@pytest.mark.parametrize("use_pass_flag", [True, False])
+def test_branch_dependent_value_write_single_branch_nonzero_write(use_pass_flag):
+    a = np.random.choice([0.0, 3.0], size=(N, N))
+    b = np.random.randn(N, N)
+    d = np.random.randn(N, N)
+    run_and_compare(branch_dependent_value_write_single_branch_nonzero_write, 0, use_pass_flag, a=a, b=b, d=d)
+
+
 if __name__ == "__main__":
     for use_pass_flag in [True, False]:
         test_branch_dependent_value_write(use_pass_flag)
         test_branch_dependent_value_write_two(use_pass_flag)
         test_branch_dependent_value_write_single_branch(use_pass_flag)
+        test_branch_dependent_value_write_single_branch_nonzero_write(use_pass_flag)
         test_complicated_if(use_pass_flag)
         test_multi_state_branch_body(use_pass_flag)
         test_nested_if(use_pass_flag)
