@@ -7,7 +7,9 @@ import ast
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
 from dace import SDFG, Memlet, SDFGState, properties, transformation
+from dace import typeclass
 from dace.sdfg.graph import Edge
+from dace.sdfg.sdfg import InterstateEdge
 from dace.transformation import pass_pipeline as ppl, dataflow as dftrans
 from dace.transformation.passes import analysis as ap, pattern_matching as pmp
 from dace.transformation.passes.clean_data_to_scalar_slice_to_tasklet_pattern import CleanDataToScalarSliceToTaskletPattern
@@ -15,7 +17,7 @@ from dace.transformation.passes.split_tasklets import SplitTasklets
 from dace.transformation.passes.tasklet_preprocessing_passes import IntegerPowerToMult, RemoveFPTypeCasts, RemoveIntTypeCasts
 from dace.transformation.dataflow.tiling import MapTiling
 from dace.transformation.passes import InlineSDFGs
-
+from dace.sdfg.fp_utils import change_fp_types
 from dace.transformation.passes.explicit_vectorization_utils import *
 
 
@@ -31,9 +33,10 @@ class ExplicitVectorization(ppl.Pass):
     vector_output_storage = properties.Property(dtype=dace.dtypes.StorageType, default=dace.dtypes.StorageType.Register)
     global_code = properties.Property(dtype=str, default="")
     global_code_location = properties.Property(dtype=str, default="")
+    vector_op_numeric_type = properties.Property(dtype=typeclass, default=dace.float64)
 
-    def __init__(self, templates, vector_width, vector_input_storage, vector_output_storage, global_code,
-                 global_code_location):
+    def __init__(self, templates, vector_width, vector_input_storage, vector_output_storage, vector_op_numeric_type,
+                 global_code, global_code_location):
         super().__init__()
         self.templates = templates
         self.vector_width = vector_width
@@ -42,6 +45,7 @@ class ExplicitVectorization(ppl.Pass):
         self.global_code = global_code
         self.global_code_location = global_code_location
         self._tasklet_vectorizable_map = dict()
+        self.vector_op_numeric_type = vector_op_numeric_type
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
@@ -132,6 +136,17 @@ class ExplicitVectorization(ppl.Pass):
             add_copies_before_and_after_nsdfg(state, nsdfg_node, (self.vector_width, ), self.vector_input_storage)
             state.sdfg.save("x6.sdfg")
 
+        vector_tasklets = {
+            n
+            for n in state.all_nodes_between(new_inner_map, state.exit_node(new_inner_map))
+            if isinstance(n, dace.nodes.Tasklet)
+        }
+        for n in vector_tasklets:
+            for e in state.in_edges(n) + state.out_edges(n):
+                if e.data.data is not None:
+                    if state.sdfg.arrays[e.data.data].dtype != self.vector_op_numeric_type:
+                        state.sdfg.arrays[e.data.data].dtype = self.vector_op_numeric_type
+
     def _vectorize_nested_sdfg(self, state: dace.SDFGState, nsdfg: dace.nodes.NestedSDFG, vector_map_param: str):
         inner_sdfg: dace.SDFG = nsdfg.sdfg
         # Imagine the case where
@@ -169,6 +184,7 @@ class ExplicitVectorization(ppl.Pass):
         # Step 3. For all scalar sink nodes de-duplicate writes
         # Step 4. Replace all memlet subsets and names
         # Step 5. Replace all tasklets to use vectorized types
+        # Step 6. Collect all data used, make sure their type matches the vector op type
 
         # 1.1.1
         fix_nsdfg_connector_array_shapes_mismatch(state, nsdfg)
@@ -269,15 +285,28 @@ class ExplicitVectorization(ppl.Pass):
 
         # Extend interstate edges for all symbols used in tasklets / or interstate edges that access vectorized data
         # TODO
-        for state in inner_sdfg.all_states():
-            nodes = {n for n in state.nodes() if n not in modified_nodes}
-            #self._expand_interstate_assignments(inner_sdfg, syms, )
-            pass
+        for edge in inner_sdfg.all_interstate_edges():
+            candidate_arrays = vector_width_arrays
+            free_syms = set()
+            for k, v in edge.data.assignments.items():
+                free_syms.add(k)
+                free_syms = free_syms.union({str(vv) for vv in dace.symbolic.SymExpr(v).free_symbols})
+            print(free_syms, {fs in candidate_arrays for fs in free_syms})
+            if any({fs in candidate_arrays for fs in free_syms}):
+                self._expand_interstate_assignment(inner_sdfg, edge, free_syms, candidate_arrays)
 
         # 5
         for state in inner_sdfg.all_states():
             nodes = {n for n in state.nodes() if n not in modified_nodes}
             self._replace_tasklets_from_node_list(state, nodes, vector_map_param)
+
+        for state in inner_sdfg.all_states():
+            vector_tasklets = {n for n in state.nodes() if n in modified_nodes and isinstance(n, dace.nodes.Tasklet)}
+            for n in vector_tasklets:
+                for e in state.in_edges(n) + state.out_edges(n):
+                    if e.data.data is not None:
+                        if state.sdfg.arrays[e.data.data].dtype != self.vector_op_numeric_type:
+                            state.sdfg.arrays[e.data.data].dtype = self.vector_op_numeric_type
 
         state.sdfg.save("x5.sdfg")
 
@@ -365,58 +394,68 @@ class ExplicitVectorization(ppl.Pass):
                         modified_edges.add(edge)
         return modified_nodes, modified_edges
 
-    def _expand_interstate_assignments(self, sdfg: dace.SDFG, syms: Set[str], candidate_arrays: Set[str]):
+    def _expand_interstate_assignment(self, sdfg: dace.SDFG, edge: Edge[InterstateEdge], syms: Set[str],
+                                      candidate_arrays: Set[str]):
         duplicated_symbols = set()
         syms_to_rm = set()
-        for edge in sdfg.all_interstate_edges():
-            new_assignments = dict()
-            # Lets say we have
-            # k = idx
-            # then we need to do:
-            # k0 = idx[0]
-            # k1 = idx[1]
-            # ...
-            # k7 = idx[7]
-            # Also need to consider the case where multiple symbols are involved
-            # k0 = idx[0] + idy[0]
-            for k, v in edge.data.assignments.items():
-                if k in syms:
-                    for i in range(0, self.vector_width):
-                        # Get all scalar accesses from v and replace with the array equivalent
-                        # if we have j = k1 + k2
-                        # we need to have j0 = k1[0] + k2[0], j1 = k1[1] + k2[1], ...
-                        vcopy = copy.deepcopy(v)
-                        nv = vcopy
-                        print("Candidate Arrays:", candidate_arrays)
-                        for ca in candidate_arrays:
-                            assert ca in sdfg.arrays
-                            ca_data = sdfg.arrays[ca]
-                            print("Candidate Array Name:", ca, "Candidate Array:", ca_data)
-                            if isinstance(ca_data, dace.data.Scalar) or (isinstance(ca_data, dace.data.Array)
-                                                                         and ca_data.shape == (1, )):
-                                ca_scl = ca_data
-                                assert ca_scl.transient
-                                sdfg.remove_data(ca, validate=False)
-                                sdfg.add_array(
-                                    name=ca,
-                                    shape=(self.vector_width, ),
-                                    dtype=ca_scl.dtype,
-                                    storage=ca_scl.storage,
-                                    location=ca_scl.location,
-                                    transient=True,
-                                    lifetime=ca_scl.lifetime,
-                                    find_new_name=False,
-                                )
-                            #nv = nv.replace(ca, f"{ca}[{i}]")
-                            nv = split_in_token(nv, ca, f"{ca}[{i}]")
-                        new_assignments[f"{k}{i}"] = nv
-                    duplicated_symbols.add(k)
-                    syms_to_rm.add(k)
-                else:
-                    new_assignments[k] = v
-            edge.data.assignments = new_assignments
+        new_assignments = dict()
+        # Lets say we have
+        # k = idx
+        # then we need to do:
+        # k0 = idx[0]
+        # k1 = idx[1]
+        # ...
+        # k7 = idx[7]
+        # Also need to consider the case where multiple symbols are involved
+        # k0 = idx[0] + idy[0]
+        for k, v in edge.data.assignments.items():
+            if k in syms:
+                for i in range(0, self.vector_width):
+                    # Get all scalar accesses from v and replace with the array equivalent
+                    # if we have j = k1 + k2
+                    # we need to have j0 = k1[0] + k2[0], j1 = k1[1] + k2[1], ...
+                    vcopy = copy.deepcopy(v)
+                    nv = vcopy
+                    #print("Candidate Arrays:", candidate_arrays, f"Edge assignment: {nv}")
+                    for ca in candidate_arrays:
+                        assert ca in sdfg.arrays
+                        ca_data = sdfg.arrays[ca]
+                        #print("Candidate Array Name:", ca, "Candidate Array:", ca_data)
+                        if isinstance(ca_data, dace.data.Scalar) or (isinstance(ca_data, dace.data.Array)
+                                                                     and ca_data.shape == (1, )):
+                            ca_scl = ca_data
+                            assert ca_scl.transient
+                            sdfg.remove_data(ca, validate=False)
+                            sdfg.add_array(
+                                name=ca,
+                                shape=(self.vector_width, ),
+                                dtype=ca_scl.dtype,
+                                storage=ca_scl.storage,
+                                location=ca_scl.location,
+                                transient=True,
+                                lifetime=ca_scl.lifetime,
+                                find_new_name=False,
+                            )
+                        #nv = nv.replace(ca, f"{ca}[{i}]")
+                        nv_before = nv
+                        nv = token_replace(nv, ca, f"{ca}[{i}]")
+                        #print(f"Before: {nv_before}, After replacing {ca} with {ca}[{i}]: {nv}")
+                    new_assignments[f"{k}{i}"] = nv
+                duplicated_symbols.add(k)
+                syms_to_rm.add(k)
+            else:
+                new_assignments[k] = v
+        edge.data.assignments = new_assignments
         for sym in syms_to_rm:
-            sdfg.remove_symbol(sym)
+            if sym in sdfg.symbols:
+                sdfg.remove_symbol(sym)
+        return duplicated_symbols
+
+    def _expand_interstate_assignments(self, sdfg: dace.SDFG, syms: Set[str], candidate_arrays: Set[str]):
+        duplicated_symbols = set()
+        for edge in sdfg.all_interstate_edges():
+            duplicated_symbols = duplicated_symbols.union(
+                self._expand_interstate_assignment(sdfg, edge, syms, candidate_arrays))
         return duplicated_symbols
 
     def _extend_temporary_scalars(self, state: SDFGState, map_entry: dace.nodes.MapEntry):
@@ -688,6 +727,7 @@ class ExplicitVectorization(ppl.Pass):
         stride_type = assert_strides_are_packed_C_or_packed_Fortran(sdfg)
         self._stride_type = stride_type
         assert_last_dim_of_maps_are_contigous_accesses(sdfg)
+        sdfg.save("t1.sdfg")
         assert_maps_consist_of_single_nsdfg_or_no_nsdfg(sdfg)
 
         if self.vector_input_storage != self.vector_output_storage:
@@ -758,12 +798,7 @@ class ExplicitVectorization(ppl.Pass):
         for node, state in sdfgs_to_vectorize:
             nested_sdfg: dace.nodes.NestedSDFG = node
             parent_scopes = self._get_all_parent_scopes(state, node)
-            if len(parent_scopes) > 0:
-                #num_vectorized += self._vectorize_sdfg(sdfg=nested_sdfg.sdfg,
-                #                                        has_parent_map=True,
-                #                                        num_vectorized=num_vectorized)
-                pass
-            else:
+            if len(parent_scopes) == 0:
                 raise NotImplementedError(
                     "NestedSDFGs without parent map scopes are not supported, they must have been inlined if the pipeline has been called."
                     "If pipeline has been called verify why InlineSDFG failed, otherwise call InlineSDFG")

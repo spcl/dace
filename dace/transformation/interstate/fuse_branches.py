@@ -30,7 +30,7 @@ def extract_bracket_content(s: str):
 
 def token_replace(code: str, src: str, dst: str) -> str:
     # Split while keeping delimiters
-    tokens = re.split(r'([()\[\]])', code)
+    tokens = re.split(r'(\s+|[()\[\]])', code)
 
     # Replace tokens that exactly match src
     tokens = [dst if token.strip() == src else token for token in tokens]
@@ -252,6 +252,7 @@ class FuseBranches(transformation.MultiStateTransformation):
                        dace.memlet.Memlet(f"float_{lhs}"))
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        # print("[can_be_applied]")
         # Works for if-else branches or only if branches
         if len(self.conditional.branches) > 2:
             print("[can_be_applied] More than two branches – only supports if/else or single if.")
@@ -294,10 +295,21 @@ class FuseBranches(transformation.MultiStateTransformation):
                     n
                     for n in state1.nodes() if isinstance(n, dace.nodes.AccessNode) and n.data == write
                 }
-
+                state0_write_accesses = {
+                    a
+                    for a in state0_accesses
+                    if state0.in_degree(a) > 0 and any(e.data.data is not None for e in state0.in_edges(a))
+                }
+                state1_write_accesses = {
+                    a
+                    for a in state1_accesses
+                    if state1.in_degree(a) > 0 and any(e.data.data is not None for e in state1.in_edges(a))
+                }
                 # If there are more than one writes we can't fuse them together without knowing how to order
-                if len(state0_accesses) > 1 or len(state1_accesses) > 1:
-                    print(f"[can_be_applied] Multiple write AccessNodes found for '{write}' in one of the branches.")
+                if len(state0_write_accesses) > 1 or len(state1_write_accesses) > 1:
+                    print(
+                        f"[can_be_applied] Multiple write accesses AccessNodes found for '{write}' in one of the branches."
+                    )
                     return False
 
                 for state, accesses in [(state0, state0_accesses), (state1, state1_accesses)]:
@@ -343,7 +355,7 @@ class FuseBranches(transformation.MultiStateTransformation):
                 print("[can_be_applied] Single branch does not have exactly one SDFGState node.")
                 return False
 
-        print(f"[can_be_applied] to {self.conditional}")
+        print(f"[can_be_applied] to {self.conditional} is True")
         return True
 
     def _scalar_is_assigned_symbolic_value(self, state: SDFGState,

@@ -1,5 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
+import re
 
 import sympy
 import dace
@@ -89,6 +90,7 @@ def extract_constant(src: str) -> str:
 
 
 def extract_single_op(src: str) -> str:
+    print(f"Extract single op from {src}")
     BINOP_SYMBOLS = {
         ast.Add: "+",
         ast.Sub: "-",
@@ -101,7 +103,16 @@ def extract_single_op(src: str) -> str:
         ast.USub: "-",
     }
 
-    SUPPORTED = {'*', '+', '-', '/', 'abs', 'exp', 'max', 'min', 'sqrt'}
+    CMP_SYMBOLS = {
+        ast.Gt: ">",
+        ast.Lt: "<",
+        ast.GtE: ">=",
+        ast.LtE: "<=",
+        ast.Eq: "==",
+        ast.NotEq: "!=",
+    }
+
+    SUPPORTED = {'*', '+', '-', '/', 'abs', 'exp', 'sqrt'}
 
     tree = ast.parse(src)
     found = None
@@ -112,10 +123,12 @@ def extract_single_op(src: str) -> str:
         # Binary op (remove the float constant requirement)
         if isinstance(node, ast.BinOp):
             op = BINOP_SYMBOLS.get(type(node.op), None)
-
         # Unary op (remove the float constant requirement)
         elif isinstance(node, ast.UnaryOp):
             op = UNARY_SYMBOLS.get(type(node.op), None)
+        elif isinstance(node, ast.Compare):
+            assert len(node.ops) == 1
+            op = CMP_SYMBOLS.get(type(node.ops[0]), None)
 
         # Function calls
         elif isinstance(node, ast.Call):
@@ -128,7 +141,7 @@ def extract_single_op(src: str) -> str:
             continue
 
         if op not in SUPPORTED:
-            raise ValueError(f"Unsupported operation: {op}")
+            print(f"Found unsupported op {op} in {src}")
 
         if found is not None:
             raise ValueError("More than one supported operation found")
@@ -136,7 +149,7 @@ def extract_single_op(src: str) -> str:
         found = op
 
     if found is None:
-        raise ValueError("No supported operation found")
+        raise ValueError(f"No supported operation found for code_str: {src}")
 
     return found
 
@@ -400,15 +413,15 @@ def assert_last_dim_of_maps_are_contigous_accesses(sdfg: dace.SDFG):
                         )
 
 
-def split_in_token(expr_str: str, src: str, dst: str) -> str:
-    tokens = expr_str.split()
-    ntokens = []
-    for token in tokens:
-        if token == src:
-            ntokens.append(dst)
-        else:
-            ntokens.append(token)
-    return " ".join(ntokens)
+def token_replace(code: str, src: str, dst: str) -> str:
+    # Split while keeping delimiters
+    tokens = re.split(r'(\s+|[()\[\]])', code)
+
+    # Replace tokens that exactly match src
+    tokens = [dst if token.strip() == src else token for token in tokens]
+
+    # Recombine everything
+    return ''.join(tokens).strip()
 
 
 def check_nsdfg_connector_array_shapes_match(parent_state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG):
@@ -684,17 +697,37 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
             return s
 
     def _get_vector_templates(rhs1: str, rhs2: str, lhs: str, constant: Union[str, None], op: str):
-        if rhs2 is None:
-            if constant is None:
-                new_code = templates[op].format(rhs1=rhs1, lhs=lhs, op=op, vector_width=vector_width)
+        if op in templates:
+            if rhs2 is None:
+                if constant is None:
+                    new_code = templates[op].format(rhs1=rhs1, lhs=lhs, op=op, vector_width=vector_width)
+                else:
+                    new_code = templates[op].format(rhs1=rhs1,
+                                                    constant=_str_to_float_or_str(constant),
+                                                    lhs=lhs,
+                                                    op=op,
+                                                    vector_width=vector_width)
             else:
-                new_code = templates[op].format(rhs1=rhs1,
-                                                constant=_str_to_float_or_str(constant),
-                                                lhs=lhs,
-                                                op=op,
-                                                vector_width=vector_width)
+                new_code = templates[op].format(rhs1=rhs1, rhs2=rhs2, lhs=lhs, op=op, vector_width=vector_width)
         else:
-            new_code = templates[op].format(rhs1=rhs1, rhs2=rhs2, lhs=lhs, op=op, vector_width=vector_width)
+            print(f"Operator `{op}` is not in supported ops `{set(templates.keys())}`")
+            print(f"Generating fall-back scalar code")
+            if op in {">", ">=", "<", "<=", "c>", "c<", "c<=", "c>=", "==", "c==", "c!=", "!="}:
+                comparison_set_suffix = "? 1.0 : 0.0"
+            else:
+                comparison_set_suffix = ""
+            if constant is not None:
+                assert op.startswith("c")
+                op = op[1:]
+                code_str = ""
+                for i in range(vector_width):
+                    code_str += f"{lhs}[{i}] = ({rhs1}[{i}] {op} {constant}){comparison_set_suffix};\n"
+            else:
+                op = op
+                code_str = ""
+                for i in range(vector_width):
+                    code_str += f"{lhs}[{i}] = ({rhs1}[{i}] {op} {rhs2}[{i}]){comparison_set_suffix};\n"
+            new_code = code_str
         return new_code
 
     # Helpers
@@ -719,7 +752,7 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         code_lines = []
         for i in range(vw):
             # If detect inner symbol used we need to correctly offset it to have + lane_id
-            code_lines.append(f"{lhs}[{i}] = {c1}_{i};")
+            code_lines.append(f"{lhs}[{i}] = {c1}{i};")
         node.code = dace.properties.CodeBlock(code="\n".join(code_lines) + "\n", language=dace.Language.CPP)
         return
 

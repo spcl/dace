@@ -106,6 +106,7 @@ inline void vector_copy(T * __restrict__ dst, const T * __restrict__ src) {{
                 vector_input_storage=dace.dtypes.StorageType.Register,
                 vector_output_storage=dace.dtypes.StorageType.Register,
                 global_code=ExplicitVectorizationPipelineCPU._cpu_global_code.format(vector_width=vector_width),
-                global_code_location="frame")
+                global_code_location="frame",
+                vector_op_numeric_type=dace.float64)
         ]
         super().__init__(passes)
