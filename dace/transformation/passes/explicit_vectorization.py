@@ -19,6 +19,7 @@ from dace.transformation.dataflow.tiling import MapTiling
 from dace.transformation.passes import InlineSDFGs
 from dace.sdfg.fp_utils import change_fp_types
 from dace.transformation.passes.explicit_vectorization_utils import *
+import dace.sdfg.construction_utils as cutil
 
 
 @properties.make_properties
@@ -141,11 +142,12 @@ class ExplicitVectorization(ppl.Pass):
             for n in state.all_nodes_between(new_inner_map, state.exit_node(new_inner_map))
             if isinstance(n, dace.nodes.Tasklet)
         }
-        for n in vector_tasklets:
-            for e in state.in_edges(n) + state.out_edges(n):
-                if e.data.data is not None:
-                    if state.sdfg.arrays[e.data.data].dtype != self.vector_op_numeric_type:
-                        state.sdfg.arrays[e.data.data].dtype = self.vector_op_numeric_type
+        # TODO: fix it in add array
+        #for n in vector_tasklets:
+        #    for e in state.in_edges(n) + state.out_edges(n):
+        #        if e.data.data is not None:
+        #            if state.sdfg.arrays[e.data.data].dtype != self.vector_op_numeric_type:
+        #                state.sdfg.arrays[e.data.data].dtype = self.vector_op_numeric_type
 
     def _vectorize_nested_sdfg(self, state: dace.SDFGState, nsdfg: dace.nodes.NestedSDFG, vector_map_param: str):
         inner_sdfg: dace.SDFG = nsdfg.sdfg
@@ -191,7 +193,14 @@ class ExplicitVectorization(ppl.Pass):
         # 1.1.2
         transient_arrays = {arr_name for arr_name, arr in inner_sdfg.arrays.items() if arr.transient}
         print("Transient arrays:", transient_arrays)
-        replace_arrays_with_new_shape(inner_sdfg, transient_arrays, (self.vector_width, ))
+        vector_width_transient_arrays = {
+            arr_name
+            for arr_name in transient_arrays if inner_sdfg.arrays[arr_name].shape == (self.vector_width, )
+        }
+        non_vector_width_transient_arrays = transient_arrays - vector_width_transient_arrays
+        replace_arrays_with_new_shape(inner_sdfg, vector_width_transient_arrays, (self.vector_width, ),
+                                      self.vector_op_numeric_type)
+        replace_arrays_with_new_shape(inner_sdfg, non_vector_width_transient_arrays, (self.vector_width, ), None)
         inner_sdfg.reset_cfg_list()
 
         vector_width_arrays = {
@@ -279,7 +288,8 @@ class ExplicitVectorization(ppl.Pass):
             }
             old_subset = dace.subsets.Range([(0, 0, 1)])
             new_subset = dace.subsets.Range([(0, self.vector_width - 1, 1)])
-            replace_memlet_expression(state, edges_to_replace, old_subset, new_subset, True, modified_edges)
+            replace_memlet_expression(state, edges_to_replace, old_subset, new_subset, True, modified_edges,
+                                      self.vector_op_numeric_type)
 
         state.sdfg.save("x4.sdfg")
 
@@ -301,17 +311,18 @@ class ExplicitVectorization(ppl.Pass):
             self._replace_tasklets_from_node_list(state, nodes, vector_map_param)
             modified_nodes = modified_nodes.union(nodes)
 
-        for state in inner_sdfg.all_states():
-            vector_tasklets = {n for n in state.nodes() if n in modified_nodes and isinstance(n, dace.nodes.Tasklet)}
-            for n in vector_tasklets:
-                for e in state.in_edges(n) + state.out_edges(n):
-                    if e.data.data is not None:
-                        if state.sdfg.arrays[e.data.data].dtype != self.vector_op_numeric_type:
-                            state.sdfg.arrays[e.data.data].dtype = self.vector_op_numeric_type
-            for e in {_e for _e in state.edges() if _e in modified_edges}:
-                if e.data.data is not None:
-                    if state.sdfg.arrays[e.data.data].dtype != self.vector_op_numeric_type:
-                        state.sdfg.arrays[e.data.data].dtype = self.vector_op_numeric_type
+        # TODO: fix, need to do it in add-array
+        #for state in inner_sdfg.all_states():
+        #    vector_tasklets = {n for n in state.nodes() if isinstance(n, dace.nodes.Tasklet)}
+        #    for n in vector_tasklets:
+        #        for e in state.out_edges(n):
+        #            if e.data.data is not None:
+        #                if state.sdfg.arrays[e.data.data].dtype != self.vector_op_numeric_type and state.sdfg.arrays[e.data.data].transient is True:
+        #                    state.sdfg.arrays[e.data.data].dtype = self.vector_op_numeric_type
+        #    #for e in {_e for _e in state.edges() if _e in modified_edges}:
+        #    #    if e.data.data is not None:
+        #    #        if state.sdfg.arrays[e.data.data].dtype != self.vector_op_numeric_type and state.sdfg.arrays[e.data.data].transient is True:
+        #    #            state.sdfg.arrays[e.data.data].dtype = self.vector_op_numeric_type
         state.sdfg.save("x5.sdfg")
 
     def _duplicate_unstructured_writes(self, inner_sdfg: dace.SDFG):
@@ -476,7 +487,7 @@ class ExplicitVectorization(ppl.Pass):
                         state.sdfg.add_array(
                             name=f"{node.data}_vec",
                             shape=(self.vector_width, ),
-                            dtype=desc.dtype,
+                            dtype=self.vector_op_numeric_type,
                             storage=self.vector_input_storage,
                             transient=True,
                             alignment=self.vector_width * desc.dtype.bytes,
@@ -545,6 +556,8 @@ class ExplicitVectorization(ppl.Pass):
             range_tup: Tuple[dace.symbolic.SymExpr, dace.symbolic.SymExpr,
                              dace.symbolic.SymExpr] = new_range_list[stride_offset]
             lb, le, ls = range_tup
+            if isinstance(le, int):
+                le = dace.symbolic.SymExpr(str(le))
             assert ls == 1, f"Previous checks must have ensured the final dimension should result in unit-stride access"
             new_range_list[stride_offset] = (
                 lb, le.subs(used_param, dace.symbolic.SymExpr(f"({self.vector_width} - 1) + {used_param}")),
@@ -808,4 +821,6 @@ class ExplicitVectorization(ppl.Pass):
                     "If pipeline has been called verify why InlineSDFG failed, otherwise call InlineSDFG")
 
         sdfg.append_global_code(cpp_code=self.global_code, location=self.global_code_location)
+
+        cutil.add_missing_symbols_to_nsdfgs(sdfg)
         return None
