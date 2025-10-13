@@ -116,7 +116,7 @@ def main():
     # Save once simplifying, in case simplification fails.
     g.save(output_sdfg, compress=output_sdfg.endswith(".sdfgz"))
     g.validate()
-    g.simplify(validate=True, validate_all=True)
+    g.simplify(validate=True, validate_all=True, skip=["ScalarToSymbolPromotion", "DeadDataflowElimination"])
     # Save once before compiling, in case compilation fails.
     # add_missing_symbols_to_symbol_maps_of_nsdfgs(g)
     # try_to_add_missing_arrays_to_nsdfgs(g)

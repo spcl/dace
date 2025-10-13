@@ -1581,7 +1581,7 @@ class AST_translator:
             new_sdfg.validate()
 
 
-            new_sdfg.simplify(verbose=True, validate_all=True)
+            new_sdfg.simplify(verbose=True, validate_all=True, skip=["ScalarToSymbolPromotion", "DeadDataflowElimination"])
 
         else:
             internal_sdfg.path = self.sdfg_path + new_sdfg.name + ".sdfg"
