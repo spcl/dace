@@ -4,7 +4,9 @@ import dace
 import copy
 
 from dace.sdfg.propagation import propagate_memlets_state
-
+import copy
+from dace.properties import CodeBlock
+from dace.sdfg.state import ConditionalBlock, LoopRegion
 
 def copy_state_contents(old_state: dace.SDFGState, new_state: dace.SDFGState) -> Dict[dace.nodes.Node, dace.nodes.Node]:
     """
@@ -233,3 +235,58 @@ def token_match(string_to_check: str, pattern_str: str) -> str:
     tokens = {token.strip() for token in tokens}
 
     return pattern_str in tokens
+
+
+def replace_length_one_arrays_with_scalars(sdfg: dace.SDFG, recursive: bool = True):
+    scalarized_arrays = set()
+    for arr_name, arr in [(k, v) for k, v in sdfg.arrays.items()]:
+        if isinstance(arr, dace.data.Array) and arr.shape == (1,):
+            sdfg.remove_data(arr_name, False)
+            sdfg.add_scalar(
+                name=arr_name,
+                dtype=arr.dtype,
+                storage=arr.storage,
+                transient=arr.transient,
+                lifetime=arr.lifetime,
+                debuginfo=arr.debuginfo,
+                find_new_name=False
+            )
+            scalarized_arrays.add(arr_name)
+
+    # Replace [0] accesses of scalars (formerly array ones) on interstate edges
+    for edge in sdfg.all_interstate_edges():
+        new_dict = dict()
+        for k, v in edge.data.assignments.items():
+            nv = v
+            for scalar_name in scalarized_arrays:
+                if f"{scalar_name}[0]" in nv:
+                    nv = nv.replace(f"{scalar_name}[0]", scalar_name)
+            new_dict[k] = nv
+        edge.data.assignments = new_dict
+
+    # Replace [0] accesses of scalars (formerly array ones) on IfBlocks
+    for node in sdfg.all_control_flow_blocks():
+        if isinstance(node, ConditionalBlock):
+            for cond, body in node.branches:
+                if cond is None:
+                    continue
+                nlc = cond.as_string if isinstance(cond, CodeBlock) else str(cond)
+                for scalar_name in scalarized_arrays:
+                    if f"{scalar_name}[0]" in nlc:
+                        nlc = nlc.replace(f"{scalar_name}[0]", scalar_name)
+                cond = CodeBlock(nlc, cond.language  if isinstance(cond, CodeBlock) else dace.dtypes.Language.Python)
+
+    # Replace [0] accesses of scalars (formerly array ones) on LoopRegions
+    for node in sdfg.all_control_flow_regions():
+        if isinstance(node, LoopRegion):
+            nlc = node.loop_condition.as_string if isinstance(node.loop_condition, CodeBlock) else str(node.loop_condition)
+            for scalar_name in scalarized_arrays:
+                if f"{scalar_name}[0]" in nlc:
+                    nlc = nlc.replace(f"{scalar_name}[0]", scalar_name)
+            node.loop_condition = CodeBlock(nlc, node.loop_condition.language if isinstance(node.loop_condition, CodeBlock) else dace.dtypes.Language.Python)
+
+    if recursive:
+        for state in sdfg.all_states():
+            for node in state.nodes():
+                if isinstance(node, dace.nodes.NestedSDFG):
+                    replace_length_one_arrays_with_scalars(node.sdfg)
