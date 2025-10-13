@@ -1,15 +1,13 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 from copy import deepcopy as dc
 from dace import dtypes, memlet as mm, properties, data as dt
 from dace.symbolic import symstr, equal
 import dace.library
-import dace.properties
 from dace.frontend.common import op_repository as oprepo
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.blas.blas_helpers import (to_blastype, get_gemm_opts, check_access, dtype_to_cudadatatype,
-                                              to_cublas_computetype)
-from dace.libraries.blas.nodes.matmul import (_get_matmul_operands, _get_batchmm_opts, _get_codegen_gemm_opts)
+from dace.libraries.blas.blas_helpers import to_blastype, check_access, dtype_to_cudadatatype, to_cublas_computetype
+from dace.libraries.blas.nodes.matmul import _get_matmul_operands, _get_batchmm_opts, _get_codegen_gemm_opts
 from .. import environments
 import warnings
 
@@ -136,17 +134,21 @@ class ExpandBatchedMatMulMKL(ExpandTransformation):
         MKL_INT ldb_array[group_count] = {{ {ldb} }};
         MKL_INT ldc_array[group_count] = {{ {ldc} }};
 
-        const {dtype}** A = new const {dtype}*[{BATCH}];
-        const {dtype}** B = new const {dtype}*[{BATCH}];
-        {dtype}** C = new {dtype}*[{BATCH}];
+        const {dtype}** __mkl_BMM_A = new const {dtype}*[{BATCH}];
+        const {dtype}** __mkl_BMM_B = new const {dtype}*[{BATCH}];
+        {dtype}** __mkl_BMM_C = new {dtype}*[{BATCH}];
         for (int __ib = 0; __ib < {BATCH}; __ib++) {{
-            A[__ib] = (({dtype}*){x}) + __ib*{stride_a};
-            B[__ib] = (({dtype}*){y}) + __ib*{stride_b};
-            C[__ib] = (({dtype}*)_c) + __ib*{stride_c};
+            __mkl_BMM_A[__ib] = (({dtype}*){x}) + __ib*{stride_a};
+            __mkl_BMM_B[__ib] = (({dtype}*){y}) + __ib*{stride_b};
+            __mkl_BMM_C[__ib] = (({dtype}*)_c) + __ib*{stride_c};
         }}
 
-        {prefix}gemm_batch(transa, transb, m_array, n_array, k_array, alpha_array, A, lda_array, B, ldb_array, beta_array, C, ldc_array, &group_count, group_sizes);'''.format_map(
-            opt)
+        {prefix}gemm_batch(transa, transb, m_array, n_array, k_array, alpha_array, __mkl_BMM_A, lda_array, __mkl_BMM_B, ldb_array, beta_array, __mkl_BMM_C, ldc_array, &group_count, group_sizes);
+
+        delete[] __mkl_BMM_A;
+        delete[] __mkl_BMM_B;
+        delete[] __mkl_BMM_C;
+        '''.format_map(opt)
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,

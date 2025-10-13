@@ -1276,6 +1276,85 @@ def test_singlestate_inline_with_symbol_mapping(outside_and_inner_symbol_have_sa
         use_InlineSDFG_transformation=True)
 
 
+def _make_nested_if_region(sdfg: dace.SDFG, level: int) -> dace.sdfg.state.ConditionalBlock:
+    if level <= 0:
+        raise ValueError(f"Expected positive level.")
+    if_region = dace.sdfg.state.ConditionalBlock(f"if_{level}")
+    then_body = dace.sdfg.state.ControlFlowRegion(f"then_body_{level}", sdfg=sdfg)
+    if_region.add_branch(dace.sdfg.state.CodeBlock("__cond"), then_body)
+    else_body = dace.sdfg.state.ControlFlowRegion(f"else_body_{level}", sdfg=sdfg)
+    if_region.add_branch(dace.sdfg.state.CodeBlock("not (__cond)"), else_body)
+
+    level -= 1
+    if level > 0:
+        for branch in then_body, else_body:
+            nested_if_region = _make_nested_if_region(sdfg, level)
+            branch.add_node(nested_if_region)
+    else:
+        for (branch, src) in (then_body, "A"), (else_body, "B"):
+            branch_state = branch.add_state()
+            src_desc = sdfg.arrays[src]
+            assert len(src_desc.shape) == 1
+            size = src_desc.shape[0]
+            branch_state.add_nedge(
+                branch_state.add_access(src),
+                branch_state.add_access("C"),
+                dace.Memlet(data=src, subset=f"0:{size}", other_subset=f"0:{size}"),
+            )
+
+    return if_region
+
+
+def _make_nested_control_flow_blocks_sdfg(level: int, size: int) -> dace.SDFG:
+    if level <= 0:
+        raise ValueError(f"Expected positive level.")
+    sdfg = dace.SDFG(unique_name("nested_control_flow_block_sdfg"))
+    sdfg.add_symbol("__cond", dace.bool_)
+    A, _ = sdfg.add_array("A", [size], dace.float64)
+    B, _ = sdfg.add_array("B", [size], dace.float64)
+    C, _ = sdfg.add_array("C", [size], dace.float64)
+
+    if_region = _make_nested_if_region(sdfg, 2)
+    sdfg.add_node(if_region, ensure_unique_name=True, is_start_block=True)
+    state = sdfg.add_state_after(if_region)
+
+    level -= 1
+    if level > 0:
+        nsdfg = _make_nested_control_flow_blocks_sdfg(level, size)
+
+        A_node = state.add_access(A)
+        B_node = state.add_access(B)
+        C_node = state.add_access(C)
+        nsdfg_node = state.add_nested_sdfg(nsdfg, inputs={A, B}, outputs={C})
+        state.add_edge(A_node, None, nsdfg_node, A, sdfg.make_array_memlet(A))
+        state.add_edge(B_node, None, nsdfg_node, B, sdfg.make_array_memlet(B))
+        state.add_edge(nsdfg_node, C, C_node, None, dace.Memlet(data=C, subset=f"0:{size}", wcr="lambda a, b: a + b"))
+
+    sdfg.validate()
+    return sdfg
+
+
+def test_multistate_inline_nested_control_flow_blocks():
+    NLEV = 3
+    SIZE = 20
+    COND = True
+    sdfg = _make_nested_control_flow_blocks_sdfg(NLEV, SIZE)
+    sdfg.arg_names = ["A", "B", "C"]
+
+    A = np.random.rand(SIZE)
+    B = np.random.rand(SIZE)
+    C = np.random.rand(SIZE)
+    sdfg(A, B, C, __cond=COND)
+    expected = np.copy(C)
+
+    from dace.transformation.interstate import InlineMultistateSDFG
+    napplied = sdfg.apply_transformations_repeated(InlineMultistateSDFG)
+    assert napplied == NLEV - 1
+
+    sdfg(A, B, C, __cond=COND)
+    assert np.allclose(C, expected)
+
+
 if __name__ == "__main__":
     test()
     # Skipped due to bug that cannot be reproduced outside CI
@@ -1285,6 +1364,7 @@ if __name__ == "__main__":
     test_multistate_inline_outer_dependencies()
     test_multistate_inline_concurrent_subgraphs()
     test_multistate_inline_samename()
+    test_multistate_inline_nested_control_flow_blocks()
     test_inline_symexpr()
     test_inline_unsqueeze()
     test_inline_unsqueeze2()
