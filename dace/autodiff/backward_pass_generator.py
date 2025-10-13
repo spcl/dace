@@ -652,7 +652,6 @@ class BackwardPassGenerator:
         # These will represent the reads that will happen after this AccessNode
         # This should avoid unnecessary zeroing out of dace generated temporaries
         for state in self.state_order[0:self.state_order.index(forward_state) + 1]:
-            # TODO: what if there are multiple views of the same state
             state_view = self.states_view_map[state]
             for node, parent in state_view.all_nodes_recursive():
                 if isinstance(node, nodes.AccessNode) and node.data == forward_node.data:
@@ -700,7 +699,6 @@ class BackwardPassGenerator:
             # We should take the dst_subset of the memlet
             # Are there cases where dst_subset is None?
             ranges = []
-            # TODO: is dst_subset always the right choice?
             for iteration in map_exit_memlet.dst_subset:
                 if isinstance(iteration, tuple):
                     # The end of the range is inclusive in the loop
@@ -756,7 +754,6 @@ class BackwardPassGenerator:
             # There is a read from the same array
             # We need to add a transient that reads the content from forward pass before it is zeroed out
             # Create a new array descriptor for the transient
-            # TODO: Reuse array descriptors for the same data
             transient_desc = copy.deepcopy(array_desc)
             transient_desc.transient = True
 
@@ -834,7 +831,6 @@ class BackwardPassGenerator:
         backward_nodes: set[nodes.Node] = set()
         given_gradients_all_states = set(self.given_gradients_data)
 
-        # TODO: this is experimental:
         required_gradients_all_states = {n for n in self.required_gradients_data}
         given_gradients_all_states = given_gradients_all_states | required_gradients_all_states
 
@@ -1343,8 +1339,6 @@ class BackwardPassGenerator:
     def _connect_conditional_map_exist(self, forward_state: SDFGState, backward_state: SDFGState,
                                        backward_map_exit: nodes.MapExit, fwd_tasklet: nodes.Tasklet):
         """Connect the map exit of a conditional tasklet to a new access node which will zero out the gradient.
-
-        # TODO: In the generalization of this, a WCR sum should be added in case we are not zeroing out the gradients.
         """
 
         if len(backward_map_exit.in_connectors) != 0:
@@ -1409,13 +1403,13 @@ class BackwardPassGenerator:
         """Check if this tasklet contains a conditional.
 
         This only happens in conditional array assignments and requires special treatment in reversing the graph.
-        TODO: How to more accurately check this?
         """
         # sanity check
         if not isinstance(tasklet_node, nodes.Tasklet):
             raise AutoDiffException(f"Expected Tasklet node, got {type(tasklet_node)}")
 
         # get the code string and check if there is an if
+        # TODO: How to more accurately check this?
         return "if" in tasklet_node.code.as_string
 
     def _conditional_nested_sdfg(self, forward_state: SDFGState, node: nodes.NestedSDFG):
@@ -1505,13 +1499,10 @@ class BackwardPassGenerator:
         the required gradient AccessNodes.
         This function checks all the required access nodes that are in the conditional block.
         At the moment this is just the target access node.
-        TODO: Extend this to check for all the required gradient access nodes.
         """
         nodes_to_track: List[nodes.AccessNode] = []
-        # TODO: get all the nodes used below the target accessnode, this would have to extend to multiple states too
-        # at the moment we know that the target access node itself should be tracked
-        gradinet_nodes = [n for n in self.required_gradients_data]
-        gradinet_nodes += [n for n in self.given_gradients_data]
+        gradient_nodes = [n for n in self.required_gradients_data]
+        gradient_nodes += [n for n in self.given_gradients_data]
 
         # get the subgraph difference
         difference = set(subgraph.nodes()).difference(set(block_nodes))
@@ -1522,7 +1513,7 @@ class BackwardPassGenerator:
                 continue
 
             # we always want to track the gradient nodes
-            if node.data in gradinet_nodes:
+            if node.data in gradient_nodes:
                 nodes_to_track.append(node)
                 continue
             # if this access node has multiple edges and any of them are outside the block

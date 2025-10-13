@@ -140,7 +140,6 @@ def _store_data(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState
             # And not the size of the loop.
             # This is because we access using the loop indices
             # Using the loop sizes instead would require shifting accesses
-            # TODO: Do we need to treat the case where 1-i is in the shape here too?
             _, new_dim = ad_utils.get_loop_end(start, end, loop)
 
             # First we check if the new dimension contains symbols
@@ -152,7 +151,6 @@ def _store_data(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState
                     new_dim = sp.Symbol(new_dim)
 
                 # Try to replace the symbols with the loop size
-                # TODO: this can be extended to a loop over the symbols in new_dim
                 loop_size, loop_index = _get_symbol_upper_bound_from_loop(bwd_generator, new_dim, all_encolsing_loops)
                 if isinstance(loop_size, int) or (isinstance(loop_size, str) and ad_utils.is_int(loop_size)):
                     new_dim = new_dim.subs(sp.Symbol(loop_index), loop_size)

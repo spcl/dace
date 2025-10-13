@@ -1516,7 +1516,7 @@ class PureSqueeze(ONNXForward):
             tasklet_inputs["__axes"] = dace.pointer(axes_desc.dtype)
 
         is_scalar_input = not isinstance(node.in_connectors['data'], dace.dtypes.pointer) and data_desc.total_size == 1
-        is_scalar_input = False  # TODO: dace decision on passing by reference or pointer is very obscure
+        is_scalar_input = False
         if is_scalar_input:
             data_str = "(&__data)"
         else:

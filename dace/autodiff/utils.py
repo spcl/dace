@@ -615,7 +615,7 @@ def get_loop_end(start: str, end: str, loop: LoopRegion) -> str:
         Get the smallest and largest index of a loop given the start and end values.
         This is an attempt at estimating the number of iterations of the loop.
         """
-    # TODO: This function only accepts for loops that starts or end at zero
+    # TODO: This function only accepts for-loops that starts or end at zero
     if is_int(start) and is_int(end):
         int_start, int_end = int(start), int(end)
         if int_start < int_end:
