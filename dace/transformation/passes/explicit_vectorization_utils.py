@@ -6,7 +6,7 @@ import sympy
 import dace
 import ast
 from typing import Dict, Iterable, Set, Tuple, Union
-from dace import SDFGState
+from dace import SDFGState, typeclass
 from dace import Any
 from dace import List
 from dace.memlet import Memlet
@@ -45,7 +45,7 @@ def repl_subset_to_symbol_offset(subset: dace.subsets.Range, symbol_offset: str)
 
 def replace_memlet_expression(state: SDFGState, edges: Iterable[Edge[Memlet]], old_subset_expr: dace.subsets.Range,
                               new_subset_expr: dace.subsets.Range, repl_scalars_with_arrays: bool,
-                              edges_to_skip: Set[Edge[Memlet]]) -> Set[str]:
+                              edges_to_skip: Set[Edge[Memlet]], vector_numeric_type: typeclass) -> Set[str]:
     arr_dim = [((e + 1 - b) // s) for (b, e, s) in new_subset_expr]
 
     for edge in edges:
@@ -64,7 +64,7 @@ def replace_memlet_expression(state: SDFGState, edges: Iterable[Edge[Memlet]], o
                             state.sdfg.remove_data(data_node.data, validate=False)
                             state.sdfg.add_array(name=data_node.data,
                                                  shape=tuple(arr_dim),
-                                                 dtype=arr.dtype,
+                                                 dtype=vector_numeric_type,
                                                  storage=arr.storage,
                                                  location=arr.location,
                                                  transient=arr.transient,
@@ -1071,14 +1071,15 @@ def add_symbol_with_value(state: dace.SDFGState, nsdfg: dace.nodes.NestedSDFG,
             nsdfg.symbol_mapping[free_sym_str] = free_sym_str
 
 
-def replace_arrays_with_new_shape(sdfg: dace.SDFG, array_namelist: Set[str], new_shape: Tuple[Any]) -> None:
+def replace_arrays_with_new_shape(sdfg: dace.SDFG, array_namelist: Set[str], new_shape: Tuple[Any],
+                                  new_type: typeclass) -> None:
     for arr_name in array_namelist:
         arr = sdfg.arrays[arr_name]
         sdfg.remove_data(arr_name, validate=False)
         sdfg.add_array(name=arr_name,
                        shape=new_shape,
                        storage=arr.storage,
-                       dtype=arr.dtype,
+                       dtype=arr.dtype if new_type is None else new_type,
                        location=arr.location,
                        transient=arr.transient,
                        lifetime=arr.lifetime,
@@ -1301,8 +1302,8 @@ def move_out_reduction(scalar_source_nodes, state: dace.SDFGState, nsdfg: dace.n
         source_data = scalar_source_nodes[0][1].data
         sink_data = node_path[-1].data
         print("Source data", source_data, "Sink data", sink_data)
-        replace_arrays_with_new_shape(inner_sdfg, {source_data, sink_data}, (vector_width, ))
-        replace_arrays_with_new_shape(state.sdfg, {accumulator_name}, (vector_width, ))
+        replace_arrays_with_new_shape(inner_sdfg, {source_data, sink_data}, (vector_width, ), None)
+        replace_arrays_with_new_shape(state.sdfg, {accumulator_name}, (vector_width, ), None)
         replace_all_access_subsets(state, accumulator_name, f"0:{vector_width}")
         expand_assignment_tasklets(state, accumulator_name, vector_width)
         reduce_before_use(state, accumulator_name, vector_width, op)

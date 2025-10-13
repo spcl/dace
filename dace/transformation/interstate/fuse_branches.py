@@ -167,6 +167,7 @@ class FuseBranches(transformation.MultiStateTransformation):
     but makes it possible to vectorize the computation.
     """
     conditional = transformation.PatternNode(ConditionalBlock)
+    parent_nsdfg_state = properties.Property(dtype=SDFGState, allow_none=True, default=None)
 
     @classmethod
     def expressions(cls):
@@ -248,6 +249,11 @@ class FuseBranches(transformation.MultiStateTransformation):
                 new_subset = "[" + ",".join(["0" for _ in state.sdfg.arrays[arr_name].shape]) + "]"
             subset_str = interstate_index_to_subset_str(new_subset)
             state.add_edge(last_access, None, tasklet, "_in_" + arr_name, dace.memlet.Memlet(f"{arr_name}{subset_str}"))
+
+            arr = state.sdfg.arrays[arr_name]
+            if arr.dtype == dace.bool:
+                arr.dtype = dace.float64
+
         state.add_edge(tasklet, f"_out_float_{lhs}", state.add_access(f"float_{lhs}"), None,
                        dace.memlet.Memlet(f"float_{lhs}"))
 
@@ -331,6 +337,13 @@ class FuseBranches(transformation.MultiStateTransformation):
                         print(f"[can_be_applied] Multiple write edges for '{write}' in one branch.")
                         return False
                     state_writes |= {e.data.data for e in state_write_edges}
+                    for e in state_write_edges:
+                        if e.data.data is None:
+                            continue
+                        if e.data.subset.num_elements_exact() != 1:
+                            print(
+                                f"[can_be_applied] All write edges need to have exactly one-element write '{write}' (edge {e} problematic)."
+                            )
 
                 # If the subset of each branch is different then we can't fuse either
                 if state0_writes != state1_writes:
@@ -354,6 +367,65 @@ class FuseBranches(transformation.MultiStateTransformation):
             if len(body0.nodes()) != 1 or not isinstance(body0.nodes()[0], SDFGState):
                 print("[can_be_applied] Single branch does not have exactly one SDFGState node.")
                 return False
+
+            # Check write sets are equivalent
+            state0: SDFGState = body0.nodes()[0]
+
+            read_sets0, write_sets0 = state0.read_and_write_sets()
+
+            # For joint writes ensure the write subsets are always the same
+            for write in write_sets0:
+                state0_accesses = {
+                    n
+                    for n in state0.nodes() if isinstance(n, dace.nodes.AccessNode) and n.data == write
+                }
+                state0_write_accesses = {
+                    a
+                    for a in state0_accesses
+                    if state0.in_degree(a) > 0 and any(e.data.data is not None for e in state0.in_edges(a))
+                }
+
+                for state, accesses in [
+                    (state0, state0_accesses),
+                ]:
+                    for access in accesses:
+                        arr = state.sdfg.arrays[access.data]
+                        if arr.dtype not in dace.dtypes.FLOAT_TYPES:
+                            print(f"[can_be_applied] Storage of '{write.data}' is not a floating point type.")
+                            return False
+
+                state0_writes = set()
+                for state_writes, state_accesses, state in [(state0_writes, state0_accesses, state0)]:
+                    state_write_edges = set()
+                    for an in state_accesses:
+                        state_write_edges |= {e for e in state.in_edges(an) if e.data.data is not None}
+                    # If there are multiple write edges again we would need to know the order
+                    if len(state_write_edges) > 1:
+                        print(f"[can_be_applied] Multiple write edges for '{write}' in one branch.")
+                        return False
+                    state_writes |= {e.data.data for e in state_write_edges}
+                    for e in state_write_edges:
+                        if e.data.data is None:
+                            continue
+                        if e.data.subset.num_elements_exact() != 1:
+                            print(
+                                f"[can_be_applied] All write edges need to have exactly one-element write '{write}' (edge {e} problematic)."
+                            )
+
+        # If nsdfg all out edges need to have size-1 subsets
+        if self.parent_nsdfg_state is not None:
+            parent_nsdfg_node = self.conditional.parent_graph.sdfg.parent_nsdfg_node
+            for oe in self.parent_nsdfg_state.out_edges(parent_nsdfg_node):
+                if oe.data.data is None:
+                    continue
+                #if not isinstance(oe.data.subset, dace.subsets.Range):
+                #    print("[can_be_applied] If working in a nested SDFG all out edges need to be single-subset edges and have type susbet Range")
+                #    print(f"[can_be_applied] {oe.data.subset}")
+                #r: dace.subsets.Range = oe.data.subset
+                #if r.num_elements_exact() != 1:
+                #    print("[can_be_applied] If working in a nested SDFG all out edges need to be single-subset edges and have type susbet Range")
+                #    print(f"[can_be_applied] {oe.data.subset}")
+                pass
 
         print(f"[can_be_applied] to {self.conditional} is True")
         return True
@@ -494,8 +566,12 @@ class FuseBranches(transformation.MultiStateTransformation):
 
         if cond_assignment is None:
             if just_var is False:
-                cond_assignment = cond_var
-                cond_var = f"_if_cond_{self.conditional.label}"
+                if " == " in pycode(cond_code_symexpr):
+                    cond_assignment = pycode(cond_code_symexpr)
+                    cond_var = f"_if_cond_{self.conditional.label}"
+                else:  # Possible an array value is being checked
+                    cond_assignment = f"{pycode(cond_code_symexpr)} == 1"
+                    cond_var = f"_if_cond_{self.conditional.label}"
             else:
                 cond_assignment = pycode(cond_code_symexpr)
                 cond_var = f"_if_cond_{self.conditional.label}"
@@ -575,6 +651,7 @@ class FuseBranches(transformation.MultiStateTransformation):
             #print(joint_writes)
             #raise Exception(joint_writes)
             new_joint_writes = copy.deepcopy(joint_writes)
+            new_reads = set()
             for write in joint_writes:
                 state0_write_accesses = {
                     n
@@ -595,11 +672,37 @@ class FuseBranches(transformation.MultiStateTransformation):
                 ie = ies[0]
                 if ie.data.data is not None:
                     self._generate_identity_write(state1, write, ie.data.subset)
+                    new_reads.add((write, ie.data))
 
             # Copy over all identify writes
             state1_to_new_state_node_map = cutil.copy_state_contents(state1, new_state)
             read_sets0, write_sets1 = state1.read_and_write_sets()
             joint_writes = new_joint_writes
+
+            # New joint writes require adding reads to a previously output-only connector
+            if new_reads:
+                # Get subset of the output and add it to the inputs of the nsdfg
+                graph.sdfg.save("owo.sdfg")
+                sdfg.save("uwu.sdfg")
+                if graph.sdfg.parent_nsdfg_node is not None:
+                    parent_nsdfg_node = graph.sdfg.parent_nsdfg_node
+                    parent_nsdfg_state = self.parent_nsdfg_state
+                    for new_read_name, new_read_memlet in new_reads:
+                        if new_read_name not in parent_nsdfg_node.in_connectors:
+                            write_edges = set(
+                                parent_nsdfg_state.out_edges_by_connector(parent_nsdfg_node, new_read_name))
+                            assert len(write_edges) == 1, f"{write_edges} of new_read: {new_read_name}"
+                            write_edge = write_edges.pop()
+                            write_subset: dace.subsets.Range = write_edge.data.subset
+                            assert write_subset.num_elements_exact() == 1
+                            cutil.insert_non_transient_data_through_parent_scopes(
+                                non_transient_data={write_edge.data.data},
+                                nsdfg_node=parent_nsdfg_node,
+                                parent_graph=parent_nsdfg_state,
+                                parent_sdfg=parent_nsdfg_state.sdfg,
+                                add_to_output_too=False,
+                                add_with_exact_subset=True,
+                                exact_subset=copy.deepcopy(write_subset))
 
         graph.add_node(new_state)
         for ie in graph.in_edges(self.conditional):

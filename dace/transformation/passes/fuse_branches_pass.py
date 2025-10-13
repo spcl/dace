@@ -35,7 +35,7 @@ class FuseBranchesPass(ppl.Pass):
 
         raise Exception("?")
 
-    def _apply_fuse_branches(self, sdfg: dace.SDFG):
+    def _apply_fuse_branches(self, root: dace.SDFG, sdfg: dace.SDFG):
         """Apply FuseBranches transformation to all eligible conditionals."""
         # Pattern matching with conditional branches to not work (9.10.25), avoid it
         t = fuse_branches.FuseBranches()
@@ -43,20 +43,34 @@ class FuseBranchesPass(ppl.Pass):
         # the transformation only runs on top-level ConditionalBlocks
         nestedness = self._get_nestedness_of_conditional_blocks(sdfg, 0)
 
+        def _get_parent_state(nsdfg_node: dace.nodes.NestedSDFG):
+            for n, g in root.all_nodes_recursive():
+                if n == nsdfg_node:
+                    return g
+            return None
+
         for _ in range(nestedness):
             for node in sdfg.all_control_flow_blocks():
                 if isinstance(node, ConditionalBlock):
                     #print(node, t.can_be_applied_to(node.parent_graph, conditional=node))
-                    if t.can_be_applied_to(node.parent_graph, conditional=node):
-                        t.apply_to(node.parent_graph.sdfg, conditional=node)
+                    if node.parent_graph.sdfg.parent_nsdfg_node is not None:
+                        parent_nsdfg_state = _get_parent_state(node.sdfg.parent_nsdfg_node)
+                    else:
+                        parent_nsdfg_state = None
+                    if t.can_be_applied_to(node.parent_graph,
+                                           conditional=node,
+                                           options={"parent_nsdfg_state": parent_nsdfg_state}):
+                        t.apply_to(node.parent_graph.sdfg,
+                                   conditional=node,
+                                   options={"parent_nsdfg_state": parent_nsdfg_state})
 
         for state in sdfg.all_states():
             for node in state.nodes():
                 if isinstance(node, dace.nodes.NestedSDFG):
-                    self._apply_fuse_branches(node.sdfg)
+                    self._apply_fuse_branches(root, node.sdfg)
 
     def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
-        self._apply_fuse_branches(sdfg)
+        self._apply_fuse_branches(sdfg, sdfg)
 
     def report(self, pass_retval: int) -> str:
         return f'Fused (andd removed) {pass_retval} branches.'

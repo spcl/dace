@@ -23,10 +23,6 @@ def branch_dependent_value_write(
             c[i, j] = 0.0
             d[i, j] = 0.0
 
-        f_cond = 1.0 if (a[i, j] > 0.5) else 0.0
-        c[i, j] = (a[i, j] * b[i, j]) * f_cond
-        d[i, j] = (1.0 - c[i, j]) * (1.0 - f_cond)
-
 
 @dace.program
 def branch_dependent_value_write_two(
@@ -135,15 +131,39 @@ def tasklets_in_if(
             b[i, j] = (1 - a[i, j]) * c
 
 
+@dace.program
+def single_branch_connectors(
+    a: dace.float64[S, S],
+    b: dace.float64[S, S],
+    d: dace.float64[S, S],
+    c: dace.float64,
+):
+    for i in dace.map[S1:S2:1]:
+        for j in dace.map[S1:S2:1]:
+            if a[i, j] > c:
+                b[i, j] = d[i, j]
+
+
+def _get_parent_state(sdfg: dace.SDFG, nsdfg_node: dace.nodes.NestedSDFG):
+    for n, g in sdfg.all_nodes_recursive():
+        if n == nsdfg_node:
+            return g
+    return None
+
+
 def apply_fuse_branches(sdfg, nestedness: int = 1):
     """Apply FuseBranches transformation to all eligible conditionals."""
     # Pattern matching with conditional branches to not work (9.10.25), avoid it
     for i in range(nestedness):
         for node, graph in sdfg.all_nodes_recursive():
+            parent_nsdfg_node = graph.sdfg.parent_nsdfg_node
+            parent_state = None
+            if parent_nsdfg_node is not None:
+                parent_state = _get_parent_state(sdfg, parent_nsdfg_node)
             if isinstance(node, ConditionalBlock):
                 t = fuse_branches.FuseBranches()
-                if t.can_be_applied_to(graph.sdfg, conditional=node):
-                    t.apply_to(graph.sdfg, conditional=node)
+                if t.can_be_applied_to(graph.sdfg, conditional=node, options={"parent_nsdfg_state": parent_state}):
+                    t.apply_to(graph.sdfg, conditional=node, options={"parent_nsdfg_state": parent_state})
 
 
 def run_and_compare(
@@ -249,12 +269,51 @@ def test_branch_dependent_value_write_single_branch_nonzero_write(use_pass_flag)
     run_and_compare(branch_dependent_value_write_single_branch_nonzero_write, 0, use_pass_flag, a=a, b=b, d=d)
 
 
+@pytest.mark.parametrize("use_pass_flag", [True, False])
+def test_single_branch_connectors(use_pass_flag):
+    a = np.random.choice([0.0, 3.0], size=(N, N))
+    b = np.random.randn(N, N)
+    d = np.random.randn(N, N)
+    c = np.random.randn(1, )
+
+    sdfg = single_branch_connectors.to_sdfg()
+    sdfg.validate()
+    arrays = {"a": a, "b": b, "c": c, "d": d}
+    out_no_fuse = {k: v.copy() for k, v in arrays.items()}
+    sdfg(a=out_no_fuse["a"], b=out_no_fuse["b"], c=out_no_fuse["c"][0], d=out_no_fuse["d"])
+    sdfg.save(sdfg.label + "_before.sdfg")
+    # Apply transformation
+    if use_pass_flag:
+        fuse_branches_pass.FuseBranchesPass().apply_pass(sdfg, {})
+    else:
+        apply_fuse_branches(sdfg, 2)
+
+    # Run SDFG version (with transformation)
+    out_fused = {k: v.copy() for k, v in arrays.items()}
+    sdfg(a=out_fused["a"], b=out_fused["b"], c=out_fused["c"][0], d=out_fused["d"])
+    sdfg.save(sdfg.label + "_after.sdfg")
+
+    branch_code = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
+    assert len(branch_code) == 0, f"(actual) len({branch_code}) != (desired) 0"
+
+    # Compare all arrays
+    for name in arrays.keys():
+        np.testing.assert_allclose(out_no_fuse[name], out_fused[name], atol=1e-12)
+
+    nsdfgs = {(n, g) for n, g in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)}
+    assert len(nsdfgs) == 1
+    nsdfg, parent_state = nsdfgs.pop()
+    assert len(nsdfg.in_connectors) == 4, f"{nsdfg.in_connectors}, length is not 4 but {len(nsdfg.in_connectors)}"
+    assert len(nsdfg.out_connectors) == 1, f"{nsdfg.out_connectors}, length is not 1 but {len(nsdfg.out_connectors)}"
+
+
 if __name__ == "__main__":
     for use_pass_flag in [True, False]:
         test_branch_dependent_value_write(use_pass_flag)
         test_branch_dependent_value_write_two(use_pass_flag)
         test_branch_dependent_value_write_single_branch(use_pass_flag)
         test_branch_dependent_value_write_single_branch_nonzero_write(use_pass_flag)
+        test_single_branch_connectors(use_pass_flag)
         test_complicated_if(use_pass_flag)
         test_multi_state_branch_body(use_pass_flag)
         test_nested_if(use_pass_flag)
