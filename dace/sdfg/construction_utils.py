@@ -1,3 +1,4 @@
+import re
 from typing import Dict, Set, Union
 import dace
 import copy
@@ -213,64 +214,22 @@ def insert_non_transient_data_through_parent_scopes(
             nsdfg_node.symbol_mapping[str(sym)] = str(sym)
 
 
-def get_missing_symbols(nsdfg_node: dace.nodes.NestedSDFG) -> Set[str]:
-    """
-    Detects symbols used in a nested SDFG that are not yet mapped from the parent.
+def token_replace(code: str, src: str, dst: str) -> str:
+    # Split while keeping delimiters
+    tokens = re.split(r'(\s+|[()\[\]])', code)
 
-    Args:
-        nsdfg_node: The NestedSDFG node to check.
+    # Replace tokens that exactly match src
+    tokens = [dst if token.strip() == src else token for token in tokens]
 
-    Returns:
-        A set of symbol names that are missing in the node's symbol mapping.
-
-    Notes:
-        - This function compares used symbols with available connectors and
-          mapped symbols.
-    """
-    nsdfg = nsdfg_node.sdfg
-    connectors = nsdfg_node.in_connectors.keys() | nsdfg_node.out_connectors.keys()
-    symbols = set(k for k in nsdfg.used_symbols(all_symbols=False) if k not in connectors)
-    missing_symbols = [s for s in symbols if s not in nsdfg_node.symbol_mapping]
-    if missing_symbols:
-        print(f"Missing symbols: {missing_symbols} for nsdfg: {nsdfg_node}")
-    return set(missing_symbols)
+    # Recombine everything
+    return ''.join(tokens).strip()
 
 
-def add_missing_symbols_to_nsdfgs(sdfg: dace.SDFG):
-    """
-    Recursively fixes missing symbol mappings for all nested SDFGs in the given SDFG.
+def token_match(string_to_check: str, pattern_str: str) -> str:
+    # Split while keeping delimiters
+    tokens = re.split(r'(\s+|[()\[\]])', string_to_check)
 
-    Args:
-        sdfg: The root SDFG to process.
+    # Replace tokens that exactly match src
+    tokens = {token.strip() for token in tokens}
 
-    Notes:
-        - Calls `add_missing_symbols_to_nsdfg` for each nested SDFG encountered.
-        - Recurses into deeper nested SDFGs as needed.
-    """
-    nsdfgs = set()
-    for state in sdfg.all_states():
-        for node in state.nodes():
-            if isinstance(node, dace.nodes.NestedSDFG):
-                add_missing_symbols_to_nsdfg(state, node)
-    for nsdfg in nsdfgs:
-        add_missing_symbols_to_nsdfgs(nsdfg)
-
-
-def add_missing_symbols_to_nsdfg(parent_state: dace.SDFGState, nsdfg: dace.nodes.NestedSDFG):
-    """
-    Adds any symbols used inside a nested SDFG that are missing in its symbol mapping.
-
-    Args:
-        parent_state: The state that contains the NestedSDFG node.
-        nsdfg: The NestedSDFG node to fix.
-
-    Behavior:
-        - Identifies missing symbols via `get_missing_symbols`.
-        - Adds them both to the nested SDFG’s symbol table and its mapping from the parent.
-    """
-    missing_symbols = get_missing_symbols(nsdfg)
-    for ms in missing_symbols:
-        nsdfg.symbol_mapping[ms] = ms
-        if ms not in nsdfg.sdfg.symbols:
-            defined_syms = parent_state.symbols_defined_at(nsdfg)
-            nsdfg.sdfg.add_symbol(ms, defined_syms[ms])
+    return pattern_str in tokens

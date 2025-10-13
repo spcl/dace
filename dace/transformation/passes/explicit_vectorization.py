@@ -822,5 +822,4 @@ class ExplicitVectorization(ppl.Pass):
 
         sdfg.append_global_code(cpp_code=self.global_code, location=self.global_code_location)
 
-        cutil.add_missing_symbols_to_nsdfgs(sdfg)
         return None
