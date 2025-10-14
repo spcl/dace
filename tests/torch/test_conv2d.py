@@ -43,3 +43,8 @@ def test_conv2d(sdfg_name: str, use_cpp_dispatcher: bool):
                                dace_output.detach().numpy(),
                                atol=1e-06,
                                err_msg="Conv2d output mismatch between PyTorch and DaCe")
+
+
+if __name__ == "__main__":
+    test_conv2d(sdfg_name="test_conv2d_cpp_True", use_cpp_dispatcher=True)
+    test_conv2d(sdfg_name="test_conv2d_cpp_False", use_cpp_dispatcher=False)

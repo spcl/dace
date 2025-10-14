@@ -35,3 +35,7 @@ def test_sqrt_expansion(sdfg_name):
     result = sdfg(inp=X)
 
     assert np.allclose(np.sqrt(X), result)
+
+
+if __name__ == "__main__":
+    test_sqrt_expansion(sdfg_name="test_sqrt_expansion")

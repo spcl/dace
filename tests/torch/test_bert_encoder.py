@@ -41,4 +41,4 @@ def test_bert_encoder(sdfg_name: str):
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    test_bert_encoder(sdfg_name="test_bert_encoder")

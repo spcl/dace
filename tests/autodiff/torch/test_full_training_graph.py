@@ -213,4 +213,9 @@ def test_two_backward_passes_accumulate():
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    test_module()
+    test_parse_backward_simple()
+    test_parse_backward_scalar()
+    test_parse_backward_with_forwarding()
+    test_two_backward_passes()
+    test_two_backward_passes_accumulate()

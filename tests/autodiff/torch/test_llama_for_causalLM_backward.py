@@ -99,4 +99,4 @@ def test_llama_model_backward(sdfg_name):
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    test_llama_model_backward(sdfg_name="test_llama_model_backward")

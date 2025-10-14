@@ -51,3 +51,10 @@ def test_conv_simple(num_in_channels, kernel_size, num_filters, bias):
 
     print(torch_Z - dace_Z)
     assert np.allclose(torch_Z, dace_Z)
+
+
+if __name__ == "__main__":
+    # Test with different parameter combinations
+    params = [(1, (3, 3), 8, True), (8, (3, 3), 3, False), (8, (5, 5), 3, True), (8, (4, 4), 3, False)]
+    for num_in_channels, kernel_size, num_filters, bias in params:
+        test_conv_simple(num_in_channels, kernel_size, num_filters, bias)

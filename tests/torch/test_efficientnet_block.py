@@ -105,4 +105,7 @@ def test_fast_mb(use_cpp_dispatcher: bool):
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    test_mbconv(use_cpp_dispatcher=True)
+    test_mbconv(use_cpp_dispatcher=False)
+    test_fast_mb(use_cpp_dispatcher=True)
+    test_fast_mb(use_cpp_dispatcher=False)

@@ -218,4 +218,12 @@ def test_add(scalars: bool, simplify: bool, sdfg_name: str):
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    # Test with different parameter combinations
+    for simplify in [True, False]:
+        test_squeeze(simplify=simplify, sdfg_name=f"test_squeeze_simplify_{simplify}")
+        test_shape(simplify=simplify, sdfg_name=f"test_shape_simplify_{simplify}")
+        test_unsqueeze(simplify=simplify, sdfg_name=f"test_unsqueeze_simplify_{simplify}")
+
+    for scalars in [True, False]:
+        for simplify in [True, False]:
+            test_add(scalars=scalars, simplify=simplify, sdfg_name=f"test_add_scalars_{scalars}_simplify_{simplify}")

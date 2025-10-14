@@ -102,5 +102,4 @@ def test_llama_decoder_backward(sdfg_name):
 
 
 if __name__ == "__main__":
-    import pytest
-    pytest.main([__file__, "-v"])
+    test_llama_decoder_backward(sdfg_name="test_llama_decoder_backward")

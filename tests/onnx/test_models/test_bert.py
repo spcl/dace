@@ -82,3 +82,7 @@ def test_bert_full(sdfg_name):
 
     torch_tensors_close("output_0", output[0], dace_output[0])
     torch_tensors_close("output_1", output[1], dace_output[1])
+
+
+if __name__ == "__main__":
+    test_bert_full(sdfg_name="test_bert_full")

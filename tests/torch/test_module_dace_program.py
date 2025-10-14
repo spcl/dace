@@ -55,3 +55,8 @@ def test_parse_forward_nested():
 
     result = train_step(x)
     tensors_close('parsed', expected.sum(), result)
+
+
+if __name__ == "__main__":
+    test_parse_forward_simple()
+    test_parse_forward_nested()

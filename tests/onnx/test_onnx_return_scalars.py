@@ -54,3 +54,7 @@ def test_onnx_return_scalars(sdfg_name: str):
     result = dace_model(inp)
     assert result.shape == (), f"Expected scalar shape (), got {result.shape}"
     assert result[()] == 1 + 2 + 3 + 4, f"Expected sum 10, got {result[()]}"
+
+
+if __name__ == "__main__":
+    test_onnx_return_scalars(sdfg_name="test_onnx_return_scalars")

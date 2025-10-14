@@ -528,3 +528,43 @@ def test_unsqueeze():
     result = sdfg(inp=data.copy())
     assert result.shape == (3, 1, 3, 1)
     assert_allclose(result, np_result)
+
+
+if __name__ == "__main__":
+    # Run all test functions
+    test_matmul_expansion(a_shape=[2, 4], b_shape=[4, 3], sdfg_name="test_matmul_expansion")
+    test_cast_int_to_float(sdfg_name="test_cast_int_to_float")
+    test_cast_float_to_int(sdfg_name="test_cast_float_to_int")
+    test_cast_float_to_long(sdfg_name="test_cast_float_to_long")
+
+    # Test reduce with multiple parameter combinations
+    reduce_params = [(True, 'Sum', [0]), (False, 'Sum', [-1]), (True, 'Sum', [0, -1]), (False, 'Max', [0, -1]),
+                     (True, 'Max', [0]), (True, 'Max', [-1]), (True, 'Mean', [-1]), (True, 'Mean', [0, -1]),
+                     (False, 'Mean', [0])]
+    for keepdims, reduce_type, axes in reduce_params:
+        test_reduce(keepdims=keepdims,
+                    reduce_type=reduce_type,
+                    axes=axes,
+                    sdfg_name=f"test_reduce_{reduce_type}_{keepdims}_{axes}")
+
+    test_reduce_scalar(sdfg_name="test_reduce_scalar")
+
+    # Test reshape with multiple shapes
+    for new_shape in [[8, 10], [80], [2, 40]]:
+        test_reshape(new_shape=new_shape, sdfg_name=f"test_reshape_{'_'.join(map(str, new_shape))}")
+
+    test_flatten(sdfg_name="test_flatten")
+    test_reciprocal(sdfg_name="test_reciprocal")
+    test_einsum()
+    test_reshape_add()
+
+    # Test sum_arrays with different input types
+    for input_desc in [dace.float32[2, 3], dace.float32[1], dace.float32]:
+        test_sum_arrays(input_desc=input_desc, sdfg_name=f"test_sum_arrays_{input_desc}")
+
+    test_shape()
+    test_gather_onnx_1()
+    test_gather_bert()
+    test_gather_scalar()
+    test_gather_onnx_2()
+    test_unsqueeze()

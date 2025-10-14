@@ -59,4 +59,7 @@ def test_dropout_bwd(p: Union[float, Literal[0]]):
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    test_dropout_fwd_training()
+    # Test with different dropout probabilities
+    for p in [0, 0.99, 0.6, 0.5]:
+        test_dropout_bwd(p=p)

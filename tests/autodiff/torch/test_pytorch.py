@@ -282,3 +282,19 @@ def test_simple_broadcasted_mul(sdfg_name):
             return x * y
 
     run_pytorch_module(Module(), sdfg_name)
+
+
+if __name__ == "__main__":
+    test_simple(sdfg_name="test_simple")
+    test_repeated(sdfg_name="test_repeated")
+    test_softmax(sdfg_name="test_softmax")
+    test_reshape_on_memlet_path(sdfg_name="test_reshape_on_memlet_path")
+    test_weights_ln(sdfg_name="test_weights_ln")
+    test_layernorm(sdfg_name="test_layernorm")
+    test_weights(sdfg_name="test_weights")
+    test_nested_gradient_summation(sdfg_name="test_nested_gradient_summation")
+    test_trans_add(sdfg_name="test_trans_add")
+    test_batched_matmul(sdfg_name="test_batched_matmul")
+    test_scalar_forwarding(sdfg_name="test_scalar_forwarding")
+    test_scalar_buffer(sdfg_name="test_scalar_buffer")
+    # test_simple_broadcasted_mul is skipped

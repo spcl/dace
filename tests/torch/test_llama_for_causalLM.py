@@ -96,4 +96,4 @@ def test_llama_model(sdfg_name: str):
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    test_llama_model(sdfg_name="test_llama_model")

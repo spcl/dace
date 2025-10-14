@@ -33,4 +33,5 @@ def test_attn(sdfg_name: str, use_cpp_dispatcher: bool):
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    test_attn(sdfg_name="test_attn_cpp_True", use_cpp_dispatcher=True)
+    test_attn(sdfg_name="test_attn_cpp_False", use_cpp_dispatcher=False)

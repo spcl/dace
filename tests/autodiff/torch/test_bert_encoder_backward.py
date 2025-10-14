@@ -42,4 +42,4 @@ def test_bert_encoder_backward(sdfg_name):
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    test_bert_encoder_backward(sdfg_name="test_bert_encoder_backward")

@@ -46,3 +46,7 @@ def test_sum(sdfg_name: str):
 
     assert np.allclose(result,
                        numpy_result), f"Variadic sum mismatch: max diff = {np.max(np.abs(result - numpy_result))}"
+
+
+if __name__ == "__main__":
+    test_sum(sdfg_name="test_sum")

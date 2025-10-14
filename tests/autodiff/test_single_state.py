@@ -613,4 +613,16 @@ def test_reshape_reuse_in_same_state():
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    test_gemm()
+    test_sum()
+    test_complex_tasklet()
+    test_tasklets_only_reuse()
+    test_tasklets_multioutput()
+    test_tasklets_only()
+    test_add_mmul_transpose_log()
+    test_reduce_node_1_axis_and_none_axis()
+    test_reduce_max_simple()
+    test_reduce_max_node_1_axis()
+    test_reshape()
+    test_reshape_on_memlet_path()
+    test_reshape_reuse_in_same_state()

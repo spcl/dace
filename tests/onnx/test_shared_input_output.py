@@ -105,4 +105,6 @@ def test_bn_in_import():
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    for training_mode in [True, False]:
+        test_bn_standalone(training_mode=training_mode)
+    test_bn_in_import()

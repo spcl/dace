@@ -32,3 +32,7 @@ def test_reshape_module(sdfg_name: str):
     dace_output = dace_model(x)
 
     torch_tensors_close("output", torch_output, dace_output)
+
+
+if __name__ == "__main__":
+    test_reshape_module(sdfg_name="test_reshape_module")
