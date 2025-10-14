@@ -56,6 +56,3 @@ def torch_tensors_close(name, torch_v, dace_v, rtol=1e-5, atol=1e-4):
     torch_v = torch_v.detach().cpu().numpy()
     dace_v = dace_v.detach().cpu().numpy()
     np.testing.assert_allclose(dace_v, torch_v, rtol=rtol, atol=atol, err_msg=f'{name} not close')
-
-
-T = typing.TypeVar("T")
