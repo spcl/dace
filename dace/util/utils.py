@@ -210,8 +210,7 @@ def auto_optimize_onnx(sdfg: dace.SDFG, cuda, simplify=False, fold_constants=Tru
     log.debug("Expanding ONNX nodes")
     expand_onnx_nodes(sdfg)
     log.debug("Setting fast implementations")
-    # MKL is currently broken
-    set_fast_implementations(sdfg, dace.DeviceType.GPU if cuda else dace.DeviceType.CPU, blocklist=["MKL"])
+    set_fast_implementations(sdfg, dace.DeviceType.GPU if cuda else dace.DeviceType.CPU)
     if simplify:
         log.debug("Applying simplification transforms")
         # there is a nondeterministic bug in redundant array that appears if
