@@ -240,7 +240,7 @@ def token_match(string_to_check: str, pattern_str: str) -> str:
 def replace_length_one_arrays_with_scalars(sdfg: dace.SDFG, recursive: bool = True):
     scalarized_arrays = set()
     for arr_name, arr in [(k, v) for k, v in sdfg.arrays.items()]:
-        if isinstance(arr, dace.data.Array) and arr.shape == (1,):
+        if isinstance(arr, dace.data.Array) and (arr.shape == (1,) or arr.shape == [1,]):
             sdfg.remove_data(arr_name, False)
             sdfg.add_scalar(
                 name=arr_name,
