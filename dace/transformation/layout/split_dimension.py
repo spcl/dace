@@ -24,7 +24,7 @@ class SplitDimensions(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def __init__(self, split_map: Dict[str, Tuple[List[int], List[int]]], verbose: bool = False):
+    def __init__(self, split_map: Dict[str, Tuple[List[bool], List[int]]], verbose: bool = False):
         self._split_map = split_map
         self._verbose = verbose
 
