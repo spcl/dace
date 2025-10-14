@@ -488,9 +488,9 @@ class LoopToMap(xf.MultiStateTransformation):
         # Fix SDFG symbols
         for sym in sdfg.free_symbols - fsymbols:
             if sym in sdfg.symbols:
-                del sdfg.symbols[sym]
+                sdfg.remove_symbol(sym)
         for sym, dtype in nsymbols.items():
-            nsdfg.symbols[sym] = dtype
+            nsdfg.symbols[sym] = dtype    
 
         # Propagate symbols, where types cannot be inferred
         alltypes = copy.deepcopy(nsdfg.symbols)
@@ -501,7 +501,7 @@ class LoopToMap(xf.MultiStateTransformation):
                 if k in nsdfg.symbols:
                     continue
 
-                # Should not happen: Cannot infer type and paretn SDFG also does not have an explicit type
+                # Should not happen: Cannot infer type and parent SDFG also does not have an explicit type
                 vtype = infer_expr_type(v, alltypes)
                 if k not in sdfg.symbols:
                     if vtype is None:
@@ -664,9 +664,13 @@ class LoopToMap(xf.MultiStateTransformation):
         # Delete the loop and connected edges.
         graph.remove_node(self.loop)
 
-        # If this had made the iteration variable a free symbol, we can remove it from the SDFG symbols
-        if itervar in sdfg.free_symbols:
-            sdfg.remove_symbol(itervar)
+        # If this had made a variable a free symbol, we can remove it from the SDFG symbols
+        for var in sdfg.free_symbols - fsymbols:
+            if sdfg.parent_nsdfg_node:
+                if var not in sdfg.parent_nsdfg_node.symbol_mapping:
+                    sdfg.remove_symbol(var)
+            else:
+              sdfg.remove_symbol(var)
 
         sdfg.reset_cfg_list()
         for n, p in sdfg.all_nodes_recursive():
