@@ -1132,7 +1132,7 @@ class Tensor(Structure):
         :param tensor_shape: logical shape of tensor (#rows, #cols, etc...)
         :param indices: 
             a list of tuples, each tuple represents a level in the tensor
-            storage hirachy, specifying the levels tensor index type, and the
+            storage hierarchy, specifying the levels tensor index type, and the
             corresponding dimension this level encodes (as index of the
             tensor_shape tuple above). The order of the dimensions may differ
             from the logical shape of the tensor, e.g. as seen in the CSC
@@ -1154,9 +1154,9 @@ class Tensor(Structure):
         num_dims = len(tensor_shape)
         dimension_order = [idx for idx in self.index_ordering if isinstance(idx, int)]
 
-        # all tensor dimensions must occure exactly once in indices
+        # all tensor dimensions must occur exactly once in indices
         if not sorted(dimension_order) == list(range(num_dims)):
-            raise TypeError((f"All tensor dimensions must be refferenced exactly once in "
+            raise TypeError((f"All tensor dimensions must be referenced exactly once in "
                              f"tensor indices. (referenced dimensions: {dimension_order}; "
                              f"tensor dimensions: {list(range(num_dims))})"))
 
