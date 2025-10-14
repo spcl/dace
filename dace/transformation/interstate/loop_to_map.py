@@ -476,7 +476,7 @@ class LoopToMap(xf.MultiStateTransformation):
         if sdfg.parent:
             for s, m in sdfg.parent_nsdfg_node.symbol_mapping.items():
                 if s not in cnode.symbol_mapping:
-                    cnode.symbol_mapping[s] = m
+                    cnode.symbol_mapping[s] = symbolic.pystr_to_symbolic(s)
                     nsdfg.add_symbol(s, sdfg.symbols[s])
         for name in read_set:
             r = body.add_read(name)
