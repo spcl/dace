@@ -261,9 +261,133 @@ def tasklet_in_nested_sdfg(
 
 
 @dace.program
+def tasklets_in_if_two(
+    a: dace.float64[S, S],
+    b: dace.float64,
+    c: dace.float64[S, S],
+    e: dace.float64[S, S],
+    f: dace.float64,
+):
+    for i in dace.map[0:S - 1:1]:
+        for j in dace.map[0:S - 1:1]:
+            if a[i, j] + a[i + 1, j + 1] < b:
+                e[i, j] = c[i, j] * f * a[i, j] * 2.0 - a[i, j]
+
+
+@dace.program
 def cast_tasklet_first_in_a_map(a: dace.float64[S, S], ):
     for i, j in dace.map[S1:S2:1, S1:S2:1] @ dace.dtypes.ScheduleType.Sequential:
         a[i, j] = dace.float64(i) + ((dace.float64(j) + 5.2) * 2.7)
+
+
+@dace.program
+def tasklets_in_if(
+    a: dace.float64[S, S],
+    b: dace.float64[S, S],
+    d: dace.float64[S, S],
+    c: dace.float64,
+):
+    for i in dace.map[S1:S2:1]:
+        for j in dace.map[S1:S2:1]:
+            if a[i, j] > c:
+                b[i, j] = b[i, j] + d[i, j]
+            else:
+                b[i, j] = b[i, j] - d[i, j]
+            b[i, j] = (1 - a[i, j]) * c
+
+
+def test_branch_fusion_tasklets():
+    try:
+        from dace.transformation.passes.fuse_branches_pass import FuseBranchesPass
+        st = FuseBranchesPass()
+    except Exception as e:
+        return
+
+    _S1 = 0
+    _S2 = 64
+    _S = _S2 - _S1
+    A = numpy.random.random((_S, _S))
+    B = numpy.random.random((_S, _S))
+    C = numpy.random.random((1, ))
+    D = numpy.random.random((_S, _S))
+
+    # Create copies for comparison
+    A_orig = A.copy()
+    B_orig = B.copy()
+    C_orig = C.copy()
+    D_orig = D.copy()
+    A_vec = A.copy()
+    B_vec = B.copy()
+    C_vec = C.copy()
+    D_vec = D.copy()
+
+    # Original SDFG
+    sdfg = tasklets_in_if.to_sdfg()
+    c_sdfg = sdfg.compile()
+
+    # Vectorized SDFG
+    copy_sdfg = copy.deepcopy(sdfg)
+    st.apply_pass(copy_sdfg, {})
+    SplitTasklets().apply_pass(copy_sdfg, {})
+    c_copy_sdfg = copy_sdfg.compile()
+
+    c_sdfg(a=A_orig, b=B_orig, c=C_orig[0], d=D_orig, S=_S, S1=_S1, S2=_S2)
+    c_copy_sdfg(a=A_vec, b=B_vec, c=C_vec[0], d=D_vec, S=_S, S1=_S1, S2=_S2)
+
+    # Compare results
+    assert numpy.allclose(A_orig, A_vec)
+    assert numpy.allclose(B_orig, B_vec)
+    assert numpy.allclose(C_orig, C_vec)
+    assert numpy.allclose(D_orig, D_vec)
+
+
+def test_branch_fusion_tasklets_two():
+    try:
+        from dace.transformation.passes.fuse_branches_pass import FuseBranchesPass
+        st = FuseBranchesPass()
+    except Exception as e:
+        return
+
+    _S1 = 0
+    _S2 = 64
+    _S = _S2 - _S1
+    A = numpy.random.random((_S, _S))
+    B = numpy.random.random((1, ))
+    C = numpy.random.random((_S, _S))
+    E = numpy.random.random((_S, _S))
+    F = numpy.random.random((1, ))
+
+    # Create copies for comparison
+    A_orig = A.copy()
+    B_orig = B.copy()
+    C_orig = C.copy()
+    E_orig = E.copy()
+    F_orig = F.copy()
+    A_vec = A.copy()
+    B_vec = B.copy()
+    C_vec = C.copy()
+    E_vec = E.copy()
+    F_vec = F.copy()
+
+    # Original SDFG
+    sdfg = tasklets_in_if_two.to_sdfg()
+    c_sdfg = sdfg.compile()
+
+    # Vectorized SDFG
+    copy_sdfg = copy.deepcopy(sdfg)
+    st.apply_pass(copy_sdfg, {})
+    SplitTasklets().apply_pass(copy_sdfg, {})
+    c_copy_sdfg = copy_sdfg.compile()
+
+    c_sdfg(a=A_orig, b=B_orig[0], c=C_orig, e=E_orig, f=F_orig[0], S=_S)
+    c_copy_sdfg(a=A_vec, b=B_vec[0], c=C_vec, e=E_vec, f=F_vec[0], S=_S)
+
+    # Compare results
+    assert numpy.allclose(A_orig, A_vec)
+    assert numpy.allclose(B_orig, B_vec)
+    assert numpy.allclose(C_orig, C_vec)
+    assert numpy.allclose(E_orig, E_vec)
+    assert numpy.allclose(F_orig, F_vec)
 
 
 def test_expressions_with_nested_sdfg_and_explicit_typecast():
@@ -325,6 +449,8 @@ def test_expressions_with_typecast_first_in_map():
 
 
 if __name__ == "__main__":
+    test_branch_fusion_tasklets()
+    test_branch_fusion_tasklets_two()
     test_expressions_with_nested_sdfg_and_explicit_typecast()
     test_expressions_with_typecast_first_in_map()
     for expression_str in example_expressions:

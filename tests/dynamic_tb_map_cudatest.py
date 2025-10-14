@@ -39,6 +39,8 @@ def test_dynamic_map():
                 and node[0].schedule == dace.dtypes.ScheduleType.Sequential:
             node[0].schedule = dace.dtypes.ScheduleType.GPU_ThreadBlock_Dynamic
 
+    sdfg.save("tblock_dynamic.sdfg")
+
     # Fill input data
     # each row has up (including) 256 elements
     A_row = np.random.randint(257, size=height + 1, dtype=dace.uint32.type)
@@ -361,9 +363,9 @@ def test_dynamic_default_schedule():
 
 if __name__ == '__main__':
     test_dynamic_map()
-    test_dynamic_maps()
-    test_nested_dynamic_map()
-    test_dynamic_map_with_step()
-    test_dynamic_multidim_map()
+    #test_dynamic_maps()
+    #test_nested_dynamic_map()
+    #test_dynamic_map_with_step()
+    #test_dynamic_multidim_map()
     # test_dynamic_nested_map()
-    test_dynamic_default_schedule()
+    #test_dynamic_default_schedule()

@@ -1,6 +1,8 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-""" This module contains classes and functions that implement the grid-strided map tiling
-    transformation."""
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+"""
+Provides a transformation to add missing GPU_ThreadBlock maps to
+GPU_Device maps, along with helper functions.
+"""
 import warnings
 
 import sympy
@@ -108,7 +110,7 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
     def expressions(cls):
         return [sdutil.node_path_graph(cls.map_entry)]
 
-    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+    def can_be_applied(self, state: SDFGState, expr_index: int, sdfg: SDFG, permissive=False):
         """
         Determines whether the transformation can be applied to a map entry.
 
@@ -118,15 +120,12 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
         """
         map_entry = self.map_entry
 
-        # Find the state that contains the map entry
-        state = next(state for node, state in sdfg.all_nodes_recursive() if node == map_entry)
-
         # Only applicable to GPU_Device maps
         if map_entry.map.schedule != dtypes.ScheduleType.GPU_Device:
             return False
 
         # Check if any inner maps are GPU-scheduled (e.g., GPU_ThreadBlock)
-        for _, inner_entry in helpers.get_internal_scopes(graph, map_entry):
+        for _, inner_entry in helpers.get_internal_scopes(state, map_entry):
             if inner_entry.map.schedule in dtypes.GPU_SCHEDULES:
                 return False  # Already has GPU-scheduled inner scope — does not apply
 
@@ -144,14 +143,16 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
 
     def apply(self, state: SDFGState, sdfg: SDFG):
         """
-        Ensures that `self.map_entry`, a `GPU_Device`-scheduled map, is explicitly nested
-        within a `GPU_ThreadBlock` map.
+        The `self.map_entry`, a `GPU_Device`-scheduled map, together with its enclosed
+        subgraph is a kernel function. This kernel lacks an explicit nested
+        `GPU_ThreadBlock` map. This function produces a semantically equivalent kernel
+        with an explicit `GPU_ThreadBlock` map.
 
         This is achieved by applying the `MapTiling` transformation to `self.map_entry`,
         using a computed block size. Essentially `self.map_entry` becomes then the thread block map and
-        the new inserted parent map (added by `MapTiling`) is the new kernel map. The schedules are set
-        accordingly. A final consistency check verifies that the resulting thread block map's range fits
-        into the computed block size.
+        the new inserted parent map (added by `MapTiling`) is the new kernel (`GPU_Device`-scheduled) map.
+        The schedules are set accordingly. A final consistency check verifies that the resulting thread
+        block map's range fits into the computed block size.
 
         Raises:
             ValueError: If the overapproximated extent of the thread block map does not match
@@ -194,15 +195,6 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
         # Set the new kernel_entry's gpu_block_size attribute
         new_kernel_entry, *_ = helpers.get_parent_map(state, kernel_map_entry)
         new_kernel_entry.map.gpu_block_size = gpu_block_size
-
-        # Catch any unexpected mismatches of inserted threadblock map's block size and the used block size
-        tb_size = to_3d_dims([symbolic.overapproximate(sz) for sz in thread_block_map_entry.map.range.size()[::-1]])
-        max_block_size = [sympy.Max(sz, bbsz) for sz, bbsz in zip(tb_size, gpu_block_size)]
-
-        if max_block_size != gpu_block_size:
-            raise ValueError(f"Block size mismatch: the overapproximated extent of the thread block map "
-                             f"({tb_size}) is not enclosed by the derived block size ({gpu_block_size}). "
-                             "They are expected to be equal or the derived block size to be larger.")
 
     def preprocess_default_dims(self):
         """

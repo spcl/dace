@@ -938,15 +938,20 @@ class Indices(Subset):
         N-dimensional data descriptor. """
 
     def __init__(self, indices):
-        if indices is None or len(indices) == 0:
-            raise TypeError('Expected an array of index expressions: got empty'
-                            ' array or None')
-        if isinstance(indices, str):
+        if indices is None:
+            raise TypeError('Expected an array of index expressions: got None')
+        elif isinstance(indices, str):
             raise TypeError("Expected collection of index expression: got str")
         elif isinstance(indices, symbolic.SymExpr):
+            # Possible Error: This case makes the calls `Indices(1)` and `Indices(a)`,
+            #   where `a` is a SymExpr different. In the first case `self.indices` is
+            #   a `list` with one element, i.e. `[1]`, but in the second case it is
+            #   `a`, i.e. `isinstance(self.indices, symbolic.SymExpr)` is `True`.
             self.indices = indices
         else:
             self.indices = [symbolic.pystr_to_symbolic(i) for i in indices]
+            if len(self.indices) == 0:
+                raise ValueError('Expected an array of index expressions: got an empty iterable.')
         self.tile_sizes = [1]
 
     def to_json(self):
@@ -969,6 +974,8 @@ class Indices(Subset):
         return Indices([*map(symbolic.pystr_to_symbolic, obj['indices'])])
 
     def __hash__(self):
+        # Possible Error: `self` is mutable thus the hash value of it might change,
+        #   which is a problem if it is inside a hash based container, such as a `set`.
         return hash(tuple(i for i in self.indices))
 
     def __deepcopy__(self, memo) -> 'Indices':
@@ -998,10 +1005,10 @@ class Indices(Subset):
         return self.size()
 
     def min_element(self):
-        return self.indices
+        return list(self.indices)
 
     def max_element(self):
-        return self.indices
+        return list(self.indices)
 
     def max_element_approx(self):
         return [_approx(ind) for ind in self.indices]
@@ -1079,6 +1086,8 @@ class Indices(Subset):
     @property
     def free_symbols(self) -> Set[str]:
         result = set()
+        # Possible error: If `self` was constructed through a `symbolic.SymExpr` then
+        #   `self.indices` is not a `list` but a `symbolic.SymExpr`.
         for dim in self.indices:
             result |= symbolic.symlist(dim).keys()
         return result
@@ -1112,8 +1121,7 @@ class Indices(Subset):
             :param order: List or tuple of integers from 0 to self.dims() - 1,
                           indicating the desired order of the dimensions.
         """
-        new_indices = [self.indices[o] for o in order]
-        self.indices = new_indices
+        self.indices = [self.indices[o] for o in order]
 
     def __ne__(self, other):
         return not self.__eq__(other)
