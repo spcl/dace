@@ -507,7 +507,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             if isinstance(node, nd.CodeNode):
                 pass
             else:
-                raise InvalidSDFGNodeError(f"Isolated node {node.label}", sdfg, state_id, nid)
+                raise InvalidSDFGNodeError("Isolated node", sdfg, state_id, nid)
 
         # Scope tests
         ########################################
@@ -574,9 +574,8 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                       # Streams do not need to be initialized
                       and not isinstance(arr, dt.Stream)):
                     if node.setzero == False:
-                        pass
-                        # warnings.warn('WARNING: Use of uninitialized transient "%s" in state "%s"' %
-                        #               (node.data, state.label))
+                        warnings.warn('WARNING: Use of uninitialized transient "%s" in state "%s"' %
+                                      (node.data, state.label))
 
                 # Register initialized transients
                 if arr.transient and state.in_degree(node) > 0:
@@ -624,19 +623,11 @@ def validate_state(state: 'dace.sdfg.SDFGState',
 
         # Connector tests
         ########################################
-        # Tasklet connector tests
-        if not isinstance(node, (nd.NestedSDFG, nd.LibraryNode)):
-            # Check for duplicate connector names (unless it's a nested SDFG)
-            if len(node.in_connectors.keys() & node.out_connectors.keys()) > 0:
-                dups = node.in_connectors.keys() & node.out_connectors.keys()
-                raise InvalidSDFGNodeError("Duplicate connectors: " + str(dups), sdfg, state_id, nid)
-
-            for conn in node.in_connectors.keys() | node.out_connectors.keys():
-                if conn in (sdfg.constants_prop.keys() | sdfg.symbols.keys() | sdfg.arrays.keys()):
-                    if not isinstance(node, nd.EntryNode):  # Special case for dynamic map inputs
-                        raise InvalidSDFGNodeError(
-                            "Connector name '%s' is already used as a symbol, constant, or array name" % conn, sdfg,
-                            state_id, nid)
+        # Check for duplicate connector names (unless it's a nested SDFG)
+        if (len(node.in_connectors.keys() & node.out_connectors.keys()) > 0
+                and not isinstance(node, (nd.NestedSDFG, nd.LibraryNode))):
+            dups = node.in_connectors.keys() & node.out_connectors.keys()
+            raise InvalidSDFGNodeError("Duplicate connectors: " + str(dups), sdfg, state_id, nid)
 
         # Check for dangling connectors (incoming)
         for conn in node.in_connectors:
@@ -722,7 +713,6 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         except InvalidSDFGError:
             raise
         except Exception as ex:
-            print(e)
             raise InvalidSDFGEdgeError("Edge validation failed: " + str(ex), sdfg, state_id, eid)
 
         # If the edge is a connection between two AccessNodes check if the subset has negative size.
