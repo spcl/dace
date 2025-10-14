@@ -177,7 +177,7 @@ def add_missing_symbols_to_symbol_maps_of_nsdfgs(sdfg: dace.SDFG):
                 missing_symbols = get_missing_symbols(nsdfg)
                 for ms in missing_symbols:
                     print(f"Adding missing symbol {ms} to the symbol map of {nsdfg}")
-                    nsdfg.symbol_mapping[ms] = ms
+                    nsdfg.symbol_mapping[str(ms)] = ms
 
     for nsdfg in nsdfgs:
         add_missing_symbols_to_symbol_maps_of_nsdfgs(nsdfg)

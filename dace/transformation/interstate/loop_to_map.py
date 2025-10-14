@@ -585,9 +585,11 @@ class LoopToMap(xf.MultiStateTransformation):
         if itervar in sdfg.free_symbols:
             sdfg.remove_symbol(itervar)
 
+
         sdfg.reset_cfg_list()
         for n, p in sdfg.all_nodes_recursive():
             if isinstance(n, nodes.NestedSDFG):
                 n.sdfg.parent = p
                 n.sdfg.parent_nsdfg_node = n
                 n.sdfg.parent_sdfg = p.sdfg
+
