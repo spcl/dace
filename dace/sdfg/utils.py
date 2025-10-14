@@ -2429,11 +2429,11 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
                     lhs = lhs.strip()
                     rhs = rhs.strip()
                     subs_rhs = str(sympy.pycode(dace.symbolic.SymExpr(rhs).subs({in_tasklet_name: scalar_val}))).strip()
-                    new_code = CodeBlock(code=f"{lhs} = {subs_rhs}",
-                                         language=dace.dtypes.Language.Python)
+                    new_code = CodeBlock(code=f"{lhs} = {subs_rhs}", language=dace.dtypes.Language.Python)
                     e.dst.code = new_code
                 else:
                     import re
+
                     def _token_replace(code: str, src: str, dst: str) -> str:
                         # Split while keeping delimiters
                         tokens = re.split(r'(\s+|[()\[\]])', code)
@@ -2443,6 +2443,7 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
 
                         # Recombine everything
                         return ''.join(tokens).strip()
+
                     new_code = CodeBlock(code=_token_replace(e.dst.code.as_string, in_tasklet_name, scalar_val),
                                          language=e.dst.code.language)
                     e.dst.code = new_code
@@ -2523,7 +2524,10 @@ def specialize_scalar(sdfg: 'dace.SDFG', scalar_name: str, scalar_val: Union[flo
             return float(val.evalf())
         return val  # unchanged if not a number
 
-    assert isinstance(scalar_val, (float, int, str, sympy.Number)), f"Expected scalar value to be float, int, str, or sympy.Number, got {type(scalar_val)}"
+    assert isinstance(
+        scalar_val,
+        (float, int, str,
+         sympy.Number)), f"Expected scalar value to be float, int, str, or sympy.Number, got {type(scalar_val)}"
     if not isinstance(scalar_val, (float, int, str)):
         if isinstance(scalar_val, sympy.Number):
             scalar_val = _sympy_to_python_number(scalar_val)
