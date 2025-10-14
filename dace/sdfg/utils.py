@@ -2420,22 +2420,35 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
             assert e.data.data == scalar_name
 
             if isinstance(e.dst, nd.Tasklet):
-                assign_tasklet = state.add_tasklet(f"assign_{scalar_name}",
-                                                   inputs={},
-                                                   outputs={"_out"},
-                                                   code=f"_out = {scalar_val}")
-                tmp_name = f"__tmp_{scalar_name}_{c}"
-                c += 1
-                copydesc = copy.deepcopy(sdfg.arrays[scalar_name])
-                copydesc.transient = True
-                copydesc.storage = dace.StorageType.Register
-                sdfg.add_datadesc(tmp_name, copydesc)
-                scl_an = state.add_access(tmp_name)
+                in_tasklet_name = e.dst_conn
+                if e.dst.code.language == dace.dtypes.Language.Python:
+                    import sympy
+                    lhs, rhs = e.dst.code.as_string.split("=")
+                    lhs = lhs.strip()
+                    rhs = rhs.strip()
+                    subs_rhs = str(sympy.pycode(dace.symbolic.SymExpr(rhs).subs({in_tasklet_name: scalar_val}))).strip()
+                    new_code = CodeBlock(code=f"{lhs} = {subs_rhs}",
+                                         language=dace.dtypes.Language.Python)
+                    e.dst.code = new_code
+                else:
+                    import re
+                    def _token_replace(code: str, src: str, dst: str) -> str:
+                        # Split while keeping delimiters
+                        tokens = re.split(r'(\s+|[()\[\]])', code)
+
+                        # Replace tokens that exactly match src
+                        tokens = [dst if token.strip() == src else token for token in tokens]
+
+                        # Recombine everything
+                        return ''.join(tokens).strip()
+                    new_code = CodeBlock(code=_token_replace(e.dst.code.as_string, in_tasklet_name, scalar_val),
+                                         language=e.dst.code.language)
+                    e.dst.code = new_code
                 state.remove_edge(e)
-                state.add_edge(assign_tasklet, "_out", scl_an, None, dace.memlet.Memlet.from_array(tmp_name, copydesc))
-                state.add_edge(scl_an, None, dst, e.dst_conn, dace.memlet.Memlet.from_array(tmp_name, copydesc))
                 if e.src_conn is not None:
                     src.remove_out_connector(e.src_conn)
+                if e.dst_conn is not None:
+                    dst.remove_in_connector(e.dst_conn)
             else:
                 state.remove_edge(e)
                 if e.src_conn is not None:
