@@ -1,3 +1,4 @@
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 from typing import List, Union, Optional
 
 from dace.autodiff.backward_pass_generator import BackwardPassGenerator

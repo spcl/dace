@@ -1,3 +1,4 @@
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Pure Python Implementations for ONNX Operations in DaCe.
 
@@ -17,8 +18,6 @@ The module contains:
 Each implementation follows the ONNX specification and is designed to be:
 - Semantically correct according to ONNX standards
 - Efficient when converted to DaCe SDFGs
-- Well-documented with clear parameter descriptions
-- Robust with proper error handling
 """
 
 import copy

@@ -1,3 +1,4 @@
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """
 DaCe ONNX Integration Library.
 
@@ -8,13 +9,11 @@ in DaCe. It enables:
 - Implementing ONNX operations as DaCe library nodes
 - Automatic shape inference for dynamic models
 - Multiple implementation strategies (pure, optimized, etc.)
-- Integration with ONNX Runtime backend API
 
 Main Components:
 - ONNXModel: Main class for importing and manipulating ONNX models
 - ONNXOp: Base class for ONNX operation nodes in SDFGs
 - Schema system: Type checking and validation for ONNX operations
-- Backend: ONNX Runtime compatible backend implementation
 
 The library is registered with DaCe and uses 'pure' as the default implementation
 strategy for ONNX operations.

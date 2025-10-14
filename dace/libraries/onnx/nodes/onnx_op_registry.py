@@ -1,4 +1,4 @@
-import itertools
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import logging
 import collections
 from typing import Iterator, Tuple, List, Dict, Type

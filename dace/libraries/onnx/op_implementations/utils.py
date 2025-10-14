@@ -1,3 +1,4 @@
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import inspect
 import copy
 from typing import Dict, Tuple, Optional, Callable, Union, Any

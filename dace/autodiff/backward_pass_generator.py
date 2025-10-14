@@ -1,25 +1,4 @@
-"""
-Automatic Differentiation (AD) Backward Pass Generator for DaCe SDFGs.
-
-This module provides the BackwardPassGenerator class, which generates backward passes
-for automatic differentiation of Stateful DataFlow Graphs (SDFGs) using reverse-mode AD.
-
-The generator supports:
-- Forward and backward pass generation for mathematical operations
-- Data forwarding strategies (store_all, recompute_all, user_defined)
-- Gradient computation for complex control flow (loops, conditionals)
-- Integration with ONNX operations and DaCe library nodes
-
-Example usage:
-    >>> sdfg = create_forward_sdfg()
-    >>> generator = BackwardPassGenerator(
-    ...     sdfg=sdfg,
-    ...     given_gradients=['output'],
-    ...     required_gradients=['input'],
-    ...     backward_sdfg=sdfg
-    ... )
-    >>> generator.backward()
-"""
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 import logging
 from typing import List, Tuple, Set, Dict, Union, Optional, Sequence

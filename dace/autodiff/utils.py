@@ -1,19 +1,4 @@
-"""
-Automatic Differentiation Utility Functions for DaCe.
-
-This module provides utility functions for the DaCe automatic differentiation system.
-It contains helper functions for:
-- Data descriptor management and creation
-- Symbolic computation and expression manipulation
-- SDFG analysis and graph traversal utilities
-- Loop region analysis and code generation
-- Error handling and validation
-- Forward/backward pass data forwarding
-
-These utilities support the BackwardPassGenerator and various backward implementations
-by providing common functionality for gradient computation and graph manipulation.
-"""
-
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 import collections
 import copy

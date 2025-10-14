@@ -1,3 +1,4 @@
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Hooks for PyTorch tensors to make them compatible with dace
 """
