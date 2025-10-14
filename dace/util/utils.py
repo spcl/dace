@@ -342,7 +342,6 @@ def get_access_node_by_name(sdfg, name):
 
     for node, state in sdfg.all_nodes_recursive():
         if isinstance(node, dace.sdfg.nodes.AccessNode):
-            # print(node.label)
             if node.label == name:
                 return node, state
 
