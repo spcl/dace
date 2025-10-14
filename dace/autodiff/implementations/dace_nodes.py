@@ -306,6 +306,46 @@ class DaceNodeBackwardImplementations:
         required_gradients: List[str],
     ):
         """
+        Performs symbolic differentiation on tasklet code to generate the backward-pass tasklet.
+
+        This method uses SymPy to symbolically differentiate expressions in a tasklet's code,
+        applying the chain rule to compute gradients with respect to input variables.
+
+        Args:
+            sdfg: The parent SDFG containing the tasklet
+            code_str: Code string from the tasklet to differentiate
+            forward_state: The SDFGState containing the forward tasklet
+            tasklet: The forward tasklet node being differentiated
+            given_gradients: List of output connector names for which gradients are provided
+                            (∂L/∂output)
+            required_gradients: List of input connector names for which gradients must be computed
+                            (∂L/∂input)
+
+        Returns:
+            tuple: A 4-tuple containing:
+                - code (str): Generated Python code for the backward tasklet
+                - rev_inputs (set): Set of input connector names for the backward tasklet
+                - rev_outputs (set): Set of output connector names for the backward tasklet
+                - result (BackwardResult): Mapping of forward connectors to backward gradient names
+
+        Raises:
+            AutoDiffException: If symbolic differentiation fails (e.g., non-differentiable operations,
+                            unexpected graph structure, missing input edges)
+
+        Notes:
+            - Uses SymPy's symbolic differentiation and common subexpression elimination (CSE)
+            - Supports indexed array accesses (e.g., A[i, j]) via IndexedBase
+            - Handles constant assignments by zeroing gradients
+            - Gradient names are generated with "_gradient" suffix to avoid conflicts
+            - SDFG-level symbols are excluded from backward tasklet inputs
+            - Type casting ensures gradient types match forward pass data types
+            - Applies chain rule: ∂L/∂input = ∂L/∂output * (∂output/∂input)
+
+        Example:
+            Forward tasklet: `y = x * x + 2 * x`
+            Given gradient: dy (∂L/∂y)
+            Required gradient: dx (∂L/∂x)
+            Generated code: `dx_gradient = dy_gradient * (2*x + 2)`
         """
         output_exprs, indexed_objects_map = ad_utils.code_to_exprs(code_str, tasklet, list(sdfg.symbols.keys()))
 
