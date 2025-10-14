@@ -47,7 +47,7 @@ def add_connecting_access_nodes(graph: gr.OrderedDiGraph):
                 graph.add_edge(outputs[e.src], e.dst)
                 edges_to_remove.append(e)
             else:
-                raise ValueError('This should not happen')
+                raise ValueError('Found directly connected library nodes with source not designated as output')
     for e in edges_to_remove:
         graph.remove_edge(e)
 

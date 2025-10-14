@@ -7,15 +7,10 @@ in the automatic differentiation system. Each class implements the BackwardImple
 interface to compute gradients for specific library operations during reverse-mode
 automatic differentiation.
 
-The implementations handle various library nodes including:
-- Reduction operations (Sum, Max, Min)
-- View operations and memory layout transformations
-- Standard computational patterns
 """
 
 import copy
 import typing
-from typing import List, Optional, Tuple
 
 # DaCe core imports
 import dace
@@ -32,7 +27,7 @@ from dace.registry import autoregister_params
 from dace.autodiff.base_abc import BackwardImplementation, BackwardContext, BackwardResult, AutoDiffException
 
 # Utility imports
-from dace.util import in_desc_with_name, out_desc_with_name, out_edge_with_name
+from dace.util import in_desc_with_name, out_desc_with_name
 
 
 @autoregister_params(node_type=dace.libraries.standard.nodes.Reduce, name="pure")
