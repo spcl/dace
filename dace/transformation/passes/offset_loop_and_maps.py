@@ -187,7 +187,6 @@ class OffsetLoopsAndMaps(ppl.Pass):
         # create a temporary file
         sdfg.validate()
 
-
         if self.convert_leq_to_lt:
             for n, g in sdfg.all_nodes_recursive():
                 if isinstance(n, LoopRegion) and n.loop_condition.language == dace.dtypes.Language.Python:
