@@ -784,19 +784,19 @@ def test_self_loop_to_map():
 
 
 def test_nested_sdfg_nested_loop():
-    def tester_init(A, n):
-      A[0,n] = n
-      for j in range(10):
-          for k in range(10):
-              A[j, k] = 0
 
+    def tester_init(A, n):
+        A[0, n] = n
+        for j in range(10):
+            for k in range(10):
+                A[j, k] = 0
 
     @dace.program
     def tester(A: dace.float32[10, 10]):
-      for i in range(10):
-          tester_init(A, i)
-    
-    sdfg = tester.to_sdfg(simplify=False) # Avoid inlining nested SDFG
+        for i in range(10):
+            tester_init(A, i)
+
+    sdfg = tester.to_sdfg(simplify=False)  # Avoid inlining nested SDFG
     assert sdfg.apply_transformations_repeated(LoopToMap) == 2
 
 

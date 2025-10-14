@@ -490,7 +490,7 @@ class LoopToMap(xf.MultiStateTransformation):
             if sym in sdfg.symbols:
                 sdfg.remove_symbol(sym)
         for sym, dtype in nsymbols.items():
-            nsdfg.symbols[sym] = dtype    
+            nsdfg.symbols[sym] = dtype
 
         # Propagate symbols, where types cannot be inferred
         alltypes = copy.deepcopy(nsdfg.symbols)
@@ -670,7 +670,7 @@ class LoopToMap(xf.MultiStateTransformation):
                 if var not in sdfg.parent_nsdfg_node.symbol_mapping:
                     sdfg.remove_symbol(var)
             else:
-              sdfg.remove_symbol(var)
+                sdfg.remove_symbol(var)
 
         sdfg.reset_cfg_list()
         for n, p in sdfg.all_nodes_recursive():
