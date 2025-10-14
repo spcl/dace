@@ -61,15 +61,6 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
         #  * Control flow block reachability
         #  * Read/write access sets per block
         sdfg = region if isinstance(region, SDFG) else region.sdfg
-        # If we're trying to remove any storing nodes, abort DDE
-        # TODO: This is a temporary fix, as DDE should be able to handle this
-        for node, parent in sdfg.all_nodes_recursive():
-            if "store" in node.label and "durbin" in sdfg.label:
-                print(f"Avoiding DDE in region {region} from {sdfg.label} because of {node.label}")
-                return None
-
-        if region.cfg_id not in pipeline_results[ap.ControlFlowBlockReachability.__name__]:
-            return None
         reachable: Dict[ControlFlowBlock, Set[ControlFlowBlock]] = pipeline_results[
             ap.ControlFlowBlockReachability.__name__][region.cfg_id]
         access_sets: Dict[ControlFlowBlock, Tuple[Set[str], Set[str]]] = pipeline_results[ap.AccessSets.__name__]
