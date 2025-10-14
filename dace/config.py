@@ -5,7 +5,7 @@ import platform
 import tempfile
 import threading
 import io
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 import yaml
 import warnings
 
@@ -142,7 +142,7 @@ class _ConfigData(threading.local):
             self._cfg_filename = filename
             try:
                 if os.path.isfile(filename):
-                    self.load(filename, None)
+                    self.load()
                     break
             except (FileNotFoundError, PermissionError, OSError):
                 # If any filesystem-related error happened during file load, move on to next candidate
@@ -158,7 +158,7 @@ class _ConfigData(threading.local):
             # Reset config to only nondefault ones
             self.save(all=False)
 
-    def load(self, filename, file):
+    def load(self, filename: Optional[str] = None, file: Optional[io.FileIO] = None):
         if file is not None:
             assert filename is None
             self._config = yaml.load(file.read(), Loader=yaml.SafeLoader)
@@ -172,13 +172,13 @@ class _ConfigData(threading.local):
         # Add defaults from metadata
         _add_defaults(self._config, self._config_metadata['required'])
 
-    def load_schema(self, filename):
+    def load_schema(self, filename: Optional[str] = None):
         if filename is None:
             filename = self._metadata_filename
         with open(filename, 'r') as f:
             self._config_metadata = yaml.load(f.read(), Loader=yaml.SafeLoader)
 
-    def save(self, path, all: bool, file):
+    def save(self, path: Optional[str] = None, all: bool = False, file: Optional[io.FileIO] = None):
         if path is None and file is None:
             path = self._cfg_filename
             if path is None:
@@ -324,7 +324,7 @@ class Config(object):
         return Config._data.cfg_filename()
 
     @staticmethod
-    def load(filename=None, file=None):
+    def load(filename: Optional[str] = None, file: Optional[io.FileIO] = None):
         """
         Loads a configuration from an existing file.
 
@@ -335,7 +335,7 @@ class Config(object):
         return Config._data.load(filename=filename, file=file)
 
     @staticmethod
-    def load_schema(filename=None):
+    def load_schema(filename: Optional[str] = None):
         """
         Loads a configuration schema from an existing file.
 
@@ -345,7 +345,7 @@ class Config(object):
         return Config._data.load(filename=filename)
 
     @staticmethod
-    def save(path=None, all: bool = False, file=None):
+    def save(path: Optional[str] = None, all: bool = False, file: Optional[io.FileIO] = None):
         """
         Saves the current configuration to a file.
 
