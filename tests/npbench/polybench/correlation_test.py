@@ -160,6 +160,7 @@ if __name__ == "__main__":
 
     if target == "cpu":
         run_correlation(dace.dtypes.DeviceType.CPU)
+        run_correlation_autodiff()
     elif target == "gpu":
         run_correlation(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":

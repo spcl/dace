@@ -142,6 +142,7 @@ if __name__ == "__main__":
 
     if target == "cpu":
         run_mvt(dace.dtypes.DeviceType.CPU)
+        run_mvt_autodiff()
     elif target == "gpu":
         run_mvt(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":

@@ -160,6 +160,7 @@ if __name__ == "__main__":
 
     if target == "cpu":
         run_atax(dace.dtypes.DeviceType.CPU)
+        run_atax_autodiff()
     elif target == "gpu":
         run_atax(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":

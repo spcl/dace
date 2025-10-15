@@ -155,6 +155,7 @@ if __name__ == "__main__":
 
     if target == "cpu":
         run_k2mm(dace.dtypes.DeviceType.CPU)
+        run_k2mm_autodiff()
     elif target == "gpu":
         run_k2mm(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":

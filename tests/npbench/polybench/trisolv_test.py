@@ -148,6 +148,7 @@ if __name__ == "__main__":
 
     if target == "cpu":
         run_trisolv(dace.dtypes.DeviceType.CPU)
+        run_trisolv_autodiff()
     elif target == "gpu":
         run_trisolv(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":

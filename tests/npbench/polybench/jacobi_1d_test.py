@@ -150,6 +150,7 @@ if __name__ == "__main__":
 
     if target == "cpu":
         run_jacobi_1d(dace.dtypes.DeviceType.CPU)
+        run_jacobi_1d_autodiff()
     elif target == "gpu":
         run_jacobi_1d(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":

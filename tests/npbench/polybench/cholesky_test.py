@@ -184,6 +184,7 @@ if __name__ == "__main__":
 
     if target == "cpu":
         run_cholesky(dace.dtypes.DeviceType.CPU)
+        run_cholesky_autodiff()
     elif target == "gpu":
         run_cholesky(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":

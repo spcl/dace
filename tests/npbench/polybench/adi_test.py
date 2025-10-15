@@ -299,6 +299,7 @@ if __name__ == "__main__":
 
     if target == "cpu":
         run_adi(dace.dtypes.DeviceType.CPU)
+        run_adi_autodiff()
     elif target == "gpu":
         run_adi(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":

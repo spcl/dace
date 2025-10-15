@@ -229,6 +229,7 @@ if __name__ == "__main__":
 
     if target == "cpu":
         run_ludcmp(dace.dtypes.DeviceType.CPU)
+        run_ludcmp_autodiff()
     elif target == "gpu":
         run_ludcmp(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":

@@ -277,6 +277,7 @@ if __name__ == "__main__":
 
     if target == "cpu":
         run_deriche(dace.dtypes.DeviceType.CPU)
+        run_deriche_autodiff()
     elif target == "gpu":
         run_deriche(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":

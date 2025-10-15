@@ -346,6 +346,7 @@ if __name__ == "__main__":
 
     if target == "cpu":
         run_lenet(dace.dtypes.DeviceType.CPU)
+        run_lenet_autodiff()
     elif target == "gpu":
         run_lenet(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":

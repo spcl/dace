@@ -196,6 +196,7 @@ if __name__ == "__main__":
 
     if target == "cpu":
         run_covariance(dace.dtypes.DeviceType.CPU)
+        run_covariance_autodiff()
     elif target == "gpu":
         run_covariance(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":

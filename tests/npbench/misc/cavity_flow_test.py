@@ -325,6 +325,7 @@ if __name__ == "__main__":
 
     if target == "cpu":
         run_cavity_flow(dace.dtypes.DeviceType.CPU)
+        run_cavity_flow_autodiff()
     elif target == "gpu":
         run_cavity_flow(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":

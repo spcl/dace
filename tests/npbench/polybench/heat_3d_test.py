@@ -187,6 +187,7 @@ if __name__ == "__main__":
 
     if target == "cpu":
         run_heat_3d(dace.dtypes.DeviceType.CPU)
+        run_heat_3d_autodiff()
     elif target == "gpu":
         run_heat_3d(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":

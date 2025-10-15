@@ -198,6 +198,7 @@ if __name__ == "__main__":
 
     if target == "cpu":
         run_lu(dace.dtypes.DeviceType.CPU)
+        run_lu_autodiff()
     elif target == "gpu":
         run_lu(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":

@@ -373,6 +373,7 @@ if __name__ == "__main__":
 
     if target == "cpu":
         run_vadv(dace.dtypes.DeviceType.CPU)
+        run_vadv_autodiff()
     elif target == "gpu":
         run_vadv(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":

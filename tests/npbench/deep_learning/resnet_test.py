@@ -339,6 +339,7 @@ if __name__ == "__main__":
 
     if target == "cpu":
         run_resnet(dace.dtypes.DeviceType.CPU)
+        run_resnet_autodiff()
     elif target == "gpu":
         run_resnet(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":

@@ -185,6 +185,7 @@ if __name__ == "__main__":
 
     if target == "cpu":
         run_syr2k(dace.dtypes.DeviceType.CPU)
+        run_syr2k_autodiff()
     elif target == "gpu":
         run_syr2k(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":

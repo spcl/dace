@@ -219,6 +219,7 @@ if __name__ == "__main__":
 
     if target == "cpu":
         run_conv2d_bias(dace.dtypes.DeviceType.CPU)
+        run_conv2d_bias_autodiff()
     elif target == "gpu":
         run_conv2d_bias(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":

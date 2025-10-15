@@ -155,6 +155,7 @@ if __name__ == "__main__":
 
     if target == "cpu":
         run_bicg(dace.dtypes.DeviceType.CPU)
+        run_bicg_autodiff()
     elif target == "gpu":
         run_bicg(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":

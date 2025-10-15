@@ -201,6 +201,7 @@ if __name__ == "__main__":
 
     if target == "cpu":
         run_durbin(dace.dtypes.DeviceType.CPU)
+        run_durbin_autodiff()
     elif target == "gpu":
         run_durbin(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":

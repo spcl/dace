@@ -201,6 +201,7 @@ if __name__ == "__main__":
 
     if target == "cpu":
         run_hdiff(dace.dtypes.DeviceType.CPU)
+        run_hdiff_autodiff()
     elif target == "gpu":
         run_hdiff(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":

@@ -155,6 +155,7 @@ if __name__ == "__main__":
 
     if target == "cpu":
         run_doitgen(dace.dtypes.DeviceType.CPU)
+        run_doitgen_autodiff()
     elif target == "gpu":
         run_doitgen(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":

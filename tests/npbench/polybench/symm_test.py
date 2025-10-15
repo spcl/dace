@@ -180,6 +180,7 @@ if __name__ == "__main__":
 
     if target == "cpu":
         run_symm(dace.dtypes.DeviceType.CPU)
+        run_symm_autodiff()
     elif target == "gpu":
         run_symm(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":

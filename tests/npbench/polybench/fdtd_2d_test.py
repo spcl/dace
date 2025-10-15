@@ -194,6 +194,7 @@ if __name__ == "__main__":
 
     if target == "cpu":
         run_fdtd_2d(dace.dtypes.DeviceType.CPU)
+        run_fdtd_2d_autodiff()
     elif target == "gpu":
         run_fdtd_2d(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":

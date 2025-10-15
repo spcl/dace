@@ -182,6 +182,7 @@ if __name__ == "__main__":
 
     if target == "cpu":
         run_seidel_2d(dace.dtypes.DeviceType.CPU)
+        run_seidel_2d_autodiff()
     elif target == "gpu":
         run_seidel_2d(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":

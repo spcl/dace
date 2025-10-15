@@ -136,6 +136,7 @@ if __name__ == "__main__":
 
     if target == "cpu":
         run_gesummv(dace.dtypes.DeviceType.CPU)
+        run_gesummv_autodiff()
     elif target == "gpu":
         run_gesummv(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":

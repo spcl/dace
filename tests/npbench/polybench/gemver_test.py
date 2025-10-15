@@ -170,6 +170,7 @@ if __name__ == "__main__":
 
     if target == "cpu":
         run_gemver(dace.dtypes.DeviceType.CPU)
+        run_gemver_autodiff()
     elif target == "gpu":
         run_gemver(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":

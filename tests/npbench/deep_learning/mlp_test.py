@@ -210,6 +210,7 @@ if __name__ == "__main__":
 
     if target == "cpu":
         run_mlp(dace.dtypes.DeviceType.CPU)
+        run_mlp_autodiff()
     elif target == "gpu":
         run_mlp(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":

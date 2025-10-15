@@ -137,6 +137,7 @@ if __name__ == "__main__":
 
     if target == "cpu":
         run_softmax(dace.dtypes.DeviceType.CPU)
+        run_softmax_autodiff()
     elif target == "gpu":
         run_softmax(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":
