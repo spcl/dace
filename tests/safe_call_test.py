@@ -1,6 +1,7 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
+import pytest
 
 
 @dace.program
@@ -9,6 +10,7 @@ def indirect_access(A: dace.float64[5], B: dace.float64[5], ub: dace.int64):
         A[i] = B[i] + 1
 
 
+@pytest.mark.sequential
 def test_oob():
     sdfg = indirect_access.to_sdfg()
 
@@ -29,6 +31,7 @@ def test_oob():
     assert caught, "Exception not raised!"
 
 
+@pytest.mark.sequential
 def test_oob_precompiled():
     sdfg = indirect_access.to_sdfg()
 
@@ -50,6 +53,7 @@ def test_oob_precompiled():
     assert caught, "Exception not raised!"
 
 
+@pytest.mark.sequential
 def test_instrumentation():
     sdfg = indirect_access.to_sdfg()
     sdfg.instrument = dace.InstrumentationType.Timer
@@ -62,6 +66,7 @@ def test_instrumentation():
     assert sdfg.get_latest_report() is not None, "Report not generated!"
 
 
+@pytest.mark.sequential
 def test_instrumentation_precompiled():
     sdfg = indirect_access.to_sdfg()
     sdfg.instrument = dace.InstrumentationType.Timer
@@ -75,6 +80,7 @@ def test_instrumentation_precompiled():
     assert sdfg.get_latest_report() is not None, "Report not generated!"
 
 
+@pytest.mark.sequential
 def test_kwargs():
     sdfg = indirect_access.to_sdfg()
 
@@ -84,6 +90,7 @@ def test_kwargs():
     assert np.allclose(A, B + 1), "Output is not forwarded correctly!"
 
 
+@pytest.mark.sequential
 def test_kwargs_precompiled():
     sdfg = indirect_access.to_sdfg()
 
@@ -94,6 +101,7 @@ def test_kwargs_precompiled():
     assert np.allclose(A, B + 1), "Output is not forwarded correctly!"
 
 
+@pytest.mark.sequential
 def test_symbols():
     N = dace.symbol('N')
 
@@ -110,6 +118,7 @@ def test_symbols():
     assert np.allclose(A, B + 1), "Output is not forwarded correctly!"
 
 
+@pytest.mark.sequential
 def test_symbols_precompiled():
     N = dace.symbol('N')
 
