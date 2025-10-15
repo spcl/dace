@@ -672,6 +672,11 @@ class LoopToMap(xf.MultiStateTransformation):
             else:
                 sdfg.remove_symbol(var)
 
+        # Also remove arrays that are unique to the loop body
+        for name in unique_set:
+            if name in sdfg.arrays:
+                sdfg.remove_data(name)
+
         sdfg.reset_cfg_list()
         for n, p in sdfg.all_nodes_recursive():
             if isinstance(n, nodes.NestedSDFG):
