@@ -321,7 +321,7 @@ class SplitDimensions(ppl.Pass):
         # then access [i, j, k] becomes [i, int_floor(j/16), int_floor(k/32), j%16, k%32]
         for state in sdfg.all_states():
             for edge in state.edges():
-                if edge.data is not None and edge.data.data == arr_name:
+                if edge.data.data is not None and edge.data.data == arr_name:
                     # memlet expression is a range/subset expression
                     # we would have [(b,e,s)], if we have a range then:
                     # we would have [(floor(b/16), floor(e/16), s)]
@@ -331,13 +331,31 @@ class SplitDimensions(ppl.Pass):
                                                     other_subset=copy.deepcopy(edge.data.other_subset))
                     edge.data = new_memlet
                 # Other subset issue be careful
-                if isinstance(edge.dst, dace.nodes.AccessNode) and edge.dst.data == arr_name:
+                if ((isinstance(edge.dst, dace.nodes.AccessNode) and edge.dst.data == arr_name) or 
+                    (isinstance(edge.src, dace.nodes.AccessNode) and edge.src.data == arr_name)):
                     if edge.data is not None and edge.data.other_subset is not None:
                         # Update other subset
-                        new_other_range = self._split_range_expressions(edge.data.other_subset, masks, factors, edge,
-                                                                        state)
+                        raise Exception("TODO: Support for Other subsets - I hate other subsets")
+                        assert edge.data.data == edge.dst.data
+                        if edge.dst.data in self._split_map:
+                            if edge.data.data == edge.dst.data:
+                                new_range = self._split_range_expressions(edge.data.other_subset, masks, factors, edge,
+                                                                                state)
+                            else:
+                                new_other_range = copy.deepcopy(edge.data.subset)
+                        else:
+                            new_other_range = copy.deepcopy(edge.data.subset)
+                        assert edge.data.data != edge.src.data
+                        if edge.src.data in self._split_map:
+                            if edge.data.data == edge.src.data:
+                                new_range = self._split_range_expressions(edge.data.subset, masks, factors, edge, state)
+                            else:
+                                new_other_range = copy.deepcopy(edge.data.subset)
+                        else:
+                            new_range = copy.deepcopy(edge.data.subset)
+
                         new_memlet = dace.memlet.Memlet(data=edge.data.data,
-                                                        subset=copy.deepcopy(edge.data.subset),
+                                                        subset=new_range,
                                                         other_subset=new_other_range)
                         edge.data = new_memlet
             for node in state.nodes():
