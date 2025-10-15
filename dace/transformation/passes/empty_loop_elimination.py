@@ -24,25 +24,25 @@ class EmptyLoopElimination(ppl.Pass):
         return modified & ppl.Modifies.CFG
 
     def apply_pass(self, sdfg: SDFG, _) -> Optional[Dict[str, Set[str]]]:
-        loops = [(n, parent) for n, parent in sdfg.all_nodes_recursive() if isinstance(n, LoopRegion) and parent.in_degree(n) <= 1 and parent.out_degree(n) <= 1]
+        loops = [(n, parent) for n, parent in sdfg.all_nodes_recursive()
+                 if isinstance(n, LoopRegion) and parent.in_degree(n) <= 1 and parent.out_degree(n) <= 1]
 
         changed = True
         while changed:
-          changed = False
-          cfgs_to_rm: Set[LoopRegion] = set()
+            changed = False
+            cfgs_to_rm: Set[LoopRegion] = set()
 
-          for node, parent in loops:
-                  inner_nodes = node.nodes()
-                  if len(inner_nodes) == 1 and len(inner_nodes[0].nodes()) == 0:
-                          cfgs_to_rm.add((node, parent))
+            for node, parent in loops:
+                inner_nodes = node.nodes()
+                if len(inner_nodes) == 1 and len(inner_nodes[0].nodes()) == 0:
+                    cfgs_to_rm.add((node, parent))
 
-          for node, parent_graph in cfgs_to_rm:
+            for node, parent_graph in cfgs_to_rm:
                 self._remove_node_connect_src_and_dst(node, parent_graph)
                 loops.remove((node, parent_graph))
                 changed = True
 
         return None
-
 
     def _remove_node_connect_src_and_dst(self, node: LoopRegion, parent_graph: ControlFlowRegion):
         ies = parent_graph.in_edges(node)
@@ -52,13 +52,13 @@ class EmptyLoopElimination(ppl.Pass):
         if len(ies) == 0 and len(oes) == 0:
             parent_graph.add_state_before(node)
             parent_graph.remove_node(node)
-            return  
+            return
 
         if len(ies) == 0:
             parent_graph.add_state_before(node)
         if len(oes) == 0:
-             parent_graph.add_state_after(node)
-        
+            parent_graph.add_state_after(node)
+
         ies = parent_graph.in_edges(node)
         oes = parent_graph.out_edges(node)
         new_assignments = dict()
