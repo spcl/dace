@@ -3,7 +3,7 @@
 from typing import Optional, Set, Dict
 
 from dace import SDFG, InterstateEdge, properties
-from dace.sdfg.state import ControlFlowRegion, LoopRegion
+from dace.sdfg.state import ControlFlowRegion, LoopRegion, ReturnBlock
 from dace.transformation import pass_pipeline as ppl, transformation
 
 
@@ -34,7 +34,8 @@ class EmptyLoopElimination(ppl.Pass):
 
             for node, parent in loops:
                 inner_nodes = node.nodes()
-                if len(inner_nodes) == 1 and len(inner_nodes[0].nodes()) == 0:
+                if len(inner_nodes) == 1 and len(
+                        inner_nodes[0].nodes()) == 0 and not isinstance(inner_nodes[0], ReturnBlock):
                     cfgs_to_rm.add((node, parent))
 
             for node, parent_graph in cfgs_to_rm:

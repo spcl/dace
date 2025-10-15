@@ -155,6 +155,30 @@ def test_loop_with_continue():
     assert len(loop_nodes) == 0
 
 
+def test_loop_with_return():
+
+    @dace.program
+    def tester(a: dace.float64[20]):
+        for i in range(20):
+            return
+
+    sdfg = tester.to_sdfg(simplify=False)
+    sdfg.simplify(skip=["EmptyLoopElimination"])
+    sdfg.validate()
+
+    # Should have exactly one loop region
+    loop_nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, LoopRegion)]
+    assert len(loop_nodes) == 1
+
+    # Apply the transformation
+    EmptyLoopElimination().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    # Check that the loop region is not eliminated
+    loop_nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, LoopRegion)]
+    assert len(loop_nodes) == 1
+
+
 def test_partially_nested_empty_loops():
 
     @dace.program
@@ -214,5 +238,6 @@ if __name__ == '__main__':
     test_nested_empty_loops()
     test_loop_with_break()
     test_loop_with_continue()
+    test_loop_with_return()
     test_partially_nested_empty_loops()
     test_empty_loop_with_symbolic_bounds()
