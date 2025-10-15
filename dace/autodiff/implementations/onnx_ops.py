@@ -31,7 +31,7 @@ import dace.transformation.transformation as xf
 # ONNX-specific imports
 import dace.libraries.onnx as donnx
 from dace.libraries.onnx.converters import clean_onnx_name
-from dace.libraries.onnx.op_implementations import pure_implementations
+from dace.libraries.onnx.op_implementations.linalg_ops import PureEinsum
 from dace.transformation.onnx.replacement import onnx_constant_or_none
 
 # Autodiff imports
@@ -80,7 +80,7 @@ class DefaultEinsumBackward(BackwardImplementation):
 
     @staticmethod
     def backward_can_be_applied(node: nd.Node, state: dace.SDFGState, sdfg: dace.SDFG) -> bool:
-        return pure_implementations.PureEinsum.forward_can_be_applied(node, state, sdfg)
+        return PureEinsum.forward_can_be_applied(node, state, sdfg)
 
     @staticmethod
     def backward(forward_node: nd.Node, context: BackwardContext, given_gradients: List[Optional[str]],
