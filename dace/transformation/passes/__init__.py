@@ -13,5 +13,5 @@ from .scalar_to_symbol import ScalarToSymbolPromotion
 from .simplify import SimplifyPass
 from .symbol_propagation import SymbolPropagation
 from .transient_reuse import TransientReuse
-
+from .offset_loop_and_maps import OffsetLoopsAndMaps
 from .util import available_passes

@@ -1,4 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+import copy
+import re
 import dace
 from typing import Dict, Optional, Set
 import sympy
@@ -15,7 +17,10 @@ import ast
 
 
 def _get_expr_from_str(expr: str) -> dace.symbolic.SymExpr:
-    parsed_expr = sympy.sympify(expr, evaluate=False)
+    try:
+        parsed_expr = sympy.sympify(expr, evaluate=False)
+    except Exception as e:
+        parsed_expr = dace.symbolic.SymExpr(expr)
     return parsed_expr
 
 
@@ -27,13 +32,21 @@ class OffsetLoopsAndMaps(ppl.Pass):
     offset_expr = Property(dtype=str, default="0")
     begin_expr = Property(dtype=str, default="0")
     do_not_check_begin = Property(dtype=bool, default=False)
+    convert_leq_to_lt = Property(dtype=bool, default=True)
+    normalize_loops = Property(dtype=bool, default=False)
 
-    def __init__(self, offset_expr: str, begin_expr: Union[str, None]):
+    def __init__(self,
+                 offset_expr: str,
+                 begin_expr: Union[str, None],
+                 convert_leq_to_lt: bool = True,
+                 normalize_loops: bool = False):
         self.offset_expr = offset_expr
         if begin_expr is None:
             self.do_not_check_begin = True
         else:
             self.begin_expr = begin_expr
+        self.convert_leq_to_lt = convert_leq_to_lt
+        self.normalize_loops = normalize_loops
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Tasklets | ppl.Modifies.CFG | ppl.Modifies.Edges
@@ -94,12 +107,48 @@ class OffsetLoopsAndMaps(ppl.Pass):
                 if isinstance(node, dace.nodes.NestedSDFG):
                     self._repl_interstate_edges_recursive(node.sdfg, repldict)
 
+    def _repl_tasklets_recursive(self, cfg: ControlFlowRegion, repldict):
+
+        def _token_replace(code: str, src: str, dst: str) -> str:
+            # Split while keeping delimiters
+            tokens = re.split(r'(\s+|[()\[\]])', code)
+
+            # Replace tokens that exactly match src
+            tokens = [dst if token.strip() == src else token for token in tokens]
+
+            # Recombine everything
+            return ''.join(tokens).strip()
+
+        for state in cfg.all_states():
+            for node in state.nodes():
+                if isinstance(node, dace.nodes.Tasklet):
+                    code = node.code
+                    code_str = copy.deepcopy(node.code.as_string)
+                    if code.language == dace.dtypes.Language.Python:
+                        # Can raise exceptions if you have stuff like AND in the expression
+                        try:
+                            symexpr = dace.symbolic.SymExpr(code_str.split(" = ")[-1].strip())
+                            symexpr = symexpr.subs(repldict)
+                            code_str = code_str.split(" = ")[0].strip() + " = " + pycode(symexpr)
+                        except Exception as e:
+                            code_str = copy.deepcopy(node.code.as_string)
+                            for k, v in repldict.items():
+                                code_str = _token_replace(code_str, k, v)
+                    else:
+                        for k, v in repldict.items():
+                            code_str = _token_replace(code_str, k, v)
+                    node.code = CodeBlock(code_str, code.language)
+
+                if isinstance(node, dace.nodes.NestedSDFG):
+                    self._repl_interstate_edges_recursive(node.sdfg, repldict)
+
     def _repl_recursive(self, cfg: ControlFlowRegion, repldict: Dict[str, str]):
         """Replace both interstate edges and memlets recursively."""
         self._repl_interstate_edges_recursive(cfg, repldict)
         self._repl_memlets_recursive(cfg, repldict)
         # TODO:
         # Implement for tasklets in case the loop variable is used as a symbol inside tasklet code
+        self._repl_tasklets_recursive(cfg, repldict)
 
     def _add_to_rhs(self, expr: str, add_expr: dace.symbolic.SymExpr, sdfg: dace.SDFG) -> str:
         """Add an expression to the right-hand side of a comparison."""
@@ -118,7 +167,7 @@ class OffsetLoopsAndMaps(ppl.Pass):
 
         # Convert back to string and simplify
         str_expr = ast.unparse(tree)
-        sym_expr = _get_expr_from_str(str_expr).simplify()
+        sym_expr = _get_expr_from_str(str_expr)
         return pycode(sym_expr)
 
         #except Exception as e:
@@ -131,7 +180,8 @@ class OffsetLoopsAndMaps(ppl.Pass):
                 node.loop_condition
                 # The begin expression matches apply offset
                 init_lhs, init_rhs = node.init_statement.as_string.split("=")
-                if self.do_not_check_begin or _get_expr_from_str(init_rhs) == _get_expr_from_str(self.offset_expr):
+                if self.do_not_check_begin or _get_expr_from_str(init_rhs) == _get_expr_from_str(
+                        self.begin_expr) or str(init_rhs) == str(self.begin_expr):
                     init_expr_str = f"(({init_rhs}) + {self.offset_expr})"
                     init_expr = _get_expr_from_str(init_expr_str)
                     new_init_statement = pycode(init_expr)
@@ -141,9 +191,14 @@ class OffsetLoopsAndMaps(ppl.Pass):
                     node.loop_condition = CodeBlock(new_loop_condition)
 
                     # Try normalize after update
-                    node.normalize()
+                    if self.normalize_loops:
+                        node.normalize()
 
-                    repldict = {node.loop_variable: f"({node.loop_variable} - {_get_expr_from_str(self.offset_expr)})"}
+                    v = f"({node.loop_variable} - {_get_expr_from_str(self.offset_expr)})"
+                    if "- -" in v:
+                        v = v.replace("- -", "+ ")
+                    repldict = {node.loop_variable: v}
+
                     self._repl_recursive(node, repldict)
             elif isinstance(node, dace.SDFGState):
                 state = node
@@ -153,11 +208,12 @@ class OffsetLoopsAndMaps(ppl.Pass):
                         new_range_list = []
                         repldict = dict()
                         for (b, e, s), param in zip(state_node.map.range, state_node.map.params):
-                            if self.do_not_check_begin is None or b == _get_expr_from_str(self.begin_expr):
+                            if self.do_not_check_begin is None or b == _get_expr_from_str(
+                                    self.begin_expr) or str(b) == str(self.begin_expr):
                                 has_matches = True
-                                new_range_list.append((b + self._get_expr_from_str(self.offset_expr),
-                                                       e + self._get_expr_from_str(self.offset_expr), s))
-                                repldict[param] = f"({param} - {pycode(self._get_expr_from_str(self.offset_expr))})"
+                                new_range_list.append((b + _get_expr_from_str(self.offset_expr),
+                                                       e + _get_expr_from_str(self.offset_expr), s))
+                                repldict[param] = f"({param} - {pycode(_get_expr_from_str(self.offset_expr))})"
                             else:
                                 new_range_list.append((b, e, s))
 
@@ -177,12 +233,50 @@ class OffsetLoopsAndMaps(ppl.Pass):
                 for _, body in node.branches:
                     self._apply(body)
 
+    def _split_expr_str_opt_rhs(self, expr_str: str, op_to_split: str) -> str:
+        exprs = expr_str.split(op_to_split)
+        if len(exprs) != 2:
+            return expr_str
+        lhs, rhs = exprs[0], exprs[1]
+        lhs = lhs.strip()
+        rhs = rhs.strip()
+
+        # Fix brackets
+        opens = lhs.count("(")
+        exits = lhs.count(")")
+        rhs = "(" * (opens - exits) + rhs
+        expr_str = lhs + op_to_split + sympy.pycode(dace.symbolic.SymExpr(rhs).simplify()) + (")" * (opens - exits))
+        return expr_str
+
     def apply_pass(self, sdfg: SDFG, pipeline_results) -> Optional[Dict[str, Set[str]]]:
         # Do it for LoopRegions and Maps
         self._apply(sdfg)
-        # TODO:
-        # Current SDFG results in missing symbols in generated function expressions,
-        # Only saving and loading it seems to fix the issue
-        # create a temporary file
         sdfg.validate()
+
+        # Simplify <= loop conditions to use < if set
+        if self.convert_leq_to_lt:
+            for n, g in sdfg.all_nodes_recursive():
+                if isinstance(n, LoopRegion) and n.loop_condition.language == dace.dtypes.Language.Python:
+                    expr = dace.symbolic.SymExpr(n.loop_condition.as_string)
+                    if isinstance(expr, sympy.core.relational.Relational) and isinstance(expr, sympy.LessThan):
+                        lhs, rhs = expr.lhs, expr.rhs
+                        n.loop_condition = CodeBlock(sympy.pycode(sympy.StrictLessThan(lhs, rhs + 1)))
+
+                    # Simplify only the rhs do this by splitting the expression from "<" and ( with the number of opened ( from left
+                    # Then simplify it and add back
+                    expr_str = self._split_expr_str_opt_rhs(n.loop_condition.as_string, " < ")
+                    n.loop_condition = CodeBlock(expr_str)
+        sdfg.validate()
+
+        # Try to simplify loop init statements, expressions such as ((-1) + 1)
+        for n, g in sdfg.all_nodes_recursive():
+            if isinstance(n, LoopRegion) and n.init_statement.language == dace.dtypes.Language.Python:
+                try:
+                    expr_str = self._split_expr_str_opt_rhs(n.init_statement.as_string, " = ")
+                except Exception as e:
+                    print(str(e))
+                    expr_str = n.init_statement.as_string
+                n.init_statement = CodeBlock(expr_str)
+        sdfg.validate()
+
         return None

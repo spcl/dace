@@ -1109,7 +1109,7 @@ class SqueezeViewRemove(pm.SingleStateTransformation):
         if astrides != vstrides:
             return False
 
-        # If destination node is nsdfg and view connects to an inout connector, then skip
+        # If the destination node is an nsdfg and the view connects to an inout connector, then skip
         for e in state.memlet_path(vedge):
             if isinstance(e.dst, nodes.NestedSDFG):
                 dst_conn = e.dst_conn
@@ -1195,7 +1195,7 @@ class UnsqueezeViewRemove(pm.SingleStateTransformation):
         if astrides != vstrides:
             return False
 
-        # If destination node is nsdfg and view connects to an inout connector, then skip
+        # If the source node is an nsdfg and the view connects to an inout connector, then skip
         for e in state.memlet_path(vedge):
             if isinstance(e.src, nodes.NestedSDFG):
                 src_conn = e.src_conn
