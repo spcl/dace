@@ -1,5 +1,7 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
+
+import pytest
 import dace
 import numpy
 from dace import ControlFlowRegion
@@ -175,17 +177,23 @@ def _run_and_compare(original_sdfg, transformed_sdfg, arg_names_to_compare):
     gc.collect()
 
 
-def test_loop_offsetting():
+@pytest.mark.parametrize("normalize_loops", [False, True])
+def test_loop_offsetting(normalize_loops):
     sdfg = _cloudsc_snippet_one.to_sdfg()
     sdfg.validate()
     copy_sdfg = copy.deepcopy(sdfg)
     copy_sdfg.name = copy_sdfg.name + "_offset"
-    OffsetLoopsAndMaps(begin_expr=None, offset_expr="-1").apply_pass(copy_sdfg, {})
+    OffsetLoopsAndMaps(begin_expr=None, offset_expr="-1", convert_leq_to_lt=False,
+                       normalize_loops=normalize_loops).apply_pass(copy_sdfg, {})
     # Begin expressions should be:
     # 0 and kidia + 1
     regions = _for_regions_and_beings(copy_sdfg)
+    copy_sdfg.save("tmp1.sdfg")
     assert regions["i"] == "0", f"Expected 0 but got {regions['i']}"
-    assert regions["j"] == "kidia", f"Expected kidia but got {regions['j']}"
+    if not normalize_loops:
+        assert regions["j"] == "kidia", f"Expected kidia but got {regions['j']}"
+    else:
+        assert regions["j"] == "0", f"Expected kidia but got {regions['j']}"
     copy_sdfg.validate()
     _run_and_compare(sdfg, copy_sdfg, ["za", "zliqfrac", "zicefrac", "zx"])
 
@@ -195,7 +203,7 @@ def test_loop_offsetting_w_begin_expr():
     sdfg.validate()
     copy_sdfg = copy.deepcopy(sdfg)
     copy_sdfg.name = copy_sdfg.name + "_offset"
-    _pass = OffsetLoopsAndMaps(begin_expr="1", offset_expr="-1")
+    _pass = OffsetLoopsAndMaps(begin_expr="1", offset_expr="-1", convert_leq_to_lt=False, normalize_loops=False)
     assert _pass.begin_expr == "1"
     assert _pass.offset_expr == "-1"
     _pass.apply_pass(copy_sdfg, {})
@@ -214,14 +222,15 @@ def test_symbol_use_in_tasklet():
     sdfg.validate()
     copy_sdfg = copy.deepcopy(sdfg)
     copy_sdfg.name = copy_sdfg.name + "_offset"
-    OffsetLoopsAndMaps(begin_expr=None, offset_expr="-1").apply_pass(copy_sdfg, {})
+    OffsetLoopsAndMaps(begin_expr=None, offset_expr="-1", convert_leq_to_lt=False,
+                       normalize_loops=False).apply_pass(copy_sdfg, {})
     # 1 taskelt should be left
     num_tasklets = 0
     for state in copy_sdfg.all_states():
         for node in state.nodes():
             if isinstance(node, dace.nodes.Tasklet):
                 num_tasklets += 1
-    assert num_tasklets == 1
+    assert num_tasklets == 2
     copy_sdfg.validate()
     copy_sdfg.simplify()
 
@@ -243,7 +252,8 @@ def test_simple_element_wise():
     sdfg.validate()
     copy_sdfg = copy.deepcopy(sdfg)
     copy_sdfg.name = copy_sdfg.name + "_offset"
-    OffsetLoopsAndMaps(begin_expr="1", offset_expr="-1").apply_pass(copy_sdfg, {})
+    OffsetLoopsAndMaps(begin_expr="1", offset_expr="-1", convert_leq_to_lt=False,
+                       normalize_loops=False).apply_pass(copy_sdfg, {})
     # 1 taskelt should be left
     num_tasklets = 0
     for state in copy_sdfg.all_states():
@@ -272,7 +282,8 @@ def test_begin_expr_condition():
     sdfg.validate()
     copy_sdfg = copy.deepcopy(sdfg)
     copy_sdfg.name = copy_sdfg.name + "_offset"
-    OffsetLoopsAndMaps(begin_expr="1", offset_expr="-1").apply_pass(copy_sdfg, {})
+    OffsetLoopsAndMaps(begin_expr="1", offset_expr="-1", convert_leq_to_lt=False,
+                       normalize_loops=False).apply_pass(copy_sdfg, {})
     # Begin expressions should be:
     # 0 and kidia + 1
     regions = _for_regions_and_beings(copy_sdfg)
@@ -287,8 +298,10 @@ def test_with_conditional():
     sdfg = _cloudsc_snippet_one_within_if.to_sdfg()
     copy_sdfg = copy.deepcopy(sdfg)
     copy_sdfg.name = copy_sdfg.name + "_offset"
-    OffsetLoopsAndMaps(begin_expr="1", offset_expr="-1").apply_pass(copy_sdfg, {})
+    OffsetLoopsAndMaps(begin_expr="1", offset_expr="-1", convert_leq_to_lt=False,
+                       normalize_loops=False).apply_pass(copy_sdfg, {})
     regions = _for_regions_and_beings(copy_sdfg)
+    copy_sdfg.save("tmp1.sdfg")
     assert regions["i"] == "0", f"Expected 0 but got {regions['i']}"
     assert regions["j"] == "(kidia + 1)", f"Expected kidia + 1 but got {regions['j']}"
     _run_and_compare(sdfg, copy_sdfg, ["za", "zliqfrac", "zicefrac", "zx"])
@@ -297,7 +310,8 @@ def test_with_conditional():
 if __name__ == "__main__":
     test_simple_element_wise()
     test_symbol_use_in_tasklet()
-    test_loop_offsetting()
+    test_loop_offsetting(True)
+    test_loop_offsetting(False)
     test_loop_offsetting_w_begin_expr()
     test_begin_expr_condition()
     test_with_conditional()
