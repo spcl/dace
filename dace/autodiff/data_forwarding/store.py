@@ -319,7 +319,16 @@ def _store_data(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState
     # First, we check if this can be avoided
     # We do a BFS exploration to see if the data we are trying to store is overwritten within the same execution state
     bfs_nodes = list(forward_state.bfs_nodes(source=forward_an))
-    if any(isinstance(n, nodes.AccessNode) and n.data == forward_an.data and n is not forward_an for n in bfs_nodes):
+
+    # We make sure that views are also compared with their original array to check for conflicts
+    conflict_arryas = [forward_an.data]
+    # Check if the access node is a view
+    if isinstance(forward_an.desc(forward_state), (dt.View, dt.ArrayView)):
+        # Get the original array name
+        viewed_array = next(forward_state.in_edges_by_connector(forward_an, "views")).data.data
+        conflict_arryas.append(viewed_array)
+
+    if any(isinstance(n, nodes.AccessNode) and n.data in conflict_arryas and n is not forward_an for n in bfs_nodes):
         to_connect = []
         for out_edge in forward_state.out_edges(forward_an):
             # Get the destination of the edge

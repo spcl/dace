@@ -33,6 +33,7 @@ from dace.libraries.onnx.op_implementations.utils import (empty_sdfg_for_node, o
                                                           python_pure_op_implementation)
 from dace.transformation.onnx import constant_folding
 from dace.transformation.onnx.replacement import onnx_constant_or_none
+from dace.libraries.onnx import converters
 
 # ==============================================================================
 # Concatenation Operations

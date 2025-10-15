@@ -14,6 +14,7 @@ import copy
 import logging
 import dace
 from dace.util import (in_desc_with_name, out_desc_with_name)
+from dace import SDFG, SDFGState
 
 log = logging.getLogger(__name__)
 
