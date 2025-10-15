@@ -125,9 +125,15 @@ class OffsetLoopsAndMaps(ppl.Pass):
                     code = node.code
                     code_str = copy.deepcopy(node.code.as_string)
                     if code.language == dace.dtypes.Language.Python:
-                        symexpr = dace.symbolic.SymExpr(code_str.split(" = ")[-1].strip())
-                        symexpr = symexpr.subs(repldict)
-                        code_str = code_str.split(" = ")[0].strip() + " = " + pycode(symexpr)
+                        # Can raise exceptions if you have stuff like AND in the expression
+                        try:
+                            symexpr = dace.symbolic.SymExpr(code_str.split(" = ")[-1].strip())
+                            symexpr = symexpr.subs(repldict)
+                            code_str = code_str.split(" = ")[0].strip() + " = " + pycode(symexpr)
+                        except Exception as e:
+                            code_str = copy.deepcopy(node.code.as_string)
+                            for k, v in repldict.items():
+                                code_str = _token_replace(code_str, k, v)
                     else:
                         for k, v in repldict.items():
                             code_str = _token_replace(code_str, k, v)
