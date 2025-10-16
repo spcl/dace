@@ -2444,7 +2444,6 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
                     e.dst.code = new_code
                 else:
 
-
                     new_code = CodeBlock(code=_token_replace(e.dst.code.as_string, in_tasklet_name, scalar_val),
                                          language=e.dst.code.language)
                     e.dst.code = new_code

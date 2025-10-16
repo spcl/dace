@@ -82,7 +82,6 @@ class RemoveLoopsWithEmptyBodies(ppl.Pass):
             parent_graph.add_state(f"{node.label}_empty_replacement", is_start_block=True)
 
     def _apply(self, cfg: dace.ControlFlowRegion):
-        print(f"[DEBUG] Applying pass on CFG: {cfg.label if hasattr(cfg, 'label') else '<unnamed>'}")
         set_to_check = set(cfg.all_control_flow_regions())
         while set_to_check:
             cfgs_to_rm: Set[LoopRegion] = set()
@@ -90,39 +89,25 @@ class RemoveLoopsWithEmptyBodies(ppl.Pass):
             for node in set_to_check:
                 parent_graph = node.parent_graph
                 if isinstance(node, LoopRegion):
-                    print(f"  [DEBUG] Checking LoopRegion: {node.label if hasattr(node, 'label') else str(node)}")
-                    print(f"    Nodes inside: {len(node.nodes())}, indeg={parent_graph.in_degree(node)}, outdeg={parent_graph.out_degree(node)}")
-
-                    if len(node.nodes()) == 1 and parent_graph.in_degree(node) <= 1 and parent_graph.out_degree(node) <= 1:
+                    if len(node.nodes()) == 1 and parent_graph.in_degree(node) <= 1 and parent_graph.out_degree(
+                            node) <= 1:
                         in_conds = [ie.data.condition.as_string.strip() for ie in parent_graph.in_edges(node)]
                         out_conds = [oe.data.condition.as_string.strip() for oe in parent_graph.out_edges(node)]
-                        print(f"    [DEBUG] In-edge conditions: {in_conds}")
-                        print(f"    [DEBUG] Out-edge conditions: {out_conds}")
 
                         in_all_true = all(c in ("1", "(1)", "") for c in in_conds)
                         out_all_true = all(c in ("1", "(1)", "") for c in out_conds)
 
                         if in_all_true and out_all_true:
                             inner_nodes = node.nodes()
-                            print(f"    [DEBUG] Inner nodes: {inner_nodes}")
                             if len(inner_nodes) == 1:
                                 inner_node = list(inner_nodes)[0]
                                 if isinstance(inner_node, dace.SDFGState) and len(inner_node.nodes()) == 0:
-                                    print(f"    [DEBUG] Marking LoopRegion {node.label if hasattr(node, 'label') else str(node)} for removal.")
                                     cfgs_to_rm.add((node, parent_graph))
-                                else:
-                                    print(f"    [DEBUG] Inner node not empty or not SDFGState.")
-                            else:
-                                print(f"    [DEBUG] LoopRegion does not have exactly one inner node.")
-                        else:
-                            print(f"    [DEBUG] Skipping LoopRegion due to non-trivial conditions.")
 
             set_to_check = {g for n, g in cfgs_to_rm}
 
             for node, parent_graph in cfgs_to_rm:
-                print(f"[DEBUG] Removing LoopRegion: {node.label if hasattr(node, 'label') else str(node)} from {parent_graph.label if hasattr(parent_graph, 'label') else str(parent_graph)}")
                 self._remove_node_connect_src_and_dst(node, parent_graph)
-
 
     def apply_pass(self, sdfg: SDFG, pipeline_results) -> Optional[Dict[str, Set[str]]]:
         self._apply(sdfg)
