@@ -12,7 +12,7 @@ from dace.transformation.passes.analysis import loop_analysis, StateReachability
 from dace.symbolic import pystr_to_symbolic, issymbolic
 from dace.subsets import Range
 import copy
-from typing import Union, Set, Optional
+from typing import Union, Set, Optional, Dict, Any
 
 
 @properties.make_properties
@@ -110,11 +110,22 @@ class LoopLocalMemoryReduction(ppl.Pass):
         # If anything was modified, reapply
         return modified != ppl.Modifies.Nothing
 
-    def apply_pass(self, sdfg: sd.SDFG, _) -> Optional[Set[str]]:
+    def depends_on(self):
+        return {StateReachability, FindAccessStates}
+
+    def apply_pass(self, sdfg: sd.SDFG, pipeline_results: Dict[str, Any]) -> Optional[Set[str]]:
         self.num_applications = 0
-        self.states_reach = StateReachability().apply_pass(sdfg, {})
-        self.access_states = FindAccessStates().apply_pass(sdfg, {})
         self.out_of_loop_states_cache = {}
+
+        if StateReachability.__name__ in pipeline_results:
+            self.states_reach = pipeline_results[StateReachability.__name__]
+        else:
+            self.states_reach = StateReachability().apply_pass(sdfg, {})
+
+        if FindAccessStates.__name__ in pipeline_results:
+            self.access_states = pipeline_results[FindAccessStates.__name__]
+        else:
+            self.access_states = FindAccessStates().apply_pass(sdfg, {})
 
         for node, _ in sdfg.all_nodes_recursive():
             if isinstance(node, LoopRegion):
