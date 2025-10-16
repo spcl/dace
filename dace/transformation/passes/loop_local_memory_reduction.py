@@ -8,7 +8,7 @@ from dace.sdfg.state import ControlFlowRegion, LoopRegion, ConditionalBlock
 from dace.data import Scalar
 from dace.transformation import transformation as xf
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.passes.analysis import loop_analysis, StateReachability
+from dace.transformation.passes.analysis import loop_analysis, StateReachability, FindAccessStates
 from dace.symbolic import pystr_to_symbolic, issymbolic
 from dace.subsets import Range
 import copy
@@ -112,7 +112,9 @@ class LoopLocalMemoryReduction(ppl.Pass):
 
     def apply_pass(self, sdfg: sd.SDFG, _) -> Optional[Set[str]]:
         self.num_applications = 0
-        self.can_reach = StateReachability().apply_pass(sdfg, {})
+        self.states_reach = StateReachability().apply_pass(sdfg, {})
+        self.access_states = FindAccessStates().apply_pass(sdfg, {})
+        self.out_of_loop_states_cache = {}
 
         for node, _ in sdfg.all_nodes_recursive():
             if isinstance(node, LoopRegion):
@@ -129,6 +131,8 @@ class LoopLocalMemoryReduction(ppl.Pass):
 
                 for arr in arrays:
                     self._apply_for_array(arr, sdfg, node, write_states)
+
+        self.out_of_loop_states_cache = {}
 
     def _get_edge_indices(self, subset: Range, loop: LoopRegion) -> list[Union[tuple, None]]:
         # list of tuples of (a, b) for a*i + b, None if cannot be determined
@@ -271,22 +275,25 @@ class LoopLocalMemoryReduction(ppl.Pass):
         # The (overapproximated) written subset must be written before read or not read at all.
         # TODO: This is overly conservative. Just checks if there are access nodes after the loop.
 
-        loop_states = set(loop.all_states())
-        for k1, v1 in self.can_reach.items():
-            for k2, v2 in v1.items():
-                if k2 not in loop_states:
-                    continue
-                for st in v2:
-                    if st not in loop_states and any(an.data == array_name for an in st.data_nodes()):
-                        # Access outside of the loop
-                        return False
-        return True
+        if loop in self.out_of_loop_states_cache:
+            out_of_loop_states = self.out_of_loop_states_cache[loop]
+        else:
+            loop_states = set(loop.all_states())
+            states_reach = self.states_reach[sdfg.cfg_id]
+            out_of_loop_states = set(v for st in loop_states for v in states_reach[st] if v not in loop_states)
+            self.out_of_loop_states_cache[loop] = out_of_loop_states
+
+        access_states = self.access_states[sdfg.cfg_id]
+        array_states = access_states[array_name]
+
+        # There should be no overlap between out_of_loop_states and states that read the array.
+        return out_of_loop_states.isdisjoint(array_states)
 
     def _get_max_indices_before_loop(self, array_name: str, sdfg: sd.SDFG, loop: LoopRegion) -> list[int]:
         # Collect all read and write subsets of the array before the loop.
         loop_states = set(loop.all_states())
         subsets = set()
-        for k1, v1 in self.can_reach.items():
+        for k1, v1 in self.states_reach.items():
             for k2, v2 in v1.items():
                 if len(v2.intersection(loop_states)) == 0 or k2 in loop_states:
                     continue
