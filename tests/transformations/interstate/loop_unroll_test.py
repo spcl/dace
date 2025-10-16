@@ -11,14 +11,12 @@ from dace.transformation.interstate.loop_unroll import LoopUnroll
 def _get_sdfg(add_state_before: bool, l: int) -> dace.SDFG:
     sdfg = dace.SDFG("size_5_loop_sdfg")
 
-    for_cfg = LoopRegion(
-        label="size_5_loop",
-        condition_expr=CodeBlock(f"i < {l}"),
-        loop_var="i",
-        initialize_expr=CodeBlock("i = 0"),
-        update_expr=CodeBlock("i = i + 1"),
-        sdfg=sdfg
-    )
+    for_cfg = LoopRegion(label="size_5_loop",
+                         condition_expr=CodeBlock(f"i < {l}"),
+                         loop_var="i",
+                         initialize_expr=CodeBlock("i = 0"),
+                         update_expr=CodeBlock("i = i + 1"),
+                         sdfg=sdfg)
 
     if add_state_before:
         _ps = sdfg.add_state(label="pre_s", is_start_block=True)
@@ -44,20 +42,16 @@ def _get_sdfg(add_state_before: bool, l: int) -> dace.SDFG:
 
     b_an = s2.add_access("B")
     a_an = s2.add_access("A")
-    t = s2.add_tasklet(
-        name="assign",
-        inputs={"_in"},
-        outputs={"_out"},
-        code="_out = _in"
-    )
+    t = s2.add_tasklet(name="assign", inputs={"_in"}, outputs={"_out"}, code="_out = _in")
     s2.add_edge(t, "_out", b_an, None, Memlet(expr="B[i]"))
     s2.add_edge(a_an, None, t, "_in", Memlet(expr="A[i]"))
 
-    sdfg.add_array("A", shape=(5,), dtype=dace.float64)
-    sdfg.add_array("B" , shape=(5,), dtype=dace.float64)
+    sdfg.add_array("A", shape=(5, ), dtype=dace.float64)
+    sdfg.add_array("B", shape=(5, ), dtype=dace.float64)
 
     sdfg.validate()
     return sdfg
+
 
 def test_if_block_inside_for():
     sdfg = _get_sdfg(add_state_before=True, l=5)
@@ -67,6 +61,7 @@ def test_if_block_inside_for():
     loops = {n for n in sdfg.all_control_flow_regions() if isinstance(n, LoopRegion)}
     assert len(loops) == 0
 
+
 def test_top_level_for():
     sdfg = _get_sdfg(add_state_before=False, l=5)
 
@@ -75,6 +70,7 @@ def test_top_level_for():
     loops = {n for n in sdfg.all_control_flow_regions() if isinstance(n, LoopRegion)}
     assert len(loops) == 0
 
+
 def test_empty_loop():
     sdfg = _get_sdfg(add_state_before=False, l=0)
 
@@ -82,6 +78,7 @@ def test_empty_loop():
 
     loops = {n for n in sdfg.all_control_flow_regions() if isinstance(n, LoopRegion)}
     assert len(loops) == 0
+
 
 if __name__ == "__main__":
     test_if_block_inside_for()

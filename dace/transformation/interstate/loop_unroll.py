@@ -88,7 +88,6 @@ class LoopUnroll(xf.MultiStateTransformation):
             for oe in graph.out_edges(self.loop):
                 graph.add_edge(unrolled_iterations[-1], oe.dst, oe.data)
 
-
         graph.remove_node(self.loop)
 
         # If loop length is 0
