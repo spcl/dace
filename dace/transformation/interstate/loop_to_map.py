@@ -112,6 +112,7 @@ class LoopToMap(xf.MultiStateTransformation):
         # We cannot handle symbols read from data containers unless they are scalar.
         for expr in (start, end, step):
             if symbolic.contains_sympy_functions(expr):
+                print(f"LoopToMap Failed because a data container is read in a loop expr: {expr} for node {self.loop}")
                 return False
 
         _, write_set = self.loop.read_and_write_sets()
@@ -169,6 +170,7 @@ class LoopToMap(xf.MultiStateTransformation):
                     for e in state.in_edges(dn):
                         if e.data.dynamic and e.data.wcr is None:
                             # If pointers are involved, give up
+                            print(f"Poitner involved? for {self.loop}")
                             return False
                         # To be sure that the value is only written at unique
                         # indices per loop iteration, we want to match symbols
@@ -177,6 +179,10 @@ class LoopToMap(xf.MultiStateTransformation):
                         if e.data.wcr is None:
                             dst_subset = e.data.get_dst_subset(e, state)
                             if not (dst_subset and _check_range(dst_subset, a, itersym, b, step)):
+                                print(dst_subset)
+                                print(_check_range(dst_subset, a, itersym, b, step))
+                                print(a,",", b,",", itersym, ",", step)
+                                print(f"Some write check failed? for {self.loop}")
                                 return False
                         # End of check
 
