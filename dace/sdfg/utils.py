@@ -2388,10 +2388,21 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
     # 3. Access Node
     # -> If access node is used then e.g. [scalar] -> [tasklet]
     # -> then [tasklet(assign const value)] -> [access node] -> [tasklet]
+    import re
+
+    def _token_replace(code: str, src: str, dst: str) -> str:
+        # Split while keeping delimiters
+        tokens = re.split(r'(\s+|[()\[\]])', code)
+
+        # Replace tokens that exactly match src
+        tokens = [dst if token.strip() == src else token for token in tokens]
+
+        # Recombine everything
+        return ''.join(tokens).strip()
 
     def repl_code_block_or_str(input: Union[CodeBlock, str], src: str, dst: str):
         if isinstance(input, CodeBlock):
-            return CodeBlock(input.as_string.replace(src, dst))
+            return CodeBlock(_token_replace(input.as_string, src, dst))
         else:
             return input.replace(src, dst)
 
@@ -2432,17 +2443,7 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
                     new_code = CodeBlock(code=f"{lhs} = {subs_rhs}", language=dace.dtypes.Language.Python)
                     e.dst.code = new_code
                 else:
-                    import re
 
-                    def _token_replace(code: str, src: str, dst: str) -> str:
-                        # Split while keeping delimiters
-                        tokens = re.split(r'(\s+|[()\[\]])', code)
-
-                        # Replace tokens that exactly match src
-                        tokens = [dst if token.strip() == src else token for token in tokens]
-
-                        # Recombine everything
-                        return ''.join(tokens).strip()
 
                     new_code = CodeBlock(code=_token_replace(e.dst.code.as_string, in_tasklet_name, scalar_val),
                                          language=e.dst.code.language)
