@@ -336,28 +336,6 @@ class SplitDimensions(ppl.Pass):
                     if edge.data is not None and edge.data.other_subset is not None:
                         # Update other subset
                         raise Exception("TODO: Support for Other subsets - I hate other subsets")
-                        assert edge.data.data == edge.dst.data
-                        if edge.dst.data in self._split_map:
-                            if edge.data.data == edge.dst.data:
-                                new_range = self._split_range_expressions(edge.data.other_subset, masks, factors, edge,
-                                                                                state)
-                            else:
-                                new_other_range = copy.deepcopy(edge.data.subset)
-                        else:
-                            new_other_range = copy.deepcopy(edge.data.subset)
-                        assert edge.data.data != edge.src.data
-                        if edge.src.data in self._split_map:
-                            if edge.data.data == edge.src.data:
-                                new_range = self._split_range_expressions(edge.data.subset, masks, factors, edge, state)
-                            else:
-                                new_other_range = copy.deepcopy(edge.data.subset)
-                        else:
-                            new_range = copy.deepcopy(edge.data.subset)
-
-                        new_memlet = dace.memlet.Memlet(data=edge.data.data,
-                                                        subset=new_range,
-                                                        other_subset=new_other_range)
-                        edge.data = new_memlet
             for node in state.nodes():
                 if isinstance(node, dace.nodes.NestedSDFG):
                     in_map = {ie.data.data: ie.dst_conn for ie in state.in_edges(node)}
