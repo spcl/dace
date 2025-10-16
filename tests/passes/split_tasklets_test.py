@@ -296,6 +296,27 @@ def tasklets_in_if(
             b[i, j] = (1 - a[i, j]) * c
 
 
+def _get_sdfg_with_symbol_use_in_tasklet() -> dace.SDFG:
+    sdfg = dace.SDFG("sd1")
+    state = sdfg.add_state("s1")
+
+    sdfg.add_symbol("zfac", dace.float64, find_new_name=False)
+    sdfg.add_array("A", shape=(1, ), dtype=dace.float64, transient=False)
+    sdfg.add_array("B", shape=(1, ), dtype=dace.float64, transient=False)
+    sdfg.add_array("C", shape=(1, ), dtype=dace.float64, transient=False)
+
+    t = state.add_tasklet(name="t1", inputs={"_in1", "_in2"}, outputs={"_out1"}, code="_out1 = _in1 + _in2 + zfac")
+    a = state.add_access("A")
+    b = state.add_access("B")
+    c = state.add_access("C")
+
+    state.add_edge(a, None, t, "_in1", dace.memlet.Memlet("A[0]"))
+    state.add_edge(b, None, t, "_in2", dace.memlet.Memlet("B[0]"))
+    state.add_edge(t, "_out1", c, None, dace.memlet.Memlet("C[0]"))
+
+    return sdfg
+
+
 def test_branch_fusion_tasklets():
     try:
         from dace.transformation.passes.fuse_branches_pass import FuseBranchesPass
@@ -448,7 +469,41 @@ def test_expressions_with_typecast_first_in_map():
     assert numpy.allclose(A_orig, A_vec)
 
 
+def test_symbol_in_tasklet():
+    A = numpy.random.random((1, ))
+    B = numpy.random.random((1, ))
+    C = numpy.random.random((1, ))
+
+    # Create copies for comparison
+    A_orig = A.copy()
+    A_vec = A.copy()
+    B_orig = B.copy()
+    B_vec = B.copy()
+    C_orig = C.copy()
+    C_vec = C.copy()
+
+    # Original SDFG
+    sdfg = _get_sdfg_with_symbol_use_in_tasklet()
+    sdfg.validate()
+    c_sdfg = sdfg.compile()
+
+    # Vectorized SDFG
+    copy_sdfg = copy.deepcopy(sdfg)
+    SplitTasklets().apply_pass(copy_sdfg, {})
+    c_copy_sdfg = copy_sdfg.compile()
+    copy_sdfg.validate()
+
+    c_sdfg(A=A_orig, B=B_orig, C=C_orig, zfac=0.25)
+    c_copy_sdfg(A=A_vec, B=B_vec, C=C_vec, zfac=0.25)
+
+    # Compare results
+    assert numpy.allclose(A_orig, A_vec)
+    assert numpy.allclose(B_orig, B_vec)
+    assert numpy.allclose(C_orig, C_vec)
+
+
 if __name__ == "__main__":
+    test_symbol_in_tasklet()
     test_branch_fusion_tasklets()
     test_branch_fusion_tasklets_two()
     test_expressions_with_nested_sdfg_and_explicit_typecast()
