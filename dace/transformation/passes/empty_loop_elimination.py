@@ -1,6 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
-from typing import Set
+from typing import Set, Optional
 
 from dace import SDFG, InterstateEdge, properties
 from dace.sdfg.state import ControlFlowRegion, LoopRegion, ReturnBlock
@@ -23,7 +23,7 @@ class EmptyLoopElimination(ppl.Pass):
         # If connectivity or any edges were changed, some more loops might be dead
         return modified & ppl.Modifies.CFG
 
-    def apply_pass(self, sdfg: SDFG, _) -> int:
+    def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
         loops = [(n, parent) for n, parent in sdfg.all_nodes_recursive()
                  if isinstance(n, LoopRegion) and parent.in_degree(n) <= 1 and parent.out_degree(n) <= 1]
 
@@ -45,7 +45,9 @@ class EmptyLoopElimination(ppl.Pass):
                 loops.remove((node, parent_graph))
                 changed = True
 
-        return num_removed
+        if num_removed > 0:
+            return num_removed
+        return None
 
     def _remove_node_connect_src_and_dst(self, node: LoopRegion, parent_graph: ControlFlowRegion):
         ies = parent_graph.in_edges(node)
