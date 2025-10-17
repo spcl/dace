@@ -83,7 +83,7 @@ class FlexClusterArch:
         self.cluster_reg_size        = {cluster_reg_size}
 
         # Spatz Vector Unit
-        self.spatz_attaced_core_list = []  # Default empty
+        self.spatz_attaced_core_list = [0]  # Default empty
         self.spatz_num_vlsu_port     = {spatz_num_vlsu_port}
         self.spatz_num_function_unit = {spatz_num_function_unit}
 
