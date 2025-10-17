@@ -429,6 +429,8 @@ def _Attribute(t, symbols, inferred_symbols):
     if (isinstance(inferred_type, dtypes.pointer) and isinstance(inferred_type.base_type, dtypes.struct)
             and t.attr in inferred_type.base_type.fields):
         return inferred_type.base_type.fields[t.attr]
+    elif isinstance(inferred_type, dtypes.struct) and t.attr in inferred_type.fields:
+        return inferred_type.fields[t.attr]
     return inferred_type
 
 

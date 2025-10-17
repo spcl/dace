@@ -1,17 +1,15 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """ Automatic optimization routines for SDFGs. """
 
 import dace
 import sympy
 from dace.sdfg import infer_types
-from dace.sdfg.state import SDFGState, ControlFlowRegion
+from dace.sdfg.state import LoopRegion, SDFGState, ControlFlowRegion
 from dace.sdfg.graph import SubgraphView
-from dace.sdfg.propagation import propagate_states
 from dace.sdfg.scope import is_devicelevel_gpu_kernel
 from dace import config, data as dt, dtypes, Memlet, symbolic
 from dace.sdfg import SDFG, nodes, graph as gr
-from typing import Set, Tuple, Union, List, Iterable, Dict
-import warnings
+from typing import Set, Tuple, Union, List, Dict
 
 # Transformations
 from dace.transformation.passes import FullMapFusion
@@ -456,6 +454,31 @@ def set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType, blocklist: L
                     node.implementation = 'CUDA (device)'
 
 
+def _check_size_changes(desc: dt.Array, nsdfg: SDFG) -> bool:
+
+    def sym_changes(sym: str, pivot: SDFG) -> bool:
+        for isedge in pivot.all_interstate_edges():
+            if sym in isedge.data.assignments:
+                return True
+        for reg in pivot.all_control_flow_regions():
+            if isinstance(reg, LoopRegion) and reg.loop_variable == sym:
+                return True
+        if pivot.parent_nsdfg_node is not None:
+            if sym in pivot.parent_nsdfg_node.symbol_mapping:
+                return sym_changes(str(pivot.parent_nsdfg_node.symbol_mapping[sym]), pivot.parent_sdfg)
+        return False
+
+    arrsyms = set(map(str, desc.total_size.free_symbols))
+    if nsdfg.parent_nsdfg_node is not None:
+        for fsym in arrsyms:
+            if fsym in nsdfg.parent_nsdfg_node.symbol_mapping:
+                parent_symbol = str(nsdfg.parent_nsdfg_node.symbol_mapping[fsym])
+                parent_nsdfg = nsdfg.parent_sdfg
+                if sym_changes(parent_symbol, parent_nsdfg):
+                    return True
+    return False
+
+
 def make_transients_persistent(sdfg: SDFG,
                                device: dtypes.DeviceType,
                                toplevel_only: bool = True) -> Dict[int, Set[str]]:
@@ -518,6 +541,12 @@ def make_transients_persistent(sdfg: SDFG,
                         continue
 
                 if desc.lifetime == dtypes.AllocationLifetime.External:
+                    not_persistent.add(dnode.data)
+                    continue
+
+                # If the size of the array depends on a symbol that changes during the lifetime of the entire SDFG,
+                # we cannot make the array persistent.
+                if isinstance(desc, dt.Array) and _check_size_changes(desc, nsdfg):
                     not_persistent.add(dnode.data)
                     continue
 

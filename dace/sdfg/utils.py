@@ -831,7 +831,7 @@ def get_last_view_node(state: SDFGState, view: nd.AccessNode) -> nd.AccessNode:
     Given a view access node, returns the last viewed access node
     if existent, else None
     """
-    sdfg = state.parent
+    sdfg = state.sdfg
     node = view
     desc = sdfg.arrays[node.data]
     while isinstance(desc, dt.View):
@@ -847,7 +847,7 @@ def get_all_view_nodes(state: SDFGState, view: nd.AccessNode) -> List[nd.AccessN
     Given a view access node, returns a list of viewed access nodes
     if existent, else None
     """
-    sdfg = state.parent
+    sdfg = state.sdfg
     node = view
     desc = sdfg.arrays[node.data]
     result = [node]
@@ -865,7 +865,7 @@ def get_all_view_edges(state: SDFGState, view: nd.AccessNode) -> List[gr.MultiCo
     Given a view access node, returns a list of viewed access nodes as edges
     if existent, else None
     """
-    sdfg = state.parent
+    sdfg = state.sdfg
     previous_node = view
     result = []
 
@@ -980,7 +980,7 @@ def get_view_edge(state: SDFGState, view: nd.AccessNode) -> gr.MultiConnectorEdg
     return in_edge
 
 
-def dynamic_map_inputs(state: SDFGState, map_entry: nd.MapEntry) -> List[gr.MultiConnectorEdge]:
+def dynamic_map_inputs(state: SDFGState, map_entry: nd.MapEntry) -> List[gr.MultiConnectorEdge[mm.Memlet]]:
     """
     For a given map entry node, returns a list of dynamic-range input edges.
 
