@@ -7,7 +7,7 @@ from typing import List, Optional
 from dace import sdfg as sd, symbolic
 from dace.properties import Property, make_properties
 from dace.sdfg import utils as sdutil
-from dace.sdfg.state import ControlFlowRegion, LoopRegion
+from dace.sdfg.state import BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowRegion, LoopRegion, ReturnBlock
 from dace.frontend.python.astutils import ASTFindReplace
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
@@ -88,8 +88,11 @@ class LoopUnroll(xf.MultiStateTransformation):
             for oe in graph.out_edges(self.loop):
                 graph.add_edge(unrolled_iterations[-1], oe.dst, oe.data)
 
-        # Remove old loop.
         graph.remove_node(self.loop)
+
+        # If loop length is 0
+        if len(unrolled_iterations) == 0:
+            graph.add_state(label="empty_unroll", is_start_block=True)
 
         if self.inline_iterations:
             for it in unrolled_iterations:
@@ -102,11 +105,29 @@ class LoopUnroll(xf.MultiStateTransformation):
                                    label_suffix: Optional[str] = None) -> ControlFlowRegion:
         it_label = loop.label + '_' + loop.loop_variable + (label_suffix if label_suffix is not None else str(value))
         iteration_region = ControlFlowRegion(it_label, graph.sdfg, graph)
+
         graph.add_node(iteration_region)
+
         block_map = {}
+
         for block in loop.nodes():
             # Using to/from JSON copies faster than deepcopy.
-            new_block = sd.SDFGState.from_json(block.to_json(), context={'sdfg': graph.sdfg})
+            if isinstance(block, LoopRegion):
+                new_block = LoopRegion.from_json(block.to_json(), context={'sdfg': graph.sdfg})
+            elif isinstance(block, ConditionalBlock):
+                new_block = ConditionalBlock.from_json(block.to_json(), context={'sdfg': graph.sdfg})
+            elif isinstance(block, sd.SDFGState):
+                new_block = sd.SDFGState.from_json(block.to_json(), context={'sdfg': graph.sdfg})
+            elif isinstance(block, ContinueBlock):
+                new_block = ContinueBlock.from_json(block.to_json(), context={'sdfg': graph.sdfg})
+            elif isinstance(block, BreakBlock):
+                new_block = BreakBlock.from_json(block.to_json(), context={'sdfg': graph.sdfg})
+            elif isinstance(block, ReturnBlock):
+                new_block = ReturnBlock.from_json(block.to_json(), context={'sdfg': graph.sdfg})
+            elif isinstance(block, ControlFlowRegion):
+                new_block = ControlFlowRegion.from_json(block.to_json(), context={'sdfg': graph.sdfg})
+            else:
+                raise Exception(f"Unsupported CFG Type {type(block)}")
             block_map[block] = new_block
             new_block.replace(loop.loop_variable, value)
             iteration_region.add_node(new_block, is_start_block=(block is loop.start_block))
