@@ -104,7 +104,7 @@ __host__ __device__ __forceinline__ void vector_copy(T * __restrict__ dst, const
                 vector_input_storage=dace.dtypes.StorageType.Register,
                 vector_output_storage=dace.dtypes.StorageType.Register,
                 global_code=ExplicitVectorizationPipelineGPU._gpu_global_code.format(vector_width=vector_width),
-                global_code_location="frame",
+                global_code_location="cuda",
                 vector_op_numeric_type=dace.float64,
             )
         ]
