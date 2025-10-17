@@ -10,7 +10,7 @@ from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDF
 import dace.sdfg.utils as sdutil
 import dace.sdfg.construction_utils as cutil
 from typing import Tuple, Set, Union
-
+from dace.sdfg.construction_utils import token_match, token_replace
 
 def extract_bracket_content(s: str):
     pattern = r"<(\w+)>\[([^\]]*)\]"
@@ -26,27 +26,6 @@ def extract_bracket_content(s: str):
     cleaned = re.sub(pattern, r"<\1>", s)
 
     return cleaned, extracted
-
-
-def token_replace(code: str, src: str, dst: str) -> str:
-    # Split while keeping delimiters
-    tokens = re.split(r'(\s+|[()\[\]])', code)
-
-    # Replace tokens that exactly match src
-    tokens = [dst if token.strip() == src else token for token in tokens]
-
-    # Recombine everything
-    return ''.join(tokens).strip()
-
-
-def token_match(string_to_check: str, pattern_str: str) -> str:
-    # Split while keeping delimiters
-    tokens = re.split(r'(\s+|[()\[\]])', string_to_check)
-
-    # Replace tokens that exactly match src
-    tokens = {token.strip() for token in tokens}
-
-    return pattern_str in tokens
 
 
 def interstate_index_to_subset_str(expr: str) -> str:

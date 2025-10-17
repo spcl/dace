@@ -237,6 +237,8 @@ def token_match(string_to_check: str, pattern_str: str) -> str:
 
     return pattern_str in tokens
 
+def try_subs_in_tasklet(tasklet: dace.nodes.Taskelt, repldict: Dict[str, str]):
+    pass
 
 def replace_length_one_arrays_with_scalars(sdfg: dace.SDFG, recursive: bool = True, transient_only: bool = False):
     scalarized_arrays = set()
