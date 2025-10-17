@@ -238,21 +238,23 @@ def token_match(string_to_check: str, pattern_str: str) -> str:
     return pattern_str in tokens
 
 
-def replace_length_one_arrays_with_scalars(sdfg: dace.SDFG, recursive: bool = True):
+def replace_length_one_arrays_with_scalars(sdfg: dace.SDFG, recursive: bool = True, transient_only: bool = False):
     scalarized_arrays = set()
     for arr_name, arr in [(k, v) for k, v in sdfg.arrays.items()]:
         if isinstance(arr, dace.data.Array) and (arr.shape == (1, ) or arr.shape == [
                 1,
         ]):
-            sdfg.remove_data(arr_name, False)
-            sdfg.add_scalar(name=arr_name,
-                            dtype=arr.dtype,
-                            storage=arr.storage,
-                            transient=arr.transient,
-                            lifetime=arr.lifetime,
-                            debuginfo=arr.debuginfo,
-                            find_new_name=False)
-            scalarized_arrays.add(arr_name)
+            if (not transient_only) or arr.transient:
+                sdfg.remove_data(arr_name, False)
+                sdfg.add_scalar(name=arr_name,
+                                dtype=arr.dtype,
+                                storage=arr.storage,
+                                transient=arr.transient,
+                                lifetime=arr.lifetime,
+                                debuginfo=arr.debuginfo,
+                                find_new_name=False)
+                scalarized_arrays.add(arr_name)
+                print(f"Making {arr_name} into scalar")
 
     # Replace [0] accesses of scalars (formerly array ones) on interstate edges
     for edge in sdfg.all_interstate_edges():
@@ -293,4 +295,4 @@ def replace_length_one_arrays_with_scalars(sdfg: dace.SDFG, recursive: bool = Tr
         for state in sdfg.all_states():
             for node in state.nodes():
                 if isinstance(node, dace.nodes.NestedSDFG):
-                    replace_length_one_arrays_with_scalars(node.sdfg)
+                    replace_length_one_arrays_with_scalars(node.sdfg, recursive=True, transient_only=True)

@@ -160,10 +160,14 @@ class SplitTasklets(ppl.Pass):
             tasklet_in_degree = state.in_degree(tasklet)
             tasklet_in_edges = state.in_edges(tasklet)
             tasklet_out_degree = state.out_degree(tasklet)
+            available_symbols = state.symbols_defined_at(tasklet)
             state.remove_node(tasklet)
             added_tasklets = list()
             for i, ssa_statement in enumerate(ssa_statements):  # Since SSA we are going to add in a line
                 lhs_vars, rhs_vars = _get_vars(ssa_statement)
+
+                symbol_rhs_vars = {rhs_var for rhs_var in rhs_vars if rhs_var in available_symbols}
+                rhs_vars = set(rhs_vars) - symbol_rhs_vars
                 assert len(lhs_vars) == 1
                 t = state.add_tasklet(
                     name=f"{tasklet.name}_split_{i}",
@@ -257,7 +261,6 @@ class SplitTasklets(ppl.Pass):
                         )
                         assert array_name not in added_accesses
                         added_accesses[array_name] = state.add_access(array_name)
-                    state.sdfg.save("x.sdfgz", compress=True)
                     state.add_edge(
                         t, out_conn, added_accesses[array_name], None,
                         dace.memlet.Memlet.from_array(dataname=array_name, datadesc=state.sdfg.arrays[array_name]))
