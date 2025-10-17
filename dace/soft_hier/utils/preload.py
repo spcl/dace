@@ -179,8 +179,8 @@ def make_preload_elf_hbm_interleaved_new(output_file_path,
             if start_addr_in_each_channel[channel_idx] != array_start_addr_in_channel:
                 valid_placement = False
                 Warning(f"Invalid placement scheme: {placement_scheme}, "
-                                 f"channel {channel_idx} start address mismatch")
-            
+                        f"channel {channel_idx} start address mismatch")
+
         # 6) Store that start address in the array's original position
         if valid_placement:
             start_addresses_in_original_order[idx] = array_start_addr_in_channel
@@ -191,7 +191,6 @@ def make_preload_elf_hbm_interleaved_new(output_file_path,
             # Update all channels used to this maximum start address
             for channel_idx in set(placement_scheme):
                 start_addr_in_each_channel[channel_idx] = max_start_addr
-        
 
         # 7) Advance addresses in all channels used by this array
         for i in range(len(placement_scheme)):

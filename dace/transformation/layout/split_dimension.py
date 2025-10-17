@@ -331,8 +331,8 @@ class SplitDimensions(ppl.Pass):
                                                     other_subset=copy.deepcopy(edge.data.other_subset))
                     edge.data = new_memlet
                 # Other subset issue be careful
-                if ((isinstance(edge.dst, dace.nodes.AccessNode) and edge.dst.data == arr_name) or 
-                    (isinstance(edge.src, dace.nodes.AccessNode) and edge.src.data == arr_name)):
+                if ((isinstance(edge.dst, dace.nodes.AccessNode) and edge.dst.data == arr_name)
+                        or (isinstance(edge.src, dace.nodes.AccessNode) and edge.src.data == arr_name)):
                     if edge.data is not None and edge.data.other_subset is not None:
                         # Update other subset
                         raise Exception("TODO: Support for Other subsets - I hate other subsets")

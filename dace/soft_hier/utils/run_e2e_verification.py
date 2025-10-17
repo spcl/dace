@@ -14,33 +14,34 @@ from dace.soft_hier.utils.generate_arch_config import generate_arg_cfg
 class HardwareConfig:
     """Hardware configuration container"""
 
-    def __init__(self,
-                 hardware_thread_group_dims=(2, 2),
-                 dace_thread_group_dims=None,
-                 hbm_addr_base="0xc0000000",
-                 hbm_addr_space="0x04000000",
-                 tcdm_size="0x00100000",
-                 cluster_zomem_size="0x00100000",
-                 redmule_ce_height=64,
-                 redmule_ce_width=64,
-                 redmule_ce_pipe=1,
-                 hbm_placement="2,2,2,2",
-                 num_node_per_ctrl=1,
-                 noc_link_width=4096,
-                 num_hbm_channels=8,
-                 dtype_input=np.uint16,
-                 dtype_output=np.uint16,
-                 dace_input_type=dace.uint16,
-                 dace_output_type=dace.uint16,
-                 test_mode='functional',  # 'functional' or 'perf_only'
-                 skip_build_hw=False
-                 ):
+    def __init__(
+            self,
+            hardware_thread_group_dims=(2, 2),
+            dace_thread_group_dims=None,
+            hbm_addr_base="0xc0000000",
+            hbm_addr_space="0x04000000",
+            tcdm_size="0x00100000",
+            cluster_zomem_size="0x00100000",
+            redmule_ce_height=64,
+            redmule_ce_width=64,
+            redmule_ce_pipe=1,
+            hbm_placement="2,2,2,2",
+            num_node_per_ctrl=1,
+            noc_link_width=4096,
+            num_hbm_channels=8,
+            dtype_input=np.uint16,
+            dtype_output=np.uint16,
+            dace_input_type=dace.uint16,
+            dace_output_type=dace.uint16,
+            test_mode='functional',  # 'functional' or 'perf_only'
+            skip_build_hw=False):
         self.hardware_thread_group_dims = hardware_thread_group_dims
         if dace_thread_group_dims is None:
             self.dace_thread_group_dims = hardware_thread_group_dims
         else:
-            if dace_thread_group_dims[0]*dace_thread_group_dims[1] != hardware_thread_group_dims[0]*hardware_thread_group_dims[1]:
-                raise ValueError("Product of dace_thread_group_dims must equal product of hardware_thread_group_dims") 
+            if dace_thread_group_dims[0] * dace_thread_group_dims[1] != hardware_thread_group_dims[
+                    0] * hardware_thread_group_dims[1]:
+                raise ValueError("Product of dace_thread_group_dims must equal product of hardware_thread_group_dims")
         self.hbm_addr_base = hbm_addr_base
         self.hbm_addr_space = hbm_addr_space
         self.tcdm_size = tcdm_size
@@ -102,7 +103,8 @@ def setup_environment():
     os.environ["SOFTHIER_INSTALL_PATH"] = f"{GVSOC_PATH}/soft_hier/flex_cluster_sdk/runtime/"
 
 
-def _parse_hbm_dump(filepath: str, num_channels: int, array_names_and_data: Iterable[Tuple[str, dace.data.Data]]) -> Dict[str, Dict[int, List[str]]]:
+def _parse_hbm_dump(filepath: str, num_channels: int,
+                    array_names_and_data: Iterable[Tuple[str, dace.data.Data]]) -> Dict[str, Dict[int, List[str]]]:
     """Parse HBM dump file into structured format"""
     sections: Dict[int, List[str]] = {}
     section_id = -1
@@ -119,7 +121,7 @@ def _parse_hbm_dump(filepath: str, num_channels: int, array_names_and_data: Iter
             elif line.startswith("0x"):
                 sections[section_id].append(line)
 
-    array_names_and_data_sorted = sorted(array_names_and_data, key= lambda x:x[0])
+    array_names_and_data_sorted = sorted(array_names_and_data, key=lambda x: x[0])
     tiles_of_channel = dict()
     for arr_name, arr in array_names_and_data_sorted:
         tiles_of_channel[arr_name] = dict()
@@ -130,7 +132,7 @@ def _parse_hbm_dump(filepath: str, num_channels: int, array_names_and_data: Iter
     parsed = {}
     for i, (name, data) in enumerate(array_names_and_data_sorted):
         parsed[name] = {}
-        
+
         for j in range(num_channels):
             parsed[name][j] = {}
             for k in range(tiles_of_channel[name][j]):
@@ -144,7 +146,7 @@ def _parse_hbm_dump(filepath: str, num_channels: int, array_names_and_data: Iter
                 tiles_before_me_on_the_different_channel = 0
                 for jj in range(j):
                     tiles_before_me_on_the_different_channel += tiles_of_channel[name][jj]
-                
+
                 offset = sections_before_me + tiles_before_me_on_the_different_channel + k
 
                 if offset in sections:
@@ -153,8 +155,8 @@ def _parse_hbm_dump(filepath: str, num_channels: int, array_names_and_data: Iter
     return parsed
 
 
-def _read_hbm_to_numpy(array_name: str, array: dace.data.Data, handler: InterleaveHandler, element_bytes: int, dtype: str,
-                       parsed: Dict[str, Dict[int, Dict[int, List[str]]]], buffer: np.ndarray) -> None:
+def _read_hbm_to_numpy(array_name: str, array: dace.data.Data, handler: InterleaveHandler, element_bytes: int,
+                       dtype: str, parsed: Dict[str, Dict[int, Dict[int, List[str]]]], buffer: np.ndarray) -> None:
     """Read HBM data into NumPy array"""
     assert len(buffer.shape) == 2
 
@@ -257,7 +259,6 @@ def compare(hardware_config: HardwareConfig,
         with open(f"array_dump_{name}_diff.txt", "w") as f:
             np.savetxt(f, diff, fmt="%04x")
 
-
     print()
     print("=" * 80)
     print("✓ ALL RESULTS MATCH" if all_match else "✗ SOME RESULTS DO NOT MATCH")
@@ -302,7 +303,6 @@ def setup_dace_config(hw_config: HardwareConfig):
     dace.config.Config.set("backend", "softhier", "HW_THREAD_GROUP_DIMS", value=hw_config.hardware_thread_group_dims)
     dace.config.Config.set("backend", "softhier", "DACE_THREAD_GROUP_DIMS", value=hw_config.dace_thread_group_dims)
     dace.config.Config.set("backend", "softhier", "TEST_MODE", value=hw_config.test_mode)
-    
 
 
 def setup_hw_env_dace(hw_config: HardwareConfig):
