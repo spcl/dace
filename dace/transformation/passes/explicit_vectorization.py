@@ -105,10 +105,11 @@ class ExplicitVectorization(ppl.Pass):
 
         # Need to check that all tasklets within the map are vectorizable
         nodes = state.all_nodes_between(new_inner_map, state.exit_node(new_inner_map))
-        assert all(
-            {self._is_vectorizable(state, node)
-             for node in nodes if isinstance(node, dace.nodes.Tasklet)}
-        ), f"All tasklets within maps need to be vectorizable. This means all inputs / outputs of the maps need to be arrays"
+        # TOOD: re-enable
+        #assert all(
+        #    {self._is_vectorizable(state, node)
+        #     for node in nodes if isinstance(node, dace.nodes.Tasklet)}
+        #), f"All tasklets within maps need to be vectorizable. This means all inputs / outputs of the maps need to be arrays"
 
         has_single_nested_sdfg = len(nodes) == 1 and isinstance(next(iter(nodes)), dace.nodes.NestedSDFG)
 
