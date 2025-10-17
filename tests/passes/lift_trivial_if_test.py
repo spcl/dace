@@ -132,10 +132,6 @@ def _get_sdfg_with_many_states():
     s1.add_edge(aA, None, aB, None, dace.memlet.Memlet.from_array("A", A))
     return sdfg
 
-<<<<<<< HEAD
-=======
-
->>>>>>> lift_trivial_if
 @pytest.mark.parametrize("condition", always_true)
 def test_single_condition(condition: str):
     sdfg = _get_sdfg(condition)
