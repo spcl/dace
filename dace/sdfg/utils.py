@@ -2534,7 +2534,7 @@ def specialize_scalar(sdfg: 'dace.SDFG', scalar_name: str, scalar_val: Union[flo
 
     _specialize_scalar_impl(sdfg, sdfg, scalar_name, scalar_val)
 
-def demote_symbol_to_scalar(sdfg: dace.SDFG, symbol_str: str):
+def demote_symbol_to_scalar(sdfg: 'dace.SDFG', symbol_str: str):
     import ast
     import dace.sdfg.construction_utils as cutil
     # If assignment is to symbol_str, append it to last scalar before
