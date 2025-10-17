@@ -27,9 +27,11 @@ class LiftTrivialIf(ppl.Pass):
         return {}
 
     def _make_unique_names(self, sdfg: dace.SDFG):
-        all_blocks = {n for n, _ in sdfg.all_nodes_recursive() if
-                      isinstance(n, dace.SDFGState) or isinstance(n, ControlFlowRegion)
-                      or isinstance(n, ControlFlowBlock)}
+        all_blocks = {
+            n
+            for n, _ in sdfg.all_nodes_recursive()
+            if isinstance(n, dace.SDFGState) or isinstance(n, ControlFlowRegion) or isinstance(n, ControlFlowBlock)
+        }
         all_labels = set()
 
         def _find_new_name(cfg: ControlFlowRegion) -> str:
@@ -60,7 +62,13 @@ class LiftTrivialIf(ppl.Pass):
 
                 return " ".join(tokens).strip()
 
-            symbolic_expr = dace.symbolic.SymExpr(_token_replace_dict(code.as_string, {"True": "1", "and": " * ", "or": "+", "False": "0"}))
+            symbolic_expr = dace.symbolic.SymExpr(
+                _token_replace_dict(code.as_string, {
+                    "True": "1",
+                    "and": " * ",
+                    "or": "+",
+                    "False": "0"
+                }))
             symbolic_expr = symbolic_expr.simplify()
             pystring = pycode(symbolic_expr)
             result = symbolic.evaluate(expr=dace.symbolic.SymExpr(pystring), symbols=dict())

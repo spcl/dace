@@ -4,7 +4,7 @@ import dace
 from dace import InterstateEdge
 from dace.sdfg.sdfg import CodeBlock, ConditionalBlock
 from dace import ControlFlowRegion
-from dace.transformation.passes.lift_trivially_true_if import LiftTrivialIf
+from dace.transformation.passes.lift_trivial_if import LiftTrivialIf
 import pytest
 
 # Always True conditions
@@ -132,6 +132,10 @@ def _get_sdfg_with_many_states():
     s1.add_edge(aA, None, aB, None, dace.memlet.Memlet.from_array("A", A))
     return sdfg
 
+<<<<<<< HEAD
+=======
+
+>>>>>>> lift_trivial_if
 @pytest.mark.parametrize("condition", always_true)
 def test_single_condition(condition: str):
     sdfg = _get_sdfg(condition)
@@ -181,6 +185,14 @@ def test_if_else_cond_is_trivially_true(condition: str):
 @pytest.mark.parametrize("condition", always_false)
 def test_if_else_cond_is_trivially_false(condition: str):
     sdfg = _get_if_else_sdfg(condition, True)
+    sdfg.validate()
+    LiftTrivialIf().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert len({n for n in sdfg.all_control_flow_blocks() if isinstance(n, ConditionalBlock)}) == 0
+
+
+def test_cfg_is_a_middle_node():
+    sdfg = _get_sdfg_with_many_states()
     sdfg.validate()
     LiftTrivialIf().apply_pass(sdfg, {})
     sdfg.validate()
