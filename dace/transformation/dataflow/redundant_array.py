@@ -1109,6 +1109,13 @@ class SqueezeViewRemove(pm.SingleStateTransformation):
         if astrides != vstrides:
             return False
 
+        # If the destination node is an nsdfg and the view connects to an inout connector, then skip
+        for e in state.memlet_path(vedge):
+            if isinstance(e.dst, nodes.NestedSDFG):
+                dst_conn = e.dst_conn
+                if dst_conn in e.dst.out_connectors:
+                    return False
+
         return True
 
     def apply(self, state: SDFGState, sdfg: SDFG):
@@ -1187,6 +1194,13 @@ class UnsqueezeViewRemove(pm.SingleStateTransformation):
         astrides = tuple(s for i, s in enumerate(out_desc.strides) if i in asqdims)
         if astrides != vstrides:
             return False
+
+        # If the source node is an nsdfg and the view connects to an inout connector, then skip
+        for e in state.memlet_path(vedge):
+            if isinstance(e.src, nodes.NestedSDFG):
+                src_conn = e.src_conn
+                if src_conn in e.src.in_connectors:
+                    return False
 
         return True
 

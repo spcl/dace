@@ -1819,6 +1819,9 @@ def all_isedges_between(src: ControlFlowBlock, dst: ControlFlowBlock) -> Iterabl
         # Step 2
         src_pivot = src
         for r in involved_src:
+            if isinstance(r, ConditionalBlock):
+                src_pivot = r
+                continue
             for sink in r.sink_nodes():
                 for p in r.all_simple_paths(src_pivot, sink, as_edges=True):
                     for e in p:
@@ -1829,6 +1832,9 @@ def all_isedges_between(src: ControlFlowBlock, dst: ControlFlowBlock) -> Iterabl
         # Step 3
         dst_pivot = dst
         for r in involved_dst:
+            if isinstance(r, ConditionalBlock):
+                dst_pivot = r
+                continue
             for p in r.all_simple_paths(r.start_block, dst_pivot, as_edges=True):
                 for e in p:
                     edges.add(e)
