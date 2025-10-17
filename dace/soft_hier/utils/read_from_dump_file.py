@@ -176,9 +176,12 @@ def get_address_and_read_from_file(i: int,
         print(f"Reading from channel {channel_id}, lines {line_id} to {line_id + lines_needed - 1}")
 
     try:
-        line_contents = parsed_sections[array_name][channel_id][tiles_before_me_on_the_same_channel][line_id:line_id + lines_needed]
+        line_contents = parsed_sections[array_name][channel_id][tiles_before_me_on_the_same_channel][line_id:line_id +
+                                                                                                     lines_needed]
     except KeyError:
-        raise KeyError(f"Could not find data for array '{array_name}' on channel {channel_id} at tile index {tiles_before_me_on_the_same_channel}, line {line_id}. Available sections: {list(parsed_sections.get(array_name, {}).get(channel_id, {}).keys())}")
+        raise KeyError(
+            f"Could not find data for array '{array_name}' on channel {channel_id} at tile index {tiles_before_me_on_the_same_channel}, line {line_id}. Available sections: {list(parsed_sections.get(array_name, {}).get(channel_id, {}).keys())}"
+        )
 
     if debug_print:
         print(f"Raw line contents (hex): {line_contents}")

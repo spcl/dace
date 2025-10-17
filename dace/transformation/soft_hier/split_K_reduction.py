@@ -106,11 +106,11 @@ class SplitKReduction(transformation.SingleStateTransformation):
         (dim_x_hw, dim_y_hw) = Config.get("backend", "softhier", "HW_THREAD_GROUP_DIMS")
         (dim_x_dace, dim_y_dace) = Config.get("backend", "softhier", "DACE_THREAD_GROUP_DIMS")
         if (dim_x_dace, dim_y_dace) == (dim_x_hw, dim_y_hw):
-            mask_x = (npe_x-1)^(kg_m-1)
-            mask_y = (npe_y-1)^(kg_n-1)
+            mask_x = (npe_x - 1) ^ (kg_m - 1)
+            mask_y = (npe_y - 1) ^ (kg_n - 1)
         else:
-            mask_dace_x = (dim_x_dace-1)^(kg_m-1)
-            mask_dace_y = (dim_y_dace-1)^(kg_n-1)
+            mask_dace_x = (dim_x_dace - 1) ^ (kg_m - 1)
+            mask_dace_y = (dim_y_dace - 1) ^ (kg_n - 1)
             full_mask = mask_dace_y << (((int)(dim_x_dace)).bit_length() - 1) | (mask_dace_x & (dim_x_dace - 1))
             mask_x = full_mask & (dim_x_hw - 1)
             mask_y = (full_mask >> (((int)(dim_x_hw)).bit_length() - 1)) & (dim_y_hw - 1)

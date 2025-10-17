@@ -132,6 +132,7 @@ def _get_sdfg_with_many_states():
     s1.add_edge(aA, None, aB, None, dace.memlet.Memlet.from_array("A", A))
     return sdfg
 
+
 @pytest.mark.parametrize("condition", always_true)
 def test_single_condition(condition: str):
     sdfg = _get_sdfg(condition)
@@ -193,6 +194,7 @@ def test_cfg_is_a_middle_node():
     LiftTrivialIf().apply_pass(sdfg, {})
     sdfg.validate()
     assert len({n for n in sdfg.all_control_flow_blocks() if isinstance(n, ConditionalBlock)}) == 0
+
 
 if __name__ == "__main__":
     for c in always_true:

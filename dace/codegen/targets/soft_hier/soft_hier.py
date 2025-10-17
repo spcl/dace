@@ -1319,16 +1319,15 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                         else:
                             mask_dace_x = ((pos_x_end - pos_x_start) ^ (dim_x_dace - 1)) | (pos_x_step - 1)
                             mask_dace_y = ((pos_y_end - pos_y_start) ^ (dim_y_dace - 1)) | (pos_y_step - 1)
-                            full_mask = mask_dace_y << (((int)(dim_x_dace)).bit_length() - 1) | (mask_dace_x & (dim_x_dace - 1))
+                            full_mask = mask_dace_y << (((int)(dim_x_dace)).bit_length() - 1) | (mask_dace_x &
+                                                                                                 (dim_x_dace - 1))
                             mask_hw_x = full_mask & (dim_x_hw - 1)
                             mask_hw_y = (full_mask >> (((int)(dim_x_hw)).bit_length() - 1)) & (dim_y_hw - 1)
                             callsite_stream.write(f"// mask_hw_x = {mask_hw_x} mask_hw_y = {mask_hw_y}\n")
                             callsite_stream.write(
                                 f"flex_dma_async_broadcast(({dst_expr}), ({src_expr}), {dst_size}, {mask_hw_x}, {mask_hw_y});"
                             )
-                            callsite_stream.write(
-                                f"// TEST"
-                            )
+                            callsite_stream.write(f"// TEST")
                     else:
                         callsite_stream.write(
                             f"bare_dma_start_1d(dace_remote_xy({pos_x},{pos_y},{dst_expr},{self._soft_hier_dims[0]}), local({src_expr}), {dst_size});"
@@ -1891,7 +1890,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                 tiles_of_channel_list = []
                 for i in range(int(HBM_NUM_CHANNELS)):
                     tiles_of_channel_list.append(str(len([j for j in arr.hbm_placement_scheme if j == i])))
-                tiles_per_channel_initializer_list = "{" + ", ".join(tiles_of_channel_list)  + "};"
+                tiles_per_channel_initializer_list = "{" + ", ".join(tiles_of_channel_list) + "};"
 
                 dump_str += f"unsigned long tiles_per_channel_{arr_name}[] = {tiles_per_channel_initializer_list}\n"
                 dump_str += "for (int i = 0; i < HBM_NUM_CHANNELS; i++){\n"
@@ -1909,7 +1908,6 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
             dump_str += "flex_dump_close();\n"
             dump_str += "}\n"
             dump_str += "flex_intra_cluster_sync();\n"
-        
 
         # Prepare an empty-grid check for runtime grids
 
@@ -1926,12 +1924,12 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
             flex_global_barrier_xy();
             if (flex_get_cluster_id() == 0 && flex_get_core_id() == 0) {{
                 flex_timer_start();
-            }} 
+            }}
             {kname}({kargs});
             flex_global_barrier_xy();
             if (flex_get_cluster_id() == 0 && flex_get_core_id() == 0) {{
                 flex_timer_end();
-            }} 
+            }}
             flex_intra_cluster_sync();
             flex_global_barrier_xy();
             {dump_str}
