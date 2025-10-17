@@ -282,7 +282,7 @@ required:
                         type: str
                         title: Arguments
                         description: Compiler argument flags
-                        default: '-fopenmp -fPIC -Wall -Wextra -O3 -march=native  -Wno-unused-parameter -Wno-unused-label'
+                        default: '-fopenmp -fPIC -Wall -Wextra -O0 -g -ggdb -march=native  -Wno-unused-parameter -Wno-unused-label'
                         default_Windows: '/O2 /fp:fast /arch:AVX2 /D_USRDLL /D_WINDLL /D__restrict__=__restrict'
 
                     libs:

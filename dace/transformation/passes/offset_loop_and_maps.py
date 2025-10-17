@@ -78,82 +78,54 @@ class OffsetLoopsAndMaps(ppl.Pass):
             new_memlet = self._create_new_memlet(edge.data, repldict)
             self._update_edge_if_changed(state, edge, new_memlet)
 
-    def _process_nested_sdfgs(self, state, repldict: Dict[str, str]):
-        """Recursively process nested SDFGs in state nodes."""
-        for node in state.nodes():
-            if isinstance(node, dace.nodes.NestedSDFG):
-                self._repl_memlets_recursive(node.sdfg, repldict)
-
     def _repl_memlets_recursive(self, cfg: ControlFlowRegion, repldict: Dict[str, str]):
         """Recursively replace memlets in all states of a control flow region."""
         for state in cfg.all_states():
             self._process_memlets_in_edges(state, state.edges(), repldict)
-            self._process_nested_sdfgs(state, repldict)
 
-    def _repl_memlets_recursive_on_edge_list(self, state, edges, repldict: Dict[str, str]):
+            for node in state.nodes():
+                if isinstance(node, dace.nodes.NestedSDFG):
+                    self._repl_memlets_recursive(node.sdfg, repldict)
+
+    def _repl_memlets_on_edge_list(self, state, edges, repldict: Dict[str, str]):
         """Replace memlets on a specific list of edges."""
         self._process_memlets_in_edges(state, edges, repldict)
-        self._process_nested_sdfgs(state, repldict)
+
+    def _repl_memlets_on_edge_list_recursive(self, state, edges, repldict: Dict[str, str]):
+        """Replace memlets on a specific list of edges."""
+        self._process_memlets_in_edges(state, edges, repldict)
+
+        for node in state.nodes():
+            if isinstance(node, dace.nodes.NestedSDFG):
+                self._repl_memlets_recursive(node.sdfg, repldict)
 
     def _repl_interstate_edges_recursive(self, cfg: ControlFlowRegion, repldict: Dict[str, str]):
         """Recursively replace interstate edges in control flow region."""
         # Replace interstate edges
-        for edge in cfg.all_interstate_edges():
+        for edge in [] if isinstance(cfg, dace.SDFGState) else cfg.all_interstate_edges():
             edge.data.replace_dict(repldict)
 
         # Process nested SDFGs
-        for state in cfg.all_states():
+        for state in [cfg] if isinstance(cfg, dace.SDFGState) else cfg.all_states():
             for node in state.nodes():
                 if isinstance(node, dace.nodes.NestedSDFG):
                     self._repl_interstate_edges_recursive(node.sdfg, repldict)
 
     def _repl_tasklets_recursive(self, cfg: ControlFlowRegion, repldict):
+        for state in [cfg] if isinstance(cfg, dace.SDFGState) else cfg.all_states():
+            self._repl_tasklets_recursive_from_node_list(state, state.nodes(), repldict)
 
-        def _token_replace(code: str, src: str, dst: str) -> str:
-            # Split while keeping delimiters
-            tokens = re.split(r'(\s+|[()\[\]])', code)
+    def _token_replace_dict(self, code: str, repldict: Dict) -> str:
+        # Split while keeping delimiters
+        tokens = re.split(r'(\s+|[()\[\]])', code)
 
-            # Replace tokens that exactly match src
-            tokens = [dst if token.strip() == src else token for token in tokens]
+        # Replace tokens that exactly match src
+        tokens = [repldict[token.strip()] if token.strip() in repldict else token for token in tokens]
 
-            # Recombine everything
-            return ''.join(tokens).strip()
+        # Recombine everything
+        return ''.join(tokens).strip()
 
-        for state in cfg.all_states():
-            for node in state.nodes():
-                if isinstance(node, dace.nodes.Tasklet):
-                    code = node.code
-                    code_str = copy.deepcopy(node.code.as_string)
-                    if code.language == dace.dtypes.Language.Python:
-                        # Can raise exceptions if you have stuff like AND in the expression
-                        try:
-                            symexpr = dace.symbolic.SymExpr(code_str.split(" = ")[-1].strip())
-                            symexpr = symexpr.subs(repldict)
-                            code_str = code_str.split(" = ")[0].strip() + " = " + pycode(symexpr)
-                        except Exception as e:
-                            code_str = copy.deepcopy(node.code.as_string)
-                            for k, v in repldict.items():
-                                code_str = _token_replace(code_str, k, v)
-                    else:
-                        for k, v in repldict.items():
-                            code_str = _token_replace(code_str, k, v)
-                    node.code = CodeBlock(code_str, code.language)
-
-                if isinstance(node, dace.nodes.NestedSDFG):
-                    self._repl_interstate_edges_recursive(node.sdfg, repldict)
-
-    def _repl_tasklets_recursive_from_node_list(self, state: dace.SDFGState, nodes: List[dace.nodes.Node], repldict):
-
-        def _token_replace(code: str, src: str, dst: str) -> str:
-            # Split while keeping delimiters
-            tokens = re.split(r'(\s+|[()\[\]])', code)
-
-            # Replace tokens that exactly match src
-            tokens = [dst if token.strip() == src else token for token in tokens]
-
-            # Recombine everything
-            return ''.join(tokens).strip()
-
+    def _repl_tasklets_on_node_list(self, state: dace.SDFGState, nodes: List[dace.nodes.Node], repldict):
         for node in nodes:
             if isinstance(node, dace.nodes.Tasklet):
                 code = node.code
@@ -166,23 +138,68 @@ class OffsetLoopsAndMaps(ppl.Pass):
                         code_str = code_str.split(" = ")[0].strip() + " = " + pycode(symexpr)
                     except Exception as e:
                         code_str = copy.deepcopy(node.code.as_string)
-                        for k, v in repldict.items():
-                            code_str = _token_replace(code_str, k, v)
+                        code_str = self._token_replace_dict(code_str, repldict)
                 else:
-                    for k, v in repldict.items():
-                        code_str = _token_replace(code_str, k, v)
+                    code_str = self._token_replace_dict(code_str, repldict)
                 node.code = CodeBlock(code_str, code.language)
 
+    def _repl_tasklets_recursive_from_node_list(self, state: dace.SDFGState, nodes: List[dace.nodes.Node], repldict):
+        self._repl_tasklets_on_node_list(state, nodes, repldict)
+
+        for node in nodes:
             if isinstance(node, dace.nodes.NestedSDFG):
-                self._repl_interstate_edges_recursive(node.sdfg, repldict)
+                self._repl_tasklets_recursive(node.sdfg, repldict)
+
+    def _token_match(self, code: str, src: Dict) -> str:
+        # Split while keeping delimiters
+        tokens = re.split(r'(\s+|[()\[\]])', code)
+        # Replace tokens that exactly match src
+        tokens = [token for token in tokens if token.strip() == src]
+
+        # Recombine everything
+        return len(tokens) != 0
+
+    def _repl_for_regions_recursive(self, root: ControlFlowRegion, cfg: ControlFlowRegion, repldict):
+        for node in [] if isinstance(cfg, dace.SDFGState) else cfg.all_control_flow_regions():
+            if node == root:
+                continue
+            if isinstance(node, LoopRegion):
+                # TODO: do it better (try sympy subs)
+                node.loop_condition = CodeBlock(self._token_replace_dict(node.loop_condition.as_string, repldict),
+                                                node.loop_condition.language)
+                node.init_statement = CodeBlock(self._token_replace_dict(node.init_statement.as_string, repldict),
+                                                node.init_statement.language)
+                node.update_statement = CodeBlock(self._token_replace_dict(node.update_statement.as_string, repldict),
+                                                  node.update_statement.language)
+
+        for state in [] if isinstance(cfg, dace.SDFGState) else cfg.all_states():
+            for node in state.nodes():
+                if isinstance(node, dace.nodes.NestedSDFG):
+                    self._repl_for_regions_recursive(root, node.sdfg, repldict)
+
+    def _repl_if_blocks_recursive(self, cfg: ControlFlowRegion, repldict):
+        for node in [] if isinstance(cfg, dace.SDFGState) else cfg.all_control_flow_regions():
+            if isinstance(node, ConditionalBlock):
+                for i, (cond, body) in enumerate(node.branches):
+                    ncond = None
+                    if cond is not None:
+                        # TODO: do it better (try sympy subs)
+                        code_str = self._token_replace_dict(cond.as_string, repldict)
+                        ncond = CodeBlock(code_str, cond.language)
+                        node.branches[i] = (ncond, body)
+
+        for state in [] if isinstance(cfg, dace.SDFGState) else cfg.all_states():
+            for node in state.nodes():
+                if isinstance(node, dace.nodes.NestedSDFG):
+                    self._repl_if_blocks_recursive(node.sdfg, repldict)
 
     def _repl_recursive(self, cfg: ControlFlowRegion, repldict: Dict[str, str]):
         """Replace both interstate edges and memlets recursively."""
         self._repl_interstate_edges_recursive(cfg, repldict)
         self._repl_memlets_recursive(cfg, repldict)
-        # TODO:
-        # Implement for tasklets in case the loop variable is used as a symbol inside tasklet code
         self._repl_tasklets_recursive(cfg, repldict)
+        self._repl_for_regions_recursive(cfg, cfg, repldict)
+        self._repl_if_blocks_recursive(cfg, repldict)
 
     def _add_to_rhs(self, expr: str, add_expr: dace.symbolic.SymExpr, sdfg: dace.SDFG) -> str:
         """Add an expression to the right-hand side of a comparison."""
@@ -256,10 +273,11 @@ class OffsetLoopsAndMaps(ppl.Pass):
                             state_node.map.range = new_range
                             nodes_between = state.all_nodes_between(state_node, state.exit_node(state_node))
                             edges_between = state.all_edges(*nodes_between)
-                            self._repl_memlets_recursive_on_edge_list(state, edges_between, repldict)
-                            # TODO:
-                            # Implement for tasklets in case the loop variable is used as a symbol inside tasklet code
-                            self._repl_tasklets_recursive_from_node_list(state, nodes_between, repldict)
+                            self._repl_memlets_on_edge_list(state, edges_between, repldict)
+                            self._repl_tasklets_on_node_list(state, nodes_between, repldict)
+                            for n in nodes_between:
+                                if isinstance(n, dace.nodes.NestedSDFG):
+                                    self._repl_recursive(n.sdfg, repldict)
 
         for node in cfg.nodes():
             if isinstance(node, ControlFlowRegion):
