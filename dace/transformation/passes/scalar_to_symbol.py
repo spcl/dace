@@ -145,6 +145,10 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
                 continue
             edge = state.in_edges(node)[0]
 
+            # Edge must not be empty
+            if edge.data.is_empty():
+                continue
+
             # Edge must not be WCR
             if edge.data.wcr is not None:
                 candidates.remove(candidate)
@@ -169,9 +173,14 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
                 if state.out_degree(edge.src) > 1:
                     candidates.remove(candidate)
                     continue
-                # If inputs to tasklets are not arrays, skip
+
                 for tinput in state.in_edges(edge.src):
+                    # If inputs to tasklets are not arrays, skip
                     if not isinstance(tinput.src, nodes.AccessNode):
+                        candidates.remove(candidate)
+                        break
+                    # If edge memlet is empty, skip
+                    if tinput.data.is_empty():
                         candidates.remove(candidate)
                         break
                     if isinstance(sdfg.arrays[tinput.src.data], dt.Stream):
