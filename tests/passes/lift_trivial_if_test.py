@@ -1,9 +1,10 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import dace
+from dace import InterstateEdge
 from dace.sdfg.sdfg import CodeBlock, ConditionalBlock
 from dace import ControlFlowRegion
-from dace.transformation.passes.lift_trivially_true_if import LiftTriviallyTrueIf
+from dace.transformation.passes.lift_trivially_true_if import LiftTrivialIf
 import pytest
 
 # Always True conditions
@@ -104,11 +105,38 @@ def _get_nested_sdfg(condition1: str, condition2: str):
     return sdfg
 
 
+def _get_sdfg_with_many_states():
+    sdfg = dace.SDFG("nested1")
+    sdfg = dace.SDFG("basic1")
+    _, A = sdfg.add_array(name="A", shape=[
+        5,
+    ], dtype=dace.float64, transient=False)
+    _, B = sdfg.add_array(name="B", shape=[
+        5,
+    ], dtype=dace.float64, transient=False)
+    cb = ConditionalBlock(label="cfb1", sdfg=sdfg, parent=sdfg)
+    so1 = sdfg.add_state("so1", is_start_block=True)
+    so2 = sdfg.add_state("so2")
+    sdfg.add_node(cb, is_start_block=False)
+    sdfg.add_edge(so1, cb, InterstateEdge())
+    sdfg.add_edge(cb, so2, InterstateEdge())
+    cfg1 = ControlFlowRegion(label="cfg1", sdfg=cb.sdfg, parent=cb)
+    cb.add_branch(condition=CodeBlock("1 == 1"), branch=cfg1)
+    cb2 = ConditionalBlock(label="cfb2", sdfg=cfg1.sdfg, parent=cfg1)
+    cfg1.add_node(cb2, is_start_block=True)
+    cfg2 = ControlFlowRegion(label="cfg2", sdfg=cb2.sdfg, parent=cb2)
+    cb2.add_branch(condition=CodeBlock("0 == 1"), branch=cfg2)
+    s1 = cfg2.add_state(label="s1", is_start_block=True)
+    aA = s1.add_access("A")
+    aB = s1.add_access("B")
+    s1.add_edge(aA, None, aB, None, dace.memlet.Memlet.from_array("A", A))
+    return sdfg
+
 @pytest.mark.parametrize("condition", always_true)
 def test_single_condition(condition: str):
     sdfg = _get_sdfg(condition)
     sdfg.validate()
-    LiftTriviallyTrueIf().apply_pass(sdfg, {})
+    LiftTrivialIf().apply_pass(sdfg, {})
     sdfg.validate()
     assert len({n for n in sdfg.all_control_flow_blocks() if isinstance(n, ConditionalBlock)}) == 0
 
@@ -117,7 +145,7 @@ def test_single_condition(condition: str):
 def test_single_condition_cant_eval(condition: str):
     sdfg = _get_sdfg(condition)
     sdfg.validate()
-    LiftTriviallyTrueIf().apply_pass(sdfg, {})
+    LiftTrivialIf().apply_pass(sdfg, {})
     sdfg.validate()
     assert len({n for n in sdfg.all_control_flow_blocks() if isinstance(n, ConditionalBlock)}) == 1
 
@@ -127,7 +155,7 @@ def test_single_condition_cant_eval(condition: str):
 def test_nested_condition(condition1: str, condition2: str):
     sdfg = _get_nested_sdfg(condition1, condition2)
     sdfg.validate()
-    LiftTriviallyTrueIf().apply_pass(sdfg, {})
+    LiftTrivialIf().apply_pass(sdfg, {})
     sdfg.validate()
     assert len({n for n in sdfg.all_control_flow_blocks() if isinstance(n, ConditionalBlock)}) == 0
 
@@ -136,7 +164,7 @@ def test_nested_condition(condition1: str, condition2: str):
 def test_nested_condition_cant_eval(condition1: str, condition2: str):
     sdfg = _get_nested_sdfg(condition1, condition2)
     sdfg.validate()
-    LiftTriviallyTrueIf().apply_pass(sdfg, {})
+    LiftTrivialIf().apply_pass(sdfg, {})
     sdfg.validate()
     assert len({n for n in sdfg.all_control_flow_blocks() if isinstance(n, ConditionalBlock)}) == 2
 
@@ -145,7 +173,7 @@ def test_nested_condition_cant_eval(condition1: str, condition2: str):
 def test_if_else_cond_is_trivially_true(condition: str):
     sdfg = _get_if_else_sdfg(condition, False)
     sdfg.validate()
-    LiftTriviallyTrueIf().apply_pass(sdfg, {})
+    LiftTrivialIf().apply_pass(sdfg, {})
     sdfg.validate()
     assert len({n for n in sdfg.all_control_flow_blocks() if isinstance(n, ConditionalBlock)}) == 0
 
@@ -154,10 +182,17 @@ def test_if_else_cond_is_trivially_true(condition: str):
 def test_if_else_cond_is_trivially_false(condition: str):
     sdfg = _get_if_else_sdfg(condition, True)
     sdfg.validate()
-    LiftTriviallyTrueIf().apply_pass(sdfg, {})
+    LiftTrivialIf().apply_pass(sdfg, {})
     sdfg.validate()
     assert len({n for n in sdfg.all_control_flow_blocks() if isinstance(n, ConditionalBlock)}) == 0
 
+
+def test_cfg_is_a_middle_node():
+    sdfg = _get_sdfg_with_many_states()
+    sdfg.validate()
+    LiftTrivialIf().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert len({n for n in sdfg.all_control_flow_blocks() if isinstance(n, ConditionalBlock)}) == 0
 
 if __name__ == "__main__":
     for c in always_true:
@@ -173,3 +208,5 @@ if __name__ == "__main__":
 
     for c in always_false:
         test_if_else_cond_is_trivially_false(c)
+
+    test_cfg_is_a_middle_node()
