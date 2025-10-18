@@ -57,9 +57,9 @@ class RemoveAssignmentTasklets(ppl.Pass):
                 state.add_edge(
                     ie.src, None, oe.dst, oe.dst_conn,
                     dace.memlet.Memlet(
-                        data=ie.src.data,
-                        subset=copy.deepcopy(ie.data.subset),
-                        other_subset=copy.deepcopy(oe.data.subset)
+                        data=oe.data.data,
+                        subset=copy.deepcopy(oe.data.subset),
+                        other_subset=copy.deepcopy(ie.data.subset),
                     )
                 )
 
