@@ -1870,7 +1870,11 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                     self._localcode.write(f'{aname}_tile_width = {hbm_width}/{width_split};')
 
         # Just dump the whole HBM address space
-        test_mode = Config.get("backend", "softhier", "TEST_MODE")
+        try:
+            test_mode = Config.get("backend", "softhier", "TEST_MODE")
+        except:
+            test_mode = "perf_only"
+
         if test_mode == "perf_only":
             dump_str = ""
         elif test_mode == "functional":
@@ -2941,7 +2945,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                             assign_str,
                             cfg,
                             state_id,
-                            [src_node, dst_node],
+                            # [src_node, dst_node],
                         )
                         self._dispatcher.defined_vars.add(edge.dst_conn, DefinedType.Pointer, ctype)
 
