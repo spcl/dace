@@ -105,7 +105,10 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
     or persistent kernels) are skipped and left to be handled by the `CUDACodeGen` backend.
     """
     map_entry = transformation.PatternNode(nodes.MapEntry)
-    divides_evenly = Property(dtype=bool, default=False, allow_none=False, desc="If the tblock-map devides the maps evenly")
+    divides_evenly = Property(dtype=bool,
+                              default=False,
+                              allow_none=False,
+                              desc="If the tblock-map devides the maps evenly")
 
     @classmethod
     def expressions(cls):

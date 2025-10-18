@@ -2534,6 +2534,7 @@ def specialize_scalar(sdfg: 'dace.SDFG', scalar_name: str, scalar_val: Union[flo
 
     _specialize_scalar_impl(sdfg, sdfg, scalar_name, scalar_val)
 
+
 def demote_symbol_to_scalar(sdfg: 'dace.SDFG', symbol_str: str):
     import ast
     import dace.sdfg.construction_utils as cutil
@@ -2542,12 +2543,11 @@ def demote_symbol_to_scalar(sdfg: 'dace.SDFG', symbol_str: str):
     sdfg.remove_symbol(symbol_str)
 
     # If top-level and in free symbols
-    # Or not top-level and in symbol mapping need to make it non transient 
+    # Or not top-level and in symbol mapping need to make it non transient
     # TODO:
     is_transient = True
 
     scalar_name, scalar = sdfg.add_scalar(symbol_str, sym_dtype, transient=is_transient)
-
 
     # For any tasklet that uses the symbol - make an access node to the scalar and connect through the in connector
     # 1.1 If symbol <- expr in any interstate edge
@@ -2573,14 +2573,17 @@ def demote_symbol_to_scalar(sdfg: 'dace.SDFG', symbol_str: str):
                                             if symbol_str in ast.unparse(n.code.code[i]):
                                                 if state.in_degree(n) > 0:
                                                     assert False, "Unsupported case TODO"
-                                                n.code.code[i] =  ast.parse(ast.unparse(n.code.code[i]).replace(symbol_str, "__in_" + symbol_str))
+                                                n.code.code[i] = ast.parse(
+                                                    ast.unparse(n.code.code[i]).replace(
+                                                        symbol_str, "__in_" + symbol_str))
                                                 n.add_in_connector("__in_" + symbol_str)
                                                 an = state.add_access(scalar_name)
                                                 state.add_edge(an, None, n, "__in_" + symbol_str,
-                                                            dace.Memlet.from_array(scalar_name, scalar))
+                                                               dace.Memlet.from_array(scalar_name, scalar))
                                                 an2 = state.add_access(assignment)
-                                                state.add_edge(an2, None, an, None,
-                                                            dace.Memlet.from_array(assignment, sdfg.arrays[assignment]))
+                                                state.add_edge(
+                                                    an2, None, an, None,
+                                                    dace.Memlet.from_array(assignment, sdfg.arrays[assignment]))
             if symbol_str in e.data.assignments:
                 del e.data.assignments[symbol_str]
 
