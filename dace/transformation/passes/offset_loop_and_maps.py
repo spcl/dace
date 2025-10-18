@@ -269,8 +269,10 @@ class OffsetLoopsAndMaps(ppl.Pass):
                                     self.begin_expr) or str(b) == str(self.begin_expr):
                                 has_matches = True
 
-                                b_expr = dace.symbolic.SymExpr(pycode(b) + " + " + pycode(_get_expr_from_str(self.offset_expr))).simplify()
-                                e_expr = dace.symbolic.SymExpr(pycode(e) + " + " + pycode(_get_expr_from_str(self.offset_expr))).simplify()
+                                b_expr = dace.symbolic.SymExpr(
+                                    pycode(b) + " + " + pycode(_get_expr_from_str(self.offset_expr))).simplify()
+                                e_expr = dace.symbolic.SymExpr(
+                                    pycode(e) + " + " + pycode(_get_expr_from_str(self.offset_expr))).simplify()
                                 s_expr = dace.symbolic.SymExpr(pycode(s)).simplify()
                                 prev_s_expr = s_expr
                                 if self.squeeze:
@@ -284,9 +286,10 @@ class OffsetLoopsAndMaps(ppl.Pass):
                                         s_expr = dace.symbolic.SymExpr(1)
 
                                 new_range_list.append((b_expr, e_expr, s_expr))
-                                
+
                                 if self.squeeze:
-                                    repldict[param] = f"(({param} * {prev_s_expr}) - {pycode(_get_expr_from_str(self.offset_expr))})"
+                                    repldict[
+                                        param] = f"(({param} * {prev_s_expr}) - {pycode(_get_expr_from_str(self.offset_expr))})"
                                 else:
                                     repldict[param] = f"({param} - {pycode(_get_expr_from_str(self.offset_expr))})"
                             else:

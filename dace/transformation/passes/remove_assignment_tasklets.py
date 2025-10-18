@@ -40,9 +40,9 @@ class RemoveAssignmentTasklets(ppl.Pass):
                     if len(node.in_connectors) == 1 and len(node.out_connectors) == 1:
                         in_conn_name = next(iter(node.in_connectors.keys()))
                         out_conn_name = next(iter(node.out_connectors.keys()))
-                        if (node.code.as_string == f"{out_conn_name} = {in_conn_name}" or 
-                            node.code.as_string == f"{out_conn_name} = {in_conn_name};" or
-                            node.code.as_string == f"vector_copy({out_conn_name}, {in_conn_name});"):
+                        if (node.code.as_string == f"{out_conn_name} = {in_conn_name}"
+                                or node.code.as_string == f"{out_conn_name} = {in_conn_name};"
+                                or node.code.as_string == f"vector_copy({out_conn_name}, {in_conn_name});"):
                             # Can rm this node
                             nodes_to_rm.add(node)
 
@@ -60,8 +60,7 @@ class RemoveAssignmentTasklets(ppl.Pass):
                         data=oe.data.data,
                         subset=copy.deepcopy(oe.data.subset),
                         other_subset=copy.deepcopy(ie.data.subset),
-                    )
-                )
+                    ))
 
             for node in state.nodes():
                 if isinstance(node, dace.nodes.NestedSDFG):
