@@ -113,7 +113,8 @@ inline void _vi_vdiv_(
                 vector_width=vector_width,
                 vector_input_storage=dace.dtypes.StorageType.SoftHier_TCDM,
                 vector_output_storage=dace.dtypes.StorageType.SoftHier_TCDM,
-                global_code=ExplicitVectorizationPipelineSoftHier._softhier_global_code.format(vector_width=vector_width),
+                global_code=ExplicitVectorizationPipelineSoftHier._softhier_global_code.format(
+                    vector_width=vector_width),
                 global_code_location="soft_hier",
                 vector_op_numeric_type=dace.float32,
             )

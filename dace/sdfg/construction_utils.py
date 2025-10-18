@@ -298,11 +298,8 @@ def replace_length_one_arrays_with_scalars(sdfg: dace.SDFG, recursive: bool = Tr
                     replace_length_one_arrays_with_scalars(node.sdfg, recursive=True, transient_only=True)
 
 
-def connect_array_names(
-    sdfg: dace.SDFG,
-    local_storage: dace.dtypes.StorageType,
-    src_storage: dace.dtypes.StorageType,
-    local_name_prefix: str):
+def connect_array_names(sdfg: dace.SDFG, local_storage: dace.dtypes.StorageType, src_storage: dace.dtypes.StorageType,
+                        local_name_prefix: str):
 
     array_name_dict = dict()
     for state in sdfg.all_states():
@@ -334,4 +331,3 @@ def connect_array_names(
 
     sdfg.replace_dict(repldict, replace_keys=True)
     sdfg.validate()
-
