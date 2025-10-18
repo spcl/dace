@@ -12,6 +12,7 @@ import dace.sdfg.construction_utils as cutil
 from typing import Tuple, Set, Union
 from dace.sdfg.construction_utils import token_match, token_replace
 
+
 def extract_bracket_content(s: str):
     pattern = r"<(\w+)>\[([^\]]*)\]"
     matches = re.findall(pattern, s)

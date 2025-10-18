@@ -14,6 +14,7 @@ import dace.sdfg.utils as sdutil
 from sympy import pycode
 from collections import Counter
 
+
 @transformation.explicit_cf_compatible
 class LiftTrivialIf(ppl.Pass):
 
@@ -53,6 +54,7 @@ class LiftTrivialIf(ppl.Pass):
         if code.language != dace.dtypes.Language.Python:
             return False
         try:
+
             def _token_replace_dict(string_to_check: str, dict) -> str:
                 # Split while keeping delimiters
                 tokens = re.split(r'(\s+|[()\[\]])', string_to_check)
