@@ -296,3 +296,42 @@ def replace_length_one_arrays_with_scalars(sdfg: dace.SDFG, recursive: bool = Tr
             for node in state.nodes():
                 if isinstance(node, dace.nodes.NestedSDFG):
                     replace_length_one_arrays_with_scalars(node.sdfg, recursive=True, transient_only=True)
+
+
+def connect_array_names(
+    sdfg: dace.SDFG,
+    local_storage: dace.dtypes.StorageType,
+    src_storage: dace.dtypes.StorageType,
+    local_name_prefix: str):
+
+    array_name_dict = dict()
+    for state in sdfg.all_states():
+        for node in state.nodes():
+            if isinstance(node, dace.nodes.AccessNode):
+                local_arr = state.sdfg.arrays[node.data]
+                print(local_arr.storage)
+                if local_arr.storage == local_storage:
+                    assert len(state.in_edges(node)) <= 1
+                    # Reads
+                    for ie in state.in_edges(node):
+                        if ie.data.data is not None and ie.data.data != node.data:
+                            src_data = state.sdfg.arrays[ie.data.data]
+                            print(src_data)
+                            if src_data.storage == src_storage:
+                                assert node.data not in array_name_dict
+                                array_name_dict[node.data] = ie.data.data
+                    # Writes
+                    for oe in state.out_edges(node):
+                        if oe.data.data is not None and oe.data.data != node.data:
+                            dst_data = state.sdfg.arrays[oe.data.data]
+                            print(dst_data)
+                            if dst_data.storage == src_storage:
+                                assert node.data not in array_name_dict
+                                array_name_dict[node.data] = oe.data.data
+
+    print(array_name_dict)
+    repldict = {k: f"{local_name_prefix}{v}" for k, v in array_name_dict.items()}
+
+    sdfg.replace_dict(repldict, replace_keys=True)
+    sdfg.validate()
+
