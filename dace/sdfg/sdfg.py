@@ -2093,13 +2093,13 @@ class SDFG(ControlFlowRegion):
 
         if find_new_name:
             # These characters might be introduced through the creation of views to members
-            #  of strictures.
+            #  of structures.
             # NOTES: If `find_new_name` is `True` and the name (understood as a sequence of
             #   any characters) is not used, i.e. `assert self.is_name_free(name)`, then it
             #   is still "cleaned", i.e. dots are replaced with underscores. However, if
             #   `find_new_name` is `False` then this cleaning is not applied and it is possible
             #   to create names that are formally invalid. The above code reproduces the exact
-            #   same behaviour and is maintained for  compatibility. This behaviour is
+            #   same behavior and is maintained for compatibility. This behavior is
             #   triggered by tests/python_frontend/structures/structure_python_test.py::test_rgf`.
             name = self._find_new_name(name)
             name = name.replace('.', '_')

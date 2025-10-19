@@ -1170,7 +1170,10 @@ class ProgramVisitor(ExtNodeVisitor):
         # self.program = None
         self.sdfg = SDFG(self.name)
         if not self.nested:
-            self.sdfg.arrays.update(scope_arrays)
+            for k, v in scope_arrays.items():
+                nested_v = copy.deepcopy(v)
+                nested_v.transient = False
+                self.sdfg.add_datadesc(k, nested_v)
             for arr in self.sdfg.arrays.values():
                 for sym in arr.free_symbols:
                     if sym.name not in self.sdfg.symbols:
