@@ -1795,7 +1795,7 @@ class CPUCodeGen(TargetCodeGenerator):
     def define_out_memlet(self, sdfg: SDFG, cfg: ControlFlowRegion, state_dfg: StateSubgraphView, state_id: int,
                           src_node: nodes.Node, dst_node: nodes.Node, edge: MultiConnectorEdge[mmlt.Memlet],
                           function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
-        print("Defining Out Memlet")
+        print("Defining Out Memlet Using CPU Codegen")
         cdtype = src_node.out_connectors[edge.src_conn]
         if isinstance(sdfg.arrays[edge.data.data], data.Stream):
             pass
