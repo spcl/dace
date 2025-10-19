@@ -1723,11 +1723,15 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                     # Rename argument in kernel prototype as necessary
                     aname = inner_ptrname
                     if data_desc.is_hbm_interleaved:
+                        hbm_width = data_desc.shape[1]
+                        hbm_height = data_desc.shape[0]
+                        height_split = data_desc.hbm_split_scheme[0]
+                        width_split = data_desc.hbm_split_scheme[1]
                         self._globalcode.write(f"uint32_t {aname}_base;")
-                        self._globalcode.write(f"uint32_t {aname}_height;")
-                        self._globalcode.write(f"uint32_t {aname}_width;")
-                        self._globalcode.write(f"uint32_t {aname}_tile_height;")
-                        self._globalcode.write(f"uint32_t {aname}_tile_width;")
+                        self._globalcode.write(f'#define {aname}_height {hbm_height}')
+                        self._globalcode.write(f'#define {aname}_width  {hbm_width}')
+                        self._globalcode.write(f'#define {aname}_tile_height  ({hbm_height}/{height_split})')
+                        self._globalcode.write(f'#define {aname}_tile_width  ({hbm_width}/{width_split})')
                         split_scheme = data_desc.hbm_split_scheme
                         placement_scheme = data_desc.hbm_placement_scheme
                         self._globalcode.write(_generate_placement_info(aname, placement_scheme, split_scheme))
@@ -1749,11 +1753,15 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                     # Rename argument in kernel prototype as necessary
                     aname = inner_ptrname
                     if data_desc.is_hbm_interleaved:
+                        hbm_width = data_desc.shape[1]
+                        hbm_height = data_desc.shape[0]
+                        height_split = data_desc.hbm_split_scheme[0]
+                        width_split = data_desc.hbm_split_scheme[1]
                         self._globalcode.write(f"uint32_t {aname}_base;")
-                        self._globalcode.write(f"uint32_t {aname}_height;")
-                        self._globalcode.write(f"uint32_t {aname}_width;")
-                        self._globalcode.write(f"uint32_t {aname}_tile_height;")
-                        self._globalcode.write(f"uint32_t {aname}_tile_width;")
+                        self._globalcode.write(f'#define {aname}_height {hbm_height}')
+                        self._globalcode.write(f'#define {aname}_width  {hbm_width}')
+                        self._globalcode.write(f'#define {aname}_tile_height  ({hbm_height}/{height_split})')
+                        self._globalcode.write(f'#define {aname}_tile_width  ({hbm_width}/{width_split})')
                         split_scheme = data_desc.hbm_split_scheme
                         placement_scheme = data_desc.hbm_placement_scheme
                         self._globalcode.write(_generate_placement_info(aname, placement_scheme, split_scheme))
@@ -1885,18 +1893,18 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
         for k, v in hbm_interleaved_args.items():
             self._localcode.write(f'{k}_base = {k};')
 
-        for aname, arg in hbm_interleaved_args.items():
-            if aname in sdfg.arrays:
-                nodedesc = sdfg.arrays[aname]
-                if nodedesc.is_hbm_interleaved:
-                    hbm_width = nodedesc.shape[1]
-                    hbm_height = nodedesc.shape[0]
-                    height_split = nodedesc.hbm_split_scheme[0]
-                    width_split = nodedesc.hbm_split_scheme[1]
-                    self._localcode.write(f'{aname}_height = {hbm_height};')
-                    self._localcode.write(f'{aname}_width = {hbm_width};')
-                    self._localcode.write(f'{aname}_tile_height = {hbm_height}/{height_split};')
-                    self._localcode.write(f'{aname}_tile_width = {hbm_width}/{width_split};')
+        # for aname, arg in hbm_interleaved_args.items():
+        #     if aname in sdfg.arrays:
+        #         nodedesc = sdfg.arrays[aname]
+        #         if nodedesc.is_hbm_interleaved:
+        #             hbm_width = nodedesc.shape[1]
+        #             hbm_height = nodedesc.shape[0]
+        #             height_split = nodedesc.hbm_split_scheme[0]
+        #             width_split = nodedesc.hbm_split_scheme[1]
+        #             self._globalcode.write(f'#define {aname}_height {hbm_height}')
+        #             self._globalcode.write(f'#define {aname}_width  {hbm_width}')
+        #             self._globalcode.write(f'#define {aname}_tile_height  ({hbm_height}/{height_split})')
+        #             self._globalcode.write(f'#define {aname}_tile_width  ({hbm_width}/{width_split})')
 
         # Just dump the whole HBM address space
         try:
