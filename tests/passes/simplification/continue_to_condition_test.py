@@ -73,7 +73,7 @@ def test_no_condition():
             a[i] = a[i] + 1
 
     sdfg = tester.to_sdfg(simplify=False)
-    sdfg.simplify(skip=["ContinueToCondition"])
+    sdfg.simplify(skip=["ContinueToCondition", "EmptyLoopElimination"])
     sdfg.validate()
 
     # Should have exactly one continue node
