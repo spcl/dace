@@ -11,6 +11,12 @@ from dace.transformation.passes.fuse_branches_pass import FuseBranchesPass
 
 class ExplicitVectorizationPipelineSoftHier(ppl.Pipeline):
     _softhier_global_code = """
+#ifndef _SOFTHIER_MACROS_DEFINED
+#define _SOFTHIER_MACROS_DEFINED
+#define STR(x) #x
+#define XSTR(x) STR(x)
+#endif _SOFTHIER_MACROS_DEFINED
+
 inline void _softhier_vi_vadd_(
     uint32_t va_addr,
     uint32_t vb_addr,
@@ -19,15 +25,15 @@ inline void _softhier_vi_vadd_(
     uint32_t vlen = {vector_width};
     uint32_t avl;
     while(vlen > 0){{
-        asm volatile("vsetvli %0, %1, e" XSTR(DATA_TYPE_WIDTH) ", m8, ta, ma" : "=r"(avl) : "r"(vlen));
-        asm volatile("vle" XSTR(DATA_TYPE_WIDTH) ".v v8,  (%0)" ::"r"(va_addr));
-        asm volatile("vle" XSTR(DATA_TYPE_WIDTH) ".v v0,  (%0)" ::"r"(vb_addr));
+        asm volatile("vsetvli %0, %1, e" XSTR(16) ", m8, ta, ma" : "=r"(avl) : "r"(vlen));
+        asm volatile("vle" XSTR(16) ".v v8,  (%0)" ::"r"(va_addr));
+        asm volatile("vle" XSTR(16) ".v v0,  (%0)" ::"r"(vb_addr));
         asm volatile("vfadd.vv v8, v8, v0");
-        asm volatile("vse" XSTR(DATA_TYPE_WIDTH) ".v v8,  (%0)" ::"r"(vc_addr));
+        asm volatile("vse" XSTR(16) ".v v8,  (%0)" ::"r"(vc_addr));
         vlen -= avl;
-        va_addr += DATA_TYPE_BYTE*avl;
-        vb_addr += DATA_TYPE_BYTE*avl;
-        vc_addr += DATA_TYPE_BYTE*avl;
+        va_addr += 2*avl;
+        vb_addr += 2*avl;
+        vc_addr += 2*avl;
     }}
 }}
 
@@ -40,15 +46,15 @@ inline void _softhier_vi_vmul_(
     uint32_t vlen = {vector_width};
     uint32_t avl;
     while(vlen > 0){{
-        asm volatile("vsetvli %0, %1, e" XSTR(DATA_TYPE_WIDTH) ", m8, ta, ma" : "=r"(avl) : "r"(vlen));
-        asm volatile("vle" XSTR(DATA_TYPE_WIDTH) ".v v8,  (%0)" ::"r"(va_addr));
-        asm volatile("vle" XSTR(DATA_TYPE_WIDTH) ".v v0,  (%0)" ::"r"(vb_addr));
+        asm volatile("vsetvli %0, %1, e" XSTR(16) ", m8, ta, ma" : "=r"(avl) : "r"(vlen));
+        asm volatile("vle" XSTR(16) ".v v8,  (%0)" ::"r"(va_addr));
+        asm volatile("vle" XSTR(16) ".v v0,  (%0)" ::"r"(vb_addr));
         asm volatile("vfmul.vv v8, v8, v0");
-        asm volatile("vse" XSTR(DATA_TYPE_WIDTH) ".v v8,  (%0)" ::"r"(vc_addr));
+        asm volatile("vse" XSTR(16) ".v v8,  (%0)" ::"r"(vc_addr));
         vlen -= avl;
-        va_addr += DATA_TYPE_BYTE*avl;
-        vb_addr += DATA_TYPE_BYTE*avl;
-        vc_addr += DATA_TYPE_BYTE*avl;
+        va_addr += 2*avl;
+        vb_addr += 2*avl;
+        vc_addr += 2*avl;
     }}
 }}
 
@@ -61,15 +67,15 @@ inline void _softhier_vi_vsub_(
     uint32_t vlen = {vector_width};
     uint32_t avl;
     while(vlen > 0){{
-        asm volatile("vsetvli %0, %1, e" XSTR(DATA_TYPE_WIDTH) ", m8, ta, ma" : "=r"(avl) : "r"(vlen));
-        asm volatile("vle" XSTR(DATA_TYPE_WIDTH) ".v v8,  (%0)" ::"r"(va_addr));
-        asm volatile("vle" XSTR(DATA_TYPE_WIDTH) ".v v0,  (%0)" ::"r"(vb_addr));
+        asm volatile("vsetvli %0, %1, e" XSTR(16) ", m8, ta, ma" : "=r"(avl) : "r"(vlen));
+        asm volatile("vle" XSTR(16) ".v v8,  (%0)" ::"r"(va_addr));
+        asm volatile("vle" XSTR(16) ".v v0,  (%0)" ::"r"(vb_addr));
         asm volatile("vfsub.vv v8, v8, v0");
-        asm volatile("vse" XSTR(DATA_TYPE_WIDTH) ".v v8,  (%0)" ::"r"(vc_addr));
+        asm volatile("vse" XSTR(16) ".v v8,  (%0)" ::"r"(vc_addr));
         vlen -= avl;
-        va_addr += DATA_TYPE_BYTE*avl;
-        vb_addr += DATA_TYPE_BYTE*avl;
-        vc_addr += DATA_TYPE_BYTE*avl;
+        va_addr += 2*avl;
+        vb_addr += 2*avl;
+        vc_addr += 2*avl;
     }}
 }}
 
@@ -83,15 +89,15 @@ inline void _softhier_vi_vdiv_(
     uint32_t vlen = {vector_width};
     uint32_t avl;
     while(vlen > 0){{
-        asm volatile("vsetvli %0, %1, e" XSTR(DATA_TYPE_WIDTH) ", m8, ta, ma" : "=r"(avl) : "r"(vlen));
-        asm volatile("vle" XSTR(DATA_TYPE_WIDTH) ".v v8,  (%0)" ::"r"(va_addr));
-        asm volatile("vle" XSTR(DATA_TYPE_WIDTH) ".v v0,  (%0)" ::"r"(vb_addr));
+        asm volatile("vsetvli %0, %1, e" XSTR(16) ", m8, ta, ma" : "=r"(avl) : "r"(vlen));
+        asm volatile("vle" XSTR(16) ".v v8,  (%0)" ::"r"(va_addr));
+        asm volatile("vle" XSTR(16) ".v v0,  (%0)" ::"r"(vb_addr));
         asm volatile("vfdiv.vv v8, v8, v0");
-        asm volatile("vse" XSTR(DATA_TYPE_WIDTH) ".v v8,  (%0)" ::"r"(vc_addr));
+        asm volatile("vse" XSTR(16) ".v v8,  (%0)" ::"r"(vc_addr));
         vlen -= avl;
-        va_addr += DATA_TYPE_BYTE*avl;
-        vb_addr += DATA_TYPE_BYTE*avl;
-        vc_addr += DATA_TYPE_BYTE*avl;
+        va_addr += 2*avl;
+        vb_addr += 2*avl;
+        vc_addr += 2*avl;
     }}
 }}
 """
