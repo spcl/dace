@@ -11,7 +11,7 @@ from dace.transformation.passes.fuse_branches_pass import FuseBranchesPass
 
 class ExplicitVectorizationPipelineSoftHier(ppl.Pipeline):
     _softhier_global_code = """
-inline void _vi_vadd_(
+inline void _softhier_vi_vadd_(
     uint32_t va_addr,
     uint32_t vb_addr,
     uint32_t vc_addr)
@@ -32,7 +32,7 @@ inline void _vi_vadd_(
 }}
 
 /*vc = va * vb*/
-inline void _vi_vmul_(
+inline void _softhier_vi_vmul_(
     uint32_t va_addr,
     uint32_t vb_addr,
     uint32_t vc_addr)
@@ -53,7 +53,7 @@ inline void _vi_vmul_(
 }}
 
 /*vc = va - vb*/
-inline void _vi_vsub_(
+inline void _softhier_vi_vsub_(
     uint32_t va_addr,
     uint32_t vb_addr,
     uint32_t vc_addr)
@@ -75,7 +75,7 @@ inline void _vi_vsub_(
 
 
 /*vc = va / vb*/
-inline void _vi_vdiv_(
+inline void _softhier_vi_vdiv_(
     uint32_t va_addr,
     uint32_t vb_addr,
     uint32_t vc_addr)
@@ -107,7 +107,7 @@ inline void _vi_vdiv_(
             InlineSDFGs(),
             ExplicitVectorization(
                 templates={
-                    "+": "_vi_vadd_((uint32_t){lhs}, (uint32_t){rhs1}, (uint32_t){rhs2});",
+                    "+": "_softhier_vi_vadd_((uint32_t){lhs}, (uint32_t){rhs1}, (uint32_t){rhs2});",
                     "=": "vector_copy({lhs}, {rhs1});"
                 },
                 vector_width=vector_width,
