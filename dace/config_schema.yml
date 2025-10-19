@@ -895,6 +895,13 @@ required:
                         title: HBM_NUM_CHANNELS
                         description: >
                             HBM_NUM_CHANNELS
+                    
+                    TEST_MODE:
+                        type: str,
+                        default: 'perf_only'
+                        title: TEST_MODE
+                        description: >
+                            Test mode for SoftHier simulator
 
     #############################################
 
