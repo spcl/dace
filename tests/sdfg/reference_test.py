@@ -10,6 +10,70 @@ import pytest
 import networkx as nx
 
 
+def test_frontend_reference():
+    N = dace.symbol('N')
+    M = dace.symbol('M')
+    mystruct = dace.data.Structure(members={
+        "data": dace.data.Array(dace.float32, (N, M), strides=(1, N)),
+        "arrA": dace.data.ArrayReference(dace.float32, (N, )),
+        "arrB": dace.data.ArrayReference(dace.float32, (N, )),
+    },
+                                   name="MyStruct")
+
+    @dace.program
+    def init_prog(mydat: mystruct, fill_value: int) -> None:
+        mydat.arrA = mydat.data[:, 2]
+        mydat.arrB = mydat.data[:, 0]
+
+        # loop over all arrays and initialize them with `fill_value`
+        for index in range(M):
+            mydat.data[:, index] = fill_value
+
+        # Initialize the two named ones by name
+        mydat.arrA[:] = fill_value + 1
+        mydat.arrB[:] = fill_value + 2
+
+    dat = np.zeros((10, 5), dtype=np.float32)
+    inp_struct = mystruct.dtype._typeclass.as_ctypes()(data=dat.__array_interface__['data'][0])
+
+    func = init_prog.compile()
+    func(mydat=inp_struct, fill_value=3, N=10, M=5)
+
+    assert np.allclose(dat[0, :], 5) and np.allclose(dat[1, :], 5)
+    assert np.allclose(dat[2, :], 3) and np.allclose(dat[3, :], 3)
+    assert np.allclose(dat[4, :], 4) and np.allclose(dat[5, :], 4)
+    assert np.allclose(dat[6, :], 3) and np.allclose(dat[7, :], 3)
+    assert np.allclose(dat[8, :], 3) and np.allclose(dat[9, :], 3)
+
+
+def test_type_annotation_reference():
+    N = dace.symbol('N')
+
+    @dace.program
+    def ref(A: dace.float64[N], B: dace.float64[N], T: dace.int32, out: dace.float64[N]):
+        ref1: dace.data.ArrayReference(A.dtype, A.shape) = A
+        ref2: dace.data.ArrayReference(A.dtype, A.shape) = B
+        if T <= 0:
+            out[:] = ref1[:] + 1
+        else:
+            out[:] = ref2[:] + 1
+
+    a = np.random.rand(20)
+    a_verif = a.copy()
+    b = np.random.rand(20)
+    b_verif = b.copy()
+    out = np.random.rand(20)
+    out_verif = out.copy()
+
+    ref(a, b, 1, out, N=20)
+    ref.f(a_verif, b_verif, 1, out_verif)
+    assert np.allclose(out, out_verif)
+
+    ref(a, b, -1, out, N=20)
+    ref.f(a_verif, b_verif, -1, out_verif)
+    assert np.allclose(out, out_verif)
+
+
 def test_unset_reference():
     sdfg = dace.SDFG('tester')
     sdfg.add_reference('ref', [20], dace.float64)
@@ -683,6 +747,8 @@ def test_ref2view_reconnection():
 
 
 if __name__ == '__main__':
+    test_frontend_reference()
+    test_type_annotation_reference()
     test_unset_reference()
     test_reference_branch()
     test_reference_sources_pass()
