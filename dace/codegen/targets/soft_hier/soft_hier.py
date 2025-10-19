@@ -426,7 +426,8 @@ class SoftHierCodeGen(TargetCodeGenerator):
     uint32_t threshold = {poolcfg if poolcfg != -1 else 'UINT64_MAX'};
     cudaMemPoolSetAttribute(mempool, cudaMemPoolAttrReleaseThreshold, &threshold);
 '''
-
+        softhier_global_codeblock = self._global_sdfg.global_code.get("soft_hier", None)
+        softhier_global_code = softhier_global_codeblock.as_string if softhier_global_codeblock is not None else ""
         self._codeobject.code = """
 // #include <{backend_header}>
 // #include <dace/dace.h>
@@ -498,7 +499,7 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
             hbm_address_space=dace.config.Config.get("backend", "softhier", "HBM_ADDRESS_SPACE"),
             hbm_address_base=dace.config.Config.get("backend", "softhier", "HBM_ADDRESS_BASE"),
             hbm_num_channels=dace.config.Config.get("backend", "softhier", "HBM_NUM_CHANNELS"),
-            softhier_global_code=self._global_sdfg.global_code["soft_hier"].as_string
+            softhier_global_code=softhier_global_code
         )
         #s = ""
         #for k, v in self._global_sdfg.global_code.items():
