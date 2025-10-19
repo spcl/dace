@@ -196,6 +196,14 @@ def test_cfg_is_a_middle_node():
     assert len({n for n in sdfg.all_control_flow_blocks() if isinstance(n, ConditionalBlock)}) == 0
 
 
+def test_cfg_is_a_middle_node():
+    sdfg = _get_sdfg_with_many_states()
+    sdfg.validate()
+    LiftTrivialIf().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert len({n for n in sdfg.all_control_flow_blocks() if isinstance(n, ConditionalBlock)}) == 0
+
+
 if __name__ == "__main__":
     for c in always_true:
         test_single_condition(c)
