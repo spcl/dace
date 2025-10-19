@@ -116,7 +116,7 @@ inline void _vi_vdiv_(
                 global_code=ExplicitVectorizationPipelineSoftHier._softhier_global_code.format(
                     vector_width=vector_width),
                 global_code_location="soft_hier",
-                vector_op_numeric_type=dace.float32,
+                vector_op_numeric_type=dace.float16,
             )
         ]
         super().__init__(passes)
