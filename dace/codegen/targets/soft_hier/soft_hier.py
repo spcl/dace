@@ -478,6 +478,7 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
     return __err;
 }}
 
+{softhier_global_code}
 
 {localcode}
 """.format(
@@ -497,7 +498,13 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
             hbm_address_space=dace.config.Config.get("backend", "softhier", "HBM_ADDRESS_SPACE"),
             hbm_address_base=dace.config.Config.get("backend", "softhier", "HBM_ADDRESS_BASE"),
             hbm_num_channels=dace.config.Config.get("backend", "softhier", "HBM_NUM_CHANNELS"),
+            softhier_global_code=self._global_sdfg.global_code["soft_hier"].as_string
         )
+        #s = ""
+        #for k, v in self._global_sdfg.global_code.items():
+        #    print(k, v.as_string)
+        #    s += f"{k}: {v.as_string}"
+        #raise Exception(s)
 
         return [self._codeobject]
 
