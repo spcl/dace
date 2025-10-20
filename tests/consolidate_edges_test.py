@@ -40,15 +40,16 @@ def test_consolidate_edges():
 
 
 def _make_sdfg_multi_usage_input(
-    N: int,
     use_inner_access_node: bool,
     use_non_standard_memlet: bool,
 ) -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.AccessNode, dace_nodes.MapEntry]:
+
+    # Needs to be 5, to trigger the Memlet propagation bug (could actually also be
+    #   less but greater than 2.
+    N = 5
+
     sdfg = dace.SDFG(utility.unique_name("multi_input_usage"))
     state = sdfg.add_state(is_start_block=True)
-
-    if use_inner_access_node and use_non_standard_memlet:
-        assert N >= 2, "Needed for alteration"
 
     multi_use_value_data, _ = sdfg.add_array(
         "multi_use_value",
@@ -102,10 +103,8 @@ def _make_sdfg_multi_usage_input(
             subset = f"__i + {offset_in_i}"
             other_subset = "0"
 
-            # NOTE: If we use `(i % 2) == 0` then we hit a bug in Memlet propagation.
-            #   Since it is only propagated to `0:11`, this is because the `__i + 2`
-            #   is somehow overlooked.
-            if use_non_standard_memlet and ((i % 2) == 1):
+            # NOTE: We need `(i % 2) == 0` the note in `_test_multi_use_value_input()`
+            if use_non_standard_memlet and ((i % 2) == 0):
                 data = inner_data
                 subset, other_subset = other_subset, subset
 
@@ -142,14 +141,12 @@ def _test_multi_use_value_input(
         # This combination does not make sense.
         return
 
-    N = 5
-    sdfg, state, multi_use_value, me = _make_sdfg_multi_usage_input(N=N,
-                                                                    use_inner_access_node=use_inner_access_node,
+    sdfg, state, multi_use_value, me = _make_sdfg_multi_usage_input(use_inner_access_node=use_inner_access_node,
                                                                     use_non_standard_memlet=use_non_standard_memlet)
 
     initial_ac = utility.count_nodes(sdfg, dace_nodes.AccessNode, True)
     assert multi_use_value in initial_ac
-    assert state.out_degree(multi_use_value) == N
+    assert state.out_degree(multi_use_value) == 5
     assert all((oedge.data.src_subset == dace_sbs.Range.from_string("0:10") or oedge.data.src_subset ==
                 dace_sbs.Range.from_string("1:11") or oedge.data.src_subset == dace_sbs.Range.from_string("2:12"))
                for oedge in state.out_edges(multi_use_value))
@@ -161,7 +158,11 @@ def _test_multi_use_value_input(
     ref, res = utility.make_sdfg_args(sdfg)
     utility.compile_and_run_sdfg(sdfg, **ref)
 
-    consolidate_edges(sdfg)
+    # NOTE: There is a bug in Memlet propagation that causes a test to fail if we
+    #   use non-standard Memlets and inner AccessNode. The reason is that the largest
+    #   subset, i.e. `__i + 2` is in a non-standard Memlet and the propagation fails
+    #   to pick it up.
+    consolidate_edges(sdfg, propagate=False)
 
     ac_after = utility.count_nodes(sdfg, dace_nodes.AccessNode, True)
     assert set(initial_ac) == set(ac_after)
@@ -169,8 +170,8 @@ def _test_multi_use_value_input(
     assert all(state.in_degree(ac) == 1 for ac in state.sink_nodes())
     assert state.out_degree(multi_use_value) == 1
 
-    # NOTE: This test might fail because of a bug in Memlet propagation.
-    #   The test was changed such that it is __not__ hit.
+    # Without `propagate=False` this test would fail if we use inner AccessNodes and
+    #  non standard Memelts.
     assert all(oedge.data.src_subset == dace_sbs.Range.from_string("0:12")
                for oedge in state.out_edges(multi_use_value))
 
