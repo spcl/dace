@@ -3,13 +3,14 @@ import aenum
 import copy as cp
 import ctypes
 import functools
+import warnings
 
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from numbers import Number
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union
 
-import numpy
+import numpy as np
 import sympy as sp
 
 try:
@@ -17,8 +18,7 @@ try:
 except (ModuleNotFoundError, ImportError):
     ArrayLike = Any
 
-import dace.dtypes as dtypes
-from dace import serialize, symbolic
+from dace import config, dtypes, serialize, symbolic
 from dace.codegen import cppunparse
 from dace.properties import (DebugInfoProperty, DictProperty, EnumProperty, ListProperty, NestedDataClassProperty,
                              OrderedDictProperty, Property, ShapeProperty, SymbolicProperty, TypeClassProperty,
@@ -30,7 +30,6 @@ def create_datadescriptor(obj, no_custom_desc=False):
 
         :see: dace.data.Data
     """
-    from dace import dtypes  # Avoiding import loops
     if isinstance(obj, Data):
         return obj
     elif not no_custom_desc and hasattr(obj, '__descriptor__'):
@@ -80,17 +79,17 @@ def create_datadescriptor(obj, no_custom_desc=False):
         if hasattr(obj, 'dtype') and obj.dtype.fields is not None:  # Struct
             dtype = dtypes.struct('unnamed', **{k: dtypes.typeclass(v[0].type) for k, v in obj.dtype.fields.items()})
         else:
-            if numpy.dtype(interface['typestr']).type is numpy.void:  # Struct from __array_interface__
+            if np.dtype(interface['typestr']).type is np.void:  # Struct from __array_interface__
                 if 'descr' in interface:
                     dtype = dtypes.struct('unnamed', **{
-                        k: dtypes.typeclass(numpy.dtype(v).type)
+                        k: dtypes.typeclass(np.dtype(v).type)
                         for k, v in interface['descr']
                     })
                 else:
                     raise TypeError(f'Cannot infer data type of array interface object "{interface}"')
             else:
-                dtype = dtypes.typeclass(numpy.dtype(interface['typestr']).type)
-        itemsize = numpy.dtype(interface['typestr']).itemsize
+                dtype = dtypes.typeclass(np.dtype(interface['typestr']).type)
+        itemsize = np.dtype(interface['typestr']).itemsize
         if len(interface['shape']) == 0:
             return Scalar(dtype, storage=storage)
         return Array(dtype=dtype,
@@ -99,7 +98,7 @@ def create_datadescriptor(obj, no_custom_desc=False):
                      storage=storage)
     elif isinstance(obj, (list, tuple)):
         # Lists and tuples are cast to numpy
-        obj = numpy.array(obj)
+        obj = np.array(obj)
 
         if obj.dtype.fields is not None:  # Struct
             dtype = dtypes.struct('unnamed', **{k: dtypes.typeclass(v[0].type) for k, v in obj.dtype.fields.items()})
@@ -118,9 +117,9 @@ def create_datadescriptor(obj, no_custom_desc=False):
         return Scalar(obj)
     elif (obj is int or obj is float or obj is complex or obj is bool or obj is None):
         return Scalar(dtypes.typeclass(obj))
-    elif isinstance(obj, type) and issubclass(obj, numpy.number):
+    elif isinstance(obj, type) and issubclass(obj, np.number):
         return Scalar(dtypes.typeclass(obj))
-    elif isinstance(obj, (Number, numpy.number, numpy.bool_)):
+    elif isinstance(obj, (Number, np.number, np.bool_)):
         return Scalar(dtypes.typeclass(type(obj)))
     elif obj is type(None):
         # NoneType is void *
@@ -407,7 +406,7 @@ class Structure(Data):
             elif isinstance(v, (sp.Basic, symbolic.SymExpr)):
                 symbols |= v.free_symbols
                 fields_and_types[k] = symbolic.symtype(v)
-            elif isinstance(v, (int, numpy.integer)):
+            elif isinstance(v, (int, np.integer)):
                 fields_and_types[k] = dtypes.typeclass(type(v))
             else:
                 raise TypeError(f"Attribute {k}'s value {v} has unsupported type: {type(v)}")
@@ -2152,8 +2151,6 @@ def make_array_from_descriptor(descriptor: Array,
                     with symbolic sizes.
     :return: A NumPy-compatible array (CuPy for GPU storage) with the specified size and strides.
     """
-    import numpy as np
-
     symbols = symbols or {}
 
     free_syms = set(map(str, descriptor.free_symbols)) - symbols.keys()
@@ -2215,7 +2212,6 @@ def make_reference_from_descriptor(descriptor: Array,
     :return: A NumPy-compatible array (CuPy for GPU storage) with the specified size and strides, sharing memory
              with the pointer specified in ``original_array``.
     """
-    import numpy as np
     symbols = symbols or {}
 
     original_array: int = ctypes.cast(original_array, ctypes.c_void_p).value
@@ -2253,3 +2249,118 @@ def make_reference_from_descriptor(descriptor: Array,
     evaluated_size = symbolic.evaluate(descriptor.total_size, symbols)
     evaluated_strides = tuple(symbolic.evaluate(s, symbols) for s in descriptor.strides)
     return create_array(evaluated_shape, npdtype, evaluated_size, evaluated_strides)
+
+
+def make_ctypes_argument(arg: Any,
+                         argtype: Data,
+                         name: Optional[str] = None,
+                         allow_views: Optional[bool] = None,
+                         symbols: Optional[Dict[str, Any]] = None,
+                         callback_retval_references: Optional[List[Any]] = None) -> Any:
+    """
+    Converts a given argument to the expected ``ctypes`` type for passing to compiled SDFG functions.
+
+    :param arg: The argument to convert.
+    :param argtype: The expected data descriptor type of the argument.
+    :param name: The name of the argument (for error messages).
+    :param allow_views: Whether to allow views and references as input. If False, raises an error if a view or
+                        reference is passed. If None (default), uses the global configuration setting
+                        ``compiler.allow_view_arguments``.
+    :param symbols: An optional symbol mapping between symbol names and their values. Used for evaluating symbolic
+                    sizes in callback arguments.
+    :param callback_retval_references: A list to store references to callback return values (to avoid garbage
+                                       collection of said return values). This object must be kept alive until the
+                                       SDFG call is complete.
+    :return: The argument converted to the appropriate ctypes type.
+    """
+    if allow_views is None:
+        no_view_arguments = not config.Config.get_bool('compiler', 'allow_view_arguments')
+    else:
+        no_view_arguments = not allow_views
+    a = name or '<unknown>'
+    atype = argtype
+
+    result = arg
+    is_array = dtypes.is_array(arg)
+    is_ndarray = isinstance(arg, np.ndarray)
+    is_dtArray = isinstance(argtype, Array)
+    if not is_array and is_dtArray:
+        if isinstance(arg, list):
+            print(f'WARNING: Casting list argument "{a}" to ndarray')
+        elif arg is None:
+            if atype.optional is False:  # If array cannot be None
+                raise TypeError(f'Passing a None value to a non-optional array in argument "{a}"')
+            # Otherwise, None values are passed as null pointers below
+        elif isinstance(arg, ctypes._Pointer):
+            pass
+        elif isinstance(arg, str):
+            # Cast to bytes
+            result = ctypes.c_char_p(arg.encode('utf-8'))
+        else:
+            raise TypeError(f'Passing an object (type {type(arg).__name__}) to an array in argument "{a}"')
+    elif is_array and not is_dtArray:
+        # GPU scalars and return values are pointers, so this is fine
+        if atype.storage != dtypes.StorageType.GPU_Global and not a.startswith('__return'):
+            raise TypeError(f'Passing an array to a scalar (type {atype.dtype.ctype}) in argument "{a}"')
+    elif (is_dtArray and is_ndarray and not isinstance(atype, ContainerArray)
+          and atype.dtype.as_numpy_dtype() != arg.dtype):
+        # Make exception for vector types
+        if (isinstance(atype.dtype, dtypes.vector) and atype.dtype.vtype.as_numpy_dtype() == arg.dtype):
+            pass
+        else:
+            print(f'WARNING: Passing {arg.dtype} array argument "{a}" to a {atype.dtype.type.__name__} array')
+    elif is_dtArray and is_ndarray and arg.base is not None and not '__return' in a and no_view_arguments:
+        raise TypeError(f'Passing a numpy view (e.g., sub-array or "A.T") "{a}" to DaCe '
+                        'programs is not allowed in order to retain analyzability. '
+                        'Please make a copy with "numpy.copy(...)". If you know what '
+                        'you are doing, you can override this error in the '
+                        'configuration by setting compiler.allow_view_arguments '
+                        'to True.')
+    elif (not isinstance(atype, (Array, Structure)) and not isinstance(atype.dtype, dtypes.callback)
+          and not isinstance(arg, (atype.dtype.type, sp.Basic))
+          and not (isinstance(arg, symbolic.symbol) and arg.dtype == atype.dtype)):
+        is_int = isinstance(arg, int)
+        if is_int and atype.dtype.type == np.int64:
+            pass
+        elif (is_int and atype.dtype.type == np.int32 and abs(arg) <= (1 << 31) - 1):
+            pass
+        elif (is_int and atype.dtype.type == np.uint32 and arg >= 0 and arg <= (1 << 32) - 1):
+            pass
+        elif isinstance(arg, float) and atype.dtype.type == np.float64:
+            pass
+        elif isinstance(arg, bool) and atype.dtype.type == np.bool_:
+            pass
+        elif (isinstance(arg, str) or arg is None) and atype.dtype == dtypes.string:
+            if arg is None:
+                result = ctypes.c_char_p(None)
+            else:
+                # Cast to bytes
+                result = ctypes.c_char_p(arg.encode('utf-8'))
+        else:
+            warnings.warn(f'Casting scalar argument "{a}" from {type(arg).__name__} to {atype.dtype.type}')
+            result = atype.dtype.type(arg)
+
+    # Call a wrapper function to make NumPy arrays from pointers.
+    if isinstance(argtype.dtype, dtypes.callback):
+        result = argtype.dtype.get_trampoline(arg, symbols or {}, callback_retval_references)
+    # List to array
+    elif isinstance(arg, list) and isinstance(argtype, Array):
+        result = np.array(arg, dtype=argtype.dtype.type)
+    # Null pointer
+    elif arg is None and isinstance(argtype, Array):
+        result = ctypes.c_void_p(0)
+
+    # Retain only the element datatype for upcoming checks and casts
+    actype = argtype.dtype.as_ctypes()
+
+    try:
+        if dtypes.is_array(arg):  # `c_void_p` is subclass of `ctypes._SimpleCData`.
+            result = ctypes.c_void_p(dtypes.array_interface_ptr(arg, atype.storage))
+        elif not isinstance(arg, (ctypes._SimpleCData, ctypes._Pointer)):
+            result = actype(arg)
+        else:
+            result = arg
+    except TypeError as ex:
+        raise TypeError(f'Invalid type for scalar argument "{a}": {ex}')
+
+    return result

@@ -1151,7 +1151,8 @@ class callback(typeclass):
             if ret_indices:
                 ret = orig_function(*list_of_other_inputs)
                 if len(list_of_outputs) == 0:
-                    refs.append(ret)  # Keep reference so that garbage collection does not free object
+                    if refs is not None:
+                        refs.append(ret)  # Keep reference so that garbage collection does not free object
                     return ret_converters[0](ret, other_arguments)
                 elif len(list_of_outputs) == 1:
                     ret = [ret]
@@ -1159,7 +1160,8 @@ class callback(typeclass):
                     if v is not None:  # Was converted to an assignable pointer
                         v[:] = r
 
-                    refs.append(r)  # Keep reference so that garbage collection does not free object
+                    if refs is not None:
+                        refs.append(r)  # Keep reference so that garbage collection does not free object
                 return
             return orig_function(*list_of_other_inputs)
 
@@ -1577,7 +1579,7 @@ def is_array(obj: Any) -> bool:
     ``__array_interface__`` or ``__cuda_array_interface__`` standards
     (supported by NumPy, Numba, CuPy, PyTorch, etc.). If the interface is
     supported, pointers can be directly obtained using the
-    ``_array_interface_ptr`` function.
+    ``array_interface_ptr`` function.
 
     :param obj: The given object.
     :return: True iff the object implements the array interface.
@@ -1610,7 +1612,7 @@ def is_gpu_array(obj: Any) -> bool:
     Returns True if an object is a GPU array, i.e., implements the
     ``__cuda_array_interface__`` standard (supported by Numba, CuPy, PyTorch,
     etc.). If the interface is supported, pointers can be directly obtained using the
-    ``_array_interface_ptr`` function.
+    ``array_interface_ptr`` function.
 
     :param obj: The given object.
     :return: True iff the object implements the CUDA array interface.
@@ -1628,3 +1630,31 @@ def is_gpu_array(obj: Any) -> bool:
             return True
 
     return False
+
+
+def array_interface_ptr(array: Any, storage: StorageType) -> int:
+    """
+    If the given array implements ``__array_interface__`` (see
+    ``dtypes.is_array``), returns the base host or device pointer to the
+    array's allocated memory.
+
+    :param array: Array object that implements NumPy's array interface.
+    :param array_type: Storage location of the array, used to determine whether
+                       it is a host or device pointer (e.g. GPU).
+    :return: A pointer to the base location of the allocated buffer.
+    """
+    if hasattr(array, 'data_ptr'):
+        return array.data_ptr()
+    if isinstance(array, ctypes.Array):
+        return ctypes.addressof(array)
+
+    if storage == StorageType.GPU_Global:
+        try:
+            return array.__cuda_array_interface__['data'][0]
+        except AttributeError:
+            # Special case for CuPy with HIP
+            if hasattr(array, 'data') and hasattr(array.data, 'ptr'):
+                return array.data.ptr
+            raise
+
+    return array.__array_interface__['data'][0]
