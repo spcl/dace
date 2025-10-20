@@ -329,7 +329,8 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
                     # named parameters of the model: this means that we can't match with the state dict
                     # anymore, so we disable this. Our CF is more flexible.
                     do_constant_folding=False,
-                    keep_initializers_as_inputs=True)
+                    keep_initializers_as_inputs=True,
+                    dynamo=False)
                 self.load_state_dict(state)
                 onnx_model_exported = onnx.load(export_name)
 
