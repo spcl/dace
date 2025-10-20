@@ -345,6 +345,12 @@ If an type is defined, it acts as a "cast" of the data it is referring to. This 
 vectorization. For example, an access :pycode:`A[4*i : 4*i + 4]` connected to a connector of type :pycode:`dace.vector(dace.float64, 4)`
 will reinterpret the data as a 4-element vector.
 
+View connectors attached to tasklets are collapsed to the underlying array view, similarly to how NumPy behaves. That
+means that if a memlet pointing to a tasklet is :pycode:`A[i, j, k, l]` and the connector is called :pycode:`a`, :pycode:`a`
+would be accessed as a scalar. If the memlet has non-scalar ranges (whether they end up being size 1 or larger), e.g.,
+:pycode:`A[i, j:j+k, 0, 0:L]`, the connector in the tasklet must be accessed as a two-dimensional array. In the example,
+:pycode:`a[m, n]` in the tasklet would correspond to accessing :pycode:`A[i, j+m, 0, n]`.
+
 Passthrough connectors are identified only by name: the incoming connector must start with ``IN_`` and outgoing connector
 must start with ``OUT_``. Passthrough connectors with matching suffixes (e.g., ``IN_arr`` and ``OUT_arr``) are considered
 part of the same *memlet path* (highlighted in orange in the above figure, see :ref:`below <sdfg-memlet>` for more details).

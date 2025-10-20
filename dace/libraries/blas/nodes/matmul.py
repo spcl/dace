@@ -1,9 +1,10 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace import properties, symbolic
 from copy import deepcopy as dc
 from typing import Any, Dict
 import warnings
+from math import prod
 
 
 def _get_matmul_operands(node, state, sdfg, name_lhs="_a", name_rhs="_b", name_out="_c"):
@@ -46,43 +47,88 @@ def _get_batchmm_opts(a_shape, a_strides, b_shape, b_strides, c_shape, c_strides
     and returns its parameters (strides, batch size), or an empty dictionary if
     batched multiplication is not detected.
 
-    :param a: Data descriptor for the first tensor.
-    :param b: Data descriptor for the second tensor.
-    :param c: Data descriptor for the output tensor (optional).
+    Supports N-dimensional tensors where all leading dimensions (except last 2) are treated
+    as batch dimensions. For example:
+    - [b, m, k] @ [b, k, n] -> [b, m, n]
+    - [b1, b2, m, k] @ [b1, b2, k, n] -> [b1, b2, m, n]  (flattened to [b1*b2, m, k])
+    - [b, m, k] @ [k, n] -> [b, m, n]
+    - [m, k] @ [b, k, n] -> [b, m, n]
+
+    :param a_shape: Shape of the first tensor.
+    :param a_strides: Strides of the first tensor.
+    :param b_shape: Shape of the second tensor.
+    :param b_strides: Strides of the second tensor.
+    :param c_shape: Shape of the output tensor (optional).
+    :param c_strides: Strides of the output tensor (optional).
     :return: A dictionary with the following keys: sa,sb,sc (strides for a, b,
-             and c); and b (batch size).
+             and c); and b (batch size). Empty dict if not batched.
     """
-    if len(a_shape) > 3 or len(b_shape) > 3 or (c_shape and len(c_shape) > 3):
-        raise ValueError('Tensor dimensions too large for (batched) matrix '
-                         'multiplication')
+    # Both inputs must be at least 2D, and at least one must have batch dimensions
     if len(a_shape) <= 2 and len(b_shape) <= 2:
         return {}
 
-    batch = None
-    stride_a, stride_b, stride_c = 0, 0, 0
-    if len(a_shape) == 3:
-        batch = a_shape[0]
-        stride_a = a_strides[0]
-    if len(b_shape) == 3:
-        if batch is not None:
-            res = symbolic.equal(batch, b_shape[0])
-            if res is None:
-                warnings.warn(f'Batch size of first tensor ({batch}) may not match second tensor ({b_shape[0]})',
-                              UserWarning)
-            elif not res:
-                raise ValueError('Batch size mismatch for matrix multiplication')
-        batch = b_shape[0]
-        stride_b = b_strides[0]
-    if c_shape and len(c_shape) == 3:
-        if batch and batch != c_shape[0]:
-            raise ValueError('Batch size mismatch for matrix multiplication')
-        batch = c_shape[0]
-        stride_c = c_strides[0]
+    # Calculate batch dimensions (all dimensions except last 2)
+    a_batch_dims = a_shape[:-2] if len(a_shape) > 2 else ()
+    b_batch_dims = b_shape[:-2] if len(b_shape) > 2 else ()
+    c_batch_dims = c_shape[:-2] if (c_shape and len(c_shape) > 2) else ()
 
-    if batch is None:
+    # Determine the output batch shape using broadcasting rules
+    # Start with the longer batch shape and validate compatibility
+    if len(a_batch_dims) >= len(b_batch_dims):
+        result_batch_dims = list(a_batch_dims)
+        shorter_dims = b_batch_dims
+        longer_dims = a_batch_dims
+    else:
+        result_batch_dims = list(b_batch_dims)
+        shorter_dims = a_batch_dims
+        longer_dims = b_batch_dims
+
+    # Validate broadcasting compatibility for batch dimensions
+    if shorter_dims:
+        offset = len(longer_dims) - len(shorter_dims)
+        for i, (s_dim, l_dim) in enumerate(zip(shorter_dims, longer_dims[offset:])):
+            res = symbolic.equal(s_dim, l_dim)
+            if res is False and s_dim != 1 and l_dim != 1:
+                raise ValueError(f'Batch dimension mismatch: {s_dim} vs {l_dim} at position {i}')
+            if res is None:
+                warnings.warn(f'Batch dimension {s_dim} may not match {l_dim} at position {i}', UserWarning)
+            # Use the non-1 dimension for broadcasting
+            if s_dim == 1 and l_dim != 1:
+                result_batch_dims[offset + i] = l_dim
+            elif l_dim == 1 and s_dim != 1:
+                result_batch_dims[offset + i] = s_dim
+
+    # Calculate total flattened batch size
+    batch_size = prod(result_batch_dims) if result_batch_dims else 1
+
+    # Calculate strides for batched operations
+    # For a tensor with shape [B1, B2, ..., M, K], the stride for batched operations
+    # should be M*K (the size of each matrix) to iterate through all matrices in the flattened batch
+    stride_a = 0
+    stride_b = 0
+    stride_c = 0
+
+    if len(a_shape) > 2:
+        # Stride for accessing each matrix: product of last two dimensions (M x K)
+        stride_a = prod(a_shape[-2:])
+
+    if len(b_shape) > 2:
+        # Stride for accessing each matrix: product of last two dimensions (K x N)
+        stride_b = prod(b_shape[-2:])
+
+    if c_shape and len(c_shape) > 2:
+        # Stride for accessing each matrix: product of last two dimensions (M x N)
+        stride_c = prod(c_shape[-2:])
+        # Validate output batch dimensions
+        for i, (c_dim, r_dim) in enumerate(zip(c_batch_dims, result_batch_dims)):
+            res = symbolic.equal(c_dim, r_dim)
+            if res is False:
+                raise ValueError(f'Output batch dimension mismatch: {c_dim} vs {r_dim} at position {i}')
+
+    if batch_size == 1 and not result_batch_dims:
         return {}
 
-    return {'sa': stride_a, 'sb': stride_b, 'sc': stride_c, 'b': batch}
+    return {'sa': stride_a, 'sb': stride_b, 'sc': stride_c, 'b': batch_size, 'batch_dims': result_batch_dims}
 
 
 def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, cdtype, func) -> Dict[str, Any]:
@@ -151,6 +197,10 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
         size_a = a[4]
         size_b = b[4]
         size_c = c[4]
+
+        # Check if this is a batched operation (at least one input has 3+ dimensions)
+        is_batched = len(size_a) >= 3 or len(size_b) >= 3
+
         if len(size_c) == 2 and ((len(size_a) == 2 and len(size_b) == 2) or (len(a[2]) == 2 and len(b[2]) == 2)):
             # Matrix and matrix -> GEMM
             from dace.libraries.blas.nodes.gemm import Gemm
@@ -169,8 +219,9 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
                                   "library node: {}".format(c[0].data.wcr))
             gemm = Gemm(node.name + 'gemm', location=node.location, alpha=node.alpha, beta=beta, cin=cin)
             return gemm
-        elif len(size_b) == 3 and (len(size_a) in [2, 3]):
-            # Batched matrix and matrix -> batched matrix multiplication
+        elif is_batched and len(size_a) >= 2 and len(size_b) >= 2:
+            # Batched matrix multiplication with broadcasting support
+            # Handles: [b, m, k] @ [b, k, n], [b, m, k] @ [k, n], [m, k] @ [b, k, n], [b1, b2, m, k] @ [b1, b2, k, n], etc.
             from dace.libraries.blas.nodes.batched_matmul import BatchedMatMul
             result = BatchedMatMul(node.name + 'bmm', location=node.location)
         elif len(size_a) == 2 and len(size_b) == 1:

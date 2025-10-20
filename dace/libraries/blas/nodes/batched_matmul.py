@@ -32,8 +32,12 @@ class ExpandBatchedMatMulPure(ExpandTransformation):
                           UserWarning)
         elif not res:
             raise SyntaxError("Matrix sizes must match")
+
+        # Determine output shape based on batch options
         if bopt:
-            shape_c = (bopt['b'], shape_a[-2], shape_b[-1])
+            # Use batch dimensions from bopt (may be multi-dimensional)
+            batch_dims = bopt.get('batch_dims', [bopt['b']])
+            shape_c = tuple(batch_dims) + (shape_a[-2], shape_b[-1])
         else:
             shape_c = (shape_a[-2], shape_b[-1])
 
@@ -64,16 +68,46 @@ class ExpandBatchedMatMulPure(ExpandTransformation):
 
         state = sdfg.add_state_after(init_state, node.label + "_state")
 
-        state.add_mapped_tasklet(
-            '_BatchedBatchedMatMult_', {
-                '__i%d' % i: '0:%s' % s
-                for i, s in enumerate([bopt['b'], array_a.shape[-2], array_b.shape[-1], array_a.shape[-1]])
-            }, {
-                '__a': dace.Memlet.simple("_a", ('__i1, __i3' if len(array_a.shape) == 2 else '__i0, __i1, __i3')),
-                '__b': dace.Memlet.simple("_b", ('__i3, __i2' if len(array_b.shape) == 2 else '__i0, __i3, __i2'))
-            },
-            '__c = __a * __b', {'__c': dace.Memlet.simple("_c", '__i0, __i1, __i2', wcr_str='lambda x, y: x + y')},
-            external_edges=True)
+        # Calculate number of batch dimensions in output
+        num_batch_dims = len(shape_c) - 2
+
+        # Build map parameters: batch dimensions + M, N, K
+        map_params = {}
+        for i in range(num_batch_dims):
+            map_params['__i%d' % i] = '0:%s' % symstr(shape_c[i])
+
+        # M, N, K dimensions
+        map_params['__im'] = '0:%s' % symstr(shape_a[-2])
+        map_params['__in'] = '0:%s' % symstr(shape_b[-1])
+        map_params['__ik'] = '0:%s' % symstr(shape_a[-1])
+
+        # Build memlet access patterns
+        # For A: if 2D, use [M, K]; if 3D+, use [batch_indices..., M, K]
+        if len(array_a.shape) == 2:
+            memlet_a = '__im, __ik'
+        else:
+            # Use output batch indices
+            a_batch_indices = ', '.join(['__i%d' % i for i in range(len(array_a.shape) - 2)])
+            memlet_a = f'{a_batch_indices}, __im, __ik'
+
+        # For B: if 2D, use [K, N]; if 3D+, use [batch_indices..., K, N]
+        if len(array_b.shape) == 2:
+            memlet_b = '__ik, __in'
+        else:
+            b_batch_indices = ', '.join(['__i%d' % i for i in range(len(array_b.shape) - 2)])
+            memlet_b = f'{b_batch_indices}, __ik, __in'
+
+        # For C: always has batch dimensions
+        c_indices = ', '.join(['__i%d' % i for i in range(num_batch_dims)]) + ', __im, __in'
+
+        state.add_mapped_tasklet('_BatchedMatMult_',
+                                 map_params, {
+                                     '__a': dace.Memlet.simple("_a", memlet_a),
+                                     '__b': dace.Memlet.simple("_b", memlet_b)
+                                 },
+                                 '__c = __a * __b',
+                                 {'__c': dace.Memlet.simple("_c", c_indices, wcr_str='lambda x, y: x + y')},
+                                 external_edges=True)
 
         return sdfg
 
@@ -441,11 +475,19 @@ class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
             raise ValueError("Expected exactly one output from "
                              "batched matrix-matrix product")
         out_memlet = out_edges[0].data
-        # Function is symmetric, edge order does not matter
-        if len(size0) not in [2, 3]:
-            raise ValueError("Batched matrix-matrix product only supported on matrices")
-        if len(size1) != 3:
-            raise ValueError("Batched matrix-matrix product only supported on matrices")
+
+        # Both inputs must be at least 2D
+        if len(size0) < 2:
+            raise ValueError(f"First input must be at least 2D, got shape with {len(size0)} dimensions")
+        if len(size1) < 2:
+            raise ValueError(f"Second input must be at least 2D, got shape with {len(size1)} dimensions")
+
+        # At least one input must have batch dimensions (3D or higher) for batched operation
+        if len(size0) <= 2 and len(size1) <= 2:
+            raise ValueError(
+                "Batched matrix-matrix product requires at least one input to have batch dimensions (3D or higher)")
+
+        # Validate K-dimension compatibility
         res = equal(size0[-1], size1[-2])
         if res is None:
             warnings.warn(
@@ -453,8 +495,11 @@ class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
                 f'may not match', UserWarning)
         elif not res:
             raise ValueError("Inputs to matrix-matrix product must agree in the k-dimension")
-        if len(out_memlet.subset) != 3:
-            raise ValueError("batched matrix-matrix product only supported on matrices")
+
+        # Output must have batch dimensions
+        if len(out_memlet.subset) < 3:
+            raise ValueError(
+                f"Batched matrix-matrix product output must be at least 3D, got {len(out_memlet.subset)} dimensions")
 
 
 # Numpy replacement
