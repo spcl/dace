@@ -67,6 +67,7 @@ except ImportError:
 try:
     import onnx
     import onnx.checker
+    import onnx.shape_inference
     from onnx import numpy_helper
 except ImportError as e:
     raise ImportError("ONNX library is required. Install with: pip install dace[ml]") from e
@@ -92,7 +93,6 @@ from dace.util import is_cuda
 from dace.libraries.onnx.converters import clean_onnx_name, convert_attribute_proto, onnx_tensor_type_to_typeclass
 from dace.libraries.onnx.nodes.onnx_op_registry import get_onnx_node, has_onnx_node
 from dace.libraries.onnx.schema import ONNXParameterType
-from dace.libraries.onnx.shape_inference import shape_inference
 
 log = logging.getLogger(__name__)
 
@@ -231,8 +231,6 @@ class ONNXModel:
         """
         :param name: the name for the SDFG.
         :param model: the model to import.
-        :param infer_shapes: whether to infer shapes for the model. If this is ``False``, the model must have
-                             value infos (with shapes) for all arrays, including intermediate values.
         :param cuda: if ``True``, the model will be executed on the GPU.
         :param simplify: if ``True``, apply simplification transformations after all nodes have been expanded.
         :param onnx_simplify: if True, run ONNX-level simplifications such as constant folding and shape inference.
@@ -249,7 +247,7 @@ class ONNXModel:
         # Use temporary files for intermediate model saves
         with tempfile.NamedTemporaryFile(suffix='.onnx', delete=True) as temp_original:
             onnx.save(model, temp_original.name)
-            model = shape_inference.infer_shapes(model, auto_merge=auto_merge)
+            model = onnx.shape_inference.infer_shapes(model, check_type=False, strict_mode=False, data_prop=True)
 
             with tempfile.NamedTemporaryFile(suffix='.onnx', delete=True) as temp_shapes:
                 onnx.save(model, temp_shapes.name)
