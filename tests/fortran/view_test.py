@@ -67,7 +67,7 @@ END SUBROUTINE viewlens
 
     sdfg.simplify()
     a = np.full([10, 11, 12], 42, order="F", dtype=np.float64)
-    b = np.full([1, 1, 2], 42, order="F", dtype=np.float64)
+    b = np.full([2, 2, 2], 42, order="F", dtype=np.float64)
     b[0, 0, 0] = 1
     sdfg(aa=a, res=b)
     assert (a[0, 0, 1] == 42)
