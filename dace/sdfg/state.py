@@ -1433,7 +1433,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         self._clear_scopedict_cache()
         super(SDFGState, self).remove_node(node)
 
-    def add_edge(self, u, u_connector, v, v_connector, memlet):
+    def add_edge(self, u, u_connector, v, v_connector, memlet, check_nodes_are_resident: bool = True):
         if not isinstance(u, nd.Node):
             raise TypeError("Source node is not of type nd.Node (type: %s)" % str(type(u)))
         if u_connector is not None and not isinstance(u_connector, str):
@@ -1444,6 +1444,10 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             raise TypeError("Destination connector is not string (type: %s)" % str(type(v_connector)))
         if not isinstance(memlet, mm.Memlet):
             raise TypeError("Memlet is not of type Memlet (type: %s)" % str(type(memlet)))
+
+        if check_nodes_are_resident:
+            assert u in self.nodes()
+            assert v in self.nodes()
 
         if u_connector and isinstance(u, nd.AccessNode) and u_connector not in u.out_connectors:
             u.add_out_connector(u_connector, force=True)
@@ -2845,12 +2849,17 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         self.add_node(block)
         return block
 
-    def add_edge(self, src: ControlFlowBlock, dst: ControlFlowBlock, data: 'dace.sdfg.InterstateEdge'):
+    def add_edge(self,
+                 src: ControlFlowBlock,
+                 dst: ControlFlowBlock,
+                 data: 'dace.sdfg.InterstateEdge',
+                 check_nodes_are_resident: bool = True):
         """ Adds a new edge to the graph. Must be an InterstateEdge or a subclass thereof.
 
             :param u: Source node.
             :param v: Destination node.
             :param edge: The edge to add.
+            :param check_nods_are_resident: ensures that the both nodes are in the graph first
         """
         if not isinstance(src, ControlFlowBlock):
             raise TypeError('Expected ControlFlowBlock, got ' + str(type(src)))
@@ -2858,6 +2867,13 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
             raise TypeError('Expected ControlFlowBlock, got ' + str(type(dst)))
         if not isinstance(data, dace.sdfg.InterstateEdge):
             raise TypeError('Expected InterstateEdge, got ' + str(type(data)))
+
+        if check_nodes_are_resident:
+            parent_graph = src.parent_graph
+            assert src.parent_graph == dst.parent_graph, "Source and destination nodes must belong to the same graph"
+            assert src in parent_graph
+            assert dst in parent_graph
+
         if dst is self._cached_start_block:
             self._cached_start_block = None
         return super().add_edge(src, dst, data)
