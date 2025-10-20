@@ -719,7 +719,11 @@ def remove_edge_and_dangling_path(state: SDFGState, edge: MultiConnectorEdge):
             state.remove_node(root_node)
 
 
-def consolidate_edges(sdfg: SDFG, starting_scope=None) -> int:
+def consolidate_edges(
+    sdfg: SDFG,
+    starting_scope=None,
+    propagate: bool = True,
+) -> int:
     """
     Union scope-entering memlets relating to the same data node in all states.
     This effectively reduces the number of connectors and allows more
@@ -756,7 +760,8 @@ def consolidate_edges(sdfg: SDFG, starting_scope=None) -> int:
                     propagate_exit = True
 
                 # Repropagate memlets
-                propagate_memlets_scope(sdfg, state, scope, propagate_entry, propagate_exit)
+                if propagate:
+                    propagate_memlets_scope(sdfg, state, scope, propagate_entry, propagate_exit)
 
                 if scope.parent is not None:
                     next_queue.append(scope.parent)
