@@ -144,6 +144,49 @@ def single_branch_connectors(
                 b[i, j] = d[i, j]
 
 
+@dace.program
+def disjoint_subsets(
+    if_cond_58: dace.int32,
+    A: dace.float64[N],
+    B: dace.float64[N, 3, 3],
+    C: dace.float64[N, 3, 3],
+    E: dace.float64[N],
+):
+    i = 4
+    if if_cond_58 == 1:
+        B[i, 2, 0] = A[i] + B[i, 2, 0]
+        B[i, 2, 0] = E[i] + B[i, 2, 0]
+        B[i, 0, 2] = B[i, 2, 0] + C[i, 0, 2]
+        B[i, 0, 2] = A[i] + B[i, 0, 2]
+    else:
+        B[i, 1, 0] = A[i] + B[i, 1, 0]
+        B[i, 1, 0] = E[i] + B[i, 1, 0]
+        B[i, 0, 1] = B[i, 2, 0] + C[i, 0, 1]
+        B[i, 0, 1] = A[i] + B[i, 0, 1]
+
+@dace.program
+def disjoint_subsets_two(
+    if_cond_58: dace.int32,
+    A: dace.float64[N],
+    B: dace.float64[N, 3, 3],
+    C: dace.float64[N, 3, 3],
+    D: dace.float64[N, 3, 3],
+    E: dace.float64[N],
+    F: dace.float64[N, 3, 3],
+):
+    for i in dace.map[0:N:1]:
+        if if_cond_58 == 1:
+            B[i, 2, 0] = A[i] + B[i, 2, 0]
+            C[i, 2, 0] = E[i] + B[i, 2, 0]
+            D[i, 0, 2] = A[i] + C[i, 0, 2]
+            F[i, 0, 2] = A[i] + D[i, 0, 2]
+        else:
+            B[i, 1, 0] = A[i] + B[i, 1, 0]
+            C[i, 1, 0] = E[i] + B[i, 1, 0]
+            D[i, 0, 1] = A[i] + C[i, 0, 1]
+            F[i, 0, 1] = A[i] + D[i, 0, 1]
+
+
 def _get_parent_state(sdfg: dace.SDFG, nsdfg_node: dace.nodes.NestedSDFG):
     for n, g in sdfg.all_nodes_recursive():
         if n == nsdfg_node:
@@ -186,8 +229,9 @@ def run_and_compare(
 
     # Run SDFG version (with transformation)
     out_fused = {k: v.copy() for k, v in arrays.items()}
+    sdfg.save(sdfg.label + "_after3.sdfg")
+
     sdfg(**out_fused)
-    sdfg.save(sdfg.label + "_after.sdfg")
 
     branch_code = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     assert len(
@@ -290,8 +334,8 @@ def test_single_branch_connectors(use_pass_flag):
 
     # Run SDFG version (with transformation)
     out_fused = {k: v.copy() for k, v in arrays.items()}
-    sdfg(a=out_fused["a"], b=out_fused["b"], c=out_fused["c"][0], d=out_fused["d"])
     sdfg.save(sdfg.label + "_after.sdfg")
+    sdfg(a=out_fused["a"], b=out_fused["b"], c=out_fused["c"][0], d=out_fused["d"])
 
     branch_code = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     assert len(branch_code) == 0, f"(actual) len({branch_code}) != (desired) 0"
@@ -307,7 +351,18 @@ def test_single_branch_connectors(use_pass_flag):
     assert len(nsdfg.out_connectors) == 1, f"{nsdfg.out_connectors}, length is not 1 but {len(nsdfg.out_connectors)}"
 
 
+@pytest.mark.parametrize("use_pass_flag", [True, False])
+def test_disjoint_subsets(use_pass_flag):
+    if_cond_58 = np.array([1], dtype=np.int32)
+    A = np.random.choice([0.0, 3.0], size=(N, ))
+    B = np.random.randn(N, 3, 3)
+    C = np.random.randn(N, 3, 3)
+    E = np.random.choice([0.0, 3.0], size=(N, 3, 3))
+    run_and_compare(disjoint_subsets, 0, use_pass_flag, A=A, B=B, C=C, E=E, if_cond_58=if_cond_58[0])
+
 if __name__ == "__main__":
+    test_disjoint_subsets(True)
+    exit(0)
     for use_pass_flag in [True, False]:
         test_branch_dependent_value_write(use_pass_flag)
         test_branch_dependent_value_write_two(use_pass_flag)
@@ -318,3 +373,4 @@ if __name__ == "__main__":
         test_multi_state_branch_body(use_pass_flag)
         test_nested_if(use_pass_flag)
         test_tasklets_in_if(use_pass_flag)
+        test_disjoint_subsets(use_pass_flag)
