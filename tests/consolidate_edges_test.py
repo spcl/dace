@@ -233,8 +233,29 @@ def _make_multi_use_value_output(
         state.add_edge(me, f"OUT_{input_data}", tlet, "__in1", dace.Memlet(data=input_data, subset="__i"))
         me.add_scope_connectors(input_data)
 
-        state.add_edge(tlet, "__out", mx, f"IN_output_{i}", dace.Memlet(data=multi_output_data,
-                                                                        subset=f"__i + {i}, {i}"))
+        if use_inner_access_node:
+            inner_data = f"inner_data_{i}"
+            sdfg.add_scalar(
+                inner_data,
+                dtype=dace.float64,
+                transient=True,
+            )
+            inner_ac = state.add_access(inner_data)
+
+            data = multi_output_data
+            subset = f"__i + {i}, {i}"
+            other_subset = "0"
+
+            if use_non_standard_memlet:
+                data = inner_data
+                subset, other_subset = other_subset, subset
+
+            state.add_edge(tlet, "__out", inner_ac, None, dace.Memlet(f"{inner_data}[0]"))
+            state.add_edge(inner_ac, None, mx, f"IN_output_{i}",
+                           dace.Memlet(data=data, subset=subset, other_subset=other_subset))
+        else:
+            state.add_edge(tlet, "__out", mx, f"IN_output_{i}",
+                           dace.Memlet(data=multi_output_data, subset=f"__i + {i}, {i}"))
         state.add_edge(mx, f"OUT_output_{i}", multi_output, None,
                        dace.Memlet(
                            data=multi_output_data,
@@ -247,8 +268,18 @@ def _make_multi_use_value_output(
     return sdfg, state, multi_output
 
 
-def test_multi_use_value_output():
-    sdfg, state, multi_output = _make_multi_use_value_output(True, True)
+def _test_multi_use_value_output(
+    use_inner_access_node: bool,
+    use_non_standard_memlet: bool,
+):
+    if use_non_standard_memlet and (not use_inner_access_node):
+        # This combination is not useful.
+        return
+
+    sdfg, state, multi_output = _make_multi_use_value_output(
+        use_inner_access_node=use_inner_access_node,
+        use_non_standard_memlet=use_non_standard_memlet,
+    )
 
     assert all(state.out_degree(sn) == 1 and isinstance(sn, dace_nodes.AccessNode) for sn in state.source_nodes())
     assert all(sn is multi_output and state.in_degree(sn) == 3 for sn in state.sink_nodes())
@@ -278,11 +309,27 @@ def test_multi_use_value_output():
     assert utility.compare_sdfg_res(ref=ref, res=res)
 
 
+@pytest.mark.parametrize("use_non_standard_memlet", [True, False])
+@pytest.mark.parametrize("use_inner_access_node", [True, False])
+def test_multi_use_value_output(
+    use_inner_access_node: bool,
+    use_non_standard_memlet: bool,
+):
+    _test_multi_use_value_output(
+        use_non_standard_memlet=use_non_standard_memlet,
+        use_inner_access_node=use_inner_access_node,
+    )
+
+
 if __name__ == '__main__':
     test_consolidate_edges()
     for use_non_standard_memlet in [True, False]:
         for use_inner_access_node in [True, False]:
             _test_multi_use_value_input(
+                use_inner_access_node=use_inner_access_node,
+                use_non_standard_memlet=use_non_standard_memlet,
+            )
+            _test_multi_use_value_output(
                 use_inner_access_node=use_inner_access_node,
                 use_non_standard_memlet=use_non_standard_memlet,
             )
