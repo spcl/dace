@@ -67,10 +67,17 @@ except ImportError:
 try:
     import onnx
     import onnx.checker
-    import onnx.shape_inference
     from onnx import numpy_helper
 except ImportError as e:
     raise ImportError("ONNX library is required. Install with: pip install dace[ml]") from e
+
+# ONNXRuntime for symbolic shape inference
+try:
+    from onnxruntime.tools.symbolic_shape_infer import SymbolicShapeInference
+    ONNXRUNTIME_AVAILABLE = True
+except ImportError:
+    SymbolicShapeInference = None
+    ONNXRUNTIME_AVAILABLE = False
 
 # onnxsim is optional (only needed for model simplification)
 try:
@@ -144,6 +151,56 @@ def _nested_HasField(obj, full_attr: str) -> bool:
         else:
             return False
     return True
+
+
+def infer_shapes_onnx_model(model: onnx.ModelProto, auto_merge: bool = False) -> onnx.ModelProto:
+    """
+    Perform shape inference on an ONNX model using ONNXRuntime's symbolic shape inference.
+
+    This function uses ONNXRuntime's symbolic shape inference tool which provides
+    better support for symbolic dimensions and dynamic shapes compared to ONNX's
+    built-in shape inference.
+
+    Args:
+        model: The ONNX model to perform shape inference on.
+        auto_merge: Whether to automatically merge symbolic dimensions when possible.
+
+    Returns:
+        The ONNX model with inferred shapes.
+
+    Note:
+        Falls back to ONNX's built-in shape inference if ONNXRuntime is not available.
+    """
+    if not ONNXRUNTIME_AVAILABLE:
+        log.warning("ONNXRuntime not available, falling back to ONNX shape inference. ")
+        # Fallback to ONNX's built-in shape inference
+        import onnx.shape_inference
+        return onnx.shape_inference.infer_shapes(model, check_type=False, strict_mode=False, data_prop=True)
+
+    try:
+        # Try newer API first
+        ssi = SymbolicShapeInference(
+            int_max=2**31 - 1,  # upper bound for unknown ints
+            auto_merge=auto_merge,  # merge symbolic dims when possible
+            guess_output_rank=False,
+            verbose=0,
+        )
+        return ssi.infer_shapes(model)
+    except TypeError:
+        # Older API variants
+        try:
+            ssi = SymbolicShapeInference()
+            return ssi.infer_shapes(model)
+        except Exception:
+            # Even older API: function-based
+            from onnxruntime.tools.symbolic_shape_infer import infer_shapes as ssi_infer
+            return ssi_infer(
+                model,
+                int_max=2**31 - 1,
+                auto_merge=auto_merge,
+                guess_output_rank=False,
+                verbose=0,
+            )
 
 
 def simplify_onnx_model(model: onnx.ModelProto, auto_merge: bool) -> onnx.ModelProto:
@@ -247,7 +304,7 @@ class ONNXModel:
         # Use temporary files for intermediate model saves
         with tempfile.NamedTemporaryFile(suffix='.onnx', delete=True) as temp_original:
             onnx.save(model, temp_original.name)
-            model = onnx.shape_inference.infer_shapes(model, check_type=False, strict_mode=False, data_prop=True)
+            model = infer_shapes_onnx_model(model, auto_merge=auto_merge)
 
             with tempfile.NamedTemporaryFile(suffix='.onnx', delete=True) as temp_shapes:
                 onnx.save(model, temp_shapes.name)
