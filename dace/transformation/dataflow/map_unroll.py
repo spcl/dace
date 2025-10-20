@@ -69,8 +69,6 @@ class MapUnroll(transformation.SingleStateTransformation):
             end += step  # Make non-inclusive
             constant_ranges.append(range(begin, end, step))
         index_tuples = itertools.product(*constant_ranges)
-        print("Unrolling map with ranges:", constant_ranges)
-        print("IT", index_tuples)
         for t in index_tuples:
             suffix = "_" + "_".join(map(str, t))
             node_to_unrolled = {}
