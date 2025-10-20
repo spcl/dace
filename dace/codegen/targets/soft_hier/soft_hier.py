@@ -1918,7 +1918,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
             dump_str = ""
             # dump_str += "flex_dump_open();\n"
             dump_str += '//printf("Start dumping arrays");\n'
-            dump_str += "//Print Out the input and output-arrays\nif (flex_is_dm_core() && flex_get_cluster_id() == 0)\n{\n"
+            dump_str += "//Print Out the input and output-arrays\nif (flex_is_first_core() && flex_get_cluster_id() == 0)\n{\n"
             dump_str += "flex_dump_open();\n"
             dump_str += '//printf("Start dumping arrays on dm_core / cluster_id == 0");\n'
             for arr_name, arr in sdfg.arrays.items():
