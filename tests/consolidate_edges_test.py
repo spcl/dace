@@ -188,6 +188,10 @@ def test_multi_use_value_input(
                                 use_non_standard_memlet=use_non_standard_memlet)
 
 
+def test_multi_use_value_output():
+    assert False, "Implement me."
+
+
 if __name__ == '__main__':
     test_consolidate_edges()
     for use_non_standard_memlet in [True, False]:
