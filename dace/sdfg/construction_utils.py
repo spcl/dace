@@ -8,6 +8,9 @@ import copy
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 
+import sympy
+from sympy import symbols, Function
+
 
 def copy_state_contents(old_state: dace.SDFGState, new_state: dace.SDFGState) -> Dict[dace.nodes.Node, dace.nodes.Node]:
     """
@@ -228,6 +231,17 @@ def token_replace(code: str, src: str, dst: str) -> str:
     return ''.join(tokens).strip()
 
 
+def token_replace_dict(code: str, repldict: Dict[str, str]) -> str:
+    # Split while keeping delimiters
+    tokens = re.split(r'(\s+|[()\[\]])', code)
+
+    # Replace tokens that exactly match src
+    tokens = [repldict[token.strip()] if token.strip() in repldict else token for token in tokens]
+
+    # Recombine everything
+    return ''.join(tokens).strip()
+
+
 def token_match(string_to_check: str, pattern_str: str) -> str:
     # Split while keeping delimiters
     tokens = re.split(r'(\s+|[()\[\]])', string_to_check)
@@ -331,3 +345,134 @@ def connect_array_names(sdfg: dace.SDFG, local_storage: dace.dtypes.StorageType,
 
     sdfg.replace_dict(repldict, replace_keys=True)
     sdfg.validate()
+
+
+def tasklet_has_symbol(tasklet: dace.nodes.Tasklet, symbol_str: str) -> bool:
+    if tasklet.code.language == dace.dtypes.Language.Python:
+        try:
+            sym_expr = dace.symbolic.SymExpr(tasklet.code.as_astring)
+            return (symbol_str in {str(s) for s in sym_expr.free_symbols})
+        except Exception as e:
+            return token_match(tasklet.code.as_string, symbol_str)
+    else:
+        return token_match(tasklet.code.as_string, symbol_str)
+
+
+def replace_code(code_str: str, code_lang: dace.dtypes.Language, repldict: Dict[str, str]):
+    import sympy
+
+    def _str_replace(lhs: str, rhs: str):
+        code_str = token_replace_dict(rhs, repldict)
+        return f"{lhs.strip()} = {code_str.strip()}"
+
+    if code_lang == dace.dtypes.Language.Python:
+        lhs, rhs = code_str.split(" = ")
+        lhs = lhs.strip()
+        rhs = rhs.strip()
+        try:
+            new_rhs_sym_expr = dace.symbolic.SymExpr(rhs).subs(repldict)
+            return f"{lhs.strip()} = {sympy.pycode(new_rhs_sym_expr).strip()}"
+        except Exception as e:
+            return _str_replace(rhs)
+    else:
+        return _str_replace(rhs)
+
+
+def tasklet_replace_code(tasklet: dace.nodes.Tasklet, repldict: Dict[str, str]):
+    new_code = replace_code(tasklet.code.as_string, tasklet.code.language, repldict)
+    tasklet.code = CodeBlock(code=new_code, language=tasklet.code.language)
+
+
+def extract_bracket_tokens(s: str) -> list[tuple[str, list[str]]]:
+    """
+    Extracts all contents inside [...] along with the token before the '[' as the name.
+
+    Args:
+        s (str): Input string.
+
+    Returns:
+        List of tuples: [(name_token, string inside brackes)]
+    """
+    results = []
+
+    # Pattern to match <name>[content_inside]
+    pattern = re.compile(r'(\b\w+)\[([^\]]*?)\]')
+
+    for match in pattern.finditer(s):
+        name = match.group(1)  # token before '['
+        content = match.group(2).split()  # split content inside brackets into tokens
+
+        results.append((name, " ".join(content)))
+
+    return {k: v for (k, v) in results}
+
+
+def remove_bracket_tokens(s: str) -> str:
+    """
+    Removes all [...] patterns from the string.
+
+    Args:
+        s (str): Input string.
+
+    Returns:
+        str: String with all [...] removed.
+    """
+    return re.sub(r'\[.*?\]', '', s)
+
+
+def generate_assignment_as_tasklet_in_state(state: dace.SDFGState, lhs: str, rhs: str):
+    rhs = rhs.strip()
+    rhs_sym_expr = dace.symbolic.SymExpr(rhs).evalf()
+    lhs = lhs.strip()
+    lhs_sym_expr = dace.symbolic.SymExpr(lhs).evalf()
+
+    in_connectors = dict()
+    out_connectors = dict()
+
+    # Get functions for indirect accesses
+    i = 0
+    for free_sym in rhs_sym_expr.free_symbols.union({f.func for f in rhs_sym_expr.atoms(Function)}):
+        if str(free_sym) in state.sdfg.arrays:
+            in_connectors[str(free_sym)] = f"_in_{free_sym}_{i}"
+            i += 1
+    for free_sym in lhs_sym_expr.free_symbols.union({f.func for f in lhs_sym_expr.atoms(Function)}):
+        if str(free_sym) in state.sdfg.arrays:
+            out_connectors[str(free_sym)] = f"_out_{free_sym}_{i}"
+            i += 1
+
+    if in_connectors == {} and out_connectors == {}:
+        raise Exception("Generated tasklets result in no or out connectors")
+
+    # Process interstate edge, extract brackets for access patterns
+    in_access_exprs = extract_bracket_tokens(token_replace_dict(rhs, in_connectors))
+    out_access_exprs = extract_bracket_tokens(token_replace_dict(lhs, out_connectors))
+    lhs = remove_bracket_tokens(token_replace_dict(lhs, out_connectors))
+    rhs = remove_bracket_tokens(token_replace_dict(rhs, in_connectors))
+
+    # Ass tasklets
+    t = state.add_tasklet(name=f"assign_{lhs}",
+                          inputs=set(in_connectors.values()),
+                          outputs=set(out_connectors.values()),
+                          code=f"{lhs} = {rhs}")
+
+    # Add connectors and accesses
+    in_access_dict = dict()
+    out_access_dict = dict()
+    for k, v in in_connectors.items():
+        in_access_dict[v] = state.add_access(k)
+    for k, v in out_connectors.items():
+        out_access_dict[v] = state.add_access(k)
+
+    # Add in and out connections
+    for k, v in in_access_dict.items():
+        data_name = v.data
+        access_str = in_access_exprs.get(k)
+        if access_str is None:
+            access_str = "0"
+        state.add_edge(v, None, t, k, dace.memlet.Memlet(expr=f"{data_name}[{access_str}]"))
+    for k, v in out_access_dict.items():
+        data_name = v.data
+        access_str = out_access_exprs.get(k)
+        if access_str is None:
+            access_str = "0"
+        state.add_edge(t, k, v, None, dace.memlet.Memlet(expr=f"{data_name}[{access_str}]"))
