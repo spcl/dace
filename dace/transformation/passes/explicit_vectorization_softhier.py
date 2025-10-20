@@ -30,7 +30,7 @@ inline void _softhier_vi_vadd_(
             asm volatile("vsetvli %0, %1, e" XSTR(16) ", m8, ta, ma" : "=r"(avl) : "r"(vlen));
             asm volatile("vle" XSTR(16) ".v v8,  (%0)" ::"r"(va_addr));
             asm volatile("vle" XSTR(16) ".v v0,  (%0)" ::"r"(vb_addr));
-            asm volatile("vfadd.vv v8, v8, v0");
+            asm volatile("vadd.vv v8, v8, v0");
             asm volatile("vse" XSTR(16) ".v v8,  (%0)" ::"r"(vc_addr));
             vlen -= avl;
             va_addr += 2*avl;
@@ -129,7 +129,7 @@ inline void _softhier_vi_vdiv_(
             InlineSDFGs(),
             ExplicitVectorization(
                 templates={
-                    "+": "_softhier_vi_vadd_((uint32_t){lhs}, (uint32_t){rhs1}, (uint32_t){rhs2});",
+                    "+": "_softhier_vi_vadd_((uint32_t){rhs1}, (uint32_t){rhs2}, (uint32_t){lhs});",
                     "=": "vector_copy({lhs}, {rhs1});"
                 },
                 vector_width=vector_width,
