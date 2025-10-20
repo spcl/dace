@@ -1,6 +1,7 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """ Loop unroll transformation """
 
+import ast
 import copy
 from typing import List, Optional
 
@@ -80,20 +81,26 @@ class LoopUnroll(xf.MultiStateTransformation):
 
             # Connect iterations with unconditional edges
             if len(unrolled_iterations) > 0:
+                assert unrolled_iterations[-1] in graph.nodes()
+                assert iteration_region in graph.nodes()
                 graph.add_edge(unrolled_iterations[-1], iteration_region, sd.InterstateEdge())
             unrolled_iterations.append(iteration_region)
 
+        if len(unrolled_iterations) == 0:
+            s = graph.add_state(label="empty_unroll", is_start_block=True)
+            unrolled_iterations.append(s)
+
         if unrolled_iterations:
             for ie in graph.in_edges(self.loop):
+                assert ie.src in graph.nodes()
+                assert unrolled_iterations[0] in graph.nodes()
                 graph.add_edge(ie.src, unrolled_iterations[0], ie.data)
             for oe in graph.out_edges(self.loop):
+                assert unrolled_iterations[-1] in graph.nodes()
+                assert oe.dst in graph.nodes()
                 graph.add_edge(unrolled_iterations[-1], oe.dst, oe.data)
 
         graph.remove_node(self.loop)
-
-        # If loop length is 0
-        if len(unrolled_iterations) == 0:
-            graph.add_state(label="empty_unroll", is_start_block=True)
 
         if self.inline_iterations:
             for it in unrolled_iterations:
@@ -129,28 +136,45 @@ class LoopUnroll(xf.MultiStateTransformation):
                 new_block = ControlFlowRegion.from_json(block.to_json(), context={'sdfg': graph.sdfg})
             else:
                 raise Exception(f"Unsupported CFG Type {type(block)}")
+            assert block not in block_map
             block_map[block] = new_block
             new_block.replace(loop.loop_variable, value)
             iteration_region.add_node(new_block, is_start_block=(block is loop.start_block))
 
-        for edge in loop.all_edges_recursive():  # Recursion needed for nested SDFGs
-            if isinstance(edge, InterstateEdge):
-                src = block_map[edge.src]
-                dst = block_map[edge.dst]
-                # Replace conditions in subgraph edges
-                data = copy.deepcopy(edge.data)
-                if not data.is_unconditional():
-                    ASTFindReplace({loop.loop_variable: str(value)}).visit(data.condition)
+        for edge in loop.all_interstate_edges():
+            src = block_map[edge.src]
+            dst = block_map[edge.dst]
+            # Replace conditions in subgraph edges
+            data = copy.deepcopy(edge.data)
+            iteration_region.add_edge(src, dst, data)
 
-                iteration_region.add_edge(src, dst, data)
+        # Replace occurences of the loop variables on all interstate edges
+        for edge, parent_graph in iteration_region.all_edges_recursive():  # Recursion needed for nested SDFGs
+            if isinstance(edge.data, InterstateEdge):
+                src = edge.src
+                dst = edge.dst
+                assert src in parent_graph.nodes()
+                assert dst in parent_graph.nodes()
+                if not edge.data.is_unconditional():
+                    ASTFindReplace({loop.loop_variable: str(value)}).visit(edge.data.condition)
 
-        for node in loop.all_nodes_recursive():
+                new_assignments = dict()
+                for k, v in edge.data.assignments.items():
+                    k_ast = ast.parse(k)
+                    v_ast = ast.parse(v)
+                    ASTFindReplace({loop.loop_variable: str(value)}).visit(k_ast)
+                    ASTFindReplace({loop.loop_variable: str(value)}).visit(v_ast)
+                    new_assignments[ast.unparse(k_ast)] = ast.unparse(v_ast)
+                edge.data.assignments = new_assignments
+
+        for node in iteration_region.all_nodes_recursive():
             if isinstance(node, NestedSDFG):
                 if loop.loop_variable in node.symbol_mapping:
-                    del node.symbol_mapping[loop.loop_variable]
-                if loop.loop_variable in node.symbol_mapping.keys():
                     node.symbol_mapping[loop.loop_variable] = ASTFindReplace({
                         loop.loop_variable: str(value)
                     }).visit(node.symbol_mapping[loop.loop_variable])
+                if loop.loop_variable in node.symbol_mapping:
+                    del node.symbol_mapping[loop.loop_variable]
 
+        graph.reset_cfg_list()
         return iteration_region
