@@ -22,19 +22,23 @@ inline void _softhier_vi_vadd_(
     uint32_t vb_addr,
     uint32_t vc_addr)
 {{
-    uint32_t vlen = {vector_width};
-    uint32_t avl;
-    while(vlen > 0){{
-        asm volatile("vsetvli %0, %1, e" XSTR(16) ", m8, ta, ma" : "=r"(avl) : "r"(vlen));
-        asm volatile("vle" XSTR(16) ".v v8,  (%0)" ::"r"(va_addr));
-        asm volatile("vle" XSTR(16) ".v v0,  (%0)" ::"r"(vb_addr));
-        asm volatile("vfadd.vv v8, v8, v0");
-        asm volatile("vse" XSTR(16) ".v v8,  (%0)" ::"r"(vc_addr));
-        vlen -= avl;
-        va_addr += 2*avl;
-        vb_addr += 2*avl;
-        vc_addr += 2*avl;
+    flex_intra_cluster_sync();
+    if (flex_is_first_core()) {{
+        uint32_t vlen = {vector_width};
+        uint32_t avl;
+        while(vlen > 0){{
+            asm volatile("vsetvli %0, %1, e" XSTR(16) ", m8, ta, ma" : "=r"(avl) : "r"(vlen));
+            asm volatile("vle" XSTR(16) ".v v8,  (%0)" ::"r"(va_addr));
+            asm volatile("vle" XSTR(16) ".v v0,  (%0)" ::"r"(vb_addr));
+            asm volatile("vfadd.vv v8, v8, v0");
+            asm volatile("vse" XSTR(16) ".v v8,  (%0)" ::"r"(vc_addr));
+            vlen -= avl;
+            va_addr += 2*avl;
+            vb_addr += 2*avl;
+            vc_addr += 2*avl;
+        }}
     }}
+    flex_intra_cluster_sync();
 }}
 
 /*vc = va * vb*/
@@ -43,19 +47,23 @@ inline void _softhier_vi_vmul_(
     uint32_t vb_addr,
     uint32_t vc_addr)
 {{
-    uint32_t vlen = {vector_width};
-    uint32_t avl;
-    while(vlen > 0){{
-        asm volatile("vsetvli %0, %1, e" XSTR(16) ", m8, ta, ma" : "=r"(avl) : "r"(vlen));
-        asm volatile("vle" XSTR(16) ".v v8,  (%0)" ::"r"(va_addr));
-        asm volatile("vle" XSTR(16) ".v v0,  (%0)" ::"r"(vb_addr));
-        asm volatile("vfmul.vv v8, v8, v0");
-        asm volatile("vse" XSTR(16) ".v v8,  (%0)" ::"r"(vc_addr));
-        vlen -= avl;
-        va_addr += 2*avl;
-        vb_addr += 2*avl;
-        vc_addr += 2*avl;
+    flex_intra_cluster_sync();
+    if (flex_is_first_core()) {{
+        uint32_t vlen = {vector_width};
+        uint32_t avl;
+        while(vlen > 0){{
+            asm volatile("vsetvli %0, %1, e" XSTR(16) ", m8, ta, ma" : "=r"(avl) : "r"(vlen));
+            asm volatile("vle" XSTR(16) ".v v8,  (%0)" ::"r"(va_addr));
+            asm volatile("vle" XSTR(16) ".v v0,  (%0)" ::"r"(vb_addr));
+            asm volatile("vfmul.vv v8, v8, v0");
+            asm volatile("vse" XSTR(16) ".v v8,  (%0)" ::"r"(vc_addr));
+            vlen -= avl;
+            va_addr += 2*avl;
+            vb_addr += 2*avl;
+            vc_addr += 2*avl;
+        }}
     }}
+    flex_intra_cluster_sync();
 }}
 
 /*vc = va - vb*/
@@ -64,19 +72,23 @@ inline void _softhier_vi_vsub_(
     uint32_t vb_addr,
     uint32_t vc_addr)
 {{
-    uint32_t vlen = {vector_width};
-    uint32_t avl;
-    while(vlen > 0){{
-        asm volatile("vsetvli %0, %1, e" XSTR(16) ", m8, ta, ma" : "=r"(avl) : "r"(vlen));
-        asm volatile("vle" XSTR(16) ".v v8,  (%0)" ::"r"(va_addr));
-        asm volatile("vle" XSTR(16) ".v v0,  (%0)" ::"r"(vb_addr));
-        asm volatile("vfsub.vv v8, v8, v0");
-        asm volatile("vse" XSTR(16) ".v v8,  (%0)" ::"r"(vc_addr));
-        vlen -= avl;
-        va_addr += 2*avl;
-        vb_addr += 2*avl;
-        vc_addr += 2*avl;
+    flex_intra_cluster_sync();
+    if (flex_is_first_core()) {{    
+        uint32_t vlen = {vector_width};
+        uint32_t avl;
+        while(vlen > 0){{
+            asm volatile("vsetvli %0, %1, e" XSTR(16) ", m8, ta, ma" : "=r"(avl) : "r"(vlen));
+            asm volatile("vle" XSTR(16) ".v v8,  (%0)" ::"r"(va_addr));
+            asm volatile("vle" XSTR(16) ".v v0,  (%0)" ::"r"(vb_addr));
+            asm volatile("vfsub.vv v8, v8, v0");
+            asm volatile("vse" XSTR(16) ".v v8,  (%0)" ::"r"(vc_addr));
+            vlen -= avl;
+            va_addr += 2*avl;
+            vb_addr += 2*avl;
+            vc_addr += 2*avl;
+        }}
     }}
+    flex_intra_cluster_sync();
 }}
 
 
@@ -86,19 +98,23 @@ inline void _softhier_vi_vdiv_(
     uint32_t vb_addr,
     uint32_t vc_addr)
 {{
-    uint32_t vlen = {vector_width};
-    uint32_t avl;
-    while(vlen > 0){{
-        asm volatile("vsetvli %0, %1, e" XSTR(16) ", m8, ta, ma" : "=r"(avl) : "r"(vlen));
-        asm volatile("vle" XSTR(16) ".v v8,  (%0)" ::"r"(va_addr));
-        asm volatile("vle" XSTR(16) ".v v0,  (%0)" ::"r"(vb_addr));
-        asm volatile("vfdiv.vv v8, v8, v0");
-        asm volatile("vse" XSTR(16) ".v v8,  (%0)" ::"r"(vc_addr));
-        vlen -= avl;
-        va_addr += 2*avl;
-        vb_addr += 2*avl;
-        vc_addr += 2*avl;
+    flex_intra_cluster_sync();
+    if (flex_is_first_core()) {{    
+        uint32_t vlen = {vector_width};
+        uint32_t avl;
+        while(vlen > 0){{
+            asm volatile("vsetvli %0, %1, e" XSTR(16) ", m8, ta, ma" : "=r"(avl) : "r"(vlen));
+            asm volatile("vle" XSTR(16) ".v v8,  (%0)" ::"r"(va_addr));
+            asm volatile("vle" XSTR(16) ".v v0,  (%0)" ::"r"(vb_addr));
+            asm volatile("vfdiv.vv v8, v8, v0");
+            asm volatile("vse" XSTR(16) ".v v8,  (%0)" ::"r"(vc_addr));
+            vlen -= avl;
+            va_addr += 2*avl;
+            vb_addr += 2*avl;
+            vc_addr += 2*avl;
+        }}
     }}
+    flex_intra_cluster_sync();
 }}
 """
 
