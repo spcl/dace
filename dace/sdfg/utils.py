@@ -686,7 +686,7 @@ def canonicalize_memlet_trees_for_scope(
 
 
 def canonicalize_memlet_trees(
-    sdfg: dace.SDFG,
+    sdfg: 'dace.SDFG',
     starting_scope: Optional['dace.sdfg.scope.ScopeTree'] = None,
 ) -> int:
     """Canonicalize the Memlet trees of all scopes in the SDFG.
@@ -711,9 +711,10 @@ def canonicalize_memlet_trees(
         next_queue = []
         while len(queue) > 0:
             for scope in queue:
-                total_modified_memlets += canonicalize_memlet_trees_for_scope(state, scope.entry)
-                total_modified_memlets += canonicalize_memlet_trees_for_scope(state, scope.exit)
-
+                if scope.entry is not None:
+                    total_modified_memlets += canonicalize_memlet_trees_for_scope(state, scope.entry)
+                if scope.exit is not None:
+                    total_modified_memlets += canonicalize_memlet_trees_for_scope(state, scope.exit)
                 if scope.parent is not None:
                     next_queue.append(scope.parent)
             queue = next_queue
