@@ -2536,56 +2536,70 @@ def specialize_scalar(sdfg: 'dace.SDFG', scalar_name: str, scalar_val: Union[flo
 
 
 def demote_symbol_to_scalar(sdfg: 'dace.SDFG', symbol_str: str):
-    import ast
     import dace.sdfg.construction_utils as cutil
+
     # If assignment is to symbol_str, append it to last scalar before
     sym_dtype = sdfg.symbols[symbol_str]
-    sdfg.remove_symbol(symbol_str)
 
     # If top-level and in free symbols
     # Or not top-level and in symbol mapping need to make it non transient
     # TODO:
-    is_transient = True
+    is_top_level = sdfg.parent_nsdfg_node is None
+    is_transient = not ((is_top_level and symbol_str in sdfg.free_symbols) or
+                        ((not is_top_level) and symbol_str in sdfg.parent_nsdfg_node.symbol_mapping))
 
-    scalar_name, scalar = sdfg.add_scalar(symbol_str, sym_dtype, transient=is_transient)
+    if is_transient is False:
+        raise Exception("Scalar to symbol demotion only works if the resulting scalar would be transient")
+
+    sdfg.remove_symbol(symbol_str)
+    sdfg.add_scalar(name=symbol_str, dtype=sym_dtype, storage=dace.dtypes.StorageType.Register, transient=is_transient)
 
     # For any tasklet that uses the symbol - make an access node to the scalar and connect through the in connector
-    # 1.1 If symbol <- expr in any interstate edge
-    # 1.2 Add a new state before edge.dst, and add assignment to the scalar
-    # TODO:
+    # 1. Replace all symbols of name appearing
+    # 2.1 If symbol <- expr in any interstate edge
+    # 2.2 Add a new state before edge.dst, and add assignment to the scalar
 
-    # 2. If used in tasklet try to replace symbol name with an in connector and add an access to the scalar
-    # TODO:
+    # 1
+    # Replace all code in tasklets and access nodes
+    for g in sdfg.all_states():
+        for n in g.nodes():
+            if isinstance(n, dace.nodes.Tasklet):
+                assert isinstance(g, dace.SDFGState)
+                sdict = g.scope_dict()
+                if cutil.tasklet_has_symbol(n, symbol_str):
+                    # 2. If used in tasklet try to replace symbol name with an in connector and add an access to the scalar
 
-    for e in sdfg.edges():
-        if e.data is not None and e.data.assignments is not None:
-            assert len([(k, v) for k, v in e.data.assignments.items() if k == symbol_str]) <= 1
-            if len([(k, v) for k, v in e.data.assignments.items() if k == symbol_str]) == 1:
-                dst, assignment = [(k, v) for k, v in e.data.assignments.items() if k == symbol_str][0]
-                if dst == symbol_str:
-                    for cfg in e.dst.all_control_flow_regions() if not isinstance(e.dst, dace.SDFGState) else [e.dst]:
-                        if isinstance(cfg, dace.SDFGState):
-                            state = cfg
-                            for n in state.nodes():
-                                if isinstance(n, dace.nodes.Tasklet):
-                                    if n.code is not None:
-                                        for i in range(len(n.code.code)):
-                                            if symbol_str in ast.unparse(n.code.code[i]):
-                                                if state.in_degree(n) > 0:
-                                                    assert False, "Unsupported case TODO"
-                                                n.code.code[i] = ast.parse(
-                                                    ast.unparse(n.code.code[i]).replace(
-                                                        symbol_str, "__in_" + symbol_str))
-                                                n.add_in_connector("__in_" + symbol_str)
-                                                an = state.add_access(scalar_name)
-                                                state.add_edge(an, None, n, "__in_" + symbol_str,
-                                                               dace.Memlet.from_array(scalar_name, scalar))
-                                                an2 = state.add_access(assignment)
-                                                state.add_edge(
-                                                    an2, None, an, None,
-                                                    dace.Memlet.from_array(assignment, sdfg.arrays[assignment]))
-            if symbol_str in e.data.assignments:
-                del e.data.assignments[symbol_str]
+                    # Sanity check no tasklet should assign to a symbol
+                    lhs, rhs = n.code.as_string.split(" = ")
+                    tasklet_lhs = lhs.strip()
+                    assert symbol_str not in tasklet_lhs
+                    cutil.tasklet_replace_code(n, {symbol_str: f"_in_{symbol_str}"})
+                    n.add_in_connector(f"_in_{symbol_str}")
+                    access = g.add_access(symbol_str)
+                    g.add_edge(access, None, n, f"_in_{symbol_str}", dace.memlet.Memlet(expr=f"{symbol_str}[0]"))
+                    # If parent scope is not None add a dependency edge to it
+                    if sdict[n] is not None:
+                        g.add_edge(sdict[n], None, access, None, dace.memlet.Memlet())
 
-    # If non-transient and has parent nsdfg node
-    # cutil.insert_non_transient_data_through_parent_scopes()
+    # 2
+    for e in sdfg.all_interstate_edges():
+        matching_assignments = {(k, v) for k, v in e.data.assignments.items() if k.strip() == symbol_str}
+        if len(matching_assignments) > 0:
+            print(matching_assignments)
+            # Add them to the next state
+            state = e.dst.parent_graph.add_state_before(e.dst,
+                                                        label=f"_{e.dst}_sym_assign",
+                                                        is_start_block=e.dst.parent_graph.start_block == e.dst)
+            # Go through all matching assignments
+            # Add symbols etc. as necessary
+            for k, v in matching_assignments:
+                del e.data.assignments[k]
+                symbol_str = k.strip()
+                if symbol_str in state.sdfg.symbols:
+                    state.sdfg.remove_symbol(symbol_str)
+                if symbol_str not in g.sdfg.arrays:
+                    state.sdfg.add_scalar(name=symbol_str,
+                                          dtype=sym_dtype,
+                                          storage=dace.dtypes.StorageType.Register,
+                                          transient=is_transient)
+                cutil.generate_assignment_as_tasklet_in_state(state, k, v)

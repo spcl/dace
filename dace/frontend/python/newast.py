@@ -536,6 +536,9 @@ def add_indirection_subgraph(sdfg: SDFG,
         for i, idx in enumerate(nonsqz_dims):
             newsubset[idx] = '__i%d' % i
 
+    # Squeeze size-1 dimensions out of expression
+    newsubset = [s for shp, s in zip(array.shape, newsubset) if shp != 1]
+
     tasklet.code = CodeBlock(
         code.format(arr='__ind_' + local_name, index=', '.join([symbolic.symstr(s) for s in newsubset])))
 

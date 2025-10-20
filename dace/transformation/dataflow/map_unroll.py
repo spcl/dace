@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from dace import data as dt, symbolic, SDFG
-from dace.sdfg import nodes, utils as sdutil
+from dace.sdfg import InterstateEdge, nodes, utils as sdutil
 from dace.sdfg.state import SDFGState
 from dace.transformation import transformation
 import copy
@@ -116,6 +116,12 @@ class MapUnroll(transformation.SingleStateTransformation):
                 if memlet.data in local_memories:
                     memlet.data = memlet.data + suffix
                 state.add_edge(src, src_conn, dst, dst_conn, memlet)
+
+            for edge in subgraph.all_edges_recursive():
+                if isinstance(edge, InterstateEdge):
+                    for k, v in edge.data.assignments.items():
+                        pass
+
             # Eliminate the now trivial map
             TrivialMapElimination.apply_to(sdfg,
                                            verify=False,

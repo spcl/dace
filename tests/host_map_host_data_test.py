@@ -57,10 +57,10 @@ def create_increment_sdfg():
     tasklet.add_out_connector('OUT__a')
     an1 = state.add_read('A')
     an2 = state.add_write('A')
-    state.add_edge(an1, None, map_entry, 'IN__a', dace.Memlet(f'A[i]'))
-    state.add_edge(map_entry, 'OUT__a', tasklet, 'IN__a', dace.Memlet())
+    state.add_edge(an1, None, map_entry, 'IN__a', dace.Memlet(f'A[0:{array_size}]'))
+    state.add_edge(map_entry, 'OUT__a', tasklet, 'IN__a', dace.Memlet('A[i]'))
     state.add_edge(tasklet, 'OUT__a', map_exit, 'IN__a', dace.Memlet(f'A[i]'))
-    state.add_edge(map_exit, 'OUT__a', an2, None, dace.Memlet(f'A[i]'))
+    state.add_edge(map_exit, 'OUT__a', an2, None, dace.Memlet(f'A[0:{array_size}]'))
     sdfg.validate()
     return A, sdfg
 
