@@ -6,7 +6,8 @@ from typing import List, Optional
 
 from dace import sdfg as sd, symbolic
 from dace.properties import Property, make_properties
-from dace.sdfg import utils as sdutil
+from dace.sdfg import InterstateEdge, utils as sdutil
+from dace.sdfg.nodes import NestedSDFG
 from dace.sdfg.state import BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowRegion, LoopRegion, ReturnBlock
 from dace.frontend.python.astutils import ASTFindReplace
 from dace.transformation import transformation as xf
@@ -131,13 +132,25 @@ class LoopUnroll(xf.MultiStateTransformation):
             block_map[block] = new_block
             new_block.replace(loop.loop_variable, value)
             iteration_region.add_node(new_block, is_start_block=(block is loop.start_block))
-        for edge in loop.edges():
-            src = block_map[edge.src]
-            dst = block_map[edge.dst]
-            # Replace conditions in subgraph edges
-            data = copy.deepcopy(edge.data)
-            if not data.is_unconditional():
-                ASTFindReplace({loop.loop_variable: str(value)}).visit(data.condition)
-            iteration_region.add_edge(src, dst, data)
+
+        for edge in loop.all_edges_recursive():  # Recursion needed for nested SDFGs
+            if isinstance(edge, InterstateEdge):
+                src = block_map[edge.src]
+                dst = block_map[edge.dst]
+                # Replace conditions in subgraph edges
+                data = copy.deepcopy(edge.data)
+                if not data.is_unconditional():
+                    ASTFindReplace({loop.loop_variable: str(value)}).visit(data.condition)
+
+                iteration_region.add_edge(src, dst, data)
+
+        for node in loop.all_nodes_recursive():
+            if isinstance(node, NestedSDFG):
+                if loop.loop_variable in node.symbol_mapping:
+                    del node.symbol_mapping[loop.loop_variable]
+                if loop.loop_variable in node.symbol_mapping.keys():
+                    node.symbol_mapping[loop.loop_variable] = ASTFindReplace({
+                        loop.loop_variable: str(value)
+                    }).visit(node.symbol_mapping[loop.loop_variable])
 
         return iteration_region
