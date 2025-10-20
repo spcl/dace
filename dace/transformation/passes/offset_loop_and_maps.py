@@ -34,14 +34,14 @@ class OffsetLoopsAndMaps(ppl.Pass):
     do_not_check_begin = Property(dtype=bool, default=False)
     convert_leq_to_lt = Property(dtype=bool, default=True)
     normalize_loops = Property(dtype=bool, default=False)
-    squeeze = Property(dtype=bool, default=False)
+    squeeze_maps = Property(dtype=bool, default=False)
 
     def __init__(self,
                  offset_expr: str,
                  begin_expr: Union[str, None],
                  convert_leq_to_lt: bool = True,
                  normalize_loops: bool = False,
-                 squeeze: bool = False):
+                 squeeze_maps: bool = False):
         self.offset_expr = offset_expr
         if begin_expr is None:
             self.do_not_check_begin = True
@@ -49,7 +49,7 @@ class OffsetLoopsAndMaps(ppl.Pass):
             self.begin_expr = begin_expr
         self.convert_leq_to_lt = convert_leq_to_lt
         self.normalize_loops = normalize_loops
-        self.squeeze = squeeze
+        self.squeeze_maps = squeeze_maps
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Tasklets | ppl.Modifies.CFG | ppl.Modifies.Edges
@@ -147,6 +147,19 @@ class OffsetLoopsAndMaps(ppl.Pass):
                 else:
                     code_str = self._token_replace_dict(code_str, repldict)
                 node.code = CodeBlock(code_str, code.language)
+
+    def _repl_maps_on_node_list(self, state: dace.SDFGState, nodes: List[dace.nodes.Node], multipliers: Dict[str, dace.symbolic.SymExpr]):
+        multipliers = {str(k): str(k) + " * " + str(v) for k, v in multipliers.items()}
+        for node in nodes:
+            if isinstance(node, dace.nodes.MapEntry):
+                new_range_list = []
+                for (b, e, s)in node.map.range:
+                    new_b = b.subs(multipliers)
+                    new_e = e.subs(multipliers)
+                    new_s = s.subs(multipliers)
+                    new_range_list.append((new_b, new_e, new_s))
+                new_range = dace.subsets.Range(new_range_list)
+                node.map.range = new_range
 
     def _repl_tasklets_recursive_from_node_list(self, state: dace.SDFGState, nodes: List[dace.nodes.Node], repldict):
         self._repl_tasklets_on_node_list(state, nodes, repldict)
@@ -263,7 +276,7 @@ class OffsetLoopsAndMaps(ppl.Pass):
                         has_matches = False
                         new_range_list = []
                         repldict = dict()
-                        multipliers = []
+                        multipliers = dict()
                         for (b, e, s), param in zip(state_node.map.range, state_node.map.params):
                             if self.do_not_check_begin is None or b == _get_expr_from_str(
                                     self.begin_expr) or str(b) == str(self.begin_expr):
@@ -275,19 +288,19 @@ class OffsetLoopsAndMaps(ppl.Pass):
                                     pycode(e) + " + " + pycode(_get_expr_from_str(self.offset_expr))).simplify()
                                 s_expr = dace.symbolic.SymExpr(pycode(s)).simplify()
                                 prev_s_expr = s_expr
-                                if self.squeeze:
+                                if self.squeeze_maps:
                                     loop_len = e_expr + 1 - b_expr
                                     loop_step = s_expr
                                     if isinstance(loop_len / loop_step, (int, sympy.Number)):
-                                        multiplier = dace.symbolic.SymExpr(int(loop_len / loop_step))
-                                        multipliers.append(multiplier)
+                                        multipliers[param] = s_expr
                                         assert b_expr == 0
-                                        e_expr = b_expr + multiplier - 1
+                                        squeezed_e = dace.symbolic.SymExpr(int(loop_len / loop_step))
+                                        e_expr = b_expr + squeezed_e - 1
                                         s_expr = dace.symbolic.SymExpr(1)
 
                                 new_range_list.append((b_expr, e_expr, s_expr))
 
-                                if self.squeeze:
+                                if self.squeeze_maps:
                                     repldict[
                                         param] = f"(({param} * {prev_s_expr}) - {pycode(_get_expr_from_str(self.offset_expr))})"
                                 else:
@@ -303,6 +316,8 @@ class OffsetLoopsAndMaps(ppl.Pass):
                             edges_between = state.all_edges(*nodes_between)
                             self._repl_memlets_on_edge_list(state, edges_between, repldict)
                             self._repl_tasklets_on_node_list(state, nodes_between, repldict)
+                            if self.squeeze_maps:
+                                self._repl_maps_on_node_list(state, nodes_between, multipliers)
                             for n in nodes_between:
                                 if isinstance(n, dace.nodes.NestedSDFG):
                                     self._repl_recursive(n.sdfg, repldict)
