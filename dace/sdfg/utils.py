@@ -616,6 +616,18 @@ def consolidate_edges_scope(state: SDFGState, scope_node: Union[nd.EntryNode, nd
         remove_outer_connector = scope_node.remove_in_connector
         remove_inner_connector = scope_node.remove_out_connector
         prefix, oprefix = 'IN_', 'OUT_'
+
+        def get_outer_data(e: MultiConnectorEdge[dace.Memlet]):
+            mpath = state.memlet_path(e)
+            assert isinstance(mpath[0].src, nd.AccessNode)
+            return mpath[0].src.data
+
+        def get_outer_subset(e: MultiConnectorEdge[dace.Memlet]):
+            return e.data.get_src_subset(e, state)
+
+        def set_outer_subset(e: MultiConnectorEdge[dace.Memlet], new_subset: sbs.Subset):
+            e.data.src_subset = new_subset
+
     else:
         outer_edges = state.out_edges
         inner_edges = state.in_edges
@@ -624,6 +636,17 @@ def consolidate_edges_scope(state: SDFGState, scope_node: Union[nd.EntryNode, nd
         remove_inner_connector = scope_node.remove_in_connector
         prefix, oprefix = 'OUT_', 'IN_'
 
+        def get_outer_data(e: MultiConnectorEdge[dace.Memlet]):
+            mpath = state.memlet_path(e)
+            assert isinstance(mpath[-1].dst, nd.AccessNode)
+            return mpath[-1].dst.data
+
+        def get_outer_subset(e: MultiConnectorEdge[dace.Memlet]):
+            return e.data.get_dst_subset(e, state)
+
+        def set_outer_subset(e: MultiConnectorEdge[dace.Memlet], new_subset: sbs.Subset):
+            e.data.dst_subset = new_subset
+
     edges_by_connector = collections.defaultdict(list)
     connectors_to_remove = set()
     for e in inner_edges(scope_node):
@@ -631,16 +654,18 @@ def consolidate_edges_scope(state: SDFGState, scope_node: Union[nd.EntryNode, nd
             continue
         conn = inner_conn(e)
         edges_by_connector[conn].append(e)
-        if e.data.data not in data_to_conn:
-            data_to_conn[e.data.data] = conn
-        elif data_to_conn[e.data.data] != conn:  # Need to consolidate
+        odata = get_outer_data(e)
+        if odata not in data_to_conn:
+            data_to_conn[odata] = conn
+        elif data_to_conn[odata] != conn:  # Need to consolidate
             connectors_to_remove.add(conn)
 
     for conn in connectors_to_remove:
         e = edges_by_connector[conn][0]
+        odata = get_outer_data(e)
         offset = 3 if conn.startswith('IN_') else (4 if conn.startswith('OUT_') else len(oprefix))
         # Outer side of the scope - remove edge and union subsets
-        target_conn = prefix + data_to_conn[e.data.data][offset:]
+        target_conn = prefix + data_to_conn[odata][offset:]
         conn_to_remove = prefix + conn[offset:]
         remove_outer_connector(conn_to_remove)
         if isinstance(scope_node, nd.EntryNode):
@@ -652,7 +677,7 @@ def consolidate_edges_scope(state: SDFGState, scope_node: Union[nd.EntryNode, nd
         assert len(edges_to_remove) == 1 and len(out_edges) == 1
         edge_to_remove = edges_to_remove[0]
         out_edge = out_edges[0]
-        out_edge.data.subset = sbs.union(out_edge.data.subset, edge_to_remove.data.subset)
+        set_outer_subset(out_edge, sbs.union(get_outer_subset(out_edge), get_outer_subset(edge_to_remove)))
 
         # Check if dangling connectors have been created and remove them,
         # as well as their parent edges
@@ -663,11 +688,11 @@ def consolidate_edges_scope(state: SDFGState, scope_node: Union[nd.EntryNode, nd
         if isinstance(scope_node, nd.EntryNode):
             remove_inner_connector(e.src_conn)
             for e in edges_by_connector[conn]:
-                e._src_conn = data_to_conn[e.data.data]
+                e._src_conn = data_to_conn[odata]
         else:
             remove_inner_connector(e.dst_conn)
             for e in edges_by_connector[conn]:
-                e._dst_conn = data_to_conn[e.data.data]
+                e._dst_conn = data_to_conn[odata]
 
     return consolidated
 
