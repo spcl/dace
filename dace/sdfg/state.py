@@ -1433,7 +1433,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         self._clear_scopedict_cache()
         super(SDFGState, self).remove_node(node)
 
-    def add_edge(self, u, u_connector, v, v_connector, memlet, check_nodes_are_resident: bool = True):
+    def add_edge(self, u, u_connector, v, v_connector, memlet):
         if not isinstance(u, nd.Node):
             raise TypeError("Source node is not of type nd.Node (type: %s)" % str(type(u)))
         if u_connector is not None and not isinstance(u_connector, str):
@@ -1444,10 +1444,6 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             raise TypeError("Destination connector is not string (type: %s)" % str(type(v_connector)))
         if not isinstance(memlet, mm.Memlet):
             raise TypeError("Memlet is not of type Memlet (type: %s)" % str(type(memlet)))
-
-        if check_nodes_are_resident:
-            assert u in self.nodes()
-            assert v in self.nodes()
 
         if u_connector and isinstance(u, nd.AccessNode) and u_connector not in u.out_connectors:
             u.add_out_connector(u_connector, force=True)
