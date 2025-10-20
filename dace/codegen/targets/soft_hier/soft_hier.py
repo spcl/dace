@@ -1014,7 +1014,7 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                 self._dispatcher, sdfg, state, edge, src_node, dst_node, self._cpu_codegen._packed_types))
             name = memlet.data
             # print memlet information
-            # print(f"memlet: {memlet} {memlet.src_subset} {memlet.dst_subset}")
+            print(f"memlet: {memlet} {memlet.src_subset} {memlet.dst_subset}")
             nodedesc = sdfg.arrays[name]
             data_size = nodedesc.dtype.bytes
             dims = len(copy_shape)
@@ -1050,7 +1050,9 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
             callsite_stream.write(f'// is_sync = {is_sync}')
             self._has_async_dma = (not is_sync) or self._has_async_dma
             if dims == 1:
-                beg, end, step = subset.ranges[0]
+                other_subset: subsets.Range = memlet.other_subset
+                beg, end, step = other_subset.ranges[0]
+                print(f"subset = {subset}; index_0: {src_name} -> {dst_name}, {beg}, {end}, {step}")
                 length = (end + 1) - beg
                 data_size = nodedesc.dtype.bytes  # Number of bytes per element
                 if (src_storage == dtypes.StorageType.SoftHier_HBM and dst_storage == dtypes.StorageType.SoftHier_TCDM):
@@ -1079,14 +1081,15 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                         callsite_stream.write("if(flex_is_dm_core())")
                         callsite_stream.write("{", cfg, state_id, src_node)
                         funcname = "flex_dma_async_1d"
+                        # total_size = des
                         callsite_stream.write(('    {func}({args});').format(
                             func=funcname,
                             args=', '.join([f'local({dst_expr})'] + [f'local({src_expr})'] +
                                            [f'{length}*{data_size}'])), cfg, state_id, [src_node, dst_node])
                         callsite_stream.write("flex_dma_async_wait_all();")
                         callsite_stream.write("}", cfg, state_id, src_node)
-                        # if is_sync:
-                        #     callsite_stream.write("flex_intra_cluster_sync();")
+                        if is_sync:
+                            callsite_stream.write("flex_intra_cluster_sync();")
                 elif (src_storage == dtypes.StorageType.SoftHier_TCDM
                       and dst_storage == dtypes.StorageType.SoftHier_HBM):
                     callsite_stream.write("// SoftHier_TCDM -> SoftHier_HBM")
