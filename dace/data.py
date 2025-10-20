@@ -388,6 +388,9 @@ class Structure(Data):
 
         self.members = OrderedDict(members)
         for k, v in self.members.items():
+            if isinstance(v, dtypes.typeclass):
+                v = Scalar(v)
+                self.members[k] = v
             v.transient = transient
 
         self.name = name
@@ -403,6 +406,8 @@ class Structure(Data):
             elif isinstance(v, Scalar):
                 symbols |= v.free_symbols
                 fields_and_types[k] = v.dtype
+            elif isinstance(v, dtypes.typeclass):
+                fields_and_types[k] = v
             elif isinstance(v, (sp.Basic, symbolic.SymExpr)):
                 symbols |= v.free_symbols
                 fields_and_types[k] = symbolic.symtype(v)
@@ -422,6 +427,7 @@ class Structure(Data):
         #         fields_and_types[str(s)] = dtypes.int32
 
         dtype = dtypes.pointer(dtypes.struct(name, **fields_and_types))
+        dtype.base_type.__descriptor__ = self
         shape = (1, )
         super(Structure, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
 
@@ -504,6 +510,40 @@ class Structure(Data):
     @property
     def pool(self) -> bool:
         return False
+
+    def make_argument(self, **fields) -> ctypes.Structure:
+        """
+        Creates a structure instance from the given field values, which can be used as
+        an argument for DaCe programs.
+
+        :param fields: Dictionary of field names to values.
+        :return: A ctypes Structure instance.
+        """
+        struct_type: dtypes.struct = self.dtype.base_type
+        struct_ctype = struct_type.as_ctypes()
+
+        def _make_arg(arg: Any, expected_type: Data, name: str) -> Any:
+            if isinstance(expected_type, Structure):
+                return expected_type.make_argument_from_object(arg)
+            return make_ctypes_argument(arg, expected_type, name)
+
+        struct_instance = struct_ctype(
+            **{
+                field_name: _make_arg(field_value, self.members[field_name], field_name)
+                for field_name, field_value in fields.items() if field_name in self.members
+            })
+        return struct_instance
+
+    def make_argument_from_object(self, obj) -> ctypes.Structure:
+        """
+        Creates a structure instance from the given object, which can be used as
+        an argument for DaCe programs. If the object has attributes matching the field names,
+        those attributes are used as field values. Other attributes are ignored.
+
+        :param obj: Object containing field values.
+        :return: A ctypes Structure instance.
+        """
+        return self.make_argument(**{field_name: getattr(obj, field_name) for field_name in self.members})
 
 
 class TensorIterationTypes(aenum.AutoNumberEnum):

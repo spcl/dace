@@ -872,9 +872,13 @@ class struct(typeclass):
             else:
                 fields.append((k, _FFI_CTYPES[v.type]))
         # Create new struct class.
-        struct_class = type("NewStructClass", (ctypes.Structure, ), {"_fields_": fields})
+        struct_class = type(self.name or "NewStructClass", (ctypes.Structure, ), {"_fields_": fields})
         # NOTE: Each call to `type` returns a different class, so we need to cache it to ensure uniqueness.
         _FFI_CTYPES[self] = struct_class
+
+        if hasattr(self, "__descriptor__"):
+            struct_class.__descriptor__ = self.__descriptor__
+
         return struct_class
 
     def as_numpy_dtype(self):
