@@ -6,6 +6,8 @@ from dace import subsets as dace_sbs
 from dace.sdfg import nodes as dace_nodes
 from dace.sdfg.utils import consolidate_edges
 
+import pytest
+
 from .transformations import utility
 
 
@@ -38,7 +40,9 @@ def test_consolidate_edges():
 
 
 def _make_sdfg_multi_usage_input(
-    N: int, ) -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.AccessNode, dace_nodes.MapEntry]:
+    N: int,
+    use_inner_access_node: bool,
+) -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.AccessNode, dace_nodes.MapEntry]:
     sdfg = dace.SDFG(utility.unique_name("multi_usage_sdfg"))
     state = sdfg.add_state(is_start_block=True)
 
@@ -69,6 +73,14 @@ def _make_sdfg_multi_usage_input(
                 transient=False,
             )
 
+        if use_inner_access_node:
+            inner_data = f"inner_data_{i}"
+            sdfg.add_scalar(
+                inner_data,
+                dtype=dace.float64,
+                transient=True,
+            )
+
         iac, oac = (state.add_access(name) for name in [input_data, output_data])
         tlet = state.add_tasklet(
             f"tlet_{i}",
@@ -79,10 +91,22 @@ def _make_sdfg_multi_usage_input(
 
         state.add_edge(multi_use_value, None, me, f"IN_muv_{i}",
                        dace.Memlet(f"{multi_use_value_data}[{offset_in_i}:{offset_in_i + 10}]"))
-        state.add_edge(me, f"OUT_muv_{i}", tlet, "__in1", dace.Memlet(f"{multi_use_value_data}[__i + {offset_in_i}]"))
+
+        if use_inner_access_node:
+            inner_ac = state.add_access(inner_data)
+            state.add_edge(me, f"OUT_muv_{i}", inner_ac, None,
+                           dace.Memlet(
+                               data=multi_use_value_data,
+                               subset=f"__i + {offset_in_i}",
+                               other_subset="0",
+                           ))
+            state.add_edge(inner_ac, None, tlet, "__in1", dace.Memlet(f"{inner_data}[0]"))
+        else:
+            state.add_edge(me, f"OUT_muv_{i}", tlet, "__in1",
+                           dace.Memlet(f"{multi_use_value_data}[__i + {offset_in_i}]"))
         me.add_scope_connectors(f"muv_{i}")
 
-        state.add_edge(iac, None, me, f"IN_{input_data}", dace.Memlet(f"{input_data}[0:10, 0:3]"))
+        state.add_edge(iac, None, me, f"IN_{input_data}", dace.Memlet(f"{input_data}[0:10, 0:30]"))
         state.add_edge(me, f"OUT_{input_data}", tlet, "__in2", dace.Memlet(f"{input_data}[__i, __j]"))
         me.add_scope_connectors(input_data)
 
@@ -95,9 +119,9 @@ def _make_sdfg_multi_usage_input(
     return sdfg, state, multi_use_value, me
 
 
-def test_multi_use_value_input():
+def _test_multi_use_value_input(use_inner_access_node: bool, ):
     N = 5
-    sdfg, state, multi_use_value, me = _make_sdfg_multi_usage_input(N=N)
+    sdfg, state, multi_use_value, me = _make_sdfg_multi_usage_input(N=N, use_inner_access_node=use_inner_access_node)
 
     initial_ac = utility.count_nodes(sdfg, dace_nodes.AccessNode, True)
     assert multi_use_value in initial_ac
@@ -127,6 +151,11 @@ def test_multi_use_value_input():
     assert utility.compare_sdfg_res(ref=ref, res=res)
 
 
+@pytest.mark.parametrize("use_inner_access_node", [True, False])
+def test_multi_use_value_input(use_inner_access_node: bool):
+    _test_multi_use_value_input(use_inner_access_node=use_inner_access_node)
+
+
 if __name__ == '__main__':
     test_consolidate_edges()
-    test_multi_use_value_input()
+    #_test_multi_use_value_input(use_inner_access_node=True)
