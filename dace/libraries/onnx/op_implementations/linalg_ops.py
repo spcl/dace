@@ -15,6 +15,7 @@ import typing
 
 import dace
 from dace import SDFG, SDFGState, nodes
+from dace.libraries.blas.nodes.matmul import MatMul
 from dace.sdfg.nodes import Node
 from dace.util import in_desc_with_name, out_desc_with_name
 
@@ -29,8 +30,8 @@ from dace.frontend.common import create_einsum_sdfg
 # ============================================================================
 
 
-@op_implementation(op="MatMul", name="pure")
-class PureMatMul(ONNXForward):
+@op_implementation(op="MatMul", name="pure_einsum")
+class PureMatMulToEinSum(ONNXForward):
 
     @staticmethod
     def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
@@ -131,6 +132,34 @@ class PureMatMul(ONNXForward):
         nstate.add_edge(nstate.add_read("B"), None, einsum_node, "Inputs__1", nsdfg.make_array_memlet("B"))
         nstate.add_edge(einsum_node, "Output", nstate.add_write("Y"), None, nsdfg.make_array_memlet("Y"))
 
+        return nsdfg
+
+
+@op_implementation(op="MatMul", name="pure")
+class PureMatMul(ONNXForward):
+
+    @staticmethod
+    def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
+        return True
+
+    @staticmethod
+    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+        # Replace MatMul with a GEMM library node
+        nsdfg = dace.SDFG(node.label + "_expansion")
+        nstate = nsdfg.add_state()
+        gemm_node = MatMul(node.label + "_gemm_expansion", alpha=1.0, beta=0.0)
+        nstate.add_node(gemm_node)
+
+        nsdfg.add_datadesc("A", copy.deepcopy(in_desc_with_name(node, state, sdfg, "A")))
+        nsdfg.add_datadesc("B", copy.deepcopy(in_desc_with_name(node, state, sdfg, "B")))
+        nsdfg.add_datadesc("Y", copy.deepcopy(out_desc_with_name(node, state, sdfg, "Y")))
+        nsdfg.arrays["A"].transient = False
+        nsdfg.arrays["B"].transient = False
+        nsdfg.arrays["Y"].transient = False
+
+        nstate.add_edge(nstate.add_read("A"), None, gemm_node, "_a", nsdfg.make_array_memlet("A"))
+        nstate.add_edge(nstate.add_read("B"), None, gemm_node, "_b", nsdfg.make_array_memlet("B"))
+        nstate.add_edge(gemm_node, "_c", nstate.add_write("Y"), None, nsdfg.make_array_memlet("Y"))
         return nsdfg
 
 
