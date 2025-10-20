@@ -2404,24 +2404,24 @@ def make_ctypes_argument(arg: Any,
 
     # Call a wrapper function to make NumPy arrays from pointers.
     if isinstance(argtype.dtype, dtypes.callback):
-        result = argtype.dtype.get_trampoline(arg, symbols or {}, callback_retval_references)
+        result = argtype.dtype.get_trampoline(result, symbols or {}, callback_retval_references)
     # List to array
-    elif isinstance(arg, list) and isinstance(argtype, Array):
-        result = np.array(arg, dtype=argtype.dtype.type)
+    elif isinstance(result, list) and isinstance(argtype, Array):
+        result = np.array(result, dtype=argtype.dtype.type)
     # Null pointer
-    elif arg is None and isinstance(argtype, Array):
+    elif result is None and isinstance(argtype, Array):
         result = ctypes.c_void_p(0)
 
     # Retain only the element datatype for upcoming checks and casts
     actype = argtype.dtype.as_ctypes()
 
     try:
-        if dtypes.is_array(arg):  # `c_void_p` is subclass of `ctypes._SimpleCData`.
-            result = ctypes.c_void_p(dtypes.array_interface_ptr(arg, atype.storage))
-        elif not isinstance(arg, (ctypes._SimpleCData, ctypes._Pointer)):
-            result = actype(arg)
+        if dtypes.is_array(result):  # `c_void_p` is subclass of `ctypes._SimpleCData`.
+            result = ctypes.c_void_p(dtypes.array_interface_ptr(result, atype.storage))
+        elif not isinstance(result, (ctypes._SimpleCData, ctypes._Pointer)):
+            result = actype(result)
         else:
-            result = arg
+            pass
     except TypeError as ex:
         raise TypeError(f'Invalid type for scalar argument "{a}": {ex}')
 
