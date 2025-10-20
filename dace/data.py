@@ -2,6 +2,7 @@
 import aenum
 import copy as cp
 import ctypes
+import dataclasses
 import functools
 import warnings
 
@@ -442,6 +443,26 @@ class Structure(Data):
 
         return ret
 
+    @staticmethod
+    def from_dataclass(cls, **overrides) -> 'Structure':
+        """
+        Creates a Structure data descriptor from a dataclass instance.
+
+        :param cls: The dataclass to convert.
+        :param overrides: Optional overrides for the structure fields.
+        :return: A Structure data descriptor.
+        """
+        members = {}
+        for field in dataclasses.fields(cls):
+            # Recursive structures
+            if dataclasses.is_dataclass(field.type):
+                members[field.name] = Structure.from_dataclass(field.type)
+                continue
+            members[field.name] = field.type
+
+        members.update(overrides)
+        return Structure(members, name=cls.__name__)
+
     @property
     def total_size(self):
         return -1
@@ -524,14 +545,15 @@ class Structure(Data):
 
         def _make_arg(arg: Any, expected_type: Data, name: str) -> Any:
             if isinstance(expected_type, Structure):
-                return expected_type.make_argument_from_object(arg)
+                return ctypes.pointer(expected_type.make_argument_from_object(arg))
             return make_ctypes_argument(arg, expected_type, name)
 
-        struct_instance = struct_ctype(
-            **{
-                field_name: _make_arg(field_value, self.members[field_name], field_name)
-                for field_name, field_value in fields.items() if field_name in self.members
-            })
+        args = {
+            field_name: _make_arg(field_value, self.members[field_name], field_name)
+            for field_name, field_value in fields.items() if field_name in self.members
+        }
+
+        struct_instance = struct_ctype(**args)
         return struct_instance
 
     def make_argument_from_object(self, obj) -> ctypes.Structure:
