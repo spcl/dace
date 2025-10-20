@@ -187,20 +187,16 @@ def infer_shapes_onnx_model(model: onnx.ModelProto, auto_merge: bool = False) ->
         )
         return ssi.infer_shapes(model)
     except TypeError:
-        # Older API variants
+        # Older API: no-argument constructor
         try:
             ssi = SymbolicShapeInference()
             return ssi.infer_shapes(model)
-        except Exception:
-            # Even older API: function-based
-            from onnxruntime.tools.symbolic_shape_infer import infer_shapes as ssi_infer
-            return ssi_infer(
-                model,
-                int_max=2**31 - 1,
-                auto_merge=auto_merge,
-                guess_output_rank=False,
-                verbose=0,
-            )
+        except Exception as e:
+            # If all else fails, fall back to ONNX shape inference
+            log.warning(f"ONNXRuntime symbolic shape inference failed ({e}), "
+                        "falling back to ONNX shape inference.")
+            import onnx.shape_inference
+            return onnx.shape_inference.infer_shapes(model, check_type=False, strict_mode=False, data_prop=True)
 
 
 def simplify_onnx_model(model: onnx.ModelProto, auto_merge: bool) -> onnx.ModelProto:
