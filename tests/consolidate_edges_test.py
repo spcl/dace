@@ -42,9 +42,13 @@ def test_consolidate_edges():
 def _make_sdfg_multi_usage_input(
     N: int,
     use_inner_access_node: bool,
+    use_non_standard_memlet: bool,
 ) -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.AccessNode, dace_nodes.MapEntry]:
-    sdfg = dace.SDFG(utility.unique_name("multi_usage_sdfg"))
+    sdfg = dace.SDFG(utility.unique_name("multi_input_usage"))
     state = sdfg.add_state(is_start_block=True)
+
+    if use_inner_access_node and use_non_standard_memlet:
+        assert N >= 2, "Needed for alteration"
 
     multi_use_value_data, _ = sdfg.add_array(
         "multi_use_value",
@@ -94,11 +98,22 @@ def _make_sdfg_multi_usage_input(
 
         if use_inner_access_node:
             inner_ac = state.add_access(inner_data)
+            data = multi_use_value_data
+            subset = f"__i + {offset_in_i}"
+            other_subset = "0"
+
+            # NOTE: If we use `(i % 2) == 0` then we hit a bug in Memlet propagation.
+            #   Since it is only propagated to `0:11`, this is because the `__i + 2`
+            #   is somehow overlooked.
+            if use_non_standard_memlet and ((i % 2) == 1):
+                data = inner_data
+                subset, other_subset = other_subset, subset
+
             state.add_edge(me, f"OUT_muv_{i}", inner_ac, None,
                            dace.Memlet(
-                               data=multi_use_value_data,
-                               subset=f"__i + {offset_in_i}",
-                               other_subset="0",
+                               data=data,
+                               subset=subset,
+                               other_subset=other_subset,
                            ))
             state.add_edge(inner_ac, None, tlet, "__in1", dace.Memlet(f"{inner_data}[0]"))
         else:
@@ -119,9 +134,18 @@ def _make_sdfg_multi_usage_input(
     return sdfg, state, multi_use_value, me
 
 
-def _test_multi_use_value_input(use_inner_access_node: bool, ):
+def _test_multi_use_value_input(
+    use_inner_access_node: bool,
+    use_non_standard_memlet: bool,
+):
+    if use_non_standard_memlet and (not use_inner_access_node):
+        # This combination does not make sense.
+        return
+
     N = 5
-    sdfg, state, multi_use_value, me = _make_sdfg_multi_usage_input(N=N, use_inner_access_node=use_inner_access_node)
+    sdfg, state, multi_use_value, me = _make_sdfg_multi_usage_input(N=N,
+                                                                    use_inner_access_node=use_inner_access_node,
+                                                                    use_non_standard_memlet=use_non_standard_memlet)
 
     initial_ac = utility.count_nodes(sdfg, dace_nodes.AccessNode, True)
     assert multi_use_value in initial_ac
@@ -142,20 +166,33 @@ def _test_multi_use_value_input(use_inner_access_node: bool, ):
     ac_after = utility.count_nodes(sdfg, dace_nodes.AccessNode, True)
     assert set(initial_ac) == set(ac_after)
 
+    assert all(state.in_degree(ac) == 1 for ac in state.sink_nodes())
     assert state.out_degree(multi_use_value) == 1
+
+    # NOTE: This test might fail because of a bug in Memlet propagation.
+    #   The test was changed such that it is __not__ hit.
     assert all(oedge.data.src_subset == dace_sbs.Range.from_string("0:12")
                for oedge in state.out_edges(multi_use_value))
-    assert all(state.in_degree(ac) == 1 for ac in state.sink_nodes())
 
     utility.compile_and_run_sdfg(sdfg, **res)
     assert utility.compare_sdfg_res(ref=ref, res=res)
 
 
 @pytest.mark.parametrize("use_inner_access_node", [True, False])
-def test_multi_use_value_input(use_inner_access_node: bool):
-    _test_multi_use_value_input(use_inner_access_node=use_inner_access_node)
+@pytest.mark.parametrize("use_non_standard_memlet", [True, False])
+def test_multi_use_value_input(
+    use_inner_access_node: bool,
+    use_non_standard_memlet: bool,
+):
+    _test_multi_use_value_input(use_inner_access_node=use_inner_access_node,
+                                use_non_standard_memlet=use_non_standard_memlet)
 
 
 if __name__ == '__main__':
     test_consolidate_edges()
-    #_test_multi_use_value_input(use_inner_access_node=True)
+    for use_non_standard_memlet in [True, False]:
+        for use_inner_access_node in [True, False]:
+            _test_multi_use_value_input(
+                use_inner_access_node=use_inner_access_node,
+                use_non_standard_memlet=use_non_standard_memlet,
+            )
