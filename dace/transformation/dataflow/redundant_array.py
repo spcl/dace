@@ -119,10 +119,43 @@ def _validate_subsets(edge: graph.MultiConnectorEdge,
 
 
 def find_dims_to_pop(a_size, b_size):
+    """Determine how the first subset has to be squeezed to get to the dimension of the second subset.
+
+    Essentially the function determines which dimensions from the subset `A` have to be removed
+    to get down to the dimensionality of subset `B`. In case they have the same dimensionality
+    an empty list is returned.
+    It is important that this function does not operates on the actual subsets but on their
+    sizes.
+    """
+    if len(a_size) < len(b_size):
+        raise ValueError(
+            f"Expected that subset `A` has a larger rank ({len(a_size)} | {a_size}) than subset `B` ({len(b_size)} | {b_size})"
+        )
+    if len(a_size) == len(b_size):
+        return []
+
     dims_to_pop = []
-    for i, sz in enumerate(reversed(a_size)):
-        if sz not in b_size:
-            dims_to_pop.append(len(a_size) - 1 - i)
+    b_dim_to_check = 0
+    for dim_to_pop, a_sz in enumerate(a_size):
+        b_sz = b_size[b_dim_to_check]
+        if (a_sz == b_sz) == True:  # SymPy comparison.
+            # They are the same, thus we do not have to pop the dimension, but we have
+            #  to advance the `B` pointer.
+            b_dim_to_check += 1
+        else:
+            # They are different thus we have to pop the dimension, but we do _not_
+            #  have to advance the `B` pointer, as we have to reuse it in the next
+            #  iteration again.
+            # TODO: Check if we have to ensure that `a_sz` is 1.
+            dims_to_pop.append(dim_to_pop)
+
+    if b_dim_to_check != len(b_size):
+        raise ValueError(
+            f"Could not associate all `B` dimensions to an `A` dimension, only matched {b_dim_to_check} of {len(b_size)}"
+        )
+    if len(a_size) - len(b_size) != len(dims_to_pop):
+        raise ValueError(f"Expected to pop {len(a_size) - len(b_size)} but only popped {len(dims_to_pop)}")
+
     return dims_to_pop
 
 
