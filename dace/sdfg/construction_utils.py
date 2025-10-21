@@ -3,6 +3,7 @@ from typing import Dict, Set, Union
 import dace
 import copy
 
+from dace.sdfg import ControlFlowRegion
 from dace.sdfg.propagation import propagate_memlets_state
 import copy
 from dace.properties import CodeBlock
@@ -10,6 +11,16 @@ from dace.sdfg.state import ConditionalBlock, LoopRegion
 
 import sympy
 from sympy import symbols, Function
+
+from sympy.printing.pycode import PythonCodePrinter
+
+
+class BracketFunctionPrinter(PythonCodePrinter):
+
+    def _print_Function(self, expr):
+        name = self._print(expr.func)
+        args = ", ".join([self._print(arg) for arg in expr.args])
+        return f"{name}[{args}]"
 
 
 def copy_state_contents(old_state: dace.SDFGState, new_state: dace.SDFGState) -> Dict[dace.nodes.Node, dace.nodes.Node]:
@@ -371,7 +382,9 @@ def replace_code(code_str: str, code_lang: dace.dtypes.Language, repldict: Dict[
         rhs = rhs.strip()
         try:
             new_rhs_sym_expr = dace.symbolic.SymExpr(rhs).subs(repldict)
-            return f"{lhs.strip()} = {sympy.pycode(new_rhs_sym_expr).strip()}"
+            printer = BracketFunctionPrinter({'strict': False})
+            cleaned_expr = printer.doprint(new_rhs_sym_expr).strip()
+            return f"{lhs.strip()} = {cleaned_expr}"
         except Exception as e:
             return _str_replace(rhs)
     else:
@@ -476,3 +489,124 @@ def generate_assignment_as_tasklet_in_state(state: dace.SDFGState, lhs: str, rhs
         if access_str is None:
             access_str = "0"
         state.add_edge(t, k, v, None, dace.memlet.Memlet(expr=f"{data_name}[{access_str}]"))
+
+
+def _find_parent_state(root_sdfg: dace.SDFG, node: dace.nodes.NestedSDFG):
+    if node is not None:
+        # Find parent state of that node
+        for n, g in root_sdfg.all_nodes_recursive():
+            if n == node:
+                parent_state = g
+                return parent_state
+    return None
+
+
+def get_num_parent_map_scopes(root_sdfg: dace.SDFG, node: dace.nodes.MapEntry, parent_state: dace.SDFGState):
+    scope_dict = parent_state.scope_dict()
+    num_parent_maps = 0
+    cur_node = node
+    while scope_dict[cur_node] is not None:
+        if isinstance(scope_dict[cur_node], dace.nodes.MapEntry):
+            num_parent_maps += 1
+        cur_node = scope_dict[cur_node]
+
+    # Check parent nsdfg
+    parent_nsdfg_node = parent_state.sdfg.parent_nsdfg_node
+    parent_nsdfg_parent_state = _find_parent_state(root_sdfg, parent_nsdfg_node)
+
+    while parent_nsdfg_node is not None:
+        scope_dict = parent_nsdfg_parent_state.scope_dict()
+        cur_node = parent_nsdfg_node
+        while scope_dict[cur_node] is not None:
+            if isinstance(scope_dict[cur_node], dace.nodes.MapEntry):
+                num_parent_maps += 1
+            cur_node = scope_dict[cur_node]
+        parent_nsdfg_node = parent_nsdfg_parent_state.sdfg.parent_nsdfg_node
+        parent_nsdfg_parent_state = _find_parent_state(root_sdfg, parent_nsdfg_node)
+
+    return num_parent_maps
+
+
+def get_num_parent_map_and_loop_scopes(root_sdfg: dace.SDFG, node: dace.nodes.MapEntry, parent_state: dace.SDFGState):
+    return len(get_parent_map_and_loop_scopes(root_sdfg, node, parent_state))
+
+
+def get_parent_map_and_loop_scopes(root_sdfg: dace.SDFG, node: dace.nodes.MapEntry | ControlFlowRegion,
+                                   parent_state: dace.SDFGState):
+    scope_dict = parent_state.scope_dict() if parent_state is not None else None
+    num_parent_maps_and_loops = 0
+    cur_node = node
+    parent_scopes = list()
+
+    if isinstance(cur_node, dace.nodes.MapEntry):
+        while scope_dict[cur_node] is not None:
+            if isinstance(scope_dict[cur_node], dace.nodes.MapEntry):
+                num_parent_maps_and_loops += 1
+                parent_scopes.append(scope_dict[cur_node])
+            cur_node = scope_dict[cur_node]
+
+    parent_graph = parent_state.parent_graph if parent_state is not None else node.parent_graph
+    parent_sdfg = parent_state.sdfg if parent_state is not None else node.parent_graph.sdfg
+    while parent_graph != parent_sdfg:
+        if isinstance(parent_graph, LoopRegion):
+            num_parent_maps_and_loops += 1
+            parent_scopes.append(parent_graph)
+        parent_graph = parent_graph.parent_graph
+
+    # Check parent nsdfg
+    parent_nsdfg_node = parent_sdfg.sdfg.parent_nsdfg_node
+    parent_nsdfg_parent_state = _find_parent_state(root_sdfg, parent_nsdfg_node)
+
+    while parent_nsdfg_node is not None:
+        scope_dict = parent_nsdfg_parent_state.scope_dict()
+        cur_node = parent_nsdfg_node
+        while scope_dict[cur_node] is not None:
+            if isinstance(scope_dict[cur_node], dace.nodes.MapEntry):
+                num_parent_maps_and_loops += 1
+                parent_scopes.append(scope_dict[cur_node])
+            cur_node = scope_dict[cur_node]
+
+        parent_graph = parent_nsdfg_parent_state.parent_graph
+        parent_sdfg = parent_graph.sdfg
+        while parent_graph != parent_sdfg:
+            if isinstance(parent_graph, LoopRegion):
+                num_parent_maps_and_loops += 1
+                parent_scopes.append(parent_graph)
+            parent_graph = parent_graph.parent_graph
+
+        parent_nsdfg_node = parent_sdfg.parent_nsdfg_node
+        parent_nsdfg_parent_state = _find_parent_state(root_sdfg, parent_nsdfg_node)
+
+    return parent_scopes
+
+
+def get_parent_maps(root_sdfg: dace.SDFG, node: dace.nodes.MapEntry, parent_state: dace.SDFGState):
+    maps = []
+    scope_dict = parent_state.scope_dict()
+    cur_node = node
+    while scope_dict[cur_node] is not None:
+        if isinstance(scope_dict[cur_node], dace.nodes.MapEntry):
+            maps.append((cur_node, parent_state))
+        cur_node = scope_dict[cur_node]
+
+    parent_graph = parent_state.parent_graph
+    while parent_graph != parent_state.sdfg:
+        if isinstance(parent_graph, LoopRegion):
+            pass
+        parent_graph = parent_graph.parent_graph
+
+    # Check parent nsdfg
+    parent_nsdfg_node = parent_state.sdfg.parent_nsdfg_node
+    parent_nsdfg_parent_state = _find_parent_state(root_sdfg, parent_nsdfg_node)
+
+    while parent_nsdfg_node is not None:
+        scope_dict = parent_nsdfg_parent_state.scope_dict()
+        cur_node = parent_nsdfg_node
+        while scope_dict[cur_node] is not None:
+            if isinstance(scope_dict[cur_node], dace.nodes.MapEntry):
+                maps.append((cur_node, parent_state))
+            cur_node = scope_dict[cur_node]
+        parent_nsdfg_node = parent_nsdfg_parent_state.sdfg.parent_nsdfg_node
+        parent_nsdfg_parent_state = _find_parent_state(root_sdfg, parent_nsdfg_node)
+
+    return maps
