@@ -104,6 +104,13 @@ def _get_batchmm_opts(a_shape, a_strides, b_shape, b_strides, c_shape, c_strides
     # Calculate strides for batched operations
     # For a tensor with shape [B1, B2, ..., M, K], the stride for batched operations
     # should be M*K (the size of each matrix) to iterate through all matrices in the flattened batch
+    #
+    # For broadcasting cases (e.g., A - [b1, b2, m, k] @ B - [b2, k, n]):
+    # - The flattened batch is b1*b2
+    # - B needs special handling: we need to compute which of the b2 matrices to use
+    #   For batch index i in [0, b1*b2), the B matrix index is (i % b2)
+    #   This can be expressed as: if A has more batch dims than B, use modulo arithmetic
+
     stride_a = 0
     stride_b = 0
     stride_c = 0
@@ -125,10 +132,35 @@ def _get_batchmm_opts(a_shape, a_strides, b_shape, b_strides, c_shape, c_strides
             if res is False:
                 raise ValueError(f'Output batch dimension mismatch: {c_dim} vs {r_dim} at position {i}')
 
+    # For partial broadcasting (3D-4D cases), we need to track additional information
+    # to properly index into the smaller batch dimension tensor
+    a_batch_multiplier = 1  # How many times to cycle through A's batch
+    b_batch_multiplier = 1  # How many times to cycle through B's batch
+
+    if len(a_batch_dims) < len(result_batch_dims):
+        # A has fewer batch dimensions, so it will be broadcast
+        # Calculate the size of the leading dimensions that A doesn't have
+        a_batch_multiplier = prod(result_batch_dims[:len(result_batch_dims) - len(a_batch_dims)])
+
+    if len(b_batch_dims) < len(result_batch_dims):
+        # B has fewer batch dimensions, so it will be broadcast
+        # Calculate the size of the leading dimensions that B doesn't have
+        b_batch_multiplier = prod(result_batch_dims[:len(result_batch_dims) - len(b_batch_dims)])
+
     if batch_size == 1 and not result_batch_dims:
         return {}
 
-    return {'sa': stride_a, 'sb': stride_b, 'sc': stride_c, 'b': batch_size, 'batch_dims': result_batch_dims}
+    return {
+        'sa': stride_a,
+        'sb': stride_b,
+        'sc': stride_c,
+        'b': batch_size,
+        'batch_dims': result_batch_dims,
+        'a_batch_size': prod(a_batch_dims) if a_batch_dims else 1,
+        'b_batch_size': prod(b_batch_dims) if b_batch_dims else 1,
+        'a_batch_multiplier': a_batch_multiplier,
+        'b_batch_multiplier': b_batch_multiplier
+    }
 
 
 def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, cdtype, func) -> Dict[str, Any]:
@@ -165,6 +197,7 @@ def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, 
     if opt['swap']:
         if bopt:
             bopt['sa'], bopt['sb'] = bopt['sb'], bopt['sa']
+            bopt['a_batch_size'], bopt['b_batch_size'] = bopt['b_batch_size'], bopt['a_batch_size']
         opt['lda'], opt['ldb'] = opt['ldb'], opt['lda']
         opt['x'], opt['y'] = opt['y'], opt['x']
         opt['xdtype'], opt['ydtype'] = opt['ydtype'], opt['xdtype']
@@ -180,6 +213,8 @@ def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, 
         opt['stride_b'] = sym2cpp(bopt['sb'])
         opt['stride_c'] = sym2cpp(bopt['sc'])
         opt['BATCH'] = sym2cpp(bopt['b'])
+        opt['a_batch_size'] = sym2cpp(bopt['a_batch_size'])
+        opt['b_batch_size'] = sym2cpp(bopt['b_batch_size'])
     else:
         opt['BATCH'] = None
 

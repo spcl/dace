@@ -86,15 +86,22 @@ class ExpandBatchedMatMulPure(ExpandTransformation):
         if len(array_a.shape) == 2:
             memlet_a = '__im, __ik'
         else:
-            # Use output batch indices
-            a_batch_indices = ', '.join(['__i%d' % i for i in range(len(array_a.shape) - 2)])
+            # Align input batch dims to output batch dims
+            num_a_batch = len(array_a.shape) - 2
+            # Start from the rightmost batch dimension of output and work backwards
+            offset = num_batch_dims - num_a_batch
+            a_batch_indices = ', '.join(['__i%d' % (offset + i) for i in range(num_a_batch)])
             memlet_a = f'{a_batch_indices}, __im, __ik'
 
         # For B: if 2D, use [K, N]; if 3D+, use [batch_indices..., K, N]
         if len(array_b.shape) == 2:
             memlet_b = '__ik, __in'
         else:
-            b_batch_indices = ', '.join(['__i%d' % i for i in range(len(array_b.shape) - 2)])
+            # Align input batch dims to output batch dims
+            num_b_batch = len(array_b.shape) - 2
+            # Start from the rightmost batch dimension of output and work backwards
+            offset = num_batch_dims - num_b_batch
+            b_batch_indices = ', '.join(['__i%d' % (offset + i) for i in range(num_b_batch)])
             memlet_b = f'{b_batch_indices}, __ik, __in'
 
         # For C: always has batch dimensions
@@ -172,8 +179,11 @@ class ExpandBatchedMatMulMKL(ExpandTransformation):
         const {dtype}** __mkl_BMM_B = new const {dtype}*[{BATCH}];
         {dtype}** __mkl_BMM_C = new {dtype}*[{BATCH}];
         for (int __ib = 0; __ib < {BATCH}; __ib++) {{
-            __mkl_BMM_A[__ib] = (({dtype}*){x}) + __ib*{stride_a};
-            __mkl_BMM_B[__ib] = (({dtype}*){y}) + __ib*{stride_b};
+            // Handle broadcasting - compute correct index for inputs with fewer batch dimensions
+            int __a_idx = ({stride_a} > 0) ? (({a_batch_size} < {BATCH}) ? (__ib % {a_batch_size}) : __ib) : 0;
+            int __b_idx = ({stride_b} > 0) ? (({b_batch_size} < {BATCH}) ? (__ib % {b_batch_size}) : __ib) : 0;
+            __mkl_BMM_A[__ib] = (({dtype}*){x}) + __a_idx*{stride_a};
+            __mkl_BMM_B[__ib] = (({dtype}*){y}) + __b_idx*{stride_b};
             __mkl_BMM_C[__ib] = (({dtype}*)_c) + __ib*{stride_c};
         }}
 
@@ -227,9 +237,12 @@ class ExpandBatchedMatMulOpenBLAS(ExpandTransformation):
 
         code = '''
         for (int __ib = 0; __ib < {BATCH}; ++__ib) {{
+            // Handle broadcasting - compute correct index for inputs with fewer batch dimensions
+            int __a_idx = ({stride_a} > 0) ? (({a_batch_size} < {BATCH}) ? (__ib % {a_batch_size}) : __ib) : 0;
+            int __b_idx = ({stride_b} > 0) ? (({b_batch_size} < {BATCH}) ? (__ib % {b_batch_size}) : __ib) : 0;
             cblas_{func}(CblasColMajor, {ta}, {tb}, {M}, {N}, {K}, {alpha},
-                         (({dtype}*){x}) + __ib*{stride_a}, {lda},
-                         (({dtype}*){y}) + __ib*{stride_b}, {ldb},
+                         (({dtype}*){x}) + __a_idx*{stride_a}, {lda},
+                         (({dtype}*){y}) + __b_idx*{stride_b}, {ldb},
                          {beta},
                          (({dtype}*)_c) + __ib*{stride_c}, {ldc});
         }}'''.format_map(opt)
@@ -325,17 +338,38 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
         opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, cdtype, func)
         opt['array_prefix'] = '_' if needs_copy else ''
 
+        # Check if we need broadcasting (non-uniform strides)
+        needs_broadcasting = (opt.get('a_batch_size') and opt.get('b_batch_size')
+                              and (opt['a_batch_size'] != opt['BATCH'] or opt['b_batch_size'] != opt['BATCH']))
+
         # Matrix multiplication
         if (node.compute_type is None and node.accumulator_type is None and node.algorithm is None):
-            call = '''cublas{func}StridedBatched(__dace_cublas_handle,
-                CUBLAS_OP_{ta}, CUBLAS_OP_{tb},
-                {M}, {N}, {K},
-                {alpha},
-                ({dtype}*){array_prefix}{x}, {lda}, {stride_a},
-                ({dtype}*){array_prefix}{y}, {ldb}, {stride_b},
-                {beta},
-                ({dtype}*){array_prefix}_c, {ldc}, {stride_c},
-                {BATCH});'''.format_map(opt)
+            if needs_broadcasting:
+                # Use manual loop for broadcasting cases
+                call = '''
+                for (int __ib = 0; __ib < {BATCH}; ++__ib) {{
+                    int __a_idx = ({stride_a} > 0) ? (({a_batch_size} < {BATCH}) ? (__ib % {a_batch_size}) : __ib) : 0;
+                    int __b_idx = ({stride_b} > 0) ? (({b_batch_size} < {BATCH}) ? (__ib % {b_batch_size}) : __ib) : 0;
+                    cublas{func}(__dace_cublas_handle,
+                        CUBLAS_OP_{ta}, CUBLAS_OP_{tb},
+                        {M}, {N}, {K},
+                        {alpha},
+                        ({dtype}*){array_prefix}{x} + __a_idx*{stride_a}, {lda},
+                        ({dtype}*){array_prefix}{y} + __b_idx*{stride_b}, {ldb},
+                        {beta},
+                        ({dtype}*){array_prefix}_c + __ib*{stride_c}, {ldc});
+                }}'''.format_map(opt)
+            else:
+                # Use StridedBatched for uniform case
+                call = '''cublas{func}StridedBatched(__dace_cublas_handle,
+                    CUBLAS_OP_{ta}, CUBLAS_OP_{tb},
+                    {M}, {N}, {K},
+                    {alpha},
+                    ({dtype}*){array_prefix}{x}, {lda}, {stride_a},
+                    ({dtype}*){array_prefix}{y}, {ldb}, {stride_b},
+                    {beta},
+                    ({dtype}*){array_prefix}_c, {ldc}, {stride_c},
+                    {BATCH});'''.format_map(opt)
         else:
             if node.compute_type is not None:
                 acctype = node.compute_type
@@ -349,24 +383,49 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
             if node.algorithm is not None:
                 algorithm = node.algorithm
 
-            call = f'''
-            cublasGemmStridedBatchedEx(__dace_cublas_handle,
-                CUBLAS_OP_{opt['ta']}, CUBLAS_OP_{opt['tb']},
-                {opt['M']}, {opt['N']}, {opt['K']},
-                {alpha},
-                {opt['array_prefix']}{opt['x']},
-                {dtype_to_cudadatatype(opt['xdtype'])},
-                {opt['lda']}, {opt['stride_a']},
-                {opt['array_prefix']}{opt['y']},
-                {dtype_to_cudadatatype(opt['ydtype'])},
-                {opt['ldb']}, {opt['stride_b']},
-                {beta},
-                {opt['array_prefix']}_c,
-                {dtype_to_cudadatatype(opt['cdtype'])},
-                {opt['ldc']}, {opt['stride_c']},
-                {opt['BATCH']},
-                {acctype}, {algorithm});
-            '''
+            if needs_broadcasting:
+                # Use manual loop for broadcasting cases with GemmEx
+                call = f'''
+                for (int __ib = 0; __ib < {opt['BATCH']}; ++__ib) {{{{
+                    int __a_idx = ({opt['stride_a']} > 0) ? (({opt['a_batch_size']} < {opt['BATCH']}) ? (__ib % {opt['a_batch_size']}) : __ib) : 0;
+                    int __b_idx = ({opt['stride_b']} > 0) ? (({opt['b_batch_size']} < {opt['BATCH']}) ? (__ib % {opt['b_batch_size']}) : __ib) : 0;
+                    cublasGemmEx(__dace_cublas_handle,
+                        CUBLAS_OP_{opt['ta']}, CUBLAS_OP_{opt['tb']},
+                        {opt['M']}, {opt['N']}, {opt['K']},
+                        {alpha},
+                        {opt['array_prefix']}{opt['x']} + __a_idx*{opt['stride_a']},
+                        {dtype_to_cudadatatype(opt['xdtype'])},
+                        {opt['lda']},
+                        {opt['array_prefix']}{opt['y']} + __b_idx*{opt['stride_b']},
+                        {dtype_to_cudadatatype(opt['ydtype'])},
+                        {opt['ldb']},
+                        {beta},
+                        {opt['array_prefix']}_c + __ib*{opt['stride_c']},
+                        {dtype_to_cudadatatype(opt['cdtype'])},
+                        {opt['ldc']},
+                        {acctype}, {algorithm});
+                }}}}
+                '''
+            else:
+                # Use StridedBatchedEx for uniform case
+                call = f'''
+                cublasGemmStridedBatchedEx(__dace_cublas_handle,
+                    CUBLAS_OP_{opt['ta']}, CUBLAS_OP_{opt['tb']},
+                    {opt['M']}, {opt['N']}, {opt['K']},
+                    {alpha},
+                    {opt['array_prefix']}{opt['x']},
+                    {dtype_to_cudadatatype(opt['xdtype'])},
+                    {opt['lda']}, {opt['stride_a']},
+                    {opt['array_prefix']}{opt['y']},
+                    {dtype_to_cudadatatype(opt['ydtype'])},
+                    {opt['ldb']}, {opt['stride_b']},
+                    {beta},
+                    {opt['array_prefix']}_c,
+                    {dtype_to_cudadatatype(opt['cdtype'])},
+                    {opt['ldc']}, {opt['stride_c']},
+                    {opt['BATCH']},
+                    {acctype}, {algorithm});
+                '''
 
         code = call_prefix + call + call_suffix
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
