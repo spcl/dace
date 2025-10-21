@@ -329,6 +329,105 @@ def test_batchmm_5d_3d_broadcast(implementation: str, dtype):
         assert np.allclose(ref, z)
 
 
+@pytest.mark.parametrize("implementation, dtype", [
+    pytest.param("pure", dace.float32),
+    pytest.param("pure", dace.float64),
+    pytest.param("MKL", dace.float32, marks=pytest.mark.mkl),
+    pytest.param("MKL", dace.float64, marks=pytest.mark.mkl),
+    pytest.param("OpenBLAS", dace.float32, marks=pytest.mark.lapack),
+    pytest.param("OpenBLAS", dace.float64, marks=pytest.mark.lapack)
+])
+def test_batchmm_1d_3d_broadcast(implementation: str, dtype):
+    """Test 1D-3D batched matmul with broadcast: [k] @ [b, k, n]"""
+    b, n, k = 3, 32, 64
+
+    @dace.program
+    def bmm_1d_3d_broadcast(A: dtype[k], B: dtype[b, k, n], C: dtype[b, n]):
+        C[:] = A @ B
+
+    with change_default(blas, implementation):
+        sdfg = bmm_1d_3d_broadcast.to_sdfg()
+        sdfg.simplify()
+        sdfg.expand_library_nodes()
+
+        x = np.random.rand(k).astype(dtype.as_numpy_dtype())
+        y = np.random.rand(b, k, n).astype(dtype.as_numpy_dtype())
+        z = np.zeros([b, n]).astype(dtype.as_numpy_dtype())
+
+        csdfg = sdfg.compile()
+        csdfg(A=x, B=y, C=z)
+
+        ref = x @ y
+
+        assert np.allclose(ref, z)
+
+
+@pytest.mark.parametrize("implementation, dtype", [
+    pytest.param("pure", dace.float32),
+    pytest.param("pure", dace.float64),
+    pytest.param("MKL", dace.float32, marks=pytest.mark.mkl),
+    pytest.param("MKL", dace.float64, marks=pytest.mark.mkl),
+    pytest.param("OpenBLAS", dace.float32, marks=pytest.mark.lapack),
+    pytest.param("OpenBLAS", dace.float64, marks=pytest.mark.lapack)
+])
+def test_batchmm_3d_1d_broadcast(implementation: str, dtype):
+    """Test 3D-1D batched matmul with broadcast: [b, m, k] @ [k]"""
+    b, m, k = 3, 32, 64
+
+    @dace.program
+    def bmm_3d_1d_broadcast(A: dtype[b, m, k], B: dtype[k], C: dtype[b, m]):
+        C[:] = A @ B
+
+    with change_default(blas, implementation):
+        sdfg = bmm_3d_1d_broadcast.to_sdfg()
+        sdfg.simplify()
+        sdfg.expand_library_nodes()
+
+        x = np.random.rand(b, m, k).astype(dtype.as_numpy_dtype())
+        y = np.random.rand(k).astype(dtype.as_numpy_dtype())
+        z = np.zeros([b, m]).astype(dtype.as_numpy_dtype())
+
+        csdfg = sdfg.compile()
+        csdfg(A=x, B=y, C=z)
+
+        ref = x @ y
+
+        assert np.allclose(ref, z)
+
+
+@pytest.mark.parametrize("implementation, dtype", [
+    pytest.param("pure", dace.float32),
+    pytest.param("pure", dace.float64),
+    pytest.param("MKL", dace.float32, marks=pytest.mark.mkl),
+    pytest.param("MKL", dace.float64, marks=pytest.mark.mkl),
+    pytest.param("OpenBLAS", dace.float32, marks=pytest.mark.lapack),
+    pytest.param("OpenBLAS", dace.float64, marks=pytest.mark.lapack)
+])
+def test_batchmm_4d_1d_broadcast(implementation: str, dtype):
+    """Test 4D-1D batched matmul with broadcast: [b1, b2, m, k] @ [k]"""
+    b1, b2, m, k = 4, 2, 32, 64
+
+    @dace.program
+    def bmm_4d_1d_broadcast(A: dtype[b1, b2, m, k], B: dtype[k], C: dtype[b1, b2, m]):
+        C[:] = A @ B
+
+    with change_default(blas, implementation):
+        sdfg = bmm_4d_1d_broadcast.to_sdfg()
+        sdfg.simplify()
+        sdfg.expand_library_nodes()
+
+        x = np.random.rand(b1, b2, m, k).astype(dtype.as_numpy_dtype())
+        y = np.random.rand(k).astype(dtype.as_numpy_dtype())
+        z = np.zeros([b1, b2, m]).astype(dtype.as_numpy_dtype())
+
+        csdfg = sdfg.compile()
+        csdfg(A=x, B=y, C=z)
+
+        ref = x @ y
+
+        assert np.allclose(ref, z)
+
+
 if __name__ == "__main__":
     test_batchmm("pure", dace.float32)
     test_batchmm("pure", dace.float64)

@@ -191,9 +191,25 @@ def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, 
     opt['xdtype'] = adesc.dtype
     opt['ydtype'] = bdesc.dtype
     opt['cdtype'] = cdesc.dtype
-    opt['M'] = sym2cpp(ashape[-2])
-    opt['N'] = sym2cpp(bshape[-1])
-    opt['K'] = sym2cpp(ashape[-1])
+
+    # Handle 1D inputs: [k] is treated as [1, k] or [k, 1] depending on context
+    if len(ashape) == 1:
+        # [k] @ [..., k, n] -> M=1, K=ashape[0]
+        opt['M'] = sym2cpp(1)
+        opt['K'] = sym2cpp(ashape[0])
+    else:
+        opt['M'] = sym2cpp(ashape[-2])
+        opt['K'] = sym2cpp(ashape[-1])
+
+    if len(bshape) == 1:
+        # [..., m, k] @ [k] -> N=1, K=bshape[0]
+        opt['N'] = sym2cpp(1)
+        if 'K' not in opt:
+            opt['K'] = sym2cpp(bshape[0])
+    else:
+        opt['N'] = sym2cpp(bshape[-1])
+        if 'K' not in opt:
+            opt['K'] = sym2cpp(bshape[-2])
     opt['lda'] = sym2cpp(opt['lda'])
     opt['ldb'] = sym2cpp(opt['ldb'])
     opt['ldc'] = sym2cpp(opt['ldc'])
@@ -290,6 +306,15 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
             b[0].dst_conn = "_y"
             c[0].src_conn = "_result"
             result = Dot(node.name + 'dot', location=node.location)
+        elif len(size_a) == 1 and len(size_b) > 2:
+            # Vector @ batched matrix -> batched GEMV (e.g., [k] @ [b, k, n] = [b, n])
+            # This can be viewed as batched y = A^T @ x where x is the vector
+            from dace.libraries.blas.nodes.batched_matmul import BatchedMatMul
+            result = BatchedMatMul(node.name + 'bmm', location=node.location)
+        elif len(size_a) > 2 and len(size_b) == 1:
+            # Batched matrix @ vector -> batched GEMV (e.g., [b, m, k] @ [k] = [b, m])
+            from dace.libraries.blas.nodes.batched_matmul import BatchedMatMul
+            result = BatchedMatMul(node.name + 'bmm', location=node.location)
         else:
             raise NotImplementedError("Matrix multiplication not implemented "
                                       "for shapes: {} and {}".format(size_a, size_b))
