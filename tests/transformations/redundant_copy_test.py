@@ -448,7 +448,7 @@ def test_invalid_redundant_array_strided(order):
     assert np.allclose(b, np.flip(a, 0).flatten(order=order))
 
 
-def _make_reshaping_not_zero_started_sdfg(
+def _make_reshaping_not_zero_started_input_sdfg(
     a_has_larger_rank_than_b: bool, ) -> Tuple[dace.SDFG, dace.SDFGState, nodes.AccessNode, nodes.MapEntry]:
     sdfg = dace.SDFG(utility.unique_name("non_zero_offset_reshaping"))
     state = sdfg.add_state(is_start_block=True)
@@ -501,8 +501,8 @@ def _make_reshaping_not_zero_started_sdfg(
 
 
 @pytest.mark.parametrize("a_has_larger_rank_than_b", [True, False])
-def test_reshaping_not_zero_started_sdfg(a_has_larger_rank_than_b: bool):
-    sdfg, state, a, me = _make_reshaping_not_zero_started_sdfg(a_has_larger_rank_than_b=a_has_larger_rank_than_b)
+def test_reshaping_not_zero_started_input(a_has_larger_rank_than_b: bool):
+    sdfg, state, a, me = _make_reshaping_not_zero_started_input_sdfg(a_has_larger_rank_than_b=a_has_larger_rank_than_b)
 
     assert utility.count_nodes(state, nodes.AccessNode) == 3
     assert utility.count_nodes(state, nodes.MapEntry) == 1
@@ -544,5 +544,5 @@ if __name__ == '__main__':
     test_redundant_second_copy_isolated()
     test_invalid_redundant_array_strided('C')
     test_invalid_redundant_array_strided('F')
-    test_reshaping_not_zero_started_sdfg(True)
-    test_reshaping_not_zero_started_sdfg(False)
+    test_reshaping_not_zero_started_input(True)
+    test_reshaping_not_zero_started_input(False)
