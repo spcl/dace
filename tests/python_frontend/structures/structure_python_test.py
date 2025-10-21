@@ -287,7 +287,8 @@ def test_struct_interface():
     B.indices[:] = -1
     B.data[:] = -1
 
-    dense_to_csr_local_python(A, CSR.make_argument_from_object(B), M=tmp.shape[0], N=tmp.shape[1], nnz=tmp.nnz)
+    with dace.config.set_temporary('compiler', 'allow_view_arguments', value=True):
+        dense_to_csr_local_python(A, CSR.make_argument_from_object(B), M=tmp.shape[0], N=tmp.shape[1], nnz=tmp.nnz)
 
     assert np.allclose(B.indptr, ref.indptr)
     assert np.allclose(B.indices, ref.indices)
