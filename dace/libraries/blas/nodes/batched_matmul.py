@@ -464,11 +464,13 @@ class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
         for _, _, _, dst_conn, memlet in state.in_edges(self):
             if dst_conn == '_a':
                 subset = dc(memlet.subset)
-                subset.squeeze()
+                # TODO: Make a seprate PR to remove the squeezing
+                # subset.squeeze()
                 size0 = subset.size()
             if dst_conn == '_b':
                 subset = dc(memlet.subset)
-                subset.squeeze()
+                # TODO: Make a seprate PR to remove the squeezing
+                # subset.squeeze()
                 size1 = subset.size()
         out_edges = state.out_edges(self)
         if len(out_edges) != 1:
