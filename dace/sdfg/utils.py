@@ -663,7 +663,7 @@ def canonicalize_memlet_trees_for_scope(
         for inner_edge in inner_edges_for(corresponding_inner_connector):
             for mtree in state.memlet_tree(inner_edge).traverse_children(include_self=True):
                 medge: MultiConnectorEdge[dace.Memlet] = mtree.edge
-                if medge.data.data == outer_edge:
+                if medge.data.data == outer_data:
                     # This edge is already referring to the outer data, so no change is needed.
                     continue
 
