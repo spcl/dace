@@ -1,4 +1,4 @@
-from typing import List, Any
+from typing import List, Any, Set
 import dace
 
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
@@ -79,6 +79,50 @@ def move_access_node_up(state: dace.SDFGState, access_node: dace.nodes.AccessNod
     print(new_begs)
     if do_offset_memlets:
         offset_memlets(state, new_begs, lvl2_map_entry, dataname)
+
+
+
+def find_next(state: dace.SDFGState, map_entry: dace.nodes.MapEntry):
+    for n in state.bfs_nodes(map_entry):
+        if isinstance(n, dace.nodes.MapEntry) and state.entry_node(n) == map_entry:
+            return n
+    return None
+
+def offset_tblock_param(sdfg: dace.SDFG, params: Set[str]):
+    repldict = {str(p) : 0 for p in params}
+    for state in sdfg.all_states():
+        for node in state.nodes():
+            if isinstance(node, dace.nodes.MapEntry):
+                param_set = {str(s) for s in node.map.params} # If you have a matching map with params
+                if param_set == params:
+                    #print("Matched:", {node})
+                    nodes_between = state.all_nodes_between(node, state.exit_node(node))
+                    for edge in state.all_edges(*nodes_between):
+                        if edge.src == node or edge.dst == state.exit_node(node) or edge.dst == node or edge.src == state.exit_node(node): # If connects to the entry / exit skio
+                            continue
+                        # Replace all occurences of the params with 0
+                        if edge.data.data is None:
+                            continue
+                        #print("R1", edge.data)
+                        ndata = copy.deepcopy(edge.data)
+                        ndata.replace(repldict)
+                        edge.data = ndata
+                        #print("R2", edge.data)
+                    
+                    for n2 in nodes_between:
+                        if isinstance(n2, dace.nodes.MapEntry):
+                            nlist = []
+                            
+                            for (b,e,s) in n2.map.range:
+                                nlist.append(
+                                    [
+                                        b.subs(repldict),
+                                        e.subs(repldict),
+                                        s.subs(repldict)
+                                    ]
+                                )
+                            
+                            n2.map.range = dace.subsets.Range(nlist)
 
 
 def move_exit_access_node_down(state: dace.SDFGState, access_node: dace.nodes.AccessNode, do_offset_memlets: bool):
