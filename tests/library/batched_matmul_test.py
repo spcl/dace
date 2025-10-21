@@ -224,6 +224,111 @@ def test_batchmm_4d_broadcast_lhs(implementation: str, dtype):
         assert np.allclose(ref, z)
 
 
+@pytest.mark.parametrize("implementation, dtype", [
+    pytest.param("pure", dace.float32),
+    pytest.param("pure", dace.float64),
+    pytest.param("MKL", dace.float32, marks=pytest.mark.mkl),
+    pytest.param("MKL", dace.float64, marks=pytest.mark.mkl),
+    pytest.param("cuBLAS", dace.float32, marks=pytest.mark.gpu),
+    pytest.param("cuBLAS", dace.float64, marks=pytest.mark.gpu),
+    pytest.param("OpenBLAS", dace.float32, marks=pytest.mark.lapack),
+    pytest.param("OpenBLAS", dace.float64, marks=pytest.mark.lapack)
+])
+def test_batchmm_3d_4d_broadcast(implementation: str, dtype):
+    """Test 4D batched matmul with broadcast on LHS: [b2, m, k] @ [b1, b2, k, n]"""
+    b1, b2, m, n, k = 4, 2, 64, 128, 64
+
+    @dace.program
+    def bmm_3d_4d_broadcast(A: dtype[b2, m, k], B: dtype[b1, b2, k, n], C: dtype[b1, b2, m, n]):
+        C[:] = A @ B
+
+    with change_default(blas, implementation):
+        sdfg = bmm_3d_4d_broadcast.to_sdfg()
+        sdfg.simplify()
+        sdfg.expand_library_nodes()
+
+        x = np.random.rand(b2, m, k).astype(dtype.as_numpy_dtype())
+        y = np.random.rand(b1, b2, k, n).astype(dtype.as_numpy_dtype())
+        z = np.zeros([b1, b2, m, n]).astype(dtype.as_numpy_dtype())
+
+        csdfg = sdfg.compile()
+        csdfg(A=x, B=y, C=z)
+
+        ref = x @ y
+
+        assert np.allclose(ref, z)
+
+
+@pytest.mark.parametrize("implementation, dtype", [
+    pytest.param("pure", dace.float32),
+    pytest.param("pure", dace.float64),
+    pytest.param("MKL", dace.float32, marks=pytest.mark.mkl),
+    pytest.param("MKL", dace.float64, marks=pytest.mark.mkl),
+    pytest.param("cuBLAS", dace.float32, marks=pytest.mark.gpu),
+    pytest.param("cuBLAS", dace.float64, marks=pytest.mark.gpu),
+    pytest.param("OpenBLAS", dace.float32, marks=pytest.mark.lapack),
+    pytest.param("OpenBLAS", dace.float64, marks=pytest.mark.lapack)
+])
+def test_batchmm_4d_3d_broadcast(implementation: str, dtype):
+    """Test 4D batched matmul with broadcast on RHS: [b1, b2, m, k] @ [b2, k, n]"""
+    b1, b2, m, n, k = 4, 2, 64, 128, 64
+
+    @dace.program
+    def bmm_4d_3d_broadcast(A: dtype[b1, b2, m, k], B: dtype[b2, k, n], C: dtype[b1, b2, m, n]):
+        C[:] = A @ B
+
+    with change_default(blas, implementation):
+        sdfg = bmm_4d_3d_broadcast.to_sdfg()
+        sdfg.simplify()
+        sdfg.expand_library_nodes()
+
+        x = np.random.rand(b1, b2, m, k).astype(dtype.as_numpy_dtype())
+        y = np.random.rand(b2, k, n).astype(dtype.as_numpy_dtype())
+        z = np.zeros([b1, b2, m, n]).astype(dtype.as_numpy_dtype())
+
+        csdfg = sdfg.compile()
+        csdfg(A=x, B=y, C=z)
+
+        ref = x @ y
+
+        assert np.allclose(ref, z)
+
+
+@pytest.mark.parametrize("implementation, dtype", [
+    pytest.param("pure", dace.float32),
+    pytest.param("pure", dace.float64),
+    pytest.param("MKL", dace.float32, marks=pytest.mark.mkl),
+    pytest.param("MKL", dace.float64, marks=pytest.mark.mkl),
+    pytest.param("cuBLAS", dace.float32, marks=pytest.mark.gpu),
+    pytest.param("cuBLAS", dace.float64, marks=pytest.mark.gpu),
+    pytest.param("OpenBLAS", dace.float32, marks=pytest.mark.lapack),
+    pytest.param("OpenBLAS", dace.float64, marks=pytest.mark.lapack)
+])
+def test_batchmm_5d_3d_broadcast(implementation: str, dtype):
+    """Test 5D batched matmul with broadcast on RHS: [b1, b2, b3, m, k] @ [b3, k, n]"""
+    b1, b2, b3, m, n, k = 4, 2, 3, 64, 128, 64
+
+    @dace.program
+    def bmm_5d_3d_broadcast(A: dtype[b1, b2, b3, m, k], B: dtype[b3, k, n], C: dtype[b1, b2, b3, m, n]):
+        C[:] = A @ B
+
+    with change_default(blas, implementation):
+        sdfg = bmm_5d_3d_broadcast.to_sdfg()
+        sdfg.simplify()
+        sdfg.expand_library_nodes()
+
+        x = np.random.rand(b1, b2, b3, m, k).astype(dtype.as_numpy_dtype())
+        y = np.random.rand(b3, k, n).astype(dtype.as_numpy_dtype())
+        z = np.zeros([b1, b2, b3, m, n]).astype(dtype.as_numpy_dtype())
+
+        csdfg = sdfg.compile()
+        csdfg(A=x, B=y, C=z)
+
+        ref = x @ y
+
+        assert np.allclose(ref, z)
+
+
 if __name__ == "__main__":
     test_batchmm("pure", dace.float32)
     test_batchmm("pure", dace.float64)
@@ -261,3 +366,21 @@ if __name__ == "__main__":
     test_batchmm_4d_broadcast_lhs("MKL", dace.float64)
     test_batchmm_4d_broadcast_lhs("cuBLAS", dace.float32)
     test_batchmm_4d_broadcast_lhs("cuBLAS", dace.float64)
+    test_batchmm_3d_4d_broadcast("pure", dace.float32)
+    test_batchmm_3d_4d_broadcast("pure", dace.float64)
+    test_batchmm_3d_4d_broadcast("MKL", dace.float32)
+    test_batchmm_3d_4d_broadcast("MKL", dace.float64)
+    test_batchmm_3d_4d_broadcast("cuBLAS", dace.float32)
+    test_batchmm_3d_4d_broadcast("cuBLAS", dace.float64)
+    test_batchmm_4d_3d_broadcast("pure", dace.float32)
+    test_batchmm_4d_3d_broadcast("pure", dace.float64)
+    test_batchmm_4d_3d_broadcast("MKL", dace.float32)
+    test_batchmm_4d_3d_broadcast("MKL", dace.float64)
+    test_batchmm_4d_3d_broadcast("cuBLAS", dace.float32)
+    test_batchmm_4d_3d_broadcast("cuBLAS", dace.float64)
+    test_batchmm_5d_3d_broadcast("pure", dace.float32)
+    test_batchmm_5d_3d_broadcast("pure", dace.float64)
+    test_batchmm_5d_3d_broadcast("MKL", dace.float32)
+    test_batchmm_5d_3d_broadcast("MKL", dace.float64)
+    test_batchmm_5d_3d_broadcast("cuBLAS", dace.float32)
+    test_batchmm_5d_3d_broadcast("cuBLAS", dace.float64)
