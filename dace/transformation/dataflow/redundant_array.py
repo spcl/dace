@@ -21,8 +21,9 @@ from dace.transformation import transformation as pm
 # Helper methods #############################################################
 
 
-def _subset_has_shape(subset: subsets.Subset, shape: Sequence[int]) -> bool:
-    return len(subset.size()) == len(shape) and all(m == a for m, a in zip(subset.size(), shape))
+def _subset_has_shape(subset: subsets.Range, shape: Sequence[symbolic.SymbolicType]) -> bool:
+    return subset.dims() == len(shape) and all((m == a) == True  # SymPy comparison
+                                               for m, a in zip(subset.size(), shape))
 
 
 def _validate_subsets(edge: graph.MultiConnectorEdge,
@@ -983,9 +984,37 @@ class RedundantSecondArray(pm.SingleStateTransformation):
                 if len(graph.all_edges(in_array)) == 0:
                     graph.remove_node(in_array)
                 return
-            view_strides = out_desc.strides
-            if (a_dims_to_pop and len(a_dims_to_pop) == len(in_desc.shape) - len(out_desc.shape)):
-                view_strides = [s for i, s in enumerate(in_desc.strides) if i not in a_dims_to_pop]
+
+            # We now need to figuring out which stride we are using. Since we replace `out_array`
+            #  with a view, we must use the same strides for it as `in_array`. But depending on
+            #  the situation, we need to modify them a bit.
+            in_dim = len(in_desc.shape)
+            out_dim = len(out_desc.shape)
+            if in_dim < out_dim:
+                # `out_array` has more dimensions, we thus have to replace the some strides
+                #  in `out_array` with the ones from `in_array` the extra ones will remain.
+                assert len(b_dims_to_pop) == out_dim - in_dim
+                view_strides = []
+                in_index = 0
+                for out_index in range(out_dim):
+                    if out_index in b_dims_to_pop:
+                        # The dimension is additional, thus we use the original value.
+                        view_strides.append(out_desc.strides[out_index])
+                    else:
+                        view_strides.append(in_desc.strides[in_index])
+                        in_index += 1
+                assert in_index == in_dim
+                assert len(view_strides) == out_dim
+                view_strides = tuple(view_strides)
+            elif in_dim > out_dim:
+                # `in_array` has more dimensions, thus we can simply remove the ones that we
+                #  no longer need.
+                assert len(a_dims_to_pop) == in_dim - out_dim
+                view_strides = tuple(s for i, s in enumerate(in_desc.strides) if i not in a_dims_to_pop)
+            else:
+                # The two have the same dimensionality, thus there is no modifications
+                view_strides = in_desc.strides
+
             sdfg.arrays[out_array.data] = data.ArrayView(out_desc.dtype, out_desc.shape, True, out_desc.allow_conflicts,
                                                          in_desc.storage, in_desc.location, view_strides,
                                                          out_desc.offset, in_desc.may_alias,
