@@ -4,6 +4,7 @@ import re
 import sympy
 import dace
 from dace import properties, transformation
+from dace import InterstateEdge
 from dace.properties import CodeBlock
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
@@ -121,27 +122,57 @@ def remove_node_redirect_in_edges_to(parent_graph: ControlFlowRegion, node: Cont
 @dace.transformation.explicit_cf_compatible
 class FuseBranches(transformation.MultiStateTransformation):
     """
-    We have the pattern:
+    It translated couple of SIMT branches to a form compatible with SIMD instructions
     ```
     if (cond){
-        out1[address1] = computation1(...)
+        out1[address1] = computation1(...);
     } else {
-        out1[address2] = computation2(...)
+        out1[address1] = computation2(...);
     }
     ```
 
     If all the write sets in the left and right branches are the same,
-    menaing the address1 == address2,
+    menaing the address1 == address1,
     we can transformation the if branch to:
     ```
     fcond = float(cond)
-    out1[address1] = computation1(...) * fcond + (1.0 - fcond) * computation2(...)
+    out1[address1] = computation1(...) * fcond + (1.0 - fcond) * computation2(...);
     ```
 
     For single branch case:
     ```
-    out1[address1] = computation1(...) * fcond + (1.0 - fcond) * out1[address1]
+    out1[address1] = computation1(...) * fcond + (1.0 - fcond) * out1[address1];
     ```
+
+    Also supportes:
+    ```
+    if (cond){
+        out1[address1] = computation1(...);
+    } else {
+        out1[address2] = computation2(...);
+    }
+    ```
+    If `address1` and `address2` are completely disjoint the pass will handle this
+    by chaining the if branches and treating them as conditionals with a single branch
+    like.
+    ```
+    if (cond){
+        out1[address1] = computation1(...);
+    }
+    bool new_cong = !cond;
+    if (neg_cond) {
+        out1[address2] = computation2(...);
+    }
+    ```
+
+    The pass also supports multiple writes if the conditional has just one branch:
+    ```
+    if (cond){
+        out1[address1] = computation1(...);
+        out1[address2] = computation2(...);
+    }
+    ```
+
 
     This eliminates branching by duplicating the computation of each branch
     but makes it possible to vectorize the computation.
@@ -187,12 +218,25 @@ class FuseBranches(transformation.MultiStateTransformation):
         cleaned_as_symexpr = dace.symbolic.SymExpr(cleaned)
 
         assert arr_inputs.union(symbol_inputs) == free_vars
+        print(cleaned_as_symexpr)
+
+        from sympy.printing.pycode import PythonCodePrinter
+
+        class BracketFunctionPrinter(PythonCodePrinter):
+
+            def _print_Function(self, expr):
+                name = self._print(expr.func)
+                args = ", ".join([self._print(arg) for arg in expr.args])
+                return f"{name}[{args}]"
+
+        printer = BracketFunctionPrinter({'strict': False})
+        cleaned_symexpr_str = printer.doprint(cleaned_as_symexpr)
 
         tasklet = state.add_tasklet(name=f"ieassign_{lhs}_to_float_{lhs}_scalar",
                                     inputs={"_in_" + arr_input
                                             for arr_input in arr_inputs},
                                     outputs={"_out_float_" + lhs},
-                                    code=f"_out_float_{lhs} = {pycode(cleaned_as_symexpr)}")
+                                    code=f"_out_float_{lhs} = ({cleaned_symexpr_str})")
 
         for arr_name in arr_inputs:
             an_of_arr_name = {n for n in state.nodes() if isinstance(n, dace.nodes.AccessNode) and n.data == arr_name}
@@ -293,6 +337,72 @@ class FuseBranches(transformation.MultiStateTransformation):
 
         return True
 
+    def collect_all_accesses(self, state: dace.SDFGState):
+        state_accesses = {n for n in state.nodes() if isinstance(n, dace.nodes.AccessNode)}
+        return state_accesses
+
+    def collect_all_accesses(self, state: dace.SDFGState):
+        state_accesses = {n for n in state.nodes() if isinstance(n, dace.nodes.AccessNode)}
+        return state_accesses
+
+    def collect_accesses(self, state: dace.SDFGState, write: str):
+        state_accesses = {n for n in state.nodes() if isinstance(n, dace.nodes.AccessNode) and n.data == write}
+        return state_accesses
+
+    def collect_write_accesses(self, state: dace.SDFGState, write: str):
+        state_accesses = self.collect_accesses(state, write)
+        state_write_accesses = {
+            a
+            for a in state_accesses if (state.in_degree(a) > 0 and any(
+                e.data.data is not None for e in state.in_edges(a)) and (state.out_degree(a) == 0 or isinstance(
+                    state.sdfg.arrays[a.data], dace.data.Array) or state.sdfg.arrays[a.data].transient is False))
+        }
+        return state_write_accesses
+
+    def collect_ignored_write_accesses(self, state: dace.SDFGState):
+        state_all_write_accesses = {
+            a
+            for a in state.nodes()
+            if isinstance(a, dace.nodes.AccessNode) and (state.in_degree(a) > 0 and any(e.data.data is not None
+                                                                                        for e in state.in_edges(a)))
+        }
+        state_all_considered_write_accesses = {
+            a
+            for a in state_all_write_accesses if (state.in_degree(a) > 0 and any(
+                e.data.data is not None for e in state.in_edges(a)) and (state.out_degree(a) == 0 or isinstance(
+                    state.sdfg.arrays[a.data], dace.data.Array) or state.sdfg.arrays[a.data].transient is False))
+        }
+        return state_all_write_accesses - state_all_considered_write_accesses
+
+    def ignored_accesses_are_reused(self, state: dace.SDFGState):
+        ignored_accesses = self.collect_ignored_write_accesses(state)
+        ignored_data = {a.data for a in ignored_accesses}
+
+        # Ensure the arrays are not used elsewhere
+        # Check loopRegions, conditionalBlocks
+        copy_sdfg = copy.deepcopy(state.sdfg)
+        sdutil.set_nested_sdfg_parent_references(copy_sdfg)
+        for state2 in copy_sdfg.all_states():
+            if state2.label == state.label:
+                for n in state2.nodes():
+                    state2.remove_node(n)
+
+        # Check if ignore data is used anywhere
+        read_set, write_set = copy_sdfg.read_and_write_sets()
+
+        ignored_in_read = read_set.intersection(ignored_data)
+        ignored_in_write = read_set.intersection(ignored_data)
+        if len(ignored_in_read) > 0:
+            print(
+                f"[can_be_applied] Ignored data ({ignored_data}) is used in the rest of the SDFG (read) {ignored_in_read}"
+            )
+        if len(ignored_in_write) > 0:
+            print(
+                f"[can_be_applied] Ignored data ({ignored_data}) is used in the rest of the SDFG (write) {ignored_in_write}"
+            )
+
+        return len(ignored_in_read) > 0 or len(ignored_in_write) > 0
+
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         # print("[can_be_applied]")
         # Works for if-else branches or only if branches
@@ -328,6 +438,7 @@ class FuseBranches(transformation.MultiStateTransformation):
             diff_state1 = write_sets1.difference(write_sets0)
 
             # For joint writes ensure the write subsets are always the same
+
             for write in joint_writes:
                 state0_accesses = {
                     n
@@ -337,26 +448,17 @@ class FuseBranches(transformation.MultiStateTransformation):
                     n
                     for n in state1.nodes() if isinstance(n, dace.nodes.AccessNode) and n.data == write
                 }
-                state0_write_accesses = {
-                    a
-                    for a in state0_accesses if state0.in_degree(a) > 0 and any(
-                        e.data.data is not None
-                        for e in state0.in_edges(a)) and (isinstance(state1.sdfg.arrays[a.data], dace.data.Array)
-                                                          or state1.sdfg.arrays[a.data].transient is False)
-                }
-                state1_write_accesses = {
-                    a
-                    for a in state1_accesses if state1.in_degree(a) > 0 and any(
-                        e.data.data is not None
-                        for e in state1.in_edges(a)) and (isinstance(state1.sdfg.arrays[a.data], dace.data.Array)
-                                                          or state1.sdfg.arrays[a.data].transient is False)
-                }
+
+                state0_write_accesses = self.collect_write_accesses(state0, write)
+                state1_write_accesses = self.collect_write_accesses(state1, write)
 
                 for state, accesses in [(state0, state0_accesses), (state1, state1_accesses)]:
                     for access in accesses:
                         arr = state.sdfg.arrays[access.data]
-                        if arr.dtype not in dace.dtypes.FLOAT_TYPES:
-                            print(f"[can_be_applied] Storage of '{write.data}' is not a floating point type.")
+                        if arr.dtype not in dace.dtypes.FLOAT_TYPES and arr.dtype not in dace.dtypes.INT_TYPES:
+                            print(
+                                f"[can_be_applied] Storage of '{write.data}' is not a floating/int point type has type: {arr.dtype}"
+                            )
                             return False
 
                 state0_writes = set()
@@ -421,6 +523,11 @@ class FuseBranches(transformation.MultiStateTransformation):
                     print(f"[can_be_applied] Branch 1 writes to non-reusable data: {diff_state1}")
                     return False
 
+            if self.ignored_accesses_are_reused(state0):
+                return False
+            if self.ignored_accesses_are_reused(state1):
+                return False
+
         elif len(self.conditional.branches) == 1:
             tup0: Tuple[properties.CodeBlock, ControlFlowRegion] = self.conditional.branches[0]
             cond0, body0 = tup0[0], tup0[1]
@@ -437,23 +544,18 @@ class FuseBranches(transformation.MultiStateTransformation):
 
             # For joint writes ensure the write subsets are always the same
             for write in write_sets0:
-                state0_accesses = {
-                    n
-                    for n in state0.nodes() if isinstance(n, dace.nodes.AccessNode) and n.data == write
-                }
-                state0_write_accesses = {
-                    a
-                    for a in state0_accesses
-                    if state0.in_degree(a) > 0 and any(e.data.data is not None for e in state0.in_edges(a))
-                }
+                state0_accesses = self.collect_accesses(state0, write)
+                state0_write_accesses = self.collect_write_accesses(state0, write)
 
                 for state, accesses in [
                     (state0, state0_accesses),
                 ]:
                     for access in accesses:
                         arr = state.sdfg.arrays[access.data]
-                        if arr.dtype not in dace.dtypes.FLOAT_TYPES:
-                            print(f"[can_be_applied] Storage of '{write.data}' is not a floating point type.")
+                        if arr.dtype not in dace.dtypes.FLOAT_TYPES and arr.dtype not in dace.dtypes.INT_TYPES:
+                            print(
+                                f"[can_be_applied] Storage of '{write.data}' is not a floating/int point type has type: {arr.dtype}"
+                            )
                             return False
 
                 state0_writes = set()
@@ -475,6 +577,8 @@ class FuseBranches(transformation.MultiStateTransformation):
                                 f"[can_be_applied] All write edges need to have exactly one-element write '{write}' (edge {e} problematic)."
                             )
 
+                if self.ignored_accesses_are_reused(state0):
+                    return False
         # If nsdfg all out edges need to have size-1 subsets
         if self.parent_nsdfg_state is not None:
             parent_nsdfg_node = self.conditional.parent_graph.sdfg.parent_nsdfg_node
@@ -492,9 +596,9 @@ class FuseBranches(transformation.MultiStateTransformation):
 
         # TODO:
         # Check that transients are not used in any other state
-        print(
-            f"[can_be_applied] The check for the writing states for transient data within the branches has not been implemented yet!"
-        )
+        #print(
+        #    f"[can_be_applied] The check for the writing states for transient data within the branches has not been implemented yet!"
+        #)
 
         print(f"[can_be_applied] to {self.conditional} is True")
         return True
@@ -720,6 +824,89 @@ class FuseBranches(transformation.MultiStateTransformation):
 
         return if_block, new_if_block
 
+    def try_clean(self, graph: ControlFlowRegion, sdfg: SDFG):
+        # Some patterns that we can clean
+
+        # Pattern 1
+        # If start block is a state and is empty and has assignments only,
+        # We can add them before
+        assert graph == self.conditional.parent_graph
+        assert sdfg == self.conditional.parent_graph.sdfg
+
+        if len(self.conditional.branches) == 1:
+            cond, body = self.conditional.branches[0]
+
+            first_start_block = body.start_block
+            start_block = body.start_block
+            # While empty state with assignments
+            while (len(start_block.nodes()) == 0 and isinstance(start_block, dace.SDFGState)
+                   and body.out_degree(start_block) == 1):
+
+                assert body.in_degree(start_block) == 0
+                # RM and copy assignments
+                oe = body.out_edges(start_block)[0]
+                assignments = oe.data.assignments
+                body.remove_node(start_block)
+                # Update start block
+                start_block = oe.dst
+
+                # Add state before if cond
+                graph.add_state_before(self.conditional,
+                                       label=start_block.label + "_p",
+                                       assignments=copy.deepcopy(assignments),
+                                       is_start_block=graph.start_block == self.conditional)
+
+            if start_block != first_start_block:
+                # Rm and Add conditional to get the start block correct
+                oes = body.out_edges(start_block)
+                cpnode = copy.deepcopy(start_block)
+                body.remove_node(start_block)
+                body.add_node(cpnode, is_start_block=True)
+
+                for oe in oes:
+                    body.add_edge(cpnode, oe.dst, copy.deepcopy(oe.data))
+
+            graph.reset_cfg_list()
+
+            # Pattern 2
+            # If all top-level nodes are connected through empty interstate edges
+            # And we have a line graph, put each state to the same if condition
+            nodes = list(body.bfs_nodes())
+            in_degree_leq_one = all({body.in_degree(n) <= 1 for n in nodes})
+            out_degree_leq_one = all({body.out_degree(n) <= 1 for n in nodes})
+            edges = body.edges()
+            all_edges_empty = all({e.data.assignments == dict() for e in edges})
+
+            if in_degree_leq_one and out_degree_leq_one and all_edges_empty:
+                # Put all nodes into their own if condition
+                node_to_add_after = self.conditional
+                # First node gets to stay
+                for ci, node in enumerate(nodes[1:]):
+                    body.remove_node(node)
+
+                    parent_graph = self.conditional.parent_graph
+
+                    copy_conditional = ConditionalBlock(label=self.conditional.label + f"_v_{ci}",
+                                                        sdfg=self.conditional.sdfg,
+                                                        parent=parent_graph)
+                    cfg = ControlFlowRegion(label=self.conditional.label + f"_v_{ci}_body",
+                                            sdfg=self.conditional.sdfg,
+                                            parent=copy_conditional)
+                    cfg.add_node(copy.deepcopy(node))
+                    copy_conditional.add_branch(condition=copy.deepcopy(cond), branch=cfg)
+
+                    parent_graph.add_node(copy_conditional, False, False)
+
+                    for oe in parent_graph.out_edges(node_to_add_after):
+                        parent_graph.remove_edge(oe)
+                        parent_graph.add_edge(copy_conditional, oe.dst, copy.deepcopy(oe.data))
+                    parent_graph.add_edge(node_to_add_after, copy_conditional, InterstateEdge())
+
+                    node_to_add_after = copy_conditional
+
+            graph.sdfg.reset_cfg_list()
+            sdutil.set_nested_sdfg_parent_references(graph.sdfg)
+
     def apply(self, graph: ControlFlowRegion, sdfg: SDFG):
         # If CFG has 1 or two branches
         # If two branches then the write sets to sink nodes are the same
@@ -757,7 +944,6 @@ class FuseBranches(transformation.MultiStateTransformation):
             # And thus we can use twice the single branch imlpementaiton
             if self._is_disjoint_subset(state0, state1):  # Then we need to sequentialize branches
                 first_if, second_if = self._split_branches(parent_graph=graph, if_block=self.conditional)
-                graph.sdfg.save("hmm.sdfg")
                 t1 = FuseBranches()
                 t1.conditional = first_if
                 assert t1.can_be_applied(graph=graph, expr_index=0, sdfg=sdfg)
@@ -768,7 +954,6 @@ class FuseBranches(transformation.MultiStateTransformation):
                 t2.apply(graph=graph, sdfg=sdfg)
                 # Create two single branch SDFGs
                 # Then call apply on each one of them
-                sdfg.save("b.sdfg")
                 return
 
         cond_prep_state = self._get_prev_state_or_create(graph)
@@ -803,20 +988,8 @@ class FuseBranches(transformation.MultiStateTransformation):
                 graph.add_edge(new_state, oe.dst, copy.deepcopy(oe.data))
 
             for write in joint_writes:
-                state0_write_accesses = {
-                    n
-                    for n in state0.nodes()
-                    if isinstance(n, dace.nodes.AccessNode) and n.data == write and state0.in_degree(n) > 0 and (
-                        isinstance(state0.sdfg.arrays[n.data], dace.data.Array)
-                        or state0.sdfg.arrays[n.data].transient is False)
-                }
-                state1_write_accesses = {
-                    n
-                    for n in state1.nodes()
-                    if isinstance(n, dace.nodes.AccessNode) and n.data == write and state1.in_degree(n) > 0 and (
-                        isinstance(state1.sdfg.arrays[n.data], dace.data.Array)
-                        or state1.sdfg.arrays[n.data].transient is False)
-                }
+                state0_write_accesses = self.collect_write_accesses(state0, write)
+                state1_write_accesses = self.collect_write_accesses(state1, write)
 
                 state0_write_accesses_in_new_state = {state0_to_new_state_node_map[n] for n in state0_write_accesses}
                 state1_write_accesses_in_new_state = {state1_to_new_state_node_map[n] for n in state1_write_accesses}
@@ -913,13 +1086,7 @@ class FuseBranches(transformation.MultiStateTransformation):
             new_joint_writes = copy.deepcopy(joint_writes)
             new_reads = dict()
             for write in joint_writes:
-                state0_write_accesses = {
-                    n
-                    for n in state0.nodes()
-                    if isinstance(n, dace.nodes.AccessNode) and n.data == write and state0.in_degree(n) > 0 and (
-                        isinstance(state0.sdfg.arrays[n.data], dace.data.Array)
-                        or state0.sdfg.arrays[n.data].transient is False)
-                }
+                state0_write_accesses = self.collect_write_accesses(state0, write)
                 state0_write_accesses_in_new_state = {state0_to_new_state_node_map[n] for n in state0_write_accesses}
 
                 for state0_write_access in state0_write_accesses:
@@ -963,13 +1130,7 @@ class FuseBranches(transformation.MultiStateTransformation):
             for oe in graph.out_edges(self.conditional):
                 graph.add_edge(new_state, oe.dst, copy.deepcopy(oe.data))
             for write in joint_writes:
-                state0_write_accesses = {
-                    n
-                    for n in state0.nodes()
-                    if isinstance(n, dace.nodes.AccessNode) and n.data == write and state0.in_degree(n) > 0 and (
-                        isinstance(state1.sdfg.arrays[n.data], dace.data.Array)
-                        or state1.sdfg.arrays[n.data].transient is False)
-                }
+                state0_write_accesses = self.collect_write_accesses(state0, write)
 
                 #state0_write_accesses_in_new_state = {state0_to_new_state_node_map[n] for n in state0_write_accesses}
 
@@ -1054,7 +1215,6 @@ class FuseBranches(transformation.MultiStateTransformation):
                                                                            skip_set={tmp2_access})
 
                     #self._try_simplify_combine_tasklet(new_state, combine_tasklet)
-                    new_state.sdfg.save("x.sdfg")
                     new_state.remove_node(state1_in_new_state_write_access)
 
         # If the symbol is not used anymore
@@ -1078,8 +1238,6 @@ class FuseBranches(transformation.MultiStateTransformation):
                             if sym_name in graph.parent_nsdfg_node.symbol_mapping:
                                 del graph.parent_nsdfg_node.symbol_mapping[sym_name]
 
-        graph.sdfg.save("after_fuse.sdfg")
-
         for ie in graph.in_edges(new_state):
             # If ie.src is empty and ie.data.assignments is empty remove ie.src
             if len(ie.data.assignments) == 0 and isinstance(ie.src, dace.SDFGState) and len(ie.src.nodes()) == 0:
@@ -1087,7 +1245,9 @@ class FuseBranches(transformation.MultiStateTransformation):
 
         self._try_fuse(graph, new_state, cond_prep_state)
 
-        graph.sdfg.save("bb.sdfg")
+        graph.sdfg.reset_cfg_list()
+        sdutil.set_nested_sdfg_parent_references(graph.sdfg)
+
         graph.sdfg.validate()
 
     def _find_previous_write(self, state: dace.SDFGState, sink: dace.nodes.Tasklet, data: str,

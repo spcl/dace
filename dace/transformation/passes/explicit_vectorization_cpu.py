@@ -132,6 +132,9 @@ inline void vector_copy(T * __restrict__ dst, const T * __restrict__ src) {{
 
     def __init__(self, vector_width):
         passes = [
+            # Fix Correctness
+            # Detect Parallelism & Parallelize
+            # Preprocessing
             FuseBranchesPass(),
             RemoveFPTypeCasts(),
             RemoveIntTypeCasts(),

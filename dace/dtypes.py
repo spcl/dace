@@ -1259,6 +1259,7 @@ string = stringtype()
 MPI_Request = opaque('MPI_Request')
 
 FLOAT_TYPES = {float64, float32, float16}
+INT_TYPES = {int8, int16, int32, int64, uintp, uint8, uint16, uint32, uint64}
 
 
 @undefined_safe_enum

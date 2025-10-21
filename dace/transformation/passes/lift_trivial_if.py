@@ -76,7 +76,6 @@ class LiftTrivialIf(ppl.Pass):
             result = symbolic.evaluate(expr=dace.symbolic.SymExpr(pystring), symbols=dict())
             return bool(result) is val
         except Exception as e:
-            print(e)
             return False
 
     def _trivially_true(self, code: CodeBlock):

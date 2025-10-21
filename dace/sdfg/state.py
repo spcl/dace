@@ -2845,11 +2845,7 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         self.add_node(block)
         return block
 
-    def add_edge(self,
-                 src: ControlFlowBlock,
-                 dst: ControlFlowBlock,
-                 data: 'dace.sdfg.InterstateEdge',
-                 check_nodes_are_resident: bool = True):
+    def add_edge(self, src: ControlFlowBlock, dst: ControlFlowBlock, data: 'dace.sdfg.InterstateEdge'):
         """ Adds a new edge to the graph. Must be an InterstateEdge or a subclass thereof.
 
             :param u: Source node.
@@ -2863,12 +2859,6 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
             raise TypeError('Expected ControlFlowBlock, got ' + str(type(dst)))
         if not isinstance(data, dace.sdfg.InterstateEdge):
             raise TypeError('Expected InterstateEdge, got ' + str(type(data)))
-
-        if check_nodes_are_resident:
-            parent_graph = src.parent_graph
-            assert src.parent_graph == dst.parent_graph, "Source and destination nodes must belong to the same graph"
-            assert src in parent_graph
-            assert dst in parent_graph
 
         if dst is self._cached_start_block:
             self._cached_start_block = None
