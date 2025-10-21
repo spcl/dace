@@ -183,6 +183,11 @@ class DefaultMatMulBackward(BackwardImplementation):
         # Track which forward inputs we need
         required_forward_inputs = set()
 
+        # Get tensor ranks
+        A_rank = len(A_desc.shape)
+        B_rank = len(B_desc.shape)
+        Y_rank = len(Y_desc.shape)
+
         # Compute gradient for A if required: dA = dY @ B^T
         # We use ONNXTranspose to explicitly transpose B, then use MatMul
         if "A" in required_gradients:
@@ -199,12 +204,12 @@ class DefaultMatMulBackward(BackwardImplementation):
 
             # Transpose B: we need to transpose the last two dimensions
             # For shape [b1, b2, ..., k, n] -> [b1, b2, ..., n, k]
-            B_rank = len(B_desc.shape)
+            # Special case for 1D: B stays as is (transpose will be identity)
             if B_rank >= 2:
                 # Create permutation: [..., -1, -2] (swap last two dims)
                 perm = list(range(B_rank - 2)) + [B_rank - 1, B_rank - 2]
             else:
-                # For 1D case, no transpose needed (will be handled by matmul specialization)
+                # For 1D case, no transpose needed (identity permutation)
                 perm = list(range(B_rank))
 
             # Add transposed B descriptor
@@ -218,91 +223,185 @@ class DefaultMatMulBackward(BackwardImplementation):
                                        storage=B_desc.storage)
             nsdfg.add_datadesc("B_T", B_T_desc)
 
-            # Create Transpose node
-            transpose_B = donnx.ONNXTranspose(forward_node.label + "_B_transpose", perm=perm)
-            nstate.add_node(transpose_B)
-            nstate.add_edge(nstate.add_read("B"), None, transpose_B, "data", nsdfg.make_array_memlet("B"))
-            B_T_access = nstate.add_access("B_T")
-            nstate.add_edge(transpose_B, "transposed", B_T_access, None, nsdfg.make_array_memlet("B_T"))
-
-            # Determine if we need to sum over batch dimensions (broadcasting case)
-            # If B has more dimensions than A, then B was batched and A was broadcast
-            # (though this is less common)
-            A_rank = len(A_desc.shape)
-            B_rank_orig = len(B_desc.shape)
+            # Only create Transpose node if B_rank >= 2 (otherwise it's identity)
+            if B_rank >= 2:
+                transpose_B = donnx.ONNXTranspose(forward_node.label + "_B_transpose", perm=perm)
+                nstate.add_node(transpose_B)
+                nstate.add_edge(nstate.add_read("B"), None, transpose_B, "data", nsdfg.make_array_memlet("B"))
+                B_T_access = nstate.add_access("B_T")
+                nstate.add_edge(transpose_B, "transposed", B_T_access, None, nsdfg.make_array_memlet("B_T"))
+            else:
+                # For 1D, B_T is just a copy of B
+                B_read = nstate.add_read("B")
+                B_T_access = nstate.add_write("B_T")
+                nstate.add_nedge(B_read, B_T_access, nsdfg.make_array_memlet("B"))
 
             # Compute the expected A_grad shape from matmul
-            # Y_grad @ B^T: [... batch ..., m, n] @ [... batch ..., n, k] -> [... batch ..., m, k]
-            matmul_output_shape = list(Y_desc.shape[:-2]) + [Y_desc.shape[-2], B_transposed_shape[-1]]
+            # Need to handle different cases based on Y_rank and tensor dimensions
+            # Y_grad @ B^T computation shape logic:
+            # - Y has shape that results from A @ B
+            # - For 1d @ 1d: Y is scalar, dA = dY * B (element-wise, not matmul)
+            # - For 2d @ 1d: Y is (m,), dA shape (m, k) = dY.unsqueeze(-1) @ B.unsqueeze(0)
+            # - For 1d @ 2d: Y is (n,), dA shape (m,) = Y @ B^T -> reduce properly
+            # - For higher dims with broadcasting: need to sum over broadcast dims
 
-            # Check if we need reduction (when matmul output has more dims than A_grad target)
-            needs_reduction = len(matmul_output_shape) > A_rank
+            if Y_rank == 1 and A_rank == 1 and B_rank == 1:
+                # 1d @ 1d case (dot product): Y is shape (1,) or (), dA = dY * B
+                # ONNX export creates shape (1,) for scalar outputs from 1d @ 1d
+                # Use ONNX Mul for element-wise scalar multiplication
+                mul_node = donnx.ONNXMul(forward_node.label + "_A_grad_mul")
+                nstate.add_node(mul_node)
 
-            if needs_reduction:
-                # Create intermediate array for MatMul output before reduction
-                A_grad_before_reduction_desc = dace.data.Array(dtype=A_desc.dtype,
-                                                               shape=matmul_output_shape,
-                                                               transient=True,
-                                                               storage=A_desc.storage)
-                nsdfg.add_datadesc("A_grad_tmp", A_grad_before_reduction_desc)
-
-                # Create MatMul node: A_grad_tmp = Y_grad @ B^T
-                matmul_A_grad = MatMul(forward_node.label + "_A_grad", alpha=1.0, beta=0.0)
-                nstate.add_node(matmul_A_grad)
-
-                # Connect: Y_grad -> _a, B_T -> _b
-                nstate.add_edge(Y_grad_access, None, matmul_A_grad, "_a",
+                # Connect dY and B to Mul node
+                nstate.add_edge(Y_grad_access, None, mul_node, "A",
                                 nsdfg.make_array_memlet(result.given_grad_names["Y"]))
-                nstate.add_edge(B_T_access, None, matmul_A_grad, "_b", nsdfg.make_array_memlet("B_T"))
+                nstate.add_edge(B_T_access, None, mul_node, "B", nsdfg.make_array_memlet("B_T"))
 
-                A_grad_tmp_access = nstate.add_access("A_grad_tmp")
-                nstate.add_edge(matmul_A_grad, "_c", A_grad_tmp_access, None, nsdfg.make_array_memlet("A_grad_tmp"))
-
-                # Sum over the broadcasted batch dimensions
-                reduce_axes = list(range(len(matmul_output_shape) - A_rank))
-
-                # Create ReduceSum to sum over batch dimensions
-                reduce_sum = donnx.ONNXReduceSum(forward_node.label + "_A_grad_reduce", keepdims=0, optional={"axes"})
-                reduce_sum.axes = reduce_axes
-                nstate.add_node(reduce_sum)
-
-                # Create axes array for ReduceSum
-                axes_name = "A_grad_reduce_axes"
-                axes_desc = dace.data.Array(dace.int64, [len(reduce_axes)], transient=True)
-                nsdfg.add_datadesc(axes_name, axes_desc)
-                axes_access = nstate.add_access(axes_name)
-
-                axes_tasklet = nstate.add_tasklet("init_A_reduce_axes", {}, {"out": dace.pointer(dace.int64)},
-                                                  '\n'.join(
-                                                      [f"out[{i}] = {axis};" for i, axis in enumerate(reduce_axes)]),
-                                                  language=dace.Language.CPP)
-                nstate.add_edge(axes_tasklet, "out", axes_access, None, dace.Memlet.from_array(axes_name, axes_desc))
-
-                # Connect ReduceSum
-                nstate.add_edge(A_grad_tmp_access, None, reduce_sum, "data", nsdfg.make_array_memlet("A_grad_tmp"))
-                nstate.add_edge(axes_access, None, reduce_sum, "axes", nsdfg.make_array_memlet(axes_name))
-
-                # Output to A_grad with write-conflict resolution for gradient accumulation
+                # Output to A_grad with WCR
                 A_grad_memlet = nsdfg.make_array_memlet(result.required_grad_names["A"])
                 A_grad_memlet.wcr = "lambda x, y: x + y"
-                nstate.add_edge(reduce_sum, "reduced", nstate.add_write(result.required_grad_names["A"]), None,
-                                A_grad_memlet)
+                nstate.add_edge(mul_node, "C", nstate.add_write(result.required_grad_names["A"]), None, A_grad_memlet)
+            elif Y_rank == 1 and A_rank == 2 and B_rank == 1:
+                # 2d @ 1d case: Y is (m,), A is (m, k), B is (k,)
+                # dA = dY.unsqueeze(-1) @ B.unsqueeze(0) = outer(dY, B)
+                # Result shape: (m, k)
+                # We can use outer product or implement as dA[i,j] = dY[i] * B[j]
+                map_range = {"i": f"0:{A_desc.shape[0]}", "j": f"0:{A_desc.shape[1]}"}
+                map_entry, map_exit = nstate.add_map("outer_product", map_range)
+
+                tasklet = nstate.add_tasklet("outer_prod", {"dY_elem", "B_elem"}, {"dA_elem"},
+                                             "dA_elem = dY_elem * B_elem")
+
+                # Connect Y_grad -> tasklet (through map)
+                nstate.add_memlet_path(Y_grad_access,
+                                       map_entry,
+                                       tasklet,
+                                       dst_conn="dY_elem",
+                                       memlet=dace.Memlet(data=result.given_grad_names["Y"], subset="i"))
+
+                # Connect B_T -> tasklet (through map)
+                nstate.add_memlet_path(B_T_access,
+                                       map_entry,
+                                       tasklet,
+                                       dst_conn="B_elem",
+                                       memlet=dace.Memlet(data="B_T", subset="j"))
+
+                # Connect tasklet -> A_grad (through map)
+                A_grad_write = nstate.add_write(result.required_grad_names["A"])
+                A_grad_memlet = dace.Memlet(data=result.required_grad_names["A"],
+                                            subset="i,j",
+                                            wcr="lambda x, y: x + y")
+                nstate.add_memlet_path(tasklet, map_exit, A_grad_write, src_conn="dA_elem", memlet=A_grad_memlet)
             else:
-                # No reduction needed - direct matmul to A_grad
-                # Create MatMul node: A_grad = Y_grad @ B^T
-                matmul_A_grad = MatMul(forward_node.label + "_A_grad", alpha=1.0, beta=0.0)
-                nstate.add_node(matmul_A_grad)
+                # General matrix multiplication case
+                # Compute matmul output shape: Y_grad @ B^T
+                # Extract batch dims and matrix dims separately
+                if Y_rank >= 2:
+                    Y_batch_dims = list(Y_desc.shape[:-2])
+                    Y_m = Y_desc.shape[-2]
+                    Y_n = Y_desc.shape[-1]
+                elif Y_rank == 1:
+                    Y_batch_dims = []
+                    Y_m = Y_desc.shape[0]
+                    Y_n = 1  # Will be unsqueezed
+                else:
+                    Y_batch_dims = []
+                    Y_m = 1
+                    Y_n = 1
 
-                # Connect: Y_grad -> _a, B_T -> _b
-                nstate.add_edge(Y_grad_access, None, matmul_A_grad, "_a",
-                                nsdfg.make_array_memlet(result.given_grad_names["Y"]))
-                nstate.add_edge(B_T_access, None, matmul_A_grad, "_b", nsdfg.make_array_memlet("B_T"))
+                if B_rank >= 2:
+                    B_k = B_transposed_shape[-1]  # After transpose, last dim is k
+                    B_batch_dims = list(B_transposed_shape[:-2])
+                elif B_rank == 1:
+                    B_k = B_transposed_shape[0]
+                    B_batch_dims = []
+                else:
+                    B_k = 1
+                    B_batch_dims = []
 
-                # Output to A_grad with write-conflict resolution for gradient accumulation
-                A_grad_memlet = nsdfg.make_array_memlet(result.required_grad_names["A"])
-                A_grad_memlet.wcr = "lambda x, y: x + y"
-                nstate.add_edge(matmul_A_grad, "_c", nstate.add_write(result.required_grad_names["A"]), None,
-                                A_grad_memlet)
+                # Determine matmul output shape (broadcast batch dims)
+                max_batch_rank = max(len(Y_batch_dims), len(B_batch_dims))
+                matmul_batch_dims = []
+                for i in range(max_batch_rank):
+                    y_idx = len(Y_batch_dims) - max_batch_rank + i
+                    b_idx = len(B_batch_dims) - max_batch_rank + i
+                    y_dim = Y_batch_dims[y_idx] if y_idx >= 0 else 1
+                    b_dim = B_batch_dims[b_idx] if b_idx >= 0 else 1
+                    matmul_batch_dims.append(max(y_dim, b_dim))
+
+                matmul_output_shape = matmul_batch_dims + [Y_m, B_k] if matmul_batch_dims else [Y_m, B_k]
+
+                # Check if we need reduction (when matmul output has more dims than A_grad target)
+                needs_reduction = len(matmul_output_shape) > A_rank
+
+                if needs_reduction:
+                    # Create intermediate array for MatMul output before reduction
+                    A_grad_before_reduction_desc = dace.data.Array(dtype=A_desc.dtype,
+                                                                   shape=matmul_output_shape,
+                                                                   transient=True,
+                                                                   storage=A_desc.storage)
+                    nsdfg.add_datadesc("A_grad_tmp", A_grad_before_reduction_desc)
+
+                    # Create MatMul node: A_grad_tmp = Y_grad @ B^T
+                    matmul_A_grad = MatMul(forward_node.label + "_A_grad", alpha=1.0, beta=0.0)
+                    nstate.add_node(matmul_A_grad)
+
+                    # Connect: Y_grad -> _a, B_T -> _b
+                    nstate.add_edge(Y_grad_access, None, matmul_A_grad, "_a",
+                                    nsdfg.make_array_memlet(result.given_grad_names["Y"]))
+                    nstate.add_edge(B_T_access, None, matmul_A_grad, "_b", nsdfg.make_array_memlet("B_T"))
+
+                    A_grad_tmp_access = nstate.add_access("A_grad_tmp")
+                    nstate.add_edge(matmul_A_grad, "_c", A_grad_tmp_access, None, nsdfg.make_array_memlet("A_grad_tmp"))
+
+                    # Sum over the broadcasted batch dimensions
+                    reduce_axes = list(range(len(matmul_output_shape) - A_rank))
+
+                    # Create ReduceSum to sum over batch dimensions
+                    reduce_sum = donnx.ONNXReduceSum(forward_node.label + "_A_grad_reduce",
+                                                     keepdims=0,
+                                                     optional={"axes"})
+                    reduce_sum.axes = reduce_axes
+                    nstate.add_node(reduce_sum)
+
+                    # Create axes array for ReduceSum
+                    axes_name = "A_grad_reduce_axes"
+                    axes_desc = dace.data.Array(dace.int64, [len(reduce_axes)], transient=True)
+                    nsdfg.add_datadesc(axes_name, axes_desc)
+                    axes_access = nstate.add_access(axes_name)
+
+                    axes_tasklet = nstate.add_tasklet(
+                        "init_A_reduce_axes", {}, {"out": dace.pointer(dace.int64)},
+                        '\n'.join([f"out[{i}] = {axis};" for i, axis in enumerate(reduce_axes)]),
+                        language=dace.Language.CPP)
+                    nstate.add_edge(axes_tasklet, "out", axes_access, None,
+                                    dace.Memlet.from_array(axes_name, axes_desc))
+
+                    # Connect ReduceSum
+                    nstate.add_edge(A_grad_tmp_access, None, reduce_sum, "data", nsdfg.make_array_memlet("A_grad_tmp"))
+                    nstate.add_edge(axes_access, None, reduce_sum, "axes", nsdfg.make_array_memlet(axes_name))
+
+                    # Output to A_grad with write-conflict resolution for gradient accumulation
+                    A_grad_memlet = nsdfg.make_array_memlet(result.required_grad_names["A"])
+                    A_grad_memlet.wcr = "lambda x, y: x + y"
+                    nstate.add_edge(reduce_sum, "reduced", nstate.add_write(result.required_grad_names["A"]), None,
+                                    A_grad_memlet)
+                else:
+                    # No reduction needed - direct matmul to A_grad
+                    # Create MatMul node: A_grad = Y_grad @ B^T
+                    matmul_A_grad = MatMul(forward_node.label + "_A_grad", alpha=1.0, beta=0.0)
+                    nstate.add_node(matmul_A_grad)
+
+                    # Connect: Y_grad -> _a, B_T -> _b
+                    nstate.add_edge(Y_grad_access, None, matmul_A_grad, "_a",
+                                    nsdfg.make_array_memlet(result.given_grad_names["Y"]))
+                    nstate.add_edge(B_T_access, None, matmul_A_grad, "_b", nsdfg.make_array_memlet("B_T"))
+
+                    # Output to A_grad with write-conflict resolution for gradient accumulation
+                    A_grad_memlet = nsdfg.make_array_memlet(result.required_grad_names["A"])
+                    A_grad_memlet.wcr = "lambda x, y: x + y"
+                    nstate.add_edge(matmul_A_grad, "_c", nstate.add_write(result.required_grad_names["A"]), None,
+                                    A_grad_memlet)
 
         # Compute gradient for B if required: dB = A^T @ dY
         if "B" in required_gradients:
@@ -319,12 +418,12 @@ class DefaultMatMulBackward(BackwardImplementation):
 
             # Transpose A: we need to transpose the last two dimensions
             # For shape [b1, b2, ..., m, k] -> [b1, b2, ..., k, m]
-            A_rank = len(A_desc.shape)
+            # Special case for 1D: A stays as is (transpose will be identity)
             if A_rank >= 2:
                 # Create permutation: [..., -1, -2] (swap last two dims)
                 perm = list(range(A_rank - 2)) + [A_rank - 1, A_rank - 2]
             else:
-                # For 1D case, no transpose needed (will be handled by matmul specialization)
+                # For 1D case, no transpose needed (identity permutation)
                 perm = list(range(A_rank))
 
             # Add transposed A descriptor
@@ -338,93 +437,217 @@ class DefaultMatMulBackward(BackwardImplementation):
                                        storage=A_desc.storage)
             nsdfg.add_datadesc("A_T", A_T_desc)
 
-            # Create Transpose node
-            transpose_A = donnx.ONNXTranspose(forward_node.label + "_A_transpose", perm=perm)
-            nstate.add_node(transpose_A)
-            nstate.add_edge(nstate.add_read("A"), None, transpose_A, "data", nsdfg.make_array_memlet("A"))
-            A_T_access = nstate.add_access("A_T")
-            nstate.add_edge(transpose_A, "transposed", A_T_access, None, nsdfg.make_array_memlet("A_T"))
-
-            # Determine if we need to sum over batch dimensions (broadcasting case)
-            # If A has more dimensions than B, then A was batched and B was broadcast
-            # In this case, dB needs to sum over the batch dimensions
-            A_rank = len(A_desc.shape)
-            B_rank = len(B_desc.shape)
-            Y_rank = len(Y_desc.shape)
-
-            # Compute the expected B_grad shape from matmul
-            # A_T @ Y_grad: [... batch ..., k, m] @ [... batch ..., m, n] -> [... batch ..., k, n]
-            matmul_output_shape = list(A_transposed_shape[:-2]) + [A_transposed_shape[-2], Y_desc.shape[-1]]
-
-            # Check if we need reduction (when matmul output has more dims than B_grad target)
-            needs_reduction = len(matmul_output_shape) > B_rank
-
-            if needs_reduction:
-                # Create intermediate array for MatMul output before reduction
-                B_grad_before_reduction_desc = dace.data.Array(dtype=B_desc.dtype,
-                                                               shape=matmul_output_shape,
-                                                               transient=True,
-                                                               storage=B_desc.storage)
-                nsdfg.add_datadesc("B_grad_tmp", B_grad_before_reduction_desc)
-
-                # Create MatMul node: B_grad_tmp = A^T @ Y_grad
-                matmul_B_grad = MatMul(forward_node.label + "_B_grad", alpha=1.0, beta=0.0)
-                nstate.add_node(matmul_B_grad)
-
-                # Connect: A_T -> _a, Y_grad -> _b
-                nstate.add_edge(A_T_access, None, matmul_B_grad, "_a", nsdfg.make_array_memlet("A_T"))
-                nstate.add_edge(Y_grad_access, None, matmul_B_grad, "_b",
-                                nsdfg.make_array_memlet(result.given_grad_names["Y"]))
-
-                B_grad_tmp_access = nstate.add_access("B_grad_tmp")
-                nstate.add_edge(matmul_B_grad, "_c", B_grad_tmp_access, None, nsdfg.make_array_memlet("B_grad_tmp"))
-
-                # Sum over the broadcasted batch dimensions
-                # The axes to sum over are all leading dimensions that don't exist in B
-                reduce_axes = list(range(len(matmul_output_shape) - B_rank))
-
-                # Create ReduceSum to sum over batch dimensions
-                reduce_sum = donnx.ONNXReduceSum(forward_node.label + "_B_grad_reduce", keepdims=0, optional={"axes"})
-                reduce_sum.axes = reduce_axes
-                nstate.add_node(reduce_sum)
-
-                # Create axes array for ReduceSum
-                axes_name = "B_grad_reduce_axes"
-                axes_desc = dace.data.Array(dace.int64, [len(reduce_axes)], transient=True)
-                nsdfg.add_datadesc(axes_name, axes_desc)
-                axes_access = nstate.add_access(axes_name)
-
-                axes_tasklet = nstate.add_tasklet("init_reduce_axes", {}, {"out": dace.pointer(dace.int64)},
-                                                  '\n'.join(
-                                                      [f"out[{i}] = {axis};" for i, axis in enumerate(reduce_axes)]),
-                                                  language=dace.Language.CPP)
-                nstate.add_edge(axes_tasklet, "out", axes_access, None, dace.Memlet.from_array(axes_name, axes_desc))
-
-                # Connect ReduceSum
-                nstate.add_edge(B_grad_tmp_access, None, reduce_sum, "data", nsdfg.make_array_memlet("B_grad_tmp"))
-                nstate.add_edge(axes_access, None, reduce_sum, "axes", nsdfg.make_array_memlet(axes_name))
-
-                # Output to B_grad with write-conflict resolution for gradient accumulation
-                B_grad_memlet = nsdfg.make_array_memlet(result.required_grad_names["B"])
-                B_grad_memlet.wcr = "lambda x, y: x + y"
-                nstate.add_edge(reduce_sum, "reduced", nstate.add_write(result.required_grad_names["B"]), None,
-                                B_grad_memlet)
+            # Only create Transpose node if A_rank >= 2 (otherwise it's identity)
+            if A_rank >= 2:
+                transpose_A = donnx.ONNXTranspose(forward_node.label + "_A_transpose", perm=perm)
+                nstate.add_node(transpose_A)
+                nstate.add_edge(nstate.add_read("A"), None, transpose_A, "data", nsdfg.make_array_memlet("A"))
+                A_T_access = nstate.add_access("A_T")
+                nstate.add_edge(transpose_A, "transposed", A_T_access, None, nsdfg.make_array_memlet("A_T"))
             else:
-                # No reduction needed - direct matmul to B_grad
-                # Create MatMul node: B_grad = A^T @ Y_grad
-                matmul_B_grad = MatMul(forward_node.label + "_B_grad", alpha=1.0, beta=0.0)
-                nstate.add_node(matmul_B_grad)
+                # For 1D, A_T is just a copy of A
+                A_read = nstate.add_read("A")
+                A_T_access = nstate.add_write("A_T")
+                nstate.add_nedge(A_read, A_T_access, nsdfg.make_array_memlet("A"))
 
-                # Connect: A_T -> _a, Y_grad -> _b
-                nstate.add_edge(A_T_access, None, matmul_B_grad, "_a", nsdfg.make_array_memlet("A_T"))
-                nstate.add_edge(Y_grad_access, None, matmul_B_grad, "_b",
+            # Handle special cases for B gradient computation
+            if Y_rank == 1 and A_rank == 1 and B_rank == 1:
+                # 1d @ 1d case (dot product): Y is shape (1,) or (), dB = dY * A
+                # ONNX export creates shape (1,) for scalar outputs from 1d @ 1d
+                # Use ONNX Mul for element-wise scalar multiplication
+                mul_node = donnx.ONNXMul(forward_node.label + "_B_grad_mul")
+                nstate.add_node(mul_node)
+
+                # Connect dY and A to Mul node
+                nstate.add_edge(Y_grad_access, None, mul_node, "A",
                                 nsdfg.make_array_memlet(result.given_grad_names["Y"]))
+                nstate.add_edge(A_T_access, None, mul_node, "B", nsdfg.make_array_memlet("A_T"))
 
-                # Output to B_grad with write-conflict resolution for gradient accumulation
+                # Output to B_grad with WCR
                 B_grad_memlet = nsdfg.make_array_memlet(result.required_grad_names["B"])
                 B_grad_memlet.wcr = "lambda x, y: x + y"
-                nstate.add_edge(matmul_B_grad, "_c", nstate.add_write(result.required_grad_names["B"]), None,
-                                B_grad_memlet)
+                nstate.add_edge(mul_node, "C", nstate.add_write(result.required_grad_names["B"]), None, B_grad_memlet)
+            elif Y_rank == 1 and A_rank == 2 and B_rank == 1:
+                # 2d @ 1d case: Y is (m,), A is (m, k), B is (k,)
+                # dB = A.T @ dY where A.T is (k, m) and dY is (m,) -> dB is (k,)
+                # This is sum over m: dB[j] = sum_i(A[i,j] * dY[i])
+                # Use reduction map
+                map_range = {
+                    "i": f"0:{A_desc.shape[0]}",  # Iterate over rows of A
+                    "j": f"0:{B_desc.shape[0]}"  # Iterate over columns of A (= elements of B)
+                }
+                map_entry, map_exit = nstate.add_map("reduce_matvec_B", map_range)
+
+                tasklet = nstate.add_tasklet("matvec_reduce_B", {"A_elem", "dY_elem"}, {"dB_contrib"},
+                                             "dB_contrib = A_elem * dY_elem")
+
+                # Read from original A, not A_T
+                # A[i,j] corresponds to A.T[j,i]
+                if "A" not in nsdfg.arrays:
+                    A_desc_copy = copy.deepcopy(A_desc)
+                    A_desc_copy.transient = False
+                    nsdfg.add_datadesc("A", A_desc_copy)
+                    required_forward_inputs.add("A")
+
+                A_read = nstate.add_read("A")
+                nstate.add_memlet_path(A_read,
+                                       map_entry,
+                                       tasklet,
+                                       dst_conn="A_elem",
+                                       memlet=dace.Memlet(data="A", subset="i,j"))
+
+                # Connect Y_grad
+                nstate.add_memlet_path(Y_grad_access,
+                                       map_entry,
+                                       tasklet,
+                                       dst_conn="dY_elem",
+                                       memlet=dace.Memlet(data=result.given_grad_names["Y"], subset="i"))
+
+                # Connect to B_grad with reduction (sum over i)
+                B_grad_write = nstate.add_write(result.required_grad_names["B"])
+                B_grad_memlet = dace.Memlet(data=result.required_grad_names["B"], subset="j", wcr="lambda x, y: x + y")
+                nstate.add_memlet_path(tasklet, map_exit, B_grad_write, src_conn="dB_contrib", memlet=B_grad_memlet)
+            elif Y_rank == 1 and A_rank == 1 and B_rank == 2:
+                # 1d @ 2d case: Y is (n,), A is (m,), B is (m, n)
+                # dB = outer(A, dY) = A.unsqueeze(-1) @ dY.unsqueeze(0)
+                # Result shape: (m, n)
+                map_range = {"i": f"0:{B_desc.shape[0]}", "j": f"0:{B_desc.shape[1]}"}
+                map_entry, map_exit = nstate.add_map("outer_product_B", map_range)
+
+                tasklet = nstate.add_tasklet("outer_prod_B", {"A_elem", "dY_elem"}, {"dB_elem"},
+                                             "dB_elem = A_elem * dY_elem")
+
+                # Connect A_T -> tasklet (through map)
+                nstate.add_memlet_path(A_T_access,
+                                       map_entry,
+                                       tasklet,
+                                       dst_conn="A_elem",
+                                       memlet=dace.Memlet(data="A_T", subset="i"))
+
+                # Connect Y_grad -> tasklet (through map)
+                nstate.add_memlet_path(Y_grad_access,
+                                       map_entry,
+                                       tasklet,
+                                       dst_conn="dY_elem",
+                                       memlet=dace.Memlet(data=result.given_grad_names["Y"], subset="j"))
+
+                # Connect tasklet -> B_grad (through map)
+                B_grad_write = nstate.add_write(result.required_grad_names["B"])
+                B_grad_memlet = dace.Memlet(data=result.required_grad_names["B"],
+                                            subset="i,j",
+                                            wcr="lambda x, y: x + y")
+                nstate.add_memlet_path(tasklet, map_exit, B_grad_write, src_conn="dB_elem", memlet=B_grad_memlet)
+            else:
+                # General matrix multiplication case
+                # Compute matmul output shape: A^T @ Y_grad
+                # Extract batch dims and matrix dims separately
+                if A_rank >= 2:
+                    A_k = A_transposed_shape[-2]  # After transpose, second-to-last dim is k
+                    A_batch_dims = list(A_transposed_shape[:-2])
+                elif A_rank == 1:
+                    A_k = A_transposed_shape[0]
+                    A_batch_dims = []
+                else:
+                    A_k = 1
+                    A_batch_dims = []
+
+                if Y_rank >= 2:
+                    Y_batch_dims = list(Y_desc.shape[:-2])
+                    Y_m = Y_desc.shape[-2]
+                    Y_n = Y_desc.shape[-1]
+                elif Y_rank == 1:
+                    Y_batch_dims = []
+                    Y_m = Y_desc.shape[0]
+                    Y_n = 1  # Will be unsqueezed
+                else:
+                    Y_batch_dims = []
+                    Y_m = 1
+                    Y_n = 1
+
+                # Determine matmul output shape (broadcast batch dims)
+                max_batch_rank = max(len(A_batch_dims), len(Y_batch_dims))
+                matmul_batch_dims = []
+                for i in range(max_batch_rank):
+                    a_idx = len(A_batch_dims) - max_batch_rank + i
+                    y_idx = len(Y_batch_dims) - max_batch_rank + i
+                    a_dim = A_batch_dims[a_idx] if a_idx >= 0 else 1
+                    y_dim = Y_batch_dims[y_idx] if y_idx >= 0 else 1
+                    matmul_batch_dims.append(max(a_dim, y_dim))
+
+                matmul_output_shape = matmul_batch_dims + [A_k, Y_n] if matmul_batch_dims else [A_k, Y_n]
+
+                # Check if we need reduction (when matmul output has more dims than B_grad target)
+                needs_reduction = len(matmul_output_shape) > B_rank
+
+                if needs_reduction:
+                    # Create intermediate array for MatMul output before reduction
+                    B_grad_before_reduction_desc = dace.data.Array(dtype=B_desc.dtype,
+                                                                   shape=matmul_output_shape,
+                                                                   transient=True,
+                                                                   storage=B_desc.storage)
+                    nsdfg.add_datadesc("B_grad_tmp", B_grad_before_reduction_desc)
+
+                    # Create MatMul node: B_grad_tmp = A^T @ Y_grad
+                    matmul_B_grad = MatMul(forward_node.label + "_B_grad", alpha=1.0, beta=0.0)
+                    nstate.add_node(matmul_B_grad)
+
+                    # Connect: A_T -> _a, Y_grad -> _b
+                    nstate.add_edge(A_T_access, None, matmul_B_grad, "_a", nsdfg.make_array_memlet("A_T"))
+                    nstate.add_edge(Y_grad_access, None, matmul_B_grad, "_b",
+                                    nsdfg.make_array_memlet(result.given_grad_names["Y"]))
+
+                    B_grad_tmp_access = nstate.add_access("B_grad_tmp")
+                    nstate.add_edge(matmul_B_grad, "_c", B_grad_tmp_access, None, nsdfg.make_array_memlet("B_grad_tmp"))
+
+                    # Sum over the broadcasted batch dimensions
+                    # The axes to sum over are all leading dimensions that don't exist in B
+                    reduce_axes = list(range(len(matmul_output_shape) - B_rank))
+
+                    # Create ReduceSum to sum over batch dimensions
+                    reduce_sum = donnx.ONNXReduceSum(forward_node.label + "_B_grad_reduce",
+                                                     keepdims=0,
+                                                     optional={"axes"})
+                    reduce_sum.axes = reduce_axes
+                    nstate.add_node(reduce_sum)
+
+                    # Create axes array for ReduceSum
+                    axes_name = "B_grad_reduce_axes"
+                    axes_desc = dace.data.Array(dace.int64, [len(reduce_axes)], transient=True)
+                    nsdfg.add_datadesc(axes_name, axes_desc)
+                    axes_access = nstate.add_access(axes_name)
+
+                    axes_tasklet = nstate.add_tasklet(
+                        "init_reduce_axes", {}, {"out": dace.pointer(dace.int64)},
+                        '\n'.join([f"out[{i}] = {axis};" for i, axis in enumerate(reduce_axes)]),
+                        language=dace.Language.CPP)
+                    nstate.add_edge(axes_tasklet, "out", axes_access, None,
+                                    dace.Memlet.from_array(axes_name, axes_desc))
+
+                    # Connect ReduceSum
+                    nstate.add_edge(B_grad_tmp_access, None, reduce_sum, "data", nsdfg.make_array_memlet("B_grad_tmp"))
+                    nstate.add_edge(axes_access, None, reduce_sum, "axes", nsdfg.make_array_memlet(axes_name))
+
+                    # Output to B_grad with write-conflict resolution for gradient accumulation
+                    B_grad_memlet = nsdfg.make_array_memlet(result.required_grad_names["B"])
+                    B_grad_memlet.wcr = "lambda x, y: x + y"
+                    nstate.add_edge(reduce_sum, "reduced", nstate.add_write(result.required_grad_names["B"]), None,
+                                    B_grad_memlet)
+                else:
+                    # No reduction needed - direct matmul to B_grad
+                    # Create MatMul node: B_grad = A^T @ Y_grad
+                    matmul_B_grad = MatMul(forward_node.label + "_B_grad", alpha=1.0, beta=0.0)
+                    nstate.add_node(matmul_B_grad)
+
+                    # Connect: A_T -> _a, Y_grad -> _b
+                    nstate.add_edge(A_T_access, None, matmul_B_grad, "_a", nsdfg.make_array_memlet("A_T"))
+                    nstate.add_edge(Y_grad_access, None, matmul_B_grad, "_b",
+                                    nsdfg.make_array_memlet(result.given_grad_names["Y"]))
+
+                    # Output to B_grad with write-conflict resolution for gradient accumulation
+                    B_grad_memlet = nsdfg.make_array_memlet(result.required_grad_names["B"])
+                    B_grad_memlet.wcr = "lambda x, y: x + y"
+                    nstate.add_edge(matmul_B_grad, "_c", nstate.add_write(result.required_grad_names["B"]), None,
+                                    B_grad_memlet)
 
         # Create nested SDFG node in backward state
         inputs = {result.given_grad_names["Y"]}.union(required_forward_inputs)
