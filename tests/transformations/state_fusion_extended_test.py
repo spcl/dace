@@ -35,14 +35,14 @@ def test_extended_fusion():
 
     t1 = strt.add_tasklet('t1', {'a', 'b'}, {
         'c',
-    }, 'c[1,1] = a[1,1] + b[1,1]')
+    }, 'c = a + b')
     t2 = strt.add_tasklet('t2', {}, {
         'tmpa',
     }, 'tmpa=4')
 
     t3 = mid.add_tasklet('t3', {'d', 'e'}, {
         'f',
-    }, 'f[1,1] = e[1,1] + d[1,1]')
+    }, 'f = e + d')
     t4 = mid.add_tasklet('t4', {}, {
         'tmpa',
     }, 'tmpa=7')

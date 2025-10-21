@@ -71,6 +71,14 @@ try:
 except ImportError as e:
     raise ImportError("ONNX library is required. Install with: pip install dace[ml]") from e
 
+# ONNXRuntime for symbolic shape inference
+try:
+    from onnxruntime.tools.symbolic_shape_infer import SymbolicShapeInference
+    ONNXRUNTIME_AVAILABLE = True
+except ImportError:
+    SymbolicShapeInference = None
+    ONNXRUNTIME_AVAILABLE = False
+
 # onnxsim is optional (only needed for model simplification)
 try:
     import onnxsim
@@ -92,7 +100,6 @@ from dace.util import is_cuda
 from dace.libraries.onnx.converters import clean_onnx_name, convert_attribute_proto, onnx_tensor_type_to_typeclass
 from dace.libraries.onnx.nodes.onnx_op_registry import get_onnx_node, has_onnx_node
 from dace.libraries.onnx.schema import ONNXParameterType
-from dace.libraries.onnx.shape_inference import shape_inference
 
 log = logging.getLogger(__name__)
 
@@ -146,6 +153,84 @@ def _nested_HasField(obj, full_attr: str) -> bool:
     return True
 
 
+def infer_shapes_onnx_model(model: onnx.ModelProto, auto_merge: bool = False) -> onnx.ModelProto:
+    """
+    Perform shape inference on an ONNX model using ONNXRuntime's symbolic shape inference.
+
+    This function uses ONNXRuntime's symbolic shape inference tool which provides
+    better support for symbolic dimensions and dynamic shapes compared to ONNX's
+    built-in shape inference.
+
+    Args:
+        model: The ONNX model to perform shape inference on.
+        auto_merge: Whether to automatically merge symbolic dimensions when possible.
+
+    Returns:
+        The ONNX model with inferred shapes.
+
+    Note:
+        Falls back to ONNX's built-in shape inference if ONNXRuntime is not available
+        or if symbolic shape inference produces incomplete results.
+    """
+    if not ONNXRUNTIME_AVAILABLE:
+        log.warning("ONNXRuntime not available, falling back to ONNX shape inference. ")
+        # Fallback to ONNX's built-in shape inference
+        import onnx.shape_inference
+        return onnx.shape_inference.infer_shapes(model, check_type=False, strict_mode=False, data_prop=True)
+
+    try:
+        # Try newer API first
+        ssi = SymbolicShapeInference(
+            int_max=2**31 - 1,  # upper bound for unknown ints
+            auto_merge=auto_merge,  # merge symbolic dims when possible
+            guess_output_rank=False,
+            verbose=0,
+        )
+        model = ssi.infer_shapes(model)
+
+        # Check if shape inference completed successfully for all value_infos
+        incomplete_shapes = False
+        for value in model.graph.value_info:
+            if not _nested_HasField(value, "type.tensor_type.shape"):
+                incomplete_shapes = True
+                break
+
+        # If symbolic shape inference produced incomplete results, use ONNX fallback
+        if incomplete_shapes:
+            log.warning("ONNXRuntime symbolic shape inference produced incomplete results, "
+                        "falling back to ONNX shape inference.")
+            import onnx.shape_inference
+            return onnx.shape_inference.infer_shapes(model, check_type=False, strict_mode=False, data_prop=True)
+
+        return model
+    except TypeError:
+        # Older API: no-argument constructor
+        try:
+            ssi = SymbolicShapeInference()
+            model = ssi.infer_shapes(model)
+
+            # Check completeness for older API too
+            incomplete_shapes = False
+            for value in model.graph.value_info:
+                if not _nested_HasField(value, "type.tensor_type.shape"):
+                    incomplete_shapes = True
+                    break
+
+            if incomplete_shapes:
+                log.warning("ONNXRuntime symbolic shape inference produced incomplete results, "
+                            "falling back to ONNX shape inference.")
+                import onnx.shape_inference
+                return onnx.shape_inference.infer_shapes(model, check_type=False, strict_mode=False, data_prop=True)
+
+            return model
+        except Exception as e:
+            # If all else fails, fall back to ONNX shape inference
+            log.warning(f"ONNXRuntime symbolic shape inference failed ({e}), "
+                        "falling back to ONNX shape inference.")
+            import onnx.shape_inference
+            return onnx.shape_inference.infer_shapes(model, check_type=False, strict_mode=False, data_prop=True)
+
+
 def simplify_onnx_model(model: onnx.ModelProto, auto_merge: bool) -> onnx.ModelProto:
     """
     Simplify an ONNX model using onnx-simplifier.
@@ -174,11 +259,16 @@ def simplify_onnx_model(model: onnx.ModelProto, auto_merge: bool) -> onnx.ModelP
     if not ONNXSIM_AVAILABLE:
         raise ImportError("onnxsim is required for model simplification. Install with: pip install dace[ml]")
 
-    model, check = onnxsim.simplify(model, skip_fuse_bn=True)
-
-    if not check:
-        raise RuntimeError("onnx-simplifier optimizations failed validation")
-    return model
+    try:
+        model, check = onnxsim.simplify(model, skip_fuse_bn=True)
+        if not check:
+            raise RuntimeError("onnx-simplifier optimizations failed validation")
+        return model
+    except (onnx.checker.ValidationError, ValueError) as e:
+        # If simplification fails due to validation errors (e.g., missing shape info),
+        # return the original model
+        log.warning(f"ONNX simplification failed with error: {e}. Continuing without simplification.")
+        return model
 
 
 class ONNXModel:
@@ -231,8 +321,6 @@ class ONNXModel:
         """
         :param name: the name for the SDFG.
         :param model: the model to import.
-        :param infer_shapes: whether to infer shapes for the model. If this is ``False``, the model must have
-                             value infos (with shapes) for all arrays, including intermediate values.
         :param cuda: if ``True``, the model will be executed on the GPU.
         :param simplify: if ``True``, apply simplification transformations after all nodes have been expanded.
         :param onnx_simplify: if True, run ONNX-level simplifications such as constant folding and shape inference.
@@ -249,7 +337,7 @@ class ONNXModel:
         # Use temporary files for intermediate model saves
         with tempfile.NamedTemporaryFile(suffix='.onnx', delete=True) as temp_original:
             onnx.save(model, temp_original.name)
-            model = shape_inference.infer_shapes(model, auto_merge=auto_merge)
+            model = infer_shapes_onnx_model(model, auto_merge=auto_merge)
 
             with tempfile.NamedTemporaryFile(suffix='.onnx', delete=True) as temp_shapes:
                 onnx.save(model, temp_shapes.name)
