@@ -455,9 +455,16 @@ class RedundantArray(pm.SingleStateTransformation):
             if in_array.data in sdfg.arrays:
                 del sdfg.arrays[in_array.data]
             return
+
+        # NOTE: This is probably wrong! Since we replace `in_array` with a View the view must
+        #   follow the strides of `out_array`, since `in_array` views the memory of `out_array`.
+        #   Furthermore, `RedundantSecondArray` makes a case distinction here, when it composes
+        #   the strides for the view which is not done here. However, there is the
+        #   `_is_reshaping_memlet()` function that should handle some cases.
         view_strides = in_desc.strides
         if (b_dims_to_pop and len(b_dims_to_pop) == len(out_desc.shape) - len(in_desc.shape)):
             view_strides = [s for i, s in enumerate(out_desc.strides) if i not in b_dims_to_pop]
+
         sdfg.arrays[in_array.data] = data.ArrayView(in_desc.dtype, in_desc.shape, True, in_desc.allow_conflicts,
                                                     out_desc.storage, out_desc.location, view_strides, in_desc.offset,
                                                     out_desc.may_alias, dtypes.AllocationLifetime.Scope,
