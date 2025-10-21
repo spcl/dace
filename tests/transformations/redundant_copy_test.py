@@ -448,16 +448,15 @@ def test_invalid_redundant_array_strided(order):
     assert np.allclose(b, np.flip(a, 0).flatten(order=order))
 
 
-def _make_reshaping_not_zero_started_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, nodes.AccessNode, nodes.MapEntry]:
+def _make_reshaping_not_zero_started_sdfg(
+    a_has_larger_rank_than_b: bool, ) -> Tuple[dace.SDFG, dace.SDFGState, nodes.AccessNode, nodes.MapEntry]:
     sdfg = dace.SDFG(utility.unique_name("non_zero_offset_reshaping"))
     state = sdfg.add_state(is_start_block=True)
 
+    a_shape = (10, 1, 2, 20) if a_has_larger_rank_than_b else (10, 20)
     sdfg.add_array(
         "a",
-        shape=(
-            10,
-            20,
-        ),
+        shape=a_shape,
         dtype=dace.float64,
         transient=False,
     )
@@ -478,7 +477,10 @@ def _make_reshaping_not_zero_started_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, 
     )
     a, b, c = (state.add_access(name) for name in "abc")
 
-    state.add_edge(a, None, b, None, dace.Memlet("a[5:10, 3:13] -> [0:5, 0, 0:10]"))
+    state.add_edge(
+        a, None, b, None,
+        dace.Memlet("a[5:10, 0, 1, 3:13] -> [0:5, 0, 0:10]")
+        if a_has_larger_rank_than_b else dace.Memlet("a[5:10, 3:13] -> [0:5, 0, 0:10]"))
 
     _, me, _ = state.add_mapped_tasklet(
         "comp",
@@ -498,8 +500,9 @@ def _make_reshaping_not_zero_started_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, 
     return sdfg, state, a, me
 
 
-def test_reshaping_not_zero_started_sdfg():
-    sdfg, state, a, me = _make_reshaping_not_zero_started_sdfg()
+@pytest.mark.parametrize("a_has_larger_rank_than_b", [True, False])
+def test_reshaping_not_zero_started_sdfg(a_has_larger_rank_than_b: bool):
+    sdfg, state, a, me = _make_reshaping_not_zero_started_sdfg(a_has_larger_rank_than_b=a_has_larger_rank_than_b)
 
     assert utility.count_nodes(state, nodes.AccessNode) == 3
     assert utility.count_nodes(state, nodes.MapEntry) == 1
@@ -541,4 +544,5 @@ if __name__ == '__main__':
     test_redundant_second_copy_isolated()
     test_invalid_redundant_array_strided('C')
     test_invalid_redundant_array_strided('F')
-    test_reshaping_not_zero_started_sdfg()
+    test_reshaping_not_zero_started_sdfg(True)
+    test_reshaping_not_zero_started_sdfg(False)
