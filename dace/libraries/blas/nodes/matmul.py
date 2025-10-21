@@ -201,7 +201,9 @@ def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, 
     if opt['swap']:
         if bopt:
             bopt['sa'], bopt['sb'] = bopt['sb'], bopt['sa']
-            bopt['a_batch_size'], bopt['b_batch_size'] = bopt['b_batch_size'], bopt['a_batch_size']
+            # Only swap batch sizes if they exist (for batched operations)
+            if 'a_batch_size' in bopt and 'b_batch_size' in bopt:
+                bopt['a_batch_size'], bopt['b_batch_size'] = bopt['b_batch_size'], bopt['a_batch_size']
         opt['lda'], opt['ldb'] = opt['ldb'], opt['lda']
         opt['x'], opt['y'] = opt['y'], opt['x']
         opt['xdtype'], opt['ydtype'] = opt['ydtype'], opt['xdtype']
@@ -217,8 +219,9 @@ def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, 
         opt['stride_b'] = sym2cpp(bopt['sb'])
         opt['stride_c'] = sym2cpp(bopt['sc'])
         opt['BATCH'] = sym2cpp(bopt['b'])
-        opt['a_batch_size'] = sym2cpp(bopt['a_batch_size'])
-        opt['b_batch_size'] = sym2cpp(bopt['b_batch_size'])
+        # Set batch sizes - use defaults if not present (for backward compatibility)
+        opt['a_batch_size'] = sym2cpp(bopt.get('a_batch_size', bopt['b']))
+        opt['b_batch_size'] = sym2cpp(bopt.get('b_batch_size', bopt['b']))
     else:
         opt['BATCH'] = None
 

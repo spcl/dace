@@ -649,6 +649,12 @@ class DefaultMatMulBackward(BackwardImplementation):
                     nstate.add_edge(matmul_B_grad, "_c", nstate.add_write(result.required_grad_names["B"]), None,
                                     B_grad_memlet)
 
+        # Mark all required gradients for zero initialization (needed for WCR accumulation)
+        # Use the internal SDFG array names (values from required_grad_names) as zero_init keys
+        for grad_array_name in result.required_grad_names.values():
+            if grad_array_name:
+                result.zero_init[grad_array_name] = True
+
         # Create nested SDFG node in backward state
         inputs = {result.given_grad_names["Y"]}.union(required_forward_inputs)
         outputs = set(result.required_grad_names.values())
