@@ -22,6 +22,7 @@ from dace.transformation import transformation as pm
 
 
 def _subset_has_shape(subset: subsets.Range, shape: Sequence[symbolic.SymbolicType]) -> bool:
+    """Check if `subset` has the size given in `shape`."""
     return subset.dims() == len(shape) and all((m == a) == True  # SymPy comparison
                                                for m, a in zip(subset.size(), shape))
 
