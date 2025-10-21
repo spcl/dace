@@ -164,6 +164,7 @@ def disjoint_subsets(
         B[i, 0, 1] = B[i, 2, 0] + C[i, 0, 1]
         B[i, 0, 1] = A[i] + B[i, 0, 1]
 
+
 @dace.program
 def disjoint_subsets_two(
     if_cond_58: dace.int32,
@@ -360,9 +361,8 @@ def test_disjoint_subsets(use_pass_flag):
     E = np.random.choice([0.0, 3.0], size=(N, 3, 3))
     run_and_compare(disjoint_subsets, 0, use_pass_flag, A=A, B=B, C=C, E=E, if_cond_58=if_cond_58[0])
 
+
 if __name__ == "__main__":
-    test_disjoint_subsets(True)
-    exit(0)
     for use_pass_flag in [True, False]:
         test_branch_dependent_value_write(use_pass_flag)
         test_branch_dependent_value_write_two(use_pass_flag)
