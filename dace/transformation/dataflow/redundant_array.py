@@ -150,11 +150,89 @@ def find_dims_to_pop(
             returned, for example `a_size := [1, 3, 5], b_size := [1, 8]` will return `[1, 2]`.
             Note that this in particular is not a real case scenario as it is clearly an error
             in the subsets.
+
+        There is an improved version, `find_dims_to_pop2()` which has a better behaviour.
     """
     dims_to_pop = []
     for i, sz in enumerate(reversed(a_size)):
         if sz not in b_size:
             dims_to_pop.append(len(a_size) - 1 - i)
+    return dims_to_pop
+
+
+def find_dims_to_pop2(
+    a_size: Sequence[symbolic.SymbolicType],
+    b_size: Sequence[symbolic.SymbolicType],
+) -> List[int]:
+    """Determine how the first subset has to be squeezed to get to the dimension of the second subset.
+
+    Essentially the function determines which dimensions from the subset `A` have to be removed
+    to get down to the dimensionality of subset `B`. In case they have the same dimensionality
+    an empty list is returned. A base assumption is the function is that a View is not used to
+    modify the relative order of dimensions, i.e. only dummy dimensions are inserted at certain
+    locations.
+    It is important that this function does not operates on the actual subsets but on their
+    sizes.
+
+    This is an improved version of `find_dims_to_pop()`.
+
+    Returns:
+        The function will return the list of dimensions that have to be removed in subset `A`
+        to bring it to the same dimensionality as subset `B`. In case the function failed to
+        associate all `B` dimensions to a corresponding `A` dimension the function returns
+        `None`.
+
+    Note:
+        This function behaves differently than `find_dims_to_pop()` in some cases. In most cases
+        the function ensures that a matching has been found. Keep in mind that the function
+        assumes that the relative ordering of dimensions is the same on the source and the
+        destination.
+    """
+    if len(a_size) < len(b_size):
+        raise ValueError(
+            f"Expected that subset `A` has a larger rank ({len(a_size)} | {a_size}) than subset `B` ({len(b_size)} | {b_size})"
+        )
+    if len(a_size) == len(b_size):
+        # NOTE: We now check if there two subsets have the same size. The original version
+        #   "kind of" did that. For `a_size := [3, 4], b_size := [4, 3]` it would have returned
+        #   `[]` but for `a_size := [1, 4], b_size := [2, 4]` it would have returned `[]`, which
+        #   is a very questionable behaviour.
+        if all((a_sz == b_sz) == True for a_sz, b_sz in zip(a_size, b_size)):  # SymPy comparison
+            return []
+        return None
+
+    dims_to_pop = []
+    b_dim_to_check = 0
+    for dim_to_pop, a_sz in enumerate(a_size):
+        if b_dim_to_check == len(b_size):
+            # We have associated all dimensions of `b` thus we have to pop this dimension.
+            if (a_sz == 1) == True:
+                dims_to_pop.append(dim_to_pop)
+                continue
+            return None
+
+        b_sz = b_size[b_dim_to_check]
+        if (a_sz == b_sz) == True:  # SymPy comparison.
+            # They are the same, thus we do not have to pop the dimension, but we have
+            #  to advance the `B` pointer.
+            b_dim_to_check += 1
+        else:
+            # They are different thus we have to pop the dimension, but we do _not_
+            #  have to advance the `B` pointer, as we have to reuse it in the next
+            #  iteration again.
+            if (a_sz == 1) == True:
+                dims_to_pop.append(dim_to_pop)
+                continue
+            return None
+
+    if b_dim_to_check != len(b_size):
+        # NOTE: It would be probably the best to generate an error here. The previous implementation
+        #   returned `dims_to_pop` which does not make sense, as it is incomplete. After some inspection
+        #   the best value in this case should be `None`.
+        return None
+    if len(a_size) - len(b_size) != len(dims_to_pop):
+        raise ValueError(f"Expected to pop {len(a_size) - len(b_size)} but only popped {len(dims_to_pop)}")
+
     return dims_to_pop
 
 
@@ -760,6 +838,16 @@ class RedundantSecondArray(pm.SingleStateTransformation):
             warnings.warn(f'validate_subsets failed: {ex}')
             return False
 
+        if a_subset and b1_subset and a_subset.dims() != b1_subset.dims():
+            a_size = a_subset.size_exact()
+            b_size = b1_subset.size_exact()
+            if a_subset.dims() > b1_subset.dims():
+                if find_dims_to_pop2(a_size, b_size) is None:
+                    return False
+            else:
+                if find_dims_to_pop2(b_size, a_size) is None:
+                    return False
+
         # Find the true in desc (in case in_array is a view).
         true_in_array = in_array
         true_in_desc = in_desc
@@ -992,10 +1080,10 @@ class RedundantSecondArray(pm.SingleStateTransformation):
             a_size = a_subset.size_exact()
             b_size = b1_subset.size_exact()
             if a_subset.dims() > b1_subset.dims():
-                a_dims_to_pop = find_dims_to_pop(a_size, b_size)
+                a_dims_to_pop = find_dims_to_pop2(a_size, b_size)
                 aset, popped = pop_dims(a_subset, a_dims_to_pop)
             else:
-                b_dims_to_pop = find_dims_to_pop(b_size, a_size)
+                b_dims_to_pop = find_dims_to_pop2(b_size, a_size)
 
         # If the src subset does not cover the removed array, create a view.
         if a_subset and not _subset_has_shape(a_subset, out_desc.shape):
@@ -1029,9 +1117,10 @@ class RedundantSecondArray(pm.SingleStateTransformation):
             #  the situation, we need to modify them a bit.
             in_dim = len(in_desc.shape)
             out_dim = len(out_desc.shape)
-            if (len(b_dims_to_pop) == out_dim - in_dim) and (in_dim < out_dim):
+            if in_dim < out_dim:
                 # `out_array` has more dimensions, we thus have to replace the some strides
                 #  in `out_array` with the ones from `in_array` the extra ones will remain.
+                assert len(b_dims_to_pop) == out_dim - in_dim
                 view_strides = []
                 in_index = 0
                 for out_index in range(out_dim):
@@ -1044,9 +1133,10 @@ class RedundantSecondArray(pm.SingleStateTransformation):
                 assert in_index == in_dim
                 assert len(view_strides) == out_dim
                 view_strides = tuple(view_strides)
-            elif (len(a_dims_to_pop) == in_dim - out_dim) and (in_dim > out_dim):
+            elif in_dim > out_dim:
                 # `in_array` has more dimensions, thus we can simply remove the ones that we
                 #  no longer need.
+                assert len(a_dims_to_pop) == in_dim - out_dim
                 view_strides = tuple(s for i, s in enumerate(in_desc.strides) if i not in a_dims_to_pop)
             else:
                 # The two have the same dimensionality, thus there is no modifications
