@@ -71,17 +71,35 @@ class ExpandBatchedMatMulPure(ExpandTransformation):
         _, array_b = sdfg.add_array("_b", shape_b, dtype_b, strides=strides_b, storage=storage)
         _, array_c = sdfg.add_array("_c", shape_c, dtype_c, strides=cdata[-3], storage=storage)
 
-        # Add an initialization state
-        init_state = sdfg.add_state()
-        init_state.add_mapped_tasklet(
-            'batched_matmul_init', {
-                '_o%d' % i: '0:%s' % symstr(d)
-                for i, d in enumerate(shape_c)
-            }, {},
-            'out = 0', {'out': dace.Memlet.simple('_c', ','.join(['_o%d' % i for i in range(len(shape_c))]))},
-            external_edges=True)
-
-        state = sdfg.add_state_after(init_state, node.label + "_state")
+        # Handle beta factor for C
+        # C_new = alpha * A @ B + beta * C_old
+        if node.beta == 0:
+            # Initialize C to 0
+            init_state = sdfg.add_state()
+            init_state.add_mapped_tasklet(
+                'batched_matmul_init', {
+                    '_o%d' % i: '0:%s' % symstr(d)
+                    for i, d in enumerate(shape_c)
+                }, {},
+                'out = 0', {'out': dace.Memlet.simple('_c', ','.join(['_o%d' % i for i in range(len(shape_c))]))},
+                external_edges=True)
+            state = sdfg.add_state_after(init_state, node.label + "_state")
+        elif node.beta != 1:
+            # Scale C by beta before accumulation
+            init_state = sdfg.add_state()
+            beta_value = node.beta
+            init_state.add_mapped_tasklet(
+                'batched_matmul_scale_c', {
+                    '_o%d' % i: '0:%s' % symstr(d)
+                    for i, d in enumerate(shape_c)
+                }, {'_in': dace.Memlet.simple('_c', ','.join(['_o%d' % i for i in range(len(shape_c))]))},
+                f'_out = {beta_value} * _in',
+                {'_out': dace.Memlet.simple('_c', ','.join(['_o%d' % i for i in range(len(shape_c))]))},
+                external_edges=True)
+            state = sdfg.add_state_after(init_state, node.label + "_state")
+        else:
+            # beta == 1: Just accumulate into existing C values
+            state = sdfg.add_state(node.label + "_state")
 
         # Calculate number of batch dimensions in output
         # For 1D cases, output may have fewer dimensions
@@ -168,12 +186,19 @@ class ExpandBatchedMatMulPure(ExpandTransformation):
             c_indices_parts.append('__in')
         c_indices = ', '.join(c_indices_parts)
 
+        # Handle alpha factor in the multiplication
+        alpha_value = node.alpha
+        if alpha_value == 1:
+            tasklet_code = '__c = __a * __b'
+        else:
+            tasklet_code = f'__c = {alpha_value} * __a * __b'
+
         state.add_mapped_tasklet('_BatchedMatMult_',
                                  map_params, {
                                      '__a': dace.Memlet.simple("_a", memlet_a),
                                      '__b': dace.Memlet.simple("_b", memlet_b)
                                  },
-                                 '__c = __a * __b',
+                                 tasklet_code,
                                  {'__c': dace.Memlet.simple("_c", c_indices, wcr_str='lambda x, y: x + y')},
                                  external_edges=True)
 
@@ -197,18 +222,31 @@ class ExpandBatchedMatMulMKL(ExpandTransformation):
         from dace.codegen.common import sym2cpp
 
         prefix = to_blastype(dtype.type).lower()
+        # Use node's alpha and beta values
         if dtype == dace.float32:
-            alpha = "1.0f"
-            beta = "0.0f"
+            alpha = f"{float(node.alpha)}f"
+            beta = f"{float(node.beta)}f"
         elif dtype == dace.float64:
-            alpha = "1.0"
-            beta = "0.0"
+            alpha = f"{float(node.alpha)}"
+            beta = f"{float(node.beta)}"
         elif dtype == dace.complex64:
-            alpha = "dace::blas::BlasConstants::Get().Complex64Pone()"
-            beta = "dace::blas::BlasConstants::Get().Complex64Zero()"
+            if node.alpha == 1:
+                alpha = "dace::blas::BlasConstants::Get().Complex64Pone()"
+            else:
+                alpha = f"dace::blas::make_cuComplex({node.alpha}, 0)"
+            if node.beta == 0:
+                beta = "dace::blas::BlasConstants::Get().Complex64Zero()"
+            else:
+                beta = f"dace::blas::make_cuComplex({node.beta}, 0)"
         elif dtype == dace.complex128:
-            alpha = "dace::blas::BlasConstants::Get().Complex128Pone()"
-            beta = "dace::blas::BlasConstants::Get().Complex128Zero()"
+            if node.alpha == 1:
+                alpha = "dace::blas::BlasConstants::Get().Complex128Pone()"
+            else:
+                alpha = f"dace::blas::make_cuDoubleComplex({node.alpha}, 0)"
+            if node.beta == 0:
+                beta = "dace::blas::BlasConstants::Get().Complex128Zero()"
+            else:
+                beta = f"dace::blas::make_cuDoubleComplex({node.beta}, 0)"
         else:
             raise ValueError("Unsupported type for BLAS: " + str(dtype))
 
@@ -318,21 +356,35 @@ class ExpandBatchedMatMulMKL(ExpandTransformation):
                                                             astrides, bstrides, dtype, is_a_1d, is_b_1d)
 
         func = to_blastype(dtype.type).lower() + 'gemm'
+
+        # Use node's alpha and beta values
         if dtype == dace.float32:
-            alpha = "1.0f"
-            beta = "0.0f"
+            alpha = f"{float(node.alpha)}f"
+            beta = f"{float(node.beta)}f"
             prefix = "s"
         elif dtype == dace.float64:
-            alpha = "1.0"
-            beta = "0.0"
+            alpha = f"{float(node.alpha)}"
+            beta = f"{float(node.beta)}"
             prefix = "d"
         elif dtype == dace.complex64:
-            alpha = "dace::blas::BlasConstants::Get().Complex64Pone()"
-            beta = "dace::blas::BlasConstants::Get().Complex64Zero()"
+            if node.alpha == 1:
+                alpha = "dace::blas::BlasConstants::Get().Complex64Pone()"
+            else:
+                alpha = f"dace::blas::make_cuComplex({node.alpha}, 0)"
+            if node.beta == 0:
+                beta = "dace::blas::BlasConstants::Get().Complex64Zero()"
+            else:
+                beta = f"dace::blas::make_cuComplex({node.beta}, 0)"
             prefix = "c"
         elif dtype == dace.complex128:
-            alpha = "dace::blas::BlasConstants::Get().Complex128Pone()"
-            beta = "dace::blas::BlasConstants::Get().Complex128Zero()"
+            if node.alpha == 1:
+                alpha = "dace::blas::BlasConstants::Get().Complex128Pone()"
+            else:
+                alpha = f"dace::blas::make_cuDoubleComplex({node.alpha}, 0)"
+            if node.beta == 0:
+                beta = "dace::blas::BlasConstants::Get().Complex128Zero()"
+            else:
+                beta = f"dace::blas::make_cuDoubleComplex({node.beta}, 0)"
             prefix = "z"
         else:
             raise ValueError("Unsupported type for BLAS dot product: " + str(dtype))
@@ -393,18 +445,31 @@ class ExpandBatchedMatMulOpenBLAS(ExpandTransformation):
         from dace.codegen.common import sym2cpp
 
         prefix = to_blastype(dtype.type).lower()
+        # Use node's alpha and beta values
         if dtype == dace.float32:
-            alpha = "1.0f"
-            beta = "0.0f"
+            alpha = f"{float(node.alpha)}f"
+            beta = f"{float(node.beta)}f"
         elif dtype == dace.float64:
-            alpha = "1.0"
-            beta = "0.0"
+            alpha = f"{float(node.alpha)}"
+            beta = f"{float(node.beta)}"
         elif dtype == dace.complex64:
-            alpha = "dace::blas::BlasConstants::Get().Complex64Pone()"
-            beta = "dace::blas::BlasConstants::Get().Complex64Zero()"
+            if node.alpha == 1:
+                alpha = "dace::blas::BlasConstants::Get().Complex64Pone()"
+            else:
+                alpha = f"dace::blas::make_cuComplex({node.alpha}, 0)"
+            if node.beta == 0:
+                beta = "dace::blas::BlasConstants::Get().Complex64Zero()"
+            else:
+                beta = f"dace::blas::make_cuComplex({node.beta}, 0)"
         elif dtype == dace.complex128:
-            alpha = "dace::blas::BlasConstants::Get().Complex128Pone()"
-            beta = "dace::blas::BlasConstants::Get().Complex128Zero()"
+            if node.alpha == 1:
+                alpha = "dace::blas::BlasConstants::Get().Complex128Pone()"
+            else:
+                alpha = f"dace::blas::make_cuDoubleComplex({node.alpha}, 0)"
+            if node.beta == 0:
+                beta = "dace::blas::BlasConstants::Get().Complex128Zero()"
+            else:
+                beta = f"dace::blas::make_cuDoubleComplex({node.beta}, 0)"
         else:
             raise ValueError("Unsupported type for BLAS: " + str(dtype))
 
@@ -514,18 +579,31 @@ class ExpandBatchedMatMulOpenBLAS(ExpandTransformation):
                                                                  astrides, bstrides, dtype, is_a_1d, is_b_1d)
 
         func = to_blastype(dtype.type).lower() + 'gemm'
+        # Use node's alpha and beta values
         if dtype == dace.float32:
-            alpha = "1.0f"
-            beta = "0.0f"
+            alpha = f"{float(node.alpha)}f"
+            beta = f"{float(node.beta)}f"
         elif dtype == dace.float64:
-            alpha = "1.0"
-            beta = "0.0"
+            alpha = f"{float(node.alpha)}"
+            beta = f"{float(node.beta)}"
         elif dtype == dace.complex64:
-            alpha = "dace::blas::BlasConstants::Get().Complex64Pone()"
-            beta = "dace::blas::BlasConstants::Get().Complex64Zero()"
+            if node.alpha == 1:
+                alpha = "dace::blas::BlasConstants::Get().Complex64Pone()"
+            else:
+                alpha = f"dace::blas::make_cuComplex({node.alpha}, 0)"
+            if node.beta == 0:
+                beta = "dace::blas::BlasConstants::Get().Complex64Zero()"
+            else:
+                beta = f"dace::blas::make_cuComplex({node.beta}, 0)"
         elif dtype == dace.complex128:
-            alpha = "dace::blas::BlasConstants::Get().Complex128Pone()"
-            beta = "dace::blas::BlasConstants::Get().Complex128Zero()"
+            if node.alpha == 1:
+                alpha = "dace::blas::BlasConstants::Get().Complex128Pone()"
+            else:
+                alpha = f"dace::blas::make_cuDoubleComplex({node.alpha}, 0)"
+            if node.beta == 0:
+                beta = "dace::blas::BlasConstants::Get().Complex128Zero()"
+            else:
+                beta = f"dace::blas::make_cuDoubleComplex({node.beta}, 0)"
         else:
             raise ValueError("Unsupported type for BLAS dot product: " + str(dtype))
         opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, cdesc.dtype.ctype, func)
@@ -612,26 +690,43 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
             1.0: f"__state->cublas_handle.Constants(__dace_cuda_device).{factort}Pone()",
             0.0: f"__state->cublas_handle.Constants(__dace_cuda_device).{factort}Zero()",
         }
+
+        # Handle alpha
         if node.alpha not in constants:
             # Deal with complex input constants
             if isinstance(node.alpha, complex):
-                alpha = f'{dtype.ctype}({node.alpha.real}, {node.alpha.imag})'
+                alpha_val = f'{dtype.ctype}({node.alpha.real}, {node.alpha.imag})'
             else:
-                alpha = f'{dtype.ctype}({node.alpha})'
+                alpha_val = f'{dtype.ctype}({node.alpha})'
+            use_host_mode_alpha = True
+        else:
+            alpha = constants[node.alpha]
+            use_host_mode_alpha = False
 
-            # Set pointer mode to host
-            call_prefix += f'''cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_HOST);
-                {dtype.ctype} alpha = {alpha};
-                {dtype.ctype} beta = 0;
-                '''
+        # Handle beta
+        if node.beta not in constants:
+            # Deal with complex input constants
+            if isinstance(node.beta, complex):
+                beta_val = f'{dtype.ctype}({node.beta.real}, {node.beta.imag})'
+            else:
+                beta_val = f'{dtype.ctype}({node.beta})'
+            use_host_mode_beta = True
+        else:
+            beta = constants[node.beta]
+            use_host_mode_beta = False
+
+        # Set pointer mode to host if needed
+        if use_host_mode_alpha or use_host_mode_beta:
+            call_prefix += 'cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_HOST);\n'
+            if use_host_mode_alpha:
+                call_prefix += f'                {dtype.ctype} alpha = {alpha_val};\n'
+                alpha = f'({cdtype} *)&alpha'
+            if use_host_mode_beta:
+                call_prefix += f'                {dtype.ctype} beta = {beta_val};\n'
+                beta = f'({cdtype} *)&beta'
             call_suffix += '''
     cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_DEVICE);
                 '''
-            beta = f'({cdtype} *)&beta'
-            alpha = f'({cdtype} *)&alpha'
-        else:
-            alpha = constants[node.alpha]
-            beta = "__state->cublas_handle.Constants(__dace_cuda_device).%sZero()" % factort
 
         # Set up options for code formatting
         opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, cdtype, func)
