@@ -1,5 +1,5 @@
 import copy
-from sympy import Function, preorder_traversal, pycode
+from sympy import Eq, Equality, Function, Integer, preorder_traversal, pycode
 import re
 import sympy
 import dace
@@ -12,6 +12,7 @@ import dace.sdfg.utils as sdutil
 import dace.sdfg.construction_utils as cutil
 from typing import Tuple, Set, Union
 from dace.sdfg.construction_utils import token_match, token_replace
+from dace.symbolic import pystr_to_symbolic
 
 
 def extract_bracket_content(s: str):
@@ -402,6 +403,28 @@ class FuseBranches(transformation.MultiStateTransformation):
 
         return bool(ignored_in_read or ignored_in_write)
 
+    def only_top_level_tasklets(self, graph: ControlFlowRegion):
+        checked_at_least_one_tasklet = False
+        # Can be applied should ensure this
+        assert set(graph.all_states()) == set(graph.nodes())
+        for state in graph.all_states():
+            # The function to get parent map and loop scopes is expensive so lets try map-libnodes first entry first
+            for node in state.nodes():
+                if isinstance(node, (dace.nodes.MapEntry, dace.nodes.LibraryNode)):
+                    return False
+            for node in state.nodes():
+                if isinstance(node, dace.nodes.Tasklet):
+                    parent_maps = cutil.get_parent_map_and_loop_scopes(root_sdfg=graph.sdfg,
+                                                                       node=node,
+                                                                       parent_state=state)
+                    checked_at_least_one_tasklet = True
+                    print(node, state.scope_dict()[node], parent_maps)
+                    if len(parent_maps) > 0:
+                        return False
+
+        # If no tasklet has been checked
+        return checked_at_least_one_tasklet
+
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         # print("[can_be_applied]")
         # Works for if-else branches or only if branches
@@ -428,6 +451,16 @@ class FuseBranches(transformation.MultiStateTransformation):
             # Check write sets are equivalent
             state0: SDFGState = body0.nodes()[0]
             state1: SDFGState = body1.nodes()[0]
+
+            # Need to consist of top level tasklets
+            all_top_level0 = self.only_top_level_tasklets(body0)
+            if not all_top_level0:
+                print(f"[can_be_applied] All tasklets need to be top level. Not the case for body {body0}.")
+                return False
+            all_top_level1 = self.only_top_level_tasklets(body1)
+            if not all_top_level1:
+                print(f"[can_be_applied] All tasklets need to be top level. Not the case for body {body1}.")
+                return False
 
             read_sets0, write_sets0 = state0.read_and_write_sets()
             read_sets1, write_sets1 = state1.read_and_write_sets()  # fixed typo
@@ -471,10 +504,10 @@ class FuseBranches(transformation.MultiStateTransformation):
                     for e in state_write_edges:
                         if e.data.data is None:
                             continue
-                        if e.data.subset.num_elements_exact() != 1:
-                            print(
-                                f"[can_be_applied] All write edges need to have exactly one-element write '{write}' (edge {e} problematic)."
-                            )
+                        #if e.data.subset.num_elements_exact() != 1:
+                        #    print(
+                        #        f"[can_be_applied] All write edges need to have exactly one-element write '{write}' (edge {e} problematic)."
+                        #    )
                         if e.data.data not in state_write_subsets:
                             state_write_subsets[e.data.data] = set()
                         state_write_subsets[e.data.data].add(e.data.subset)
@@ -534,6 +567,12 @@ class FuseBranches(transformation.MultiStateTransformation):
             state0: SDFGState = body0.nodes()[0]
 
             read_sets0, write_sets0 = state0.read_and_write_sets()
+
+            # Need to consist of top level tasklets
+            all_top_level0 = self.only_top_level_tasklets(body0)
+            if not all_top_level0:
+                print(f"[can_be_applied] All tasklets need to be top level. Not the case for body {body0}.")
+                return False
 
             # For joint writes ensure the write subsets are always the same
             for write in write_sets0:
@@ -690,16 +729,15 @@ class FuseBranches(transformation.MultiStateTransformation):
         assert len(non_none_conds) == 1
         cond = non_none_conds.pop()
         cond_code_str = cond.as_string
-        cond_code_symexpr = dace.symbolic.SymExpr(cond_code_str)
+        cond_code_symexpr = pystr_to_symbolic(cond_code_str, simplify=False)
         assert len(cond_code_symexpr.free_symbols) == 1
 
         # Find values assigned to the symbols
-        #print("Condition as symexpr:", cond_code_symexpr)
+        print("Condition as symexpr:", cond_code_symexpr)
         free_syms = {str(s).strip() for s in cond_code_symexpr.free_symbols if str(s) in graph.sdfg.symbols}
-        all_free_syms = {str(s).strip() for s in cond_code_symexpr.free_symbols}
-        #print("free_syms:", free_syms)
-        #print("All free_syms:", all_free_syms)
+        print("free_syms:", free_syms)
         sym_val_map = dict()
+        symbolic_sym_val_map = dict()
         nodes_to_check = {self.conditional}
 
         # Do reverse BFS from the sink node to get all possible interstate assignments
@@ -707,35 +745,51 @@ class FuseBranches(transformation.MultiStateTransformation):
             node_to_check = nodes_to_check.pop()
             ies = {ie for ie in graph.in_edges(node_to_check)}
             for ie in ies:
-                #print(f"Check node: {node_to_check}, edge: {ie.data.assignments}")
+                print(f"Check node: {node_to_check}, edge: {ie.data.assignments}")
                 for k, v in ie.data.assignments.items():
                     if k in free_syms and k not in sym_val_map:
-                        sym_val_map[k] = dace.symbolic.SymExpr(v)
+                        # in case if Eq((x + 1 > b), 1) sympy will have a problem
+                        expr = pystr_to_symbolic(v, simplify=False)
+                        #if isinstance(expr, Eq):
+                        sym_val_map[k] = v
+                        #    symbolic_sym_val_map[k] = expr
+                        # else: if not an Equality expression, subs / simplify will cause issue
+                        # As relationals can't be integers in Sympy system
+                        # But DaCe uses 1 == True, 0 == False
             nodes_to_check = nodes_to_check.union({ie.src for ie in ies})
 
         # The symbol can in free symbols
         assigned_syms = {k for k in sym_val_map}
-        #unassigned_syms = free_syms - assigned_syms
-        #print("assigned_syms:", assigned_syms)
-        #print("unassigned_syms:", unassigned_syms)
-        #print("sym_val_map:", sym_val_map)
-        #graph.sdfg.save("owo.sdfg")
+        unassigned_syms = free_syms - assigned_syms
+        print("assigned_syms:", assigned_syms)
+        print("unassigned_syms:", unassigned_syms)
+        print("sym_val_map:", sym_val_map)
+        graph.sdfg.save("owo.sdfg")
 
         cond_var = str(next(iter(cond_code_symexpr.free_symbols)))
 
         # If the sym_map has any functions, then we need to drop, e.g. array access
         new_sym_val_map = dict()
         for k, v in sym_val_map.items():
-            funcs = [e for e in v.atoms(Function)]
-            #print(f"Functions in {v} are {funcs}")
+            vv = dace.symbolic.SymExpr(v)
+            funcs = [e for e in vv.atoms(Function)]
+            print(f"Functions in {v} are {funcs}")
             if len(funcs) == 0:
                 new_sym_val_map[k] = v
         sym_val_map = new_sym_val_map
 
-        #print(f"Subs {cond_code_symexpr} -> {cond_code_symexpr.subs(sym_val_map)}")
-        cond_assignment = pycode(cond_code_symexpr.subs(sym_val_map))
+        # Subsitute using replace dict to avoid problems
+        self.conditional.replace_dict(sym_val_map)
 
-        return cond_var, cond_assignment
+        print(
+            f"Subs {cond_code_symexpr}, with sym map ({sym_val_map}) -> {cond_code_symexpr.subs(sym_val_map)} | {cond_code_symexpr.xreplace(symbolic_sym_val_map)}"
+        )
+        #cond_assignment = pycode(cond_code_symexpr.subs(sym_val_map))
+        new_conds = {c.as_string for c, b in self.conditional.branches if c is not None}
+        new_cond = new_conds.pop()
+        #raise Exception(cond_var, new_cond)
+
+        return cond_var, new_cond
 
     def _generate_identity_write(self, state: SDFGState, arr_name: str, subset: dace.subsets.Range):
         accessed_data = {n.data for n in state.nodes() if isinstance(n, dace.nodes.AccessNode)}
@@ -801,15 +855,11 @@ class FuseBranches(transformation.MultiStateTransformation):
 
         return if_block, new_if_block
 
-    def try_clean(self, graph: ControlFlowRegion, sdfg: SDFG):
-        # Some patterns that we can clean
-
+    def move_interstate_assignments_from_empty_start_states_to_front_of_conditional(self, graph: ControlFlowRegion,
+                                                                                    conditional: ConditionalBlock):
         # Pattern 1
         # If start block is a state and is empty and has assignments only,
         # We can add them before
-        assert graph == self.conditional.parent_graph
-        assert sdfg == self.conditional.parent_graph.sdfg
-
         if len(self.conditional.branches) == 1:
             cond, body = self.conditional.branches[0]
 
@@ -843,11 +893,18 @@ class FuseBranches(transformation.MultiStateTransformation):
                 for oe in oes:
                     body.add_edge(cpnode, oe.dst, copy.deepcopy(oe.data))
 
-            graph.reset_cfg_list()
+            graph.sdfg.reset_cfg_list()
+            sdutil.set_nested_sdfg_parent_references(graph.sdfg)
+            graph.sdfg.validate()
 
-            # Pattern 2
-            # If all top-level nodes are connected through empty interstate edges
-            # And we have a line graph, put each state to the same if condition
+    def duplicate_condition_across_all_top_level_nodes_if_line_graph_and_empty_interstate_edges(
+            self, graph: ControlFlowRegion, conditional: ConditionalBlock):
+        # Pattern 2
+        # If all top-level nodes are connected through empty interstate edges
+        # And we have a line graph, put each state to the same if condition
+        if len(self.conditional.branches) == 1:
+            cond, body = self.conditional.branches[0]
+
             nodes = list(body.bfs_nodes())
             in_degree_leq_one = all({body.in_degree(n) <= 1 for n in nodes})
             out_degree_leq_one = all({body.out_degree(n) <= 1 for n in nodes})
@@ -884,6 +941,44 @@ class FuseBranches(transformation.MultiStateTransformation):
             graph.sdfg.reset_cfg_list()
             sdutil.set_nested_sdfg_parent_references(graph.sdfg)
             graph.sdfg.validate()
+
+    def sequentialize_if_else_branch_if_disjoint_subsets(self, graph: ControlFlowRegion):
+        # Disjoint subsets do not require the combine tasklet.
+        # Therefore we need to split:
+        # if (cond1) {
+        #   body1
+        # } else {
+        #   body2
+        # }
+        # into two sequential ifs:
+        # if (cond1) {
+        #   body1
+        # }
+        # neg_cond1 = !cond1
+        # if (!cond1) {
+        #   body2
+        # }
+        # And thus we can use twice the single branch imlpementaiton
+        if self.can_be_applied(graph=graph, expr_index=0, sdfg=graph.sdfg, permissive=False):
+            if len(self.conditional.branches) == 2:
+                tup0 = self.conditional.branches[0]
+                tup1 = self.conditional.branches[1]
+                (cond0, body0) = tup0[0], tup0[1]
+                (cond1, body1) = tup1[0], tup1[1]
+                state0: SDFGState = body0.nodes()[0]
+                state1: SDFGState = body1.nodes()[0]
+                if self._is_disjoint_subset(state0, state1):  # Then we need to sequentialize branches
+                    first_if, second_if = self._split_branches(parent_graph=graph, if_block=self.conditional)
+
+    def try_clean(self, graph: ControlFlowRegion, sdfg: SDFG):
+        assert graph == self.conditional.parent_graph
+        assert sdfg == self.conditional.parent_graph.sdfg
+        # Some patterns that we can clean
+        self.move_interstate_assignments_from_empty_start_states_to_front_of_conditional(graph, self.conditional)
+        self.duplicate_condition_across_all_top_level_nodes_if_line_graph_and_empty_interstate_edges(
+            graph, self.conditional)
+        # Implicitly done by can-be-applied
+        # self.sequentialize_if_else_branch_if_disjoint_subsets(graph)
 
     def apply(self, graph: ControlFlowRegion, sdfg: SDFG):
         # If CFG has 1 or two branches
@@ -1238,6 +1333,7 @@ class FuseBranches(transformation.MultiStateTransformation):
         graph.sdfg.reset_cfg_list()
         sdutil.set_nested_sdfg_parent_references(graph.sdfg)
 
+        graph.sdfg.save("t1.sdfgz", compress=True)
         graph.sdfg.validate()
 
     def _find_previous_write(self, state: dace.SDFGState, sink: dace.nodes.Tasklet, data: str,
