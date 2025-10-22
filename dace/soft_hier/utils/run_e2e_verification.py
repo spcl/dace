@@ -335,7 +335,7 @@ def run_e2e_verification(hw_config: HardwareConfig,
 
     # Step 5 Compare Data
     if hw_config.test_mode == 'perf_only':
-        return {'all_match': True, 'details': {}, 'execution_period_ns': ret_dict.get('execution_period_ns', None)}
+        return {'all_match': True, 'details': {}, 'execution_period_ns': ret_dict.get('execution_period_ns', None), 'interleave_handlers': interleave_handlers}
     elif hw_config.test_mode == 'functional':
         comparison = compare(hw_config, numpy_data, sdfg_data, interleave_handlers, sdfg, tolerance)
         return {'all_match': comparison['all_match'], 'details': {}, 'execution_period_ns': ret_dict.get('execution_period_ns', None)}
