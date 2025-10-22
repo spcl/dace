@@ -206,10 +206,10 @@ def find_dims_to_pop2(
     for dim_to_pop, a_sz in enumerate(a_size):
         if b_dim_to_check == len(b_size):
             # We have associated all dimensions of `b` thus we have to pop this dimension.
-            if (a_sz == 1) == True:
-                dims_to_pop.append(dim_to_pop)
-                continue
-            return None
+            if (a_sz == 1) == False:  # SymPy comparison.
+                return None
+            dims_to_pop.append(dim_to_pop)
+            continue
 
         b_sz = b_size[b_dim_to_check]
         if (a_sz == b_sz) == True:  # SymPy comparison.
@@ -220,10 +220,9 @@ def find_dims_to_pop2(
             # They are different thus we have to pop the dimension, but we do _not_
             #  have to advance the `B` pointer, as we have to reuse it in the next
             #  iteration again.
-            if (a_sz == 1) == True:
-                dims_to_pop.append(dim_to_pop)
-                continue
-            return None
+            if (a_sz == 1) == False:  # SymPy comparison.
+                return None
+            dims_to_pop.append(dim_to_pop)
 
     if b_dim_to_check != len(b_size):
         # NOTE: It would be probably the best to generate an error here. The previous implementation
