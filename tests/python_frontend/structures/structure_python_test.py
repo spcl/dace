@@ -275,6 +275,10 @@ def test_readwrite_structure_in_map():
     ref = np.zeros((10, 5), dtype=np.float32)
     ref[:6, :] = 6.0
 
+    generated_code = copy_prog.to_sdfg().generate_code()
+    for code in generated_code:
+        print(code.clean_code)
+
     copy_prog.compile()(inp_struct, M=10, N=5)
 
     assert np.allclose(data, ref)
