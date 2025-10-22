@@ -5,6 +5,7 @@ Reduction operations for ONNX.
 This module contains implementations of reduction operations including:
 - ReduceSum, ReduceMean: Standard reductions over specified axes
 - ReduceMax, ReduceMin: Min/max reductions
+- ReduceL2: L2 norm reduction
 - CumSum: Cumulative sum along an axis
 - Sum: Element-wise sum of multiple inputs
 
@@ -427,3 +428,60 @@ class PureSum(ONNXForward):
         tasklet.in_connectors = {f"__{inp}": in_desc_with_name(node, state, sdfg, inp).dtype for inp in input_names}
         tasklet.out_connectors = {"__sum": out_desc_with_name(node, state, sdfg, "sum").dtype}
         return nsdfg
+
+
+# ============================================================================
+# ReduceL2 Operations
+# ============================================================================
+
+
+@op_implementation(op="ReduceL2", name="pure")
+class PureReduceL2(ONNXForward):
+    """
+    Pure implementation of ONNX ReduceL2 operator.
+
+    Computes the L2 norm (sqrt of sum of squares) of input elements along specified axes.
+    """
+
+    @staticmethod
+    def forward_can_be_applied(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> bool:
+        # Check that axes are present and constant
+        is_axes_present = True
+        try:
+            if hasattr(sdfg, "_parent_onnx_model") and in_edge_with_name(
+                    node, state, "axes").src.data not in sdfg._parent_onnx_model.clean_weights:
+                return False
+        except ValueError:
+            is_axes_present = False
+
+        if not is_axes_present and hasattr(node, "axes"):
+            is_axes_present = True
+
+        if not is_axes_present:
+            return False
+
+        return True
+
+    @staticmethod
+    def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+        # Get axes
+        axes = None
+        try:
+            if hasattr(sdfg, "_parent_onnx_model") and in_edge_with_name(
+                    node, state, "axes").src.data in sdfg._parent_onnx_model.clean_weights:
+                axes = sdfg._parent_onnx_model.clean_weights[in_edge_with_name(node, state, "axes").src.data].numpy()
+        except ValueError:
+            pass
+
+        if axes is not None:
+            if len(axes) == 1:
+                axes = axes[0]
+            else:
+                raise NotImplementedError("PureReduceL2 with multiple axes as input connectors is not implemented yet.")
+        else:
+            axes = node.axes if hasattr(node, "axes") else None
+
+        def prog(data, reduced):
+            reduced[:] = np.sqrt(np.sum(np.square(data), axis=axes))
+
+        return program_for_node(prog, sdfg, state, node)

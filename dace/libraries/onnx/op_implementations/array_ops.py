@@ -828,3 +828,424 @@ class PureCast(ONNXForward):
                                                       external_edges=True)
 
             return nsdfg
+
+
+# ============================================================================
+# Constant Generation Operations
+# ============================================================================
+
+
+@op_implementation(op="Constant", name="pure")
+class PureConstant(ONNXForward):
+    """
+    Pure implementation of ONNX Constant operator.
+
+    Generates a constant tensor with a given value.
+    """
+
+    @staticmethod
+    def forward_can_be_applied(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> bool:
+        # Constant nodes should have a value attribute
+        return hasattr(node, 'value') or hasattr(node, 'value_float') or hasattr(node, 'value_int')
+
+    @staticmethod
+    def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+        nsdfg = dace.SDFG(node.label + "_expansion")
+        nstate = nsdfg.add_state()
+
+        output_desc = copy.deepcopy(out_desc_with_name(node, state, sdfg, "output"))
+        nsdfg.add_datadesc("output", output_desc)
+        nsdfg.arrays["output"].transient = False
+
+        output_write = nstate.add_write("output")
+
+        # Get the constant value
+        if hasattr(node, 'value'):
+            const_value = node.value
+        elif hasattr(node, 'value_float'):
+            const_value = node.value_float
+        elif hasattr(node, 'value_int'):
+            const_value = node.value_int
+        else:
+            raise ValueError("Constant node must have value, value_float, or value_int attribute")
+
+        # Convert to numpy array if needed
+        if not isinstance(const_value, np.ndarray):
+            const_value = np.array(const_value, dtype=output_desc.dtype.as_numpy_dtype())
+
+        # Flatten the constant value for iteration
+        flat_value = const_value.flatten()
+
+        # Create tasklets to write each element
+        for i, val in enumerate(flat_value):
+            tasklet = nstate.add_tasklet(f"write_const_{i}", {}, {"out": output_desc.dtype}, f"out = {val}")
+            nstate.add_edge(tasklet, "out", output_write, None, dace.Memlet(f"output[{i}]"))
+
+        return nsdfg
+
+
+@op_implementation(op="ConstantOfShape", name="pure")
+class PureConstantOfShape(ONNXForward):
+    """
+    Pure implementation of ONNX ConstantOfShape operator.
+
+    Generates a tensor with given shape filled with a constant value.
+    """
+
+    @staticmethod
+    def forward_can_be_applied(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> bool:
+        # Check if shape input is constant
+        try:
+            shape_node = next(state.in_edges_by_connector(node, "shape")).src
+            return onnx_constant_or_none(sdfg, shape_node) is not None
+        except (StopIteration, ValueError):
+            return False
+
+    @staticmethod
+    def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+        # Get the shape value
+        shape_node = next(state.in_edges_by_connector(node, "shape")).src
+        shape_val = onnx_constant_or_none(sdfg, shape_node)
+
+        # Remove shape input since it's constant
+        constant_folding.remove_node_and_computation(sdfg, state, node, "shape")
+
+        # Get fill value (default is 0)
+        fill_value = 0
+        if hasattr(node, 'value'):
+            fill_value = node.value
+
+        output_desc = out_desc_with_name(node, state, sdfg, "output")
+
+        def prog(output):
+            output[:] = fill_value
+
+        return program_for_node(prog, sdfg, state, node)
+
+
+# ============================================================================
+# Range Operation
+# ============================================================================
+
+
+@op_implementation(op="Range", name="pure")
+class PureRange(ONNXForward):
+    """
+    Pure implementation of ONNX Range operator.
+
+    Generates a sequence of numbers from start to limit with step increment.
+    """
+
+    @staticmethod
+    def forward_can_be_applied(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> bool:
+        # Check if all inputs are constants
+        for conn in ["start", "limit", "delta"]:
+            try:
+                input_node = next(state.in_edges_by_connector(node, conn)).src
+                if onnx_constant_or_none(sdfg, input_node) is None:
+                    return False
+            except (StopIteration, ValueError):
+                return False
+        return True
+
+    @staticmethod
+    def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+        # Get constant values
+        start_node = next(state.in_edges_by_connector(node, "start")).src
+        limit_node = next(state.in_edges_by_connector(node, "limit")).src
+        delta_node = next(state.in_edges_by_connector(node, "delta")).src
+
+        start_val = onnx_constant_or_none(sdfg, start_node)
+        limit_val = onnx_constant_or_none(sdfg, limit_node)
+        delta_val = onnx_constant_or_none(sdfg, delta_node)
+
+        # Remove constant inputs
+        constant_folding.remove_node_and_computation(sdfg, state, node, "start")
+        constant_folding.remove_node_and_computation(sdfg, state, node, "limit")
+        constant_folding.remove_node_and_computation(sdfg, state, node, "delta")
+
+        output_desc = out_desc_with_name(node, state, sdfg, "output")
+
+        nsdfg = dace.SDFG(node.label + "_expansion")
+        nstate = nsdfg.add_state()
+
+        nsdfg.add_datadesc("output", copy.deepcopy(output_desc))
+        nsdfg.arrays["output"].transient = False
+
+        output_write = nstate.add_write("output")
+
+        # Calculate number of elements
+        num_elements = int(np.ceil((limit_val - start_val) / delta_val))
+
+        # Create mapped tasklet to generate range
+        map_ranges = {"i": f"0:{num_elements}"}
+
+        tasklet, map_entry, map_exit = nstate.add_mapped_tasklet(name=node.label + "_tasklet",
+                                                                 map_ranges=map_ranges,
+                                                                 inputs={},
+                                                                 code=f"__out = {start_val} + i * {delta_val}",
+                                                                 outputs={"__out": dace.Memlet("output[i]")},
+                                                                 external_edges=True)
+
+        return nsdfg
+
+
+# ============================================================================
+# GatherND Operation
+# ============================================================================
+
+
+@op_implementation(op="GatherND", name="pure")
+class PureGatherND(ONNXForward):
+    """
+    Pure implementation of ONNX GatherND operator.
+
+    Gathers values from data tensor using multi-dimensional indices.
+    """
+
+    @staticmethod
+    def forward_can_be_applied(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> bool:
+        return True
+
+    @staticmethod
+    def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+        nsdfg, nstate, input_nodes, output_nodes = empty_sdfg_for_node(sdfg, state, node, add_access_nodes=True)
+
+        data_desc = in_desc_with_name(node, state, sdfg, "data")
+        indices_desc = in_desc_with_name(node, state, sdfg, "indices")
+        output_desc = out_desc_with_name(node, state, sdfg, "output")
+
+        batch_dims = getattr(node, 'batch_dims', 0)
+
+        # Get index depth (last dimension of indices)
+        indices_shape = indices_desc.shape
+        index_depth = indices_shape[-1]
+
+        # Calculate output shape for mapping
+        output_shape = output_desc.shape
+
+        # Generate code for GatherND operation
+        data_idx_expr = " + ".join(
+            [f"indices_flat[i * {index_depth} + {j}] * {data_desc.strides[j]}" for j in range(index_depth)])
+
+        num_indices = int(np.prod(indices_shape[:-1]))
+
+        code = f"""
+        for (int i = 0; i < {num_indices}; i++) {{
+            long long data_idx = {data_idx_expr};
+            __output[i] = __data[data_idx];
+        }}
+        """
+
+        tasklet = nstate.add_tasklet(name=node.label + "_tasklet",
+                                     inputs={
+                                         "__data": dace.pointer(data_desc.dtype),
+                                         "indices_flat": dace.pointer(indices_desc.dtype)
+                                     },
+                                     outputs={"__output": dace.pointer(output_desc.dtype)},
+                                     language=dace.Language.CPP,
+                                     code=code)
+
+        nstate.add_edge(input_nodes["data"], None, tasklet, "__data", dace.Memlet.from_array("data", data_desc))
+        nstate.add_edge(input_nodes["indices"], None, tasklet, "indices_flat",
+                        dace.Memlet.from_array("indices", indices_desc))
+        nstate.add_edge(tasklet, "__output", output_nodes["output"], None,
+                        dace.Memlet.from_array("output", output_desc))
+
+        return nsdfg
+
+
+# ============================================================================
+# ScatterND Operation
+# ============================================================================
+
+
+@op_implementation(op="ScatterND", name="pure")
+class PureScatterND(ONNXForward):
+    """
+    Pure implementation of ONNX ScatterND operator.
+
+    Scatters values into a tensor at locations specified by indices.
+    """
+
+    @staticmethod
+    def forward_can_be_applied(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> bool:
+        return True
+
+    @staticmethod
+    def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+        nsdfg, nstate, input_nodes, output_nodes = empty_sdfg_for_node(sdfg, state, node, add_access_nodes=True)
+
+        data_desc = in_desc_with_name(node, state, sdfg, "data")
+        indices_desc = in_desc_with_name(node, state, sdfg, "indices")
+        updates_desc = in_desc_with_name(node, state, sdfg, "updates")
+        output_desc = out_desc_with_name(node, state, sdfg, "output")
+
+        # Get index depth (last dimension of indices)
+        indices_shape = indices_desc.shape
+        index_depth = indices_shape[-1]
+
+        num_updates = int(np.prod(indices_shape[:-1]))
+        data_size = int(np.prod(data_desc.shape))
+
+        # Generate code for ScatterND operation
+        code = f"""
+        // Copy input data to output
+        for (int i = 0; i < {data_size}; i++) {{
+            __output[i] = __data[i];
+        }}
+
+        // Scatter updates
+        for (int i = 0; i < {num_updates}; i++) {{
+            long long idx = 0;
+            """ + "\n            ".join(
+            [f"idx += __indices[i * {index_depth} + {j}] * {data_desc.strides[j]};" for j in range(index_depth)]) + f"""
+            __output[idx] = __updates[i];
+        }}
+        """
+
+        tasklet = nstate.add_tasklet(name=node.label + "_tasklet",
+                                     inputs={
+                                         "__data": dace.pointer(data_desc.dtype),
+                                         "__indices": dace.pointer(indices_desc.dtype),
+                                         "__updates": dace.pointer(updates_desc.dtype)
+                                     },
+                                     outputs={"__output": dace.pointer(output_desc.dtype)},
+                                     language=dace.Language.CPP,
+                                     code=code)
+
+        nstate.add_edge(input_nodes["data"], None, tasklet, "__data", dace.Memlet.from_array("data", data_desc))
+        nstate.add_edge(input_nodes["indices"], None, tasklet, "__indices",
+                        dace.Memlet.from_array("indices", indices_desc))
+        nstate.add_edge(input_nodes["updates"], None, tasklet, "__updates",
+                        dace.Memlet.from_array("updates", updates_desc))
+        nstate.add_edge(tasklet, "__output", output_nodes["output"], None,
+                        dace.Memlet.from_array("output", output_desc))
+
+        return nsdfg
+
+
+# ============================================================================
+# TopK Operation
+# ============================================================================
+
+
+@op_implementation(op="TopK", name="pure")
+class PureTopK(ONNXForward):
+    """
+    Pure implementation of ONNX TopK operator.
+
+    Finds the top K largest (or smallest) elements along a given axis.
+    """
+
+    @staticmethod
+    def forward_can_be_applied(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> bool:
+        # Check if K is constant
+        try:
+            k_node = next(state.in_edges_by_connector(node, "K")).src
+            return onnx_constant_or_none(sdfg, k_node) is not None
+        except (StopIteration, ValueError):
+            return False
+
+    @staticmethod
+    def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+        # Get K value
+        k_node = next(state.in_edges_by_connector(node, "K")).src
+        k_val = int(onnx_constant_or_none(sdfg, k_node))
+
+        # Remove K input since it's constant
+        constant_folding.remove_node_and_computation(sdfg, state, node, "K")
+
+        input_desc = in_desc_with_name(node, state, sdfg, "X")
+        values_desc = out_desc_with_name(node, state, sdfg, "Values")
+        indices_desc = out_desc_with_name(node, state, sdfg, "Indices")
+
+        axis = getattr(node, 'axis', -1)
+        largest = getattr(node, 'largest', 1)
+        sorted_output = getattr(node, 'sorted', 1)
+
+        # Normalize axis
+        if axis < 0:
+            axis = len(input_desc.shape) + axis
+
+        nsdfg = dace.SDFG(node.label + "_expansion")
+        nstate = nsdfg.add_state()
+
+        nsdfg.add_datadesc("X", copy.deepcopy(input_desc))
+        nsdfg.add_datadesc("Values", copy.deepcopy(values_desc))
+        nsdfg.add_datadesc("Indices", copy.deepcopy(indices_desc))
+        nsdfg.arrays["X"].transient = False
+        nsdfg.arrays["Values"].transient = False
+        nsdfg.arrays["Indices"].transient = False
+
+        input_read = nstate.add_read("X")
+        values_write = nstate.add_write("Values")
+        indices_write = nstate.add_write("Indices")
+
+        # Generate code for partial sort along axis
+        input_shape = input_desc.shape
+        axis_size = input_shape[axis]
+
+        # Calculate strides for iteration
+        outer_size = int(np.prod(input_shape[:axis])) if axis > 0 else 1
+        inner_size = int(np.prod(input_shape[axis + 1:])) if axis < len(input_shape) - 1 else 1
+
+        # Simple bubble sort for top K (not optimal but works for pure SDFG)
+        # For production, we'd use a more efficient algorithm
+        comparison_op = ">" if largest else "<"
+
+        code = f"""
+        for (int outer = 0; outer < {outer_size}; outer++) {{
+            for (int inner = 0; inner < {inner_size}; inner++) {{
+                // Create temporary arrays for sorting
+                {input_desc.dtype.ctype} temp_vals[{axis_size}];
+                long long temp_idxs[{axis_size}];
+
+                // Copy slice to temporary array
+                for (int i = 0; i < {axis_size}; i++) {{
+                    int idx = outer * {axis_size * inner_size} + i * {inner_size} + inner;
+                    temp_vals[i] = __X[idx];
+                    temp_idxs[i] = i;
+                }}
+
+                // Partial sort to find top K
+                for (int i = 0; i < {k_val}; i++) {{
+                    for (int j = i + 1; j < {axis_size}; j++) {{
+                        if (temp_vals[j] {comparison_op} temp_vals[i]) {{
+                            // Swap values
+                            {input_desc.dtype.ctype} tmp_v = temp_vals[i];
+                            temp_vals[i] = temp_vals[j];
+                            temp_vals[j] = tmp_v;
+
+                            // Swap indices
+                            long long tmp_i = temp_idxs[i];
+                            temp_idxs[i] = temp_idxs[j];
+                            temp_idxs[j] = tmp_i;
+                        }}
+                    }}
+                }}
+
+                // Write top K results
+                for (int i = 0; i < {k_val}; i++) {{
+                    int out_idx = outer * {k_val * inner_size} + i * {inner_size} + inner;
+                    __Values[out_idx] = temp_vals[i];
+                    __Indices[out_idx] = temp_idxs[i];
+                }}
+            }}
+        }}
+        """
+
+        tasklet = nstate.add_tasklet(name=node.label + "_tasklet",
+                                     inputs={"__X": dace.pointer(input_desc.dtype)},
+                                     outputs={
+                                         "__Values": dace.pointer(values_desc.dtype),
+                                         "__Indices": dace.pointer(indices_desc.dtype)
+                                     },
+                                     language=dace.Language.CPP,
+                                     code=code)
+
+        nstate.add_edge(input_read, None, tasklet, "__X", dace.Memlet.from_array("X", input_desc))
+        nstate.add_edge(tasklet, "__Values", values_write, None, dace.Memlet.from_array("Values", values_desc))
+        nstate.add_edge(tasklet, "__Indices", indices_write, None, dace.Memlet.from_array("Indices", indices_desc))
+
+        return nsdfg

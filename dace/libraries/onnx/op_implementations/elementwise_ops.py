@@ -4,8 +4,9 @@ Elementwise and mathematical ONNX operations.
 
 This module contains pure implementations of elementwise mathematical operations including:
 - Basic arithmetic: Add, Sub, Mul, Div, Pow
-- Unary math functions: Log, Exp, Sqrt, Sin, Cos, Tanh, Erf, Neg, Reciprocal
+- Unary math functions: Log, Exp, Sqrt, Sin, Cos, Tan, Tanh, Erf, Neg, Reciprocal
 - Activation functions: Relu, LeakyRelu, Sigmoid, Softplus
+- Comparison operations: Equal, GreaterOrEqual
 - Utility operations: Clip
 
 All operations support broadcasting where applicable.
@@ -83,6 +84,11 @@ def Sin(input, output):
 @python_pure_op_implementation
 def Cos(input, output):
     output[:] = np.cos(input)
+
+
+@python_pure_op_implementation
+def Tan(input, output):
+    output[:] = np.tan(input)
 
 
 @python_pure_op_implementation
@@ -399,3 +405,38 @@ class PureClip(ONNXForward):
             output[:] = dace.elementwise(lfunc, input)
 
         return program_for_node(prog, sdfg, state, node)
+
+
+# ============================================================================
+# Comparison Operations
+# ============================================================================
+
+
+@python_pure_op_implementation
+def Equal(A, B, C):
+    """
+    ONNX Equal operation implementation.
+
+    Returns element-wise equality comparison between two tensors.
+
+    Args:
+        A: First input tensor.
+        B: Second input tensor.
+        C: Output tensor containing boolean values.
+    """
+    C[:] = np.equal(A, B)
+
+
+@python_pure_op_implementation
+def GreaterOrEqual(A, B, C):
+    """
+    ONNX GreaterOrEqual operation implementation.
+
+    Returns element-wise A >= B comparison.
+
+    Args:
+        A: First input tensor.
+        B: Second input tensor.
+        C: Output tensor containing boolean values.
+    """
+    C[:] = np.greater_equal(A, B)
