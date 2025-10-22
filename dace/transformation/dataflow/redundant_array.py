@@ -119,7 +119,7 @@ def _validate_subsets(edge: graph.MultiConnectorEdge,
     return src_subset, dst_subset
 
 
-def find_dims_to_pop(a_size, b_size):
+def find_dims_to_pop(a_size, b_size) -> Optional[List[int]]:
     """Determine how the first subset has to be squeezed to get to the dimension of the second subset.
 
     Essentially the function determines which dimensions from the subset `A` have to be removed
@@ -127,13 +127,41 @@ def find_dims_to_pop(a_size, b_size):
     an empty list is returned.
     It is important that this function does not operates on the actual subsets but on their
     sizes.
+
+    Returns:
+        The function will return the list of dimensions that have to be removed in subset `A`
+        to bring it to the same dimensionality as subset `B`. In case the function failed to
+        associate all `B` dimensions to a corresponding `A` dimension the function returns
+        `None`.
+
+    Note:
+        In some cases the function behaves unexpected in some cases:
+        - If it was not possible to associate all dimensions of the `B` subset to a dimension
+            from the `A` subset the function returns `None`. This is a different behaviour
+            from the original version, which simply returned a list with questionable content.
+            Thus it was always necessary to check if
+            `len(a_size) - len(RETRUN_VALUE) == len(b_size)` hold before using it. For example
+            in the case `a_size := [3, 3], b_size := [9]` `None` will be returned.
+        - If a size is listed multiple times, for example `a_size := [1, 1, 5], b := [1, 5]` then
+            it is unspecific if `[0]` or `[1]` is returned. Note that the previous implementation
+            returned `[]` in that case.
+        - The function does not enforce that the dimensions that are popped are one (which might
+            change in the future). For example consider `a_size := [4, 3, 4], b_size := [3, 4]`
+            in that case the function will returns `[0]`, although it should probably return
+            `None`. Note that the original version would have returned `[]`.
     """
     if len(a_size) < len(b_size):
         raise ValueError(
             f"Expected that subset `A` has a larger rank ({len(a_size)} | {a_size}) than subset `B` ({len(b_size)} | {b_size})"
         )
     if len(a_size) == len(b_size):
-        return []
+        # NOTE: We now check if there two subsets have the same size. The original version
+        #   "kind of" did that. For `a_size := [3, 4], b_size := [4, 3]` it would have returned
+        #   `[]` but for `a_size := [1, 4], b_size := [2, 4]` it would have returned `[]`, which
+        #   is a very questionable behaviour.
+        if all((a_sz == b_sz) == True for a_sz, b_sz in zip(a_size, b_size)):  # SymPy comparison
+            return []
+        return None
 
     dims_to_pop = []
     b_dim_to_check = 0
@@ -156,9 +184,10 @@ def find_dims_to_pop(a_size, b_size):
             dims_to_pop.append(dim_to_pop)
 
     if b_dim_to_check != len(b_size):
-        raise ValueError(
-            f"Could not associate all `B` dimensions to an `A` dimension, only matched {b_dim_to_check} of {len(b_size)}"
-        )
+        # NOTE: It would be probably the best to generate an error here. The previous implementation
+        #   returned `dims_to_pop` which does not make sense, as it is incomplete. After some inspection
+        #   the best value in this case should be `None`.
+        return None
     if len(a_size) - len(b_size) != len(dims_to_pop):
         raise ValueError(f"Expected to pop {len(a_size) - len(b_size)} but only popped {len(dims_to_pop)}")
 
@@ -251,6 +280,30 @@ class RedundantArray(pm.SingleStateTransformation):
         except (NotImplementedError, ValueError) as ex:
             warnings.warn(f'validate_subsets failed: {ex}')
             return False
+
+        # In `apply()` we might need to pop some dimensions thus we must ensure that
+        #  we can actually do it.
+        # NOTE: If somebody understand that, please improve it.
+        check_if_we_need_to_pop = True
+        if (isinstance(in_desc, data.View) and isinstance(out_desc, data.View)):
+            for e in graph.in_edges(in_array):
+                if e.data.dst_subset is not None and a1_subset != e.data.dst_subset:
+                    check_if_we_need_to_pop = True
+                    break
+            else:
+                check_if_we_need_to_pop = False
+        if check_if_we_need_to_pop:
+            if a1_subset and b_subset and a1_subset.dims() != b_subset.dims():
+                a_size = a1_subset.size_exact()
+                b_size = b_subset.size_exact()
+                if a1_subset.dims() > b_subset.dims():
+                    a_dims_to_pop = find_dims_to_pop(a_size, b_size)
+                    if a_dims_to_pop is None:
+                        return False
+                else:
+                    b_dims_to_pop = find_dims_to_pop(b_size, a_size)
+                    if b_dims_to_pop is None:
+                        return False
 
         # Find the true in desc (in case in_array is a view).
         true_in_array = in_array
