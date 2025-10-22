@@ -57,15 +57,14 @@ def copy_state_contents(old_state: dace.SDFGState, new_state: dace.SDFGState) ->
     return node_map
 
 
-def insert_non_transient_data_through_parent_scopes(
-    non_transient_data: Set[str],
-    nsdfg_node: 'dace.nodes.NestedSDFG',
-    parent_graph: 'dace.SDFGState',
-    parent_sdfg: 'dace.SDFG',
-    add_to_output_too: bool = False,
-    add_with_exact_subset: bool = False,
-    exact_subset: Union[None, dace.subsets.Range] = None,
-):
+def insert_non_transient_data_through_parent_scopes(non_transient_data: Set[str],
+                                                    nsdfg_node: 'dace.nodes.NestedSDFG',
+                                                    parent_graph: 'dace.SDFGState',
+                                                    parent_sdfg: 'dace.SDFG',
+                                                    add_to_output_too: bool = False,
+                                                    add_with_exact_subset: bool = False,
+                                                    exact_subset: Union[None, dace.subsets.Range] = None,
+                                                    nsdfg_connector_name: Union[str, None] = None):
     """
     Inserts non-transient data containers into all relevant parent scopes (through all map scopes).
 
@@ -109,10 +108,11 @@ def insert_non_transient_data_through_parent_scopes(
             inner_sdfg.remove_symbol(data_access)
 
         # Add the data descriptor to the nested SDFG if missing
-        if data_access not in inner_sdfg.arrays:
+        inner_data_access = data_access if nsdfg_connector_name is None else nsdfg_connector_name
+        if inner_data_access not in inner_sdfg.arrays:
             copydesc = copy.deepcopy(datadesc)
             copydesc.transient = False
-            inner_sdfg.add_datadesc(name=data_access, datadesc=copydesc)
+            inner_sdfg.add_datadesc(name=inner_data_access, datadesc=copydesc)
 
         # Ensure the parent also has the data descriptor
         if data_access not in parent_sdfg.arrays:
@@ -136,41 +136,89 @@ def insert_non_transient_data_through_parent_scopes(
                 return dace.memlet.Memlet.from_array(data_access, datadesc)
 
         # --- Add input connection path ---
+
+        state = {
+            'cur_in_conn_name': f"IN_{data_access}_p",
+            'cur_out_conn_name': f"OUT_{data_access}_p",
+            'cur_name_set': False,
+        }
+
+        def _get_in_conn_name(dst, state=state):
+            if state['cur_name_set'] is False:
+                i = 0
+                while (state['cur_in_conn_name'] in dst.in_connectors
+                       or state['cur_out_conn_name'] in dst.out_connectors):
+                    state['cur_in_conn_name'] = f"IN_{data_access}_p_{i}"
+                    state['cur_out_conn_name'] = f"OUT_{data_access}_p_{i}"
+                    i += 1
+                state['cur_name_set'] = True
+
+            inner_data_access = data_access if nsdfg_connector_name is None else nsdfg_connector_name
+            print("IN", state, dst.in_connectors, dst.out_connectors)
+            if isinstance(dst, dace.nodes.AccessNode):
+                return None
+            elif isinstance(dst, dace.nodes.NestedSDFG):
+                return inner_data_access
+            else:
+                return state['cur_in_conn_name']
+
+        def _get_out_conn_name(src, state=state):
+            if state['cur_name_set'] is False:
+                i = 0
+                while (state['cur_in_conn_name'] in src.in_connectors
+                       or state['cur_out_conn_name'] in src.out_connectors):
+                    state['cur_in_conn_name'] = f"IN_{data_access}_p_{i}"
+                    state['cur_out_conn_name'] = f"OUT_{data_access}_p_{i}"
+                    i += 1
+                state['cur_name_set'] = True
+            print("DST", state, dst.in_connectors, dst.out_connectors)
+
+            inner_data_access = data_access if nsdfg_connector_name is None else nsdfg_connector_name
+            if isinstance(src, dace.nodes.AccessNode):
+                return None
+            elif isinstance(src, dace.nodes.NestedSDFG):
+                return inner_data_access
+            else:
+                return state['cur_out_conn_name']
+
         an = parent_graph.add_access(data_access)
         src = an
         for it_id, parent_scope in enumerate(reversed(parent_scopes)):
             dst = parent_scope
+            # Initialize state with a parent map
+            _get_in_conn_name(dst)
+
             parent_graph.add_edge(
                 src,
-                None if isinstance(src, dace.nodes.AccessNode) else f"OUT_{data_access}",
+                _get_out_conn_name(src),
                 dst,
-                data_access if isinstance(dst, dace.nodes.NestedSDFG) else f"IN_{data_access}",
+                _get_in_conn_name(dst),
                 _get_memlet(it_id, data_access, datadesc),
             )
             # Ensure connectors exist
             if not isinstance(src, dace.nodes.AccessNode):
-                src.add_out_connector(f"OUT_{data_access}", force=True)
+                src.add_out_connector(_get_out_conn_name(src), force=True)
             if isinstance(dst, dace.nodes.NestedSDFG):
-                dst.add_in_connector(data_access, force=True)
+                dst.add_in_connector(_get_in_conn_name(dst), force=True)
             else:
-                dst.add_in_connector(f"IN_{data_access}")
+                dst.add_in_connector(_get_in_conn_name(dst))
             src = parent_scope
 
         # Connect final edge to the NestedSDFG
         dst = nsdfg_node
         parent_graph.add_edge(
             src,
-            None if isinstance(src, dace.nodes.AccessNode) else f"OUT_{data_access}",
+            _get_out_conn_name(src),
             dst,
-            data_access if isinstance(dst, dace.nodes.NestedSDFG) else f"IN_{data_access}",
+            _get_in_conn_name(dst),
             _get_memlet(it_id, data_access, datadesc),
         )
         if not isinstance(src, dace.nodes.AccessNode):
-            src.add_out_connector(f"OUT_{data_access}", force=True)
+            src.add_out_connector(_get_out_conn_name(src), force=True)
         if isinstance(dst, dace.nodes.NestedSDFG):
-            dst.add_in_connector(data_access, force=True)
+            dst.add_in_connector(_get_in_conn_name(dst), force=True)
         else:
-            dst.add_in_connector(f"IN_{data_access}", force=True)
+            dst.add_in_connector(_get_in_conn_name(dst), force=True)
 
         # --- Optionally add output connection path ---
         if add_to_output_too:
@@ -180,29 +228,31 @@ def insert_non_transient_data_through_parent_scopes(
                 src = parent_graph.exit_node(parent_scope)
                 parent_graph.add_edge(
                     src,
-                    data_access if isinstance(src, dace.nodes.NestedSDFG) else f"OUT_{data_access}",
+                    _get_out_conn_name(src),
                     dst,
-                    None if isinstance(dst, dace.nodes.AccessNode) else f"IN_{data_access}",
+                    _get_in_conn_name(dst),
                     _get_memlet(it_id, data_access, datadesc),
                 )
                 if not isinstance(dst, dace.nodes.AccessNode):
-                    dst.add_in_connector(f"IN_{data_access}", force=True)
+                    dst.add_in_connector(_get_in_conn_name(dst), force=True)
                 if isinstance(src, dace.nodes.NestedSDFG):
-                    src.add_out_connector(data_access, force=True)
+                    src.add_out_connector(_get_out_conn_name(src), force=True)
                 else:
-                    src.add_out_connector(f"OUT_{data_access}")
+                    src.add_out_connector(_get_out_conn_name(src), )
                 dst = src
             src = nsdfg_node
             parent_graph.add_edge(
                 src,
-                data_access if isinstance(src, dace.nodes.NestedSDFG) else f"OUT_{data_access}",
+                _get_out_conn_name(src),
                 dst,
-                None if isinstance(dst, dace.nodes.AccessNode) else f"IN_{data_access}",
+                _get_in_conn_name(dst),
                 _get_memlet(it_id, data_access, datadesc),
             )
             if not isinstance(dst, dace.nodes.AccessNode):
-                dst.add_in_connector(f"IN_{data_access}", force=True)
-            src.add_out_connector(data_access if isinstance(src, dace.nodes.NestedSDFG) else f"OUT_{data_access}")
+                dst.add_in_connector(f"IN_{data_access}_p", force=True)
+            src.add_out_connector(_get_out_conn_name(dst))
+
+    parent_graph.sdfg.save("x.sdfg")
 
     # Re-propagate memlets when subsets are explicit
     if add_with_exact_subset:
@@ -261,6 +311,26 @@ def token_match(string_to_check: str, pattern_str: str) -> str:
     tokens = {token.strip() for token in tokens}
 
     return pattern_str in tokens
+
+
+def token_split(string_to_check: str, pattern_str: str) -> Set[str]:
+    # Split while keeping delimiters
+    tokens = re.split(r'(\s+|[()\[\]])', string_to_check)
+
+    # Replace tokens that exactly match src
+    tokens = {token.strip() for token in tokens}
+
+    return tokens
+
+
+def token_split_variable_names(string_to_check: str) -> Set[str]:
+    # Split while keeping delimiters
+    tokens = re.split(r'(\s+|[()\[\]])', string_to_check)
+
+    # Replace tokens that exactly match src
+    tokens = {token.strip() for token in tokens if token not in ["[", "]", "(", ")"] and token.isidentifier()}
+
+    return tokens
 
 
 def replace_length_one_arrays_with_scalars(sdfg: dace.SDFG, recursive: bool = True, transient_only: bool = False):
