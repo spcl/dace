@@ -119,7 +119,10 @@ def _validate_subsets(edge: graph.MultiConnectorEdge,
     return src_subset, dst_subset
 
 
-def find_dims_to_pop(a_size, b_size) -> Optional[List[int]]:
+def find_dims_to_pop(
+    a_size: Sequence[symbolic.SymbolicType],
+    b_size: Sequence[symbolic.SymbolicType],
+) -> List[int]:
     """Determine how the first subset has to be squeezed to get to the dimension of the second subset.
 
     Essentially the function determines which dimensions from the subset `A` have to be removed
@@ -130,67 +133,28 @@ def find_dims_to_pop(a_size, b_size) -> Optional[List[int]]:
 
     Returns:
         The function will return the list of dimensions that have to be removed in subset `A`
-        to bring it to the same dimensionality as subset `B`. In case the function failed to
-        associate all `B` dimensions to a corresponding `A` dimension the function returns
-        `None`.
+        to bring it to the same dimensionality as subset `B`.
 
     Note:
-        In some cases the function behaves unexpected in some cases:
-        - If it was not possible to associate all dimensions of the `B` subset to a dimension
-            from the `A` subset the function returns `None`. This is a different behaviour
-            from the original version, which simply returned a list with questionable content.
-            Thus it was always necessary to check if
-            `len(a_size) - len(RETRUN_VALUE) == len(b_size)` hold before using it. For example
-            in the case `a_size := [3, 3], b_size := [9]` `None` will be returned.
+        This function is wrong. However, every attempt of fixing it resulted in breaking other
+        things in strange ways. The only solution would be to redo all transformations.
+        For example, let's consider the following cases:
+        - `a_size := [3, 3], b_size := [9]` in this case the function will return `[0, 1]`, which
+            might be correct in some cases but not in other, depending on the strides of `A`
+        - While the example above can make sense the following example,
+            `a_size := [4, 4], b_size := [9]` which also results in `[0, 1]` does not make sense
+            and is clearly wrong.
         - If a size is listed multiple times, for example `a_size := [1, 1, 5], b := [1, 5]` then
-            it is unspecific if `[0]` or `[1]` is returned. Note that the previous implementation
-            returned `[]` in that case.
-        - The function does not enforce that the dimensions that are popped are one (which might
-            change in the future). For example consider `a_size := [4, 3, 4], b_size := [3, 4]`
-            in that case the function will returns `[0]`, although it should probably return
-            `None`. Note that the original version would have returned `[]`.
+            the function will return `[]` although it should return `[0]` or `[1]`.
+        - Furthermore, if not all dimensions could be matched then some unspecific value is
+            returned, for example `a_size := [1, 3, 5], b_size := [1, 8]` will return `[1, 2]`.
+            Note that this in particular is not a real case scenario as it is clearly an error
+            in the subsets.
     """
-    if len(a_size) < len(b_size):
-        raise ValueError(
-            f"Expected that subset `A` has a larger rank ({len(a_size)} | {a_size}) than subset `B` ({len(b_size)} | {b_size})"
-        )
-    if len(a_size) == len(b_size):
-        # NOTE: We now check if there two subsets have the same size. The original version
-        #   "kind of" did that. For `a_size := [3, 4], b_size := [4, 3]` it would have returned
-        #   `[]` but for `a_size := [1, 4], b_size := [2, 4]` it would have returned `[]`, which
-        #   is a very questionable behaviour.
-        if all((a_sz == b_sz) == True for a_sz, b_sz in zip(a_size, b_size)):  # SymPy comparison
-            return []
-        return None
-
     dims_to_pop = []
-    b_dim_to_check = 0
-    for dim_to_pop, a_sz in enumerate(a_size):
-        if b_dim_to_check == len(b_size):
-            # We have associated all dimensions of `b` thus we have to pop this dimension.
-            dims_to_pop.append(dim_to_pop)
-            continue
-
-        b_sz = b_size[b_dim_to_check]
-        if (a_sz == b_sz) == True:  # SymPy comparison.
-            # They are the same, thus we do not have to pop the dimension, but we have
-            #  to advance the `B` pointer.
-            b_dim_to_check += 1
-        else:
-            # They are different thus we have to pop the dimension, but we do _not_
-            #  have to advance the `B` pointer, as we have to reuse it in the next
-            #  iteration again.
-            # TODO: Check if we have to ensure that `a_sz` is 1.
-            dims_to_pop.append(dim_to_pop)
-
-    if b_dim_to_check != len(b_size):
-        # NOTE: It would be probably the best to generate an error here. The previous implementation
-        #   returned `dims_to_pop` which does not make sense, as it is incomplete. After some inspection
-        #   the best value in this case should be `None`.
-        return None
-    if len(a_size) - len(b_size) != len(dims_to_pop):
-        raise ValueError(f"Expected to pop {len(a_size) - len(b_size)} but only popped {len(dims_to_pop)}")
-
+    for i, sz in enumerate(reversed(a_size)):
+        if sz not in b_size:
+            dims_to_pop.append(len(a_size) - 1 - i)
     return dims_to_pop
 
 
@@ -280,30 +244,6 @@ class RedundantArray(pm.SingleStateTransformation):
         except (NotImplementedError, ValueError) as ex:
             warnings.warn(f'validate_subsets failed: {ex}')
             return False
-
-        # In `apply()` we might need to pop some dimensions thus we must ensure that
-        #  we can actually do it.
-        # NOTE: If somebody understand that, please improve it.
-        check_if_we_need_to_pop = True
-        if (isinstance(in_desc, data.View) and isinstance(out_desc, data.View)):
-            for e in graph.in_edges(in_array):
-                if e.data.dst_subset is not None and a1_subset != e.data.dst_subset:
-                    check_if_we_need_to_pop = True
-                    break
-            else:
-                check_if_we_need_to_pop = False
-        if check_if_we_need_to_pop:
-            if a1_subset and b_subset and a1_subset.dims() != b_subset.dims():
-                a_size = a1_subset.size_exact()
-                b_size = b_subset.size_exact()
-                if a1_subset.dims() > b_subset.dims():
-                    a_dims_to_pop = find_dims_to_pop(a_size, b_size)
-                    if a_dims_to_pop is None:
-                        return False
-                else:
-                    b_dims_to_pop = find_dims_to_pop(b_size, a_size)
-                    if b_dims_to_pop is None:
-                        return False
 
         # Find the true in desc (in case in_array is a view).
         true_in_array = in_array
@@ -1089,10 +1029,9 @@ class RedundantSecondArray(pm.SingleStateTransformation):
             #  the situation, we need to modify them a bit.
             in_dim = len(in_desc.shape)
             out_dim = len(out_desc.shape)
-            if in_dim < out_dim:
+            if (len(b_dims_to_pop) == out_dim - in_dim) and (in_dim < out_dim):
                 # `out_array` has more dimensions, we thus have to replace the some strides
                 #  in `out_array` with the ones from `in_array` the extra ones will remain.
-                assert len(b_dims_to_pop) == out_dim - in_dim
                 view_strides = []
                 in_index = 0
                 for out_index in range(out_dim):
@@ -1105,13 +1044,13 @@ class RedundantSecondArray(pm.SingleStateTransformation):
                 assert in_index == in_dim
                 assert len(view_strides) == out_dim
                 view_strides = tuple(view_strides)
-            elif in_dim > out_dim:
+            elif (len(a_dims_to_pop) == in_dim - out_dim) and (in_dim > out_dim):
                 # `in_array` has more dimensions, thus we can simply remove the ones that we
                 #  no longer need.
-                assert len(a_dims_to_pop) == in_dim - out_dim
                 view_strides = tuple(s for i, s in enumerate(in_desc.strides) if i not in a_dims_to_pop)
             else:
                 # The two have the same dimensionality, thus there is no modifications
+                assert in_dim == out_dim
                 view_strides = in_desc.strides
 
             sdfg.arrays[out_array.data] = data.ArrayView(out_desc.dtype, out_desc.shape, True, out_desc.allow_conflicts,
