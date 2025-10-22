@@ -531,14 +531,15 @@ def get_num_parent_map_and_loop_scopes(root_sdfg: dace.SDFG, node: dace.nodes.Ma
     return len(get_parent_map_and_loop_scopes(root_sdfg, node, parent_state))
 
 
-def get_parent_map_and_loop_scopes(root_sdfg: dace.SDFG, node: dace.nodes.MapEntry | ControlFlowRegion,
+def get_parent_map_and_loop_scopes(root_sdfg: dace.SDFG,
+                                   node: dace.nodes.MapEntry | ControlFlowRegion | dace.nodes.Tasklet,
                                    parent_state: dace.SDFGState):
     scope_dict = parent_state.scope_dict() if parent_state is not None else None
     num_parent_maps_and_loops = 0
     cur_node = node
     parent_scopes = list()
 
-    if isinstance(cur_node, dace.nodes.MapEntry):
+    if isinstance(cur_node, (dace.nodes.MapEntry, dace.nodes.Tasklet)):
         while scope_dict[cur_node] is not None:
             if isinstance(scope_dict[cur_node], dace.nodes.MapEntry):
                 num_parent_maps_and_loops += 1
@@ -557,7 +558,7 @@ def get_parent_map_and_loop_scopes(root_sdfg: dace.SDFG, node: dace.nodes.MapEnt
     parent_nsdfg_node = parent_sdfg.sdfg.parent_nsdfg_node
     parent_nsdfg_parent_state = _find_parent_state(root_sdfg, parent_nsdfg_node)
 
-    while parent_nsdfg_node is not None:
+    while parent_nsdfg_node is not None and parent_nsdfg_parent_state is not None:
         scope_dict = parent_nsdfg_parent_state.scope_dict()
         cur_node = parent_nsdfg_node
         while scope_dict[cur_node] is not None:
