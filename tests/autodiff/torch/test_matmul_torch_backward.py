@@ -33,8 +33,8 @@ def run_matmul_test(
     sdfg_name: str,
     input_shapes: dict,
     use_sum: bool = True,
-    rtol: float = 1e-4,
-    atol: float = 1e-4,
+    rtol: float = 1e-5,
+    atol: float = 1e-5,
     auto_optimize: bool = False,
 ):
     """
@@ -495,7 +495,7 @@ def test_matmul_attention_like(sdfg_name: str):
             scores = (Q @ K.transpose(-2, -1)) * self.scale
             return scores @ V
 
-    run_matmul_test(AttentionLike(), sdfg_name, {"Q": (2, 8, 64), "K": (2, 8, 64), "V": (2, 8, 64)}, atol=1e-3)
+    run_matmul_test(AttentionLike(), sdfg_name, {"Q": (2, 8, 64), "K": (2, 8, 64), "V": (2, 8, 64)})
 
 
 ##################################
@@ -561,13 +561,7 @@ def test_matmul_4d_multihead_attention(sdfg_name: str):
             output = scores @ V  # (batch, n_heads, seq_len, head_dim)
             return output
 
-    run_matmul_test(MultiHeadAttention(),
-                    sdfg_name, {
-                        "Q": (2, 8, 32, 64),
-                        "K": (2, 8, 32, 64),
-                        "V": (2, 8, 32, 64)
-                    },
-                    atol=1e-3)
+    run_matmul_test(MultiHeadAttention(), sdfg_name, {"Q": (2, 8, 32, 64), "K": (2, 8, 32, 64), "V": (2, 8, 32, 64)})
 
 
 @pytest.mark.torch
@@ -608,13 +602,7 @@ def test_matmul_grouped_query_attention(sdfg_name: str):
             output = scores @ V
             return output
 
-    run_matmul_test(GroupedQueryAttention(),
-                    sdfg_name, {
-                        "Q": (1, 8, 32, 64),
-                        "K": (1, 2, 32, 64),
-                        "V": (1, 2, 32, 64)
-                    },
-                    atol=1e-3)
+    run_matmul_test(GroupedQueryAttention(), sdfg_name, {"Q": (1, 8, 32, 64), "K": (1, 2, 32, 64), "V": (1, 2, 32, 64)})
 
 
 @pytest.mark.torch
@@ -650,8 +638,8 @@ def test_matmul_llama_ffn_structure(sdfg_name: str):
     run_matmul_test(
         LlamaStyleFFN(),
         sdfg_name,
-        {"x": (2, 32, 512)},  # (batch, seq_len, dim)
-        atol=1e-3)
+        {"x": (2, 32, 512)},  # (batch, seq_len, dim))
+    )
 
 
 @pytest.mark.torch
@@ -674,7 +662,7 @@ def test_matmul_attention_qk_only(sdfg_name: str):
             scores = Q @ K.transpose(-2, -1)  # (batch, n_heads, seq_len, seq_len)
             return scores * self.scale
 
-    run_matmul_test(AttentionScores(), sdfg_name, {"Q": (2, 8, 64, 64), "K": (2, 8, 64, 64)}, atol=1e-3)
+    run_matmul_test(AttentionScores(), sdfg_name, {"Q": (2, 8, 64, 64), "K": (2, 8, 64, 64)})
 
 
 @pytest.mark.torch
@@ -693,7 +681,7 @@ def test_matmul_attention_av_only(sdfg_name: str):
             # V: (batch, n_heads, seq_len, head_dim)
             return scores @ V
 
-    run_matmul_test(AttentionApply(), sdfg_name, {"scores": (2, 8, 64, 64), "V": (2, 8, 64, 64)}, atol=1e-3)
+    run_matmul_test(AttentionApply(), sdfg_name, {"scores": (2, 8, 64, 64), "V": (2, 8, 64, 64)})
 
 
 @pytest.mark.torch
@@ -715,13 +703,11 @@ def test_matmul_larger_sequence(sdfg_name: str):
             scores = (Q @ K.transpose(-2, -1)) * self.scale
             return scores @ V
 
-    run_matmul_test(LargeSequenceAttention(),
-                    sdfg_name, {
-                        "Q": (1, 8, 512, 64),
-                        "K": (1, 8, 512, 64),
-                        "V": (1, 8, 512, 64)
-                    },
-                    atol=1e-3)
+    run_matmul_test(LargeSequenceAttention(), sdfg_name, {
+        "Q": (1, 8, 512, 64),
+        "K": (1, 8, 512, 64),
+        "V": (1, 8, 512, 64)
+    })
 
 
 ##################################
@@ -768,5 +754,3 @@ if __name__ == "__main__":
     test_matmul_with_transpose(sdfg_name="test_matmul_with_transpose")
     test_matmul_llama_ffn_structure(sdfg_name="test_matmul_llama_ffn_structure")
     test_matmul_grouped_query_attention(sdfg_name="test_matmul_grouped_query_attention")
-
-    print("All MatMul PyTorch backward tests passed!")
