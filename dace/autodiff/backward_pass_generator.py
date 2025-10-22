@@ -267,9 +267,11 @@ class BackwardPassGenerator:
                 cname = next(k for k, v in bres.required_grad_names.items() if v == zname)
 
                 for e in forward_state.in_edges_by_connector(node, cname):
-                    zero_init[e.data.data] = zinit
+                    grad_array_name = self.array_grad_name(e.data.data)
+                    zero_init[grad_array_name] = zinit
                 for e in forward_state.out_edges_by_connector(node, cname):
-                    zero_init[e.data.data] = zinit
+                    grad_array_name = self.array_grad_name(e.data.data)
+                    zero_init[grad_array_name] = zinit
 
         self._applied = True
         result = BackwardResult(required_grad_names=required_grad_names,
