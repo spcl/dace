@@ -387,6 +387,9 @@ class Structure(Data):
 
         self.members = OrderedDict(members)
         for k, v in self.members.items():
+            if isinstance(v, dtypes.typeclass):
+                v = Scalar(v)
+                self.members[k] = v
             v.transient = transient
 
         self.name = name
@@ -402,6 +405,8 @@ class Structure(Data):
             elif isinstance(v, Scalar):
                 symbols |= v.free_symbols
                 fields_and_types[k] = v.dtype
+            elif isinstance(v, dtypes.typeclass):
+                fields_and_types[k] = v
             elif isinstance(v, (sp.Basic, symbolic.SymExpr)):
                 symbols |= v.free_symbols
                 fields_and_types[k] = symbolic.symtype(v)
