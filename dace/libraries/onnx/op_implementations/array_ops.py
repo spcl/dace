@@ -297,6 +297,13 @@ class PureSqueeze(ONNXForward):
 
 @op_implementation(op="Expand", name="pure")
 class PureExpand(ONNXForward):
+    """
+    Pure implementation of ONNX Expand operator using broadcasting.
+
+    The Expand operator broadcasts the input tensor to a new shape following NumPy's broadcasting rules.
+    This implementation uses a mapped tasklet to copy elements with proper index translation.
+    It handles both the general broadcasting case and the no-op case where shapes are identical.
+    """
 
     @staticmethod
     def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
@@ -304,34 +311,44 @@ class PureExpand(ONNXForward):
 
     @staticmethod
     def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+        from dace.libraries.onnx.op_implementations.common import broadcast_indices
+        from dace.transformation.onnx import constant_folding
 
-        shape = out_desc_with_name(node, state, sdfg, "output").shape
+        # Get input and output descriptors
+        input_desc = in_desc_with_name(node, state, sdfg, "input")
+        output_desc = out_desc_with_name(node, state, sdfg, "output")
 
-        def prog(input, output):
-            output = np.broadcast_to(input, shape)
-
-        return program_for_node(prog, sdfg, state, node)
-
-
-@op_implementation(op="Expand", name="pure")
-class PureExpand(ONNXForward):
-    """ Handle no-op case for Expand """
-
-    @staticmethod
-    def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
-        return iterables_equal(
-            in_desc_with_name(node, state, sdfg, "input").shape,
-            out_desc_with_name(node, state, sdfg, "output").shape)
-
-    @staticmethod
-    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
-
+        # Remove the 'shape' input since we already know the output shape
+        # and don't need to propagate gradients through it
         constant_folding.remove_node_and_computation(sdfg, state, node, "shape")
 
-        def prog(input, output):
-            output[:] = input
+        # Create nested SDFG
+        nsdfg = dace.SDFG(node.label + "_expansion")
+        nstate = nsdfg.add_state()
 
-        return program_for_node(prog, sdfg, state, node)
+        # Add data descriptors to nested SDFG
+        nsdfg.add_datadesc("input", copy.deepcopy(input_desc))
+        nsdfg.add_datadesc("output", copy.deepcopy(output_desc))
+        nsdfg.arrays["input"].transient = False
+        nsdfg.arrays["output"].transient = False
+
+        # Generate broadcast-aware indexing using the common helper
+        input_indices = broadcast_indices(input_desc.shape, output_desc.shape)
+        input_index_str = ", ".join(input_indices) if input_indices else "0"
+
+        # Create map over output shape
+        map_ranges = {f"i{i}": f"0:{output_desc.shape[i]}" for i in range(len(output_desc.shape))}
+        output_index_str = ", ".join(map_ranges.keys())
+
+        # Create mapped tasklet for broadcasting copy
+        nstate.add_mapped_tasklet(name=node.label + "_tasklet",
+                                  map_ranges=map_ranges,
+                                  inputs={"__input": dace.Memlet(f"input[{input_index_str}]")},
+                                  code="__output = __input",
+                                  outputs={"__output": dace.Memlet(f"output[{output_index_str}]")},
+                                  external_edges=True)
+
+        return nsdfg
 
 
 # ==============================================================================
