@@ -164,7 +164,8 @@ class CUDACodeGen(TargetCodeGenerator):
         # Identify kernels with inserted GPU_ThreadBlock-scheduled maps
         old_nodes = set(node for node, _ in sdfg.all_nodes_recursive())
 
-        sdfg.apply_transformations_once_everywhere(AddThreadBlockMap, )
+        # Disable `AddThreadBlockMap` because it causes a cuda codegen error in gt4py unittest
+        # sdfg.apply_transformations_once_everywhere(AddThreadBlockMap, )
 
         new_nodes = set(node for node, _ in sdfg.all_nodes_recursive()) - old_nodes
 
