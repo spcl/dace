@@ -231,6 +231,7 @@ class DefaultMatMulBackward(BackwardImplementation):
                 nstate.add_node(transpose_B)
                 nstate.add_edge(nstate.add_read("B"), None, transpose_B, "data", nsdfg.make_array_memlet("B"))
                 B_T_access = nstate.add_access("B_T")
+                B_T_access.setzero = True
                 nstate.add_edge(transpose_B, "transposed", B_T_access, None, nsdfg.make_array_memlet("B_T"))
             else:
                 # For 1D or 1x1 matrices, B_T is just a copy of B
@@ -440,7 +441,7 @@ class DefaultMatMulBackward(BackwardImplementation):
                     nsdfg.add_datadesc("A_grad_tmp", A_grad_before_reduction_desc)
 
                     # Create MatMul node: A_grad_tmp = Y_grad @ B^T
-                    matmul_A_grad = MatMul(forward_node.label + "_A_grad", alpha=1.0, beta=0.0)
+                    matmul_A_grad = MatMul(forward_node.label + "_A_grad", alpha=1.0, beta=1.0)
                     nstate.add_node(matmul_A_grad)
 
                     # Connect: Y_grad -> _a, B_T -> _b
@@ -449,6 +450,7 @@ class DefaultMatMulBackward(BackwardImplementation):
                     nstate.add_edge(B_T_access, None, matmul_A_grad, "_b", nsdfg.make_array_memlet("B_T"))
 
                     A_grad_tmp_access = nstate.add_access("A_grad_tmp")
+                    A_grad_tmp_access.setzero = True
                     nstate.add_edge(matmul_A_grad, "_c", A_grad_tmp_access, None, nsdfg.make_array_memlet("A_grad_tmp"))
 
                     # Sum over the broadcasted batch dimensions
@@ -466,6 +468,7 @@ class DefaultMatMulBackward(BackwardImplementation):
                     axes_desc = dace.data.Array(dace.int64, [len(reduce_axes)], transient=True)
                     nsdfg.add_datadesc(axes_name, axes_desc)
                     axes_access = nstate.add_access(axes_name)
+                    axes_access.setzero = True
 
                     axes_tasklet = nstate.add_tasklet(
                         "init_A_reduce_axes", {}, {"out": dace.pointer(dace.int64)},
@@ -486,7 +489,7 @@ class DefaultMatMulBackward(BackwardImplementation):
                 else:
                     # No reduction needed - direct matmul to A_grad
                     # Create MatMul node: A_grad = Y_grad @ B^T
-                    matmul_A_grad = MatMul(forward_node.label + "_A_grad", alpha=1.0, beta=0.0)
+                    matmul_A_grad = MatMul(forward_node.label + "_A_grad", alpha=1.0, beta=1.0)
                     nstate.add_node(matmul_A_grad)
 
                     # Connect: Y_grad -> _a, B_T -> _b
@@ -542,6 +545,7 @@ class DefaultMatMulBackward(BackwardImplementation):
                 nstate.add_node(transpose_A)
                 nstate.add_edge(nstate.add_read("A"), None, transpose_A, "data", nsdfg.make_array_memlet("A"))
                 A_T_access = nstate.add_access("A_T")
+                A_T_access.setzero = True
                 nstate.add_edge(transpose_A, "transposed", A_T_access, None, nsdfg.make_array_memlet("A_T"))
             else:
                 # For 1D or 1x1 matrices, A_T is just a copy of A
@@ -752,7 +756,7 @@ class DefaultMatMulBackward(BackwardImplementation):
                     nsdfg.add_datadesc("B_grad_tmp", B_grad_before_reduction_desc)
 
                     # Create MatMul node: B_grad_tmp = A^T @ Y_grad
-                    matmul_B_grad = MatMul(forward_node.label + "_B_grad", alpha=1.0, beta=0.0)
+                    matmul_B_grad = MatMul(forward_node.label + "_B_grad", alpha=1.0, beta=1.0)
                     nstate.add_node(matmul_B_grad)
 
                     # Connect: A_T -> _a, Y_grad -> _b
@@ -761,6 +765,7 @@ class DefaultMatMulBackward(BackwardImplementation):
                                     nsdfg.make_array_memlet(result.given_grad_names["Y"]))
 
                     B_grad_tmp_access = nstate.add_access("B_grad_tmp")
+                    B_grad_tmp_access.setzero = True
                     nstate.add_edge(matmul_B_grad, "_c", B_grad_tmp_access, None, nsdfg.make_array_memlet("B_grad_tmp"))
 
                     # Sum over the broadcasted batch dimensions
@@ -779,6 +784,7 @@ class DefaultMatMulBackward(BackwardImplementation):
                     axes_desc = dace.data.Array(dace.int64, [len(reduce_axes)], transient=True)
                     nsdfg.add_datadesc(axes_name, axes_desc)
                     axes_access = nstate.add_access(axes_name)
+                    axes_access.setzero = True
 
                     axes_tasklet = nstate.add_tasklet(
                         "init_reduce_axes", {}, {"out": dace.pointer(dace.int64)},
@@ -799,7 +805,7 @@ class DefaultMatMulBackward(BackwardImplementation):
                 else:
                     # No reduction needed - direct matmul to B_grad
                     # Create MatMul node: B_grad = A^T @ Y_grad
-                    matmul_B_grad = MatMul(forward_node.label + "_B_grad", alpha=1.0, beta=0.0)
+                    matmul_B_grad = MatMul(forward_node.label + "_B_grad", alpha=1.0, beta=1.0)
                     nstate.add_node(matmul_B_grad)
 
                     # Connect: A_T -> _a, Y_grad -> _b
@@ -977,8 +983,11 @@ class DefaultSoftmaxBackward(BackwardImplementation):
         forward_output_read = nstate.add_read("output")
         input_grad_write = nstate.add_write("input_grad")
         prod_access = nstate.add_access("prod")
+        prod_access.setzero = True
         sums_access = nstate.add_access("sums")
+        sums_access.setzero = True
         sub_term_access = nstate.add_access("sub_term")
+        sub_term_access.setzero = True
 
         # prod = forward_output * output_grad
         mul_node1 = donnx.ONNXMul("mul_prod")
@@ -995,6 +1004,7 @@ class DefaultSoftmaxBackward(BackwardImplementation):
         # Setup the axes input for the ReduceSum node
         axes_name, _ = nsdfg.add_array(name="reduce_sum_axes", shape=[1], dtype=dace.int64, transient=True)
         axes_access = nstate.add_access(axes_name)
+        axes_access.setzero = True
         axes_tasklet = nstate.add_tasklet("init_axes", {}, {"out"}, f"out = {dim};", language=dace.Language.CPP)
         nstate.add_edge(axes_tasklet, "out", axes_access, None, dace.Memlet(f"{axes_name}"))
 
@@ -1411,6 +1421,7 @@ class DefaultLayerNormalizationBackward(BackwardImplementation):
         axes_desc.transient = True  # Make it transient since it's internal
         nsdfg.add_datadesc(axes_name, axes_desc)
         axes_access = nstate.add_access(axes_name)
+        axes_access.setzero = True
 
         # Initialize reduction axes as a constant array
         axes_tasklet = nstate.add_tasklet(name="init_axes",
@@ -1435,6 +1446,7 @@ class DefaultLayerNormalizationBackward(BackwardImplementation):
         nstate.add_edge(nstate.add_read("X"), None, mean_op, "data", nsdfg.make_array_memlet("X"))
         nstate.add_edge(axes_access, None, mean_op, "axes", nsdfg.make_array_memlet(axes_name))
         mean_access = nstate.add_access("mean")
+        mean_access.setzero = True
         nstate.add_edge(mean_op, "reduced", mean_access, None, nsdfg.make_array_memlet("mean"))
 
         # Recompute variance
@@ -1449,6 +1461,7 @@ class DefaultLayerNormalizationBackward(BackwardImplementation):
         nstate.add_edge(nstate.add_read("X"), None, diff_op, "A", nsdfg.make_array_memlet("X"))
         nstate.add_edge(mean_access, None, diff_op, "B", nsdfg.make_array_memlet("mean"))
         diff_access = nstate.add_access("diff")
+        diff_access.setzero = True
         nstate.add_edge(diff_op, "C", diff_access, None, nsdfg.make_array_memlet("diff"))
 
         # Create squared difference descriptor
@@ -1463,6 +1476,7 @@ class DefaultLayerNormalizationBackward(BackwardImplementation):
         nstate.add_edge(diff_access, None, sq_diff_op, "A", nsdfg.make_array_memlet("diff"))
         nstate.add_edge(diff_access, None, sq_diff_op, "B", nsdfg.make_array_memlet("diff"))
         sq_diff_access = nstate.add_access("sq_diff")
+        sq_diff_access.setzero = True
         nstate.add_edge(sq_diff_op, "C", sq_diff_access, None, nsdfg.make_array_memlet("sq_diff"))
 
         # Create variance descriptor with reduced shape
@@ -1480,6 +1494,7 @@ class DefaultLayerNormalizationBackward(BackwardImplementation):
         nstate.add_edge(sq_diff_access, None, variance_op, "data", nsdfg.make_array_memlet("sq_diff"))
         nstate.add_edge(axes_access, None, variance_op, "axes", nsdfg.make_array_memlet(axes_name))
         variance_access = nstate.add_access("variance")
+        variance_access.setzero = True
         nstate.add_edge(variance_op, "reduced", variance_access, None, nsdfg.make_array_memlet("variance"))
 
         # Add epsilon to variance
@@ -1505,6 +1520,7 @@ class DefaultLayerNormalizationBackward(BackwardImplementation):
         nstate.add_edge(variance_access, None, variance_eps_op, "A", nsdfg.make_array_memlet("variance"))
         nstate.add_edge(epsilon_write, None, variance_eps_op, "B", nsdfg.make_array_memlet(epsilon_name))
         variance_eps_access = nstate.add_access("variance_eps")
+        variance_eps_access.setzero = True
         nstate.add_edge(variance_eps_op, "C", variance_eps_access, None, nsdfg.make_array_memlet("variance_eps"))
 
         # Create std_dev descriptor
@@ -1517,6 +1533,7 @@ class DefaultLayerNormalizationBackward(BackwardImplementation):
         nstate.add_node(std_dev_op)
         nstate.add_edge(variance_eps_access, None, std_dev_op, "X", nsdfg.make_array_memlet("variance_eps"))
         std_dev_access = nstate.add_access("std_dev")
+        std_dev_access.setzero = True
         nstate.add_edge(std_dev_op, "Y", std_dev_access, None, nsdfg.make_array_memlet("std_dev"))
 
         # Create inv_std_dev descriptor
@@ -1535,6 +1552,7 @@ class DefaultLayerNormalizationBackward(BackwardImplementation):
         nstate.add_edge(one_write, None, inv_std_dev_op, "A", nsdfg.make_array_memlet(one_name))
         nstate.add_edge(std_dev_access, None, inv_std_dev_op, "B", nsdfg.make_array_memlet("std_dev"))
         inv_std_dev_access = nstate.add_access("inv_std_dev")
+        inv_std_dev_access.setzero = True
         nstate.add_edge(inv_std_dev_op, "C", inv_std_dev_access, None, nsdfg.make_array_memlet("inv_std_dev"))
 
         # Create x_hat descriptor (normalized input)
@@ -1548,6 +1566,7 @@ class DefaultLayerNormalizationBackward(BackwardImplementation):
         nstate.add_edge(diff_access, None, x_hat_op, "A", nsdfg.make_array_memlet("diff"))
         nstate.add_edge(inv_std_dev_access, None, x_hat_op, "B", nsdfg.make_array_memlet("inv_std_dev"))
         x_hat_access = nstate.add_access("x_hat")
+        x_hat_access.setzero = True
         nstate.add_edge(x_hat_op, "C", x_hat_access, None, nsdfg.make_array_memlet("x_hat"))
 
         # Compute bias gradient if needed
@@ -1572,6 +1591,7 @@ class DefaultLayerNormalizationBackward(BackwardImplementation):
             nstate.add_edge(nstate.add_read("Y_grad"), None, dY_x_hat_op, "A", nsdfg.make_array_memlet("Y_grad"))
             nstate.add_edge(x_hat_access, None, dY_x_hat_op, "B", nsdfg.make_array_memlet("x_hat"))
             dY_x_hat_access = nstate.add_access("dY_x_hat")
+            dY_x_hat_access.setzero = True
             nstate.add_edge(dY_x_hat_op, "C", dY_x_hat_access, None, nsdfg.make_array_memlet("dY_x_hat"))
 
             scale_grad_op = donnx.ONNXReduceSum("scale_grad_op", keepdims=0, optional={"axes"})
@@ -1595,6 +1615,7 @@ class DefaultLayerNormalizationBackward(BackwardImplementation):
             nstate.add_edge(nstate.add_read("Y_grad"), None, dX_hat_op, "A", nsdfg.make_array_memlet("Y_grad"))
             nstate.add_edge(nstate.add_read("Scale"), None, dX_hat_op, "B", nsdfg.make_array_memlet("Scale"))
             dX_hat_access = nstate.add_access("dX_hat")
+            dX_hat_access.setzero = True
             nstate.add_edge(dX_hat_op, "C", dX_hat_access, None, nsdfg.make_array_memlet("dX_hat"))
 
             # Compute mean of dX_hat over reduction axes
@@ -1609,6 +1630,7 @@ class DefaultLayerNormalizationBackward(BackwardImplementation):
             nstate.add_edge(dX_hat_access, None, dX_hat_mean_op, "data", nsdfg.make_array_memlet("dX_hat"))
             nstate.add_edge(axes_access, None, dX_hat_mean_op, "axes", nsdfg.make_array_memlet(axes_name))
             dX_hat_mean_access = nstate.add_access("dX_hat_mean")
+            dX_hat_mean_access.setzero = True
             nstate.add_edge(dX_hat_mean_op, "reduced", dX_hat_mean_access, None, nsdfg.make_array_memlet("dX_hat_mean"))
 
             # Compute dX_hat * x_hat
@@ -1637,6 +1659,7 @@ class DefaultLayerNormalizationBackward(BackwardImplementation):
                             nsdfg.make_array_memlet("dX_hat_x_hat"))
             nstate.add_edge(axes_access, None, dX_hat_x_hat_mean_op, "axes", nsdfg.make_array_memlet(axes_name))
             dX_hat_x_hat_mean_access = nstate.add_access("dX_hat_x_hat_mean")
+            dX_hat_x_hat_mean_access.setzero = True
             nstate.add_edge(dX_hat_x_hat_mean_op, "reduced", dX_hat_x_hat_mean_access, None,
                             nsdfg.make_array_memlet("dX_hat_x_hat_mean"))
 
@@ -1666,6 +1689,7 @@ class DefaultLayerNormalizationBackward(BackwardImplementation):
             nstate.add_edge(dX_hat_access, None, dX_hat_minus_mean_op, "A", nsdfg.make_array_memlet("dX_hat"))
             nstate.add_edge(dX_hat_mean_access, None, dX_hat_minus_mean_op, "B", nsdfg.make_array_memlet("dX_hat_mean"))
             dX_hat_minus_mean_access = nstate.add_access("dX_hat_minus_mean")
+            dX_hat_minus_mean_access.setzero = True
             nstate.add_edge(dX_hat_minus_mean_op, "C", dX_hat_minus_mean_access, None,
                             nsdfg.make_array_memlet("dX_hat_minus_mean"))
 
@@ -1682,6 +1706,7 @@ class DefaultLayerNormalizationBackward(BackwardImplementation):
             nstate.add_edge(x_hat_dX_hat_x_hat_mean_access, None, dX_hat_final_op, "B",
                             nsdfg.make_array_memlet("x_hat_dX_hat_x_hat_mean"))
             dX_hat_final_access = nstate.add_access("dX_hat_final")
+            dX_hat_final_access.setzero = True
             nstate.add_edge(dX_hat_final_op, "C", dX_hat_final_access, None, nsdfg.make_array_memlet("dX_hat_final"))
 
             # Multiply by inv_std_dev to get final X gradient
@@ -1797,6 +1822,7 @@ class DefaultReduceSumBackward(BackwardImplementation):
                     language=dace.Language.CPP,
                 )
                 axes_access = nstate.add_access(axes_name_in_bwd)
+                axes_access.setzero = True
                 nstate.add_edge(axes_tasklet, 'out', axes_access, None,
                                 dace.Memlet.from_array(axes_name_in_bwd, axes_desc_bwd))
 
@@ -1812,6 +1838,7 @@ class DefaultReduceSumBackward(BackwardImplementation):
 
             grad_to_expand = "unsqueezed_grad"
             read_grad_to_expand = nstate.add_access(grad_to_expand)
+            read_grad_to_expand.setzero = True
             nstate.add_edge(unsqueeze_op, "expanded", read_grad_to_expand, None,
                             nsdfg.make_array_memlet("unsqueezed_grad"))
 
@@ -1822,6 +1849,7 @@ class DefaultReduceSumBackward(BackwardImplementation):
         shape_tasklet = nstate.add_tasklet("init_shape", {}, {"out"},
                                            '\n'.join([f"out[{i}] = {s};" for i, s in enumerate(input_desc.shape)]))
         shape_access = nstate.add_access(shape_name)
+        shape_access.setzero = True
         nstate.add_edge(shape_tasklet, "out", shape_access, None, dace.Memlet.from_array(shape_name, shape_desc))
 
         expand_op = donnx.ONNXExpand("expand_grad")

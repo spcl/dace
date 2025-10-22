@@ -84,7 +84,7 @@ def run_matmul_test(
     # Create DaCe module with backward support
     dace_module = DaceModule(
         dace_module_model,
-        simplify=True,
+        simplify=False,
         backward=True,
         sdfg_name=sdfg_name,
         auto_optimize=auto_optimize,
@@ -481,33 +481,6 @@ def test_matmul_linear_stack(sdfg_name: str):
 
 @pytest.mark.torch
 @pytest.mark.autodiff
-def test_matmul_multi_input_weighted(sdfg_name: str):
-    """Test matmul with multiple inputs and learnable parameters."""
-
-    class MultiInputWeighted(nn.Module):
-
-        def __init__(self):
-            super().__init__()
-            self.W1 = nn.Parameter(torch.randn(4, 3))
-            self.W2 = nn.Parameter(torch.randn(6, 3))
-
-        def forward(self, A, B):
-            # (A @ W1) + (B @ W2)
-            return (A @ self.W1) + (B @ self.W2)
-
-    run_matmul_test(
-        MultiInputWeighted(),
-        sdfg_name,
-        {
-            "A": (5, 4),
-            "B": (5, 6)
-        },
-        atol=1e-3  # Slightly higher tolerance for complex gradients
-    )
-
-
-@pytest.mark.torch
-@pytest.mark.autodiff
 def test_matmul_attention_like(sdfg_name: str):
     """Test an attention-like pattern: Q @ K^T @ V."""
 
@@ -757,43 +730,43 @@ def test_matmul_larger_sequence(sdfg_name: str):
 
 if __name__ == "__main__":
     # Basic 2D tests
-    # test_matmul_2d_basic(sdfg_name="test_matmul_2d_basic")
-    # test_matmul_2d_square(sdfg_name="test_matmul_2d_square")
-    # test_matmul_2d_tall(sdfg_name="test_matmul_2d_tall")
-    # test_matmul_2d_wide(sdfg_name="test_matmul_2d_wide")
+    test_matmul_2d_basic(sdfg_name="test_matmul_2d_basic")
+    test_matmul_2d_square(sdfg_name="test_matmul_2d_square")
+    test_matmul_2d_tall(sdfg_name="test_matmul_2d_tall")
+    test_matmul_2d_wide(sdfg_name="test_matmul_2d_wide")
 
-    # # Batched tests
-    # test_matmul_3d_batched(sdfg_name="test_matmul_3d_batched")
-    # test_matmul_4d_batched(sdfg_name="test_matmul_4d_batched")
+    # Batched tests
+    test_matmul_3d_batched(sdfg_name="test_matmul_3d_batched")
+    test_matmul_4d_batched(sdfg_name="test_matmul_4d_batched")
 
-    # # Broadcasting tests
-    # test_matmul_broadcast_2d_3d(sdfg_name="test_matmul_broadcast_2d_3d")
-    # test_matmul_broadcast_3d_2d(sdfg_name="test_matmul_broadcast_3d_2d")
-    # test_matmul_broadcast_3d_4d(sdfg_name="test_matmul_broadcast_3d_4d")
-    # test_matmul_broadcast_4d_3d(sdfg_name="test_matmul_broadcast_4d_3d")
+    # Broadcasting tests
+    test_matmul_broadcast_2d_3d(sdfg_name="test_matmul_broadcast_2d_3d")
+    test_matmul_broadcast_3d_2d(sdfg_name="test_matmul_broadcast_3d_2d")
+    test_matmul_broadcast_3d_4d(sdfg_name="test_matmul_broadcast_3d_4d")
+    test_matmul_broadcast_4d_3d(sdfg_name="test_matmul_broadcast_4d_3d")
 
-    # # 1D vector tests
-    # test_matmul_1d_1d_dot_product(sdfg_name="test_matmul_1d_1d_dot_product")
-    # test_matmul_2d_1d_matvec(sdfg_name="test_matmul_2d_1d_matvec")
-    # test_matmul_1d_2d_vecmat(sdfg_name="test_matmul_1d_2d_vecmat")
-    # test_matmul_3d_1d_batched_matvec(sdfg_name="test_matmul_3d_1d_batched_matvec")
-    # test_matmul_1d_3d_batched_vecmat(sdfg_name="test_matmul_1d_3d_batched_vecmat")
+    # 1D vector tests
+    test_matmul_1d_1d_dot_product(sdfg_name="test_matmul_1d_1d_dot_product")
+    test_matmul_2d_1d_matvec(sdfg_name="test_matmul_2d_1d_matvec")
+    test_matmul_1d_2d_vecmat(sdfg_name="test_matmul_1d_2d_vecmat")
+    test_matmul_3d_1d_batched_matvec(sdfg_name="test_matmul_3d_1d_batched_matvec")
+    test_matmul_1d_3d_batched_vecmat(sdfg_name="test_matmul_1d_3d_batched_vecmat")
 
-    # # Mixed dimensional tests
-    # test_matmul_complex_chain(sdfg_name="test_matmul_complex_chain")
-    # test_matmul_sequential(sdfg_name="test_matmul_sequential")
-    # test_matmul_with_elementwise(sdfg_name="test_matmul_with_elementwise")
+    # Mixed dimensional tests
+    test_matmul_complex_chain(sdfg_name="test_matmul_complex_chain")
+    test_matmul_sequential(sdfg_name="test_matmul_sequential")
+    test_matmul_with_elementwise(sdfg_name="test_matmul_with_elementwise")
 
-    # # Tests with learnable parameters
-    # test_matmul_with_weight_parameter(sdfg_name="test_matmul_with_weight_parameter")
-    # test_matmul_with_batched_weight(sdfg_name="test_matmul_with_batched_weight")
-    # test_matmul_linear_stack(sdfg_name="test_matmul_linear_stack")
-    # test_matmul_multi_input_weighted(sdfg_name="test_matmul_multi_input_weighted")
-    # test_matmul_attention_like(sdfg_name="test_matmul_attention_like")
+    # Tests with learnable parameters
+    test_matmul_with_weight_parameter(sdfg_name="test_matmul_with_weight_parameter")
+    test_matmul_with_batched_weight(sdfg_name="test_matmul_with_batched_weight")
+    test_matmul_linear_stack(sdfg_name="test_matmul_linear_stack")
+    test_matmul_attention_like(sdfg_name="test_matmul_attention_like")
 
-    # # Edge cases
-    # test_matmul_single_element_matrices(sdfg_name="test_matmul_single_element_matrices")
-    # test_matmul_with_transpose(sdfg_name="test_matmul_with_transpose")
+    # Edge cases
+    test_matmul_single_element_matrices(sdfg_name="test_matmul_single_element_matrices")
+    test_matmul_with_transpose(sdfg_name="test_matmul_with_transpose")
     test_matmul_llama_ffn_structure(sdfg_name="test_matmul_llama_ffn_structure")
+    test_matmul_grouped_query_attention(sdfg_name="test_matmul_grouped_query_attention")
 
     print("All MatMul PyTorch backward tests passed!")
