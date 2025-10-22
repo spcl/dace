@@ -138,6 +138,11 @@ def find_dims_to_pop(a_size, b_size):
     dims_to_pop = []
     b_dim_to_check = 0
     for dim_to_pop, a_sz in enumerate(a_size):
+        if b_dim_to_check == len(b_size):
+            # We have associated all dimensions of `b` thus we have to pop this dimension.
+            dims_to_pop.append(dim_to_pop)
+            continue
+
         b_sz = b_size[b_dim_to_check]
         if (a_sz == b_sz) == True:  # SymPy comparison.
             # They are the same, thus we do not have to pop the dimension, but we have
