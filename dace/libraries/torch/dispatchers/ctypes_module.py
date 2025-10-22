@@ -116,7 +116,10 @@ def callable_for_bwd_module(module: 'dace.frontend.python.module.DaceModule', fo
     gradient_descriptors: List[Tuple[str, bool, data.Data]] = []
 
     for _, grad_name in backward_result.required_grad_names.items():
-        zero_init = backward_result.zero_init.get(grad_name, True)
+        # Always zero-initialize gradient arrays to ensure correctness
+        # This is necessary because gradients may use WCR (write-conflict resolution)
+        # and must start from zero for proper accumulation
+        zero_init = True
         desc = backward_compiled.sdfg.arrays[grad_name]
 
         gradient_descriptors.append((grad_name, zero_init, desc))

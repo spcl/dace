@@ -223,15 +223,17 @@ class DefaultMatMulBackward(BackwardImplementation):
                                        storage=B_desc.storage)
             nsdfg.add_datadesc("B_T", B_T_desc)
 
-            # Only create Transpose node if B_rank >= 2 (otherwise it's identity)
-            if B_rank >= 2:
+            # Only create Transpose node if B_rank >= 2 and not a 1x1 matrix
+            # For 1x1 matrices, transpose is a no-op and causes validation issues
+            is_1x1_matrix = B_rank == 2 and B_desc.shape[-2] == 1 and B_desc.shape[-1] == 1
+            if B_rank >= 2 and not is_1x1_matrix:
                 transpose_B = donnx.ONNXTranspose(forward_node.label + "_B_transpose", perm=perm)
                 nstate.add_node(transpose_B)
                 nstate.add_edge(nstate.add_read("B"), None, transpose_B, "data", nsdfg.make_array_memlet("B"))
                 B_T_access = nstate.add_access("B_T")
                 nstate.add_edge(transpose_B, "transposed", B_T_access, None, nsdfg.make_array_memlet("B_T"))
             else:
-                # For 1D, B_T is just a copy of B
+                # For 1D or 1x1 matrices, B_T is just a copy of B
                 B_read = nstate.add_read("B")
                 B_T_access = nstate.add_write("B_T")
                 nstate.add_nedge(B_read, B_T_access, nsdfg.make_array_memlet("B"))
@@ -290,6 +292,101 @@ class DefaultMatMulBackward(BackwardImplementation):
                 A_grad_write = nstate.add_write(result.required_grad_names["A"])
                 A_grad_memlet = dace.Memlet(data=result.required_grad_names["A"],
                                             subset="i,j",
+                                            wcr="lambda x, y: x + y")
+                nstate.add_memlet_path(tasklet, map_exit, A_grad_write, src_conn="dA_elem", memlet=A_grad_memlet)
+            elif A_rank == 1 and B_rank >= 2:
+                # Vector @ batched-matrix case: A is (m,) and B is (..., m, n), Y is (..., n)
+                # dA[i] = sum over all batch and column dims: sum_{...,j} B[...,i,j] * dY[...,j]
+                # Build dynamic map range based on B shape
+                batch_dims = B_desc.shape[:-2]  # All dimensions except last 2
+                m_dim = B_desc.shape[-2]  # Number of rows (= size of A)
+                n_dim = B_desc.shape[-1]  # Number of columns
+
+                # Create map indices: one for each batch dim, plus i (rows of B), plus j (cols of B)
+                map_params = {}
+                batch_indices = []
+                for idx, dim in enumerate(batch_dims):
+                    param_name = f"b{idx}"
+                    map_params[param_name] = f"0:{dim}"
+                    batch_indices.append(param_name)
+                map_params["i"] = f"0:{m_dim}"
+                map_params["j"] = f"0:{n_dim}"
+
+                map_entry, map_exit = nstate.add_map("vec_batched_mat_A_grad", map_params)
+
+                tasklet = nstate.add_tasklet("vecmat_A", {"B_elem", "dY_elem"}, {"dA_contrib"},
+                                             "dA_contrib = B_elem * dY_elem")
+
+                # Read from B - subset is batch indices + i,j
+                B_subset = ",".join(batch_indices + ["i", "j"]) if batch_indices else "i,j"
+                if "B" not in nsdfg.arrays:
+                    B_desc_copy = copy.deepcopy(B_desc)
+                    B_desc_copy.transient = False
+                    nsdfg.add_datadesc("B", B_desc_copy)
+                    required_forward_inputs.add("B")
+
+                B_read = nstate.add_read("B")
+                nstate.add_memlet_path(B_read,
+                                       map_entry,
+                                       tasklet,
+                                       dst_conn="B_elem",
+                                       memlet=dace.Memlet(data="B", subset=B_subset))
+
+                # Read from Y_grad - subset is batch indices + j
+                Y_subset = ",".join(batch_indices + ["j"]) if batch_indices else "j"
+                nstate.add_memlet_path(Y_grad_access,
+                                       map_entry,
+                                       tasklet,
+                                       dst_conn="dY_elem",
+                                       memlet=dace.Memlet(data=result.given_grad_names["Y"], subset=Y_subset))
+
+                # Write to A_grad with reduction over all batch dims and j
+                A_grad_write = nstate.add_write(result.required_grad_names["A"])
+                A_grad_memlet = dace.Memlet(data=result.required_grad_names["A"], subset="i", wcr="lambda x, y: x + y")
+                nstate.add_memlet_path(tasklet, map_exit, A_grad_write, src_conn="dA_contrib", memlet=A_grad_memlet)
+            elif B_rank == 1 and A_rank >= 2:
+                # Batched matrix-vector case: A is (..., m, k) and B is (k,), Y is (..., m)
+                # dA[...,i,j] = dY[...,i] * B[j] (outer product per batch element)
+                # Build dynamic map range based on A shape
+                batch_dims = A_desc.shape[:-2]  # All dimensions except last 2
+                m_dim = A_desc.shape[-2]  # Number of rows
+                k_dim = A_desc.shape[-1]  # Number of columns (= size of B)
+
+                # Create map indices: one for each batch dim, plus i (rows), plus j (cols)
+                map_params = {}
+                batch_indices = []
+                for idx, dim in enumerate(batch_dims):
+                    param_name = f"b{idx}"
+                    map_params[param_name] = f"0:{dim}"
+                    batch_indices.append(param_name)
+                map_params["i"] = f"0:{m_dim}"
+                map_params["j"] = f"0:{k_dim}"
+
+                map_entry, map_exit = nstate.add_map("batched_matvec_A_grad", map_params)
+
+                tasklet = nstate.add_tasklet("batched_outer_A", {"dY_elem", "B_elem"}, {"dA_elem"},
+                                             "dA_elem = dY_elem * B_elem")
+
+                # Read from Y_grad - subset is batch indices + i
+                Y_subset = ",".join(batch_indices + ["i"])
+                nstate.add_memlet_path(Y_grad_access,
+                                       map_entry,
+                                       tasklet,
+                                       dst_conn="dY_elem",
+                                       memlet=dace.Memlet(data=result.given_grad_names["Y"], subset=Y_subset))
+
+                # Read from B - subset is just j
+                nstate.add_memlet_path(B_T_access,
+                                       map_entry,
+                                       tasklet,
+                                       dst_conn="B_elem",
+                                       memlet=dace.Memlet(data="B_T", subset="j"))
+
+                # Write to A_grad - subset is batch indices + i,j
+                A_grad_subset = ",".join(batch_indices + ["i", "j"])
+                A_grad_write = nstate.add_write(result.required_grad_names["A"])
+                A_grad_memlet = dace.Memlet(data=result.required_grad_names["A"],
+                                            subset=A_grad_subset,
                                             wcr="lambda x, y: x + y")
                 nstate.add_memlet_path(tasklet, map_exit, A_grad_write, src_conn="dA_elem", memlet=A_grad_memlet)
             else:
@@ -437,15 +534,17 @@ class DefaultMatMulBackward(BackwardImplementation):
                                        storage=A_desc.storage)
             nsdfg.add_datadesc("A_T", A_T_desc)
 
-            # Only create Transpose node if A_rank >= 2 (otherwise it's identity)
-            if A_rank >= 2:
+            # Only create Transpose node if A_rank >= 2 and not a 1x1 matrix
+            # For 1x1 matrices, transpose is a no-op and causes validation issues
+            is_A_1x1_matrix = A_rank == 2 and A_desc.shape[-2] == 1 and A_desc.shape[-1] == 1
+            if A_rank >= 2 and not is_A_1x1_matrix:
                 transpose_A = donnx.ONNXTranspose(forward_node.label + "_A_transpose", perm=perm)
                 nstate.add_node(transpose_A)
                 nstate.add_edge(nstate.add_read("A"), None, transpose_A, "data", nsdfg.make_array_memlet("A"))
                 A_T_access = nstate.add_access("A_T")
                 nstate.add_edge(transpose_A, "transposed", A_T_access, None, nsdfg.make_array_memlet("A_T"))
             else:
-                # For 1D, A_T is just a copy of A
+                # For 1D or 1x1 matrices, A_T is just a copy of A
                 A_read = nstate.add_read("A")
                 A_T_access = nstate.add_write("A_T")
                 nstate.add_nedge(A_read, A_T_access, nsdfg.make_array_memlet("A"))
@@ -507,36 +606,101 @@ class DefaultMatMulBackward(BackwardImplementation):
                 B_grad_write = nstate.add_write(result.required_grad_names["B"])
                 B_grad_memlet = dace.Memlet(data=result.required_grad_names["B"], subset="j", wcr="lambda x, y: x + y")
                 nstate.add_memlet_path(tasklet, map_exit, B_grad_write, src_conn="dB_contrib", memlet=B_grad_memlet)
-            elif Y_rank == 1 and A_rank == 1 and B_rank == 2:
-                # 1d @ 2d case: Y is (n,), A is (m,), B is (m, n)
-                # dB = outer(A, dY) = A.unsqueeze(-1) @ dY.unsqueeze(0)
-                # Result shape: (m, n)
-                map_range = {"i": f"0:{B_desc.shape[0]}", "j": f"0:{B_desc.shape[1]}"}
-                map_entry, map_exit = nstate.add_map("outer_product_B", map_range)
+            elif A_rank == 1 and B_rank >= 2:
+                # Vector @ batched-matrix case: A is (m,) and B is (..., m, n), Y is (..., n)
+                # dB[...,i,j] = A[i] * dY[...,j] (outer product per batch element)
+                # Build dynamic map range based on B shape
+                batch_dims = B_desc.shape[:-2]  # All dimensions except last 2
+                m_dim = B_desc.shape[-2]  # Number of rows (= size of A)
+                n_dim = B_desc.shape[-1]  # Number of columns
+
+                # Create map indices: one for each batch dim, plus i (rows), plus j (cols)
+                map_params = {}
+                batch_indices = []
+                for idx, dim in enumerate(batch_dims):
+                    param_name = f"b{idx}"
+                    map_params[param_name] = f"0:{dim}"
+                    batch_indices.append(param_name)
+                map_params["i"] = f"0:{m_dim}"
+                map_params["j"] = f"0:{n_dim}"
+
+                map_entry, map_exit = nstate.add_map("vec_batched_mat_B_grad", map_params)
 
                 tasklet = nstate.add_tasklet("outer_prod_B", {"A_elem", "dY_elem"}, {"dB_elem"},
                                              "dB_elem = A_elem * dY_elem")
 
-                # Connect A_T -> tasklet (through map)
+                # Read from A - subset is just i
                 nstate.add_memlet_path(A_T_access,
                                        map_entry,
                                        tasklet,
                                        dst_conn="A_elem",
                                        memlet=dace.Memlet(data="A_T", subset="i"))
 
-                # Connect Y_grad -> tasklet (through map)
+                # Read from Y_grad - subset is batch indices + j
+                Y_subset = ",".join(batch_indices + ["j"]) if batch_indices else "j"
                 nstate.add_memlet_path(Y_grad_access,
                                        map_entry,
                                        tasklet,
                                        dst_conn="dY_elem",
-                                       memlet=dace.Memlet(data=result.given_grad_names["Y"], subset="j"))
+                                       memlet=dace.Memlet(data=result.given_grad_names["Y"], subset=Y_subset))
 
-                # Connect tasklet -> B_grad (through map)
+                # Write to B_grad - subset is batch indices + i,j
+                B_grad_subset = ",".join(batch_indices + ["i", "j"]) if batch_indices else "i,j"
                 B_grad_write = nstate.add_write(result.required_grad_names["B"])
                 B_grad_memlet = dace.Memlet(data=result.required_grad_names["B"],
-                                            subset="i,j",
+                                            subset=B_grad_subset,
                                             wcr="lambda x, y: x + y")
                 nstate.add_memlet_path(tasklet, map_exit, B_grad_write, src_conn="dB_elem", memlet=B_grad_memlet)
+            elif B_rank == 1 and A_rank >= 2:
+                # Batched matrix-vector case: A is (..., m, k) and B is (k,), Y is (..., m)
+                # dB[j] = sum over all batch and row dimensions: sum_{...,i} A[...,i,j] * dY[...,i]
+                # Build dynamic map range based on A shape
+                batch_dims = A_desc.shape[:-2]  # All dimensions except last 2
+                m_dim = A_desc.shape[-2]  # Number of rows
+                k_dim = A_desc.shape[-1]  # Number of columns (= size of B)
+
+                # Create map indices: one for each batch dim, plus i (rows), plus j (cols)
+                map_params = {}
+                batch_indices = []
+                for idx, dim in enumerate(batch_dims):
+                    param_name = f"b{idx}"
+                    map_params[param_name] = f"0:{dim}"
+                    batch_indices.append(param_name)
+                map_params["i"] = f"0:{m_dim}"
+                map_params["j"] = f"0:{k_dim}"
+
+                map_entry, map_exit = nstate.add_map("batched_matvec_B_grad", map_params)
+
+                tasklet = nstate.add_tasklet("batched_matvec_B", {"A_elem", "dY_elem"}, {"dB_contrib"},
+                                             "dB_contrib = A_elem * dY_elem")
+
+                # Read from A - need to build subset string dynamically
+                A_subset = ",".join(batch_indices + ["i", "j"])
+                if "A" not in nsdfg.arrays:
+                    A_desc_copy = copy.deepcopy(A_desc)
+                    A_desc_copy.transient = False
+                    nsdfg.add_datadesc("A", A_desc_copy)
+                    required_forward_inputs.add("A")
+
+                A_read = nstate.add_read("A")
+                nstate.add_memlet_path(A_read,
+                                       map_entry,
+                                       tasklet,
+                                       dst_conn="A_elem",
+                                       memlet=dace.Memlet(data="A", subset=A_subset))
+
+                # Read from Y_grad - subset is batch indices + i
+                Y_subset = ",".join(batch_indices + ["i"])
+                nstate.add_memlet_path(Y_grad_access,
+                                       map_entry,
+                                       tasklet,
+                                       dst_conn="dY_elem",
+                                       memlet=dace.Memlet(data=result.given_grad_names["Y"], subset=Y_subset))
+
+                # Write to B_grad with reduction over all batch dims and i
+                B_grad_write = nstate.add_write(result.required_grad_names["B"])
+                B_grad_memlet = dace.Memlet(data=result.required_grad_names["B"], subset="j", wcr="lambda x, y: x + y")
+                nstate.add_memlet_path(tasklet, map_exit, B_grad_write, src_conn="dB_contrib", memlet=B_grad_memlet)
             else:
                 # General matrix multiplication case
                 # Compute matmul output shape: A^T @ Y_grad

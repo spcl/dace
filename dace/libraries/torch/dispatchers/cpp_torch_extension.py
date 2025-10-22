@@ -374,8 +374,10 @@ def setup_grad_values(backward_result: BackwardResult, sdfg: dace.SDFG, outputs:
     """
     code = "// input grads"
     for param_name, grad_name in sorted(backward_result.required_grad_names.items()):
-        zero_init = backward_result.zero_init.get(param_name, True)
-        code += "\n" + tensor_init_for_desc(grad_name, sdfg.arrays[grad_name], clean_weights, zeros=zero_init)
+        # Always zero-initialize gradient arrays to ensure correctness
+        # This is necessary because gradients may use WCR (write-conflict resolution)
+        # and must start from zero for proper accumulation
+        code += "\n" + tensor_init_for_desc(grad_name, sdfg.arrays[grad_name], clean_weights, zeros=True)
 
     code += "// output grads"
     for i, o in enumerate(outputs):
