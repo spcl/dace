@@ -1,4 +1,5 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+import ctypes
 import dace
 import numpy as np
 import pytest
@@ -270,7 +271,7 @@ def test_readwrite_structure_in_map():
     inp_struct = Bundle.dtype.base_type.as_ctypes()(
         data=data.__array_interface__['data'][0],
         data2=data2.__array_interface__['data'][0],
-        size=6,
+        size=ctypes.c_int64(6),
     )
     ref = np.zeros((10, 5), dtype=np.float32)
     ref[:6, :] = 6.0
@@ -279,7 +280,8 @@ def test_readwrite_structure_in_map():
     for code in generated_code:
         print(code.clean_code)
 
-    copy_prog.compile()(inp_struct, M=10, N=5)
+    csdfg = copy_prog.compile()
+    csdfg.fast_call((ctypes.byref(inp_struct), ctypes.c_int(5)), (ctypes.c_int(5),))
 
     assert np.allclose(data, ref)
 
