@@ -13,6 +13,8 @@ import dace.sdfg.construction_utils as cutil
 from typing import Tuple, Set, Union
 from dace.sdfg.construction_utils import token_match, token_replace
 from dace.symbolic import pystr_to_symbolic
+from dace.transformation.interstate.state_fusion import StateFusion
+from dace.transformation.passes import FuseStates
 
 
 def extract_bracket_content(s: str):
@@ -95,14 +97,6 @@ def remove_symbol_assignments(graph: ControlFlowRegion, sym_name: str):
             if k != sym_name:
                 new_assignments[k] = v
         e.data.assignments = new_assignments
-
-
-def remove_node_redirect_in_edges_to(parent_graph: ControlFlowRegion, node: ControlFlowRegion,
-                                     new_dst: ControlFlowRegion):
-    ies = parent_graph.in_edges(node)
-    parent_graph.remove_node(node)
-    for ie in ies:
-        parent_graph.add_edge(ie.src, new_dst, copy.deepcopy(ie.data))
 
 
 @properties.make_properties
@@ -277,6 +271,11 @@ class FuseBranches(transformation.MultiStateTransformation):
         read_sets0, write_sets0 = state0.read_and_write_sets()
         read_sets1, write_sets1 = state1.read_and_write_sets()
         joint_writes = write_sets0.intersection(write_sets1)
+
+        # Remove ignored writes
+        ignores_writes = self.collect_ignored_writes(state0).union(self.collect_ignored_writes(state1))
+        joint_writes = joint_writes.difference(ignores_writes)
+
         for write in joint_writes:
             state0_accesses = {n for n in state0.nodes() if isinstance(n, dace.nodes.AccessNode) and n.data == write}
             state1_accesses = {n for n in state1.nodes() if isinstance(n, dace.nodes.AccessNode) and n.data == write}
@@ -370,7 +369,11 @@ class FuseBranches(transformation.MultiStateTransformation):
 
         return all_write_accesses - considered_write_accesses
 
-    def ignored_accesses_are_reused(self, state: dace.SDFGState):
+    def collect_ignored_writes(self, state: dace.SDFGState):
+        ignored_write_access_nodes = self.collect_ignored_write_accesses(state)
+        return {an.data for an in ignored_write_access_nodes}
+
+    def ignored_accesses_are_reused(self, states: Set[dace.SDFGState]):
         """
         Check if ignored write accesses are used elsewhere in the SDFG.
         Implement it by remove the state and then running and checking the
@@ -379,7 +382,9 @@ class FuseBranches(transformation.MultiStateTransformation):
         Returns:
             True if any ignored data is later read or written in another state.
         """
-        ignored_accesses = self.collect_ignored_write_accesses(state)
+        ignored_accesses = set()
+        for state in states:
+            ignored_accesses = ignored_accesses.union(self.collect_ignored_write_accesses(state))
         ignored_data = {a.data for a in ignored_accesses}
 
         # Work on a copy to safely remove nodes
@@ -387,8 +392,10 @@ class FuseBranches(transformation.MultiStateTransformation):
         sdutil.set_nested_sdfg_parent_references(copy_sdfg)
 
         # Remove all nodes from the target state in the copy
+        labels = {(s.label, s.parent_graph.label, s.sdfg.label) for s in states}
         for st in copy_sdfg.all_states():
-            if st.label == state.label:
+            label_tuple = (st.label, st.parent_graph.label, st.sdfg.label)
+            if label_tuple in labels:
                 for n in list(st.nodes()):
                     st.remove_node(n)
 
@@ -402,6 +409,29 @@ class FuseBranches(transformation.MultiStateTransformation):
             print(f"[can_be_applied] Ignored data ({ignored_data}) is used elsewhere (write): {ignored_in_write}")
 
         return bool(ignored_in_read or ignored_in_write)
+
+    def symbol_reused_outside_conditional(self, sym_name: str):
+        copy_sdfg = copy.deepcopy(self.conditional.sdfg)
+        sdutil.set_nested_sdfg_parent_references(copy_sdfg)
+
+        # Remove all nodes from the target state in the copy
+        conditional_label_tuple = (self.conditional.label, self.conditional.parent_graph.label
+                                   if self.conditional.parent_graph is not None else "", self.conditional.sdfg.label)
+        for st in copy_sdfg.all_control_flow_regions():
+            label_tuple = (st.label, st.parent_graph.label if st.parent_graph is not None else "", st.sdfg.label)
+            if label_tuple == conditional_label_tuple:
+                ies = st.parent_graph.in_edges(st)
+                oes = st.parent_graph.out_edges(st)
+                empty_state = st.parent_graph.add_state(label=f"empty_replacement_{st.label}",
+                                                        is_start_block=st.start_block)
+                st.parent_graph.remove_node(st)
+                for ie in ies:
+                    st.parent_graph.add_edge(ie.src, empty_state, copy.deepcopy(ie.data))
+                for oe in oes:
+                    st.parent_graph.add_edge(empty_state, oe.dst, copy.deepcopy(oe.data))
+                break
+
+        return not (sym_name in copy_sdfg.free_symbols)
 
     def only_top_level_tasklets(self, graph: ControlFlowRegion):
         checked_at_least_one_tasklet = False
@@ -418,16 +448,124 @@ class FuseBranches(transformation.MultiStateTransformation):
                                                                        node=node,
                                                                        parent_state=state)
                     checked_at_least_one_tasklet = True
-                    print(node, state.scope_dict()[node], parent_maps)
                     if len(parent_maps) > 0:
                         return False
 
         # If no tasklet has been checked
         return checked_at_least_one_tasklet
 
+    def add_conditional_write_combination(self, new_state: dace.SDFGState,
+                                          state0_in_new_state_write_access: dace.nodes.AccessNode,
+                                          state1_in_new_state_write_access: dace.nodes.AccessNode,
+                                          cond_var_as_float_name: str, write_name: str, index: int):
+        """
+        Adds a conditional write combination mechanism to merge outputs from two branches.
+
+        This function creates temporary scalars and a combine tasklet to perform:
+        result = float_cond * tmp1 + (1 - float_cond) * tmp2
+
+        Args:
+            new_state: The SDFG state where the combination will be added
+            state0_write_access: Write access node from state0 (original state)
+            state1_write_access: Write access node from state1 (original state)
+            state0_in_new_state_write_access: Write access node from state0 in new_state
+            state1_in_new_state_write_access: Write access node from state1 in new_state
+            cond_var_as_float_name: Name of the float condition variable
+            write_name: Base name for the write operation (used in naming)
+            index: Index for unique naming of temporaries
+
+        Returns:
+            tuple: (combine_tasklet, tmp1_access, tmp2_access, float_cond_access)
+        """
+
+        # Prepare write subset for non-tasklet inputs
+        ies0 = new_state.in_edges(state0_in_new_state_write_access)
+        ies1 = new_state.in_edges(state1_in_new_state_write_access)
+        assert len(ies0) == len(ies1)
+        assert len(ies0) == 1
+
+        ie0, ie1 = ies0[0], ies1[0]
+        assert ie0.data.subset == ie1.data.subset
+        write_subset: dace.subsets.Range = ie0.data.subset
+        assert write_subset.num_elements_exact() == 1
+
+        # Generate unique names for temporary scalars
+        tmp1_name = f"if_body_tmp_{index}"
+        tmp2_name = f"else_body_tmp_{index}"
+
+        # Get array information for dtype
+        arr = new_state.sdfg.arrays[state0_in_new_state_write_access.data]
+
+        # 1. Add temporary scalar between state0's write to array (tmp1)
+        tmp1_name, tmp1_scalar = new_state.sdfg.add_scalar(
+            name=tmp1_name,
+            dtype=arr.dtype,
+            storage=dace.dtypes.StorageType.Default,
+            transient=True,
+            find_new_name=True,
+        )
+
+        # 2. Add temporary scalar between state1's write to array (tmp2)
+        tmp2_name, tmp2_scalar = new_state.sdfg.add_scalar(
+            name=tmp2_name,
+            dtype=arr.dtype,
+            storage=dace.dtypes.StorageType.Default,
+            transient=True,
+            find_new_name=True,
+        )
+
+        # 3. Add the combine tasklet which performs: float_cond1 * tmp1 + (1 - float_cond1) * tmp2
+        combine_tasklet = new_state.add_tasklet(
+            name=f"combine_branch_values_for_{write_name}_{index}",
+            inputs={"_in_left", "_in_right", "_in_factor"},
+            outputs={"_out"},
+            code="_out = (_in_factor * _in_left) + ((1.0 - _in_factor) * _in_right)")
+
+        # 4. Redirect the writes to access nodes with temporary scalars for each state
+        # Handle state0's write
+        ies = new_state.in_edges(state0_in_new_state_write_access)
+        assert len(ies) == 1, f"Expected 1 input edge to state0 write access, got {len(ies)}"
+        ie = ies[0]
+        tmp1_access = new_state.add_access(tmp1_name)
+        new_state.add_edge(ie.src, ie.src_conn, tmp1_access, None, dace.memlet.Memlet(f"{tmp1_name}"))
+        new_state.remove_edge(ie)
+
+        # Handle state1's write
+        ies = new_state.in_edges(state1_in_new_state_write_access)
+        assert len(ies) == 1, f"Expected 1 input edge to state1 write access, got {len(ies)}: {ies}"
+        ie = ies[0]
+        tmp2_access = new_state.add_access(tmp2_name)
+        new_state.add_edge(ie.src, ie.src_conn, tmp2_access, None, dace.memlet.Memlet(f"{tmp2_name}"))
+
+        # 5. Remove write of state1
+        new_state.remove_edge(ie)
+
+        # 6. Redirect tmp scalars to the combine tasklet and then to the old write
+        float_cond_access = new_state.add_access(cond_var_as_float_name)
+
+        # Connect inputs to combine tasklet
+        for tmp_access, connector in [(tmp1_access, "_in_left"), (tmp2_access, "_in_right"),
+                                      (float_cond_access, "_in_factor")]:
+            new_state.add_edge(tmp_access, None, combine_tasklet, connector, dace.memlet.Memlet(tmp_access.data))
+
+        # Connect combine tasklet output to the final write access
+        new_state.add_edge(
+            combine_tasklet, "_out", state0_in_new_state_write_access, None,
+            dace.memlet.Memlet(data=state0_in_new_state_write_access.data, subset=copy.deepcopy(ie.data.subset)))
+
+        return combine_tasklet, tmp1_access, tmp2_access, float_cond_access
+
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
-        # print("[can_be_applied]")
         # Works for if-else branches or only if branches
+        # Sanity checks for the sdfg and graph parameters
+        assert sdfg == self.conditional.sdfg
+        assert graph == self.conditional.parent_graph
+
+        if sdfg.parent_nsdfg_node is not None:
+            if self.parent_nsdfg_state is None:
+                print("[can_be_applied] Nested SDFGs need to provide the parent state of the parent nsdfg node")
+                return False
+
         if len(self.conditional.branches) > 2:
             print("[can_be_applied] More than two branches – only supports if/else or single if.")
             return False
@@ -504,10 +642,6 @@ class FuseBranches(transformation.MultiStateTransformation):
                     for e in state_write_edges:
                         if e.data.data is None:
                             continue
-                        #if e.data.subset.num_elements_exact() != 1:
-                        #    print(
-                        #        f"[can_be_applied] All write edges need to have exactly one-element write '{write}' (edge {e} problematic)."
-                        #    )
                         if e.data.data not in state_write_subsets:
                             state_write_subsets[e.data.data] = set()
                         state_write_subsets[e.data.data].add(e.data.subset)
@@ -549,10 +683,9 @@ class FuseBranches(transformation.MultiStateTransformation):
                     print(f"[can_be_applied] Branch 1 writes to non-reusable data: {diff_state1}")
                     return False
 
-            if self.ignored_accesses_are_reused(state0):
-                return False
-            if self.ignored_accesses_are_reused(state1):
-                return False
+            if not permissive:
+                if self.ignored_accesses_are_reused({state0, state1}):
+                    return False
 
         elif len(self.conditional.branches) == 1:
             tup0: Tuple[properties.CodeBlock, ControlFlowRegion] = self.conditional.branches[0]
@@ -595,11 +728,7 @@ class FuseBranches(transformation.MultiStateTransformation):
                     state_write_edges = set()
                     for an in state_accesses:
                         state_write_edges |= {e for e in state.in_edges(an) if e.data.data is not None}
-                    # If there are multiple write edges again we would need to know the order
-                    # Ok - if single take the last one
-                    #if len(state_write_edges) > 1:
-                    #    print(f"[can_be_applied] Multiple write edges for '{write}' in one branch.")
-                    #    return False
+
                     state_writes |= {e.data.data for e in state_write_edges}
                     for e in state_write_edges:
                         if e.data.data is None:
@@ -609,8 +738,9 @@ class FuseBranches(transformation.MultiStateTransformation):
                                 f"[can_be_applied] All write edges need to have exactly one-element write '{write}' (edge {e} problematic)."
                             )
 
-                if self.ignored_accesses_are_reused(state0):
-                    return False
+                if not permissive:
+                    if self.ignored_accesses_are_reused({state0}):
+                        return False
 
         print(f"[can_be_applied] to {self.conditional} is True")
         return True
@@ -730,7 +860,7 @@ class FuseBranches(transformation.MultiStateTransformation):
         cond = non_none_conds.pop()
         cond_code_str = cond.as_string
         cond_code_symexpr = pystr_to_symbolic(cond_code_str, simplify=False)
-        assert len(cond_code_symexpr.free_symbols) == 1
+        #assert len(cond_code_symexpr.free_symbols) == 1, f"{cond_code_symexpr}, {cond_code_symexpr.free_symbols}"
 
         # Find values assigned to the symbols
         print("Condition as symexpr:", cond_code_symexpr)
@@ -764,9 +894,13 @@ class FuseBranches(transformation.MultiStateTransformation):
         print("assigned_syms:", assigned_syms)
         print("unassigned_syms:", unassigned_syms)
         print("sym_val_map:", sym_val_map)
-        graph.sdfg.save("owo.sdfg")
 
-        cond_var = str(next(iter(cond_code_symexpr.free_symbols)))
+        # If 1 free symbol, easy it means it is condition variable,
+        # otherwise get the left most
+        if len(cond_code_symexpr.free_symbols) == 1:
+            cond_var = str(next(iter(cond_code_symexpr.free_symbols)))
+        else:
+            cond_var = cutil.token_split_variable_names(cond_code_str).pop()
 
         # If the sym_map has any functions, then we need to drop, e.g. array access
         new_sym_val_map = dict()
@@ -845,7 +979,8 @@ class FuseBranches(transformation.MultiStateTransformation):
         parent_graph.add_node(new_if_block)
 
         for oe in if_out_edges:
-            oe.src = new_if_block
+            parent_graph.remove_edge(oe)
+            parent_graph.add_edge(new_if_block, oe.dst, copy.deepcopy(oe.data))
 
         # Do not use negation assignments={f"{negated_name}": f"not ({cond.as_string})"}
         # Crates issue when simplifying with sympy
@@ -969,6 +1104,167 @@ class FuseBranches(transformation.MultiStateTransformation):
                 state1: SDFGState = body1.nodes()[0]
                 if self._is_disjoint_subset(state0, state1):  # Then we need to sequentialize branches
                     first_if, second_if = self._split_branches(parent_graph=graph, if_block=self.conditional)
+                    return first_if, second_if
+        return None, None
+
+    def demote_branch_only_symbols_appearing_only_a_single_branch_to_scalars_and_try_fuse(
+            self, graph: ControlFlowRegion, sdfg: dace.SDFG):
+        for branch, body in self.conditional.branches:
+            # 2 states, first state empty and only thing is interstate assignments
+            if (len(body.nodes()) == 2 and all({isinstance(n, dace.SDFGState)
+                                                for n in body.nodes()}) and len(body.start_block.nodes()) == 0
+                    and len(body.edges()) == 1):
+                edge = body.edges()[0]
+                # If symbol not used anywhere else
+                symbols_reused = False
+                symbols_defined = set()
+                for k, v in edge.data.assignments.items():
+                    symbols_reused |= self.symbol_reused_outside_conditional(k)
+                    symbols_defined.add(k)
+                    if symbols_reused:
+                        break
+
+                print(symbols_reused)
+                print(symbols_defined)
+
+                if len(symbols_defined) > 1:
+                    print("ToDo: Can't support more than one symbol defined currently")
+                    return
+
+                if not symbols_reused:
+                    # Then demote all symbols
+                    for symbol_str in symbols_defined:
+                        sdutil.demote_symbol_to_scalar(sdfg, symbol_str)
+
+                    # Get edges of the first nodes
+                    edge0, edge1 = list(body.all_edges(*(list(body.bfs_nodes()))[0:2]))
+                    assert edge0.data.assignments == dict()
+                    assert edge1.data.assignments == dict()
+
+                    # State fusion will fail but we know it is fine
+                    # Copy all access nodes to the next state, connect the sink node from prev. state
+                    # to the next state
+                    body.reset_cfg_list()
+
+                    assignment_state, other_state = list(body.bfs_nodes())[1:3]
+                    node_map = cutil.copy_state_contents(assignment_state, other_state)
+                    # Multiple symbols -> multiple sink nodes
+
+                    sink_nodes = {n for n in assignment_state.nodes() if assignment_state.out_degree(n) == 0}
+                    print("Sink nodes:", sink_nodes, " of:", assignment_state.nodes())
+
+                    for sink_node in sink_nodes:
+                        sink_data = sink_node.data
+                        sink_node_in_other_state = node_map[sink_node]
+
+                        # Find matching source nodes with same name
+                        source_nodes = {
+                            n
+                            for n in other_state.nodes() if isinstance(n, dace.nodes.AccessNode) and n.data == sink_data
+                            and n not in node_map.values()
+                        }
+
+                        # Reconnect edges to the new source node
+                        for source_node in source_nodes:
+                            out_edges = other_state.out_edges(source_node)
+                            for out_edge in out_edges:
+                                other_state.remove_edge(out_edge)
+                                other_state.add_edge(sink_node_in_other_state, out_edge.src_conn, out_edge.dst,
+                                                     out_edge.dst_conn, copy.deepcopy(out_edge.data))
+                            other_state.remove_node(source_node)
+
+                    # Remove both nodes to change the start block
+                    # Old node is not needed enaymore
+                    body.remove_node(body.start_block)
+                    body.remove_node(other_state)
+                    body.remove_node(assignment_state)
+                    body.add_node(other_state, is_start_block=True)
+
+    def demote_branch_only_symbols_appering_on_both_branches_to_scalars_and_try_fuse(
+            self, graph: ControlFlowRegion, sdfg: dace.SDFG):
+        if len(self.conditional.branches) != 2:
+            return
+        (cond0, body0), (cond1, body1) = self.conditional.branches
+        # 2 states, first state empty and only thing is interstate assignments
+        if (len(body0.nodes()) == 2 and all({isinstance(n, dace.SDFGState)
+                                             for n in body0.nodes()}) and len(body0.start_block.nodes()) == 0
+                and len(body0.edges()) == 1 and len(body1.nodes()) == 2
+                and all({isinstance(n, dace.SDFGState)
+                         for n in body1.nodes()}) and len(body1.start_block.nodes()) == 0 and len(body1.edges()) == 1):
+            edge0 = body0.edges()[0]
+            edge1 = body1.edges()[0]
+
+            # If symbol not used anywhere else
+            symbols_defined0 = set()
+            symbols_defined1 = set()
+            for k, v in edge0.data.assignments.items():
+                symbols_defined0.add(k)
+            for k, v in edge1.data.assignments.items():
+                symbols_defined1.add(k)
+
+            if symbols_defined1 != symbols_defined0:
+                return
+
+            symbols_defined = symbols_defined0
+
+            # Then demote all symbols
+            for symbol_str in symbols_defined:
+                sdutil.demote_symbol_to_scalar(sdfg, symbol_str)
+
+            # Get edges coming and out from the first two nodes
+            edge0_0, edge0_1 = list(body0.all_edges(*(list(body0.bfs_nodes()))[0:2]))
+            edge1_0, edge1_1 = list(body1.all_edges(*(list(body1.bfs_nodes()))[0:2]))
+            assert edge0_0.data.assignments == dict()
+            assert edge1_1.data.assignments == dict()
+            assert edge0_1.data.assignments == dict()
+            assert edge1_0.data.assignments == dict()
+
+            # State fusion will fail but we know it is fine
+            # Copy all access nodes to the next state, connect the sink node from prev. state
+            # to the next state
+            body0.reset_cfg_list()
+            body1.reset_cfg_list()
+
+            for body in [body0, body1]:
+                print("CCC", body)
+                assignment_state, other_state = list(body.bfs_nodes())[1:3]
+                node_map = cutil.copy_state_contents(assignment_state, other_state)
+                # Multiple symbols -> multiple sink nodes
+
+                sink_nodes = {n for n in assignment_state.nodes() if assignment_state.out_degree(n) == 0}
+                print("Sink nodes:", sink_nodes, " of:", assignment_state.nodes())
+
+                for sink_node in sink_nodes:
+                    sink_data = sink_node.data
+                    sink_node_in_other_state = node_map[sink_node]
+
+                    # Find matching source nodes with same name
+                    source_nodes = {
+                        n
+                        for n in other_state.nodes()
+                        if isinstance(n, dace.nodes.AccessNode) and n.data == sink_data and n not in node_map.values()
+                    }
+
+                    # Reconnect edges to the new source node
+                    for source_node in source_nodes:
+                        if source_node == sink_node_in_other_state:
+                            continue
+                        out_edges = other_state.out_edges(source_node)
+                        for out_edge in out_edges:
+                            other_state.remove_edge(out_edge)
+                            other_state.add_edge(sink_node_in_other_state, out_edge.src_conn, out_edge.dst,
+                                                 out_edge.dst_conn, copy.deepcopy(out_edge.data))
+
+                        other_state.remove_node(source_node)
+
+                # Remove both nodes to change the start block
+                # Old node is not needed enaymore
+                body.remove_node(body.start_block)
+                body.remove_node(other_state)
+                body.remove_node(assignment_state)
+                body.add_node(other_state, is_start_block=True)
+
+            FuseStates().apply_pass(self.conditional.sdfg, {})
 
     def try_clean(self, graph: ControlFlowRegion, sdfg: SDFG):
         assert graph == self.conditional.parent_graph
@@ -979,6 +1275,9 @@ class FuseBranches(transformation.MultiStateTransformation):
             graph, self.conditional)
         # Implicitly done by can-be-applied
         # self.sequentialize_if_else_branch_if_disjoint_subsets(graph)
+
+        self.demote_branch_only_symbols_appering_on_both_branches_to_scalars_and_try_fuse(graph, sdfg)
+        self.demote_branch_only_symbols_appearing_only_a_single_branch_to_scalars_and_try_fuse(graph, sdfg)
 
     def apply(self, graph: ControlFlowRegion, sdfg: SDFG):
         # If CFG has 1 or two branches
@@ -1016,19 +1315,28 @@ class FuseBranches(transformation.MultiStateTransformation):
             #   body2
             # }
             # And thus we can use twice the single branch imlpementaiton
-            if self._is_disjoint_subset(state0, state1):  # Then we need to sequentialize branches
+            first_if, second_if = self.sequentialize_if_else_branch_if_disjoint_subsets(graph)
+
+            if first_if is not None and second_if is not None:
                 print("Disjoint subsets - split the branching if-else two separate single state branches and execute")
-                first_if, second_if = self._split_branches(parent_graph=graph, if_block=self.conditional)
                 print(f"Applying to first_if: {first_if}")
                 t1 = FuseBranches()
                 t1.conditional = first_if
-                assert t1.can_be_applied(graph=graph, expr_index=0, sdfg=sdfg)
+                if sdfg.parent_nsdfg_node is not None:
+                    t1.parent_nsdfg_state = self.parent_nsdfg_state
+                # Right now can_be_applied False because the is reused, but we do not care about
+                # this type of a reuse - so call permissive=True
+                assert t1.can_be_applied(graph=graph, expr_index=0, sdfg=sdfg, permissive=True)
                 t1.apply(graph=graph, sdfg=sdfg)
 
                 t2 = FuseBranches()
                 t2.conditional = second_if
+                if sdfg.parent_nsdfg_node is not None:
+                    t2.parent_nsdfg_state = self.parent_nsdfg_state
                 print(f"Applying to second_if: {second_if}")
-                assert t2.can_be_applied(graph=graph, expr_index=0, sdfg=sdfg)
+                # Right now can_be_applied False because the is reused, but we do not care about
+                # this type of a reuse - so call permissive=True
+                assert t2.can_be_applied(graph=graph, expr_index=0, sdfg=sdfg, permissive=True)
                 t2.apply(graph=graph, sdfg=sdfg)
                 # Create two single branch SDFGs
                 # Then call apply on each one of them
@@ -1049,7 +1357,7 @@ class FuseBranches(transformation.MultiStateTransformation):
             state1: SDFGState = body1.nodes()[0]
 
             if self._is_disjoint_subset(state0, state1):
-                raise NotImplementedError("TODO")
+                raise Exception("The case shoudl have been handled by branch split")
 
             new_state = dace.SDFGState(f"fused_{state0.label}_and_{state1.label}")
             state0_to_new_state_node_map = cutil.copy_state_contents(state0, new_state)
@@ -1060,6 +1368,12 @@ class FuseBranches(transformation.MultiStateTransformation):
             read_sets0, write_sets1 = state1.read_and_write_sets()
 
             joint_writes = write_sets0.intersection(write_sets1)
+
+            # Remove ignored writes from the set
+            ignored_writes0 = self.collect_ignored_writes(state0)
+            ignored_writes1 = self.collect_ignored_writes(state1)
+            ignored_writes = ignored_writes0.union(ignored_writes1)
+            joint_writes = joint_writes.difference(ignored_writes)
 
             graph.add_node(new_state)
             for ie in graph.in_edges(self.conditional):
@@ -1080,69 +1394,22 @@ class FuseBranches(transformation.MultiStateTransformation):
                 # Sequentializing the branches would fix this issue (but would come at a performance cost)
                 assert len(state0_write_accesses_in_new_state) == 1, f"len({state0_write_accesses_in_new_state}) != 1"
                 assert len(state1_write_accesses_in_new_state) == 1, f"len({state1_write_accesses_in_new_state}) != 1"
+                assert len(state0_write_accesses) == 1
 
+                state0_write_access = state0_write_accesses.pop()
                 state0_in_new_state_write_access = state0_write_accesses_in_new_state.pop()
                 state1_in_new_state_write_access = state1_write_accesses_in_new_state.pop()
 
-                # 1. Add a temporary scalar between state0's write to array (tmp1)
-                # 2. Add a temporary scalar between state1's write to array (tmp2)
-                # 3. Add the combine tasklet which will be perform float_cond1 * tmp1 + (1- float_cond1) * tmp2
-                # 4. Redirect the writes to the access node with the temporary scalar for each each state
-                # 5. Rm write of state 1
-                # 6. Redirect tmp scalars to the combine tasklet and then that to to the old write
-                # And which writes it to the access node coming from state0
-                # 7. Rm unused access nodes of state 1
-                tmp1_name = "if_body_tmp"
-                tmp2_name = "else_body_tmp"
-                arr = new_state.sdfg.arrays[state0_in_new_state_write_access.data]
-                # 1
-                tmp1_name, tmp1_scalar = new_state.sdfg.add_scalar(
-                    name=tmp1_name,
-                    dtype=arr.dtype,
-                    storage=dace.dtypes.StorageType.Default,
-                    transient=True,
-                    find_new_name=True,
-                )
-                # 2
-                tmp2_name, tmp2_scalar = new_state.sdfg.add_scalar(
-                    name=tmp2_name,
-                    dtype=arr.dtype,
-                    storage=dace.dtypes.StorageType.Default,
-                    transient=True,
-                    find_new_name=True,
-                )
-                # 3
-                combine_tasklet = new_state.add_tasklet(
-                    name=f"combine_branch_values_for_{write}",
-                    inputs={"_in_left", "_in_right", "_in_factor"},
-                    outputs={"_out"},
-                    code=f"_out = (_in_factor * _in_left) + ((1.0 - _in_factor) * _in_right)")
-                # 4
-                ies = new_state.in_edges(state0_in_new_state_write_access)
-                assert len(ies) == 1
-                ie = ies[0]
-                tmp1_access = new_state.add_access(tmp1_name)
-                new_state.add_edge(ie.src, ie.src_conn, tmp1_access, None, dace.memlet.Memlet(f"{tmp1_name}"))
-                new_state.remove_edge(ie)
-                ies = new_state.in_edges(state1_in_new_state_write_access)
-                assert len(ies) == 1
-                ie = ies[0]
-                tmp2_access = new_state.add_access(tmp2_name)
-                new_state.add_edge(ie.src, ie.src_conn, tmp2_access, None, dace.memlet.Memlet(f"{tmp2_name}"))
-                # 5
-                new_state.remove_edge(ie)
-                # 6
-                float_cond_access = new_state.add_access(cond_var_as_float_name)
-                for tmp_access, connector in [(tmp1_access, "_in_left"), (tmp2_access, "_in_right"),
-                                              (float_cond_access, "_in_factor")]:
-                    new_state.add_edge(tmp_access, None, combine_tasklet, connector,
-                                       dace.memlet.Memlet(tmp_access.data))
+                combine_tasklet, tmp1_access, tmp2_access, float_cond_access = self.add_conditional_write_combination(
+                    new_state=new_state,
+                    state0_in_new_state_write_access=state0_in_new_state_write_access,
+                    state1_in_new_state_write_access=state1_in_new_state_write_access,
+                    cond_var_as_float_name=cond_var_as_float_name,
+                    write_name=write,
+                    index=0)
 
-                new_state.add_edge(combine_tasklet, "_out", state0_in_new_state_write_access, None,
-                                   dace.memlet.Memlet(state0_in_new_state_write_access.data))
                 new_state.remove_node(state1_in_new_state_write_access)
 
-                sdfg.save("middle.sdfg")
                 self._try_simplify_combine_tasklet(new_state, combine_tasklet)
         else:
             assert len(self.conditional.branches) == 1
@@ -1156,14 +1423,8 @@ class FuseBranches(transformation.MultiStateTransformation):
             state0_to_new_state_node_map = cutil.copy_state_contents(state0, new_state)
 
             read_sets0, write_sets0 = state0.read_and_write_sets()
-            joint_writes = {
-                n
-                for n in write_sets0
-                if isinstance(state0.sdfg.arrays[n], dace.data.Array) or state0.sdfg.arrays[n].transient is False
-            }
+            joint_writes = write_sets0.difference(self.collect_ignored_writes(state0))
 
-            #print(joint_writes)
-            #raise Exception(joint_writes)
             new_joint_writes = copy.deepcopy(joint_writes)
             new_reads = dict()
             for write in joint_writes:
@@ -1183,12 +1444,17 @@ class FuseBranches(transformation.MultiStateTransformation):
             read_sets0, write_sets1 = state1.read_and_write_sets()
             joint_writes = new_joint_writes
 
-            # New joint writes require adding reads to a previously output-only connector
+            # New joint writes require adding reads to a previously output-only connector,
+            # we nede to do this if the data is not transient
             if new_reads:
                 if graph.sdfg.parent_nsdfg_node is not None:
                     parent_nsdfg_node = graph.sdfg.parent_nsdfg_node
                     parent_nsdfg_state = self.parent_nsdfg_state
                     for new_read_name, new_read_memlet, nodes in new_reads.values():
+                        assert new_read_name in graph.sdfg.arrays
+                        new_read_is_transient = graph.sdfg.arrays[new_read_name].transient
+                        if new_read_is_transient:
+                            continue
                         if new_read_name not in parent_nsdfg_node.in_connectors:
                             write_edges = set(
                                 parent_nsdfg_state.out_edges_by_connector(parent_nsdfg_node, new_read_name))
@@ -1205,7 +1471,8 @@ class FuseBranches(transformation.MultiStateTransformation):
                                 parent_sdfg=parent_nsdfg_state.sdfg,
                                 add_to_output_too=False,
                                 add_with_exact_subset=use_exact_subset,
-                                exact_subset=copy.deepcopy(write_subset))
+                                exact_subset=copy.deepcopy(write_subset),
+                                nsdfg_connector_name=new_read_name)
 
             graph.add_node(new_state)
             for ie in graph.in_edges(self.conditional):
@@ -1227,68 +1494,16 @@ class FuseBranches(transformation.MultiStateTransformation):
                     assert state0_in_new_state_write_access in new_state.nodes()
                     assert state1_in_new_state_write_access in new_state.nodes()
 
-                    # 1. Add a temporary scalar between state0's write to array (tmp1)
-                    # 2. Add a temporary scalar between state1's write to array (tmp2)
-                    # 3. Add the combine tasklet which will be perform float_cond1 * tmp1 + (1- float_cond1) * tmp2
-                    # 4. Redirect the writes to the access node with the temporary scalar for each each state
-                    # 5. Rm write of state 1
-                    # 6. Redirect tmp scalars to the combine tasklet and then that to to the old write
-                    # And which writes it to the access node coming from state0
-                    # 7. Rm unused access nodes of state 1
-                    tmp1_name = f"if_body_tmp_{i}"
-                    tmp2_name = f"else_body_tmp_{i}"
-                    arr = new_state.sdfg.arrays[state0_in_new_state_write_access.data]
-                    # 1
-                    tmp1_name, tmp1_scalar = new_state.sdfg.add_scalar(
-                        name=tmp1_name,
-                        dtype=arr.dtype,
-                        storage=dace.dtypes.StorageType.Default,
-                        transient=True,
-                        find_new_name=True,
-                    )
-                    # 2
-                    tmp2_name, tmp2_scalar = new_state.sdfg.add_scalar(
-                        name=tmp2_name,
-                        dtype=arr.dtype,
-                        storage=dace.dtypes.StorageType.Default,
-                        transient=True,
-                        find_new_name=True,
-                    )
-                    # 3
-                    combine_tasklet = new_state.add_tasklet(
-                        name=f"combine_branch_values_for_{write}_{i}",
-                        inputs={"_in_left", "_in_right", "_in_factor"},
-                        outputs={"_out"},
-                        code=f"_out = (_in_factor * _in_left) + ((1.0 - _in_factor) * _in_right)")
-                    # 4
-                    ies = new_state.in_edges(state0_in_new_state_write_access)
-                    assert len(ies) == 1
-                    ie = ies[0]
-                    tmp1_access = new_state.add_access(tmp1_name)
-                    new_state.add_edge(ie.src, ie.src_conn, tmp1_access, None, dace.memlet.Memlet(f"{tmp1_name}"))
-                    new_state.remove_edge(ie)
-                    ies = new_state.in_edges(state1_in_new_state_write_access)
-                    assert len(ies) == 1, f"{ies} | {state1_in_new_state_write_access} | {state1.nodes()}"
-                    ie = ies[0]
-                    tmp2_access = new_state.add_access(tmp2_name)
-                    new_state.add_edge(ie.src, ie.src_conn, tmp2_access, None, dace.memlet.Memlet(f"{tmp2_name}"))
-                    # 5
-                    new_state.remove_edge(ie)
-                    # 6
-                    float_cond_access = new_state.add_access(cond_var_as_float_name)
-                    for tmp_access, connector in [(tmp1_access, "_in_left"), (tmp2_access, "_in_right"),
-                                                  (float_cond_access, "_in_factor")]:
-                        new_state.add_edge(tmp_access, None, combine_tasklet, connector,
-                                           dace.memlet.Memlet(tmp_access.data))
+                    # If state 1 access should have setzero defined to be true to avoid writing trash
+                    state1_in_new_state_write_access.setzero = True
 
-                    ies = state0.in_edges(state0_write_access)
-                    assert len(ies) == 1
-                    ie = ies[0]
-                    new_state.add_edge(
-                        combine_tasklet, "_out", state0_in_new_state_write_access, None,
-                        dace.memlet.Memlet(data=state0_in_new_state_write_access.data,
-                                           subset=copy.deepcopy(ie.data.subset)))
-                    #new_state.remove_node(state1_in_new_state_write_access)
+                    combine_tasklet, tmp1_access, tmp2_access, float_cond_access = self.add_conditional_write_combination(
+                        new_state=new_state,
+                        state0_in_new_state_write_access=state0_in_new_state_write_access,
+                        state1_in_new_state_write_access=state1_in_new_state_write_access,
+                        cond_var_as_float_name=cond_var_as_float_name,
+                        write_name=write,
+                        index=i)
 
                     # If we detect a previous right, for correctness we need to connect to that
                     self._connect_rhs_identity_assignment_to_previous_read(new_state=new_state,
@@ -1297,10 +1512,9 @@ class FuseBranches(transformation.MultiStateTransformation):
                                                                            combine_tasklet=combine_tasklet,
                                                                            skip_set={tmp2_access})
 
-                    #self._try_simplify_combine_tasklet(new_state, combine_tasklet)
-                    sdfg.save("middle.sdfg")
-
                     new_state.remove_node(state1_in_new_state_write_access)
+
+                    self._try_simplify_combine_tasklet(new_state, combine_tasklet)
 
         # If the symbol is not used anymore
         conditional_strs = {cond.as_string for cond, _ in self.conditional.branches if cond is not None}
@@ -1323,17 +1537,11 @@ class FuseBranches(transformation.MultiStateTransformation):
                             if sym_name in graph.parent_nsdfg_node.symbol_mapping:
                                 del graph.parent_nsdfg_node.symbol_mapping[sym_name]
 
-        for ie in graph.in_edges(new_state):
-            # If ie.src is empty and ie.data.assignments is empty remove ie.src
-            if len(ie.data.assignments) == 0 and isinstance(ie.src, dace.SDFGState) and len(ie.src.nodes()) == 0:
-                remove_node_redirect_in_edges_to(graph, ie.src, new_state)
-
         self._try_fuse(graph, new_state, cond_prep_state)
 
         graph.sdfg.reset_cfg_list()
         sdutil.set_nested_sdfg_parent_references(graph.sdfg)
 
-        graph.sdfg.save("t1.sdfgz", compress=True)
         graph.sdfg.validate()
 
     def _find_previous_write(self, state: dace.SDFGState, sink: dace.nodes.Tasklet, data: str,
