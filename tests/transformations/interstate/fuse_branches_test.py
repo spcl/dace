@@ -111,6 +111,25 @@ def nested_if(a: dace.float64[N, N], b: dace.float64[N, N], c: dace.float64[N, N
 
 
 @dace.program
+def nested_if_two(a: dace.float64[N, N], b: dace.float64[N, N], c: dace.float64[N, N], d: dace.float64[N, N]):
+    for i, j in dace.map[0:N:1, 0:N:1]:
+        c[i, j] = b[i, j] * c[i, j]
+        d[i, j] = b[i, j] * d[i, j]
+        if a[i, j] > 0.3:
+            if b[i, j] > 0.1:
+                b[i, j] = 1.1
+                d[i, j] = 0.8
+            else:
+                b[i, j] = 1.2
+                d[i, j] = 0.9
+        else:
+            b[i, j] = -1.1
+            d[i, j] = 2.2
+        c[i, j] = max(0, b[i, j])
+        d[i, j] = max(0, d[i, j])
+
+
+@dace.program
 def branch_dependent_value_write_single_branch(
     a: dace.float64[N, N],
     b: dace.float64[N, N],
@@ -288,7 +307,9 @@ def run_and_compare(
     sdfg.save(sdfg.label + "_before.sdfg")
     # Apply transformation
     if use_pass:
-        fuse_branches_pass.FuseBranchesPass().apply_pass(sdfg, {})
+        fb = fuse_branches_pass.FuseBranchesPass()
+        fb.try_clean = True
+        fb.apply_pass(sdfg, {})
     else:
         apply_fuse_branches(sdfg, 2)
 
@@ -386,10 +407,18 @@ def test_multi_state_branch_body(use_pass_flag):
 def test_nested_if(use_pass_flag):
     a = np.random.choice([0.0, 3.0], size=(N, N))
     b = np.random.choice([0.0, 5.0], size=(N, N))
-    c = np.zeros((N, N))
-    d = np.zeros((N, N))
+    c = np.random.choice([0.0, 5.0], size=(N, N))
+    d = np.random.choice([0.0, 5.0], size=(N, N))
     s = np.zeros((1, )).astype(np.int64)
     run_and_compare(nested_if, 0, use_pass_flag, a=a, b=b, c=c, d=d, s=s[0])
+
+
+def test_nested_if_two():
+    a = np.random.choice([0.0, 3.0], size=(N, N))
+    b = np.random.choice([0.0, 5.0], size=(N, N))
+    c = np.random.choice([0.0, 5.0], size=(N, N))
+    d = np.random.choice([0.0, 5.0], size=(N, N))
+    run_and_compare(nested_if_two, 0, True, a=a, b=b, c=c, d=d)
 
 
 @pytest.mark.parametrize("use_pass_flag", [True, False])
@@ -1446,6 +1475,7 @@ def test_disjoint_chain(rtt_val):
 
 
 if __name__ == "__main__":
+    test_nested_if_two()
     test_disjoint_chain_split_branch_only(0.0)
     test_disjoint_chain_split_branch_only(4.0)
     test_disjoint_chain_split_branch_only(6.0)
