@@ -171,7 +171,7 @@ class PureSoftmax(ONNXForward):
         return nsdfg
 
 
-softmax_compute = dict(axis=lambda node, input: list(range(len(input.shape)))[node.axis:])
+softmax_compute = dict(axis=lambda node, input: node.axis if node.axis >= 0 else len(input.shape) + node.axis)
 
 
 @python_pure_op_implementation(**softmax_compute)

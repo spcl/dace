@@ -316,26 +316,34 @@ class PureGemm(ONNXForward):
         if node.alpha != 1 or node.beta != 0:
             mm_result = f"Ytmp_{uid}"
         scal_result = mm_result
-        if node.alpha != 1:
+        if node.alpha != 1 and node.beta != 0:
+            # Only use intermediate scaled array if both alpha and beta scaling are needed
             scal_result = f"scaled_{uid}"
+        elif node.alpha != 1:
+            # If only alpha scaling, write directly to Y
+            scal_result = "Y"
 
         # Create arrays according to alpha and beta
         if node.alpha != 1 or node.beta != 0:
             Ytmp_desc = out_desc_with_name(node, state, sdfg, "Y")
             nsdfg.add_datadesc(f"Ytmp_{uid}", copy.deepcopy(Ytmp_desc))
             nsdfg.arrays[f"Ytmp_{uid}"].transient = True
-        if node.beta != 0:
-            beta_desc = out_desc_with_name(node, state, sdfg, "Y")
-            nsdfg.add_datadesc(f"scaled_{uid}", copy.deepcopy(beta_desc))
+        if node.alpha != 1 and node.beta != 0:
+            # Only create scaled intermediate if both alpha and beta scaling are needed
+            scaled_desc = out_desc_with_name(node, state, sdfg, "Y")
+            nsdfg.add_datadesc(f"scaled_{uid}", copy.deepcopy(scaled_desc))
             nsdfg.arrays[f"scaled_{uid}"].transient = True
 
         nstate.add_edge(nstate.add_read("A"), None, einsum_node, "Inputs__0", nsdfg.make_array_memlet("A"))
         nstate.add_edge(nstate.add_read("B"), None, einsum_node, "Inputs__1", nsdfg.make_array_memlet("B"))
-        mm_result_node = nstate.add_write(mm_result)
-        nstate.add_edge(einsum_node, "Output", mm_result_node, None, nsdfg.make_array_memlet(mm_result))
+        mm_result_access_node = nstate.add_access(mm_result)
+        nstate.add_edge(einsum_node, "Output", mm_result_access_node, None, nsdfg.make_array_memlet(mm_result))
 
         # Multiply by alpha: mm_result -> scal_result
+        scal_result_access_node = None
         if node.alpha != 1:
+            # Reuse the same access node from einsum output for alpha scaling input
+            scal_result_access_node = nstate.add_access(scal_result)
             nstate.add_mapped_tasklet(
                 node.label + '_alphascale',
                 {
@@ -343,10 +351,11 @@ class PureGemm(ONNXForward):
                     for i, k in enumerate(result)
                 },
                 dict(a=dace.Memlet(data=mm_result, subset=','.join(result))),
-                f'o = a * dace.{Ytmp_desc.dtype}({node.alpha})',
+                f'o = a * {Ytmp_desc.dtype.ctype}({node.alpha})',
                 dict(o=dace.Memlet(data=scal_result, subset=','.join(result))),
                 external_edges=True,
-                input_nodes=dict(a=mm_result_node),
+                input_nodes={mm_result: mm_result_access_node},
+                output_nodes={scal_result: scal_result_access_node},
             )
 
         # Multiply by beta: scal_result, "C" -> "Y"
@@ -354,9 +363,21 @@ class PureGemm(ONNXForward):
             C_desc = in_desc_with_name(node, state, sdfg, "C")
             nsdfg.add_datadesc("C", copy.deepcopy(C_desc))
             nsdfg.arrays["C"].transient = False
-            scal_result_node = next(n for n in nstate.sink_nodes()
-                                    if isinstance(n, dace.nodes.AccessNode) and n.data == scal_result)
-            beta_scale_code = f'o = s + c * dace.{C_desc.dtype}({node.beta})'
+
+            # Find or create the access node for scal_result
+            # scal_result is either mm_result (if alpha==1) or scaled_{uid} (if alpha!=1)
+            # Reuse the access node from alpha scaling output, or from mm_result if no alpha scaling
+            if node.alpha != 1:
+                # Reuse the access node from alpha scaling output
+                scal_result_input_node = scal_result_access_node
+            else:
+                # No alpha scaling, scal_result is mm_result, use the mm_result access node
+                scal_result_input_node = mm_result_access_node
+
+            c_read_node = nstate.add_read("C")
+            y_write_node = nstate.add_write("Y")
+
+            beta_scale_code = f'o = s + c * {C_desc.dtype.ctype}({node.beta})'
             if node.beta == 1:
                 beta_scale_code = f'o = s + c'
 
@@ -378,7 +399,11 @@ class PureGemm(ONNXForward):
                 beta_scale_code,
                 dict(o=dace.Memlet(data="Y", subset=','.join(result))),
                 external_edges=True,
-                input_nodes={scal_result: scal_result_node},
+                input_nodes={
+                    scal_result: scal_result_input_node,
+                    "C": c_read_node
+                },
+                output_nodes={"Y": y_write_node},
             )
 
         return nsdfg

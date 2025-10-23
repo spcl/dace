@@ -83,7 +83,7 @@ class PureMaxPool2D(ONNXForward):
         batch_size = X.shape[0]
         num_channels = X.shape[1]
         strides = node.strides if node.strides is not None else [1 for _ in range(image_dims)]
-        pads = node.pads if node.pads is not None else [0 for _ in range(image_dims) * 2]
+        pads = node.pads if node.pads is not None else [0 for _ in range(image_dims * 2)]
         stride_x, stride_y = strides
         assert pads[0] == pads[2] and pads[1] == pads[3]
         pad_x, pad_y, _, _ = pads
@@ -397,7 +397,9 @@ class PureBatchNormalization(ONNXForward):
             True if the implementation can be applied, False otherwise
         """
         X = in_desc_with_name(node, state, sdfg, "X")
-        if len(X.shape) != 4:
+        # BatchNormalization supports 2D, 3D, 4D, 5D inputs
+        # Input shape: (N, C) or (N, C, D1, ..., Dn) where n >= 0
+        if len(X.shape) < 2:
             return False
 
         if "in_mean" in node.in_connectors and "input_mean" not in node.in_connectors:
@@ -433,7 +435,12 @@ class PureBatchNormalization(ONNXForward):
         num_channels = reduce_axes.pop(1)
 
         N = _prod(reduce_axes)
-        broadcast_shape = [num_channels, 1, 1]
+        # Compute broadcast shape based on input dimensions
+        # For 2D input (N, C): broadcast_shape = [C]
+        # For 3D input (N, C, D): broadcast_shape = [C, 1]
+        # For 4D input (N, C, H, W): broadcast_shape = [C, 1, 1]
+        # etc.
+        broadcast_shape = [num_channels] + [1] * (len(shape) - 2)
         dtype = in_desc_with_name(node, state, sdfg, "X").dtype
         eps = node.epsilon
         momentum = node.momentum

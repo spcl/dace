@@ -382,29 +382,152 @@ class PureClip(ONNXForward):
 
     @staticmethod
     def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
-        min_node = next(state.in_edges_by_connector(node, 'min')).src
-        max_node = next(state.in_edges_by_connector(node, 'max')).src
-        # TODO other cases
-        return (onnx_constant_or_none(sdfg, min_node) is not None and onnx_constant_or_none(sdfg, max_node) is not None)
+        # Always applicable - supports both constant and dynamic min/max
+        return True
 
     @staticmethod
     def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+        # Create new SDFG
+        nsdfg = dace.SDFG(node.label + "_expansion")
+        nstate = nsdfg.add_state()
 
-        min_node = next(state.in_edges_by_connector(node, 'min')).src
-        max_node = next(state.in_edges_by_connector(node, 'max')).src
-        minval = onnx_constant_or_none(sdfg, min_node)
-        maxval = onnx_constant_or_none(sdfg, max_node)
+        # Get input/output descriptors
+        input_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, "input"))
+        output_desc = copy.deepcopy(out_desc_with_name(node, state, sdfg, "output"))
 
-        input_dtype = in_desc_with_name(node, state, sdfg, "input").dtype
-        minstr = f"dace.{input_dtype.to_string()}({minval})"
-        maxstr = f"dace.{input_dtype.to_string()}({maxval})"
+        # Add data descriptors to SDFG
+        nsdfg.add_datadesc("input", input_desc)
+        nsdfg.add_datadesc("output", output_desc)
+        nsdfg.arrays["input"].transient = False
+        nsdfg.arrays["output"].transient = False
 
-        lfunc = f"lambda x: min(max(x, {minstr}), {maxstr})"
+        # Check if min and max are provided
+        has_min = 'min' in node.in_connectors
+        has_max = 'max' in node.in_connectors
 
-        def prog(input, output):
-            output[:] = dace.elementwise(lfunc, input)
+        # Try to get constant values if available
+        min_const = None
+        max_const = None
 
-        return program_for_node(prog, sdfg, state, node)
+        if has_min:
+            try:
+                min_edge = next(state.in_edges_by_connector(node, 'min'))
+                min_const = onnx_constant_or_none(sdfg, min_edge.src)
+            except (StopIteration, AttributeError):
+                pass
+
+        if has_max:
+            try:
+                max_edge = next(state.in_edges_by_connector(node, 'max'))
+                max_const = onnx_constant_or_none(sdfg, max_edge.src)
+            except (StopIteration, AttributeError):
+                pass
+
+        # Determine clipping strategy based on what's available
+        dtype_str = input_desc.dtype.to_string()
+
+        if min_const is not None and max_const is not None:
+            # Both min and max are constants - use simple elementwise
+            minstr = f"dace.{dtype_str}({min_const})"
+            maxstr = f"dace.{dtype_str}({max_const})"
+            code = f"__output = min(max(__input, {minstr}), {maxstr})"
+
+            # Create mapped tasklet
+            map_ranges = {f"i{i}": f"0:{input_desc.shape[i]}" for i in range(len(input_desc.shape))}
+            index_str = ", ".join(map_ranges.keys())
+
+            tasklet, map_entry, map_exit = nstate.add_mapped_tasklet(
+                name=node.label + "_tasklet",
+                map_ranges=map_ranges,
+                inputs={"__input": dace.Memlet(f"input[{index_str}]")},
+                code=code,
+                outputs={"__output": dace.Memlet(f"output[{index_str}]")},
+                external_edges=True)
+        else:
+            # At least one of min/max is dynamic - need to handle them as arrays
+            if has_min and min_const is None:
+                min_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, "min"))
+                nsdfg.add_datadesc("min", min_desc)
+                nsdfg.arrays["min"].transient = False
+
+            if has_max and max_const is None:
+                max_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, "max"))
+                nsdfg.add_datadesc("max", max_desc)
+                nsdfg.arrays["max"].transient = False
+
+            # Build the clipping code using Python ternary operators
+            # Note: We can't use min/max functions due to conflicts with array parameter names 'min' and 'max'
+            if not has_min and not has_max:
+                # No clipping needed - just copy
+                code = "__output = __input"
+                inputs = {"__input": None}  # Will be filled below
+            elif not has_min:
+                # Only max clipping
+                if max_const is not None:
+                    maxstr = f"dace.{dtype_str}({max_const})"
+                    code = f"__output = __input if __input < {maxstr} else {maxstr}"
+                    inputs = {"__input": None}
+                else:
+                    code = "__output = __input if __input < __max_val else __max_val"
+                    inputs = {"__input": None, "__max": None}
+            elif not has_max:
+                # Only min clipping
+                if min_const is not None:
+                    minstr = f"dace.{dtype_str}({min_const})"
+                    code = f"__output = __input if __input > {minstr} else {minstr}"
+                    inputs = {"__input": None}
+                else:
+                    code = "__output = __input if __input > __min_val else __min_val"
+                    inputs = {"__input": None, "__min": None}
+            else:
+                # Both min and max, at least one is dynamic
+                # Use two-step clipping: clip to min, then clip to max
+                if min_const is not None:
+                    minstr = f"dace.{dtype_str}({min_const})"
+                    if max_const is not None:
+                        maxstr = f"dace.{dtype_str}({max_const})"
+                        code = f"_temp = __input if __input > {minstr} else {minstr}\n__output = _temp if _temp < {maxstr} else {maxstr}"
+                        inputs = {"__input": None}
+                    else:
+                        code = f"_temp = __input if __input > {minstr} else {minstr}\n__output = _temp if _temp < __max_val else __max_val"
+                        inputs = {"__input": None, "__max": None}
+                else:
+                    if max_const is not None:
+                        maxstr = f"dace.{dtype_str}({max_const})"
+                        code = f"_temp = __input if __input > __min_val else __min_val\n__output = _temp if _temp < {maxstr} else {maxstr}"
+                        inputs = {"__input": None, "__min": None}
+                    else:
+                        code = "_temp = __input if __input > __min_val else __min_val\n__output = _temp if _temp < __max_val else __max_val"
+                        inputs = {"__input": None, "__min": None, "__max": None}
+
+            # Create mapped tasklet with broadcasting support
+            map_ranges = {f"i{i}": f"0:{input_desc.shape[i]}" for i in range(len(input_desc.shape))}
+            index_str = ", ".join(map_ranges.keys())
+
+            # Build input memlets
+            final_inputs = {"__input": dace.Memlet(f"input[{index_str}]")}
+
+            if "__min" in inputs and has_min and min_const is None:
+                # Handle broadcasting for min
+                min_indices = broadcast_indices(min_desc.shape, input_desc.shape)
+                min_index_str = ", ".join(min_indices) if min_indices else "0"
+                final_inputs["__min_val"] = dace.Memlet(f"min[{min_index_str}]")
+
+            if "__max" in inputs and has_max and max_const is None:
+                # Handle broadcasting for max
+                max_indices = broadcast_indices(max_desc.shape, input_desc.shape)
+                max_index_str = ", ".join(max_indices) if max_indices else "0"
+                final_inputs["__max_val"] = dace.Memlet(f"max[{max_index_str}]")
+
+            tasklet, map_entry, map_exit = nstate.add_mapped_tasklet(
+                name=node.label + "_tasklet",
+                map_ranges=map_ranges,
+                inputs=final_inputs,
+                code=code,
+                outputs={"__output": dace.Memlet(f"output[{index_str}]")},
+                external_edges=True)
+
+        return nsdfg
 
 
 # ============================================================================
