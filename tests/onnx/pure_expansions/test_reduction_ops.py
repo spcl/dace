@@ -25,10 +25,14 @@ def assert_allclose(a, b, rtol=1e-5, atol=1e-8):
         (0, 0, 0),
         (1, 0, 0),
         (2, 0, 0),
-        pytest.param(0, 1, 0, marks=pytest.mark.skip(reason="CumSum exclusive not implemented")),  # exclusive
-        pytest.param(0, 0, 1, marks=pytest.mark.skip(reason="CumSum reverse not implemented")),  # reverse
-        pytest.param(1, 1, 0, marks=pytest.mark.skip(reason="CumSum exclusive not implemented")),  # exclusive on axis 1
-        pytest.param(1, 0, 1, marks=pytest.mark.skip(reason="CumSum reverse not implemented")),  # reverse on axis 1
+        pytest.param(
+            0,
+            1,
+            0,
+        ),  # exclusive
+        pytest.param(0, 0, 1),  # reverse
+        pytest.param(1, 1, 0),  # exclusive on axis 1
+        pytest.param(1, 0, 1),  # reverse on axis 1
     ])
 def test_cumsum(axis, exclusive, reverse, sdfg_name):
     """Test CumSum operation with different parameters."""

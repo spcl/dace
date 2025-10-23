@@ -141,7 +141,7 @@ def test_matmul_4d_batched(a_shape, b_shape, sdfg_name):
 @pytest.mark.onnx
 @pytest.mark.parametrize("a_shape, b_shape", [
     ([10, 20], [1, 20, 30]),
-    pytest.param([2, 1, 10, 20], [2, 3, 20, 30], marks=pytest.mark.skip(reason="4D broadcasting validation issue")),
+    pytest.param([2, 1, 10, 20], [2, 3, 20, 30]),
 ])
 def test_matmul_broadcast(a_shape, b_shape, sdfg_name):
     """Test MatMul operation with broadcasting."""
@@ -284,7 +284,6 @@ def test_matmul_expansion(a_shape, b_shape, sdfg_name):
 
 
 @pytest.mark.onnx
-@pytest.mark.skip(reason="Gemm without bias has intermediate array definition issues")
 def test_gemm_no_bias(sdfg_name):
     """Test Gemm operation without bias (C)."""
     blas.Gemm.default_implementation = "pure"

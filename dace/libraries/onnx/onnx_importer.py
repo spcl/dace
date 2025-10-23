@@ -577,6 +577,8 @@ class ONNXModel:
                     raise ValueError(
                         "Invalid ONNX model; found two values with name '{}', but different dimensions ({} and {})".
                         format(name, existing_arr.shape, shape))
+                # Mark the array as non-transient since it's a constant (initializer)
+                existing_arr.transient = False
 
         # we need to copy here because the weight_arr tensor is not writable
         self.weights[unclean_name] = torch.from_numpy(np_array.copy())
@@ -752,10 +754,12 @@ class ONNXModel:
         # create numpy arrays for the outputs
         for name in self.outputs:
             clean_name = clean_onnx_name(name)
-            outputs[clean_name] = create_output_array(inferred_symbols,
-                                                      self.sdfg.arrays[clean_name],
-                                                      use_torch=torch_outputs,
-                                                      zeros=True)
+            # Skip creating output arrays that are already initialized as constants (from constant folding)
+            if clean_name not in self.initialized_parameters:
+                outputs[clean_name] = create_output_array(inferred_symbols,
+                                                          self.sdfg.arrays[clean_name],
+                                                          use_torch=torch_outputs,
+                                                          zeros=True)
 
         # check that there's no overlap
         seen = set()

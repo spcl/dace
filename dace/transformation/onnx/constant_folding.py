@@ -125,6 +125,52 @@ class ConstantFolding(transformation.SingleStateTransformation):
             state.add_edge(access_shape, None, output_edge.dst, output_edge.dst_conn,
                            sdfg.make_array_memlet(clean_constant_name))
 
+        elif isinstance(node, donnx.ONNXRange):
+            # if we have a Range node with constant inputs, compute the range output
+            # Get the constant inputs
+            start_val = None
+            limit_val = None
+            delta_val = None
+
+            for edge in state.in_edges(node):
+                if edge.dst_conn == "start":
+                    start_val = parent.clean_weights[edge.src.data].cpu().numpy()
+                elif edge.dst_conn == "limit":
+                    limit_val = parent.clean_weights[edge.src.data].cpu().numpy()
+                elif edge.dst_conn == "delta":
+                    delta_val = parent.clean_weights[edge.src.data].cpu().numpy()
+
+            # Compute the range output
+            # Handle both scalar and array inputs
+            start_scalar = start_val.item() if hasattr(start_val, 'item') else start_val
+            limit_scalar = limit_val.item() if hasattr(limit_val, 'item') else limit_val
+            delta_scalar = delta_val.item() if hasattr(delta_val, 'item') else delta_val
+
+            range_output = np.arange(start_scalar, limit_scalar, delta_scalar)
+
+            # Determine the output data type based on the node's output connector
+            output_edge = state.out_edges(node)[0]
+            output_desc = sdfg.arrays[output_edge.src.data] if hasattr(output_edge.src,
+                                                                       'data') else sdfg.arrays[output_edge.dst.data]
+            output_dtype = output_desc.dtype.as_numpy_dtype()
+
+            range_output = range_output.astype(output_dtype)
+
+            # Create a constant for the range output
+            constant_name = sdfg.temp_data_name()
+            clean_constant_name = clean_onnx_name(constant_name)
+            sdfg.add_array(clean_constant_name, range_output.shape, dace.dtypes.typeclass(output_dtype.type))
+
+            assert constant_name not in parent.clean_weights
+            parent.weights[constant_name] = torch.from_numpy(range_output)
+
+            # Replace the Range node output with the constant
+            assert len(state.out_edges(node)) == 1
+            output_edge = state.out_edges(node)[0]
+            access_range = state.add_access(clean_constant_name)
+            state.add_edge(access_range, None, output_edge.dst, output_edge.dst_conn,
+                           sdfg.make_array_memlet(clean_constant_name))
+
         # remove all now useless nodes with a reverse BFS
         remove_node_and_computation(sdfg, state, node)
 

@@ -37,9 +37,6 @@ class PureCumSum(ONNXForward):
     @staticmethod
     def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
 
-        if node.exclusive or node.reverse:
-            raise NotImplementedError("CumSum with exclusive or reverse attributes is not implemented")
-
         nsdfg, nstate, input_nodes, output_nodes = empty_sdfg_for_node(sdfg, state, node, add_access_nodes=True)
 
         x_desc = in_desc_with_name(node, state, sdfg, "x")
@@ -51,18 +48,69 @@ class PureCumSum(ONNXForward):
 
         num_dims = len(x_desc.shape)
 
-        y_prev_idx_expr = " + ".join([f"(i{i} - is_axis{i}) * {s}" for i, s in enumerate(y_desc.strides)])
+        # Get exclusive and reverse flags
+        exclusive = int(node.exclusive) if hasattr(node, 'exclusive') else 0
+        reverse = int(node.reverse) if hasattr(node, 'reverse') else 0
 
+        # Generate code based on exclusive and reverse flags
         code = ""
-        for i, val in enumerate(y_desc.shape):
-            code += f"for (int i{i} = 0; i{i} < {val}; i{i}++) {{\n"
-            code += f"int is_axis{i} = ({i} == ({num_dims} + __axis) % {num_dims});\n"
-        code += f"__y[{y_idx_expr}] = __x[{x_idx_expr}];\n"
-        code += f"if (" + ' || '.join([f"(i{i} > 0 && is_axis{i})" for i in range(num_dims)]) + ") {\n"
-        code += f"__y[{y_idx_expr}] += __y[{y_prev_idx_expr}];\n"
-        code += "}\n"
-        for _ in y_desc.shape:
-            code += "}\n"
+
+        if reverse:
+            # For reverse cumsum, iterate from high to low on the axis
+            for i, val in enumerate(y_desc.shape):
+                code += f"int is_axis{i} = ({i} == ({num_dims} + __axis) % {num_dims});\n"
+
+            # Reverse iteration: start from the end
+            for i, val in enumerate(y_desc.shape):
+                code += f"for (int i{i} = {val} - 1; i{i} >= 0; i{i}--) {{\n"
+
+            if exclusive:
+                # Reverse exclusive: y[i] = sum(x[i+1:])
+                # So for the last element on axis, y = 0; otherwise y = x + y[next]
+                y_next_idx_expr = " + ".join([f"(i{i} + is_axis{i}) * {s}" for i, s in enumerate(y_desc.strides)])
+                code += f"if (" + ' || '.join(
+                    [f"(i{i} < {y_desc.shape[i]} - 1 && is_axis{i})" for i in range(num_dims)]) + ") {\n"
+                code += f"__y[{y_idx_expr}] = __y[{y_next_idx_expr}];\n"
+                code += "} else {\n"
+                code += f"__y[{y_idx_expr}] = 0;\n"
+                code += "}\n"
+            else:
+                # Reverse inclusive: y[i] = sum(x[i:])
+                y_next_idx_expr = " + ".join([f"(i{i} + is_axis{i}) * {s}" for i, s in enumerate(y_desc.strides)])
+                code += f"__y[{y_idx_expr}] = __x[{x_idx_expr}];\n"
+                code += f"if (" + ' || '.join(
+                    [f"(i{i} < {y_desc.shape[i]} - 1 && is_axis{i})" for i in range(num_dims)]) + ") {\n"
+                code += f"__y[{y_idx_expr}] += __y[{y_next_idx_expr}];\n"
+                code += "}\n"
+
+            for _ in y_desc.shape:
+                code += "}\n"
+        else:
+            # For forward cumsum, iterate from low to high on the axis
+            for i, val in enumerate(y_desc.shape):
+                code += f"for (int i{i} = 0; i{i} < {val}; i{i}++) {{\n"
+                code += f"int is_axis{i} = ({i} == ({num_dims} + __axis) % {num_dims});\n"
+
+            if exclusive:
+                # Forward exclusive: y[i] = sum(x[0:i])
+                # So for first element on axis, y = 0; otherwise y = y[prev] + x[prev]
+                y_prev_idx_expr = " + ".join([f"(i{i} - is_axis{i}) * {s}" for i, s in enumerate(y_desc.strides)])
+                x_prev_idx_expr = " + ".join([f"(i{i} - is_axis{i}) * {s}" for i, s in enumerate(x_desc.strides)])
+                code += f"if (" + ' || '.join([f"(i{i} > 0 && is_axis{i})" for i in range(num_dims)]) + ") {\n"
+                code += f"__y[{y_idx_expr}] = __y[{y_prev_idx_expr}] + __x[{x_prev_idx_expr}];\n"
+                code += "} else {\n"
+                code += f"__y[{y_idx_expr}] = 0;\n"
+                code += "}\n"
+            else:
+                # Forward inclusive: y[i] = sum(x[0:i+1])
+                y_prev_idx_expr = " + ".join([f"(i{i} - is_axis{i}) * {s}" for i, s in enumerate(y_desc.strides)])
+                code += f"__y[{y_idx_expr}] = __x[{x_idx_expr}];\n"
+                code += f"if (" + ' || '.join([f"(i{i} > 0 && is_axis{i})" for i in range(num_dims)]) + ") {\n"
+                code += f"__y[{y_idx_expr}] += __y[{y_prev_idx_expr}];\n"
+                code += "}\n"
+
+            for _ in y_desc.shape:
+                code += "}\n"
 
         tasklet = nstate.add_tasklet(
             name=node.label + "_tasklet",

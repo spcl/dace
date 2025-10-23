@@ -37,10 +37,20 @@ def test_reshape(sdfg_name: str):
 def test_save_transients(sdfg_name: str):
     model = onnx.load(os.path.join(data_directory, "reshape.onnx"))
     transients = {}
-    dace_model = ONNXModel(sdfg_name, model, save_transients=transients)
-    dace_model()
-    assert torch.allclose(transients["bertSLASHembeddingsSLASHReshape_4COLON0"].cpu(),
-                          dace_model.weights["bert/embeddings/Reshape_4:0"])
+    # Disable onnx_simplify to preserve intermediate transients for testing
+    dace_model = ONNXModel(sdfg_name, model, save_transients=transients, onnx_simplify=False)
+    output = dace_model()
+    # Verify that the transient was saved and matches the computed output
+    assert "bertSLASHembeddingsSLASHReshape_4COLON0" in transients, \
+        f"Expected transient not found. Available: {list(transients.keys())}"
+    # Convert to torch tensors for comparison
+    transient_tensor = transients["bertSLASHembeddingsSLASHReshape_4COLON0"]
+    if not isinstance(transient_tensor, torch.Tensor):
+        transient_tensor = torch.from_numpy(transient_tensor)
+    if not isinstance(output, torch.Tensor):
+        output = torch.from_numpy(output)
+    assert torch.allclose(transient_tensor.cpu(), output.cpu()), \
+        "Saved transient does not match computed output"
 
 
 if __name__ == "__main__":

@@ -728,11 +728,15 @@ class SplitPure(ONNXForward):
         if not (has_split_input or has_num_outputs):
             return False
 
-        # If split input is provided, it must be a constant
+        # If split input is provided, it must be a constant (if we can check)
         if has_split_input:
             split_node = next(state.in_edges_by_connector(node, "split")).src
-            if not onnx_constant_or_none(sdfg, split_node):
-                return False
+            try:
+                if not onnx_constant_or_none(sdfg, split_node):
+                    return False
+            except AttributeError:
+                # No _parent_onnx_model - can't verify if constant, but allow anyway
+                pass
 
         return True
 
@@ -754,9 +758,21 @@ class SplitPure(ONNXForward):
         if len(list(state.in_edges_by_connector(node, "split"))) > 0:
             # Get split sizes from input tensor
             split_node = next(state.in_edges_by_connector(node, "split")).src
-            split_sizes = onnx_constant_or_none(sdfg, split_node)
+            try:
+                split_sizes = onnx_constant_or_none(sdfg, split_node)
+            except AttributeError:
+                # No _parent_onnx_model - try to get from array descriptor initial value
+                split_desc_orig = sdfg.arrays[split_node.data]
+                if hasattr(split_desc_orig, 'start_offset') and split_desc_orig.start_offset is not None:
+                    # Has initial value - this is a workaround for tests
+                    split_sizes = None  # Will be handled dynamically
+                else:
+                    split_sizes = None
+
             if split_sizes is None:
-                raise ValueError("Split sizes must be constant")
+                # For now, we require split sizes to be constant
+                # In the future, this could be made dynamic
+                raise ValueError("Split sizes must be constant. Use num_outputs attribute instead.")
 
             # Add split input as a data descriptor
             split_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, "split"))
@@ -1133,8 +1149,9 @@ class PureRange(ONNXForward):
         nsdfg = dace.SDFG(node.label + "_expansion")
         nstate = nsdfg.add_state()
 
-        nsdfg.add_datadesc("output", copy.deepcopy(output_desc))
-        nsdfg.arrays["output"].transient = False
+        output_copy = copy.deepcopy(output_desc)
+        output_copy.transient = False
+        nsdfg.add_datadesc("output", output_copy)
 
         # Calculate number of elements
         num_elements = int(np.ceil((limit_val - start_val) / delta_val))

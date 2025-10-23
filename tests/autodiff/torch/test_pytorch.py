@@ -272,7 +272,6 @@ def test_scalar_buffer(sdfg_name):
 
 @pytest.mark.torch
 @pytest.mark.autodiff
-@pytest.mark.skip(reason="Requires pure implementation of expand")
 def test_simple_broadcasted_mul(sdfg_name):
 
     class Module(torch.nn.Module):

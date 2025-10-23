@@ -1,5 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import pytest
+import copy
 
 pytest.importorskip("onnx", reason="ONNX not installed. Please install with: pip install dace[ml]")
 pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
@@ -7,6 +8,7 @@ pytest.importorskip("torch", reason="PyTorch not installed. Please install with:
 import numpy as np
 import dace
 import dace.libraries.onnx as donnx
+from dace import transformation, data as dt
 
 
 def assert_allclose(a, b, rtol=1e-5, atol=1e-8):
@@ -427,17 +429,16 @@ def test_split_equal(sdfg_name):
     sdfg = dace.SDFG(sdfg_name)
 
     inp = np.random.randn(6, 4).astype(np.float32)
-    split = np.array([2, 2, 2], dtype=np.int64)
 
     sdfg.add_array("inp", inp.shape, dace.float32)
-    sdfg.add_array("split", split.shape, dace.int64)
     sdfg.add_array("out0", [2, 4], dace.float32)
     sdfg.add_array("out1", [2, 4], dace.float32)
     sdfg.add_array("out2", [2, 4], dace.float32)
 
     state = sdfg.add_state()
 
-    op_node = donnx.ONNXSplit("split", axis=0, optional={'split'})
+    # Use num_outputs instead of split input for equal splits
+    op_node = donnx.ONNXSplit("split", axis=0, num_outputs=3)
     state.add_node(op_node)
 
     # Add variadic output connectors
@@ -446,14 +447,18 @@ def test_split_equal(sdfg_name):
     op_node.add_out_connector("outputs__2")
 
     state.add_edge(state.add_read("inp"), None, op_node, "input", sdfg.make_array_memlet("inp"))
-    state.add_edge(state.add_read("split"), None, op_node, "split", sdfg.make_array_memlet("split"))
     state.add_edge(op_node, "outputs__0", state.add_write("out0"), None, sdfg.make_array_memlet("out0"))
     state.add_edge(op_node, "outputs__1", state.add_write("out1"), None, sdfg.make_array_memlet("out1"))
     state.add_edge(op_node, "outputs__2", state.add_write("out2"), None, sdfg.make_array_memlet("out2"))
 
     sdfg.expand_library_nodes()
 
-    out0, out1, out2 = sdfg(inp=inp, split=split)
+    # Allocate output arrays
+    out0 = np.zeros([2, 4], dtype=np.float32)
+    out1 = np.zeros([2, 4], dtype=np.float32)
+    out2 = np.zeros([2, 4], dtype=np.float32)
+
+    sdfg(inp=inp, out0=out0, out1=out1, out2=out2)
 
     expected = np.split(inp, [2, 4], axis=0)
 
