@@ -1084,11 +1084,11 @@ class FuseBranches(transformation.MultiStateTransformation):
 
                     if not all_edges_empty:
                         cfg_in_edges = body.in_edges(node)
-                        assert len(cfg_in_edges) == 1
-                        cfg_in_edge = cfg_in_edges[0]
+                        assert len(cfg_in_edges) <= 1, f"{cfg_in_edges}"
+                        cfg_in_edge = cfg_in_edges[0] if len(cfg_in_edges) == 1 else None
                         cfg_out_edges = body.out_edges(node)
-                        assert len(cfg_out_edges) == 1
-                        cfg_out_edge = cfg_out_edges[0]
+                        assert len(cfg_out_edges) <= 1, f"{cfg_out_edges}"
+                        cfg_out_edge = cfg_out_edges[0] if len(cfg_out_edges) == 1 else None
 
                     body.remove_node(node)
 
@@ -1113,16 +1113,21 @@ class FuseBranches(transformation.MultiStateTransformation):
                     parent_graph.add_edge(node_to_add_after, copy_conditional, InterstateEdge())
 
                     if not all_edges_empty:
-                        pre_assign = parent_graph.add_state_before(
-                            state=copy_conditional,
-                            label=f"pre_assign_{copy_conditional.label}",
-                            is_start_block=parent_graph.start_block == copy_conditional,
-                            assignments=cfg_in_edge.data.assignments)
-                        post_assign = parent_graph.add_state_after(state=copy_conditional,
-                                                                   label=f"post_assign_{copy_conditional.label}",
-                                                                   is_start_block=False,
-                                                                   assignments=cfg_out_edge.data.assignments)
-                        node_to_add_after = post_assign
+                        if cfg_in_edge is not None:
+                            pre_assign = parent_graph.add_state_before(
+                                state=copy_conditional,
+                                label=f"pre_assign_{copy_conditional.label}",
+                                is_start_block=parent_graph.start_block == copy_conditional,
+                                assignments=cfg_in_edge.data.assignments)
+                        if cfg_out_edge is not None:
+                            post_assign = parent_graph.add_state_after(
+                                state=copy_conditional,
+                                label=f"post_assign_{copy_conditional.label}",
+                                is_start_block=False,
+                                assignments=cfg_out_edge.data.assignments)
+                            node_to_add_after = post_assign
+                        else:
+                            node_to_add_after = copy_conditional
                     else:
                         node_to_add_after = copy_conditional
                 applied = True
