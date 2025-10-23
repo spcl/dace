@@ -21,35 +21,15 @@ class FuseBranchesPass(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return (modified & ppl.Modifies.CFG)
 
-    def _get_nestedness_of_conditional_blocks(self, cfg: ControlFlowRegion, current_depth: int) -> int:
-        if isinstance(cfg, SDFGState):
-            return current_depth
-        elif isinstance(cfg, ConditionalBlock):
-            return max(
-                [self._get_nestedness_of_conditional_blocks(body, current_depth + 1) for cond, body in node.branches])
-        else:
-            for node in cfg.nodes():
-                if isinstance(node, ConditionalBlock):
-                    return max([
-                        self._get_nestedness_of_conditional_blocks(body, current_depth + 1)
-                        for cond, body in node.branches
-                    ])
-                elif isinstance(node, SDFGState):
-                    return current_depth
-                else:
-                    return max(
-                        [self._get_nestedness_of_conditional_blocks(body, current_depth) for body in node.nodes()])
-
-        raise Exception("?")
-
     def _apply_fuse_branches(self, root: dace.SDFG, sdfg: dace.SDFG, parent_nsdfg_state: Union[dace.SDFG, None] = None):
         """Apply FuseBranches transformation to all eligible conditionals."""
         # Pattern matching with conditional branches to not work (9.10.25), avoid it
         # Depending on the number of nestedness we need to apply that many times because
         # the transformation only runs on top-level ConditionalBlocks
-        nestedness = self._get_nestedness_of_conditional_blocks(sdfg, 0) + 1
+        changed = True
+        while changed:
+            changed = False
 
-        for _ in range(nestedness):
             for node in sdfg.all_control_flow_blocks():
                 if isinstance(node, ConditionalBlock):
                     t = fuse_branches.FuseBranches()
@@ -67,11 +47,14 @@ class FuseBranchesPass(ppl.Pass):
                             t.parent_nsdfg_state = parent_nsdfg_state
                         if t.can_be_applied(graph=node.parent_graph, expr_index=0, sdfg=node.sdfg):
                             t.apply(graph=node.parent_graph, sdfg=node.sdfg)
+                            changed = True
 
         for state in sdfg.all_states():
             for node in state.nodes():
                 if isinstance(node, dace.nodes.NestedSDFG):
-                    self._apply_fuse_branches(root, node.sdfg, state)
+                    changed |= self._apply_fuse_branches(root, node.sdfg, state)
+
+        return changed
 
     def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
         if self.clean_only is True:
