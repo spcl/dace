@@ -276,7 +276,7 @@ def insert_non_transient_data_through_parent_scopes(non_transient_data: Set[str]
     defined_syms = parent_graph.symbols_defined_at(nsdfg_node)
     for sym in new_symbols:
         if str(sym) not in nsdfg_node.sdfg.symbols:
-            nsdfg_node.sdfg.add_symbol(sym, defined_syms[str(sym)])
+            nsdfg_node.sdfg.add_symbol(str(sym), defined_syms[str(sym)])
         if str(sym) not in nsdfg_node.symbol_mapping:
             nsdfg_node.symbol_mapping[str(sym)] = str(sym)
 
@@ -601,9 +601,8 @@ def get_num_parent_map_and_loop_scopes(root_sdfg: dace.SDFG, node: dace.nodes.Ma
     return len(get_parent_map_and_loop_scopes(root_sdfg, node, parent_state))
 
 
-def get_parent_map_and_loop_scopes(root_sdfg: dace.SDFG,
-                                   node: dace.nodes.MapEntry | ControlFlowRegion | dace.nodes.Tasklet,
-                                   parent_state: dace.SDFGState):
+def get_parent_map_and_loop_scopes(root_sdfg: dace.SDFG, node: dace.nodes.MapEntry | ControlFlowRegion
+                                   | dace.nodes.Tasklet | ConditionalBlock, parent_state: dace.SDFGState):
     scope_dict = parent_state.scope_dict() if parent_state is not None else None
     num_parent_maps_and_loops = 0
     cur_node = node
@@ -625,7 +624,7 @@ def get_parent_map_and_loop_scopes(root_sdfg: dace.SDFG,
         parent_graph = parent_graph.parent_graph
 
     # Check parent nsdfg
-    parent_nsdfg_node = parent_sdfg.sdfg.parent_nsdfg_node
+    parent_nsdfg_node = parent_sdfg.parent_nsdfg_node
     parent_nsdfg_parent_state = _find_parent_state(root_sdfg, parent_nsdfg_node)
 
     while parent_nsdfg_node is not None and parent_nsdfg_parent_state is not None:
