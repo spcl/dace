@@ -14,6 +14,7 @@ from typing import Union
 class FuseBranchesPass(ppl.Pass):
     try_clean = properties.Property(dtype=bool, default=False, allow_none=False)
     clean_only = properties.Property(dtype=bool, default=False, allow_none=True)
+    permissive = properties.Property(dtype=bool, default=False, allow_none=False)
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG
@@ -45,7 +46,10 @@ class FuseBranchesPass(ppl.Pass):
                         t.conditional = node
                         if node.sdfg.parent_nsdfg_node is not None:
                             t.parent_nsdfg_state = parent_nsdfg_state
-                        if t.can_be_applied(graph=node.parent_graph, expr_index=0, sdfg=node.sdfg):
+                        if t.can_be_applied(graph=node.parent_graph,
+                                            expr_index=0,
+                                            sdfg=node.sdfg,
+                                            permissive=self.permissive):
                             t.apply(graph=node.parent_graph, sdfg=node.sdfg)
                             changed = True
 
