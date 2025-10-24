@@ -318,7 +318,6 @@ def run_and_compare(
     sdfg.validate()
     out_no_fuse = {k: v.copy() for k, v in arrays.items()}
     sdfg(**out_no_fuse)
-    sdfg.save(sdfg.label + "_before.sdfg")
     # Apply transformation
     if use_pass:
         fb = fuse_branches_pass.FuseBranchesPass()
@@ -330,8 +329,6 @@ def run_and_compare(
 
     # Run SDFG version (with transformation)
     out_fused = {k: v.copy() for k, v in arrays.items()}
-    sdfg.save("b.sdfg")
-    sdfg.save(sdfg.label + "_after3.sdfg")
 
     sdfg(**out_fused)
 
@@ -353,7 +350,6 @@ def run_and_compare_sdfg(
     sdfg.validate()
     out_no_fuse = {k: v.copy() for k, v in arrays.items()}
     sdfg(**out_no_fuse)
-    sdfg.save(sdfg.label + "_before.sdfg")
 
     # Run SDFG version (with transformation)
     fb = fuse_branches_pass.FuseBranchesPass()
@@ -362,7 +358,6 @@ def run_and_compare_sdfg(
     fb.apply_pass(sdfg, {})
     out_fused = {k: v.copy() for k, v in arrays.items()}
     sdfg(**out_fused)
-    sdfg.save(sdfg.label + "_after3.sdfg")
 
     # Compare all arrays
     for name in arrays.keys():
@@ -441,12 +436,10 @@ def test_condition_on_bounds():
     arrays = {"a": a, "b": b, "c": c, "d": d}
     out_no_fuse = {k: v.copy() for k, v in arrays.items()}
     sdfg(a=out_no_fuse["a"], b=out_no_fuse["b"], c=out_no_fuse["c"], d=out_no_fuse["d"], s=1, SN=2)
-    sdfg.save(sdfg.label + "_before.sdfg")
     # Apply transformation
     fuse_branches_pass.FuseBranchesPass().apply_pass(sdfg, {})
     sdfg.validate()
     out_fused = {k: v.copy() for k, v in arrays.items()}
-    sdfg.save(sdfg.label + "_after3.sdfg")
 
     nsdfgs = {(n, g) for n, g in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)}
     assert len(nsdfgs) == 1  # Can be applied should return false
@@ -481,7 +474,6 @@ def test_branch_dependent_value_write_with_transient_reuse():
     a = np.random.choice([0.001, 3.0], size=(N, N))
     b = np.random.choice([0.001, 3.0], size=(N, N))
     c = np.random.choice([0.001, 3.0], size=(N, N))
-    branch_dependent_value_write_with_transient_reuse.to_sdfg().save("t.sdfg")
     run_and_compare(branch_dependent_value_write_with_transient_reuse, 0, True, a=a, b=b, c=c)
 
 
@@ -497,7 +489,6 @@ def test_single_branch_connectors(use_pass_flag):
     arrays = {"a": a, "b": b, "c": c, "d": d}
     out_no_fuse = {k: v.copy() for k, v in arrays.items()}
     sdfg(a=out_no_fuse["a"], b=out_no_fuse["b"], c=out_no_fuse["c"][0], d=out_no_fuse["d"])
-    sdfg.save(sdfg.label + "_before.sdfg")
     # Apply transformation
     if use_pass_flag:
         fuse_branches_pass.FuseBranchesPass().apply_pass(sdfg, {})
@@ -506,7 +497,6 @@ def test_single_branch_connectors(use_pass_flag):
 
     # Run SDFG version (with transformation)
     out_fused = {k: v.copy() for k, v in arrays.items()}
-    sdfg.save(sdfg.label + "_after.sdfg")
     sdfg(a=out_fused["a"], b=out_fused["b"], c=out_fused["c"][0], d=out_fused["d"])
 
     branch_code = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
@@ -571,7 +561,6 @@ def test_try_clean():
     cblocks = {n for n, g in sdfg1.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     assert len(cblocks) == 2
     # A state must have been moved before)
-    sdfg1.save("a.sdfg")
     assert isinstance(sdfg1.start_block, dace.SDFGState)
     sdfg1.validate()
 
@@ -582,7 +571,6 @@ def test_try_clean():
     # 1 left because now the if branch has 2 states
     assert len(cblocks) == 1, f"{cblocks}"
     sdfg1.validate()
-    sdfg1.save("x4.sdfg")
 
     for cblock in cblocks:
         parent_sdfg = cblock.parent_graph.sdfg
@@ -593,14 +581,12 @@ def test_try_clean():
         assert applied is False
         applied = xform.try_clean(graph=parent_graph, sdfg=parent_sdfg, lift_multi_state=True)
         assert applied is True
-    sdfg1.save("x5.sdfg")
     sdfg1.validate()
 
     fbpass = fuse_branches_pass.FuseBranchesPass()
     fbpass.try_clean = False
     fbpass.apply_pass(sdfg1, {})
     cblocks = {n for n, g in sdfg1.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
-    sdfg1.save("x6.sdfg")
     assert len(cblocks) == 0, f"{cblocks}"
     sdfg1.validate()
 
@@ -800,7 +786,6 @@ def test_if_over_map_with_top_level_tasklets():
 
 def test_can_be_applied_parameters_on_nested_sdfg():
     sdfg = nested_if.to_sdfg()
-    sdfg.save("o.sdfg")
     cblocks = {n for n in sdfg.all_control_flow_regions() if isinstance(n, ConditionalBlock)}
     assert len(cblocks) == 0
     inner_cblocks = {
@@ -1121,7 +1106,6 @@ def test_complicated_pattern_for_manual_clean_up_one():
         1,
     ], dtype=np.float64)
     sdfg = complicated_pattern_for_manual_clean_up_one.to_sdfg()
-    sdfg.save("uwu.sdfg")
 
     nested_sdfgs = {(n, g) for (n, g) in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)}
 
@@ -1380,10 +1364,7 @@ def test_condition_from_transient_scalar():
     _if_cond_42 = np.random.choice([8.0, 11.0], size=(1, ))
     sdfg = _get_sdfg_with_condition_from_transient_scalar()
 
-    sdfg.save("condition_from_transient_scalar_before.sdfg")
-
     run_and_compare_sdfg(sdfg, permissive=False, zsolac=zsolac, zlcond2=zlcond2, za=za, _if_cond_42=_if_cond_42[0])
-    sdfg.save("condition_from_transient_scalar_after.sdfg")
 
     branch_code = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     assert len(branch_code) == 0, f"(actual) len({branch_code}) != (desired) {0}"
@@ -1479,7 +1460,6 @@ def _get_disjoint_chain_sdfg() -> dace.SDFG:
 
     sd1.validate()
     sd2.validate()
-    sd2.save("xx.sdfg")
     return sd2, p_s1
 
 
@@ -1498,7 +1478,6 @@ def test_disjoint_chain_split_branch_only(rtt_val):
     sdfg.validate()
     out_no_fuse = {k: v.copy() for k, v in arrays.items()}
     sdfg(**out_no_fuse)
-    sdfg.save(sdfg.label + "_before.sdfg")
 
     # Run SDFG version (with transformation)
     xform = fuse_branches.FuseBranches()
@@ -1512,8 +1491,6 @@ def test_disjoint_chain_split_branch_only(rtt_val):
 
     out_fused = {k: v.copy() for k, v in arrays.items()}
     copy_sdfg(**out_fused)
-    copy_sdfg.save(sdfg.label + "_after3.sdfg")
-    copy_sdfg.save("xxx.sdfgz")
 
     for name in arrays.keys():
         np.testing.assert_allclose(out_no_fuse[name], out_fused[name], atol=1e-12)
@@ -1784,7 +1761,6 @@ def test_nested_sdfg_with_return(ret_arr):
     sdfg.validate()
     out_no_fuse = {k: v.copy() for k, v in arrays.items()}
     sdfg(**out_no_fuse)
-    sdfg.save(sdfg.label + "_before.sdfg")
     assert out_no_fuse["zalfa_1"][0] != 999.9
 
     # Run SDFG version (with transformation)
@@ -1794,7 +1770,6 @@ def test_nested_sdfg_with_return(ret_arr):
     fb.apply_pass(sdfg, {})
     out_fused = {k: v.copy() for k, v in arrays.items()}
     sdfg(**out_fused)
-    sdfg.save(sdfg.label + "_after3.sdfg")
     assert out_fused["zalfa_1"][0] != 999.9
 
     # Compare all arrays
