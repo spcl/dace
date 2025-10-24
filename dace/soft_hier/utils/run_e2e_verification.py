@@ -22,6 +22,8 @@ class HardwareConfig:
             hbm_addr_space="0x04000000",
             tcdm_size="0x00100000",
             cluster_zomem_size="0x00100000",
+            spatz_num_vlsu_port=8,
+            spatz_num_function_unit=8,
             redmule_ce_height=64,
             redmule_ce_width=64,
             redmule_ce_pipe=1,
@@ -46,6 +48,8 @@ class HardwareConfig:
         self.hbm_addr_space = hbm_addr_space
         self.tcdm_size = tcdm_size
         self.cluster_zomem_size = cluster_zomem_size
+        self.spatz_num_vlsu_port = spatz_num_vlsu_port
+        self.spatz_num_function_unit = spatz_num_function_unit
         self.redmule_ce_height = redmule_ce_height
         self.redmule_ce_width = redmule_ce_width
         self.redmule_ce_pipe = redmule_ce_pipe
@@ -274,6 +278,8 @@ def setup_architecture(hw_config: HardwareConfig):
         cluster_zomem_size=hex(hw_config.cluster_zomem_size),
         num_cluster_x=hw_config.hardware_thread_group_dims[0],
         num_cluster_y=hw_config.hardware_thread_group_dims[1],
+        spatz_num_vlsu_port=hw_config.spatz_num_vlsu_port,
+        spatz_num_function_unit=hw_config.spatz_num_function_unit,
         redmule_ce_height=hw_config.redmule_ce_height,
         redmule_ce_width=hw_config.redmule_ce_width,
         redmule_ce_pipe=hw_config.redmule_ce_pipe,
