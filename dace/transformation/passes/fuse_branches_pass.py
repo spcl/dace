@@ -15,6 +15,7 @@ class FuseBranchesPass(ppl.Pass):
     try_clean = properties.Property(dtype=bool, default=False, allow_none=False)
     clean_only = properties.Property(dtype=bool, default=False, allow_none=True)
     permissive = properties.Property(dtype=bool, default=False, allow_none=False)
+    eps_operator_type_for_log_and_div = properties.Property(dtype=str, default="add", allow_none=True)
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG
@@ -35,6 +36,8 @@ class FuseBranchesPass(ppl.Pass):
                 if isinstance(node, ConditionalBlock):
                     t = fuse_branches.FuseBranches()
                     t.conditional = node
+                    t.eps_operator_type_for_log_and_div = self.eps_operator_type_for_log_and_div
+
                     if self.try_clean:
                         t.try_clean(node.parent_graph, sdfg, True)
                         node = t.conditional
@@ -46,6 +49,7 @@ class FuseBranchesPass(ppl.Pass):
                         t.conditional = node
                         if node.sdfg.parent_nsdfg_node is not None:
                             t.parent_nsdfg_state = parent_nsdfg_state
+                        t.eps_operator_type_for_log_and_div = self.eps_operator_type_for_log_and_div
                         if t.can_be_applied(graph=node.parent_graph,
                                             expr_index=0,
                                             sdfg=node.sdfg,

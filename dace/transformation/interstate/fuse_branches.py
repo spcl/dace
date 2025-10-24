@@ -107,6 +107,72 @@ def remove_symbol_assignments(graph: ControlFlowRegion, sym_name: str):
         e.data.assignments = new_assignments
 
 
+class DivEps(ast.NodeTransformer):
+
+    def __init__(self, eps_node, tasklet_code_str, mode="add"):
+        """
+        mode: 'add' -> use (x + eps)
+              'max' -> use max(x, eps)
+        """
+        self.eps_node = eps_node
+        self.mode = mode
+        self.tasklet_code_str = tasklet_code_str
+
+    def visit_BinOp(self, node):
+        self.generic_visit(node)
+        if isinstance(node.op, ast.Div):
+            if self.mode == "add":
+                print(f"Changing {self.tasklet_code_str} to have +{ast.unparse(self.eps_node)} "
+                      f"to avoid NaN/inf floating-point exception in division!")
+                node.right = ast.BinOp(left=node.right, op=ast.Add(), right=self.eps_node)
+            elif self.mode == "max":
+                print(f"Changing {self.tasklet_code_str} to have max(..., {ast.unparse(self.eps_node)}) "
+                      f"to avoid NaN/inf floating-point exception in division!")
+                node.right = ast.Call(
+                    func=ast.Name(id="max", ctx=ast.Load()),
+                    args=[node.right, self.eps_node],
+                    keywords=[],
+                )
+        return node
+
+    def visit_Call(self, node):
+        self.generic_visit(node)
+
+        # determine the name of the called function
+        func_name = None
+        if isinstance(node.func, ast.Attribute):
+            func_name = node.func.attr
+        elif isinstance(node.func, ast.Name):
+            func_name = node.func.id
+
+        if func_name in ("log", "log10", "log2"):
+            if node.args:
+                if self.mode == "add":
+                    print(
+                        f"Changing {self.tasklet_code_str} to have ({ast.unparse(node.args[0])}) + {ast.unparse(self.eps_node)} "
+                        f"inside {func_name}() to avoid log(0) NaN!")
+                    node.args[0] = ast.BinOp(
+                        left=node.args[0],
+                        op=ast.Add(),
+                        right=self.eps_node,
+                    )
+                elif self.mode == "max":
+                    print(
+                        f"Changing {self.tasklet_code_str} to have max(({ast.unparse(node.args[0])}), {ast.unparse(self.eps_node)}) "
+                        f"inside {func_name}() to avoid log(0) NaN!")
+                    node.args[0] = ast.Call(
+                        func=ast.Name(id="max", ctx=ast.Load()),
+                        args=[node.args[0], self.eps_node],
+                        keywords=[],
+                    )
+
+                # ensure it's a bare function name (no np.log)
+                if isinstance(node.func, ast.Attribute):
+                    node.func = ast.Name(id=node.func.attr, ctx=ast.Load())
+
+        return node
+
+
 @properties.make_properties
 @dace.transformation.explicit_cf_compatible
 class FuseBranches(transformation.MultiStateTransformation):
@@ -168,6 +234,10 @@ class FuseBranches(transformation.MultiStateTransformation):
     """
     conditional = transformation.PatternNode(ConditionalBlock)
     parent_nsdfg_state = properties.Property(dtype=SDFGState, allow_none=True, default=None)
+    eps_operator_type_for_log_and_div = properties.Property(dtype=str,
+                                                            allow_none=False,
+                                                            default="max",
+                                                            choices=["max", "add"])
 
     @classmethod
     def expressions(cls):
@@ -415,12 +485,7 @@ class FuseBranches(transformation.MultiStateTransformation):
         ignored_in_read = read_set & ignored_data
         ignored_in_write = write_set & ignored_data
 
-        if ignored_in_read:
-            print(f"[can_be_applied] Ignored data ({ignored_data}) is used elsewhere (read): {ignored_in_read}")
-        if ignored_in_write:
-            print(f"[can_be_applied] Ignored data ({ignored_data}) is used elsewhere (write): {ignored_in_write}")
-
-        return bool(ignored_in_read or ignored_in_write)
+        return bool(ignored_in_read or ignored_in_write), ignored_in_read.union(ignored_in_write)
 
     def symbol_reused_outside_conditional(self, sym_name: str):
         copy_sdfg = copy.deepcopy(self.conditional.sdfg)
@@ -514,7 +579,9 @@ class FuseBranches(transformation.MultiStateTransformation):
         assert len(ies0) == 1
 
         ie0, ie1 = ies0[0], ies1[0]
-        assert ie0.data.subset == ie1.data.subset
+        assert (ie0.data.subset == ie1.data.subset or ie0.data.subset == ie1.data.other_subset
+                or ie0.data.other_subset == ie1.data.subset
+                ), f"{ie0.data.subset} =? {ie1.data.subset} ; {ie0.data.other_subset} =? {ie1.data.other_subset}"
         write_subset: dace.subsets.Range = ie0.data.subset
         assert write_subset.num_elements_exact() == 1
 
@@ -578,9 +645,18 @@ class FuseBranches(transformation.MultiStateTransformation):
             new_state.add_edge(tmp_access, None, combine_tasklet, connector, dace.memlet.Memlet(tmp_access.data))
 
         # Connect combine tasklet output to the final write access
+        if (ie.data.data != state0_in_new_state_write_access.data):
+            raise Exception("?")
+
+        # In case other-subset
+        if ie.data.data == state0_in_new_state_write_access.data:
+            subset_to_use = ie.data.subset
+        else:
+            assert ie.data.other_subset is not None
+            subset_to_use = ie.data.other_subset
         new_state.add_edge(
             combine_tasklet, "_out", state0_in_new_state_write_access, None,
-            dace.memlet.Memlet(data=state0_in_new_state_write_access.data, subset=copy.deepcopy(ie.data.subset)))
+            dace.memlet.Memlet(data=state0_in_new_state_write_access.data, subset=copy.deepcopy(subset_to_use)))
 
         return combine_tasklet, tmp1_access, tmp2_access, float_cond_access
 
@@ -718,7 +794,10 @@ class FuseBranches(transformation.MultiStateTransformation):
                     return False
 
             if not permissive:
-                if self.ignored_accesses_are_reused({state0, state1}):
+                has_reuse_on_ignored, ignored_but_reused_data = self.ignored_accesses_are_reused({state0, state1})
+                if has_reuse_on_ignored:
+                    print(
+                        f"[can_be_applied] Ignored data ({write}) is used elsewhere (read): {ignored_but_reused_data}")
                     return False
 
         elif len(self.conditional.branches) == 1:
@@ -772,9 +851,9 @@ class FuseBranches(transformation.MultiStateTransformation):
                                 f"[can_be_applied] All write edges need to have exactly one-element write '{write}' (edge {e} problematic)."
                             )
 
-                if not permissive:
-                    if self.ignored_accesses_are_reused({state0}):
-                        return False
+                    #has_reused_ignored_data, resued = self.ignored_accesses_are_reused({state0})
+                    # It is ok to have reused data for this case
+                    # return False
 
         if permissive is False:
             if self.condition_has_map_param():
@@ -1424,25 +1503,16 @@ class FuseBranches(transformation.MultiStateTransformation):
         def _add_eps(expr_str: str, eps: str):
             eps_node = ast.Name(id=eps, ctx=ast.Load())
 
-            class DivEps(ast.NodeTransformer):
-
-                def visit_BinOp(self, node):
-                    self.generic_visit(node)
-                    if isinstance(node.op, ast.Div):
-                        print(
-                            f"Changing {tasklet_code_str} to have +{eps} to avoid NaN/inf floating-point exception and its propagation!"
-                        )
-                        node.right = ast.BinOp(left=node.right, op=ast.Add(), right=eps_node)
-                    return node
-
+            # It might better to use max instead of DIV
             tree = ast.parse(expr_str, mode='exec')
-            tree = DivEps().visit(tree)
+            tree = DivEps(eps_node=eps_node, tasklet_code_str=expr_str,
+                          mode=self.eps_operator_type_for_log_and_div).visit(tree)
             return ast.unparse(tree).strip()
 
         if precision == dace.float64:
-            eps = numpy.finfo(numpy.float64).eps
+            eps = numpy.finfo(numpy.float64).tiny
         else:
-            eps = numpy.finfo(numpy.float32).eps
+            eps = numpy.finfo(numpy.float64).tiny
 
         has_division = False
         for tasklet in tasklets:
@@ -1651,7 +1721,9 @@ class FuseBranches(transformation.MultiStateTransformation):
 
                 new_state.remove_node(state1_in_new_state_write_access)
                 float_type = new_state.sdfg.arrays[float_cond_access.data].dtype
+
                 has_divisions = self.make_division_tasklets_safe_for_unconditional_execution(new_state, float_type)
+
                 if not has_divisions:
                     self._try_simplify_combine_tasklet(new_state, combine_tasklet)
 
@@ -1669,6 +1741,11 @@ class FuseBranches(transformation.MultiStateTransformation):
             read_sets0, write_sets0 = state0.read_and_write_sets()
             joint_writes = write_sets0.difference(self.collect_ignored_writes(state0))
 
+            # If there ignored but reused data add them too
+            # It is ok to have reused data for this case
+            _, reused_but_ignored = self.ignored_accesses_are_reused({state0})
+            joint_writes = joint_writes.union(reused_but_ignored)
+
             new_joint_writes = copy.deepcopy(joint_writes)
             new_reads = dict()
             for write in joint_writes:
@@ -1680,7 +1757,13 @@ class FuseBranches(transformation.MultiStateTransformation):
                     assert len(ies) == 1
                     ie = ies[0]
                     if ie.data.data is not None:
-                        an1, tasklet, an2 = self._generate_identity_write(state1, write, ie.data.subset)
+                        # Other subset
+                        if ie.data.data == write:
+                            subset_to_use = ie.data.subset
+                        else:
+                            assert ie.data.other_subset is not None
+                            subset_to_use = ie.data.other_subset
+                        an1, tasklet, an2 = self._generate_identity_write(state1, write, subset_to_use)
                         new_reads[state0_write_access] = (write, ie.data, (an1, tasklet, an2))
 
             # Copy over all identify writes
@@ -1766,6 +1849,8 @@ class FuseBranches(transformation.MultiStateTransformation):
 
         if self.parent_nsdfg_state is not None:
             self.parent_nsdfg_state.sdfg.validate()
+        else:
+            self.conditional.sdfg.validate()
 
         # If the symbol is not used anymore
         conditional_strs = {cond.as_string for cond, _ in self.conditional.branches if cond is not None}
@@ -1780,7 +1865,8 @@ class FuseBranches(transformation.MultiStateTransformation):
 
         if self.parent_nsdfg_state is not None:
             self.parent_nsdfg_state.sdfg.validate()
-
+        else:
+            self.conditional.sdfg.validate()
         # Then name says symbols but could be an array too
         for sym_name in conditional_symbols:
             if not symbol_is_used(graph.sdfg, sym_name):
@@ -1793,6 +1879,8 @@ class FuseBranches(transformation.MultiStateTransformation):
 
         if self.parent_nsdfg_state is not None:
             self.parent_nsdfg_state.sdfg.validate()
+        else:
+            self.conditional.sdfg.validate()
 
         self._try_fuse(graph, new_state, cond_prep_state)
 
@@ -1801,6 +1889,8 @@ class FuseBranches(transformation.MultiStateTransformation):
 
         if self.parent_nsdfg_state is not None:
             self.parent_nsdfg_state.sdfg.validate()
+        else:
+            self.conditional.sdfg.validate()
 
     def _find_previous_write(self, state: dace.SDFGState, sink: dace.nodes.Tasklet, data: str,
                              skip_set: Set[dace.nodes.Node]):
