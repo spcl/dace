@@ -98,12 +98,14 @@ namespace dace
     struct half {
         // source: https://stackoverflow.com/a/26779139/15853075
         half(float f) {
-            uint32_t x = *((uint32_t*)&f);
-            h = ((x>>16)&0x8000)|((((x&0x7f800000)-0x38000000)>>13)&0x7c00)|((x>>13)&0x03ff);
+            union { float fval; uint32_t x; } u;
+            u.fval = f;
+            h = ((u.x>>16)&0x8000)|((((u.x&0x7f800000)-0x38000000)>>13)&0x7c00)|((u.x>>13)&0x03ff);
         }
         operator float() {
-            float f = ((h&0x8000)<<16) | (((h&0x7c00)+0x1C000)<<13) | ((h&0x03FF)<<13);
-            return f;
+            union { float f; uint32_t tmp; } u;
+            u.tmp = ((h&0x8000)<<16) | (((h&0x7c00)+0x1C000)<<13) | ((h&0x03FF)<<13);
+            return u.f;
         }
         uint16_t h;
     };

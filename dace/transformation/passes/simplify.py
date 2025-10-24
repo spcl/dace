@@ -19,6 +19,7 @@ from dace.transformation.passes.reference_reduction import ReferenceToView
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 from dace.transformation.passes.simplification.prune_empty_conditional_branches import PruneEmptyConditionalBranches
 from dace.transformation.passes.simplification.continue_to_condition import ContinueToCondition
+from dace.transformation.passes.empty_loop_elimination import EmptyLoopElimination
 
 SIMPLIFY_PASSES = [
     InlineSDFGs,
@@ -36,6 +37,7 @@ SIMPLIFY_PASSES = [
     ArrayElimination,
     ConsolidateEdges,
     ContinueToCondition,
+    EmptyLoopElimination,
 ]
 
 _nonrecursive_passes = [
