@@ -134,7 +134,7 @@ class GPUTXMarkersProvider(InstrumentationProvider):
                       global_stream: CodeIOStream, copy_shape, src_strides, dst_strides) -> None:
         if state.instrument != dtypes.InstrumentationType.GPU_TX_MARKERS:
             return
-        if is_devicelevel_gpu_kernel(sdfg, state, src_node):
+        if is_devicelevel_gpu_kernel(sdfg, state, src_node) or is_devicelevel_gpu_kernel(sdfg, state, dst_node):
             # Don't instrument device code
             return
         self.print_range_push(f'copy_{src_node.label}_to_{dst_node.label}', sdfg, local_stream)
@@ -144,7 +144,7 @@ class GPUTXMarkersProvider(InstrumentationProvider):
                     global_stream: CodeIOStream) -> None:
         if state.instrument != dtypes.InstrumentationType.GPU_TX_MARKERS:
             return
-        if is_devicelevel_gpu_kernel(sdfg, state, src_node):
+        if is_devicelevel_gpu_kernel(sdfg, state, src_node) or is_devicelevel_gpu_kernel(sdfg, state, dst_node):
             # Don't instrument device code
             return
         self.print_range_pop(local_stream)
