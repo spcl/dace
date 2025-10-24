@@ -257,11 +257,11 @@ def compare(hardware_config: HardwareConfig,
 
         # dump with 3 decimal places
         with open(f"array_dump_{name}_sdfg.txt", "w") as f:
-            np.savetxt(f, sdfg_array, fmt="%04x")
+            np.savetxt(f, sdfg_array, fmt="%08x")
         with open(f"array_dump_{name}_numpy.txt", "w") as f:
-            np.savetxt(f, numpy_array, fmt="%04x")
+            np.savetxt(f, numpy_array, fmt="%08x")
         with open(f"array_dump_{name}_diff.txt", "w") as f:
-            np.savetxt(f, diff, fmt="%04x")
+            np.savetxt(f, diff, fmt="%08x")
 
     print()
     print("=" * 80)

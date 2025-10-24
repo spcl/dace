@@ -186,7 +186,7 @@ def get_address_and_read_from_file(i: int,
     if debug_print:
         print(f"Raw line contents (hex): {line_contents}")
 
-    raw_bytes = b''.join(int(line, 16).to_bytes(2, "big") for line in line_contents)
+    raw_bytes = b''.join(int(line, 16).to_bytes(2, "big") for line in reversed(line_contents))
 
     if debug_print:
         print(f"Raw bytes: {raw_bytes.hex()}")
