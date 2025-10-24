@@ -22,7 +22,7 @@ from dace.sdfg.nodes import Node
 
 from dace.libraries.onnx.forward_implementation_abc import ONNXForward
 from dace.libraries.onnx.nodes import onnx_op
-from dace.libraries.onnx.op_implementations.common import broadcast_indices
+from dace.libraries.onnx.op_implementations.common import broadcast_indices, create_memlet_str
 from dace.libraries.onnx.op_implementations.utils import (op_implementation, out_desc_with_name, program_for_node,
                                                           python_pure_op_implementation)
 from dace.util import in_desc_with_name, in_edge_with_name
@@ -192,16 +192,16 @@ class PureAdd(ONNXForward):
 
         # Generate broadcasting-aware indexing for inputs
         A_indices = broadcast_indices(A_desc.shape, C_desc.shape)
-        A_index_str = ", ".join(A_indices) if A_indices else "0"
+        A_memlet_str = create_memlet_str("A", A_indices, A_desc.shape)
 
         B_indices = broadcast_indices(B_desc.shape, C_desc.shape)
-        B_index_str = ", ".join(B_indices) if B_indices else "0"
+        B_memlet_str = create_memlet_str("B", B_indices, B_desc.shape)
 
         tasklet, map_entry, map_exit = nstate.add_mapped_tasklet(name=node.label + "_tasklet",
                                                                  map_ranges=map_ranges,
                                                                  inputs={
-                                                                     "__A": dace.Memlet(f"A[{A_index_str}]"),
-                                                                     "__B": dace.Memlet(f"B[{B_index_str}]")
+                                                                     "__A": dace.Memlet(A_memlet_str),
+                                                                     "__B": dace.Memlet(B_memlet_str)
                                                                  },
                                                                  code="__C = __A + __B",
                                                                  outputs={"__C": dace.Memlet(f"C[{index_str}]")},
@@ -242,16 +242,16 @@ class PureSub(ONNXForward):
 
         # Generate broadcasting-aware indexing for inputs
         A_indices = broadcast_indices(A_desc.shape, C_desc.shape)
-        A_index_str = ", ".join(A_indices) if A_indices else "0"
+        A_memlet_str = create_memlet_str("A", A_indices, A_desc.shape)
 
         B_indices = broadcast_indices(B_desc.shape, C_desc.shape)
-        B_index_str = ", ".join(B_indices) if B_indices else "0"
+        B_memlet_str = create_memlet_str("B", B_indices, B_desc.shape)
 
         tasklet, map_entry, map_exit = nstate.add_mapped_tasklet(name=node.label + "_tasklet",
                                                                  map_ranges=map_ranges,
                                                                  inputs={
-                                                                     "__A": dace.Memlet(f"A[{A_index_str}]"),
-                                                                     "__B": dace.Memlet(f"B[{B_index_str}]")
+                                                                     "__A": dace.Memlet(A_memlet_str),
+                                                                     "__B": dace.Memlet(B_memlet_str)
                                                                  },
                                                                  code="__C = __A - __B",
                                                                  outputs={"__C": dace.Memlet(f"C[{index_str}]")},
@@ -292,16 +292,16 @@ class PureMul(ONNXForward):
 
         # Generate broadcasting-aware indexing for inputs
         A_indices = broadcast_indices(A_desc.shape, C_desc.shape)
-        A_index_str = ", ".join(A_indices) if A_indices else "0"
+        A_memlet_str = create_memlet_str("A", A_indices, A_desc.shape)
 
         B_indices = broadcast_indices(B_desc.shape, C_desc.shape)
-        B_index_str = ", ".join(B_indices) if B_indices else "0"
+        B_memlet_str = create_memlet_str("B", B_indices, B_desc.shape)
 
         tasklet, map_entry, map_exit = nstate.add_mapped_tasklet(name=node.label + "_tasklet",
                                                                  map_ranges=map_ranges,
                                                                  inputs={
-                                                                     "__A": dace.Memlet(f"A[{A_index_str}]"),
-                                                                     "__B": dace.Memlet(f"B[{B_index_str}]")
+                                                                     "__A": dace.Memlet(A_memlet_str),
+                                                                     "__B": dace.Memlet(B_memlet_str)
                                                                  },
                                                                  code="__C = __A * __B",
                                                                  outputs={"__C": dace.Memlet(f"C[{index_str}]")},
@@ -342,16 +342,16 @@ class PureDiv(ONNXForward):
 
         # Generate broadcasting-aware indexing for inputs
         A_indices = broadcast_indices(A_desc.shape, C_desc.shape)
-        A_index_str = ", ".join(A_indices) if A_indices else "0"
+        A_memlet_str = create_memlet_str("A", A_indices, A_desc.shape)
 
         B_indices = broadcast_indices(B_desc.shape, C_desc.shape)
-        B_index_str = ", ".join(B_indices) if B_indices else "0"
+        B_memlet_str = create_memlet_str("B", B_indices, B_desc.shape)
 
         tasklet, map_entry, map_exit = nstate.add_mapped_tasklet(name=node.label + "_tasklet",
                                                                  map_ranges=map_ranges,
                                                                  inputs={
-                                                                     "__A": dace.Memlet(f"A[{A_index_str}]"),
-                                                                     "__B": dace.Memlet(f"B[{B_index_str}]")
+                                                                     "__A": dace.Memlet(A_memlet_str),
+                                                                     "__B": dace.Memlet(B_memlet_str)
                                                                  },
                                                                  code="__C = __A / __B",
                                                                  outputs={"__C": dace.Memlet(f"C[{index_str}]")},
@@ -510,14 +510,14 @@ class PureClip(ONNXForward):
             if "__min" in inputs and has_min and min_const is None:
                 # Handle broadcasting for min
                 min_indices = broadcast_indices(min_desc.shape, input_desc.shape)
-                min_index_str = ", ".join(min_indices) if min_indices else "0"
-                final_inputs["__min_val"] = dace.Memlet(f"min[{min_index_str}]")
+                min_memlet_str = create_memlet_str("min", min_indices, min_desc.shape)
+                final_inputs["__min_val"] = dace.Memlet(min_memlet_str)
 
             if "__max" in inputs and has_max and max_const is None:
                 # Handle broadcasting for max
                 max_indices = broadcast_indices(max_desc.shape, input_desc.shape)
-                max_index_str = ", ".join(max_indices) if max_indices else "0"
-                final_inputs["__max_val"] = dace.Memlet(f"max[{max_index_str}]")
+                max_memlet_str = create_memlet_str("max", max_indices, max_desc.shape)
+                final_inputs["__max_val"] = dace.Memlet(max_memlet_str)
 
             tasklet, map_entry, map_exit = nstate.add_mapped_tasklet(
                 name=node.label + "_tasklet",

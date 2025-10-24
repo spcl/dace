@@ -31,9 +31,111 @@ from dace.libraries.onnx.forward_implementation_abc import ONNXForward
 from dace.libraries.onnx.nodes import onnx_op
 from dace.libraries.onnx.op_implementations.utils import (empty_sdfg_for_node, op_implementation, program_for_node,
                                                           python_pure_op_implementation)
+from dace.libraries.onnx.op_implementations.common import broadcast_indices, create_memlet_str
 from dace.transformation.onnx import constant_folding
 from dace.transformation.onnx.replacement import onnx_constant_or_none
 from dace.libraries.onnx import converters
+
+# ==============================================================================
+# Pad Operations
+# ==============================================================================
+
+
+@op_implementation(op="Pad", name="pure")
+class PurePad(ONNXForward):
+    """
+    Pure implementation of ONNX Pad operator.
+
+    Pads a tensor with a constant value along specified dimensions.
+    """
+
+    @staticmethod
+    def forward_can_be_applied(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> bool:
+        # For now, only support constant padding with pads as an input
+        return True
+
+    @staticmethod
+    def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+        # The ONNX Pad operator takes:
+        # - data: input tensor
+        # - pads: padding values (2 * rank of data)
+        # - constant_value (optional): value to pad with (default 0)
+
+        # Get descriptors
+        data_desc = in_desc_with_name(node, state, sdfg, "data")
+        output_desc = out_desc_with_name(node, state, sdfg, "output")
+        pads_desc = in_desc_with_name(node, state, sdfg, "pads")
+
+        # Check if constant_value input exists
+        has_constant_value = len(list(state.in_edges_by_connector(node, "constant_value"))) > 0
+
+        # Create a new SDFG for the expansion
+        nsdfg = dace.SDFG(node.label + "_expansion")
+        nstate = nsdfg.add_state()
+
+        # Add data descriptors to nested SDFG
+        nsdfg.add_datadesc("data", copy.deepcopy(data_desc))
+        nsdfg.add_datadesc("output", copy.deepcopy(output_desc))
+        nsdfg.add_datadesc("pads", copy.deepcopy(pads_desc))
+        nsdfg.arrays["data"].transient = False
+        nsdfg.arrays["output"].transient = False
+        nsdfg.arrays["pads"].transient = False
+
+        if has_constant_value:
+            constant_value_desc = in_desc_with_name(node, state, sdfg, "constant_value")
+            nsdfg.add_datadesc("constant_value", copy.deepcopy(constant_value_desc))
+            nsdfg.arrays["constant_value"].transient = False
+
+        # Generate code to copy with padding
+        ndim = len(data_desc.shape)
+        output_shape = output_desc.shape
+        input_shape = data_desc.shape
+
+        # Create a map over the output tensor
+        map_ranges = {f"i{d}": f"0:{output_shape[d]}" for d in range(ndim)}
+        output_indices = ', '.join([f'i{d}' for d in range(ndim)])
+
+        # Generate tasklet code
+        code_lines = []
+        code_lines.append(f"# Compute input indices from output indices")
+        for d in range(ndim):
+            code_lines.append(f"input_i{d} = i{d} - int(__pads[{d}])")
+
+        # Check if we're in the padding region
+        condition_parts = []
+        for d in range(ndim):
+            condition_parts.append(f"(input_i{d} >= 0 and input_i{d} < {input_shape[d]})")
+        condition = " and ".join(condition_parts)
+
+        code_lines.append(f"if {condition}:")
+        input_indices = ', '.join([f'input_i{d}' for d in range(ndim)])
+        code_lines.append(f"    __out = __data[{input_indices}]")
+        code_lines.append("else:")
+        if has_constant_value:
+            code_lines.append("    __out = __constant_value[0]")
+        else:
+            code_lines.append("    __out = 0")
+
+        tasklet_code = '\n'.join(code_lines)
+
+        # Build tasklet inputs
+        tasklet_inputs = {
+            "__data": dace.Memlet.from_array("data", data_desc),
+            "__pads": dace.Memlet.from_array("pads", pads_desc)
+        }
+        if has_constant_value:
+            tasklet_inputs["__constant_value"] = dace.Memlet.from_array("constant_value", constant_value_desc)
+
+        # Create mapped tasklet with external edges
+        nstate.add_mapped_tasklet(name=node.label + "_tasklet",
+                                  map_ranges=map_ranges,
+                                  inputs=tasklet_inputs,
+                                  code=tasklet_code,
+                                  outputs={"__out": dace.Memlet(f"output[{output_indices}]")},
+                                  external_edges=True)
+
+        return nsdfg
+
 
 # ==============================================================================
 # Concatenation Operations
@@ -115,87 +217,6 @@ class PureConcat(ONNXForward):
 # ==============================================================================
 # Shape Manipulation Operations - Unsqueeze
 # ==============================================================================
-
-
-@op_implementation(op="Unsqueeze", name="pure")
-class PureUnsqueeze(ONNXForward):
-
-    @staticmethod
-    def forward_can_be_applied(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> bool:
-        # Avoid this expansion if the backward pass will be constructed
-        # TODO pass the backward flag to the functions
-        return False
-
-    @staticmethod
-    def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
-        # Create new SDFG
-        nsdfg = dace.SDFG(node.label + "_expansion")
-        nstate = nsdfg.add_state()
-
-        # Get input/output descriptors
-        data_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, "data"))
-        expanded_desc = copy.deepcopy(out_desc_with_name(node, state, sdfg, "expanded"))
-
-        # Add data descriptors to SDFG
-        nsdfg.add_datadesc("data", data_desc)
-        nsdfg.add_datadesc("expanded", expanded_desc)
-        nsdfg.arrays["data"].transient = False
-        nsdfg.arrays["expanded"].transient = False
-
-        # Add access nodes
-        data_read = nstate.add_read("data")
-        expanded_write = nstate.add_write("expanded")
-
-        # Handle axes based on ONNX version
-        if node.schema.since_version < 13:
-            # axes is attribute - create transient array and initialize it
-            axes_values = node.axes if hasattr(node, 'axes') else []
-            axes_arr_shape = [len(axes_values)]
-            axes_arr_dtype = dace.int64
-            _, axes_desc = nsdfg.add_array("axes", axes_arr_shape, axes_arr_dtype, transient=True)
-            axes_node = nstate.add_access("axes")
-
-            # Add tasklet to initialize axes array
-            axes_init_tasklet = nstate.add_tasklet(
-                f"init_axes",
-                set(), {"out": dace.pointer(axes_arr_dtype)},
-                "\n".join([f"out [{idx}] = {val};" for idx, val in enumerate(axes_values)]),
-                language=dace.Language.CPP)
-            nstate.add_edge(axes_init_tasklet, "out", axes_node, None, dace.Memlet(f"axes[0:{len(axes_values)}]"))
-        else:
-            # axes is input - get from input connector
-            axes_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, "axes"))
-            nsdfg.add_datadesc("axes", axes_desc)
-            nsdfg.arrays["axes"].transient = False
-            axes_node = nstate.add_read("axes")
-
-        is_scalar_input = not isinstance(node.in_connectors['data'], dace.dtypes.pointer) and data_desc.total_size == 1
-        if is_scalar_input:
-            data_str = "(&__data)"
-        else:
-            data_str = "__data"
-
-        # Create tasklet that performs the unsqueeze operation
-        data_size = int(np.prod(data_desc.shape))
-        tasklet = nstate.add_tasklet(name=node.label + "_tasklet",
-                                     inputs={
-                                         "__data": dace.pointer(data_desc.dtype),
-                                         "__axes": dace.pointer(axes_desc.dtype),
-                                     },
-                                     outputs={"__unsqueezed": dace.pointer(expanded_desc.dtype)},
-                                     code=f"""
-            for (int i = 0; i < {data_size}; i++) {{
-                __unsqueezed[i] = {data_str}[i];
-            }}
-            """,
-                                     language=dace.Language.CPP)
-
-        # Connect the tasklet with memlets
-        nstate.add_edge(data_read, None, tasklet, "__data", dace.Memlet("data"))
-        nstate.add_edge(axes_node, None, tasklet, "__axes", dace.Memlet("axes"))
-        nstate.add_edge(tasklet, "__unsqueezed", expanded_write, None, dace.Memlet("expanded"))
-
-        return nsdfg
 
 
 @op_implementation(op="Unsqueeze", name="pure")
@@ -334,7 +355,7 @@ class PureExpand(ONNXForward):
 
         # Generate broadcast-aware indexing using the common helper
         input_indices = broadcast_indices(input_desc.shape, output_desc.shape)
-        input_index_str = ", ".join(input_indices) if input_indices else "0"
+        input_memlet_str = create_memlet_str("input", input_indices, input_desc.shape)
 
         # Create map over output shape
         map_ranges = {f"i{i}": f"0:{output_desc.shape[i]}" for i in range(len(output_desc.shape))}
@@ -343,7 +364,7 @@ class PureExpand(ONNXForward):
         # Create mapped tasklet for broadcasting copy
         nstate.add_mapped_tasklet(name=node.label + "_tasklet",
                                   map_ranges=map_ranges,
-                                  inputs={"__input": dace.Memlet(f"input[{input_index_str}]")},
+                                  inputs={"__input": dace.Memlet(input_memlet_str)},
                                   code="__output = __input",
                                   outputs={"__output": dace.Memlet(f"output[{output_index_str}]")},
                                   external_edges=True)
@@ -519,10 +540,26 @@ class PureSlice(ONNXForward):
                     start = s + start
                 if end < 0:
                     end = s + end
-                # Handle out of bounds
-                if end > s:
-                    end = s
-                rng[axis] = (start, end - 1, step)
+
+                # Handle negative steps
+                if step < 0:
+                    # For negative steps, we go from start down to end (exclusive)
+                    # Clamp start to valid range
+                    if start >= s:
+                        start = s - 1
+                    # For negative step, end can be < 0 (meaning go to beginning)
+                    # Clamp end to be at least -1 (which means include index 0)
+                    if end < -1:
+                        end = -1
+                    # In DaCe Range with negative step, the range is (start, end, step)
+                    # where start > end
+                    rng[axis] = (start, end, step)
+                else:
+                    # Handle out of bounds for positive steps
+                    if end > s:
+                        end = s
+                    # For positive steps, DaCe Range uses inclusive end, so end - 1
+                    rng[axis] = (start, end - 1, step)
 
             sbs = subsets.Range(rng)
             osbs = subsets.Range.from_array(odesc)
@@ -1054,21 +1091,18 @@ class PureConstantOfShape(ONNXForward):
 
     @staticmethod
     def forward_can_be_applied(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> bool:
-        # Check if shape input is constant
-        try:
-            shape_node = next(state.in_edges_by_connector(node, "input")).src
-            return onnx_constant_or_none(sdfg, shape_node) is not None
-        except (StopIteration, ValueError):
-            return False
+        # Always applicable - handles both constant and runtime shape inputs
+        return True
 
     @staticmethod
     def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
-        # Get the shape value
+        # Get the shape value (if constant)
         shape_node = next(state.in_edges_by_connector(node, "input")).src
         shape_val = onnx_constant_or_none(sdfg, shape_node)
 
-        # Remove shape input since it's constant
-        constant_folding.remove_node_and_computation(sdfg, state, node, "input")
+        # Remove shape input if it's constant
+        if shape_val is not None:
+            constant_folding.remove_node_and_computation(sdfg, state, node, "input")
 
         # Get fill value (default is 0)
         fill_value = 0
@@ -1086,19 +1120,83 @@ class PureConstantOfShape(ONNXForward):
         nsdfg.add_array('output', output_desc.shape, output_desc.dtype)
         nsdfg.arrays['output'].transient = False
 
-        # Create a map and tasklet to fill the output
-        map_ranges = {f'__i{i}': f'0:{s}' for i, s in enumerate(output_desc.shape)}
-        output_indices = ', '.join(f'__i{i}' for i in range(len(output_desc.shape)))
+        # If shape is constant, we can use static maps
+        if shape_val is not None:
+            # Create a map and tasklet to fill the output
+            map_ranges = {f'__i{i}': f'0:{s}' for i, s in enumerate(output_desc.shape)}
+            output_indices = ', '.join(f'__i{i}' for i in range(len(output_desc.shape)))
 
-        # Use add_mapped_tasklet for simpler construction
-        tasklet, map_entry, map_exit = nstate.add_mapped_tasklet(
-            name='fill',
-            map_ranges=map_ranges,
-            inputs={},
-            code=f'__out = {output_desc.dtype.ctype}({fill_value})',
-            outputs={'__out': dace.Memlet(f'output[{output_indices}]')},
-            external_edges=True,
-            output_nodes={'output': nstate.add_write('output')})
+            # Use add_mapped_tasklet for simpler construction
+            tasklet, map_entry, map_exit = nstate.add_mapped_tasklet(
+                name='fill',
+                map_ranges=map_ranges,
+                inputs={},
+                code=f'__out = {output_desc.dtype.ctype}({fill_value})',
+                outputs={'__out': dace.Memlet(f'output[{output_indices}]')},
+                external_edges=True,
+                output_nodes={'output': nstate.add_write('output')})
+        else:
+            # Shape is not constant, need to handle it at runtime
+            # Add input shape array to nested SDFG
+            input_desc = in_desc_with_name(node, state, sdfg, "input")
+            nsdfg.add_datadesc('input', copy.deepcopy(input_desc))
+            nsdfg.arrays['input'].transient = False
+
+            # Since the shape is dynamic, we can't use static maps
+            # Instead, we'll create a tasklet that fills the entire output tensor
+            # using nested loops based on the runtime shape values
+
+            # Get the number of dimensions from the output descriptor
+            ndims = len(output_desc.shape)
+
+            # Create a single tasklet that fills the entire output
+            # Generate C++ code for nested loops based on the shape array
+            code_lines = []
+
+            # Read shape values into local variables
+            # Handle both scalar input (when ndims=1) and array input
+            if ndims == 1 and prod(input_desc.shape) == 1:
+                # Special case: single dimension, input might be passed as scalar
+                code_lines.append(f'const auto dim0 = __input;')
+            else:
+                for i in range(ndims):
+                    code_lines.append(f'const auto dim{i} = __input[{i}];')
+
+            # Generate nested loops
+            indent = ''
+            for i in range(ndims):
+                code_lines.append(f'{indent}for (auto i{i} = 0; i{i} < dim{i}; ++i{i}) {{')
+                indent += '    '
+
+            # Fill the output
+            if ndims == 1:
+                code_lines.append(f'{indent}__output[i0] = {fill_value};')
+            else:
+                output_indices = ', '.join(f'i{i}' for i in range(ndims))
+                code_lines.append(f'{indent}__output[{output_indices}] = {fill_value};')
+
+            # Close loops
+            for i in range(ndims):
+                indent = indent[:-4]
+                code_lines.append(f'{indent}}}')
+
+            tasklet_code = '\n'.join(code_lines)
+
+            # Create access nodes
+            input_node = nstate.add_read('input')
+            output_node = nstate.add_write('output')
+
+            # Create tasklet
+            tasklet = nstate.add_tasklet(name='fill',
+                                         inputs={'__input'},
+                                         outputs={'__output'},
+                                         code=tasklet_code,
+                                         language=dace.Language.CPP)
+
+            # Connect edges
+            # For scalar input (single element), use from_array which will optimize to scalar
+            nstate.add_edge(input_node, None, tasklet, '__input', dace.Memlet.from_array('input', input_desc))
+            nstate.add_edge(tasklet, '__output', output_node, None, dace.Memlet.from_array('output', output_desc))
 
         return nsdfg
 
@@ -1124,7 +1222,8 @@ class PureRange(ONNXForward):
                 input_node = next(state.in_edges_by_connector(node, conn)).src
                 if onnx_constant_or_none(sdfg, input_node) is None:
                     return False
-            except (StopIteration, ValueError):
+            except (StopIteration, ValueError, AttributeError):
+                # AttributeError occurs when _parent_onnx_model is not available
                 return False
         return True
 
@@ -1327,7 +1426,8 @@ class PureTopK(ONNXForward):
         try:
             k_node = next(state.in_edges_by_connector(node, "K")).src
             return onnx_constant_or_none(sdfg, k_node) is not None
-        except (StopIteration, ValueError):
+        except (StopIteration, ValueError, AttributeError):
+            # AttributeError occurs when _parent_onnx_model is not available
             return False
 
     @staticmethod

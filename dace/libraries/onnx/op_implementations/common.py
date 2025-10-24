@@ -75,6 +75,33 @@ def broadcast_indices(input_shape, output_shape):
     return indices
 
 
+def create_memlet_str(data_name, indices, shape):
+    """
+    Creates a memlet string for accessing an array, handling scalars correctly.
+
+    For scalars (empty shape), returns just the data name without brackets.
+    For arrays, returns the data name with bracketed indices.
+
+    Args:
+        data_name: Name of the data container
+        indices: List of index expressions from broadcast_indices
+        shape: The shape of the array being accessed
+
+    Returns:
+        Memlet string (e.g., "A" for scalar, "A[i0, i1]" for array)
+    """
+    if len(shape) == 0:
+        # Scalar - no subscript needed
+        return data_name
+    elif indices:
+        # Array with indices
+        return f"{data_name}[{', '.join(indices)}]"
+    else:
+        # Edge case: array but no indices (shouldn't normally happen in broadcast context)
+        # Use [0] as fallback
+        return f"{data_name}[0]"
+
+
 def setup_reduction_sdfg(node: 'ONNXOp', state: SDFGState, sdfg: SDFG, operation_name: str):
     """
     Helper function to set up the common SDFG structure for reduction operations.
