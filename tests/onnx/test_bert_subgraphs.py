@@ -17,7 +17,7 @@ data_directory = os.path.join(os.path.dirname(__file__), "onnx_files")
 @pytest.mark.onnx
 def test_slice(sdfg_name: str):
     model = onnx.load(os.path.join(data_directory, "slice.onnx"))
-    dace_model = ONNXModel(sdfg_name, model, onnx_simplify=False)
+    dace_model = ONNXModel(sdfg_name, model)
 
     data = torch.ones(2)
 
@@ -37,8 +37,7 @@ def test_reshape(sdfg_name: str):
 def test_save_transients(sdfg_name: str):
     model = onnx.load(os.path.join(data_directory, "reshape.onnx"))
     transients = {}
-    # Disable onnx_simplify to preserve intermediate transients for testing
-    dace_model = ONNXModel(sdfg_name, model, save_transients=transients, onnx_simplify=False)
+    dace_model = ONNXModel(sdfg_name, model, save_transients=transients)
     output = dace_model()
     # Verify that the transient was saved and matches the computed output
     assert "bertSLASHembeddingsSLASHReshape_4COLON0" in transients, \

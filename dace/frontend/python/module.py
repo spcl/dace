@@ -25,12 +25,12 @@ except ImportError:
 
 try:
     import onnx
+    from dace.transformation.onnx import ConstantFolding
     ONNX_AVAILABLE = True
 except ImportError:
     onnx = None
     ONNX_AVAILABLE = False
 
-import dace
 from dace import data
 from dace.codegen import compiled_sdfg
 from dace.sdfg import SDFG, nodes
@@ -83,7 +83,6 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
             :param backward: whether to enable the backward pass.
             :param inputs_to_skip: if provided, a list of inputs to skip computing gradients for.
                                 (only relevant when the backward pass is enabled)
-            :param onnx_simplify: whether to apply onnx simplification using onnxsim.
             :param simplify: whether to apply simplification transforms after conversion (this generally improves performance,
                             but can be slow).
             :param sdfg_name: the name to give to the sdfg (defaults to ``dace_model``).
@@ -114,7 +113,6 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
                      training: bool = False,
                      backward: bool = False,
                      inputs_to_skip: Optional[List[str]] = None,
-                     onnx_simplify: bool = True,
                      simplify: bool = True,
                      auto_optimize: bool = False,
                      debug_transients: bool = False,
@@ -131,7 +129,6 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
             self.use_cuda = cuda
             self.sdfg_name = sdfg_name or type(module).__name__
             self.auto_optimize = auto_optimize
-            self.onnx_simplify = onnx_simplify
             self.simplify = simplify
             self.debug_transients = debug_transients
             self.compile_torch_extension = compile_torch_extension
@@ -354,13 +351,17 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
                 # load using importer
                 dace_model = ONNXModel(self.sdfg_name,
                                        onnx_model_exported,
-                                       onnx_simplify=self.onnx_simplify,
                                        cuda=self.use_cuda,
                                        auto_optimize=self.auto_optimize)
                 self.sdfg = dace_model.sdfg
                 self.dace_model = dace_model
 
                 self.sdfg.validate()
+
+                # Apply constant folding pass
+                self.sdfg.apply_transformations_repeated([ConstantFolding],
+                                                         validate=True,
+                                                         print_report=logging.root.level <= logging.DEBUG)
 
                 for _, hook in self.post_onnx_hooks.items():
                     hook(self)

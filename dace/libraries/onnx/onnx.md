@@ -117,21 +117,19 @@ ONNXModel.__init__()
        ↓
 2. shape_inference.infer_shapes() → Compute shapes
        ↓
-3. onnxsim.simplify() (optional) → Optimize ONNX graph
+3. Create SDFG structure
        ↓
-4. Create SDFG structure
-       ↓
-5. For each ONNX node:
+4. For each ONNX node:
    ├─→ get_onnx_node(op_type, version) → Retrieve node class
    ├─→ Create instance with attributes
    ├─→ Add connectors from schema
    └─→ Create edges with memlets
        ↓
-6. Load weights (initializers)
+5. Load weights (initializers)
        ↓
-7. Handle outputs (scalar promotion, return arrays)
+6. Handle outputs (scalar promotion, return arrays)
        ↓
-8. Apply GPU transformations (if cuda=True)
+7. Apply GPU transformations (if cuda=True)
        ↓
 SDFG with ONNX Library Nodes
        ↓
@@ -252,7 +250,6 @@ class ONNXModel:
         cuda: bool = False,
         apply_strict: bool = False,
         auto_optimize: bool = True,
-        onnx_simplify: bool = True,
         infer_shapes: bool = True,
         auto_merge: bool = False
     ):
@@ -265,7 +262,6 @@ class ONNXModel:
             cuda: Enable GPU execution
             apply_strict: Strict ONNX validation
             auto_optimize: Apply DaCe optimizations on first run
-            onnx_simplify: Apply onnx-simplifier before import
             infer_shapes: Run shape inference
             auto_merge: Auto-merge conflicting symbolic shapes
         """
@@ -475,18 +471,9 @@ Provides bidirectional conversion between ONNX, DaCe, NumPy, and PyTorch type sy
 │ 4. Auto-merge conflicting symbols (optional)            │
 └──────────────────────┬──────────────────────────────────┘
                        ▼
-┌─────────────────────────────────────────────────────────┐
-│ Phase 3: ONNX-Level Optimization (optional)              │
-├─────────────────────────────────────────────────────────┤
-│ 1. Apply onnxsim.simplify()                             │
-│    - Constant folding                                    │
-│    - Dead code elimination                               │
-│    - Operator fusion                                     │
-│ 2. Validate optimization preserves semantics            │
-└──────────────────────┬──────────────────────────────────┘
                        ▼
 ┌─────────────────────────────────────────────────────────┐
-│ Phase 4: SDFG Construction                               │
+│ Phase 3: SDFG Construction                               │
 ├─────────────────────────────────────────────────────────┤
 │ 1. Create empty SDFG with initial state                 │
 │ 2. Register inputs/outputs as data descriptors          │
@@ -501,7 +488,7 @@ Provides bidirectional conversion between ONNX, DaCe, NumPy, and PyTorch type sy
 └──────────────────────┬──────────────────────────────────┘
                        ▼
 ┌─────────────────────────────────────────────────────────┐
-│ Phase 5: Weight Management                               │
+│ Phase 4: Weight Management                               │
 ├─────────────────────────────────────────────────────────┤
 │ 1. Load initializers (weights/biases) from ONNX         │
 │ 2. Convert to PyTorch tensors                           │
@@ -510,7 +497,7 @@ Provides bidirectional conversion between ONNX, DaCe, NumPy, and PyTorch type sy
 └──────────────────────┬──────────────────────────────────┘
                        ▼
 ┌─────────────────────────────────────────────────────────┐
-│ Phase 6: Output Handling                                 │
+│ Phase 5: Output Handling                                 │
 ├─────────────────────────────────────────────────────────┤
 │ 1. Promote scalars to arrays (CPU only)                 │
 │ 2. Create return arrays (__return, __return_0, etc.)    │
@@ -519,7 +506,7 @@ Provides bidirectional conversion between ONNX, DaCe, NumPy, and PyTorch type sy
 └──────────────────────┬──────────────────────────────────┘
                        ▼
 ┌─────────────────────────────────────────────────────────┐
-│ Phase 7: GPU Transformation (if cuda=True)               │
+│ Phase 6: GPU Transformation (if cuda=True)               │
 ├─────────────────────────────────────────────────────────┤
 │ 1. Apply sdfg.apply_gpu_transformations()               │
 │ 2. Convert memory to GPU_Global storage                 │

@@ -6,11 +6,9 @@ import pytest
 
 pytest.importorskip("onnx", reason="ONNX not installed. Please install with: pip install dace[ml]")
 pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
-pytest.importorskip("onnxsim", reason="ONNX Simplifier not installed. Please install with: pip install dace[ml]")
 import os
 
 import onnx
-import onnxsim
 import pathlib
 import urllib
 
@@ -67,12 +65,6 @@ def test_bert_full(sdfg_name):
     attention_mask = torch.ones(1, 8, dtype=torch.int64)
 
     model = onnx.load(bert_path)
-    # infer shapes
-    model, _ = onnxsim.simplify(model,
-                                skip_fuse_bn=True,
-                                input_shapes=dict(input_ids=tokens_tensor.shape,
-                                                  token_type_ids=segments_tensors.shape,
-                                                  attention_mask=attention_mask.shape))
 
     dace_model = donnx.ONNXModel(sdfg_name, model, auto_merge=True)
 

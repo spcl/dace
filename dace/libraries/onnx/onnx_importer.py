@@ -79,14 +79,6 @@ except ImportError:
     SymbolicShapeInference = None
     ONNXRUNTIME_AVAILABLE = False
 
-# onnxsim is optional (only needed for model simplification)
-try:
-    import onnxsim
-    ONNXSIM_AVAILABLE = True
-except ImportError:
-    onnxsim = None
-    ONNXSIM_AVAILABLE = False
-
 import dace
 from dace import SDFG, SDFGState, data as dt, dtypes, nodes
 from dace.codegen import compiled_sdfg
@@ -231,46 +223,6 @@ def infer_shapes_onnx_model(model: onnx.ModelProto, auto_merge: bool = False) ->
             return onnx.shape_inference.infer_shapes(model, check_type=False, strict_mode=False, data_prop=True)
 
 
-def simplify_onnx_model(model: onnx.ModelProto, auto_merge: bool) -> onnx.ModelProto:
-    """
-    Simplify an ONNX model using onnx-simplifier.
-
-    This function applies various optimizations to the ONNX model including:
-    - Constant folding
-    - Dead code elimination
-    - Shape inference
-    - Operator fusion (except batch normalization)
-
-    Args:
-        model: The ONNX model to simplify.
-        auto_merge: Whether to automatically merge nodes (passed to onnxsim).
-
-    Returns:
-        The simplified ONNX model.
-
-    Raises:
-        ImportError: If onnxsim is not installed.
-        RuntimeError: If onnx-simplifier optimizations fail validation.
-
-    Note:
-        Batch normalization fusion is skipped (skip_fuse_bn=True) to maintain
-        numerical accuracy and allow separate optimization strategies.
-    """
-    if not ONNXSIM_AVAILABLE:
-        raise ImportError("onnxsim is required for model simplification. Install with: pip install dace[ml]")
-
-    try:
-        model, check = onnxsim.simplify(model, skip_fuse_bn=True)
-        if not check:
-            raise RuntimeError("onnx-simplifier optimizations failed validation")
-        return model
-    except (onnx.checker.ValidationError, ValueError) as e:
-        # If simplification fails due to validation errors (e.g., missing shape info),
-        # return the original model
-        log.warning(f"ONNX simplification failed with error: {e}. Continuing without simplification.")
-        return model
-
-
 class ONNXModel:
     """ Loads an ONNX model into an SDFG.
 
@@ -314,7 +266,6 @@ class ONNXModel:
                  cuda: bool = False,
                  auto_optimize: bool = False,
                  simplify: bool = False,
-                 onnx_simplify: bool = True,
                  storage: Optional[dtypes.StorageType] = None,
                  save_transients: Optional[Dict[str, torch.Tensor]] = None,
                  auto_merge: bool = False):
@@ -323,7 +274,6 @@ class ONNXModel:
         :param model: the model to import.
         :param cuda: if ``True``, the model will be executed on the GPU.
         :param simplify: if ``True``, apply simplification transformations after all nodes have been expanded.
-        :param onnx_simplify: if True, run ONNX-level simplifications such as constant folding and shape inference.
         :param auto_optimize: if ``True``, apply automatic optimizations before calling.
         :param storage: the storage type of the parameters, inputs and outputs. If None, will be set according to
                         ``cuda``.
@@ -341,11 +291,6 @@ class ONNXModel:
 
             with tempfile.NamedTemporaryFile(suffix='.onnx', delete=True) as temp_shapes:
                 onnx.save(model, temp_shapes.name)
-
-                if onnx_simplify:
-                    model = simplify_onnx_model(model, auto_merge)
-                    with tempfile.NamedTemporaryFile(suffix='.onnx', delete=True) as temp_simplified:
-                        onnx.save(model, temp_simplified.name)
 
         self.do_auto_optimize = auto_optimize
         self.model = model
@@ -566,7 +511,11 @@ class ONNXModel:
             self.sdfg.add_scalar(name, dtype, storage=storage)
         else:
             if name not in self.sdfg.arrays:
-                self.sdfg.add_array(name, shape, dtype, storage=storage, transient=False)
+                # Ensure we don't create arrays with empty shape
+                if len(shape) == 0:
+                    self.sdfg.add_scalar(name, dtype, storage=storage, transient=False)
+                else:
+                    self.sdfg.add_array(name, shape, dtype, storage=storage, transient=False)
             else:
                 existing_arr = self.sdfg.arrays[name]
                 if existing_arr.dtype != dtype:

@@ -91,24 +91,28 @@ def test_mnist(sdfg_name: str):
 
 @pytest.mark.torch
 @pytest.mark.autodiff
-@pytest.mark.skip(reason="Requires pure implementation of expand")
 def test_bert(sdfg_name):
     batch_size = 2
-    seq_len = 512
-    hidden_size = 768
+    seq_len = 64
+    hidden_size = 128
 
     class BertTokenSoftmaxClf(nn.Module):
-
         def __init__(self):
             super(BertTokenSoftmaxClf, self).__init__()
-            self.bert = BertLayer(BertConfig(hidden_act="relu", attn_implementation="eager")).eval()
+            # Configure BERT with Dropout disabled for numerical validation
+            config = BertConfig(
+                hidden_act="relu",
+                attn_implementation="eager",
+                hidden_dropout_prob=0.0,
+                attention_probs_dropout_prob=0.0
+            )
+            self.bert = BertLayer(config)
             self.sm = nn.LogSoftmax(dim=-1)
 
         def forward(self, x):
             embs = self.bert(x)[0]
             return self.sm(embs.sum(dim=-1))
 
-    # check forward pass using loss
     input = torch.randn([batch_size, seq_len, hidden_size])
     labels = torch.tensor([0, 123], dtype=torch.long)
 
@@ -117,4 +121,4 @@ def test_bert(sdfg_name):
 
 if __name__ == "__main__":
     test_mnist(sdfg_name="test_mnist")
-    # test_bert is skipped
+    test_bert(sdfg_name="test_bert")
