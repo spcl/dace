@@ -441,6 +441,7 @@ class SoftHierCodeGen(TargetCodeGenerator):
 #include "flex_dump.h"
 #define floor(x) ((x))
 #define Mod(x, y) ((x) % (y))
+#define Min(x, y) ((x) < (y) ? (x) : (y))
 #define dace_cluster_index(x,y,dim_x)         ((y)*(dim_x)+(x))
 #define dace_remote_xy(x,y,offset,dim_x)       (ARCH_CLUSTER_TCDM_REMOTE+dace_cluster_index(x,y,dim_x)*ARCH_CLUSTER_TCDM_SIZE+offset)
 {file_header}
