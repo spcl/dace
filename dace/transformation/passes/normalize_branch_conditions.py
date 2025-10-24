@@ -30,6 +30,7 @@ class NormalizeBranchConditions(ppl.Pass):
         return {}
 
     _cond_assignment_state_id = 0
+
     def _get_in_edge(self, cb: ConditionalBlock, always_create_new_state: bool):
         g = cb.parent_graph
         if g.in_degree(cb) > 1 or g.in_degree(cb) == 0 or always_create_new_state:
@@ -51,14 +52,13 @@ class NormalizeBranchConditions(ppl.Pass):
         Else returns the new condition as a string and required interstate assignment
         Returns None, None if nothing new is necessray
         """
+
         def _is_just_a_variable(symexpr: dace.symbolic.SymExpr, cond_lhs: str) -> bool:
             free_symbols = symexpr.free_symbols
             funcs = list(symexpr.atoms(sympy.Function))
             print(symexpr, free_symbols, funcs)
-            return (len(free_symbols) == 1 and
-                    len(funcs) == 0 and 
-                    cond_lhs.strip().replace("(", "").replace(")", "") == str(next(iter(free_symbols))).strip()
-                    )
+            return (len(free_symbols) == 1 and len(funcs) == 0
+                    and cond_lhs.strip().replace("(", "").replace(")", "") == str(next(iter(free_symbols))).strip())
 
         cond_str = cond_str.strip()
 
@@ -87,11 +87,7 @@ class NormalizeBranchConditions(ppl.Pass):
                 else:
                     # Found format `if((expr) == 1`
                     new_cond_name = "normalized_cond"
-                    new_cond_name = sdfg.add_symbol(
-                        name=new_cond_name,
-                        stype=dace.int32,
-                        find_new_name=True
-                    )
+                    new_cond_name = sdfg.add_symbol(name=new_cond_name, stype=dace.int32, find_new_name=True)
                     new_cond_str = f"{new_cond_name} == 1"
                     necessary_assignment = f"{new_cond_name}: {lhs.strip()}"
                     return (new_cond_str, necessary_assignment)
@@ -104,11 +100,7 @@ class NormalizeBranchConditions(ppl.Pass):
                 else:
                     # Found format `if(expr)`
                     new_cond_name = "normalized_cond"
-                    new_cond_name = sdfg.add_symbol(
-                        name=new_cond_name,
-                        stype=dace.int32,
-                        find_new_name=True
-                    )
+                    new_cond_name = sdfg.add_symbol(name=new_cond_name, stype=dace.int32, find_new_name=True)
                     new_cond_str = f"{new_cond_name} == 1"
                     necessary_assignment = f"{new_cond_name}: {cond_str}"
                     return (new_cond_str, necessary_assignment)
@@ -138,15 +130,12 @@ class NormalizeBranchConditions(ppl.Pass):
                     # Analysis failed (multiple `==` operators, or not Python)
                     continue
                 elif analysis == (None, None):
-                    # Nothing needs to be done 
+                    # Nothing needs to be done
                     continue
                 else:
-                    new_cond:str = analysis[0]
-                    new_assignment:str = analysis[1]
-                    cb.branches[i] = (
-                        CodeBlock(new_cond),
-                        body
-                    )
+                    new_cond: str = analysis[0]
+                    new_assignment: str = analysis[1]
+                    cb.branches[i] = (CodeBlock(new_cond), body)
                     if new_assignment is not None:
                         assignment_lhs, assignment_rhs = new_assignment.split(":")
                         assignment_lhs = assignment_lhs.strip()

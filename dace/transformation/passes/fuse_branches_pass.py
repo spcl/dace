@@ -36,7 +36,7 @@ class FuseBranchesPass(ppl.Pass):
                     t = fuse_branches.FuseBranches()
                     t.conditional = node
                     if self.try_clean:
-                        t.try_clean(node.parent_graph, sdfg)
+                        t.try_clean(node.parent_graph, sdfg, True)
                         node = t.conditional
 
             if not self.clean_only:
