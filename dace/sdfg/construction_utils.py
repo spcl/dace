@@ -13,6 +13,8 @@ import sympy
 from sympy import symbols, Function
 
 from sympy.printing.pycode import PythonCodePrinter
+import dace.sdfg.utils as sdutil
+from dace.transformation.passes import FuseStates
 
 
 class BracketFunctionPrinter(PythonCodePrinter):
@@ -55,6 +57,91 @@ def copy_state_contents(old_state: dace.SDFGState, new_state: dace.SDFGState) ->
         new_state.add_edge(c_src, e.src_conn, c_dst, e.dst_conn, copy.deepcopy(e.data))
 
     return node_map
+
+
+def copy_graph_contents(old_graph: ControlFlowRegion,
+                        new_graph: ControlFlowRegion) -> Dict[dace.nodes.Node, dace.nodes.Node]:
+    """
+    Deep-copies all nodes and edges from one SDFG state into another.
+
+    Args:
+        old_state: The source SDFG state to copy from.
+        new_state: The destination SDFG state to copy into.
+
+    Returns:
+        A mapping from original nodes in `old_state` to their deep-copied
+        counterparts in `new_state`.
+
+    Notes:
+        - Node objects are deep-copied.
+        - Edge data are also deep-copied.
+        - Connections between the newly created nodes are preserved.
+    """
+    assert isinstance(old_graph, ControlFlowRegion)
+    assert isinstance(new_graph, ControlFlowRegion)
+
+    node_map = dict()
+
+    # Copy all nodes
+    for n in old_graph.nodes():
+        c_n = copy.deepcopy(n)
+        node_map[n] = c_n
+        new_graph.add_node(c_n, is_start_block=old_graph.start_block == n)
+
+    # Copy all edges, reconnecting them to their new node counterparts
+    for e in old_graph.edges():
+        c_src = node_map[e.src]
+        c_dst = node_map[e.dst]
+        new_graph.add_edge(c_src, c_dst, copy.deepcopy(e.data))
+
+    sdutil.set_nested_sdfg_parent_references(new_graph.sdfg)
+
+    return node_map
+
+
+def move_branch_cfg_up_discard_conditions(if_block: ConditionalBlock, body_to_take: ControlFlowRegion):
+    # Sanity check the ensure apssed arguments are correct
+    bodies = {b for _, b in if_block.branches}
+    assert body_to_take in bodies
+    assert isinstance(if_block, ConditionalBlock)
+
+    graph = if_block.parent_graph
+
+    node_map = dict()
+    # Save end and start blocks for reconnections
+    new_start_block = None
+    new_end_block = None
+
+    for node in body_to_take.nodes():
+        # Copy over nodes
+        copynode = copy.deepcopy(node)
+        node_map[node] = copynode
+        # Check if we need to have a new start state
+        start_block_case = (body_to_take.start_block == node) and (graph.start_block == if_block)
+        if body_to_take.start_block == node:
+            assert new_start_block is None
+            new_start_block = copynode
+        if body_to_take.out_degree(node) == 0:
+            assert new_end_block is None
+            new_end_block = copynode
+        graph.add_node(copynode, is_start_block=start_block_case)
+
+    for edge in body_to_take.edges():
+        src = node_map[edge.src]
+        dst = node_map[edge.dst]
+        graph.add_edge(src, dst, copy.deepcopy(edge.data))
+
+    for ie in graph.in_edges(if_block):
+        graph.add_edge(ie.src, new_start_block, copy.deepcopy(ie.data))
+    for oe in graph.out_edges(if_block):
+        graph.add_edge(new_end_block, oe.dst, copy.deepcopy(oe.data))
+
+    graph.remove_node(if_block)
+
+
+# Put map-body into NSDFG
+# Convert Map to Loop
+# Put map into NSDFG
 
 
 def insert_non_transient_data_through_parent_scopes(non_transient_data: Set[str],

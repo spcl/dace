@@ -1,6 +1,5 @@
 import dace
 
-
 import copy
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
@@ -12,7 +11,7 @@ from dace.sdfg import nodes, propagation, utils as sdutil
 from dace.transformation import transformation
 from sympy import diff
 from typing import List, Set, Tuple
-
+import dace.sdfg.construction_utils as cutil
 from dace.transformation.passes.analysis import loop_analysis
 
 
@@ -37,7 +36,11 @@ class MoveLoopInvariantIfUp(transformation.MultiStateTransformation):
 
     @classmethod
     def expressions(cls):
-        return [sdutil.node_path_graph(cls.map_state), sdutil.node_path_graph(cls.map_entry), sdutil.node_path_graph(cls.loop)]
+        return [
+            sdutil.node_path_graph(cls.map_state),
+            sdutil.node_path_graph(cls.map_entry),
+            sdutil.node_path_graph(cls.loop)
+        ]
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         # If condition needs to be really invariant the map_entry (and all maps between map entry and the if)
@@ -67,72 +70,64 @@ class MoveLoopInvariantIfUp(transformation.MultiStateTransformation):
         #1.
         new_sdfg = dace.SDFG(name=f"{self.if_block.label}_nsdfg", parent=self.map_state)
 
-        cb = ConditionalBlock(label=f"{self.if_block.label}",
-                            sdfg=new_sdfg,
-                            parent=new_sdfg)
+        cb = ConditionalBlock(label=f"{self.if_block.label}", sdfg=new_sdfg, parent=new_sdfg)
 
         new_sdfg.add_node(cb, is_start_block=True)
 
-        new_branches = [
-            (CodeBlock(cond), ControlFlowRegion(label=f"{body.label}", sdfg=new_sdfg, parent=cb))
-            for cond, body in self.if_block.branches
-        ]
+        new_branches = [(CodeBlock(cond), ControlFlowRegion(label=f"{body.label}", sdfg=new_sdfg, parent=cb))
+                        for cond, body in self.if_block.branches]
+        # Need to generate else branch if the if-block is not the only node
+        if_block_sdfg = self.if_block.sdfg
+        assert self.if_block in if_block_sdfg.nodes()
+        if len(if_block_sdfg.nodes()) != 1:
+            assert len(self.if_block.branches) == 1
+            body_label = self.if_block.branches[0][1].label
+            new_branches.append((None, ControlFlowRegion(label=f"{body_label}_else", sdfg=new_sdfg, parent=cb)))
+            # Add else body the current if-block
+            cfg = ControlFlowRegion(label=f"{body_label}_else", sdfg=new_sdfg, parent=cb)
+            self.if_block.add_branch(None, cfg)
+            # Add an empty state as placeholder
+            cfg.add_state("empty_s", is_start_block=True)
 
         branch_and_state_sdfg_map = dict()
+        branch_and_state_sdfg_map_w_labels = dict()
         for cond, body in new_branches:
             # 3
             s1 = body.add_state(f"main_{body.label}", is_start_block=True)
             cb.add_branch(cond, body)
             new_map_content_sdfg = dace.SDFG(name=f"{body.label}_nsdfg", parent=self.map_state)
             branch_and_state_sdfg_map[body] = (s1, new_map_content_sdfg)
+            branch_and_state_sdfg_map_w_labels[body.label] = (s1, new_map_content_sdfg)
 
         # 2
         node_maps = dict()
-        for i, (body, (state, new_map_content_sdfg)) in enumerate(branch_and_state_sdfg_map.items()):
-            node_maps[body] = dict()
-            for node in self.if_block.sdfg.nodes():
-                if node != self.if_block:
-                    cnode = copy.deepcopy(node)
-                    node_maps[body][node] = cnode
-                    new_map_content_sdfg.add_node(cnode)
-                else:
-                    start_node = None
-                    end_node = None
-                    node_map2 = dict()
 
-                    for cond2, body2 in node.branches:
-                        for node2 in body2.nodes():
-                            # 4
-                            cpnode2 = copy.deepcopy(node2)
-                            if node2 == body2.start_block:
-                                start_node = cpnode2
-                            if body2.out_degree(node2) == 0:
-                                end_node = cpnode2
-                            new_map_content_sdfg.add_node(cpnode2)
-                            node_map2[node2] = cpnode2
-                        for edge2 in node.edges():
-                            src = node_map2[edge2.src]
-                            dst = node_map2[edge2.dst]
-                            new_map_content_sdfg.add_edge(src, dst, copy.deepcopy(edge2.data))
+        for i, (body_label, (state, new_map_content_sdfg)) in enumerate(branch_and_state_sdfg_map_w_labels.items()):
+            # Copy everything
+            if_block_sdfg = self.if_block.sdfg
+            assert self.if_block in if_block_sdfg.nodes()
+            node_map = cutil.copy_graph_contents(if_block_sdfg, new_map_content_sdfg)
 
-                    assert start_node is not None
-                    assert end_node is not None
-                    node_maps[body][node] = (start_node, end_node)
+            # Map the old if block to the new if block
+            new_if_block = node_map[self.if_block]
+            body_to_take = {body for c, body in new_if_block.branches if body.label == body_label}.pop()
+            branches = {b for _, b in new_if_block.branches}
+            assert body_to_take in branches, f"{body_to_take} not in {branches}"
 
-        # 2.1
-        for edge in self.if_block.sdfg.edges():
-            for body, (state, new_map_content_sdfg) in branch_and_state_sdfg_map.items():
-                src = node_maps[body][edge.src] if edge.src != self.if_block else node_maps[body][edge.src][1]
-                dst = node_maps[body][edge.dst] if edge.dst != self.if_block else node_maps[body][edge.dst][0]
-                new_map_content_sdfg.add_edge(src, dst, copy.deepcopy(edge.data))
+            cutil.move_branch_cfg_up_discard_conditions(new_if_block, body_to_take)
+            node_maps[body] = node_map
 
         # Both nested SDFGs can reuse the previous nested SDFGs inputs and outputs
         old_nsdfg_node = self.if_block.sdfg.parent_nsdfg_node
-        inputs = set(old_nsdfg_node.in_connectors.keys())
-        outputs = set(old_nsdfg_node.out_connectors.keys())
 
-        input_to_arr_name = {ie.dst_conn: ie.data.data for ie in self.map_state.in_edges(old_nsdfg_node) if ie.data.data is not None}
-        output_to_arr_name = {oe.src_conn: oe.data.data for oe in self.map_state.out_edges(old_nsdfg_node) if oe.data.data is not None}
+        input_to_arr_name = {
+            ie.dst_conn: ie.data.data
+            for ie in self.map_state.in_edges(old_nsdfg_node) if ie.data.data is not None
+        }
+        output_to_arr_name = {
+            oe.src_conn: oe.data.data
+            for oe in self.map_state.out_edges(old_nsdfg_node) if oe.data.data is not None
+        }
 
         # Collect map params
         parent_maps = list()
@@ -150,7 +145,6 @@ class MoveLoopInvariantIfUp(transformation.MultiStateTransformation):
             # dynamic in conncetors and free symbols in the ranges
             in_conns = {in_conn for in_conn in map_entry.in_connectors if not in_conn.startswith("IN_")}
             map_symbols = map_symbols.union(in_conns)
-            
 
         # Delete map parameters from the new symbol mapping
         new_symbol_mapping = copy.deepcopy(old_nsdfg_node.symbol_mapping)
@@ -172,7 +166,6 @@ class MoveLoopInvariantIfUp(transformation.MultiStateTransformation):
                 del new_symbol_mapping[s]
 
         new_outer_symbol_mapping = copy.deepcopy(new_symbol_mapping)
-        print(set(new_inner_symbol_mapping.keys()) - set(new_outer_symbol_mapping.keys()))
 
         for i, (body, (state, new_map_content_sdfg)) in enumerate(branch_and_state_sdfg_map.items()):
             for arr_names in [input_to_arr_name, output_to_arr_name]:
@@ -182,15 +175,13 @@ class MoveLoopInvariantIfUp(transformation.MultiStateTransformation):
                         copydesc.transient = False
                         new_map_content_sdfg.add_datadesc(conn_name, copydesc)
             for arr_name, arr in self.if_block.sdfg.arrays.items():
-                    if arr_name not in new_map_content_sdfg.arrays:
-                        copydesc = copy.deepcopy(arr)
-                        new_map_content_sdfg.add_datadesc(arr_name, copydesc)
-            nsdfg = state.add_nested_sdfg(
-                sdfg=new_map_content_sdfg,
-                inputs=set(input_to_arr_name.keys()),
-                outputs=set(output_to_arr_name.keys()),
-                symbol_mapping=new_inner_symbol_mapping
-            )
+                if arr_name not in new_map_content_sdfg.arrays:
+                    copydesc = copy.deepcopy(arr)
+                    new_map_content_sdfg.add_datadesc(arr_name, copydesc)
+            nsdfg = state.add_nested_sdfg(sdfg=new_map_content_sdfg,
+                                          inputs=set(input_to_arr_name.keys()),
+                                          outputs=set(output_to_arr_name.keys()),
+                                          symbol_mapping=new_inner_symbol_mapping)
             new_map_content_sdfg.parent_nsdfg_node = nsdfg
 
         # Old arrays used by the map will be registered to the outside map
@@ -203,7 +194,6 @@ class MoveLoopInvariantIfUp(transformation.MultiStateTransformation):
                     copydesc.transient = False
                     new_sdfg.add_datadesc(arr_name, copydesc)
 
-
         # Copy over map entry
         # If edge.dst is not in the node map then to the nested SDFG
         # If edge.src is not in the node map then need to add access node
@@ -213,7 +203,7 @@ class MoveLoopInvariantIfUp(transformation.MultiStateTransformation):
         for i, (body, (state, new_map_content_sdfg)) in enumerate(branch_and_state_sdfg_map.items()):
             assert isinstance(state, dace.SDFGState)
             node_map = dict()
-            
+
             # Copy and add map entries
             print(parent_maps)
             for j, map_entry in enumerate(reversed(parent_maps)):
@@ -237,14 +227,7 @@ class MoveLoopInvariantIfUp(transformation.MultiStateTransformation):
                     if ie.data.data is None:
                         continue
 
-
-                    state.add_edge(
-                        node_map[ie.src],
-                        ie.src_conn,
-                        node_map[ie.dst],
-                        ie.dst_conn,
-                        copy.deepcopy(ie.data)
-                    )
+                    state.add_edge(node_map[ie.src], ie.src_conn, node_map[ie.dst], ie.dst_conn, copy.deepcopy(ie.data))
 
                     if ie.dst_conn is not None and ie.dst_conn not in node_map[ie.dst].in_connectors:
                         node_map[ie.dst].add_in_connector(ie.dst_conn)
@@ -253,7 +236,7 @@ class MoveLoopInvariantIfUp(transformation.MultiStateTransformation):
 
                 # Handle outgoing edges — connect to the parent NSDFG node of the nested SDFG
                 for oe in self.map_state.out_edges(map_entry):
-                    if (j == len(parent_maps) -1) and not oe.src_conn.startswith("OUT_"):
+                    if (j == len(parent_maps) - 1) and not oe.src_conn.startswith("OUT_"):
                         # This should be now a symbol
                         if oe.src_conn in node_map[oe.src].in_connectors:
                             node_map[oe.src].remove_out_connector(oe.src_conn)
@@ -272,13 +255,7 @@ class MoveLoopInvariantIfUp(transformation.MultiStateTransformation):
                         node_map[oe.dst].add_in_connector(oe.dst_conn)
 
                     # Add the edge to connect map entry → nested SDFG parent
-                    state.add_edge(
-                        node_map[oe.src],
-                        oe.src_conn,
-                        node_map[oe.dst],
-                        oe.dst_conn,
-                        copy.deepcopy(oe.data)
-                    )
+                    state.add_edge(node_map[oe.src], oe.src_conn, node_map[oe.dst], oe.dst_conn, copy.deepcopy(oe.data))
 
             for j, map_entry in enumerate(reversed(parent_maps)):
                 map_exit = self.map_state.exit_node(map_entry)
@@ -302,13 +279,7 @@ class MoveLoopInvariantIfUp(transformation.MultiStateTransformation):
                         node_map[oe.dst].add_in_connector(oe.dst_conn)
 
                     # Add the edge (copy the data descriptor to preserve memlet)
-                    state.add_edge(
-                        node_map[oe.src],
-                        oe.src_conn,
-                        node_map[oe.dst],
-                        oe.dst_conn,
-                        copy.deepcopy(oe.data)
-                    )
+                    state.add_edge(node_map[oe.src], oe.src_conn, node_map[oe.dst], oe.dst_conn, copy.deepcopy(oe.data))
 
                 # Handle incoming edges — connect nested SDFG parent node → map exit
                 for ie in self.map_state.in_edges(map_exit):
@@ -330,38 +301,60 @@ class MoveLoopInvariantIfUp(transformation.MultiStateTransformation):
                     if ie.dst_conn is not None and ie.dst_conn not in node_map[ie.dst].in_connectors:
                         node_map[ie.dst].add_in_connector(ie.dst_conn)
 
-                    state.add_edge(
-                        node_map[ie.src],
-                        ie.src_conn,
-                        node_map[ie.dst],
-                        ie.dst_conn,
-                        copy.deepcopy(ie.data)
-                    )
+                    state.add_edge(node_map[ie.src], ie.src_conn, node_map[ie.dst], ie.dst_conn, copy.deepcopy(ie.data))
         # ======================================================================================
 
+        # Dynamic inputs
+        for arr_names in [
+                new_inputs,
+        ]:
+            for arr_name in arr_names:
+                if arr_name not in new_sdfg.arrays:
+                    copydesc = copy.deepcopy(self.map_state.sdfg.arrays[arr_name])
+                    copydesc.transient = False
+                    assert str(copydesc.dtype) != "void"
+                    new_sdfg.add_datadesc(arr_name, copydesc)
+
+        connectors = set(new_inputs).union(set(new_outputs))
+        symbols = set(k for k in new_sdfg.free_symbols if k not in connectors)
+        missing_symbols = [s for s in symbols if s not in new_outer_symbol_mapping]
+        if missing_symbols:
+            for ms in missing_symbols:
+                new_outer_symbol_mapping[ms] = ms
+
         new_sdfg.save("ns.sdfg")
-        nsdfg2 = self.map_state.add_nested_sdfg(
-            sdfg=new_sdfg,
-            inputs=set(new_inputs),
-            outputs=set(new_outputs),
-            symbol_mapping=new_outer_symbol_mapping
-        )
+        nsdfg2 = self.map_state.add_nested_sdfg(sdfg=new_sdfg,
+                                                inputs=set(new_inputs),
+                                                outputs=set(new_outputs),
+                                                symbol_mapping=new_outer_symbol_mapping)
         new_sdfg.parent_nsdfg_node = nsdfg2
 
         # Now connect the access nodes of parent map to the nsdfg - copy full subsets
         for ie in self.map_state.in_edges(self.map_entry):
-            self.map_state.add_edge(ie.src, ie.src_conn, nsdfg2, ie.data.data,
-                                    dace.memlet.Memlet.from_array(ie.data.data, self.map_state.sdfg.arrays[ie.data.data]))
+            self.map_state.add_edge(
+                ie.src, ie.src_conn, nsdfg2, ie.data.data,
+                dace.memlet.Memlet.from_array(ie.data.data, self.map_state.sdfg.arrays[ie.data.data]))
 
         for oe in self.map_state.out_edges(self.map_state.exit_node(self.map_entry)):
-            self.map_state.add_edge(nsdfg2, oe.data.data, oe.dst, oe.dst_conn,
-                                    dace.memlet.Memlet.from_array(oe.data.data, self.map_state.sdfg.arrays[oe.data.data]))
+            self.map_state.add_edge(
+                nsdfg2, oe.data.data, oe.dst, oe.dst_conn,
+                dace.memlet.Memlet.from_array(oe.data.data, self.map_state.sdfg.arrays[oe.data.data]))
 
-        # Remove all map nodes 
-        nodes = set(self.map_state.all_nodes_between(self.map_entry, self.map_state.exit_node(self.map_entry))).union({self.map_entry, self.map_state.exit_node(self.map_entry)})
+        # Remove all map nodes
+        nodes = set(self.map_state.all_nodes_between(self.map_entry, self.map_state.exit_node(self.map_entry))).union(
+            {self.map_entry, self.map_state.exit_node(self.map_entry)})
 
         src_nodes = {ie.src for ie in self.map_state.in_edges(self.map_entry)}
         dst_nodes = {oe.dst for oe in self.map_state.out_edges(self.map_state.exit_node(self.map_entry))}
+
+        for arr_name in new_inputs:
+            if new_sdfg.arrays[arr_name].dtype != self.map_state.sdfg.arrays[arr_name].dtype:
+                new_sdfg.arrays[arr_name].dtype = self.map_state.sdfg.arrays[arr_name].dtype
+
+        if "kfdia" in new_inputs:
+            print(new_sdfg.arrays["kfdia"])
+            assert str(new_sdfg.arrays["kfdia"].dtype) != "void"
+            assert "kfdia" in new_sdfg.arrays
 
         for node in nodes:
             self.map_state.remove_node(node)
@@ -370,3 +363,20 @@ class MoveLoopInvariantIfUp(transformation.MultiStateTransformation):
             assert self.map_state.degree(src_node) != 0
         for dst_node in dst_nodes:
             assert self.map_state.degree(dst_node) != 0
+
+        for i, (body, (state, new_map_content_sdfg)) in enumerate(branch_and_state_sdfg_map.items()):
+            nsdfg_node = new_map_content_sdfg.parent_nsdfg_node
+            connectors = nsdfg_node.in_connectors | nsdfg_node.out_connectors
+            symbols = set(k for k in new_map_content_sdfg.free_symbols if k not in connectors)
+            missing_symbols = [s for s in symbols if s not in nsdfg_node.symbol_mapping]
+            if missing_symbols:
+                raise Exception("uwu")
+
+        nsdfg_node = new_sdfg.parent_nsdfg_node
+        connectors = nsdfg_node.in_connectors | nsdfg_node.out_connectors
+        symbols = set(k for k in new_sdfg.free_symbols if k not in connectors)
+        missing_symbols = [s for s in symbols if s not in nsdfg_node.symbol_mapping]
+        if missing_symbols:
+            raise Exception("uwu2")
+
+        self.map_state.sdfg.save("applied.sdfgz", compress=True)

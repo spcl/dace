@@ -571,6 +571,7 @@ def test_try_clean():
     cblocks = {n for n, g in sdfg1.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     assert len(cblocks) == 2
     # A state must have been moved before)
+    sdfg1.save("a.sdfg")
     assert isinstance(sdfg1.start_block, dace.SDFGState)
     sdfg1.validate()
 
@@ -588,7 +589,9 @@ def test_try_clean():
         parent_graph = cblock.parent_graph
         xform = fuse_branches.FuseBranches()
         xform.conditional = cblock
-        applied = xform.try_clean(graph=parent_graph, sdfg=parent_sdfg)
+        applied = xform.try_clean(graph=parent_graph, sdfg=parent_sdfg, lift_multi_state=False)
+        assert applied is False
+        applied = xform.try_clean(graph=parent_graph, sdfg=parent_sdfg, lift_multi_state=True)
         assert applied is True
     sdfg1.save("x5.sdfg")
     sdfg1.validate()
@@ -1607,7 +1610,202 @@ def test_can_be_applied_on_map_param_usage():
     run_and_compare(map_param_usage, 0, True, a=A, b=B, d=D)
 
 
+def _get_safe_map_param_use_in_nested_sdfg() -> dace.SDFG:
+    inner_sdfg = dace.SDFG("inner")
+    outer_sdfg = dace.SDFG("outer")
+
+    inner_symbol_mapping = {
+        "_for_it_37": "_for_it_37",
+    }
+    for arr_name in ["zsolac", "zacust", "zfinalsum"]:
+        inner_sdfg.add_array(arr_name, (N, ), dace.float64)
+        outer_sdfg.add_array(arr_name, (N, ), dace.float64)
+    inner_inputs = {"zsolac", "zacust", "zfinalsum"}
+    inner_outputs = {"zacust", "zsolac"}
+
+    i_s1 = inner_sdfg.add_state("i_s1", is_start_block=True)
+    i_cb1 = ConditionalBlock("i_cb1", sdfg=inner_sdfg, parent=inner_sdfg)
+    inner_sdfg.add_node(i_cb1)
+    inner_sdfg.add_edge(i_s1, i_cb1, InterstateEdge(assignments={"_if_cond_22": "zfinalsum[_for_it_37] < 1e-14"}))
+    inner_sdfg.add_symbol("_if_cond_22", dace.int32)
+    inner_sdfg.add_symbol("_for_it_37", dace.int32)
+
+    i_cfg1 = ControlFlowRegion("i_cfg1", sdfg=inner_sdfg, parent=i_cb1)
+    i_cfg1_s1 = i_cfg1.add_state("i_cfg1_s1", is_start_block=True)
+
+    t1 = i_cfg1_s1.add_tasklet("t1", inputs={}, outputs={"_out"}, code="_out = 0.0")
+    i_cfg1_s1.add_edge(t1, "_out", i_cfg1_s1.add_access("zacust"), None, dace.memlet.Memlet("zacust[_for_it_37]"))
+
+    i_cb1.add_branch(CodeBlock("_if_cond_22 == 1"), i_cfg1)
+
+    i_s2 = inner_sdfg.add_state_after(i_cb1, label="i_s2")
+    t2 = i_s2.add_tasklet("t2", inputs={"_in1", "_in2"}, outputs={"_out"}, code="_out = _in1 + _in2")
+    for in_name, conn_name in [("zacust", "_in1"), ("zsolac", "_in2")]:
+        i_s2.add_edge(i_s2.add_access(in_name), None, t2, conn_name, dace.memlet.Memlet(f"{in_name}[_for_it_37]"))
+    i_s2.add_edge(t2, "_out", i_s2.add_access("zsolac"), None, dace.memlet.Memlet(f"zsolac[_for_it_37]"))
+
+    o_s1 = outer_sdfg.add_state("o_s1", is_start_block=True)
+    nsdfg = o_s1.add_nested_sdfg(sdfg=inner_sdfg,
+                                 inputs=inner_inputs,
+                                 outputs=inner_outputs,
+                                 symbol_mapping=inner_symbol_mapping)
+
+    map_entry, map_exit = o_s1.add_map(name="m1", ndrange={
+        "_for_it_37": dace.subsets.Range([(0, N - 1, 1)]),
+    })
+    for in_name in inner_inputs:
+        o_s1.add_edge(o_s1.add_access(in_name), None, map_entry, f"IN_{in_name}",
+                      dace.memlet.Memlet.from_array(in_name, o_s1.sdfg.arrays[in_name]))
+        map_entry.add_in_connector(f"IN_{in_name}")
+        map_entry.add_out_connector(f"OUT_{in_name}")
+        o_s1.add_edge(map_entry, f"OUT_{in_name}", nsdfg, in_name,
+                      dace.memlet.Memlet.from_array(in_name, o_s1.sdfg.arrays[in_name]))
+    for out_name in inner_outputs:
+        o_s1.add_edge(nsdfg, out_name, map_exit, f"IN_{out_name}",
+                      dace.memlet.Memlet.from_array(out_name, o_s1.sdfg.arrays[out_name]))
+        map_exit.add_in_connector(f"IN_{out_name}")
+        map_exit.add_out_connector(f"OUT_{out_name}")
+        o_s1.add_edge(map_exit, f"OUT_{out_name}", o_s1.add_access(out_name), None,
+                      dace.memlet.Memlet.from_array(out_name, o_s1.sdfg.arrays[out_name]))
+
+    outer_sdfg.validate()
+    return outer_sdfg
+
+
+def test_safe_map_param_use_in_nested_sdfg():
+    sdfg = _get_safe_map_param_use_in_nested_sdfg()
+    sdfg.validate()
+
+    for n, g in sdfg.all_nodes_recursive():
+        if isinstance(n, ConditionalBlock):
+            xform = fuse_branches.FuseBranches()
+            xform.conditional = n
+            xform.parent_nsdfg_state = _find_state(sdfg, g.sdfg.parent_nsdfg_node)
+            assert xform.can_be_applied(graph=g, expr_index=0, sdfg=g.sdfg, permissive=False)
+            assert xform.can_be_applied(graph=g, expr_index=0, sdfg=g.sdfg, permissive=True)
+
+    # "zsolac", "zacust", "zlfinalsum"
+    zsolac = np.random.choice([0.001, 5.0], size=(N, ))
+    zfinalsum = np.random.choice([0.001, 5.0], size=(N, ))
+    zacust = np.random.choice([0.001, 5.0], size=(N, ))
+    run_and_compare_sdfg(sdfg, False, zsolac=zsolac, zfinalsum=zfinalsum, zacust=zacust)
+
+
+def _get_nsdfg_with_return(return_arr: bool) -> dace.SDFG:
+    inner_sdfg = dace.SDFG("inner")
+    outer_sdfg = dace.SDFG("outer")
+
+    inner_symbol_mapping = {}
+    for outer_arr_name in ["ztp"]:
+        outer_sdfg.add_array(outer_arr_name, (N, N), dace.float64)
+    for outer_scalar_name in ["rtt"]:
+        outer_sdfg.add_scalar(outer_scalar_name, dace.float64)
+    outer_sdfg.add_array("zalfa_1", (1, ), dace.float64)
+    if return_arr:
+        inner_sdfg.add_array("foedelta__ret", (1, ), dace.float64)
+    else:
+        inner_sdfg.add_scalar("foedelta__ret", dace.float64)
+    for inner_scalar_name in ["ptare_var_0", "rtt_var_1"]:
+        inner_sdfg.add_scalar(inner_scalar_name, dace.float64)
+    for inner_tmp_name in ["tmp_call_103", "tmp_call_1"]:
+        inner_sdfg.add_scalar(inner_tmp_name, dace.float64, transient=True)
+
+    inner_inputs = {"ptare_var_0", "rtt_var_1"}
+    inner_outputs = {"foedelta__ret"}
+    inner_to_outer_name_mapping_in = {
+        "ptare_var_0": ("rtt", "[0]"),
+        "rtt_var_1": ("ztp", "[4,4]"),
+    }
+    inner_to_outer_name_mapping_out = {"foedelta__ret": ("zalfa_1", "[0]")}
+
+    i_s1 = inner_sdfg.add_state("i_s1", is_start_block=True)
+    i_cb1 = ConditionalBlock("i_cb1", sdfg=inner_sdfg, parent=inner_sdfg)
+    inner_sdfg.add_node(i_cb1)
+    inner_sdfg.add_edge(i_s1, i_cb1, InterstateEdge())
+
+    i_cfg1 = ControlFlowRegion("i_cfg1", sdfg=inner_sdfg, parent=i_cb1)
+    i_cfg1_s1 = i_cfg1.add_state("i_cfg1_s1", is_start_block=True)
+    i_cfg2 = ControlFlowRegion("i_cfg2", sdfg=inner_sdfg, parent=i_cb1)
+    i_cfg2_s1 = i_cfg2.add_state("i_cfg2_s1", is_start_block=True)
+
+    t1 = i_cfg1_s1.add_tasklet("t1", inputs={}, outputs={"_out"}, code="_out = 0.0")
+    i_cfg1_s1.add_edge(t1, "_out", i_cfg1_s1.add_access("tmp_call_103"), None, dace.memlet.Memlet("tmp_call_103[0]"))
+    t2 = i_cfg2_s1.add_tasklet("t2", inputs={}, outputs={"_out"}, code="_out = 1.0")
+    taccess_1 = i_cfg2_s1.add_access("tmp_call_1")
+    i_cfg2_s1.add_edge(t2, "_out", taccess_1, None, dace.memlet.Memlet("tmp_call_1[0]"))
+    t3 = i_cfg2_s1.add_tasklet("t3", inputs={"_in1"}, outputs={"_out"}, code="_out = (- _in1)")
+    i_cfg2_s1.add_edge(taccess_1, None, t3, "_in1", dace.memlet.Memlet("tmp_call_1[0]"))
+    i_cfg2_s1.add_edge(t3, "_out", i_cfg2_s1.add_access("tmp_call_103"), None, dace.memlet.Memlet("tmp_call_103[0]"))
+
+    i_cb1.add_branch(CodeBlock("(ptare_var_0 - rtt_var_1) >= 0.0"), i_cfg1)
+    i_cb1.add_branch(None, i_cfg2)
+
+    i_s2 = inner_sdfg.add_state_after(i_cb1, label="i_s2")
+    t4 = i_s2.add_tasklet("t4", inputs={"_in1"}, outputs={"_out"}, code="_out = max(0.0, _in1)")
+    i_s2.add_edge(i_s2.add_access("tmp_call_103"), None, t4, "_in1", dace.memlet.Memlet("tmp_call_103[0]"))
+    i_s2.add_edge(t4, "_out", i_s2.add_access("foedelta__ret"), None, dace.memlet.Memlet("foedelta__ret[0]"))
+
+    o_s1 = outer_sdfg.add_state("o_s1", is_start_block=True)
+    nsdfg = o_s1.add_nested_sdfg(sdfg=inner_sdfg,
+                                 inputs=inner_inputs,
+                                 outputs=inner_outputs,
+                                 symbol_mapping=inner_symbol_mapping)
+
+    for inner_name, (outer_name, access_str) in inner_to_outer_name_mapping_in.items():
+        o_s1.add_edge(o_s1.add_access(outer_name), None, nsdfg, inner_name,
+                      dace.memlet.Memlet(f"{outer_name}{access_str}"))
+    for inner_name, (outer_name, access_str) in inner_to_outer_name_mapping_out.items():
+        o_s1.add_edge(nsdfg, inner_name, o_s1.add_access(outer_name), None,
+                      dace.memlet.Memlet(f"{outer_name}{access_str}"))
+
+    outer_sdfg.validate()
+    return outer_sdfg
+
+
+@pytest.mark.parametrize("ret_arr", [True, False])
+def test_nested_sdfg_with_return(ret_arr):
+    sdfg = _get_nsdfg_with_return(ret_arr)
+    sdfg.validate()
+
+    for n, g in sdfg.all_nodes_recursive():
+        if isinstance(n, ConditionalBlock):
+            xform = fuse_branches.FuseBranches()
+            xform.conditional = n
+            xform.parent_nsdfg_state = _find_state(sdfg, g.sdfg.parent_nsdfg_node)
+            assert xform.can_be_applied(graph=g, expr_index=0, sdfg=g.sdfg, permissive=False)
+            assert xform.can_be_applied(graph=g, expr_index=0, sdfg=g.sdfg, permissive=True)
+
+    ztp = np.random.choice([0.001, 5.0], size=(N, N))
+    rtt = np.random.choice([10.0, 15.0], size=(1, ))
+    zalfa_1 = np.array([999.9])
+    arrays = {"ztp": ztp, "rtt": rtt[0], "zalfa_1": zalfa_1}
+
+    # Run SDFG version (no transformation)
+    sdfg.validate()
+    out_no_fuse = {k: v.copy() for k, v in arrays.items()}
+    sdfg(**out_no_fuse)
+    sdfg.save(sdfg.label + "_before.sdfg")
+    assert out_no_fuse["zalfa_1"][0] != 999.9
+
+    # Run SDFG version (with transformation)
+    fb = fuse_branches_pass.FuseBranchesPass()
+    fb.try_clean = True
+    fb.permissive = False
+    fb.apply_pass(sdfg, {})
+    out_fused = {k: v.copy() for k, v in arrays.items()}
+    sdfg(**out_fused)
+    sdfg.save(sdfg.label + "_after3.sdfg")
+    assert out_fused["zalfa_1"][0] != 999.9
+
+    # Compare all arrays
+    for name in arrays.keys():
+        np.testing.assert_allclose(out_no_fuse[name], out_fused[name], atol=1e-12)
+
+
 if __name__ == "__main__":
+    test_nested_sdfg_with_return(True)
+    test_nested_sdfg_with_return(False)
+    test_safe_map_param_use_in_nested_sdfg()
     test_can_be_applied_on_map_param_usage()
     test_pattern_from_cloudsc_one(0.0)
     test_pattern_from_cloudsc_one(1.0)
