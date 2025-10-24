@@ -660,6 +660,12 @@ class FuseBranches(transformation.MultiStateTransformation):
 
         return combine_tasklet, tmp1_access, tmp2_access, float_cond_access
 
+    def has_wcr_edges(self, state: dace.SDFGState):
+        for e in state.edges():
+            if e.data.wcr is not None or e.data.wcr_nonatomic:
+                return True
+        return False
+
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         # Works for if-else branches or only if branches
         # Sanity checks for the sdfg and graph parameters
@@ -703,6 +709,10 @@ class FuseBranches(transformation.MultiStateTransformation):
             all_top_level1 = self.only_top_level_tasklets(body1)
             if not all_top_level1:
                 print(f"[can_be_applied] All tasklets need to be top level. Not the case for body {body1}.")
+                return False
+
+            if self.has_wcr_edges(state0) or self.has_wcr_edges(state1):
+                print(f"[can_be_applied] Has WCR edges.")
                 return False
 
             read_sets0, write_sets0 = state0.read_and_write_sets()
@@ -818,6 +828,10 @@ class FuseBranches(transformation.MultiStateTransformation):
             all_top_level0 = self.only_top_level_tasklets(body0)
             if not all_top_level0:
                 print(f"[can_be_applied] All tasklets need to be top level. Not the case for body {body0}.")
+                return False
+
+            if self.has_wcr_edges(state0):
+                print(f"[can_be_applied] Has WCR edges.")
                 return False
 
             # For joint writes ensure the write subsets are always the same

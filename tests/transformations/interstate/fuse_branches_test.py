@@ -1921,10 +1921,9 @@ def test_huge_sdfg_with_log_exp_div(eps_operator_type_for_log_and_div: str):
     fb.eps_operator_type_for_log_and_div = eps_operator_type_for_log_and_div
     fb.apply_pass(sdfg, {})
     sdfg.name = sdfg.label + "_transformed"
-    sdfg.save("out.sdfg")
 
-    #cblocks = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
-    #assert len(cblocks) == 0
+    cblocks = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
+    assert len(cblocks) == 0
 
     # Run SDFG version (with transformation)
     out_fused = {k: v.copy() for k, v in data.items()}
@@ -1998,10 +1997,9 @@ def test_mid_sdfg_with_log_exp_div(eps_operator_type_for_log_and_div: str):
     fb.eps_operator_type_for_log_and_div = eps_operator_type_for_log_and_div
     fb.apply_pass(sdfg, {})
     sdfg.name = sdfg.label + "_transformed"
-    sdfg.save("out.sdfg")
 
-    #cblocks = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
-    #assert len(cblocks) == 0
+    cblocks = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
+    assert len(cblocks) == 0
 
     # Run SDFG version (with transformation)
     out_fused = {k: v.copy() for k, v in data.items()}
@@ -2013,6 +2011,46 @@ def test_mid_sdfg_with_log_exp_div(eps_operator_type_for_log_and_div: str):
         print(name)
         print(out_fused[name] - out_no_fuse[name])
         np.testing.assert_allclose(out_fused[name], out_no_fuse[name], atol=1e-12)
+
+
+@dace.program
+def wcr_edge(A: dace.float64[N, N]):
+    for i, j in dace.map[0:N, 0:N]:
+        cond = A[i, j]
+        if cond > 0.00000000001:
+            A[i, j] += 2.0
+
+
+def test_can_be_applied_on_wcr_edge():
+    sdfg = wcr_edge.to_sdfg()
+
+    cblocks = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
+    assert len(cblocks) == 1
+
+    for cblock in cblocks:
+        xform = fuse_branches.FuseBranches()
+        xform.conditional = cblock
+        xform.parent_nsdfg_state = _find_state(
+            sdfg, cblock.sdfg.parent_nsdfg_node) if cblock.sdfg.parent_nsdfg_node is not None else None
+        assert xform.can_be_applied(cblock.parent_graph, 0, cblock.sdfg, False) is False
+        assert xform.can_be_applied(cblock.parent_graph, 0, cblock.sdfg, True) is False
+
+    from dace.transformation.dataflow.wcr_conversion import WCRToAugAssign
+    sdfg.apply_transformations_repeated(WCRToAugAssign)
+    sdfg.save("x.sdfg")
+
+    cblocks = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
+    for cblock in cblocks:
+        xform = fuse_branches.FuseBranches()
+        xform.conditional = cblock
+        xform.parent_nsdfg_state = _find_state(
+            sdfg, cblock.sdfg.parent_nsdfg_node) if cblock.sdfg.parent_nsdfg_node is not None else None
+        assert xform.can_be_applied(cblock.parent_graph, 0, cblock.sdfg, False) is True
+        assert xform.can_be_applied(cblock.parent_graph, 0, cblock.sdfg, True) is True
+
+    A = np.random.choice([0.001, 5.0], size=(N, N))
+
+    run_and_compare_sdfg(sdfg, False, A=A)
 
 
 if __name__ == "__main__":
