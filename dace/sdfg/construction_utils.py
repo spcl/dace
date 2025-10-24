@@ -241,7 +241,7 @@ def insert_non_transient_data_through_parent_scopes(non_transient_data: Set[str]
                 state['cur_name_set'] = True
 
             inner_data_access = data_access if nsdfg_connector_name is None else nsdfg_connector_name
-            print("IN", state, dst.in_connectors, dst.out_connectors)
+
             if isinstance(dst, dace.nodes.AccessNode):
                 return None
             elif isinstance(dst, dace.nodes.NestedSDFG):
@@ -258,7 +258,6 @@ def insert_non_transient_data_through_parent_scopes(non_transient_data: Set[str]
                     state['cur_out_conn_name'] = f"OUT_{data_access}_p_{i}"
                     i += 1
                 state['cur_name_set'] = True
-            print("DST", state, dst.in_connectors, dst.out_connectors)
 
             inner_data_access = data_access if nsdfg_connector_name is None else nsdfg_connector_name
             if isinstance(src, dace.nodes.AccessNode):
