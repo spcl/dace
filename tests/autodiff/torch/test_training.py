@@ -93,14 +93,17 @@ def test_mnist(sdfg_name: str):
 @pytest.mark.autodiff
 def test_bert(sdfg_name):
     batch_size = 2
-    seq_len = 64
-    hidden_size = 128
+    seq_len = 16
+    hidden_size = 64
 
     class BertTokenSoftmaxClf(nn.Module):
         def __init__(self):
             super(BertTokenSoftmaxClf, self).__init__()
             # Configure BERT with Dropout disabled for numerical validation
             config = BertConfig(
+                hidden_size=hidden_size,
+                num_attention_heads=4,
+                intermediate_size=hidden_size * 4,
                 hidden_act="relu",
                 attn_implementation="eager",
                 hidden_dropout_prob=0.0,
@@ -114,7 +117,7 @@ def test_bert(sdfg_name):
             return self.sm(embs.sum(dim=-1))
 
     input = torch.randn([batch_size, seq_len, hidden_size])
-    labels = torch.tensor([0, 123], dtype=torch.long)
+    labels = torch.tensor([0, 15], dtype=torch.long)
 
     training_step(BertTokenSoftmaxClf(), BertTokenSoftmaxClf(), (input, labels), sdfg_name)
 
