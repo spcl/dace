@@ -2535,11 +2535,18 @@ def specialize_scalar(sdfg: 'dace.SDFG', scalar_name: str, scalar_val: Union[flo
     _specialize_scalar_impl(sdfg, sdfg, scalar_name, scalar_val)
 
 
-def demote_symbol_to_scalar(sdfg: 'dace.SDFG', symbol_str: str):
+def demote_symbol_to_scalar(sdfg: 'dace.SDFG', symbol_str: str, default_type: 'dace.dtypes.typeclass' = None):
     import dace.sdfg.construction_utils as cutil
+    if default_type is None:
+        default_type = dace.int32
+
 
     # If assignment is to symbol_str, append it to last scalar before
-    sym_dtype = sdfg.symbols[symbol_str]
+    if symbol_str in sdfg.symbols:
+        sym_dtype = sdfg.symbols[symbol_str]
+    else:
+        print(f"Symbol {symbol_str} not in the symbols of {sdfg.label} ({sdfg.symbols}), setting to default type {default_type}")
+        sym_dtype = default_type
 
     # If top-level and in free symbols
     # Or not top-level and in symbol mapping need to make it non transient
@@ -2551,7 +2558,8 @@ def demote_symbol_to_scalar(sdfg: 'dace.SDFG', symbol_str: str):
     if is_transient is False:
         raise Exception("Scalar to symbol demotion only works if the resulting scalar would be transient")
 
-    sdfg.remove_symbol(symbol_str)
+    if symbol_str in sdfg.symbols:
+        sdfg.remove_symbol(symbol_str)
     sdfg.add_scalar(name=symbol_str, dtype=sym_dtype, storage=dace.dtypes.StorageType.Register, transient=is_transient)
 
     # For any tasklet that uses the symbol - make an access node to the scalar and connect through the in connector
@@ -2585,7 +2593,6 @@ def demote_symbol_to_scalar(sdfg: 'dace.SDFG', symbol_str: str):
     for e in sdfg.all_interstate_edges():
         matching_assignments = {(k, v) for k, v in e.data.assignments.items() if k.strip() == symbol_str}
         if len(matching_assignments) > 0:
-            print(matching_assignments)
             # Add them to the next state
             state = e.dst.parent_graph.add_state_before(e.dst,
                                                         label=f"_{e.dst}_sym_assign",

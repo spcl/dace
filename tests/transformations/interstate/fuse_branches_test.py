@@ -2020,6 +2020,34 @@ def wcr_edge(A: dace.float64[N, N]):
         if cond > 0.00000000001:
             A[i, j] += 2.0
 
+@dace.program
+def loop_param_usage(A: dace.float64[6, N, N], B: dace.float64[N, N], C: dace.float64[N, N]):
+    for i in range(6):
+        for j in dace.map[0:N]:
+            for k in dace.map[0:N]:
+                if A[i,j,k] > 2.0:
+                    C[i, j] = 2.0 + C[i, j] 
+
+
+def test_loop_param_usage():
+    A = np.random.choice([0.001, 5.0], size=(6, N, N))
+    B = np.random.choice([0.001, 5.0], size=(N, N))
+    C = np.random.choice([0.001, 5.0], size=(N, N))
+
+    sdfg = loop_param_usage.to_sdfg()
+    sdfg.save("x.sdfg")
+    cblocks = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
+    assert len(cblocks) == 1
+
+    for cblock in cblocks:
+        xform = fuse_branches.FuseBranches()
+        xform.conditional = cblock
+        xform.parent_nsdfg_state = _find_state(
+            sdfg, cblock.sdfg.parent_nsdfg_node) if cblock.sdfg.parent_nsdfg_node is not None else None
+        assert xform.can_be_applied(cblock.parent_graph, 0, cblock.sdfg, False) is True
+        assert xform.can_be_applied(cblock.parent_graph, 0, cblock.sdfg, True) is True
+
+    run_and_compare_sdfg(sdfg, False, A=A, B=B, C=C)
 
 def test_can_be_applied_on_wcr_edge():
     sdfg = wcr_edge.to_sdfg()
@@ -2037,7 +2065,6 @@ def test_can_be_applied_on_wcr_edge():
 
     from dace.transformation.dataflow.wcr_conversion import WCRToAugAssign
     sdfg.apply_transformations_repeated(WCRToAugAssign)
-    sdfg.save("x.sdfg")
 
     cblocks = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     for cblock in cblocks:
