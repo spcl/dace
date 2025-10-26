@@ -13,7 +13,7 @@ from dace.transformation import pass_pipeline as ppl, transformation
 import dace.sdfg.utils as sdutil
 from sympy import pycode
 from collections import Counter
-
+import dace.sdfg.construction_utils as cutil
 
 @transformation.explicit_cf_compatible
 class LiftTrivialIf(ppl.Pass):
@@ -121,7 +121,7 @@ class LiftTrivialIf(ppl.Pass):
 
         # Remove trivial Ifs
         for cfb, cfg in cfb_to_rm_cfg_to_keep:
-            self._remove_if_cfb_keep_body(cfb, cfg)
+            cutil.move_branch_cfg_up_discard_conditions(cfb, cfg)
             assert cfb not in graph.nodes()
             rmed_count += 1
 
@@ -153,44 +153,6 @@ class LiftTrivialIf(ppl.Pass):
                     rmed_count += self._detect_trivial_ifs_and_rm_cfg(node.sdfg)
 
         return rmed_count
-
-    def _remove_if_cfb_keep_body(self, cfb: ConditionalBlock, cfg: ControlFlowRegion):
-        parent_graph = cfb.parent_graph
-        cfb_in_edges = parent_graph.in_edges(cfb)
-        cfb_out_edges = parent_graph.out_edges(cfb)
-        parent_graph.remove_node(cfb)
-
-        node_map = dict()
-        start_block = cfg.start_block
-        start_blocks = [node for node in cfg.nodes() if cfg.in_degree(node) == 0]
-        assert [start_block] == start_blocks
-        end_blocks = [node for node in cfg.nodes() if cfg.out_degree(node) == 0]
-        assert len(end_blocks) == 1
-        end_block = end_blocks[0]
-        for node in cfg.nodes():
-            if node not in node_map:
-                cpnode = copy.deepcopy(node)
-            else:
-                cpnode = node_map[node]
-            node_map[node] = cpnode
-            is_start_block = False
-            if len(cfb_in_edges) == 0 and cfg.start_block == node:
-                is_start_block = True
-            parent_graph.add_node(cpnode, is_start_block=is_start_block)
-
-        for edge in cfg.edges():
-            assert node_map[edge.src] in parent_graph.nodes()
-            assert node_map[edge.dst] in parent_graph.nodes()
-            parent_graph.add_edge(node_map[edge.src], node_map[edge.dst], copy.deepcopy(edge.data))
-
-        for ie in cfb_in_edges:
-            assert ie.src not in node_map
-            parent_graph.add_edge(ie.src, node_map[start_block], copy.deepcopy(ie.data))
-            assert ie.dst not in parent_graph
-        for oe in cfb_out_edges:
-            assert oe.dst not in node_map
-            parent_graph.add_edge(node_map[end_block], oe.dst, copy.deepcopy(oe.data))
-            assert oe.src not in parent_graph
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Set[str]]]:
         # Start with top level nodes and continue further to ensure a trivial if within another trivial if

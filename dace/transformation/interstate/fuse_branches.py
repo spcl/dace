@@ -236,7 +236,7 @@ class FuseBranches(transformation.MultiStateTransformation):
     parent_nsdfg_state = properties.Property(dtype=SDFGState, allow_none=True, default=None)
     eps_operator_type_for_log_and_div = properties.Property(dtype=str,
                                                             allow_none=False,
-                                                            default="max",
+                                                            default="add",
                                                             choices=["max", "add"])
 
     @classmethod
@@ -575,8 +575,8 @@ class FuseBranches(transformation.MultiStateTransformation):
         # Prepare write subset for non-tasklet inputs
         ies0 = new_state.in_edges(state0_in_new_state_write_access)
         ies1 = new_state.in_edges(state1_in_new_state_write_access)
-        assert len(ies0) == len(ies1)
-        assert len(ies0) == 1
+        #assert len(ies0) == len(ies1)
+        #assert len(ies0) == 1
 
         ie0, ie1 = ies0[0], ies1[0]
         assert (ie0.data.subset == ie1.data.subset or ie0.data.subset == ie1.data.other_subset
@@ -620,18 +620,18 @@ class FuseBranches(transformation.MultiStateTransformation):
         # 4. Redirect the writes to access nodes with temporary scalars for each state
         # Handle state0's write
         ies = new_state.in_edges(state0_in_new_state_write_access)
-        assert len(ies) == 1, f"Expected 1 input edge to state0 write access, got {len(ies)}"
-        ie = ies[0]
-        tmp1_access = new_state.add_access(tmp1_name)
-        new_state.add_edge(ie.src, ie.src_conn, tmp1_access, None, dace.memlet.Memlet(f"{tmp1_name}"))
-        new_state.remove_edge(ie)
+        #assert len(ies) == 1, f"Expected 1 input edge to state0 write access, got {len(ies)}"
+        for ie in ies:
+            tmp1_access = new_state.add_access(tmp1_name)
+            new_state.add_edge(ie.src, ie.src_conn, tmp1_access, None, dace.memlet.Memlet(f"{tmp1_name}"))
+            new_state.remove_edge(ie)
 
         # Handle state1's write
         ies = new_state.in_edges(state1_in_new_state_write_access)
-        assert len(ies) == 1, f"Expected 1 input edge to state1 write access, got {len(ies)}: {ies}"
-        ie = ies[0]
-        tmp2_access = new_state.add_access(tmp2_name)
-        new_state.add_edge(ie.src, ie.src_conn, tmp2_access, None, dace.memlet.Memlet(f"{tmp2_name}"))
+        #assert len(ies) == 1, f"Expected 1 input edge to state1 write access, got {len(ies)}: {ies}"
+        for ie in ies:
+            tmp2_access = new_state.add_access(tmp2_name)
+            new_state.add_edge(ie.src, ie.src_conn, tmp2_access, None, dace.memlet.Memlet(f"{tmp2_name}"))
 
         # 5. Remove write of state1
         new_state.remove_edge(ie)
@@ -1178,15 +1178,20 @@ class FuseBranches(transformation.MultiStateTransformation):
         return applied
 
     def duplicate_condition_across_all_top_level_nodes_if_line_graph_and_empty_interstate_edges(
-            self, graph: ControlFlowRegion, conditional: ConditionalBlock):
+            self, graph: ControlFlowRegion):
         # Pattern 2
         # If all top-level nodes are connected through empty interstate edges
         # And we have a line graph, put each state to the same if condition
         applied = False
+        print(len(self.conditional.branches))
         if len(self.conditional.branches) == 1:
             cond, body = self.conditional.branches[0]
 
-            nodes = list(body.bfs_nodes())
+            nodes = [n for n in body.bfs_nodes()]
+            print(len(nodes), nodes)
+            if len(nodes) <= 1:
+                return False
+
             in_degree_leq_one = all({body.in_degree(n) <= 1 for n in nodes})
             out_degree_leq_one = all({body.out_degree(n) <= 1 for n in nodes})
             edges = body.edges()
@@ -1212,14 +1217,20 @@ class FuseBranches(transformation.MultiStateTransformation):
 
                     parent_graph = self.conditional.parent_graph
 
-                    copy_conditional = ConditionalBlock(label=self.conditional.label + f"_v_{ci}",
-                                                        sdfg=self.conditional.sdfg,
-                                                        parent=parent_graph)
-                    cfg = ControlFlowRegion(label=self.conditional.label + f"_v_{ci}_body",
-                                            sdfg=self.conditional.sdfg,
-                                            parent=copy_conditional)
-                    cfg.add_node(copy.deepcopy(node))
-                    copy_conditional.add_branch(condition=copy.deepcopy(cond), branch=cfg)
+                    is_empty_state = isinstance(node, dace.SDFGState) and len(node.nodes()) == 0
+                    # If state is empty do not wrap it in a conditional region
+                    if not is_empty_state:
+                        copy_conditional = ConditionalBlock(label=self.conditional.label + f"_v_{ci}",
+                                                            sdfg=self.conditional.sdfg,
+                                                            parent=parent_graph)
+                        
+                        cfg = ControlFlowRegion(label=self.conditional.label + f"_v_{ci}_body",
+                                                sdfg=self.conditional.sdfg,
+                                                parent=copy_conditional)
+                        cfg.add_node(copy.deepcopy(node))
+                        copy_conditional.add_branch(condition=copy.deepcopy(cond), branch=cfg)
+                    else:
+                        copy_conditional = copy.deepcopy(node)
 
                     parent_graph.add_node(copy_conditional, False, False)
 
@@ -1251,7 +1262,6 @@ class FuseBranches(transformation.MultiStateTransformation):
 
                 graph.sdfg.reset_cfg_list()
                 sdutil.set_nested_sdfg_parent_references(graph.sdfg)
-                graph.sdfg.validate()
         return applied
 
     def sequentialize_if_else_branch_if_disjoint_subsets(self, graph: ControlFlowRegion):
@@ -1289,6 +1299,8 @@ class FuseBranches(transformation.MultiStateTransformation):
         applied = False
         for branch, body in self.conditional.branches:
             # 2 states, first state empty and only thing is interstate assignments
+            print(body.nodes())
+            print(body.start_block.nodes())
             if (len(body.nodes()) == 2 and all({isinstance(n, dace.SDFGState)
                                                 for n in body.nodes()}) and len(body.start_block.nodes()) == 0
                     and len(body.edges()) == 1):
@@ -1323,22 +1335,27 @@ class FuseBranches(transformation.MultiStateTransformation):
                     assert len(symbols_defined) == 1
                     for i, symbol_str in enumerate(symbols_defined):
                         # It might be that the symbol is not defined (defined through an interstate edge)
-                        if symbol_str not in sdfg.symbols:
-                            sdfg.add_symbol(symbol_str, dace.float64)
-                        sdutil.demote_symbol_to_scalar(sdfg, symbol_str)
+                        #if symbol_str not in sdfg.symbols:
+                        #    sdfg.add_symbol(symbol_str, dace.float64)
+                        print(symbol_str)
+                        sdutil.demote_symbol_to_scalar(sdfg, symbol_str, dace.float64)
                         # Get edges of the first nodes
-                        edge0, edge1 = list(body.all_edges(*(list(body.bfs_nodes()))[0:2]))
-                        # assert edge0.data.assignments == dict()
-                        # assert edge1.data.assignments == dict()
-                        for k, v in edge1.data.assignments.items():
-                            assert k not in edge0.data.assignments
-                            edge0.data.assignments[k] = v
+                        edges = list(body.all_edges(*(list(body.bfs_nodes()))[0:2]))
+                        if len(edges) == 2:
+                            edge0, edge1 = edges
+                            # assert edge0.data.assignments == dict()
+                            # assert edge1.data.assignments == dict()
+                            for k, v in edge1.data.assignments.items():
+                                assert k not in edge0.data.assignments
+                                edge0.data.assignments[k] = v
+                        else:
+                            pass
 
                         # State fusion will fail but we know it is fine
                         # Copy all access nodes to the next state, connect the sink node from prev. state
                         # to the next state
                         body.reset_cfg_list()
-
+                        body.sdfg.save("x2.sdfg")
                         assignment_state, other_state = list(body.bfs_nodes())[1:3]
                         node_map = cutil.copy_state_contents(assignment_state, other_state)
                         # Multiple symbols -> multiple sink nodes
@@ -1414,7 +1431,9 @@ class FuseBranches(transformation.MultiStateTransformation):
 
             # Then demote all symbols
             for symbol_str in symbols_defined:
-                sdutil.demote_symbol_to_scalar(sdfg, symbol_str)
+                #if symbol_str not in sdfg.symbols:
+                #    sdfg.add_symbol(symbol_str, dace.float64)
+                sdutil.demote_symbol_to_scalar(sdfg, symbol_str, dace.float64)
 
             # Get edges coming and out from the first two nodes
             edge0_0, edge0_1 = list(body0.all_edges(*(list(body0.bfs_nodes()))[0:2]))
@@ -1498,7 +1517,7 @@ class FuseBranches(transformation.MultiStateTransformation):
 
         if lift_multi_state:
             applied |= self.duplicate_condition_across_all_top_level_nodes_if_line_graph_and_empty_interstate_edges(
-                graph, self.conditional)
+                graph)
             sdfg.validate()
 
         return applied
@@ -1524,9 +1543,9 @@ class FuseBranches(transformation.MultiStateTransformation):
             return ast.unparse(tree).strip()
 
         if precision == dace.float64:
-            eps = numpy.finfo(numpy.float64).tiny
+            eps = numpy.finfo(numpy.float64).tiny * 8 # Having the min as the limit can still result with NaN due to how string stuff works
         else:
-            eps = numpy.finfo(numpy.float64).tiny
+            eps = numpy.finfo(numpy.float32).tiny * 8
 
         has_division = False
         for tasklet in tasklets:
@@ -1768,7 +1787,7 @@ class FuseBranches(transformation.MultiStateTransformation):
 
                 for state0_write_access in state0_write_accesses:
                     ies = state0.in_edges(state0_write_access)
-                    assert len(ies) == 1
+                    assert len(ies) >= 1
                     ie = ies[0]
                     if ie.data.data is not None:
                         # Other subset

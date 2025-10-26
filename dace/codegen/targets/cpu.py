@@ -1964,6 +1964,9 @@ class CPUCodeGen(TargetCodeGenerator):
                     if node.map.unroll_factor:
                         unroll_pragma += f" {node.map.unroll_factor}"
                     result.write(unroll_pragma, cfg, state_id, node)
+                
+                if node.map.vectorize is not None and node.map.vectorize is True:
+                    result.write(f"#pragma clang loop vectorize(enable)\n", cfg, state_id, node)
 
                 result.write(
                     "for (auto %s = %s; %s < %s; %s += %s) {\n" %
