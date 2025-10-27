@@ -3208,7 +3208,7 @@ def const_eval_nodes(ast: Program) -> Program:
     return ast
 
 
-def unroll_loops(ast: Program) -> Program:
+def unroll_loops(ast: Program, max_iter: int = 16) -> Program:
     """Unroll loops with static bounds."""
     for node in reversed(walk(ast, (Block_Nonlabel_Do_Construct, Block_Label_Do_Construct))):
         do_stmt = node.children[0]
@@ -3229,6 +3229,8 @@ def unroll_loops(ast: Program) -> Program:
             if not unrollable:
                 continue
             assert len(looprange) >= 2
+            # Don't modify the original looprange in case we bail
+            looprange = looprange.copy()
             # Tweak looprange so we can just pass it to Python
             for i, rng in enumerate(looprange):
                 looprange[i] = int(rng.tofortran())
@@ -3237,6 +3239,8 @@ def unroll_loops(ast: Program) -> Program:
             # Add default 'step' 1 if it doesn't exist
             if len(looprange) == 2:
                 looprange.append(1)
+            if max_iter > 0 and len(range(*looprange)) > max_iter:
+                continue
             unrolled = []
             for i in range(*looprange):
                 unrolled.append(Assignment_Stmt(f"{loopvar} = {i}"))

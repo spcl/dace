@@ -2866,7 +2866,8 @@ class ParseConfig:
                  ast_checkpoint_dir: Union[None, str, Path] = None,
                  consolidate_global_data: bool = True,
                  rename_uniquely: bool = True,
-                 do_not_prune_type_components: bool = False):
+                 do_not_prune_type_components: bool = False,
+                 unroll_loops: int = 0):
         # Make the configs canonical, by processing the various types upfront.
         if not sources:
             sources: Dict[str, str] = {}
@@ -2906,6 +2907,7 @@ class ParseConfig:
         self.consolidate_global_data = consolidate_global_data
         self.rename_uniquely = rename_uniquely
         self.do_not_prune_type_components = do_not_prune_type_components
+        self.unroll_loops = unroll_loops  # Integer gives maximum number of iterations to unroll. Negative means unroll all.
 
     def set_all_possible_entry_points_from(self, ast: Program):
         # Keep all the possible entry points.
@@ -3053,8 +3055,9 @@ def run_fparser_transformations(ast: Program, cfg: ParseConfig):
         print("FParser Op: Fix arguments...")
         # Fix the practically constant arguments, just in case.
         ast = make_practically_constant_arguments_constants(ast, cfg.entry_points)
-        print("FParser Op: Unroll loops...")
-        ast = unroll_loops(ast)
+        if cfg.unroll_loops != 0:
+            print("FParser Op: Unroll loops...")
+            ast = unroll_loops(ast, cfg.unroll_loops)
         print("FParser Op: Fix local vars...")
         # Fix the locally constant variables, just in case.
         ast = exploit_locally_constant_variables(ast)
