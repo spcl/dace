@@ -2511,6 +2511,8 @@ class TypeInference(NodeTransformer):
 
         node.lval = self.visit(node.lval)
         node.rval = self.visit(node.rval)
+
+
         """
             Handle promotion of numeric types.
         """
@@ -2572,6 +2574,13 @@ class TypeInference(NodeTransformer):
             #
             # (3)   No sizes are known - we leave it like that.
             #       We need more information to determine that.
+
+            if node.op in ["<", ">", "<=", ">=", "==", "!=", "and", "or"]:
+
+                """
+                    The result of a boolean operation is always boolean, regardless of the input types.
+                """
+                node.type = 'LOGICAL'
 
             left_size = self._get_sizes(node.lval) if node.lval.type != 'VOID' else None
             right_size = self._get_sizes(node.rval) if node.rval.type != 'VOID' else None
