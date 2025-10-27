@@ -187,10 +187,10 @@ class FuseBranches(transformation.MultiStateTransformation):
     ```
 
     If all the write sets in the left and right branches are the same,
-    menaing the address1 == address1,
+    (for all write accesses),
     we can transformation the if branch to:
     ```
-    fcond = float(cond)
+    fcond = cond? 1.0 : 0.0
     out1[address1] = computation1(...) * fcond + (1.0 - fcond) * computation2(...);
     ```
 
@@ -214,8 +214,7 @@ class FuseBranches(transformation.MultiStateTransformation):
     if (cond){
         out1[address1] = computation1(...);
     }
-    bool new_cong = !cond;
-    if (neg_cond) {
+    if (! cond) {
         out1[address2] = computation2(...);
     }
     ```
@@ -226,6 +225,26 @@ class FuseBranches(transformation.MultiStateTransformation):
         out1[address1] = computation1(...);
         out1[address2] = computation2(...);
     }
+
+    If the pattern is (address do not need tob e disjoint):
+    if (cond){
+        out1[address1] = computation1(...);
+        out1[address2] = computation2(...);
+    } else {
+        out1[address3] = computation1(...);
+        out1[address4] = computation2(...);
+    }
+
+    Then the condition is first converted to:
+    if (cond){
+        out1[address1] = computation1(...);
+        out1[address2] = computation2(...);
+    }
+    if (not cond)
+        out1[address3] = computation1(...);
+        out1[address4] = computation2(...);
+    }
+
     ```
 
 
