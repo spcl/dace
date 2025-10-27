@@ -10,7 +10,8 @@ from dace.frontend.fortran.ast_desugaring import correct_for_function_calls, dec
     make_practically_constant_arguments_constants, make_practically_constant_global_vars_constants, \
     exploit_locally_constant_variables, create_global_initializers, convert_data_statements_into_assignments, \
     deconstruct_statement_functions, deconstuct_goto_statements, SPEC, remove_access_and_bind_statements, \
-    identifier_specs, alias_specs, consolidate_uses, consolidate_global_data_into_arg, prune_coarsely
+    identifier_specs, alias_specs, consolidate_uses, consolidate_global_data_into_arg, prune_coarsely, \
+    unroll_loops
 from dace.frontend.fortran.fortran_parser import construct_full_ast
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
@@ -3091,5 +3092,76 @@ SUBROUTINE main
   DOUBLE PRECISION :: c = 3.0
 END SUBROUTINE main
 """.strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+def test_unroll_loops():
+    """Tests whether basic unrolling transformation works."""
+    sources, main = SourceCodeBuilder().add_file("""
+subroutine main(d)
+  implicit none
+  integer :: idx, d
+  do, idx=1,3
+    d = d + idx
+  end do
+end subroutine main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = unroll_loops(ast)
+
+    got = ast.tofortran()
+    want = """
+SUBROUTINE main(d)
+  IMPLICIT NONE
+  INTEGER :: idx, d
+  idx = 1
+  d = d + idx
+  idx = 2
+  d = d + idx
+  idx = 3
+  d = d + idx
+END SUBROUTINE main
+    """.strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+def test_unroll_loops_nested():
+    """Tests whether nested unrolling transformation works."""
+    sources, main = SourceCodeBuilder().add_file("""
+subroutine main(d)
+  implicit none
+  integer :: idx, jdx, d
+  do, idx=1,2
+    do, jdx=1,2
+      d = d + jdx
+    end do
+    d = d + idx
+  end do
+end subroutine main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = unroll_loops(ast)
+
+    got = ast.tofortran()
+    want = """
+SUBROUTINE main(d)
+  IMPLICIT NONE
+  INTEGER :: idx, jdx, d
+  idx = 1
+  jdx = 1
+  d = d + jdx
+  jdx = 2
+  d = d + jdx
+  d = d + idx
+  idx = 2
+  jdx = 1
+  d = d + jdx
+  jdx = 2
+  d = d + jdx
+  d = d + idx
+END SUBROUTINE main
+    """.strip()
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()

@@ -3208,6 +3208,46 @@ def const_eval_nodes(ast: Program) -> Program:
     return ast
 
 
+def unroll_loops(ast: Program) -> Program:
+    """Unroll loops with static bounds."""
+    for node in reversed(walk(ast, (Block_Nonlabel_Do_Construct, Block_Label_Do_Construct))):
+        do_stmt = node.children[0]
+        assert isinstance(do_stmt, (Label_Do_Stmt, Nonlabel_Do_Stmt))
+        assert isinstance(node.children[-1], End_Do_Stmt)
+        do_ops = node.children[1:-1]
+
+        loop_control = singular(children_of_type(do_stmt, Loop_Control))
+
+        _, cntexpr, _, _ = loop_control.children
+        if cntexpr:
+            loopvar, looprange = cntexpr
+            unrollable = True
+            for rng in looprange:
+                if not isinstance(rng, Int_Literal_Constant):
+                    # We need the loop range to be constant
+                    unrollable = False
+            if not unrollable:
+                continue
+            assert len(looprange) >= 2
+            # Tweak looprange so we can just pass it to Python
+            for i, rng in enumerate(looprange):
+                looprange[i] = int(rng.tofortran())
+            # Increment 'end', since Python range is exclusive
+            looprange[1] += 1
+            # Add default 'step' 1 if it doesn't exist
+            if len(looprange) == 2:
+                looprange.append(1)
+            unrolled = []
+            for i in range(*looprange):
+                unrolled.append(Assignment_Stmt(f"{loopvar} = {i}"))
+                for op in do_ops:
+                    # unrolled.append(copy_fparser_node(op))
+                    unrolled.append(deepcopy(op))
+            replace_node(node, unrolled)
+
+    return ast
+
+
 @dataclass
 class ConstTypeInjection:
     scope_spec: Optional[SPEC]  # Only replace within this scope object.

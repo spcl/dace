@@ -34,7 +34,7 @@ from dace.frontend.fortran.ast_desugaring import ENTRY_POINT_OBJECT_CLASSES, NAM
     make_practically_constant_arguments_constants, exploit_locally_constant_variables, \
     assign_globally_unique_subprogram_names, convert_data_statements_into_assignments, \
     deconstruct_statement_functions, assign_globally_unique_variable_names, deconstuct_goto_statements, remove_self, \
-    prune_coarsely, consolidate_global_data_into_arg, identifier_specs
+    prune_coarsely, consolidate_global_data_into_arg, identifier_specs, unroll_loops
 from dace.frontend.fortran.ast_internal_classes import FNode, Main_Program_Node, Name_Node, Var_Decl_Node
 from dace.frontend.fortran.ast_internal_classes import Program_Node
 from dace.frontend.fortran.ast_utils import children_of_type, mywalk, atmost_one
@@ -3053,6 +3053,8 @@ def run_fparser_transformations(ast: Program, cfg: ParseConfig):
         print("FParser Op: Fix arguments...")
         # Fix the practically constant arguments, just in case.
         ast = make_practically_constant_arguments_constants(ast, cfg.entry_points)
+        print("FParser Op: Unroll loops...")
+        ast = unroll_loops(ast)
         print("FParser Op: Fix local vars...")
         # Fix the locally constant variables, just in case.
         ast = exploit_locally_constant_variables(ast)
