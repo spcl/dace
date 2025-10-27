@@ -1732,14 +1732,17 @@ module main
 contains
   subroutine foo
     implicit none
-    real :: res1, res2, res3, unk
+    real :: res1, res2, res3, res4, res5, unk
     real, parameter :: &
         x = -(three + 4.0), &
         y = -4.0, &
         z = 3.0
+    real, parameter :: arr(3) = [3, 4, 5]
     res1 = unk ** x
     res2 = unk ** y
     res3 = unk ** z
+    res4 = arr(1)
+    res5 = arr(1) + arr(2) + arr(3)
   end subroutine foo
 end module main
 """).check_with_gfortran().get()
@@ -1755,11 +1758,14 @@ MODULE main
   CONTAINS
   SUBROUTINE foo
     IMPLICIT NONE
-    REAL :: res1, res2, res3, unk
+    REAL :: res1, res2, res3, res4, res5, unk
     REAL, PARAMETER :: x = - (7.0), y = - 4.0, z = 3.0
+    REAL, PARAMETER :: arr(3) = [3, 4, 5]
     res1 = unk ** (- 7.0)
     res2 = unk ** (- 4.0)
     res3 = unk ** 3.0
+    res4 = 3
+    res5 = 12
   END SUBROUTINE foo
 END MODULE main
 """.strip()
