@@ -2292,6 +2292,15 @@ subroutine main()
     i = i + 1
   end do
 
+  ! A simple do loop with `i` as a loop variable, cond is known.
+  ! The first reference to out is known.
+  do i=1, 5
+    out = 14.4
+    if (cond) then
+      out = out * i
+    end if
+  end do
+
   ! Just making sure that `cond` is still known after all the loops.
   if (cond) out = out + 1.
 
@@ -2360,6 +2369,12 @@ SUBROUTINE main
   DO WHILE (i < 10)
     out = out + 1
     i = i + 1
+  END DO
+  DO i = 1, 5
+    out = 14.4
+    IF (.TRUE.) THEN
+      out = 14.4 * i
+    END IF
   END DO
   IF (.TRUE.) out = out + 1.
   IF (.TRUE.) THEN
