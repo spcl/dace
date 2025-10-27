@@ -2372,9 +2372,7 @@ def _track_local_consts(node: Union[Base, List[Base]], alias_map: SPEC_TABLE,
             except NotImplementedError:
                 plus, minus = {}, set()
     elif isinstance(node, Assignment_Stmt):
-        lv, op, rv = node.children
-        _inject_knowns(lv, value=False, pointer=True)
-        _inject_knowns(rv)
+        _inject_knowns(node)
         lv, op, rv = node.children
         lspec, ltyp = None, None
         if isinstance(lv, Name):
