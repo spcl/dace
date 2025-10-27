@@ -11,6 +11,7 @@ from dace.transformation.passes import analysis as ap
 from dace import properties
 import dace.sdfg.construction_utils as cutil
 
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class RemoveReduntantCopyTasklets(ppl.Pass):
@@ -36,15 +37,10 @@ class RemoveReduntantCopyTasklets(ppl.Pass):
         if only_if_transient and arr.transient is False:
             return False
 
-        return (
-            isinstance(arr, dace.data.Scalar) or
-            (
-                isinstance(arr, dace.data.Array) and 
-                (
-                    arr.shape == (1,) or arr.shape == [1,]
-                )
-            )
-        )
+        return (isinstance(arr, dace.data.Scalar)
+                or (isinstance(arr, dace.data.Array) and (arr.shape == (1, ) or arr.shape == [
+                    1,
+                ])))
 
     def _apply(self, sdfg: SDFG):
         # If AccessNode (A1) -> CopyTasklet -> AccessNode (A2)
@@ -57,23 +53,18 @@ class RemoveReduntantCopyTasklets(ppl.Pass):
                     in_conn = next(iter(tasklet.in_connectors))
                     out_conn = next(iter(tasklet.out_connectors))
 
-                    copy_template = self.copy_tasklet_pattern.format(
-                        _in=in_conn,
-                        _out=out_conn
-                    )
+                    copy_template = self.copy_tasklet_pattern.format(_in=in_conn, _out=out_conn)
 
                     if tasklet.code.as_string == copy_template:
                         # We can remove it if source is transient
                         in_edges = state.in_edges(tasklet)
                         out_edges = state.out_edges(tasklet)
 
-                        if (
-                            len(in_edges) == 1 and len(out_edges) == 1 and
-                            isinstance(in_edges[0].src, dace.nodes.AccessNode) and
-                            isinstance(out_edges[0].dst, dace.nodes.AccessNode) and
-                            self._scalar_or_len_one_array(out_edges[0].data.data, sdfg, True) and
-                            state.out_degree(out_edges[0].dst) > 0
-                           ):
+                        if (len(in_edges) == 1 and len(out_edges) == 1
+                                and isinstance(in_edges[0].src, dace.nodes.AccessNode)
+                                and isinstance(out_edges[0].dst, dace.nodes.AccessNode)
+                                and self._scalar_or_len_one_array(out_edges[0].data.data, sdfg, True)
+                                and state.out_degree(out_edges[0].dst) > 0):
                             dst_node = out_edges[0].dst
                             dst_out_edges = state.out_edges(dst_node)
                             state.remove_node(tasklet)
@@ -82,11 +73,8 @@ class RemoveReduntantCopyTasklets(ppl.Pass):
 
                             # Subset needs to be 0 so no need to change
                             for dst_out_edge in dst_out_edges:
-                                state.add_edge(
-                                    in_edge.src, None,
-                                    dst_out_edge.dst, dst_out_edge.dst_conn,
-                                    copy.deepcopy(in_edge.data)
-                                )
+                                state.add_edge(in_edge.src, None, dst_out_edge.dst, dst_out_edge.dst_conn,
+                                               copy.deepcopy(in_edge.data))
                                 replacement_dict[dst_out_edge.data.data] = in_edge.data.data
 
         sdfg.validate()

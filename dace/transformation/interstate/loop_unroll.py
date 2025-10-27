@@ -116,7 +116,6 @@ class LoopUnroll(xf.MultiStateTransformation):
                 else:
                     graph.add_node(oe.dst, is_start_block=True)
 
-
         if self.inline_iterations:
             for it in unrolled_iterations:
                 it.inline()

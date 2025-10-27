@@ -15,6 +15,7 @@ from sympy import pycode
 from collections import Counter
 import dace.sdfg.construction_utils as cutil
 
+
 @transformation.explicit_cf_compatible
 class LiftTrivialIf(ppl.Pass):
 

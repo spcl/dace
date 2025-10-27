@@ -1242,7 +1242,7 @@ class FuseBranches(transformation.MultiStateTransformation):
                         copy_conditional = ConditionalBlock(label=self.conditional.label + f"_v_{ci}",
                                                             sdfg=self.conditional.sdfg,
                                                             parent=parent_graph)
-                        
+
                         cfg = ControlFlowRegion(label=self.conditional.label + f"_v_{ci}_body",
                                                 sdfg=self.conditional.sdfg,
                                                 parent=copy_conditional)
@@ -1562,7 +1562,9 @@ class FuseBranches(transformation.MultiStateTransformation):
             return ast.unparse(tree).strip()
 
         if precision == dace.float64:
-            eps = numpy.finfo(numpy.float64).tiny * 8 # Having the min as the limit can still result with NaN due to how string stuff works
+            eps = numpy.finfo(
+                numpy.float64
+            ).tiny * 8  # Having the min as the limit can still result with NaN due to how string stuff works
         else:
             eps = numpy.finfo(numpy.float32).tiny * 8
 
