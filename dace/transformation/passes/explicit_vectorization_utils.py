@@ -14,6 +14,9 @@ from dace.properties import CodeBlock
 from dace.sdfg.graph import Edge
 from enum import Enum
 import dace.sdfg.utils as sdutil
+import dace.sdfg.tasklet_utils as tutil
+
+import ast
 
 
 def repl_subset(subset: dace.subsets.Range, repl_dict: Dict[str, str]) -> dace.subsets.Range:
@@ -70,88 +73,6 @@ def replace_memlet_expression(state: SDFGState, edges: Iterable[Edge[Memlet]], o
                                                  transient=arr.transient,
                                                  lifetime=arr.lifetime)
             edge.data = dace.memlet.Memlet(data=edge.data.data, subset=copy.deepcopy(new_subset_expr))
-
-
-def extract_constant(src: str) -> str:
-    tree = ast.parse(src)
-
-    for node in ast.walk(tree):
-        # Direct constant
-        if isinstance(node, ast.Constant):
-            return str(node.value)
-        # Unary operation on constant (like -3.14)
-        elif isinstance(node, ast.UnaryOp) and isinstance(node.operand, ast.Constant):
-            if isinstance(node.op, ast.USub):
-                return f"-{node.operand.value}"
-            elif isinstance(node.op, ast.UAdd):
-                return str(node.operand.value)
-
-    raise ValueError("No constant found")
-
-
-def extract_single_op(src: str) -> str:
-    print(f"Extract single op from {src}")
-    BINOP_SYMBOLS = {
-        ast.Add: "+",
-        ast.Sub: "-",
-        ast.Mult: "*",
-        ast.Div: "/",
-    }
-
-    UNARY_SYMBOLS = {
-        ast.UAdd: "+",
-        ast.USub: "-",
-    }
-
-    CMP_SYMBOLS = {
-        ast.Gt: ">",
-        ast.Lt: "<",
-        ast.GtE: ">=",
-        ast.LtE: "<=",
-        ast.Eq: "==",
-        ast.NotEq: "!=",
-    }
-
-    SUPPORTED = {'*', '+', '-', '/', 'abs', 'exp', 'sqrt'}
-
-    tree = ast.parse(src)
-    found = None
-
-    for node in ast.walk(tree):
-        op = None
-
-        # Binary op (remove the float constant requirement)
-        if isinstance(node, ast.BinOp):
-            op = BINOP_SYMBOLS.get(type(node.op), None)
-        # Unary op (remove the float constant requirement)
-        elif isinstance(node, ast.UnaryOp):
-            op = UNARY_SYMBOLS.get(type(node.op), None)
-        elif isinstance(node, ast.Compare):
-            assert len(node.ops) == 1
-            op = CMP_SYMBOLS.get(type(node.ops[0]), None)
-
-        # Function calls
-        elif isinstance(node, ast.Call):
-            if isinstance(node.func, ast.Name):
-                op = node.func.id
-            elif isinstance(node.func, ast.Attribute):
-                op = node.func.attr
-
-        if op is None:
-            continue
-
-        if op not in SUPPORTED:
-            print(f"Found unsupported op {op} in {src}")
-
-        if found is not None:
-            raise ValueError("More than one supported operation found")
-
-        found = op
-
-    if found is None:
-        raise ValueError(f"No supported operation found for code_str: {src}")
-
-    return found
 
 
 def has_maps(sdfg: dace.SDFG):
@@ -333,13 +254,6 @@ def match_connector_to_data(state: dace.SDFGState, tasklet: dace.nodes.Tasklet):
     return tdict
 
 
-def get_scalar_and_array_arguments(state: dace.SDFGState, tasklet: dace.nodes.Tasklet):
-    tdict = match_connector_to_data(state, tasklet)
-    scalars = {k for k, v in tdict.items() if isinstance(v, dace.data.Scalar)}
-    arrays = {k for k, v in tdict.items() if isinstance(v, dace.data.Array)}
-    return scalars, arrays
-
-
 def assert_strides_are_packed_C_or_packed_Fortran(sdfg: dace.SDFG) -> Union[str, None]:
     stride_type = None
 
@@ -513,31 +427,6 @@ def fix_nsdfg_connector_array_shapes_mismatch(parent_state: dace.SDFGState, nsdf
                                           may_alias=False)
 
 
-def extract_non_connector_syms_from_tasklet(node: dace.nodes.Tasklet) -> Set[str]:
-    assert isinstance(node, dace.nodes.Tasklet)
-    assert node.code.language == dace.dtypes.Language.Python
-    connectors = {str(s) for s in set(node.in_connectors.keys()).union(set(node.out_connectors.keys()))}
-    code_rhs: str = node.code.as_string.split("=")[-1].strip()
-    all_syms = {str(s) for s in dace.symbolic.SymExpr(code_rhs).free_symbols}
-    real_free_syms = all_syms - connectors
-    free_non_connector_syms = {str(s) for s in real_free_syms}
-    return free_non_connector_syms
-
-
-class TaskletType(Enum):
-    ARRAY_ARRAY_ASSIGNMENT = "array_array_assignment"  # a = b
-    ARRAY_SYMBOL_ASSIGNMENT = "array_symbol_assignment"  # a = sym
-    SCALAR_SYMBOL = "scalar_symbol"  # a = scalar op sym
-    ARRAY_SYMBOL = "array_symbol"  # a = array op sym
-    ARRAY_SCALAR = "array_scalar"  # a = array op scalar
-    ARRAY_ARRAY = "array_array"  # a = array1 op array2
-    SCALAR_SCALAR = "scalar_scalar"  # a = scalar1 op scalar2
-    SYMBOL_SYMBOL = "symbol_symbol"  # a = symbol1 op symbol2
-
-
-import ast
-
-
 class IntToFloatTransformer(ast.NodeTransformer):
 
     def visit_Constant(self, node):
@@ -583,140 +472,6 @@ def get_rhs_order(code_str: str, op_str: str, rhs1: str, rhs2: str) -> List[str]
     assert False
 
 
-def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
-    """
-    Inspect `node` and `state` and return a dict describing the
-    tasklet type (TaskletType) and metadata needed for code instantiation.
-    """
-    in_conns = list(node.in_connectors.keys())
-    out_conns = list(node.out_connectors.keys())
-    n_in = len(in_conns)
-    n_out = len(out_conns)
-
-    assert n_out <= 1, "Only support tasklets with at most 1 output in this pass"
-    lhs = next(iter(node.out_connectors.keys())) if n_out == 1 else None
-
-    assert isinstance(node, dace.nodes.Tasklet)
-    code: CodeBlock = node.code
-    assert code.language == dace.dtypes.Language.Python
-    code_str: str = code.as_string
-
-    # Try extract constant (used for array-constant templates)
-    info_dict = {"type": None, "lhs": lhs, "rhs1": None, "rhs2": None, "constant1": None, "constant2": None, "op": None}
-
-    assert n_out == 1
-
-    # Single-input + single-output: assignment, scalar-symbol, array-symbol
-    if n_in == 1:
-        rhs = in_conns[0]
-        # assignment case: a = b
-        # find connected data description for rhs
-        in_edges = {ie for ie in state.in_edges_by_connector(node, rhs)}
-        assert len(in_edges) == 1, f"expected 1 in-edge for connector {rhs}, found {len(in_edges)}"
-        rhs_data_name = in_edges.pop().data.data
-        rhs_data = state.sdfg.arrays[rhs_data_name]
-        out_edges = {oe for oe in state.out_edges_by_connector(node, lhs)}
-        assert len(out_edges) == 1, f"expected 1 out-edge for connector {lhs}, found {len(out_edges)}"
-        lhs_data_name = out_edges.pop().data.data
-        lhs_data = state.sdfg.arrays[lhs_data_name]
-
-        if code_str == f"{lhs} = {rhs}" or code_str == f"{lhs} = {rhs};":
-            state.sdfg.save("x.sdfg")
-            assert isinstance(lhs_data,
-                              dace.data.Array), f"Expected lhs_data to be array but is: {lhs_data}, ({type(lhs_data)})"
-            assert isinstance(rhs_data,
-                              dace.data.Array), f"Expected rhs_data to be array but is: {rhs_data}, ({type(rhs_data)})"
-            info_dict.update({"type": TaskletType.ARRAY_ARRAY_ASSIGNMENT, "op": "=", "rhs1": rhs})
-            return info_dict
-
-        has_constant = False
-        constant = None
-        try:
-            constant = extract_constant(code_str)
-            has_constant = True
-        except Exception:
-            has_constant = False
-
-        # single input with an explicit numeric constant (e.g., a = arr + 5)
-        free_non_connector_syms = extract_non_connector_syms_from_tasklet(node)
-        if len(free_non_connector_syms) == 1:
-            has_constant = True
-            constant = free_non_connector_syms.pop()
-
-        if not has_constant:
-            # Tasklet might be something like in1 * in1
-            info_dict.update({
-                "type": TaskletType.ARRAY_ARRAY,
-                "rhs1": rhs,
-                "rhs2": rhs,
-                "op": extract_single_op(code_str)
-            })
-            return info_dict
-        else:
-            if isinstance(rhs_data, dace.data.Array):
-                info_dict.update({
-                    "type": TaskletType.ARRAY_SYMBOL,
-                    "rhs1": rhs,
-                    "constant1": constant,
-                    "op": extract_single_op(code_str)
-                })
-                return info_dict
-            elif isinstance(rhs_data, dace.data.Scalar):
-                info_dict.update({
-                    "type": TaskletType.SCALAR_SYMBOL,
-                    "rhs1": rhs,
-                    "constant1": constant,
-                    "op": extract_single_op(code_str)
-                })
-                return info_dict
-            else:
-                raise Exception("Unhandled case in tasklet type")
-
-    # Two-input binary ops
-    elif n_in == 2:
-        op = extract_single_op(code_str)
-        rhs1, rhs2 = in_conns[0], in_conns[1]
-        lhs = next(iter(node.out_connectors.keys()))
-        scalars, arrays = get_scalar_and_array_arguments(state, node)
-        assert len(scalars) + len(arrays) == 2
-
-        if len(arrays) == 2 and len(scalars) == 0:
-            info_dict.update({"type": TaskletType.ARRAY_ARRAY, "rhs1": rhs1, "rhs2": rhs2, "op": op})
-            return info_dict
-        elif len(scalars) == 1 and len(arrays) == 1:
-            array_arg = next(iter(arrays))
-            scalar_arg = next(iter(scalars))
-            info_dict.update({"type": TaskletType.ARRAY_SCALAR, "rhs1": array_arg, "constant1": scalar_arg, "op": op})
-            return info_dict
-        elif len(scalars) == 2:
-            # preserve original behavior: save and raise
-            state.sdfg.save("hmm.sdfg")
-            info_dict.update({"type": TaskletType.SCALAR_SCALAR})
-            raise Exception(
-                "Hmm, check? SDFG saved as hmm.sdfg. There should be no SCALAR_SCALAR tasklets left when vectorizing")
-
-    # Zero-input (symbol-only) tasklets: decide by lhs storage type
-    if n_in == 0:
-        free_syms = extract_non_connector_syms_from_tasklet(node)
-        assert len(free_syms) == 2 or len(free_syms) == 1, f"{str(free_syms)}"
-        if len(free_syms) == 2:
-            free_sym1 = free_syms.pop()
-            free_sym2 = free_syms.pop()
-            info_dict.update({
-                "type": TaskletType.SYMBOL_SYMBOL,
-                "constant1": free_sym1,
-                "constant2": free_sym2,
-                "op": extract_single_op(code_str)
-            })
-            return info_dict
-        elif len(free_syms) == 1:
-            free_sym1 = free_syms.pop()
-            info_dict.update({"type": TaskletType.ARRAY_SYMBOL_ASSIGNMENT, "constant1": free_sym1, "op": "="})
-            return info_dict
-
-    raise NotImplementedError("Unhandled case in detect tasklet type")
-
-
 def offset_symbol_in_expression(expr_str: str, symbol_to_offset: str, offset: int) -> str:
     expr = dace.symbolic.SymExpr(expr_str)
     sym_to_change = None
@@ -741,7 +496,7 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
       - "type" (TaskletType)
       - "lhs", "rhs1", "rhs2", "constant1", "constant2", "op"
     """
-    ttype: TaskletType = info.get("type")
+    ttype: tutil.TaskletType = info.get("type")
     lhs = info.get("lhs")
     rhs1 = info.get("rhs1")
     rhs2 = info.get("rhs2")
@@ -895,13 +650,13 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         )
 
     # 1) ARRAY-ARRAY assignment: a = b  (both arrays)
-    if ttype == TaskletType.ARRAY_ARRAY_ASSIGNMENT:
+    if ttype == tutil.TaskletType.ARRAY_ARRAY_ASSIGNMENT:
         # use direct template with op "="
         set_template(rhs1, None, None, lhs, "=")
         return
 
     # 1) ARRAY-SYMBOL assignment: a = sym
-    if ttype == TaskletType.ARRAY_SYMBOL_ASSIGNMENT:
+    if ttype == tutil.TaskletType.ARRAY_SYMBOL_ASSIGNMENT:
         code_lines = []
         for i in range(vw):
             # If detect inner symbol used we need to correctly offset it to have + lane_id
@@ -910,12 +665,12 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         return
 
     # 2) Single-input with constant: array or scalar combined with a symbol/constant
-    if ttype == TaskletType.ARRAY_SYMBOL:
+    if ttype == tutil.TaskletType.ARRAY_SYMBOL:
         # rhs1 is an array, constant1 is the symbol/constant -> use constant template (op prefixed with 'c')
         set_template(rhs1, None, c1, lhs, "c" + op)
         return
 
-    if ttype == TaskletType.SCALAR_SYMBOL:
+    if ttype == tutil.TaskletType.SCALAR_SYMBOL:
         # rhs1 is a scalar, constant1 is the symbol -> generate explicit per-lane assignments
         # e.g., for i in 0..vw-1: lhs[i] = rhs1 op constant1;
         code_lines = []
@@ -939,12 +694,12 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         return
 
     # 3) Two-input binary ops
-    if ttype == TaskletType.ARRAY_ARRAY:
+    if ttype == tutil.TaskletType.ARRAY_ARRAY:
         # array op array
         set_template(rhs1, rhs2, None, lhs, op)
         return
 
-    if ttype == TaskletType.ARRAY_SCALAR:
+    if ttype == tutil.TaskletType.ARRAY_SCALAR:
         # array op scalar -> use constant template (prefix op with 'c')
         # note: info stores rhs1 as the array name and constant1 as the scalar name
         set_template(rhs1, None, c1, lhs, "c" + op)
@@ -957,13 +712,13 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         #    )
         return
 
-    if ttype == TaskletType.SCALAR_SCALAR:
+    if ttype == tutil.TaskletType.SCALAR_SCALAR:
         # preserved original behavior: this was saved + raised in classifier
         # keep behavior consistent by raising here as well (classifier already saved)
         raise Exception("Unhandled: two scalar operands (SCALAR_SCALAR). See saved hmm.sdfg")
 
     # 4) zero-input (symbol-symbol)
-    if ttype == TaskletType.SYMBOL_SYMBOL:
+    if ttype == tutil.TaskletType.SYMBOL_SYMBOL:
         # we need to decide whether lhs is an array or scalar by checking SDFG arrays
         # get out-edge for the lhs connector to obtain the data descriptor name
         out_edges = {oe for oe in state.out_edges_by_connector(node, lhs)}
@@ -1296,7 +1051,7 @@ def move_out_reduction(scalar_source_nodes, state: dace.SDFGState, nsdfg: dace.n
     num_flops, node_path = only_one_flop_after_source(scalar_source_nodes[0][0], scalar_source_nodes[0][1])
     is_inout_accumulator, accumulator_name = input_is_zero_and_transient_accumulator(
         state, nsdfg, scalar_source_nodes[0][0], scalar_source_nodes[0][1], node_path[-1])
-    op = extract_single_op(node_path[1].code.as_string)
+    op = tutil._extract_single_op(node_path[1].code.as_string)
     print(is_inout_accumulator, num_flops, accumulator_name)
     if num_flops <= 1 and is_inout_accumulator:
         source_data = scalar_source_nodes[0][1].data
