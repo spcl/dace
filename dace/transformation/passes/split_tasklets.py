@@ -1,15 +1,13 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 import dace
-from typing import Dict, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 from dace import SDFG
 from dace.transformation import pass_pipeline as ppl, transformation
 
 import ast
 from dace.sdfg.nodes import CodeBlock
-
-import re
 
 
 class ASTSplitter:
@@ -18,7 +16,7 @@ class ASTSplitter:
         self.n = 0
         self.stmts = []
 
-    def temp(self):
+    def temp(self) -> str:
         t = f"__t{self.n}"
         self.n += 1
         return t
@@ -27,31 +25,86 @@ class ASTSplitter:
         if isinstance(node, ast.BinOp):
             l, r = self.visit(node.left), self.visit(node.right)
             t = self.temp()
-            ops = {ast.Add: '+', ast.Sub: '-', ast.Mult: '*', ast.Div: '/', ast.Pow: '**'}
+            ops = {
+                ast.Add: '+',
+                ast.Sub: '-',
+                ast.Mult: '*',
+                ast.Div: '/',
+                ast.Pow: '**',
+                ast.Mod: '%',
+                ast.MatMult: '@',
+                ast.BitAnd: '&',
+                ast.BitOr: '|',
+                ast.BitXor: '^',
+                ast.LShift: '<<',
+                ast.RShift: '>>'
+            }
             self.stmts.append(f"{t} = {l} {ops[type(node.op)]} {r}")
             return t
+
         elif isinstance(node, ast.UnaryOp):
             op = self.visit(node.operand)
             t = self.temp()
-            ops = {ast.USub: '-', ast.UAdd: '+'}
+            ops = {ast.USub: '-', ast.UAdd: '+', ast.Not: 'not ', ast.Invert: '~'}
             self.stmts.append(f"{t} = {ops[type(node.op)]}{op}")
             return t
+
         elif isinstance(node, ast.Call):
             func = self.visit(node.func)
             args = [self.visit(arg) for arg in node.args]
             t = self.temp()
             self.stmts.append(f"{t} = {func}({', '.join(args)})")
             return t
+
         elif isinstance(node, ast.Name):
             return node.id
+
         elif isinstance(node, ast.Constant):
             return str(node.value)
+
         elif isinstance(node, ast.Attribute):
             return f"{self.visit(node.value)}.{node.attr}"
+
+        elif isinstance(node, ast.Compare):
+            # Handle comparison operators
+            left = self.visit(node.left)
+            comparisons = []
+            current = left
+
+            for op, comparator in zip(node.ops, node.comparators):
+                comp = self.visit(comparator)
+                t = self.temp()
+                ops = {
+                    ast.Eq: '==',
+                    ast.NotEq: '!=',
+                    ast.Lt: '<',
+                    ast.LtE: '<=',
+                    ast.Gt: '>',
+                    ast.GtE: '>=',
+                }
+                self.stmts.append(f"{t} = {current} {ops[type(op)]} {comp}")
+                comparisons.append(t)
+                current = comp
+
+            # If multiple comparisons, combine with 'and'
+            if len(comparisons) > 1:
+                t = self.temp()
+                self.stmts.append(f"{t} = {' and '.join(comparisons)}")
+                return t
+            return comparisons[0] if comparisons else left
+
+        elif isinstance(node, ast.BoolOp):
+            # Handle boolean operators (and, or)
+            values = [self.visit(v) for v in node.values]
+            t = self.temp()
+            op = ' and ' if isinstance(node.op, ast.And) else ' or '
+            self.stmts.append(f"{t} = {op.join(values)}")
+            return t
+
         return ast.unparse(node)
 
 
-def to_ssa(code):
+def to_ssa(code: str) -> List[str]:
     tree = ast.parse(code).body[0]
     ssa = ASTSplitter()
     if isinstance(tree, ast.Assign):
@@ -71,29 +124,14 @@ def to_ssa(code):
     return ssa.stmts
 
 
-class VarCollector(ast.NodeVisitor):
-
-    def __init__(self):
-        self.vars = set()
-
-    def visit_Name(self, node):
-        # only collect plain variable names
-        self.vars.add(node.id)
-
-    def visit_Attribute(self, node):
-        # don't collect attributes like `dace.int64`
-        self.generic_visit(node)
-
-
-def _get_vars(ssa_line: str):
-    lhs, rhs = ssa_line.split('=', 1)
-    lhs_var = lhs.strip()
-
-    tree = ast.parse(rhs.strip(), mode="eval")
-    collector = VarCollector()
-    collector.visit(tree)
-
-    return [lhs_var], list(collector.vars)
+def _get_vars(ssa_line: str) -> Tuple[List[str], List[str]]:
+    lhs, rhs = ssa_line.split(" = ")
+    lhs = lhs.strip()
+    rhs = rhs.strip()
+    # Also ignore log functions
+    function_names = dace.symbolic._builtin_userfunctions.union({"log", "Log", "ln", "exp", "Exp"})
+    print(f"{ssa_line} -> {dace.symbolic.symbols_in_code(rhs, symbols_to_ignore=function_names)}")
+    return [lhs], list(dace.symbolic.symbols_in_code(rhs, symbols_to_ignore=function_names))
 
 
 @transformation.explicit_cf_compatible
@@ -104,7 +142,7 @@ class SplitTasklets(ppl.Pass):
         return ppl.Modifies.Tasklets | ppl.Modifies.Descriptors | ppl.Modifies.AccessNodes | ppl.Modifies.Edges
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
-        return modified & ppl.Modifies.Tasklets
+        return ppl.Modifies.Tasklets
 
     def depends_on(self):
         return {}
@@ -159,7 +197,6 @@ class SplitTasklets(ppl.Pass):
 
             tasklet_in_degree = state.in_degree(tasklet)
             tasklet_in_edges = state.in_edges(tasklet)
-            tasklet_out_degree = state.out_degree(tasklet)
             available_symbols = state.symbols_defined_at(tasklet)
             state.remove_node(tasklet)
             added_tasklets = list()

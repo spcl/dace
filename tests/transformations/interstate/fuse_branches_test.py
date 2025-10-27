@@ -2020,13 +2020,14 @@ def wcr_edge(A: dace.float64[N, N]):
         if cond > 0.00000000001:
             A[i, j] += 2.0
 
+
 @dace.program
 def loop_param_usage(A: dace.float64[6, N, N], B: dace.float64[N, N], C: dace.float64[N, N]):
     for i in range(6):
         for j in dace.map[0:N]:
             for k in dace.map[0:N]:
-                if A[i,j,k] > 2.0:
-                    C[i, j] = 2.0 + C[i, j] 
+                if A[i, j, k] > 2.0:
+                    C[i, j] = 2.0 + C[i, j]
 
 
 def test_loop_param_usage():
@@ -2048,6 +2049,7 @@ def test_loop_param_usage():
         assert xform.can_be_applied(cblock.parent_graph, 0, cblock.sdfg, True) is True
 
     run_and_compare_sdfg(sdfg, False, A=A, B=B, C=C)
+
 
 def test_can_be_applied_on_wcr_edge():
     sdfg = wcr_edge.to_sdfg()

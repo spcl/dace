@@ -2570,12 +2570,13 @@ def demote_symbol_to_scalar(sdfg: 'dace.SDFG', symbol_str: str, default_type: 'd
     if default_type is None:
         default_type = dace.int32
 
-
     # If assignment is to symbol_str, append it to last scalar before
     if symbol_str in sdfg.symbols:
         sym_dtype = sdfg.symbols[symbol_str]
     else:
-        print(f"Symbol {symbol_str} not in the symbols of {sdfg.label} ({sdfg.symbols}), setting to default type {default_type}")
+        print(
+            f"Symbol {symbol_str} not in the symbols of {sdfg.label} ({sdfg.symbols}), setting to default type {default_type}"
+        )
         sym_dtype = default_type
 
     # If top-level and in free symbols
