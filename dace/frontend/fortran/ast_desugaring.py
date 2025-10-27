@@ -2372,9 +2372,7 @@ def _track_local_consts(node: Union[Base, List[Base]], alias_map: SPEC_TABLE,
             except NotImplementedError:
                 plus, minus = {}, set()
     elif isinstance(node, Assignment_Stmt):
-        lv, op, rv = node.children
-        _inject_knowns(lv, value=False, pointer=True)
-        _inject_knowns(rv)
+        _inject_knowns(node)
         lv, op, rv = node.children
         lspec, ltyp = None, None
         if isinstance(lv, Name):
@@ -2469,13 +2467,14 @@ def _track_local_consts(node: Union[Base, List[Base]], alias_map: SPEC_TABLE,
         do_ops = node.children[1:-1]
         has_pointer_asgns = bool(walk(node, Pointer_Assignment_Stmt))
 
+        # Everything updated in the body will not be constant outside
         net_tpm = set()
-        for op in do_ops:
-            tp, tm = _track_local_consts(op, alias_map, {}, set())
-            net_tpm.update(tp.keys())
-            net_tpm.update(tm)
+        tp, tm = _track_local_consts(do_ops, alias_map, {}, set())
+        net_tpm.update(tp.keys())
+        net_tpm.update(tm)
         loop_control = singular(children_of_type(do_stmt, Loop_Control))
         _, cntexpr, _, _ = loop_control.children
+        # The loop variable is not constant
         if cntexpr:
             loopvar, _ = cntexpr
             loopvar_spec = _find_real_ident_spec(loopvar, alias_map)
@@ -2494,6 +2493,8 @@ def _track_local_consts(node: Union[Base, List[Base]], alias_map: SPEC_TABLE,
                                          net_tpm | minus)
             _integrate_subresults(tp, tm)
 
+        # Loop var cannot be assumed to be generally constant after the loop
+        # TODO: if it's strictly a for loop, we know the value after the loop
         _, loop_ctl = do_stmt.children
         _, loop_var, _, _ = loop_ctl.children
         if loop_var:
