@@ -69,7 +69,10 @@ def onetest(instrumentation: dace.InstrumentationType, size=128):
         range_push = re.search(r'(nvtx|roctx)RangePush\("sdfg', code) is not None
         range_push &= re.search(r'(nvtx|roctx)RangePush\("copy', code) is not None
         range_push &= re.search(r'(nvtx|roctx)RangePush\("state', code) is not None
-        range_push &= re.search(r'(nvtx|roctx)RangePush\("scope', code) is not None
+        range_push &= re.search(r'(nvtx|roctx)RangePush\("alloc', code) is not None
+        range_push &= re.search(r'(nvtx|roctx)RangePush\("dealloc', code) is not None
+        range_push &= re.search(r'(nvtx|roctx)RangePush\("init', code) is not None
+        range_push &= re.search(r'(nvtx|roctx)RangePush\("exit', code) is not None
         assert range_push
         range_pop = re.search(r'(nvtx|roctx)RangePop\b', code)
         assert range_pop is not None
