@@ -751,7 +751,7 @@ with open(r"{temp_path}", "wb") as f:
     def _convert_return_values(self):
         # Return the values as they would be from a Python function
         # NOTE: Currently it is not possible to return a scalar value, see `tests/sdfg/scalar_return.py`
-        if self._return_arrays is None or len(self._return_arrays) == 0:
+        if not self._return_arrays:
             return None
         elif len(self._return_arrays) == 1:
             return self._return_arrays[0].item() if self._retarray_is_scalar[0] else self._return_arrays[0]
