@@ -1685,6 +1685,17 @@ def symbols_in_code(code: str, potential_symbols: Set[str] = None, symbols_to_ig
     tokens = set(re.findall(_NAME_TOKENS, code))
     if potential_symbols is not None:
         tokens &= potential_symbols
+
+    # Remove 'e' from tokens if it appears as part of scientific notation
+    for match in _NAME_TOKENS.finditer(code):
+        s, e = match.span()
+        token = match.group(0)
+
+        # Check prev. literal is a digit and the next digit involves a number or +/-
+        if token == 'e' and s > 0 and e < len(code):
+            if code[s - 1].isdigit() and code[e] in '-+0123456789':
+                tokens.remove('e')
+
     if symbols_to_ignore is None:
         return tokens
     return tokens - symbols_to_ignore
