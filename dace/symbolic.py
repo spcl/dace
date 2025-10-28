@@ -1709,7 +1709,6 @@ def symbols_in_code(code: str, potential_symbols: Set[str] = None, symbols_to_ig
                             tokens.discard(token)
                 else:
                     if e < len(code) and s > 0:
-                        print(code[s - 1].isdigit(), code[s - 1], code[e] in '-+0123456789', code[e])
                         if code[s - 1].isdigit() and code[e] in '-+0123456789':
                             # Discard only if the count of this token is now zero, as `e = 1e-5` will mean token e was found twice
                             token_counts[token] -= 1
