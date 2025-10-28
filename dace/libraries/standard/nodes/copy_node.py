@@ -86,9 +86,49 @@ class ExpandCUDA(ExpandTransformation):
         return sdfg
 
 
+@library.expansion
+class ExpandCPU(ExpandTransformation):
+    environments = [environments.CPU]
+
+    @staticmethod
+    def expansion(node, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG):
+        inp_name, inp, in_subset, out_name, out, out_subset = node.validate(parent_sdfg, parent_state)
+        map_lengths = [(e + 1 - b) // s for (b, e, s) in in_subset]
+        cp_size = reduce(operator.mul, map_lengths, 1)
+
+        sdfg = dace.SDFG(f"{node.label}_sdfg")
+        _, inp_arr = sdfg.add_array(inp_name, inp.shape, inp.dtype, inp.storage, strides=inp.strides)
+        _, out_arr = sdfg.add_array(out_name, out.shape, out.dtype, out.storage, strides=out.strides)
+
+        state = sdfg.add_state(f"{node.label}_state")
+
+        # Add CPU access nodes
+        in_access = state.add_access(inp_name)
+        out_access = state.add_access(out_name)
+
+        # Tasklet performing standard CPU memcpy
+        tasklet = state.add_tasklet(
+            name=f"memcpy_tasklet",
+            inputs={"_memcpy_in"},
+            outputs={"_memcpy_out"},
+            code=f"memcpy(_memcpy_out, _memcpy_in, {sym2cpp(cp_size)} * sizeof({inp.dtype.ctype}));",
+            language=dace.Language.CPP,
+            code_global="#include <cstring>")
+
+        # Connect input and output to the tasklet
+        state.add_edge(
+            in_access, None, tasklet, "_memcpy_in",
+            dace.memlet.Memlet(data=inp_name, subset=dace.subsets.Range([(0, e - 1, 1) for e in map_lengths])))
+        state.add_edge(
+            tasklet, "_memcpy_out", out_access, None,
+            dace.memlet.Memlet(data=out_name, subset=dace.subsets.Range([(0, e - 1, 1) for e in map_lengths])))
+
+        return sdfg
+
+
 @library.node
 class CopyLibraryNode(nodes.LibraryNode):
-    implementations = {"pure": ExpandPure, "CUDA": ExpandCUDA}
+    implementations = {"pure": ExpandPure, "CUDA": ExpandCUDA, "CPU": ExpandCPU}
     default_implementation = 'pure'
 
     def __init__(self, name, *args, **kwargs):
@@ -103,7 +143,9 @@ class CopyLibraryNode(nodes.LibraryNode):
         inp_name, inp, in_subset, out_name, out, out_subset = None, None, None, None, None, None
         if len(state.out_edges(self)) != 1:
             raise ValueError("Number of out edges unequal to one")
+
         if len(state.in_edges(self)) != 1:
+            state.sdfg.save("x.sdfgz", compress=True)
             raise ValueError("Number of in edges unequal to one")
 
         oe = next(iter(state.out_edges(self)))
@@ -116,9 +158,6 @@ class CopyLibraryNode(nodes.LibraryNode):
 
         in_subset = ie.data.subset
         inp_name = ie.dst_conn
-        print("IN-OUT-NAMES", inp_name, out_name)
-        print("ARRANAMES", sdfg.arrays)
-
         if not inp:
             raise ValueError("Missing the input tensor.")
         if not out:

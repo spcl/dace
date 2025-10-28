@@ -4,11 +4,12 @@ import warnings
 import dace
 import copy
 from dace import Tuple, properties
-from dace.sdfg.graph import MultiConnectorEdge
+from dace.memlet import Memlet
+from dace.sdfg.graph import Edge, MultiConnectorEdge
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
 from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
-from typing import Dict, List, Set
+from typing import Dict, Iterable, List, Set
 
 
 @properties.make_properties
@@ -39,7 +40,9 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             src = node_path[i]
             dst = node_path[i + 1]
             oes = {oe for oe in state.out_edges(src) if oe.dst == dst}
-            assert len(oes) == 1
+            if len(oes) != 1:
+                # Fail
+                return []
             oe = oes.pop()
             edges.append(oe)
         return edges
@@ -119,7 +122,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                 step_equal_one = False
                 break
 
-        # Non-zero step in map range
+        # Non-one step in map range
         if not step_equal_one:
             return paths
 
@@ -156,11 +159,11 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             out_conn = next(iter(tasklet.out_connectors))
             if tasklet.language == dace.Language.Python:
                 tasklet_code_str = tasklet.code.as_string
-                if f"{out_conn} = 0" != tasklet_code_str:
+                if f"{out_conn} = 0" != tasklet_code_str and f"{out_conn} = 0.0" != tasklet_code_str:
                     continue
             elif tasklet.language == dace.Language.CPP:
                 tasklet_code_str = tasklet.code.as_string
-                if f"{out_conn} = 0;" != tasklet_code_str:
+                if f"{out_conn} = 0;" != tasklet_code_str and f"{out_conn} = 0.0;" != tasklet_code_str:
                     continue
             else:
                 continue
@@ -209,9 +212,11 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
     # then the expression we have needs to cover whole first dimension X-1 if it is not 1 in dimension X
     def _is_contig_subset(self, range_list: List[Tuple], array: dace.data.Array) -> bool:
         if self._is_packed_fortran_strides(array):
+            print(f"array is packed Fortran")
             range_list = range_list
             expr_lens = [((e + 1) - b) for (b, e, s) in range_list]
         elif self._is_packed_c_strides(array):
+            print(f"array is packed C")
             range_list = list(reversed(range_list))
             expr_lens = [((e + 1) - b) for (b, e, s) in reversed(range_list)]
         else:
@@ -271,7 +276,12 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
 
             # If we overapproximate the first dimension, we assume it is contiguous
             if self.overapproximate_first_dimension:
-                new_in_data_range[0] = ((0, state.sdfg.arrays[in_edge.data.data].shape[0] - 1, 1))
+                arr = state.sdfg.arrays[out_edge.data.data]
+                stride_one_dimension = {(i, d) for i, (d, s) in enumerate(zip(arr.shape, arr.strides)) if s == 1}
+                assert len(stride_one_dimension) == 1
+                dim_offset, stride_one_dimension = stride_one_dimension.pop()
+                new_in_data_range[dim_offset] = ((0, stride_one_dimension - 1, 1))
+
         for (b, e, s) in out_data_range:
             nb: dace.symbolic.SymExpr = b
             ne: dace.symbolic.SymExpr = e
@@ -281,9 +291,14 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                 ne = ne.subs(p, e2)
                 assert ns == 1 and s2 == 1, "Only step of 1 is supported for memcpy/memset detection"
             new_out_data_range.append((nb, ne, ns))
+
         # If we overapproximate the first dimension, we assume it is contiguous
         if self.overapproximate_first_dimension:
-            new_out_data_range[0] = ((0, state.sdfg.arrays[out_edge.data.data].shape[0] - 1, 1))
+            arr = state.sdfg.arrays[out_edge.data.data]
+            stride_one_dimension = {(i, d) for i, (d, s) in enumerate(zip(arr.shape, arr.strides)) if s == 1}
+            assert len(stride_one_dimension) == 1
+            dim_offset, stride_one_dimension = stride_one_dimension.pop()
+            new_out_data_range[dim_offset] = ((0, stride_one_dimension - 1, 1))
 
         new_in_data_subset = dace.subsets.Range(new_in_data_range) if in_edge.data.data is not None else None
         new_out_data_subset = dace.subsets.Range(new_out_data_range) if out_edge.data.data is not None else None
@@ -375,6 +390,16 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                         UserWarning)
                 continue
 
+            # Dynamic in connectors not supported
+            cant_apply = False
+            for inc in map_entry.in_connectors:
+                if not inc.startswith("IN_"):
+                    if verbose:
+                        warnings.warn(f"Dynamic in connectors not supported for memcpy. Skipping.", UserWarning)
+                    cant_apply = True
+                    break
+            if cant_apply:
+                continue
             # To calculate the total range,
             # Take input subset of tasklet replace expression with map range
             # For now, we will just use the original range
@@ -415,22 +440,13 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
 
             rmed_count += 1
 
-        for i, e in enumerate(joined_edges):
-            assert e in state.edges(), f"{e} not in {state.edges()}"
-            state.remove_edge(e)
-            if e.src_conn is not None:
-                e.src.remove_out_connector(e.src_conn)
-            if e.dst_conn is not None:
-                e.dst.remove_in_connector(e.dst_conn)
-
-        for n in state.nodes():
-            if state.degree(n) == 0:
-                state.remove_node(n)
+        self.rm_edges(state, joined_edges)
 
         return rmed_count
 
     def remove_memset_from_kernel(self, state: dace.SDFGState, node: dace.nodes.MapEntry, verbose=True):
         memset_paths = self._detect_contiguous_memset_paths(state, node)
+        print(memset_paths)
 
         joined_edges = set()
         for memcpy_path in memset_paths:
@@ -501,19 +517,44 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
 
             rmed_count += 1
 
-        for i, e in enumerate(joined_edges):
+        self.rm_edges(state, joined_edges)
+
+        return rmed_count
+
+    def _has_passthrough_connectors(self, n: dace.nodes.Node):
+        in_conns = n.in_connectors
+        out_conns = n.out_connectors
+
+        has_passtrough = any({c.startswith("IN_") for c in in_conns})
+        has_passtrough |= any({c.startswith("OUT_") for c in out_conns})
+
+        return has_passtrough
+
+    def rm_edges(self, state: dace.SDFGState, edges: Iterable[Edge[Memlet]]):
+        nodes_to_check = set()
+        for i, e in enumerate(edges):
             assert e in state.edges(), f"{e} not in {state.edges()}"
             state.remove_edge(e)
             if e.src_conn is not None:
                 e.src.remove_out_connector(e.src_conn)
             if e.dst_conn is not None:
                 e.dst.remove_in_connector(e.dst_conn)
+            nodes_to_check.add(e.src)
+            nodes_to_check.add(e.dst)
+
+        for n in nodes_to_check:
+            if isinstance(n, dace.nodes.MapEntry):
+                # If it has passthrough connectors then data is left,
+                # Otherwise only dynamic connectors and we should remove them
+                if (not self._has_passthrough_connectors(n)) and state.out_degree(n) == 0:
+                    state.remove_node(n)
+            if isinstance(n, dace.nodes.MapExit):
+                if not self._has_passthrough_connectors(n) and state.in_degree(n) == 0:
+                    state.remove_node(n)
 
         for n in state.nodes():
-            if state.degree(n) == 0:
+            if (state.degree(n) == 0):
                 state.remove_node(n)
-
-        return rmed_count
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_res: Dict) -> Dict[int, Dict[dace.SDFGState, Set[dace.SDFGState]]]:
         map_entries = set()
@@ -534,7 +575,9 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             if self._get_num_tasklets_within_map(state, node) == 0:
                 continue
 
+            print(node)
             rmed_memcpy = self.remove_memcpy_from_kernel(state, node)
+            print(rmed_memcpy)
             sdfg.validate()
 
             # If the map is only used for 1 memcpy, then it might have been already removed
@@ -542,6 +585,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                 rmed_memset = self.remove_memset_from_kernel(state, node)
             else:
                 rmed_memset = 0
+            print(rmed_memset)
             sdfg.validate()
 
             assert node not in rmed_memsets

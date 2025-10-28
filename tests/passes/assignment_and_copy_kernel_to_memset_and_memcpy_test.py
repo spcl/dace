@@ -176,181 +176,263 @@ def _get_num_memset_library_nodes(sdfg: dace.SDFG) -> int:
     return sum(isinstance(node, MemsetLibraryNode) for state in sdfg.all_states() for node in state.nodes())
 
 
-# --- Tests ---
-def test_simple_memcpy():
-    """Single memcpy test: output should match input exactly."""
+D = dace.symbol("D")
+
+
+@dace.program
+def double_memset_with_dynamic_connectors(kfdia: dace.int32, kidia: dace.int32, llindex3: dace.float64[D, D],
+                                          zsinksum: dace.float64[D]):
+    for i, j in dace.map[0:D:1, kidia - 1:kfdia:]:
+        llindex3[i, j] = 0.0
+    for j in dace.map[kidia - 1:kfdia:1]:
+        zsinksum[j] = 0.0
+
+
+def _set_lib_node_type(sdfg: dace.SDFG, expansion_type: str):
+    for n, g in sdfg.all_nodes_recursive():
+        if isinstance(n, (CopyLibraryNode, MemsetLibraryNode)):
+            n.implementation = expansion_type
+
+
+EXPANSION_TYPES = ["pure", "CPU", pytest.param("CUDA", marks=pytest.mark.gpu)]
+
+
+@pytest.mark.parametrize("expansion_type", EXPANSION_TYPES)
+def test_double_memset_with_dynamic_connectors(expansion_type: str):
+    if expansion_type == "CUDA":
+        import cupy
+    xp = cupy if expansion_type == "CUDA" else numpy
+
+    sdfg = double_memset_with_dynamic_connectors.to_sdfg()
+
+    A_IN = xp.random.rand(DIM_SIZE, DIM_SIZE)
+    B_IN = xp.ones(DIM_SIZE)
+
+    sdfg.validate()
+    p = AssignmentAndCopyKernelToMemsetAndMemcpy()
+    p.overapproximate_first_dimension = True
+    p.apply_pass(sdfg, {})
+    for n, g in sdfg.all_nodes_recursive():
+        if isinstance(n, dace.nodes.NestedSDFG):
+            p.apply_pass(n.sdfg)
+    sdfg.validate()
+
+    assert _get_num_memcpy_library_nodes(
+        sdfg) == 0, f"Expected 0 memcpy library node, got {_get_num_memcpy_library_nodes(sdfg)}"
+    assert _get_num_memset_library_nodes(
+        sdfg) == 2, f"Expected 2 memset library nodes, got {_get_num_memset_library_nodes(sdfg)}"
+
+    sdfg.expand_library_nodes(recursive=True)
+    sdfg.validate()
+    _set_lib_node_type(sdfg, expansion_type)
+    sdfg.expand_library_nodes(recursive=True)
+    sdfg.validate()
+    sdfg(llindex3=A_IN, zsinksum=B_IN, D=DIM_SIZE, kfdia=1, kidia=DIM_SIZE)
+
+    assert xp.all(B_IN == 0.0), f"zsinksum should be fully zeroed {B_IN}"
+    assert xp.all(A_IN == 0.0), f"llindex3 should be fully zeroed {A_IN}"
+
+
+@pytest.mark.parametrize("expansion_type", EXPANSION_TYPES)
+def test_simple_memcpy(expansion_type: str):
+    if expansion_type == "CUDA":
+        import cupy
+    xp = cupy if expansion_type == "CUDA" else numpy
+
     sdfg = _get_sdfg(1, 0, False, False, False)
     sdfg.validate()
     AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
     sdfg.validate()
-    sdfg.save("s1.sdfg")
-    assert _get_num_memcpy_library_nodes(sdfg) == 1, "Expected 1 memcpy library node"
-    assert _get_num_memset_library_nodes(sdfg) == 0, "Expected 0 memset library nodes"
+    assert _get_num_memcpy_library_nodes(sdfg) == 1
+    assert _get_num_memset_library_nodes(sdfg) == 0
 
-    A_IN = numpy.random.rand(DIM_SIZE, DIM_SIZE)
-    A_OUT = numpy.zeros_like(A_IN)
-
+    A_IN = xp.random.rand(DIM_SIZE, DIM_SIZE)
+    A_OUT = xp.zeros_like(A_IN)
+    _set_lib_node_type(sdfg, expansion_type)
+    sdfg.expand_library_nodes(recursive=True)
+    sdfg.validate()
     sdfg(A_IN=A_IN, A_OUT=A_OUT)
 
-    assert numpy.allclose(A_IN, A_OUT), "A_OUT does not match A_IN in simple memcpy"
+    assert xp.allclose(A_IN, A_OUT)
 
 
-def test_simple_memset():
-    """Single memset test: output should be all zeros."""
+@pytest.mark.parametrize("expansion_type", EXPANSION_TYPES)
+def test_simple_memset(expansion_type: str):
+    if expansion_type == "CUDA":
+        import cupy
+    xp = cupy if expansion_type == "CUDA" else numpy
+
     sdfg = _get_sdfg(0, 1, False, False, False)
     AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
-    sdfg.save("x2.sdfg")
-    assert _get_num_memcpy_library_nodes(sdfg) == 0, "Expected 0 memcpy library nodes"
-    assert _get_num_memset_library_nodes(sdfg) == 1, "Expected 0 memset library node"
+    assert _get_num_memcpy_library_nodes(sdfg) == 0
+    assert _get_num_memset_library_nodes(sdfg) == 1
 
-    A_IN = numpy.random.rand(DIM_SIZE, DIM_SIZE)
-    A_OUT = numpy.zeros_like(A_IN)
-
+    A_IN = xp.random.rand(DIM_SIZE, DIM_SIZE)
+    A_OUT = xp.zeros_like(A_IN)
+    _set_lib_node_type(sdfg, expansion_type)
+    sdfg.expand_library_nodes(recursive=True)
+    sdfg.validate()
     sdfg(A_IN=A_IN, A_OUT=A_OUT)
 
-    assert numpy.allclose(A_OUT, 0.0), "A_OUT is not zero in simple memset"
+    assert xp.allclose(A_OUT, 0.0)
 
 
-def test_multi_memcpy():
-    """Two memcpies: each output should equal its corresponding input."""
+@pytest.mark.parametrize("expansion_type", EXPANSION_TYPES)
+def test_multi_memcpy(expansion_type: str):
+    if expansion_type == "CUDA":
+        import cupy
+    xp = cupy if expansion_type == "CUDA" else numpy
+
     sdfg = _get_sdfg(2, 0, False, False, False)
-    sdfg.save("x1x.sdfg")
     AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
-    sdfg.save("x3x.sdfg")
+    assert _get_num_memcpy_library_nodes(sdfg) == 2
+    assert _get_num_memset_library_nodes(sdfg) == 0
 
-    assert _get_num_memcpy_library_nodes(sdfg) == 2, "Expected 2 memcpy library nodes"
-    assert _get_num_memset_library_nodes(sdfg) == 0, "Expected 0 memset library nodes"
-
-    A_IN = numpy.random.rand(DIM_SIZE, DIM_SIZE)
-    A_OUT = numpy.zeros_like(A_IN)
-    B_IN = numpy.random.rand(DIM_SIZE, DIM_SIZE)
-    B_OUT = numpy.zeros_like(B_IN)
-
+    A_IN = xp.random.rand(DIM_SIZE, DIM_SIZE)
+    A_OUT = xp.zeros_like(A_IN)
+    B_IN = xp.random.rand(DIM_SIZE, DIM_SIZE)
+    B_OUT = xp.zeros_like(B_IN)
+    _set_lib_node_type(sdfg, expansion_type)
+    sdfg.expand_library_nodes(recursive=True)
+    sdfg.validate()
     sdfg(A_IN=A_IN, A_OUT=A_OUT, B_IN=B_IN, B_OUT=B_OUT)
 
-    assert numpy.allclose(A_IN, A_OUT), "A_OUT does not match A_IN in multi memcpy"
-    assert numpy.allclose(B_IN, B_OUT), "B_OUT does not match B_IN in multi memcpy"
+    assert xp.allclose(A_IN, A_OUT)
+    assert xp.allclose(B_IN, B_OUT)
 
 
-def test_multi_memset():
-    """Two memsets: both outputs should be all zeros."""
+@pytest.mark.parametrize("expansion_type", EXPANSION_TYPES)
+def test_multi_memset(expansion_type: str):
+    if expansion_type == "CUDA":
+        import cupy
+    xp = cupy if expansion_type == "CUDA" else numpy
+
     sdfg = _get_sdfg(0, 2, False, False, False)
     AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
+    assert _get_num_memcpy_library_nodes(sdfg) == 0
+    assert _get_num_memset_library_nodes(sdfg) == 2
 
-    assert _get_num_memcpy_library_nodes(sdfg) == 0, "Expected 0 memcpy library nodes"
-    assert _get_num_memset_library_nodes(sdfg) == 2, "Expected 2 memset library nodes"
-
-    A_IN = numpy.random.rand(DIM_SIZE, DIM_SIZE)
-    A_OUT = numpy.zeros_like(A_IN)
-    B_IN = numpy.random.rand(DIM_SIZE, DIM_SIZE)
-    B_OUT = numpy.zeros_like(B_IN)
-
+    A_IN = xp.random.rand(DIM_SIZE, DIM_SIZE)
+    A_OUT = xp.zeros_like(A_IN)
+    B_IN = xp.random.rand(DIM_SIZE, DIM_SIZE)
+    B_OUT = xp.zeros_like(B_IN)
+    _set_lib_node_type(sdfg, expansion_type)
+    sdfg.expand_library_nodes(recursive=True)
+    sdfg.validate()
     sdfg(A_IN=A_IN, A_OUT=A_OUT, B_IN=B_IN, B_OUT=B_OUT)
 
-    assert numpy.allclose(A_OUT, 0.0), "A_OUT is not zero in multi memset"
-    assert numpy.allclose(B_OUT, 0.0), "B_OUT is not zero in multi memset"
+    assert xp.allclose(A_OUT, 0.0)
+    assert xp.allclose(B_OUT, 0.0)
 
 
-def test_multi_mixed():
-    """One memcpy and one memset: memcpy should copy, memset should zero output."""
+@pytest.mark.parametrize("expansion_type", EXPANSION_TYPES)
+def test_multi_mixed(expansion_type: str):
+    if expansion_type == "CUDA":
+        import cupy
+    xp = cupy if expansion_type == "CUDA" else numpy
+
     sdfg = _get_sdfg(1, 1, False, False, False)
     AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
+    assert _get_num_memcpy_library_nodes(sdfg) == 1
+    assert _get_num_memset_library_nodes(sdfg) == 1
 
-    assert _get_num_memcpy_library_nodes(sdfg) == 1, "Expected 1 memcpy library node"
-    assert _get_num_memset_library_nodes(sdfg) == 1, "Expected 1 memset library node"
-
-    A_IN = numpy.random.rand(DIM_SIZE, DIM_SIZE)
-    A_OUT = numpy.zeros_like(A_IN)
-    B_IN = numpy.random.rand(DIM_SIZE, DIM_SIZE)
-    B_OUT = numpy.zeros_like(B_IN)
-
+    A_IN = xp.random.rand(DIM_SIZE, DIM_SIZE)
+    A_OUT = xp.zeros_like(A_IN)
+    B_IN = xp.random.rand(DIM_SIZE, DIM_SIZE)
+    B_OUT = xp.zeros_like(B_IN)
+    _set_lib_node_type(sdfg, expansion_type)
+    sdfg.expand_library_nodes(recursive=True)
+    sdfg.validate()
     sdfg(A_IN=A_IN, A_OUT=A_OUT, B_IN=B_IN, B_OUT=B_OUT)
 
-    assert numpy.allclose(A_IN, A_OUT), "A_OUT does not match A_IN in mixed memcpy/memset"
-    assert numpy.allclose(B_OUT, 0.0), "B_OUT is not zero in mixed memcpy/memset"
+    assert xp.allclose(A_IN, A_OUT)
+    assert xp.allclose(B_OUT, 0.0)
 
 
-def test_simple_with_extra_computation():
-    """
-    Add extra computation (doubling) to every other tasklet.
-    Expect memcpy results to be doubled in output, memsets remain zero.
-    """
+@pytest.mark.parametrize("expansion_type", EXPANSION_TYPES)
+def test_simple_with_extra_computation(expansion_type: str):
+    if expansion_type == "CUDA":
+        import cupy
+    xp = cupy if expansion_type == "CUDA" else numpy
+
     sdfg = _get_sdfg(2, 2, True, False, False)
     AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
 
-    assert _get_num_memcpy_library_nodes(sdfg) == 1, "Expected 1 memcpy library node"
-    assert _get_num_memset_library_nodes(sdfg) == 1, "Expected 1 memset library node"
-
-    A_IN = numpy.random.rand(DIM_SIZE, DIM_SIZE)
-    A_OUT = numpy.zeros_like(A_IN)
-    B_IN = numpy.random.rand(DIM_SIZE, DIM_SIZE)
-    B_OUT = numpy.zeros_like(B_IN)
-    C_IN = numpy.random.rand(DIM_SIZE, DIM_SIZE)
-    C_OUT = numpy.zeros_like(C_IN)
-    D_IN = numpy.random.rand(DIM_SIZE, DIM_SIZE)
-    D_OUT = numpy.zeros_like(D_IN)
-
+    A_IN = xp.random.rand(DIM_SIZE, DIM_SIZE)
+    A_OUT = xp.zeros_like(A_IN)
+    B_IN = xp.random.rand(DIM_SIZE, DIM_SIZE)
+    B_OUT = xp.zeros_like(B_IN)
+    C_IN = xp.random.rand(DIM_SIZE, DIM_SIZE)
+    C_OUT = xp.zeros_like(C_IN)
+    D_IN = xp.random.rand(DIM_SIZE, DIM_SIZE)
+    D_OUT = xp.zeros_like(D_IN)
+    _set_lib_node_type(sdfg, expansion_type)
+    sdfg.expand_library_nodes(recursive=True)
+    sdfg.validate()
     sdfg(A_IN=A_IN, A_OUT=A_OUT, B_IN=B_IN, B_OUT=B_OUT, C_IN=C_IN, C_OUT=C_OUT, D_IN=D_IN, D_OUT=D_OUT)
 
-    # A_OUT should be double of A_IN
-    assert numpy.allclose(A_OUT, 2 * A_IN), "A_OUT does not match expected doubled values"
-    # memcpy B should be unchanged
-    assert numpy.allclose(B_OUT, B_IN), "B_OUT does not match B_IN with extra computation"
-    # memsets should zero the outputs
-    assert numpy.allclose(C_OUT, 0.0), "C_OUT is not zero with extra computation"
-    assert numpy.allclose(D_OUT, 0.0), "D_OUT is not zero with extra computation"
+    assert xp.allclose(A_OUT, 2 * A_IN)
+    assert xp.allclose(B_OUT, B_IN)
+    assert xp.allclose(C_OUT, 0.0)
+    assert xp.allclose(D_OUT, 0.0)
 
 
-def test_simple_non_zero():
-    """Memset with non_zero=True should fill with ones instead of zeros."""
+@pytest.mark.parametrize("expansion_type", EXPANSION_TYPES)
+def test_simple_non_zero(expansion_type: str):
+    if expansion_type == "CUDA":
+        import cupy
+    xp = cupy if expansion_type == "CUDA" else numpy
+
     sdfg = _get_sdfg(0, 1, False, True, False)
     AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
 
-    assert _get_num_memcpy_library_nodes(sdfg) == 0, "Expected 0 memcpy library nodes"
-    assert _get_num_memset_library_nodes(sdfg) == 0, "Expected 0 memset library nodes"
-
-    A_IN = numpy.random.rand(DIM_SIZE, DIM_SIZE)
-    A_OUT = numpy.zeros_like(A_IN)
-
+    A_IN = xp.random.rand(DIM_SIZE, DIM_SIZE)
+    A_OUT = xp.zeros_like(A_IN)
+    _set_lib_node_type(sdfg, expansion_type)
+    sdfg.expand_library_nodes(recursive=True)
+    sdfg.validate()
     sdfg(A_IN=A_OUT, A_OUT=A_OUT)
 
-    assert numpy.allclose(A_OUT, 1.0), "A_OUT is not filled with ones in non-zero memset"
+    assert xp.allclose(A_OUT, 1.0)
 
 
-def test_mixed_overapprox():
-    """
-    Overapproximation test (currently marked as TODO).
-    Checks mixed memcpy and memset with more than one of each.
-    """
+@pytest.mark.parametrize("expansion_type", EXPANSION_TYPES)
+def test_mixed_overapprox(expansion_type: str):
+    if expansion_type == "CUDA":
+        import cupy
+    xp = cupy if expansion_type == "CUDA" else numpy
+
     sdfg = _get_sdfg(2, 2, False, False, True)
     AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
+    sdfg.validate()
 
-    assert _get_num_memcpy_library_nodes(sdfg) == 2, "Expected 2 memcpy library nodes"
-    assert _get_num_memset_library_nodes(sdfg) == 2, "Expected 2 memset library nodes"
+    A_IN = xp.random.rand(DIM_SIZE, DIM_SIZE)
+    A_OUT = xp.zeros_like(A_IN)
+    B_IN = xp.random.rand(DIM_SIZE, DIM_SIZE)
+    B_OUT = xp.zeros_like(B_IN)
+    C_IN = xp.random.rand(DIM_SIZE, DIM_SIZE)
+    C_OUT = xp.zeros_like(C_IN)
+    D_IN = xp.random.rand(DIM_SIZE, DIM_SIZE)
+    D_OUT = xp.zeros_like(D_IN)
 
-    A_IN = numpy.random.rand(DIM_SIZE, DIM_SIZE)
-    A_OUT = numpy.zeros_like(A_IN)
-    B_IN = numpy.random.rand(DIM_SIZE, DIM_SIZE)
-    B_OUT = numpy.zeros_like(B_IN)
-    C_IN = numpy.random.rand(DIM_SIZE, DIM_SIZE)
-    C_OUT = numpy.zeros_like(C_IN)
-    D_IN = numpy.random.rand(DIM_SIZE, DIM_SIZE)
-    D_OUT = numpy.zeros_like(D_IN)
-
+    _set_lib_node_type(sdfg, expansion_type)
+    sdfg.expand_library_nodes(recursive=True)
+    sdfg.validate()
     sdfg(A_IN=A_IN, A_OUT=A_OUT, B_IN=B_IN, B_OUT=B_OUT, C_IN=C_IN, C_OUT=C_OUT, D_IN=D_IN, D_OUT=D_OUT)
 
-    assert numpy.allclose(A_IN, A_OUT), f"A_OUT does not match A_IN in mixed overapprox {A_IN - A_OUT}"
-    assert numpy.allclose(B_OUT, B_IN), "B_OUT does not match B_IN in mixed overapprox"
-    assert numpy.allclose(C_OUT, 0.0), "C_OUT is not zero in mixed overapprox"
-    assert numpy.allclose(D_OUT, 0.0), "D_OUT is not zero in mixed overapprox"
+    assert xp.allclose(C_OUT, 0.0)
+    assert xp.allclose(D_OUT, 0.0)
+    assert xp.allclose(B_OUT[2:10, 0:10], B_IN[2:10, 0:10])
+    assert xp.allclose(A_IN[2:10, 0:10], A_OUT[2:10, 0:10])
 
 
 if __name__ == "__main__":
-    test_simple_memcpy()
-    test_simple_memset()
-    test_multi_memcpy()
-    test_multi_memset()
-    test_multi_mixed()
-    test_simple_with_extra_computation()
-    test_simple_non_zero()
-    test_mixed_overapprox()
+    for expansion_type in ["CPU", "pure", "GPU"]:
+        test_simple_memcpy(expansion_type)
+        test_simple_memset(expansion_type)
+        test_multi_memcpy(expansion_type)
+        test_multi_memset(expansion_type)
+        test_multi_mixed(expansion_type)
+        test_simple_with_extra_computation(expansion_type)
+        test_simple_non_zero(expansion_type)
+        test_mixed_overapprox(expansion_type)
