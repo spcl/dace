@@ -273,7 +273,7 @@ class invoke_compiled_sdfg_call_hooks(contextlib.AbstractContextManager):
             for hook in _COMPILED_SDFG_CALL_HOOKS:
                 if hook is None:
                     continue
-                new_compiled_sdfg = stack.enter_context(hook(compiled_sdfg, args))
+                new_compiled_sdfg = stack.enter_context(hook(compiled_sdfg, self.args))
                 if new_compiled_sdfg is not None:
                     compiled_sdfg = new_compiled_sdfg
             return compiled_sdfg
