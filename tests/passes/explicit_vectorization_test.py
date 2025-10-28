@@ -577,6 +577,50 @@ def test_spmv():
     # Compare results
     assert numpy.allclose(y_orig, y_vec), f"{y_orig - y_vec}"
 
+@dace.program
+def jacobi2d(A: dace.float64[S, S], B: dace.float64[S, S], tsteps: dace.int64):  #, N, tsteps):
+    for t in range(tsteps):
+        @dace.map
+        def a(i: _[1:N - 1], j: _[1:N - 1]):
+            a1 << A[i, j]
+            a2 << A[i, j - 1]
+            a3 << A[i, j + 1]
+            a4 << A[i + 1, j]
+            a5 << A[i - 1, j]
+            b >> B[i, j]
+
+            b = 0.2 * (a1 + a2 + a3 + a4 + a5)
+
+        @dace.map
+        def b(i: _[1:N - 1], j: _[1:N - 1]):
+            a1 << B[i, j]
+            a2 << B[i, j - 1]
+            a3 << B[i, j + 1]
+            a4 << B[i + 1, j]
+            a5 << B[i - 1, j]
+            b >> A[i, j]
+
+            b = 0.2 * (a1 + a2 + a3 + a4 + a5)
+
+def test_jacobi2d():
+    _S = 64
+    A = numpy.random.random((_S, _S))
+    B = numpy.random.random((_S, _S))
+
+    sdfg = jacobi2d.to_sdfg()
+    sdfg.save("s.sdfg")
+
+    run_vectorization_test(dace_func=overlapping_access,
+                           arrays={
+                               'A': A,
+                               'B': B
+                           },
+                           params={
+                               'S': _S,
+                           },
+                           vector_width=8,
+                           save_sdfgs=True,
+                           sdfg_name="jacobi2d")
 
 if __name__ == "__main__":
     test_vsubs_cpu()
@@ -591,3 +635,5 @@ if __name__ == "__main__":
     test_simple_cpu()
     test_no_maps()
     test_spmv()
+    test_overlapping_access()
+    test_jacobi2d()

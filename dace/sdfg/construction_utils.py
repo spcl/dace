@@ -777,7 +777,7 @@ def _find_new_name(base: str, existing_names: Set[str]) -> str:
     return candidate
 
 
-def duplicate_memlets_from_single_in_connector(state: dace.SDFGState, map_entry: dace.nodes.MapEntry):
+def duplicate_memlets_sharing_single_in_connector(state: dace.SDFGState, map_entry: dace.nodes.MapEntry):
     for out_conn in list(map_entry.out_connectors.keys()):
         out_edges_of_out_conn = set(state.out_edges_by_connector(map_entry, out_conn))
         if len(out_edges_of_out_conn) > 1:
