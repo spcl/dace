@@ -640,7 +640,7 @@ class ExplicitVectorization(ppl.Pass):
                                          vector_map_param: str):
         for node in nodes:
             if isinstance(node, dace.nodes.Tasklet):
-                tasklet_info = classify_tasklet(state, node)
+                tasklet_info = tutil.classify_tasklet(state, node)
                 print("Tasklet:", node, " has info:", tasklet_info)
                 instantiate_tasklet_from_info(state, node, tasklet_info, self.vector_width, self.templates,
                                               vector_map_param)

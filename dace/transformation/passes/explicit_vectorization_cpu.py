@@ -15,17 +15,21 @@ class ExplicitVectorizationPipelineCPU(ppl.Pipeline):
 
 
 #if defined(__clang__)
-  #define _dace_vectorize _Pragma("clang loop vectorize(enable) vectorize_width({vector_width}8)")
+    #define _dace_vectorize_hint
+  #define _dace_vectorize "clang loop vectorize(enable) vectorize_width({vector_width}8)"
 #elif defined(__GNUC__)
-  #define _dace_vectorize _Pragma("GCC ivdep") _Pragma("omp simd simdlen({vector_width})")
+  #define _dace_vectorize_hint 
+  #define _dace_vectorize "omp simd simdlen({vector_width})"
 #else
-  #define _dace_vectorize _Pragma("omp simd simdlen({vector_width})")
+    #define _dace_vectorize_hint
+  #define _dace_vectorize "omp simd simdlen({vector_width})"
 #endif
 
 
 template<typename T>
 inline void vector_mult(T * __restrict__ c, const T * __restrict__ a, const T * __restrict__ b) {{
-    _dace_vectorize
+    #pragma _dace_vectorize_hint
+    #pragma _dace_vectorize
     for (int i = 0; i < {vector_width}; i++) {{
         c[i] = a[i] * b[i];
     }}
@@ -33,7 +37,8 @@ inline void vector_mult(T * __restrict__ c, const T * __restrict__ a, const T * 
 
 template<typename T>
 inline void vector_mult_w_scalar(T * __restrict__ b, const T * __restrict__ a, const T constant) {{
-    _dace_vectorize
+    #pragma _dace_vectorize_hint
+    #pragma _dace_vectorize
     for (int i = 0; i < {vector_width}; i++) {{
         b[i] = a[i] * constant;
     }}
@@ -41,7 +46,8 @@ inline void vector_mult_w_scalar(T * __restrict__ b, const T * __restrict__ a, c
 
 template<typename T>
 inline void vector_add(T * __restrict__ c, const T * __restrict__ a, const T * __restrict__ b) {{
-    _dace_vectorize
+    #pragma _dace_vectorize_hint
+    #pragma _dace_vectorize
     for (int i = 0; i < {vector_width}; i++) {{
         c[i] = a[i] + b[i];
     }}
@@ -49,7 +55,8 @@ inline void vector_add(T * __restrict__ c, const T * __restrict__ a, const T * _
 
 template<typename T>
 inline void vector_add_w_scalar(T * __restrict__ b, const T * __restrict__ a, const T constant) {{
-    _dace_vectorize
+    #pragma _dace_vectorize_hint
+    #pragma _dace_vectorize
     for (int i = 0; i < {vector_width}; i++) {{
         b[i] = a[i] + constant;
     }}
@@ -57,7 +64,8 @@ inline void vector_add_w_scalar(T * __restrict__ b, const T * __restrict__ a, co
 
 template<typename T>
 inline void vector_sub(T * __restrict__ c, const T * __restrict__ a, const T * __restrict__ b) {{
-    _dace_vectorize
+    #pragma _dace_vectorize_hint
+    #pragma _dace_vectorize
     for (int i = 0; i < {vector_width}; i++) {{
         c[i] = a[i] - b[i];
     }}
@@ -65,7 +73,8 @@ inline void vector_sub(T * __restrict__ c, const T * __restrict__ a, const T * _
 
 template<typename T>
 inline void vector_sub_w_scalar(T * __restrict__ b, const T * __restrict__ a, const T constant) {{
-    _dace_vectorize
+    #pragma _dace_vectorize_hint
+    #pragma _dace_vectorize
     for (int i = 0; i < {vector_width}; i++) {{
         b[i] = a[i] - constant;
     }}
@@ -73,7 +82,8 @@ inline void vector_sub_w_scalar(T * __restrict__ b, const T * __restrict__ a, co
 
 template<typename T>
 inline void vector_sub_w_scalar_c(T * __restrict__ b, const T constant, const T * __restrict__ a) {{
-    _dace_vectorize
+    #pragma _dace_vectorize_hint
+    #pragma _dace_vectorize
     for (int i = 0; i < {vector_width}; i++) {{
         b[i] = constant - a[i];
     }}
@@ -81,7 +91,8 @@ inline void vector_sub_w_scalar_c(T * __restrict__ b, const T constant, const T 
 
 template<typename T>
 inline void vector_div(T * __restrict__ c, const T * __restrict__ a, const T * __restrict__ b) {{
-    _dace_vectorize
+    #pragma _dace_vectorize_hint
+    #pragma _dace_vectorize
     for (int i = 0; i < {vector_width}; i++) {{
         c[i] = a[i] / b[i];
     }}
@@ -89,7 +100,8 @@ inline void vector_div(T * __restrict__ c, const T * __restrict__ a, const T * _
 
 template<typename T>
 inline void vector_div_w_scalar(T * __restrict__ b, const T * __restrict__ a, const T constant) {{
-    _dace_vectorize
+    #pragma _dace_vectorize_hint
+    #pragma _dace_vectorize
     for (int i = 0; i < {vector_width}; i++) {{
         b[i] = a[i] / constant;
     }}
@@ -97,7 +109,8 @@ inline void vector_div_w_scalar(T * __restrict__ b, const T * __restrict__ a, co
 
 template<typename T>
 inline void vector_div_w_scalar_c(T * __restrict__ b, const T constant, const T * __restrict__ a) {{
-    _dace_vectorize
+    #pragma _dace_vectorize_hint
+    #pragma _dace_vectorize
     for (int i = 0; i < {vector_width}; i++) {{
         b[i] = constant / a[i];
     }}
@@ -105,7 +118,8 @@ inline void vector_div_w_scalar_c(T * __restrict__ b, const T constant, const T 
 
 template<typename T>
 inline void vector_copy(T * __restrict__ dst, const T * __restrict__ src) {{
-    _dace_vectorize
+    #pragma _dace_vectorize_hint
+    #pragma _dace_vectorize
     for (int i = 0; i < {vector_width}; i++) {{
         dst[i] = src[i];
     }}
@@ -115,7 +129,8 @@ inline void vector_copy(T * __restrict__ dst, const T * __restrict__ src) {{
 
 template<typename T>
 inline void vector_exp(T * __restrict__ out, const T * __restrict__ a) {{
-    _dace_vectorize
+    #pragma _dace_vectorize_hint
+    #pragma _dace_vectorize
     for (int i = 0; i < {vector_width}; i++) {{
         out[i] = std::exp(a[i]);
     }}
@@ -123,7 +138,8 @@ inline void vector_exp(T * __restrict__ out, const T * __restrict__ a) {{
 
 template<typename T>
 inline void vector_log(T * __restrict__ out, const T * __restrict__ a) {{
-    _dace_vectorize
+    #pragma _dace_vectorize_hint
+    #pragma _dace_vectorize
     for (int i = 0; i < {vector_width}; i++) {{
         out[i] = std::log(a[i]);
     }}
@@ -131,7 +147,8 @@ inline void vector_log(T * __restrict__ out, const T * __restrict__ a) {{
 
 template<typename T>
 inline void vector_min(T * __restrict__ out, const T * __restrict__ a, const T * __restrict__ b) {{
-    _dace_vectorize
+    #pragma _dace_vectorize_hint
+    #pragma _dace_vectorize
     for (int i = 0; i < {vector_width}; i++) {{
         out[i] = std::min(a[i], b[i]);
     }}
@@ -139,7 +156,8 @@ inline void vector_min(T * __restrict__ out, const T * __restrict__ a, const T *
 
 template<typename T>
 inline void vector_min_w_scalar(T * __restrict__ out, const T * __restrict__ a, const T constant) {{
-    _dace_vectorize
+    #pragma _dace_vectorize_hint
+    #pragma _dace_vectorize
     for (int i = 0; i < {vector_width}; i++) {{
         out[i] = std::min(a[i], constant);
     }}
@@ -147,7 +165,8 @@ inline void vector_min_w_scalar(T * __restrict__ out, const T * __restrict__ a, 
 
 template<typename T>
 inline void vector_max(T * __restrict__ out, const T * __restrict__ a, const T * __restrict__ b) {{
-    _dace_vectorize
+    #pragma _dace_vectorize_hint
+    #pragma _dace_vectorize
     for (int i = 0; i < {vector_width}; i++) {{
         out[i] = std::max(a[i], b[i]);
     }}
@@ -155,7 +174,8 @@ inline void vector_max(T * __restrict__ out, const T * __restrict__ a, const T *
 
 template<typename T>
 inline void vector_max_w_scalar(T * __restrict__ out, const T * __restrict__ a, const T constant) {{
-    _dace_vectorize
+    #pragma _dace_vectorize_hint
+    #pragma _dace_vectorize
     for (int i = 0; i < {vector_width}; i++) {{
         out[i] = std::max(a[i], constant);
     }}
@@ -163,7 +183,8 @@ inline void vector_max_w_scalar(T * __restrict__ out, const T * __restrict__ a, 
 
 template<typename T>
 inline void vector_gt(T * __restrict__ out, const T * __restrict__ a, const T * __restrict__ b) {{
-    _dace_vectorize
+    #pragma _dace_vectorize_hint
+    #pragma _dace_vectorize
     for (int i = 0; i < {vector_width}; i++) {{
         out[i] = (a[i] > b[i]) ? 1.0 : 0.0;
     }}
@@ -171,7 +192,8 @@ inline void vector_gt(T * __restrict__ out, const T * __restrict__ a, const T * 
 
 template<typename T>
 inline void vector_gt_w_scalar(T * __restrict__ out, const T * __restrict__ a, const T constant) {{
-    _dace_vectorize
+    #pragma _dace_vectorize_hint
+    #pragma _dace_vectorize
     for (int i = 0; i < {vector_width}; i++) {{
         out[i] = (a[i] > constant) ? 1.0 : 0.0;
     }}
@@ -179,7 +201,8 @@ inline void vector_gt_w_scalar(T * __restrict__ out, const T * __restrict__ a, c
 
 template<typename T>
 inline void vector_gt_w_scalar_c(T * __restrict__ out, const T constant, const T * __restrict__ a) {{
-    _dace_vectorize
+    #pragma _dace_vectorize_hint
+    #pragma _dace_vectorize
     for (int i = 0; i < {vector_width}; i++) {{
         out[i] = (constant > a[i]) ? 1.0 : 0.0;
     }}
@@ -187,7 +210,8 @@ inline void vector_gt_w_scalar_c(T * __restrict__ out, const T constant, const T
 
 template<typename T>
 inline void vector_lt(T * __restrict__ out, const T * __restrict__ a, const T * __restrict__ b) {{
-    _dace_vectorize
+    #pragma _dace_vectorize_hint
+    #pragma _dace_vectorize
     for (int i = 0; i < {vector_width}; i++) {{
         out[i] = (a[i] < b[i]) ? 1.0 : 0.0;
     }}
@@ -195,7 +219,8 @@ inline void vector_lt(T * __restrict__ out, const T * __restrict__ a, const T * 
 
 template<typename T>
 inline void vector_lt_w_scalar(T * __restrict__ out, const T * __restrict__ a, const T constant) {{
-    _dace_vectorize
+    #pragma _dace_vectorize_hint
+    #pragma _dace_vectorize
     for (int i = 0; i < {vector_width}; i++) {{
         out[i] = (a[i] < constant) ? 1.0 : 0.0;
     }}
@@ -203,7 +228,8 @@ inline void vector_lt_w_scalar(T * __restrict__ out, const T * __restrict__ a, c
 
 template<typename T>
 inline void vector_lt_w_scalar_c(T * __restrict__ out, const T constant, const T * __restrict__ a) {{
-    _dace_vectorize
+    #pragma _dace_vectorize_hint
+    #pragma _dace_vectorize
     for (int i = 0; i < {vector_width}; i++) {{
         out[i] = (constant < a[i]) ? 1.0 : 0.0;
     }}
@@ -211,7 +237,8 @@ inline void vector_lt_w_scalar_c(T * __restrict__ out, const T constant, const T
 
 template<typename T>
 inline void vector_ge(T * __restrict__ out, const T * __restrict__ a, const T * __restrict__ b) {{
-    _dace_vectorize
+    #pragma _dace_vectorize_hint
+    #pragma _dace_vectorize
     for (int i = 0; i < {vector_width}; i++) {{
         out[i] = (a[i] >= b[i]) ? 1.0 : 0.0;
     }}
@@ -219,7 +246,8 @@ inline void vector_ge(T * __restrict__ out, const T * __restrict__ a, const T * 
 
 template<typename T>
 inline void vector_ge_w_scalar(T * __restrict__ out, const T * __restrict__ a, const T constant) {{
-    _dace_vectorize
+    #pragma _dace_vectorize_hint
+    #pragma _dace_vectorize
     for (int i = 0; i < {vector_width}; i++) {{
         out[i] = (a[i] >= constant) ? 1.0 : 0.0;
     }}
@@ -227,7 +255,8 @@ inline void vector_ge_w_scalar(T * __restrict__ out, const T * __restrict__ a, c
 
 template<typename T>
 inline void vector_ge_w_scalar_c(T * __restrict__ out, const T constant, const T * __restrict__ a) {{
-    _dace_vectorize
+    #pragma _dace_vectorize_hint
+    #pragma _dace_vectorize
     for (int i = 0; i < {vector_width}; i++) {{
         out[i] = (constant >= a[i]) ? 1.0 : 0.0;
     }}
@@ -235,7 +264,8 @@ inline void vector_ge_w_scalar_c(T * __restrict__ out, const T constant, const T
 
 template<typename T>
 inline void vector_le(T * __restrict__ out, const T * __restrict__ a, const T * __restrict__ b) {{
-    _dace_vectorize
+    #pragma _dace_vectorize_hint
+    #pragma _dace_vectorize
     for (int i = 0; i < {vector_width}; i++) {{
         out[i] = (a[i] <= b[i]) ? 1.0 : 0.0;
     }}
@@ -243,7 +273,8 @@ inline void vector_le(T * __restrict__ out, const T * __restrict__ a, const T * 
 
 template<typename T>
 inline void vector_le_w_scalar(T * __restrict__ out, const T * __restrict__ a, const T constant) {{
-    _dace_vectorize
+    #pragma _dace_vectorize_hint
+    #pragma _dace_vectorize
     for (int i = 0; i < {vector_width}; i++) {{
         out[i] = (a[i] <= constant) ? 1.0 : 0.0;
     }}
@@ -251,7 +282,8 @@ inline void vector_le_w_scalar(T * __restrict__ out, const T * __restrict__ a, c
 
 template<typename T>
 inline void vector_le_w_scalar_c(T * __restrict__ out, const T constant, const T * __restrict__ a) {{
-    _dace_vectorize
+    #pragma _dace_vectorize_hint
+    #pragma _dace_vectorize
     for (int i = 0; i < {vector_width}; i++) {{
         out[i] = (constant <= a[i]) ? 1.0 : 0.0;
     }}
@@ -259,7 +291,8 @@ inline void vector_le_w_scalar_c(T * __restrict__ out, const T constant, const T
 
 template<typename T>
 inline void vector_eq(T * __restrict__ out, const T * __restrict__ a, const T * __restrict__ b) {{
-    _dace_vectorize
+    #pragma _dace_vectorize_hint
+    #pragma _dace_vectorize
     for (int i = 0; i < {vector_width}; i++) {{
         out[i] = (a[i] == b[i]) ? 1.0 : 0.0;
     }}
@@ -267,7 +300,8 @@ inline void vector_eq(T * __restrict__ out, const T * __restrict__ a, const T * 
 
 template<typename T>
 inline void vector_eq_w_scalar(T * __restrict__ out, const T * __restrict__ a, const T constant) {{
-    _dace_vectorize
+    #pragma _dace_vectorize_hint
+    #pragma _dace_vectorize
     for (int i = 0; i < {vector_width}; i++) {{
         out[i] = (a[i] == constant) ? 1.0 : 0.0;
     }}
@@ -276,7 +310,8 @@ inline void vector_eq_w_scalar(T * __restrict__ out, const T * __restrict__ a, c
 
 template<typename T>
 inline void vector_ne(T * __restrict__ out, const T * __restrict__ a, const T * __restrict__ b) {{
-    _dace_vectorize
+    #pragma _dace_vectorize_hint
+    #pragma _dace_vectorize
     for (int i = 0; i < {vector_width}; i++) {{
         out[i] = (a[i] != b[i]) ? 1.0 : 0.0;
     }}
@@ -284,7 +319,8 @@ inline void vector_ne(T * __restrict__ out, const T * __restrict__ a, const T * 
 
 template<typename T>
 inline void vector_ne_w_scalar(T * __restrict__ out, const T * __restrict__ a, const T constant) {{
-    _dace_vectorize
+    #pragma _dace_vectorize_hint
+    #pragma _dace_vectorize
     for (int i = 0; i < {vector_width}; i++) {{
         out[i] = (a[i] != constant) ? 1.0 : 0.0;
     }}
