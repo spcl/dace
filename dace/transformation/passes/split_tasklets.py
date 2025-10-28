@@ -133,8 +133,23 @@ def _get_vars(ssa_line: str) -> Tuple[List[str], List[str]]:
     lhs = lhs.strip()
     rhs = rhs.strip()
     # Also ignore log functions
-    function_names = dace.symbolic._builtin_userfunctions.union({"log", "Log", "ln", "exp", "Exp", "or", "and", "Or", "And", "OR", "AND"})
-    print(f"{ssa_line} -> {dace.symbolic.symbols_in_code(rhs, symbols_to_ignore=function_names)}")
+    function_names = dace.symbolic._builtin_userfunctions.union({
+        "log",
+        "Log",
+        "ln",
+        "exp",
+        "Exp",
+        "or",
+        "and",
+        "Or",
+        "And",
+        "OR",
+        "AND",
+        "math",
+        "Math",
+        "MATH",
+    })
+    # print(f"{ssa_line} -> {dace.symbolic.symbols_in_code(rhs, symbols_to_ignore=function_names)}")
     return [lhs], list(dace.symbolic.symbols_in_code(rhs, symbols_to_ignore=function_names))
 
 
@@ -259,8 +274,6 @@ class SplitTasklets(ppl.Pass):
                     for in_conn in t.in_connectors.keys():
                         matching_in_edges = {ie for ie in tasklet_input_edges if ie.dst_conn == in_conn}
                         if len(matching_in_edges) == 0:
-                            if in_conn == "e" or in_conn == "or":
-                                raise Exception("uwu", t.in_connectors)
                             array_name = f"{in_conn}{self.tmp_access_identifier}{split_access_counter}"
                             if array_name not in state.sdfg.arrays:
                                 state.sdfg.add_scalar(
@@ -294,8 +307,6 @@ class SplitTasklets(ppl.Pass):
                     # Output should have been added already
                     assert len(t.out_connectors) == 1
                     out_conn = next(iter(t.out_connectors))
-                    if out_conn == "e" or out_conn == "or":
-                        raise Exception("uwu")
                     array_name = f"{out_conn}{self.tmp_access_identifier}{split_access_counter}"
                     if array_name not in state.sdfg.arrays:
                         state.sdfg.add_scalar(

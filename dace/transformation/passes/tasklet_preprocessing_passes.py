@@ -15,32 +15,52 @@ from dace.transformation.passes.split_tasklets import SplitTasklets
 import ast
 
 
-class PowToMulExpander(ast.NodeTransformer):
+class PowerOperatorExpander(ast.NodeTransformer):
 
     def visit_BinOp(self, node):
-        self.generic_visit(node)  # first rewrite children
+        self.generic_visit(node)  # First, rewrite children
 
-        # Match "var ** int_like"
-        if isinstance(node.op, ast.Pow) and isinstance(node.right, ast.Constant):
-            val = node.right.value
+        # Match "a ** b"
+        if isinstance(node.op, ast.Pow):
+            right = node.right
+            left = node.left
 
-            # Accept ints directly
-            if isinstance(val, int):
-                n = val
-            # Accept floats that are exactly whole numbers (e.g. 3.0)
-            elif isinstance(val, float) and val.is_integer():
-                n = int(val)
-            else:
-                return node  # not integer-like → leave unchanged
+            # Case 1: integer-like exponent
+            if isinstance(right, ast.Constant):
+                val = right.value
+                if isinstance(val, int):
+                    n = val
+                elif isinstance(val, float) and val.is_integer():
+                    n = int(val)
+                else:
+                    n = None
 
-            if n > 1:
-                # Expand: x * x * ... * x
-                new_node = node.left
-                for _ in range(n - 1):
-                    new_node = ast.BinOp(left=ast.copy_location(new_node, node.left),
-                                         op=ast.Mult(),
-                                         right=ast.copy_location(ast.fix_missing_locations(node.left), node.left))
-                return ast.copy_location(new_node, node)
+                if n is not None:
+                    if n > 1:
+                        # Expand: x * x * ... * x
+                        new_node = ast.copy_location(left, left)
+                        for _ in range(n - 1):
+                            new_node = ast.BinOp(left=ast.copy_location(new_node, left),
+                                                 op=ast.Mult(),
+                                                 right=ast.copy_location(ast.fix_missing_locations(left), left))
+                        return ast.copy_location(new_node, node)
+                    else:
+                        # Leave x ** 0 or x ** 1 unchanged
+                        return node
+
+            # Case 2: non-integer exponent → use exp(y * log(x))
+            log_call = ast.Call(func=ast.Attribute(value=ast.Name(id="math", ctx=ast.Load()),
+                                                   attr="log",
+                                                   ctx=ast.Load()),
+                                args=[ast.copy_location(left, left)],
+                                keywords=[])
+            mul_expr = ast.BinOp(left=ast.copy_location(right, right), op=ast.Mult(), right=log_call)
+            exp_call = ast.Call(func=ast.Attribute(value=ast.Name(id="math", ctx=ast.Load()),
+                                                   attr="exp",
+                                                   ctx=ast.Load()),
+                                args=[mul_expr],
+                                keywords=[])
+            return ast.copy_location(exp_call, node)
 
         return node
 
@@ -77,9 +97,9 @@ class DaceCastRemover(ast.NodeTransformer):
         return node
 
 
-def _expand_pow_to_mul(src):
+def _expand_pow(src):
     tree = ast.parse(src)
-    tree = PowToMulExpander().visit(tree)
+    tree = PowerOperatorExpander().visit(tree)
     ast.fix_missing_locations(tree)
     return ast.unparse(tree)
 
@@ -100,7 +120,7 @@ def _remove_dace_int_casts(src):
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
-class IntegerPowerToMult(ppl.Pass):
+class PowerOperatorExpansionExapnsion(ppl.Pass):
     CATEGORY: str = 'Optimization Preparation'
 
     def modifies(self) -> ppl.Modifies:
@@ -117,7 +137,7 @@ class IntegerPowerToMult(ppl.Pass):
             if isinstance(node, dace.sdfg.nodes.Tasklet):
                 if node.code.language == dace.dtypes.Language.Python:
                     ast_str = node.code.as_string
-                    new_ast_str = _expand_pow_to_mul(ast_str)
+                    new_ast_str = _expand_pow(ast_str)
                     if new_ast_str != ast_str:
                         node.code = CodeBlock(new_ast_str, language=dace.Language.Python)
 
