@@ -37,7 +37,9 @@ class ASTSplitter:
                 ast.BitOr: '|',
                 ast.BitXor: '^',
                 ast.LShift: '<<',
-                ast.RShift: '>>'
+                ast.RShift: '>>',
+                ast.Or: 'or',
+                ast.And: 'and'
             }
             self.stmts.append(f"{t} = {l} {ops[type(node.op)]} {r}")
             return t
@@ -98,6 +100,8 @@ class ASTSplitter:
             values = [self.visit(v) for v in node.values]
             t = self.temp()
             op = ' and ' if isinstance(node.op, ast.And) else ' or '
+            if op == "or":
+                assert isinstance(node.op, ast.Or)
             self.stmts.append(f"{t} = {op.join(values)}")
             return t
 
@@ -255,6 +259,8 @@ class SplitTasklets(ppl.Pass):
                     for in_conn in t.in_connectors.keys():
                         matching_in_edges = {ie for ie in tasklet_input_edges if ie.dst_conn == in_conn}
                         if len(matching_in_edges) == 0:
+                            if in_conn == "e" or in_conn == "or":
+                                raise Exception("uwu", t.in_connectors)
                             array_name = f"{in_conn}{self.tmp_access_identifier}{split_access_counter}"
                             if array_name not in state.sdfg.arrays:
                                 state.sdfg.add_scalar(
@@ -288,6 +294,8 @@ class SplitTasklets(ppl.Pass):
                     # Output should have been added already
                     assert len(t.out_connectors) == 1
                     out_conn = next(iter(t.out_connectors))
+                    if out_conn == "e" or out_conn == "or":
+                        raise Exception("uwu")
                     array_name = f"{out_conn}{self.tmp_access_identifier}{split_access_counter}"
                     if array_name not in state.sdfg.arrays:
                         state.sdfg.add_scalar(
