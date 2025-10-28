@@ -133,7 +133,7 @@ def _get_vars(ssa_line: str) -> Tuple[List[str], List[str]]:
     lhs = lhs.strip()
     rhs = rhs.strip()
     # Also ignore log functions
-    function_names = dace.symbolic._builtin_userfunctions.union({"log", "Log", "ln", "exp", "Exp"})
+    function_names = dace.symbolic._builtin_userfunctions.union({"log", "Log", "ln", "exp", "Exp", "or", "and", "Or", "And", "OR", "AND"})
     print(f"{ssa_line} -> {dace.symbolic.symbols_in_code(rhs, symbols_to_ignore=function_names)}")
     return [lhs], list(dace.symbolic.symbols_in_code(rhs, symbols_to_ignore=function_names))
 
