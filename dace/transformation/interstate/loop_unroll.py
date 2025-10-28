@@ -101,20 +101,20 @@ class LoopUnroll(xf.MultiStateTransformation):
                 assert oe.dst in graph.nodes()
                 graph.add_edge(unrolled_iterations[-1], oe.dst, oe.data)
 
-        # If we remove start block we need to update it
+        # If we remove start block we need to update the new start-block
         was_start_block = graph.start_block == self.loop
         graph.remove_node(self.loop)
         if was_start_block:
             oes = graph.out_edges(self.loop)
             if len(oes) > 0:
-                dst = oes[0].dst
+                oe = oes[0]
+                oes2 = graph.out_edges(oe.dst)
                 graph.remove_node(oe.dst)
-                oes2 = graph.out_edges(dst)
                 assert len(oes2) <= 1
                 if len(oes2) == 1:
                     graph.add_node(oe.dst, is_start_block=True)
                     for oe2 in oes2:
-                        graph.add_edge(dst, oe2.dst, copy.deepcopy(oes2))
+                        graph.add_edge(oe.dst, oe2.dst, copy.deepcopy(oe2.data))
                 else:
                     graph.add_node(oe.dst, is_start_block=True)
 

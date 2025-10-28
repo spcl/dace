@@ -37,7 +37,7 @@ def test_overlapping_access():
     assert len(map_entries) == 1
     map_entry, state = map_entries.pop()
 
-    cutil.duplicate_memlets_from_single_in_connector(state, map_entry)
+    cutil.duplicate_memlets_sharing_single_in_connector(state, map_entry)
     sdfg.validate()
 
 
@@ -49,7 +49,7 @@ def test_overlapping_access_with_previous_write():
     assert len(map_entries) == 1
     map_entry, state = map_entries.pop()
 
-    cutil.duplicate_memlets_from_single_in_connector(state, map_entry)
+    cutil.duplicate_memlets_sharing_single_in_connector(state, map_entry)
     sdfg.validate()
 
 
@@ -64,7 +64,7 @@ def test_overlapping_access_with_intermediate_access_node():
     assert len(map_entries) == 1
     map_entry, state = map_entries.pop()
 
-    cutil.duplicate_memlets_from_single_in_connector(state, map_entry)
+    cutil.duplicate_memlets_sharing_single_in_connector(state, map_entry)
     sdfg.validate()
 
 
