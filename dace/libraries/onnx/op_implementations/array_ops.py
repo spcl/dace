@@ -923,7 +923,25 @@ class PureGather(ONNXForward):
         out_shape = out_desc.shape
         idx_desc = in_desc_with_name(node, state, sdfg, "indices")
         idx_shape = idx_desc.shape
-        data_shape = in_desc_with_name(node, state, sdfg, "data").shape
+        data_desc = in_desc_with_name(node, state, sdfg, "data")
+        data_shape = data_desc.shape
+
+        # Handle degenerate case: scalar data (size 1)
+        # In this case, just copy the value without indexing
+        is_scalar_data = (isinstance(data_desc, dace.data.Scalar)
+                          or (hasattr(data_desc, 'total_size') and data_desc.total_size == 1))
+        is_scalar_output = (isinstance(out_desc, dace.data.Scalar)
+                            or (hasattr(out_desc, 'total_size') and out_desc.total_size == 1))
+
+        if is_scalar_data and is_scalar_output:
+            # Both data and output are scalars - just copy
+            tasklet = nstate.add_tasklet(node.label + "_tasklet", {"__data": data_desc.dtype},
+                                         {"__output": out_desc.dtype}, "__output = __data")
+            data_read = nstate.add_read("data")
+            output_write = nstate.add_write("output")
+            nstate.add_edge(data_read, None, tasklet, "__data", dace.Memlet.from_array("data", data_desc))
+            nstate.add_edge(tasklet, "__output", output_write, None, dace.Memlet.from_array("output", out_desc))
+            return nsdfg
 
         # FIXME: we can sometimes generate views
 
@@ -972,7 +990,8 @@ class PureGather(ONNXForward):
 
         # required to make underlying code to see it as a pointer and enable index-based access
         # even if the data contains just a single element
-        tasklet.in_connectors["__data"] = dace.pointer(out_desc.dtype)
+        # IMPORTANT: Use data_desc.dtype, not out_desc.dtype!
+        tasklet.in_connectors["__data"] = dace.pointer(data_desc.dtype)
 
         return nsdfg
 
