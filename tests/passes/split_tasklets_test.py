@@ -35,10 +35,10 @@ example_expressions = [
     ("tmp_call_15_out = min(min(w_con_e_0_in, w_con_e_1_in), 0.0)", 2),  # 2 min()
     ("tmp_call_15_out = exp(exp(a))", 2),  # 2 exp()
     ("tmp_call_15_out = log(log(a))", 2),  # 2 log()
-    ("out = a or b", 1), # 1 or
-    ("out = a << 2", 1), # 1 <<
-    ("out = a >> 2", 1), # 1 >>
-    ("out = a | 2", 1), # 1 |
+    ("out = a or b", 1),  # 1 or
+    ("out = a << 2", 1),  # 1 <<
+    ("out = a >> 2", 1),  # 1 >>
+    ("out = a | 2", 1),  # 1 |
 ]
 
 # Double-split tasklet test case - Format: ((expr1, expr2), expected_total_statements)
