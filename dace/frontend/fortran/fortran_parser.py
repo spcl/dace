@@ -2192,6 +2192,13 @@ class AST_translator:
         :param cfg: The control flow region to which the node should be translated
         """
 
+        # Transform array assignments into individual assignments
+        if isinstance(node.rval, ast_internal_classes.Array_Constructor_Node):
+            # node.lval = node.lval.name
+            # new_exec = ast_transforms.ReplaceArrayConstructor().visit(node)
+            new_exec = ast_transforms.ReplaceArrayAssignment().visit(node)
+            self.translate(new_exec, sdfg, cfg)
+            return
         calls = list(mywalk(node, ast_internal_classes.Call_Expr_Node))
         if len(calls) == 1:
             augmented_call = calls[0]
