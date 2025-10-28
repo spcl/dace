@@ -1,6 +1,8 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+from typing import Dict, Iterator
 import dace
-from dace.transformation import pass_pipeline as ppl
+from dace.transformation import Pass, pass_pipeline as ppl
+from dace.transformation.pass_pipeline import Modifies
 from dace.transformation.passes.clean_data_to_scalar_slice_to_tasklet_pattern import CleanDataToScalarSliceToTaskletPattern
 from dace.transformation.passes.duplicate_all_memlets_sharing_same_in_connector import DuplicateAllMemletsSharingSingleMapOutConnector
 from dace.transformation.passes.split_tasklets import SplitTasklets
@@ -9,6 +11,7 @@ from dace.transformation.passes import InlineSDFGs
 from dace.transformation.passes.explicit_vectorization import ExplicitVectorization
 from dace.transformation.passes.fuse_branches_pass import FuseBranchesPass
 from dace.transformation.passes.remove_redundant_assignment_tasklets import RemoveRedundantAssignmentTasklets
+import dace.sdfg.utils as sdutil
 
 
 class ExplicitVectorizationPipelineGPU(ppl.Pipeline):
@@ -93,7 +96,6 @@ __host__ __device__ __forceinline__ void vector_copy(T * __restrict__ dst, const
             PowerOperatorExpansion(),
             SplitTasklets(),
             CleanDataToScalarSliceToTaskletPattern(),
-            RemoveRedundantAssignmentTasklets(),
             InlineSDFGs(),
             DuplicateAllMemletsSharingSingleMapOutConnector(),
             ExplicitVectorization(
@@ -113,3 +115,15 @@ __host__ __device__ __forceinline__ void vector_copy(T * __restrict__ dst, const
             )
         ]
         super().__init__(passes)
+
+    def iterate_over_passes(self, sdfg: dace.SDFG) -> Iterator[Pass]:
+        """
+        Iterates over passes in the pipeline, potentially multiple times based on which elements were modified
+        in the pass.
+        Note that this method may be overridden by subclasses to modify pass order.
+
+        :param sdfg: The SDFG on which the pipeline is currently being applied
+        """
+        for p in self.passes:
+            p: Pass
+            yield p

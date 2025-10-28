@@ -3,25 +3,22 @@ import dace.sdfg.construction_utils as cutil
 
 S = dace.symbol("S")
 
+
 @dace.program
-def overlapping_access(A: dace.float64[2, 2, S],
-                       B: dace.float64[S]):
+def overlapping_access(A: dace.float64[2, 2, S], B: dace.float64[S]):
     for i in dace.map[0:S:1]:
         B[i] = A[0, 0, i] + A[1, 0, i]
 
 
 @dace.program
-def overlapping_access_with_previous_write(A: dace.float64[2, 2, S],
-                                           B: dace.float64[S]):
+def overlapping_access_with_previous_write(A: dace.float64[2, 2, S], B: dace.float64[S]):
     A[0, 0, 0] = 3.0
     for i in dace.map[0:S:1]:
         B[i] = A[0, 0, i] + A[1, 0, i]
 
 
 @dace.program
-def overlapping_with_intermediate_access_node(A: dace.float64[2, 2, S],
-                                                B: dace.float64[2, 2, S],
-                                                C: dace.float64[S]):
+def overlapping_with_intermediate_access_node(A: dace.float64[2, 2, S], B: dace.float64[2, 2, S], C: dace.float64[S]):
     A[0, 0, 0] = 3.0
     for i in dace.map[0:2:1]:
         c = B[i, 0, 0]
@@ -53,13 +50,12 @@ def test_overlapping_access_with_previous_write():
     sdfg.validate()
 
 
-
-
 def test_overlapping_access_with_intermediate_access_node():
     sdfg = overlapping_with_intermediate_access_node.to_sdfg()
     sdfg.validate()
 
-    map_entries = {(n, g) for n, g in sdfg.all_nodes_recursive()
+    map_entries = {(n, g)
+                   for n, g in sdfg.all_nodes_recursive()
                    if isinstance(n, dace.nodes.MapEntry) and g.scope_dict()[n] is not None}
     assert len(map_entries) == 1
     map_entry, state = map_entries.pop()

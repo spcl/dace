@@ -419,7 +419,9 @@ def test_tasklets_in_if():
     assert numpy.allclose(arrays_orig['d'], arrays_vec['d']), f"D Diff: {arrays_orig['d'] - arrays_vec['d']}"
 
 
-def test_tasklets_in_if_two():
+# There was a non-deterministic bug, therefore run it multiple times
+@pytest.mark.parametrize("run_id", [i for i in range(8)])
+def test_tasklets_in_if_two(run_id):
     _S = 64
     A = numpy.random.random((_S, _S))
     B = numpy.random.random((1, ))
@@ -521,6 +523,19 @@ def overlapping_access(A: dace.float64[2, 2, S], B: dace.float64[S]):
         B[i] = A[0, 0, i] + A[1, 0, i]
 
 
+@dace.program
+def overlapping_access_same_src_and_dst(A: dace.float64[2, 2, S]):
+    for i in dace.map[0:S:1]:
+        A[0, 0, i] = A[0, 0, i] + A[1, 0, i]
+
+
+@dace.program
+def overlapping_access_same_src_and_dst_in_nestedsdfg(A: dace.float64[2, 2, S], js: dace.int64):
+    for i in dace.map[0:S:1]:
+        j = js + 1
+        A[0, j, i] = A[0, j, i] + A[1, j, i]
+
+
 def test_overlapping_access():
     _S = 64
     A = numpy.random.random((2, 2, _S))
@@ -540,6 +555,45 @@ def test_overlapping_access():
                            vector_width=8,
                            save_sdfgs=True,
                            sdfg_name="overlapping_access")
+
+
+def test_overlapping_access_same_src_and_dst():
+    _S = 64
+    A = numpy.random.random((2, 2, _S))
+
+    sdfg = overlapping_access_same_src_and_dst.to_sdfg()
+    sdfg.save("s.sdfg")
+
+    run_vectorization_test(dace_func=overlapping_access_same_src_and_dst,
+                           arrays={
+                               'A': A,
+                           },
+                           params={
+                               'S': _S,
+                           },
+                           vector_width=8,
+                           save_sdfgs=True,
+                           sdfg_name="overlapping_access_same_src_and_dst")
+
+
+def test_overlapping_access_same_src_and_dst_in_nestedsdfg():
+    _S = 64
+    A = numpy.random.random((2, 2, _S))
+
+    sdfg = overlapping_access_same_src_and_dst_in_nestedsdfg.to_sdfg()
+    sdfg.save("s.sdfg")
+
+    run_vectorization_test(dace_func=overlapping_access_same_src_and_dst_in_nestedsdfg,
+                           arrays={
+                               'A': A,
+                           },
+                           params={
+                               'S': _S,
+                               "js": 0,
+                           },
+                           vector_width=8,
+                           save_sdfgs=True,
+                           sdfg_name="overlapping_access_same_src_and_dst_in_nestedsdfg")
 
 
 def test_spmv():
@@ -577,30 +631,16 @@ def test_spmv():
     # Compare results
     assert numpy.allclose(y_orig, y_vec), f"{y_orig - y_vec}"
 
+
 @dace.program
 def jacobi2d(A: dace.float64[S, S], B: dace.float64[S, S], tsteps: dace.int64):  #, N, tsteps):
     for t in range(tsteps):
-        @dace.map
-        def a(i: _[1:N - 1], j: _[1:N - 1]):
-            a1 << A[i, j]
-            a2 << A[i, j - 1]
-            a3 << A[i, j + 1]
-            a4 << A[i + 1, j]
-            a5 << A[i - 1, j]
-            b >> B[i, j]
+        for i, j in dace.map[0:S - 2, 0:S - 2]:
+            B[i + 1, j + 1] = 0.2 * (A[i + 1, j + 1] + A[i, j + 1] + A[i + 2, j + 1] + A[i + 1, j] + A[i + 1, j + 2])
 
-            b = 0.2 * (a1 + a2 + a3 + a4 + a5)
+        for i, j in dace.map[0:S - 2, 0:S - 2]:
+            A[i + 1, j + 1] = 0.2 * (B[i + 1, j + 1] + B[i, j + 1] + B[i + 2, j + 1] + B[i + 1, j] + B[i + 1, j + 2])
 
-        @dace.map
-        def b(i: _[1:N - 1], j: _[1:N - 1]):
-            a1 << B[i, j]
-            a2 << B[i, j - 1]
-            a3 << B[i, j + 1]
-            a4 << B[i + 1, j]
-            a5 << B[i - 1, j]
-            b >> A[i, j]
-
-            b = 0.2 * (a1 + a2 + a3 + a4 + a5)
 
 def test_jacobi2d():
     _S = 64
@@ -622,6 +662,7 @@ def test_jacobi2d():
                            save_sdfgs=True,
                            sdfg_name="jacobi2d")
 
+
 if __name__ == "__main__":
     test_vsubs_cpu()
     test_vsubs_two_cpu()
@@ -630,10 +671,13 @@ if __name__ == "__main__":
     test_unsupported_op()
     test_unsupported_op_two()
     test_tasklets_in_if()
-    test_tasklets_in_if_two()
+    for i in range(8):
+        test_tasklets_in_if_two(i)
     test_nested_sdfg()
     test_simple_cpu()
     test_no_maps()
     test_spmv()
     test_overlapping_access()
     test_jacobi2d()
+    test_overlapping_access_same_src_and_dst()
+    test_overlapping_access_same_src_and_dst_in_nestedsdfg()

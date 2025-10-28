@@ -127,7 +127,7 @@ class PowerOperatorExpansion(ppl.Pass):
         return ppl.Modifies.Tasklets
 
     def should_reapply(self, modified: ppl.Modifies):
-        return ppl.Modifies.Tasklets
+        return False
 
     def depends_on(self):
         return {}
@@ -153,7 +153,7 @@ class RemoveFPTypeCasts(ppl.Pass):
         return ppl.Modifies.Tasklets
 
     def should_reapply(self, modified: ppl.Modifies):
-        return ppl.Modifies.Tasklets
+        return False
 
     def depends_on(self):
         return {}
@@ -177,7 +177,7 @@ class RemoveIntTypeCasts(ppl.Pass):
         return ppl.Modifies.Tasklets
 
     def should_reapply(self, modified: ppl.Modifies):
-        return ppl.Modifies.Tasklets
+        return False
 
     def depends_on(self):
         return {}

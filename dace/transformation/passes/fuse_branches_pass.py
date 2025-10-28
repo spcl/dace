@@ -21,7 +21,7 @@ class FuseBranchesPass(ppl.Pass):
         return ppl.Modifies.CFG
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
-        return (modified & ppl.Modifies.CFG)
+        return False
 
     def _apply_fuse_branches(self, root: dace.SDFG, sdfg: dace.SDFG, parent_nsdfg_state: Union[dace.SDFG, None] = None):
         """Apply FuseBranches transformation to all eligible conditionals."""

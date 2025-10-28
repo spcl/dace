@@ -1099,6 +1099,7 @@ def propagate_memlets_nested_sdfg(parent_sdfg: 'SDFG', parent_state: 'SDFGState'
                                 fall_back = True
                                 break
                         if fall_back:
+                            sdfg.save("x.sdfg")
                             border_memlet.src_subset[i] = fallback_subset[i]
                 if border_memlet.dst_subset is not None:
                     if border_memlet.data is None:

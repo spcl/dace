@@ -9,6 +9,7 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 from dace import SDFG, Memlet, SDFGState, properties, transformation
 from dace import typeclass
 from dace.sdfg.graph import Edge
+from dace.sdfg.nodes import CodeNode
 from dace.sdfg.sdfg import InterstateEdge
 from dace.transformation import pass_pipeline as ppl, dataflow as dftrans
 from dace.transformation.passes import analysis as ap, pattern_matching as pmp
@@ -47,12 +48,13 @@ class ExplicitVectorization(ppl.Pass):
         self.global_code_location = global_code_location
         self._tasklet_vectorizable_map = dict()
         self.vector_op_numeric_type = vector_op_numeric_type
+        self._used_names = set()
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
 
     def should_reapply(self, modified: ppl.Modifies):
-        return ppl.Modifies.States | ppl.Modifies.Tasklets | ppl.Modifies.NestedSDFGs | ppl.Modifies.Scopes | ppl.Modifies.Descriptors
+        return False
 
     def depends_on(self):
         return {
@@ -215,13 +217,14 @@ class ExplicitVectorization(ppl.Pass):
         }
         print(f"Inner SDFG now has following vector-width arrays: {vector_width_arrays}")
         print(f"Inner SDFG now has following scalars: {scalars}")
-        state.sdfg.save("x1.sdfg")
+        state.sdfg.validate()
+        state.sdfg.save("y1.sdfg")
 
         # 1.2
         scalar_source_nodes: List[Tuple[dace.SDFGState,
                                         dace.nodes.AccessNode]] = get_scalar_source_nodes(inner_sdfg, True)
         scalar_sink_nodes: List[Tuple[dace.SDFGState, dace.nodes.AccessNode]] = get_scalar_sink_nodes(inner_sdfg, True)
-        print(scalar_source_nodes, scalar_sink_nodes)
+        print("CXC", scalar_source_nodes, scalar_sink_nodes)
 
         # 1.3 and 1.3.1
         if len(scalar_source_nodes) > 1 and len(scalar_sink_nodes) > 1:
@@ -237,7 +240,7 @@ class ExplicitVectorization(ppl.Pass):
             scalar_sink_nodes: List[Tuple[dace.SDFGState,
                                           dace.nodes.AccessNode]] = get_scalar_sink_nodes(inner_sdfg, True)
 
-        state.sdfg.save("x2.sdfg")
+        state.sdfg.save("y2.sdfg")
 
         if len(scalar_source_nodes) > 0 and len(scalar_sink_nodes) > 0:
             raise Exception(
@@ -301,7 +304,7 @@ class ExplicitVectorization(ppl.Pass):
             for k, v in edge.data.assignments.items():
                 free_syms.add(k)
                 free_syms = free_syms.union({str(vv) for vv in dace.symbolic.SymExpr(v).free_symbols})
-            print(free_syms, {fs in candidate_arrays for fs in free_syms})
+            print("BBB", free_syms, {fs in candidate_arrays for fs in free_syms})
             if any({fs in candidate_arrays for fs in free_syms}):
                 self._expand_interstate_assignment(inner_sdfg, edge, free_syms, candidate_arrays)
 
@@ -375,7 +378,9 @@ class ExplicitVectorization(ppl.Pass):
                         # A -[j]> B becomes now
                         # A -[j0,j1,...,j7]-> A_packed -[0:8]-> B
                         for i in range(self.vector_width):
-                            new_subset = repl_subset_to_symbol_offset(subset=edge.data.subset, symbol_offset=str(i))
+                            new_subset = repl_subset_to_symbol_offset(sdfg=state.sdfg,
+                                                                      subset=edge.data.subset,
+                                                                      symbol_offset=str(i))
                             at = state.add_tasklet(
                                 name=f"assign_{i}",
                                 inputs={
@@ -645,42 +650,184 @@ class ExplicitVectorization(ppl.Pass):
                 instantiate_tasklet_from_info(state, node, tasklet_info, self.vector_width, self.templates,
                                               vector_map_param)
 
-    def _offset_memlets(self, state: SDFGState, map_entry: dace.nodes.MapEntry, offsets: List[dace.symbolic.SymExpr],
-                        dataname: str, vectorization_number: int):
+    def _offset_all_memlets(self, state: SDFGState, map_entry: dace.nodes.MapEntry, dataname: str, new_dataname: str):
         nodes = list(state.all_nodes_between(map_entry, state.exit_node(map_entry)))
         assert not any({
             isinstance(node, dace.nodes.MapEntry)
             for node in nodes
         }), f"No map entry nodes are allowed within the vectorized map entry - this case is not supported yet"
         edges = state.all_edges(*nodes)
-        self._offset_memlets_from_edge_list(state, edges, offsets, dataname, vectorization_number)
+        self._offset_memlets_from_edge_list(state, edges, dataname, new_dataname)
 
-    def _offset_memlets_from_edge_list(self, state: SDFGState, edges: Iterable[Edge[Memlet]],
-                                       offsets: List[dace.symbolic.SymExpr], dataname: str, vectorization_number: int):
+    def _offset_memlets_from_edge_list(self, state: SDFGState, edges: Iterable[Edge[Memlet]], dataname: str,
+                                       new_dataname: str):
         for edge in edges:
-            if edge.data is None or edge.data.data != dataname:
+            if edge.data.data is None or edge.data.data != dataname:
                 continue
             memlet: dace.memlet.Memlet = edge.data
 
             assert memlet.other_subset is None, f"Other subset not supported in vectorization yet, found {memlet.other_subset} that is None for {memlet} (edge: {edge}) (state: {state})"
 
             new_memlet = dace.memlet.Memlet(
-                data=f"{memlet.data}_vec_k{vectorization_number}",
+                data=new_dataname,
                 subset=dace.subsets.Range([(0, self.vector_width - 1, 1)]),
             )
             state.remove_edge(edge)
             state.add_edge(edge.src, edge.src_conn, edge.dst, edge.dst_conn, new_memlet)
 
+    def _iterate_on_path_from_map_entry_to_exit(self, state: SDFGState, map_exit: dace.nodes.MapExit,
+                                                data_in_edge: Edge[Memlet], dataname: str, new_dataname: str):
+        # IMPORTANT!
+        # Get memlet paths until we reach map exit
+        # This will create a problem if the input flows into the exit because we can't distinguish,
+        # We will assume the first occurence flow to the exit
+        edges_to_check = state.memlet_path(data_in_edge)
+
+        while edges_to_check:
+            for edge in edges_to_check:
+                if edge.dst == map_exit:
+                    edges_to_check = None
+                    break
+
+                if edge.data.data is None or edge.data.data != dataname:
+                    continue
+
+                memlet: dace.memlet.Memlet = edge.data
+
+                assert memlet.other_subset is None, f"Other subset not supported in vectorization yet, found {memlet.other_subset} that is None for {memlet} (edge: {edge}) (state: {state})"
+
+                new_memlet = dace.memlet.Memlet(
+                    data=new_dataname,
+                    subset=dace.subsets.Range([(0, self.vector_width - 1, 1)]),
+                )
+                state.remove_edge(edge)
+                state.add_edge(edge.src, edge.src_conn, edge.dst, edge.dst_conn, new_memlet)
+
+            if edges_to_check is not None:
+                sink_node = edges_to_check[-1].dst
+                # Tasklet (SSA-ed) or access nodes can appear, this means one edge
+                new_out_edges = state.out_edges(sink_node)
+                assert len(new_out_edges
+                           ) == 1, f"Sink node {sink_node} has out edges {new_out_edges}, excepted to have 1 out-edge"
+                new_out_edge = new_out_edges[0]
+                edges_to_check = state.memlet_path(new_out_edge)
+
+            # the sink node is a code node and out data has the same array then we have a problem (not that we can fix but it needs to be preprocessed)
+            if isinstance(sink_node, (CodeNode, dace.nodes.Tasklet)):
+                for ie in state.out_edges(sink_node):
+                    if ie.data.data is not None and ie.data.data == dataname:
+                        print(
+                            f"After sink node, the data {dataname} is still used, dangerous. Implementation assumes, the first one flows out we have two inputs that access the same"
+                        )
+
+    def _iterate_on_path_from_map_exit_to_entry(self, state: SDFGState, map_entry: dace.nodes.MapEntry,
+                                                data_out_edge: Edge[Memlet], dataname: str, new_dataname: str):
+        edges_to_check = state.memlet_path(data_out_edge)
+
+        while edges_to_check:
+            for edge in edges_to_check:
+                if edge.src == map_entry:
+                    edges_to_check = None
+                    break
+
+                if edge.data.data is None or edge.data.data != dataname:
+                    continue
+
+                memlet: dace.memlet.Memlet = edge.data
+
+                assert memlet.other_subset is None, f"Other subset not supported in vectorization yet, found {memlet.other_subset} that is None for {memlet} (edge: {edge}) (state: {state})"
+
+                new_memlet = dace.memlet.Memlet(
+                    data=new_dataname,
+                    subset=dace.subsets.Range([(0, self.vector_width - 1, 1)]),
+                )
+                state.remove_edge(edge)
+                state.add_edge(edge.src, edge.src_conn, edge.dst, edge.dst_conn, new_memlet)
+
+            if edges_to_check is not None:
+                source_node = edges_to_check[0].src
+                # Tasklet (SSA-ed) or access nodes can appear, this means one edge
+                new_in_edges = state.in_edges(source_node)
+                #assert len(new_in_edges) == 1, f"Source node {source_node} has out edges {new_in_edges}, excepted to have 1 out-edge"
+                # if length is not 1 we cant now what to do anymore
+                if len(new_in_edges) == 1:
+                    new_in_edge = new_in_edges[0]
+                    edges_to_check = state.memlet_path(new_in_edge)
+                else:
+                    new_in_edge = None
+                    edges_to_check = None
+
+            # the sink node is a code node and out data has the same array then we have a problem (not that we can fix but it needs to be preprocessed)
+            if isinstance(source_node, (CodeNode, dace.nodes.Tasklet)):
+                for ie in state.in_edges(source_node):
+                    if ie.data.data is not None and ie.data.data == dataname:
+                        print(
+                            f"After source node, the data {dataname} is still used, dangerous. Implementation assumes, the first one flows out we have two inputs that access the same"
+                        )
+
+    def _offset_memlets_on_path(self, state: SDFGState, map_entry: dace.nodes.MapEntry, dataname: str,
+                                new_dataname: str):
+        # Get memlet paths
+        # And while memlet we have not encountered the map exit continue
+        # if we find data name then we will replace
+        print(f"Offset memlets on path {dataname} -> {new_dataname}")
+        # Precondition: memlet-path and no tree (previous passes to explicit vectorization should have fixed that)
+        # one in edge to the map entry with the vector data
+        map_exit = state.exit_node(map_entry)
+
+        # Get all in edges (need to do the same for the map exit later)
+        # Go from map_entry -> map_exit for input data
+        # map_exit -> map_entry for output data
+        in_edges = state.in_edges(map_entry)
+        # Filter by the data
+        data_in_edges = {e for e in in_edges if e.data.data == new_dataname}
+        assert len(data_in_edges) <= 1
+        if len(data_in_edges) == 1:
+            data_in_edge: Edge[Memlet] = next(iter(data_in_edges))
+            self._iterate_on_path_from_map_entry_to_exit(state, map_exit, data_in_edge, dataname, new_dataname)
+
+        # Now for map exit
+        out_edges = state.out_edges(map_exit)
+        # Filter by the data
+        print(out_edges)
+        data_out_edges = {e for e in out_edges if e.data.data == new_dataname}
+        print(out_edges)
+        assert len(data_out_edges) <= 1
+        if len(data_out_edges) == 1:
+            print("CCC", data_out_edges)
+            data_out_edge: Edge[Memlet] = next(iter(data_out_edges))
+
+            # IMPORTANT!
+            # Get memlet paths until we reach map exit
+            # This will create a problem if the input flows into the exit because we can't distinguish,
+            # We will assume the first occurence flow to the exit
+            self._iterate_on_path_from_map_exit_to_entry(state, map_entry, data_out_edge, dataname, new_dataname)
+
+        assert len(data_in_edges) == 1 or len(
+            data_out_edges
+        ) == 1, f"{dataname} -> {new_dataname} no data in our out edges found | {in_edges}, {out_edges}"
+
+    def _find_new_name(self, candidate: str):
+        candidate2 = candidate
+        i = 0
+        while candidate2 in self._used_names:
+            candidate2 = candidate + f"_{i}"
+            i += 1
+        self._used_names.add(candidate)
+        return candidate2
+
     def _copy_in_and_copy_out(self, state: SDFGState, map_entry: dace.nodes.MapEntry, vectorization_number: int):
         map_exit = state.exit_node(map_entry)
         data_and_offsets = list()
+        in_datas = set()
         for ie in state.in_edges(map_entry):
             # If input storage is not registers need to copy in
             array = state.parent_graph.sdfg.arrays[ie.data.data]
             if array.storage != self.vector_input_storage:
                 # Add new array, if not there
-                if f"{ie.data.data}_vec_k{vectorization_number}" not in state.parent_graph.sdfg.arrays:
-                    state.parent_graph.sdfg.add_array(name=f"{ie.data.data}_vec_k{vectorization_number}",
+                arr_name_to_use = self._find_new_name(f"{ie.data.data}_vec_k{vectorization_number}")
+                if arr_name_to_use not in state.parent_graph.sdfg.arrays:
+                    state.parent_graph.sdfg.add_array(name=arr_name_to_use,
                                                       shape=(self.vector_width, ),
                                                       dtype=array.dtype,
                                                       storage=self.vector_input_storage,
@@ -689,29 +836,35 @@ class ExplicitVectorization(ppl.Pass):
                                                       alignment=self.vector_width * array.dtype.bytes,
                                                       find_new_name=False,
                                                       may_alias=False)
-                an = state.add_access(f"{ie.data.data}_vec_k{vectorization_number}")
+                in_datas.add(arr_name_to_use)
+                an = state.add_access(arr_name_to_use)
                 src, src_conn, dst, dst_conn, data = ie
                 state.remove_edge(ie)
                 state.add_edge(src, src_conn, an, None, copy.deepcopy(data))
                 state.add_edge(an, None, map_entry, ie.dst_conn,
-                               dace.memlet.Memlet(f"{ie.data.data}_vec_k{vectorization_number}[0:{self.vector_width}]"))
+                               dace.memlet.Memlet(f"{arr_name_to_use}[0:{self.vector_width}]"))
 
                 memlet: dace.memlet.Memlet = ie.data
                 dataname: str = memlet.data
                 offsets = [b for (b, e, s) in memlet.subset]
-                for data, _off in data_and_offsets:
-                    if data == dataname:
-                        if _off != offsets:
-                            raise ValueError(
-                                f"Cannot handle multiple input edges from the same array {dataname} to the same map {map_entry} in state {state}"
-                            )
-                data_and_offsets.append((dataname, offsets))
-
+                #for data, _off in data_and_offsets:
+                #    if data == dataname:
+                #        if _off != offsets:
+                #            state.sdfg.save("uwuowo.sdfg")
+                #            raise ValueError(
+                #                f"Cannot handle multiple input edges from the same array {dataname} to the same map {map_entry} in state {state}"
+                #            )
+                data_and_offsets.append((dataname, arr_name_to_use, offsets))
+        print("Added in data:", in_datas)
+        out_datas = set()
         for oe in state.out_edges(map_exit):
             array = state.parent_graph.sdfg.arrays[oe.data.data]
+            print(array)
             if array.storage != self.vector_output_storage:
-                if f"{oe.data.data}_vec_k{vectorization_number}" not in state.parent_graph.sdfg.arrays:
-                    state.parent_graph.sdfg.add_array(name=f"{oe.data.data}_vec_k{vectorization_number}",
+                # If the name exists in the inputs, reuse the name
+                arr_name_to_use = f"{oe.data.data}_vec_k{vectorization_number}"
+                if arr_name_to_use not in state.parent_graph.sdfg.arrays:
+                    state.parent_graph.sdfg.add_array(name=arr_name_to_use,
                                                       shape=(self.vector_width, ),
                                                       dtype=array.dtype,
                                                       storage=self.vector_input_storage,
@@ -720,25 +873,27 @@ class ExplicitVectorization(ppl.Pass):
                                                       alignment=self.vector_width * array.dtype.bytes,
                                                       find_new_name=False,
                                                       may_alias=False)
-                an = state.add_access(f"{oe.data.data}_vec_k{vectorization_number}")
+                out_datas.add(arr_name_to_use)
+                an = state.add_access(arr_name_to_use)
                 src, src_conn, dst, dst_conn, data = oe
                 state.remove_edge(oe)
                 state.add_edge(map_exit, src_conn, an, None,
-                               dace.memlet.Memlet(f"{oe.data.data}_vec_k{vectorization_number}[0:{self.vector_width}]"))
+                               dace.memlet.Memlet(f"{arr_name_to_use}[0:{self.vector_width}]"))
                 state.add_edge(an, None, dst, dst_conn, copy.deepcopy(data))
 
                 memlet: dace.memlet.Memlet = oe.data
                 dataname: str = memlet.data
                 offsets = [b for (b, e, s) in memlet.subset]
-                for data, _off in data_and_offsets:
-                    if data == dataname:
-                        if _off != offsets:
-                            raise NotImplementedError(
-                                f"Vectorization can't handle when data appears both in input and output sets of a map")
-                data_and_offsets.append((dataname, offsets))
+                #for data, _off in data_and_offsets:
+                #    if data == dataname:
+                #        if _off != offsets:
+                #            raise NotImplementedError(
+                #                f"Vectorization can't handle when data appears both in input and output sets of a map")
+                data_and_offsets.append((dataname, arr_name_to_use, offsets))
+        print("Out data:", out_datas)
 
-        for dataname, offsets in data_and_offsets:
-            self._offset_memlets(state, map_entry, offsets, dataname, vectorization_number)
+        for dataname, new_dataname, offsets in data_and_offsets:
+            self._offset_memlets_on_path(state, map_entry, dataname, new_dataname)
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Set[str]]]:
         stride_type = assert_strides_are_packed_C_or_packed_Fortran(sdfg)
