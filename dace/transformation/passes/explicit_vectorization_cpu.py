@@ -3,7 +3,7 @@ import dace
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.clean_data_to_scalar_slice_to_tasklet_pattern import CleanDataToScalarSliceToTaskletPattern
 from dace.transformation.passes.split_tasklets import SplitTasklets
-from dace.transformation.passes.tasklet_preprocessing_passes import PowerOperatorExpansionExapnsion, RemoveFPTypeCasts, RemoveIntTypeCasts
+from dace.transformation.passes.tasklet_preprocessing_passes import PowerOperatorExpansion, RemoveFPTypeCasts, RemoveIntTypeCasts
 from dace.transformation.passes import InlineSDFGs
 from dace.transformation.passes.explicit_vectorization import ExplicitVectorization
 from dace.transformation.passes.fuse_branches_pass import FuseBranchesPass
@@ -296,7 +296,7 @@ inline void vector_ne_w_scalar(T * __restrict__ out, const T * __restrict__ a, c
             FuseBranchesPass(),
             RemoveFPTypeCasts(),
             RemoveIntTypeCasts(),
-            PowerOperatorExpansionExapnsion(),
+            PowerOperatorExpansion(),
             SplitTasklets(),
             CleanDataToScalarSliceToTaskletPattern(),
             InlineSDFGs(),
@@ -311,12 +311,12 @@ inline void vector_ne_w_scalar(T * __restrict__ out, const T * __restrict__ a, c
                     "exp": "vector_exp({lhs}, {rhs1});",
                     "min": "vector_min({lhs}, {rhs1}, {rhs2});",
                     "max": "vector_max({lhs}, {rhs1}, {rhs2});",
-                    ">":   "vector_gt({lhs}, {rhs1}, {rhs2});",
-                    "<":   "vector_lt({lhs}, {rhs1}, {rhs2});",
-                    ">=":  "vector_ge({lhs}, {rhs1}, {rhs2});",
-                    "<=":  "vector_le({lhs}, {rhs1}, {rhs2});",
-                    "==":  "vector_eq({lhs}, {rhs1}, {rhs2});",
-                    "!=":  "vector_ne({lhs}, {rhs1}, {rhs2});",
+                    ">": "vector_gt({lhs}, {rhs1}, {rhs2});",
+                    "<": "vector_lt({lhs}, {rhs1}, {rhs2});",
+                    ">=": "vector_ge({lhs}, {rhs1}, {rhs2});",
+                    "<=": "vector_le({lhs}, {rhs1}, {rhs2});",
+                    "==": "vector_eq({lhs}, {rhs1}, {rhs2});",
+                    "!=": "vector_ne({lhs}, {rhs1}, {rhs2});",
                     # scalar variants type 1
                     "c*": "vector_mult_w_scalar({lhs}, {rhs1}, {constant});",
                     "c+": "vector_add_w_scalar({lhs}, {rhs1}, {constant});",
@@ -324,8 +324,8 @@ inline void vector_ne_w_scalar(T * __restrict__ out, const T * __restrict__ a, c
                     "c/": "vector_div_w_scalar({lhs}, {rhs1}, {constant});",
                     "cmin": "vector_min_w_scalar({lhs}, {rhs1}, {constant});",
                     "cmax": "vector_max_w_scalar({lhs}, {rhs1}, {constant});",
-                    "c>":  "vector_gt_w_scalar({lhs}, {rhs1}, {constant});",
-                    "c<":  "vector_lt_w_scalar({lhs}, {rhs1}, {constant});",
+                    "c>": "vector_gt_w_scalar({lhs}, {rhs1}, {constant});",
+                    "c<": "vector_lt_w_scalar({lhs}, {rhs1}, {constant});",
                     "c>=": "vector_ge_w_scalar({lhs}, {rhs1}, {constant});",
                     "c<=": "vector_le_w_scalar({lhs}, {rhs1}, {constant});",
                     "c==": "vector_eq_w_scalar({lhs}, {rhs1}, {constant});",
@@ -333,8 +333,8 @@ inline void vector_ne_w_scalar(T * __restrict__ out, const T * __restrict__ a, c
                     # scalar variants type 2 for non-commutative ops
                     "-c": "vector_sub_w_scalar_c({lhs}, {constant}, {rhs1});",
                     "/c": "vector_div_w_scalar_c({lhs}, {constant}, {rhs1});",
-                    ">c":  "vector_gt_w_scalar_c({lhs}, {constant}, {rhs1});",
-                    "<c":  "vector_lt_w_scalar_c({lhs}, {constant}, {rhs1});",
+                    ">c": "vector_gt_w_scalar_c({lhs}, {constant}, {rhs1});",
+                    "<c": "vector_lt_w_scalar_c({lhs}, {constant}, {rhs1});",
                     ">=c": "vector_ge_w_scalar_c({lhs}, {constant}, {rhs1});",
                     "<=c": "vector_le_w_scalar_c({lhs}, {constant}, {rhs1});",
                 },
@@ -343,7 +343,6 @@ inline void vector_ne_w_scalar(T * __restrict__ out, const T * __restrict__ a, c
                 vector_output_storage=dace.dtypes.StorageType.Register,
                 global_code=ExplicitVectorizationPipelineCPU._cpu_global_code.format(vector_width=vector_width),
                 global_code_location="frame",
-                vector_op_numeric_type=dace.float64
-            )
+                vector_op_numeric_type=dace.float64)
         ]
         super().__init__(passes)
