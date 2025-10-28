@@ -3,13 +3,13 @@
 
 import ast
 import copy
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from dace import sdfg as sd, symbolic
 from dace.properties import Property, make_properties
 from dace.sdfg import InterstateEdge, utils as sdutil
 from dace.sdfg.nodes import NestedSDFG
-from dace.sdfg.state import BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowRegion, LoopRegion, ReturnBlock
+from dace.sdfg.state import BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowRegion, LoopRegion, ReturnBlock, SDFGState
 from dace.frontend.python.astutils import ASTFindReplace
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
@@ -71,7 +71,8 @@ class LoopUnroll(xf.MultiStateTransformation):
             raise TypeError('Loop difference and strides cannot be symbolic.')
 
         # Create states for loop subgraph
-        unrolled_iterations: List[ControlFlowRegion] = []
+        # A state is returned as a replacement when the loop body is empty
+        unrolled_iterations: List[Union[ControlFlowRegion, SDFGState]] = []
         for i in range(0, loop_diff, stride):
             # Instantiate loop contents as a new control flow region with iterate value.
             current_index = start + i
@@ -104,6 +105,9 @@ class LoopUnroll(xf.MultiStateTransformation):
 
         if self.inline_iterations:
             for it in unrolled_iterations:
+                # SDFGState does not have an inline attribute
+                if isinstance(it, SDFGState):
+                    continue
                 it.inline()
 
     def instantiate_loop_iteration(self,
@@ -141,7 +145,7 @@ class LoopUnroll(xf.MultiStateTransformation):
             new_block.replace(loop.loop_variable, value)
             iteration_region.add_node(new_block, is_start_block=(block is loop.start_block))
 
-        for edge in loop.all_interstate_edges():
+        for edge in loop.edges():
             src = block_map[edge.src]
             dst = block_map[edge.dst]
             # Replace conditions in subgraph edges
