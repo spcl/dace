@@ -766,3 +766,14 @@ def get_parent_maps(root_sdfg: dace.SDFG, node: dace.nodes.MapEntry, parent_stat
         parent_nsdfg_parent_state = _find_parent_state(root_sdfg, parent_nsdfg_node)
 
     return maps
+
+
+def duplicate_memlets_from_single_in_connector(state: dace.SDFGState, map_entry: dace.nodes.MapEntry):
+    for out_conn in map_entry.out_connectors:
+        out_edges_of_out_conn = set(state.out_edges_by_connector(map_entry, out_conn))
+        if len(out_edges_of_out_conn) > 1:
+            # Need to duplicate the out edges
+
+            # Above the first map, always add the complete subset and then call memlet propagation
+
+            pass

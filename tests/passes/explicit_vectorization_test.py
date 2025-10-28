@@ -514,6 +514,32 @@ def trim_to_multiple_of_8(dense: numpy.ndarray) -> numpy.ndarray:
             A[i, nz_idx[-excess:]] = 0
     return A
 
+@dace.program
+def overlapping_access(A: dace.float64[2, 2, S],
+                       B: dace.float64[S]):
+    for i in dace.map[0:S:1]:
+        B[i] = A[0, 0, i] + A[1, 0, i]
+
+def test_overlapping_access():
+    _S = 64
+    A = numpy.random.random((2, 2, _S))
+    B = numpy.random.random((_S))
+
+    sdfg = overlapping_access.to_sdfg()
+    sdfg.save("s.sdfg")
+
+    run_vectorization_test(dace_func=overlapping_access,
+                           arrays={
+                               'A': A,
+                               'B': B
+                           },
+                           params={
+                               'S': _S,
+                           },
+                           vector_width=8,
+                           save_sdfgs=True,
+                           sdfg_name="overlapping_access")
+
 
 def test_spmv():
     _N = 32
