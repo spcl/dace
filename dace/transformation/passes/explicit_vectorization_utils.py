@@ -256,23 +256,33 @@ def match_connector_to_data(state: dace.SDFGState, tasklet: dace.nodes.Tasklet):
 
 def assert_strides_are_packed_C_or_packed_Fortran(sdfg: dace.SDFG) -> Union[str, None]:
     stride_type = None
+    has_one_d_arrays = False
 
-    for arr, desc in sdfg.arrays.items():
+    for arr_name, desc in sdfg.arrays.items():
         if not isinstance(desc, dace.data.Array):
             continue
 
         # Check unit stride exists
         has_unit_stride = desc.strides[0] == 1 or desc.strides[-1] == 1
-        assert has_unit_stride, f"Array {arr} needs unit stride in first or last dimension: {desc.strides}"
+        assert has_unit_stride, f"Array {arr_name} needs unit stride in first or last dimension: {desc.strides}"
 
         # Determine stride type
-        current_type = "F" if desc.strides[0] == 1 else "C"
+
+        # If it is a 1D array we can assume it is both Fortran or C
+        # Default to F
+        if len(desc.shape) == 1:
+            has_one_d_arrays = True
+        else: # Do not change current type only due to 1D arrays
+            current_type = "F" if desc.strides[0] == 1 else "C"
 
         # Consistency check
         if stride_type is None:
             stride_type = current_type
         elif stride_type != current_type:
             raise ValueError("All arrays must have consistent stride ordering (all F or all C)")
+
+    if has_one_d_arrays is True and stride_type is None:
+        stride_type = "F"
 
     return stride_type
 
