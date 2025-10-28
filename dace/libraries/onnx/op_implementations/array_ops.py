@@ -618,16 +618,24 @@ class PureSlice(ONNXForward):
             num_dims = len(idesc.shape)
             num_slices = int(np.prod(starts_desc.shape))
 
-            # Build tasklet inputs
+            # Check if inputs are scalars (shape () or size 1)
+            starts_is_scalar = (starts_desc.shape == () or (len(starts_desc.shape) == 1 and starts_desc.shape[0] == 1))
+            ends_is_scalar = (ends_desc.shape == () or (len(ends_desc.shape) == 1 and ends_desc.shape[0] == 1))
+            axes_is_scalar = has_axes and (axes_desc.shape == () or
+                                           (len(axes_desc.shape) == 1 and axes_desc.shape[0] == 1))
+            steps_is_scalar = has_steps and (steps_desc.shape == () or
+                                             (len(steps_desc.shape) == 1 and steps_desc.shape[0] == 1))
+
+            # Build tasklet inputs - use scalar type for scalar inputs, pointer for arrays
             tasklet_inputs = {
                 "__data": dace.pointer(idesc.dtype),
-                "__starts": dace.pointer(starts_desc.dtype),
-                "__ends": dace.pointer(ends_desc.dtype)
+                "__starts": starts_desc.dtype if starts_is_scalar else dace.pointer(starts_desc.dtype),
+                "__ends": ends_desc.dtype if ends_is_scalar else dace.pointer(ends_desc.dtype)
             }
             if has_axes:
-                tasklet_inputs["__axes"] = dace.pointer(axes_desc.dtype)
+                tasklet_inputs["__axes"] = axes_desc.dtype if axes_is_scalar else dace.pointer(axes_desc.dtype)
             if has_steps:
-                tasklet_inputs["__steps"] = dace.pointer(steps_desc.dtype)
+                tasklet_inputs["__steps"] = steps_desc.dtype if steps_is_scalar else dace.pointer(steps_desc.dtype)
 
             # Pre-compute shape information for code generation
             out_shape_strs = [f'({odesc.shape[dim_i]})' for dim_i in range(num_dims)]
@@ -673,13 +681,15 @@ class PureSlice(ONNXForward):
             {"// Single slice case - parameters may be scalars after simplification" if num_slices == 1 else ""}
             for (int slice_i = 0; slice_i < {num_slices}; slice_i++) {{
                 int axis = slice_i;  // Default: axes = [0, 1, ..., num_slices-1]
-                {"if (__axes) axis = (int)__axes;" if has_axes and num_slices == 1 else ""}
+                {"if (__axes) axis = (int)__axes;" if has_axes and num_slices == 1 and axes_is_scalar else ""}
+                {"if (__axes) axis = (int)(*__axes);" if has_axes and num_slices == 1 and not axes_is_scalar else ""}
                 {"if (__axes) axis = (int)__axes[slice_i];" if has_axes and num_slices > 1 else ""}
 
-                long long start = (long long){("__starts" if num_slices == 1 else "__starts[slice_i]")};
-                long long end = (long long){("__ends" if num_slices == 1 else "__ends[slice_i]")};
+                long long start = (long long){("__starts" if num_slices == 1 and starts_is_scalar else ("(*__starts)" if num_slices == 1 else "__starts[slice_i]"))};
+                long long end = (long long){("__ends" if num_slices == 1 and ends_is_scalar else ("(*__ends)" if num_slices == 1 else "__ends[slice_i]"))};
                 long long step = 1;
-                {"if (__steps) step = (long long)__steps;" if has_steps and num_slices == 1 else ""}
+                {"if (__steps) step = (long long)__steps;" if has_steps and num_slices == 1 and steps_is_scalar else ""}
+                {"if (__steps) step = (long long)(*__steps);" if has_steps and num_slices == 1 and not steps_is_scalar else ""}
                 {"if (__steps) step = (long long)__steps[slice_i];" if has_steps and num_slices > 1 else ""}
 
                 // Handle negative indices
