@@ -18,7 +18,7 @@ class ExplicitVectorizationPipelineCPU(ppl.Pipeline):
     #define _dace_vectorize_hint
   #define _dace_vectorize "clang loop vectorize(enable) vectorize_width({vector_width}8)"
 #elif defined(__GNUC__)
-  #define _dace_vectorize_hint 
+  #define _dace_vectorize_hint
   #define _dace_vectorize "omp simd simdlen({vector_width})"
 #else
     #define _dace_vectorize_hint

@@ -768,12 +768,134 @@ def get_parent_maps(root_sdfg: dace.SDFG, node: dace.nodes.MapEntry, parent_stat
     return maps
 
 
+def _find_new_name(base: str, existing_names: Set[str]) -> str:
+    i = 0
+    candidate = f"{base}_d_{i}"
+    while candidate in existing_names:
+        i += 1
+        candidate = f"{base}_d_{i}"
+    return candidate
+
+
 def duplicate_memlets_from_single_in_connector(state: dace.SDFGState, map_entry: dace.nodes.MapEntry):
-    for out_conn in map_entry.out_connectors:
+    for out_conn in list(map_entry.out_connectors.keys()):
         out_edges_of_out_conn = set(state.out_edges_by_connector(map_entry, out_conn))
         if len(out_edges_of_out_conn) > 1:
+            base_in_edge = out_edges_of_out_conn.pop()
+
+            # Get all parent maps (including this)
+            parent_maps: Set[dace.nodes.MapEntry] = {map_entry}
+            sdict = state.scope_dict()
+            parent_map = sdict[map_entry]
+            while parent_map is not None:
+                parent_maps.add(parent_map)
+                parent_map = sdict[parent_map]
+
+            # Need it to find unique names
+            all_existing_connector_names = set()
+            for map_entry in parent_maps:
+                for in_conn in map_entry.in_connectors:
+                    all_existing_connector_names.add(in_conn[len("IN_"):])
+                for out_conn in map_entry.out_connectors:
+                    all_existing_connector_names.add(out_conn[len("OUT_"):])
+
+            # Base path
+            memlet_paths = []
+            path = state.memlet_path(base_in_edge)
+            source_node = path[0].src
+            memlet_paths.append(path)
+            while sdict[source_node] is not None:
+                if not isinstance(source_node, (dace.nodes.AccessNode, dace.nodes.MapEntry)):
+                    print(source_node)
+                    raise Exception(
+                        f"In the path from map entry to the top level scope, only access nodes and other map entries may appear, got: {source_node}"
+                    )
+                in_edges = state.in_edges(source_node)
+                if isinstance(source_node, dace.nodes.MapEntry) and len(in_edges) != 1:
+                    in_edges = list(state.in_edges_by_connector(source_node, "IN_" + path[-1].src_conn[len("OUT_"):]))
+                if isinstance(source_node, dace.nodes.AccessNode) and len(in_edges) != 1:
+                    raise Exception(
+                        "In the path from map entry to the top level scope, the intermediate access nodes need to have in and out degree (by connector) 1"
+                    )
+
+                in_edge = in_edges[0]
+                path = state.memlet_path(in_edge)
+                source_node = path[0].src
+                memlet_paths.append(path)
+                #print(source_node)
+
             # Need to duplicate the out edges
+            for e in list(out_edges_of_out_conn):
+                state.remove_edge(e)
 
-            # Above the first map, always add the complete subset and then call memlet propagation
+            for edge_to_duplicate in out_edges_of_out_conn:
+                base = edge_to_duplicate.src_conn[len("OUT_"):]
+                new_connector_base = _find_new_name(base, all_existing_connector_names)
+                all_existing_connector_names.add(new_connector_base)
 
-            pass
+                node_map = dict()
+                for i, subpath in enumerate(memlet_paths):
+                    for j, e in enumerate(reversed(subpath)):
+                        # We work by adding an in edge
+                        in_name = f"IN_{new_connector_base}"
+                        out_name = f"OUT_{new_connector_base}"
+
+                        if e.src_conn is not None:
+                            out_conn = out_name if e.src_conn.startswith("OUT_") else e.src_conn
+                        else:
+                            out_conn = None
+
+                        if e.dst_conn is not None:
+                            if e.src == map_entry:
+                                in_conn = edge_to_duplicate.dst_conn
+                            else:
+                                in_conn = in_name if e.dst_conn.startswith("IN_") else e.dst_conn
+                        else:
+                            in_conn = None
+
+                        if isinstance(e.src, dace.nodes.MapEntry):
+                            src_node = e.src
+                        elif isinstance(e.src, dace.nodes.AccessNode):
+                            if e.src in node_map:
+                                src_node = node_map[e.src]
+                            else:
+                                a = state.add_access(e.src.data)
+                                node_map[e.src] = a
+                                src_node = a
+                        else:
+                            src_node = e.src
+
+                        if isinstance(e.dst, dace.nodes.MapEntry):
+                            dst_node = e.dst
+                        elif isinstance(e.dst, dace.nodes.AccessNode):
+                            if e.dst in node_map:
+                                dst_node = node_map[e.dst]
+                            else:
+                                a = state.add_access(e.dst.data)
+                                node_map[e.dst] = a
+                                dst_node = a
+                        else:
+                            dst_node = e.dst
+
+                        # Above the first map, always add the complete subset and then call memlet propagation
+                        if e.src is map_entry:
+                            data = copy.deepcopy(edge_to_duplicate.data)
+                        else:
+                            data = dace.memlet.Memlet.from_array(e.data.data, state.sdfg.arrays[e.data.data])
+
+                        state.add_edge(src_node, out_conn, dst_node, in_conn, data)
+
+                        if out_conn is not None and out_conn not in src_node.out_connectors:
+                            src_node.add_out_connector(out_conn, force=True)
+                        if in_conn is not None and in_conn not in dst_node.in_connectors:
+                            dst_node.add_in_connector(in_conn, force=True)
+
+                        # If we duplicate an access node, we should add correct dependency edges
+                        if i == len(memlet_paths) - 1:
+                            if j == len(subpath) - 1:
+                                # Source node
+                                origin_source_node = e.src
+                                for ie in state.in_edges(origin_source_node):
+                                    state.add_edge(ie.src, None, src_node, None, dace.memlet.Memlet(None))
+
+    propagate_memlets_state(state.sdfg, state)
