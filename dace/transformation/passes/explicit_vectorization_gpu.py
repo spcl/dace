@@ -3,7 +3,7 @@ import dace
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.clean_data_to_scalar_slice_to_tasklet_pattern import CleanDataToScalarSliceToTaskletPattern
 from dace.transformation.passes.split_tasklets import SplitTasklets
-from dace.transformation.passes.tasklet_preprocessing_passes import PowerOperatorExpansionExapnsion, RemoveFPTypeCasts, RemoveIntTypeCasts
+from dace.transformation.passes.tasklet_preprocessing_passes import PowerOperatorExpansion, RemoveFPTypeCasts, RemoveIntTypeCasts
 from dace.transformation.passes import InlineSDFGs
 from dace.transformation.passes.explicit_vectorization import ExplicitVectorization
 from dace.transformation.passes.fuse_branches_pass import FuseBranchesPass
@@ -88,7 +88,7 @@ __host__ __device__ __forceinline__ void vector_copy(T * __restrict__ dst, const
             FuseBranchesPass(),
             RemoveFPTypeCasts(),
             RemoveIntTypeCasts(),
-            PowerOperatorExpansionExapnsion(),
+            PowerOperatorExpansion(),
             SplitTasklets(),
             CleanDataToScalarSliceToTaskletPattern(),
             InlineSDFGs(),

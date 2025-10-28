@@ -120,7 +120,7 @@ def _remove_dace_int_casts(src):
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
-class PowerOperatorExpansionExapnsion(ppl.Pass):
+class PowerOperatorExpansion(ppl.Pass):
     CATEGORY: str = 'Optimization Preparation'
 
     def modifies(self) -> ppl.Modifies:
