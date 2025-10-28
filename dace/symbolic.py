@@ -1,5 +1,6 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
+from collections import Counter
 from functools import lru_cache
 import sys
 import sympy
@@ -1682,7 +1683,9 @@ def symbols_in_code(code: str, potential_symbols: Set[str] = None, symbols_to_ig
         # Don't bother tokenizing for an empty set of potential symbols
         return set()
 
-    tokens = set(re.findall(_NAME_TOKENS, code))
+    tokens_list = re.findall(_NAME_TOKENS, code)
+    token_counts = Counter(tokens_list)
+    tokens = set(tokens_list)
     if potential_symbols is not None:
         tokens &= potential_symbols
 
@@ -1692,9 +1695,26 @@ def symbols_in_code(code: str, potential_symbols: Set[str] = None, symbols_to_ig
         token = match.group(0)
 
         # Check prev. literal is a digit and the next digit involves a number or +/-
-        if token == 'e' and s > 0 and e < len(code):
-            if code[s - 1].isdigit() and code[e] in '-+0123456789':
-                tokens.remove('e')
+        # Check if token starts with e e.g. `e`, `e5`
+        if token.startswith('e') and s > 0:
+            # If token directly has a digit to the left `1e5`, `1e-3`
+            if code[s - 1].isdigit():
+                if len(token) > 1:
+                    rest = token[1:]  # everything after 'e'
+                    # If the rest is `+/- then digits` or just digits then rm
+                    if rest and (rest[0] in '+-' and rest[1:].isdigit() or rest.isdigit()):
+                        # Discard only if the count of this token is now zero, as `e = 1e-5` will mean token e was found twice
+                        token_counts[token] -= 1
+                        if token_counts[token] == 0:
+                            tokens.discard(token)
+                else:
+                    if e < len(code) and s > 0:
+                        print(code[s - 1].isdigit(), code[s - 1], code[e] in '-+0123456789', code[e])
+                        if code[s - 1].isdigit() and code[e] in '-+0123456789':
+                            # Discard only if the count of this token is now zero, as `e = 1e-5` will mean token e was found twice
+                            token_counts[token] -= 1
+                            if token_counts[token] == 0:
+                                tokens.discard(token)
 
     if symbols_to_ignore is None:
         return tokens
