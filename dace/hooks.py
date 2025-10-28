@@ -251,7 +251,7 @@ def invoke_sdfg_call_hooks(sdfg: 'SDFG'):
         yield sdfg
 
 
-class compiled_sdfg_call_hooks_manager(contextlib.AbstractContextManager):
+class invoke_compiled_sdfg_call_hooks(contextlib.AbstractContextManager):
     """Internal context manager that calls all compiled SDFG call hooks in their registered order.
 
     Note:
