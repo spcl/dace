@@ -272,7 +272,7 @@ def assert_strides_are_packed_C_or_packed_Fortran(sdfg: dace.SDFG) -> Union[str,
         # Default to F
         if len(desc.shape) == 1:
             has_one_d_arrays = True
-        else: # Do not change current type only due to 1D arrays
+        else:  # Do not change current type only due to 1D arrays
             current_type = "F" if desc.strides[0] == 1 else "C"
 
         # Consistency check
