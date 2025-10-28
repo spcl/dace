@@ -16,8 +16,7 @@ class CleanDataToScalarSliceToTaskletPattern(ppl.Pass):
         return ppl.Modifies.Tasklets | ppl.Modifies.AccessNodes | ppl.Modifies.Edges
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
-        return (modified & ppl.Modifies.Tasklets) or (modified & ppl.Modifies.AccessNodes) or (modified
-                                                                                               & ppl.Modifies.Edges)
+        return False
 
     def depends_on(self):
         return {}

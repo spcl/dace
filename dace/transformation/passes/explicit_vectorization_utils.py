@@ -13,6 +13,7 @@ from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg.graph import Edge
 from enum import Enum
+from dace.sdfg.state import ConditionalBlock, LoopRegion
 import dace.sdfg.utils as sdutil
 import dace.sdfg.tasklet_utils as tutil
 
@@ -34,7 +35,7 @@ def repl_subset(subset: dace.subsets.Range, repl_dict: Dict[str, str]) -> dace.s
     return new_subset
 
 
-def repl_subset_to_symbol_offset(subset: dace.subsets.Range, symbol_offset: str) -> dace.subsets.Range:
+def repl_subset_to_symbol_offset(sdfg: dace.SDFG, subset: dace.subsets.Range, symbol_offset: str) -> dace.subsets.Range:
     free_syms = subset.free_symbols
     print("Free symbols in subset:", free_syms)
 
@@ -43,6 +44,25 @@ def repl_subset_to_symbol_offset(subset: dace.subsets.Range, symbol_offset: str)
 
     new_subset = repl_subset(subset=subset, repl_dict=repl_dict)
     print("Subset after symbol offset replacement:", new_subset)
+
+    # If symbol is in SDFG free symbols we need add the mappings
+    # TODO: something going wrong, fix
+    # TODO: better add missing symbols at the end
+    for free_sym in free_syms:
+        if free_sym in sdfg.free_symbols:
+            #raise Exception(free_sym)
+            print(free_sym, "is in free symbols of the sdfg")
+            #first_state = sdfg.start_block
+            #if len(sdfg.out_edges(first_state)) == 0:
+            #    sdfg.add_state_before(sdfg.start_block, label=f"pre_assign_{free_sym}", is_start_block=True,
+            #                        assignments={
+            #                            k: free_sym for k in repl_dict.values()
+            #                        })
+            #else:
+            #    adict = {k: free_sym for k in repl_dict.values()}
+            #    first_edge = sdfg.out_edges(first_state)[0]
+            #    first_edge.data.assignments.update(adict)
+
     return new_subset
 
 
@@ -143,6 +163,7 @@ def add_copies_before_and_after_nsdfg(
     required_shape: Tuple[int],
     copy_to_storage: dace.dtypes.StorageType,
 ):
+    in_datas = set()
     for ie in state.in_edges(nsdfg_node):
         if ie.data is not None:
             in_data_name: str = ie.data.data
@@ -171,6 +192,7 @@ def add_copies_before_and_after_nsdfg(
                     arr_name = f"{in_data_name}_vec"
                     assert state.sdfg.arrays[arr_name].storage == copy_to_storage
                 arr_access = state.add_access(arr_name)
+                in_datas.add(arr_name)
 
                 # Impl. proper min
                 state.sdfg.save("x.sdfg")
@@ -191,15 +213,19 @@ def add_copies_before_and_after_nsdfg(
                 # Remove only after adding to avoid disconnecting the component
                 state.remove_edge(ie)
 
+    out_datas = set()
     for oe in state.out_edges(nsdfg_node):
+        print(oe)
         if oe.data is not None:
+            print(oe.data)
             out_data_name: str = oe.data.data
             nsdfg_data_name: str = oe.src_conn
-            subset_lengths = tuple([(e + 1 - b) // s for b, e, s in ie.data.subset])
-            subset_lengths_packed = tuple([(e + 1 - b) // s for b, e, s in ie.data.subset if (e + 1 - b) != 1])
+            subset_lengths = tuple([(e + 1 - b) // s for b, e, s in oe.data.subset])
+            subset_lengths_packed = tuple([(e + 1 - b) // s for b, e, s in oe.data.subset if (e + 1 - b) != 1])
             if (required_shape is None or subset_lengths == required_shape or subset_lengths_packed == required_shape):
                 # Insert copy
                 orig_arr = state.sdfg.arrays[out_data_name]
+                print(orig_arr)
                 if orig_arr.storage == copy_to_storage:
                     continue
                 if orig_arr.transient is True and orig_arr.storage == dace.dtypes.StorageType.Default:
@@ -219,6 +245,7 @@ def add_copies_before_and_after_nsdfg(
                     arr_name = f"{out_data_name}_vec"
                     assert state.sdfg.arrays[arr_name].storage == copy_to_storage
                 arr_access = state.add_access(arr_name)
+                out_datas.add(arr_name)
 
                 full_subset_str = ", ".join([f"{0}:{sl}" for sl in subset_lengths])
                 state.add_edge(nsdfg_node, nsdfg_data_name, arr_access, None,
@@ -236,6 +263,11 @@ def add_copies_before_and_after_nsdfg(
 
                 # Remove only after adding to avoid disconnecting the component
                 state.remove_edge(oe)
+
+    print("IN copy-in data:", in_datas)
+    print("OUT copy-out data:", out_datas)
+    #if len(out_datas) == 0:
+    #    breakpoint()
 
 
 def get_op(expr_str: str):
@@ -257,7 +289,7 @@ def match_connector_to_data(state: dace.SDFGState, tasklet: dace.nodes.Tasklet):
 def assert_strides_are_packed_C_or_packed_Fortran(sdfg: dace.SDFG) -> Union[str, None]:
     stride_type = None
     has_one_d_arrays = False
-
+    current_type = None
     for arr_name, desc in sdfg.arrays.items():
         if not isinstance(desc, dace.data.Array):
             continue
@@ -393,6 +425,7 @@ def fix_nsdfg_connector_array_shapes_mismatch(parent_state: dace.SDFGState, nsdf
             subset = ie.data.subset
             dst_arr_name = ie.dst_conn
             dst_arr = nsdfg_node.sdfg.arrays[dst_arr_name]
+            darrshape = dst_arr.shape
             dst_shape_1 = tuple([(e + 1 - b) for (b, e, s) in subset])
             dst_shape_2 = tuple([(e + 1 - b) // s for (b, e, s) in subset])
             dst_shape_1_collapsed = tuple([(e + 1 - b) for (b, e, s) in subset if (e + 1 - b) != 1])
@@ -412,11 +445,21 @@ def fix_nsdfg_connector_array_shapes_mismatch(parent_state: dace.SDFGState, nsdf
                                           alignment=dst_arr.alignment,
                                           may_alias=False)
 
+                # Replace all accesses that "dst_shape_1" with "dst_shape_1_collapsed"
+                # Do not take an action if one-dimensional
+                dims_to_keep = [1 if (e + 1 - b) != 1 else 0 for (b, e, s) in subset]
+                print("KKKK ", dims_to_keep, ",", dst_shape_1_collapsed, ",", darrshape, ",", subset)
+
+                if len(dims_to_keep) != 1 and len(darrshape) == len(dims_to_keep) and (len(darrshape)
+                                                                                       > len(dst_shape_1_collapsed)):
+                    drop_dims(nsdfg_node.sdfg, dims_to_keep, dst_arr_name)
+
     for oe in parent_state.out_edges(nsdfg_node):
         if oe.data is not None:
             subset = oe.data.subset
             dst_arr_name = oe.src_conn
             dst_arr = nsdfg_node.sdfg.arrays[dst_arr_name]
+            darrshape = dst_arr.shape
             dst_shape_1 = tuple([(e + 1 - b) for (b, e, s) in subset])
             dst_shape_2 = tuple([(e + 1 - b) // s for (b, e, s) in subset])
             dst_shape_1_collapsed = tuple([(e + 1 - b) for (b, e, s) in subset if (e + 1 - b) != 1])
@@ -435,6 +478,101 @@ def fix_nsdfg_connector_array_shapes_mismatch(parent_state: dace.SDFGState, nsdf
                                           find_new_name=False,
                                           alignment=dst_arr.alignment,
                                           may_alias=False)
+
+                # Replace all accesses that "dst_shape_1" with "dst_shape_1_collapsed"
+                # Do not take an action if one-dimensional
+                dims_to_keep = [1 if (e + 1 - b) != 1 else 0 for (b, e, s) in subset]
+                print("KKKK2 ", dims_to_keep, ",", dst_shape_1_collapsed, ",", darrshape, ",", subset)
+
+                if len(dims_to_keep) != 1 and len(darrshape) == len(dims_to_keep) and (len(darrshape)
+                                                                                       > len(dst_shape_1_collapsed)):
+                    drop_dims(nsdfg_node.sdfg, dims_to_keep, dst_arr_name)
+
+
+def extract_bracket_contents(expr: str, name: str):
+    # Find <name>[...]
+    pattern = rf'\b{name}\s*\[(.*)\]'
+    match = re.search(pattern, expr)
+    if not match:
+        return "", []
+
+    full_match = match.group(0)
+    inside = match.group(1)
+    parts = []
+    current = []
+    depth = 0
+    in_string = None
+
+    for ch in inside:
+        if in_string:
+            current.append(ch)
+            if ch == in_string:
+                in_string = None
+            continue
+
+        if ch in ("'", '"'):
+            in_string = ch
+            current.append(ch)
+        elif ch in "([{":
+            depth += 1
+            current.append(ch)
+        elif ch in ")]}":
+            depth -= 1
+            current.append(ch)
+        elif ch == ',' and depth == 0:
+            part = ''.join(current).strip()
+            if part:
+                parts.append(part)
+            current = []
+        else:
+            current.append(ch)
+
+    # Add last part
+    if current:
+        parts.append(''.join(current).strip())
+
+    return full_match, parts
+
+
+def drop_dims_from_str(src_str: str, dim_mask: Tuple[int], dataname: str):
+    matched_substring, access_tokens = extract_bracket_contents(src_str, dataname)
+    if access_tokens != []:
+        assert len(access_tokens) == len(dim_mask)
+        filtered = [v for v, m in zip(access_tokens, dim_mask) if m]
+        filtered = "[" + ", ".join(filtered) + "]"
+        return src_str.replace(matched_substring, filtered)
+    else:
+        return src_str
+
+
+def drop_dims(sdfg: dace.SDFG, dim_mask: Tuple[int], dataname: str):
+    for cfg in sdfg.all_control_flow_regions():
+        if isinstance(cfg, LoopRegion):
+            cfg.loop_condition = CodeBlock(drop_dims_from_str(cfg.loop_condition.as_string, dim_mask, dataname),
+                                           cfg.loop_condition.language)
+            cfg.update_statement = CodeBlock(drop_dims_from_str(cfg.update_statement.as_string, dim_mask, dataname),
+                                             cfg.update_statement.language)
+            cfg.init_statement = CodeBlock(drop_dims_from_str(cfg.init_statement.as_string, dim_mask, dataname),
+                                           cfg.init_statement.language)
+        elif isinstance(cfg, ConditionalBlock):
+            for i, (c, b) in enumerate(cfg.branches):
+                cfg.branches[i] = (CodeBlock(drop_dims_from_str(c.as_string, dim_mask, dataname), c.language), b)
+    for s in sdfg.all_states():
+        if isinstance(s, SDFGState):
+            for edge in s.edges():
+                if edge.data.data is not None and edge.data.data == dataname:
+                    newsubset = []
+                    assert len(edge.data.subset) == len(dim_mask)
+                    for (b, e, s), m in zip(edge.data.subset, dim_mask):
+                        if m:
+                            newsubset.append((b, e, s))
+                    edge.data = dace.memlet.Memlet(data=dataname, subset=dace.subsets.Range(newsubset))
+    for e in sdfg.all_interstate_edges():
+        if e.data.assignments != dict():
+            nassignments = dict()
+            for k, v in e.data.assignments.items():
+                nassignments[k] = drop_dims_from_str(v, dim_mask, dataname)
+            e.data.assignments = nassignments
 
 
 class IntToFloatTransformer(ast.NodeTransformer):
@@ -762,6 +900,7 @@ def duplicate_access(state: dace.SDFGState, node: dace.nodes.AccessNode,
     assert len(ies) == 1
     ie = ies[0]
     src = ie.src
+    state.sdfg.save("o.sdfgz", compress=True)
     assert isinstance(src, dace.nodes.Tasklet), f"Writes to sink nodes need to go through assignment tasklets, do it"
     inc = next(iter(src.in_connectors))
     outc = next(iter(src.out_connectors))
@@ -806,7 +945,7 @@ def duplicate_access(state: dace.SDFGState, node: dace.nodes.AccessNode,
             assert False
         touched_edges.add(e1)
 
-        new_subset = repl_subset_to_symbol_offset(ie.data.subset, str(i))
+        new_subset = repl_subset_to_symbol_offset(state.sdfg, ie.data.subset, str(i))
 
         e2 = state.add_edge(t, "_out", ie.dst, None, dace.memlet.Memlet(data=node.data, subset=new_subset))
         if isinstance(e2, dace.nodes.Node):
@@ -814,26 +953,6 @@ def duplicate_access(state: dace.SDFGState, node: dace.nodes.AccessNode,
         touched_edges.add(e2)
 
     return touched_nodes, touched_edges
-
-
-def add_symbol_with_value(state: dace.SDFGState, nsdfg: dace.nodes.NestedSDFG,
-                          symbol_names_and_values: Dict[str, str]) -> None:
-    inner_sdfg = nsdfg.sdfg
-    for symbol_name in symbol_names_and_values:
-        inner_sdfg.add_symbol(name=symbol_name, find_new_name=False, stype=dace.int64)
-    inner_sdfg.add_state_before(inner_sdfg.start_block, assignments=symbol_names_and_values)
-
-    # Get all newly needed symbols from rhs
-    for v in symbol_names_and_values.values():
-        v_symexpr_free_syms = dace.symbolic.SymExpr(v).free_symbols
-        for free_sym in v_symexpr_free_syms:
-            free_sym_str = str(free_sym)
-            if free_sym_str in inner_sdfg.symbols:
-                continue
-            symbols_defined_at = state.symbols_defined_at(nsdfg)
-            assert free_sym_str in symbols_defined_at, f"{free_sym_str} of {v} is not in symbols defined at the scope: {symbols_defined_at}."
-            inner_sdfg.add_symbol(free_sym_str, symbols_defined_at[free_sym_str], False)
-            nsdfg.symbol_mapping[free_sym_str] = free_sym_str
 
 
 def replace_arrays_with_new_shape(sdfg: dace.SDFG, array_namelist: Set[str], new_shape: Tuple[Any],

@@ -161,7 +161,7 @@ class SplitTasklets(ppl.Pass):
         return ppl.Modifies.Tasklets | ppl.Modifies.Descriptors | ppl.Modifies.AccessNodes | ppl.Modifies.Edges
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
-        return ppl.Modifies.Tasklets
+        return False
 
     def depends_on(self):
         return {}

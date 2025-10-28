@@ -1,5 +1,3 @@
-duplicate_memlets_sharing_single_in_connector
-
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import copy
@@ -10,6 +8,7 @@ from dace.transformation import pass_pipeline as ppl, transformation
 import dace.sdfg.utils as sdutil
 import dace.sdfg.construction_utils as cutil
 
+
 @transformation.explicit_cf_compatible
 class DuplicateAllMemletsSharingSingleMapOutConnector(ppl.Pass):
 
@@ -17,7 +16,7 @@ class DuplicateAllMemletsSharingSingleMapOutConnector(ppl.Pass):
         return ppl.Modifies.Edges | ppl.Modifies.AccessNodes | ppl.Modifies.Memlets
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
-        return modified & ppl.Modifies.Edges
+        return False
 
     def depends_on(self):
         return {}
@@ -27,12 +26,16 @@ class DuplicateAllMemletsSharingSingleMapOutConnector(ppl.Pass):
             for node in state.nodes():
                 if isinstance(node, dace.nodes.MapEntry):
                     # Check if inner most map
-                    maps_inside = {node for node in state.all_nodes_between(node, state.exit_node(node)) if isinstance(node, dace.nodes.MapEntry)}
+                    maps_inside = {
+                        node
+                        for node in state.all_nodes_between(node, state.exit_node(node))
+                        if isinstance(node, dace.nodes.MapEntry)
+                    }
                     if len(maps_inside) > 0:
                         continue
-                    
+
                     cutil.duplicate_memlets_sharing_single_in_connector(state, node)
-                
+
                 if isinstance(node, dace.nodes.NestedSDFG):
                     self._apply(node.sdfg)
 
