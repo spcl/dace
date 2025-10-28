@@ -1966,17 +1966,19 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
         if ns in killed:
             continue
         ns_typ = find_type_of_entity(ns_node, alias_map)
-        if isinstance(ns_node, Entity_Decl) and ns_typ.pointer:
-            # If it is a pointer that we have decided to remove, then clear out all of its assignments.
-            for pa in walk(ast, Pointer_Assignment_Stmt):
-                dst = pa.children[0]
-                if not isinstance(dst, Name):
-                    # TODO: Handle data-refs.
-                    continue
-                dst_spec = search_real_local_alias_spec(dst, alias_map)
-                if dst_spec and alias_map[dst_spec] is ns_node:
-                    remove_self(pa)
         if isinstance(ns_node, Entity_Decl):
+            if ns_typ.pointer:
+                # If it is a pointer that we have decided to remove, then clear out all of its assignments.
+                for pa in walk(ast, Pointer_Assignment_Stmt):
+                    dst = pa.children[0]
+                    if isinstance(dst, Name):
+                        dst_spec = search_real_local_alias_spec(dst, alias_map)
+                    else:
+                        scope_spec = search_scope_spec(dst)
+                        assert scope_spec
+                        dst_spec = find_dataref_component_spec(dst, scope_spec, alias_map)
+                    if dst_spec and alias_map[dst_spec] is ns_node:
+                        remove_self(pa)
             elist = ns_node.parent
             remove_self(ns_node)
             # But there are many things to clean-up.
@@ -2011,6 +2013,18 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
             if not elist_spart.children:
                 remove_self(elist_spart)
         elif isinstance(ns_node, Component_Decl):
+            if ns_typ.pointer:
+                # If it is a pointer that we have decided to remove, then clear out all of its assignments.
+                for pa in walk(ast, Pointer_Assignment_Stmt):
+                    dst = pa.children[0]
+                    if isinstance(dst, Name):
+                        dst_spec = search_real_local_alias_spec(dst, alias_map)
+                    else:
+                        scope_spec = search_scope_spec(dst)
+                        assert scope_spec
+                        dst_spec = find_dataref_component_spec(dst, scope_spec, alias_map)
+                    if dst_spec and alias_map[dst_spec] is ns_node:
+                        remove_self(pa)
             clist = ns_node.parent
             remove_self(ns_node)
             # But there are many things to clean-up.

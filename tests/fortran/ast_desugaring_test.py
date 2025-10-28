@@ -1586,6 +1586,7 @@ module lib
   type T
     integer :: data(4) = 8
     integer, pointer :: ptr(:) => null()
+    integer, pointer :: unused_T_ptr(:) => null()
   end type T
 end module lib
 
