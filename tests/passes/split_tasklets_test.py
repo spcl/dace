@@ -35,6 +35,10 @@ example_expressions = [
     ("tmp_call_15_out = min(min(w_con_e_0_in, w_con_e_1_in), 0.0)", 2),  # 2 min()
     ("tmp_call_15_out = exp(exp(a))", 2),  # 2 exp()
     ("tmp_call_15_out = log(log(a))", 2),  # 2 log()
+    ("out = a or b", 1), # 1 or
+    ("out = a << 2", 1), # 1 <<
+    ("out = a >> 2", 1), # 1 >>
+    ("out = a | 2", 1), # 1 |
 ]
 
 # Double-split tasklet test case - Format: ((expr1, expr2), expected_total_statements)
@@ -48,7 +52,7 @@ def _get_vars(ssa_line):
     lhs_var = lhs.strip()
     rhs_vars = list(
         set(re.findall(r'\b[a-zA-Z_]\w*\b', rhs)) -
-        {"min", "abs", "exp", "log", "max", "round", "sum", "sqrt", "sin", "cos", "tan", "ceil", "floor"})
+        {"min", "abs", "exp", "log", "max", "round", "sum", "sqrt", "sin", "cos", "tan", "ceil", "floor", "or", "and"})
     return [lhs_var], rhs_vars
 
 
@@ -63,11 +67,13 @@ def _generate_single_tasklet_sdfg(expression_str: str) -> dace.SDFG:
 
     lhs_vars, rhs_vars = _get_vars(expression_str)
 
+    gen_integer = "<<" in expression_str or ">>" in expression_str or "|" in expression_str
+
     assert len(lhs_vars) == 1, f"{lhs_vars} = {rhs_vars}"
     for var in lhs_vars + rhs_vars:
         if var + "_ARR" in sdfg.arrays:
             continue
-        sdfg.add_array(name=var + "_ARR", shape=(1, ), dtype=dace.float64)
+        sdfg.add_array(name=var + "_ARR", shape=(1, ), dtype=dace.float64 if not gen_integer else dace.int64)
 
     state = sdfg.add_state(label="main")
     state.add_mapped_tasklet(
@@ -101,8 +107,13 @@ def _generate_double_tasklet_sdfg(expression_strs: typing.Tuple[str, str],
     global _double_tasklet_sdfg_counter
     _double_tasklet_sdfg_counter += 1
 
+    gen_integer = False
+    for i, expression_str in enumerate(expression_strs):
+        if "<<" in expression_str or ">>" in expression_str or "|" in expression_str:
+            gen_integer = True
+
     sdfg = dace.SDFG(f"double_tasklet_sdfg_{_double_tasklet_sdfg_counter}")
-    sdfg.add_scalar(name="tmp_Scalar", dtype=dace.float64, transient=True)
+    sdfg.add_scalar(name="tmp_Scalar", dtype=dace.float64 if not gen_integer else dace.int64, transient=True)
     state = sdfg.add_state(label="main")
 
     in_accesses = set()
@@ -111,7 +122,7 @@ def _generate_double_tasklet_sdfg(expression_strs: typing.Tuple[str, str],
         lhs_vars, rhs_vars = _get_vars(expression_str)
         for var in lhs_vars:
             assert var != "tmp"
-            sdfg.add_array(name=var + "_ARR", shape=(1, ), dtype=dace.float64)
+            sdfg.add_array(name=var + "_ARR", shape=(1, ), dtype=dace.float64 if not gen_integer else dace.int64)
         if i == len(expression_strs) - 1:
             for var in lhs_vars:
                 out_accesses.add(state.add_access(var + "_ARR"))
@@ -119,7 +130,7 @@ def _generate_double_tasklet_sdfg(expression_strs: typing.Tuple[str, str],
         for var in rhs_vars:
             if var == "tmp":
                 continue
-            sdfg.add_array(name=var + "_ARR", shape=(1, ), dtype=dace.float64)
+            sdfg.add_array(name=var + "_ARR", shape=(1, ), dtype=dace.float64 if not gen_integer else dace.int64)
             in_accesses.add(state.add_access(var + "_ARR"))
 
     if not direct_connection_between_tasklets:
