@@ -35,6 +35,20 @@ NONDETERMINISTIC_OPS = {'ONNXDropout',
                         'ONNXScan',
                         'ONNXTreeEnsembleClassifier',
                         'ONNXTreeEnsembleRegressor'}
+# Supported ops list
+SUPPORTED_OPS = {'ONNXShape',
+                 'ONNXConstantOfShape',
+                 'ONNXRange',
+                 'ONNXMul',
+                 'ONNXAdd',
+                 'ONNXSub',
+                 'ONNXDiv',
+                 'ONNXEqual',
+                 'ONNXGreater',
+                 'ONNXLess',
+                 'ONNXGreaterOrEqual',
+                 'ONNXLessOrEqual',
+                 'ONNXWhere'}
 # yapf: enable
 
 
@@ -72,6 +86,11 @@ class ConstantFolding(transformation.SingleStateTransformation):
         if not hasattr(sdfg, "_parent_onnx_model"):
             return False
 
+        # Check the supported list of operations
+        if "ONNX" + node.schema.name not in SUPPORTED_OPS:
+            return False
+
+        # Check the blocklist of operations
         if 'ONNX' + node.schema.name in NONDETERMINISTIC_OPS:
             return False
 
@@ -274,12 +293,6 @@ class ConstantFolding(transformation.SingleStateTransformation):
 
             # Update array descriptor
             result = np.asarray(result)
-
-            # If result is 0-dimensional (scalar), reshape to (1,) to avoid memlet issues
-            if result.shape == ():
-                result = result.reshape((1, ))
-
-            sdfg.arrays[constant_name].shape = result.shape
 
             # Add to weights
             parent.weights[constant_name] = torch.from_numpy(result)
