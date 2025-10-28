@@ -259,7 +259,7 @@ def test_readwrite_structure_in_map():
         "data2": dace.data.Array(dace.float32, (M, N)),
         "size": dace.data.Scalar(dace.int64)
     },
-                                 name="BundleType")
+                                 name="BundleTypeTwoArrays")
 
     @dace.program
     def copy_prog(bundle: Bundle) -> None:
@@ -275,10 +275,6 @@ def test_readwrite_structure_in_map():
     )
     ref = np.zeros((10, 5), dtype=np.float32)
     ref[:6, :] = 6.0
-
-    generated_code = copy_prog.to_sdfg().generate_code()
-    for code in generated_code:
-        print(code.clean_code)
 
     csdfg = copy_prog.compile()
     csdfg.fast_call((ctypes.byref(inp_struct), ctypes.c_int(5)), (ctypes.c_int(5),))
