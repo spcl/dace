@@ -298,7 +298,7 @@ For each forward state, the generator:
 
 The abstract base class for all backward implementations.
 
-```python
+```python```python
 @dace.registry.make_registry
 class BackwardImplementation(abc.ABC):
 
@@ -438,6 +438,7 @@ During backward pass generation, we often need access to intermediate values fro
 # Forward
 y = sigmoid(x)
 z = y * y
+L = z # Identity loss function
 
 # Backward (to compute dL/dx)
 dL/dy = dL/dz * 2y    # Need y from forward pass!
