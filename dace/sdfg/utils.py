@@ -8,8 +8,6 @@ import warnings
 import networkx as nx
 import time
 
-import sympy
-
 import dace.sdfg.nodes
 from dace.codegen import compiled_sdfg as csdfg
 from dace.sdfg.graph import MultiConnectorEdge
