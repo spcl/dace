@@ -1585,3 +1585,118 @@ class PureTopK(ONNXForward):
         nstate.add_edge(tasklet, "__Indices", indices_write, None, dace.Memlet.from_array("Indices", indices_desc))
 
         return nsdfg
+
+
+# ==============================================================================
+# Triangular Matrix Operations
+# ==============================================================================
+
+
+@op_implementation(op="Trilu", name="pure")
+class PureTrilu(ONNXForward):
+    """
+    Pure implementation of ONNX Trilu operator.
+
+    Given a 2-D matrix or batches of 2-D matrices, returns the upper or lower
+    triangular part of the tensor(s). The other elements of the tensor are set to zero.
+
+    Attributes:
+        upper (int): Boolean. Indicates whether upper or lower part of matrix is
+                     retained. Default is 1 (true - upper triangular).
+
+    Inputs:
+        input: Input tensor of rank >= 2
+        k (optional): A 0-D tensor containing a single value corresponding to the
+                     number diagonals above or below the main diagonal to exclude
+                     or include. Default value is 0.
+    """
+
+    @staticmethod
+    def forward_can_be_applied(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> bool:
+        return True
+
+    @staticmethod
+    def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+        # Get the upper attribute (default is 1/True for upper triangular)
+        upper = getattr(node, 'upper', 1)
+
+        # Get descriptors
+        input_desc = in_desc_with_name(node, state, sdfg, "input")
+        output_desc = out_desc_with_name(node, state, sdfg, "output")
+
+        # Check if k input exists (optional diagonal offset)
+        has_k = len(list(state.in_edges_by_connector(node, "k"))) > 0
+
+        # Create a new SDFG for the expansion
+        nsdfg = dace.SDFG(node.label + "_expansion")
+        nstate = nsdfg.add_state()
+
+        # Add data descriptors to nested SDFG
+        nsdfg.add_datadesc("input", copy.deepcopy(input_desc))
+        nsdfg.add_datadesc("output", copy.deepcopy(output_desc))
+        nsdfg.arrays["input"].transient = False
+        nsdfg.arrays["output"].transient = False
+
+        if has_k:
+            k_desc = in_desc_with_name(node, state, sdfg, "k")
+            nsdfg.add_datadesc("k", copy.deepcopy(k_desc))
+            nsdfg.arrays["k"].transient = False
+
+        # Get shape information
+        input_shape = input_desc.shape
+        ndim = len(input_shape)
+
+        # The last two dimensions are the matrix dimensions
+        # Earlier dimensions are batch dimensions
+        if ndim < 2:
+            raise ValueError(f"Trilu requires input rank >= 2, got {ndim}")
+
+        # Create a map over all dimensions of the output tensor
+        map_ranges = [(f"i{d}", f"0:{input_shape[d]}") for d in range(ndim)]
+        output_indices = ', '.join([f'i{d}' for d in range(ndim)])
+
+        # Generate tasklet code
+        # For upper triangular (upper=1): keep elements where col >= row + k
+        # For lower triangular (upper=0): keep elements where col <= row + k
+        # The last two dimensions are the row and column indices
+        row_idx = f"i{ndim-2}"  # Second to last dimension is row
+        col_idx = f"i{ndim-1}"  # Last dimension is column
+
+        if has_k:
+            # k is a scalar input, extract first element
+            if upper:
+                condition = f"{col_idx} >= {row_idx} + __k"
+            else:
+                condition = f"{col_idx} <= {row_idx} + __k"
+        else:
+            # Default k = 0
+            if upper:
+                condition = f"{col_idx} >= {row_idx}"
+            else:
+                condition = f"{col_idx} <= {row_idx}"
+
+        input_indices = ', '.join([f'i{d}' for d in range(ndim)])
+        tasklet_code = f"""
+if {condition}:
+    __out = __input[{input_indices}]
+else:
+    __out = 0
+"""
+
+        # Build input memlet
+        input_memlet_str = "input[" + ", ".join([f"0:{input_shape[d]}" for d in range(ndim)]) + "]"
+
+        # Build tasklet inputs
+        tasklet_inputs = {"__input": dace.Memlet(input_memlet_str)}
+        if has_k:
+            tasklet_inputs["__k"] = dace.Memlet("k[0]")
+
+        # Create mapped tasklet
+        nstate.add_mapped_tasklet(name=node.label + "_tasklet",
+                                  map_ranges=map_ranges,
+                                  inputs=tasklet_inputs,
+                                  code=tasklet_code,
+                                  outputs={"__out": dace.Memlet(f"output[{output_indices}]")},
+                                  external_edges=True)
+
+        return nsdfg
