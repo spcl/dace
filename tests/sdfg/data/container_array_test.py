@@ -260,7 +260,6 @@ def test_two_levels():
     assert np.allclose(ref, B[0])
 
 
-@pytest.mark.skip(reason="TEST")
 def test_multi_nested_containers():
 
     M, N = dace.symbol('M'), dace.symbol('N')
