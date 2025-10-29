@@ -2621,10 +2621,17 @@ def _track_local_consts(node: Union[Base, List[Base]], alias_map: SPEC_TABLE,
             ltyp = find_type_dataref(lv, scope_spec, alias_map)
         if lspec and ltyp and ltyp.pointer:
             # Replace the pointer with whatever it's pointing to
-            plus[lspec] = rv
-            if lspec in minus:
-                minus.remove(lspec)
-        tp, tm = _track_local_consts(rv, alias_map)
+            scope_spec = search_scope_spec(rv)
+            root_name = _dataref_root(rv, scope_spec, alias_map)[0]
+            bad = walk(rv.children, (Name, Data_Ref, Part_Ref))
+            remove = {}
+            if not bad or bad == [root_name]:
+                plus[lspec] = rv
+                if lspec in minus:
+                    minus.remove(lspec)
+            else:
+                remove = {lspec}
+        tp, tm = _track_local_consts(rv, alias_map, {}, remove)
         _integrate_subresults(tp, tm)
     elif isinstance(node, If_Stmt):
         cond, body = node.children

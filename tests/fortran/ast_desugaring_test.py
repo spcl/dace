@@ -2484,6 +2484,7 @@ subroutine main()
   end type cfg
   type(cfg) :: c
   real, target :: data = 0.
+  real, target :: arr(3)
   real, pointer :: ptr => null()
   integer, target :: i
   integer, pointer :: iptr => null()
@@ -2503,6 +2504,13 @@ subroutine main()
       iarr(iptr) = iarr(iptr-1) + 1
     end if
   end do
+
+  ptr => arr(2)
+  data = ptr
+  ptr => arr(i)
+  data = ptr  ! Must not do constant replacement
+  ptr => arr(iarr(1))
+  data = ptr  ! Must not do constant replacement
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
@@ -2517,6 +2525,7 @@ SUBROUTINE main
   END TYPE cfg
   TYPE(cfg) :: c
   REAL, TARGET :: data = 0.
+  REAL, TARGET :: arr(3)
   REAL, POINTER :: ptr => NULL()
   INTEGER, TARGET :: i
   INTEGER, POINTER :: iptr => NULL()
@@ -2535,6 +2544,12 @@ SUBROUTINE main
       iarr(i) = iarr(i - 1) + 1
     END IF
   END DO
+  ptr => arr(2)
+  data = arr(2)
+  ptr => arr(i)
+  data = ptr
+  ptr => arr(iarr(1))
+  data = ptr
 END SUBROUTINE main
 """.strip()
     assert got == want
@@ -2658,7 +2673,7 @@ subroutine main
   bar(1) % ptr(2,2) = 2
 
   bar(2) % qtr => x(idx, 2)
-  bar(2) % ptr(1,1) = bar(2) % qtr
+  bar(2) % ptr(1,1) = bar(2) % qtr  ! Do not replace
   bar(3) % ptr(2,2) = bar(1) % ptr(idx,1)
   bar(3) % ptr(2,3) = bar(1) % ptr(2,2)
 end subroutine main
@@ -2681,7 +2696,7 @@ SUBROUTINE main
   x(idx, 1) = 5
   x(2, 2) = 2
   bar(2) % qtr => x(idx, 2)
-  bar(2) % ptr(1, 1) = x(idx, 2)
+  bar(2) % ptr(1, 1) = bar(2) % qtr
   bar(3) % ptr(2, 2) = x(idx, 1)
   bar(3) % ptr(2, 3) = x(2, 2)
 END SUBROUTINE main
