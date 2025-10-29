@@ -48,7 +48,12 @@ SUPPORTED_OPS = {'ONNXShape',
                  'ONNXLess',
                  'ONNXGreaterOrEqual',
                  'ONNXLessOrEqual',
-                 'ONNXWhere'}
+                 'ONNXWhere',
+                 'ONNXUnsqueeze',
+                 'ONNXConcat',
+                 'ONNXReshape',
+                 'ONNXTrilu',
+                 'ONNXCast'}
 # yapf: enable
 
 
@@ -388,6 +393,286 @@ class ConstantFolding(transformation.SingleStateTransformation):
             if result.shape == ():
                 result = result.reshape((1, ))
 
+            sdfg.arrays[constant_name].shape = result.shape
+
+            # Add to weights
+            parent.weights[constant_name] = torch.from_numpy(result)
+
+            # Mark as non-transient
+            sdfg.arrays[constant_name].transient = False
+
+        elif node.schema.name == "Unsqueeze":
+            # Unsqueeze operation with constant input
+            # Get the data input
+            data_input = None
+            axes_input = None
+
+            for edge in state.in_edges(node):
+                if edge.dst_conn == "data":
+                    input_name = edge.src.data
+                    input_data = parent.clean_weights[input_name]
+                    if hasattr(input_data, 'cpu'):
+                        data_input = input_data.cpu().numpy()
+                    else:
+                        data_input = np.array(input_data)
+                elif edge.dst_conn == "axes":
+                    input_name = edge.src.data
+                    input_data = parent.clean_weights[input_name]
+                    if hasattr(input_data, 'cpu'):
+                        axes_input = input_data.cpu().numpy()
+                    else:
+                        axes_input = np.array(input_data)
+
+            # Get axes - could be from input connector or from attribute
+            if axes_input is not None:
+                axes = axes_input.tolist() if hasattr(axes_input, 'tolist') else axes_input
+            elif hasattr(node, 'axes') and node.axes is not None:
+                axes = node.axes
+            else:
+                raise ValueError("Unsqueeze requires axes to be specified")
+
+            # Normalize axes to a list
+            if isinstance(axes, (int, np.integer)):
+                axes = [int(axes)]
+            elif not isinstance(axes, list):
+                axes = list(axes)
+
+            # Apply unsqueeze by inserting dimensions at the specified axes
+            result = data_input
+            # Sort axes to insert from smallest to largest
+            for axis in sorted(axes):
+                result = np.expand_dims(result, axis=axis)
+
+            # Get output name
+            assert len(state.out_edges(node)) == 1
+            output_edge = state.out_edges(node)[0]
+            output_access_node = output_edge.dst if isinstance(output_edge.dst, nd.AccessNode) else output_edge.src
+            constant_name = output_access_node.data
+
+            # Update array descriptor
+            sdfg.arrays[constant_name].shape = result.shape
+
+            # Add to weights
+            parent.weights[constant_name] = torch.from_numpy(result)
+
+            # Mark as non-transient
+            sdfg.arrays[constant_name].transient = False
+
+        elif node.schema.name == "Concat":
+            # Concat operation with all constant inputs
+            # Get all inputs and the axis
+            inputs = []
+            axis = 0
+
+            # Get axis from node attribute
+            if hasattr(node, 'axis') and node.axis is not None:
+                axis = node.axis
+
+            # Collect all inputs in order
+            # ONNX Concat has variable number of inputs named like __in_0, __in_1, etc.
+            in_edges = state.in_edges(node)
+
+            # Sort edges by connector name to maintain order
+            def extract_index(edge):
+                conn = edge.dst_conn
+                if '__in_' in conn:
+                    return int(conn.split('__in_')[1])
+                return 0
+
+            sorted_edges = sorted(in_edges, key=extract_index)
+
+            for edge in sorted_edges:
+                input_name = edge.src.data
+                input_data = parent.clean_weights[input_name]
+                if hasattr(input_data, 'cpu'):
+                    inputs.append(input_data.cpu().numpy())
+                else:
+                    inputs.append(np.array(input_data))
+
+            # Perform concatenation
+            result = np.concatenate(inputs, axis=axis)
+
+            # Get output name
+            assert len(state.out_edges(node)) == 1
+            output_edge = state.out_edges(node)[0]
+            output_access_node = output_edge.dst if isinstance(output_edge.dst, nd.AccessNode) else output_edge.src
+            constant_name = output_access_node.data
+
+            # Update array descriptor
+            sdfg.arrays[constant_name].shape = result.shape
+
+            # Add to weights
+            parent.weights[constant_name] = torch.from_numpy(result)
+
+            # Mark as non-transient
+            sdfg.arrays[constant_name].transient = False
+
+        elif node.schema.name == "Reshape":
+            # Reshape operation with constant inputs
+            # Get data input and shape input
+            data_input = None
+            shape_input = None
+
+            for edge in state.in_edges(node):
+                if edge.dst_conn == "data":
+                    input_name = edge.src.data
+                    input_data = parent.clean_weights[input_name]
+                    if hasattr(input_data, 'cpu'):
+                        data_input = input_data.cpu().numpy()
+                    else:
+                        data_input = np.array(input_data)
+                elif edge.dst_conn == "shape":
+                    input_name = edge.src.data
+                    input_data = parent.clean_weights[input_name]
+                    if hasattr(input_data, 'cpu'):
+                        shape_input = input_data.cpu().numpy()
+                    else:
+                        shape_input = np.array(input_data)
+
+            # Convert shape to tuple
+            new_shape = tuple(shape_input.tolist() if hasattr(shape_input, 'tolist') else shape_input)
+
+            # Handle special case: -1 in shape means infer dimension
+            if -1 in new_shape:
+                # Calculate the inferred dimension
+                total_elements = np.prod(data_input.shape)
+                known_elements = 1
+                infer_idx = -1
+                for i, dim in enumerate(new_shape):
+                    if dim == -1:
+                        infer_idx = i
+                    else:
+                        known_elements *= dim
+
+                if infer_idx >= 0:
+                    new_shape = list(new_shape)
+                    new_shape[infer_idx] = total_elements // known_elements
+                    new_shape = tuple(new_shape)
+
+            # Perform reshape
+            result = data_input.reshape(new_shape)
+
+            # Get output name
+            assert len(state.out_edges(node)) == 1
+            output_edge = state.out_edges(node)[0]
+            output_access_node = output_edge.dst if isinstance(output_edge.dst, nd.AccessNode) else output_edge.src
+            constant_name = output_access_node.data
+
+            # Update array descriptor
+            sdfg.arrays[constant_name].shape = result.shape
+
+            # Add to weights
+            parent.weights[constant_name] = torch.from_numpy(result)
+
+            # Mark as non-transient
+            sdfg.arrays[constant_name].transient = False
+
+        elif node.schema.name == "Trilu":
+            # Trilu operation with constant input(s)
+            # Get data input and optional k input
+            data_input = None
+            k_input = None
+
+            for edge in state.in_edges(node):
+                if edge.dst_conn == "input":
+                    input_name = edge.src.data
+                    input_data = parent.clean_weights[input_name]
+                    if hasattr(input_data, 'cpu'):
+                        data_input = input_data.cpu().numpy()
+                    else:
+                        data_input = np.array(input_data)
+                elif edge.dst_conn == "k":
+                    input_name = edge.src.data
+                    input_data = parent.clean_weights[input_name]
+                    if hasattr(input_data, 'cpu'):
+                        k_input = input_data.cpu().numpy()
+                    else:
+                        k_input = np.array(input_data)
+
+            # Get upper attribute (default is 1 for upper triangular)
+            upper = 1
+            if hasattr(node, 'upper') and node.upper is not None:
+                upper = node.upper
+
+            # Get k value (diagonal offset, default is 0)
+            k = 0
+            if k_input is not None:
+                k = int(k_input.item() if hasattr(k_input, 'item') else k_input)
+
+            # Apply triangular operation
+            if upper:
+                # Upper triangular
+                result = np.triu(data_input, k=k)
+            else:
+                # Lower triangular
+                result = np.tril(data_input, k=k)
+
+            # Get output name
+            assert len(state.out_edges(node)) == 1
+            output_edge = state.out_edges(node)[0]
+            output_access_node = output_edge.dst if isinstance(output_edge.dst, nd.AccessNode) else output_edge.src
+            constant_name = output_access_node.data
+
+            # Update array descriptor
+            sdfg.arrays[constant_name].shape = result.shape
+
+            # Add to weights
+            parent.weights[constant_name] = torch.from_numpy(result)
+
+            # Mark as non-transient
+            sdfg.arrays[constant_name].transient = False
+
+        elif node.schema.name == "Cast":
+            # Cast operation with constant input
+            # Get data input
+            data_input = None
+
+            for edge in state.in_edges(node):
+                if edge.dst_conn == "input":
+                    input_name = edge.src.data
+                    input_data = parent.clean_weights[input_name]
+                    if hasattr(input_data, 'cpu'):
+                        data_input = input_data.cpu().numpy()
+                    else:
+                        data_input = np.array(input_data)
+
+            # Get target dtype from node attribute
+            if hasattr(node, 'to') and node.to is not None:
+                # ONNX uses TensorProto data types (integers)
+                # Map ONNX type to numpy dtype
+                onnx_to_numpy_dtype = {
+                    1: np.float32,  # FLOAT
+                    2: np.uint8,  # UINT8
+                    3: np.int8,  # INT8
+                    5: np.int16,  # INT16
+                    6: np.int32,  # INT32
+                    7: np.int64,  # INT64
+                    9: np.bool_,  # BOOL
+                    10: np.float16,  # FLOAT16
+                    11: np.float64,  # DOUBLE
+                    12: np.uint32,  # UINT32
+                    13: np.uint64,  # UINT64
+                    16: np.float16,  # BFLOAT16 (map to float16)
+                }
+
+                target_dtype = onnx_to_numpy_dtype.get(node.to, np.float32)
+            else:
+                # If no target type specified, use the output descriptor's type
+                output_edge = state.out_edges(node)[0]
+                output_access_node = output_edge.dst if isinstance(output_edge.dst, nd.AccessNode) else output_edge.src
+                constant_name = output_access_node.data
+                target_dtype = sdfg.arrays[constant_name].dtype.as_numpy_dtype()
+
+            # Perform cast
+            result = data_input.astype(target_dtype)
+
+            # Get output name
+            assert len(state.out_edges(node)) == 1
+            output_edge = state.out_edges(node)[0]
+            output_access_node = output_edge.dst if isinstance(output_edge.dst, nd.AccessNode) else output_edge.src
+            constant_name = output_access_node.data
+
+            # Update array descriptor (shape should be same, just dtype changes)
             sdfg.arrays[constant_name].shape = result.shape
 
             # Add to weights
