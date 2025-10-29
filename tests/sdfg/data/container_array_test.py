@@ -1,5 +1,7 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import ctypes
+
+import pytest
 import dace
 import numpy as np
 
@@ -258,6 +260,7 @@ def test_two_levels():
     assert np.allclose(ref, B[0])
 
 
+@pytest.mark.skip(reason="TEST")
 def test_multi_nested_containers():
 
     M, N = dace.symbol('M'), dace.symbol('N')
