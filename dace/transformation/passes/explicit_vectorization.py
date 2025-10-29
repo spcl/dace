@@ -281,17 +281,17 @@ class ExplicitVectorization(ppl.Pass):
         inner_sdfg.save("x3.sdfg")
 
         # 4
-        for state in inner_sdfg.all_states():
+        for inner_state in inner_sdfg.all_states():
             # Skip the data data that are still scalar and source nodes
             scalar_source_data = {n.data for s, n in scalar_source_nodes}
             edges_to_replace = {
                 e
-                for e in state.edges()
+                for e in inner_state.edges()
                 if e not in modified_edges and e.data is not None and e.data.data not in scalar_source_data
             }
             old_subset = dace.subsets.Range([(0, 0, 1)])
             new_subset = dace.subsets.Range([(0, self.vector_width - 1, 1)])
-            replace_memlet_expression(state, edges_to_replace, old_subset, new_subset, True, modified_edges,
+            replace_memlet_expression(inner_state, edges_to_replace, old_subset, new_subset, True, modified_edges,
                                       self.vector_op_numeric_type)
 
         state.sdfg.save("x4.sdfg")
@@ -309,9 +309,9 @@ class ExplicitVectorization(ppl.Pass):
                 self._expand_interstate_assignment(inner_sdfg, edge, free_syms, candidate_arrays)
 
         # 5
-        for state in inner_sdfg.all_states():
-            nodes = {n for n in state.nodes() if n not in modified_nodes}
-            self._replace_tasklets_from_node_list(state, nodes, vector_map_param)
+        for inner_state in inner_sdfg.all_states():
+            nodes = {n for n in inner_state.nodes() if n not in modified_nodes}
+            self._replace_tasklets_from_node_list(inner_state, nodes, vector_map_param)
             modified_nodes = modified_nodes.union(nodes)
 
         # TODO: fix, need to do it in add-array
@@ -329,6 +329,23 @@ class ExplicitVectorization(ppl.Pass):
 
         # Add missing symbols
         print("OOOOOOO", inner_sdfg.free_symbols, nsdfg.symbol_mapping)
+
+        # There might be missing expanded loop symbols, they are of form `loop_var{id}` where `{id}` is an integer
+        # Construct back the loop variable and add assignments for them
+        missing_symbols = set(inner_sdfg.free_symbols - set(nsdfg.symbol_mapping.keys()))
+
+        map_symbols = assert_symbols_in_parent_map_symbols(missing_symbols, state, nsdfg)
+
+        assignment_dict = dict()
+
+        for missing_symbol in map_symbols:
+            for i in range(self.vector_width):
+                assignment_dict[f"{missing_symbol}{i}"] = f"{missing_symbol} + {i}"
+
+        inner_sdfg.add_state_before(inner_sdfg.start_block,
+                                    label="missing_sym_generate",
+                                    is_start_block=True,
+                                    assignments=assignment_dict)
 
         state.sdfg.save("x5.sdfg")
 

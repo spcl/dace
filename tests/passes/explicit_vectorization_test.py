@@ -224,13 +224,17 @@ def run_vectorization_test(dace_func,
 
     # Vectorized SDFG
     copy_sdfg = copy.deepcopy(sdfg)
+    copy_sdfg.name = copy_sdfg.name + "_vectorized"
+
     ExplicitVectorizationPipelineCPU(vector_width=vector_width).apply_pass(copy_sdfg, {})
+
     if save_sdfgs and sdfg_name:
         copy_sdfg.save(f"{sdfg_name}_vectorized.sdfg")
     c_copy_sdfg = copy_sdfg.compile()
 
     # Run both
     c_sdfg(**arrays_orig, **params)
+
     c_copy_sdfg(**arrays_vec, **params)
 
     # Compare results
