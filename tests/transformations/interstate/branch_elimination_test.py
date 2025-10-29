@@ -322,6 +322,8 @@ def run_and_compare(
 
     copy_sdfg = copy.deepcopy(sdfg)
     copy_sdfg.name = sdfg.name + "_branch_eliminated"
+    del sdfg
+
     # Apply transformation
     if use_pass:
         fb = EliminateBranches()
@@ -343,6 +345,10 @@ def run_and_compare(
     for name in arrays.keys():
         np.testing.assert_allclose(out_fused[name], out_no_fuse[name], atol=1e-12)
 
+    del out_no_fuse
+    del out_fused
+    del copy_sdfg
+
 
 def run_and_compare_sdfg(
     sdfg,
@@ -357,6 +363,8 @@ def run_and_compare_sdfg(
     # Run SDFG version (with transformation)
     copy_sdfg = copy.deepcopy(sdfg)
     copy_sdfg.name = sdfg.name + "_branch_eliminated"
+    del sdfg
+
     fb = EliminateBranches()
     fb.try_clean = True
     fb.permissive = permissive
@@ -367,6 +375,9 @@ def run_and_compare_sdfg(
     # Compare all arrays
     for name in arrays.keys():
         np.testing.assert_allclose(out_no_fuse[name], out_fused[name], atol=1e-12)
+
+    del out_no_fuse
+    del out_fused
 
     return copy_sdfg
 
