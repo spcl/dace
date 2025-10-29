@@ -596,6 +596,139 @@ def merge_maps(
     return merged_entry, merged_exit
 
 
+def canonicalize_memlet_trees_for_scope(
+    state: SDFGState,
+    scope_node: Union[nd.EntryNode, nd.ExitNode],
+) -> int:
+    """Canonicalize the Memlet trees of scope nodes.
+
+    The function will modify all Memlets that are adjacent to `scope_node`
+    such that the Memlet always refers to the data that is on the outside.
+    This function only operates on a single scope.
+
+    :param state: The SDFG state in which the scope to consolidate resides.
+    :param scope_node: The scope node whose edges will be consolidated.
+    :return: Number of modified Memlets.
+
+    :note: This is the "historical" expected format of Memlet trees at scope nodes,
+        which was present before the introduction of `other_subset`. Running this
+        transformation might fix some issues.
+    """
+    if isinstance(scope_node, nd.EntryNode):
+        may_have_dynamic_map_range = True
+        is_downward_tree = True
+        outer_edges = state.in_edges(scope_node)
+        get_outer_edge_connector = lambda e: e.dst_conn
+        inner_edges_for = lambda conn: state.out_edges_by_connector(scope_node, conn)
+        inner_prefix = 'OUT_'
+        outer_prefix = 'IN_'
+
+        def get_outer_data(e: MultiConnectorEdge[dace.Memlet]):
+            mpath = state.memlet_path(e)
+            assert isinstance(mpath[0].src, nd.AccessNode)
+            return mpath[0].src.data
+
+    else:
+        may_have_dynamic_map_range = False
+        is_downward_tree = False
+        outer_edges = state.out_edges(scope_node)
+        get_outer_edge_connector = lambda e: e.src_conn
+        inner_edges_for = lambda conn: state.in_edges_by_connector(scope_node, conn)
+        inner_prefix = 'IN_'
+        outer_prefix = 'OUT_'
+
+        def get_outer_data(e: MultiConnectorEdge[dace.Memlet]):
+            mpath = state.memlet_path(e)
+            assert isinstance(mpath[-1].dst, nd.AccessNode)
+            return mpath[-1].dst.data
+
+    def swap_prefix(conn: str) -> str:
+        if conn.startswith(inner_prefix):
+            return outer_prefix + conn[len(inner_prefix):]
+        else:
+            assert conn.startswith(
+                outer_prefix), f"Expected connector to start with '{outer_prefix}', but it was '{conn}'."
+            return inner_prefix + conn[len(outer_prefix):]
+
+    modified_memlet = 0
+    for outer_edge in outer_edges:
+        outer_edge_connector = get_outer_edge_connector(outer_edge)
+        if may_have_dynamic_map_range and (not outer_edge_connector.startswith(outer_prefix)):
+            continue
+        assert outer_edge_connector.startswith(outer_prefix)
+        corresponding_inner_connector = swap_prefix(outer_edge_connector)
+
+        # In case `scope_node` is at the global scope it should be enough to run
+        #  `outer_edge.data.data` but this way it is more in line with consolidate.
+        outer_data = get_outer_data(outer_edge)
+
+        for inner_edge in inner_edges_for(corresponding_inner_connector):
+            for mtree in state.memlet_tree(inner_edge).traverse_children(include_self=True):
+                medge: MultiConnectorEdge[dace.Memlet] = mtree.edge
+                if medge.data.data == outer_data:
+                    # This edge is already referring to the outer data, so no change is needed.
+                    continue
+
+                # Now we have to extract subset from the Memlet.
+                if is_downward_tree:
+                    subset = medge.data.get_src_subset(medge, state)
+                    other_subset = medge.data.dst_subset
+                else:
+                    subset = medge.data.get_dst_subset(medge, state)
+                    other_subset = medge.data.src_subset
+
+                # Now for an update.
+                medge.data._data = outer_data
+                medge.data._subset = subset
+                medge.data._other_subset = other_subset
+                medge.data.try_initialize(state.sdfg, state, medge)
+                modified_memlet += 1
+
+    return modified_memlet
+
+
+def canonicalize_memlet_trees(
+    sdfg: 'dace.SDFG',
+    starting_scope: Optional['dace.sdfg.scope.ScopeTree'] = None,
+) -> int:
+    """Canonicalize the Memlet trees of all scopes in the SDFG.
+
+    This function runs `canonicalize_memlet_trees_for_scope()` on all scopes
+    in the SDFG. Note that this function does not recursively processes
+    nested SDFGs.
+
+    :param sdfg: The SDFG to consolidate.
+    :param starting_scope: If not None, starts with a certain scope. Note in that
+        mode only the state in which the scope is located will be processes.
+    :return: Number of modified Memlets.
+    """
+
+    total_modified_memlets = 0
+    for state in sdfg.states():
+        # Start bottom-up
+        if starting_scope is not None and starting_scope.entry not in state.nodes():
+            continue
+
+        queue = [starting_scope] if starting_scope else state.scope_leaves()
+        next_queue = []
+        while len(queue) > 0:
+            for scope in queue:
+                if scope.entry is not None:
+                    total_modified_memlets += canonicalize_memlet_trees_for_scope(state, scope.entry)
+                if scope.exit is not None:
+                    total_modified_memlets += canonicalize_memlet_trees_for_scope(state, scope.exit)
+                if scope.parent is not None:
+                    next_queue.append(scope.parent)
+            queue = next_queue
+            next_queue = []
+
+        if starting_scope is not None:
+            # No need to traverse other states
+            break
+
+    return total_modified_memlets
+
+
 def consolidate_edges_scope(state: SDFGState, scope_node: Union[nd.EntryNode, nd.ExitNode]) -> int:
     """
         Union scope-entering memlets relating to the same data node in a scope.
