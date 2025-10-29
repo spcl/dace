@@ -445,10 +445,13 @@ def fix_nsdfg_connector_array_shapes_mismatch(parent_state: dace.SDFGState, nsdf
             dst_shape_2 = tuple([(e + 1 - b) // s for (b, e, s) in subset])
             dst_shape_1_collapsed = tuple([(e + 1 - b) for (b, e, s) in subset if (e + 1 - b) != 1])
             dst_shape_2_collapsed = tuple([(e + 1 - b) // s for (b, e, s) in subset if (e + 1 - b) // s != 1])
+            strides_1_collapsed = tuple(
+                [stride for (b, e, s), stride in zip(subset, dst_arr.strides) if (e + 1 - b) != 1])
             if dst_arr.shape != dst_shape_1 and dst_arr.shape != dst_shape_2 and dst_arr.shape != dst_shape_1_collapsed and dst_arr.shape != dst_shape_2_collapsed:
                 nsdfg_node.sdfg.remove_data(dst_arr_name, validate=False)
                 nsdfg_node.sdfg.add_array(name=dst_arr_name,
                                           shape=dst_shape_1_collapsed,
+                                          strides=strides_1_collapsed,
                                           storage=dst_arr.storage,
                                           dtype=dst_arr.dtype,
                                           location=dst_arr.location,
@@ -479,10 +482,13 @@ def fix_nsdfg_connector_array_shapes_mismatch(parent_state: dace.SDFGState, nsdf
             dst_shape_2 = tuple([(e + 1 - b) // s for (b, e, s) in subset])
             dst_shape_1_collapsed = tuple([(e + 1 - b) for (b, e, s) in subset if (e + 1 - b) != 1])
             dst_shape_2_collapsed = tuple([(e + 1 - b) // s for (b, e, s) in subset if (e + 1 - b) // s != 1])
+            strides_1_collapsed = tuple(
+                [stride for (b, e, s), stride in zip(subset, dst_arr.strides) if (e + 1 - b) != 1])
             if dst_arr.shape != dst_shape_1 and dst_arr.shape != dst_shape_2 and dst_arr.shape != dst_shape_1_collapsed and dst_arr.shape != dst_shape_2_collapsed:
                 nsdfg_node.sdfg.remove_data(dst_arr_name, validate=False)
                 nsdfg_node.sdfg.add_array(name=dst_arr_name,
                                           shape=dst_shape_1_collapsed,
+                                          strides=strides_1_collapsed,
                                           storage=dst_arr.storage,
                                           dtype=dst_arr.dtype,
                                           location=dst_arr.location,
@@ -1206,3 +1212,43 @@ def move_out_reduction(scalar_source_nodes, state: dace.SDFGState, nsdfg: dace.n
         replace_all_access_subsets(state, accumulator_name, f"0:{vector_width}")
         expand_assignment_tasklets(state, accumulator_name, vector_width)
         reduce_before_use(state, accumulator_name, vector_width, op)
+
+
+import dace.sdfg.construction_utils as cutil
+
+
+def assert_symbols_in_parent_map_symbols(missing_symbols: Set[str], state: dace.SDFGState,
+                                         nsdfg: dace.nodes.NestedSDFG):
+
+    def validate_and_strip(strings):
+        valid = []
+        for s in strings:
+            match = re.fullmatch(r'([A-Za-z_]\w*?)(\d+)$', s)
+            assert match
+            if match:
+                name, num = match.groups()
+                valid.append((name, int(num)))
+        return valid
+
+    stripped_symbols = validate_and_strip(missing_symbols)
+    loop_vars = {var for var, int_id in stripped_symbols}
+
+    sdict = state.scope_dict()
+    first_parent_map = sdict[nsdfg]
+    parent_maps_and_loops = cutil.get_parent_map_and_loop_scopes(state.sdfg, first_parent_map, state)
+
+    loop_symbols = set()
+    for p in first_parent_map.map.params:
+        loop_symbols.add(p)
+
+    for map_or_loop in parent_maps_and_loops:
+        if isinstance(map_or_loop, dace.nodes.MapEntry):
+            for p in map_or_loop.map.params:
+                loop_symbols.add(p)
+        elif isinstance(map_or_loop, LoopRegion):
+            loop_symbols.add(map_or_loop.loop_variable)
+
+    for loop_var in loop_vars:
+        assert loop_var in loop_symbols, f"{loop_var} not in {loop_symbols}"
+
+    return loop_vars
