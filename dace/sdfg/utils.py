@@ -8,6 +8,8 @@ import warnings
 import networkx as nx
 import time
 
+import sympy
+
 import dace.sdfg.nodes
 from dace.codegen import compiled_sdfg as csdfg
 from dace.sdfg.graph import MultiConnectorEdge
@@ -592,139 +594,6 @@ def merge_maps(
     graph.remove_nodes_from([outer_map_entry, outer_map_exit, inner_map_entry, inner_map_exit])
 
     return merged_entry, merged_exit
-
-
-def canonicalize_memlet_trees_for_scope(
-    state: SDFGState,
-    scope_node: Union[nd.EntryNode, nd.ExitNode],
-) -> int:
-    """Canonicalize the Memlet trees of scope nodes.
-
-    The function will modify all Memlets that are adjacent to `scope_node`
-    such that the Memlet always refers to the data that is on the outside.
-    This function only operates on a single scope.
-
-    :param state: The SDFG state in which the scope to consolidate resides.
-    :param scope_node: The scope node whose edges will be consolidated.
-    :return: Number of modified Memlets.
-
-    :note: This is the "historical" expected format of Memlet trees at scope nodes,
-        which was present before the introduction of `other_subset`. Running this
-        transformation might fix some issues.
-    """
-    if isinstance(scope_node, nd.EntryNode):
-        may_have_dynamic_map_range = True
-        is_downward_tree = True
-        outer_edges = state.in_edges(scope_node)
-        get_outer_edge_connector = lambda e: e.dst_conn
-        inner_edges_for = lambda conn: state.out_edges_by_connector(scope_node, conn)
-        inner_prefix = 'OUT_'
-        outer_prefix = 'IN_'
-
-        def get_outer_data(e: MultiConnectorEdge[dace.Memlet]):
-            mpath = state.memlet_path(e)
-            assert isinstance(mpath[0].src, nd.AccessNode)
-            return mpath[0].src.data
-
-    else:
-        may_have_dynamic_map_range = False
-        is_downward_tree = False
-        outer_edges = state.out_edges(scope_node)
-        get_outer_edge_connector = lambda e: e.src_conn
-        inner_edges_for = lambda conn: state.in_edges_by_connector(scope_node, conn)
-        inner_prefix = 'IN_'
-        outer_prefix = 'OUT_'
-
-        def get_outer_data(e: MultiConnectorEdge[dace.Memlet]):
-            mpath = state.memlet_path(e)
-            assert isinstance(mpath[-1].dst, nd.AccessNode)
-            return mpath[-1].dst.data
-
-    def swap_prefix(conn: str) -> str:
-        if conn.startswith(inner_prefix):
-            return outer_prefix + conn[len(inner_prefix):]
-        else:
-            assert conn.startswith(
-                outer_prefix), f"Expected connector to start with '{outer_prefix}', but it was '{conn}'."
-            return inner_prefix + conn[len(outer_prefix):]
-
-    modified_memlet = 0
-    for outer_edge in outer_edges:
-        outer_edge_connector = get_outer_edge_connector(outer_edge)
-        if may_have_dynamic_map_range and (not outer_edge_connector.startswith(outer_prefix)):
-            continue
-        assert outer_edge_connector.startswith(outer_prefix)
-        corresponding_inner_connector = swap_prefix(outer_edge_connector)
-
-        # In case `scope_node` is at the global scope it should be enough to run
-        #  `outer_edge.data.data` but this way it is more in line with consolidate.
-        outer_data = get_outer_data(outer_edge)
-
-        for inner_edge in inner_edges_for(corresponding_inner_connector):
-            for mtree in state.memlet_tree(inner_edge).traverse_children(include_self=True):
-                medge: MultiConnectorEdge[dace.Memlet] = mtree.edge
-                if medge.data.data == outer_data:
-                    # This edge is already referring to the outer data, so no change is needed.
-                    continue
-
-                # Now we have to extract subset from the Memlet.
-                if is_downward_tree:
-                    subset = medge.data.get_src_subset(medge, state)
-                    other_subset = medge.data.dst_subset
-                else:
-                    subset = medge.data.get_dst_subset(medge, state)
-                    other_subset = medge.data.src_subset
-
-                # Now for an update.
-                medge.data._data = outer_data
-                medge.data._subset = subset
-                medge.data._other_subset = other_subset
-                medge.data.try_initialize(state.sdfg, state, medge)
-                modified_memlet += 1
-
-    return modified_memlet
-
-
-def canonicalize_memlet_trees(
-    sdfg: 'dace.SDFG',
-    starting_scope: Optional['dace.sdfg.scope.ScopeTree'] = None,
-) -> int:
-    """Canonicalize the Memlet trees of all scopes in the SDFG.
-
-    This function runs `canonicalize_memlet_trees_for_scope()` on all scopes
-    in the SDFG. Note that this function does not recursively processes
-    nested SDFGs.
-
-    :param sdfg: The SDFG to consolidate.
-    :param starting_scope: If not None, starts with a certain scope. Note in that
-        mode only the state in which the scope is located will be processes.
-    :return: Number of modified Memlets.
-    """
-
-    total_modified_memlets = 0
-    for state in sdfg.states():
-        # Start bottom-up
-        if starting_scope is not None and starting_scope.entry not in state.nodes():
-            continue
-
-        queue = [starting_scope] if starting_scope else state.scope_leaves()
-        next_queue = []
-        while len(queue) > 0:
-            for scope in queue:
-                if scope.entry is not None:
-                    total_modified_memlets += canonicalize_memlet_trees_for_scope(state, scope.entry)
-                if scope.exit is not None:
-                    total_modified_memlets += canonicalize_memlet_trees_for_scope(state, scope.exit)
-                if scope.parent is not None:
-                    next_queue.append(scope.parent)
-            queue = next_queue
-            next_queue = []
-
-        if starting_scope is not None:
-            # No need to traverse other states
-            break
-
-    return total_modified_memlets
 
 
 def consolidate_edges_scope(state: SDFGState, scope_node: Union[nd.EntryNode, nd.ExitNode]) -> int:
@@ -2548,11 +2417,12 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
     # -> For 2: Rm. dynamic in connector, remove the edge and the node if the degree is None
     # 3. Access Node
     # -> If access node is used then e.g. [scalar] -> [tasklet]
-    # -> then [tasklet(assign const value)] -> [access node] -> [tasklet]
+    # -> then create a [tasklet] that uses the scalar_val as a constant value inside
+    import dace.sdfg.construction_utils as cutil
 
     def repl_code_block_or_str(input: Union[CodeBlock, str], src: str, dst: str):
         if isinstance(input, CodeBlock):
-            return CodeBlock(input.as_string.replace(src, dst))
+            return CodeBlock(cutil.replace_code(input.as_string, input.language, {src: dst}), input.language)
         else:
             return input.replace(src, dst)
 
@@ -2583,22 +2453,16 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
             assert e.data.data == scalar_name
 
             if isinstance(e.dst, nd.Tasklet):
-                assign_tasklet = state.add_tasklet(f"assign_{scalar_name}",
-                                                   inputs={},
-                                                   outputs={"_out"},
-                                                   code=f"_out = {scalar_val}")
-                tmp_name = f"__tmp_{scalar_name}_{c}"
-                c += 1
-                copydesc = copy.deepcopy(sdfg.arrays[scalar_name])
-                copydesc.transient = True
-                copydesc.storage = dace.StorageType.Register
-                sdfg.add_datadesc(tmp_name, copydesc)
-                scl_an = state.add_access(tmp_name)
+                in_tasklet_name = e.dst_conn
+                new_code = CodeBlock(code=cutil.replace_code(e.dst.code.as_string, e.dst.code.language,
+                                                             {in_tasklet_name: scalar_val}),
+                                     language=e.dst.code.language)
+                e.dst.code = new_code
                 state.remove_edge(e)
-                state.add_edge(assign_tasklet, "_out", scl_an, None, dace.memlet.Memlet.from_array(tmp_name, copydesc))
-                state.add_edge(scl_an, None, dst, e.dst_conn, dace.memlet.Memlet.from_array(tmp_name, copydesc))
                 if e.src_conn is not None:
                     src.remove_out_connector(e.src_conn)
+                if e.dst_conn is not None:
+                    dst.remove_in_connector(e.dst_conn)
             else:
                 state.remove_edge(e)
                 if e.src_conn is not None:
@@ -2657,7 +2521,101 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
         _specialize_scalar_impl(root, nsdfg, scalar_name, scalar_val)
 
 
-def specialize_scalar(sdfg: 'dace.SDFG', scalar_name: str, scalar_val: Union[float, int, str]):
-    assert isinstance(scalar_name, str)
-    assert isinstance(scalar_val, (float, int, str))
+def specialize_scalar(sdfg: 'dace.SDFG', scalar_name: str, scalar_val: Union[float, int, str, sympy.Number]):
+    assert isinstance(scalar_name, str), f"Expected scalar name to be str got {type(scalar_val)}"
+
+    def _sympy_to_python_number(val):
+        """Convert any SymPy numeric type to a native Python int or float."""
+        if isinstance(val, sympy.Integer):
+            return int(val)
+        elif isinstance(val, (sympy.Float, sympy.Rational)):
+            return float(val)
+        elif isinstance(val, sympy.Number):
+            # Fallback for any other sympy numeric type
+            return float(val.evalf())
+        return val  # unchanged if not a number
+
+    assert isinstance(
+        scalar_val,
+        (float, int, str,
+         sympy.Number)), f"Expected scalar value to be float, int, str, or sympy.Number, got {type(scalar_val)}"
+    if not isinstance(scalar_val, (float, int, str)):
+        if isinstance(scalar_val, sympy.Number):
+            scalar_val = _sympy_to_python_number(scalar_val)
+
     _specialize_scalar_impl(sdfg, sdfg, scalar_name, scalar_val)
+
+
+def demote_symbol_to_scalar(sdfg: 'dace.SDFG', symbol_str: str, default_type: 'dace.dtypes.typeclass' = None):
+    import dace.sdfg.construction_utils as cutil
+    if default_type is None:
+        default_type = dace.int32
+
+    # If assignment is to symbol_str, append it to last scalar before
+    if symbol_str in sdfg.symbols:
+        sym_dtype = sdfg.symbols[symbol_str]
+    else:
+        print(
+            f"Symbol {symbol_str} not in the symbols of {sdfg.label} ({sdfg.symbols}), setting to default type {default_type}"
+        )
+        sym_dtype = default_type
+
+    # If top-level and in free symbols
+    # Or not top-level and in symbol mapping need to make it non transient
+    # TODO:
+    is_top_level = sdfg.parent_nsdfg_node is None
+    is_transient = not ((is_top_level and symbol_str in sdfg.free_symbols) or
+                        ((not is_top_level) and symbol_str in sdfg.parent_nsdfg_node.symbol_mapping))
+
+    if is_transient is False:
+        raise Exception("Scalar to symbol demotion only works if the resulting scalar would be transient")
+
+    if symbol_str in sdfg.symbols:
+        sdfg.remove_symbol(symbol_str)
+    sdfg.add_scalar(name=symbol_str, dtype=sym_dtype, storage=dace.dtypes.StorageType.Register, transient=is_transient)
+
+    # For any tasklet that uses the symbol - make an access node to the scalar and connect through the in connector
+    # 1. Replace all symbols of name appearing
+    # 2.1 If symbol <- expr in any interstate edge
+    # 2.2 Add a new state before edge.dst, and add assignment to the scalar
+
+    # 1
+    # Replace all code in tasklets and access nodes
+    for g in sdfg.all_states():
+        for n in g.nodes():
+            if isinstance(n, dace.nodes.Tasklet):
+                assert isinstance(g, dace.SDFGState)
+                sdict = g.scope_dict()
+                if cutil.tasklet_has_symbol(n, symbol_str):
+                    # 2. If used in tasklet try to replace symbol name with an in connector and add an access to the scalar
+
+                    # Sanity check no tasklet should assign to a symbol
+                    cutil.tasklet_replace_code(n.code.as_string, {symbol_str: f"_in_{symbol_str}"})
+                    n.add_in_connector(f"_in_{symbol_str}")
+                    access = g.add_access(symbol_str)
+                    g.add_edge(access, None, n, f"_in_{symbol_str}", dace.memlet.Memlet(expr=f"{symbol_str}[0]"))
+                    # If parent scope is not None add a dependency edge to it
+                    if sdict[n] is not None:
+                        g.add_edge(sdict[n], None, access, None, dace.memlet.Memlet())
+
+    # 2
+    for e in sdfg.all_interstate_edges():
+        matching_assignments = {(k, v) for k, v in e.data.assignments.items() if k.strip() == symbol_str}
+        if len(matching_assignments) > 0:
+            # Add them to the next state
+            state = e.dst.parent_graph.add_state_before(e.dst,
+                                                        label=f"_{e.dst}_sym_assign",
+                                                        is_start_block=e.dst.parent_graph.start_block == e.dst)
+            # Go through all matching assignments
+            # Add symbols etc. as necessary
+            for k, v in matching_assignments:
+                del e.data.assignments[k]
+                symbol_str = k.strip()
+                if symbol_str in state.sdfg.symbols:
+                    state.sdfg.remove_symbol(symbol_str)
+                if symbol_str not in g.sdfg.arrays:
+                    state.sdfg.add_scalar(name=symbol_str,
+                                          dtype=sym_dtype,
+                                          storage=dace.dtypes.StorageType.Register,
+                                          transient=is_transient)
+                cutil.generate_assignment_as_tasklet_in_state(state, k, v)
