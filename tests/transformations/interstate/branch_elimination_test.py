@@ -319,21 +319,23 @@ def run_and_compare(
     sdfg.validate()
     out_no_fuse = {k: v.copy() for k, v in arrays.items()}
     sdfg(**out_no_fuse)
+
+    copy_sdfg = copy.deepcopy(sdfg)
+    copy_sdfg.name = sdfg.name + "_branch_eliminated"
     # Apply transformation
     if use_pass:
         fb = EliminateBranches()
         fb.try_clean = True
-        fb.apply_pass(sdfg, {})
+        fb.apply_pass(copy_sdfg, {})
     else:
-        apply_branch_elimination(sdfg, 2)
-    sdfg.name = sdfg.label + "_transformed"
+        apply_branch_elimination(copy_sdfg, 2)
 
     # Run SDFG version (with transformation)
     out_fused = {k: v.copy() for k, v in arrays.items()}
 
-    sdfg(**out_fused)
+    copy_sdfg(**out_fused)
 
-    branch_code = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
+    branch_code = {n for n, g in copy_sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     assert len(
         branch_code) == num_expected_branches, f"(actual) len({branch_code}) != (desired) {num_expected_branches}"
 
@@ -353,16 +355,20 @@ def run_and_compare_sdfg(
     sdfg(**out_no_fuse)
 
     # Run SDFG version (with transformation)
+    copy_sdfg = copy.deepcopy(sdfg)
+    copy_sdfg.name = sdfg.name + "_branch_eliminated"
     fb = EliminateBranches()
     fb.try_clean = True
     fb.permissive = permissive
-    fb.apply_pass(sdfg, {})
+    fb.apply_pass(copy_sdfg, {})
     out_fused = {k: v.copy() for k, v in arrays.items()}
-    sdfg(**out_fused)
+    copy_sdfg(**out_fused)
 
     # Compare all arrays
     for name in arrays.keys():
         np.testing.assert_allclose(out_no_fuse[name], out_fused[name], atol=1e-12)
+
+    return copy_sdfg
 
 
 @pytest.mark.parametrize("use_pass_flag", [True, False])
@@ -558,7 +564,7 @@ def test_try_clean():
         xform.conditional = cblock
         xform.try_clean(graph=parent_graph, sdfg=parent_sdfg)
 
-    # Should have moe states before
+    # Should have move states before
     cblocks = {n for n, g in sdfg1.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     assert len(cblocks) == 2
     # A state must have been moved before)
@@ -1196,9 +1202,9 @@ def test_try_clean_on_complicated_pattern_for_manual_clean_up_one():
         ssp.ignore = scalar_names
         ssp.apply_pass(nsdfg.sdfg, {})
 
-    run_and_compare_sdfg(sdfg, permissive=True, a=A, b=B, c=C, d=D[0])
+    transformed_sdfg = run_and_compare_sdfg(sdfg, permissive=True, a=A, b=B, c=C, d=D[0])
 
-    branch_code = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
+    branch_code = {n for n, g in transformed_sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     assert len(branch_code) == 0, f"(actual) len({branch_code}) != (desired) {0}"
 
 
@@ -1266,9 +1272,9 @@ def test_try_clean_on_complicated_pattern_for_manual_clean_up_two():
         ssp.ignore = scalar_names
         ssp.apply_pass(nsdfg.sdfg, {})
 
-    run_and_compare_sdfg(sdfg, permissive=True, a=A, b=B, c=C, d=D[0], e=E[0])
+    transformed_sdfg = run_and_compare_sdfg(sdfg, permissive=True, a=A, b=B, c=C, d=D[0], e=E[0])
 
-    branch_code = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
+    branch_code = {n for n, g in transformed_sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     assert len(branch_code) == 0, f"(actual) len({branch_code}) != (desired) {0}"
 
 
@@ -1298,7 +1304,6 @@ def test_single_assignment():
 def test_single_assignment_cond_from_scalar():
     A = np.ones(shape=(512, ), dtype=np.float64)
     before = single_assignment_cond_from_scalar.to_sdfg()
-    before.name = "non_fusion_single_assignment_cond_from_scalar"
     before.compile()
     run_and_compare(single_assignment_cond_from_scalar, 0, True, a=A)
 
@@ -1365,9 +1370,14 @@ def test_condition_from_transient_scalar():
     _if_cond_42 = np.random.choice([8.0, 11.0], size=(1, ))
     sdfg = _get_sdfg_with_condition_from_transient_scalar()
 
-    run_and_compare_sdfg(sdfg, permissive=False, zsolac=zsolac, zlcond2=zlcond2, za=za, _if_cond_42=_if_cond_42[0])
+    transformed_sdfg = run_and_compare_sdfg(sdfg,
+                                            permissive=False,
+                                            zsolac=zsolac,
+                                            zlcond2=zlcond2,
+                                            za=za,
+                                            _if_cond_42=_if_cond_42[0])
 
-    branch_code = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
+    branch_code = {n for n, g in transformed_sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     assert len(branch_code) == 0, f"(actual) len({branch_code}) != (desired) {0}"
 
 
@@ -1474,6 +1484,7 @@ def test_disjoint_chain_split_branch_only(rtt_val):
     rtt = np.random.choice([rtt_val], size=(1, ))
 
     copy_sdfg = copy.deepcopy(sdfg)
+    copy_sdfg.name = sdfg.name + "_branch_eliminated"
     arrays = {"zsolqa": zsolqa, "zrainacc": zrainacc, "zrainaut": zrainaut, "ztp1": ztp1, "rtt": rtt[0]}
 
     sdfg.validate()
@@ -1915,12 +1926,12 @@ def test_huge_sdfg_with_log_exp_div(eps_operator_type_for_log_and_div: str):
     sdfg.validate()
     out_no_fuse = {k: v.copy() for k, v in data.items()}
     sdfg(**out_no_fuse)
+
     # Apply transformation
     fb = EliminateBranches()
     fb.try_clean = True
     fb.eps_operator_type_for_log_and_div = eps_operator_type_for_log_and_div
     fb.apply_pass(sdfg, {})
-    sdfg.name = sdfg.label + "_transformed"
 
     cblocks = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     assert len(cblocks) == 0
@@ -1991,12 +2002,12 @@ def test_mid_sdfg_with_log_exp_div(eps_operator_type_for_log_and_div: str):
     sdfg.validate()
     out_no_fuse = {k: v.copy() for k, v in data.items()}
     sdfg(**out_no_fuse)
+
     # Apply transformation
     fb = EliminateBranches()
     fb.try_clean = True
     fb.eps_operator_type_for_log_and_div = eps_operator_type_for_log_and_div
     fb.apply_pass(sdfg, {})
-    sdfg.name = sdfg.label + "_transformed"
 
     cblocks = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     assert len(cblocks) == 0
@@ -2036,7 +2047,6 @@ def test_loop_param_usage():
     C = np.random.choice([0.001, 5.0], size=(N, N))
 
     sdfg = loop_param_usage.to_sdfg()
-    sdfg.save("x.sdfg")
     cblocks = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     assert len(cblocks) == 1
 
