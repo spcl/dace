@@ -35,7 +35,10 @@ def repl_subset(subset: dace.subsets.Range, repl_dict: Dict[str, str]) -> dace.s
     return new_subset
 
 
-def repl_subset_to_symbol_offset(sdfg: dace.SDFG, subset: dace.subsets.Range, symbol_offset: str, add_missing_symbols=False) -> dace.subsets.Range:
+def repl_subset_to_symbol_offset(sdfg: dace.SDFG,
+                                 subset: dace.subsets.Range,
+                                 symbol_offset: str,
+                                 add_missing_symbols=False) -> dace.subsets.Range:
     free_syms = subset.free_symbols
     print("Free symbols in subset:", free_syms)
 
@@ -44,7 +47,7 @@ def repl_subset_to_symbol_offset(sdfg: dace.SDFG, subset: dace.subsets.Range, sy
         #stype = sdfg.symbols[str(free_sym)]
         stype = dace.int64
         if str(free_sym) + symbol_offset not in sdfg.symbols:
-            sdfg.add_symbol( str(free_sym) + symbol_offset, stype)
+            sdfg.add_symbol(str(free_sym) + symbol_offset, stype)
     print("Generated replacement dictionary with offset:", repl_dict)
 
     new_subset = repl_subset(subset=subset, repl_dict=repl_dict)
@@ -62,13 +65,15 @@ def repl_subset_to_symbol_offset(sdfg: dace.SDFG, subset: dace.subsets.Range, sy
                 #raise Exception(free_sym)
                 # The free symbol -> add to symbol mapping,
                 # Assignments go to the first interstatedge
-                assign_dict =  {str(free_sym) + symbol_offset: str(free_sym) + " + " + symbol_offset}
+                assign_dict = {str(free_sym) + symbol_offset: str(free_sym) + " + " + symbol_offset}
                 sdfg.parent_nsdfg_node.symbol_mapping[str(free_sym)] = str(free_sym)
                 print(free_sym, "is in free symbols of the sdfg")
                 first_state = sdfg.start_block
                 if len(sdfg.out_edges(first_state)) == 0:
-                    sdfg.add_state_before(sdfg.start_block, label=f"pre_assign_{free_sym}", is_start_block=True,
-                                        assignments=assign_dict)
+                    sdfg.add_state_before(sdfg.start_block,
+                                          label=f"pre_assign_{free_sym}",
+                                          is_start_block=True,
+                                          assignments=assign_dict)
                 else:
                     first_edge = sdfg.out_edges(first_state)[0]
                     first_edge.data.assignments.update(assign_dict)

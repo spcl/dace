@@ -5,8 +5,8 @@ import pytest
 from dace.properties import CodeBlock
 from dace.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
-from dace.transformation.interstate import eliminate_branches
-from dace.transformation.passes import ConstantPropagation, eliminate_branches_pass
+from dace.transformation.interstate import branch_elimination
+from dace.transformation.passes import ConstantPropagation, EliminateBranches
 from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
 from dace.transformation.passes.symbol_propagation import SymbolPropagation
 
@@ -293,8 +293,8 @@ def _get_parent_state(sdfg: dace.SDFG, nsdfg_node: dace.nodes.NestedSDFG):
     return None
 
 
-def apply_eliminate_branches(sdfg, nestedness: int = 1):
-    """Apply EliminateBranches transformation to all eligible conditionals."""
+def apply_branch_elimination(sdfg, nestedness: int = 1):
+    """Apply BranchElimination transformation to all eligible conditionals."""
     # Pattern matching with conditional branches to not work (9.10.25), avoid it
     for i in range(nestedness):
         for node, graph in sdfg.all_nodes_recursive():
@@ -303,7 +303,7 @@ def apply_eliminate_branches(sdfg, nestedness: int = 1):
             if parent_nsdfg_node is not None:
                 parent_state = _get_parent_state(sdfg, parent_nsdfg_node)
             if isinstance(node, ConditionalBlock):
-                t = eliminate_branches.EliminateBranches()
+                t = branch_elimination.BranchElimination()
                 if t.can_be_applied_to(graph.sdfg, conditional=node, options={"parent_nsdfg_state": parent_state}):
                     t.apply_to(graph.sdfg, conditional=node, options={"parent_nsdfg_state": parent_state})
 
@@ -321,11 +321,11 @@ def run_and_compare(
     sdfg(**out_no_fuse)
     # Apply transformation
     if use_pass:
-        fb = eliminate_branches_pass.EliminateBranchesPass()
+        fb = EliminateBranches()
         fb.try_clean = True
         fb.apply_pass(sdfg, {})
     else:
-        apply_eliminate_branches(sdfg, 2)
+        apply_branch_elimination(sdfg, 2)
     sdfg.name = sdfg.label + "_transformed"
 
     # Run SDFG version (with transformation)
@@ -353,7 +353,7 @@ def run_and_compare_sdfg(
     sdfg(**out_no_fuse)
 
     # Run SDFG version (with transformation)
-    fb = eliminate_branches_pass.EliminateBranchesPass()
+    fb = EliminateBranches()
     fb.try_clean = True
     fb.permissive = permissive
     fb.apply_pass(sdfg, {})
@@ -438,7 +438,7 @@ def test_condition_on_bounds():
     out_no_fuse = {k: v.copy() for k, v in arrays.items()}
     sdfg(a=out_no_fuse["a"], b=out_no_fuse["b"], c=out_no_fuse["c"], d=out_no_fuse["d"], s=1, SN=2)
     # Apply transformation
-    eliminate_branches_pass.EliminateBranchesPass().apply_pass(sdfg, {})
+    EliminateBranches().apply_pass(sdfg, {})
     sdfg.validate()
     out_fused = {k: v.copy() for k, v in arrays.items()}
 
@@ -492,9 +492,9 @@ def test_single_branch_connectors(use_pass_flag):
     sdfg(a=out_no_fuse["a"], b=out_no_fuse["b"], c=out_no_fuse["c"][0], d=out_no_fuse["d"])
     # Apply transformation
     if use_pass_flag:
-        eliminate_branches_pass.EliminateBranchesPass().apply_pass(sdfg, {})
+        EliminateBranches().apply_pass(sdfg, {})
     else:
-        apply_eliminate_branches(sdfg, 2)
+        apply_branch_elimination(sdfg, 2)
 
     # Run SDFG version (with transformation)
     out_fused = {k: v.copy() for k, v in arrays.items()}
@@ -554,7 +554,7 @@ def test_try_clean():
     for cblock in cblocks:
         parent_sdfg = cblock.parent_graph.sdfg
         parent_graph = cblock.parent_graph
-        xform = eliminate_branches.EliminateBranches()
+        xform = branch_elimination.BranchElimination()
         xform.conditional = cblock
         xform.try_clean(graph=parent_graph, sdfg=parent_sdfg)
 
@@ -565,7 +565,7 @@ def test_try_clean():
     assert isinstance(sdfg1.start_block, dace.SDFGState)
     sdfg1.validate()
 
-    fbpass = eliminate_branches_pass.EliminateBranchesPass()
+    fbpass = EliminateBranches()
     fbpass.try_clean = False
     fbpass.apply_pass(sdfg1, {})
     cblocks = {n for n, g in sdfg1.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
@@ -576,7 +576,7 @@ def test_try_clean():
     for cblock in cblocks:
         parent_sdfg = cblock.parent_graph.sdfg
         parent_graph = cblock.parent_graph
-        xform = eliminate_branches.EliminateBranches()
+        xform = branch_elimination.BranchElimination()
         xform.conditional = cblock
         applied = xform.try_clean(graph=parent_graph, sdfg=parent_sdfg, lift_multi_state=False)
         assert applied is False
@@ -584,7 +584,7 @@ def test_try_clean():
         assert applied is True
     sdfg1.validate()
 
-    fbpass = eliminate_branches_pass.EliminateBranchesPass()
+    fbpass = EliminateBranches()
     fbpass.try_clean = False
     fbpass.apply_pass(sdfg1, {})
     cblocks = {n for n, g in sdfg1.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
@@ -602,7 +602,7 @@ def test_try_clean():
 def test_try_clean_as_pass():
     # This is a test to check the different configurations of try clean, applicability depends on the SDFG and the pass
     sdfg = _multi_state_nested_if.to_sdfg()
-    fbpass = eliminate_branches_pass.EliminateBranchesPass()
+    fbpass = EliminateBranches()
     fbpass.clean_only = True
     fbpass.try_clean = False
     fbpass.apply_pass(sdfg, {})
@@ -739,14 +739,14 @@ def test_if_over_map():
     }
     assert len(inner_cblocks) == 1
 
-    xform = eliminate_branches.EliminateBranches()
+    xform = branch_elimination.BranchElimination()
     xform.conditional = cblocks.pop()
     xform.parent_nsdfg_state = None
     assert xform.can_be_applied(graph=xform.conditional.parent_graph,
                                 expr_index=0,
                                 sdfg=xform.conditional.parent_graph.sdfg) is False
 
-    xform = eliminate_branches.EliminateBranches()
+    xform = branch_elimination.BranchElimination()
     xform.conditional = inner_cblocks.pop()
     xform.parent_nsdfg_state = _find_state(sdfg, xform.conditional.sdfg.parent_nsdfg_node)
     assert xform.can_be_applied(graph=xform.conditional.parent_graph,
@@ -765,14 +765,14 @@ def test_if_over_map_with_top_level_tasklets():
     }
     assert len(inner_cblocks) == 1
 
-    xform = eliminate_branches.EliminateBranches()
+    xform = branch_elimination.BranchElimination()
     xform.conditional = cblocks.pop()
     xform.parent_nsdfg_state = None
     assert xform.can_be_applied(graph=xform.conditional.parent_graph,
                                 expr_index=0,
                                 sdfg=xform.conditional.parent_graph.sdfg) is False
 
-    xform = eliminate_branches.EliminateBranches()
+    xform = branch_elimination.BranchElimination()
     xform.conditional = inner_cblocks.pop()
     xform.parent_nsdfg_state = None
     assert xform.can_be_applied(graph=xform.conditional.parent_graph,
@@ -808,7 +808,7 @@ def test_can_be_applied_parameters_on_nested_sdfg():
     }
     assert len(upper_inner_cblocks) == 1
 
-    xform = eliminate_branches.EliminateBranches()
+    xform = branch_elimination.BranchElimination()
     xform.conditional = full_inner_cblocks.pop()
 
     assert xform.can_be_applied(graph=xform.conditional.parent_graph,
@@ -927,7 +927,7 @@ def test_split_on_disjoint_subsets():
     assert isinstance(state0, dace.SDFGState)
     assert isinstance(state1, dace.SDFGState)
 
-    xform = eliminate_branches.EliminateBranches()
+    xform = branch_elimination.BranchElimination()
     xform.conditional = cblock
     assert xform._is_disjoint_subset(state0, state1) is True
 
@@ -969,7 +969,7 @@ def test_split_on_disjoint_subsets_nested():
     assert isinstance(state0, dace.SDFGState)
     assert isinstance(state1, dace.SDFGState)
 
-    xform = eliminate_branches.EliminateBranches()
+    xform = branch_elimination.BranchElimination()
     xform.conditional = cblock
     assert xform._is_disjoint_subset(state0, state1) is True
 
@@ -1141,7 +1141,7 @@ def test_complicated_pattern_for_manual_clean_up_one():
     for nsdfg, parent_state in nested_sdfgs:
         for cb in nsdfg.sdfg.all_control_flow_regions():
             if isinstance(cb, ConditionalBlock):
-                xform = eliminate_branches.EliminateBranches()
+                xform = branch_elimination.BranchElimination()
                 xform.parent_nsdfg_state = parent_state
                 xform.conditional = cb
                 assert xform.can_be_applied(graph=cb.parent_graph, expr_index=0, sdfg=cb.sdfg) is False
@@ -1481,7 +1481,7 @@ def test_disjoint_chain_split_branch_only(rtt_val):
     sdfg(**out_no_fuse)
 
     # Run SDFG version (with transformation)
-    xform = eliminate_branches.EliminateBranches()
+    xform = branch_elimination.BranchElimination()
     cblocks = {n for n, g in copy_sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     assert len(cblocks) == 1
     cblock = cblocks.pop()
@@ -1577,7 +1577,7 @@ def test_can_be_applied_on_map_param_usage():
 
     sdfg = map_param_usage.to_sdfg()
 
-    xform = eliminate_branches.EliminateBranches()
+    xform = branch_elimination.BranchElimination()
     cblocks = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     assert len(cblocks) == 1
     xform.conditional = cblocks.pop()
@@ -1656,7 +1656,7 @@ def test_safe_map_param_use_in_nested_sdfg():
 
     for n, g in sdfg.all_nodes_recursive():
         if isinstance(n, ConditionalBlock):
-            xform = eliminate_branches.EliminateBranches()
+            xform = branch_elimination.BranchElimination()
             xform.conditional = n
             xform.parent_nsdfg_state = _find_state(sdfg, g.sdfg.parent_nsdfg_node)
             assert xform.can_be_applied(graph=g, expr_index=0, sdfg=g.sdfg, permissive=False)
@@ -1747,7 +1747,7 @@ def test_nested_sdfg_with_return(ret_arr):
 
     for n, g in sdfg.all_nodes_recursive():
         if isinstance(n, ConditionalBlock):
-            xform = eliminate_branches.EliminateBranches()
+            xform = branch_elimination.BranchElimination()
             xform.conditional = n
             xform.parent_nsdfg_state = _find_state(sdfg, g.sdfg.parent_nsdfg_node)
             assert xform.can_be_applied(graph=g, expr_index=0, sdfg=g.sdfg, permissive=False)
@@ -1765,7 +1765,7 @@ def test_nested_sdfg_with_return(ret_arr):
     assert out_no_fuse["zalfa_1"][0] != 999.9
 
     # Run SDFG version (with transformation)
-    fb = eliminate_branches_pass.EliminateBranchesPass()
+    fb = EliminateBranches()
     fb.try_clean = True
     fb.permissive = False
     fb.apply_pass(sdfg, {})
@@ -1916,7 +1916,7 @@ def test_huge_sdfg_with_log_exp_div(eps_operator_type_for_log_and_div: str):
     out_no_fuse = {k: v.copy() for k, v in data.items()}
     sdfg(**out_no_fuse)
     # Apply transformation
-    fb = eliminate_branches_pass.EliminateBranchesPass()
+    fb = EliminateBranches()
     fb.try_clean = True
     fb.eps_operator_type_for_log_and_div = eps_operator_type_for_log_and_div
     fb.apply_pass(sdfg, {})
@@ -1992,7 +1992,7 @@ def test_mid_sdfg_with_log_exp_div(eps_operator_type_for_log_and_div: str):
     out_no_fuse = {k: v.copy() for k, v in data.items()}
     sdfg(**out_no_fuse)
     # Apply transformation
-    fb = eliminate_branches_pass.EliminateBranchesPass()
+    fb = EliminateBranches()
     fb.try_clean = True
     fb.eps_operator_type_for_log_and_div = eps_operator_type_for_log_and_div
     fb.apply_pass(sdfg, {})
@@ -2041,7 +2041,7 @@ def test_loop_param_usage():
     assert len(cblocks) == 1
 
     for cblock in cblocks:
-        xform = eliminate_branches.EliminateBranches()
+        xform = branch_elimination.BranchElimination()
         xform.conditional = cblock
         xform.parent_nsdfg_state = _find_state(
             sdfg, cblock.sdfg.parent_nsdfg_node) if cblock.sdfg.parent_nsdfg_node is not None else None
@@ -2058,7 +2058,7 @@ def test_can_be_applied_on_wcr_edge():
     assert len(cblocks) == 1
 
     for cblock in cblocks:
-        xform = eliminate_branches.EliminateBranches()
+        xform = branch_elimination.BranchElimination()
         xform.conditional = cblock
         xform.parent_nsdfg_state = _find_state(
             sdfg, cblock.sdfg.parent_nsdfg_node) if cblock.sdfg.parent_nsdfg_node is not None else None
@@ -2070,7 +2070,7 @@ def test_can_be_applied_on_wcr_edge():
 
     cblocks = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     for cblock in cblocks:
-        xform = eliminate_branches.EliminateBranches()
+        xform = branch_elimination.BranchElimination()
         xform.conditional = cblock
         xform.parent_nsdfg_state = _find_state(
             sdfg, cblock.sdfg.parent_nsdfg_node) if cblock.sdfg.parent_nsdfg_node is not None else None

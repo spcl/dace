@@ -359,7 +359,7 @@ class ExplicitVectorization(ppl.Pass):
         modified_nodes: Set[dace.nodes.Node] = set()
         modified_edges: Set[Edge[Memlet]] = set()
         expanded_symbols = set()
-        
+
         # First expand intersate assignments
         for state in sdfg.all_states():
             for edge in state.edges():
@@ -369,7 +369,7 @@ class ExplicitVectorization(ppl.Pass):
                     non_expanded_free_symbols = free_symbols - expanded_symbols
                     expanded_symbols = expanded_symbols.union(free_symbols)
                     self._expand_interstate_assignments(sdfg, non_expanded_free_symbols, candidate_arrays)
-        
+
         # Then do the other stuff
         for state in sdfg.all_states():
             for edge in state.edges():

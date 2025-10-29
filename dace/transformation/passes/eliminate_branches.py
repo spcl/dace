@@ -1,17 +1,13 @@
-import dace
-from dace import properties
-from dace import Optional
-from dace.sdfg.sdfg import SDFG
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+from dace import properties, SDFG, nodes
+from dace.sdfg.state import ConditionalBlock
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
-from dace.transformation.interstate import eliminate_branches
-from typing import Union
-
+from typing import Union, Optional
 
 @properties.make_properties
 @explicit_cf_compatible
-class EliminateBranchesPass(ppl.Pass):
+class EliminateBranches(ppl.Pass):
     try_clean = properties.Property(dtype=bool, default=False, allow_none=False)
     clean_only = properties.Property(dtype=bool, default=False, allow_none=True)
     permissive = properties.Property(dtype=bool, default=False, allow_none=False)
@@ -23,8 +19,9 @@ class EliminateBranchesPass(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def _apply_eliminate_branches(self, root: dace.SDFG, sdfg: dace.SDFG, parent_nsdfg_state: Union[dace.SDFG, None] = None):
+    def _apply_eliminate_branches(self, root: SDFG, sdfg: SDFG, parent_nsdfg_state: Union[SDFG, None] = None):
         """Apply EliminateBranches transformation to all eligible conditionals."""
+        from dace.transformation.interstate import branch_elimination
         # Pattern matching with conditional branches to not work (9.10.25), avoid it
         # Depending on the number of nestedness we need to apply that many times because
         # the transformation only runs on top-level ConditionalBlocks
@@ -34,7 +31,7 @@ class EliminateBranchesPass(ppl.Pass):
 
             for node in sdfg.all_control_flow_blocks():
                 if isinstance(node, ConditionalBlock):
-                    t = eliminate_branches.EliminateBranches()
+                    t = branch_elimination.BranchElimination()
                     t.conditional = node
                     t.eps_operator_type_for_log_and_div = self.eps_operator_type_for_log_and_div
 
@@ -45,7 +42,7 @@ class EliminateBranchesPass(ppl.Pass):
             if not self.clean_only:
                 for node in sdfg.all_control_flow_blocks():
                     if isinstance(node, ConditionalBlock):
-                        t = eliminate_branches.EliminateBranches()
+                        t = branch_elimination.BranchElimination()
                         t.conditional = node
                         if node.sdfg.parent_nsdfg_node is not None:
                             t.parent_nsdfg_state = parent_nsdfg_state
@@ -59,7 +56,7 @@ class EliminateBranchesPass(ppl.Pass):
 
         for state in sdfg.all_states():
             for node in state.nodes():
-                if isinstance(node, dace.nodes.NestedSDFG):
+                if isinstance(node, nodes.NestedSDFG):
                     changed |= self._apply_eliminate_branches(root, node.sdfg, state)
 
         return changed
