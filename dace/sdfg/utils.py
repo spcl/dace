@@ -2672,6 +2672,8 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
 
 
 def specialize_scalar(sdfg: 'dace.SDFG', scalar_name: str, scalar_val: Union[float, int, str, sympy.Number]):
+    import sympy
+
     assert isinstance(scalar_name, str), f"Expected scalar name to be str got {type(scalar_val)}"
 
     def _sympy_to_python_number(val):
