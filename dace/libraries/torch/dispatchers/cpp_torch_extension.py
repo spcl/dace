@@ -122,7 +122,7 @@ def tensor_init_for_desc(name: str, desc: data.Data, clean_weights: Dict[str, to
 
         return f"""\
             Tensor {name} = torch::from_blob(
-                new float[{len(values)}]{{{values_str}}},
+                new {torch_ctype(desc.dtype)}[{len(values)}]{{{values_str}}},
                 {{{', '.join(str(s) for s in desc.shape)}}},
                 torch::TensorOptions()
                     .dtype(torch::{typeclass_to_torch_cpp_type(desc.dtype)})
