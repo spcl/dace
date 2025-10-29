@@ -58,7 +58,8 @@ class PurePad(ONNXForward):
     def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
         # The ONNX Pad operator takes:
         # - data: input tensor
-        # - pads: padding values (2 * rank of data)
+        # - pads: padding values in ONNX format [x1_begin, x2_begin, ..., x1_end, x2_end, ...]
+        #         Length is 2 * rank of data
         # - constant_value (optional): value to pad with (default 0)
 
         # Get descriptors
@@ -92,16 +93,19 @@ class PurePad(ONNXForward):
         input_shape = data_desc.shape
 
         # Create a map over the output tensor
-        map_ranges = {f"i{d}": f"0:{output_shape[d]}" for d in range(ndim)}
+        map_ranges = [(f"i{d}", f"0:{output_shape[d]}") for d in range(ndim)]
         output_indices = ', '.join([f'i{d}' for d in range(ndim)])
 
-        # Generate tasklet code
+        # Generate tasklet code using Python syntax
+        # ONNX pads format: [dim0_begin, dim1_begin, ..., dimN_begin, dim0_end, dim1_end, ..., dimN_end]
+        # We only need the begin pads to compute input coordinates
         code_lines = []
-        code_lines.append(f"# Compute input indices from output indices")
+        code_lines.append(f"# Compute input indices from output indices using begin pads")
         for d in range(ndim):
+            # pads[d] contains the begin padding for dimension d
             code_lines.append(f"input_i{d} = i{d} - int(__pads[{d}])")
 
-        # Check if we're in the padding region
+        # Check if we're in the valid input region (not in padding)
         condition_parts = []
         for d in range(ndim):
             condition_parts.append(f"(input_i{d} >= 0 and input_i{d} < {input_shape[d]})")
@@ -112,19 +116,24 @@ class PurePad(ONNXForward):
         code_lines.append(f"    __out = __data[{input_indices}]")
         code_lines.append("else:")
         if has_constant_value:
-            code_lines.append("    __out = __constant_value[0]")
+            # constant_value is passed as a scalar, not indexed
+            code_lines.append("    __out = __constant_value")
         else:
             code_lines.append("    __out = 0")
 
         tasklet_code = '\n'.join(code_lines)
 
-        # Build tasklet inputs
-        tasklet_inputs = {
-            "__data": dace.Memlet.from_array("data", data_desc),
-            "__pads": dace.Memlet.from_array("pads", pads_desc)
-        }
+        # Build memlet strings that read full arrays (for indexing in tasklet)
+        # The pads array is read in full
+        pads_memlet_str = f"pads[0:{pads_desc.shape[0]}]"
+        # The data array is read in full
+        data_memlet_str = "data[" + ", ".join([f"0:{input_shape[d]}" for d in range(ndim)]) + "]"
+
+        # Build tasklet inputs with proper memlet strings
+        tasklet_inputs = {"__data": dace.Memlet(data_memlet_str), "__pads": dace.Memlet(pads_memlet_str)}
         if has_constant_value:
-            tasklet_inputs["__constant_value"] = dace.Memlet.from_array("constant_value", constant_value_desc)
+            # constant_value is read as a scalar (single element)
+            tasklet_inputs["__constant_value"] = dace.Memlet("constant_value[0]")
 
         # Create mapped tasklet with external edges
         nstate.add_mapped_tasklet(name=node.label + "_tasklet",
@@ -535,26 +544,41 @@ class PureSlice(ONNXForward):
                 step = int(steps_const[i]) if i < len(steps_const) else 1
 
                 s = int(idesc.shape[axis])
-                # Handle negative indices
-                if start < 0:
-                    start = s + start
-                if end < 0:
-                    end = s + end
 
-                # Handle negative steps
+                # Handle negative steps separately as they have different semantics
                 if step < 0:
-                    # For negative steps, we go from start down to end (exclusive)
+                    # For negative steps, normalize start
+                    if start < 0:
+                        start = s + start
                     # Clamp start to valid range
                     if start >= s:
                         start = s - 1
-                    # For negative step, end can be < 0 (meaning go to beginning)
-                    # Clamp end to be at least -1 (which means include index 0)
-                    if end < -1:
+
+                    # For negative end: convert to positive index
+                    if end < 0:
+                        end = s + end
+                        # If end becomes negative, it means "go to/past beginning"
+                        # DaCe Range with negative step needs end to be < start
+                        # If we want to include index 0, end should be -1
+                        if end < 0:
+                            end = -1
+
+                    # For negative steps, if end >= start, the slice is empty (wrong direction)
+                    # This shouldn't happen with correct ONNX, but handle it
+                    if end >= start:
+                        # This is likely a bug - set end to allow full backwards slice
                         end = -1
-                    # In DaCe Range with negative step, the range is (start, end, step)
-                    # where start > end
+
+                    # DaCe Range with negative step: (start, end, step) where start > end
+                    # The range includes indices from start down to (but NOT including) end
                     rng[axis] = (start, end, step)
                 else:
+                    # Positive steps: normalize negative indices
+                    if start < 0:
+                        start = s + start
+                    if end < 0:
+                        end = s + end
+
                     # Handle out of bounds for positive steps
                     if end > s:
                         end = s

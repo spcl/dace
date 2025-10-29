@@ -216,7 +216,8 @@ class PureConv2D(ONNXForward):
         if B is not None and B.shape[0] != num_filters:
             return False
 
-        if node.auto_pad != 'NOTSET':
+        # Support NOTSET (explicit pads), SAME_UPPER, SAME_LOWER, and VALID
+        if node.auto_pad not in ['NOTSET', 'SAME_UPPER', 'SAME_LOWER', 'VALID', None]:
             return False
 
         return True
@@ -257,7 +258,45 @@ class PureConv2D(ONNXForward):
         input_size_x, input_size_y = X.shape[2:]
         output_size_y, output_size_x = Y.shape[2:]
         stride_y, stride_x = node.strides or [1, 1]
-        pad_x, pad_y, _, _ = node.pads or [0, 0, 0, 0]
+
+        # Compute padding based on auto_pad mode
+        auto_pad = node.auto_pad if node.auto_pad is not None else 'NOTSET'
+        if auto_pad == 'NOTSET':
+            # Use explicit pads
+            pad_x, pad_y, _, _ = node.pads or [0, 0, 0, 0]
+        elif auto_pad == 'VALID':
+            # No padding
+            pad_x, pad_y = 0, 0
+        elif auto_pad in ['SAME_UPPER', 'SAME_LOWER']:
+            # Compute padding to make output size = ceil(input_size / stride)
+            # ONNX formula: output_size = ceil(input_size / stride)
+            # total_pad = (output_size - 1) * stride + kernel_size - input_size
+
+            # Note: Due to naming conventions in the original code:
+            # - input_size_x = H, input_size_y = W
+            # - output_size_y = H, output_size_x = W (swapped!)
+            # - stride_y = H stride, stride_x = W stride (swapped!)
+            # - filter_hx = H kernel, filter_hy = W kernel
+            # - pad_x = H pad, pad_y = W pad
+
+            # Standard SAME padding formula:
+            # For H dimension: total_pad_H = (output_H - 1) * stride_H + kernel_H - input_H
+            # For W dimension: total_pad_W = (output_W - 1) * stride_W + kernel_W - input_W
+
+            total_pad_x = max(0, (output_size_y - 1) * stride_y + filter_hx - input_size_x)  # H dimension
+            total_pad_y = max(0, (output_size_x - 1) * stride_x + filter_hy - input_size_y)  # W dimension
+
+            if auto_pad == 'SAME_UPPER':
+                # Prefer padding at the beginning (top/left)
+                pad_x = total_pad_x // 2
+                pad_y = total_pad_y // 2
+            else:  # SAME_LOWER
+                # Prefer padding at the end (bottom/right)
+                pad_x = (total_pad_x + 1) // 2
+                pad_y = (total_pad_y + 1) // 2
+        else:
+            # Should not happen due to can_be_applied check
+            pad_x, pad_y = 0, 0
 
         dtype = X.dtype
 
