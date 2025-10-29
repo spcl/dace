@@ -576,7 +576,8 @@ def test_overlapping_access_same_src_and_dst():
                            sdfg_name="overlapping_access_same_src_and_dst")
 
 
-def test_overlapping_access_same_src_and_dst_in_nestedsdfg():
+@pytest.mark.parametrize("run_id", [i for i in range(4)])
+def test_overlapping_access_same_src_and_dst_in_nestedsdfg(run_id):
     _S = 64
     A = numpy.random.random((2, 2, _S))
 
