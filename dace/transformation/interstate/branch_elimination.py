@@ -1377,7 +1377,6 @@ class BranchElimination(transformation.MultiStateTransformation):
                         # Copy all access nodes to the next state, connect the sink node from prev. state
                         # to the next state
                         body.reset_cfg_list()
-                        body.sdfg.save("x2.sdfg")
                         assignment_state, other_state = list(body.bfs_nodes())[1:3]
                         node_map = cutil.copy_state_contents(assignment_state, other_state)
                         # Multiple symbols -> multiple sink nodes

@@ -558,7 +558,7 @@ def test_try_clean():
         xform.conditional = cblock
         xform.try_clean(graph=parent_graph, sdfg=parent_sdfg)
 
-    # Should have moe states before
+    # Should have move states before
     cblocks = {n for n, g in sdfg1.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     assert len(cblocks) == 2
     # A state must have been moved before)
@@ -2036,7 +2036,6 @@ def test_loop_param_usage():
     C = np.random.choice([0.001, 5.0], size=(N, N))
 
     sdfg = loop_param_usage.to_sdfg()
-    sdfg.save("x.sdfg")
     cblocks = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     assert len(cblocks) == 1
 

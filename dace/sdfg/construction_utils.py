@@ -338,8 +338,6 @@ def insert_non_transient_data_through_parent_scopes(non_transient_data: Set[str]
                 dst.add_in_connector(f"IN_{data_access}_p", force=True)
             src.add_out_connector(_get_out_conn_name(dst))
 
-    parent_graph.sdfg.save("x.sdfg")
-
     # Re-propagate memlets when subsets are explicit
     if add_with_exact_subset:
         propagate_memlets_state(parent_graph.sdfg, parent_graph)
