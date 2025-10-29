@@ -705,10 +705,12 @@ class ExpandTransformation(PatternTransformation):
     def apply(self, state, sdfg, *args, **kwargs):
         node = state.node(self.subgraph[type(self)._match_node])
         expansion = type(self).expansion(node, state, sdfg, *args, **kwargs)
+        symbol_mapping = node.symbol_mapping if hasattr(node, "symbol_mapping") else None
         if isinstance(expansion, SDFG):
             expansion = state.add_nested_sdfg(expansion,
                                               node.in_connectors,
                                               node.out_connectors,
+                                              symbol_mapping=symbol_mapping,
                                               name=node.name,
                                               schedule=node.schedule,
                                               debuginfo=node.debuginfo)
@@ -721,6 +723,9 @@ class ExpandTransformation(PatternTransformation):
                 nsdfg.parent_sdfg = sdfg
                 nsdfg.update_cfg_list([])
                 nsdfg.parent_nsdfg_node = expansion
+
+                if hasattr(node, "symbol_mapping"):
+                    nsdfg.symbol_mapping = symbol_mapping
 
                 # Update schedule to match library node schedule
                 nsdfg.schedule = node.schedule
