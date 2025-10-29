@@ -14,7 +14,6 @@ from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDF
 import dace.sdfg.utils as sdutil
 import dace.sdfg.construction_utils as cutil
 from typing import Tuple, Set, Union
-from dace.sdfg.construction_utils import token_replace
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation.passes import FuseStates
 
@@ -309,7 +308,7 @@ class BranchElimination(transformation.MultiStateTransformation):
         # Connector version is `_in_{arr_input}_{offset}` (to not repeat the connectors)
         symbol_inputs = {var for var in free_vars if var not in state.sdfg.arrays}
         for i, arr_input in enumerate(arr_inputs):
-            cleaned = token_replace(cleaned, arr_input, f"_in_{arr_input}_{i}")
+            cleaned = cutil.token_replace_dict(cleaned, {arr_input: f"_in_{arr_input}_{i}"})
 
         assert arr_inputs.union(symbol_inputs) == free_vars
 
