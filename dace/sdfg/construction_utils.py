@@ -367,17 +367,6 @@ def insert_non_transient_data_through_parent_scopes(non_transient_data: Set[str]
             nsdfg_node.symbol_mapping[str(sym)] = str(sym)
 
 
-def token_replace(code: str, src: str, dst: str) -> str:
-    # Split while keeping delimiters
-    tokens = re.split(r'(\s+|[()\[\]])', code)
-
-    # Replace tokens that exactly match src
-    tokens = [dst if token.strip() == src else token for token in tokens]
-
-    # Recombine everything
-    return ''.join(tokens).strip()
-
-
 def token_replace_dict(code: str, repldict: Dict[str, str]) -> str:
     # Split while keeping delimiters
     tokens = re.split(r'(\s+|[()\[\]])', code)
@@ -525,17 +514,25 @@ def tasklet_has_symbol(tasklet: dace.nodes.Tasklet, symbol_str: str) -> bool:
         return token_match(tasklet.code.as_string, symbol_str)
 
 
-def replace_code(code_str: str, code_lang: dace.dtypes.Language, repldict: Dict[str, str]):
-    import sympy
+def replace_code(code_str: str, code_lang: dace.dtypes.Language, repldict: Dict[str, str]) -> str:
 
-    def _str_replace(lhs: str, rhs: str):
+    def _str_replace(lhs: str, rhs: str) -> str:
         code_str = token_replace_dict(rhs, repldict)
         return f"{lhs.strip()} = {code_str.strip()}"
 
     if code_lang == dace.dtypes.Language.Python:
-        lhs, rhs = code_str.split(" = ")
-        lhs = lhs.strip()
-        rhs = rhs.strip()
+        try:
+            lhs, rhs = code_str.split(" = ")
+            lhs = lhs.strip()
+            rhs = rhs.strip()
+        except Exception as e:
+            try:
+                new_rhs_sym_expr = dace.symbolic.SymExpr(code_str).subs(repldict)
+                printer = BracketFunctionPrinter({'strict': False})
+                cleaned_expr = printer.doprint(new_rhs_sym_expr).strip()
+                return f"{cleaned_expr}"
+            except Exception as e:
+                return _str_replace(code_str)
         try:
             new_rhs_sym_expr = dace.symbolic.SymExpr(rhs).subs(repldict)
             printer = BracketFunctionPrinter({'strict': False})
