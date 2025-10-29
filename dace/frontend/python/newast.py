@@ -1852,7 +1852,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     if symbolic.issymbolic(atom, self.sdfg.constants):
                         # Check for undefined variables
                         atomstr = str(atom)
-                        if atomstr not in self.defined:
+                        if atomstr not in self.defined and atomstr not in self.sdfg.arrays:
                             raise DaceSyntaxError(self, node, 'Undefined variable "%s"' % atom)
                         # Add to global SDFG symbols
 
@@ -2350,7 +2350,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     if symbolic.issymbolic(atom, self.sdfg.constants):
                         astr = str(atom)
                         # Check for undefined variables
-                        if astr not in self.defined:
+                        if astr not in self.defined and not ('.' in astr and astr in self.sdfg.arrays):
                             raise DaceSyntaxError(self, node, 'Undefined variable "%s"' % atom)
                         # Add to global SDFG symbols if not a scalar
                         if (astr not in self.sdfg.symbols and not (astr in self.variables or astr in self.sdfg.arrays)):
@@ -3079,8 +3079,14 @@ class ProgramVisitor(ExtNodeVisitor):
         else:
             var_name = self.sdfg.temp_data_name()
 
-        parent_name = self.scope_vars[name]
-        parent_array = self.scope_arrays[parent_name]
+        parent_name = self.scope_vars[until(name, '.')]
+        if '.' in name:
+            struct_field = name[name.index('.'):]
+            parent_name += struct_field
+            scope_ndict = dace.sdfg.NestedDict(self.scope_arrays)
+            parent_array = scope_ndict[parent_name]
+        else:
+            parent_array = self.scope_arrays[parent_name]
 
         has_indirection = (_subset_has_indirection(rng, self) or _subset_is_local_symbol_dependent(rng, self))
         if has_indirection:
@@ -3244,7 +3250,7 @@ class ProgramVisitor(ExtNodeVisitor):
             return self.accesses[(name, rng, 'w')]
         elif name in self.variables:
             return (self.variables[name], rng)
-        elif (name, rng, 'r') in self.accesses or name in self.scope_vars:
+        elif (name, rng, 'r') in self.accesses or until(name, '.') in self.scope_vars:
             return self._add_access(name, rng, 'w', target, new_name, arr_type)
         else:
             raise NotImplementedError
@@ -3498,7 +3504,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     raise IndexError('Boolean array indexing cannot be combined with indirect access')
 
             if self.nested and not new_data:
-                new_name, new_rng = self._add_write_access(name, rng, target)
+                new_name, new_rng = self._add_write_access(true_name, rng, target)
                 # Local symbol or local data dependent
                 if _subset_is_local_symbol_dependent(rng, self):
                     new_rng = rng
