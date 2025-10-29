@@ -9,7 +9,7 @@ from dace.transformation.passes.split_tasklets import SplitTasklets
 from dace.transformation.passes.tasklet_preprocessing_passes import PowerOperatorExpansion, RemoveFPTypeCasts, RemoveIntTypeCasts
 from dace.transformation.passes import InlineSDFGs
 from dace.transformation.passes.explicit_vectorization import ExplicitVectorization
-from dace.transformation.passes.fuse_branches_pass import FuseBranchesPass
+from dace.transformation.passes.eliminate_branches_pass import EliminateBranchesPass
 from dace.transformation.passes.remove_redundant_assignment_tasklets import RemoveRedundantAssignmentTasklets
 import dace.sdfg.utils as sdutil
 
@@ -90,7 +90,7 @@ __host__ __device__ __forceinline__ void vector_copy(T * __restrict__ dst, const
 
     def __init__(self, vector_width):
         passes = [
-            FuseBranchesPass(),
+            EliminateBranchesPass(),
             RemoveFPTypeCasts(),
             RemoveIntTypeCasts(),
             PowerOperatorExpansion(),
