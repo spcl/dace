@@ -1,6 +1,7 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """ A module that contains various DaCe type definitions. """
 import ctypes
+import json
 import aenum
 import inspect
 import numpy
@@ -8,7 +9,7 @@ import re
 from sympy import Float, Integer
 from collections import OrderedDict
 from functools import wraps
-from typing import Any
+from typing import Any, Dict
 from dace.config import Config
 from dace.registry import extensible_enum, undefined_safe_enum
 
@@ -791,6 +792,7 @@ class struct(typeclass):
 
         Example use: `dace.struct(a=dace.int32, b=dace.float64)`.
     """
+    STRUCT_CTYPES: Dict[str, ctypes.Structure] = {}
 
     def __init__(self, name, **fields_and_types):
         # self._data = fields_and_types
@@ -857,8 +859,9 @@ class struct(typeclass):
 
     def as_ctypes(self):
         """ Returns the ctypes version of the typeclass. """
-        if self in _FFI_CTYPES:
-            return _FFI_CTYPES[self]
+        self_as_json = json.dumps(self.to_json(), sort_keys=True)
+        if self_as_json in struct.STRUCT_CTYPES:
+            return struct.STRUCT_CTYPES[self_as_json]
         # Populate the ctype fields for the struct class.
         fields = []
         for k, v in self._data.items():
@@ -874,7 +877,7 @@ class struct(typeclass):
         # Create new struct class.
         struct_class = type(self.name or "NewStructClass", (ctypes.Structure, ), {"_fields_": fields})
         # NOTE: Each call to `type` returns a different class, so we need to cache it to ensure uniqueness.
-        _FFI_CTYPES[self] = struct_class
+        struct.STRUCT_CTYPES[self_as_json] = struct_class
 
         if hasattr(self, "__descriptor__"):
             struct_class.__descriptor__ = self.__descriptor__

@@ -312,10 +312,10 @@ def test_struct_recursive():
             'x': dace.data.Structure({
                 'a': dace.float32[20],
                 'b': dace.int32
-            }, name='InnerStruct2'),
+            }, name='InnerStruct'),
             'y': dace.float64[10, 10]
         },
-        name='OuterStruct2')
+        name='OuterStruct')
 
     @dace.program
     def struct_recursive(A: Struct, B: Struct):
