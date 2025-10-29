@@ -5,6 +5,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
 from typing import Union, Optional
 
+
 @properties.make_properties
 @explicit_cf_compatible
 class EliminateBranches(ppl.Pass):
