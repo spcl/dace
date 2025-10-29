@@ -1,15 +1,3 @@
-"""
-Comprehensive tests for MatMul backward pass implementation.
-
-This test suite validates the automatic differentiation of matrix multiplication
-operations against PyTorch's gradients. It covers all major cases:
-- Basic 2D matrix multiplication
-- Batched matrix multiplication
-- Broadcasting scenarios
-- 1D vector operations (vector-vector, matrix-vector, vector-matrix)
-- Mixed dimensional inputs
-"""
-
 import numpy as np
 import pytest
 
@@ -21,10 +9,6 @@ import torch
 import dace
 import dace.sdfg.nodes as nd
 from dace.autodiff import add_backward_pass
-
-##################################
-# Testing utilities
-##################################
 
 
 class MatMulBackwardRunner:
@@ -832,10 +816,6 @@ def test_matmul_with_elementwise():
     )
 
 
-##################################
-# Entry point for direct execution
-##################################
-
 if __name__ == "__main__":
     # Basic 2D tests
     test_matmul_2d_basic()
@@ -843,26 +823,20 @@ if __name__ == "__main__":
     test_matmul_2d_tall()
     test_matmul_2d_wide()
 
-    # Batched tests
     test_matmul_3d_batched()
     test_matmul_4d_batched()
 
-    # Broadcasting tests
     test_matmul_broadcast_2d_3d()
     test_matmul_broadcast_3d_2d()
     test_matmul_broadcast_3d_4d()
     test_matmul_broadcast_4d_3d()
 
-    # 1D vector tests
     test_matmul_1d_1d_dot_product()
     test_matmul_2d_1d_matvec()
     test_matmul_1d_2d_vecmat()
     test_matmul_3d_1d_batched_matvec()
     test_matmul_1d_3d_batched_vecmat()
 
-    # Mixed dimensional tests
     test_matmul_complex_chain()
     test_matmul_sequential()
     test_matmul_with_elementwise()
-
-    print("All MatMul backward tests passed!")

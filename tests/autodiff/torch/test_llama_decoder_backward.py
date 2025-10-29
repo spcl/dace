@@ -75,7 +75,7 @@ def test_llama_decoder_backward(sdfg_name):
     dace_model = DaceModule(
         wrapped_model,
         sdfg_name=sdfg_name,
-        simplify=False,
+        simplify=True,
         backward=True,
     )
 
