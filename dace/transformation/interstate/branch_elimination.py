@@ -14,73 +14,9 @@ from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDF
 import dace.sdfg.utils as sdutil
 import dace.sdfg.construction_utils as cutil
 from typing import Tuple, Set, Union
-from dace.sdfg.construction_utils import token_match, token_replace
+from dace.sdfg.construction_utils import token_replace
 from dace.symbolic import pystr_to_symbolic
-from dace.transformation.interstate.state_fusion import StateFusion
 from dace.transformation.passes import FuseStates
-
-
-
-def symbol_is_used(cfg: ControlFlowRegion, symbol_name: str) -> bool:
-    # Symbol can be read on an interstate edge, appear in a conditional block's conditions, loop regions condition / update
-    # Appear in shape of an array, in the expression of maps or in taskelts, passed to nested SDFGs
-
-    # Interstate edge reads
-    for e in cfg.all_interstate_edges():
-        for v in e.data.assignments.values():
-            if token_match(v, symbol_name):
-
-                return True
-
-    # Conditional Block
-    for cb in cfg.all_control_flow_blocks():
-        if isinstance(cb, ConditionalBlock):
-            for cond, _ in cb.branches:
-                if cond is None:
-                    continue
-                if token_match(cond.as_string, symbol_name):
-
-                    return True
-
-    # Memlets
-    for state in cfg.all_states():
-        for edge in state.edges():
-            if edge.data.data is not None:
-                for (b, e, s) in edge.data.subset:
-                    if token_match(f"{b} {e} {s}", symbol_name):
-                        return True
-
-    # Loop
-    for lr in cfg.all_control_flow_regions():
-        if isinstance(lr, LoopRegion):
-            if token_match(f"{lr.init_statement} {lr.update_statement} {lr.loop_condition}", symbol_name):
-                return True
-
-    # Arrays
-    for arr in cfg.sdfg.arrays.values():
-        for dim, stride in zip(arr.shape, arr.strides):
-            if token_match(f"{dim} {stride}", symbol_name):
-
-                return True
-
-    # Maps
-    for state in cfg.all_states():
-        for node in state.nodes():
-            if isinstance(node, dace.nodes.MapEntry):
-                for (b, e, s) in node.map.range:
-                    if token_match(f"{b} {e} {s}", symbol_name):
-
-                        return True
-
-    # Takslets
-    for state in cfg.all_states():
-        for node in state.nodes():
-            if isinstance(node, dace.nodes.Tasklet):
-                if token_match(node.code.as_string, symbol_name):
-
-                    return True
-
-    return False
 
 
 def remove_symbol_assignments(graph: ControlFlowRegion, sym_name: str):
@@ -259,8 +195,76 @@ class BranchElimination(transformation.MultiStateTransformation):
 
         return False
 
+    def _symbol_appears_as_read(self, cfg: ControlFlowRegion, symbol_name: str) -> bool:
+        # Symbol can be read on an interstate edge, appear in a conditional block's conditions, loop regions condition / update
+        # Appear in shape of an array, in the expression of maps or in taskelts, passed to nested SDFGs
 
-    def _extract_bracket_content(s: str):
+        # Interstate edge reads
+        for e in cfg.all_interstate_edges():
+            for v in e.data.assignments.values():
+                if symbol_name in dace.symbolic.symbols_in_code(v):
+                    return True
+
+        # Conditional Block
+        for cb in cfg.all_control_flow_blocks():
+            if isinstance(cb, ConditionalBlock):
+                for cond, _ in cb.branches:
+                    if cond is None:
+                        continue
+                    if symbol_name in dace.symbolic.symbols_in_code(cond.as_string):
+                        return True
+
+        # Memlets
+        for state in cfg.all_states():
+            for edge in state.edges():
+                if edge.data.data is not None:
+                    for (b, e, s) in edge.data.subset:
+                        if hasattr(b, "free_symbols") and symbol_name in {str(sym) for sym in b.free_symbols}:
+                            return True
+                        if hasattr(e, "free_symbols") and symbol_name in {str(sym) for sym in e.free_symbols}:
+                            return True
+                        if hasattr(s, "free_symbols") and symbol_name in {str(sym) for sym in s.free_symbols}:
+                            return True
+        # Loop
+        for lr in cfg.all_control_flow_regions():
+            if isinstance(lr, LoopRegion):
+                if symbol_name in dace.symbolic.symbols_in_code(lr.init_statement.as_string):
+                    return True
+                if symbol_name in dace.symbolic.symbols_in_code(lr.update_statement.as_string):
+                    return True
+                if symbol_name in dace.symbolic.symbols_in_code(lr.loop_condition.as_string):
+                    return True
+
+        # Arrays
+        for arr in cfg.sdfg.arrays.values():
+            for dim, stride in zip(arr.shape, arr.strides):
+                if hasattr(dim, "free_symbols") and symbol_name in {str(sym) for sym in dim.free_symbols}:
+                    return True
+                if hasattr(stride, "free_symbols") and symbol_name in {str(sym) for sym in stride.free_symbols}:
+                    return True
+
+        # Maps
+        for state in cfg.all_states():
+            for node in state.nodes():
+                if isinstance(node, dace.nodes.MapEntry):
+                    for (b, e, s) in node.map.range:
+                        if hasattr(b, "free_symbols") and symbol_name in {str(sym) for sym in b.free_symbols}:
+                            return True
+                        if hasattr(e, "free_symbols") and symbol_name in {str(sym) for sym in e.free_symbols}:
+                            return True
+                        if hasattr(s, "free_symbols") and symbol_name in {str(sym) for sym in s.free_symbols}:
+                            return True
+
+        # Takslets
+        for state in cfg.all_states():
+            for node in state.nodes():
+                if isinstance(node, dace.nodes.Tasklet):
+                    if symbol_name in dace.symbolic.symbols_in_code(node.code.as_string):
+                        return True
+
+        return False
+
+    def _extract_bracket_content(self, s: str):
         pattern = r"(\w+)\[([^\]]*)\]"
         matches = re.findall(pattern, s)
 
@@ -307,7 +311,6 @@ class BranchElimination(transformation.MultiStateTransformation):
         for i, arr_input in enumerate(arr_inputs):
             cleaned = token_replace(cleaned, arr_input, f"_in_{arr_input}_{i}")
 
-        # cleaned = token_replace(cleaned, lhs, f"_out_float_{lhs}")
         assert arr_inputs.union(symbol_inputs) == free_vars
 
         tasklet = state.add_tasklet(name=f"ieassign_{lhs}_to_{float_lhs_name}_scalar",
@@ -528,7 +531,7 @@ class BranchElimination(transformation.MultiStateTransformation):
                     st.parent_graph.add_edge(empty_state, oe.dst, copy.deepcopy(oe.data))
                 break
 
-        return symbol_is_used(copy_sdfg, sym_name)
+        return self._symbol_appears_as_read(copy_sdfg, sym_name)
 
     def only_top_level_tasklets(self, graph: ControlFlowRegion):
         checked_at_least_one_tasklet = False
@@ -1687,7 +1690,7 @@ class BranchElimination(transformation.MultiStateTransformation):
             first_if, second_if = self.sequentialize_if_else_branch_if_disjoint_subsets(graph)
 
             if first_if is not None and second_if is not None:
-                t1 = EliminateBranches()
+                t1 = BranchElimination()
                 t1.conditional = first_if
                 if sdfg.parent_nsdfg_node is not None:
                     t1.parent_nsdfg_state = self.parent_nsdfg_state
@@ -1696,7 +1699,7 @@ class BranchElimination(transformation.MultiStateTransformation):
                 assert t1.can_be_applied(graph=graph, expr_index=0, sdfg=sdfg, permissive=True)
                 t1.apply(graph=graph, sdfg=sdfg)
 
-                t2 = EliminateBranches()
+                t2 = BranchElimination()
                 t2.conditional = second_if
                 if sdfg.parent_nsdfg_node is not None:
                     t2.parent_nsdfg_state = self.parent_nsdfg_state
@@ -1924,7 +1927,7 @@ class BranchElimination(transformation.MultiStateTransformation):
             self.conditional.sdfg.validate()
         # Then name says symbols but could be an array too
         for sym_name in conditional_symbols:
-            if not symbol_is_used(graph.sdfg, sym_name):
+            if not self._symbol_appears_as_read(graph.sdfg, sym_name):
                 remove_symbol_assignments(graph.sdfg, sym_name)
                 if sym_name in graph.sdfg.symbols:
                     graph.sdfg.remove_symbol(sym_name)

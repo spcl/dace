@@ -392,8 +392,8 @@ def _get_sdfg_with_symbol_use_in_tasklet() -> dace.SDFG:
 
 def test_branch_fusion_tasklets():
     try:
-        from dace.transformation.passes.eliminate_branches_pass import EliminateBranchesPass
-        st = EliminateBranchesPass()
+        from dace.transformation.passes.eliminate_branches import EliminateBranches
+        st = EliminateBranches()
     except Exception as e:
         return
 
@@ -437,8 +437,8 @@ def test_branch_fusion_tasklets():
 
 def test_branch_fusion_tasklets_two():
     try:
-        from dace.transformation.passes.eliminate_branches_pass import EliminateBranchesPass
-        st = EliminateBranchesPass()
+        from dace.transformation.passes.eliminate_branches import EliminateBranches
+        st = EliminateBranches()
     except Exception as e:
         return
 
