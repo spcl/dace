@@ -115,7 +115,7 @@ class DataForwardingManager:
         To do this we first check if this array has been overwritten or not.
         If the array has not been overwritten, we just need to replicate it
         in the backward pass and then forward it.
-        If the array has been overwritten, we pick a strategy for this AN:
+        If the array has been overwritten, we pick a strategy for this AccessNode:
             - Store strategy:
                 - We modify the forward pass to save the values in a new array
                 - Connect this new array to the node in the backward pass
