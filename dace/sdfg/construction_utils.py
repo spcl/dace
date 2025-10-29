@@ -338,8 +338,6 @@ def insert_non_transient_data_through_parent_scopes(non_transient_data: Set[str]
                 dst.add_in_connector(f"IN_{data_access}_p", force=True)
             src.add_out_connector(_get_out_conn_name(dst))
 
-    parent_graph.sdfg.save("x.sdfg")
-
     # Re-propagate memlets when subsets are explicit
     if add_with_exact_subset:
         propagate_memlets_state(parent_graph.sdfg, parent_graph)
@@ -684,8 +682,9 @@ def get_num_parent_map_and_loop_scopes(root_sdfg: dace.SDFG, node: dace.nodes.Ma
     return len(get_parent_map_and_loop_scopes(root_sdfg, node, parent_state))
 
 
-def get_parent_map_and_loop_scopes(root_sdfg: dace.SDFG, node: dace.nodes.MapEntry | ControlFlowRegion
-                                   | dace.nodes.Tasklet | ConditionalBlock, parent_state: dace.SDFGState):
+def get_parent_map_and_loop_scopes(root_sdfg: dace.SDFG, node: Union[dace.nodes.MapEntry, ControlFlowRegion,
+                                                                     dace.nodes.Tasklet, ConditionalBlock],
+                                   parent_state: dace.SDFGState):
     scope_dict = parent_state.scope_dict() if parent_state is not None else None
     num_parent_maps_and_loops = 0
     cur_node = node
