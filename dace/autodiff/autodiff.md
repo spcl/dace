@@ -787,10 +787,10 @@ This ensures multiple gradient contributions are summed correctly.
 
 ### 8.2 Gradient Clearing
 
-**Problem**: Overwritten arrays in the forward pass requires clearing the gradients of the corresponding gradient arrays to allow the always-accumelate solution presented above.
+**Problem**: Overwritten arrays in the forward pass require clearing the gradients of the corresponding gradient arrays to allow the always-accumulate solution presented above.
 
 **When to Clear Gradients**:
-- In the backward pass, at the corresponding point where arrays in the forward pass where overwritten.
+- In the backward pass, at the corresponding point where arrays in the forward pass were overwritten.
 
 **Implementation Strategies**:
 
