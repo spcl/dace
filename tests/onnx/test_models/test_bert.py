@@ -4,19 +4,17 @@ Test a full model including indexing and input preparation. The model also inclu
 
 import pytest
 
-pytest.importorskip("onnx", reason="ONNX not installed. Please install with: pip install dace[ml]")
 pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
 import os
 
-import onnx
 import pathlib
 import urllib
 
 import torch
+import torch.nn as nn
 from transformers import BertTokenizer, BertModel
-
+from dace.frontend.python.module import DaceModule
 import dace
-import dace.libraries.onnx as donnx
 from tests.utils import torch_tensors_close
 
 
@@ -43,17 +41,28 @@ def get_data_file(url, directory_name=None) -> str:
     return file_path
 
 
-@pytest.mark.onnx
+class BertModelWrapper(nn.Module):
+
+    def __init__(self, bert_model):
+        super().__init__()
+        self.bert_model = bert_model
+
+    def forward(self, input_ids, token_type_ids, attention_mask):
+        outputs = self.bert_model(input_ids=input_ids, token_type_ids=token_type_ids, attention_mask=attention_mask)
+        return outputs.last_hidden_state, outputs.pooler_output
+
+
+@pytest.mark.torch
 def test_bert_full(sdfg_name):
     bert_tiny_root = 'http://spclstorage.inf.ethz.ch/~rauscho/bert-tiny'
     get_data_file(bert_tiny_root + "/config.json", directory_name='bert-tiny')
     vocab = get_data_file(bert_tiny_root + "/vocab.txt", directory_name='bert-tiny')
-    bert_path = get_data_file(bert_tiny_root + "/bert-tiny.onnx", directory_name='bert-tiny')
     get_data_file(bert_tiny_root + "/pytorch_model.bin", directory_name='bert-tiny')
     model_dir = os.path.dirname(vocab)
 
     tokenizer = BertTokenizer.from_pretrained(vocab)
     pt_model = BertModel.from_pretrained(model_dir)
+    pt_model.eval()
 
     text = "[CLS] how are you today [SEP] dude [SEP]"
     tokenized_text = tokenizer.tokenize(text)
@@ -64,16 +73,30 @@ def test_bert_full(sdfg_name):
     segments_tensors = torch.tensor([segment_ids])
     attention_mask = torch.ones(1, 8, dtype=torch.int64)
 
-    model = onnx.load(bert_path)
+    wrapped_model = BertModelWrapper(pt_model)
 
-    dace_model = donnx.ONNXModel(sdfg_name, model, auto_merge=True)
+    dace_model = DaceModule(
+        wrapped_model,
+        sdfg_name=sdfg_name,
+        simplify=True,
+        backward=False,
+    )
 
-    dace_output = dace_model(input_ids=tokens_tensor, token_type_ids=segments_tensors, attention_mask=attention_mask)
+    tokens_tensor_pt = torch.clone(tokens_tensor)
+    segments_tensors_pt = torch.clone(segments_tensors)
+    attention_mask_pt = torch.clone(attention_mask)
 
-    output = pt_model(tokens_tensor, token_type_ids=segments_tensors, attention_mask=attention_mask)
+    tokens_tensor_dace = torch.clone(tokens_tensor)
+    segments_tensors_dace = torch.clone(segments_tensors)
+    attention_mask_dace = torch.clone(attention_mask)
 
-    torch_tensors_close("output_0", output[0], dace_output[0])
-    torch_tensors_close("output_1", output[1], dace_output[1])
+    with torch.no_grad():
+        output = wrapped_model(tokens_tensor_pt, segments_tensors_pt, attention_mask_pt)
+
+    dace_output = dace_model(tokens_tensor_dace, segments_tensors_dace, attention_mask_dace)
+
+    torch_tensors_close("last_hidden_state", output[0], dace_output[0])
+    torch_tensors_close("pooler_output", output[1], dace_output[1])
 
 
 if __name__ == "__main__":
