@@ -20,21 +20,6 @@ from dace.transformation.interstate.state_fusion import StateFusion
 from dace.transformation.passes import FuseStates
 
 
-def extract_bracket_content(s: str):
-    pattern = r"(\w+)\[([^\]]*)\]"
-    matches = re.findall(pattern, s)
-
-    extracted = dict()
-    for name, content in matches:
-        if name in extracted:
-            raise Exception("Repeated assignment in interstate edge, not supported")
-        extracted[name] = "[" + content + "]"
-
-    # Remove [...] from the string
-    cleaned = re.sub(pattern, r"\1", s)
-
-    return cleaned, extracted
-
 
 def symbol_is_used(cfg: ControlFlowRegion, symbol_name: str) -> bool:
     # Symbol can be read on an interstate edge, appear in a conditional block's conditions, loop regions condition / update
@@ -175,7 +160,7 @@ class DivEps(ast.NodeTransformer):
 
 @properties.make_properties
 @dace.transformation.explicit_cf_compatible
-class FuseBranches(transformation.MultiStateTransformation):
+class BranchElimination(transformation.MultiStateTransformation):
     """
     It translated couple of SIMT branches to a form compatible with SIMD instructions
     ```
@@ -274,6 +259,22 @@ class FuseBranches(transformation.MultiStateTransformation):
 
         return False
 
+
+    def _extract_bracket_content(s: str):
+        pattern = r"(\w+)\[([^\]]*)\]"
+        matches = re.findall(pattern, s)
+
+        extracted = dict()
+        for name, content in matches:
+            if name in extracted:
+                raise Exception("Repeated assignment in interstate edge, not supported")
+            extracted[name] = "[" + content + "]"
+
+        # Remove [...] from the string
+        cleaned = re.sub(pattern, r"\1", s)
+
+        return cleaned, extracted
+
     def _move_interstate_assignment_to_state(self, state: dace.SDFGState, rhs: str, lhs: str):
         # Parse rhs of itnerstate edge assignment to a symbolic expression
         # array accesses are shown as functions e.g. arr1[i, j] is treated as a function arr1(i, j)
@@ -283,11 +284,11 @@ class FuseBranches(transformation.MultiStateTransformation):
                      for sym in rhs_as_symexpr.free_symbols}.union({
                          str(node.func)
                          for node in preorder_traversal(rhs_as_symexpr) if isinstance(node, Function)
-                     }) - {"AND", "OR", "NOT"}
+                     }) - {"AND", "OR", "NOT", "and", "or", "not", "And", "Or", "Not"}
 
         # For array accesses such as arr1(i, j) get the dictionary tha tmaps name to accesses {arr1: [i,j]}
         # And remove the array accesses
-        cleaned, extracted_subsets = extract_bracket_content(rhs)
+        cleaned, extracted_subsets = self._extract_bracket_content(rhs)
 
         # Collect inputs we need
         arr_inputs = {var for var in free_vars if var in state.sdfg.arrays}
@@ -1686,7 +1687,7 @@ class FuseBranches(transformation.MultiStateTransformation):
             first_if, second_if = self.sequentialize_if_else_branch_if_disjoint_subsets(graph)
 
             if first_if is not None and second_if is not None:
-                t1 = FuseBranches()
+                t1 = EliminateBranches()
                 t1.conditional = first_if
                 if sdfg.parent_nsdfg_node is not None:
                     t1.parent_nsdfg_state = self.parent_nsdfg_state
@@ -1695,7 +1696,7 @@ class FuseBranches(transformation.MultiStateTransformation):
                 assert t1.can_be_applied(graph=graph, expr_index=0, sdfg=sdfg, permissive=True)
                 t1.apply(graph=graph, sdfg=sdfg)
 
-                t2 = FuseBranches()
+                t2 = EliminateBranches()
                 t2.conditional = second_if
                 if sdfg.parent_nsdfg_node is not None:
                     t2.parent_nsdfg_state = self.parent_nsdfg_state
