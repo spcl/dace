@@ -1042,14 +1042,14 @@ class BackwardPassGenerator:
         for g in state_subgraph.nodes():
             if isinstance(g, nodes.NestedSDFG):
 
-                inout_connoctors = set(g.in_connectors).intersection(set(g.out_connectors))
+                inout_connectors = set(g.in_connectors).intersection(set(g.out_connectors))
                 # If there are any inout connectors
-                if len(inout_connoctors) > 0:
+                if len(inout_connectors) > 0:
                     out_connectors = {edge.src_conn: edge for edge in state.out_edges(g)}
                     in_connectors = {edge.dst_conn: edge for edge in state.in_edges(g)}
                     view_out_connectors = {edge.src_conn: edge for edge in state_subgraph.out_edges(g)}
                     view_in_connectors = {edge.dst_conn: edge for edge in state_subgraph.in_edges(g)}
-                    for con in inout_connoctors:
+                    for con in inout_connectors:
                         # Check if it is missing in the out or in connectors of the view
                         if con in view_out_connectors and con not in view_in_connectors:
                             # Get the equivalent in node and connector
