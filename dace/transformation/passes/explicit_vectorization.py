@@ -326,6 +326,10 @@ class ExplicitVectorization(ppl.Pass):
         #    #    if e.data.data is not None:
         #    #        if state.sdfg.arrays[e.data.data].dtype != self.vector_op_numeric_type and state.sdfg.arrays[e.data.data].transient is True:
         #    #            state.sdfg.arrays[e.data.data].dtype = self.vector_op_numeric_type
+
+        # Add missing symbols
+        print("OOOOOOO", inner_sdfg.free_symbols, nsdfg.symbol_mapping)
+
         state.sdfg.save("x5.sdfg")
 
     def _duplicate_unstructured_writes(self, inner_sdfg: dace.SDFG):
@@ -355,6 +359,8 @@ class ExplicitVectorization(ppl.Pass):
         modified_nodes: Set[dace.nodes.Node] = set()
         modified_edges: Set[Edge[Memlet]] = set()
         expanded_symbols = set()
+        
+        # First expand intersate assignments
         for state in sdfg.all_states():
             for edge in state.edges():
                 if edge.data is not None and edge.data.data in array_accessed_to_be_packed:
@@ -363,7 +369,11 @@ class ExplicitVectorization(ppl.Pass):
                     non_expanded_free_symbols = free_symbols - expanded_symbols
                     expanded_symbols = expanded_symbols.union(free_symbols)
                     self._expand_interstate_assignments(sdfg, non_expanded_free_symbols, candidate_arrays)
-
+        
+        # Then do the other stuff
+        for state in sdfg.all_states():
+            for edge in state.edges():
+                if edge.data is not None and edge.data.data in array_accessed_to_be_packed:
                     # Create a packed copy
                     # If it is a source node (no in edges, copy in), otherwise replace with the packed data
                     if state.in_degree(edge.src) == 0 and edge.src.data == edge.data.data:
@@ -380,7 +390,8 @@ class ExplicitVectorization(ppl.Pass):
                         for i in range(self.vector_width):
                             new_subset = repl_subset_to_symbol_offset(sdfg=state.sdfg,
                                                                       subset=edge.data.subset,
-                                                                      symbol_offset=str(i))
+                                                                      symbol_offset=str(i),
+                                                                      add_missing_symbols=False)
                             at = state.add_tasklet(
                                 name=f"assign_{i}",
                                 inputs={
