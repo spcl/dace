@@ -2590,7 +2590,7 @@ def demote_symbol_to_scalar(sdfg: 'dace.SDFG', symbol_str: str, default_type: 'd
                     # 2. If used in tasklet try to replace symbol name with an in connector and add an access to the scalar
 
                     # Sanity check no tasklet should assign to a symbol
-                    cutil.tasklet_replace_code(n.code.as_string, {symbol_str: f"_in_{symbol_str}"})
+                    cutil.tasklet_replace_code(n, {symbol_str: f"_in_{symbol_str}"})
                     n.add_in_connector(f"_in_{symbol_str}")
                     access = g.add_access(symbol_str)
                     g.add_edge(access, None, n, f"_in_{symbol_str}", dace.memlet.Memlet(expr=f"{symbol_str}[0]"))
