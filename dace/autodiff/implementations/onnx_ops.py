@@ -14,7 +14,6 @@ The implementations handle various ONNX operations including:
 """
 
 import copy
-import ctypes
 import itertools
 from typing import List, Optional, Tuple, Dict, Union
 
@@ -25,8 +24,7 @@ import dace
 from dace.frontend.common import einsum
 import dace.libraries
 from dace.registry import autoregister_params
-from dace import nodes as nd, dtypes, subsets
-import dace.transformation.transformation as xf
+from dace import nodes as nd
 
 # ONNX-specific imports
 import dace.libraries.onnx as donnx
@@ -2070,18 +2068,6 @@ class DefaultSliceBackward(BackwardImplementation):
         long long out_shape[{len(output_desc.shape)}] = {{{out_shapes_list}}};
         long long data_shape[{num_dims}] = {{{data_shapes_list}}};
 
-        // DEBUG: Print runtime slice parameters
-        printf("RUNTIME Slice backward DEBUG:\\n");
-        printf("  num_slices=%d\\n", {num_slices});
-        for (int i = 0; i < {num_slices}; i++) {{
-            printf("  slice[%d]: axis=%lld, start=%lld, end=%lld, step=%lld\\n",
-                   i,
-                   {"(long long)__axes[i]" if has_axes else "i"},
-                   (long long)__starts[{f"i" if num_slices > 1 else "0"}],
-                   (long long)__ends[{f"i" if num_slices > 1 else "0"}],
-                   {"(long long)__steps[i]" if has_steps else "1"});
-        }}
-
         // Compute output strides (row-major order)
         long long out_strides[{len(output_desc.shape)}];
         out_strides[{len(output_desc.shape) - 1}] = 1;
@@ -2111,13 +2097,13 @@ class DefaultSliceBackward(BackwardImplementation):
         // Fill in slice parameters for sliced axes
         for (int slice_i = 0; slice_i < {num_slices}; slice_i++) {{
             int axis = slice_i;  // Default: axes = [0, 1, ..., num_slices-1]
-            {"if (__axes) axis = (int)__axes[0];" if has_axes and num_slices == 1 else ""}
+            {"if (__axes) axis = (int)(*__axes);" if has_axes and num_slices == 1 else ""}
             {"if (__axes) axis = (int)__axes[slice_i];" if has_axes and num_slices > 1 else ""}
 
-            long long start = (long long){("__starts[0]" if num_slices == 1 else "__starts[slice_i]")};
-            long long end = (long long){("__ends[0]" if num_slices == 1 else "__ends[slice_i]")};
+            long long start = (long long){("(*__starts)" if num_slices == 1 else "__starts[slice_i]")};
+            long long end = (long long){("(*__ends)" if num_slices == 1 else "__ends[slice_i]")};
             long long step = 1;
-            {"if (__steps) step = (long long)__steps[0];" if has_steps and num_slices == 1 else ""}
+            {"if (__steps) step = (long long)(*__steps);" if has_steps and num_slices == 1 else ""}
             {"if (__steps) step = (long long)__steps[slice_i];" if has_steps and num_slices > 1 else ""}
 
             // Handle negative indices

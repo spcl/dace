@@ -162,12 +162,12 @@ def infer_shapes_onnx_model(model: onnx.ModelProto, auto_merge: bool = False) ->
 
     Note:
         Falls back to ONNX's built-in shape inference if ONNXRuntime is not available
-        or if symbolic shape inference produces incomplete results.
+        or if symbolic shape inference produces incomplete results. May also try
+        running shape inference multiple times to complete partial results.
     """
     if not ONNXRUNTIME_AVAILABLE:
         log.warning("ONNXRuntime not available, falling back to ONNX shape inference. ")
         # Fallback to ONNX's built-in shape inference
-        import onnx.shape_inference
         return onnx.shape_inference.infer_shapes(model, check_type=False, strict_mode=False, data_prop=True)
 
     try:
@@ -178,7 +178,13 @@ def infer_shapes_onnx_model(model: onnx.ModelProto, auto_merge: bool = False) ->
             guess_output_rank=False,
             verbose=0,
         )
-        model = ssi.infer_shapes(model)
+        try:
+            model = ssi.infer_shapes(model)
+        except Exception as e:
+            # Handle exceptions from infer_shapes (e.g., "Incomplete symbolic shape inference")
+            log.warning(f"ONNXRuntime symbolic shape inference failed ({e}), "
+                        "falling back to ONNX shape inference.")
+            return onnx.shape_inference.infer_shapes(model, check_type=False, strict_mode=False, data_prop=True)
 
         # Check if shape inference completed successfully for all value_infos
         incomplete_shapes = False
@@ -191,7 +197,6 @@ def infer_shapes_onnx_model(model: onnx.ModelProto, auto_merge: bool = False) ->
         if incomplete_shapes:
             log.warning("ONNXRuntime symbolic shape inference produced incomplete results, "
                         "falling back to ONNX shape inference.")
-            import onnx.shape_inference
             return onnx.shape_inference.infer_shapes(model, check_type=False, strict_mode=False, data_prop=True)
 
         return model
@@ -211,7 +216,6 @@ def infer_shapes_onnx_model(model: onnx.ModelProto, auto_merge: bool = False) ->
             if incomplete_shapes:
                 log.warning("ONNXRuntime symbolic shape inference produced incomplete results, "
                             "falling back to ONNX shape inference.")
-                import onnx.shape_inference
                 return onnx.shape_inference.infer_shapes(model, check_type=False, strict_mode=False, data_prop=True)
 
             return model
@@ -219,7 +223,6 @@ def infer_shapes_onnx_model(model: onnx.ModelProto, auto_merge: bool = False) ->
             # If all else fails, fall back to ONNX shape inference
             log.warning(f"ONNXRuntime symbolic shape inference failed ({e}), "
                         "falling back to ONNX shape inference.")
-            import onnx.shape_inference
             return onnx.shape_inference.infer_shapes(model, check_type=False, strict_mode=False, data_prop=True)
 
 
