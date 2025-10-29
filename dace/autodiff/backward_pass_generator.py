@@ -813,7 +813,7 @@ class BackwardPassGenerator:
         required_gradients_all_states = {n for n in self.required_gradients_data}
         given_gradients_all_states = given_gradients_all_states | required_gradients_all_states
 
-        # Do the backward BFS iterativly
+        # Do the backward BFS iteratively
         for state in reversed(self.state_order):
             state_given_gradients: List[nodes.AccessNode] = []
 
