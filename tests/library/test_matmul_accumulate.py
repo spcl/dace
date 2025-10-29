@@ -169,6 +169,7 @@ def test_gemv_accumulate(implementation: str, dtype):
 
         assert np.allclose(ref, y), f"Test failed for {implementation} with dtype {dtype}"
 
+
 @pytest.mark.parametrize("implementation, dtype", [
     pytest.param("pure", dace.float32),
     pytest.param("pure", dace.float64),
@@ -230,7 +231,8 @@ def test_batched_matmul_accumulate(implementation: str, dtype):
         ref = A @ B + 2.0 * C_initial
 
         assert np.allclose(ref, C), f"Test failed for {implementation} with dtype {dtype}"
-        
+
+
 if __name__ == "__main__":
     test_batched_matmul_accumulate("pure", dace.float32)
     test_batched_matmul_accumulate("pure", dace.float64)
