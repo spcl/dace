@@ -72,12 +72,12 @@ def _run_and_compare(prog, A_host, B_host, constants=None):
 
     # Run both SDFGs
     A_ref = cupy.zeros_like(A_gpu)
-    args = copy.deepcopy(constants)
+    args = copy.deepcopy(constants) if constants is not None else dict()
     args["A"] = A_ref
     args["B"] = B_gpu
     sdfg(**args)
     A_out = cupy.zeros_like(A_gpu)
-    args = copy.deepcopy(constants)
+    args = copy.deepcopy(constants) if constants is not None else dict()
     args["A"] = A_out
     args["B"] = B_gpu
     sdfg_expanded(**args)
