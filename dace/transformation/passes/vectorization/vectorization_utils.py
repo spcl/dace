@@ -1054,55 +1054,19 @@ def drop_dims(sdfg: dace.SDFG, dim_mask: Tuple[int], dataname: str) -> None:
         interstate_edge.data.assignments = new_assignments
 
 
-"""
-class IntToFloatTransformer(ast.NodeTransformer):
-    def visit_Constant(self, node):
-        if isinstance(node.value, int):
-            # Replace integer with float node
-            return ast.Constant(value=float(node.value))
-        return node
-
-    def visit_Num(self, node):  # For older Python versions (<3.8)
-        if isinstance(node.n, int):
-            return ast.copy_location(ast.Constant(value=float(node.n)), node)
-        return node
-
-
-def ints_to_floats(code_str):
-    tree = ast.parse(code_str)
-    new_tree = IntToFloatTransformer().visit(tree)
-    ast.fix_missing_locations(new_tree)
-    return ast.unparse(new_tree)
-"""
-
-
-def get_rhs_order(code_str: str, op_str: str, rhs1: str, rhs2: str) -> List[str]:
-    return [rhs1, rhs2]
-
-    splits = ints_to_floats(code_str).split(op_str)
-    assert len(splits) == 2, f"{code_str} split at {op_str} becomes {splits}, length is not 2"
-    left, right = splits[0], splits[1]
-
-    rhs1_in_left = token_match(left, str(rhs1))
-    rhs1_in_right = token_match(right, str(rhs1))
-    rhs2_in_left = token_match(left, str(rhs2))
-    rhs2_in_right = token_match(right, str(rhs2))
-
-    assert rhs1_in_left or rhs1_in_right
-    assert not (rhs1_in_left and rhs1_in_right)
-    assert rhs2_in_left or rhs2_in_right, f"{rhs2} not found in tokens `{left}` or `{right}`"
-    assert not (rhs2_in_left and rhs2_in_right)
-
-    if rhs1_in_left:
-        assert rhs2_in_right
-        return [rhs1, rhs2]
-    elif rhs2_in_left:
-        assert rhs1_in_right
-        return [rhs2, rhs1]
-    assert False
-
-
 def offset_symbol_in_expression(expr_str: str, symbol_to_offset: str, offset: int) -> str:
+    """
+    Returns a new expression string where a specified symbol is incremented by a given offset.
+
+    Args:
+        expr_str (str): The original expression as a string.
+        symbol_to_offset (str): The symbol within the expression to offset.
+        offset (int): The integer value to add to the symbol.
+
+    Returns:
+        str: A new expression string with the symbol offset.
+             If the symbol is not found in the expression, returns the original expression string unchanged.
+    """
     expr = dace.symbolic.SymExpr(expr_str)
     sym_to_change = None
     for free_sym in expr.free_symbols:
@@ -1119,12 +1083,38 @@ def offset_symbol_in_expression(expr_str: str, symbol_to_offset: str, offset: in
 def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Tasklet, info: dict, vector_width: int,
                                   templates: Dict[str, str], vector_map_param: str) -> None:
     """
-    Given the classification `info` returned by `classify_tasklet`, set
-    `node.code` to the appropriate vectorized properties.CodeBlock.
+    Instantiates a tasklet's code block in a vectorized form based on classification information.
 
-    Expects `info` to contain keys:
-      - "type" (TaskletType)
-      - "lhs", "rhs1", "rhs2", "constant1", "constant2", "op"
+    This function takes a tasklet and a classification `info` (from `classify_tasklet`) and
+    updates the tasklet's `node.code` to a vectorized CodeBlock using the provided templates.
+    It handles different tasklet types (array-array, array-scalar, scalar-symbol, etc.) and
+    supports vectorization over a given width.
+
+    Args:
+        state: The SDFGState containing the tasklet.
+        node: The tasklet node to instantiate.
+        info: Classification dictionary containing:
+            - "type": TaskletType (enum describing operand types)
+            - "lhs": Left-hand side variable
+            - "rhs1": Left-of-the-operator right-hand side variable
+            - "rhs2": Right-of-the-operator right-hand side variable
+            - "constant1": Left-of-the-operator constant operand
+            - "constant2": Right-of-the-operator constant operand
+            - "op": Operation string (e.g., "+", "*", "=")
+        vector_width: The number of lanes for vectorization.
+        templates: Mapping from operation strings to template strings for code generation.
+            - This is taken from the vectorization pipeline for CPU/GPU/Other Acceleraotor
+        vector_map_param: Name of the map parameter used for lane indexing in vectorization.
+
+    Behavior:
+        1. Determines the tasklet type from `info` and extracts lhs, rhs1, rhs2, constants, and op.
+        2. Converts constants to float if possible, for proper code generation.
+        3. Selects the appropriate template based on operation and commutativity.
+        4. Handles special cases:
+            - Array-array, array-scalar, scalar-array, scalar-symbol assignments
+            - Zero-input operations (symbol-symbol)
+            - Operations with constants, including commutative and non-commutative operations
+        5. Generates a vectorized CodeBlock, also replicating assignments for each lane in the vector.
     """
     ttype: tutil.TaskletType = info.get("type")
     lhs = info.get("lhs")
@@ -1210,7 +1200,7 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
                         new_code = templates[op].format(rhs1=rhs1, rhs2=rhs2, lhs=lhs, op=op, vector_width=vector_width)
                     else:
                         assert constant is None
-                        rhs_order = get_rhs_order(node.code.as_string, op, rhs1, rhs2)
+                        rhs_order = [rhs1, rhs2]
                         print(
                             f"Op {op} is not commutative, rhs order is {rhs_order} for node {node} ({node.code.as_string})"
                         )
@@ -1236,7 +1226,8 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
             else:
                 comparison_set_suffix = ""
             if constant is not None:
-                rhs_order = get_rhs_order(node.code.as_string, op[1:], rhs1, constant)
+                rhs_order = [rhs1 if rhs1 is not None else constant1, rhs2 if rhs2 is not None else constant2]
+                assert rhs_order[0] is not None and rhs_order[1] is not None
                 assert op.startswith("c")
                 if rhs_order == [rhs1, constant]:
                     op = op[1:]
@@ -1251,7 +1242,8 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
                 else:
                     raise Exception("???")
             else:
-                rhs_order = get_rhs_order(node.code.as_string, op, rhs1, constant)
+                rhs_order = [rhs1 if rhs1 is not None else constant1, rhs2 if rhs2 is not None else constant2]
+                assert rhs_order[0] is not None and rhs_order[1] is not None
                 assert op.startswith("c")
                 if rhs_order == [rhs1, rhs2]:
                     op = op
@@ -1332,20 +1324,19 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
     if ttype == tutil.TaskletType.ARRAY_SCALAR:
         # array op scalar -> use constant template (prefix op with 'c')
         # note: info stores rhs1 as the array name and constant1 as the scalar name
-        set_template(rhs1, None, c1, lhs, "c" + op)
-        data_edge = next(iter(state.in_edges_by_connector(node, rhs1)))
-        data_name = data_edge.data.data
-        data = state.sdfg.arrays[data_name]
-        #if data.transient is False:
-        #    raise Exception(
-        #        f"Array-Scalar tasklet is not currenlty supported by auto vectorization if input scalar is non-transient. Try to re-write the kernel. It happens at {node}, state:{state}"
-        #    )
+        set_template(rhs1, None, c2, lhs, "c" + op)
+        return
+
+    if ttype == tutil.TaskletType.SCALAR_ARRAY:
+        # array op scalar -> use constant template (prefix op with 'c')
+        # note: info stores rhs1 as the array name and constant1 as the scalar name
+        set_template(rhs2, None, c1, lhs, "c" + op)
         return
 
     if ttype == tutil.TaskletType.SCALAR_SCALAR:
         # preserved original behavior: this was saved + raised in classifier
         # keep behavior consistent by raising here as well (classifier already saved)
-        raise Exception("Unhandled: two scalar operands (SCALAR_SCALAR). See saved hmm.sdfg")
+        raise Exception("Unhandled: two scalar operands (SCALAR_SCALAR).")
 
     # 4) zero-input (symbol-symbol)
     if ttype == tutil.TaskletType.SYMBOL_SYMBOL:
@@ -1375,6 +1366,19 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
 
 def duplicate_access(state: dace.SDFGState, node: dace.nodes.AccessNode,
                      vector_width: int) -> Tuple[Set[dace.nodes.Node], Set[Edge[Memlet]]]:
+    """
+    Duplicates an access node into a packed vector of a given width, updating all relevant tasklets and memlets.
+    It writes to a packed storage by using the duplicated symbols.
+
+    Args:
+        state: The SDFG state containing the node.
+        node: The AccessNode to duplicate.
+        vector_width: Number of elements to pack.
+
+    Returns:
+        A tuple of sets: touched nodes and touched edges created during duplication.
+    """
+
     touched_nodes = set()
     touched_edges = set()
 
@@ -1439,6 +1443,15 @@ def duplicate_access(state: dace.SDFGState, node: dace.nodes.AccessNode,
 
 def replace_arrays_with_new_shape(sdfg: dace.SDFG, array_namelist: Set[str], new_shape: Tuple[Any],
                                   new_type: typeclass) -> None:
+    """
+    Replaces existing arrays in an SDFG with new shapes (and optionally a new dtype).
+
+    Args:
+        sdfg: The SDFG containing the arrays.
+        array_namelist: Set of array names to replace.
+        new_shape: The new shape for the arrays.
+        new_type: Optional new data type for arrays.
+    """
     for arr_name in array_namelist:
         arr = sdfg.arrays[arr_name]
         sdfg.remove_data(arr_name, validate=False)
@@ -1458,6 +1471,15 @@ def replace_arrays_with_new_shape(sdfg: dace.SDFG, array_namelist: Set[str], new
 
 def copy_arrays_with_a_new_shape(sdfg: dace.SDFG, array_namelist: Set[str], new_shape: Tuple[Any],
                                  name_suffix: str) -> None:
+    """
+    Creates copies of existing arrays with a new shape and a name suffix.
+
+    Args:
+        sdfg: The SDFG containing the arrays.
+        array_namelist: Set of array names to copy.
+        new_shape: Shape of the new arrays.
+        name_suffix: Suffix to append to new array names.
+    """
     for arr_name in array_namelist:
         arr = sdfg.arrays[arr_name]
         sdfg.add_array(name=arr_name + name_suffix,
@@ -1476,6 +1498,17 @@ def copy_arrays_with_a_new_shape(sdfg: dace.SDFG, array_namelist: Set[str], new_
 
 def get_scalar_source_nodes(sdfg: dace.SDFG,
                             non_transient_only: bool) -> List[Tuple[dace.SDFGState, dace.nodes.AccessNode]]:
+    """
+    Returns source nodes (in-degree 0 access nodes) for scalars (or shape-1 arrays) with no incoming edges.
+
+    Args:
+        sdfg: The SDFG to inspect.
+        non_transient_only: If True, include only non-transient scalars.
+
+    Returns:
+        List of tuples (state, AccessNode).
+    """
+
     source_nodes = list()
     for state in sdfg.all_states():
         for node in state.nodes():
@@ -1489,6 +1522,17 @@ def get_scalar_source_nodes(sdfg: dace.SDFG,
 
 def get_array_source_nodes(sdfg: dace.SDFG,
                            non_transient_only: bool) -> List[Tuple[dace.SDFGState, dace.nodes.AccessNode]]:
+    """
+    Returns source nodes for arrays with more than one element (shape != (1,)) and no incoming edges.
+
+    Args:
+        sdfg: The SDFG to inspect.
+        non_transient_only: If True, include only non-transient arrays.
+
+    Returns:
+        List of tuples (state, AccessNode).
+    """
+
     source_nodes = list()
     for state in sdfg.all_states():
         for node in state.nodes():
@@ -1504,6 +1548,17 @@ def get_array_source_nodes(sdfg: dace.SDFG,
 
 def get_scalar_sink_nodes(sdfg: dace.SDFG,
                           non_transient_only: bool) -> List[Tuple[dace.SDFGState, dace.nodes.AccessNode]]:
+    """
+    Returns sink nodes for scalars (or shape-1 arrays) with no outgoing edges.
+
+    Args:
+        sdfg: The SDFG to inspect.
+        non_transient_only: If True, include only non-transient scalars.
+
+    Returns:
+        List of tuples (state, AccessNode).
+    """
+
     sink_nodes = list()
     for state in sdfg.all_states():
         for node in state.nodes():
@@ -1517,6 +1572,16 @@ def get_scalar_sink_nodes(sdfg: dace.SDFG,
 
 def get_array_sink_nodes(sdfg: dace.SDFG,
                          non_transient_only: bool) -> List[Tuple[dace.SDFGState, dace.nodes.AccessNode]]:
+    """
+    Returns sink nodes for arrays with shape > 1 and no outgoing edges.
+
+    Args:
+        sdfg: The SDFG to inspect.
+        non_transient_only: If True, include only non-transient arrays.
+
+    Returns:
+        List of tuples (state, AccessNode).
+    """
     sink_nodes = list()
     for state in sdfg.all_states():
         for node in state.nodes():
@@ -1530,6 +1595,14 @@ def get_array_sink_nodes(sdfg: dace.SDFG,
 
 def add_transient_arrays_from_list(sdfg: dace.SDFG, arr_name_shape_storage_dtype: Iterable[Tuple[str, Any, Any,
                                                                                                  Any]]) -> None:
+    """
+    Adds transient arrays to an SDFG given a list of (name, shape, storage, dtype) tuples.
+
+    Args:
+        sdfg: The SDFG to modify.
+        arr_name_shape_storage_dtype: Iterable of array specifications.
+    """
+
     for arr_name, shape, storage, dtype in arr_name_shape_storage_dtype:
         sdfg.add_array(
             name=arr_name,
@@ -1542,10 +1615,18 @@ def add_transient_arrays_from_list(sdfg: dace.SDFG, arr_name_shape_storage_dtype
 
 
 def is_assignment_tasklet(node: dace.nodes.Tasklet) -> bool:
+    """
+    Checks if a tasklet is a simple assignment (one input to one output).
+    Checks `a = b` or `a = b;`
+    Args:
+        node: The Tasklet to check.
+
+    Returns:
+        True if it is a single assignment tasklet, False otherwise.
+    """
     if (len(node.in_connectors) == 1 and len(node.out_connectors) == 1):
         in_conn = next(iter(node.in_connectors.keys()))
         out_conn = next(iter(node.out_connectors.keys()))
-
         return (node.code.as_string == f"{out_conn} = {in_conn}" or node.code.as_string == f"{out_conn} = {in_conn};")
     return False
 
@@ -1553,6 +1634,18 @@ def is_assignment_tasklet(node: dace.nodes.Tasklet) -> bool:
 def check_writes_to_scalar_sinks_happen_through_assign_tasklets(sdfg: dace.SDFG,
                                                                 scalar_sink_nodes: List[Tuple[dace.SDFGState,
                                                                                               dace.nodes.AccessNode]]):
+    """
+    Ensures all writes to scalar sink nodes occur through simple assignment tasklets.
+    Assignments can also occur through AccessNode -Edge-> AccessNode where `other_subset` is not none.
+    Auto-vectorization does not support that.
+
+    Args:
+        sdfg: The SDFG to check.
+        scalar_sink_nodes: List of scalar sink nodes to validate.
+
+    Raises:
+        Exception if a scalar sink write is not via an assignment tasklet.
+    """
     for state, sink_node in scalar_sink_nodes:
         in_edges = state.in_edges(sink_node)
         if len(in_edges) != "1":
@@ -1564,6 +1657,18 @@ def check_writes_to_scalar_sinks_happen_through_assign_tasklets(sdfg: dace.SDFG,
 
 
 def only_one_flop_after_source(state: dace.SDFGState, node: dace.nodes.AccessNode):
+    """
+    Checks whether only one computational tasklet (non-assignment) occurs after a given source node.
+    Does BFS starting from the access node.
+
+    Args:
+        state: The SDFG state containing the node.
+        node: The source AccessNode.
+
+    Returns:
+        Tuple (bool, List of nodes) indicating if the condition holds and the nodes checked.
+    """
+
     nodes_to_check = [node]
     tasklets_with_flops = 0
     checked_nodes = []
@@ -1583,6 +1688,25 @@ def only_one_flop_after_source(state: dace.SDFGState, node: dace.nodes.AccessNod
 def input_is_zero_and_transient_accumulator(state: dace.SDFGState, nsdfg: dace.nodes.NestedSDFG,
                                             inner_state: dace.SDFGState, source_node: dace.nodes.AccessNode,
                                             sink_node: dace.nodes.AccessNode):
+    """
+    Checks if a transient accumulator is initialized to zero and used in an in-place reduction pattern.
+    `nsdfg` is the parent nsdfg node and the state is where the nsdfg resides in.
+
+    It traverses the nsdfg node backwards using the find a zero-assignment to the accumulator.
+    The accumulator is the `source_node.data`. For it to be an accumulator source and sink needs to be the
+    same too.
+
+    Args:
+        state: The parent SDFG state.
+        nsdfg: The NestedSDFG node.
+        inner_state: Inner state of the NestedSDFG.
+        source_node: Source access node feeding the accumulator.
+        sink_node: Sink access node consuming the accumulator.
+
+    Returns:
+        Tuple (bool, accumulator_name) indicating if the pattern is valid and the accumulator's name.
+    """
+
     # Make sure the data of in and out edges refer to the same name
     sink_data = sink_node.data
     source_data = source_node.data
@@ -1635,6 +1759,14 @@ def input_is_zero_and_transient_accumulator(state: dace.SDFGState, nsdfg: dace.n
 
 
 def replace_all_access_subsets(state: dace.SDFGState, name: str, new_subset_expr: str):
+    """
+    Replaces all memlet subsets for a given array in a state with a new subset expression.
+
+    Args:
+        state: The SDFG state to modify.
+        name: Array name whose accesses are replaced.
+        new_subset_expr: The new subset expression (e.g., "0:4").
+    """
     for edge in state.edges():
         if edge.data is not None and edge.data.data == name:
             nm = dace.memlet.Memlet(expr=f"{name}[{new_subset_expr}]")
@@ -1642,13 +1774,23 @@ def replace_all_access_subsets(state: dace.SDFGState, name: str, new_subset_expr
 
 
 def expand_assignment_tasklets(state: dace.SDFGState, name: str, vector_length: int):
+    """
+    Expands assignment tasklets writing to an array at a to be over the vector length
+    over the unit stride dimension a[0] = ..., a[1] = ..., ...
+    For assignment tasklets the dataname given as name.
+
+    Args:
+        state: The SDFG state to modify.
+        name: The array being written.
+        vector_length: Length of the vector to expand to.
+    """
     for e in state.edges():
         if (isinstance(e.dst, dace.nodes.AccessNode) and e.dst.data == name and isinstance(e.src, dace.nodes.Tasklet)):
             code = e.src.code
             in_conns = e.src.in_connectors
             out_conns = e.src.out_connectors
             if len(in_conns) != 0:
-                assert False, "Non-assignemnt taskelt found for accumulator, unsupported case"
+                assert False, "Non-assignemnt tasklet found for accumulator, unsupported case"
             assert len(out_conns) == 1, f"{out_conns}"
             out_conn = next(iter(out_conns))
             assert code.language == dace.dtypes.Language.Python
@@ -1659,6 +1801,17 @@ def expand_assignment_tasklets(state: dace.SDFGState, name: str, vector_length: 
 
 
 def reduce_before_use(state: dace.SDFGState, name: str, vector_width: int, op: str):
+    """
+    Adds a reduction tasklet to reduce a vectorized array into a scalar before its use.
+
+    Args:
+        state: The SDFG state.
+        name: Array to reduce.
+        vector_width: Number of vector elements.
+        op: Reduction operation (e.g., "+", "*").
+    """
+    # TODO: Reduction can be optimized (e.g. logarithmic depth or checking of vector templates have a reduction op)
+
     # Any time a tasklet reads name[0:vector_length] then we need to reduce it before
     # In a reduction tasklet
     for edge in state.edges():
@@ -1687,6 +1840,37 @@ def reduce_before_use(state: dace.SDFGState, name: str, vector_width: int, op: s
 
 def move_out_reduction(scalar_source_nodes, state: dace.SDFGState, nsdfg: dace.nodes.NestedSDFG, inner_sdfg: dace.SDFG,
                        vector_width):
+    """
+    Moves a reduction out of a NestedSDFG, vectorizing transient accumulators and adjusting tasklets.
+
+    This function is typically used when a computation pattern consists of:
+      1. A scalar source feeding a NestedSDFG,
+      2. A transient accumulator initialized to zero (outside nested SDFG)
+      3. A single computational tasklet updating the accumulator (e.g. acc = acc + some_var)
+      4. A scalar sink at the end of the nsdfg for the accumulator.
+
+    The transformation performs the following steps:
+        1. Checks that there is at most one floating-point operation after the source. (For condition 3)
+        2. Validates that the accumulator is a transient scalar initialized to zero. (For condition 1 and 2)
+        3. Extracts the operation performed on the accumulator (e.g., addition, multiplication).
+        4. Reshapes the source, sink, and accumulator arrays to a vectorized form of size `vector_width`.
+        5. Updates all memlets accessing the accumulator to cover the full vector range.
+        6. Expands assignment tasklets to operate on all vector elements.
+        7. Inserts a reduction tasklet that combines the vector elements back to a scalar before use.
+
+    Args:
+        scalar_source_nodes: List of tuples `(state, node)` representing source scalar nodes feeding the NestedSDFG.
+        state: Parent SDFGState containing the NestedSDFG node.
+        nsdfg: NestedSDFG node where the reduction occurs.
+        inner_sdfg: Inner SDFG of the NestedSDFG.
+        vector_width: The width of vectorization for the accumulator.
+
+    Notes:
+        - Only supports simple reduction patterns with one operation and transient accumulators.
+        - The function assumes that the scalar source and sink nodes are properly connected through the NestedSDFG.
+        - The reduction operation is extracted automatically from the first tasklet after the source.
+
+    """
     num_flops, node_path = only_one_flop_after_source(scalar_source_nodes[0][0], scalar_source_nodes[0][1])
     is_inout_accumulator, accumulator_name = input_is_zero_and_transient_accumulator(
         state, nsdfg, scalar_source_nodes[0][0], scalar_source_nodes[0][1], node_path[-1])
@@ -1705,6 +1889,20 @@ def move_out_reduction(scalar_source_nodes, state: dace.SDFGState, nsdfg: dace.n
 
 def assert_symbols_in_parent_map_symbols(missing_symbols: Set[str], state: dace.SDFGState,
                                          nsdfg: dace.nodes.NestedSDFG):
+    """
+    Validates that given symbols correspond to loop variables in parent map scopes of a NestedSDFG.
+
+    Args:
+        missing_symbols: Symbols to validate (e.g., {"i0", "j1"}).
+        state: The SDFG state.
+        nsdfg: NestedSDFG node.
+
+    Returns:
+        Set of loop variable names found in the parent scopes.
+
+    Raises:
+        AssertionError if a symbol is not found in the loop scopes.
+    """
 
     def validate_and_strip(strings):
         valid = []
@@ -1741,6 +1939,17 @@ def assert_symbols_in_parent_map_symbols(missing_symbols: Set[str], state: dace.
 
 
 def find_symbol_assignment(sdfg: dace.SDFG, sym_name: str) -> str:
+    """
+    Finds the assignment expression of a given symbol by traversing the SDFG backwards.
+
+    Args:
+        sdfg: The SDFG to search.
+        sym_name: Symbol to find.
+
+    Returns:
+        Assignment expression as a string, or None if not found.
+    """
+
     # Pre-condition for vectorization
     assert all({isinstance(s, dace.SDFGState) for s in sdfg.nodes()})
     sink_state = {s for s in sdfg.nodes() if sdfg.out_degree(s) == 0}.pop()
@@ -1760,6 +1969,20 @@ def find_symbol_assignment(sdfg: dace.SDFG, sym_name: str) -> str:
 
 def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.NestedSDFG,
                                 parent_state: SDFGState) -> Set[str]:
+    """
+    Determines which arrays can be vectorized based on their access patterns and symbol usage.
+    The symbols used for accessing should not have any indirectness, meaning that they should
+    not be accessing other Arrays on interstate assignemnts, this is expressed as a free function
+    in sympy.
+
+    Args:
+        sdfg: The SDFG to analyze.
+        parent_nsdfg_node: NestedSDFG node.
+        parent_state: State containing the NestedSDFG.
+
+    Returns:
+        Dictionary mapping array names to a boolean indicating vectorizability.
+    """
     # Pre condition first parent maps is over the contiguous dimension and right most param if multi-dimensional
     parent_map = parent_state.scope_dict()[parent_nsdfg_node]
     assert isinstance(parent_map, dace.nodes.MapEntry)
@@ -1811,6 +2034,15 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
 
 
 def collect_accesses_to_array_name(sdfg: dace.SDFG) -> Dict[Tuple[str, dace.subsets.Range], str]:
+    """
+    Collects all access subsets for each array in the SDFG.
+
+    Args:
+        sdfg: The SDFG to analyze.
+
+    Returns:
+        Dictionary mapping array names to a set of accessed subsets.
+    """
     d = dict()
     for state in sdfg.all_states():
         for edge in state.edges():
@@ -1821,7 +2053,3 @@ def collect_accesses_to_array_name(sdfg: dace.SDFG) -> Dict[Tuple[str, dace.subs
                     d[edge.data.data] = set()
                 d[edge.data.data].add(edge.data.subset)
     return d
-
-
-def collect_subset_to_vector_array_name(state: SDFGState) -> Dict[Tuple[str, dace.subsets.Range], str]:
-    pass
