@@ -497,8 +497,12 @@ with open(r"{temp_path}", "wb") as f:
         if self.argnames is None and len(args) != 0:
             raise KeyError(f"Passed positional arguments to an SDFG that does not accept them.")
         elif len(args) > 0 and self.argnames is not None:
-            assert all(aname not in kwargs for aname, _ in zip(self.argnames, args))
-            kwargs.update({aname: arg for aname, arg in zip(self.argnames, args)})
+            positional_arguments = {aname: avalue for aname, avalue in zip(self.argnames, args)}
+            if not positional_arguments.keys().isdisjoint(kwargs.keys()):
+                raise ValueError(
+                    f'The arguments where passed once as positional and named arguments: {set(positional_arguments.keys()).intersection(kwargs.keys())}'
+                )
+            kwargs.update(positional_arguments)
 
         # Allocate space for the return value.
         # NOTE: Calling this function is the reason why we have to update `self._lastargs`,
