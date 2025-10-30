@@ -1,5 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
+import re
 import dace
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -39,7 +40,8 @@ class ASTSplitter:
                 ast.LShift: '<<',
                 ast.RShift: '>>',
                 ast.Or: 'or',
-                ast.And: 'and'
+                ast.And: 'and',
+                ast.Eq: '==',
             }
             self.stmts.append(f"{t} = {l} {ops[type(node.op)]} {r}")
             return t
@@ -168,6 +170,15 @@ class SplitTasklets(ppl.Pass):
 
     tmp_access_identifier = "_split_"
 
+    def token_split_variable_names(self, string_to_check: str) -> Set[str]:
+        # Split while keeping delimiters
+        tokens = re.split(r'(\s+|[()\[\]])', string_to_check)
+
+        # Replace tokens that exactly match src
+        tokens = {token.strip() for token in tokens if token not in ["[", "]", "(", ")"] and token.isidentifier()}
+
+        return tokens
+
     def apply_pass(self, sdfg: SDFG, pipeline_results) -> Optional[Dict[str, Set[str]]]:
         split_access_counter = 0
 
@@ -178,6 +189,7 @@ class SplitTasklets(ppl.Pass):
                 # Can't split a tasklet that has >1 outputs
                 if len(n.out_connectors) > 1:
                     continue
+
                 input_types = set()
                 for ie in g.in_edges(n):
                     if ie.data is None:
@@ -185,11 +197,39 @@ class SplitTasklets(ppl.Pass):
                     if ie.data.data is None:
                         continue
                     input_types.add(g.sdfg.arrays[ie.data.data].dtype)
+
+                # Collect symbolic types
+                try:
+                    code_expr = dace.symbolic.SymExpr(c.as_string)
+                    for free_sym in code_expr.free_symbols:
+                        if str(free_sym) in g.sdfg.symbols:
+                            input_types.add(g.sdfg.symbols[str(free_sym)])
+                except Exception as e:
+                    # Nested comparisons might make symexpr / sympify crash
+                    code_tokens = self.token_split_variable_names(c.as_string)
+                    for free_sym in code_tokens:
+                        if str(free_sym) in g.sdfg.symbols:
+                            input_types.add(g.sdfg.symbols[str(free_sym)])
+
                 # It is complicated to split a tasklet with mixed precision input
                 # Need to bookkeep the mapping of intermediate results to precision
-                if len(input_types) > 1 or len(input_types) == 0:
-                    continue
-                input_type = next(iter(input_types))
+                if len(input_types) > 1:
+                    # It might be zero due to symbols
+                    has_float_type = any({
+                        itype
+                        for itype in input_types
+                        if itype in {dace.dtypes.float64, dace.dtypes.float32, dace.dtypes.float16}
+                    })
+                    if has_float_type:
+                        input_type = dace.float64
+                    else:
+                        input_type = dace.int64
+                elif len(input_types) == 1:
+                    input_type = next(iter(input_types))
+                else:
+                    # Default to float it consists purely of constants
+                    input_type = dace.float64
+
                 if c.language == dace.dtypes.Language.Python:
                     ssa_statements = to_ssa(c.as_string)
                     if len(ssa_statements) != 1:
@@ -207,6 +247,7 @@ class SplitTasklets(ppl.Pass):
         # For the case a tasklet goes to a taskelt that needs to be split
         # If we have t1 -> t2 but then split t1 to (t1.1, t1.2) -> t2
         # For each tasklet we split we need to track the new input and output maps
+        print(tasklets_to_split)
         for tasklet, state, ssa_statements, input_type in tasklets_to_split:
             assert isinstance(state, dace.SDFGState)
             assert isinstance(tasklet, dace.nodes.Tasklet)

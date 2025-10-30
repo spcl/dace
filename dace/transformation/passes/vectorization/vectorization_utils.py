@@ -1238,23 +1238,10 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         c = c1 if c1 is not None else c2
         expr = f"({l_op} {op} {r_op})"
         if isinstance(lhs_data, dace.data.Array):
-            node.code = dace.properties.CodeBlock(code="\n".join(
-                f"//{ttype}", [f"{lhs}[{i}] = {offset_symbol_in_expression(expr, c, i)};" for i in range(vw)]) + "\n",
-                                                  language=dace.Language.CPP)
-        else:
-            node.code = dace.properties.CodeBlock(code=f"{lhs} = {expr};\n", language=dace.Language.CPP)
-    elif ttype == tutil.TaskletType.UNARY_SYMBOL:
-        out_edges = list(state.out_edges_by_connector(node, lhs))
-        assert len(out_edges) == 1
-        lhs_data: str = state.sdfg.arrays[out_edges[0].data.data]
-        expr_str: str = node.code.as_string
-        c = c1 if c1 is not None else c2
-        raise Exception(rhs1, rhs2, c1, c2)
-        if isinstance(lhs_data, dace.data.Array):
-            node.code = dace.properties.CodeBlock(code="\n".join(
-                f"//{ttype}", [f"{lhs}[{i}] = {offset_symbol_in_expression(expr_str, c, i)};"
-                               for i in range(vw)]) + "\n",
-                                                  language=dace.Language.CPP)
+            node.code = dace.properties.CodeBlock(
+                code="\n".join([f"//{ttype}"] +
+                               [f"{lhs}[{i}] = {offset_symbol_in_expression(expr, c, i)};" for i in range(vw)]) + "\n",
+                language=dace.Language.CPP)
         else:
             node.code = dace.properties.CodeBlock(code=f"{lhs} = {expr};\n", language=dace.Language.CPP)
     else:
