@@ -326,8 +326,6 @@ class BackwardPassGenerator:
                 # Check that all edges are float, int, or boolean
                 ad_utils.check_edges_type_in_state(state_subgraph_view)
 
-                self._disambiguate_direction_dependent_views(state)
-
                 # Recursively reverse the subgraph
                 self._reverse_subgraph(forward_state=state, backward_state=reversed_state, subgraph=state_subgraph_view)
 
@@ -663,7 +661,7 @@ class BackwardPassGenerator:
             raise ValueError(f"Unsupported storage {array_desc.storage}")
 
         # Careful! The order of the ifs here matters since ArrayView is a subclass of Array
-        if isinstance(array_desc, (dt.View, dt.ArrayView)):
+        if isinstance(array_desc, dt.View):
             # No need to initialize: the viewed array will always be visited
             # (since a view can never be a required grad), and thus the viewed array will be initialized.
             pass
@@ -1274,35 +1272,6 @@ class BackwardPassGenerator:
                     expanded_something = True
 
         return expanded_something
-
-    def _disambiguate_direction_dependent_views(self, state: SDFGState):
-        """Disambiguate direction-dependent views for correct reversal.
-
-        Consider the following subgraph:
-        (A) -- y --> (B) -- x --> (C)
-        In DaCe, if B is a View node and A and C are access nodes, and y and x both have data set to A.data and
-        B.data respectively, the semantics of the graph depend on the order in which it is executed, i.e. reversing
-        the subgraph doesn't perform as expected anymore. To disambiguate this case, we set y.data to the View's
-        data.
-        :param state: The state to disambiguate views in.
-        """
-        for n in state.nodes():
-            if isinstance(n, nodes.AccessNode) and type(n.desc(self.sdfg)) is dt.View:
-                in_edges = state.in_edges(n)
-                out_edges = state.out_edges(n)
-
-                if len(in_edges) == 1 and len(out_edges) == 1:
-                    A = in_edges[0].src
-                    y = in_edges[0].data
-                    C = out_edges[0].dst
-                    x = out_edges[0].data
-                    if (isinstance(A, nodes.AccessNode) and isinstance(C, nodes.AccessNode) and y.data == A.data
-                            and x.data == C.data):
-
-                        # flip the memlet
-                        y.subset, y.other_subset = y.other_subset, y.subset
-                        y.data = n.data
-                        y.try_initialize(self.sdfg, state, in_edges[0])
 
     def _get_node_state(self, node: nodes.Node) -> SDFGState:
         """Return the SDFG state that contains this node."""
