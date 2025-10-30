@@ -1,6 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-import re
 from typing import List, Tuple
 import sympy as sp
 
@@ -595,16 +594,19 @@ def _get_symbol_upper_bound_from_loop(bwd_generator: 'DataForwardingbwd_generato
             raise AutoDiffException(f"Symbol dimension {s} couldn't be parsed correctly during storing")
         loop_index = str(list(loop_indices)[0])
     elif isinstance(s, str):
-        # Extract the free symbols in the string besides the constants and operators and remove white space
-        variable_regex = r'\b[a-zA-Z_][a-zA-Z0-9_]*\b'
-        loop_indices = re.findall(variable_regex, s)
+        # Convert the string to a symbolic expression and extract free symbols
+        try:
+            expr = sp.sympify(s)
+        except (sp.SympifyError, TypeError, ValueError) as e:
+            raise AutoDiffException(f"Symbol dimension {s} couldn't be parsed as a symbolic expression: {e}")
 
-        # If there are multiple symbols in the string
-        if len(loop_indices) != 1 or loop_indices[0] not in bwd_generator.sdfg.symbols:
+        # We don't want to match global SDFG symbols
+        loop_indices = {symb for symb in expr.free_symbols if str(symb) not in bwd_generator.sdfg.free_symbols}
+        if len(loop_indices) != 1:
             raise AutoDiffException(f"Symbol dimension {s} couldn't be parsed correctly during storing")
-        loop_index = loop_indices[0]
+        loop_index = str(list(loop_indices)[0])
     else:
-        raise AutoDiffException(f"Symbol dimesnion {s} is not a string and not a sympy symbol")
+        raise AutoDiffException(f"Symbol dimension {s} is not a string and not a sympy symbol")
 
     # If the loop bound can be directly extracted from the interstate edges
     if loop_index in bwd_generator.interstate_symbols:
