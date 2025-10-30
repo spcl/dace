@@ -1124,7 +1124,7 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
     c2 = info.get("constant2")
     op = info.get("op")
     vw = vector_width
-    is_commutative = op in {"+", "*", "c+", "c*"}
+    is_commutative = op in {"+", "*"}
 
     def _str_to_float_or_str(s: Union[int, float, str, None]):
         if s is None:
@@ -1134,138 +1134,131 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         except ValueError:
             return s
 
-    def _get_vector_templates(rhs1: str, rhs2: str, lhs: str, constant: Union[str, None], op: str):
-        s = ",".join([str(s) for s in [op, rhs1, rhs2, lhs, constant]])
-        print(s)
+    def _get_vector_templates(rhs1: str, rhs2: str, constant1: Union[str, None], constant2: Union[str, None], lhs: str,
+                              op: str):
         if op in templates:
             if rhs2 is None:
-                if constant is None:
+                if constant1 is None and constant2 is None:
                     if is_commutative:
+                        # Only one rhs is set, no constant is set means we a case where the same arrays is used repeatedly
                         new_code = templates[op].format(rhs1=rhs1, lhs=lhs, op=op, vector_width=vector_width)
                     else:
                         if op == "=":
+                            # Assignment tasklet, assign lhs <- rhs1
                             new_code = templates[op].format(rhs1=rhs1, lhs=lhs, op=op, vector_width=vector_width)
                         else:
-                            rhs_order = get_rhs_order(node.code.as_string, op, rhs1, rhs2)
-                            print(
-                                f"Op {op} is not commutative, rhs order is {rhs_order} for node {node} ({node.code.as_string})"
-                            )
-                            if rhs_order == [rhs1, rhs2]:
-                                new_code = templates[op].format(rhs1=rhs1, lhs=lhs, op=op, vector_width=vector_width)
-                            elif rhs_order == [rhs2, rhs1]:
-                                new_code = templates[op[1:] + "c"].format(rhs1=rhs1,
-                                                                          lhs=lhs,
-                                                                          op=op,
-                                                                          vector_width=vector_width)
-                            else:
-                                raise Exception("???")
-                else:
-                    if is_commutative:
-                        new_code = templates[op].format(rhs1=rhs1,
-                                                        constant=_str_to_float_or_str(constant),
-                                                        lhs=lhs,
-                                                        op=op,
-                                                        vector_width=vector_width)
-                    else:
-                        if op == "=" or op == "c=":
+                            # Only one rhs is set, no constnat is set means we a case where the same arrays is used repeatedly
+                            # Weird but we can just call rhs1=rhs1, rhs2=rhs1
+                            assert rhs1 == rhs2
                             new_code = templates[op].format(rhs1=rhs1,
+                                                            rhs2=rhs1,
+                                                            lhs=lhs,
+                                                            op=op,
+                                                            vector_width=vector_width)
+                else:
+                    assert not (constant1 is not None and constant2 is not None)
+                    # We have on constant
+                    if is_commutative:
+                        # Select the correct constant, the order is not important
+                        # And templates might only provide op + "c" variant
+                        rhs = rhs1 if rhs1 is not None else rhs2
+                        constant = constant1 if constant1 is not None else constant2
+                        new_code = templates[op + "c"].format(rhs1=rhs,
+                                                              constant=_str_to_float_or_str(constant),
+                                                              lhs=lhs,
+                                                              op=op,
+                                                              vector_width=vector_width)
+                    else:
+                        if op == "=":
+                            new_code = templates[op].format(rhs1=rhs,
                                                             constant=_str_to_float_or_str(constant),
                                                             lhs=lhs,
                                                             op=op,
                                                             vector_width=vector_width)
                         else:
-                            rhs_order = get_rhs_order(node.code.as_string, op[1:], rhs1, constant)
+                            rhs_order = None
+                            if constant1 is None:
+                                rhs_order = [rhs1, constant2]
+                            else:
+                                rhs_order = [constant1, rhs2]
                             print(
                                 f"Op {op} is not commutative, rhs order is {rhs_order} for node {node} ({node.code.as_string})"
                             )
-                            if rhs_order == [rhs1, constant]:
-                                new_code = templates[op].format(rhs1=rhs1,
-                                                                constant=_str_to_float_or_str(constant),
-                                                                lhs=lhs,
-                                                                op=op,
-                                                                vector_width=vector_width)
-                            elif rhs_order == [constant, rhs1]:
-                                new_code = templates[op[1:] + "c"].format(rhs1=rhs1,
-                                                                          constant=_str_to_float_or_str(constant),
-                                                                          lhs=lhs,
-                                                                          op=op,
-                                                                          vector_width=vector_width)
+                            if rhs_order == [constant1, rhs2]:
+                                new_code = templates["c" + op].format(rhs1=rhs2,
+                                                                      constant=_str_to_float_or_str(constant1),
+                                                                      lhs=lhs,
+                                                                      op=op,
+                                                                      vector_width=vector_width)
+                            elif rhs_order == [rhs1, constant2]:
+                                new_code = templates[op + "c"].format(rhs1=rhs1,
+                                                                      constant=_str_to_float_or_str(constant2),
+                                                                      lhs=lhs,
+                                                                      op=op,
+                                                                      vector_width=vector_width)
                             else:
-                                raise Exception("???")
+                                raise Exception(
+                                    f"An op involving 1 constant and 1 rhs should have provided [rhs1, constant2] or [constant1, rhs2] for the ordering"
+                                )
             else:
-                if is_commutative:
+                if is_commutative or op == "=":
                     new_code = templates[op].format(rhs1=rhs1, rhs2=rhs2, lhs=lhs, op=op, vector_width=vector_width)
                 else:
-                    if op == "=":
-                        new_code = templates[op].format(rhs1=rhs1, rhs2=rhs2, lhs=lhs, op=op, vector_width=vector_width)
-                    else:
-                        assert constant is None
-                        rhs_order = [rhs1, rhs2]
-                        print(
-                            f"Op {op} is not commutative, rhs order is {rhs_order} for node {node} ({node.code.as_string})"
-                        )
-                        if rhs_order == [rhs1, rhs2]:
-                            new_code = templates[op].format(rhs1=rhs_order[0],
-                                                            rhs2=rhs_order[1],
-                                                            lhs=lhs,
-                                                            op=op,
-                                                            vector_width=vector_width)
-                        elif rhs_order == [rhs2, rhs1]:
-                            new_code = templates[op].format(rhs1=rhs_order[0],
-                                                            rhs2=rhs_order[1],
-                                                            lhs=lhs,
-                                                            op=op,
-                                                            vector_width=vector_width)
-                        else:
-                            raise Exception("???")
+                    assert constant1 is None and constant2 is None
+                    print(
+                        f"Op {op} is not commutative, rhs order is {[rhs1, rhs2]} for node {node} ({node.code.as_string})"
+                    )
+                    new_code = templates[op].format(rhs1=rhs1, rhs2=rhs2, lhs=lhs, op=op, vector_width=vector_width)
         else:
             print(f"Operator `{op}` is not in supported ops `{set(templates.keys())}`")
             print(f"Generating fall-back scalar code")
-            if op in {">", ">=", "<", "<=", "c>", "c<", "c<=", "c>=", "==", "c==", "c!=", "!="}:
+            # Generate normal loops for fallback for unsupported operators
+            if op in {">", ">=", "<", "<=", "==", "!="}:
                 comparison_set_suffix = "? 1.0 : 0.0"
             else:
                 comparison_set_suffix = ""
-            if constant is not None:
+            # Constant + Array is case when ordering is important
+            # Scalars are treated the same way as constants
+            if (constant1 is not None or constant2 is not None):
                 rhs_order = [rhs1 if rhs1 is not None else constant1, rhs2 if rhs2 is not None else constant2]
                 assert rhs_order[0] is not None and rhs_order[1] is not None
-                assert op.startswith("c")
-                if rhs_order == [rhs1, constant]:
-                    op = op[1:]
-                    code_str = ""
-                    for i in range(vector_width):
-                        code_str += f"{lhs}[{i}] = ({rhs1}[{i}] {op} {constant}){comparison_set_suffix};\n"
-                elif rhs_order == [constant, rhs1]:
-                    op = op[1:]
-                    code_str = ""
-                    for i in range(vector_width):
-                        code_str += f"{lhs}[{i}] = ({constant} {op} {rhs1}[{i}]){comparison_set_suffix};\n"
+                if rhs_order == [rhs1, constant2]:
+                    code_str = "\n".join([
+                        "#pragma _dace_vectorize_hint", "#pragma _dace_vectorize",
+                        f"for (int _vi = 0; _vi < {vector_width}; _vi += 1){{"
+                    ])
+                    code_str += f"{lhs}[_vi] = ({rhs1}[_vi] {op} {constant2}){comparison_set_suffix};\n"
+                    code_str += "}}\n"
+                elif rhs_order == [constant1, rhs2]:
+                    code_str = "\n".join([
+                        "#pragma _dace_vectorize_hint", "#pragma _dace_vectorize",
+                        f"for (int _vi = 0; _vi < {vector_width}; _vi += 1){{"
+                    ])
+                    code_str += f"{lhs}[_vi] = ({constant1} {op} {rhs2}[_vi]){comparison_set_suffix};\n"
+                    code_str += "}}\n"
                 else:
-                    raise Exception("???")
+                    raise Exception(
+                        f"An op involving 1 constant and 1 rhs should have provided [rhs1, constant2] or [constant1, rhs2] for the ordering"
+                    )
             else:
-                rhs_order = [rhs1 if rhs1 is not None else constant1, rhs2 if rhs2 is not None else constant2]
-                assert rhs_order[0] is not None and rhs_order[1] is not None
-                assert op.startswith("c")
-                if rhs_order == [rhs1, rhs2]:
-                    op = op
-                    code_str = ""
-                    for i in range(vector_width):
-                        code_str += f"{lhs}[{i}] = ({rhs1}[{i}] {op} {rhs2}[{i}]){comparison_set_suffix};\n"
-                elif rhs_order == [rhs2, rhs1]:
-                    op = op
-                    code_str = ""
-                    for i in range(vector_width):
-                        code_str += f"{lhs}[{i}] = ({rhs2}[{i}] {op} {rhs1}[{i}]){comparison_set_suffix};\n"
-                else:
-                    raise Exception("???")
+                # Follow the ordering provided for Array-Array
+                code_str = ""
+                code_str = "\n".join([
+                    "#pragma _dace_vectorize_hint", "#pragma _dace_vectorize",
+                    f"for (int _vi = 0; _vi < {vector_width}; _vi += 1){{"
+                ])
+                code_str += f"{lhs}[_vi] = ({rhs1}[_vi] {op} {rhs2}[_vi]){comparison_set_suffix};\n"
+                code_str += "}}\n"
             new_code = code_str
         return new_code
 
     # Helpers
-    def set_template(rhs1_, rhs2_, constant_, lhs_, op_):
+    def set_template(rhs1_, rhs2_, constant1_, constant2_, lhs_, op_):
         node.code = dace.properties.CodeBlock(
             code=_get_vector_templates(rhs1=rhs1_,
                                        rhs2=rhs2_,
-                                       constant=_str_to_float_or_str(constant_),
+                                       constant1=_str_to_float_or_str(constant1_),
+                                       constant2=_str_to_float_or_str(constant2_),
                                        lhs=lhs_,
                                        op=op_),
             language=dace.Language.CPP,
@@ -1274,7 +1267,7 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
     # 1) ARRAY-ARRAY assignment: a = b  (both arrays)
     if ttype == tutil.TaskletType.ARRAY_ARRAY_ASSIGNMENT:
         # use direct template with op "="
-        set_template(rhs1, None, None, lhs, "=")
+        set_template(rhs1, None, None, None, lhs, "=")
         return
 
     # 1) ARRAY-SYMBOL assignment: a = sym
@@ -1289,7 +1282,7 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
     # 2) Single-input with constant: array or scalar combined with a symbol/constant
     if ttype == tutil.TaskletType.ARRAY_SYMBOL:
         # rhs1 is an array, constant1 is the symbol/constant -> use constant template (op prefixed with 'c')
-        set_template(rhs1, None, c1, lhs, "c" + op)
+        set_template(rhs1, None, None, c2, lhs, op)
         return
 
     if ttype == tutil.TaskletType.SCALAR_SYMBOL:
@@ -1318,19 +1311,19 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
     # 3) Two-input binary ops
     if ttype == tutil.TaskletType.ARRAY_ARRAY:
         # array op array
-        set_template(rhs1, rhs2, None, lhs, op)
+        set_template(rhs1, rhs2, None, None, lhs, op)
         return
 
     if ttype == tutil.TaskletType.ARRAY_SCALAR:
         # array op scalar -> use constant template (prefix op with 'c')
         # note: info stores rhs1 as the array name and constant1 as the scalar name
-        set_template(rhs1, None, c2, lhs, "c" + op)
+        set_template(rhs1, None, None, c2, lhs, op)
         return
 
     if ttype == tutil.TaskletType.SCALAR_ARRAY:
         # array op scalar -> use constant template (prefix op with 'c')
         # note: info stores rhs1 as the array name and constant1 as the scalar name
-        set_template(rhs2, None, c1, lhs, "c" + op)
+        set_template(None, rhs2, c1, None, lhs, op)
         return
 
     if ttype == tutil.TaskletType.SCALAR_SCALAR:
