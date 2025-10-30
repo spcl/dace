@@ -88,15 +88,7 @@ def _store_data(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState
 
     # Add a new AccessNode and array to the forward pass
     # First, check if a stored array with this name already exists
-    if "stored_" + forward_an.data not in bwd_generator.backward_sdfg.arrays:
-        new_store_node_name = "stored_" + forward_an.data
-    else:
-        i = 0
-        while True:
-            if f"stored_{i}_" + forward_an.data not in bwd_generator.backward_sdfg.arrays:
-                new_store_node_name = f"stored_{i}_" + forward_an.data
-                break
-            i += 1
+    new_store_node_name = forward_state.sdfg._find_new_name("stored_" + forward_an.data)
 
     # Get the new array shape
     # This will be the shape of the current array
@@ -461,8 +453,7 @@ def _connect_stored_data_to_target(bwd_generator: 'BackwardPassGenerator', forwa
             # The stored data will only contain the row and the stride for it should be one
             # This is only a problem if the view points to a NestedSDFG input,
             # that expects a descriptor with the original view stride
-            if isinstance(child_node, nodes.NestedSDFG) and isinstance(forward_node.desc(bwd_generator.sdfg),
-                                                                       (dt.View, dt.ArrayView)):
+            if isinstance(child_node, nodes.NestedSDFG) and isinstance(forward_node.desc(bwd_generator.sdfg), dt.View):
                 # Get the strides of the stored data
                 stored_data_desc = bwd_generator.sdfg.arrays[source_node.data]
                 stored_strides = stored_data_desc.strides
@@ -526,11 +517,7 @@ def _get_assign_tasklet(forward_state: SDFGState,
             else:
                 # This is a range tuple we need to add an iterator for
                 # Create a random new free symbol
-                free_symbol = "si"
-                i = 0
-                while free_symbol in memlet_access_iterators or free_symbol in forward_state.free_symbols:
-                    free_symbol = f"{free_symbol}_{i}"
-                    i += 1
+                free_symbol = forward_state.sdfg.find_new_symbol("si")
                 memlet_access_iterators.append(free_symbol)
                 param_dict.update({free_symbol: element})
 
