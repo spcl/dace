@@ -111,10 +111,11 @@ def replace_memlet_expression(state: SDFGState, edges: Iterable[Edge[Memlet]], o
 
 
 def expand_memlet_expression(state: SDFGState, edges: Iterable[Edge[Memlet]],
-                              edges_to_skip: Set[Edge[Memlet]], vector_length:int) -> Set[str]:
+                              edges_to_skip: Set[Edge[Memlet]], vector_length:int) -> Set[Edge[Memlet]]:
+    modified_edges = set()
     for edge in edges:
         if edge.data is not None:
-            assert all([((e+1-b)//s) == 1 for b,e,s in edge.data.subset])
+            assert all([((e+1-b)//s) == 1 for b,e,s in edge.data.subset]), f"Subset: {[(b,e,s) for b,e,s in edge.data.subset]}, is length one: {[((e+1-b)//s) == 1 for b,e,s in edge.data.subset]}"
             if edge in edges_to_skip:
                 raise Exception("AA")
 
@@ -129,8 +130,11 @@ def expand_memlet_expression(state: SDFGState, edges: Iterable[Edge[Memlet]],
                     assert s == 1
                     new_subset_list.append((b,e,s))
             new_subset_expr = dace.subsets.Range(new_subset_list)
-            edge.data = dace.memlet.Memlet(data=edge.data.data, subset=copy.deepcopy(new_subset_expr))
 
+            if new_subset_expr != edge.data.subset:
+                edge.data = dace.memlet.Memlet(data=edge.data.data, subset=copy.deepcopy(new_subset_expr))
+                modified_edges.add(edge)
+    return modified_edges
 
 def has_maps(sdfg: dace.SDFG):
     for n, g in sdfg.all_nodes_recursive():
@@ -1054,7 +1058,7 @@ def get_array_source_nodes(sdfg: dace.SDFG,
         for node in state.nodes():
             if (isinstance(node, dace.nodes.AccessNode) and state.in_degree(node) == 0):
                 arr = state.sdfg.arrays[node.data]
-                if (isinstance(arr, dace.data.Array) and arr.shape != (1, )):
+                if (isinstance(arr, dace.data.Array) and (arr.shape != (1, ) and arr.shape != [1,])):
                     if non_transient_only is False or arr.transient is False:
                         source_nodes.append((state, node))
     return source_nodes

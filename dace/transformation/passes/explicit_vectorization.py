@@ -305,42 +305,56 @@ class ExplicitVectorization(ppl.Pass):
         # 4
         for inner_state in inner_sdfg.all_states():
             # Skip the data data that are still scalar and source nodes
-            scalar_source_data = {n.data for s, n in scalar_source_nodes}
+            scalar_source_data = {n.data for _, n in scalar_source_nodes}
+            array_source_data = {n.data for _, n in array_source_nodes}
+            # Scalar source nodes can't be replaced.
+            # These are non-transient scalars of the SDFG as we do not know how to expand them.
+            # If it was a scalar view of an array that could be expanded, that should have been done before
+            # by the previous steps
+            # If it is an array it will be done in 4.1
             edges_to_replace = {
-                e
-                for e in inner_state.edges()
-                if e not in modified_edges and e.data is not None and e.data.data not in scalar_source_data
+                edge
+                for edge in inner_state.edges()
+                if edge not in modified_edges and
+                   edge.data is not None and
+                   edge.data.data not in scalar_source_data and
+                   edge.data.data not in array_source_data
             }
             old_subset = dace.subsets.Range([(0, 0, 1)])
             new_subset = dace.subsets.Range([(0, self.vector_width - 1, 1)])
             replace_memlet_expression(inner_state, edges_to_replace, old_subset, new_subset, True, modified_edges,
                                       self.vector_op_numeric_type)
 
-        # Do it for arrays
-        # TODO: ALSO NEED TO EXPAND MEMLET EXPRESSIONS of arrays
+        # 4.1 Do it for arrays
+        # Expand memlets accessing arrays, consider nested SDFG receives A[0:2, 0:2, 0:X] as a view
+        # and within the nested SDFG we access A[0, 0, for_it_0] (map parameter), then this is vectorizable
+        # and should be expanded to A[0:1, 0:1, for_it_0:for_it_0+8] (exclusive range).
+        # This should be performed only for arrays.
         for inner_state in inner_sdfg.all_states():
             # Skip the data data that are still scalar and source nodes
-            source_data = {n.data for s, n in array_source_nodes}
+            array_source_data = {n.data for _, n in array_source_nodes}
             edges_to_replace = {
-                e
-                for e in inner_state.edges()
-                if e not in modified_edges and e.data is not None and e.data.data in source_data
+                edge
+                for edge in inner_state.edges()
+                if edge not in modified_edges and 
+                   edge.data is not None and
+                   edge.data.data in array_source_data
             }
-            old_subset = dace.subsets.Range([(0, 0, 1)])
-            new_subset = dace.subsets.Range([(0, self.vector_width - 1, 1)])
-            #replace_memlet_expression(inner_state, edges_to_replace, old_subset, new_subset, True, modified_edges,
-            #                          self.vector_op_numeric_type)
             expand_memlet_expression(inner_state, edges_to_replace, modified_edges, self.vector_width)
 
         state.sdfg.save("x4.sdfg")
 
         # Extend interstate edges for all symbols used in tasklets / or interstate edges that access vectorized data
+        # There two types of doing this, assume the map parameters are (i, j) and we vectorize over j with vector simd length > 2
+        # The map parameter used in the loop is expanded via: _sym1 = j -> _sym1_0 = j, _sym1_1 = j + 1, ...
+        # The others are duplicated (for convenience) _sym1 = i -> _sym1_0 = i, _sym1_1 = i, ...
         for edge in inner_sdfg.all_interstate_edges():
             candidate_arrays = vector_width_arrays
             free_syms = set()
             for k, v in edge.data.assignments.items():
                 free_syms.add(k)
                 free_syms = free_syms.union({str(vv) for vv in dace.symbolic.SymExpr(v).free_symbols})
+            # Check if any array appears in an assignment, those need to be expanded
             print("BBB", free_syms, {fs in candidate_arrays for fs in free_syms})
             if any({fs in candidate_arrays for fs in free_syms}):
                 self._expand_interstate_assignment(inner_sdfg, edge, free_syms, candidate_arrays)
@@ -352,18 +366,7 @@ class ExplicitVectorization(ppl.Pass):
             self._replace_tasklets_from_node_list(inner_state, nodes, vector_map_param)
             modified_nodes = modified_nodes.union(nodes)
 
-        # TODO: fix, need to do it in add-array
-        #for state in inner_sdfg.all_states():
-        #    vector_tasklets = {n for n in state.nodes() if isinstance(n, dace.nodes.Tasklet)}
-        #    for n in vector_tasklets:
-        #        for e in state.out_edges(n):
-        #            if e.data.data is not None:
-        #                if state.sdfg.arrays[e.data.data].dtype != self.vector_op_numeric_type and state.sdfg.arrays[e.data.data].transient is True:
-        #                    state.sdfg.arrays[e.data.data].dtype = self.vector_op_numeric_type
-        #    #for e in {_e for _e in state.edges() if _e in modified_edges}:
-        #    #    if e.data.data is not None:
-        #    #        if state.sdfg.arrays[e.data.data].dtype != self.vector_op_numeric_type and state.sdfg.arrays[e.data.data].transient is True:
-        #    #            state.sdfg.arrays[e.data.data].dtype = self.vector_op_numeric_type
+
         state.sdfg.save("x4_5.sdfg")
 
         # Add missing symbols
