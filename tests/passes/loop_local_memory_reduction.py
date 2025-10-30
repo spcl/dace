@@ -29,18 +29,28 @@ def check_transformation_option(orig_sdfg: dace.SDFG, N: int, options: Dict[str,
 
     # Execute both SDFGs
     input_data_orig = {}
-    input_data_llmr = {}
-    for argName, argType in llmr_sdfg.arglist().items():
+    sym_data = {}
+    for sym in orig_sdfg.symbols:
+        if sym not in orig_sdfg.constants:
+            sym_data[sym] = 32
+            input_data_orig[sym] = 32
+
+    for argName, argType in orig_sdfg.arglist().items():
         if isinstance(argType, dace.data.Scalar):
-            input_data_orig[argName] = np.random.rand()
-            input_data_llmr[argName] = copy.deepcopy(input_data_orig[argName])
+            input_data_orig[argName] = 32
             continue
 
-        arr = dace.ndarray(shape=argType.shape, dtype=argType.dtype)
-        arr[:] = np.random.rand(*argType.shape).astype(argType.dtype.type)
+        shape = []
+        for entry in argType.shape:
+            shape.append(
+                dace.symbolic.evaluate(entry, {**orig_sdfg.constants, **sym_data})
+            )
+        shape = tuple(shape)
+        arr = dace.ndarray(shape=shape, dtype=argType.dtype)
+        arr[:] = np.random.rand(*arr.shape).astype(arr.dtype)
         input_data_orig[argName] = arr
-        input_data_llmr[argName] = copy.deepcopy(arr)
 
+    input_data_llmr = copy.deepcopy(input_data_orig)
     orig_sdfg(**input_data_orig)
     llmr_sdfg(**input_data_llmr)
 
@@ -52,6 +62,8 @@ def check_transformation_option(orig_sdfg: dace.SDFG, N: int, options: Dict[str,
     # Memory footprint should be reduced
     orig_mem = sum(np.prod(arrType.shape) for arrName, arrType in orig_sdfg.arrays.items())
     llmr_mem = sum(np.prod(arrType.shape) for arrName, arrType in llmr_sdfg.arrays.items())
+    orig_mem  = dace.symbolic.evaluate(orig_mem, {**orig_sdfg.constants, **sym_data})
+    llmr_mem = dace.symbolic.evaluate(llmr_mem, {**llmr_sdfg.constants, **sym_data})
     assert llmr_mem < orig_mem, f"Memory not reduced: {orig_mem} >= {llmr_mem}"
 
 
@@ -719,6 +731,23 @@ def test_symbolic_offset():
     check_transformation(sdfg, 1)
 
 
+def test_symbolic_sizes():
+
+    N = dace.symbol('N')
+
+    @dace.program
+    def tester(b: dace.float64[N], c: dace.float64[N]):
+        a = dace.define_local([N], dace.float64)
+        a[0] = 0
+        a[1] = 1
+        for i in range(2, N):
+            b[i] = a[i - 1] + a[i - 2]
+            a[i] = c[i] * 2
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_transformation(sdfg, 1)
+
+
 def test_cloudsc():
 
     @dace.program
@@ -789,4 +818,5 @@ if __name__ == "__main__":
     test_conditional()
     test_conditional2()
     test_symbolic_offset()
+    test_symbolic_sizes()
     test_cloudsc()

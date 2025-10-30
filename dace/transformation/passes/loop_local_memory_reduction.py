@@ -271,11 +271,13 @@ class LoopLocalMemoryReduction(ppl.Pass):
                 k_p2 = (1 << k.bit_length()) - 1
 
                 # If we're larger than the array size, don't round up.
-                if k_p2 + 1 < sdfg.arrays[array_name].shape[dim]:
+                ineq = symbolic.resolve_symbol_to_constant(k_p2 + 1 >= sdfg.arrays[array_name].shape[dim], sdfg)
+                if ineq is not None and not ineq:
                     k = k_p2
 
             # Condition must hold
-            if not cond or k + 1 >= sdfg.arrays[array_name].shape[dim]:
+            ineq = symbolic.resolve_symbol_to_constant(k + 1 >= sdfg.arrays[array_name].shape[dim], sdfg)
+            if not cond or (ineq is not None and ineq):
                 k_values.append(None)
             else:
                 k_values.append(k + 1)  # +1 because k is the highest index accessed, so size is k+1
