@@ -33,17 +33,17 @@ def repl_subset_to_symbol_offset(sdfg: dace.SDFG,
     This function replaces each free symbol in the subset with a new symbol
     that has the offset appended to its name (e.g., 'i' becomes 'i_{offset}' where offset is an integer).
     New symbols are automatically added to the SDFG if they don't exist.
-    
+
     Args:
         sdfg: The SDFG containing the subset
         subset: The subset whose symbols should be offset
         symbol_offset: String to append to each symbol name (should be an integer)
         add_missing_symbols: If True, adds symbol mappings and assignments for
                            free symbols in the parent SDFG
-        
+
     Returns:
         A new subset with offset symbols applied
-        
+
     Example:
         If subset contains symbol 'i' and symbol_offset is '_v':
         - 'i' becomes 'i_v'
@@ -73,7 +73,8 @@ def repl_subset_to_symbol_offset(sdfg: dace.SDFG,
         if str(free_sym) in sdfg.free_symbols:
             print(free_sym, "is in free symbols of the sdfg")
             if not add_missing_symbols:
-                raise Exception("This will result an invalid SDFG, either call with `add_missing_symbols=True` or fix this issue")
+                raise Exception(
+                    "This will result an invalid SDFG, either call with `add_missing_symbols=True` or fix this issue")
 
     if add_missing_symbols is True:
         for free_sym in free_syms:
@@ -97,16 +98,12 @@ def repl_subset_to_symbol_offset(sdfg: dace.SDFG,
     return new_subset
 
 
-def replace_memlet_expression(state: SDFGState,
-                              edges: Iterable[Edge[Memlet]],
-                              old_subset_expr: dace.subsets.Range,
-                              new_subset_expr: dace.subsets.Range,
-                              repl_scalars_with_arrays: bool,
-                              edges_to_skip: Set[Edge[Memlet]],
-                              vector_numeric_type: typeclass) -> Set[str]:
+def replace_memlet_expression(state: SDFGState, edges: Iterable[Edge[Memlet]], old_subset_expr: dace.subsets.Range,
+                              new_subset_expr: dace.subsets.Range, repl_scalars_with_arrays: bool,
+                              edges_to_skip: Set[Edge[Memlet]], vector_numeric_type: typeclass) -> Set[str]:
     """
     Replace memlet subsets matching a pattern with a new subset expression.
-    
+
     Optionally converts scalar/size-1 arrays to arrays that match the new_subset_expr's sizes
     using the `vector_numeric_type` as dtype to accommodate the new subset dimensions.
 
@@ -154,8 +151,8 @@ def replace_memlet_expression(state: SDFGState,
             edge.data = dace.memlet.Memlet(data=edge.data.data, subset=copy.deepcopy(new_subset_expr))
 
 
-def expand_memlet_expression(state: SDFGState, edges: Iterable[Edge[Memlet]],
-                             edges_to_skip: Set[Edge[Memlet]], vector_length: int) -> Set[Edge[Memlet]]:
+def expand_memlet_expression(state: SDFGState, edges: Iterable[Edge[Memlet]], edges_to_skip: Set[Edge[Memlet]],
+                             vector_length: int) -> Set[Edge[Memlet]]:
     """
     Expand single-element memlet subsets along stride-1 dimensions to a given vector length.
     Pre-condition: all subset dimensions need to be 1
@@ -196,11 +193,10 @@ def expand_memlet_expression(state: SDFGState, edges: Iterable[Edge[Memlet]],
             new_subset_expr = dace.subsets.Range(new_subset_list)
 
             if new_subset_expr != edge.data.subset:
-                edge.data = dace.memlet.Memlet(
-                    data=edge.data.data, subset=copy.deepcopy(new_subset_expr)
-                )
+                edge.data = dace.memlet.Memlet(data=edge.data.data, subset=copy.deepcopy(new_subset_expr))
                 modified_edges.add(edge)
     return modified_edges
+
 
 def has_maps(sdfg: dace.SDFG) -> bool:
     """
@@ -232,10 +228,7 @@ def is_innermost_map(map_entry: dace.nodes.MapEntry, state: SDFGState) -> bool:
     nodes_between = state.all_nodes_between(map_entry, state.exit_node(map_entry))
     if any(isinstance(node, dace.nodes.MapEntry) for node in nodes_between):
         return False
-    return not any(
-        isinstance(node, dace.nodes.NestedSDFG) and has_maps(node.sdfg)
-        for node in nodes_between
-    )
+    return not any(isinstance(node, dace.nodes.NestedSDFG) and has_maps(node.sdfg) for node in nodes_between)
 
 
 def assert_maps_consist_of_single_nsdfg_or_no_nsdfg(sdfg: dace.SDFG) -> None:
@@ -256,8 +249,7 @@ def assert_maps_consist_of_single_nsdfg_or_no_nsdfg(sdfg: dace.SDFG) -> None:
                 if not isinstance(k, (dace.nodes.MapEntry, dace.nodes.MapExit))
             }
             assert (len(all_nodes) == 1 and isinstance(next(iter(all_nodes)), dace.nodes.NestedSDFG)) or not any(
-                isinstance(_n, dace.nodes.NestedSDFG) for _n in all_nodes
-            )
+                isinstance(_n, dace.nodes.NestedSDFG) for _n in all_nodes)
 
 
 def to_ints(sym_epxr: dace.symbolic.SymExpr) -> int | None:
@@ -275,23 +267,21 @@ def to_ints(sym_epxr: dace.symbolic.SymExpr) -> int | None:
     except Exception:
         return None
 
-def get_vector_max_access_ranges(
-    state: SDFGState, 
-    node: dace.nodes.NestedSDFG
-) -> Dict[str, str]:
+
+def get_vector_max_access_ranges(state: SDFGState, node: dace.nodes.NestedSDFG) -> Dict[str, str]:
     """
     Extract the maximum access range for vectorized map parameters.
-    
+
     This function analyzes the nested map hierarchy to determine the maximum
     iteration range for vector map parameters. It walks up the scope hierarchy (two steps)
     from the nested SDFG through its vectorized map (vmap) to the outer data-parallel map (dmap),
     extracting the end bounds that constrain vector access ranges.
-    
+
     The typical use case is for vectorization where you have:
     - Outer data-parallel map (dmap): iterates over independent data chunks
     - Inner vector map (vmap): 1-vector op, map of form (i:i+vector_simd_len:vector_simd_len)
     - Nested SDFG: contains the actual computation
-    
+
     Args:
         state: The SDFG state containing the nested SDFG node
         node: The nested SDFG node whose vector access ranges to determine
@@ -299,7 +289,7 @@ def get_vector_max_access_ranges(
     Returns:
         Dictionary mapping vector map parameter names to their maximum values
         (end bounds from the data-parallel map)
-        
+
     Example:
         For a hierarchy:
         ```
@@ -308,17 +298,17 @@ def get_vector_max_access_ranges(
             NestedSDFG
         ```
         Returns: {'i_v': 'N'}
-        
+
     Note:
         This assumes a two-level map hierarchy with the nested SDFG inside
         a vector map, which is itself inside a data-parallel map.
     """
     # Get scope hierarchy: nsdfg -> vector_map -> data_map
     scope_dict = state.scope_dict()
-    
+
     # Vector map is the immediate parent of the nested SDFG
     vector_map = scope_dict[node]
-    
+
     # Build mapping: vector_param -> vector_begin_expr
     # and reverse: vector_begin_expr -> vector_param
     v_params_to_begins = {}
@@ -326,10 +316,10 @@ def get_vector_max_access_ranges(
     for param, (begin, end, step) in zip(vector_map.map.params, vector_map.map.range):
         v_params_to_begins[param] = str(begin)
         v_begins_to_params[str(begin)] = param
-    
+
     # Data-parallel map is the parent of the vector map
     data_map = scope_dict[vector_map]
-    
+
     # Build mappings for data-parallel map parameters
     d_params_to_begins = {}
     d_begins_to_params = {}
@@ -338,7 +328,7 @@ def get_vector_max_access_ranges(
         d_params_to_begins[param] = str(begin)
         d_begins_to_params[str(begin)] = param
         d_params_to_ends[param] = str(end)
-    
+
     # For each vector parameter, find its maximum bound from the data map
     # The vector map begin expression should match a data map parameter,
     # allowing us to look up the corresponding end bound
@@ -346,12 +336,11 @@ def get_vector_max_access_ranges(
     for v_param in vector_map.map.params:
         # Get the begin expression of the vector parameter (e.g., 'i')
         v_begin_expr = v_params_to_begins[v_param]
-        
+
         # Look up the corresponding data map end bound (e.g., 'N')
         param_max_ranges[v_param] = d_params_to_ends[v_begin_expr]
 
     return param_max_ranges
-
 
 
 def add_copies_before_and_after_nsdfg(
@@ -468,6 +457,7 @@ def add_copies_before_and_after_nsdfg(
     #if len(out_datas) == 0:
     #    breakpoint()
 
+
 def match_connector_to_data(state: dace.SDFGState, tasklet: dace.nodes.Tasklet) -> dict[str, dace.data.Data]:
     """
     Map tasklet input connectors to their corresponding array descriptors.
@@ -572,23 +562,18 @@ def assert_last_dim_of_maps_are_contigous_accesses(sdfg: dace.SDFG):
                     parent_state = find_state_of_nsdfg_node(sdfg, node)
                     parent_scope = parent_state.scope_dict()[parent_nsdfg]
                     if parent_scope is None or not isinstance(parent_scope, dace.nodes.MapEntry):
-                        raise Exception(
-                            f"No NSDFGs that are not within Map scopes should be left, "
-                            f"check {parent_nsdfg} in state {parent_state}. Call inlineSDFG"
-                        )
+                        raise Exception(f"No NSDFGs that are not within Map scopes should be left, "
+                                        f"check {parent_nsdfg} in state {parent_state}. Call inlineSDFG")
                 else:
                     continue
             else:
                 if not isinstance(map_entry, dace.nodes.MapEntry):
-                    raise ValueError(
-                        f"Parent scope of node {node} is not a map, found {map_entry} in state {state}."
-                    )
+                    raise ValueError(f"Parent scope of node {node} is not a map, found {map_entry} in state {state}.")
                 checked_map_entries.add(map_entry)
 
             if map_entry not in checked_map_entries:
                 assert isinstance(
-                    map_entry, dace.nodes.MapEntry
-                ), f"Parent scope of node {node} is not a map, returned {map_entry}."
+                    map_entry, dace.nodes.MapEntry), f"Parent scope of node {node} is not a map, returned {map_entry}."
                 nodes = list(state.all_nodes_between(map_entry, state.exit_node(map_entry)))
                 edges = state.all_edges(*nodes)
                 # Currently this enforced the map parameter to be involved in the memlet access
@@ -601,34 +586,32 @@ def assert_last_dim_of_maps_are_contigous_accesses(sdfg: dace.SDFG):
                     free_symbols = memlet.subset.free_symbols
                     last_param = list(map_entry.map.params)[-1]
                     if last_param not in free_symbols:
-                        raise ValueError(
-                            f"Last map parameter {last_param} must be in the memlet {memlet}, "
-                            f"not in this case - edge: {edge}, state: {state}"
-                        )
+                        raise ValueError(f"Last map parameter {last_param} must be in the memlet {memlet}, "
+                                         f"not in this case - edge: {edge}, state: {state}")
 
 
 def check_nsdfg_connector_array_shapes_match(parent_state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG):
     """
     Validate that nested SDFG connector arrays match their memlet subset shapes.
     This is to avoid memlet-squeezing issues going to the nested SDFGs
-    
+
     This function checks both input and output edges of a nested SDFG to ensure
     that the array shapes inside the nested SDFG match the shapes implied by
     the memlet subsets on the edges connecting to the parent SDFG.
-    
+
     The validation considers multiple shape interpretations:
     1. Full shape with unit stride: (end + 1 - begin)
     2. Shape accounting for stride: (end + 1 - begin) // stride
     3. Collapsed shapes (excluding size-1 dimensions)
-    
+
     Args:
         parent_state: The state in the parent SDFG containing the nested SDFG node
         nsdfg_node: The nested SDFG node whose connector shapes to validate
-        
+
     Raises:
         AssertionError: If any connector array shape doesn't match any of the
                        expected shape interpretations, with detailed error message
-                       
+
 
     Note:
         This is a validation-only function - it does not modify the SDFG.
@@ -639,189 +622,135 @@ def check_nsdfg_connector_array_shapes_match(parent_state: dace.SDFGState, nsdfg
     for in_edge in parent_state.in_edges(nsdfg_node):
         if in_edge.data is None:
             continue
-        
+
         subset = in_edge.data.subset
         connector_name = in_edge.dst_conn  # Connector name in nested SDFG
         connector_array = nsdfg_node.sdfg.arrays[connector_name]
-        
+
         # Calculate expected shapes based on subset
         # Shape 1: Full dimension size (end - begin + 1)
-        expected_shape_full = tuple([
-            (end + 1 - begin) 
-            for begin, end, step in subset
-        ])
-        
+        expected_shape_full = tuple([(end + 1 - begin) for begin, end, step in subset])
+
         # Shape 2: Effective size accounting for stride
-        expected_shape_strided = tuple([
-            (end + 1 - begin) // step 
-            for begin, end, step in subset
-        ])
-        
+        expected_shape_strided = tuple([(end + 1 - begin) // step for begin, end, step in subset])
+
         # Shape 3: Collapsed (remove size-1 dimensions from full shape)
-        expected_shape_collapsed_full = tuple([
-            (end + 1 - begin) 
-            for begin, end, step in subset 
-            if (end + 1 - begin) != 1
-        ])
-        
+        expected_shape_collapsed_full = tuple([(end + 1 - begin) for begin, end, step in subset
+                                               if (end + 1 - begin) != 1])
+
         # Shape 4: Collapsed with stride (remove size-1 dimensions from strided)
-        expected_shape_collapsed_strided = tuple([
-            (end + 1 - begin) // step 
-            for begin, end, step in subset 
-            if (end + 1 - begin) // step != 1
-        ])
-        
+        expected_shape_collapsed_strided = tuple([(end + 1 - begin) // step for begin, end, step in subset
+                                                  if (end + 1 - begin) // step != 1])
+
         # Validate: array shape must match one of the expected shapes
-        shape_matches = (
-            connector_array.shape == expected_shape_full or
-            connector_array.shape == expected_shape_strided or
-            connector_array.shape == expected_shape_collapsed_full or
-            connector_array.shape == expected_shape_collapsed_strided
-        )
-        
-        assert shape_matches, (
-            f"Shape mismatch for input connector '{connector_name}':\n"
-            f"  Array shape: {connector_array.shape}\n"
-            f"  Expected one of:\n"
-            f"    Full:              {expected_shape_full}\n"
-            f"    Strided:           {expected_shape_strided}\n"
-            f"    Collapsed full:    {expected_shape_collapsed_full}\n"
-            f"    Collapsed strided: {expected_shape_collapsed_strided}"
-        )
-    
+        shape_matches = (connector_array.shape == expected_shape_full or connector_array.shape == expected_shape_strided
+                         or connector_array.shape == expected_shape_collapsed_full
+                         or connector_array.shape == expected_shape_collapsed_strided)
+
+        assert shape_matches, (f"Shape mismatch for input connector '{connector_name}':\n"
+                               f"  Array shape: {connector_array.shape}\n"
+                               f"  Expected one of:\n"
+                               f"    Full:              {expected_shape_full}\n"
+                               f"    Strided:           {expected_shape_strided}\n"
+                               f"    Collapsed full:    {expected_shape_collapsed_full}\n"
+                               f"    Collapsed strided: {expected_shape_collapsed_strided}")
+
     # ===== Validate Output Edges =====
     for out_edge in parent_state.out_edges(nsdfg_node):
         if out_edge.data is None:
             continue
-        
+
         subset = out_edge.data.subset
         connector_name = out_edge.src_conn  # Connector name in nested SDFG
         connector_array = nsdfg_node.sdfg.arrays[connector_name]
-        
-        # Calculate expected shapes (same logic as input edges)
-        expected_shape_full = tuple([
-            (end + 1 - begin) 
-            for begin, end, step in subset
-        ])
-        
-        expected_shape_strided = tuple([
-            (end + 1 - begin) // step 
-            for begin, end, step in subset
-        ])
-        
-        expected_shape_collapsed_full = tuple([
-            (end + 1 - begin) 
-            for begin, end, step in subset 
-            if (end + 1 - begin) != 1
-        ])
-        
-        expected_shape_collapsed_strided = tuple([
-            (end + 1 - begin) // step 
-            for begin, end, step in subset 
-            if (end + 1 - begin) // step != 1
-        ])
-        
-        # Validate: array shape must match one of the expected shapes
-        shape_matches = (
-            connector_array.shape == expected_shape_full or
-            connector_array.shape == expected_shape_strided or
-            connector_array.shape == expected_shape_collapsed_full or
-            connector_array.shape == expected_shape_collapsed_strided
-        )
-        
-        assert shape_matches, (
-            f"Shape mismatch for output connector '{connector_name}':\n"
-            f"  Array shape: {connector_array.shape}\n"
-            f"  Expected one of:\n"
-            f"    Full:              {expected_shape_full}\n"
-            f"    Strided:           {expected_shape_strided}\n"
-            f"    Collapsed full:    {expected_shape_collapsed_full}\n"
-            f"    Collapsed strided: {expected_shape_collapsed_strided}"
-        )
 
-def fix_nsdfg_connector_array_shapes_mismatch(
-    parent_state: dace.SDFGState,
-    nsdfg_node: dace.nodes.NestedSDFG
-) -> None:
+        # Calculate expected shapes (same logic as input edges)
+        expected_shape_full = tuple([(end + 1 - begin) for begin, end, step in subset])
+
+        expected_shape_strided = tuple([(end + 1 - begin) // step for begin, end, step in subset])
+
+        expected_shape_collapsed_full = tuple([(end + 1 - begin) for begin, end, step in subset
+                                               if (end + 1 - begin) != 1])
+
+        expected_shape_collapsed_strided = tuple([(end + 1 - begin) // step for begin, end, step in subset
+                                                  if (end + 1 - begin) // step != 1])
+
+        # Validate: array shape must match one of the expected shapes
+        shape_matches = (connector_array.shape == expected_shape_full or connector_array.shape == expected_shape_strided
+                         or connector_array.shape == expected_shape_collapsed_full
+                         or connector_array.shape == expected_shape_collapsed_strided)
+
+        assert shape_matches, (f"Shape mismatch for output connector '{connector_name}':\n"
+                               f"  Array shape: {connector_array.shape}\n"
+                               f"  Expected one of:\n"
+                               f"    Full:              {expected_shape_full}\n"
+                               f"    Strided:           {expected_shape_strided}\n"
+                               f"    Collapsed full:    {expected_shape_collapsed_full}\n"
+                               f"    Collapsed strided: {expected_shape_collapsed_strided}")
+
+
+def fix_nsdfg_connector_array_shapes_mismatch(parent_state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG) -> None:
     """
     Automatically fix shape mismatches in nested SDFG connector arrays.
-    
+
     This function detects and corrects shape mismatches between connector arrays
     inside a nested SDFG and their corresponding memlet subsets in the parent SDFG.
     (see also `check_nsdfg_connector_array_shapes_match`)
-    
+
     Fix strategy:
     1. Calculate expected shape from memlet subset (collapsed, removing size-1 dims)
     2. If shape mismatch detected, recreate array with correct shape and strides
     3. Update all accesses inside the nested SDFG using drop_dims() transformation
-    
+
     This is particularly useful after transformations that:
     - Modify memlet subsets (e.g., vectorization, tiling)
     - Collapse dimensions (e.g., constant folding, loop unrolling)
     - Change access patterns (e.g., stride modifications)
-    
+
     Args:
         parent_state: The state in the parent SDFG containing the nested SDFG node
         nsdfg_node: The nested SDFG node whose connector shapes to fix
 
     """
-    
+
     # ===== Fix Input Edge Connector Arrays =====
     for in_edge in parent_state.in_edges(nsdfg_node):
         if in_edge.data is None:
             continue
-        
+
         subset = in_edge.data.subset
         connector_name = in_edge.dst_conn
         connector_array = nsdfg_node.sdfg.arrays[connector_name]
         original_shape = connector_array.shape
-        
+
         # Calculate all possible expected shapes
-        expected_shape_full = tuple([
-            (end + 1 - begin) 
-            for begin, end, step in subset
-        ])
-        
-        expected_shape_strided = tuple([
-            (end + 1 - begin) // step 
-            for begin, end, step in subset
-        ])
-        
-        expected_shape_collapsed_full = tuple([
-            (end + 1 - begin) 
-            for begin, end, step in subset 
-            if (end + 1 - begin) != 1
-        ])
-        
-        expected_shape_collapsed_strided = tuple([
-            (end + 1 - begin) // step 
-            for begin, end, step in subset 
-            if (end + 1 - begin) // step != 1
-        ])
-        
+        expected_shape_full = tuple([(end + 1 - begin) for begin, end, step in subset])
+
+        expected_shape_strided = tuple([(end + 1 - begin) // step for begin, end, step in subset])
+
+        expected_shape_collapsed_full = tuple([(end + 1 - begin) for begin, end, step in subset
+                                               if (end + 1 - begin) != 1])
+
+        expected_shape_collapsed_strided = tuple([(end + 1 - begin) // step for begin, end, step in subset
+                                                  if (end + 1 - begin) // step != 1])
+
         # Calculate strides for collapsed shape (excluding size-1 dimensions)
-        strides_collapsed = tuple([
-            stride 
-            for (begin, end, step), stride in zip(subset, connector_array.strides)
-            if (end + 1 - begin) != 1
-        ])
-        
+        strides_collapsed = tuple(
+            [stride for (begin, end, step), stride in zip(subset, connector_array.strides) if (end + 1 - begin) != 1])
+
         # Check if shape matches any expected pattern
-        shape_matches = (
-            connector_array.shape == expected_shape_full or
-            connector_array.shape == expected_shape_strided or
-            connector_array.shape == expected_shape_collapsed_full or
-            connector_array.shape == expected_shape_collapsed_strided
-        )
-        
+        shape_matches = (connector_array.shape == expected_shape_full or connector_array.shape == expected_shape_strided
+                         or connector_array.shape == expected_shape_collapsed_full
+                         or connector_array.shape == expected_shape_collapsed_strided)
+
         if shape_matches:
             continue  # No fix needed
-        
+
         # ===== Mismatch detected - fix it =====
-        
+
         # Remove old array descriptor
         nsdfg_node.sdfg.remove_data(connector_name, validate=False)
-        
+
         # Recreate array with collapsed shape and adjusted strides
         nsdfg_node.sdfg.add_array(
             name=connector_name,
@@ -836,85 +765,60 @@ def fix_nsdfg_connector_array_shapes_mismatch(
             allow_conflicts=connector_array.allow_conflicts,
             find_new_name=False,
             alignment=connector_array.alignment,
-            may_alias=False
-        )
-        
+            may_alias=False)
+
         # Determine which dimensions to keep (1) vs drop (0)
         # Keep dimensions that have size > 1
-        dims_to_keep = [
-            1 if (end + 1 - begin) != 1 else 0 
-            for begin, end, step in subset
-        ]
-        
+        dims_to_keep = [1 if (end + 1 - begin) != 1 else 0 for begin, end, step in subset]
+
         # Update all accesses inside nested SDFG if:
         # 1. Not a 1D array (len > 1)
         # 2. Original shape matches the subset dimensionality
         # 3. Original shape had more dimensions than the collapsed shape
-        should_drop_dims = (
-            len(dims_to_keep) != 1 and
-            len(original_shape) == len(dims_to_keep) and
-            len(original_shape) > len(expected_shape_collapsed_full)
-        )
-        
+        should_drop_dims = (len(dims_to_keep) != 1 and len(original_shape) == len(dims_to_keep)
+                            and len(original_shape) > len(expected_shape_collapsed_full))
+
         if should_drop_dims:
             drop_dims(nsdfg_node.sdfg, dims_to_keep, connector_name)
-    
+
     # ===== Fix Output Edge Connector Arrays =====
     for out_edge in parent_state.out_edges(nsdfg_node):
         if out_edge.data is None:
             continue
-        
+
         subset = out_edge.data.subset
         connector_name = out_edge.src_conn
         connector_array = nsdfg_node.sdfg.arrays[connector_name]
         original_shape = connector_array.shape
-        
+
         # Calculate all possible expected shapes
-        expected_shape_full = tuple([
-            (end + 1 - begin) 
-            for begin, end, step in subset
-        ])
-        
-        expected_shape_strided = tuple([
-            (end + 1 - begin) // step 
-            for begin, end, step in subset
-        ])
-        
-        expected_shape_collapsed_full = tuple([
-            (end + 1 - begin) 
-            for begin, end, step in subset 
-            if (end + 1 - begin) != 1
-        ])
-        
-        expected_shape_collapsed_strided = tuple([
-            (end + 1 - begin) // step 
-            for begin, end, step in subset 
-            if (end + 1 - begin) // step != 1
-        ])
-        
+        expected_shape_full = tuple([(end + 1 - begin) for begin, end, step in subset])
+
+        expected_shape_strided = tuple([(end + 1 - begin) // step for begin, end, step in subset])
+
+        expected_shape_collapsed_full = tuple([(end + 1 - begin) for begin, end, step in subset
+                                               if (end + 1 - begin) != 1])
+
+        expected_shape_collapsed_strided = tuple([(end + 1 - begin) // step for begin, end, step in subset
+                                                  if (end + 1 - begin) // step != 1])
+
         # Calculate strides for collapsed shape (excluding size-1 dimensions)
-        strides_collapsed = tuple([
-            stride 
-            for (begin, end, step), stride in zip(subset, connector_array.strides)
-            if (end + 1 - begin) != 1
-        ])
-        
+        strides_collapsed = tuple(
+            [stride for (begin, end, step), stride in zip(subset, connector_array.strides) if (end + 1 - begin) != 1])
+
         # Check if shape matches any expected pattern
-        shape_matches = (
-            connector_array.shape == expected_shape_full or
-            connector_array.shape == expected_shape_strided or
-            connector_array.shape == expected_shape_collapsed_full or
-            connector_array.shape == expected_shape_collapsed_strided
-        )
-        
+        shape_matches = (connector_array.shape == expected_shape_full or connector_array.shape == expected_shape_strided
+                         or connector_array.shape == expected_shape_collapsed_full
+                         or connector_array.shape == expected_shape_collapsed_strided)
+
         if shape_matches:
             continue  # No fix needed
-        
+
         # ===== Mismatch detected - fix it =====
-        
+
         # Remove old array descriptor
         nsdfg_node.sdfg.remove_data(connector_name, validate=False)
-        
+
         # Recreate array with collapsed shape and adjusted strides
         nsdfg_node.sdfg.add_array(
             name=connector_name,
@@ -929,34 +833,25 @@ def fix_nsdfg_connector_array_shapes_mismatch(
             allow_conflicts=connector_array.allow_conflicts,
             find_new_name=False,
             alignment=connector_array.alignment,
-            may_alias=False
-        )
-        
+            may_alias=False)
+
         # Determine which dimensions to keep (1) vs drop (0)
-        dims_to_keep = [
-            1 if (end + 1 - begin) != 1 else 0 
-            for begin, end, step in subset
-        ]
-        
+        dims_to_keep = [1 if (end + 1 - begin) != 1 else 0 for begin, end, step in subset]
+
         # Debug output for tracking dimension dropping
-        print(
-            f"Output connector '{connector_name}' dimension analysis:\n"
-            f"  Dims to keep: {dims_to_keep}\n"
-            f"  Collapsed shape: {expected_shape_collapsed_full}\n"
-            f"  Original shape: {original_shape}\n"
-            f"  Subset: {subset}"
-        )
-        
+        print(f"Output connector '{connector_name}' dimension analysis:\n"
+              f"  Dims to keep: {dims_to_keep}\n"
+              f"  Collapsed shape: {expected_shape_collapsed_full}\n"
+              f"  Original shape: {original_shape}\n"
+              f"  Subset: {subset}")
+
         # Update all accesses inside nested SDFG if:
         # 1. Not a 1D array (len > 1)
         # 2. Original shape matches the subset dimensionality
         # 3. Original shape had more dimensions than the collapsed shape
-        should_drop_dims = (
-            len(dims_to_keep) != 1 and
-            len(original_shape) == len(dims_to_keep) and
-            len(original_shape) > len(expected_shape_collapsed_full)
-        )
-        
+        should_drop_dims = (len(dims_to_keep) != 1 and len(original_shape) == len(dims_to_keep)
+                            and len(original_shape) > len(expected_shape_collapsed_full))
+
         if should_drop_dims:
             drop_dims(nsdfg_node.sdfg, dims_to_keep, connector_name)
 
@@ -965,9 +860,9 @@ def extract_bracket_contents(expr: str, name: str):
     """
     Extracts the contents inside the brackets following a given variable name in an expression.
 
-    This function searches for a pattern of the form `<name>[...]` within a given string and 
-    extracts the full matched substring and the individual elements inside the brackets. It 
-    correctly handles nested brackets and quoted strings, ensuring that commas within nested 
+    This function searches for a pattern of the form `<name>[...]` within a given string and
+    extracts the full matched substring and the individual elements inside the brackets. It
+    correctly handles nested brackets and quoted strings, ensuring that commas within nested
     structures or strings are not treated as separators.
 
     Args:
@@ -975,7 +870,7 @@ def extract_bracket_contents(expr: str, name: str):
         name (str): The name of the variable or function to match before the brackets.
 
     Returns:
-        tuple[str, list[str]]: 
+        tuple[str, list[str]]:
             A tuple containing:
               - The full matched string (e.g., `"A[1, (2, 3), 'x']"`), or an empty string if no match is found.
               - A list of strings representing the top-level comma-separated elements inside the brackets.
@@ -1024,72 +919,59 @@ def extract_bracket_contents(expr: str, name: str):
     return full_match, parts
 
 
-def drop_dims_from_str(
-    src_str: str,
-    dim_mask: Tuple[int],
-    dataname: str
-) -> str:
+def drop_dims_from_str(src_str: str, dim_mask: Tuple[int], dataname: str) -> str:
     """
     Remove dimensions from array accesses in a code string.
-    
+
     This function finds array access patterns for a specific array name in a
     string and removes dimensions according to a binary mask. Dimensions with
     mask value 0 are removed, dimensions with mask value 1 are kept.
-    
+
     Args:
         src_str: Source string containing potential array accesses
         dim_mask: Tuple of 0s and 1s indicating which dimensions to keep
                  (1 = keep, 0 = drop)
         dataname: Name of the array whose accesses should be modified
-        
+
     Returns:
         Modified string with dimensions dropped from array accesses
-        
+
     Examples:
         >>> drop_dims_from_str("A[i, 0, j] + B[k]", (1, 0, 1), "A")
         "A[i, j] + B[k]"
 
-    
+
     Raises:
         AssertionError: If the number of dimensions in the access doesn't match
                         the length of dim_mask
-        
+
     Notes:
         - If no array access is found, returns the original string unchanged
     """
     # Find and parse array access in the string
     matched_substring, access_tokens = extract_bracket_contents(src_str, dataname)
-    
+
     if access_tokens == []:
         # No array access found - return unchanged
         return src_str
-    
+
     # Verify dimension count matches
     assert len(access_tokens) == len(dim_mask), (
         f"Dimension mismatch: array access has {len(access_tokens)} dimensions "
-        f"but dim_mask has {len(dim_mask)} entries"
-    )
+        f"but dim_mask has {len(dim_mask)} entries")
 
     # Filter dimensions: keep only those where mask is 1
-    filtered = [
-        dimension_expr 
-        for dimension_expr, mask_bit in zip(access_tokens, dim_mask) 
-        if mask_bit
-    ]
+    filtered = [dimension_expr for dimension_expr, mask_bit in zip(access_tokens, dim_mask) if mask_bit]
 
     filtered_str = "[" + ", ".join(filtered) + "]"
 
     return src_str.replace(matched_substring, dataname + filtered_str)
 
 
-def drop_dims(
-    sdfg: dace.SDFG,
-    dim_mask: Tuple[int],
-    dataname: str
-) -> None:
+def drop_dims(sdfg: dace.SDFG, dim_mask: Tuple[int], dataname: str) -> None:
     """
     Remove dimensions from all accesses to a specific array throughout an SDFG.
-    
+
     This function traverses an entire SDFG and updates all references to a
     specific array, removing dimensions according to the provided mask. It
     updates:
@@ -1105,101 +987,72 @@ def drop_dims(
         dataname: Name of the array whose accesses to update
 
     """
-    
+
     for cfg_region in sdfg.all_control_flow_regions():
-        
+
         # Handle loop regions: update loop condition, init, and update statements
         if isinstance(cfg_region, LoopRegion):
             # Update loop condition (e.g., "i < N and A[i] > 0")
             cfg_region.loop_condition = CodeBlock(
-                drop_dims_from_str(
-                    cfg_region.loop_condition.as_string,
-                    dim_mask,
-                    dataname
-                ),
-                cfg_region.loop_condition.language
-            )
-            
+                drop_dims_from_str(cfg_region.loop_condition.as_string, dim_mask, dataname),
+                cfg_region.loop_condition.language)
+
             # Update loop update statement (e.g., "i = i + 1")
             cfg_region.update_statement = CodeBlock(
-                drop_dims_from_str(
-                    cfg_region.update_statement.as_string,
-                    dim_mask,
-                    dataname
-                ),
-                cfg_region.update_statement.language
-            )
-            
+                drop_dims_from_str(cfg_region.update_statement.as_string, dim_mask, dataname),
+                cfg_region.update_statement.language)
+
             # Update loop initialization (e.g., "i = A[0]")
             cfg_region.init_statement = CodeBlock(
-                drop_dims_from_str(
-                    cfg_region.init_statement.as_string,
-                    dim_mask,
-                    dataname
-                ),
-                cfg_region.init_statement.language
-            )
-        
+                drop_dims_from_str(cfg_region.init_statement.as_string, dim_mask, dataname),
+                cfg_region.init_statement.language)
+
         # Handle conditional blocks: update branch conditions
         elif isinstance(cfg_region, ConditionalBlock):
             # Each branch is a (condition, block) tuple
             for i, (condition, block) in enumerate(cfg_region.branches):
                 # Update condition expression
-                new_condition = CodeBlock(
-                    drop_dims_from_str(
-                        condition.as_string,
-                        dim_mask,
-                        dataname
-                    ),
-                    condition.language
-                )
+                new_condition = CodeBlock(drop_dims_from_str(condition.as_string, dim_mask, dataname),
+                                          condition.language)
                 # Replace the branch with updated condition
                 cfg_region.branches[i] = (new_condition, block)
-    
+
     for state in sdfg.all_states():
         if not isinstance(state, SDFGState):
             continue
-        
+
         for edge in state.edges():
             # Check if this edge accesses the target array
             if edge.data.data is None or edge.data.data != dataname:
                 continue
-            
+
             # Verify dimension count matches
-            assert len(edge.data.subset) == len(dim_mask), (
-                f"Memlet subset has {len(edge.data.subset)} dimensions "
-                f"but dim_mask has {len(dim_mask)} entries"
-            )
-            
+            assert len(edge.data.subset) == len(dim_mask), (f"Memlet subset has {len(edge.data.subset)} dimensions "
+                                                            f"but dim_mask has {len(dim_mask)} entries")
+
             # Build new subset with filtered dimensions
             new_subset = []
             for (begin, end, step), mask_bit in zip(edge.data.subset, dim_mask):
                 if mask_bit:  # Keep this dimension
                     new_subset.append((begin, end, step))
-            
+
             # Create new memlet with reduced dimensionality
-            edge.data = dace.memlet.Memlet(
-                data=dataname,
-                subset=dace.subsets.Range(new_subset)
-            )
-    
+            edge.data = dace.memlet.Memlet(data=dataname, subset=dace.subsets.Range(new_subset))
+
     for interstate_edge in sdfg.all_interstate_edges():
         # Skip edges without assignments
         if interstate_edge.data.assignments == {}:
             continue
-        
+
         # Update each assignment expression
         new_assignments = {}
         for var_name, expr in interstate_edge.data.assignments.items():
             # Apply dimension dropping to the expression
-            new_assignments[var_name] = drop_dims_from_str(
-                expr,
-                dim_mask,
-                dataname
-            )
-        
+            new_assignments[var_name] = drop_dims_from_str(expr, dim_mask, dataname)
+
         # Replace assignments
         interstate_edge.data.assignments = new_assignments
+
 
 """
 class IntToFloatTransformer(ast.NodeTransformer):
@@ -1221,6 +1074,7 @@ def ints_to_floats(code_str):
     ast.fix_missing_locations(new_tree)
     return ast.unparse(new_tree)
 """
+
 
 def get_rhs_order(code_str: str, op_str: str, rhs1: str, rhs2: str) -> List[str]:
     return [rhs1, rhs2]
@@ -1632,14 +1486,17 @@ def get_scalar_source_nodes(sdfg: dace.SDFG,
                         source_nodes.append((state, node))
     return source_nodes
 
+
 def get_array_source_nodes(sdfg: dace.SDFG,
-                            non_transient_only: bool) -> List[Tuple[dace.SDFGState, dace.nodes.AccessNode]]:
+                           non_transient_only: bool) -> List[Tuple[dace.SDFGState, dace.nodes.AccessNode]]:
     source_nodes = list()
     for state in sdfg.all_states():
         for node in state.nodes():
             if (isinstance(node, dace.nodes.AccessNode) and state.in_degree(node) == 0):
                 arr = state.sdfg.arrays[node.data]
-                if (isinstance(arr, dace.data.Array) and (arr.shape != (1, ) and arr.shape != [1,])):
+                if (isinstance(arr, dace.data.Array) and (arr.shape != (1, ) and arr.shape != [
+                        1,
+                ])):
                     if non_transient_only is False or arr.transient is False:
                         source_nodes.append((state, node))
     return source_nodes
@@ -1659,7 +1516,7 @@ def get_scalar_sink_nodes(sdfg: dace.SDFG,
 
 
 def get_array_sink_nodes(sdfg: dace.SDFG,
-                          non_transient_only: bool) -> List[Tuple[dace.SDFGState, dace.nodes.AccessNode]]:
+                         non_transient_only: bool) -> List[Tuple[dace.SDFGState, dace.nodes.AccessNode]]:
     sink_nodes = list()
     for state in sdfg.all_states():
         for node in state.nodes():
@@ -1669,6 +1526,7 @@ def get_array_sink_nodes(sdfg: dace.SDFG,
                     if non_transient_only is False or arr.transient is False:
                         sink_nodes.append((state, node))
     return sink_nodes
+
 
 def add_transient_arrays_from_list(sdfg: dace.SDFG, arr_name_shape_storage_dtype: Iterable[Tuple[str, Any, Any,
                                                                                                  Any]]) -> None:
@@ -1845,8 +1703,6 @@ def move_out_reduction(scalar_source_nodes, state: dace.SDFGState, nsdfg: dace.n
         reduce_before_use(state, accumulator_name, vector_width, op)
 
 
-
-
 def assert_symbols_in_parent_map_symbols(missing_symbols: Set[str], state: dace.SDFGState,
                                          nsdfg: dace.nodes.NestedSDFG):
 
@@ -1901,7 +1757,9 @@ def find_symbol_assignment(sdfg: dace.SDFG, sym_name: str) -> str:
     return None
     #raise Exception("Symbol assignment not found")
 
-def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.NestedSDFG, parent_state: SDFGState) -> Set[str]:
+
+def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.NestedSDFG,
+                                parent_state: SDFGState) -> Set[str]:
     # Pre condition first parent maps is over the contiguous dimension and right most param if multi-dimensional
     parent_map = parent_state.scope_dict()[parent_nsdfg_node]
     assert isinstance(parent_map, dace.nodes.MapEntry)
@@ -1922,7 +1780,7 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
         for access_subset in accesses:
             # Get the stride 1 dimension
             stride_one_dim = {i for i, stride in enumerate(sdfg.arrays[arr_name].strides) if stride == 1}.pop()
-            b,e,s = access_subset[stride_one_dim]
+            b, e, s = access_subset[stride_one_dim]
             assert b == e
             assert s == 1
             if isinstance(b, dace.symbolic.SymExpr):
@@ -1938,10 +1796,9 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
                         assignment_expr = dace.symbolic.SymExpr(assignment)
                         # Define functions to ignore (common arithmetic + piecewise + rounding)
                         ignored = {
-                            sympy.sin, sympy.cos, sympy.tan, sympy.exp, sympy.log, sympy.sqrt,
-                            sympy.Abs, sympy.floor, sympy.ceiling, sympy.Min, sympy.Max,
-                            sympy.asin, sympy.acos, sympy.atan, sympy.sinh, sympy.cosh, sympy.tanh,
-                            sympy.asinh, sympy.acosh, sympy.atanh
+                            sympy.sin, sympy.cos, sympy.tan, sympy.exp, sympy.log, sympy.sqrt, sympy.Abs, sympy.floor,
+                            sympy.ceiling, sympy.Min, sympy.Max, sympy.asin, sympy.acos, sympy.atan, sympy.sinh,
+                            sympy.cosh, sympy.tanh, sympy.asinh, sympy.acosh, sympy.atanh
                         }
 
                         # Collect only user-defined or nonstandard functions
@@ -1964,6 +1821,7 @@ def collect_accesses_to_array_name(sdfg: dace.SDFG) -> Dict[Tuple[str, dace.subs
                     d[edge.data.data] = set()
                 d[edge.data.data].add(edge.data.subset)
     return d
+
 
 def collect_subset_to_vector_array_name(state: SDFGState) -> Dict[Tuple[str, dace.subsets.Range], str]:
     pass

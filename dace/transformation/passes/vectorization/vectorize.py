@@ -218,7 +218,7 @@ class Vectorize(ppl.Pass):
         scalar_source_nodes: List[Tuple[dace.SDFGState,
                                         dace.nodes.AccessNode]] = get_scalar_source_nodes(inner_sdfg, True)
         array_source_nodes: List[Tuple[dace.SDFGState,
-                                        dace.nodes.AccessNode]] = get_array_source_nodes(inner_sdfg, True)
+                                       dace.nodes.AccessNode]] = get_array_source_nodes(inner_sdfg, True)
         scalar_sink_nodes: List[Tuple[dace.SDFGState, dace.nodes.AccessNode]] = get_scalar_sink_nodes(inner_sdfg, True)
         array_sink_nodes: List[Tuple[dace.SDFGState, dace.nodes.AccessNode]] = get_array_sink_nodes(inner_sdfg, True)
         print("CXC", scalar_source_nodes, scalar_sink_nodes)
@@ -306,11 +306,8 @@ class Vectorize(ppl.Pass):
             # If it is an array it will be done in 4.1
             edges_to_replace = {
                 edge
-                for edge in inner_state.edges()
-                if edge not in modified_edges and
-                   edge.data is not None and
-                   edge.data.data not in scalar_source_data and
-                   edge.data.data not in array_source_data
+                for edge in inner_state.edges() if edge not in modified_edges and edge.data is not None
+                and edge.data.data not in scalar_source_data and edge.data.data not in array_source_data
             }
             old_subset = dace.subsets.Range([(0, 0, 1)])
             new_subset = dace.subsets.Range([(0, self.vector_width - 1, 1)])
@@ -328,9 +325,7 @@ class Vectorize(ppl.Pass):
             edges_to_replace = {
                 edge
                 for edge in inner_state.edges()
-                if edge not in modified_edges and 
-                   edge.data is not None and
-                   edge.data.data in array_source_data
+                if edge not in modified_edges and edge.data is not None and edge.data.data in array_source_data
             }
             expand_memlet_expression(inner_state, edges_to_replace, modified_edges, self.vector_width)
 
@@ -351,13 +346,11 @@ class Vectorize(ppl.Pass):
             if any({fs in candidate_arrays for fs in free_syms}):
                 self._expand_interstate_assignment(inner_sdfg, edge, free_syms, candidate_arrays)
 
-
         # 5
         for inner_state in inner_sdfg.all_states():
             nodes = {n for n in inner_state.nodes() if n not in modified_nodes}
             self._replace_tasklets_from_node_list(inner_state, nodes, vector_map_param)
             modified_nodes = modified_nodes.union(nodes)
-
 
         state.sdfg.save("x4_5.sdfg")
 
@@ -399,8 +392,8 @@ class Vectorize(ppl.Pass):
                             raise Exception(
                                 "At this point of the pass, no write to non-transient scalar sinks should remain")
                     if arr.transient is False and (isinstance(arr, dace.data.Array) and
-                                                   (arr.shape != (1, ) and arr.shape != (self.vector_width, )) and 
-                                                   node.data in non_vectorizable_arrays):
+                                                   (arr.shape != (1, ) and arr.shape != (self.vector_width, ))
+                                                   and node.data in non_vectorizable_arrays):
                         touched_nodes, touched_edges = duplicate_access(state, node, self.vector_width)
                         modified_edges = modified_edges.union(touched_edges)
                         modified_nodes = modified_nodes.union(touched_nodes)
@@ -493,7 +486,7 @@ class Vectorize(ppl.Pass):
         # k0 = idx[0] + idy[0]
         for k, v in edge.data.assignments.items():
             if k in syms:
-                
+
                 for i in range(0, self.vector_width):
                     # Get all scalar accesses from v and replace with the array equivalent
                     # if we have j = k1 + k2

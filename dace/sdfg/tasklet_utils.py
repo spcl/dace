@@ -4,11 +4,7 @@ Tasklet Classification Utilities
 
 This module provides utilities for analyzing and classifying DaCe tasklets based on their
 computational patterns. It parses tasklet code to determine the types of operations, operands,
-and constants involved, enabling automated code generation and optimization passes.
-
-The main functionality is the `classify_tasklet` function, which inspects a tasklet's code
-and metadata to determine its type (e.g., array-symbol operation, binary array operation)
-and extract relevant information such as operands, constants, and operations.
+and constants involved. It also provides utilities furhter manipulate and analyze tasklets.
 """
 
 import dace
@@ -57,6 +53,7 @@ class TaskletType(Enum):
     SCALAR_SYMBOL = "scalar_symbol"
     ARRAY_SYMBOL = "array_symbol"
     ARRAY_SCALAR = "array_scalar"
+    SCALAR_ARRAY = "scalar_array"
     ARRAY_ARRAY = "array_array"
     UNARY_ARRAY = "unary_array"
     UNARY_SYMBOL = "unary_symbol"
@@ -159,7 +156,9 @@ _CMP_SYMBOLS = {
 _SUPPORTED_OPS = {'*', '+', '-', '/', '>', '<', '>=', '<=', '==', '!='}
 """Set of supported binary and comparison operators."""
 
-_SUPPORTED = {'*', '+', '-', '/', 'abs', 'exp', 'sqrt', 'log', 'ln', 'exp', 'pow', 'min', 'max'}
+_SUPPORTED = {
+    '*', '+', '-', '/', '>', '<', '>=', '<=', '==', '!=', 'abs', 'exp', 'sqrt', 'log', 'ln', 'exp', 'pow', 'min', 'max'
+}
 """Set of all supported operations including functions."""
 
 
@@ -249,10 +248,6 @@ def _match_connector_to_data(state: dace.SDFGState, tasklet: dace.nodes.Tasklet)
     Returns:
         Dictionary mapping connector names (str) to data descriptors (dace.data.Data)
 
-    Examples:
-        For a tasklet with input connector "in_a" connected to array "A":
-        >>> _match_connector_to_data(state, tasklet)
-        {'in_a': <dace.data.Array object>}
     """
     tdict = dict()
     for ie in state.in_edges(tasklet):
@@ -326,10 +321,14 @@ def _reorder_rhs(code_str: str, op: str, rhs1: str, rhs2: str) -> Tuple[str, str
         return rhs2, rhs1
 
     if rhs1 not in left_string and rhs2 not in right_string:
-        raise Exception("SSA tasklet, rhs1 appears in none of the substrings")
+        raise Exception(
+            f"SSA tasklet, rhs1 appears in none of the substrings rhs1: {rhs1} string: {left_string} -op- {right_string}"
+        )
 
     if rhs2 not in left_string and rhs2 not in right_string:
-        raise Exception("SSA tasklet, rhs2 appears in none of the substrings")
+        raise Exception(
+            f"SSA tasklet, rhs2 appears in none of the substrings, rhs2: {rhs1} string: {left_string} -op- {right_string}"
+        )
 
 
 def count_name_occurrences(expr: str, name: str) -> int:
@@ -351,8 +350,6 @@ def count_name_occurrences(expr: str, name: str) -> int:
         2
         >>> count_name_occurrences("x * x * x", "x")
         3
-        >>> count_name_occurrences("abs(y)", "y")
-        1
 
     Note:
         This is used to distinguish between unary operations (single occurrence)
@@ -382,11 +379,14 @@ def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
         Dictionary with the following keys:
             - type (TaskletType): The classified tasklet type
             - lhs (str): Output connector name (left-hand side variable)
-            - rhs1 (str or None): First input connector/operand name (left of the operator if both rhs1 and rhs2 are set)
-            - rhs2 (str or None): Second input connector/operand name (right of the operator if both rhs1 and rhs2 are set, can be same as rhs1)
-            - constant1 (str or None): First constant/symbol value (left of the operator if both c1 and c2 are set)
-            - constant2 (str or None): Second constant/symbol value (right of the operator if both c1 and c2 are set, can be same as c1)
+            - rhs1 (str or None):  Input connector/operand name left of the operator/first function argument
+            - rhs2 (str or None): Input connector/operand name right of the operator/secpnd function argument
+            - constant1 (str or None): First constant/symbol value left of the operator/first function argument
+            - constant2 (str or None): Second constant/symbol value right of the operator/secpnd function argument
             - op (str): Operation symbol or function name
+
+    Notes:
+        - Left of the operator is c1 or rhs1 and right of the operator is c2 or rhs2, regardless of the number of constants or expressions
 
     Raises:
         AssertionError: If tasklet has more than 1 output connector
@@ -420,8 +420,8 @@ def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
             'lhs': 'out',
             'rhs1': 'in_a',
             'rhs2': None,
-            'constant1': '5',
-            'constant2': None,
+            'constant1': None,
+            'constant2': '5',
             'op': '+'
         }
         # For more see the unit tests
@@ -459,6 +459,7 @@ def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
         lhs_data_name = out_edges.pop().data.data
         lhs_data = state.sdfg.arrays[lhs_data_name]
 
+        # Assignment operators it will return op <- `=` and always populate `rhs1`
         if code_str == f"{lhs} = {rhs}" or code_str == f"{lhs} = {rhs};":
             lhs_datadesc = lhs_data
             rhs_datadesc = rhs_data
@@ -490,6 +491,8 @@ def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
             constant = free_non_connector_syms.pop()
 
         if not has_constant:
+            # If the rhs arrays appears repeatedly it means we have an operator like `a = b * b`
+            # In case the occurence equaling two, repeat the `rhs` argument
             rhs_occurence_count = count_name_occurrences(code_str.split(" = ")[1].strip(), rhs)
             if isinstance(rhs_data, dace.data.Array):
                 rhs2 = None if rhs_occurence_count == 1 else rhs
@@ -504,19 +507,31 @@ def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
             else:
                 raise Exception(f"Unhandled case in tasklet type (1) {rhs_data}, {type(rhs_data)}")
         else:
+            # Handle the correct order, left-of the operand is `1` and right is `2`
+            op = _extract_single_op(code_str)
+            reordered = _reorder_rhs(code_str, op, rhs, constant)
+            rhs1 = rhs if reordered[0] == rhs else None
+            rhs2 = rhs if reordered[1] == rhs else None
+            constant1 = constant if reordered[0] == constant else None
+            constant2 = constant if reordered[1] == constant else None
+            print(rhs1, rhs2, constant1, constant2)
             if isinstance(rhs_data, dace.data.Array):
                 info_dict.update({
                     "type": TaskletType.ARRAY_SYMBOL,
-                    "rhs1": rhs,
-                    "constant1": constant,
+                    "rhs1": rhs1,
+                    "rhs2": rhs2,
+                    "constant1": constant1,
+                    "constant2": constant2,
                     "op": _extract_single_op(code_str)
                 })
                 return info_dict
             elif isinstance(rhs_data, dace.data.Scalar):
                 info_dict.update({
                     "type": TaskletType.SCALAR_SYMBOL,
-                    "rhs1": rhs,
-                    "constant1": constant,
+                    "rhs1": rhs1,
+                    "rhs2": rhs2,
+                    "constant1": constant1,
+                    "constant2": constant2,
                     "op": _extract_single_op(code_str)
                 })
                 return info_dict
@@ -527,6 +542,7 @@ def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
         op = _extract_single_op(code_str)
         rhs1, rhs2 = in_conns[0], in_conns[1]
         rhs1, rhs2 = _reorder_rhs(code_str, op, rhs1, rhs2)
+        print(rhs1, rhs2)
 
         lhs = next(iter(node.out_connectors.keys()))
         scalars, arrays = _get_scalar_and_array_arguments(state, node)
@@ -538,7 +554,14 @@ def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
         elif len(scalars) == 1 and len(arrays) == 1:
             array_arg = next(iter(arrays))
             scalar_arg = next(iter(scalars))
-            info_dict.update({"type": TaskletType.ARRAY_SCALAR, "rhs1": array_arg, "constant1": scalar_arg, "op": op})
+            ttype = TaskletType.ARRAY_SCALAR if rhs1 == array_arg else TaskletType.SCALAR_ARRAY
+            if ttype == TaskletType.ARRAY_SCALAR:
+                assert rhs2 == scalar_arg
+            else:
+                assert rhs1 == scalar_arg
+            assert rhs1 is not None
+            assert rhs2 is not None
+            info_dict.update({"type": ttype, "rhs1": rhs1, "rhs2": rhs2, "op": op})
             return info_dict
         elif len(scalars) == 2:
             info_dict.update({"type": TaskletType.SCALAR_SCALAR, "rhs1": rhs1, "rhs2": rhs2, "op": op})

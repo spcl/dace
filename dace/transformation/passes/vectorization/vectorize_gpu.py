@@ -10,6 +10,7 @@ from dace.transformation.passes import InlineSDFGs
 from dace.transformation.passes.vectorization.vectorize import Vectorize
 from dace.transformation.passes.eliminate_branches import EliminateBranches
 
+
 class VectorizeGPU(ppl.Pipeline):
     _gpu_global_code = """
 template<typename T>
