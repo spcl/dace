@@ -43,9 +43,7 @@ def check_transformation_option(orig_sdfg: dace.SDFG, N: int, options: Dict[str,
 
         shape = []
         for entry in argType.shape:
-            shape.append(
-                dace.symbolic.evaluate(entry, {**orig_sdfg.constants, **sym_data})
-            )
+            shape.append(dace.symbolic.evaluate(entry, {**orig_sdfg.constants, **sym_data}))
         shape = tuple(shape)
         arr = dace.ndarray(shape=shape, dtype=argType.dtype)
         arr[:] = np.random.rand(*arr.shape).astype(arr.dtype)
@@ -63,7 +61,7 @@ def check_transformation_option(orig_sdfg: dace.SDFG, N: int, options: Dict[str,
     # Memory footprint should be reduced
     orig_mem = sum(np.prod(arrType.shape) for arrName, arrType in orig_sdfg.arrays.items())
     llmr_mem = sum(np.prod(arrType.shape) for arrName, arrType in llmr_sdfg.arrays.items())
-    orig_mem  = dace.symbolic.evaluate(orig_mem, {**orig_sdfg.constants, **sym_data})
+    orig_mem = dace.symbolic.evaluate(orig_mem, {**orig_sdfg.constants, **sym_data})
     llmr_mem = dace.symbolic.evaluate(llmr_mem, {**llmr_sdfg.constants, **sym_data})
     assert llmr_mem < orig_mem, f"Memory not reduced: {orig_mem} >= {llmr_mem}"
 
@@ -72,7 +70,13 @@ def check_transformation_option(orig_sdfg: dace.SDFG, N: int, options: Dict[str,
 def check_transformation(sdfg: dace.SDFG, N: int, aps: bool = False):
     for bitmask in [False, True]:
         for np2 in [False, True]:
-            check_transformation_option(sdfg, N, options={"bitmask_indexing": bitmask, "next_power_of_two": np2, "assume_positive_symbols": aps})
+            check_transformation_option(sdfg,
+                                        N,
+                                        options={
+                                            "bitmask_indexing": bitmask,
+                                            "next_power_of_two": np2,
+                                            "assume_positive_symbols": aps
+                                        })
 
 
 def test_simple():
@@ -748,6 +752,7 @@ def test_symbolic_sizes():
     sdfg = tester.to_sdfg(simplify=True)
     check_transformation(sdfg, 1)
 
+
 def test_symbolic_k():
 
     N = dace.symbol('N')
@@ -764,6 +769,7 @@ def test_symbolic_k():
     sdfg = tester.to_sdfg(simplify=True)
     check_transformation(sdfg, 0, aps=False)
     check_transformation(sdfg, 1, aps=True)
+
 
 def test_cloudsc():
 

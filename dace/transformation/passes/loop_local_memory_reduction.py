@@ -3,8 +3,8 @@
 import sympy as sp
 from dace import sdfg as sd, symbolic, properties
 from dace import data as dt
-from dace.sdfg import utils as sdutil
-from dace.sdfg.state import ControlFlowRegion, LoopRegion, ConditionalBlock
+from dace.sdfg import SDFGState
+from dace.sdfg.state import LoopRegion, ConditionalBlock
 from dace.data import Scalar
 from dace.transformation import transformation as xf
 from dace.transformation import pass_pipeline as ppl
@@ -137,15 +137,19 @@ class LoopLocalMemoryReduction(ppl.Pass):
                 if not self._has_constant_loop_expressions(sdfg, node):
                     continue
 
-                arrays = set(acc_node.data for acc_node in node.data_nodes())
-                write_states = {}
-                for st in node.all_states():
-                    for an in st.data_nodes():
-                        if st.in_degree(an) > 0:
-                            write_states.setdefault(an.data, set()).add(st)
+                cond_states = set()
+                for st, _ in node.all_nodes_recursive():
+                    if isinstance(st, SDFGState):
+                        pgraph = st.parent_graph
+                        while pgraph is not None and pgraph != node:
+                            if isinstance(pgraph, ConditionalBlock):
+                                cond_states.add(st)
+                                break
+                            pgraph = pgraph.parent_graph
 
+                arrays = set(acc_node.data for acc_node in node.data_nodes())
                 for arr in arrays:
-                    self._apply_for_array(arr, sdfg, node, write_states)
+                    self._apply_for_array(arr, sdfg, node, cond_states)
 
         self.out_of_loop_states_cache = {}
 
@@ -167,17 +171,16 @@ class LoopLocalMemoryReduction(ppl.Pass):
         return indices
 
     def _get_read_write_indices(
-            self, array_name: str,
-            loop: LoopRegion) -> tuple[list[list[Union[tuple, None]]], list[list[Union[tuple, None]]]]:
+            self, array_name: str, loop: LoopRegion,
+            cond_states: set[sd.SDFGState]) -> tuple[list[list[Union[tuple, None]]], list[list[Union[tuple, None]]]]:
         # list of list of tuples of (a, b) for a*i + b
         read_indices = list()
         write_indices = list()
 
-        access_nodes = set(an for an in loop.data_nodes() if an.data == array_name)
-        read_edges = set(e for an in access_nodes for st in loop.all_states() if an in st.data_nodes()
+        read_edges = set(e for st in loop.all_states() for an in st.data_nodes() if an.data == array_name
                          for e in st.out_edges(an))
-        write_edges = set(e for an in access_nodes for st in loop.all_states() if an in st.data_nodes()
-                          for e in st.in_edges(an))
+        write_edges = set(e for st in loop.all_states() if st not in cond_states for an in st.data_nodes()
+                          if an.data == array_name for e in st.in_edges(an))
 
         for edge in read_edges:
             eri = self._get_edge_indices(edge.data.src_subset, loop)
@@ -349,7 +352,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
         return indices
 
     def _apply_for_array(self, array_name: str, sdfg: sd.SDFG, loop: LoopRegion,
-                         write_states: dict[str, set[sd.SDFGState]]) -> bool:
+                         cond_states: set[sd.SDFGState]) -> bool:
         # Must be transient (otherwise it's observable)
         if not sdfg.arrays[array_name].transient:
             return
@@ -359,7 +362,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
             return
 
         # There needs to be at least one read and one write.
-        read_indices, write_indices = self._get_read_write_indices(array_name, loop)
+        read_indices, write_indices = self._get_read_write_indices(array_name, loop, cond_states)
         if not read_indices or not write_indices:
             return
 
@@ -386,14 +389,6 @@ class LoopLocalMemoryReduction(ppl.Pass):
                 return
             if any(il[dim][0] == 0 for il in write_indices) and any(il[dim][0] != 0 for il in write_indices):
                 return
-
-        # None of the write accesses must be within a conditional block. Reads are ok.
-        for st in write_states.get(array_name, set()):
-            pgraph = st.parent_graph
-            while pgraph is not None and pgraph != loop:
-                if isinstance(pgraph, ConditionalBlock):
-                    return
-                pgraph = pgraph.parent_graph
 
         # Outside of the loop, the written subset of the array must be written before read or not read at all.
         if not self._write_is_loop_local(array_name, write_indices, sdfg, loop):
