@@ -31,6 +31,10 @@ jobs:
         python-version: ${{ matrix.python-version }}
     - name: Install dependencies
       run: |
+        # Make dependency setup faster
+        echo 'set man-db/auto-update false' | sudo debconf-communicate >/dev/null
+        sudo dpkg-reconfigure man-db
+        # Install dependencies
         sudo apt-get update
         sudo apt-get install -y libyaml-dev cmake
         sudo apt-get install -y libblas-dev libopenblas-dev liblapacke-dev
