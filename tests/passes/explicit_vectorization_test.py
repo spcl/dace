@@ -672,6 +672,8 @@ def test_jacobi2d():
 
 
 C = 32
+
+
 def _get_disjoint_chain_sdfg(trivial_if: bool, fortran_layout: bool = False) -> dace.SDFG:
     sd1 = dace.SDFG("disjoint_chain")
     cb1 = ConditionalBlock("cond_if_cond_58", sdfg=sd1, parent=sd1)
@@ -764,6 +766,7 @@ def _get_disjoint_chain_sdfg(trivial_if: bool, fortran_layout: bool = False) -> 
     sd2.validate()
     return sd2, p_s1
 
+
 @pytest.mark.parametrize("trivial_if", [True, False])
 def test_disjoint_chain_split_branch_only(trivial_if: bool):
     sdfg, nsdfg_parent_state = _get_disjoint_chain_sdfg(trivial_if)
@@ -794,9 +797,9 @@ def test_disjoint_chain_split_branch_only(trivial_if: bool):
         xform.conditional = cblock
         xform.parent_nsdfg_state = nsdfg_parent_state
         xform.sequentialize_if_else_branch_if_disjoint_subsets(cblock.parent_graph)
-    
+
     out_fused = {k: v.copy() for k, v in arrays.items()}
-    
+
     ExplicitVectorizationPipelineCPU(vector_width=8).apply_pass(copy_sdfg, {})
     copy_sdfg(**out_fused)
 

@@ -11,8 +11,8 @@ tasklet_infos = [
         "rhs1": "in_a",
         "rhs2": None,
         "op": "+",
-        "constant1": "sym_b",
-        "constant2": None
+        "constant1": None,
+        "constant2": "sym_b",
     }),
     ("out = in_a - sym_b", "array", {"a"}, {}, {"sym_b"}, {
         "type": tutil.TaskletType.ARRAY_SYMBOL,
@@ -20,8 +20,8 @@ tasklet_infos = [
         "rhs1": "in_a",
         "rhs2": None,
         "op": "-",
-        "constant1": "sym_b",
-        "constant2": None
+        "constant1": None,
+        "constant2": "sym_b"
     }),
     ("out = in_a * sym_b", "array", {"a"}, {}, {"sym_b"}, {
         "type": tutil.TaskletType.ARRAY_SYMBOL,
@@ -29,8 +29,8 @@ tasklet_infos = [
         "rhs1": "in_a",
         "rhs2": None,
         "op": "*",
-        "constant1": "sym_b",
-        "constant2": None
+        "constant1": None,
+        "constant2": "sym_b"
     }),
     ("out = in_a / sym_b", "array", {"a"}, {}, {"sym_b"}, {
         "type": tutil.TaskletType.ARRAY_SYMBOL,
@@ -38,8 +38,8 @@ tasklet_infos = [
         "rhs1": "in_a",
         "rhs2": None,
         "op": "/",
-        "constant1": "sym_b",
-        "constant2": None
+        "constant1": None,
+        "constant2": "sym_b"
     }),
 
     # === ARRAY + CONSTANT ===
@@ -49,8 +49,8 @@ tasklet_infos = [
         "rhs1": "in_a",
         "rhs2": None,
         "op": "+",
-        "constant1": "2",
-        "constant2": None
+        "constant1": None,
+        "constant2": "2"
     }),
     ("out = in_a * 3", "array", {"a"}, {}, {}, {
         "type": tutil.TaskletType.ARRAY_SYMBOL,
@@ -58,8 +58,8 @@ tasklet_infos = [
         "rhs1": "in_a",
         "rhs2": None,
         "op": "*",
-        "constant1": "3",
-        "constant2": None
+        "constant1": None,
+        "constant2": "3"
     }),
     ("out = in_a / 2.5", "array", {"a"}, {}, {}, {
         "type": tutil.TaskletType.ARRAY_SYMBOL,
@@ -67,8 +67,8 @@ tasklet_infos = [
         "rhs1": "in_a",
         "rhs2": None,
         "op": "/",
-        "constant1": "2.5",
-        "constant2": None
+        "constant1": None,
+        "constant2": "2.5"
     }),
     ("out = in_a - 5", "array", {"a"}, {}, {}, {
         "type": tutil.TaskletType.ARRAY_SYMBOL,
@@ -76,8 +76,8 @@ tasklet_infos = [
         "rhs1": "in_a",
         "rhs2": None,
         "op": "-",
-        "constant1": "5",
-        "constant2": None
+        "constant1": None,
+        "constant2": "5"
     }),
 
     # === ARRAY + ARRAY ===
@@ -125,8 +125,8 @@ tasklet_infos = [
         "rhs1": "in_x",
         "rhs2": None,
         "op": "+",
-        "constant1": "sym_y",
-        "constant2": None
+        "constant1": None,
+        "constant2": "sym_y"
     }),
     ("out = in_x * sym_y", "scalar", {}, {"x"}, {"sym_y"}, {
         "type": tutil.TaskletType.SCALAR_SYMBOL,
@@ -134,8 +134,8 @@ tasklet_infos = [
         "rhs1": "in_x",
         "rhs2": None,
         "op": "*",
-        "constant1": "sym_y",
-        "constant2": None
+        "constant1": None,
+        "constant2": "sym_y"
     }),
     ("out = in_x - sym_y", "scalar", {}, {"x"}, {"sym_y"}, {
         "type": tutil.TaskletType.SCALAR_SYMBOL,
@@ -143,8 +143,8 @@ tasklet_infos = [
         "rhs1": "in_x",
         "rhs2": None,
         "op": "-",
-        "constant1": "sym_y",
-        "constant2": None
+        "constant1": None,
+        "constant2": "sym_y"
     }),
 
     # === SCALAR + SCALAR ===
@@ -205,7 +205,7 @@ tasklet_infos = [
         "constant2": "sym_b"
     }),
 
-    # === FUNCTIONAL / SUPPORTED OPS ===
+    # === UNARY / FUNCTIONAL OPS ===
     ("out = abs(in_a)", "array", {"a"}, {}, {}, {
         "type": tutil.TaskletType.UNARY_ARRAY,
         "lhs": "out",
@@ -248,8 +248,8 @@ tasklet_infos = [
         "rhs1": "in_a",
         "rhs2": None,
         "op": "pow",
-        "constant1": "2",
-        "constant2": None
+        "constant1": None,
+        "constant2": "2"
     }),
     ("out = min(in_a, in_b)", "array", {"a", "b"}, {}, {}, {
         "type": tutil.TaskletType.ARRAY_ARRAY,
@@ -276,15 +276,6 @@ tasklet_infos = [
         "rhs2": None,
         "op": "abs",
         "constant1": "sym_a",
-        "constant2": None
-    }),
-    ("out = exp(in_a)", "array", {"a"}, {}, {}, {
-        "type": tutil.TaskletType.UNARY_ARRAY,
-        "lhs": "out",
-        "rhs1": "in_a",
-        "rhs2": None,
-        "op": "exp",
-        "constant1": None,
         "constant2": None
     }),
     ("out = sqrt(in_a)", "scalar", {}, {"a"}, {}, {
@@ -350,7 +341,7 @@ tasklet_infos = [
         "rhs2": None,
         "op": "=",
         "constant1": "sym_a",
-        "constant2": None
+        "constant2": None,
     }),
 
     # === SINGLE-INPUT TWO RHS CASE ===
@@ -380,6 +371,33 @@ tasklet_infos = [
         "op": "+",
         "constant1": None,
         "constant2": None
+    }),
+    ("out = in_a - in_scl1", "array", {"a"}, {"scl1"}, {}, {
+        "type": tutil.TaskletType.ARRAY_SCALAR,
+        "lhs": "out",
+        "rhs1": "in_a",
+        "rhs2": "in_scl1",
+        "op": "-",
+        "constant1": None,
+        "constant2": None,
+    }),
+    ("out = in_scl1 - in_a", "array", {"a"}, {"scl1"}, {}, {
+        "type": tutil.TaskletType.SCALAR_ARRAY,
+        "lhs": "out",
+        "rhs1": "in_scl1",
+        "rhs2": "in_a",
+        "op": "-",
+        "constant1": None,
+        "constant2": None,
+    }),
+    ("out = in_scl1 - in_a", "scalar", {"a"}, {"scl1"}, {}, {
+        "type": tutil.TaskletType.SCALAR_ARRAY,
+        "lhs": "out",
+        "rhs1": "in_scl1",
+        "rhs2": "in_a",
+        "op": "-",
+        "constant1": None,
+        "constant2": None,
     }),
 ]
 
