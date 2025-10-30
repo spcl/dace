@@ -556,10 +556,12 @@ with open(r"{temp_path}", "wb") as f:
         callparams = tuple((carg, aname) for arg, carg, aname in zip(arglist, cargs, argnames)
                            if not (symbolic.issymbolic(arg) and (hasattr(arg, 'name') and arg.name in constants)))
 
-        newargs = tuple(carg for carg, aname in callparams)
-        initargs = tuple(carg for carg, aname in callparams if aname in symbols)
+        # NOTE: Since it is technically allowed to modify `self.lastargs[...]` we do not
+        #   turn it into a `tuple` but a `list`.
+        newargs = [carg for carg, aname in callparams]
+        initargs = [carg for carg, aname in callparams if aname in symbols]
 
-        self._lastargs = newargs, initargs
+        self._lastargs = (newargs, initargs)
         return self._lastargs
 
     def clear_return_values(self):
