@@ -5,7 +5,7 @@ import os
 import re
 import shutil
 import subprocess
-from typing import Any, Callable, Dict, List, Tuple, Optional, Type, Union
+from typing import Any, Callable, Dict, List, Tuple, Optional, Type, Union, Sequence
 import warnings
 import tempfile
 import pickle
@@ -331,11 +331,8 @@ class CompiledSDFG(object):
         if self._initialized:
             return
 
-        if len(args) > 0 and self.argnames is not None:
-            kwargs.update({aname: arg for aname, arg in zip(self.argnames, args)})
-
         # Construct arguments in the exported C function order
-        _, initargtuple = self._construct_args(kwargs)
+        _, initargtuple = self.construct_arguments(*args, **kwargs)
         self._initialize(initargtuple)
         return self._libhandle
 
@@ -376,17 +373,8 @@ class CompiledSDFG(object):
                return the same objects. To force the allocation of new memory
                you can call ``clear_return_values()`` in advance.
         """
-        if self.argnames is None and len(args) != 0:
-            raise KeyError(f"Passed positional arguments to an SDFG that does not accept them.")
-        elif len(args) > 0 and self.argnames is not None:
-            kwargs.update(
-                # `_construct_args` will handle all of its arguments as kwargs.
-                {
-                    aname: arg
-                    for aname, arg in zip(self.argnames, args)
-                })
-        argtuple, initargtuple = self._construct_args(kwargs)  # Missing arguments will be detected here.
         # Return values are cached in `self._lastargs`.
+        argtuple, initargtuple = self.construct_arguments(*args, **kwargs)  # Missing arguments will be detected here.
         return self.fast_call(argtuple, initargtuple, do_gpu_check=True)
 
     def safe_call(self, *args, **kwargs):
@@ -444,24 +432,22 @@ with open(r"{temp_path}", "wb") as f:
 
     def fast_call(
         self,
-        callargs: Tuple[Any, ...],
-        initargs: Tuple[Any, ...],
+        callargs: Sequence[Any],
+        initargs: Sequence[Any],
         do_gpu_check: bool = False,
     ) -> Union[Tuple[Any, ...], Any]:
         """
-        Calls the underlying binary functions directly and bypassing
-        argument sanitation.
+        Calls the underlying binary functions directly and bypassing argument sanitation.
 
         This is a faster, but less user friendly version of ``__call__()``.
         While ``__call__()`` will transforms its Python arguments such that
         they can be forwarded, this function assumes that this processing
         was already done by the user.
+        To build the argument vectors you should use `self.construct_arguments()`.
 
         :param callargs:        Arguments passed to the actual computation.
         :param initargs:        Arguments passed to the initialization function.
         :param do_gpu_check:    Check if errors happened on the GPU.
-
-        :note: You may use `_construct_args()` to generate the processed arguments.
         """
         from dace.codegen import common  # Circular import
         try:
@@ -498,18 +484,25 @@ with open(r"{temp_path}", "wb") as f:
             self._libhandle = ctypes.c_void_p(0)
         self._lib.unload()
 
-    def _construct_args(self, kwargs) -> Tuple[Tuple[Any], Tuple[Any]]:
-        """
-        Main function that controls argument construction for calling
-        the C prototype of the SDFG.
+    def construct_arguments(self, *args: Any, **kwargs: Any) -> Tuple[Tuple[Any], Tuple[Any]]:
+        """Construct the argument vectors suitable for from its argument.
 
-        Organizes arguments first by ``sdfg.arglist``, then data descriptors
-        by alphabetical order, then symbols by alphabetical order.
-
-        :note: If not initialized this function will initialize the memory for
-               the return values, however, it might also reallocate said memory.
-        :note: This function will also update the internal argument cache.
+        The returned argument vectors are suitable to be passed to `fast_call()`.
+        While the function will allocate space for the return values which might
+        involve a reallocation. Note that the function will also update the
+        internal argument vector cache, i.e. `self._lastargs`.
         """
+        if self.argnames is None and len(args) != 0:
+            raise KeyError(f"Passed positional arguments to an SDFG that does not accept them.")
+        elif len(args) > 0 and self.argnames is not None:
+            assert all(aname not in kwargs for aname, _ in zip(self.argnames, args))
+            kwargs.update({aname: arg for aname, arg in zip(self.argnames, args)})
+
+        # Allocate space for the return value.
+        # NOTE: Calling this function is the reason why we have to update `self._lastargs`,
+        #   because, if the return values are reallocated the memory of them might get
+        #   reclaimed and the pointers stored in `self._lastargs` are dangling.
+        # TODO: Find a better solution that makes this function have no side effects.
         self._initialize_return_values(kwargs)
 
         # Add the return values to the arguments, since they are part of the C signature.
@@ -539,26 +532,24 @@ with open(r"{temp_path}", "wb") as f:
             argnames = []
             sig = []
 
-        # Type checking
-        cargs = []
         no_view_arguments = not Config.get_bool('compiler', 'allow_view_arguments')
-        for i, (a, arg, atype) in enumerate(zip(argnames, arglist, argtypes)):
-            carg = dt.make_ctypes_argument(arg,
-                                           atype,
-                                           a,
-                                           allow_views=not no_view_arguments,
-                                           symbols=kwargs,
-                                           callback_retval_references=self._callback_retval_references)
-            cargs.append(carg)
-
+        cargs = tuple(
+            dt.make_ctypes_argument(aval,
+                                    atype,
+                                    aname,
+                                    allow_views=not no_view_arguments,
+                                    symbols=kwargs,
+                                    callback_retval_references=self._callback_retval_references)
+            for aval, atype, aname in zip(arglist, argtypes, argnames))
         constants = self.sdfg.constants
         symbols = self._free_symbols
         callparams = tuple((carg, aname) for arg, carg, aname in zip(arglist, cargs, argnames)
-                           if not (symbolic.issymbolic(arg) and (hasattr(arg, 'name') and arg.name in constants)))
+                           if not ((hasattr(arg, 'name') and arg.name in constants) and symbolic.issymbolic(arg)))
 
-        newargs = tuple(carg for carg, aname in callparams)
+        newargs = tuple(carg for carg, _aname in callparams)
         initargs = tuple(carg for carg, aname in callparams if aname in symbols)
 
+        # See note above why we _have_ update them.
         self._lastargs = newargs, initargs
         return self._lastargs
 
