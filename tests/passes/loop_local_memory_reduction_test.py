@@ -717,6 +717,7 @@ def test_conditional2():
     sdfg = tester.to_sdfg(simplify=True)
     check_transformation(sdfg, 1)
 
+
 def test_conditional3():
 
     @dace.program
@@ -746,11 +747,12 @@ def test_conditional4():
             if i % 2 == 0:
                 b[i] = a[i - 1] + a[i - 2]
             else:
-                a[i*2] = c[i] * 2
+                a[i * 2] = c[i] * 2
             a[i] = c[i] * 2
 
     sdfg = tester.to_sdfg(simplify=True)
     check_transformation(sdfg, 0)
+
 
 def test_symbolic_offset():
 
