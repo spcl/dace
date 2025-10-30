@@ -4,6 +4,7 @@ Module that provides hooks that can be used to extend DaCe functionality.
 """
 
 from typing import Any, Callable, Generator, List, Optional, Tuple, Union, ContextManager, TYPE_CHECKING
+import contextlib
 from contextlib import contextmanager, ExitStack
 import pydoc
 from dace import config
@@ -250,23 +251,40 @@ def invoke_sdfg_call_hooks(sdfg: 'SDFG'):
         yield sdfg
 
 
-@contextmanager
-def invoke_compiled_sdfg_call_hooks(compiled_sdfg: 'CompiledSDFG', args: Tuple[Any, ...]):
-    """
-    Internal context manager that calls all compiled SDFG call hooks in their registered order.
-    """
-    if not _COMPILED_SDFG_CALL_HOOKS:
-        yield compiled_sdfg
-        return
-    with ExitStack() as stack:
-        for hook in _COMPILED_SDFG_CALL_HOOKS:
-            if hook is None:
-                continue
-            new_compiled_sdfg = stack.enter_context(hook(compiled_sdfg, args))
-            if new_compiled_sdfg is not None:
-                compiled_sdfg = new_compiled_sdfg
+class invoke_compiled_sdfg_call_hooks(contextlib.AbstractContextManager):
+    """Internal context manager that calls all compiled SDFG call hooks in their registered order.
 
-        yield compiled_sdfg
+    Note:
+        This context manager is called in the hot path of `CompiledSDFG.fast_call()`,
+        using `@contextmanager` adds a non negligible runtime overhead compared to a
+        direct implementation.
+    """
+
+    __slots__ = ('compiled_sdfg', 'args', 'exit_stack')
+
+    def __init__(self, compiled_sdfg: 'CompiledSDFG', args: Tuple[Any, ...]) -> None:
+        self.compiled_sdfg: 'CompiledSDFG' = compiled_sdfg
+        self.args: Tuple[Any, ...] = args
+
+    def __enter__(self) -> 'CompiledSDFG':
+        if _COMPILED_SDFG_CALL_HOOKS:
+            compiled_sdfg = self.compiled_sdfg
+            self.exit_stack = stack = ExitStack().__enter__()
+            for hook in _COMPILED_SDFG_CALL_HOOKS:
+                if hook is None:
+                    continue
+                new_compiled_sdfg = stack.enter_context(hook(compiled_sdfg, self.args))
+                if new_compiled_sdfg is not None:
+                    compiled_sdfg = new_compiled_sdfg
+            return compiled_sdfg
+
+        else:
+            self.exit_stack = None
+            return self.compiled_sdfg
+
+    def __exit__(self, *exc_details):
+        if self.exit_stack is not None:
+            return self.exit_stack.__exit__(*exc_details)
 
 
 ##########################################################################
