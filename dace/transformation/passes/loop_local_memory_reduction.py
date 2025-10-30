@@ -101,6 +101,10 @@ class LoopLocalMemoryReduction(ppl.Pass):
         "Whether or not to round up the reduced memory size to the next power of two (enables bitmasking instead of modulo).",
     )
 
+    assume_positive_symbols = properties.Property(dtype=bool,
+                                                  default=False,
+                                                  desc="Assume symbols are positive when checking for applicability.")
+
     num_applications = 0  # To track number of applications for testing
 
     def modifies(self) -> ppl.Modifies:
@@ -222,17 +226,10 @@ class LoopLocalMemoryReduction(ppl.Pass):
                 continue
 
             # Get the minimum read index and maximum write index
-            try:
-                read_lb = min([i[1] for i in dim_read_indices])
-                read_ub = max([i[1] for i in dim_read_indices])
-                write_lb = min([i[1] for i in dim_write_indices])
-                write_ub = max([i[1] for i in dim_write_indices])
-            except TypeError:
-                # If the minimum or maximum cannot be determined (e.g. because of symbolic expressions being uncomparable), we cannot apply the transformation.
-                k_values.append(None)
-                continue
-
-            # TODO: We could also handle cases where write_lb == read_ub if we can prove that the write happens before the read in the loop for larger spans.
+            read_lb = sp.Min(*[i[1] for i in dim_read_indices])
+            read_ub = sp.Max(*[i[1] for i in dim_read_indices])
+            write_lb = sp.Min(*[i[1] for i in dim_write_indices])
+            write_ub = sp.Max(*[i[1] for i in dim_write_indices])
 
             # We assume a is the same for all indices, so we can just take the first one.
             a = dim_read_indices[0][0] * step
@@ -252,22 +249,25 @@ class LoopLocalMemoryReduction(ppl.Pass):
                     st.in_degree(an) > 0 and st.out_degree(an) > 0 for st in loop.all_states()
                     for an in st.data_nodes() if an.data == array_name)
 
+            # Add positive symbol assumption
+            if self.assume_positive_symbols and issymbolic(cond):
+                pos_syms = {s: sp.Symbol(s.name, positive=True) for s in cond.free_symbols}
+                cond = cond.xreplace(pos_syms)
+
             # Take maximum from previous accesses into account
             try:
-                k = max(span, max_indices[dim])
+                k = sp.Max(span, max_indices[dim])
                 not cond  # XXX: This ensures the condition can be evaluated. Do not remove.
             except TypeError:
                 k_values.append(None)
                 continue
 
-            k = symbolic.resolve_symbol_to_constant(k, sdfg)
-            if k is None:
-                k_values.append(None)
-                continue
-            k = int(k)
+            kc = symbolic.resolve_symbol_to_constant(k, sdfg)
+            if kc is not None:
+                k = int(kc)
 
             # Round up to next power of two if enabled
-            if self.next_power_of_two:
+            if self.next_power_of_two and not issymbolic(k):
                 k_p2 = (1 << k.bit_length()) - 1
 
                 # If we're larger than the array size, don't round up.
@@ -424,7 +424,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
                     # we can replace the array with a scalar, so no need for modulo.
                     lb = pystr_to_symbolic("0")
                     ub = pystr_to_symbolic("0")
-                elif self.bitmask_indexing and k & (k - 1) == 0:
+                elif self.bitmask_indexing and not issymbolic(k) and k & (k - 1) == 0:
                     # if k is a power of two, we can use a bitmask instead of modulo.
                     lb = pystr_to_symbolic(f"{subset[i][0]} & ({k - 1})")
                     ub = pystr_to_symbolic(f"{subset[i][1]} & ({k - 1})")
@@ -452,7 +452,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
                     # we can replace the array with a scalar, so no need for modulo.
                     lb = pystr_to_symbolic("0")
                     ub = pystr_to_symbolic("0")
-                elif self.bitmask_indexing and k & (k - 1) == 0:
+                elif self.bitmask_indexing and not issymbolic(k) and k & (k - 1) == 0:
                     # if k is a power of two, we can use a bitmask instead of modulo.
                     lb = pystr_to_symbolic(f"{subset[i][0]} & ({k - 1})")
                     ub = pystr_to_symbolic(f"{subset[i][1]} & ({k - 1})")

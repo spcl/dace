@@ -18,6 +18,7 @@ def check_transformation_option(orig_sdfg: dace.SDFG, N: int, options: Dict[str,
     llmr = LoopLocalMemoryReduction()
     llmr.bitmask_indexing = options["bitmask_indexing"]
     llmr.next_power_of_two = options["next_power_of_two"]
+    llmr.assume_positive_symbols = options["assume_positive_symbols"]
     llmr.apply_pass(llmr_sdfg, {})
     apps = llmr.num_applications
     assert apps >= N, f"Expected at least {N} applications, got {apps} with options {options}"
@@ -68,10 +69,10 @@ def check_transformation_option(orig_sdfg: dace.SDFG, N: int, options: Dict[str,
 
 
 # Checks if LoopLocalMemoryReduction applied at least N times and if memory footprint was reduced for all options
-def check_transformation(sdfg: dace.SDFG, N: int):
+def check_transformation(sdfg: dace.SDFG, N: int, aps: bool = False):
     for bitmask in [False, True]:
         for np2 in [False, True]:
-            check_transformation_option(sdfg, N, options={"bitmask_indexing": bitmask, "next_power_of_two": np2})
+            check_transformation_option(sdfg, N, options={"bitmask_indexing": bitmask, "next_power_of_two": np2, "assume_positive_symbols": aps})
 
 
 def test_simple():
@@ -747,6 +748,22 @@ def test_symbolic_sizes():
     sdfg = tester.to_sdfg(simplify=True)
     check_transformation(sdfg, 1)
 
+def test_symbolic_k():
+
+    N = dace.symbol('N')
+
+    @dace.program
+    def tester(b: dace.float64[64], c: dace.float64[64]):
+        a = dace.define_local([64], dace.float64)
+        for j in range(32):
+            a[j] = j
+        for i in range(32, 64):
+            b[i] = a[i - N] + a[i - N]
+            a[i] = c[i] * 2
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_transformation(sdfg, 0, aps=False)
+    check_transformation(sdfg, 1, aps=True)
 
 def test_cloudsc():
 
@@ -819,4 +836,5 @@ if __name__ == "__main__":
     test_conditional2()
     test_symbolic_offset()
     test_symbolic_sizes()
+    test_symbolic_k()
     test_cloudsc()
