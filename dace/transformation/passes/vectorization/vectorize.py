@@ -1,31 +1,23 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-
-import copy
-
 import dace
-import ast
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
-
+import copy
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 from dace import SDFG, Memlet, SDFGState, properties, transformation
 from dace import typeclass
 from dace.sdfg.graph import Edge
 from dace.sdfg.nodes import CodeNode
 from dace.sdfg.sdfg import InterstateEdge
-from dace.transformation import pass_pipeline as ppl, dataflow as dftrans
-from dace.transformation.passes import analysis as ap, pattern_matching as pmp
+from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.clean_data_to_scalar_slice_to_tasklet_pattern import CleanDataToScalarSliceToTaskletPattern
 from dace.transformation.passes.split_tasklets import SplitTasklets
 from dace.transformation.passes.tasklet_preprocessing_passes import RemoveFPTypeCasts, RemoveIntTypeCasts, PowerOperatorExpansion
 from dace.transformation.dataflow.tiling import MapTiling
-from dace.transformation.passes import InlineSDFGs
-from dace.sdfg.fp_utils import change_fp_types
-from dace.transformation.passes.explicit_vectorization_utils import *
-import dace.sdfg.construction_utils as cutil
+from dace.transformation.passes.vectorization.vectorization_utils import *
 
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
-class ExplicitVectorization(ppl.Pass):
+class Vectorize(ppl.Pass):
     templates = properties.DictProperty(
         key_type=str,
         value_type=str,

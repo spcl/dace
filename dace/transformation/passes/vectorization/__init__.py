@@ -1,0 +1,1 @@
+from .vectorize import AutoVectorize
