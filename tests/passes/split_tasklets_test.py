@@ -64,6 +64,60 @@ def _get_vars(ssa_line):
 _single_tasklet_sdfg_counter = 0
 
 
+def count_operators(expr: str):
+    """
+    Count the number of operators in a Python expression.
+
+    Args:
+        expr (str): A Python expression (e.g., "a + b * -c == f(x)").
+
+    Returns:
+        tuple[int, int]: A tuple (num_ops, num_assignments), where:
+            - num_ops: Number of all operators (binary, unary, boolean, comparison, function calls, etc.).
+            - num_assignments: Number of assignment operations ('=').
+    """
+    tree = ast.parse(expr)
+
+    num_ops = 0
+    num_assignments = 0
+
+    for node in ast.walk(tree):
+        # Count assignments separately
+        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            num_assignments += 1
+
+        # Binary ops: +, -, *, /, %, **, <<, >>, &, |, ^
+        elif isinstance(node, ast.BinOp):
+            num_ops += 1
+
+        # Unary ops: -, +, ~, not
+        elif isinstance(node, ast.UnaryOp):
+            num_ops += 1
+
+        # Bool ops: and, or
+        elif isinstance(node, ast.BoolOp):
+            num_ops += 1
+
+        # Comparisons: ==, !=, <, >, <=, >=, is, is not, in, not in
+        elif isinstance(node, ast.Compare):
+            num_ops += len(node.ops)
+
+        # Function calls (count as one operator per call)
+        elif isinstance(node, ast.Call):
+            num_ops += 1
+
+    return num_ops, num_assignments
+
+
+def assert_all_tasklets_are_ssa(sdfg: dace.SDFG):
+    for n, g in sdfg.all_nodes_recursive():
+        if isinstance(n, dace.nodes.Tasklet):
+            assert n.code.language == dace.dtypes.Language.Python
+            num_ops, num_assignments = count_operators(n.code.as_string)
+            assert num_ops <= 1, f"{n.code.as_string} has {num_ops} ops, needs to be less than 1 after SSA"  # Might be just an assignment
+            assert num_assignments == 1
+
+
 def _generate_single_tasklet_sdfg(expression_str: str) -> dace.SDFG:
     global _single_tasklet_sdfg_counter
     _single_tasklet_sdfg_counter += 1
@@ -250,26 +304,6 @@ def _generate_double_tasklet_sdfg(expression_strs: typing.Tuple[str, str],
     return sdfg
 
 
-def _one_assign_one_op(code: str) -> bool:
-    try:
-        tree = ast.parse(code)
-    except SyntaxError:
-        return False
-
-    assigns = sum(isinstance(n, (ast.Assign, ast.AnnAssign, ast.AugAssign)) for n in ast.walk(tree))
-    ops = sum(
-        isinstance(n, (ast.Call, ast.BinOp, ast.UnaryOp, ast.BoolOp, ast.Compare, ast.Lambda)) for n in ast.walk(tree))
-    return (assigns, ops)
-
-
-def _check_tasklet_properties(sdfg: dace.SDFG):
-    for n, g in sdfg.all_nodes_recursive():
-        if isinstance(n, dace.nodes.Tasklet):
-            assert n.language == dace.dtypes.Language.Python
-            assert _one_assign_one_op(n.code.as_string) == (1, 1) or _one_assign_one_op(n.code.as_string) == (
-                1, 0), f"{n.code.as_string} has (assigns, ops): {_one_assign_one_op(n.code.as_string)}"
-
-
 def _count_tasklets_in_map(sdfg: dace.SDFG) -> int:
     """Count the number of tasklets inside maps in the SDFG."""
     total_tasklets = 0
@@ -301,7 +335,7 @@ def _run_compile_and_comparison_test(sdfg: dace.SDFG, expected_num_statements: i
     sdfg(**cp_arr_dict)
 
     # Assert that all tasklets have a single op inside
-    _check_tasklet_properties(sdfg)
+    assert_all_tasklets_are_ssa(sdfg)
 
     # Check expected number of statements if provided
     if expected_num_statements is not None:
@@ -329,6 +363,7 @@ def test_single_tasklet_split(expression_str: str, expected_num_statements: int)
             num_tasklets = {t for t in g.all_nodes_between(n, g.exit_node(n)) if isinstance(t, dace.nodes.Tasklet)}
             assert len(num_tasklets) >= expected_num_statements, f"{num_tasklets}"
 
+    assert_all_tasklets_are_ssa(sdfg)
     _run_compile_and_comparison_test(sdfg, expected_num_statements)
 
 
@@ -346,6 +381,7 @@ def test_single_tasklet_symbol_only_split(expression_str: str, expected_num_stat
             num_tasklets = {t for t in g.all_nodes_between(n, g.exit_node(n)) if isinstance(t, dace.nodes.Tasklet)}
             assert len(num_tasklets) >= expected_num_statements, f"{num_tasklets}"
 
+    assert_all_tasklets_are_ssa(sdfg)
     _run_compile_and_comparison_test(sdfg, expected_num_statements)
 
 
@@ -363,6 +399,7 @@ def test_double_tasklet_split(expression_strs: typing.Tuple[str, str], expected_
             num_tasklets = {t for t in g.all_nodes_between(n, g.exit_node(n)) if isinstance(t, dace.nodes.Tasklet)}
             assert len(num_tasklets) >= expected_num_statements, f"{num_tasklets}"
 
+    assert_all_tasklets_are_ssa(sdfg)
     _run_compile_and_comparison_test(sdfg, expected_num_statements)
 
 
@@ -381,6 +418,7 @@ def test_double_tasklet_split_direct_tasklet_connection(expression_strs: typing.
             num_tasklets = {t for t in g.all_nodes_between(n, g.exit_node(n)) if isinstance(t, dace.nodes.Tasklet)}
             assert len(num_tasklets) >= expected_num_statements, f"{num_tasklets}"
 
+    assert_all_tasklets_are_ssa(sdfg)
     _run_compile_and_comparison_test(sdfg, expected_num_statements)
 
 
@@ -495,6 +533,7 @@ def test_branch_fusion_tasklets():
     c_sdfg(a=A_orig, b=B_orig, c=C_orig[0], d=D_orig, S=_S, S1=_S1, S2=_S2)
     c_copy_sdfg(a=A_vec, b=B_vec, c=C_vec[0], d=D_vec, S=_S, S1=_S1, S2=_S2)
 
+    assert_all_tasklets_are_ssa(copy_sdfg)
     # Compare results
     assert numpy.allclose(A_orig, A_vec)
     assert numpy.allclose(B_orig, B_vec)
@@ -543,6 +582,7 @@ def test_branch_fusion_tasklets_two():
     c_sdfg(a=A_orig, b=B_orig[0], c=C_orig, e=E_orig, f=F_orig[0], S=_S)
     c_copy_sdfg(a=A_vec, b=B_vec[0], c=C_vec, e=E_vec, f=F_vec[0], S=_S)
 
+    assert_all_tasklets_are_ssa(sdfg)
     # Compare results
     assert numpy.allclose(A_orig, A_vec)
     assert numpy.allclose(B_orig, B_vec)
@@ -576,6 +616,7 @@ def test_expressions_with_nested_sdfg_and_explicit_typecast():
     c_sdfg(a=A_orig, b=B_orig, S=_S, S1=_S1, S2=_S2, offset1=-1, offset2=-1)
     c_copy_sdfg(a=A_vec, b=B_vec, S=_S, S1=_S1, S2=_S2, offset1=-1, offset2=-1)
 
+    assert_all_tasklets_are_ssa(copy_sdfg)
     # Compare results
     assert numpy.allclose(A_orig, A_vec)
     assert numpy.allclose(B_orig, B_vec)
@@ -605,6 +646,7 @@ def test_expressions_with_typecast_first_in_map():
     c_sdfg(a=A_orig, S1=_S1, S2=_S2, S=_S)
     c_copy_sdfg(a=A_vec, S1=_S1, S2=_S2, S=_S)
 
+    assert_all_tasklets_are_ssa(sdfg)
     # Compare results
     assert numpy.allclose(A_orig, A_vec)
 
@@ -636,6 +678,7 @@ def test_symbol_in_tasklet():
     c_sdfg(A=A_orig, B=B_orig, C=C_orig, zfac=0.25)
     c_copy_sdfg(A=A_vec, B=B_vec, C=C_vec, zfac=0.25)
 
+    assert_all_tasklets_are_ssa(copy_sdfg)
     # Compare results
     assert numpy.allclose(A_orig, A_vec)
     assert numpy.allclose(B_orig, B_vec)
