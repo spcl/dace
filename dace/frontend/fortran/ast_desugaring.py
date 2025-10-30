@@ -29,7 +29,7 @@ from fparser.two.Fortran2003 import Program_Stmt, Module_Stmt, Function_Stmt, Su
     Deallocate_Stmt, Close_Stmt, Goto_Stmt, Continue_Stmt, Format_Stmt, Stmt_Function_Stmt, Internal_Subprogram_Part, \
     Private_Components_Stmt, Generic_Spec, Language_Binding_Spec, Type_Attr_Spec, Suffix, Proc_Component_Def_Stmt, \
     Proc_Decl, End_Type_Stmt, End_Interface_Stmt, Procedure_Declaration_Stmt, Pointer_Assignment_Stmt, Cycle_Stmt, \
-    Equiv_Operand, Case_Value_Range_List, Ac_Value_List
+    Equiv_Operand, Case_Value_Range_List, Ac_Value_List, Explicit_Shape_Spec_List
 from fparser.two.Fortran2008 import Procedure_Stmt, Type_Declaration_Stmt, Error_Stop_Stmt
 from fparser.two.utils import Base, walk, BinaryOpBase, UnaryOpBase, NumberBase, BlockBase
 
@@ -639,13 +639,12 @@ def _eval_real_literal(x: Union[Signed_Real_Literal_Constant, Real_Literal_Const
 def _const_eval_basic_type(expr: Base, alias_map: SPEC_TABLE) -> Optional[NUMPY_TYPES]:
     if isinstance(expr, (Part_Ref, Data_Ref)):
         name_node = expr.children[0]
-        # Only support scalar array accesses for now
+        # TODO: Support multidimensional array access.
         if (len(expr.children) > 1 and isinstance(expr.children[1], Section_Subscript_List)):
             subsc = expr.children[1]
             if (len(subsc.children) == 1):
-                # TODO index offset correction
                 idx = _const_eval_basic_type(subsc.children[0], alias_map)
-                if not idx:
+                if idx is None:
                     # Array index is not constant
                     return None
                 # This is just copied behavior from 'Name'
@@ -659,12 +658,23 @@ def _const_eval_basic_type(expr: Base, alias_map: SPEC_TABLE) -> Optional[NUMPY_
                 if not isinstance(decl, Entity_Decl):
                     # Is not even a data entity.
                     return None
+                # Find array declaration bounds
+                shape = singular(children_of_type(decl, Explicit_Shape_Spec_List))
+                shape = singular(children_of_type(shape, Explicit_Shape_Spec)).children
+                assert len(shape) == 2
+                assert shape[1] is not None
+                lbound = 1
+                if shape[0] is not None:
+                    lbound = _const_eval_basic_type(shape[0], alias_map)
+                ubound = _const_eval_basic_type(shape[1], alias_map)
+                if lbound is None or ubound is None:
+                    # Shape is not constant
+                    return None
                 typ = find_type_of_entity(decl, alias_map)
                 if not typ or not typ.const:
                     # Does not have a constant type.
                     return None
                 init = atmost_one(children_of_type(decl, Initialization))
-                # TODO: Add ref.
                 _, iexpr = init.children
                 if f"{iexpr}" == 'NULL()':
                     # We don't have good representation of "null pointer".
@@ -674,8 +684,8 @@ def _const_eval_basic_type(expr: Base, alias_map: SPEC_TABLE) -> Optional[NUMPY_
                     # Expect an Ac_Value_List
                     _, acvall, _ = iexpr.children
                     if (isinstance(acvall, Ac_Value_List)):
-                        # TODO Bounds check here, but idx is non-normalized anyway so all of this is wrong no matter what
-                        return _const_eval_basic_type(acvall.children[idx-1], alias_map)
+                        assert lbound <= idx and idx <= ubound, f"Array index {idx} is out of bounds in {decl.name}"
+                        return _const_eval_basic_type(acvall.children[idx-lbound], alias_map)
         # Fail otherwise
         return None
     elif isinstance(expr, Name):
@@ -3664,6 +3674,9 @@ def consolidate_global_data_into_arg(ast: Program, always_add_global_data_arg: b
         for tdecl in children_of_type(spart, Type_Declaration_Stmt):
             typ, attr, decl = tdecl.children
             if 'PARAMETER' in f"{attr}":
+                # Parameter arrays cannot always be resolved, the indices may not be constant.
+                # Keep the array declaration but remove the PARAMETER attribute to avoid
+                # confusing the internal AST builder later.
                 attr.items = [spec for spec in attr.children if spec.string != 'PARAMETER']
                 if not attr.items:
                     tdecl.items = (typ, None, decl)

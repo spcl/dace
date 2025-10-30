@@ -3069,7 +3069,7 @@ def run_fparser_transformations(ast: Program, cfg: ParseConfig):
 
     if cfg.consolidate_global_data:
         print("FParser Op: Consolidating the global variables of the AST...")
-        ast = consolidate_global_data_into_arg(ast, cfg.entry_points)
+        ast = consolidate_global_data_into_arg(ast)
         ast = prune_coarsely(ast, cfg.do_not_prune)
         _checkpoint_ast(cfg, 'ast_v4.f90', ast)
 
