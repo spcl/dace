@@ -172,25 +172,32 @@ class LoopLocalMemoryReduction(ppl.Pass):
 
     def _get_read_write_indices(
             self, array_name: str, loop: LoopRegion,
-            cond_states: set[sd.SDFGState]) -> tuple[list[list[Union[tuple, None]]], list[list[Union[tuple, None]]]]:
+            cond_states: set[sd.SDFGState]) -> tuple[list[list[Union[tuple, None]]], list[list[Union[tuple, None]]], list[list[Union[tuple, None]]]]:
         # list of list of tuples of (a, b) for a*i + b
         read_indices = list()
-        write_indices = list()
+        uncond_write_indices = list()
+        all_write_indices = list()
 
         read_edges = set(e for st in loop.all_states() for an in st.data_nodes() if an.data == array_name
                          for e in st.out_edges(an))
-        write_edges = set(e for st in loop.all_states() if st not in cond_states for an in st.data_nodes()
+        uncond_write_edges = set(e for st in loop.all_states() if st not in cond_states for an in st.data_nodes()
+                          if an.data == array_name for e in st.in_edges(an))
+        all_write_edges = set(e for st in loop.all_states() for an in st.data_nodes()
                           if an.data == array_name for e in st.in_edges(an))
 
         for edge in read_edges:
             eri = self._get_edge_indices(edge.data.src_subset, loop)
             read_indices.append(eri)
 
-        for edge in write_edges:
+        for edge in uncond_write_edges:
             ewi = self._get_edge_indices(edge.data.dst_subset, loop)
-            write_indices.append(ewi)
+            uncond_write_indices.append(ewi)
 
-        return read_indices, write_indices
+        for edge in all_write_edges:
+            ewi = self._get_edge_indices(edge.data.dst_subset, loop)
+            all_write_indices.append(ewi) 
+
+        return read_indices, uncond_write_indices, all_write_indices
 
     def _has_constant_loop_expressions(self, sdfg: sd.SDFG, loop: LoopRegion) -> tuple[bool, Union[int, None]]:
         itervar = loop.loop_variable
@@ -210,7 +217,8 @@ class LoopLocalMemoryReduction(ppl.Pass):
         self,
         array_name: str,
         read_indices: list[list[Union[tuple, None]]],
-        write_indices: list[list[Union[tuple, None]]],
+        uncond_write_indices: list[list[Union[tuple, None]]],
+        all_write_indices: list[list[Union[tuple, None]]],
         step: int,
         sdfg: sd.SDFG,
         loop: LoopRegion,
@@ -222,7 +230,8 @@ class LoopLocalMemoryReduction(ppl.Pass):
         for dim in range(len(read_indices[0])):
             # Get all read and write indices for this dimension
             dim_read_indices = [il[dim] for il in read_indices if il[dim] is not None]
-            dim_write_indices = [il[dim] for il in write_indices if il[dim] is not None]
+            dim_write_indices = [il[dim] for il in all_write_indices if il[dim] is not None]
+            dim_uncond_write_indices = [il[dim] for il in uncond_write_indices if il[dim] is not None]
 
             if not dim_read_indices or not dim_write_indices:
                 k_values.append(None)
@@ -231,20 +240,21 @@ class LoopLocalMemoryReduction(ppl.Pass):
             # Get the minimum read index and maximum write index
             read_lb = sp.Min(*[i[1] for i in dim_read_indices])
             read_ub = sp.Max(*[i[1] for i in dim_read_indices])
-            write_lb = sp.Min(*[i[1] for i in dim_write_indices])
             write_ub = sp.Max(*[i[1] for i in dim_write_indices])
+            uncond_write_lb = sp.Min(*[i[1] for i in dim_uncond_write_indices])
+            uncond_write_ub = sp.Max(*[i[1] for i in dim_uncond_write_indices])
 
             # We assume a is the same for all indices, so we can just take the first one.
             a = dim_read_indices[0][0] * step
             if a >= 1:
                 span = (write_ub - read_lb) / a
-                cond = (write_lb > read_ub)  # At least one write index must be higher than all read indices
+                cond = (uncond_write_lb > read_ub)  # At least one write index must be higher than all read indices
             if a == 0:
                 span = len(dim_read_indices + dim_write_indices)
-                cond = (write_lb > read_ub)  # At least one write index must be higher than all read indices
+                cond = (uncond_write_lb > read_ub)  # At least one write index must be higher than all read indices
             if a <= -1:
                 span = (read_ub - write_ub) / (-a)
-                cond = (write_ub < read_lb)  # At least one write index must be lower than all read indices
+                cond = (uncond_write_ub < read_lb)  # At least one write index must be lower than all read indices
 
             # If we have a span of one, it's enough that reads happen after writes in the loop.
             if span == 0:
@@ -362,16 +372,16 @@ class LoopLocalMemoryReduction(ppl.Pass):
             return
 
         # There needs to be at least one read and one write.
-        read_indices, write_indices = self._get_read_write_indices(array_name, loop, cond_states)
-        if not read_indices or not write_indices:
+        read_indices, uncond_write_indices, all_write_indices = self._get_read_write_indices(array_name, loop, cond_states)
+        if not read_indices or not all_write_indices:
             return
 
         # All read and write indices must be linear combinations of the loop variable. I.e. a*i + b, where a and b are constants.
-        if any(i is None for il in read_indices + write_indices for i in il):
+        if any(i is None for il in read_indices + all_write_indices for i in il):
             return
 
         # The scaling factor a must be the same for all indices if a != 0.
-        a_values = set(i[0] for il in read_indices + write_indices for i in il if i[0] != 0)
+        a_values = set(i[0] for il in read_indices + all_write_indices for i in il if i[0] != 0)
         if len(a_values) > 1:
             return
         if len(a_values) == 0:
@@ -380,22 +390,20 @@ class LoopLocalMemoryReduction(ppl.Pass):
         # The offset b must be multiple of a if a != 0.
         step = symbolic.resolve_symbol_to_constant(loop_analysis.get_loop_stride(loop), sdfg)
         a = a_values.pop() * step
-        if a != 0 and any(i[1] % a != 0 for il in read_indices + write_indices for i in il if i[0] != 0):
+        if a != 0 and any(i[1] % a != 0 for il in read_indices + all_write_indices for i in il if i[0] != 0):
             return
 
         # All constants (a == 0) must be in the same dimension.
         for dim in range(len(read_indices[0])):
-            if any(il[dim][0] == 0 for il in read_indices) and any(il[dim][0] != 0 for il in read_indices):
-                return
-            if any(il[dim][0] == 0 for il in write_indices) and any(il[dim][0] != 0 for il in write_indices):
+            if any(il[dim][0] == 0 for il in read_indices + all_write_indices) and any(il[dim][0] != 0 for il in read_indices +all_write_indices):
                 return
 
         # Outside of the loop, the written subset of the array must be written before read or not read at all.
-        if not self._write_is_loop_local(array_name, write_indices, sdfg, loop):
+        if not self._write_is_loop_local(array_name, all_write_indices, sdfg, loop):
             return
 
         # A K value must be found for at least one dimension.
-        Ks = self._get_K_values(array_name, read_indices, write_indices, step, sdfg, loop)
+        Ks = self._get_K_values(array_name, read_indices, uncond_write_indices,all_write_indices, step, sdfg, loop)
         if all(k is None for k in Ks):
             return
 
