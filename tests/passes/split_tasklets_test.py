@@ -10,6 +10,7 @@ from dace.transformation.passes.split_tasklets import SplitTasklets
 
 # Format: (expression, expected_num_statements_after_split)
 example_expressions = [
+    ("_out_float__if_cond = ((_if_cond == 1) == 0)", 2),  # 2 ==
     ("out_ci = 5 * in_ci + 4", 2),  # __t0 = 5 * in_ci; out_ci = __t0 + 4
     ("cfl_w_limit_out = (0.85 / dtime_0_in)", 1),  # Single operation
     ("z_w_con_c_out_0 = 0.0", 1),  # Assignment only, no operation
@@ -44,6 +45,10 @@ example_expressions = [
 # Double-split tasklet test case - Format: ((expr1, expr2), expected_total_statements)
 example_double_expressions = [(("out1 = in1 * in2 * in3", "out2 = in4 * in5 * tmp"), 4)  # 2 * in expr1, 2 * in expr2
                               ]
+
+example_symbol_only_expressions = [
+    ("_out_float__if_cond = ((_if_cond == 1) == 0)", 2),  # 2 ==
+]
 
 
 # This just intendeded to be used with these tests!
@@ -87,6 +92,46 @@ def _generate_single_tasklet_sdfg(expression_str: str) -> dace.SDFG:
         external_edges=True,
         input_nodes={rhs_var: state.add_access(f"{rhs_var}_ARR")
                      for rhs_var in rhs_vars},
+        output_nodes={lhs_var: state.add_access(f"{lhs_var}_ARR")
+                      for lhs_var in lhs_vars},
+    )
+
+    for n in state.nodes():
+        if state.degree(n) == 0:
+            state.remove_node(n)
+
+    sdfg.validate()
+    return sdfg
+
+
+def _generate_single_tasklet_symbol_only_sdfg(expression_str: str) -> dace.SDFG:
+    global _single_tasklet_sdfg_counter
+    _single_tasklet_sdfg_counter += 1
+
+    sdfg = dace.SDFG(f"single_tasklet_sdfg_{_single_tasklet_sdfg_counter}")
+
+    lhs_vars, rhs_vars = _get_vars(expression_str)
+
+    gen_integer = "<<" in expression_str or ">>" in expression_str or "|" in expression_str
+
+    assert len(lhs_vars) == 1, f"{lhs_vars} = {rhs_vars}"
+    for var in lhs_vars:
+        if var + "_ARR" in sdfg.arrays:
+            continue
+        sdfg.add_array(name=var + "_ARR", shape=(1, ), dtype=dace.float64 if not gen_integer else dace.int64)
+    for var in rhs_vars:
+        sdfg.add_symbol(name=var, stype=dace.float64 if not gen_integer else dace.int64)
+
+    state = sdfg.add_state(label="main")
+    state.add_mapped_tasklet(
+        name="wrapper_map",
+        map_ranges={"i": dace.subsets.Range([(0, 0, 1)])},
+        inputs={},
+        code=expression_str,
+        outputs={lhs_var: dace.memlet.Memlet(expr=f"{lhs_var}_ARR[i]")
+                 for lhs_var in lhs_vars},
+        external_edges=True,
+        input_nodes={},
         output_nodes={lhs_var: state.add_access(f"{lhs_var}_ARR")
                       for lhs_var in lhs_vars},
     )
@@ -245,8 +290,13 @@ def _run_compile_and_comparison_test(sdfg: dace.SDFG, expected_num_statements: i
 
     array_names = {array_name for array_name, arr in original_sdfg.arrays.items() if arr.transient is False}
     arr_dict = {arr_name: numpy.random.choice([3.0, 6.0], (1, )) for arr_name in array_names}
+    symbol_names = {symbol_name for symbol_name in original_sdfg.free_symbols}
+    symbol_dict = {symbol_name: 1.0 for symbol_name in symbol_names}
     cp_arr_dict = copy.deepcopy(arr_dict)
+    cp_sym_dict = symbol_dict
 
+    arr_dict.update(symbol_dict)
+    cp_arr_dict.update(cp_sym_dict)
     original_sdfg(**arr_dict)
     sdfg(**cp_arr_dict)
 
@@ -268,6 +318,23 @@ def _run_compile_and_comparison_test(sdfg: dace.SDFG, expected_num_statements: i
 @pytest.mark.parametrize("expression_str,expected_num_statements", example_expressions)
 def test_single_tasklet_split(expression_str: str, expected_num_statements: int):
     sdfg = _generate_single_tasklet_sdfg(expression_str)
+    sdfg.validate()
+    sdfg.compile()
+
+    SplitTasklets().apply_pass(sdfg=sdfg, pipeline_results={})
+    sdfg.validate()
+
+    for n, g in sdfg.all_nodes_recursive():
+        if isinstance(n, dace.nodes.MapEntry):
+            num_tasklets = {t for t in g.all_nodes_between(n, g.exit_node(n)) if isinstance(t, dace.nodes.Tasklet)}
+            assert len(num_tasklets) >= expected_num_statements, f"{num_tasklets}"
+
+    _run_compile_and_comparison_test(sdfg, expected_num_statements)
+
+
+@pytest.mark.parametrize("expression_str,expected_num_statements", example_symbol_only_expressions)
+def test_single_tasklet_symbol_only_split(expression_str: str, expected_num_statements: int):
+    sdfg = _generate_single_tasklet_symbol_only_sdfg(expression_str)
     sdfg.validate()
     sdfg.compile()
 
@@ -587,3 +654,5 @@ if __name__ == "__main__":
         test_double_tasklet_split(expression_strs, expected_num_statements)
     for expression_strs, expected_num_statements in example_double_expressions:
         test_double_tasklet_split_direct_tasklet_connection(expression_strs, expected_num_statements)
+    for expression_strs, expected_num_statements in example_symbol_only_expressions:
+        test_single_tasklet_symbol_only_split(expression_str, expected_num_statements)
