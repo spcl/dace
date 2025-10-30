@@ -87,7 +87,7 @@ def is_previously_written(sdfg: SDFG,
                         if in_edge.data.data == array_name:
                             # Check if there's a path to our node,
                             # since we only care about writes that happen before the current node
-                            if nx.has_path(subgraph, other_node, node):
+                            if nx.has_path(state.nx, other_node, node):
                                 return True
         else:
             # This is not our current subgraph, check the write states
