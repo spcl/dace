@@ -1,6 +1,7 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 import re
+import typing
 import sympy
 import dace
 import ast
@@ -174,6 +175,7 @@ def expand_memlet_expression(state: SDFGState, edges: Iterable[Edge[Memlet]], ed
     modified_edges = set()
     for edge in edges:
         if edge.data is not None:
+            state.sdfg.save("e.sdfg")
             assert all(
                 ((e + 1 - b) // s) == 1 for b, e, s in edge.data.subset
             ), f"Subset: {[(b, e, s) for b, e, s in edge.data.subset]}, is length one: {[((e + 1 - b) // s) == 1 for b, e, s in edge.data.subset]}"
@@ -252,7 +254,7 @@ def assert_maps_consist_of_single_nsdfg_or_no_nsdfg(sdfg: dace.SDFG) -> None:
                 isinstance(_n, dace.nodes.NestedSDFG) for _n in all_nodes)
 
 
-def to_ints(sym_epxr: dace.symbolic.SymExpr) -> int | None:
+def to_ints(sym_epxr: dace.symbolic.SymExpr) -> typing.Union[int, None]:
     """
     Try to convert a symbolic expression to an integer.
 
@@ -1067,6 +1069,9 @@ def offset_symbol_in_expression(expr_str: str, symbol_to_offset: str, offset: in
         str: A new expression string with the symbol offset.
              If the symbol is not found in the expression, returns the original expression string unchanged.
     """
+    print("Csffs", expr_str)
+    if "Eq(" in expr_str:
+        raise Exception(expr_str)
     expr = dace.symbolic.SymExpr(expr_str)
     sym_to_change = None
     for free_sym in expr.free_symbols:
@@ -1083,50 +1088,37 @@ def offset_symbol_in_expression(expr_str: str, symbol_to_offset: str, offset: in
 def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Tasklet, info: dict, vector_width: int,
                                   templates: Dict[str, str], vector_map_param: str) -> None:
     """
-    Instantiates a tasklet's code block in a vectorized form based on classification information.
+    Instantiates a tasklet's code block in vectorized form based on classification info.
 
-    This function takes a tasklet and a classification `info` (from `classify_tasklet`) and
-    updates the tasklet's `node.code` to a vectorized CodeBlock using the provided templates.
-    It handles different tasklet types (array-array, array-scalar, scalar-symbol, etc.) and
-    supports vectorization over a given width.
+    This function takes a tasklet and its classification `info` (from `classify_tasklet`) and
+    updates `node.code` to a vectorized CodeBlock using the provided templates. Handles
+    different tasklet types (array-array, array-scalar, scalar-symbol, etc.) and supports
+    vectorization over the specified width.
 
     Args:
         state: The SDFGState containing the tasklet.
         node: The tasklet node to instantiate.
         info: Classification dictionary containing:
-            - "type": TaskletType (enum describing operand types)
-            - "lhs": Left-hand side variable
-            - "rhs1": Left-of-the-operator right-hand side variable
-            - "rhs2": Right-of-the-operator right-hand side variable
-            - "constant1": Left-of-the-operator constant operand
-            - "constant2": Right-of-the-operator constant operand
-            - "op": Operation string (e.g., "+", "*", "=")
-        vector_width: The number of lanes for vectorization.
+            - "type": TaskletType enum describing operand types.
+            - "lhs": Left-hand side variable.
+            - "rhs1": First right-hand side variable.
+            - "rhs2": Second right-hand side variable (optional).
+            - "constant1": First constant operand (optional).
+            - "constant2": Second constant operand (optional).
+            - "op": Operation string (e.g., "+", "*", "=").
+        vector_width: Number of lanes for vectorization.
         templates: Mapping from operation strings to template strings for code generation.
-            - This is taken from the vectorization pipeline for CPU/GPU/Other Acceleraotor
         vector_map_param: Name of the map parameter used for lane indexing in vectorization.
-
-    Behavior:
-        1. Determines the tasklet type from `info` and extracts lhs, rhs1, rhs2, constants, and op.
-        2. Converts constants to float if possible, for proper code generation.
-        3. Selects the appropriate template based on operation and commutativity.
-        4. Handles special cases:
-            - Array-array, array-scalar, scalar-array, scalar-symbol assignments
-            - Zero-input operations (symbol-symbol)
-            - Operations with constants, including commutative and non-commutative operations
-        5. Generates a vectorized CodeBlock, also replicating assignments for each lane in the vector.
     """
+    # Extract classification info
     ttype: tutil.TaskletType = info.get("type")
-    lhs = info.get("lhs")
-    rhs1 = info.get("rhs1")
-    rhs2 = info.get("rhs2")
-    c1 = info.get("constant1")
-    c2 = info.get("constant2")
-    op = info.get("op")
+    lhs, rhs1, rhs2 = info.get("lhs"), info.get("rhs1"), info.get("rhs2")
+    c1, c2, op = info.get("constant1"), info.get("constant2"), info.get("op")
     vw = vector_width
     is_commutative = op in {"+", "*"}
 
     def _str_to_float_or_str(s: Union[int, float, str, None]):
+        """Convert string constants to float if possible."""
         if s is None:
             return s
         try:
@@ -1134,227 +1126,139 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         except ValueError:
             return s
 
-    def _get_vector_templates(rhs1: str, rhs2: str, constant1: Union[str, None], constant2: Union[str, None], lhs: str,
-                              op: str):
-        if op in templates:
-            if rhs2 is None:
-                if constant1 is None and constant2 is None:
-                    if is_commutative:
-                        # Only one rhs is set, no constant is set means we a case where the same arrays is used repeatedly
-                        new_code = templates[op].format(rhs1=rhs1, lhs=lhs, op=op, vector_width=vector_width)
-                    else:
-                        if op == "=":
-                            # Assignment tasklet, assign lhs <- rhs1
-                            new_code = templates[op].format(rhs1=rhs1, lhs=lhs, op=op, vector_width=vector_width)
-                        else:
-                            # Only one rhs is set, no constnat is set means we a case where the same arrays is used repeatedly
-                            # Weird but we can just call rhs1=rhs1, rhs2=rhs1
-                            assert rhs1 == rhs2
-                            new_code = templates[op].format(rhs1=rhs1,
-                                                            rhs2=rhs1,
-                                                            lhs=lhs,
-                                                            op=op,
-                                                            vector_width=vector_width)
-                else:
-                    assert not (constant1 is not None and constant2 is not None)
-                    # We have on constant
-                    if is_commutative:
-                        # Select the correct constant, the order is not important
-                        # And templates might only provide op + "c" variant
-                        rhs = rhs1 if rhs1 is not None else rhs2
-                        constant = constant1 if constant1 is not None else constant2
-                        new_code = templates[op + "c"].format(rhs1=rhs,
-                                                              constant=_str_to_float_or_str(constant),
-                                                              lhs=lhs,
-                                                              op=op,
-                                                              vector_width=vector_width)
-                    else:
-                        if op == "=":
-                            new_code = templates[op].format(rhs1=rhs,
-                                                            constant=_str_to_float_or_str(constant),
-                                                            lhs=lhs,
-                                                            op=op,
-                                                            vector_width=vector_width)
-                        else:
-                            rhs_order = None
-                            if constant1 is None:
-                                rhs_order = [rhs1, constant2]
-                            else:
-                                rhs_order = [constant1, rhs2]
-                            print(
-                                f"Op {op} is not commutative, rhs order is {rhs_order} for node {node} ({node.code.as_string})"
-                            )
-                            if rhs_order == [constant1, rhs2]:
-                                new_code = templates["c" + op].format(rhs1=rhs2,
-                                                                      constant=_str_to_float_or_str(constant1),
-                                                                      lhs=lhs,
-                                                                      op=op,
-                                                                      vector_width=vector_width)
-                            elif rhs_order == [rhs1, constant2]:
-                                new_code = templates[op + "c"].format(rhs1=rhs1,
-                                                                      constant=_str_to_float_or_str(constant2),
-                                                                      lhs=lhs,
-                                                                      op=op,
-                                                                      vector_width=vector_width)
-                            else:
-                                raise Exception(
-                                    f"An op involving 1 constant and 1 rhs should have provided [rhs1, constant2] or [constant1, rhs2] for the ordering"
-                                )
-            else:
-                if is_commutative or op == "=":
-                    new_code = templates[op].format(rhs1=rhs1, rhs2=rhs2, lhs=lhs, op=op, vector_width=vector_width)
-                else:
-                    assert constant1 is None and constant2 is None
-                    print(
-                        f"Op {op} is not commutative, rhs order is {[rhs1, rhs2]} for node {node} ({node.code.as_string})"
-                    )
-                    new_code = templates[op].format(rhs1=rhs1, rhs2=rhs2, lhs=lhs, op=op, vector_width=vector_width)
-        else:
-            print(f"Operator `{op}` is not in supported ops `{set(templates.keys())}`")
-            print(f"Generating fall-back scalar code")
-            # Generate normal loops for fallback for unsupported operators
-            if op in {">", ">=", "<", "<=", "==", "!="}:
-                comparison_set_suffix = "? 1.0 : 0.0"
-            else:
-                comparison_set_suffix = ""
-            # Constant + Array is case when ordering is important
-            # Scalars are treated the same way as constants
-            if (constant1 is not None or constant2 is not None):
-                rhs_order = [rhs1 if rhs1 is not None else constant1, rhs2 if rhs2 is not None else constant2]
-                assert rhs_order[0] is not None and rhs_order[1] is not None
-                if rhs_order == [rhs1, constant2]:
-                    code_str = "\n".join([
-                        "#pragma _dace_vectorize_hint", "#pragma _dace_vectorize",
-                        f"for (int _vi = 0; _vi < {vector_width}; _vi += 1){{"
-                    ])
-                    code_str += f"{lhs}[_vi] = ({rhs1}[_vi] {op} {constant2}){comparison_set_suffix};\n"
-                    code_str += "}}\n"
-                elif rhs_order == [constant1, rhs2]:
-                    code_str = "\n".join([
-                        "#pragma _dace_vectorize_hint", "#pragma _dace_vectorize",
-                        f"for (int _vi = 0; _vi < {vector_width}; _vi += 1){{"
-                    ])
-                    code_str += f"{lhs}[_vi] = ({constant1} {op} {rhs2}[_vi]){comparison_set_suffix};\n"
-                    code_str += "}}\n"
-                else:
-                    raise Exception(
-                        f"An op involving 1 constant and 1 rhs should have provided [rhs1, constant2] or [constant1, rhs2] for the ordering"
-                    )
-            else:
-                # Follow the ordering provided for Array-Array
-                code_str = ""
-                code_str = "\n".join([
-                    "#pragma _dace_vectorize_hint", "#pragma _dace_vectorize",
-                    f"for (int _vi = 0; _vi < {vector_width}; _vi += 1){{"
-                ])
-                code_str += f"{lhs}[_vi] = ({rhs1}[_vi] {op} {rhs2}[_vi]){comparison_set_suffix};\n"
-                code_str += "}}\n"
-            new_code = code_str
-        return new_code
+    def _generate_code(rhs1_, rhs2_, const1_, const2_, lhs_, op_):
+        """
+        Generate the C++ vectorized code string using templates or fallbacks.
 
-    # Helpers
-    def set_template(rhs1_, rhs2_, constant1_, constant2_, lhs_, op_):
+        Handles:
+        - Array-array, array-scalar, scalar-array
+        - Commutative and non-commutative ops
+        - Single constant + array/scalar (or array/scalar + constant)
+        - Fallback loops if operator not supported (hope compiler will do it)
+        """
+        # Use template if available
+        if op_ in templates:
+            # One array + optional constant
+            if rhs1_ is None or rhs2_ is None:
+                rhs = rhs1_ if rhs1_ is not None else rhs2_
+                constant = const1_ if const1_ is not None else const2_
+                if constant is None:
+                    # Single array or repeated array case
+                    if is_commutative:
+                        return templates[op_].format(rhs1=rhs, rhs2=rhs, lhs=lhs_, op=op_, vector_width=vw)
+                    return templates[op_].format(rhs1=rhs, rhs2=rhs, lhs=lhs_, op=op_, vector_width=vw)
+                else:
+                    # Single array + constant
+                    if is_commutative or op_ == "=":
+                        return templates[op_ + "c"].format(rhs1=rhs,
+                                                           constant=_str_to_float_or_str(constant),
+                                                           lhs=lhs_,
+                                                           op=op_,
+                                                           vector_width=vw)
+            else:
+                # Two arrays
+                return templates[op_].format(rhs1=rhs1_, rhs2=rhs2_, lhs=lhs_, op=op_, vector_width=vw)
+
+        # Fallback: unsupported operator
+        comparison_suffix = "? 1.0 : 0.0" if op_ in {">", ">=", "<", "<=", "==", "!="} else ""
+        code_lines = [f"#pragma _dace_vectorize_hint", f"#pragma _dace_vectorize"]
+        code_lines.append(f"for (int _vi = 0; _vi < {vw}; _vi += 1) {{")
+
+        # Determine operand order
+        lhs_expr = lhs_ + "[_vi]"
+        rhs_left = rhs1_ if rhs1_ is not None else const1_
+        rhs_right = rhs2_ if rhs2_ is not None else const2_
+
+        if rhs_left is None or rhs_right is None:
+            raise Exception("Invalid operand configuration for fallback vectorization")
+
+        if rhs_left == const1_:
+            code_lines.append(f"{lhs_expr} = ({rhs_left} {op_} {rhs_right}[_vi]){comparison_suffix};")
+        else:
+            code_lines.append(f"{lhs_expr} = ({rhs_left}[_vi] {op_} {rhs_right}){comparison_suffix};")
+
+        code_lines.append("}")
+        return "\n".join(code_lines)
+
+    def _set_template(rhs1_, rhs2_, const1_, const2_, lhs_, op_, ttype):
+        """Helper to set tasklet code from template/fallback."""
         node.code = dace.properties.CodeBlock(
-            code=_get_vector_templates(rhs1=rhs1_,
-                                       rhs2=rhs2_,
-                                       constant1=_str_to_float_or_str(constant1_),
-                                       constant2=_str_to_float_or_str(constant2_),
-                                       lhs=lhs_,
-                                       op=op_),
-            language=dace.Language.CPP,
-        )
+            code=f"//{ttype}\n" +
+            _generate_code(rhs1_, rhs2_, _str_to_float_or_str(const1_), _str_to_float_or_str(const2_), lhs_, op_),
+            language=dace.Language.CPP)
 
-    # 1) ARRAY-ARRAY assignment: a = b  (both arrays)
+    # Dispatch based on tasklet type
     if ttype == tutil.TaskletType.ARRAY_ARRAY_ASSIGNMENT:
-        # use direct template with op "="
-        set_template(rhs1, None, None, None, lhs, "=")
-        return
-
-    # 1) ARRAY-SYMBOL assignment: a = sym
-    if ttype == tutil.TaskletType.ARRAY_SYMBOL_ASSIGNMENT:
-        code_lines = []
+        _set_template(rhs1, rhs2, c1, c2, lhs, "=", ttype)
+    elif ttype == tutil.TaskletType.ARRAY_SCALAR_ASSIGNMENT:
+        node.code = dace.properties.CodeBlock(code="\n".join([f"{lhs}[{i}] = {c2};" for i in range(vw)]) + "\n",
+                                              language=dace.Language.CPP)
+    elif ttype == tutil.TaskletType.ARRAY_SYMBOL_ASSIGNMENT:
+        node.code = dace.properties.CodeBlock(code="\n".join([f"{lhs}[{i}] = {c1}{i};" for i in range(vw)]) + "\n",
+                                              language=dace.Language.CPP)
+    elif ttype in {tutil.TaskletType.ARRAY_SYMBOL, tutil.TaskletType.ARRAY_ARRAY, tutil.TaskletType.UNARY_ARRAY}:
+        _set_template(rhs1, rhs2, c1, c2, lhs, op, ttype)
+    elif ttype in {
+            tutil.TaskletType.SCALAR_ARRAY,
+    }:
+        # The tasklet-info treads scalars as arrays and only symbols as constants
+        # For the vector-code scalar is the same as a constant
+        _set_template(None, rhs2, rhs1, None, lhs, op, ttype)
+    elif ttype in {
+            tutil.TaskletType.ARRAY_SCALAR,
+    }:
+        # The tasklet-info treads scalars as arrays and only symbols as constants
+        # For the vector-code scalar is the same as a constant
+        _set_template(rhs1, None, None, rhs2, lhs, op, ttype)
+    elif ttype == tutil.TaskletType.SCALAR_SYMBOL:
+        code_lines = [f"//{ttype}"]
+        symbols = state.symbols_defined_at(node)
+        l_op = rhs1 if rhs1 is not None else c1
+        r_op = rhs2 if rhs2 is not None else c2
+        c = c1 if c1 is not None else c2
         for i in range(vw):
-            # If detect inner symbol used we need to correctly offset it to have + lane_id
-            code_lines.append(f"{lhs}[{i}] = {c1}{i};")
+            expr = f"({l_op} {op} {r_op})"
+            if str(c) in symbols:
+                expr = offset_symbol_in_expression(expr, vector_map_param, i)
+            else:
+                if l_op == c:
+                    expr = f"({l_op} {op} {r_op})"
+                else:
+                    expr = f"({l_op} {op} {r_op}{i})"
+            code_lines.append(f"{lhs}[{i}] = {expr};")
         node.code = dace.properties.CodeBlock(code="\n".join(code_lines) + "\n", language=dace.Language.CPP)
-        return
-
-    # 2) Single-input with constant: array or scalar combined with a symbol/constant
-    if ttype == tutil.TaskletType.ARRAY_SYMBOL:
-        # rhs1 is an array, constant1 is the symbol/constant -> use constant template (op prefixed with 'c')
-        set_template(rhs1, None, None, c2, lhs, op)
-        return
-
-    if ttype == tutil.TaskletType.SCALAR_SYMBOL:
-        # rhs1 is a scalar, constant1 is the symbol -> generate explicit per-lane assignments
-        # e.g., for i in 0..vw-1: lhs[i] = rhs1 op constant1;
-        code_lines = []
-        # Depending on if the symbol is inside the SDFG or not two approaches might be necessary
-
-        available_symbols = state.symbols_defined_at(node)
-        if str(c1) in available_symbols:
-            # This means we need to add lane id
-            for i in range(vw):
-                # If detect inner symbol used we need to correctly offset it to have + lane_id
-                expr_str = f"({rhs1} {op} {c1})"
-                corrected_expr_str = offset_symbol_in_expression(expr_str, vector_map_param, i)
-                code_lines.append(f"{lhs}[{i}] = {corrected_expr_str};")
-        else:
-            # This means we need to access by offset
-            for i in range(vw):
-                # If detect inner symbol used we need to correctly offset it to have + lane_id
-                code_lines.append(f"{lhs}[{i}] = ({rhs1} {op} {c1}{i});")
-
-        node.code = dace.properties.CodeBlock(code="\n".join(code_lines) + "\n", language=dace.Language.CPP)
-        return
-
-    # 3) Two-input binary ops
-    if ttype == tutil.TaskletType.ARRAY_ARRAY:
-        # array op array
-        set_template(rhs1, rhs2, None, None, lhs, op)
-        return
-
-    if ttype == tutil.TaskletType.ARRAY_SCALAR:
-        # array op scalar -> use constant template (prefix op with 'c')
-        # note: info stores rhs1 as the array name and constant1 as the scalar name
-        set_template(rhs1, None, None, c2, lhs, op)
-        return
-
-    if ttype == tutil.TaskletType.SCALAR_ARRAY:
-        # array op scalar -> use constant template (prefix op with 'c')
-        # note: info stores rhs1 as the array name and constant1 as the scalar name
-        set_template(None, rhs2, c1, None, lhs, op)
-        return
-
-    if ttype == tutil.TaskletType.SCALAR_SCALAR:
-        # preserved original behavior: this was saved + raised in classifier
-        # keep behavior consistent by raising here as well (classifier already saved)
-        raise Exception("Unhandled: two scalar operands (SCALAR_SCALAR).")
-
-    # 4) zero-input (symbol-symbol)
-    if ttype == tutil.TaskletType.SYMBOL_SYMBOL:
-        # we need to decide whether lhs is an array or scalar by checking SDFG arrays
-        # get out-edge for the lhs connector to obtain the data descriptor name
-        out_edges = {oe for oe in state.out_edges_by_connector(node, lhs)}
-        assert len(out_edges) == 1, f"expected 1 out-edge for connector {lhs}, found {len(out_edges)}"
-        lhs_data_name = out_edges.pop().data.data
-        lhs_data = state.sdfg.arrays[lhs_data_name]
-
-        expr = f"{c1} {op} {c2}"
+    elif ttype == tutil.TaskletType.SCALAR_SCALAR:
+        raise Exception("Unhandled: SCALAR_SCALAR tasklets")
+    elif ttype == tutil.TaskletType.SYMBOL_SYMBOL:
+        out_edges = list(state.out_edges_by_connector(node, lhs))
+        assert len(out_edges) == 1
+        lhs_data = state.sdfg.arrays[out_edges[0].data.data]
+        l_op = rhs1 if rhs1 is not None else c1
+        r_op = rhs2 if rhs2 is not None else c2
+        c = c1 if c1 is not None else c2
+        expr = f"({l_op} {op} {r_op})"
         if isinstance(lhs_data, dace.data.Array):
-            # replicate across lanes
-            code_lines = []
-            for i in range(vw):
-                # Any appereance of the vector map param `j` needs to be replaced with `j + lane_id`
-                code_lines.append(f"{lhs}[{i}] = {offset_symbol_in_expression(expr, vector_map_param, i)};")
-            node.code = dace.properties.CodeBlock(code="\n".join(code_lines) + "\n", language=dace.Language.CPP)
+            node.code = dace.properties.CodeBlock(code="\n".join(
+                f"//{ttype}", [f"{lhs}[{i}] = {offset_symbol_in_expression(expr, c, i)};" for i in range(vw)]) + "\n",
+                                                  language=dace.Language.CPP)
         else:
-            # scalar lhs
             node.code = dace.properties.CodeBlock(code=f"{lhs} = {expr};\n", language=dace.Language.CPP)
-        return
-
-    # Fallback: unknown classification
-    raise NotImplementedError(f"Unhandled TaskletType in instantiation: {ttype}")
+    elif ttype == tutil.TaskletType.UNARY_SYMBOL:
+        out_edges = list(state.out_edges_by_connector(node, lhs))
+        assert len(out_edges) == 1
+        lhs_data: str = state.sdfg.arrays[out_edges[0].data.data]
+        expr_str: str = node.code.as_string
+        c = c1 if c1 is not None else c2
+        raise Exception(rhs1, rhs2, c1, c2)
+        if isinstance(lhs_data, dace.data.Array):
+            node.code = dace.properties.CodeBlock(code="\n".join(
+                f"//{ttype}", [f"{lhs}[{i}] = {offset_symbol_in_expression(expr_str, c, i)};"
+                               for i in range(vw)]) + "\n",
+                                                  language=dace.Language.CPP)
+        else:
+            node.code = dace.properties.CodeBlock(code=f"{lhs} = {expr};\n", language=dace.Language.CPP)
+    else:
+        raise NotImplementedError(f"Unhandled TaskletType: {ttype}, from: {node.code.as_string} ({node})")
 
 
 def duplicate_access(state: dace.SDFGState, node: dace.nodes.AccessNode,

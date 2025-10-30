@@ -298,7 +298,7 @@ class Vectorize(ppl.Pass):
         for inner_state in inner_sdfg.all_states():
             # Skip the data data that are still scalar and source nodes
             scalar_source_data = {n.data for _, n in scalar_source_nodes}
-            array_source_data = {n.data for _, n in array_source_nodes}
+            array_data = {n.data for _, n in array_source_nodes}.union({n.data for _, n in array_sink_nodes})
             # Scalar source nodes can't be replaced.
             # These are non-transient scalars of the SDFG as we do not know how to expand them.
             # If it was a scalar view of an array that could be expanded, that should have been done before
@@ -307,12 +307,14 @@ class Vectorize(ppl.Pass):
             edges_to_replace = {
                 edge
                 for edge in inner_state.edges() if edge not in modified_edges and edge.data is not None
-                and edge.data.data not in scalar_source_data and edge.data.data not in array_source_data
+                and edge.data.data not in scalar_source_data and edge.data.data not in array_data
             }
             old_subset = dace.subsets.Range([(0, 0, 1)])
             new_subset = dace.subsets.Range([(0, self.vector_width - 1, 1)])
             replace_memlet_expression(inner_state, edges_to_replace, old_subset, new_subset, True, modified_edges,
                                       self.vector_op_numeric_type)
+
+        state.sdfg.save("x3_6.sdfg")
 
         # 4.1 Do it for arrays
         # Expand memlets accessing arrays, consider nested SDFG receives A[0:2, 0:2, 0:X] as a view
@@ -321,11 +323,11 @@ class Vectorize(ppl.Pass):
         # This should be performed only for arrays.
         for inner_state in inner_sdfg.all_states():
             # Skip the data data that are still scalar and source nodes
-            array_source_data = {n.data for _, n in array_source_nodes}
+            array_data = {n.data for _, n in array_source_nodes}.union({n.data for _, n in array_sink_nodes})
             edges_to_replace = {
                 edge
                 for edge in inner_state.edges()
-                if edge not in modified_edges and edge.data is not None and edge.data.data in array_source_data
+                if edge not in modified_edges and edge.data is not None and edge.data.data in array_data
             }
             expand_memlet_expression(inner_state, edges_to_replace, modified_edges, self.vector_width)
 
@@ -515,7 +517,7 @@ class Vectorize(ppl.Pass):
                             )
                         #nv = nv.replace(ca, f"{ca}[{i}]")
                         nv_before = nv
-                        nv = token_replace(nv, ca, f"{ca}[{i}]")
+                        nv = cutil.token_replace_dict(nv, {ca: f"{ca}[{i}]"})
                         #print(f"Before: {nv_before}, After replacing {ca} with {ca}[{i}]: {nv}")
                     new_assignments[f"{k}{i}"] = nv
                     if i == 0:
