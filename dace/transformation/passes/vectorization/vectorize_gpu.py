@@ -1,20 +1,16 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Dict, Iterator
+from typing import Iterator
 import dace
 from dace.transformation import Pass, pass_pipeline as ppl
-from dace.transformation.pass_pipeline import Modifies
 from dace.transformation.passes.clean_data_to_scalar_slice_to_tasklet_pattern import CleanDataToScalarSliceToTaskletPattern
 from dace.transformation.passes.duplicate_all_memlets_sharing_same_in_connector import DuplicateAllMemletsSharingSingleMapOutConnector
 from dace.transformation.passes.split_tasklets import SplitTasklets
 from dace.transformation.passes.tasklet_preprocessing_passes import PowerOperatorExpansion, RemoveFPTypeCasts, RemoveIntTypeCasts
 from dace.transformation.passes import InlineSDFGs
-from dace.transformation.passes.explicit_vectorization import ExplicitVectorization
+from dace.transformation.passes.vectorization.vectorize import Vectorize
 from dace.transformation.passes.eliminate_branches import EliminateBranches
-from dace.transformation.passes.remove_redundant_assignment_tasklets import RemoveRedundantAssignmentTasklets
-import dace.sdfg.utils as sdutil
 
-
-class ExplicitVectorizationPipelineGPU(ppl.Pipeline):
+class VectorizeGPU(ppl.Pipeline):
     _gpu_global_code = """
 template<typename T>
 __host__ __device__ __forceinline__ void vector_mult(T * __restrict__ c, const T * __restrict__ a, const T * __restrict__ b) {{
@@ -98,7 +94,7 @@ __host__ __device__ __forceinline__ void vector_copy(T * __restrict__ dst, const
             CleanDataToScalarSliceToTaskletPattern(),
             InlineSDFGs(),
             DuplicateAllMemletsSharingSingleMapOutConnector(),
-            ExplicitVectorization(
+            Vectorize(
                 templates={
                     "*": "vector_mult({lhs}, {rhs1}, {rhs2});",
                     "+": "vector_add({lhs}, {rhs1}, {rhs2});",
@@ -109,7 +105,7 @@ __host__ __device__ __forceinline__ void vector_copy(T * __restrict__ dst, const
                 vector_width=vector_width,
                 vector_input_storage=dace.dtypes.StorageType.Register,
                 vector_output_storage=dace.dtypes.StorageType.Register,
-                global_code=ExplicitVectorizationPipelineGPU._gpu_global_code.format(vector_width=vector_width),
+                global_code=VectorizeGPU._gpu_global_code.format(vector_width=vector_width),
                 global_code_location="frame",
                 vector_op_numeric_type=dace.float64,
             )
@@ -120,7 +116,7 @@ __host__ __device__ __forceinline__ void vector_copy(T * __restrict__ dst, const
         """
         Iterates over passes in the pipeline, potentially multiple times based on which elements were modified
         in the pass.
-        Note that this method may be overridden by subclasses to modify pass order.
+        Vectorization pipeline needs to run only once!
 
         :param sdfg: The SDFG on which the pipeline is currently being applied
         """
