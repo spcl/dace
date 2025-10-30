@@ -110,6 +110,28 @@ def replace_memlet_expression(state: SDFGState, edges: Iterable[Edge[Memlet]], o
             edge.data = dace.memlet.Memlet(data=edge.data.data, subset=copy.deepcopy(new_subset_expr))
 
 
+def expand_memlet_expression(state: SDFGState, edges: Iterable[Edge[Memlet]],
+                              edges_to_skip: Set[Edge[Memlet]], vector_length:int) -> Set[str]:
+    for edge in edges:
+        if edge.data is not None:
+            assert all([((e+1-b)//s) == 1 for b,e,s in edge.data.subset])
+            if edge in edges_to_skip:
+                raise Exception("AA")
+
+            new_subset_list = []
+            for (b,e,s), stride in zip(edge.data.subset, state.sdfg.arrays[edge.data.data].strides):
+                if stride == 1:
+                    assert b == e
+                    assert s == 1
+                    new_subset_list.append((b, b+vector_length-1, s))
+                else:
+                    assert b == e
+                    assert s == 1
+                    new_subset_list.append((b,e,s))
+            new_subset_expr = dace.subsets.Range(new_subset_list)
+            edge.data = dace.memlet.Memlet(data=edge.data.data, subset=copy.deepcopy(new_subset_expr))
+
+
 def has_maps(sdfg: dace.SDFG):
     for n, g in sdfg.all_nodes_recursive():
         if isinstance(n, dace.nodes.MapEntry):
@@ -1025,6 +1047,18 @@ def get_scalar_source_nodes(sdfg: dace.SDFG,
                         source_nodes.append((state, node))
     return source_nodes
 
+def get_array_source_nodes(sdfg: dace.SDFG,
+                            non_transient_only: bool) -> List[Tuple[dace.SDFGState, dace.nodes.AccessNode]]:
+    source_nodes = list()
+    for state in sdfg.all_states():
+        for node in state.nodes():
+            if (isinstance(node, dace.nodes.AccessNode) and state.in_degree(node) == 0):
+                arr = state.sdfg.arrays[node.data]
+                if (isinstance(arr, dace.data.Array) and arr.shape != (1, )):
+                    if non_transient_only is False or arr.transient is False:
+                        source_nodes.append((state, node))
+    return source_nodes
+
 
 def get_scalar_sink_nodes(sdfg: dace.SDFG,
                           non_transient_only: bool) -> List[Tuple[dace.SDFGState, dace.nodes.AccessNode]]:
@@ -1038,6 +1072,18 @@ def get_scalar_sink_nodes(sdfg: dace.SDFG,
                         sink_nodes.append((state, node))
     return sink_nodes
 
+
+def get_array_sink_nodes(sdfg: dace.SDFG,
+                          non_transient_only: bool) -> List[Tuple[dace.SDFGState, dace.nodes.AccessNode]]:
+    sink_nodes = list()
+    for state in sdfg.all_states():
+        for node in state.nodes():
+            if (isinstance(node, dace.nodes.AccessNode) and state.out_degree(node) == 0):
+                arr = state.sdfg.arrays[node.data]
+                if isinstance(arr, dace.data.Array) and arr.shape != (1, ):
+                    if non_transient_only is False or arr.transient is False:
+                        sink_nodes.append((state, node))
+    return sink_nodes
 
 def add_transient_arrays_from_list(sdfg: dace.SDFG, arr_name_shape_storage_dtype: Iterable[Tuple[str, Any, Any,
                                                                                                  Any]]) -> None:
@@ -1252,3 +1298,88 @@ def assert_symbols_in_parent_map_symbols(missing_symbols: Set[str], state: dace.
         assert loop_var in loop_symbols, f"{loop_var} not in {loop_symbols}"
 
     return loop_vars
+
+
+def find_symbol_assignment(sdfg: dace.SDFG, sym_name: str) -> str:
+    # Pre-condition for vectorization
+    assert all({isinstance(s, dace.SDFGState) for s in sdfg.nodes()})
+    sink_state = {s for s in sdfg.nodes() if sdfg.out_degree(s) == 0}.pop()
+    edges_to_check = sink_state.parent_graph.in_edges(sink_state)
+    while edges_to_check:
+        edge = edges_to_check.pop()
+
+        for k, v in edge.data.assignments.items():
+            if k == sym_name:
+                return v
+
+        edges_to_check += sink_state.parent_graph.in_edges(edge.src)
+
+    return None
+    #raise Exception("Symbol assignment not found")
+
+def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.NestedSDFG, parent_state: SDFGState) -> Set[str]:
+    # Pre condition first parent maps is over the contiguous dimension and right most param if multi-dimensional
+    parent_map = parent_state.scope_dict()[parent_nsdfg_node]
+    assert isinstance(parent_map, dace.nodes.MapEntry)
+    map_param = parent_map.map.params[-1]
+
+    all_accesses_to_arrays = collect_accesses_to_array_name(sdfg)
+
+    for state in sdfg.all_states():
+        for edge in state.edges():
+            if edge.data.other_subset is not None:
+                raise NotImplementedError("other subset support not implemented")
+            if edge.data.data is not None:
+                pass
+
+    array_is_vectorizable = {k: True for k in all_accesses_to_arrays}
+
+    for arr_name, accesses in all_accesses_to_arrays.items():
+        for access_subset in accesses:
+            # Get the stride 1 dimension
+            stride_one_dim = {i for i, stride in enumerate(sdfg.arrays[arr_name].strides) if stride == 1}.pop()
+            b,e,s = access_subset[stride_one_dim]
+            assert b == e
+            assert s == 1
+            if isinstance(b, dace.symbolic.SymExpr):
+                free_syms = b.free_syms
+                for free_sym in free_syms:
+                    # Accessing map param is ok
+                    if str(free_sym) == map_param:
+                        continue
+                    else:
+                        # Other free symbols should not have indirect accesses
+                        assignment = find_symbol_assignment(sdfg, str(free_sym))
+                        assert assignment is not None
+                        assignment_expr = dace.symbolic.SymExpr(assignment)
+                        # Define functions to ignore (common arithmetic + piecewise + rounding)
+                        ignored = {
+                            sympy.sin, sympy.cos, sympy.tan, sympy.exp, sympy.log, sympy.sqrt,
+                            sympy.Abs, sympy.floor, sympy.ceiling, sympy.Min, sympy.Max,
+                            sympy.asin, sympy.acos, sympy.atan, sympy.sinh, sympy.cosh, sympy.tanh,
+                            sympy.asinh, sympy.acosh, sympy.atanh
+                        }
+
+                        # Collect only user-defined or nonstandard functions
+                        funcs = {f for f in assignment_expr.atoms(sympy.Function) if f.func not in ignored}
+                        if len(funcs) != 0:
+                            print(f"Indirect access detected: {funcs} for {arr_name}, is not vectorizable")
+                        array_is_vectorizable[arr_name] = False
+
+    return array_is_vectorizable
+
+
+def collect_accesses_to_array_name(sdfg: dace.SDFG) -> Dict[Tuple[str, dace.subsets.Range], str]:
+    d = dict()
+    for state in sdfg.all_states():
+        for edge in state.edges():
+            if edge.data.other_subset is not None:
+                raise NotImplementedError("other subset support not implemented")
+            if edge.data.data is not None:
+                if edge.data.data not in d:
+                    d[edge.data.data] = set()
+                d[edge.data.data].add(edge.data.subset)
+    return d
+
+def collect_subset_to_vector_array_name(state: SDFGState) -> Dict[Tuple[str, dace.subsets.Range], str]:
+    pass
