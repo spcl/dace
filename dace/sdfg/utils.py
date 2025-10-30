@@ -594,7 +594,7 @@ def merge_maps(
     return merged_entry, merged_exit
 
 
-def canonicalize_memlet_trees_for_scope(
+def canonicalize_memlet_trees_of_scope_node(
     state: SDFGState,
     scope_node: Union[nd.EntryNode, nd.ExitNode],
 ) -> int:
@@ -693,7 +693,7 @@ def canonicalize_memlet_trees_for_map(
 ) -> int:
     """Canonicalize the Memlets of an entire Map scope.
 
-    This function is similar to `canonicalize_memlet_trees_for_scope()`, but it acts
+    This function is similar to `canonicalize_memlet_trees_of_scope_node()`, but it acts
     on both scope nodes, i.e. `MapEntry` and `MapExit`, that constitute the Map scope.
     The function returns the number of canonicalized Memlets.
 
@@ -708,8 +708,8 @@ def canonicalize_memlet_trees_for_map(
         mx = map_node
         me = state.entry_node(mx)
 
-    ret = canonicalize_memlet_trees_for_scope(state, me)
-    ret += canonicalize_memlet_trees_for_scope(state, mx)
+    ret = canonicalize_memlet_trees_of_scope_node(state, me)
+    ret += canonicalize_memlet_trees_of_scope_node(state, mx)
     return ret
 
 
@@ -719,7 +719,7 @@ def canonicalize_memlet_trees(
 ) -> int:
     """Canonicalize the Memlet trees of all scopes in the SDFG.
 
-    This function runs `canonicalize_memlet_trees_for_scope()` on all scopes
+    This function runs `canonicalize_memlet_trees_of_scope_node()` on all scopes
     in the SDFG. Note that this function does not recursively processes
     nested SDFGs.
 
@@ -740,9 +740,9 @@ def canonicalize_memlet_trees(
         while len(queue) > 0:
             for scope in queue:
                 if scope.entry is not None:
-                    total_modified_memlets += canonicalize_memlet_trees_for_scope(state, scope.entry)
+                    total_modified_memlets += canonicalize_memlet_trees_of_scope_node(state, scope.entry)
                 if scope.exit is not None:
-                    total_modified_memlets += canonicalize_memlet_trees_for_scope(state, scope.exit)
+                    total_modified_memlets += canonicalize_memlet_trees_of_scope_node(state, scope.exit)
                 if scope.parent is not None:
                     next_queue.append(scope.parent)
             queue = next_queue
