@@ -181,6 +181,7 @@ class ExplicitVectorization(ppl.Pass):
         # 1.3.1 Unless has flops in that case we can move it, if it involved in the last floating point operation
         # 1.4 Scalar sinks are supported as they can be de-duplicated when writing, track them
         # 1.5 Detect indirect accesses that need a packed intermediate storage
+        # 1.6 Each access parameter needs to becomes is own array make its own array
 
         # After replacing all arrays to match, vectorize:
         # Step 2. Duplicate all interstate symbols to respect lane-ids
@@ -200,6 +201,7 @@ class ExplicitVectorization(ppl.Pass):
             for arr_name in transient_arrays if inner_sdfg.arrays[arr_name].shape == (self.vector_width, )
         }
         non_vector_width_transient_arrays = transient_arrays - vector_width_transient_arrays
+        print("Non vector width transient arrays:", non_vector_width_transient_arrays)
         replace_arrays_with_new_shape(inner_sdfg, vector_width_transient_arrays, (self.vector_width, ),
                                       self.vector_op_numeric_type)
         replace_arrays_with_new_shape(inner_sdfg, non_vector_width_transient_arrays, (self.vector_width, ), None)
@@ -223,7 +225,10 @@ class ExplicitVectorization(ppl.Pass):
         # 1.2
         scalar_source_nodes: List[Tuple[dace.SDFGState,
                                         dace.nodes.AccessNode]] = get_scalar_source_nodes(inner_sdfg, True)
+        array_source_nodes: List[Tuple[dace.SDFGState,
+                                        dace.nodes.AccessNode]] = get_array_source_nodes(inner_sdfg, True)
         scalar_sink_nodes: List[Tuple[dace.SDFGState, dace.nodes.AccessNode]] = get_scalar_sink_nodes(inner_sdfg, True)
+        array_sink_nodes: List[Tuple[dace.SDFGState, dace.nodes.AccessNode]] = get_array_sink_nodes(inner_sdfg, True)
         print("CXC", scalar_source_nodes, scalar_sink_nodes)
 
         # 1.3 and 1.3.1
@@ -249,23 +254,39 @@ class ExplicitVectorization(ppl.Pass):
         # No scalar sink nodes should be left
 
         # 1.5
-        non_scalar_non_vector_width_arrays = {
-            (arr_name + "_packed", (self.vector_width, ), self.vector_input_storage, arr.dtype)
-            for arr_name, arr in inner_sdfg.arrays.items()
-            if isinstance(arr, dace.data.Array) and (arr.shape != (1, ) and arr.shape != (self.vector_width, ))
-        }
-        array_accessed_to_be_packed = {
-            arr_name[:-len("_packed")]
-            for arr_name, _, _, _ in non_scalar_non_vector_width_arrays
-        }
-        add_transient_arrays_from_list(inner_sdfg, non_scalar_non_vector_width_arrays)
+        # Generate subset to packed array name map
+        # This analysis needs to be more detailed
+        # Consider x = A[0, 0, _for_it_52]
+        # This can be vectorized but the input shape will not be the (1,) or (vector_width,)
+        # use the utility function that returns the accesses that are vectorizable:
+        # vectorizable access means that all subets to an array depends purely on constants or loop parameters
+        vectorizable_arrays_dict = collect_vectorizable_arrays(inner_sdfg, nsdfg, state)
+        vectorizable_arrays = {k for k, v in vectorizable_arrays_dict.items() if v is True}
+        non_vectorizable_arrays = {k for k, v in vectorizable_arrays_dict.items() if v is False}
+
+        print("VECTORIZABLE ARRAYS", vectorizable_arrays)
+        print("NON-VECTORIZABLE ARRAYS", non_vectorizable_arrays)
+
+        #non_scalar_non_vector_width_arrays = {
+        #    (arr_name + "_packed", (self.vector_width, ), self.vector_input_storage, arr.dtype)
+        #    for arr_name, arr in inner_sdfg.arrays.items()
+        #    if isinstance(arr, dace.data.Array) and (arr.shape != (1, ) and arr.shape != (self.vector_width, ))
+        #}
+        #array_accessed_to_be_packed = {
+        #    arr_name[:-len("_packed")]
+        #    for arr_name, _, _, _ in non_scalar_non_vector_width_arrays
+        #}
+        #add_transient_arrays_from_list(inner_sdfg, non_scalar_non_vector_width_arrays)
+        add_transient_arrays_from_list(inner_sdfg, non_vectorizable_arrays)
 
         modified_nodes: Set[dace.nodes.Node] = set()
         modified_edges: Set[Edge[Memlet]] = set()
 
         # 2 and 2.1
         inner_sdfg.save("x1.sdfg")
-        new_mn, new_me = self._generate_loads_to_packed_storage(inner_sdfg, array_accessed_to_be_packed,
+        #new_mn, new_me = self._generate_loads_to_packed_storage(inner_sdfg, array_accessed_to_be_packed,
+        #                                                        vector_width_arrays)
+        new_mn, new_me = self._generate_loads_to_packed_storage(inner_sdfg, non_vectorizable_arrays,
                                                                 vector_width_arrays)
         modified_nodes = modified_nodes.union(new_mn)
         modified_edges = modified_edges.union(new_me)
@@ -273,8 +294,9 @@ class ExplicitVectorization(ppl.Pass):
         inner_sdfg.save("x2.sdfg")
 
         # 3
+        print("Scalar sink nodes:", scalar_sink_nodes)
         check_writes_to_scalar_sinks_happen_through_assign_tasklets(inner_sdfg, scalar_sink_nodes)
-        new_mn, new_me = self._duplicate_unstructured_writes(inner_sdfg)
+        new_mn, new_me = self._duplicate_unstructured_writes(inner_sdfg, non_vectorizable_arrays)
         modified_nodes = modified_nodes.union(new_mn)
         modified_edges = modified_edges.union(new_me)
 
@@ -294,10 +316,25 @@ class ExplicitVectorization(ppl.Pass):
             replace_memlet_expression(inner_state, edges_to_replace, old_subset, new_subset, True, modified_edges,
                                       self.vector_op_numeric_type)
 
+        # Do it for arrays
+        # TODO: ALSO NEED TO EXPAND MEMLET EXPRESSIONS of arrays
+        for inner_state in inner_sdfg.all_states():
+            # Skip the data data that are still scalar and source nodes
+            source_data = {n.data for s, n in array_source_nodes}
+            edges_to_replace = {
+                e
+                for e in inner_state.edges()
+                if e not in modified_edges and e.data is not None and e.data.data in source_data
+            }
+            old_subset = dace.subsets.Range([(0, 0, 1)])
+            new_subset = dace.subsets.Range([(0, self.vector_width - 1, 1)])
+            #replace_memlet_expression(inner_state, edges_to_replace, old_subset, new_subset, True, modified_edges,
+            #                          self.vector_op_numeric_type)
+            expand_memlet_expression(inner_state, edges_to_replace, modified_edges, self.vector_width)
+
         state.sdfg.save("x4.sdfg")
 
         # Extend interstate edges for all symbols used in tasklets / or interstate edges that access vectorized data
-        # TODO
         for edge in inner_sdfg.all_interstate_edges():
             candidate_arrays = vector_width_arrays
             free_syms = set()
@@ -307,6 +344,7 @@ class ExplicitVectorization(ppl.Pass):
             print("BBB", free_syms, {fs in candidate_arrays for fs in free_syms})
             if any({fs in candidate_arrays for fs in free_syms}):
                 self._expand_interstate_assignment(inner_sdfg, edge, free_syms, candidate_arrays)
+
 
         # 5
         for inner_state in inner_sdfg.all_states():
@@ -326,6 +364,7 @@ class ExplicitVectorization(ppl.Pass):
         #    #    if e.data.data is not None:
         #    #        if state.sdfg.arrays[e.data.data].dtype != self.vector_op_numeric_type and state.sdfg.arrays[e.data.data].transient is True:
         #    #            state.sdfg.arrays[e.data.data].dtype = self.vector_op_numeric_type
+        state.sdfg.save("x4_5.sdfg")
 
         # Add missing symbols
         print("OOOOOOO", inner_sdfg.free_symbols, nsdfg.symbol_mapping)
@@ -349,7 +388,7 @@ class ExplicitVectorization(ppl.Pass):
 
         state.sdfg.save("x5.sdfg")
 
-    def _duplicate_unstructured_writes(self, inner_sdfg: dace.SDFG):
+    def _duplicate_unstructured_writes(self, inner_sdfg: dace.SDFG, non_vectorizable_arrays: Set[str]):
         modified_edges = set()
         modified_nodes = set()
         for state in inner_sdfg.all_states():
@@ -365,7 +404,8 @@ class ExplicitVectorization(ppl.Pass):
                             raise Exception(
                                 "At this point of the pass, no write to non-transient scalar sinks should remain")
                     if arr.transient is False and (isinstance(arr, dace.data.Array) and
-                                                   (arr.shape != (1, ) and arr.shape != (self.vector_width, ))):
+                                                   (arr.shape != (1, ) and arr.shape != (self.vector_width, )) and 
+                                                   node.data in non_vectorizable_arrays):
                         touched_nodes, touched_edges = duplicate_access(state, node, self.vector_width)
                         modified_edges = modified_edges.union(touched_edges)
                         modified_nodes = modified_nodes.union(touched_nodes)
@@ -458,6 +498,7 @@ class ExplicitVectorization(ppl.Pass):
         # k0 = idx[0] + idy[0]
         for k, v in edge.data.assignments.items():
             if k in syms:
+                
                 for i in range(0, self.vector_width):
                     # Get all scalar accesses from v and replace with the array equivalent
                     # if we have j = k1 + k2
@@ -489,14 +530,19 @@ class ExplicitVectorization(ppl.Pass):
                         nv = token_replace(nv, ca, f"{ca}[{i}]")
                         #print(f"Before: {nv_before}, After replacing {ca} with {ca}[{i}]: {nv}")
                     new_assignments[f"{k}{i}"] = nv
+                    if i == 0:
+                        new_assignments[k] = nv
                 duplicated_symbols.add(k)
                 syms_to_rm.add(k)
             else:
                 new_assignments[k] = v
         edge.data.assignments = new_assignments
-        for sym in syms_to_rm:
-            if sym in sdfg.symbols:
-                sdfg.remove_symbol(sym)
+        #for sym in syms_to_rm:
+        #    print("TRY REMOVE", sym)
+        #    if sym in sdfg.symbols:
+        #        print(f"SYM NOT IN {sdfg.symbols}")
+        #        sdfg.remove_symbol(str(sym))
+        #        assert (str(sym) not in sdfg.symbols)
         return duplicated_symbols
 
     def _expand_interstate_assignments(self, sdfg: dace.SDFG, syms: Set[str], candidate_arrays: Set[str]):

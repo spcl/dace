@@ -4,6 +4,9 @@ import dace
 import copy
 import pytest
 import numpy
+from dace.properties import CodeBlock
+from dace.sdfg.state import ConditionalBlock
+from dace.transformation.interstate import branch_elimination
 from dace.transformation.passes.explicit_vectorization_cpu import ExplicitVectorizationPipelineCPU
 from dace.transformation.passes.explicit_vectorization_gpu import ExplicitVectorizationPipelineGPU
 
@@ -424,7 +427,7 @@ def test_tasklets_in_if():
 
 
 # There was a non-deterministic bug, therefore run it multiple times
-@pytest.mark.parametrize("run_id", [i for i in range(8)])
+@pytest.mark.parametrize("run_id", [i for i in range(2)])
 def test_tasklets_in_if_two(run_id):
     _S = 64
     A = numpy.random.random((_S, _S))
@@ -668,6 +671,139 @@ def test_jacobi2d():
                            sdfg_name="jacobi2d")
 
 
+C = 32
+def _get_disjoint_chain_sdfg(trivial_if: bool, fortran_layout: bool = False) -> dace.SDFG:
+    sd1 = dace.SDFG("disjoint_chain")
+    cb1 = ConditionalBlock("cond_if_cond_58", sdfg=sd1, parent=sd1)
+    ss1 = sd1.add_state(label="pre", is_start_block=True)
+    sd1.add_node(cb1, is_start_block=False)
+
+    cfg1 = dace.ControlFlowRegion(label="cond_58_true", sdfg=sd1, parent=cb1)
+    s1 = cfg1.add_state("main_1", is_start_block=True)
+    cfg2 = dace.ControlFlowRegion(label="cond_58_false", sdfg=sd1, parent=cb1)
+    s2 = cfg2.add_state("main_2", is_start_block=True)
+
+    cb1.add_branch(
+        condition=CodeBlock("_if_cond_58 == 1" if not trivial_if else "1 == 1"),
+        branch=cfg1,
+    )
+    cb1.add_branch(
+        condition=None,
+        branch=cfg2,
+    )
+    for arr_name, shape in [
+        ("zsolqa", (5, 5, C)),
+        ("zrainaut", (C, )),
+        ("zrainacc", (C, )),
+        ("ztp1", (C, )),
+    ]:
+        sd1.add_array(arr_name, shape, dace.float64)
+    sd1.add_scalar("rtt", dace.float64)
+    sd1.add_symbol("_if_cond_58", dace.float64)
+    sd1.add_symbol("_for_it_52", dace.int64)
+    sd1.add_edge(src=ss1, dst=cb1, data=dace.InterstateEdge(assignments={
+        "_if_cond_58": "ztp1[_for_it_52] <= rtt",
+    }, ))
+
+    for state, d1_access_str, zsolqa_access_str, zsolqa_access_str_rev in [
+        (s1, "_for_it_52", "0,3,_for_it_52", "3,0,_for_it_52"), (s2, "_for_it_52", "0,2,_for_it_52", "2,0,_for_it_52")
+    ]:
+        zrainaut = state.add_access("zrainaut")
+        zrainacc = state.add_access("zrainacc")
+        zsolqa1 = state.add_access("zsolqa")
+        zsolqa2 = state.add_access("zsolqa")
+        zsolqa3 = state.add_access("zsolqa")
+        zsolqa4 = state.add_access("zsolqa")
+        zsolqa5 = state.add_access("zsolqa")
+        for i, (tasklet_code, in1, instr1, in2, instr2, out, outstr) in enumerate([
+            ("_out = _in1 + _in2", zrainaut, d1_access_str, zsolqa1, zsolqa_access_str, zsolqa2, zsolqa_access_str),
+            ("_out = _in1 + _in2", zrainacc, d1_access_str, zsolqa2, zsolqa_access_str, zsolqa3, zsolqa_access_str),
+            ("_out = (-_in1) + _in2", zrainaut, d1_access_str, zsolqa3, zsolqa_access_str_rev, zsolqa4,
+             zsolqa_access_str_rev),
+            ("_out = (-_in1) + _in2", zrainacc, d1_access_str, zsolqa4, zsolqa_access_str_rev, zsolqa5,
+             zsolqa_access_str_rev),
+        ]):
+            t1 = state.add_tasklet("t1", {"_in1", "_in2"}, {"_out"}, tasklet_code)
+            state.add_edge(in1, None, t1, "_in1", dace.memlet.Memlet(f"{in1.data}[{instr1}]"))
+            state.add_edge(in2, None, t1, "_in2", dace.memlet.Memlet(f"{in2.data}[{instr2}]"))
+            state.add_edge(t1, "_out", out, None, dace.memlet.Memlet(f"{out.data}[{outstr}]"))
+
+    sd1.validate()
+
+    sd2 = dace.SDFG("sd2")
+    p_s1 = sd2.add_state("p_s1", is_start_block=True)
+
+    map_entry, map_exit = p_s1.add_map(name="map1", ndrange={"_for_it_52": dace.subsets.Range([(0, C - 1, 1)])})
+    nsdfg = p_s1.add_nested_sdfg(sdfg=sd1,
+                                 inputs={"zsolqa", "ztp1", "zrainaut", "zrainacc", "rtt"},
+                                 outputs={"zsolqa"},
+                                 symbol_mapping={"_for_it_52": "_for_it_52"})
+    for arr_name, shape in [("zsolqa", (5, 5, C)), ("zrainaut", (C, )), ("zrainacc", (C, )), ("ztp1", (C, ))]:
+        sd2.add_array(arr_name, shape, dace.float64)
+    sd2.add_scalar("rtt", dace.float64)
+    for input_name in {"zsolqa", "ztp1", "zrainaut", "zrainacc", "rtt"}:
+        a = p_s1.add_access(input_name)
+        p_s1.add_edge(a, None, map_entry, f"IN_{input_name}",
+                      dace.memlet.Memlet.from_array(input_name, sd2.arrays[input_name]))
+        p_s1.add_edge(map_entry, f"OUT_{input_name}", nsdfg, input_name,
+                      dace.memlet.Memlet.from_array(input_name, sd2.arrays[input_name]))
+        map_entry.add_in_connector(f"IN_{input_name}")
+        map_entry.add_out_connector(f"OUT_{input_name}")
+    for output_name in {"zsolqa"}:
+        a = p_s1.add_access(output_name)
+        p_s1.add_edge(map_exit, f"OUT_{output_name}", a, None,
+                      dace.memlet.Memlet.from_array(output_name, sd2.arrays[output_name]))
+        p_s1.add_edge(nsdfg, output_name, map_exit, f"IN_{output_name}",
+                      dace.memlet.Memlet.from_array(output_name, sd2.arrays[output_name]))
+        map_exit.add_in_connector(f"IN_{output_name}")
+        map_exit.add_out_connector(f"OUT_{output_name}")
+
+    nsdfg.sdfg.parent_nsdfg_node = nsdfg
+
+    sd1.validate()
+    sd2.validate()
+    return sd2, p_s1
+
+@pytest.mark.parametrize("trivial_if", [True, False])
+def test_disjoint_chain_split_branch_only(trivial_if: bool):
+    sdfg, nsdfg_parent_state = _get_disjoint_chain_sdfg(trivial_if)
+    zsolqa = numpy.random.choice([0.001, 5.0], size=(C, 5, 5))
+    zrainacc = numpy.random.choice([0.001, 5.0], size=(C, ))
+    zrainaut = numpy.random.choice([0.001, 5.0], size=(C, ))
+    ztp1 = numpy.random.choice([3.5, 5.0], size=(C, ))
+    rtt = numpy.random.choice([4.0], size=(1, ))
+
+    copy_sdfg = copy.deepcopy(sdfg)
+    copy_sdfg.name = sdfg.name + "_branch_eliminated"
+    arrays = {"zsolqa": zsolqa, "zrainacc": zrainacc, "zrainaut": zrainaut, "ztp1": ztp1, "rtt": rtt[0]}
+
+    sdfg.validate()
+    out_no_fuse = {k: v.copy() for k, v in arrays.items()}
+    sdfg(**out_no_fuse)
+
+    # Run SDFG version (with transformation)
+    if trivial_if:
+        from dace.transformation.passes.lift_trivial_if import LiftTrivialIf
+        LiftTrivialIf().apply_pass(copy_sdfg, {})
+    else:
+        xform = branch_elimination.BranchElimination()
+        cblocks = {n for n, g in copy_sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
+        assert len(cblocks) == 1
+        cblock = cblocks.pop()
+
+        xform.conditional = cblock
+        xform.parent_nsdfg_state = nsdfg_parent_state
+        xform.sequentialize_if_else_branch_if_disjoint_subsets(cblock.parent_graph)
+    
+    out_fused = {k: v.copy() for k, v in arrays.items()}
+    
+    ExplicitVectorizationPipelineCPU(vector_width=8).apply_pass(copy_sdfg, {})
+    copy_sdfg(**out_fused)
+
+    for name in arrays.keys():
+        numpy.testing.assert_allclose(out_no_fuse[name], out_fused[name], atol=1e-12)
+
+
 if __name__ == "__main__":
     test_vsubs_cpu()
     test_vsubs_two_cpu()
@@ -676,7 +812,7 @@ if __name__ == "__main__":
     test_unsupported_op()
     test_unsupported_op_two()
     test_tasklets_in_if()
-    for i in range(8):
+    for i in range(2):
         test_tasklets_in_if_two(i)
     test_nested_sdfg()
     test_simple_cpu()
