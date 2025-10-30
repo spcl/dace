@@ -491,6 +491,8 @@ with open(r"{temp_path}", "wb") as f:
         While the function will allocate space for the return values which might
         involve a reallocation. Note that the function will also update the
         internal argument vector cache, i.e. `self._lastargs`.
+
+        :note: The update of `self._lastargs` should be considered a bug rather than a feature.
         """
         if self.argnames is None and len(args) != 0:
             raise KeyError(f"Passed positional arguments to an SDFG that does not accept them.")
