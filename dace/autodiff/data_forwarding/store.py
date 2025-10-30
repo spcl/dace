@@ -488,7 +488,7 @@ def _get_assign_tasklet(forward_state: SDFGState,
     param_dict = {}
     memlet_access_iterators = []
 
-    # We check the incoming memlet volumn
+    # We check the incoming memlet volume
     if assign_memlet_data.volume != 1:
         # We need to add a map to iterate through the missing dimensions
         # For this we will create an assign block containing a map
@@ -503,6 +503,9 @@ def _get_assign_tasklet(forward_state: SDFGState,
                 # This is a range tuple we need to add an iterator for
                 # Create a random new free symbol
                 free_symbol = forward_state.sdfg.find_new_symbol("si")
+
+                # Add the new symbol here so that find_new_symbol doesn't return it again
+                forward_state.sdfg.add_symbol(free_symbol, dtypes.int64)
                 memlet_access_iterators.append(free_symbol)
                 param_dict.update({free_symbol: element})
 
@@ -632,9 +635,24 @@ def _get_symbol_upper_bound_from_loop(bwd_generator: 'DataForwardingbwd_generato
                 # Get the max loop range
                 start, end = ad_utils.extract_loop_region_info(l)
 
-                # If this is the case of exmaple of a loop like 6 - i
-                # TODO: How can we do this better?
-                matched = f"-{loop_index}" in str(s) or f"- {loop_index}" in str(s)
+                # Check if the loop variable has a negative coefficient
+                # by extracting the coefficient from the affine expression
+                s_expr = sp.sympify(s) if isinstance(s, str) else s
+                # Find the actual symbol in the expression that matches loop_index by name
+                loop_symbol = None
+                for sym in s_expr.free_symbols:
+                    if str(sym) == loop_index:
+                        loop_symbol = sym
+                        break
+
+                # Extract the coefficient of the loop variable
+                if loop_symbol is not None:
+                    coeff = s_expr.coeff(loop_symbol)
+                    # If coefficient is negative we need to use smallest instead of largest
+                    matched = coeff is not None and (coeff < 0) == True
+                else:
+                    # Loop variable not found in expression
+                    matched = False
                 smallest, largest = ad_utils.get_loop_end(start, end, l)
                 if not matched:
                     loop_size = largest
