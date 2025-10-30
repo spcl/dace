@@ -386,7 +386,7 @@ def token_match(string_to_check: str, pattern_str: str) -> str:
     return pattern_str in tokens
 
 
-def token_split(string_to_check: str, pattern_str: str) -> Set[str]:
+def token_split(string_to_check: str) -> Set[str]:
     # Split while keeping delimiters
     tokens = re.split(r'(\s+|[()\[\]])', string_to_check)
 
@@ -528,6 +528,7 @@ def replace_code(code_str: str, code_lang: dace.dtypes.Language, repldict: Dict[
                 new_rhs_sym_expr = dace.symbolic.SymExpr(code_str).subs(repldict)
                 printer = BracketFunctionPrinter({'strict': False})
                 cleaned_expr = printer.doprint(new_rhs_sym_expr).strip()
+                assert isinstance(cleaned_expr, str)
                 return f"{cleaned_expr}"
             except Exception as e:
                 return _str_replace(code_str)
@@ -535,6 +536,7 @@ def replace_code(code_str: str, code_lang: dace.dtypes.Language, repldict: Dict[
             new_rhs_sym_expr = dace.symbolic.SymExpr(rhs).subs(repldict)
             printer = BracketFunctionPrinter({'strict': False})
             cleaned_expr = printer.doprint(new_rhs_sym_expr).strip()
+            assert isinstance(cleaned_expr, str)
             return f"{lhs.strip()} = {cleaned_expr}"
         except Exception as e:
             return _str_replace(rhs)

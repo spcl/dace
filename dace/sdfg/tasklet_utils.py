@@ -13,6 +13,7 @@ from dace.properties import CodeBlock
 from enum import Enum
 import ast
 import typing
+import dace.sdfg.construction_utils as cutil
 
 
 class TaskletType(Enum):
@@ -98,6 +99,39 @@ def _extract_constant_from_ast_str(src: str) -> str:
     raise ValueError("No constant found")
 
 
+def _split_code_on_assignment(code_str: str) -> Tuple[str, str]:
+    """
+    Returns the LHS and RHS of the first assignment in a Python tasklet.
+
+    Args:
+        node: A Python tasklet node.
+
+    Returns:
+        A tuple (lhs_str, rhs_str) where both are strings representing
+        the left-hand side and right-hand side of the first assignment.
+    """
+    # Parse the tasklet code into an AST
+    code_ast = ast.parse(code_str)
+
+    # Find the first assignment statement
+    assign_node = next((n for n in code_ast.body if isinstance(n, ast.Assign)), None)
+    if assign_node is None:
+        raise ValueError("No assignment found in tasklet code.")
+
+    # Convert LHS to string
+    lhs_node = assign_node.targets[0]  # handle simple assignments only
+    lhs_str = ast.unparse(lhs_node).strip()
+
+    # Convert RHS to string
+    rhs_node = assign_node.value
+    rhs_str = ast.unparse(rhs_node).strip()
+
+    assert isinstance(lhs_str, str)
+    assert isinstance(rhs_str, str)
+
+    return lhs_str, rhs_str
+
+
 def _extract_non_connector_syms_from_tasklet(node: dace.nodes.Tasklet) -> typing.Set[str]:
     """
     Identify free symbols in tasklet code that are not input/output connectors.
@@ -122,11 +156,45 @@ def _extract_non_connector_syms_from_tasklet(node: dace.nodes.Tasklet) -> typing
     assert isinstance(node, dace.nodes.Tasklet)
     assert node.code.language == dace.dtypes.Language.Python
     connectors = {str(s) for s in set(node.in_connectors.keys()).union(set(node.out_connectors.keys()))}
-    code_rhs: str = node.code.as_string.split("=")[-1].strip()
+    code_lhs, code_rhs = _split_code_on_assignment(node.code.as_string)
+    print("RRRRRRRRRRR", code_rhs)
     all_syms = {str(s) for s in dace.symbolic.SymExpr(code_rhs).free_symbols}
     real_free_syms = all_syms - connectors
     free_non_connector_syms = {str(s) for s in real_free_syms}
     return free_non_connector_syms
+
+
+def _extract_non_connector_bound_syms_from_tasklet(code_str: str) -> typing.Set[str]:
+    """
+    Recursively extract all literal constants (numbers, strings, booleans, None)
+    from a Python AST node.
+
+    Args:
+        node (ast.AST): The AST node or subtree to traverse.
+
+    Returns:
+        List of constants (int, float, str, bool, None, etc.)
+    """
+    constants = []
+    node = ast.parse(code_str, mode="exec")
+
+    class ConstantExtractor(ast.NodeVisitor):
+
+        def visit_Constant(self, n):
+            constants.append(n.value)
+
+        # For compatibility with Python <3.8
+        def visit_Num(self, n):  # type: ignore
+            constants.append(n.n)
+
+        def visit_Str(self, n):  # type: ignore
+            constants.append(n.s)
+
+        def visit_NameConstant(self, n):  # type: ignore
+            constants.append(n.value)
+
+    ConstantExtractor().visit(node)
+    return {str(c) for c in constants}
 
 
 _BINOP_SYMBOLS = {
@@ -306,13 +374,19 @@ def _reorder_rhs(code_str: str, op: str, rhs1: str, rhs2: str) -> Tuple[str, str
             raise ValueError(f"Failed to parse function expression: {code_rhs}") from e
 
     else:
-        left_string, right_string = [cstr.strip() for cstr in code_rhs.split(op)]
+        left_string, right_string = [cutil.token_split(cstr.strip()) for cstr in code_rhs.split(op)]
 
     if rhs1 in left_string and rhs2 in left_string:
-        raise Exception("SSA tasklet, rhs1 and rhs2 both can't appear on left side of the operand")
+        if rhs1 != rhs2:
+            raise Exception(
+                "SSA tasklet, rhs1 and rhs2 both can't appear on left side of the operand (unless they are the same and repeated)"
+            )
 
     if rhs1 in right_string and rhs2 in right_string:
-        raise Exception("SSA tasklet, rhs1 and rhs2 both can't appear on right side of the operand")
+        if rhs1 != rhs2:
+            raise Exception(
+                "SSA tasklet, rhs1 and rhs2 both can't appear on right side of the operand (unless they are the same and repeated)"
+            )
 
     if rhs1 in left_string and rhs2 in right_string:
         return rhs1, rhs2
@@ -569,11 +643,12 @@ def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
 
     elif n_in == 0:
         free_syms = _extract_non_connector_syms_from_tasklet(node)
-        assert len(free_syms) == 2 or len(free_syms) == 1, f"{str(free_syms)}"
+        bound_syms = _extract_non_connector_bound_syms_from_tasklet(node.code.as_string)
+        op = _extract_single_op(code_str, default_to_assignment=True)
         if len(free_syms) == 2:
+            assert len(bound_syms) == 0
             free_sym1 = free_syms.pop()
             free_sym2 = free_syms.pop()
-            op = _extract_single_op(code_str, default_to_assignment=False)
             free_sym1, free_sym2 = _reorder_rhs(code_str, op, free_sym1, free_sym2)
             info_dict.update({
                 "type": TaskletType.SYMBOL_SYMBOL,
@@ -583,7 +658,6 @@ def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
             })
             return info_dict
         elif len(free_syms) == 1:
-            op = _extract_single_op(code_str, default_to_assignment=True)
             if op == "=":
                 free_sym1 = free_syms.pop()
                 info_dict.update({"type": TaskletType.ARRAY_SYMBOL_ASSIGNMENT, "constant1": free_sym1, "op": "="})
@@ -591,9 +665,42 @@ def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
             else:
                 free_sym1 = free_syms.pop()
                 rhs_occurence_count = count_name_occurrences(code_str.split(" = ")[1].strip(), free_sym1)
-                free_sym2 = None if rhs_occurence_count == 1 else free_sym1
-                ttype = TaskletType.UNARY_SYMBOL if rhs_occurence_count == 1 else TaskletType.SYMBOL_SYMBOL
-                info_dict.update({"type": ttype, "constant1": free_sym1, "constant2": free_sym2, "op": op})
+                if rhs_occurence_count == 2:
+                    assert len(bound_syms) == 0
+                    c1, c2 = free_sym1, None
+                    ttype = TaskletType.UNARY_SYMBOL
+                else:
+                    # It might be sym1 op 2.0 (constant literal, doesn't have to be 2.0)
+                    # But also a function
+                    assert len(bound_syms) <= 1
+                    if len(bound_syms) == 1:
+                        bound_sym1 = bound_syms.pop()
+                        # Make sure order is correct
+                        c1, c2 = _reorder_rhs(code_str, op, free_sym1, bound_sym1)
+                        ttype = TaskletType.SYMBOL_SYMBOL
+                    else:
+                        c1, c2 = free_sym1, None
+                        ttype = TaskletType.UNARY_SYMBOL
+
+                info_dict.update({"type": ttype, "constant1": c1, "constant2": c2, "op": op})
+                return info_dict
+        else:
+            if len(bound_syms) == 2:
+                c1 = bound_syms.pop()
+                c2 = bound_syms.pop()
+                c1, c2 = _reorder_rhs(code_str, op, c1, c2)
+                if c1 == c2:
+                    ttype = TaskletType.UNARY_SYMBOL
+                else:
+                    ttype = TaskletType.SYMBOL_SYMBOL
+                info_dict.update({"type": ttype, "constant1": c1, "constant2": c2, "op": op})
+                return info_dict
+            else:
+                assert len(bound_syms) == 1
+                # Could be a function call on a constant like `f(2.0)`
+                c1 = bound_syms.pop()
+                ttype = TaskletType.UNARY_SYMBOL
+                info_dict.update({"type": ttype, "constant1": c1, "constant2": None, "op": op})
                 return info_dict
 
     raise NotImplementedError("Unhandled case in detect tasklet type")
