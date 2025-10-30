@@ -76,20 +76,26 @@ def is_previously_written(sdfg: SDFG,
 
     reachable = inverse_reachability(sdfg)
 
-    # check the current state
+    # Check the current state
     for subgraph in sdfg_utils.concurrent_subgraphs(state):
         if node in subgraph.nodes():
-            # this is our current subgraph, check if it was written before in this subgraph
-            for edge in state.edge_bfs(node, reverse=True):
-                if edge.data.data == array_name:
-                    return True
+            # Get all the access nodes in the subgraph to the same data
+            for other_node in subgraph.data_nodes():
+                if other_node != node and other_node.data == array_name:
+                    # Check if this is a write node
+                    for in_edge in subgraph.in_edges(other_node):
+                        if in_edge.data.data == array_name:
+                            # Check if there's a path to our node,
+                            # since we only care about writes that happen before the current node
+                            if nx.has_path(subgraph, other_node, node):
+                                return True
         else:
-            # this is not our current subgraph, check the write states
+            # This is not our current subgraph, check the write states
             _, write_set = subgraph.read_and_write_sets()
             if array_name in write_set:
                 return True
 
-    # check other states
+    # Check other states
     for predecessor in reachable[state]:
         _, write_set = access_sets[predecessor]
         if array_name in write_set:
