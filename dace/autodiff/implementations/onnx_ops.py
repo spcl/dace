@@ -271,6 +271,7 @@ class DefaultSoftmaxBackward(BackwardImplementation):
 
         input_grad_desc = copy.deepcopy(butils.forward_in_desc_with_name(forward_node, context, input_name))
         input_grad_desc.transient = False
+        input_grad_desc_dtype = input_grad_desc.dtype
         result.required_grad_names[input_name] = "input_grad"
         nsdfg.add_datadesc("input_grad", input_grad_desc)
 
@@ -282,7 +283,7 @@ class DefaultSoftmaxBackward(BackwardImplementation):
         prod_desc.transient = True
         nsdfg.add_datadesc("prod", prod_desc)
 
-        sums_desc = dace.data.Array(dace.float32, sums_shape, transient=True)
+        sums_desc = dace.data.Array(input_grad_desc_dtype, sums_shape, transient=True)
         nsdfg.add_datadesc("sums", sums_desc)
 
         sub_term_desc = copy.deepcopy(output_desc)
@@ -379,12 +380,13 @@ class DefaultMaxPoolBackward(BackwardImplementation):
         N, C, H, W = output_shape
         sty, stx = forward_node.strides
         sy, sx = forward_node.kernel_shape
+        dtype = butils.forward_in_desc_with_name(forward_node, context, "X").dtype
 
         def maxpool_backward(X, Y_grad, X_grad):
             for b, c, ti, tj in dace.map[0:N, 0:C, 0:H, 0:W]:
-                maxv = np.empty([1], dtype=dace.float32)
-                maxi = np.empty([1], dtype=dace.int32)
-                maxj = np.empty([1], dtype=dace.int32)
+                maxv = np.empty([1], dtype=dtype)
+                maxi = np.empty([1], dtype=np.int32)
+                maxj = np.empty([1], dtype=np.int32)
                 with dace.tasklet:
                     v >> maxv
                     v = -9999999
