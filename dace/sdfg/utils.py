@@ -598,11 +598,13 @@ def canonicalize_memlet_trees_for_scope(
     state: SDFGState,
     scope_node: Union[nd.EntryNode, nd.ExitNode],
 ) -> int:
-    """Canonicalize the Memlet trees of scope nodes.
+    """Canonicalize the Memlet trees of a single scope nodes.
 
-    The function will modify all Memlets that are adjacent to `scope_node`
-    such that the Memlet always refers to the data that is on the outside.
-    This function only operates on a single scope.
+    The function will modify all Memlets that are adjacent to `scope_node` such that
+    the Memlet always refers to the data that is on the outside.
+    This function only operates on a single scope node, i.e. either a `MapEntry` or
+    a `MapExit`, if you want to process a whole Map then you should use
+    `canonicalize_memlet_trees_for_map()`.
 
     :param state: The SDFG state in which the scope to consolidate resides.
     :param scope_node: The scope node whose edges will be consolidated.
@@ -675,7 +677,7 @@ def canonicalize_memlet_trees_for_scope(
                     subset = medge.data.get_dst_subset(medge, state)
                     other_subset = medge.data.src_subset
 
-                # Now for an update.
+                # Now update them correctly.
                 medge.data._data = outer_data
                 medge.data._subset = subset
                 medge.data._other_subset = other_subset
@@ -683,6 +685,32 @@ def canonicalize_memlet_trees_for_scope(
                 modified_memlet += 1
 
     return modified_memlet
+
+
+def canonicalize_memlet_trees_for_map(
+    state: SDFGState,
+    map_node: Union[nd.EntryNode, nd.ExitNode],
+) -> int:
+    """Canonicalize the Memlets of an entire Map scope.
+
+    This function is similar to `canonicalize_memlet_trees_for_scope()`, but it acts
+    on both scope nodes, i.e. `MapEntry` and `MapExit`, that constitute the Map scope.
+    The function returns the number of canonicalized Memlets.
+
+    :param state: The state that contains the Map.
+    :param map_node: Either the `MapEntry` or `MapExit` node of the map that should be canonicalized.
+    """
+    if isinstance(map_node, nd.MapEntry):
+        me = map_node
+        mx = state.exit_node(me)
+    else:
+        assert isinstance(map_node, nd.MapExit)
+        mx = map_node
+        me = state.entry_node(mx)
+
+    ret = canonicalize_memlet_trees_for_scope(state, me)
+    ret += canonicalize_memlet_trees_for_scope(state, mx)
+    return ret
 
 
 def canonicalize_memlet_trees(
