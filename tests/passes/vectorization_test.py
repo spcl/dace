@@ -1,4 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+import math
 import dace
 import copy
 import pytest
@@ -69,7 +70,7 @@ def v_const_subs_two_cpu(A: dace.float64[N, N]):
 @dace.program
 def unsupported_op(A: dace.float64[N, N], B: dace.float64[N, N]):
     for i, j in dace.map[0:N, 0:N]:
-        A[i, j] = B[i, j] > 0.0
+        A[i, j] = math.exp(B[i, j])
 
 
 @dace.program
