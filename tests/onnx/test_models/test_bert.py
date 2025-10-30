@@ -1,3 +1,4 @@
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Test a full model including indexing and input preparation. The model also includes lots of symbolic dimensions.
 """
