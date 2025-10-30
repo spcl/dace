@@ -1,5 +1,4 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-
 import dace
 import copy
 import pytest
@@ -7,8 +6,8 @@ import numpy
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock
 from dace.transformation.interstate import branch_elimination
-from dace.transformation.passes.explicit_vectorization_cpu import ExplicitVectorizationPipelineCPU
-from dace.transformation.passes.explicit_vectorization_gpu import ExplicitVectorizationPipelineGPU
+from dace.transformation.passes.vectorization.vectorize_cpu import VectorizeCPU
+from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
 
 # Vector Addition Symbols
 N = dace.symbol('N')
@@ -229,7 +228,7 @@ def run_vectorization_test(dace_func,
     copy_sdfg = copy.deepcopy(sdfg)
     copy_sdfg.name = copy_sdfg.name + "_vectorized"
 
-    ExplicitVectorizationPipelineCPU(vector_width=vector_width).apply_pass(copy_sdfg, {})
+    VectorizeCPU(vector_width=vector_width).apply_pass(copy_sdfg, {})
 
     if save_sdfgs and sdfg_name:
         copy_sdfg.save(f"{sdfg_name}_vectorized.sdfg")
@@ -411,7 +410,7 @@ def test_tasklets_in_if():
     sdfg = tasklets_in_if.to_sdfg()
     copy_sdfg = copy.deepcopy(sdfg)
     sdfg.save("nested_tasklets_in_if.sdfg")
-    ExplicitVectorizationPipelineCPU(vector_width=8).apply_pass(copy_sdfg, {})
+    VectorizeCPU(vector_width=8).apply_pass(copy_sdfg, {})
     copy_sdfg.save("nested_tasklets_in_if_vectorized.sdfg")
 
     c_sdfg = sdfg.compile()
@@ -458,7 +457,7 @@ def test_tasklets_in_if_two(run_id):
     sdfg.simplify(skip=["ScalarToSymbolPromotion"])
     copy_sdfg = copy.deepcopy(sdfg)
     sdfg.save("nested_tasklets.sdfg")
-    ExplicitVectorizationPipelineCPU(vector_width=8).apply_pass(copy_sdfg, {})
+    VectorizeCPU(vector_width=8).apply_pass(copy_sdfg, {})
     copy_sdfg.save("nested_tasklets_vectorized.sdfg")
 
     c_sdfg = sdfg.compile()
@@ -627,7 +626,7 @@ def test_spmv():
     # Vectorized SDFG
     copy_sdfg = copy.deepcopy(sdfg)
     sdfg.save("spmv.sdfg")
-    ExplicitVectorizationPipelineCPU(vector_width=8).apply_pass(copy_sdfg, {})
+    VectorizeCPU(vector_width=8).apply_pass(copy_sdfg, {})
     copy_sdfg.save("auto_vectorized_spmv.sdfg")
 
     c_sdfg = sdfg.compile()
@@ -800,7 +799,7 @@ def test_disjoint_chain_split_branch_only(trivial_if: bool):
 
     out_fused = {k: v.copy() for k, v in arrays.items()}
 
-    ExplicitVectorizationPipelineCPU(vector_width=8).apply_pass(copy_sdfg, {})
+    VectorizeCPU(vector_width=8).apply_pass(copy_sdfg, {})
     copy_sdfg(**out_fused)
 
     for name in arrays.keys():
