@@ -481,24 +481,10 @@ def _get_assign_tasklet(forward_state: SDFGState,
     # Create the assign tasklet
     assign_tasklet_node_in_connector = "in_stored_" + node.data
     assign_tasklet_node_out_connector = "out_stored_" + node.data
-    assign_tasklet_node = nodes.Tasklet(
-        label=f"__store_{node.data}_assign_",
-        inputs={assign_tasklet_node_in_connector},
-        outputs={assign_tasklet_node_out_connector},
-        code=f"{assign_tasklet_node_out_connector} = {assign_tasklet_node_in_connector}",
-    )
 
-    # Add it to the state
-    forward_state.add_node(assign_tasklet_node)
-
-    # Connect it to the last map entry node
     # Create the memlet for the assignment
     # This will be the same as the memlet going to the tasklet
     assign_memlet_data = copy.deepcopy(last_edge.data)
-    assign_block = assign_tasklet_node
-    assign_block_in_connector = assign_tasklet_node_in_connector
-    return_node = assign_tasklet_node
-    return_connector = assign_tasklet_node_out_connector
     param_dict = {}
     memlet_access_iterators = []
 
@@ -520,43 +506,69 @@ def _get_assign_tasklet(forward_state: SDFGState,
                 memlet_access_iterators.append(free_symbol)
                 param_dict.update({free_symbol: element})
 
-        # Create the map and add it to the SDFG
-        map = nodes.Map("flatten_assignment_map",
-                        params=list(param_dict.keys()),
-                        ndrange=list(param_dict.values()),
-                        schedule=dtypes.ScheduleType.GPU_Device if cuda else dtypes.ScheduleType.Default)
-        map_entry = nodes.MapEntry(map)
-        map_exit = nodes.MapExit(map)
-        forward_state.add_nodes_from([map_entry, map_exit])
-
-        # Add the necessary connectors
-        assert map_entry.add_in_connector(f"IN_store_block")
-        assert map_entry.add_out_connector(f"OUT_store_block")
-        assert map_exit.add_in_connector(f"IN_store_block")
-        assert map_exit.add_out_connector(f"OUT_store_block")
-
-        # Create the memlet from the map entry to the assign tasklet
+        # Build the memlets for input and output
         in_state_access = ','.join(memlet_access_iterators)
-        memlet_data = Memlet(expr=f"{last_edge.data.data}[{in_state_access}]")
+        input_memlet = Memlet(expr=f"{last_edge.data.data}[{in_state_access}]")
+        if loop_iterators:
+            output_memlet = Memlet(expr=f"{stored_node.data}[{loop_iterators},{in_state_access}]")
+        else:
+            output_memlet = Memlet(expr=f"{stored_node.data}[{in_state_access}]")
 
-        # Create the edge between the map entry and assign tasklet
-        forward_state.add_edge(map_entry, "OUT_store_block", assign_tasklet_node, assign_tasklet_node_in_connector,
-                               memlet_data)
+        assign_tasklet_node, map_entry, map_exit = forward_state.add_mapped_tasklet(
+            name=f"__store_{node.data}_assign_",
+            map_ranges=param_dict,
+            inputs={assign_tasklet_node_in_connector: input_memlet},
+            code=f"{assign_tasklet_node_out_connector} = {assign_tasklet_node_in_connector}",
+            outputs={assign_tasklet_node_out_connector: output_memlet},
+            schedule=dtypes.ScheduleType.GPU_Device if cuda else dtypes.ScheduleType.Default,
+            external_edges=False)
 
-        # Create the memlet from the assign tasklet to the map exist
-        memlet_data = Memlet(
-            expr=f"{stored_node.data}[{loop_iterators},{in_state_access}]") if loop_iterators else Memlet(
-                expr=f"{stored_node.data}[{in_state_access}]")
+        # Add the necessary connectors for external connections
+        map_entry.add_in_connector("IN_store_block")
+        map_exit.add_out_connector("OUT_store_block")
 
-        # Create the edge between the map entry and assign tasklet
-        forward_state.add_edge(assign_tasklet_node, assign_tasklet_node_out_connector, map_exit, "IN_store_block",
-                               memlet_data)
+        # Update the internal edges to route through the new connectors
+        # Find and update the edge from map_entry to tasklet
+        for e in list(forward_state.out_edges(map_entry)):
+            if e.dst == assign_tasklet_node:
+                # Update the source connector to route through our external connector
+                forward_state.remove_edge(e)
+                forward_state.add_edge(map_entry, "OUT_store_block", assign_tasklet_node,
+                                       assign_tasklet_node_in_connector, e.data)
+                map_entry.add_out_connector("OUT_store_block")
+                break
+
+        # Find and update the edge from tasklet to map_exit
+        for e in list(forward_state.in_edges(map_exit)):
+            if e.src == assign_tasklet_node:
+                # Update the destination connector to route through our external connector
+                forward_state.remove_edge(e)
+                forward_state.add_edge(assign_tasklet_node, assign_tasklet_node_out_connector, map_exit,
+                                       "IN_store_block", e.data)
+                map_exit.add_in_connector("IN_store_block")
+                break
 
         # Make sure this block is connected correctly
         assign_block = map_entry
         assign_block_in_connector = "IN_store_block"
         return_node = map_exit
         return_connector = "OUT_store_block"
+    else:
+        # Volume is 1, create a simple tasklet without a map
+        assign_tasklet_node = nodes.Tasklet(
+            label=f"__store_{node.data}_assign_",
+            inputs={assign_tasklet_node_in_connector},
+            outputs={assign_tasklet_node_out_connector},
+            code=f"{assign_tasklet_node_out_connector} = {assign_tasklet_node_in_connector}",
+        )
+
+        # Add it to the state
+        forward_state.add_node(assign_tasklet_node)
+
+        assign_block = assign_tasklet_node
+        assign_block_in_connector = assign_tasklet_node_in_connector
+        return_node = assign_tasklet_node
+        return_connector = assign_tasklet_node_out_connector
 
     # Get the last map
     last_map = last_edge.src
