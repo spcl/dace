@@ -164,7 +164,9 @@ class CompiledSDFG(object):
         self.do_not_execute = False
 
         # Contains the pointer arguments that where used to call the SDFG, `__call__()`
-        #  was used. Used only for debugging.
+        #  was used. It is also used by `get_workspace_size()`.
+        # NOTE: Using its content might be dangerous as only the pointers to arrays are
+        #   stored. It is the users responsibility to ensure that they are valid.
         self._lastargs = None
 
         lib.load()  # Explicitly load the library
@@ -272,12 +274,21 @@ class CompiledSDFG(object):
         """
         Returns the total external memory size to be allocated for this SDFG.
 
+        Note that the function queries the sizes of the last call that was made by
+        `__call__()` or `initialize()`. Calls made by `fast_call()` or `safe_call()`
+        will not be considered.
+
         :return: A dictionary mapping storage types to the number of bytes necessary
                  to allocate for the SDFG to work properly.
+        :note: It is the users responsibility that all arguments, especially the array
+            arguments, remain valid between the call to `__call__()` or `initialize()`
+            and the call to this function.
         """
         if not self._initialized:
             raise ValueError('Compiled SDFG is uninitialized, please call ``initialize`` prior to '
                              'querying external memory size.')
+        if self._lastargs is None:
+            raise ValueError('To use `get_workspace_sizes()` `__call__()` or `initialize()` must be called before.')
 
         result: Dict[dtypes.StorageType, int] = {}
         for storage in self.external_memory_types:
@@ -335,8 +346,12 @@ class CompiledSDFG(object):
             return
 
         # Construct arguments in the exported C function order
-        _, initargtuple = self.construct_arguments(*args, **kwargs)
+        callargtuple, initargtuple = self.construct_arguments(*args, **kwargs)
         self._initialize(initargtuple)
+
+        # The main reason for setting `_lastargs` here is, to allow calls to `get_workspace_size()`.
+        self._lastargs = (callargtuple, initargtuple)
+
         return self._libhandle
 
     def finalize(self):
