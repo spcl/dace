@@ -201,14 +201,15 @@ class Vectorize(ppl.Pass):
         # Step 5. Replace all tasklets to use vectorized types
         # Step 6. Collect all data used, make sure their type matches the vector op type
 
-        # 0
-        # All assigned symbols
+        # 0 
+        # Collect all assigned symbols, check what we can demote
         if self.try_to_demote_symbols_in_nsdfgs:
-            demoted_symbols = try_demoting_vectorizable_symbols(inner_sdfg)
+            try_demoting_vectorizable_symbols(inner_sdfg)
 
         # 1.1.1
         fix_nsdfg_connector_array_shapes_mismatch(state, nsdfg)
         cutil.replace_length_one_arrays_with_scalars(inner_sdfg, True, True)
+        state.sdfg.save("z0.sdfg")
         # 1.1.2
         transient_arrays = {arr_name for arr_name, arr in inner_sdfg.arrays.items() if arr.transient}
         print("Transient arrays:", transient_arrays)
@@ -272,9 +273,10 @@ class Vectorize(ppl.Pass):
             inner_sdfg, True, invariant_scalars)
         array_source_nodes: List[Tuple[dace.SDFGState,
                                        dace.nodes.AccessNode]] = get_array_source_nodes(inner_sdfg, True)
-        scalar_sink_nodes: List[Tuple[dace.SDFGState, dace.nodes.AccessNode]] = get_scalar_sink_nodes(
-            inner_sdfg, True, invariant_scalars)
+        scalar_sink_nodes: List[Tuple[dace.SDFGState,
+                                      dace.nodes.AccessNode]] = get_scalar_sink_nodes(inner_sdfg, True, set())
         array_sink_nodes: List[Tuple[dace.SDFGState, dace.nodes.AccessNode]] = get_array_sink_nodes(inner_sdfg, True)
+        print("Scalar source nodes", scalar_source_nodes)
 
         print("CXC", scalar_source_nodes, scalar_sink_nodes)
 
@@ -285,13 +287,20 @@ class Vectorize(ppl.Pass):
         #                    f"Scalar sink nodes: {scalar_sink_nodes}")
         #el
         if len(scalar_source_nodes) == 1 and len(scalar_sink_nodes) == 1:
-            move_out_reduction(scalar_source_nodes, state, nsdfg, inner_sdfg, self.vector_width)
+            has_reduction = move_out_reduction(scalar_source_nodes, state, nsdfg, inner_sdfg, self.vector_width)
             # This changes scalar sink and source nodes
-            inner_sdfg.reset_cfg_list()
-            scalar_source_nodes: List[Tuple[dace.SDFGState,
-                                            dace.nodes.AccessNode]] = get_scalar_source_nodes(inner_sdfg, True)
-            scalar_sink_nodes: List[Tuple[dace.SDFGState,
-                                          dace.nodes.AccessNode]] = get_scalar_sink_nodes(inner_sdfg, True)
+            if has_reduction:
+                scalar_source_nodes: List[Tuple[dace.SDFGState,
+                                                dace.nodes.AccessNode]] = get_scalar_source_nodes(inner_sdfg, True)
+                scalar_sink_nodes: List[Tuple[dace.SDFGState,
+                                            dace.nodes.AccessNode]] = get_scalar_sink_nodes(inner_sdfg, True, set())
+                array_source_nodes: List[Tuple[dace.SDFGState,
+                                            dace.nodes.AccessNode]] = get_array_source_nodes(inner_sdfg, True)
+                array_sink_nodes: List[Tuple[dace.SDFGState,
+                                            dace.nodes.AccessNode]] = get_array_sink_nodes(inner_sdfg, True)
+
+                print("SCALAR SINK AFTER REDUCTION", scalar_sink_nodes)
+                print("SCALAR SOURCES AFTER REDUCTION", scalar_source_nodes)
 
         state.sdfg.save("y2.sdfg")
 
@@ -310,7 +319,7 @@ class Vectorize(ppl.Pass):
         # vectorizable access means that all subets to an array depends purely on constants or loop parameters
         vectorizable_arrays_dict = collect_vectorizable_arrays(inner_sdfg, nsdfg, state, invariant_scalars)
         vectorizable_arrays = {k for k, v in vectorizable_arrays_dict.items() if v is True}
-        non_vectorizable_arrays = {k for k, v in vectorizable_arrays_dict.items() if v is False}
+        non_vectorizable_arrays = {k for k, v in vectorizable_arrays_dict.items() if v is False} - invariant_scalars
 
         print("VECTORIZABLE ARRAYS", vectorizable_arrays)
         print("NON-VECTORIZABLE ARRAYS", non_vectorizable_arrays)
@@ -345,10 +354,12 @@ class Vectorize(ppl.Pass):
 
         # TODO: fix vectorizable arrays. SpMV load is not vectorizable but it thinks it is
         inner_sdfg.save("x2.sdfg")
+        #raise Exception(non_vectorizable_arrays)
 
         # 3
         print("Scalar sink nodes:", scalar_sink_nodes)
         check_writes_to_scalar_sinks_happen_through_assign_tasklets(inner_sdfg, scalar_sink_nodes)
+
         new_mn, new_me = self._duplicate_unstructured_writes(inner_sdfg, non_vectorizable_arrays)
         modified_nodes = modified_nodes.union(new_mn)
         modified_edges = modified_edges.union(new_me)
@@ -437,6 +448,8 @@ class Vectorize(ppl.Pass):
         missing_symbols = set(inner_sdfg.free_symbols - set(nsdfg.symbol_mapping.keys()))
         print("EEEEEEEEEEE", missing_symbols)
 
+        state.sdfg.save("xp5.sdfg")
+
         map_symbols = assert_symbols_in_parent_map_symbols(missing_symbols, state, nsdfg)
 
         assignment_dict = dict()
@@ -505,14 +518,15 @@ class Vectorize(ppl.Pass):
                         modified_nodes.add(non_packed_access)
                         modified_nodes.add(src_node)
 
-                        # Replace all symbols used e.g. i,j with `i0`, `j0`
+                        # Replace all symbols used e.g. i,j with `i`, `j_laneid_0`
                         # A -[j]> B becomes now
-                        # A -[j0,j1,...,j7]-> A_packed -[0:8]-> B
+                        # A -[j_laneid_0,j_laneid_1,...,j_laneid_7]-> A_packed -[0:8]-> B
                         for i in range(self.vector_width):
-                            new_subset = repl_subset_to_symbol_offset(sdfg=state.sdfg,
-                                                                      subset=edge.data.subset,
-                                                                      symbol_offset=str(i),
-                                                                      add_missing_symbols=False)
+                            print(f"CALLWITH {i}")
+                            new_subset = repl_subset_to_use_laneid_offset(sdfg=state.sdfg,
+                                                                          subset=copy.deepcopy(edge.data.subset),
+                                                                          symbol_offset=str(i))
+                            print("NS", new_subset)
                             at = state.add_tasklet(
                                 name=f"assign_{i}",
                                 inputs={
@@ -544,6 +558,8 @@ class Vectorize(ppl.Pass):
                         if isinstance(edge, dace.nodes.Node):
                             assert False
                         modified_edges.add(edge)
+        sdfg.save("KKK.sdfg")
+        #raise Exception("owo")
         return modified_nodes, modified_edges
 
     def _expand_interstate_assignment(self, sdfg: dace.SDFG, edge: Edge[InterstateEdge], syms: Set[str],
