@@ -376,12 +376,19 @@ class CompiledSDFG(object):
         """
         # Return values are cached in `self._lastargs`.
         argtuple, initargtuple = self.construct_arguments(*args, **kwargs)  # Missing arguments will be detected here.
-        return self.fast_call(argtuple, initargtuple, do_gpu_check=True)
+        self._lastargs = (argtuple, initargtuple)
+        self.fast_call(argtuple, initargtuple, do_gpu_check=True)
+        return self.convert_return_values()
 
     def safe_call(self, *args, **kwargs):
         """
         Forwards the Python call to the compiled ``SDFG`` in a separate process to avoid crashes in the main process. Raises an exception if the SDFG execution fails.
+
+        Note the current implementation lacks the proper handling of return values.
+        Thus output can only be transmitted through inout arguments.
         """
+        if any(aname == '__return' or aname.startswith('__return_') for aname in self.sdfg.arrays.keys()):
+            raise NotImplementedError('`CompiledSDFG.safe_call()` does not support return values.')
 
         # Pickle the SDFG and arguments
         with tempfile.NamedTemporaryFile(mode='wb', delete=False) as f:
