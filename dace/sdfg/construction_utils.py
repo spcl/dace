@@ -502,6 +502,12 @@ def get_parent_map_and_loop_scopes(root_sdfg: dace.SDFG, node: Union[dace.nodes.
     cur_node = node
     parent_scopes = list()
 
+    def _get_parent_state(sdfg: dace.SDFG, nsdfg_node: dace.nodes.NestedSDFG):
+        for n, g in sdfg.all_nodes_recursive():
+            if n == nsdfg_node:
+                return g
+        return None
+
     if isinstance(cur_node, (dace.nodes.MapEntry, dace.nodes.Tasklet)):
         while scope_dict[cur_node] is not None:
             if isinstance(scope_dict[cur_node], dace.nodes.MapEntry):
@@ -519,7 +525,7 @@ def get_parent_map_and_loop_scopes(root_sdfg: dace.SDFG, node: Union[dace.nodes.
 
     # Check parent nsdfg
     parent_nsdfg_node = parent_sdfg.parent_nsdfg_node
-    parent_nsdfg_parent_state = parent_state.sdfg.parent_graph
+    parent_nsdfg_parent_state = _get_parent_state(root_sdfg, parent_nsdfg_node)
 
     while parent_nsdfg_node is not None and parent_nsdfg_parent_state is not None:
         scope_dict = parent_nsdfg_parent_state.scope_dict()
@@ -539,12 +545,19 @@ def get_parent_map_and_loop_scopes(root_sdfg: dace.SDFG, node: Union[dace.nodes.
             parent_graph = parent_graph.parent_graph
 
         parent_nsdfg_node = parent_sdfg.parent_nsdfg_node
-        parent_nsdfg_parent_state = parent_state.sdfg.parent_graph
+        parent_nsdfg_parent_state = _get_parent_state(root_sdfg, parent_nsdfg_node)
 
     return parent_scopes
 
 
 def get_parent_maps(root_sdfg: dace.SDFG, node: dace.nodes.MapEntry, parent_state: dace.SDFGState):
+
+    def _get_parent_state(sdfg: dace.SDFG, nsdfg_node: dace.nodes.NestedSDFG):
+        for n, g in sdfg.all_nodes_recursive():
+            if n == nsdfg_node:
+                return g
+        return None
+
     maps = []
     scope_dict = parent_state.scope_dict()
     cur_node = node
@@ -561,7 +574,7 @@ def get_parent_maps(root_sdfg: dace.SDFG, node: dace.nodes.MapEntry, parent_stat
 
     # Check parent nsdfg
     parent_nsdfg_node = parent_state.sdfg.parent_nsdfg_node
-    parent_nsdfg_parent_state = parent_state.sdfg.parent_graph
+    parent_nsdfg_parent_state = _get_parent_state(root_sdfg, parent_nsdfg_node)
 
     while parent_nsdfg_node is not None:
         scope_dict = parent_nsdfg_parent_state.scope_dict()

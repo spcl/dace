@@ -312,16 +312,18 @@ def run_and_compare(
     program,
     num_expected_branches,
     use_pass,
+    sdfg_name,
     **arrays,
 ):
     # Run SDFG version (no transformation)
     sdfg = program.to_sdfg()
     sdfg.validate()
+    sdfg.name = sdfg_name
     out_no_fuse = {k: v.copy() for k, v in arrays.items()}
     sdfg(**out_no_fuse)
 
     copy_sdfg = copy.deepcopy(sdfg)
-    copy_sdfg.name = sdfg.name + "_branch_eliminated"
+    copy_sdfg.name = sdfg_name + "_branch_eliminated"
     del sdfg
 
     # Apply transformation
@@ -353,16 +355,18 @@ def run_and_compare(
 def run_and_compare_sdfg(
     sdfg,
     permissive,
+    sdfg_name,
     **arrays,
 ):
     # Run SDFG version (no transformation)
     sdfg.validate()
+    sdfg.name = sdfg_name
     out_no_fuse = {k: v.copy() for k, v in arrays.items()}
     sdfg(**out_no_fuse)
 
     # Run SDFG version (with transformation)
     copy_sdfg = copy.deepcopy(sdfg)
-    copy_sdfg.name = sdfg.name + "_branch_eliminated"
+    copy_sdfg.name = sdfg_name + "_branch_eliminated"
     del sdfg
 
     fb = EliminateBranches()
@@ -388,14 +392,21 @@ def test_branch_dependent_value_write(use_pass_flag):
     b = np.random.rand(N, N)
     c = np.zeros((N, N))
     d = np.zeros((N, N))
-    run_and_compare(branch_dependent_value_write, 0, use_pass_flag, a=a, b=b, c=c, d=d)
+    run_and_compare(branch_dependent_value_write,
+                    0,
+                    use_pass_flag,
+                    f"branch_dependent_value_write_use_pass_{str(use_pass_flag).lower()}",
+                    a=a,
+                    b=b,
+                    c=c,
+                    d=d)
 
 
 def test_weird_condition():
     a = np.random.rand(N, N)
     b = np.random.rand(N, N)
     ncldtop = np.array([N // 2], dtype=np.int64)
-    run_and_compare(weird_condition, 1, False, a=a, b=b, ncldtop=ncldtop[0])
+    run_and_compare(weird_condition, 1, False, f"weird_condition", a=a, b=b, ncldtop=ncldtop[0])
 
 
 @pytest.mark.parametrize("use_pass_flag", [True, False])
@@ -404,7 +415,14 @@ def test_branch_dependent_value_write_two(use_pass_flag):
     b = np.zeros((N, N))
     c = np.zeros((N, N))
     d = np.zeros((N, N))
-    run_and_compare(branch_dependent_value_write_two, 0, use_pass_flag, a=a, b=b, c=c, d=d)
+    run_and_compare(branch_dependent_value_write_two,
+                    0,
+                    use_pass_flag,
+                    f"branch_dependent_value_write_two_use_pass_{str(use_pass_flag).lower()}",
+                    a=a,
+                    b=b,
+                    c=c,
+                    d=d)
 
 
 @pytest.mark.parametrize("use_pass_flag", [True, False])
@@ -412,7 +430,13 @@ def test_branch_dependent_value_write_single_branch(use_pass_flag):
     a = np.random.choice([0.001, 3.0], size=(N, N))
     b = np.random.choice([0.001, 5.0], size=(N, N))
     d = np.zeros((N, N))
-    run_and_compare(branch_dependent_value_write_single_branch, 0, use_pass_flag, a=a, b=b, d=d)
+    run_and_compare(branch_dependent_value_write_single_branch,
+                    0,
+                    use_pass_flag,
+                    f"branch_dependent_value_write_single_branch_use_pass_{str(use_pass_flag).lower()}",
+                    a=a,
+                    b=b,
+                    d=d)
 
 
 @pytest.mark.parametrize("use_pass_flag", [True, False])
@@ -420,7 +444,13 @@ def test_complicated_if(use_pass_flag):
     a = np.random.choice([0.001, 3.0], size=(N, N))
     b = np.random.choice([0.001, 5.0], size=(N, N))
     d = np.zeros((N, N))
-    run_and_compare(complicated_if, 0, use_pass_flag, a=a, b=b, d=d)
+    run_and_compare(complicated_if,
+                    0,
+                    use_pass_flag,
+                    f"complicated_if_use_pass_{str(use_pass_flag).lower()}",
+                    a=a,
+                    b=b,
+                    d=d)
 
 
 @pytest.mark.parametrize("use_pass_flag", [True, False])
@@ -430,7 +460,15 @@ def test_multi_state_branch_body(use_pass_flag):
     c = np.random.choice([0.001, 5.0], size=(N, N))
     d = np.zeros((N, N))
     s = np.zeros((1, )).astype(np.int64)
-    run_and_compare(multi_state_branch_body, 1 if use_pass_flag else 1, use_pass_flag, a=a, b=b, c=c, d=d, s=s[0])
+    run_and_compare(multi_state_branch_body,
+                    1 if use_pass_flag else 1,
+                    use_pass_flag,
+                    f"multistate_branch_body_{str(use_pass_flag).lower()}",
+                    a=a,
+                    b=b,
+                    c=c,
+                    d=d,
+                    s=s[0])
 
 
 @pytest.mark.parametrize("use_pass_flag", [True, False])
@@ -440,7 +478,15 @@ def test_nested_if(use_pass_flag):
     c = np.random.choice([0.001, 5.0], size=(N, N))
     d = np.random.choice([0.001, 5.0], size=(N, N))
     s = np.zeros((1, )).astype(np.int64)
-    run_and_compare(nested_if, 0, use_pass_flag, a=a, b=b, c=c, d=d, s=s[0])
+    run_and_compare(nested_if,
+                    0,
+                    use_pass_flag,
+                    f"nested_if_use_pass_{str(use_pass_flag).lower()}",
+                    a=a,
+                    b=b,
+                    c=c,
+                    d=d,
+                    s=s[0])
 
 
 def test_condition_on_bounds():
@@ -451,13 +497,13 @@ def test_condition_on_bounds():
 
     sdfg = condition_on_bounds.to_sdfg()
     sdfg.validate()
+    sdfg.name = "condition_on_bounds"
     arrays = {"a": a, "b": b, "c": c, "d": d}
     out_no_fuse = {k: v.copy() for k, v in arrays.items()}
     sdfg(a=out_no_fuse["a"], b=out_no_fuse["b"], c=out_no_fuse["c"], d=out_no_fuse["d"], s=1, SN=2)
     # Apply transformation
     EliminateBranches().apply_pass(sdfg, {})
     sdfg.validate()
-    out_fused = {k: v.copy() for k, v in arrays.items()}
 
     nsdfgs = {(n, g) for n, g in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)}
     assert len(nsdfgs) == 1  # Can be applied should return false
@@ -468,7 +514,7 @@ def test_nested_if_two():
     b = np.random.choice([0.001, 5.0], size=(N, N))
     c = np.random.choice([0.001, 5.0], size=(N, N))
     d = np.random.choice([0.001, 5.0], size=(N, N))
-    run_and_compare(nested_if_two, 0, True, a=a, b=b, c=c, d=d)
+    run_and_compare(nested_if_two, 0, True, f"nested_if_two", a=a, b=b, c=c, d=d)
 
 
 @pytest.mark.parametrize("use_pass_flag", [True, False])
@@ -477,7 +523,14 @@ def test_tasklets_in_if(use_pass_flag):
     b = np.random.choice([0.001, 5.0], size=(N, N))
     c = np.zeros((1, ))
     d = np.zeros((N, N))
-    run_and_compare(tasklets_in_if, 0, use_pass_flag, a=a, b=b, d=d, c=c[0])
+    run_and_compare(tasklets_in_if,
+                    0,
+                    use_pass_flag,
+                    f"tasklets_in_if_use_pass{str(use_pass_flag).lower()}",
+                    a=a,
+                    b=b,
+                    d=d,
+                    c=c[0])
 
 
 @pytest.mark.parametrize("use_pass_flag", [True, False])
@@ -485,14 +538,26 @@ def test_branch_dependent_value_write_single_branch_nonzero_write(use_pass_flag)
     a = np.random.choice([0.001, 3.0], size=(N, N))
     b = np.random.choice([0.001, 5.0], size=(N, N))
     d = np.random.choice([0.001, 5.0], size=(N, N))
-    run_and_compare(branch_dependent_value_write_single_branch_nonzero_write, 0, use_pass_flag, a=a, b=b, d=d)
+    run_and_compare(branch_dependent_value_write_single_branch_nonzero_write,
+                    0,
+                    use_pass_flag,
+                    f"branch_dependent_value_write_single_branch_nonzero_write_use_pass_{str(use_pass_flag).lower()}",
+                    a=a,
+                    b=b,
+                    d=d)
 
 
 def test_branch_dependent_value_write_with_transient_reuse():
     a = np.random.choice([0.001, 3.0], size=(N, N))
     b = np.random.choice([0.001, 3.0], size=(N, N))
     c = np.random.choice([0.001, 3.0], size=(N, N))
-    run_and_compare(branch_dependent_value_write_with_transient_reuse, 0, True, a=a, b=b, c=c)
+    run_and_compare(branch_dependent_value_write_with_transient_reuse,
+                    0,
+                    True,
+                    f"branch_dependent_value_write_with_transient_reuse",
+                    a=a,
+                    b=b,
+                    c=c)
 
 
 @pytest.mark.parametrize("use_pass_flag", [True, False])
@@ -504,27 +569,30 @@ def test_single_branch_connectors(use_pass_flag):
 
     sdfg = single_branch_connectors.to_sdfg()
     sdfg.validate()
+    sdfg.name = f"test_single_branch_connectors_use_pass_{str(use_pass_flag).lower()}"
     arrays = {"a": a, "b": b, "c": c, "d": d}
     out_no_fuse = {k: v.copy() for k, v in arrays.items()}
     sdfg(a=out_no_fuse["a"], b=out_no_fuse["b"], c=out_no_fuse["c"][0], d=out_no_fuse["d"])
     # Apply transformation
+    copy_sdfg = copy.deepcopy(sdfg)
+    copy_sdfg.name = f"test_single_branch_connectors_use_pass_{str(use_pass_flag).lower()}_branch_eliminated"
     if use_pass_flag:
-        EliminateBranches().apply_pass(sdfg, {})
+        EliminateBranches().apply_pass(copy_sdfg, {})
     else:
-        apply_branch_elimination(sdfg, 2)
+        apply_branch_elimination(copy_sdfg, 2)
 
     # Run SDFG version (with transformation)
     out_fused = {k: v.copy() for k, v in arrays.items()}
-    sdfg(a=out_fused["a"], b=out_fused["b"], c=out_fused["c"][0], d=out_fused["d"])
+    copy_sdfg(a=out_fused["a"], b=out_fused["b"], c=out_fused["c"][0], d=out_fused["d"])
 
-    branch_code = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
+    branch_code = {n for n, g in copy_sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     assert len(branch_code) == 0, f"(actual) len({branch_code}) != (desired) 0"
 
     # Compare all arrays
     for name in arrays.keys():
         np.testing.assert_allclose(out_no_fuse[name], out_fused[name], atol=1e-12)
 
-    nsdfgs = {(n, g) for n, g in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)}
+    nsdfgs = {(n, g) for n, g in copy_sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)}
     assert len(nsdfgs) == 1
     nsdfg, parent_state = nsdfgs.pop()
     assert len(nsdfg.in_connectors) == 4, f"{nsdfg.in_connectors}, length is not 4 but {len(nsdfg.in_connectors)}"
@@ -538,7 +606,15 @@ def test_disjoint_subsets(use_pass_flag):
     B = np.random.randn(N, 3, 3)
     C = np.random.randn(N, 3, 3)
     E = np.random.choice([0.001, 3.0], size=(N, 3, 3))
-    run_and_compare(disjoint_subsets, 0, use_pass_flag, A=A, B=B, C=C, E=E, if_cond_58=if_cond_58[0])
+    run_and_compare(disjoint_subsets,
+                    0,
+                    use_pass_flag,
+                    f"disjoint_subsets_use_pass_{str(use_pass_flag).lower()}",
+                    A=A,
+                    B=B,
+                    C=C,
+                    E=E,
+                    if_cond_58=if_cond_58[0])
 
 
 @dace.program
@@ -613,7 +689,14 @@ def test_try_clean():
     A = np.random.choice([0.001, 3.0], size=(N, ))
     B = np.random.randn(N, 3, 3)
     C = np.random.choice([0.001, 3.0], size=(N, ))
-    run_and_compare_sdfg(sdfg1, permissive=False, A=A, B=B, C=C, if_cond_1=if_cond_1[0], offset=offset[0])
+    run_and_compare_sdfg(sdfg1,
+                         permissive=False,
+                         sdfg_name=f"multi_state_nested_if_sdfg",
+                         A=A,
+                         B=B,
+                         C=C,
+                         if_cond_1=if_cond_1[0],
+                         offset=offset[0])
 
 
 def test_try_clean_as_pass():
@@ -647,7 +730,14 @@ def test_try_clean_as_pass():
     A = np.random.choice([0.001, 3.0], size=(N, ))
     B = np.random.randn(N, 3, 3)
     C = np.random.choice([0.001, 3.0], size=(N, ))
-    run_and_compare_sdfg(sdfg, permissive=False, A=A, B=B, C=C, if_cond_1=if_cond_1[0], offset=offset[0])
+    run_and_compare_sdfg(sdfg,
+                         permissive=False,
+                         sdfg_name=f"multi_state_nested_if_sdfg_try_clean_variant",
+                         A=A,
+                         B=B,
+                         C=C,
+                         if_cond_1=if_cond_1[0],
+                         offset=offset[0])
 
 
 def _get_sdfg_with_interstate_array_condition():
@@ -697,6 +787,7 @@ def test_sdfg_with_interstate_array_condition():
     run_and_compare_sdfg(
         sdfg,
         permissive=False,
+        sdfg_name=f"sdfg_with_interstate_array_condition",
         llindex=llindex,
         zsolqa=zsolqa,
         zratio=zratio,
@@ -735,7 +826,7 @@ def test_repeated_condition_variables():
     b = np.random.choice([0.001, 3.0], size=(N, N))
     c = np.random.choice([0.001, 3.0], size=(N, N))
     conds = np.random.choice([1.0, 3.0], size=(4, N))
-    run_and_compare(repeated_condition_variables, 0, True, a=a, b=b, c=c, conds=conds)
+    run_and_compare(repeated_condition_variables, 0, True, f"repeated_condition_variables", a=a, b=b, c=c, conds=conds)
 
 
 def _find_state(root_sdfg: dace.SDFG, node):
@@ -875,6 +966,7 @@ def test_non_trivial_subset_after_combine_tasklet():
         non_trivial_subset_after_combine_tasklet,
         0,
         True,
+        f"non_trivial_subset_after_combine_tasklet",
         a=A,
         b=B,
         c=C,
@@ -957,6 +1049,7 @@ def test_split_on_disjoint_subsets():
         split_on_disjoint_subsets,
         0,
         True,
+        f"split_on_disjoint_subsets",
         a=A,
         b=B,
         c=C,
@@ -999,6 +1092,7 @@ def test_split_on_disjoint_subsets_nested():
         split_on_disjoint_subsets_nested,
         0,
         True,
+        f"split_on_disjoint_subsets_nested",
         a=A,
         b=B,
         c=C,
@@ -1050,6 +1144,7 @@ def test_write_to_transient():
         write_to_transient,
         0,
         True,
+        f"write_to_transient",
         a=A,
         b=B,
         d=D[0],
@@ -1066,6 +1161,7 @@ def test_write_to_transient_two():
         write_to_transient_two,
         0,
         True,
+        f"write_to_transient_two",
         a=A,
         b=B,
         d=D[0],
@@ -1092,6 +1188,7 @@ def test_double_empty_state():
     run_and_compare_sdfg(
         sdfg,
         permissive=False,
+        sdfg_name=f"double_empty_state",
         a=A,
         b=B,
         d=D[0],
@@ -1213,7 +1310,13 @@ def test_try_clean_on_complicated_pattern_for_manual_clean_up_one():
         ssp.ignore = scalar_names
         ssp.apply_pass(nsdfg.sdfg, {})
 
-    transformed_sdfg = run_and_compare_sdfg(sdfg, permissive=True, a=A, b=B, c=C, d=D[0])
+    transformed_sdfg = run_and_compare_sdfg(sdfg,
+                                            permissive=True,
+                                            sdfg_name="try_clean_on_complicated_pattern_for_manual_cleanup_one",
+                                            a=A,
+                                            b=B,
+                                            c=C,
+                                            d=D[0])
 
     branch_code = {n for n, g in transformed_sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     assert len(branch_code) == 0, f"(actual) len({branch_code}) != (desired) {0}"
@@ -1283,7 +1386,14 @@ def test_try_clean_on_complicated_pattern_for_manual_clean_up_two():
         ssp.ignore = scalar_names
         ssp.apply_pass(nsdfg.sdfg, {})
 
-    transformed_sdfg = run_and_compare_sdfg(sdfg, permissive=True, a=A, b=B, c=C, d=D[0], e=E[0])
+    transformed_sdfg = run_and_compare_sdfg(sdfg,
+                                            permissive=True,
+                                            sdfg_name="try_clean_on_complicated_pattern_for_manual_cleanup_two",
+                                            a=A,
+                                            b=B,
+                                            c=C,
+                                            d=D[0],
+                                            e=E[0])
 
     branch_code = {n for n, g in transformed_sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     assert len(branch_code) == 0, f"(actual) len({branch_code}) != (desired) {0}"
@@ -1309,14 +1419,14 @@ def single_assignment_cond_from_scalar(a: dace.float64[512]):
 def test_single_assignment():
     if_cond_1 = np.array([1], dtype=np.float64)
     A = np.ones(shape=(N, ), dtype=np.float64)
-    run_and_compare(single_assignment, 0, True, a=A, _if_cond_1=if_cond_1[0])
+    run_and_compare(single_assignment, 0, True, "single_assignment", a=A, _if_cond_1=if_cond_1[0])
 
 
 def test_single_assignment_cond_from_scalar():
     A = np.ones(shape=(512, ), dtype=np.float64)
     before = single_assignment_cond_from_scalar.to_sdfg()
     before.compile()
-    run_and_compare(single_assignment_cond_from_scalar, 0, True, a=A)
+    run_and_compare(single_assignment_cond_from_scalar, 0, True, "single_assignment_cond_from_scalar", a=A)
 
 
 def _get_sdfg_with_condition_from_transient_scalar() -> dace.SDFG:
@@ -1383,6 +1493,7 @@ def test_condition_from_transient_scalar():
 
     transformed_sdfg = run_and_compare_sdfg(sdfg,
                                             permissive=False,
+                                            sdfg_name="condition_from_transient_scalar",
                                             zsolac=zsolac,
                                             zlcond2=zlcond2,
                                             za=za,
@@ -1488,6 +1599,7 @@ def _get_disjoint_chain_sdfg() -> dace.SDFG:
 @pytest.mark.parametrize("rtt_val", [0.0, 4.0, 6.0])
 def test_disjoint_chain_split_branch_only(rtt_val):
     sdfg, nsdfg_parent_state = _get_disjoint_chain_sdfg()
+    sdfg.name = f"disjoint_chain_split_branch_only_rtt_val_{str(rtt_val).replace('.','_')}"
     zsolqa = np.random.choice([0.001, 5.0], size=(N, 5, 5))
     zrainacc = np.random.choice([0.001, 5.0], size=(N, ))
     zrainaut = np.random.choice([0.001, 5.0], size=(N, ))
@@ -1530,6 +1642,7 @@ def test_disjoint_chain(rtt_val):
 
     run_and_compare_sdfg(sdfg,
                          permissive=False,
+                         sdfg_name=f"disjoint_chain_rtt_val_{str(rtt_val).replace('.', '_')}",
                          zsolqa=zsolqa,
                          zrainacc=zrainacc,
                          zrainaut=zrainaut,
@@ -1569,7 +1682,15 @@ def test_pattern_from_cloudsc_one(c_val):
     D = np.random.choice([0.001, 5.0], size=(N, N))
     E = np.random.choice([0.001, 5.0], size=(N, N))
 
-    run_and_compare(pattern_from_cloudsc_one, 0, True, A=A, B=B, c=C[0], D=D, E=E)
+    run_and_compare(pattern_from_cloudsc_one,
+                    0,
+                    True,
+                    f"pattern_from_cloudsc_one_c_val_{str(c_val).replace('.', '_')}",
+                    A=A,
+                    B=B,
+                    c=C[0],
+                    D=D,
+                    E=E)
 
 
 @dace.program
@@ -1607,7 +1728,7 @@ def test_can_be_applied_on_map_param_usage():
 
     assert xform.can_be_applied(xform.conditional.parent_graph, 0, xform.conditional.sdfg, False)
 
-    run_and_compare(map_param_usage, 0, True, a=A, b=B, d=D)
+    run_and_compare(map_param_usage, 0, True, "can_be_applied_on_map_param_usage_tester", a=A, b=B, d=D)
 
 
 def _get_safe_map_param_use_in_nested_sdfg() -> dace.SDFG:
@@ -1688,7 +1809,12 @@ def test_safe_map_param_use_in_nested_sdfg():
     zsolac = np.random.choice([0.001, 5.0], size=(N, ))
     zfinalsum = np.random.choice([0.001, 5.0], size=(N, ))
     zacust = np.random.choice([0.001, 5.0], size=(N, ))
-    run_and_compare_sdfg(sdfg, False, zsolac=zsolac, zfinalsum=zfinalsum, zacust=zacust)
+    run_and_compare_sdfg(sdfg,
+                         False,
+                         f"safe_map_param_use_in_nested_sdfg",
+                         zsolac=zsolac,
+                         zfinalsum=zfinalsum,
+                         zacust=zacust)
 
 
 def _get_nsdfg_with_return(return_arr: bool) -> dace.SDFG:
@@ -1766,12 +1892,15 @@ def _get_nsdfg_with_return(return_arr: bool) -> dace.SDFG:
 def test_nested_sdfg_with_return(ret_arr):
     sdfg = _get_nsdfg_with_return(ret_arr)
     sdfg.validate()
+    sdfg.name = f"nested_sdfg_with_return_ret_arr_{str(ret_arr).lower()}"
+    copy_sdfg = copy.deepcopy(sdfg)
+    copy_sdfg.name = sdfg.name + "_branch_eliminated"
 
-    for n, g in sdfg.all_nodes_recursive():
+    for n, g in copy_sdfg.all_nodes_recursive():
         if isinstance(n, ConditionalBlock):
             xform = branch_elimination.BranchElimination()
             xform.conditional = n
-            xform.parent_nsdfg_state = _find_state(sdfg, g.sdfg.parent_nsdfg_node)
+            xform.parent_nsdfg_state = _find_state(copy_sdfg, g.sdfg.parent_nsdfg_node)
             assert xform.can_be_applied(graph=g, expr_index=0, sdfg=g.sdfg, permissive=False)
             assert xform.can_be_applied(graph=g, expr_index=0, sdfg=g.sdfg, permissive=True)
 
@@ -1790,9 +1919,9 @@ def test_nested_sdfg_with_return(ret_arr):
     fb = EliminateBranches()
     fb.try_clean = True
     fb.permissive = False
-    fb.apply_pass(sdfg, {})
+    fb.apply_pass(copy_sdfg, {})
     out_fused = {k: v.copy() for k, v in arrays.items()}
-    sdfg(**out_fused)
+    copy_sdfg(**out_fused)
     assert out_fused["zalfa_1"][0] != 999.9
 
     # Compare all arrays
@@ -1924,7 +2053,9 @@ def test_huge_sdfg_with_log_exp_div(eps_operator_type_for_log_and_div: str):
     data['zrho'] = safe_uniform(0.9, 1.2, (N, ))  # density
     data['zcldtopdist'] = safe_uniform(0.1, 1.0, (N, ))  # distance to cloud top
     data['zicenuclei'] = safe_uniform(1e2, 1e4, (N, ))  # ice nuclei concentration
+
     sdfg = huge_sdfg.to_sdfg()
+    sdfg.name = f"huge_sdfg_with_log_exp_div_operator_{eps_operator_type_for_log_and_div}"
     sdfg.validate()
     #it_23: dace.int64, it_47: dace.int64
     ScalarToSymbolPromotion().apply_pass(sdfg, {})
@@ -1939,18 +2070,20 @@ def test_huge_sdfg_with_log_exp_div(eps_operator_type_for_log_and_div: str):
     sdfg(**out_no_fuse)
 
     # Apply transformation
+    copy_sdfg = copy.deepcopy(sdfg)
+    copy_sdfg.name = f"huge_sdfg_with_log_exp_div_operator_{eps_operator_type_for_log_and_div}_branch_eliminated"
     fb = EliminateBranches()
     fb.try_clean = True
     fb.eps_operator_type_for_log_and_div = eps_operator_type_for_log_and_div
-    fb.apply_pass(sdfg, {})
+    fb.apply_pass(copy_sdfg, {})
 
-    cblocks = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
+    cblocks = {n for n, g in copy_sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     assert len(cblocks) == 0
 
     # Run SDFG version (with transformation)
     out_fused = {k: v.copy() for k, v in data.items()}
 
-    sdfg(**out_fused)
+    copy_sdfg(**out_fused)
 
     # Compare all arrays
     for name in data.keys():
@@ -2001,7 +2134,13 @@ def test_mid_sdfg_with_log_exp_div(eps_operator_type_for_log_and_div: str):
     data['zcldtopdist'] = safe_uniform(0.1, 1.0, (N, ))  # distance to cloud top
     data['zicenuclei'] = safe_uniform(1e2, 1e4, (N, ))  # ice nuclei concentration
     sdfg = mid_sdfg.to_sdfg()
+    sdfg.name = f"mid_sdfg_with_log_exp_div_operator_{eps_operator_type_for_log_and_div}"
+    copy_sdfg = copy.deepcopy(sdfg)
+    copy_sdfg.name = f"mid_sdfg_with_log_exp_div_operator_{eps_operator_type_for_log_and_div}_branch_eliminated"
+
     sdfg.validate()
+    copy_sdfg.validate()
+
     #it_23: dace.int64, it_47: dace.int64
     ScalarToSymbolPromotion().apply_pass(sdfg, {})
     sdfg.validate()
@@ -2015,18 +2154,19 @@ def test_mid_sdfg_with_log_exp_div(eps_operator_type_for_log_and_div: str):
     sdfg(**out_no_fuse)
 
     # Apply transformation
+
     fb = EliminateBranches()
     fb.try_clean = True
     fb.eps_operator_type_for_log_and_div = eps_operator_type_for_log_and_div
-    fb.apply_pass(sdfg, {})
+    fb.apply_pass(copy_sdfg, {})
 
-    cblocks = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
+    cblocks = {n for n, g in copy_sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     assert len(cblocks) == 0
 
     # Run SDFG version (with transformation)
     out_fused = {k: v.copy() for k, v in data.items()}
 
-    sdfg(**out_fused)
+    copy_sdfg(**out_fused)
 
     # Compare all arrays
     for name in data.keys():
@@ -2069,7 +2209,7 @@ def test_loop_param_usage():
         assert xform.can_be_applied(cblock.parent_graph, 0, cblock.sdfg, False) is True
         assert xform.can_be_applied(cblock.parent_graph, 0, cblock.sdfg, True) is True
 
-    run_and_compare_sdfg(sdfg, False, A=A, B=B, C=C)
+    run_and_compare_sdfg(sdfg, False, "loop_param_usage", A=A, B=B, C=C)
 
 
 def test_can_be_applied_on_wcr_edge():
@@ -2100,7 +2240,7 @@ def test_can_be_applied_on_wcr_edge():
 
     A = np.random.choice([0.001, 5.0], size=(N, N))
 
-    run_and_compare_sdfg(sdfg, False, A=A)
+    run_and_compare_sdfg(sdfg, False, "can_be_applied_wcr", A=A)
 
 
 if __name__ == "__main__":
