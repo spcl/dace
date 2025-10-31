@@ -172,22 +172,37 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
         import filecmp
         import shutil
         import tempfile
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            sdfg.save(f'{tmp_dir}/test.sdfg', hash=False)
-            sdfg2 = SDFG.from_file(f'{tmp_dir}/test.sdfg')
-            sdfg2.save(f'{tmp_dir}/test2.sdfg', hash=False)
+        import os
+        with tempfile.NamedTemporaryFile(suffix="_.sdfg", delete=False) as tmp1, \
+            tempfile.NamedTemporaryFile(suffix="_.sdfg", delete=False) as tmp2:
+            tmp1_path = tmp1.name
+            tmp2_path = tmp2.name
+
+        try:
+            sdfg.save(tmp1_path, hash=False)
+            sdfg2 = SDFG.from_file(tmp1_path)
+            sdfg2.save(tmp2_path, hash=False)
+
             print('Testing SDFG serialization...')
-            if not filecmp.cmp(f'{tmp_dir}/test.sdfg', f'{tmp_dir}/test2.sdfg'):
-                with open(f'{tmp_dir}/test.sdfg', 'r') as f1:
-                    with open(f'{tmp_dir}/test2.sdfg', 'r') as f2:
-                        diff = difflib.unified_diff(f1.readlines(),
-                                                    f2.readlines(),
-                                                    fromfile='test.sdfg  (first save)',
-                                                    tofile='test2.sdfg (after roundtrip)')
+            if not filecmp.cmp(tmp1_path, tmp2_path):
+                with open(tmp1_path, 'r') as f1, open(tmp2_path, 'r') as f2:
+                    diff = difflib.unified_diff(f1.readlines(),
+                                                f2.readlines(),
+                                                fromfile='test.sdfg  (first save)',
+                                                tofile='test2.sdfg (after roundtrip)')
                 diff = ''.join(diff)
-                shutil.move(f'{tmp_dir}/test.sdfg', 'test.sdfg')
-                shutil.move(f'{tmp_dir}/test2.sdfg', 'test2.sdfg')
+
+                shutil.copy(tmp1_path, 'test.sdfg')
+                shutil.copy(tmp2_path, 'test2.sdfg')
                 raise RuntimeError(f'SDFG serialization failed - files do not match:\n{diff}')
+
+        finally:
+            # Clean up the temporary files
+            try:
+                os.remove(tmp1_path)
+                os.remove(tmp2_path)
+            except OSError:
+                pass
 
     if config.Config.get_bool('optimizer', 'detect_control_flow'):
         # NOTE: This should likely be done either earlier in the future, or changed entirely in modular codegen.
