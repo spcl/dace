@@ -512,7 +512,6 @@ with open(r"{temp_path}", "wb") as f:
         :note: This is an advanced interface.
         :note: In previous versions this function also called `convert_return_values()`.
         """
-        from dace.codegen import common  # Circular import
         try:
             # Call initializer function if necessary, then SDFG
             if self._initialized is False:
@@ -525,6 +524,7 @@ with open(r"{temp_path}", "wb") as f:
 
             # Optionally get errors from call
             if do_gpu_check and self.has_gpu_code:
+                from dace.codegen import common  # Circular import and avoid import in the hot path.
                 try:
                     lasterror = common.get_gpu_runtime().get_last_error_string()
                 except RuntimeError as ex:
