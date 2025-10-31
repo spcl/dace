@@ -13,6 +13,7 @@ from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 import dace.sdfg.utils as sdutil
 import dace.sdfg.construction_utils as cutil
+import dace.sdfg.tasklet_utils as tutil
 from typing import Tuple, Set, Union
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation.passes import FuseStates
@@ -1062,7 +1063,7 @@ class BranchElimination(transformation.MultiStateTransformation):
         if len(cond_code_symexpr.free_symbols) == 1:
             cond_var = str(next(iter(cond_code_symexpr.free_symbols)))
         else:
-            cond_var = cutil.token_split_variable_names(cond_code_str).pop()
+            cond_var = tutil.token_split_variable_names(cond_code_str).pop()
 
         # If the sym_map has any functions, then we need to drop, e.g. array access
         new_sym_val_map = dict()

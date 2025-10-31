@@ -446,15 +446,11 @@ tasklet_infos = [
     }),
 ]
 
-i = 0
-
 
 def _gen_sdfg(
     tasklet_info: typing.Tuple[str, str, typing.Set[str], typing.Set[str], typing.Set[str], tutil.TaskletType]
 ) -> dace.SDFG:
-    global i
-    i += 1
-    sdfg = dace.SDFG(f"sd{i}")
+    sdfg = dace.SDFG(f"sd")
     state = sdfg.add_state("s0", is_start_block=True)
 
     expr_str, out_type, in_arrays, in_scalars, in_symbols, _ = tasklet_info
@@ -486,13 +482,15 @@ def _gen_sdfg(
     return sdfg
 
 
-@pytest.mark.parametrize("tasklet_info", tasklet_infos)
+@pytest.mark.parametrize("tasklet_info", [(id, tasklet_info) for id, tasklet_info in enumerate(tasklet_infos)])
 def test_single_tasklet_split(tasklet_info):
-    sdfg = _gen_sdfg(tasklet_info)
+    id, tasklet_info_tuple = tasklet_info
+    desired_tasklet_info = tasklet_info_tuple[-1]
+
+    sdfg = _gen_sdfg(tasklet_info_tuple)
+    sdfg.name = f"tasklet_info_test_id_{id}"
     sdfg.validate()
     sdfg.compile()
-
-    _, _, _, _, _, desired_tasklet_info = tasklet_info
 
     tasklets = {(n, g) for n, g in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)}
     assert len(tasklets) == 1

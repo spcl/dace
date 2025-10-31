@@ -2700,6 +2700,8 @@ def specialize_scalar(sdfg: 'dace.SDFG', scalar_name: str, scalar_val: Union[flo
 
 def demote_symbol_to_scalar(sdfg: 'dace.SDFG', symbol_str: str, default_type: 'dace.dtypes.typeclass' = None):
     import dace.sdfg.construction_utils as cutil
+    import dace.sdfg.tasklet_utils as tutil
+
     if default_type is None:
         default_type = dace.int32
 
@@ -2738,14 +2740,14 @@ def demote_symbol_to_scalar(sdfg: 'dace.SDFG', symbol_str: str, default_type: 'd
             if isinstance(n, dace.nodes.Tasklet):
                 assert isinstance(g, dace.SDFGState)
                 sdict = g.scope_dict()
-                if cutil.tasklet_has_symbol(n, symbol_str):
+                if tutil.tasklet_has_symbol(n, symbol_str):
                     # 2. If used in tasklet try to replace symbol name with an in connector and add an access to the scalar
 
                     # Sanity check no tasklet should assign to a symbol
                     lhs, rhs = n.code.as_string.split(" = ", 2)
                     tasklet_lhs = lhs.strip()
                     assert symbol_str != tasklet_lhs
-                    cutil.tasklet_replace_code(n, {symbol_str: f"_in_{symbol_str}"})
+                    tutil.tasklet_replace_code(n, {symbol_str: f"_in_{symbol_str}"})
                     n.add_in_connector(f"_in_{symbol_str}")
                     access = g.add_access(symbol_str)
                     g.add_edge(access, None, n, f"_in_{symbol_str}", dace.memlet.Memlet(expr=f"{symbol_str}[0]"))
