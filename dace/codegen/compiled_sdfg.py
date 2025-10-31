@@ -161,8 +161,11 @@ class CompiledSDFG(object):
         self._lib = lib
         self._initialized = False
         self._libhandle = ctypes.c_void_p(0)
-        self._lastargs = ()
         self.do_not_execute = False
+
+        # Contains the pointer arguments that where used to call the SDFG, `__call__()`
+        #  was used. Used only for debugging.
+        self._lastargs = None
 
         lib.load()  # Explicitly load the library
         self._init = lib.get_symbol('__dace_init_{}'.format(sdfg.name))
@@ -172,7 +175,6 @@ class CompiledSDFG(object):
         self._cfunc = lib.get_symbol('__program_{}'.format(sdfg.name))
 
         # Cache SDFG return values
-        self._create_new_arrays: bool = True
         self._return_syms: Dict[str, Any] = None
         self._retarray_shapes: List[Tuple[str, np.dtype, dtypes.StorageType, Tuple[int], Tuple[int], int]] = []
         self._retarray_is_scalar: List[bool] = []
@@ -359,15 +361,14 @@ class CompiledSDFG(object):
         """
         Forwards the Python call to the compiled ``SDFG``.
 
-        The order of the positional arguments is expected to be the same as in
-        the ``argnames`` member. The function will roughly perform the
-        following tasks:
-        - Change the order of the Python arguments into the one required by
-          the binary.
-        - Performing some basic sanity checks.
-        - Transforming the Python arguments into their ``C`` equivalents.
-        - Allocate the memory for the return values.
-        - Call the ``C` function.
+        The order of the positional arguments is expected to be the same as in the
+        ``argnames`` member. The function will perform the following tasks:
+        - Calling ``construct_arguments()`` and creating the argument vector and
+            allocating the memory for the return values.
+        - Performing the actual call by means of ``fast_call()``, with enabled error
+            checks.
+        - Then it will convert the return value into the expected format by means of
+            ``convert_return_values()`` and return that value.
 
         :note: The memory for the return values is only allocated the first
                time this function is called. Thus, this function will always
@@ -443,19 +444,22 @@ with open(r"{temp_path}", "wb") as f:
         callargs: Sequence[Any],
         initargs: Sequence[Any],
         do_gpu_check: bool = False,
-    ) -> Union[Tuple[Any, ...], Any]:
+    ) -> None:
         """
         Calls the underlying binary functions directly and bypassing argument sanitation.
 
-        This is a faster, but less user friendly version of ``__call__()``.
-        While ``__call__()`` will transforms its Python arguments such that
-        they can be forwarded, this function assumes that this processing
-        was already done by the user.
+        This is a faster, but less user friendly version of ``__call__()``. While
+        ``__call__()`` will transforms its Python arguments such that they can be
+        forwarded and allocate memory for the return values, this function assumes
+        that this processing was already done by the user.
         To build the argument vectors you should use `self.construct_arguments()`.
 
         :param callargs:        Arguments passed to the actual computation.
         :param initargs:        Arguments passed to the initialization function.
         :param do_gpu_check:    Check if errors happened on the GPU.
+
+        :note: This is an advanced interface.
+        :note: In previous versions this function also called `convert_return_values()`.
         """
         from dace.codegen import common  # Circular import
         try:
@@ -479,8 +483,7 @@ with open(r"{temp_path}", "wb") as f:
                 if lasterror is not None:
                     raise RuntimeError(
                         f'An error was detected when calling "{self._sdfg.name}": {self._get_error_text(lasterror)}')
-
-            return self._convert_return_values()
+            return
         except (RuntimeError, TypeError, UnboundLocalError, KeyError, cgx.DuplicateDLLError, ReferenceError):
             self._lib.unload()
             raise
@@ -495,12 +498,20 @@ with open(r"{temp_path}", "wb") as f:
     def construct_arguments(self, *args: Any, **kwargs: Any) -> Tuple[Tuple[Any], Tuple[Any]]:
         """Construct the argument vectors suitable for from its argument.
 
-        The returned argument vectors are suitable to be passed to `fast_call()`.
-        While the function will allocate space for the return values which might
-        involve a reallocation. Note that the function will also update the
-        internal argument vector cache, i.e. `self._lastargs`.
+        The function returns a pair of tuple, that are suitable for `fast_call()`.
+        The first element of is `callargs`, i.e. the full arguments, while the
+        second element is `initargs`, which is only used/needed the first time
+        an SDFG is called.
 
-        :note: The update of `self._lastargs` should be considered a bug rather than a feature.
+        It is important that this function will also allocate new return values.
+        The array objects are managed by `self` and remain valid until this
+        function is called again. However, they are also returned by `self.__call__()`.
+
+        :note: In case of arrays, the returned argument vectors only contains the
+            pointers to the underlying memory. Thus it is the user's responsibility
+            to ensure that the memory remains allocated until the argument vector
+            is used.
+        :note: This is an advanced interface.
         """
         if self.argnames is None and len(args) != 0:
             raise KeyError(f"Passed positional arguments to an SDFG that does not accept them.")
@@ -512,11 +523,8 @@ with open(r"{temp_path}", "wb") as f:
                 )
             kwargs.update(positional_arguments)
 
-        # Allocate space for the return value.
-        # NOTE: Calling this function is the reason why we have to update `self._lastargs`,
-        #   because, if the return values are reallocated the memory of them might get
-        #   reclaimed and the pointers stored in `self._lastargs` are dangling.
-        # TODO: Find a better solution that makes this function have no side effects.
+        # NOTE: This might invalidate the elements associated to the return values of
+        #   all argument vectors that were created before.
         self._initialize_return_values(kwargs)
 
         # Add the return values to the arguments, since they are part of the C signature.
@@ -555,19 +563,41 @@ with open(r"{temp_path}", "wb") as f:
                                     symbols=kwargs,
                                     callback_retval_references=self._callback_retval_references)
             for aval, atype, aname in zip(arglist, argtypes, argnames))
+
         symbols = self._free_symbols
         callparams = tuple((carg, aname) for arg, carg, aname in zip(arglist, cargs, argnames)
                            if not ((hasattr(arg, 'name') and arg.name in self._constants) and symbolic.issymbolic(arg)))
-
         newargs = tuple(carg for carg, _aname in callparams)
         initargs = tuple(carg for carg, aname in callparams if aname in symbols)
 
-        # See note above why we _have_ to update them.
-        self._lastargs = newargs, initargs
-        return self._lastargs
+        return (newargs, initargs)
+
+    def convert_return_values(self) -> Union[Any, Tuple[Any, ...]]:
+        """Convert the return arguments.
+
+        Execute the `return` statement and return. This function should only be called
+        after `fast_call()` has been run.
+
+        :note: This is an advanced interface.
+        :note: After `fast_call()` returns it is only allowed to call this function once.
+        :note: This function has a bug that makes it impossible to return a tuple of size one.
+        """
+        # TODO: Make sure that the function is called only once by checking it.
+        # NOTE: Currently it is not possible to return a scalar value, see `tests/sdfg/scalar_return.py`
+        if not self._return_arrays:
+            return None
+        elif len(self._return_arrays) == 1:
+            # NOTE: The check above is wrong, The true check should be something like `'__return' in self.sdfg.arrays`.
+            #   Because it is possible to return a tuple with one element, but the ck
+            return self._return_arrays[0].item() if self._retarray_is_scalar[0] else self._return_arrays[0]
+        else:
+            return tuple(r.item() if scalar else r for r, scalar in zip(self._return_arrays, self._retarray_is_scalar))
 
     def clear_return_values(self):
-        self._create_new_arrays = True
+        warnings.warn(
+            'The "CompiledSDFG.clear_return_values" API is deprecated, as this behaviour has'
+            ' become the new default, and is a noops.', DeprecationWarning)
+        pass
 
     def _create_array(self, _: str, dtype: np.dtype, storage: dtypes.StorageType, shape: Tuple[int],
                       strides: Tuple[int], total_size: int):
@@ -603,52 +633,38 @@ with open(r"{temp_path}", "wb") as f:
         # Clear references from last call (allow garbage collection)
         self._callback_retval_references.clear()
 
-        if self._initialized:
-            if self._return_syms == syms:
-                if not self._create_new_arrays:
-                    return
-                else:
-                    self._create_new_arrays = False
-                    # Use stored sizes to recreate arrays (fast path)
-                    self._return_arrays = tuple(kwargs[desc[0]] if desc[0] in kwargs else self._create_array(*desc)
-                                                for desc in self._retarray_shapes)
-                    return
+        if self._initialized and self._return_syms == syms:
+            # Use stored sizes to recreate arrays (fast path)
+            self._return_arrays = tuple(kwargs[desc[0]] if desc[0] in kwargs else self._create_array(*desc)
+                                        for desc in self._retarray_shapes)
+            return
 
         self._return_syms = syms
-        self._create_new_arrays = False
-
-        # Initialize return values with numpy arrays
-        self._retarray_shapes = []
         self._return_arrays = []
+        self._retarray_shapes = []
         for arrname, arr in sorted(self.sdfg.arrays.items()):
             if arrname.startswith('__return') and not arr.transient:
                 if arrname in kwargs:
+                    # The return value is passed as an argument, in that case store the name in `self._retarray_shapes`.
+                    warnings.warn(f'Return value "{arrname}" is passed as a regular argument.', stacklevel=2)
                     self._return_arrays.append(kwargs[arrname])
                     self._retarray_is_scalar.append(isinstance(arr, dt.Scalar))
                     self._retarray_shapes.append((arrname, ))
-                    continue
 
-                if isinstance(arr, dt.Stream):
+                elif isinstance(arr, dt.Stream):
                     raise NotImplementedError('Return streams are unsupported')
 
-                shape = tuple(symbolic.evaluate(s, syms) for s in arr.shape)
-                dtype = arr.dtype.as_numpy_dtype()
-                total_size = int(symbolic.evaluate(arr.total_size, syms))
-                strides = tuple(symbolic.evaluate(s, syms) * arr.dtype.bytes for s in arr.strides)
-                shape_desc = (arrname, dtype, arr.storage, shape, strides, total_size)
-                self._retarray_is_scalar.append(isinstance(arr, dt.Scalar) or isinstance(arr.dtype, dtypes.pyobject))
-                self._retarray_shapes.append(shape_desc)
+                else:
+                    shape = tuple(symbolic.evaluate(s, syms) for s in arr.shape)
+                    dtype = arr.dtype.as_numpy_dtype()
+                    total_size = int(symbolic.evaluate(arr.total_size, syms))
+                    strides = tuple(symbolic.evaluate(s, syms) * arr.dtype.bytes for s in arr.strides)
+                    shape_desc = (arrname, dtype, arr.storage, shape, strides, total_size)
+                    self._retarray_is_scalar.append(
+                        isinstance(arr, dt.Scalar) or isinstance(arr.dtype, dtypes.pyobject))
+                    self._retarray_shapes.append(shape_desc)
 
-                # Create an array with the properties of the SDFG array
-                arr = self._create_array(*shape_desc)
-                self._return_arrays.append(arr)
-
-    def _convert_return_values(self):
-        # Return the values as they would be from a Python function
-        # NOTE: Currently it is not possible to return a scalar value, see `tests/sdfg/scalar_return.py`
-        if not self._return_arrays:
-            return None
-        elif len(self._return_arrays) == 1:
-            return self._return_arrays[0].item() if self._retarray_is_scalar[0] else self._return_arrays[0]
-        else:
-            return tuple(r.item() if scalar else r for r, scalar in zip(self._return_arrays, self._retarray_is_scalar))
+                    # Create an array with the properties of the SDFG array
+                    arr = self._create_array(*shape_desc)
+                    self._return_arrays.append(arr)
+        self._return_arrays = tuple(self._return_arrays)
