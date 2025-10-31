@@ -1086,6 +1086,7 @@ def offset_symbol_in_expression(expr_str: str, symbol_to_offset: str, offset: in
     offset_expr = expr.subs(sym_to_change, offsetted_expr)
     return sympy.pycode(offset_expr)
 
+
 def use_laneid_symbol_in_expression(expr_str: str, symbol_to_offset: str, offset: int) -> str:
     """
     Returns a new expression string where a specified symbol is replaced with laneid-ed version
@@ -1113,6 +1114,7 @@ def use_laneid_symbol_in_expression(expr_str: str, symbol_to_offset: str, offset
     offsetted_expr = f"({sym_to_change}_laneid_{offset})"
     offset_expr = expr.subs(sym_to_change, offsetted_expr)
     return sympy.pycode(offset_expr)
+
 
 def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Tasklet, info: dict, vector_width: int,
                                   templates: Dict[str, str], vector_map_param: str) -> None:
@@ -1187,10 +1189,10 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
                         assert constant == const2_
                         cop_ = op_ + "c"
                     return templates[cop_].format(rhs1=rhs,
-                                                    constant=_str_to_float_or_str(constant),
-                                                    lhs=lhs_,
-                                                    op=op_,
-                                                    vector_width=vw)
+                                                  constant=_str_to_float_or_str(constant),
+                                                  lhs=lhs_,
+                                                  op=op_,
+                                                  vector_width=vw)
 
             else:
                 # Two arrays
@@ -1288,7 +1290,8 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         if isinstance(lhs_data, dace.data.Array):
             node.code = dace.properties.CodeBlock(
                 code="\n".join([f"//{ttype}"] +
-                               [f"{lhs}[{i}] = {use_laneid_symbol_in_expression(expr, c, i)};" for i in range(vw)]) + "\n",
+                               [f"{lhs}[{i}] = {use_laneid_symbol_in_expression(expr, c, i)};"
+                                for i in range(vw)]) + "\n",
                 language=dace.Language.CPP)
         else:
             node.code = dace.properties.CodeBlock(code=f"{lhs} = {expr};\n", language=dace.Language.CPP)
@@ -1428,9 +1431,9 @@ def copy_arrays_with_a_new_shape(sdfg: dace.SDFG, array_namelist: Set[str], new_
                        may_alias=arr.may_alias)
 
 
-def get_scalar_source_nodes(sdfg: dace.SDFG,
-                            non_transient_only: bool,
-                            skip: Set[str] = set()) -> List[Tuple[dace.SDFGState, dace.nodes.AccessNode]]:
+def get_scalar_source_nodes(
+    sdfg: dace.SDFG, non_transient_only: bool,
+    skip: Set[str] = set()) -> List[Tuple[dace.SDFGState, dace.nodes.AccessNode]]:
     """
     Returns source nodes (in-degree 0 access nodes) for scalars (or shape-1 arrays) with no incoming edges.
 
@@ -1480,8 +1483,7 @@ def get_array_source_nodes(sdfg: dace.SDFG,
     return source_nodes
 
 
-def get_scalar_sink_nodes(sdfg: dace.SDFG,
-                          non_transient_only: bool,
+def get_scalar_sink_nodes(sdfg: dace.SDFG, non_transient_only: bool,
                           skip: Set[str]) -> List[Tuple[dace.SDFGState, dace.nodes.AccessNode]]:
     """
     Returns sink nodes for scalars (or shape-1 arrays) with no outgoing edges.
@@ -1903,8 +1905,7 @@ def find_symbol_assignment(sdfg: dace.SDFG, sym_name: str) -> str:
     #raise Exception("Symbol assignment not found")
 
 
-def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.NestedSDFG,
-                                parent_state: SDFGState,
+def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.NestedSDFG, parent_state: SDFGState,
                                 invariant_scalars: Set[str]) -> Set[str]:
     """
     Determines which arrays can be vectorized based on their access patterns and symbol usage.
@@ -2013,15 +2014,36 @@ import math
 # Allowed standard and math-like functions
 STANDARD_FUNCS = {
     # Builtins and math intrinsics
-    "abs", "exp", "log", "ln", "sqrt", "sin", "cos", "tan",
-    "asin", "acos", "atan", "atan2", "sinh", "cosh", "tanh",
-    "floor", "ceil", "pow", "min", "max",
+    "abs",
+    "exp",
+    "log",
+    "ln",
+    "sqrt",
+    "sin",
+    "cos",
+    "tan",
+    "asin",
+    "acos",
+    "atan",
+    "atan2",
+    "sinh",
+    "cosh",
+    "tanh",
+    "floor",
+    "ceil",
+    "pow",
+    "min",
+    "max",
     # DaCe-like or symbolic math intrinsics
-    "int_floor", "int_ceil", "div_floor", "div_ceil",
+    "int_floor",
+    "int_ceil",
+    "div_floor",
+    "div_ceil",
 } | set(dir(math))
 
 
 class FuncToSubscript(ast.NodeTransformer):
+
     def visit_Call(self, node):
         # Recurse into child nodes
         self.generic_visit(node)
@@ -2052,11 +2074,7 @@ class FuncToSubscript(ast.NodeTransformer):
         else:
             new_slice = ast.Tuple(elts=node.args, ctx=ast.Load())
 
-        return ast.Subscript(
-            value=func,
-            slice=new_slice,
-            ctx=ast.Load()
-        )
+        return ast.Subscript(value=func, slice=new_slice, ctx=ast.Load())
 
 
 def convert_nonstandard_calls(expr: str) -> str:
@@ -2066,13 +2084,10 @@ def convert_nonstandard_calls(expr: str) -> str:
     return ast.unparse(new_tree)
 
 
-def expand_interstate_assignments_to_lanes(inner_sdfg: dace.SDFG,
-                                           nsdfg_node: dace.nodes.NestedSDFG,
-                                           state: dace.SDFGState,
-                                           vector_width: int,
-                                           invariant_data: Set[str]):
+def expand_interstate_assignments_to_lanes(inner_sdfg: dace.SDFG, nsdfg_node: dace.nodes.NestedSDFG,
+                                           state: dace.SDFGState, vector_width: int, invariant_data: Set[str]):
     # `sym = 0`
-    # Would become 
+    # Would become
     # `sym_laneid_0 = 0, sym=sym_laneid_0, sym_laneid_1 = 0, sym_laneid_2 = 0, ....`
     # Assume:
     # `sym = A[_for_it] + 1`
@@ -2118,8 +2133,10 @@ def expand_interstate_assignments_to_lanes(inner_sdfg: dace.SDFG,
 
                 # All other symbols are replaced with `s` -> `s{laneid}`, except free symbols
                 # Those are kept as they are
-                non_map_free_syms = {str(s) for s in original_v_expr.free_symbols} - ({vectorized_param}.union(inner_sdfg.free_symbols))
-                
+                non_map_free_syms = {str(s)
+                                     for s in original_v_expr.free_symbols} - ({vectorized_param}.union(
+                                         inner_sdfg.free_symbols))
+
                 assert vectorized_param not in non_map_free_syms
 
                 for free_sym in non_map_free_syms:
@@ -2134,13 +2151,14 @@ def expand_interstate_assignments_to_lanes(inner_sdfg: dace.SDFG,
 
                         # Add the new symbol to the symbols
                         if f"{free_sym}_laneid_{i}" not in inner_sdfg.symbols:
-                            inner_sdfg.add_symbol(f"{free_sym}_laneid_{i}", inner_sdfg.symbols.get(str(free_sym), dace.float64))
+                            inner_sdfg.add_symbol(f"{free_sym}_laneid_{i}",
+                                                  inner_sdfg.symbols.get(str(free_sym), dace.float64))
                     else:
                         if isinstance(inner_sdfg.arrays[free_sym_str], dace.data.Scalar):
                             #print(f"Subs {free_sym} with {free_sym}")
                             v_expr = v_expr.subs(free_sym, f"{free_sym}")
                         else:
-                            assert inner_sdfg.arrays[free_sym_str].shape != (1,)
+                            assert inner_sdfg.arrays[free_sym_str].shape != (1, )
                             #print(f"Subs {free_sym} with {free_sym}({i})")
                             v_expr = v_expr.subs(free_sym, f"{free_sym}({i})")
 
@@ -2154,9 +2172,8 @@ def expand_interstate_assignments_to_lanes(inner_sdfg: dace.SDFG,
                     # Let's hope compiler will prune the unused data, have laneid 0 one for the original symbol too
                     new_assignments[k] = convert_nonstandard_calls(new_v)
 
-
-
         edge.data.assignments = new_assignments
+
 
 def try_demoting_vectorizable_symbols(inner_sdfg: dace.SDFG) -> Set[str]:
     assigned_symbols = dict()
