@@ -2548,11 +2548,22 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
     # -> For 2: Rm. dynamic in connector, remove the edge and the node if the degree is None
     # 3. Access Node
     # -> If access node is used then e.g. [scalar] -> [tasklet]
-    # -> then [tasklet(assign const value)] -> [access node] -> [tasklet]
+    # -> then create a [tasklet] that uses the scalar_val as a constant value inside
+    import re
+
+    def _token_replace(code: str, src: str, dst: str) -> str:
+        # Split while keeping delimiters
+        tokens = re.split(r'(\s+|[()\[\]])', code)
+
+        # Replace tokens that exactly match src
+        tokens = [dst if token.strip() == src else token for token in tokens]
+
+        # Recombine everything
+        return ''.join(tokens).strip()
 
     def repl_code_block_or_str(input: Union[CodeBlock, str], src: str, dst: str):
         if isinstance(input, CodeBlock):
-            return CodeBlock(input.as_string.replace(src, dst))
+            return CodeBlock(_token_replace(input.as_string, src, dst))
         else:
             return input.replace(src, dst)
 
@@ -2583,22 +2594,25 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
             assert e.data.data == scalar_name
 
             if isinstance(e.dst, nd.Tasklet):
-                assign_tasklet = state.add_tasklet(f"assign_{scalar_name}",
-                                                   inputs={},
-                                                   outputs={"_out"},
-                                                   code=f"_out = {scalar_val}")
-                tmp_name = f"__tmp_{scalar_name}_{c}"
-                c += 1
-                copydesc = copy.deepcopy(sdfg.arrays[scalar_name])
-                copydesc.transient = True
-                copydesc.storage = dace.StorageType.Register
-                sdfg.add_datadesc(tmp_name, copydesc)
-                scl_an = state.add_access(tmp_name)
+                in_tasklet_name = e.dst_conn
+                if e.dst.code.language == dace.dtypes.Language.Python:
+                    import sympy
+                    lhs, rhs = e.dst.code.as_string.split("=")
+                    lhs = lhs.strip()
+                    rhs = rhs.strip()
+                    subs_rhs = str(sympy.pycode(dace.symbolic.SymExpr(rhs).subs({in_tasklet_name: scalar_val}))).strip()
+                    new_code = CodeBlock(code=f"{lhs} = {subs_rhs}", language=dace.dtypes.Language.Python)
+                    e.dst.code = new_code
+                else:
+
+                    new_code = CodeBlock(code=_token_replace(e.dst.code.as_string, in_tasklet_name, scalar_val),
+                                         language=e.dst.code.language)
+                    e.dst.code = new_code
                 state.remove_edge(e)
-                state.add_edge(assign_tasklet, "_out", scl_an, None, dace.memlet.Memlet.from_array(tmp_name, copydesc))
-                state.add_edge(scl_an, None, dst, e.dst_conn, dace.memlet.Memlet.from_array(tmp_name, copydesc))
                 if e.src_conn is not None:
                     src.remove_out_connector(e.src_conn)
+                if e.dst_conn is not None:
+                    dst.remove_in_connector(e.dst_conn)
             else:
                 state.remove_edge(e)
                 if e.src_conn is not None:
@@ -2658,6 +2672,107 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
 
 
 def specialize_scalar(sdfg: 'dace.SDFG', scalar_name: str, scalar_val: Union[float, int, str]):
-    assert isinstance(scalar_name, str)
-    assert isinstance(scalar_val, (float, int, str))
+    import sympy
+
+    assert isinstance(scalar_name, str), f"Expected scalar name to be str got {type(scalar_val)}"
+
+    def _sympy_to_python_number(val):
+        """Convert any SymPy numeric type to a native Python int or float."""
+        if isinstance(val, sympy.Integer):
+            return int(val)
+        elif isinstance(val, (sympy.Float, sympy.Rational)):
+            return float(val)
+        elif isinstance(val, sympy.Number):
+            # Fallback for any other sympy numeric type
+            return float(val.evalf())
+        return val  # unchanged if not a number
+
+    assert isinstance(
+        scalar_val,
+        (float, int, str,
+         sympy.Number)), f"Expected scalar value to be float, int, str, or sympy.Number, got {type(scalar_val)}"
+    if not isinstance(scalar_val, (float, int, str)):
+        if isinstance(scalar_val, sympy.Number):
+            scalar_val = _sympy_to_python_number(scalar_val)
+
     _specialize_scalar_impl(sdfg, sdfg, scalar_name, scalar_val)
+
+
+def demote_symbol_to_scalar(sdfg: 'dace.SDFG', symbol_str: str, default_type: 'dace.dtypes.typeclass' = None):
+    import dace.sdfg.construction_utils as cutil
+    import dace.sdfg.tasklet_utils as tutil
+
+    if default_type is None:
+        default_type = dace.int32
+
+    # If assignment is to symbol_str, append it to last scalar before
+    if symbol_str in sdfg.symbols:
+        sym_dtype = sdfg.symbols[symbol_str]
+    else:
+        print(
+            f"Symbol {symbol_str} not in the symbols of {sdfg.label} ({sdfg.symbols}), setting to default type {default_type}"
+        )
+        sym_dtype = default_type
+
+    # If top-level and in free symbols
+    # Or not top-level and in symbol mapping need to make it non transient
+    # TODO:
+    is_top_level = sdfg.parent_nsdfg_node is None
+    is_transient = not ((is_top_level and symbol_str in sdfg.free_symbols) or
+                        ((not is_top_level) and symbol_str in sdfg.parent_nsdfg_node.symbol_mapping))
+
+    if is_transient is False:
+        raise Exception("Scalar to symbol demotion only works if the resulting scalar would be transient")
+
+    if symbol_str in sdfg.symbols:
+        sdfg.remove_symbol(symbol_str)
+    sdfg.add_scalar(name=symbol_str, dtype=sym_dtype, storage=dace.dtypes.StorageType.Register, transient=is_transient)
+
+    # For any tasklet that uses the symbol - make an access node to the scalar and connect through the in connector
+    # 1. Replace all symbols of name appearing
+    # 2.1 If symbol <- expr in any interstate edge
+    # 2.2 Add a new state before edge.dst, and add assignment to the scalar
+
+    # 1
+    # Replace all code in tasklets and access nodes
+    for g in sdfg.all_states():
+        for n in g.nodes():
+            if isinstance(n, dace.nodes.Tasklet):
+                assert isinstance(g, dace.SDFGState)
+                sdict = g.scope_dict()
+                if tutil.tasklet_has_symbol(n, symbol_str):
+                    # 2. If used in tasklet try to replace symbol name with an in connector and add an access to the scalar
+
+                    # Sanity check no tasklet should assign to a symbol
+                    lhs, rhs = n.code.as_string.split(" = ")
+                    tasklet_lhs = lhs.strip()
+                    assert symbol_str not in tasklet_lhs
+                    tutil.tasklet_replace_code(n, {symbol_str: f"_in_{symbol_str}"})
+                    n.add_in_connector(f"_in_{symbol_str}")
+                    access = g.add_access(symbol_str)
+                    g.add_edge(access, None, n, f"_in_{symbol_str}", dace.memlet.Memlet(expr=f"{symbol_str}[0]"))
+                    # If parent scope is not None add a dependency edge to it
+                    if sdict[n] is not None:
+                        g.add_edge(sdict[n], None, access, None, dace.memlet.Memlet())
+
+    # 2
+    for e in sdfg.all_interstate_edges():
+        matching_assignments = {(k, v) for k, v in e.data.assignments.items() if k.strip() == symbol_str}
+        if len(matching_assignments) > 0:
+            # Add them to the next state
+            state = e.dst.parent_graph.add_state_before(e.dst,
+                                                        label=f"_{e.dst}_sym_assign",
+                                                        is_start_block=e.dst.parent_graph.start_block == e.dst)
+            # Go through all matching assignments
+            # Add symbols etc. as necessary
+            for k, v in matching_assignments:
+                del e.data.assignments[k]
+                symbol_str = k.strip()
+                if symbol_str in state.sdfg.symbols:
+                    state.sdfg.remove_symbol(symbol_str)
+                if symbol_str not in g.sdfg.arrays:
+                    state.sdfg.add_scalar(name=symbol_str,
+                                          dtype=sym_dtype,
+                                          storage=dace.dtypes.StorageType.Register,
+                                          transient=is_transient)
+                cutil.generate_assignment_as_tasklet_in_state(state, k, v)
