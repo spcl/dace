@@ -85,7 +85,7 @@ __host__ __device__ __forceinline__ void vector_copy(T * __restrict__ dst, const
 }}
 """
 
-    def __init__(self, vector_width, try_to_demote_symbols_in_nsdfgs):
+    def __init__(self, vector_width, try_to_demote_symbols_in_nsdfgs = False):
         passes = [
             EliminateBranches(),
             RemoveFPTypeCasts(),

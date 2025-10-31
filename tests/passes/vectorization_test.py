@@ -1,5 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import math
+from typing import Tuple
 import dace
 import copy
 import pytest
@@ -117,7 +118,7 @@ def tasklet_in_nested_sdfg(
 
 
 @dace.program
-def tasklet_in_nested_sdfg_2(
+def tasklet_in_nested_sdfg_two(
     a: dace.float64[S, S],
     b: dace.float64[S, S],
     offset1: dace.int64,
@@ -182,7 +183,7 @@ def spmv_csr(indptr: dace.int64[n + 1], indices: dace.int64[nnz], data: dace.flo
 
 
 @dace.program
-def spmv_csr_2(indptr: dace.int64[n + 1], indices: dace.int64[nnz], data: dace.float64[nnz], x: dace.float64[m],
+def spmv_csr_two(indptr: dace.int64[n + 1], indices: dace.int64[nnz], data: dace.float64[nnz], x: dace.float64[m],
                y: dace.float64[n]):
     n_rows = len(indptr) - 1
 
@@ -223,6 +224,7 @@ def run_vectorization_test(dace_func,
 
     # Original SDFG
     sdfg = dace_func.to_sdfg(simplify=False)
+    sdfg.name = sdfg_name
     if simplify:
         sdfg.simplify(validate=True, validate_all=True, skip=skip_simplify or set())
     if save_sdfgs and sdfg_name:
@@ -445,8 +447,7 @@ def test_tasklets_in_if():
 
 
 # There was a non-deterministic bug, therefore run it multiple times
-@pytest.mark.parametrize("run_id", [i for i in range(2)])
-def test_tasklets_in_if_two(run_id):
+def test_tasklets_in_if_two():
     _S = 64
     A = numpy.random.random((_S, _S))
     B = numpy.random.random((1, ))
@@ -475,6 +476,7 @@ def test_tasklets_in_if_two(run_id):
     sdfg = tasklets_in_if_two.to_sdfg(simplify=False)
     sdfg.simplify(skip=["ScalarToSymbolPromotion"])
     copy_sdfg = copy.deepcopy(sdfg)
+    copy_sdfg.name = copy_sdfg.name + "_vectorized"
     sdfg.save("nested_tasklets.sdfg")
     VectorizeCPU(vector_width=8).apply_pass(copy_sdfg, {})
     copy_sdfg.save("nested_tasklets_vectorized.sdfg")
@@ -566,9 +568,6 @@ def test_overlapping_access():
     A = numpy.random.random((2, 2, _S))
     B = numpy.random.random((_S))
 
-    sdfg = overlapping_access.to_sdfg()
-    sdfg.save("s.sdfg")
-
     run_vectorization_test(dace_func=overlapping_access,
                            arrays={
                                'A': A,
@@ -585,9 +584,6 @@ def test_overlapping_access():
 def test_overlapping_access_same_src_and_dst():
     _S = 64
     A = numpy.random.random((2, 2, _S))
-
-    sdfg = overlapping_access_same_src_and_dst.to_sdfg()
-    sdfg.save("s.sdfg")
 
     run_vectorization_test(dace_func=overlapping_access_same_src_and_dst,
                            arrays={
@@ -606,9 +602,6 @@ def test_overlapping_access_same_src_and_dst_in_nestedsdfg(run_id):
     _S = 64
     A = numpy.random.random((2, 2, _S))
 
-    sdfg = overlapping_access_same_src_and_dst_in_nestedsdfg.to_sdfg()
-    sdfg.save("s.sdfg")
-
     run_vectorization_test(dace_func=overlapping_access_same_src_and_dst_in_nestedsdfg,
                            arrays={
                                'A': A,
@@ -619,7 +612,7 @@ def test_overlapping_access_same_src_and_dst_in_nestedsdfg(run_id):
                            },
                            vector_width=8,
                            save_sdfgs=True,
-                           sdfg_name="overlapping_access_same_src_and_dst_in_nestedsdfg")
+                           sdfg_name=f"overlapping_access_same_src_and_dst_in_nestedsdfg_runid_{run_id}")
 
 
 def test_spmv():
@@ -750,7 +743,7 @@ def _get_disjoint_chain_sdfg(trivial_if: bool, fortran_layout: bool = False) -> 
 
     sd1.validate()
 
-    sd2 = dace.SDFG("sd2")
+    sd2 = dace.SDFG("disjoin_chain_sdfg")
     p_s1 = sd2.add_state("p_s1", is_start_block=True)
 
     map_entry, map_exit = p_s1.add_map(name="map1", ndrange={"_for_it_52": dace.subsets.Range([(0, C - 1, 1)])})
@@ -785,8 +778,9 @@ def _get_disjoint_chain_sdfg(trivial_if: bool, fortran_layout: bool = False) -> 
     return sd2, p_s1
 
 
-@pytest.mark.parametrize("trivial_if, demote_symbols", [True, False], [True, False])
-def test_disjoint_chain_split_branch_only(trivial_if: bool, demote_symbols: bool):
+@pytest.mark.parametrize("trivial_if_demote_symbols", [(True, True), (True, False), (False, True), (False, False)])
+def test_disjoint_chain_split_branch_only(trivial_if_demote_symbols: Tuple[bool, bool]):
+    trivial_if, demote_symbols = trivial_if_demote_symbols
     sdfg, nsdfg_parent_state = _get_disjoint_chain_sdfg(trivial_if)
     zsolqa = numpy.random.choice([0.001, 5.0], size=(C, 5, 5))
     zrainacc = numpy.random.choice([0.001, 5.0], size=(C, ))
@@ -794,12 +788,14 @@ def test_disjoint_chain_split_branch_only(trivial_if: bool, demote_symbols: bool
     ztp1 = numpy.random.choice([3.5, 5.0], size=(C, ))
     rtt = numpy.random.choice([4.0], size=(1, ))
 
+    sdfg.name = f"{sdfg.name}_{str(trivial_if).lower()}_{str(demote_symbols).lower()}"
     copy_sdfg = copy.deepcopy(sdfg)
-    copy_sdfg.name = sdfg.name + "_branch_eliminated"
+    copy_sdfg.name = f"{copy_sdfg.name}_{str(trivial_if).lower()}_{str(demote_symbols).lower()}_vectorized"
+
     arrays = {"zsolqa": zsolqa, "zrainacc": zrainacc, "zrainaut": zrainaut, "ztp1": ztp1, "rtt": rtt[0]}
 
     sdfg.validate()
-    sdfg.save("disjoint_chain.sdfg")
+    sdfg.save(f"disjoint_chain_{str(trivial_if).lower()}_{str(demote_symbols).lower()}.sdfg")
     out_no_fuse = {k: v.copy() for k, v in arrays.items()}
     sdfg(**out_no_fuse)
 
@@ -820,7 +816,7 @@ def test_disjoint_chain_split_branch_only(trivial_if: bool, demote_symbols: bool
     out_fused = {k: v.copy() for k, v in arrays.items()}
 
     vectorizer = VectorizeCPU(vector_width=8)
-    vectorizer.try_to_demote_symbols_in_nsdfgs = demot_symbols
+    vectorizer.try_to_demote_symbols_in_nsdfgs = demote_symbols
     vectorizer.apply_pass(copy_sdfg, {})
     copy_sdfg.save("disjoint_chain_vectorized.sdfg")
 
@@ -838,8 +834,7 @@ if __name__ == "__main__":
     test_unsupported_op()
     test_unsupported_op_two()
     test_tasklets_in_if()
-    for i in range(2):
-        test_tasklets_in_if_two(i)
+    test_tasklets_in_if_two()
     test_nested_sdfg()
     test_simple_cpu()
     test_no_maps()
@@ -848,6 +843,5 @@ if __name__ == "__main__":
     test_jacobi2d()
     test_overlapping_access_same_src_and_dst()
     test_overlapping_access_same_src_and_dst_in_nestedsdfg()
-    for tif in [True, False]:
-        for ds in [True, False]:
-            test_disjoint_chain_split_branch_only(tif, ds)
+    for argtuple in [(True, True), (True, False), (False, True), (False, False)]:
+        test_disjoint_chain_split_branch_only(argtuple)

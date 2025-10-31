@@ -31,7 +31,7 @@ class Vectorize(ppl.Pass):
     try_to_demote_symbols_in_nsdfgs = properties.Property(dtype=bool, default=False)
 
     def __init__(self, templates, vector_width, vector_input_storage, vector_output_storage, vector_op_numeric_type,
-                 global_code, global_code_location):
+                 global_code, global_code_location, try_to_demote_symbols_in_nsdfgs):
         super().__init__()
         self.templates = templates
         self.vector_width = vector_width
@@ -41,6 +41,7 @@ class Vectorize(ppl.Pass):
         self.global_code_location = global_code_location
         self._tasklet_vectorizable_map = dict()
         self.vector_op_numeric_type = vector_op_numeric_type
+        self.try_to_demote_symbols_in_nsdfgs = try_to_demote_symbols_in_nsdfgs
         self._used_names = set()
 
     def modifies(self) -> ppl.Modifies:
