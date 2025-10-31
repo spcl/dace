@@ -138,18 +138,21 @@ class LoopLocalMemoryReduction(ppl.Pass):
                     continue
 
                 cond_states = set()
-                for st, _ in node.all_nodes_recursive():
-                    if isinstance(st, SDFGState):
-                        pgraph = st.parent_graph
-                        while pgraph is not None and pgraph != node:
-                            if isinstance(pgraph, ConditionalBlock):
-                                cond_states.add(st)
-                                break
-                            pgraph = pgraph.parent_graph
+                for st in node.all_states():
+                    pgraph = st.parent_graph
+                    while pgraph is not None and pgraph != node:
+                        if isinstance(pgraph, ConditionalBlock):
+                            cond_states.add(st)
+                            break
+                        pgraph = pgraph.parent_graph
+
+                changing_syms = set()
+                for edge in node.all_interstate_edges():
+                    changing_syms.update(edge.data.assignments.keys())
 
                 arrays = set(acc_node.data for acc_node in node.data_nodes())
                 for arr in arrays:
-                    self._apply_for_array(arr, sdfg, node, cond_states)
+                    self._apply_for_array(arr, sdfg, node, cond_states, changing_syms)
 
         self.out_of_loop_states_cache = {}
 
@@ -233,7 +236,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
             dim_write_indices = [il[dim] for il in all_write_indices if il[dim] is not None]
             dim_uncond_write_indices = [il[dim] for il in uncond_write_indices if il[dim] is not None]
 
-            if not dim_read_indices or not dim_write_indices:
+            if not dim_read_indices or not dim_uncond_write_indices:
                 k_values.append(None)
                 continue
 
@@ -251,7 +254,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
                 cond = (uncond_write_lb > read_ub)  # At least one write index must be higher than all read indices
             if a == 0:
                 span = len(dim_read_indices + dim_write_indices)
-                cond = (uncond_write_lb > read_ub)  # At least one write index must be higher than all read indices
+                cond = True  # No condition needed
             if a <= -1:
                 span = (read_ub - write_ub) / (-a)
                 cond = (uncond_write_ub < read_lb)  # At least one write index must be lower than all read indices
@@ -361,8 +364,8 @@ class LoopLocalMemoryReduction(ppl.Pass):
                 indices.append(max_index)
         return indices
 
-    def _apply_for_array(self, array_name: str, sdfg: sd.SDFG, loop: LoopRegion,
-                         cond_states: set[sd.SDFGState]) -> bool:
+    def _apply_for_array(self, array_name: str, sdfg: sd.SDFG, loop: LoopRegion, cond_states: set[sd.SDFGState],
+                         changing_syms: set[str]) -> bool:
         # Must be transient (otherwise it's observable)
         if not sdfg.arrays[array_name].transient:
             return
@@ -381,8 +384,48 @@ class LoopLocalMemoryReduction(ppl.Pass):
         if any(i is None for il in read_indices + all_write_indices for i in il):
             return
 
+        # None of the indices can depend on changing symbols (i.e. symbols updated in the loop).
+        for il in read_indices + all_write_indices:
+            for (a, b) in il:
+                if any(s.name in changing_syms for s in a.free_symbols.union(b.free_symbols)):
+                    return
+
+        # Combine the read and write indices into a 1D array access for easier analysis
+        collapsed_read_indices = []
+        itervar = pystr_to_symbolic(loop.loop_variable)
+        for rd in read_indices:
+            new_rd = pystr_to_symbolic("0")
+            for (a, b), s in zip(rd, sdfg.arrays[array_name].strides):
+                new_rd += (a * itervar + b) * s
+            a = sp.Wild("a", exclude=[itervar])
+            b = sp.Wild("b", exclude=[itervar])
+            m = new_rd.match(a * itervar + b)
+            collapsed_read_indices.append([(m[a], m[b])])
+
+        collapsed_uncond_write_indices = []
+        itervar = pystr_to_symbolic(loop.loop_variable)
+        for wr in uncond_write_indices:
+            new_wr = pystr_to_symbolic("0")
+            for (a, b), s in zip(wr, sdfg.arrays[array_name].strides):
+                new_wr += (a * itervar + b) * s
+            a = sp.Wild("a", exclude=[itervar])
+            b = sp.Wild("b", exclude=[itervar])
+            m = new_wr.match(a * itervar + b)
+            collapsed_uncond_write_indices.append([(m[a], m[b])])
+
+        collapsed_all_write_indices = []
+        itervar = pystr_to_symbolic(loop.loop_variable)
+        for wr in all_write_indices:
+            new_wr = pystr_to_symbolic("0")
+            for (a, b), s in zip(wr, sdfg.arrays[array_name].strides):
+                new_wr += (a * itervar + b) * s
+            a = sp.Wild("a", exclude=[itervar])
+            b = sp.Wild("b", exclude=[itervar])
+            m = new_wr.match(a * itervar + b)
+            collapsed_all_write_indices.append([(m[a], m[b])])
+
         # The scaling factor a must be the same for all indices if a != 0.
-        a_values = set(i[0] for il in read_indices + all_write_indices for i in il if i[0] != 0)
+        a_values = set(i[0] for il in collapsed_read_indices + collapsed_all_write_indices for i in il if i[0] != 0)
         if len(a_values) > 1:
             return
         if len(a_values) == 0:
@@ -391,18 +434,24 @@ class LoopLocalMemoryReduction(ppl.Pass):
         # The offset b must be multiple of a if a != 0.
         step = symbolic.resolve_symbol_to_constant(loop_analysis.get_loop_stride(loop), sdfg)
         a = a_values.pop() * step
-        if a != 0 and any(i[1] % a != 0 for il in read_indices + all_write_indices for i in il if i[0] != 0):
+        if a != 0 and any(i[1] % a != 0 for il in collapsed_read_indices + collapsed_all_write_indices
+                          for i in il if i[0] != 0):
             return
 
         # All constants (a == 0) must be in the same dimension.
-        for dim in range(len(read_indices[0])):
-            if any(il[dim][0] == 0
-                   for il in read_indices + all_write_indices) and any(il[dim][0] != 0
-                                                                       for il in read_indices + all_write_indices):
+        for dim in range(len(collapsed_read_indices[0])):
+            if any(il[dim][0] == 0 for il in collapsed_read_indices + collapsed_all_write_indices) and any(
+                    il[dim][0] != 0 for il in collapsed_read_indices + collapsed_all_write_indices):
                 return
 
         # Outside of the loop, the written subset of the array must be written before read or not read at all.
-        if not self._write_is_loop_local(array_name, all_write_indices, sdfg, loop):
+        if not self._write_is_loop_local(array_name, collapsed_all_write_indices, sdfg, loop):
+            return
+
+        # A K value must be found for the combined 1D access.
+        collapsed_K = self._get_K_values(array_name, collapsed_read_indices, collapsed_uncond_write_indices,
+                                         collapsed_all_write_indices, step, sdfg, loop)
+        if all(k is None for k in collapsed_K):
             return
 
         # A K value must be found for at least one dimension.

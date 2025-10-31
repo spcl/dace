@@ -21,12 +21,14 @@ def check_transformation_option(orig_sdfg: dace.SDFG, N: int, options: Dict[str,
     llmr.assume_positive_symbols = options["assume_positive_symbols"]
     llmr.apply_pass(llmr_sdfg, {})
     apps = llmr.num_applications
-    assert apps >= N, f"Expected at least {N} applications, got {apps} with options {options}"
-    llmr_sdfg.validate()
 
     # We can stop here if we don't expect any transformations
     if N == 0:
+        assert apps == 0, f"Expected 0 applications, got {apps} with options {options}"
         return
+
+    assert apps >= N, f"Expected at least {N} applications, got {apps} with options {options}"
+    llmr_sdfg.validate()
 
     # Execute both SDFGs
     input_data_orig = {}
@@ -292,16 +294,67 @@ def test_indirect_access():
     @dace.program
     def tester(b: dace.float64[32], c: dace.float64[32]):
         a = dace.define_local([32], dace.float64)
-        for j in range(32):
+        for j in range(2):
             a[j] = j
 
         for i in range(2, 32):
             b[i] = a[i - 1] + a[i - 2]
-            idx = int(b[i]) % 32
+            idx = int(b[i]) % 3
             a[idx] = c[i] * 2
 
     sdfg = tester.to_sdfg(simplify=True)
     check_transformation(sdfg, 0)
+
+
+def test_indirect_access2():
+
+    @dace.program
+    def tester(b: dace.float64[32], c: dace.float64[32]):
+        a = dace.define_local([32], dace.float64)
+        for j in range(2):
+            a[j] = j
+
+        for i in range(2, 32):
+            idx = int(b[i]) % 3
+            b[i] = a[idx - 1] + a[idx - 2]
+            a[idx] = c[i] * 2
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_transformation(sdfg, 0)
+
+
+def test_indirect_access3():
+
+    @dace.program
+    def tester(b: dace.float64[32], c: dace.float64[32]):
+        a = dace.define_local([32], dace.float64)
+        for j in range(2):
+            a[j] = j
+
+        idx = int(b[0]) % 3
+        for i in range(2, 32):
+            b[i] = a[idx +1] + a[idx]
+            a[idx+2] = c[i] * 2
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_transformation(sdfg, 1)
+
+
+def test_indirect_access4():
+
+    @dace.program
+    def tester(b: dace.float64[32], c: dace.float64[32]):
+        a = dace.define_local([32], dace.float64)
+        for j in range(2):
+            a[j] = j
+
+        idx = int(b[0]) % 3
+        for i in range(2, 32):
+            b[i] = a[i - idx - 1] + a[i - idx - 2]
+            a[i - idx] = c[i] * 2
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_transformation(sdfg, 1)
 
 
 def test_constant_index():
@@ -331,6 +384,23 @@ def test_constant_index2():
         for i in range(2, 32):
             b[i] = a[5] + a[3]
             a[7] = c[i] * 2
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_transformation(sdfg, 1)
+
+
+def test_constant_index3():
+
+    @dace.program
+    def tester(b: dace.float64[32], c: dace.float64[32]):
+        a = dace.define_local([32], dace.float64)
+        a[0] = 0
+        a[1] = 1
+
+        for i in range(2, 32):
+            b[i] = a[1] + a[0]
+            a[0] = c[i] * 2
+            a[1] = c[i] * 3
 
     sdfg = tester.to_sdfg(simplify=True)
     check_transformation(sdfg, 1)
@@ -524,12 +594,13 @@ def test_multidimensional2():
             for jj in range(4):
                 a[ii, jj] = ii + jj
 
+        # In theory, in this case, LLMR could be applied
         for i in range(2, 14):
             b[i, i] = a[i - 1, i] + a[i - 2, i - 1]
             a[i, i + 1] = c[i] * 2
 
     sdfg = tester.to_sdfg(simplify=True)
-    check_transformation(sdfg, 1)
+    check_transformation(sdfg, 0)
 
 
 def test_multidimensional3():
@@ -580,6 +651,24 @@ def test_multidimensional_constant():
 
     sdfg = tester.to_sdfg(simplify=True)
     check_transformation(sdfg, 1)
+
+
+def test_multidimensional_constant2():
+
+    @dace.program
+    def tester(b: dace.float64[16, 16], c: dace.float64[16]):
+        a = dace.define_local([16, 16], dace.float64)
+        for jj in range(2):
+            a[3, jj] = jj
+            a[4, jj] = jj
+            a[5, jj] = jj
+
+        for i in range(2, 16):
+            b[i, i] = a[4, i - 2] + a[3, i - 1]
+            a[5, i] = c[i] * 2
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_transformation(sdfg, 0)
 
 
 def test_multidimensional_no_overwrite():
@@ -644,13 +733,14 @@ def test_nested3():
             for jj in range(3):
                 a[ii, jj] = ii + jj
 
+        # In theory, in this case, LLMR could be applied
         for i in range(0, 16):
             for j in range(2, 14):
                 b[i, j] = a[i, j - 1] + a[i, j - 2]
                 a[i, j] = c[i] * 2
 
     sdfg = tester.to_sdfg(simplify=True)
-    check_transformation(sdfg, 1)
+    check_transformation(sdfg, 0)
 
 
 def test_nested4():
@@ -737,6 +827,24 @@ def test_conditional3():
 
 
 def test_conditional4():
+
+    @dace.program
+    def tester(b: dace.float64[32], c: dace.float64[32]):
+        a = dace.define_local([32], dace.float64)
+        a[0] = 0
+        a[1] = 1
+        for i in range(2, 32):
+            b[i] = a[i - 1] + a[i - 2]
+            if i % 2 == 0:
+                a[i] = c[i] + 2
+            else:
+                a[i] = c[i] * 2
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_transformation(sdfg, 1)
+
+
+def test_conditional5():
 
     @dace.program
     def tester(b: dace.float64[32], c: dace.float64[32]):
@@ -851,8 +959,12 @@ if __name__ == "__main__":
     test_nonlinear_step()
     test_nonconstant_step()
     test_indirect_access()
+    test_indirect_access2()
+    test_indirect_access3()
+    test_indirect_access4()
     test_constant_index()
     test_constant_index2()
+    test_constant_index3()
     test_larger_step()
     test_larger_step2()
     test_larger_index()
@@ -868,6 +980,7 @@ if __name__ == "__main__":
     test_multidimensional3()
     test_multidimensional_mixed()
     test_multidimensional_constant()
+    test_multidimensional_constant2()
     test_multidimensional_no_overwrite()
     test_nested()
     test_nested2()
@@ -878,6 +991,7 @@ if __name__ == "__main__":
     test_conditional2()
     test_conditional3()
     test_conditional4()
+    test_conditional5()
     test_symbolic_offset()
     test_symbolic_sizes()
     test_symbolic_k()
