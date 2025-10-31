@@ -30,6 +30,7 @@ class Vectorize(ppl.Pass):
     global_code_location = properties.Property(dtype=str, default="")
     vector_op_numeric_type = properties.Property(dtype=typeclass, default=dace.float64)
     try_to_demote_symbols_in_nsdfgs = properties.Property(dtype=bool, default=False)
+    add_copies = properties.Property(dtype=bool, default=True)
 
     def __init__(self, templates, vector_width, vector_input_storage, vector_output_storage, vector_op_numeric_type,
                  global_code, global_code_location, try_to_demote_symbols_in_nsdfgs):
@@ -56,14 +57,6 @@ class Vectorize(ppl.Pass):
             PowerOperatorExpansion, SplitTasklets, RemoveFPTypeCasts, RemoveIntTypeCasts,
             CleanDataToScalarSliceToTaskletPattern
         }
-
-    def _get_all_parent_scopes(self, state: SDFGState, node: dace.nodes.NestedSDFG):
-        parents = list()
-        parent = state.scope_dict()[node]
-        while parent is not None:
-            parents.append(parent)
-            parent = state.scope_dict()[parent]
-        return parents
 
     def _vectorize_map(self, state: SDFGState, inner_map_entry: dace.nodes.MapEntry, vectorization_number: int):
         # Get the innermost maps
@@ -131,7 +124,8 @@ class Vectorize(ppl.Pass):
             fix_nsdfg_connector_array_shapes_mismatch(state, nsdfg_node)
             check_nsdfg_connector_array_shapes_match(state, nsdfg_node)
             self._vectorize_nested_sdfg(state, nsdfg_node, vector_map_param)
-            add_copies_before_and_after_nsdfg(state, nsdfg_node, (self.vector_width, ), self.vector_input_storage)
+            if self.add_copies:
+                add_copies_before_and_after_nsdfg(state, nsdfg_node, self.vector_width, self.vector_input_storage)
             state.sdfg.save("x6.sdfg")
 
         vector_tasklets = {
@@ -1067,8 +1061,9 @@ class Vectorize(ppl.Pass):
         stride_type = assert_strides_are_packed_C_or_packed_Fortran(sdfg)
         self._stride_type = stride_type
         assert_last_dim_of_maps_are_contigous_accesses(sdfg)
-        sdfg.save("t1.sdfg")
         assert_maps_consist_of_single_nsdfg_or_no_nsdfg(sdfg)
+        assert_no_other_subset(sdfg)
+        assert_no_wcr(sdfg)
 
         if self.vector_input_storage != self.vector_output_storage:
             raise NotImplementedError("Different input and output storage types not implemented yet")
@@ -1116,7 +1111,6 @@ class Vectorize(ppl.Pass):
         vectorized_maps = set()
         sdfgs_to_vectorize = set()
         for i, (map_entry, state) in enumerate(map_entries):
-            print("The map is:", map_entry, ", is innermost map:", is_innermost_map(map_entry, state))
             if is_innermost_map(map_entry, state):
                 num_vectorized += 1
                 all_nodes_between = state.all_nodes_between(map_entry, state.exit_node(map_entry))
@@ -1136,9 +1130,8 @@ class Vectorize(ppl.Pass):
         # We have problems. If no maps,
         # We need to add a parent map
         for node, state in sdfgs_to_vectorize:
-            nested_sdfg: dace.nodes.NestedSDFG = node
-            parent_scopes = self._get_all_parent_scopes(state, node)
-            if len(parent_scopes) == 0:
+            parent_scope_is_none = state.scope_dict()[node] is None
+            if parent_scope_is_none:
                 raise NotImplementedError(
                     "NestedSDFGs without parent map scopes are not supported, they must have been inlined if the pipeline has been called."
                     "If pipeline has been called verify why InlineSDFG failed, otherwise call InlineSDFG")
