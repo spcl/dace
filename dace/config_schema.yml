@@ -32,7 +32,7 @@ required:
 
             autooptimize:
                 type: bool
-                default: false
+                default: true
                 title: Run auto-optimization heuristics
                 description: >
                     Automatically runs the set of optimizing transformation
@@ -971,7 +971,7 @@ required:
         required:
             serialization:
                 type: bool
-                default: false
+                default: true
                 title: Test Serialization on validation
                 description: >
                     Before generating code, verify that a serialization/deserialization loop
