@@ -433,6 +433,8 @@ class LoopLocalMemoryReduction(ppl.Pass):
             a = sp.Wild("a", exclude=[itervar])
             b = sp.Wild("b", exclude=[itervar])
             m = new_rd.match(a * itervar + b)
+            if m is None:
+                return
             collapsed_read_indices.append([(m[a], m[b])])
 
         collapsed_uncond_write_indices = []
@@ -444,6 +446,8 @@ class LoopLocalMemoryReduction(ppl.Pass):
             a = sp.Wild("a", exclude=[itervar])
             b = sp.Wild("b", exclude=[itervar])
             m = new_wr.match(a * itervar + b)
+            if m is None:
+                return
             collapsed_uncond_write_indices.append([(m[a], m[b])])
 
         collapsed_all_write_indices = []
@@ -455,6 +459,8 @@ class LoopLocalMemoryReduction(ppl.Pass):
             a = sp.Wild("a", exclude=[itervar])
             b = sp.Wild("b", exclude=[itervar])
             m = new_wr.match(a * itervar + b)
+            if m is None:
+                return
             collapsed_all_write_indices.append([(m[a], m[b])])
 
         # The scaling factor a must be the same for all indices if a != 0.
