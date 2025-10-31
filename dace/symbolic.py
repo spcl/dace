@@ -385,6 +385,8 @@ def symlist(values):
     except TypeError:
         values = [values]
 
+    skip = set()
+
     for expr in values:
         if isinstance(expr, SymExpr):
             true_expr = expr.expr
@@ -393,6 +395,12 @@ def symlist(values):
         else:
             continue
         for atom in sympy.preorder_traversal(true_expr):
+            if atom in skip:
+                continue
+            if isinstance(atom, Attr):
+                # Skip attributes
+                skip.add(atom.args[1])
+                continue
             if isinstance(atom, symbol):
                 result[atom.name] = atom
     return result
