@@ -198,7 +198,9 @@ class CompiledSDFG(object):
 
         # Cache SDFG return values
         self._return_syms: Dict[str, Any] = None
+        # It will contain the shape of the array or the name if the return array is passed as argument.
         self._retarray_shapes: List[Tuple[str, np.dtype, dtypes.StorageType, Tuple[int], Tuple[int], int]] = []
+        # Is only `True` if teh return value is a scalar _and_ a `pyobject`.
         self._retarray_is_pyobject: List[bool] = []
         self._return_arrays: List[np.ndarray] = []
         self._callback_retval_references: List[Any] = []  # Avoids garbage-collecting callback return values
@@ -558,6 +560,10 @@ with open(r"{temp_path}", "wb") as f:
         The array objects are managed by `self` and remain valid until this
         function is called again. However, they are also returned by `self.__call__()`.
 
+        It is also possible to pass the array, that should be used to return a value,
+        directly as argument. In that case the allocation for that return value will
+        be skipped.
+
         :note: In case of arrays, the returned argument vectors only contains the
             pointers to the underlying memory. Thus it is the user's responsibility
             to ensure that the memory remains allocated until the argument vector
@@ -628,6 +634,8 @@ with open(r"{temp_path}", "wb") as f:
 
         Execute the `return` statement and return. This function should only be called
         after `fast_call()` has been run.
+        Keep in mid that it is not possible to return scalars (with the exception of
+        `pyobject`s), they will be always returned as an array with shape `(1,)`.
 
         :note: This is an advanced interface.
         :note: After `fast_call()` returns it is only allowed to call this function once.
