@@ -329,7 +329,7 @@ inline void vector_ne_w_scalar(T * __restrict__ out, const T * __restrict__ a, c
 }}
 """
 
-    def __init__(self, vector_width):
+    def __init__(self, vector_width, try_to_demote_symbols_in_nsdfgs):
         passes = [
             EliminateBranches(),
             RemoveFPTypeCasts(),
@@ -382,7 +382,9 @@ inline void vector_ne_w_scalar(T * __restrict__ out, const T * __restrict__ a, c
                 vector_output_storage=dace.dtypes.StorageType.Register,
                 global_code=VectorizeCPU._cpu_global_code.format(vector_width=vector_width),
                 global_code_location="frame",
-                vector_op_numeric_type=dace.float64)
+                vector_op_numeric_type=dace.float64,
+                try_to_demote_symbols_in_nsdfgs=try_to_demote_symbols_in_nsdfgs,
+            )
         ]
         super().__init__(passes)
 

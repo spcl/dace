@@ -897,3 +897,18 @@ def duplicate_memlets_sharing_single_in_connector(state: dace.SDFGState, map_ent
                                     state.add_edge(ie.src, None, src_node, None, dace.memlet.Memlet(None))
 
     propagate_memlets_state(state.sdfg, state)
+
+def array_is_used_in_sdfg_states(sdfg: dace.SDFG, states_to_skip: Set[dace.SDFGState], arr_name: str, read_only: bool = False):
+    for st in sdfg.all_states():
+        if st in states_to_skip:
+            continue
+
+        read_set, write_set = st.read_and_write_sets()
+        if read_only:
+            if arr_name in read_set:
+                return True
+        else:
+            if arr_name in read_set or arr_name in write_set:
+                return True
+
+    return False

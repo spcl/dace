@@ -48,6 +48,10 @@ def vsubs_cpu(A: dace.float64[N, N], B: dace.float64[N, N]):
     for i, j in dace.map[0:N, 0:N]:
         A[i, j] = A[i, j] - B[i, j]
 
+@dace.program
+def vexp_cpu(A: dace.float64[N, N]):
+    for i, j in dace.map[0:N, 0:N]:
+        A[i, j] = math.exp(A[i, j])
 
 @dace.program
 def vsubs_two_cpu(A: dace.float64[N, N], B: dace.float64[N, N]):
@@ -263,6 +267,20 @@ def test_vsubs_cpu():
         sdfg_name="vsubs_one",
     )
 
+def test_vexp_cpu():
+    N = 64
+    A = numpy.random.random((N, N))
+
+    run_vectorization_test(
+        dace_func=vexp_cpu,
+        arrays={
+            'A': A,
+        },
+        params={'N': N},
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name="vexp_one",
+    )
 
 def test_vsubs_two_cpu():
     N = 64
@@ -628,7 +646,7 @@ def test_spmv():
     copy_sdfg = copy.deepcopy(sdfg)
     sdfg.save("spmv.sdfg")
     VectorizeCPU(vector_width=8).apply_pass(copy_sdfg, {})
-    copy_sdfg.save("auto_vectorized_spmv.sdfg")
+    copy_sdfg.save("spmv_vectorized.sdfg")
 
     c_sdfg = sdfg.compile()
     c_copy_sdfg = copy_sdfg.compile()
@@ -767,8 +785,8 @@ def _get_disjoint_chain_sdfg(trivial_if: bool, fortran_layout: bool = False) -> 
     return sd2, p_s1
 
 
-@pytest.mark.parametrize("trivial_if", [True, False])
-def test_disjoint_chain_split_branch_only(trivial_if: bool):
+@pytest.mark.parametrize("trivial_if, demote_symbols", [True, False], [True, False])
+def test_disjoint_chain_split_branch_only(trivial_if: bool, demote_symbols: bool):
     sdfg, nsdfg_parent_state = _get_disjoint_chain_sdfg(trivial_if)
     zsolqa = numpy.random.choice([0.001, 5.0], size=(C, 5, 5))
     zrainacc = numpy.random.choice([0.001, 5.0], size=(C, ))
@@ -781,6 +799,7 @@ def test_disjoint_chain_split_branch_only(trivial_if: bool):
     arrays = {"zsolqa": zsolqa, "zrainacc": zrainacc, "zrainaut": zrainaut, "ztp1": ztp1, "rtt": rtt[0]}
 
     sdfg.validate()
+    sdfg.save("disjoint_chain.sdfg")
     out_no_fuse = {k: v.copy() for k, v in arrays.items()}
     sdfg(**out_no_fuse)
 
@@ -800,7 +819,11 @@ def test_disjoint_chain_split_branch_only(trivial_if: bool):
 
     out_fused = {k: v.copy() for k, v in arrays.items()}
 
-    VectorizeCPU(vector_width=8).apply_pass(copy_sdfg, {})
+    vectorizer = VectorizeCPU(vector_width=8)
+    vectorizer.try_to_demote_symbols_in_nsdfgs = demot_symbols
+    vectorizer.apply_pass(copy_sdfg, {})
+    copy_sdfg.save("disjoint_chain_vectorized.sdfg")
+
     copy_sdfg(**out_fused)
 
     for name in arrays.keys():
@@ -825,3 +848,6 @@ if __name__ == "__main__":
     test_jacobi2d()
     test_overlapping_access_same_src_and_dst()
     test_overlapping_access_same_src_and_dst_in_nestedsdfg()
+    for tif in [True, False]:
+        for ds in [True, False]:
+            test_disjoint_chain_split_branch_only(tif, ds)
