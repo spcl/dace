@@ -302,15 +302,24 @@ class CompiledSDFG(object):
         """
         Sets the workspace for the given storage type to the given buffer.
 
+        Note that the function queries the sizes of the last call that was made by
+        `__call__()` or `initialize()`. Calls made by `fast_call()` or `safe_call()`
+        will not be considered.
+
         :param storage: The storage type to fill.
         :param workspace: An array-convertible object (through ``__[cuda_]array_interface__``,
                           see ``array_interface_ptr``) to use for the workspace.
+        :note: It is the users responsibility that all arguments, especially the array
+            arguments, remain valid between the call to `__call__()` or `initialize()`
+            and the call to this function.
         """
         if not self._initialized:
             raise ValueError('Compiled SDFG is uninitialized, please call ``initialize`` prior to '
                              'setting external memory.')
         if storage not in self.external_memory_types:
             raise ValueError(f'Compiled SDFG does not specify external memory of {storage}')
+        if self._lastargs is None:
+            raise ValueError('To use `get_workspace_sizes()` `__call__()` or `initialize()` must be called before.')
 
         func = self._lib.get_symbol(f'__dace_set_external_memory_{storage.name}', None)
         ptr = dtypes.array_interface_ptr(workspace, storage)
