@@ -183,6 +183,7 @@ class CompiledSDFG(object):
         self._typedict = self._sdfg.arglist()
         self._sig = self._sdfg.signature_arglist(with_types=False, arglist=self._typedict)
         self._free_symbols = self._sdfg.free_symbols
+        self._constants = self._sdfg.constants
         self.argnames = argnames
 
         if self.argnames is None and len(sdfg.arg_names) != 0:
@@ -547,15 +548,14 @@ with open(r"{temp_path}", "wb") as f:
                                     symbols=kwargs,
                                     callback_retval_references=self._callback_retval_references)
             for aval, atype, aname in zip(arglist, argtypes, argnames))
-        constants = self.sdfg.constants
         symbols = self._free_symbols
         callparams = tuple((carg, aname) for arg, carg, aname in zip(arglist, cargs, argnames)
-                           if not ((hasattr(arg, 'name') and arg.name in constants) and symbolic.issymbolic(arg)))
+                           if not ((hasattr(arg, 'name') and arg.name in self._constants) and symbolic.issymbolic(arg)))
 
         newargs = tuple(carg for carg, _aname in callparams)
         initargs = tuple(carg for carg, aname in callparams if aname in symbols)
 
-        # See note above why we _have_ update them.
+        # See note above why we _have_ to update them.
         self._lastargs = newargs, initargs
         return self._lastargs
 
