@@ -700,6 +700,7 @@ with open(r"{temp_path}", "wb") as f:
         self._return_syms = syms
         self._return_arrays = []
         self._retarray_shapes = []
+        self._retarray_is_pyobject = []
         for arrname, arr in sorted(self.sdfg.arrays.items()):
             if arrname.startswith('__return'):
                 if arr.transient:
