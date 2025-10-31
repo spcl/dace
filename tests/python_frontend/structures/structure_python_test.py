@@ -1,5 +1,6 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
+from dataclasses import dataclass
 import numpy as np
 import pytest
 
@@ -256,6 +257,112 @@ def test_read_structure_gpu():
     assert np.allclose(B, ref)
 
 
+def test_struct_interface():
+    M, N, nnz = (dace.symbol(s) for s in ('M', 'N', 'nnz'))
+    CSR = dace.data.Structure(dict(indptr=dace.int32[M + 1], indices=dace.int32[nnz], data=dace.float32[nnz]),
+                              name='CSRMatrix')
+
+    @dace.program
+    def dense_to_csr_local_python(A: dace.float32[M, N], B: CSR):
+        tmp = dace.define_local_structure(CSR)
+        idx = 0
+        for i in range(M):
+            tmp.indptr[i] = idx
+            for j in range(N):
+                if A[i, j] != 0:
+                    tmp.data[idx] = A[i, j]
+                    tmp.indices[idx] = j
+                    idx += 1
+        tmp.indptr[M] = idx
+        B.indptr[:] = tmp.indptr[:]
+        B.indices[:] = tmp.indices[:]
+        B.data[:] = tmp.data[:]
+
+    rng = np.random.default_rng(42)
+    tmp = sparse.random(20, 20, density=0.1, format='csr', dtype=np.float32, random_state=rng)
+    A = tmp.toarray()
+    B = tmp.tocsr(copy=True)
+    ref = tmp.tocsr(copy=True)
+    B.indptr[:] = -1
+    B.indices[:] = -1
+    B.data[:] = -1
+
+    with dace.config.set_temporary('compiler', 'allow_view_arguments', value=True):
+        dense_to_csr_local_python(A, CSR.make_argument_from_object(B), M=tmp.shape[0], N=tmp.shape[1], nnz=tmp.nnz)
+
+    assert np.allclose(B.indptr, ref.indptr)
+    assert np.allclose(B.indices, ref.indices)
+    assert np.allclose(B.data, ref.data)
+
+
+def test_struct_recursive():
+
+    @dataclass
+    class Inner:
+        a: dace.float32[20]
+        b: dace.int32
+
+    @dataclass
+    class Outer:
+        x: Inner
+        y: dace.float64[10, 10]
+
+    Struct = dace.data.Structure(
+        {
+            'x': dace.data.Structure({
+                'a': dace.float32[20],
+                'b': dace.int32
+            }, name='InnerStruct'),
+            'y': dace.float64[10, 10]
+        },
+        name='OuterStruct')
+
+    @dace.program
+    def struct_recursive(A: Struct, B: Struct):
+        B.x.a[:] = A.x.a[:]
+        B.x.b = A.x.b  # This assignment will not propagate back to the calling code (due to struct passing by value)
+        B.y[:] = A.y[:]
+
+    A = Outer(x=Inner(a=np.random.rand(20).astype(np.float32), b=42), y=np.random.rand(10, 10).astype(np.float64))
+    B = Outer(x=Inner(a=np.zeros(20, dtype=np.float32), b=0), y=np.zeros((10, 10), dtype=np.float64))
+
+    struct_recursive(Struct.make_argument_from_object(A), Struct.make_argument_from_object(B))
+
+    assert np.allclose(B.x.a, A.x.a)
+    assert not np.allclose(B.x.b, A.x.b)
+    assert np.allclose(B.y, A.y)
+
+
+def test_struct_recursive_from_dataclass():
+
+    @dataclass
+    class Inner:
+        a: dace.float32[20]
+        b: dace.int32
+
+    @dataclass
+    class Outer:
+        x: Inner
+        y: dace.float64[10, 10]
+
+    Struct = dace.data.Structure.from_dataclass(Outer)
+
+    @dace.program
+    def struct_recursive(A: Struct, B: Struct):
+        B.x.a[:] = A.x.a[:]
+        B.x.b = A.x.b  # This assignment will not propagate back to the calling code (due to struct passing by value)
+        B.y[:] = A.y[:]
+
+    A = Outer(x=Inner(a=np.random.rand(20).astype(np.float32), b=42), y=np.random.rand(10, 10).astype(np.float64))
+    B = Outer(x=Inner(a=np.zeros(20, dtype=np.float32), b=0), y=np.zeros((10, 10), dtype=np.float64))
+
+    struct_recursive(Struct.make_argument_from_object(A), Struct.make_argument_from_object(B))
+
+    assert np.allclose(B.x.a, A.x.a)
+    assert not np.allclose(B.x.b, A.x.b)
+    assert np.allclose(B.y, A.y)
+
+
 if __name__ == '__main__':
     test_read_structure()
     test_write_structure()
@@ -263,3 +370,6 @@ if __name__ == '__main__':
     test_local_structure()
     test_rgf()
     # test_read_structure_gpu()
+    test_struct_interface()
+    test_struct_recursive()
+    test_struct_recursive_from_dataclass()
