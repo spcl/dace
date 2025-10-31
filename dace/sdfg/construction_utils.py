@@ -1,28 +1,15 @@
-import re
-from typing import Dict, Set, Union
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
+from typing import Dict, Set, Union
 import copy
-
 from dace.sdfg import ControlFlowRegion
 from dace.sdfg.propagation import propagate_memlets_state
 import copy
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, LoopRegion
-
-import sympy
-from sympy import symbols, Function
-
-from sympy.printing.pycode import PythonCodePrinter
+from sympy import Function
 import dace.sdfg.utils as sdutil
-from dace.transformation.passes import FuseStates
-
-
-class BracketFunctionPrinter(PythonCodePrinter):
-
-    def _print_Function(self, expr):
-        name = self._print(expr.func)
-        args = ", ".join([self._print(arg) for arg in expr.args])
-        return f"{name}[{args}]"
+from dace.sdfg.tasklet_utils import token_replace_dict, extract_bracket_tokens, remove_bracket_tokens
 
 
 def copy_state_contents(old_state: dace.SDFGState, new_state: dace.SDFGState) -> Dict[dace.nodes.Node, dace.nodes.Node]:
@@ -100,7 +87,28 @@ def copy_graph_contents(old_graph: ControlFlowRegion,
 
 
 def move_branch_cfg_up_discard_conditions(if_block: ConditionalBlock, body_to_take: ControlFlowRegion):
-    # Sanity check the ensure apssed arguments are correct
+    """
+    Moves a branch of a conditional block up in the control flow graph (CFG),
+    replacing the conditional with the selected branch, discarding
+    the conditional check and other branches.
+
+    This operation:
+    - Copies all nodes and edges from the selected branch (`body_to_take`) into
+      the parent graph of the conditional.
+    - Connects all incoming edges of the original conditional block to the
+      start of the selected branch.
+    - Connects all outgoing edges of the original conditional block to the
+      end of the selected branch.
+    - Removes the original conditional block from the graph.
+
+    Parameters:
+        -if_block : ConditionalBlock
+            The conditional block in the CFG whose branch is to be promoted.
+        -body_to_take : ControlFlowRegion
+            The branch of the conditional block to be moved up. Must be one of the
+            branches of `if_block`.
+    """
+    # Sanity check the ensure passed arguments are correct
     bodies = {b for _, b in if_block.branches}
     assert body_to_take in bodies
     assert isinstance(if_block, ConditionalBlock)
@@ -137,11 +145,6 @@ def move_branch_cfg_up_discard_conditions(if_block: ConditionalBlock, body_to_ta
         graph.add_edge(new_end_block, oe.dst, copy.deepcopy(oe.data))
 
     graph.remove_node(if_block)
-
-
-# Put map-body into NSDFG
-# Convert Map to Loop
-# Put map into NSDFG
 
 
 def insert_non_transient_data_through_parent_scopes(non_transient_data: Set[str],
@@ -365,47 +368,6 @@ def insert_non_transient_data_through_parent_scopes(non_transient_data: Set[str]
             nsdfg_node.symbol_mapping[str(sym)] = str(sym)
 
 
-def token_replace_dict(code: str, repldict: Dict[str, str]) -> str:
-    # Split while keeping delimiters
-    tokens = re.split(r'(\s+|[()\[\]])', code)
-
-    # Replace tokens that exactly match src
-    tokens = [repldict[token.strip()] if token.strip() in repldict else token for token in tokens]
-
-    # Recombine everything
-    return ''.join(tokens).strip()
-
-
-def token_match(string_to_check: str, pattern_str: str) -> str:
-    # Split while keeping delimiters
-    tokens = re.split(r'(\s+|[()\[\]])', string_to_check)
-
-    # Replace tokens that exactly match src
-    tokens = {token.strip() for token in tokens}
-
-    return pattern_str in tokens
-
-
-def token_split(string_to_check: str, pattern_str: str) -> Set[str]:
-    # Split while keeping delimiters
-    tokens = re.split(r'(\s+|[()\[\]])', string_to_check)
-
-    # Replace tokens that exactly match src
-    tokens = {token.strip() for token in tokens}
-
-    return tokens
-
-
-def token_split_variable_names(string_to_check: str) -> Set[str]:
-    # Split while keeping delimiters
-    tokens = re.split(r'(\s+|[()\[\]])', string_to_check)
-
-    # Replace tokens that exactly match src
-    tokens = {token.strip() for token in tokens if token not in ["[", "]", "(", ")"] and token.isidentifier()}
-
-    return tokens
-
-
 def replace_length_one_arrays_with_scalars(sdfg: dace.SDFG, recursive: bool = True, transient_only: bool = False):
     scalarized_arrays = set()
     for arr_name, arr in [(k, v) for k, v in sdfg.arrays.items()]:
@@ -466,124 +428,6 @@ def replace_length_one_arrays_with_scalars(sdfg: dace.SDFG, recursive: bool = Tr
                     replace_length_one_arrays_with_scalars(node.sdfg, recursive=True, transient_only=True)
 
 
-def connect_array_names(sdfg: dace.SDFG, local_storage: dace.dtypes.StorageType, src_storage: dace.dtypes.StorageType,
-                        local_name_prefix: str):
-
-    array_name_dict = dict()
-    for state in sdfg.all_states():
-        for node in state.nodes():
-            if isinstance(node, dace.nodes.AccessNode):
-                local_arr = state.sdfg.arrays[node.data]
-                print(local_arr.storage)
-                if local_arr.storage == local_storage:
-                    assert len(state.in_edges(node)) <= 1
-                    # Reads
-                    for ie in state.in_edges(node):
-                        if ie.data.data is not None and ie.data.data != node.data:
-                            src_data = state.sdfg.arrays[ie.data.data]
-                            print(src_data)
-                            if src_data.storage == src_storage:
-                                assert node.data not in array_name_dict
-                                array_name_dict[node.data] = ie.data.data
-                    # Writes
-                    for oe in state.out_edges(node):
-                        if oe.data.data is not None and oe.data.data != node.data:
-                            dst_data = state.sdfg.arrays[oe.data.data]
-                            print(dst_data)
-                            if dst_data.storage == src_storage:
-                                assert node.data not in array_name_dict
-                                array_name_dict[node.data] = oe.data.data
-
-    print(array_name_dict)
-    repldict = {k: f"{local_name_prefix}{v}" for k, v in array_name_dict.items()}
-
-    sdfg.replace_dict(repldict, replace_keys=True)
-    sdfg.validate()
-
-
-def tasklet_has_symbol(tasklet: dace.nodes.Tasklet, symbol_str: str) -> bool:
-    if tasklet.code.language == dace.dtypes.Language.Python:
-        try:
-            sym_expr = dace.symbolic.SymExpr(tasklet.code.as_astring)
-            return (symbol_str in {str(s) for s in sym_expr.free_symbols})
-        except Exception as e:
-            return token_match(tasklet.code.as_string, symbol_str)
-    else:
-        return token_match(tasklet.code.as_string, symbol_str)
-
-
-def replace_code(code_str: str, code_lang: dace.dtypes.Language, repldict: Dict[str, str]) -> str:
-
-    def _str_replace(lhs: str, rhs: str) -> str:
-        code_str = token_replace_dict(rhs, repldict)
-        return f"{lhs.strip()} = {code_str.strip()}"
-
-    if code_lang == dace.dtypes.Language.Python:
-        try:
-            lhs, rhs = code_str.split(" = ")
-            lhs = lhs.strip()
-            rhs = rhs.strip()
-        except Exception as e:
-            try:
-                new_rhs_sym_expr = dace.symbolic.SymExpr(code_str).subs(repldict)
-                printer = BracketFunctionPrinter({'strict': False})
-                cleaned_expr = printer.doprint(new_rhs_sym_expr).strip()
-                return f"{cleaned_expr}"
-            except Exception as e:
-                return _str_replace(code_str)
-        try:
-            new_rhs_sym_expr = dace.symbolic.SymExpr(rhs).subs(repldict)
-            printer = BracketFunctionPrinter({'strict': False})
-            cleaned_expr = printer.doprint(new_rhs_sym_expr).strip()
-            return f"{lhs.strip()} = {cleaned_expr}"
-        except Exception as e:
-            return _str_replace(rhs)
-    else:
-        return _str_replace(rhs)
-
-
-def tasklet_replace_code(tasklet: dace.nodes.Tasklet, repldict: Dict[str, str]):
-    new_code = replace_code(tasklet.code.as_string, tasklet.code.language, repldict)
-    tasklet.code = CodeBlock(code=new_code, language=tasklet.code.language)
-
-
-def extract_bracket_tokens(s: str) -> list[tuple[str, list[str]]]:
-    """
-    Extracts all contents inside [...] along with the token before the '[' as the name.
-
-    Args:
-        s (str): Input string.
-
-    Returns:
-        List of tuples: [(name_token, string inside brackes)]
-    """
-    results = []
-
-    # Pattern to match <name>[content_inside]
-    pattern = re.compile(r'(\b\w+)\[([^\]]*?)\]')
-
-    for match in pattern.finditer(s):
-        name = match.group(1)  # token before '['
-        content = match.group(2).split()  # split content inside brackets into tokens
-
-        results.append((name, " ".join(content)))
-
-    return {k: v for (k, v) in results}
-
-
-def remove_bracket_tokens(s: str) -> str:
-    """
-    Removes all [...] patterns from the string.
-
-    Args:
-        s (str): Input string.
-
-    Returns:
-        str: String with all [...] removed.
-    """
-    return re.sub(r'\[.*?\]', '', s)
-
-
 def generate_assignment_as_tasklet_in_state(state: dace.SDFGState, lhs: str, rhs: str):
     rhs = rhs.strip()
     rhs_sym_expr = dace.symbolic.SymExpr(rhs).evalf()
@@ -642,40 +486,8 @@ def generate_assignment_as_tasklet_in_state(state: dace.SDFGState, lhs: str, rhs
         state.add_edge(t, k, v, None, dace.memlet.Memlet(expr=f"{data_name}[{access_str}]"))
 
 
-def _find_parent_state(root_sdfg: dace.SDFG, node: dace.nodes.NestedSDFG):
-    if node is not None:
-        # Find parent state of that node
-        for n, g in root_sdfg.all_nodes_recursive():
-            if n == node:
-                parent_state = g
-                return parent_state
-    return None
-
-
 def get_num_parent_map_scopes(root_sdfg: dace.SDFG, node: dace.nodes.MapEntry, parent_state: dace.SDFGState):
-    scope_dict = parent_state.scope_dict()
-    num_parent_maps = 0
-    cur_node = node
-    while scope_dict[cur_node] is not None:
-        if isinstance(scope_dict[cur_node], dace.nodes.MapEntry):
-            num_parent_maps += 1
-        cur_node = scope_dict[cur_node]
-
-    # Check parent nsdfg
-    parent_nsdfg_node = parent_state.sdfg.parent_nsdfg_node
-    parent_nsdfg_parent_state = _find_parent_state(root_sdfg, parent_nsdfg_node)
-
-    while parent_nsdfg_node is not None:
-        scope_dict = parent_nsdfg_parent_state.scope_dict()
-        cur_node = parent_nsdfg_node
-        while scope_dict[cur_node] is not None:
-            if isinstance(scope_dict[cur_node], dace.nodes.MapEntry):
-                num_parent_maps += 1
-            cur_node = scope_dict[cur_node]
-        parent_nsdfg_node = parent_nsdfg_parent_state.sdfg.parent_nsdfg_node
-        parent_nsdfg_parent_state = _find_parent_state(root_sdfg, parent_nsdfg_node)
-
-    return num_parent_maps
+    return len(get_parent_maps(root_sdfg, node, parent_state))
 
 
 def get_num_parent_map_and_loop_scopes(root_sdfg: dace.SDFG, node: dace.nodes.MapEntry, parent_state: dace.SDFGState):
@@ -707,7 +519,7 @@ def get_parent_map_and_loop_scopes(root_sdfg: dace.SDFG, node: Union[dace.nodes.
 
     # Check parent nsdfg
     parent_nsdfg_node = parent_sdfg.parent_nsdfg_node
-    parent_nsdfg_parent_state = _find_parent_state(root_sdfg, parent_nsdfg_node)
+    parent_nsdfg_parent_state = parent_state.sdfg.parent_graph
 
     while parent_nsdfg_node is not None and parent_nsdfg_parent_state is not None:
         scope_dict = parent_nsdfg_parent_state.scope_dict()
@@ -727,7 +539,7 @@ def get_parent_map_and_loop_scopes(root_sdfg: dace.SDFG, node: Union[dace.nodes.
             parent_graph = parent_graph.parent_graph
 
         parent_nsdfg_node = parent_sdfg.parent_nsdfg_node
-        parent_nsdfg_parent_state = _find_parent_state(root_sdfg, parent_nsdfg_node)
+        parent_nsdfg_parent_state = parent_state.sdfg.parent_graph
 
     return parent_scopes
 
@@ -749,7 +561,7 @@ def get_parent_maps(root_sdfg: dace.SDFG, node: dace.nodes.MapEntry, parent_stat
 
     # Check parent nsdfg
     parent_nsdfg_node = parent_state.sdfg.parent_nsdfg_node
-    parent_nsdfg_parent_state = _find_parent_state(root_sdfg, parent_nsdfg_node)
+    parent_nsdfg_parent_state = parent_state.sdfg.parent_graph
 
     while parent_nsdfg_node is not None:
         scope_dict = parent_nsdfg_parent_state.scope_dict()
@@ -759,6 +571,6 @@ def get_parent_maps(root_sdfg: dace.SDFG, node: dace.nodes.MapEntry, parent_stat
                 maps.append((cur_node, parent_state))
             cur_node = scope_dict[cur_node]
         parent_nsdfg_node = parent_nsdfg_parent_state.sdfg.parent_nsdfg_node
-        parent_nsdfg_parent_state = _find_parent_state(root_sdfg, parent_nsdfg_node)
+        parent_nsdfg_parent_state = parent_state.sdfg.parent_graph
 
     return maps
