@@ -319,12 +319,16 @@ def run_and_compare(
     sdfg = program.to_sdfg()
     sdfg.validate()
     sdfg.name = sdfg_name
-    out_no_fuse = {k: v.copy() for k, v in arrays.items()}
-    sdfg(**out_no_fuse)
 
     copy_sdfg = copy.deepcopy(sdfg)
     copy_sdfg.name = sdfg_name + "_branch_eliminated"
-    del sdfg
+
+    # Run SDFG version (with transformation)
+    c_sdfg = sdfg.compile()
+    c_copy_sdfg = copy_sdfg.compile()
+
+    out_no_fuse = {k: v.copy() for k, v in arrays.items()}
+    out_fused = {k: v.copy() for k, v in arrays.items()}
 
     # Apply transformation
     if use_pass:
@@ -334,10 +338,8 @@ def run_and_compare(
     else:
         apply_branch_elimination(copy_sdfg, 2)
 
-    # Run SDFG version (with transformation)
-    out_fused = {k: v.copy() for k, v in arrays.items()}
-
-    copy_sdfg(**out_fused)
+    c_sdfg(**out_no_fuse)
+    c_copy_sdfg(**out_fused)
 
     branch_code = {n for n, g in copy_sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     assert len(
@@ -346,10 +348,6 @@ def run_and_compare(
     # Compare all arrays
     for name in arrays.keys():
         np.testing.assert_allclose(out_fused[name], out_no_fuse[name], atol=1e-12)
-
-    del out_no_fuse
-    del out_fused
-    del copy_sdfg
 
 
 def run_and_compare_sdfg(
@@ -361,27 +359,27 @@ def run_and_compare_sdfg(
     # Run SDFG version (no transformation)
     sdfg.validate()
     sdfg.name = sdfg_name
-    out_no_fuse = {k: v.copy() for k, v in arrays.items()}
-    sdfg(**out_no_fuse)
-
     # Run SDFG version (with transformation)
     copy_sdfg = copy.deepcopy(sdfg)
     copy_sdfg.name = sdfg_name + "_branch_eliminated"
-    del sdfg
+
+    c_sdfg = sdfg.compile()
+    c_copy_sdfg = copy_sdfg.compile()
+
+    out_no_fuse = {k: v.copy() for k, v in arrays.items()}
+    out_fused = {k: v.copy() for k, v in arrays.items()}
 
     fb = EliminateBranches()
     fb.try_clean = True
     fb.permissive = permissive
     fb.apply_pass(copy_sdfg, {})
-    out_fused = {k: v.copy() for k, v in arrays.items()}
-    copy_sdfg(**out_fused)
+
+    c_sdfg(**out_no_fuse)
+    c_copy_sdfg(**out_fused)
 
     # Compare all arrays
     for name in arrays.keys():
         np.testing.assert_allclose(out_no_fuse[name], out_fused[name], atol=1e-12)
-
-    del out_no_fuse
-    del out_fused
 
     return copy_sdfg
 
