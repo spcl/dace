@@ -170,8 +170,6 @@ class CompiledSDFG(object):
     :note: In previous version the arrays used as return values were sometimes reused.
         However, this was changed and every time `construct_arguments()` is called
         new arrays are allocated.
-    :note: It is not possible to return a tuple with one element. Instead the element
-        will be returned.
     :note: It is not possible to return scalars. Note that currently using scalars
         as return values is a validation error. The only exception are (probably)
         Python objects.
@@ -204,6 +202,14 @@ class CompiledSDFG(object):
         self._retarray_is_pyobject: List[bool] = []
         self._return_arrays: List[np.ndarray] = []
         self._callback_retval_references: List[Any] = []  # Avoids garbage-collecting callback return values
+
+        # If there are return values then this is `True` it is is a single value. Note that
+        #  `False` either means that a tuple is returned or there are no return values.
+        # NOTE: Needed to handle the case of a tuple with one element.
+        self._is_single_value_ret: bool = False
+        if '__return' in self._sdfg.arrays:
+            assert not any(aname.startswith('__return_') for aname in self._sdfg.arrays.keys())
+            self._is_single_value_ret = True
 
         # Cache SDFG argument properties
         self._typedict = self._sdfg.arglist()
@@ -625,15 +631,13 @@ with open(r"{temp_path}", "wb") as f:
 
         :note: This is an advanced interface.
         :note: After `fast_call()` returns it is only allowed to call this function once.
-        :note: This function has a bug that makes it impossible to return a tuple of size one.
         """
         # TODO: Make sure that the function is called only once by checking it.
         # NOTE: Currently it is not possible to return a scalar value, see `tests/sdfg/scalar_return.py`
         if not self._return_arrays:
             return None
-        elif len(self._return_arrays) == 1:
-            # NOTE: The check above is wrong, The true check should be something like `'__return' in self.sdfg.arrays`.
-            #   Because it is possible to return a tuple with one element, but the ck
+        elif self._is_single_value_ret:
+            assert len(self._return_arrays) == 1
             return self._return_arrays[0].item() if self._retarray_is_pyobject[0] else self._return_arrays[0]
         else:
             return tuple(r.item() if is_pyobj else r
@@ -712,4 +716,5 @@ with open(r"{temp_path}", "wb") as f:
                     # Create an array with the properties of the SDFG array
                     arr = self._create_array(*shape_desc)
                     self._return_arrays.append(arr)
+        assert (not self._is_single_value_ret) or (len(self._return_arrays) == 1)
         self._return_arrays = tuple(self._return_arrays)
