@@ -173,7 +173,8 @@ class CompiledSDFG(object):
     :note: It is not possible to return a tuple with one element. Instead the element
         will be returned.
     :note: It is not possible to return scalars. Note that currently using scalars
-        as return values is a validation error.
+        as return values is a validation error. The only exception are (probably)
+        Python objects.
     """
 
     def __init__(self, sdfg, lib: ReloadableDLL, argnames: List[str] = None):
@@ -200,7 +201,7 @@ class CompiledSDFG(object):
         # Cache SDFG return values
         self._return_syms: Dict[str, Any] = None
         self._retarray_shapes: List[Tuple[str, np.dtype, dtypes.StorageType, Tuple[int], Tuple[int], int]] = []
-        self._retarray_is_scalar: List[bool] = []
+        self._retarray_is_pyobject: List[bool] = []
         self._return_arrays: List[np.ndarray] = []
         self._callback_retval_references: List[Any] = []  # Avoids garbage-collecting callback return values
 
@@ -633,9 +634,10 @@ with open(r"{temp_path}", "wb") as f:
         elif len(self._return_arrays) == 1:
             # NOTE: The check above is wrong, The true check should be something like `'__return' in self.sdfg.arrays`.
             #   Because it is possible to return a tuple with one element, but the ck
-            return self._return_arrays[0].item() if self._retarray_is_scalar[0] else self._return_arrays[0]
+            return self._return_arrays[0].item() if self._retarray_is_pyobject[0] else self._return_arrays[0]
         else:
-            return tuple(r.item() if scalar else r for r, scalar in zip(self._return_arrays, self._retarray_is_scalar))
+            return tuple(r.item() if is_pyobj else r
+                         for r, is_pyobj in zip(self._return_arrays, self._retarray_is_pyobject))
 
     def clear_return_values(self):
         warnings.warn(
@@ -692,7 +694,7 @@ with open(r"{temp_path}", "wb") as f:
                     # The return value is passed as an argument, in that case store the name in `self._retarray_shapes`.
                     warnings.warn(f'Return value "{arrname}" is passed as a regular argument.', stacklevel=2)
                     self._return_arrays.append(kwargs[arrname])
-                    self._retarray_is_scalar.append(isinstance(arr, dt.Scalar))
+                    self._retarray_is_pyobject.append(isinstance(arr, dtypes.pyobject))
                     self._retarray_shapes.append((arrname, ))
 
                 elif isinstance(arr, dt.Stream):
@@ -704,8 +706,7 @@ with open(r"{temp_path}", "wb") as f:
                     total_size = int(symbolic.evaluate(arr.total_size, syms))
                     strides = tuple(symbolic.evaluate(s, syms) * arr.dtype.bytes for s in arr.strides)
                     shape_desc = (arrname, dtype, arr.storage, shape, strides, total_size)
-                    self._retarray_is_scalar.append(
-                        isinstance(arr, dt.Scalar) or isinstance(arr.dtype, dtypes.pyobject))
+                    self._retarray_is_pyobject.append(isinstance(arr.dtype, dtypes.pyobject))
                     self._retarray_shapes.append(shape_desc)
 
                     # Create an array with the properties of the SDFG array
