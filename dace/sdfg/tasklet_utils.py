@@ -620,7 +620,7 @@ def _reorder_rhs(code_str: str, op: str, rhs1: str, rhs2: str) -> Tuple[str, str
             raise ValueError(f"Failed to parse function expression: {code_rhs}") from e
 
     else:
-        left_string, right_string = [cutil.token_split(cstr.strip()) for cstr in code_rhs.split(op)]
+        left_string, right_string = [token_split(cstr.strip()) for cstr in code_rhs.split(op)]
 
     if rhs1 in left_string and rhs2 in left_string:
         if rhs1 != rhs2:

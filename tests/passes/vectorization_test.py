@@ -49,10 +49,12 @@ def vsubs_cpu(A: dace.float64[N, N], B: dace.float64[N, N]):
     for i, j in dace.map[0:N, 0:N]:
         A[i, j] = A[i, j] - B[i, j]
 
+
 @dace.program
 def vexp_cpu(A: dace.float64[N, N]):
     for i, j in dace.map[0:N, 0:N]:
         A[i, j] = math.exp(A[i, j])
+
 
 @dace.program
 def vsubs_two_cpu(A: dace.float64[N, N], B: dace.float64[N, N]):
@@ -184,7 +186,7 @@ def spmv_csr(indptr: dace.int64[n + 1], indices: dace.int64[nnz], data: dace.flo
 
 @dace.program
 def spmv_csr_two(indptr: dace.int64[n + 1], indices: dace.int64[nnz], data: dace.float64[nnz], x: dace.float64[m],
-               y: dace.float64[n]):
+                 y: dace.float64[n]):
     n_rows = len(indptr) - 1
 
     for i in dace.map[0:n_rows:1]:
@@ -269,6 +271,7 @@ def test_vsubs_cpu():
         sdfg_name="vsubs_one",
     )
 
+
 def test_vexp_cpu():
     N = 64
     A = numpy.random.random((N, N))
@@ -283,6 +286,7 @@ def test_vexp_cpu():
         save_sdfgs=True,
         sdfg_name="vexp_one",
     )
+
 
 def test_vsubs_two_cpu():
     N = 64

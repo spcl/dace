@@ -721,7 +721,11 @@ def duplicate_memlets_sharing_single_in_connector(state: dace.SDFGState, map_ent
 
     propagate_memlets_state(state.sdfg, state)
 
-def array_is_used_in_sdfg_states(sdfg: dace.SDFG, states_to_skip: Set[dace.SDFGState], arr_name: str, read_only: bool = False):
+
+def array_is_used_in_sdfg_states(sdfg: dace.SDFG,
+                                 states_to_skip: Set[dace.SDFGState],
+                                 arr_name: str,
+                                 read_only: bool = False):
     for st in sdfg.all_states():
         if st in states_to_skip:
             continue

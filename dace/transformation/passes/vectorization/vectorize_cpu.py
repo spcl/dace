@@ -329,7 +329,7 @@ inline void vector_ne_w_scalar(T * __restrict__ out, const T * __restrict__ a, c
 }}
 """
 
-    def __init__(self, vector_width, try_to_demote_symbols_in_nsdfgs = False):
+    def __init__(self, vector_width, try_to_demote_symbols_in_nsdfgs=False):
         passes = [
             EliminateBranches(),
             RemoveFPTypeCasts(),
