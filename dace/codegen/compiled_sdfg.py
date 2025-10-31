@@ -693,12 +693,16 @@ with open(r"{temp_path}", "wb") as f:
         self._return_arrays = []
         self._retarray_shapes = []
         for arrname, arr in sorted(self.sdfg.arrays.items()):
-            if arrname.startswith('__return') and not arr.transient:
-                if arrname in kwargs:
+            if arrname.startswith('__return'):
+                if arr.transient:
+                    raise ValueError(f'Used the special array name "{arrname}" as transient.')
+
+                elif arrname in kwargs:
                     # The return value is passed as an argument, in that case store the name in `self._retarray_shapes`.
                     warnings.warn(f'Return value "{arrname}" is passed as a regular argument.', stacklevel=2)
                     self._return_arrays.append(kwargs[arrname])
-                    self._retarray_is_pyobject.append(isinstance(arr, dtypes.pyobject))
+                    self._retarray_is_pyobject.append(
+                        isinstance(arr, dt.Scalar) and isinstance(arr.dtype, dtypes.pyobject))
                     self._retarray_shapes.append((arrname, ))
 
                 elif isinstance(arr, dt.Stream):
@@ -710,11 +714,13 @@ with open(r"{temp_path}", "wb") as f:
                     total_size = int(symbolic.evaluate(arr.total_size, syms))
                     strides = tuple(symbolic.evaluate(s, syms) * arr.dtype.bytes for s in arr.strides)
                     shape_desc = (arrname, dtype, arr.storage, shape, strides, total_size)
-                    self._retarray_is_pyobject.append(isinstance(arr.dtype, dtypes.pyobject))
+                    self._retarray_is_pyobject.append(
+                        isinstance(arr, dt.Scalar) and isinstance(arr.dtype, dtypes.pyobject))
                     self._retarray_shapes.append(shape_desc)
 
                     # Create an array with the properties of the SDFG array
                     arr = self._create_array(*shape_desc)
                     self._return_arrays.append(arr)
+
         assert (not self._is_single_value_ret) or (len(self._return_arrays) == 1)
         self._return_arrays = tuple(self._return_arrays)
