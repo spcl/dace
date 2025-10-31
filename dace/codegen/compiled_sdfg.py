@@ -709,8 +709,6 @@ with open(r"{temp_path}", "wb") as f:
                     # The return value is passed as an argument, in that case store the name in `self._retarray_shapes`.
                     warnings.warn(f'Return value "{arrname}" is passed as a regular argument.', stacklevel=2)
                     self._return_arrays.append(kwargs[arrname])
-                    self._retarray_is_pyobject.append(
-                        isinstance(arr, dt.Scalar) and isinstance(arr.dtype, dtypes.pyobject))
                     self._retarray_shapes.append((arrname, ))
 
                 elif isinstance(arr, dt.Stream):
@@ -722,13 +720,46 @@ with open(r"{temp_path}", "wb") as f:
                     total_size = int(symbolic.evaluate(arr.total_size, syms))
                     strides = tuple(symbolic.evaluate(s, syms) * arr.dtype.bytes for s in arr.strides)
                     shape_desc = (arrname, dtype, arr.storage, shape, strides, total_size)
-                    self._retarray_is_pyobject.append(
-                        isinstance(arr, dt.Scalar) and isinstance(arr.dtype, dtypes.pyobject))
                     self._retarray_shapes.append(shape_desc)
 
                     # Create an array with the properties of the SDFG array
-                    arr = self._create_array(*shape_desc)
-                    self._return_arrays.append(arr)
+                    return_array = self._create_array(*shape_desc)
+                    self._return_arrays.append(return_array)
+
+                # BUG COMPATIBILITY(PR#2206):
+                #   In the original version `_retarray_is_pyobject` was named `_retarray_is_scalar`, however
+                #   since scalars could not be returned on an [implementation level](https://github.com/spcl/dace/pull/1609)
+                #   it was essentially useless. But was used for `pyobject` in _some_ cases. And indeed,
+                #   since `pyobject`s are essentially `void` pointers is was, in principle possible, to return/pass
+                #   them as "scalars", read "not inside an array".
+                #   However, if the return value was passed as argument, i.e. the first `elif`, then it
+                #   was ignored if `arr` was a `pyobject`. Only if the return value was managed by `self`,
+                #   i.e. the `else` case, then it was considered, in a way at least. The problem was, that it was
+                #   done using the following check:
+                #       `isinstance(arr, dt.Scalar) or isinstance(arr.dtype, dtypes.pyobject)`
+                #   Because of the `or` that is used, _everything_ whose `dtype` is `pyobject` was classified
+                #   as a scalar `pyobject`, i.e. one element, even if it was in fact an array of millions of `pyobject`s.
+                #   The correct behaviour would be to change the `or` to an `and` but then several unit
+                #   tests (`test_pyobject_return`, `test_pyobject_return_tuple` and `test_nested_autoparse[False]`
+                #   in `tests/python_frontend/callee_autodetect_test.py`) will fail.
+                #   The following code is bug compatible and also allows to pass a `pyobject` directly, i.e.
+                #   through `kwargs`.
+                if isinstance(arr.dtype, dtypes.pyobject):
+                    if isinstance(arr, dt.Scalar):
+                        # Proper scalar.
+                        self._retarray_is_pyobject.append(True)
+                    elif isinstance(arr, dt.Array):
+                        # An array, let's check if it is just a wrapper for a single value.
+                        if not (len(arr.shape) == 1 and arr.shape[0] == 1):
+                            warnings.warn(f'Decay an array of `pyobject`s with shape {arr.shape} to a single one.',
+                                          stacklevel=2)
+                        self._retarray_is_pyobject.append(True)
+                    else:
+                        raise ValueError(
+                            f'Does not know how to handle "{arrname}", which is a {type(arr).__name__} of `pyobject`.')
+                else:
+                    self._retarray_is_pyobject.append(False)
 
         assert (not self._is_single_value_ret) or (len(self._return_arrays) == 1)
+        assert len(self._return_arrays) == len(self._retarray_shapes) == len(self._retarray_is_pyobject)
         self._return_arrays = tuple(self._return_arrays)
