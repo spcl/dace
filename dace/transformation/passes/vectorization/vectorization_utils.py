@@ -15,6 +15,9 @@ from dace.sdfg.graph import Edge
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 import dace.sdfg.tasklet_utils as tutil
 import dace.sdfg.construction_utils as cutil
+import dace.sdfg.utils as sdutil
+import ast
+import math
 
 
 def repl_subset(subset: dace.subsets.Range, repl_dict: Dict[str, str]) -> dace.subsets.Range:
@@ -1069,7 +1072,6 @@ def offset_symbol_in_expression(expr_str: str, symbol_to_offset: str, offset: in
         str: A new expression string with the symbol offset.
              If the symbol is not found in the expression, returns the original expression string unchanged.
     """
-    print("Csffs", expr_str)
     if "Eq(" in expr_str:
         raise Exception(expr_str)
     expr = dace.symbolic.SymExpr(expr_str)
@@ -1080,10 +1082,37 @@ def offset_symbol_in_expression(expr_str: str, symbol_to_offset: str, offset: in
             break
     if sym_to_change is None:
         return expr_str
-    offsetted_expr = sym_to_change + offset
+    offsetted_expr = f"({sym_to_change} + {offset})"
     offset_expr = expr.subs(sym_to_change, offsetted_expr)
     return sympy.pycode(offset_expr)
 
+def use_laneid_symbol_in_expression(expr_str: str, symbol_to_offset: str, offset: int) -> str:
+    """
+    Returns a new expression string where a specified symbol is replaced with laneid-ed version
+    `sym1` -> `sym1_laneid_{offset}`
+
+    Args:
+        expr_str (str): The original expression as a string.
+        symbol_to_offset (str): The symbol within the expression to offset.
+        offset (int): The integer value to add to the symbol.
+
+    Returns:
+        str: A new expression string with the symbol offset.
+             If the symbol is not found in the expression, returns the original expression string unchanged.
+    """
+    if "Eq(" in expr_str:
+        raise Exception(expr_str)
+    expr = dace.symbolic.SymExpr(expr_str)
+    sym_to_change = None
+    for free_sym in expr.free_symbols:
+        if str(free_sym) == symbol_to_offset:
+            sym_to_change = free_sym
+            break
+    if sym_to_change is None:
+        return expr_str
+    offsetted_expr = f"({sym_to_change}_laneid_{offset})"
+    offset_expr = expr.subs(sym_to_change, offsetted_expr)
+    return sympy.pycode(offset_expr)
 
 def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Tasklet, info: dict, vector_width: int,
                                   templates: Dict[str, str], vector_map_param: str) -> None:
@@ -1115,7 +1144,7 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
     lhs, rhs1, rhs2 = info.get("lhs"), info.get("rhs1"), info.get("rhs2")
     c1, c2, op = info.get("constant1"), info.get("constant2"), info.get("op")
     vw = vector_width
-    is_commutative = op in {"+", "*"}
+    is_commutative = op in {"+", "*", "==", "!="}
 
     def _str_to_float_or_str(s: Union[int, float, str, None]):
         """Convert string constants to float if possible."""
@@ -1149,12 +1178,20 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
                     return templates[op_].format(rhs1=rhs, rhs2=rhs, lhs=lhs_, op=op_, vector_width=vw)
                 else:
                     # Single array + constant
+                    cop_ = None
                     if is_commutative or op_ == "=":
-                        return templates[op_ + "c"].format(rhs1=rhs,
-                                                           constant=_str_to_float_or_str(constant),
-                                                           lhs=lhs_,
-                                                           op=op_,
-                                                           vector_width=vw)
+                        cop_ = op_ + "c"
+                    elif constant == const1_:
+                        cop_ = "c" + op_
+                    else:
+                        assert constant == const2_
+                        cop_ = op_ + "c"
+                    return templates[cop_].format(rhs1=rhs,
+                                                    constant=_str_to_float_or_str(constant),
+                                                    lhs=lhs_,
+                                                    op=op_,
+                                                    vector_width=vw)
+
             else:
                 # Two arrays
                 return templates[op_].format(rhs1=rhs1_, rhs2=rhs2_, lhs=lhs_, op=op_, vector_width=vw)
@@ -1196,8 +1233,19 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
     elif ttype == tutil.TaskletType.ARRAY_SYMBOL_ASSIGNMENT:
         node.code = dace.properties.CodeBlock(code="\n".join([f"{lhs}[{i}] = {c1}{i};" for i in range(vw)]) + "\n",
                                               language=dace.Language.CPP)
-    elif ttype in {tutil.TaskletType.ARRAY_SYMBOL, tutil.TaskletType.ARRAY_ARRAY, tutil.TaskletType.UNARY_ARRAY}:
+    elif ttype in {tutil.TaskletType.ARRAY_SYMBOL, tutil.TaskletType.ARRAY_ARRAY}:
         _set_template(rhs1, rhs2, c1, c2, lhs, op, ttype)
+    elif ttype in {tutil.TaskletType.UNARY_ARRAY}:
+        arr_name = rhs1 if rhs1 is not None else rhs2
+        occurences = tutil.count_name_occurrences(node.code.as_string.split(" = ")[1].strip(), arr_name)
+        assert occurences == 1
+        if op == "-":
+            # Implement (-A) as (0 - A)
+            _set_template(None, arr_name, "0.0", None, lhs, op, tutil.TaskletType.ARRAY_SYMBOL)
+        elif op == "+":
+            raise Exception("Unary + operator is not supported")
+        else:
+            _set_template(rhs1, rhs2, c1, c2, lhs, op, ttype)
     elif ttype in {
             tutil.TaskletType.SCALAR_ARRAY,
     }:
@@ -1240,7 +1288,7 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         if isinstance(lhs_data, dace.data.Array):
             node.code = dace.properties.CodeBlock(
                 code="\n".join([f"//{ttype}"] +
-                               [f"{lhs}[{i}] = {offset_symbol_in_expression(expr, c, i)};" for i in range(vw)]) + "\n",
+                               [f"{lhs}[{i}] = {use_laneid_symbol_in_expression(expr, c, i)};" for i in range(vw)]) + "\n",
                 language=dace.Language.CPP)
         else:
             node.code = dace.properties.CodeBlock(code=f"{lhs} = {expr};\n", language=dace.Language.CPP)
@@ -1381,7 +1429,8 @@ def copy_arrays_with_a_new_shape(sdfg: dace.SDFG, array_namelist: Set[str], new_
 
 
 def get_scalar_source_nodes(sdfg: dace.SDFG,
-                            non_transient_only: bool) -> List[Tuple[dace.SDFGState, dace.nodes.AccessNode]]:
+                            non_transient_only: bool,
+                            skip: Set[str] = set()) -> List[Tuple[dace.SDFGState, dace.nodes.AccessNode]]:
     """
     Returns source nodes (in-degree 0 access nodes) for scalars (or shape-1 arrays) with no incoming edges.
 
@@ -1400,7 +1449,8 @@ def get_scalar_source_nodes(sdfg: dace.SDFG,
                 arr = state.sdfg.arrays[node.data]
                 if isinstance(arr, dace.data.Scalar) or (isinstance(arr, dace.data.Array) and arr.shape == (1, )):
                     if non_transient_only is False or arr.transient is False:
-                        source_nodes.append((state, node))
+                        if node.data not in skip:
+                            source_nodes.append((state, node))
     return source_nodes
 
 
@@ -1431,7 +1481,8 @@ def get_array_source_nodes(sdfg: dace.SDFG,
 
 
 def get_scalar_sink_nodes(sdfg: dace.SDFG,
-                          non_transient_only: bool) -> List[Tuple[dace.SDFGState, dace.nodes.AccessNode]]:
+                          non_transient_only: bool,
+                          skip: Set[str]) -> List[Tuple[dace.SDFGState, dace.nodes.AccessNode]]:
     """
     Returns sink nodes for scalars (or shape-1 arrays) with no outgoing edges.
 
@@ -1450,7 +1501,8 @@ def get_scalar_sink_nodes(sdfg: dace.SDFG,
                 arr = state.sdfg.arrays[node.data]
                 if isinstance(arr, dace.data.Scalar) or isinstance(arr, dace.data.Array) and arr.shape == (1, ):
                     if non_transient_only is False or arr.transient is False:
-                        sink_nodes.append((state, node))
+                        if node.data not in skip:
+                            sink_nodes.append((state, node))
     return sink_nodes
 
 
@@ -1852,7 +1904,8 @@ def find_symbol_assignment(sdfg: dace.SDFG, sym_name: str) -> str:
 
 
 def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.NestedSDFG,
-                                parent_state: SDFGState) -> Set[str]:
+                                parent_state: SDFGState,
+                                invariant_scalars: Set[str]) -> Set[str]:
     """
     Determines which arrays can be vectorized based on their access patterns and symbol usage.
     The symbols used for accessing should not have any indirectness, meaning that they should
@@ -1863,6 +1916,8 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
         sdfg: The SDFG to analyze.
         parent_nsdfg_node: NestedSDFG node.
         parent_state: State containing the NestedSDFG.
+        invariant_scalars: Set of scalar names that are invariant across lanes (means these
+            scalars to do not prevent vectorization)
 
     Returns:
         Dictionary mapping array names to a boolean indicating vectorizability.
@@ -1873,6 +1928,7 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
     map_param = parent_map.map.params[-1]
 
     all_accesses_to_arrays = collect_accesses_to_array_name(sdfg)
+    print(all_accesses_to_arrays)
 
     for state in sdfg.all_states():
         for edge in state.edges():
@@ -1890,8 +1946,12 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
             b, e, s = access_subset[stride_one_dim]
             assert b == e
             assert s == 1
-            if isinstance(b, dace.symbolic.SymExpr):
-                free_syms = b.free_syms
+            print(b, type(b))
+            if isinstance(b, (dace.symbolic.SymExpr, dace.symbolic.symbol)):
+                if isinstance(b, dace.symbolic.SymExpr):
+                    free_syms = {str(s) for s in b.free_syms}.union({f.func for f in b.atoms(sympy.Function)})
+                else:
+                    free_syms = {b}
                 for free_sym in free_syms:
                     # Accessing map param is ok
                     if str(free_sym) == map_param:
@@ -1908,11 +1968,19 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
                             sympy.cosh, sympy.tanh, sympy.asinh, sympy.acosh, sympy.atanh
                         }
 
-                        # Collect only user-defined or nonstandard functions
+                        # Collect only user-defined or nonstandard functions - in intersate edge this means array accees
                         funcs = {f for f in assignment_expr.atoms(sympy.Function) if f.func not in ignored}
-                        if len(funcs) != 0:
-                            print(f"Indirect access detected: {funcs} for {arr_name}, is not vectorizable")
-                        array_is_vectorizable[arr_name] = False
+                        # Any array on the right-hand-side -> big problem
+                        # Check for scalar / array accesses like this too
+                        scalars = {s for s in assignment_expr.free_symbols if s in sdfg.arrays} - invariant_scalars
+                        # TODO: check and refactor this
+                        if len(funcs) != 0 or len(scalars) != 0:
+                            print(f"Indirect access detected: ({funcs}, {scalars}) for {arr_name}, is not vectorizable")
+                            array_is_vectorizable[arr_name] = False
+                        #if arr_name == "__tmp_180_36_r":
+                        #    raise Exception(free_syms, assignment, funcs)
+        #if arr_name == "__tmp_180_36_r":
+        #    raise Exception(arr_name)
 
     return array_is_vectorizable
 
@@ -1937,3 +2005,192 @@ def collect_accesses_to_array_name(sdfg: dace.SDFG) -> Dict[Tuple[str, dace.subs
                     d[edge.data.data] = set()
                 d[edge.data.data].add(edge.data.subset)
     return d
+
+
+import ast
+import math
+
+# Allowed standard and math-like functions
+STANDARD_FUNCS = {
+    # Builtins and math intrinsics
+    "abs", "exp", "log", "ln", "sqrt", "sin", "cos", "tan",
+    "asin", "acos", "atan", "atan2", "sinh", "cosh", "tanh",
+    "floor", "ceil", "pow", "min", "max",
+    # DaCe-like or symbolic math intrinsics
+    "int_floor", "int_ceil", "div_floor", "div_ceil",
+} | set(dir(math))
+
+
+class FuncToSubscript(ast.NodeTransformer):
+    def visit_Call(self, node):
+        # Recurse into child nodes
+        self.generic_visit(node)
+
+        func = node.func
+        func_name = None
+
+        # Handle simple functions like foo(...)
+        if isinstance(func, ast.Name):
+            func_name = func.id
+
+        # Handle qualified names like math.sin or np.exp
+        elif isinstance(func, ast.Attribute):
+            if isinstance(func.value, ast.Name):
+                # Keep math.*, np.*, numpy.* untouched
+                if func.value.id in ("math", "np", "numpy"):
+                    func_name = f"{func.value.id}.{func.attr}"
+                else:
+                    func_name = func.attr
+
+        # Skip conversion if function is standard
+        if func_name and func_name.split(".")[-1] in STANDARD_FUNCS:
+            return node
+
+        # Otherwise, convert func(a, b) → func[a, b]
+        if len(node.args) == 1:
+            new_slice = node.args[0]
+        else:
+            new_slice = ast.Tuple(elts=node.args, ctx=ast.Load())
+
+        return ast.Subscript(
+            value=func,
+            slice=new_slice,
+            ctx=ast.Load()
+        )
+
+
+def convert_nonstandard_calls(expr: str) -> str:
+    tree = ast.parse(expr, mode="eval")
+    new_tree = FuncToSubscript().visit(tree)
+    ast.fix_missing_locations(new_tree)
+    return ast.unparse(new_tree)
+
+
+def expand_interstate_assignments_to_lanes(inner_sdfg: dace.SDFG,
+                                           nsdfg_node: dace.nodes.NestedSDFG,
+                                           state: dace.SDFGState,
+                                           vector_width: int,
+                                           invariant_data: Set[str]):
+    # `sym = 0`
+    # Would become 
+    # `sym_laneid_0 = 0, sym=sym_laneid_0, sym_laneid_1 = 0, sym_laneid_2 = 0, ....`
+    # Assume:
+    # `sym = A[_for_it] + 1`
+    # Would become:
+    # `sym_laneid_0 = A[_for_it + 0] + 1`, `sym = sym_laneid_0`, `sym_laneid_1 = A[_for_it + 1] + 1`, ...
+
+    # Invariant data means that the data is constant across iterators
+    # If all free symbols are from invariant data then duplication is not necessar
+
+    # Pre-condition last dimension is the dimension we vectorize
+    parent_map_entry = state.scope_dict()[nsdfg_node]
+    assert parent_map_entry is not None and isinstance(parent_map_entry, dace.nodes.MapEntry)
+    vectorized_param = parent_map_entry.map.params[-1]
+    #print("VVVVVVV", vectorized_param)
+
+    for edge in inner_sdfg.all_interstate_edges():
+        new_assignments = dict()
+        assignments = edge.data.assignments
+        for k, v in assignments.items():
+            # Add a new symbol for each lane
+            original_v_expr = dace.symbolic.SymExpr(v)
+            for i in range(vector_width):
+                v_expr = dace.symbolic.SymExpr(v)
+
+                funcs = {str(f) for f in v_expr.atoms(sympy.Function)}
+                non_func_free_syms = {str(s) for s in v_expr.free_symbols if str(s) not in funcs}
+                # Collect functions that are accesses
+                array_accesses = {f for f in funcs if f in inner_sdfg.arrays}
+                variant_array_accesses = (array_accesses.union(non_func_free_syms)) - invariant_data
+
+                if len(variant_array_accesses) == 0:
+                    print(f"For `{k} = {v_expr}` no vector-lane variant data is found, skipping duplication")
+                    # Copy the old self
+                    new_assignments[k] = v
+                    continue
+
+                new_k = f"{k}_laneid_{i}"
+                if new_k not in inner_sdfg.symbols:
+                    inner_sdfg.add_symbol(new_k, inner_sdfg.symbols.get(k, dace.float64))
+
+                # Replace map param `_for_it` with `_for_it + laneid`
+                v_expr = v_expr.subs(vectorized_param, f"({vectorized_param} + {i})")
+
+                # All other symbols are replaced with `s` -> `s{laneid}`, except free symbols
+                # Those are kept as they are
+                non_map_free_syms = {str(s) for s in original_v_expr.free_symbols} - ({vectorized_param}.union(inner_sdfg.free_symbols))
+                
+                assert vectorized_param not in non_map_free_syms
+
+                for free_sym in non_map_free_syms:
+                    # The free_sym can be an array, scalar or symbol
+                    free_sym_str = str(free_sym)
+                    assert free_sym_str in inner_sdfg.arrays or free_sym_str in inner_sdfg.symbols
+
+                    # If it is a symbol replace with laneid
+                    if free_sym_str in inner_sdfg.symbols:
+                        #print(f"Subs {free_sym} with {free_sym}_laneid_{i}")
+                        v_expr = v_expr.subs(free_sym, f"{free_sym}_laneid_{i}")
+
+                        # Add the new symbol to the symbols
+                        if f"{free_sym}_laneid_{i}" not in inner_sdfg.symbols:
+                            inner_sdfg.add_symbol(f"{free_sym}_laneid_{i}", inner_sdfg.symbols.get(str(free_sym), dace.float64))
+                    else:
+                        if isinstance(inner_sdfg.arrays[free_sym_str], dace.data.Scalar):
+                            #print(f"Subs {free_sym} with {free_sym}")
+                            v_expr = v_expr.subs(free_sym, f"{free_sym}")
+                        else:
+                            assert inner_sdfg.arrays[free_sym_str].shape != (1,)
+                            #print(f"Subs {free_sym} with {free_sym}({i})")
+                            v_expr = v_expr.subs(free_sym, f"{free_sym}({i})")
+
+                new_v = sympy.pycode(v_expr, allow_unknown_functions=True)
+                #print("NEWV", new_v)
+                # Convert non-standard function calls back to array accesses before assigning
+                new_assignments[new_k] = convert_nonstandard_calls(new_v)
+
+                if i == 0:
+                    # In case the symbol is used for something vectorizable - then this duplication was necessary
+                    # Let's hope compiler will prune the unused data, have laneid 0 one for the original symbol too
+                    new_assignments[k] = convert_nonstandard_calls(new_v)
+
+
+
+        edge.data.assignments = new_assignments
+
+def try_demoting_vectorizable_symbols(inner_sdfg: dace.SDFG) -> Set[str]:
+    assigned_symbols = dict()
+    for edge in inner_sdfg.all_interstate_edges():
+        for k, v in edge.data.assignments.items():
+            if k not in assigned_symbols:
+                assigned_symbols[k] = set()
+            assigned_symbols[k].add(v)
+
+    demotable_symbols = set()
+    for sym, sym_assignments in assigned_symbols.items():
+        # Check that the access is to arrays and map param is involved
+        all_function_args = set()
+        print(sym_assignments)
+        for sym_assignment in sym_assignments:
+            sym_assign_expr = dace.symbolic.SymExpr(sym_assignment)
+            # Collect all array accesses (they are functions that are present in the sdfg)
+            funcs = {(f.name, f) for f in sym_assign_expr.atoms(sympy.Function)}
+            print(funcs)
+            for fname, f in funcs:
+                print(f"Check function: {fname} ({str(fname) in inner_sdfg.arrays})")
+                if fname in inner_sdfg.arrays:
+                    for arg in f.args:
+                        all_function_args = all_function_args.union({str(s) for s in arg.free_symbols})
+
+        # If all function args are s
+        print(f"{sym} <-(depends)- {all_function_args}")
+        # if the depend set has no arrays or scalars we can do it
+        data_in_dependence_set = {d for d in all_function_args if d in inner_sdfg.arrays}
+        if len(data_in_dependence_set) == 0:
+            demotable_symbols.add(sym)
+
+    for demotable_symbol in demotable_symbols:
+        stype = inner_sdfg.symbols[demotable_symbol]
+        sdutil.demote_symbol_to_scalar(inner_sdfg, demotable_symbol, stype)
+
+    return demotable_symbols

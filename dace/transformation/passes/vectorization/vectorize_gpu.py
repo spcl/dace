@@ -85,7 +85,7 @@ __host__ __device__ __forceinline__ void vector_copy(T * __restrict__ dst, const
 }}
 """
 
-    def __init__(self, vector_width):
+    def __init__(self, vector_width, try_to_demote_symbols_in_nsdfgs):
         passes = [
             EliminateBranches(),
             RemoveFPTypeCasts(),
@@ -109,6 +109,7 @@ __host__ __device__ __forceinline__ void vector_copy(T * __restrict__ dst, const
                 global_code=VectorizeGPU._gpu_global_code.format(vector_width=vector_width),
                 global_code_location="frame",
                 vector_op_numeric_type=dace.float64,
+                try_to_demote_symbols_in_nsdfgs=try_to_demote_symbols_in_nsdfgs,
             )
         ]
         super().__init__(passes)

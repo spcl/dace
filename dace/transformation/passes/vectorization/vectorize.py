@@ -28,6 +28,7 @@ class Vectorize(ppl.Pass):
     global_code = properties.Property(dtype=str, default="")
     global_code_location = properties.Property(dtype=str, default="")
     vector_op_numeric_type = properties.Property(dtype=typeclass, default=dace.float64)
+    try_to_demote_symbols_in_nsdfgs = properties.Property(dtype=bool, default=False)
 
     def __init__(self, templates, vector_width, vector_input_storage, vector_output_storage, vector_op_numeric_type,
                  global_code, global_code_location):
@@ -143,6 +144,19 @@ class Vectorize(ppl.Pass):
         #            if state.sdfg.arrays[e.data.data].dtype != self.vector_op_numeric_type:
         #                state.sdfg.arrays[e.data.data].dtype = self.vector_op_numeric_type
 
+    def parent_connection_is_scalar(self, state: dace.SDFGState, nsdfg: dace.nodes.NestedSDFG, scalar_name: str) -> bool:
+        for ie in state.in_edges(nsdfg):
+            if ie.dst_conn == scalar_name:
+                dataname = ie.data.data
+                if isinstance(state.sdfg.arrays[dataname], dace.data.Scalar):
+                    return True
+        for oe in state.out_edges(nsdfg):
+            if oe.src_conn == scalar_name:
+                dataname = oe.data.data
+                if isinstance(state.sdfg.arrays[dataname], dace.data.Scalar):
+                    return True
+        return False # Shouldn't happen but whatever
+
     def _vectorize_nested_sdfg(self, state: dace.SDFGState, nsdfg: dace.nodes.NestedSDFG, vector_map_param: str):
         inner_sdfg: dace.SDFG = nsdfg.sdfg
         # Imagine the case where
@@ -165,6 +179,7 @@ class Vectorize(ppl.Pass):
         # and extend that state
 
         # Step 1. Analyze
+        # 0. Try to demote some symbols into scalars 
         # 1.1. Detect input and output shapes
         # 1.1.1 Make all non-transient data within the nested SDFG match the connector shapes.
         # 1.1.2 All transient arrays should match the vector unit shape
@@ -183,8 +198,15 @@ class Vectorize(ppl.Pass):
         # Step 5. Replace all tasklets to use vectorized types
         # Step 6. Collect all data used, make sure their type matches the vector op type
 
+        # 0
+        # All assigned symbols
+        if self.try_to_demote_symbols_in_nsdfgs:
+            demoted_symbols = try_demoting_vectorizable_symbols(inner_sdfg)
+
+
         # 1.1.1
         fix_nsdfg_connector_array_shapes_mismatch(state, nsdfg)
+        cutil.replace_length_one_arrays_with_scalars(inner_sdfg, True, True)
         # 1.1.2
         transient_arrays = {arr_name for arr_name, arr in inner_sdfg.arrays.items() if arr.transient}
         print("Transient arrays:", transient_arrays)
@@ -192,7 +214,34 @@ class Vectorize(ppl.Pass):
             arr_name
             for arr_name in transient_arrays if inner_sdfg.arrays[arr_name].shape == (self.vector_width, )
         }
-        non_vector_width_transient_arrays = transient_arrays - vector_width_transient_arrays
+        # If a scalar is only used on an interstate edge we have a pattern such as:
+        # scalar1 = i + scalar0
+        # A[scalar1]
+        # This vectorizable as A[scalar1:scalar1+8] (vector width = 8)
+        # This would be not vectorizable if it would be:
+        # scalar1 = array1[i]
+        # Then would need to duplicate the accesses as we can't
+        # guarantee that the resulting access will be contigous
+
+        # Get scalars
+        scalars = {
+            arr_name for arr_name, arr in inner_sdfg.sdfg.arrays.items() if isinstance(arr, dace.data.Scalar)
+        }
+
+        scalars_only_used_on_interstate_edges = {
+            scalar for scalar in scalars if not cutil.array_is_used_in_sdfg_states(inner_sdfg, set(), scalar, True)
+        }
+        # If a scalar is transient + invariant or passed from parent also as a scalar and not as an array
+        # Then we can use the same variable across all lanes
+        invariant_scalars = {
+            scalar for scalar in scalars_only_used_on_interstate_edges if inner_sdfg.arrays[scalar].transient or self.parent_connection_is_scalar(state, nsdfg, scalar)
+        }
+        print("Scalars only used in interstate edges:", scalars_only_used_on_interstate_edges)
+        print("Invariant scalars:", invariant_scalars)
+        state.sdfg.save("y0.sdfg")
+
+        # Do not make scalars used only interstate edges into vector-width arrays
+        non_vector_width_transient_arrays = transient_arrays - (vector_width_transient_arrays.union(invariant_scalars))
         print("Non vector width transient arrays:", non_vector_width_transient_arrays)
         replace_arrays_with_new_shape(inner_sdfg, vector_width_transient_arrays, (self.vector_width, ),
                                       self.vector_op_numeric_type)
@@ -213,22 +262,26 @@ class Vectorize(ppl.Pass):
         print(f"Inner SDFG now has following scalars: {scalars}")
         state.sdfg.validate()
         state.sdfg.save("y1.sdfg")
+        #raise Exception("uwu")
 
         # 1.2
         scalar_source_nodes: List[Tuple[dace.SDFGState,
-                                        dace.nodes.AccessNode]] = get_scalar_source_nodes(inner_sdfg, True)
+                                        dace.nodes.AccessNode]] = get_scalar_source_nodes(inner_sdfg, True, invariant_scalars)
         array_source_nodes: List[Tuple[dace.SDFGState,
                                        dace.nodes.AccessNode]] = get_array_source_nodes(inner_sdfg, True)
-        scalar_sink_nodes: List[Tuple[dace.SDFGState, dace.nodes.AccessNode]] = get_scalar_sink_nodes(inner_sdfg, True)
+        scalar_sink_nodes: List[Tuple[dace.SDFGState, dace.nodes.AccessNode]] = get_scalar_sink_nodes(inner_sdfg, True, invariant_scalars)
         array_sink_nodes: List[Tuple[dace.SDFGState, dace.nodes.AccessNode]] = get_array_sink_nodes(inner_sdfg, True)
+
+
         print("CXC", scalar_source_nodes, scalar_sink_nodes)
 
         # 1.3 and 1.3.1
-        if len(scalar_source_nodes) > 1 and len(scalar_sink_nodes) > 1:
-            raise Exception("Pass can't handle more than one scalar sink and source nodes in the NestedSDFG"
-                            f"Scalar source nodes: {scalar_source_nodes}"
-                            f"Scalar sink nodes: {scalar_sink_nodes}")
-        elif len(scalar_source_nodes) == 1 and len(scalar_sink_nodes) == 1:
+        #if len(scalar_source_nodes) > 1 and len(scalar_sink_nodes) > 1:
+        #    raise Exception("Pass can't handle more than one scalar sink and source nodes in the NestedSDFG"
+        #                    f"Scalar source nodes: {scalar_source_nodes}"
+        #                    f"Scalar sink nodes: {scalar_sink_nodes}")
+        #el
+        if len(scalar_source_nodes) == 1 and len(scalar_sink_nodes) == 1:
             move_out_reduction(scalar_source_nodes, state, nsdfg, inner_sdfg, self.vector_width)
             # This changes scalar sink and source nodes
             inner_sdfg.reset_cfg_list()
@@ -252,7 +305,7 @@ class Vectorize(ppl.Pass):
         # This can be vectorized but the input shape will not be the (1,) or (vector_width,)
         # use the utility function that returns the accesses that are vectorizable:
         # vectorizable access means that all subets to an array depends purely on constants or loop parameters
-        vectorizable_arrays_dict = collect_vectorizable_arrays(inner_sdfg, nsdfg, state)
+        vectorizable_arrays_dict = collect_vectorizable_arrays(inner_sdfg, nsdfg, state, invariant_scalars)
         vectorizable_arrays = {k for k, v in vectorizable_arrays_dict.items() if v is True}
         non_vectorizable_arrays = {k for k, v in vectorizable_arrays_dict.items() if v is False}
 
@@ -269,7 +322,12 @@ class Vectorize(ppl.Pass):
         #    for arr_name, _, _, _ in non_scalar_non_vector_width_arrays
         #}
         #add_transient_arrays_from_list(inner_sdfg, non_scalar_non_vector_width_arrays)
-        add_transient_arrays_from_list(inner_sdfg, non_vectorizable_arrays)
+        non_vectorizable_array_descs = [(arr_name, inner_sdfg.arrays[arr_name]) for arr_name in non_vectorizable_arrays]
+        non_vectorizable_array_infos = {
+            (arr_name + "_packed", (self.vector_width, ), self.vector_input_storage, arr.dtype)
+            for arr_name, arr in non_vectorizable_array_descs
+        }
+        add_transient_arrays_from_list(inner_sdfg, non_vectorizable_array_infos)
 
         modified_nodes: Set[dace.nodes.Node] = set()
         modified_edges: Set[Edge[Memlet]] = set()
@@ -283,6 +341,7 @@ class Vectorize(ppl.Pass):
         modified_nodes = modified_nodes.union(new_mn)
         modified_edges = modified_edges.union(new_me)
 
+        # TODO: fix vectorizable arrays. SpMV load is not vectorizable but it thinks it is
         inner_sdfg.save("x2.sdfg")
 
         # 3
@@ -297,7 +356,8 @@ class Vectorize(ppl.Pass):
         # 4
         for inner_state in inner_sdfg.all_states():
             # Skip the data data that are still scalar and source nodes
-            scalar_source_data = {n.data for _, n in scalar_source_nodes}
+            # Do not replace invariant scalars either
+            scalar_source_data = {n.data for _, n in scalar_source_nodes}.union(invariant_scalars)
             array_data = {n.data for _, n in array_source_nodes}.union({n.data for _, n in array_sink_nodes})
             # Scalar source nodes can't be replaced.
             # These are non-transient scalars of the SDFG as we do not know how to expand them.
@@ -306,8 +366,11 @@ class Vectorize(ppl.Pass):
             # If it is an array it will be done in 4.1
             edges_to_replace = {
                 edge
-                for edge in inner_state.edges() if edge not in modified_edges and edge.data is not None
-                and edge.data.data not in scalar_source_data and edge.data.data not in array_data
+                for edge in inner_state.edges() 
+                if edge not in modified_edges and 
+                edge.data is not None and
+                edge.data.data not in scalar_source_data and
+                edge.data.data not in array_data
             }
             old_subset = dace.subsets.Range([(0, 0, 1)])
             new_subset = dace.subsets.Range([(0, self.vector_width - 1, 1)])
@@ -337,16 +400,27 @@ class Vectorize(ppl.Pass):
         # There two types of doing this, assume the map parameters are (i, j) and we vectorize over j with vector simd length > 2
         # The map parameter used in the loop is expanded via: _sym1 = j -> _sym1_0 = j, _sym1_1 = j + 1, ...
         # The others are duplicated (for convenience) _sym1 = i -> _sym1_0 = i, _sym1_1 = i, ...
-        for edge in inner_sdfg.all_interstate_edges():
-            candidate_arrays = vector_width_arrays
-            free_syms = set()
-            for k, v in edge.data.assignments.items():
-                free_syms.add(k)
-                free_syms = free_syms.union({str(vv) for vv in dace.symbolic.SymExpr(v).free_symbols})
-            # Check if any array appears in an assignment, those need to be expanded
-            print("BBB", free_syms, {fs in candidate_arrays for fs in free_syms})
-            if any({fs in candidate_arrays for fs in free_syms}):
-                self._expand_interstate_assignment(inner_sdfg, edge, free_syms, candidate_arrays)
+        # TODO: maybe expand all symbols always?
+        # `sym = 0`
+        # Would become 
+        # `sym_laneid_0 = 0, sym=sym_laneid_0, sym_laneid_1 = 0, sym_laneid_2 = 0, ....`
+        # Assume:
+        # `sym = A[_for_it] + 1`
+        # Would become:
+        # `sym_laneid_0 = A[_for_it + 0] + 1`, `sym = sym_laneid_0`, `sym_laneid_1 = A[_for_it + 1] + 1`, ...
+        expand_interstate_assignments_to_lanes(inner_sdfg, nsdfg, state, self.vector_width, invariant_scalars)
+
+        #for edge in inner_sdfg.all_interstate_edges():
+        #    candidate_arrays = vector_width_arrays
+        #    free_syms = set()
+        #    for k, v in edge.data.assignments.items():
+        #        free_syms.add(k)
+        #        free_syms = free_syms.union({str(vv) for vv in dace.symbolic.SymExpr(v).free_symbols})
+        #    # Check if any array appears in an assignment, those need to be expanded
+        #    print("BBB", free_syms, {fs in candidate_arrays for fs in free_syms})
+        #    if any({fs in candidate_arrays for fs in free_syms}):
+        #        self._expand_interstate_assignment(inner_sdfg, edge, free_syms, candidate_arrays)
+        state.sdfg.save("x4_2.sdfg")
 
         # 5
         for inner_state in inner_sdfg.all_states():
@@ -362,8 +436,10 @@ class Vectorize(ppl.Pass):
         # There might be missing expanded loop symbols, they are of form `loop_var{id}` where `{id}` is an integer
         # Construct back the loop variable and add assignments for them
         missing_symbols = set(inner_sdfg.free_symbols - set(nsdfg.symbol_mapping.keys()))
+        print("EEEEEEEEEEE", missing_symbols)
 
         map_symbols = assert_symbols_in_parent_map_symbols(missing_symbols, state, nsdfg)
+
 
         assignment_dict = dict()
 
@@ -519,7 +595,7 @@ class Vectorize(ppl.Pass):
                         nv_before = nv
                         nv = cutil.token_replace_dict(nv, {ca: f"{ca}[{i}]"})
                         #print(f"Before: {nv_before}, After replacing {ca} with {ca}[{i}]: {nv}")
-                    new_assignments[f"{k}{i}"] = nv
+                    new_assignments[f"{k}_laneid_{i}"] = nv
                     if i == 0:
                         new_assignments[k] = nv
                 duplicated_symbols.add(k)
@@ -711,6 +787,21 @@ class Vectorize(ppl.Pass):
             if isinstance(node, dace.nodes.Tasklet):
                 tasklet_info = tutil.classify_tasklet(state, node)
                 print("Tasklet:", node, " has info:", tasklet_info)
+                ttype: tutil.TaskletType = tasklet_info.get("type")
+                # If we still have scalar-scalar or scalar-symbol or symbol-symbol op
+                # that is not writing to an array (all length 1 arrays have been made into scalasr before)
+                # it means they are invariant and we should keep them as they are
+                if ttype in {tutil.TaskletType.SCALAR_SCALAR,
+                             tutil.TaskletType.SCALAR_SYMBOL,
+                             tutil.TaskletType.SCALAR_SYMBOL,
+                             tutil.TaskletType.SYMBOL_SYMBOL,
+                             tutil.TaskletType.SCALAR_SCALAR_ASSIGNMENT,
+                             tutil.TaskletType.UNARY_SCALAR,
+                             tutil.TaskletType.UNARY_SYMBOL}:
+                    # If output is not an array
+                    oe = state.out_edges(node).pop()
+                    if not isinstance(state.sdfg.arrays[oe.data.data], dace.data.Array):
+                        continue
                 instantiate_tasklet_from_info(state, node, tasklet_info, self.vector_width, self.templates,
                                               vector_map_param)
 

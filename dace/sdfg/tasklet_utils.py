@@ -157,7 +157,6 @@ def _extract_non_connector_syms_from_tasklet(node: dace.nodes.Tasklet) -> typing
     assert node.code.language == dace.dtypes.Language.Python
     connectors = {str(s) for s in set(node.in_connectors.keys()).union(set(node.out_connectors.keys()))}
     code_lhs, code_rhs = _split_code_on_assignment(node.code.as_string)
-    print("RRRRRRRRRRR", code_rhs)
     all_syms = {str(s) for s in dace.symbolic.SymExpr(code_rhs).free_symbols}
     real_free_syms = all_syms - connectors
     free_non_connector_syms = {str(s) for s in real_free_syms}
@@ -250,7 +249,6 @@ def _extract_single_op(src: str, default_to_assignment: bool = False) -> str:
         This function assumes tasklet contains a single operation.
         You can run the pass `SplitTasklets` to get such tasklets.
     """
-    print(f"Extract single op from {src}")
 
     tree = ast.parse(src)
     found = None
@@ -290,7 +288,6 @@ def _extract_single_op(src: str, default_to_assignment: bool = False) -> str:
             func_name = call_node.func.id
             found = func_name
     except SyntaxError as e:
-        print(e)
         pass
 
     if found is None:
@@ -588,7 +585,6 @@ def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
             rhs2 = rhs if reordered[1] == rhs else None
             constant1 = constant if reordered[0] == constant else None
             constant2 = constant if reordered[1] == constant else None
-            print(rhs1, rhs2, constant1, constant2)
             if isinstance(rhs_data, dace.data.Array):
                 info_dict.update({
                     "type": TaskletType.ARRAY_SYMBOL,
@@ -616,7 +612,6 @@ def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
         op = _extract_single_op(code_str)
         rhs1, rhs2 = in_conns[0], in_conns[1]
         rhs1, rhs2 = _reorder_rhs(code_str, op, rhs1, rhs2)
-        print(rhs1, rhs2)
 
         lhs = next(iter(node.out_connectors.keys()))
         scalars, arrays = _get_scalar_and_array_arguments(state, node)
