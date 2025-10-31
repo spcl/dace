@@ -121,6 +121,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
         self.num_applications = 0
         self.out_of_loop_states_cache = {}
 
+        # Get analysis results
         if StateReachability.__name__ in pipeline_results:
             self.states_reach = pipeline_results[StateReachability.__name__]
         else:
@@ -131,20 +132,54 @@ class LoopLocalMemoryReduction(ppl.Pass):
         else:
             self.access_states = FindAccessStates().apply_pass(sdfg, {})
 
+        # Maps each conditional block to a set of access nodes which are not written to the same location in all paths.
+        self.cond_unique = set()
+        for cfb in sdfg.all_control_flow_blocks(recursive=True):
+            if not isinstance(cfb, ConditionalBlock):
+                continue
+
+            # No else branch -> all access nodes are unique
+            if not any(cnd is None for cnd, br in cfb.branches):
+                self.cond_unique.update(an for an in cfb.data_nodes())
+                continue
+
+            # Build a mapping of access_node -> written subset -> set of branches it appears in
+            access_write_branch = {}
+            for _, br in cfb.branches:
+                for st in br.all_states():
+                    for an in st.data_nodes():
+                        array_name = an.data
+                        write_subsets = set(e.data.dst_subset for e in st.in_edges(an))
+                        wss = str(write_subsets)
+                        if array_name not in access_write_branch:
+                            access_write_branch[array_name] = {}
+                        if wss not in access_write_branch[array_name]:
+                            access_write_branch[array_name][wss] = {"branches": set(), "access_nodes": set()}
+                        access_write_branch[array_name][wss]["branches"].add(br)
+                        access_write_branch[array_name][wss]["access_nodes"].add(an)
+
+            # Eliminate all write subset that appear in all branches
+            for array_name, ws_br in list(access_write_branch.items()):
+                to_remove = []
+                for wss, brd in list(ws_br.items()):
+                    if len(brd["branches"]) == len(cfb.branches):
+                        to_remove.append(wss)
+                for wss in to_remove:
+                    del ws_br[wss]
+                if len(ws_br) == 0:
+                    del access_write_branch[array_name]
+
+            # All remaining access nodes are unique
+            for array_name, ws_br in access_write_branch.items():
+                for wss, brd in ws_br.items():
+                    self.cond_unique.update(brd["access_nodes"])
+
+        # Iterate over all loops in the SDFG
         for node, _ in sdfg.all_nodes_recursive():
             if isinstance(node, LoopRegion):
                 # Loop step expression must be constant.
                 if not self._has_constant_loop_expressions(sdfg, node):
                     continue
-
-                cond_states = set()
-                for st in node.all_states():
-                    pgraph = st.parent_graph
-                    while pgraph is not None and pgraph != node:
-                        if isinstance(pgraph, ConditionalBlock):
-                            cond_states.add(st)
-                            break
-                        pgraph = pgraph.parent_graph
 
                 changing_syms = set()
                 for edge in node.all_interstate_edges():
@@ -152,7 +187,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
 
                 arrays = set(acc_node.data for acc_node in node.data_nodes())
                 for arr in arrays:
-                    self._apply_for_array(arr, sdfg, node, cond_states, changing_syms)
+                    self._apply_for_array(arr, sdfg, node, changing_syms)
 
         self.out_of_loop_states_cache = {}
 
@@ -174,7 +209,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
         return indices
 
     def _get_read_write_indices(
-        self, array_name: str, loop: LoopRegion, cond_states: set[sd.SDFGState]
+        self, array_name: str, loop: LoopRegion
     ) -> tuple[list[list[Union[tuple, None]]], list[list[Union[tuple, None]]], list[list[Union[tuple, None]]]]:
         # list of list of tuples of (a, b) for a*i + b
         read_indices = list()
@@ -183,8 +218,8 @@ class LoopLocalMemoryReduction(ppl.Pass):
 
         read_edges = set(e for st in loop.all_states() for an in st.data_nodes() if an.data == array_name
                          for e in st.out_edges(an))
-        uncond_write_edges = set(e for st in loop.all_states() if st not in cond_states for an in st.data_nodes()
-                                 if an.data == array_name for e in st.in_edges(an))
+        uncond_write_edges = set(e for st in loop.all_states() for an in st.data_nodes()
+                                 if an.data == array_name and an not in self.cond_unique for e in st.in_edges(an))
         all_write_edges = set(e for st in loop.all_states() for an in st.data_nodes() if an.data == array_name
                               for e in st.in_edges(an))
 
@@ -364,8 +399,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
                 indices.append(max_index)
         return indices
 
-    def _apply_for_array(self, array_name: str, sdfg: sd.SDFG, loop: LoopRegion, cond_states: set[sd.SDFGState],
-                         changing_syms: set[str]) -> bool:
+    def _apply_for_array(self, array_name: str, sdfg: sd.SDFG, loop: LoopRegion, changing_syms: set[str]) -> bool:
         # Must be transient (otherwise it's observable)
         if not sdfg.arrays[array_name].transient:
             return
@@ -375,8 +409,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
             return
 
         # There needs to be at least one read and one write.
-        read_indices, uncond_write_indices, all_write_indices = self._get_read_write_indices(
-            array_name, loop, cond_states)
+        read_indices, uncond_write_indices, all_write_indices = self._get_read_write_indices(array_name, loop)
         if not read_indices or not all_write_indices:
             return
 

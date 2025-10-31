@@ -333,8 +333,8 @@ def test_indirect_access3():
 
         idx = int(b[0]) % 3
         for i in range(2, 32):
-            b[i] = a[idx +1] + a[idx]
-            a[idx+2] = c[i] * 2
+            b[i] = a[idx + 1] + a[idx]
+            a[idx + 2] = c[i] * 2
 
     sdfg = tester.to_sdfg(simplify=True)
     check_transformation(sdfg, 1)
@@ -834,14 +834,14 @@ def test_conditional4():
         a[0] = 0
         a[1] = 1
         for i in range(2, 32):
-            b[i] = a[i - 1] + a[i - 2]
             if i % 2 == 0:
-                a[i] = c[i] + 2
+                b[i] = a[i - 1] + a[i - 2]
             else:
-                a[i] = c[i] * 2
+                a[i * 2] = c[i] * 2
+            a[i] = c[i] * 2
 
     sdfg = tester.to_sdfg(simplify=True)
-    check_transformation(sdfg, 1)
+    check_transformation(sdfg, 0)
 
 
 def test_conditional5():
@@ -852,14 +852,34 @@ def test_conditional5():
         a[0] = 0
         a[1] = 1
         for i in range(2, 32):
+            b[i] = a[i - 1] + a[i - 2]
             if i % 2 == 0:
-                b[i] = a[i - 1] + a[i - 2]
+                a[i] = c[i] + 2
             else:
-                a[i * 2] = c[i] * 2
-            a[i] = c[i] * 2
+                a[i] = c[i] * 2
 
     sdfg = tester.to_sdfg(simplify=True)
-    check_transformation(sdfg, 0)
+    check_transformation(sdfg, 1)
+
+
+def test_conditional6():
+
+    @dace.program
+    def tester(b: dace.float64[32], c: dace.float64[32]):
+        a = dace.define_local([32], dace.float64)
+        a[0] = 0
+        a[1] = 1
+        for i in range(2, 32):
+            b[i] = a[i - 1] + a[i - 2]
+            if i % 2 == 0:
+                a[i] = c[i] + 2
+            elif i % 3 == 0:
+                a[i] = c[i] - 2
+            else:
+                a[i] = c[i] * 2
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_transformation(sdfg, 1)
 
 
 def test_symbolic_offset():
@@ -992,6 +1012,7 @@ if __name__ == "__main__":
     test_conditional3()
     test_conditional4()
     test_conditional5()
+    test_conditional6()
     test_symbolic_offset()
     test_symbolic_sizes()
     test_symbolic_k()
