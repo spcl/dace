@@ -15,7 +15,6 @@ from dace.properties import CodeBlock
 from enum import Enum
 import ast
 import typing
-import dace.sdfg.construction_utils as cutil
 
 
 class TaskletType(Enum):

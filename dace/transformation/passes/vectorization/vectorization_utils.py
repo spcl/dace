@@ -23,7 +23,7 @@ import math
 def repl_subset(subset: dace.subsets.Range, repl_dict: Dict[str, str]) -> dace.subsets.Range:
     """ Convenience wrapper to make the .replace not in-place """
     new_subset = copy.deepcopy(subset)
-    subset.replace(repl_dict)
+    new_subset.replace(repl_dict)
     return new_subset
 
 
@@ -98,6 +98,61 @@ def repl_subset_to_symbol_offset(sdfg: dace.SDFG,
                 else:
                     first_edge = sdfg.out_edges(first_state)[0]
                     first_edge.data.assignments.update(assign_dict)
+
+    return new_subset
+
+
+def repl_subset_to_use_laneid_offset(sdfg: dace.SDFG, subset: dace.subsets.Range,
+                                     symbol_offset: str) -> dace.subsets.Range:
+    """
+    Apply a symbolic offset to all free symbols in a subset.
+
+    This function replaces each free symbol in the subset with a new symbol
+    that has the offset appended to its name (e.g., 'i' becomes 'i_{offset}' where offset is an integer).
+    New symbols are automatically added to the SDFG if they don't exist.
+
+    Args:
+        sdfg: The SDFG containing the subset
+        subset: The subset whose symbols should be offset
+        symbol_offset: String to append to each symbol name (should be an integer)
+        add_missing_symbols: If True, adds symbol mappings and assignments for
+                           free symbols in the parent SDFG
+
+    Returns:
+        A new subset with offset symbols applied
+
+    Example:
+        If subset contains symbol 'i' and symbol_offset is '_v':
+        - 'i' becomes 'i_v'
+        - Symbol 'i_v' is added to SDFG if not present
+    """
+    # Offset needs to be positive integer
+    assert symbol_offset.isdigit()
+
+    free_syms = subset.free_symbols
+    print(f"Symbol offset: {symbol_offset}")
+    print("Free symbols in subset:", free_syms)
+
+    repl_dict = {str(free_sym): str(free_sym) + "_laneid_" + str(symbol_offset) for free_sym in free_syms}
+    for free_sym in free_syms:
+        if str(free_sym) in sdfg.symbols:
+            stype = sdfg.symbols[str(free_sym)]
+        else:
+            stype = dace.int64
+        offset_symbol_name = str(free_sym) + "_laneid_" + str(symbol_offset)
+        if offset_symbol_name not in sdfg.symbols:
+            sdfg.add_symbol(offset_symbol_name, stype)
+    print("Generated replacement dictionary with offset:", repl_dict)
+
+    new_subset = repl_subset(subset=subset, repl_dict=repl_dict)
+    print("Subset before symbol offset replacement:", subset)
+    print("Subset after symbol offset replacement:", new_subset)
+
+    for free_sym in free_syms:
+        if str(free_sym) in sdfg.free_symbols:
+            print(free_sym, "is in free symbols of the sdfg")
+            raise Exception(
+                "This will result an invalid SDFG, either call with `add_missing_symbols=True` or fix this issue")
 
     return new_subset
 
@@ -1821,8 +1876,13 @@ def move_out_reduction(scalar_source_nodes, state: dace.SDFGState, nsdfg: dace.n
         replace_arrays_with_new_shape(inner_sdfg, {source_data, sink_data}, (vector_width, ), None)
         replace_arrays_with_new_shape(state.sdfg, {accumulator_name}, (vector_width, ), None)
         replace_all_access_subsets(state, accumulator_name, f"0:{vector_width}")
+        # replace_all_access_subsets(state, sink_data, f"0:{vector_width}")
         expand_assignment_tasklets(state, accumulator_name, vector_width)
         reduce_before_use(state, accumulator_name, vector_width, op)
+        inner_sdfg.save("spmv_mid.sdfg")
+
+        return True
+    return False
 
 
 def assert_symbols_in_parent_map_symbols(missing_symbols: Set[str], state: dace.SDFGState,
@@ -1968,20 +2028,38 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
                             sympy.ceiling, sympy.Min, sympy.Max, sympy.asin, sympy.acos, sympy.atan, sympy.sinh,
                             sympy.cosh, sympy.tanh, sympy.asinh, sympy.acosh, sympy.atanh
                         }
+                        print("A:", assignment)
 
                         # Collect only user-defined or nonstandard functions - in intersate edge this means array accees
-                        funcs = {f for f in assignment_expr.atoms(sympy.Function) if f.func not in ignored}
+                        funcs = {f.name for f in assignment_expr.atoms(sympy.Function) if f.func not in ignored}
                         # Any array on the right-hand-side -> big problem
                         # Check for scalar / array accesses like this too
-                        scalars = {s for s in assignment_expr.free_symbols if s in sdfg.arrays} - invariant_scalars
+                        scalars = {str(s)
+                                   for s in assignment_expr.free_symbols if str(s) in sdfg.arrays} - invariant_scalars
+                        #print("F", funcs)
+                        #print("S", scalars)
+                        #print("I", invariant_scalars)
+                        #print("FS", assignment_expr.free_symbols)
+                        #print("SA", sdfg.arrays)
+                        #print("X1", {s for s in assignment_expr.free_symbols if str(s) in sdfg.arrays} )
+                        #print("X2", invariant_scalars)
+                        #print("X3", {s for s in assignment_expr.free_symbols if s in sdfg.arrays} - invariant_scalars)
                         # TODO: check and refactor this
+                        # If scalar is invariant it should be ok?
+                        print("Invariant", invariant_scalars)
+                        print("Non-invariant scalars",
+                              {s
+                               for s in assignment_expr.free_symbols if str(s) in sdfg.arrays} - invariant_scalars)
                         if len(funcs) != 0 or len(scalars) != 0:
                             print(f"Indirect access detected: ({funcs}, {scalars}) for {arr_name}, is not vectorizable")
                             array_is_vectorizable[arr_name] = False
+                            #raise Exception("UWUOWO")
                         #if arr_name == "__tmp_180_36_r":
                         #    raise Exception(free_syms, assignment, funcs)
         #if arr_name == "__tmp_180_36_r":
         #    raise Exception(arr_name)
+
+    #assert "__tmp_183_36_r" in  array_is_vectorizable and  array_is_vectorizable["__tmp_183_36_r"] is False
 
     return array_is_vectorizable
 
