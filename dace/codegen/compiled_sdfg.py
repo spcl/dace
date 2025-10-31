@@ -375,7 +375,6 @@ class CompiledSDFG(object):
                return the same objects. To force the allocation of new memory
                you can call ``clear_return_values()`` in advance.
         """
-        # Return values are cached in `self._lastargs`.
         argtuple, initargtuple = self.construct_arguments(*args, **kwargs)  # Missing arguments will be detected here.
         self._lastargs = (argtuple, initargtuple)
         self.fast_call(argtuple, initargtuple, do_gpu_check=True)
