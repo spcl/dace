@@ -784,7 +784,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 and (not isinstance(dst_node, nd.AccessNode) or (name != dst_node.data and name != e.dst_conn))):
             raise InvalidSDFGEdgeError(
                 "Memlet data does not match source or destination "
-                "data nodes)",
+                "data nodes",
                 sdfg,
                 state_id,
                 eid,
@@ -801,6 +801,20 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                     raise InvalidSDFGEdgeError(
                         f'Data container "{e.data.data}" is stored as {sdfg.arrays[e.data.data].storage} '
                         'but accessed on host', sdfg, state_id, eid)
+
+        # Ensure empty memlets are properly connected to tasklets:
+        # Empty memlets may only connect two adjacent tasklets
+        if e.data.is_empty():
+            if len(path) == 1 and isinstance(src_node, nd.Tasklet) and isinstance(dst_node, nd.Tasklet):
+                pass
+            elif isinstance(dst_node, nd.Tasklet) and path[-1].dst_conn:
+                raise InvalidSDFGEdgeError(
+                    f'Empty memlet connected to tasklet input connector "{path[-1].dst_conn}". This '
+                    'is only allowed when connecting two adjacent tasklets.', sdfg, state_id, eid)
+            elif isinstance(src_node, nd.Tasklet) and path[0].src_conn:
+                raise InvalidSDFGEdgeError(
+                    f'Empty memlet connected to tasklet output connector "{path[0].src_conn}". This '
+                    'is only allowed when connecting two adjacent tasklets.', sdfg, state_id, eid)
 
         # Check memlet subset validity with respect to source/destination nodes
         if e.data.data is not None and e.data.allow_oob == False:
