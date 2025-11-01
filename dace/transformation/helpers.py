@@ -1326,7 +1326,8 @@ def permute_map(map_entry: nodes.MapEntry, perm: List[int]):
     map_entry.map.range = [map_entry.map.range[p] for p in perm]
 
 
-def extract_map_dims(sdfg: SDFG, map_entry: nodes.MapEntry, dims: List[int]) -> Tuple[nodes.MapEntry, Optional[nodes.MapEntry]]:
+def extract_map_dims(sdfg: SDFG, map_entry: nodes.MapEntry,
+                     dims: List[int]) -> Tuple[nodes.MapEntry, Optional[nodes.MapEntry]]:
     """
     Helper function that extracts specific map dimensions into an outer map.
 
