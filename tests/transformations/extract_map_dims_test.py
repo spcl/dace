@@ -1,4 +1,3 @@
-
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import dace
@@ -71,10 +70,12 @@ def test_extract_partial_dims():
     assert extracted_map != remainder_map, "Extracted and remainder maps should be different"
 
     # Extracted map should have 2 parameters
-    assert len(extracted_map.map.params) == 2, f"Expected 2 parameters in extracted map, got {len(extracted_map.map.params)}"
+    assert len(
+        extracted_map.map.params) == 2, f"Expected 2 parameters in extracted map, got {len(extracted_map.map.params)}"
 
     # Remainder map should have 1 parameter
-    assert len(remainder_map.map.params) == 1, f"Expected 1 parameter in remainder map, got {len(remainder_map.map.params)}"
+    assert len(
+        remainder_map.map.params) == 1, f"Expected 1 parameter in remainder map, got {len(remainder_map.map.params)}"
 
 
 def test_extract_single_dim_from_multidim():
@@ -108,10 +109,12 @@ def test_extract_single_dim_from_multidim():
     assert extracted_map != remainder_map, "Extracted and remainder maps should be different"
 
     # Extracted map should have 1 parameter
-    assert len(extracted_map.map.params) == 1, f"Expected 1 parameter in extracted map, got {len(extracted_map.map.params)}"
+    assert len(
+        extracted_map.map.params) == 1, f"Expected 1 parameter in extracted map, got {len(extracted_map.map.params)}"
 
     # Remainder map should have 2 parameters
-    assert len(remainder_map.map.params) == 2, f"Expected 2 parameters in remainder map, got {len(remainder_map.map.params)}"
+    assert len(
+        remainder_map.map.params) == 2, f"Expected 2 parameters in remainder map, got {len(remainder_map.map.params)}"
 
 
 if __name__ == '__main__':
