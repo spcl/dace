@@ -972,7 +972,6 @@ class CPUCodeGen(TargetCodeGenerator):
                 vec_prefix = 'v'
                 vec_suffix = f'<{dtype.veclen}>'
                 dtype = dtype.base_type
-
         func = f'{vec_prefix}reduce{atomic}{vec_suffix}'
 
         # Special call for detected reduction types

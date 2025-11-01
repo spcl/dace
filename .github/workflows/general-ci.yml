@@ -38,7 +38,7 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y libyaml-dev cmake libblas-dev libopenblas-dev liblapacke-dev libpapi-dev papi-tools
         pip install flake8 pytest-xdist coverage
-        pip install -e ".[testing]"
+        pip install -e ".[testing,ml]"
         curl -Os https://uploader.codecov.io/latest/linux/codecov
         chmod +x codecov
 
