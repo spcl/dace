@@ -31,7 +31,7 @@ except ImportError:
     onnx = None
     ONNX_AVAILABLE = False
 
-from dace import data
+from dace import data, dtypes
 from dace.codegen import compiled_sdfg
 from dace.sdfg import SDFG, nodes
 from dace.frontend.python import common as pycommon
@@ -164,8 +164,12 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
                 if self.backward:
 
                     def auto_optimize_backward(fwd_sdfg, bwd_sdfg):
-                        auto_opt(fwd_sdfg, self.use_cuda, simplify=self.simplify)
-                        auto_opt(bwd_sdfg, self.use_cuda, simplify=self.simplify)
+                        auto_opt(fwd_sdfg,
+                                 simplify=self.simplify,
+                                 device=dtypes.DeviceType.GPU if self.use_cuda else dtypes.DeviceType.CPU)
+                        auto_opt(bwd_sdfg,
+                                 simplify=self.simplify,
+                                 device=dtypes.DeviceType.GPU if self.use_cuda else dtypes.DeviceType.CPU)
 
                     self.append_post_autodiff_hook("auto_optimize", auto_optimize_backward)
                 else:
