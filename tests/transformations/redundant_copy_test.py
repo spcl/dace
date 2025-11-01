@@ -1,13 +1,16 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 import pytest
+import copy
 from typing import Tuple
 
 import dace
-from dace import nodes
+from dace import nodes, data as dace_data
 from dace.libraries.standard import Transpose
 from dace.transformation.dataflow import (RedundantArray, RedundantSecondArray, RedundantArrayCopying,
                                           RedundantArrayCopyingIn)
+
+from . import utility
 
 
 def test_reshaping_with_redundant_arrays():
@@ -445,6 +448,87 @@ def test_invalid_redundant_array_strided(order):
     assert np.allclose(b, np.flip(a, 0).flatten(order=order))
 
 
+def _make_reshaping_not_zero_started_input_sdfg(
+    a_has_larger_rank_than_b: bool, ) -> Tuple[dace.SDFG, dace.SDFGState, nodes.AccessNode, nodes.MapEntry]:
+    sdfg = dace.SDFG(utility.unique_name("non_zero_offset_reshaping"))
+    state = sdfg.add_state(is_start_block=True)
+
+    a_shape = (10, 1, 2, 20) if a_has_larger_rank_than_b else (10, 20)
+    sdfg.add_array(
+        "a",
+        shape=a_shape,
+        dtype=dace.float64,
+        transient=False,
+    )
+    sdfg.add_array(
+        "b",
+        shape=(5, 1, 10),
+        dtype=dace.float64,
+        transient=True,
+    )
+    sdfg.add_array(
+        "c",
+        shape=(
+            10,
+            20,
+        ),
+        dtype=dace.float64,
+        transient=False,
+    )
+    a, b, c = (state.add_access(name) for name in "abc")
+
+    state.add_edge(
+        a, None, b, None,
+        dace.Memlet("a[5:10, 0, 1, 3:13] -> [0:5, 0, 0:10]")
+        if a_has_larger_rank_than_b else dace.Memlet("a[5:10, 3:13] -> [0:5, 0, 0:10]"))
+
+    _, me, _ = state.add_mapped_tasklet(
+        "comp",
+        map_ranges={
+            "__i": "5:10",
+            "__j": "3:13"
+        },
+        inputs={"__in": dace.Memlet("b[__i - 5, 0, __j - 3]")},
+        code="__out = __in + 1.3",
+        outputs={"__out": dace.Memlet("c[__i, __j]")},
+        external_edges=True,
+        input_nodes={b},
+        output_nodes={c},
+    )
+    sdfg.validate()
+
+    return sdfg, state, a, me
+
+
+@pytest.mark.parametrize("a_has_larger_rank_than_b", [True, False])
+def test_reshaping_not_zero_started_input(a_has_larger_rank_than_b: bool):
+    sdfg, state, a, me = _make_reshaping_not_zero_started_input_sdfg(a_has_larger_rank_than_b=a_has_larger_rank_than_b)
+
+    assert utility.count_nodes(state, nodes.AccessNode) == 3
+    assert utility.count_nodes(state, nodes.MapEntry) == 1
+
+    assert "b" in sdfg.arrays
+    assert not isinstance(sdfg.arrays["b"], dace_data.View)
+    b_original_strides = copy.deepcopy(sdfg.arrays["b"].strides)
+
+    ref, res = utility.make_sdfg_args(sdfg)
+    utility.compile_and_run_sdfg(sdfg, **ref)
+
+    nb_applies = sdfg.apply_transformations_repeated(RedundantSecondArray, validate=True, validate_all=True)
+    assert nb_applies == 1
+
+    assert utility.count_nodes(state, nodes.AccessNode) == 3
+    assert utility.count_nodes(state, nodes.MapEntry) == 1
+
+    assert "b" in sdfg.arrays
+    assert isinstance(sdfg.arrays["b"], dace_data.View)
+    assert len(sdfg.arrays["b"].strides) == len(b_original_strides)
+    assert not all(ob == cb for ob, cb in zip(b_original_strides, sdfg.arrays["b"].strides))
+
+    utility.compile_and_run_sdfg(sdfg, **res)
+    assert all(np.allclose(ref[name], res[name]) for name in ref.keys())
+
+
 if __name__ == '__main__':
     test_in()
     test_out()
@@ -460,3 +544,5 @@ if __name__ == '__main__':
     test_redundant_second_copy_isolated()
     test_invalid_redundant_array_strided('C')
     test_invalid_redundant_array_strided('F')
+    test_reshaping_not_zero_started_input(True)
+    test_reshaping_not_zero_started_input(False)
