@@ -1,3 +1,5 @@
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+
 import dace
 import pytest
 
@@ -195,35 +197,6 @@ def test_explicit_c_strides_not_packed():
 
 
 if __name__ == "__main__":
-
-    all_tests = [
-        test_get_packed_fortran_strides_1d,
-        test_get_packed_fortran_strides_2d,
-        test_get_packed_fortran_strides_3d,
-        test_get_packed_fortran_strides_4d,
-        test_get_packed_c_strides_1d,
-        test_get_packed_c_strides_2d,
-        test_get_packed_c_strides_3d,
-        test_get_packed_c_strides_4d,
-        test_is_packed_fortran_strides_true_3d,
-        test_is_packed_fortran_strides_false_c_layout,
-        test_is_packed_fortran_strides_false_custom_strides,
-        test_is_packed_fortran_strides_false_wrong_order,
-        test_is_packed_c_strides_true_1d,
-        test_is_packed_c_strides_true_2d,
-        test_is_packed_c_strides_true_3d,
-        test_is_packed_c_strides_false_fortran_layout,
-        test_is_packed_c_strides_false_custom_strides,
-        test_is_packed_c_strides_false_wrong_order,
-        test_empty_shape,
-        test_fortran_and_c_equivalent_for_1d,
-        test_c_strides_calculation_accumulation,
-        test_explicit_fortran_strides,
-        test_explicit_fortran_strides_not_packed,
-        test_explicit_c_strides,
-        test_explicit_c_strides_not_packed,
-    ]
-
-    results = []
-    for test in all_tests:
-        test()
+    tests = [obj for name, obj in globals().items() if callable(obj) and name.startswith("test_")]
+    for test_function in tests:
+        test_function()

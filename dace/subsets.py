@@ -931,6 +931,64 @@ class Range(Subset):
 
         return True
 
+    def is_contiguous_subset(self, array: 'dace.data.Array') -> bool:
+        """
+        Check if a range list represents a contiguous subset of an array.
+
+        For a subset to be contiguous:
+        - In Fortran layout: once a dimension is partial, all subsequent dimensions must have length 1
+        - In C layout: same rule applies after reversing dimensions
+
+        Args:
+            range_list: List of tuples (begin, end, step) for each dimension
+            array: DaCe array to check against
+
+        Returns:
+            True if the subset is contiguous, False otherwise
+
+        Raises:
+            ValueError: If array has neither Fortran nor C strides
+        """
+        # Any step size != 1 -> not contiguous
+        for (b, e, s) in self:
+            if s != 1:
+                return False
+
+        # Determine array layout and calculate expression lengths accordingly
+        if array.is_packed_fortran_strides():
+            # Fortran layout: first dimension varies fastest
+            expr_lens = [((e + 1) - b) for (b, e, s) in self]
+            shape_dims = array.shape
+        elif array.is_packed_c_strides():
+            # C layout: last dimension varies fastest, so reverse the order
+            expr_lens = list(reversed([((e + 1) - b) for (b, e, s) in self]))
+            shape_dims = list(reversed(array.shape))
+        else:
+            return False
+
+        # Check contiguity: once we find a partial dimension, all remaining must be length 1
+        for i, (expr_len, dim) in enumerate(zip(expr_lens, shape_dims)):
+            try:
+                # Check if this dimension is partial (less than full shape)
+                if expr_len < dim:
+                    # This dimension is partial - all remaining dimensions must be length 1
+                    for j in range(i + 1, len(expr_lens)):
+                        if expr_lens[j] != 1:
+                            return False
+                    # All remaining dimensions are 1, so this is contiguous
+                    return True
+            except TypeError:
+                # Handle symbolic expressions that can't be compared
+                # Assume it might be partial, so check remaining dimensions
+                for j in range(i + 1, len(expr_lens)):
+                    if expr_lens[j] != 1:
+                        return False
+                # All remaining dimensions are 1
+                return True
+
+        # All dimensions are full size - this is contiguous
+        return True
+
 
 @dace.serialize.serializable
 class Indices(Subset):
