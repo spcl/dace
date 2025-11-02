@@ -181,39 +181,6 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         n = {n for n in state.all_nodes_between(node, state.exit_node(node)) if isinstance(n, dace.nodes.Tasklet)}
         return len(n)
 
-    # let's say arrays strides are [1, N, M*N]
-    # then the expression we have needs to cover whole first dimension X-1 if it is not 1 in dimension X
-    def _is_contig_subset(self, range_list: List[Tuple], array: dace.data.Array) -> bool:
-        if array.is_packed_fortran_strides():
-            range_list = range_list
-            expr_lens = [((e + 1) - b) for (b, e, s) in range_list]
-        elif array.is_packed_c_strides():
-            range_list = list(reversed(range_list))
-            expr_lens = [((e + 1) - b) for (b, e, s) in reversed(range_list)]
-        else:
-            raise ValueError(
-                f"Array {array} does not have Fortran or C strides, has strides: {array.strides}, expected Fortran: {self._get_packed_fortran_strides(array)} or C: {self._get_packed_c_strides(array)}"
-            )
-
-        expr_lens = [((e + 1) - b) for (b, e, s) in range_list]
-        for i, expr_len in enumerate(expr_lens):
-            # It can be that this triggers an error because trurth value is rational, then we assume it is less than the shape
-            try:
-                if expr_len < array.shape[i]:
-                    # All next ones must be 1
-                    for j in range(i + 1, len(expr_lens)):
-                        if expr_lens[j] != 1:
-                            return False
-                    return True
-            except TypeError:
-                # All next ones must be 1
-                for j in range(i + 1, len(expr_lens)):
-                    if expr_lens[j] != 1:
-                        return False
-                return True
-
-        return True
-
     def _get_write_begin_and_length(self,
                                     state: dace.SDFGState,
                                     map_entry: dace.nodes.MapEntry,
@@ -275,14 +242,14 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         new_out_data_subset = dace.subsets.Range(new_out_data_range) if out_edge.data.data is not None else None
 
         if in_edge.data.data is not None:
-            contig_subset = self._is_contig_subset(new_in_data_range, state.sdfg.arrays[in_edge.data.data])
+            contig_subset = new_in_data_subset.is_contiguous_subset(state.sdfg.arrays[in_edge.data.data])
             if not contig_subset:
                 warnings.warn(f"Input array {in_edge.data.data} is not contiguous, cannot remove memcpy/memset.",
                               UserWarning)
                 return None, None, None
 
         if out_edge.data.data is not None:
-            contig_subset = self._is_contig_subset(new_out_data_range, state.sdfg.arrays[out_edge.data.data])
+            contig_subset = new_out_data_subset.is_contiguous_subset(state.sdfg.arrays[out_edge.data.data])
             if not contig_subset:
                 warnings.warn(
                     f"Output array {out_edge.data.data} is not contiguous, cannot remove memcpy/memset {new_out_data_range} of ({state.sdfg.arrays[out_edge.data.data]})",
