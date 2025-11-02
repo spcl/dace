@@ -9,12 +9,7 @@ import dace.subsets
 def create_array(shape, strides):
     """Helper to create a dace.data.Array with specific strides"""
     sdfg = dace.SDFG('test_sdfg')
-    name, array = sdfg.add_array(
-        name='test_array',
-        shape=shape,
-        dtype=dace.float64,
-        strides=strides
-    )
+    name, array = sdfg.add_array(name='test_array', shape=shape, dtype=dace.float64, strides=strides)
     return array
 
 
@@ -135,7 +130,6 @@ def test_c_single_element_all_dims():
     assert result is True
 
 
-
 def test_fortran_2d_full_first_partial_second():
     """Test Fortran 2D array with full first, partial second - should be contiguous"""
     array = create_array((50, 100), (1, 50))
@@ -170,7 +164,7 @@ def test_c_2d_partial_first_full_second():
 
 def test_1d_full_range():
     """Test 1D array with full range - should be contiguous"""
-    array = create_array((100,), (1,))
+    array = create_array((100, ), (1, ))
     subset = create_subset([(0, 99, 1)])
     result = subset.is_contiguous_subset(array)
     assert result is True
@@ -178,7 +172,7 @@ def test_1d_full_range():
 
 def test_1d_partial_range():
     """Test 1D array with partial range - should be contiguous"""
-    array = create_array((100,), (1,))
+    array = create_array((100, ), (1, ))
     subset = create_subset([(25, 74, 1)])
     result = subset.is_contiguous_subset(array)
     assert result is True
@@ -226,7 +220,7 @@ def test_c_4d_non_contiguous():
 
 def test_c_4d_contiguous_first_partial_second_rest_one():
     """Test Fortran 4D array - partial middle dims without trailing size 1"""
-    array = create_array((5, 10, 15, 20), (3000, 300 ,20, 1))
+    array = create_array((5, 10, 15, 20), (3000, 300, 20, 1))
     subset = create_subset([(1, 1, 1), (1, 1, 1), (0, 5, 1), (0, 20, 1)])
     result = subset.is_contiguous_subset(array)
     assert result is True
@@ -236,15 +230,12 @@ def test_non_standard_strides_returns_false():
     """Test array with non-standard strides - should return False"""
     array = create_array((10, 20, 30), (2, 20, 400))  # Custom strides
     subset = create_subset([(0, 9, 1), (0, 19, 1), (0, 29, 1)])
-    
+
     result = subset.is_contiguous_subset(array)
     assert result is False
 
 
 if __name__ == "__main__":
-    tests = [
-        obj for name, obj in globals().items()
-        if callable(obj) and name.startswith("test_")
-    ]
+    tests = [obj for name, obj in globals().items() if callable(obj) and name.startswith("test_")]
     for test_function in tests:
         test_function()
