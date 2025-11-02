@@ -160,7 +160,6 @@ def _get_sdfg(
         map_exit.add_out_connector(f"OUT_{out_name}")
 
     # Save for debugging and validate SDFG correctness
-    sdfg.save("x.sdfg")
     sdfg.validate()
     return sdfg
 
@@ -215,14 +214,11 @@ def test_nested_maps(expansion_type: str):
     xp = cupy if expansion_type == "CUDA" else numpy
 
     sdfg = nested_maps.to_sdfg()
-    sdfg.save("nested_maps.sdfg")
 
     AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
     # We should have 2 memset libnodes
     assert _get_num_memset_library_nodes(
         sdfg) == 2, f"Expected 2 memset library nodes, got {_get_num_memset_library_nodes(sdfg)}"
-
-    sdfg.save("nested_maps_libnodes.sdfg")
 
     kidia = 0
     kfdia = DIM_SIZE
@@ -230,7 +226,6 @@ def test_nested_maps(expansion_type: str):
     B_IN = xp.random.rand(5, DIM_SIZE)
     _set_lib_node_type(sdfg, expansion_type)
     sdfg.expand_library_nodes(recursive=True)
-    sdfg.save("nested_maps_expanded.sdfg")
     sdfg.validate()
     sdfg(llindex=A_IN, zsinksum=B_IN, kidia=kidia, kfdia=kfdia, D=DIM_SIZE)
     assert xp.allclose(A_IN, 0.0)
