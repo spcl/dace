@@ -15,6 +15,7 @@ from dace import Language as lang
 from dace import data as dat
 from dace import SDFG, InterstateEdge, Memlet, pointer, nodes
 from dace import symbolic as sym
+from dace.sdfg import dealias
 from dace.sdfg.state import ControlFlowRegion, LoopRegion
 from copy import deepcopy as dpcp
 
@@ -800,6 +801,8 @@ class AST_translator:
             for i in assigns:
                 self.translate(i, new_sdfg, new_sdfg)
             self.translate(node.execution_part, new_sdfg, new_sdfg)
+
+        dealias.integrate_nested_sdfg(new_sdfg)
 
     def binop2sdfg(self, node: ast_internal_classes.BinOp_Node, sdfg: SDFG, cfg: ControlFlowRegion):
         """
