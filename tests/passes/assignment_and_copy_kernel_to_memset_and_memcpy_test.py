@@ -168,12 +168,12 @@ def _get_sdfg(
 # --- Utility functions for counting nodes in an SDFG ---
 def _get_num_memcpy_library_nodes(sdfg: dace.SDFG) -> int:
     """Return number of memcpy library nodes in an SDFG."""
-    return sum(isinstance(node, CopyLibraryNode) for state in sdfg.all_states() for node in state.nodes())
+    return sum(isinstance(node, CopyLibraryNode) for node, state in sdfg.all_nodes_recursive())
 
 
 def _get_num_memset_library_nodes(sdfg: dace.SDFG) -> int:
     """Return number of memset library nodes in an SDFG."""
-    return sum(isinstance(node, MemsetLibraryNode) for state in sdfg.all_states() for node in state.nodes())
+    return sum(isinstance(node, MemsetLibraryNode) for node, state in sdfg.all_nodes_recursive())
 
 
 D = dace.symbol("D")
@@ -218,6 +218,10 @@ def test_nested_maps(expansion_type: str):
     sdfg.save("nested_maps.sdfg")
 
     AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
+    # We should have 2 memset libnodes
+    assert _get_num_memset_library_nodes(
+        sdfg) == 2, f"Expected 2 memset library nodes, got {_get_num_memset_library_nodes(sdfg)}"
+
     sdfg.save("nested_maps_libnodes.sdfg")
 
     kidia = 0
