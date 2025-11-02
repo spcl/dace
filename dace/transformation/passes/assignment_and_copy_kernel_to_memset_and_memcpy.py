@@ -441,15 +441,6 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                 raise Exception(
                     f"Map entry, exit or tasklet not in state: {map_entry} ({map_entry in state.nodes()}),"
                     f"{map_exit} ({map_exit in state.nodes()}), {tasklet} ({tasklet in state.nodes()}).", )
-            current_tasklets = {
-                n
-                for n in state.all_nodes_between(map_entry, map_exit) if isinstance(n, dace.nodes.Tasklet)
-            }
-            if len(memset_paths) != len(current_tasklets):
-                raise Exception(
-                    f"Number of memset paths {len(memset_paths)} does not match number of tasklets in map "
-                    f"{len({n for n in state.all_nodes_between(map_entry, map_exit) if isinstance(n, dace.nodes.Tasklet)})}. Was removed before probably.",
-                )
 
             begin_subset, exit_subset, copy_length = self._get_write_begin_and_length(state, map_entry, tasklet)
 
