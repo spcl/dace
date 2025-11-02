@@ -9,6 +9,8 @@ from dace.transformation.passes.assignment_and_copy_kernel_to_memset_and_memcpy 
 
 # Global dimension size for all test arrays
 DIM_SIZE = 10
+D = dace.symbol("D")
+EXPANSION_TYPES = ["pure", "CPU", pytest.param("CUDA", marks=pytest.mark.gpu)]
 
 
 def _get_sdfg(
@@ -164,7 +166,6 @@ def _get_sdfg(
     return sdfg
 
 
-# --- Utility functions for counting nodes in an SDFG ---
 def _get_num_memcpy_library_nodes(sdfg: dace.SDFG) -> int:
     """Return number of memcpy library nodes in an SDFG."""
     return sum(isinstance(node, CopyLibraryNode) for node, state in sdfg.all_nodes_recursive())
@@ -175,7 +176,10 @@ def _get_num_memset_library_nodes(sdfg: dace.SDFG) -> int:
     return sum(isinstance(node, MemsetLibraryNode) for node, state in sdfg.all_nodes_recursive())
 
 
-D = dace.symbol("D")
+def _set_lib_node_type(sdfg: dace.SDFG, expansion_type: str):
+    for n, g in sdfg.all_nodes_recursive():
+        if isinstance(n, (CopyLibraryNode, MemsetLibraryNode)):
+            n.implementation = expansion_type
 
 
 @dace.program
@@ -187,14 +191,19 @@ def double_memset_with_dynamic_connectors(kfdia: dace.int32, kidia: dace.int32, 
         zsinksum[j] = 0.0
 
 
-def _set_lib_node_type(sdfg: dace.SDFG, expansion_type: str):
-    for n, g in sdfg.all_nodes_recursive():
-        if isinstance(n, (CopyLibraryNode, MemsetLibraryNode)):
-            n.implementation = expansion_type
+@dace.program
+def double_memcpy_with_dynamic_connectors(kfdia: dace.int32, kidia: dace.int32, llindex3_in: dace.float64[D, D],
+                                          zsinksum_in: dace.float64[D], llindex3_out: dace.float64[D, D],
+                                          zsinksum_out: dace.float64[D]):
+    for i, j in dace.map[0:D:1, kidia - 1:kfdia:]:
+        llindex3_out[i, j] = llindex3_in[i, j]
+    for j in dace.map[kidia - 1:kfdia:1]:
+        zsinksum_out[j] = zsinksum_in[j]
 
 
 @dace.program
-def nested_maps(kidia: dace.int64, kfdia: dace.int64, llindex: dace.float64[5, 5, D], zsinksum: dace.float64[5, D]):
+def nested_memset_maps_with_dynamic_connectors(kidia: dace.int64, kfdia: dace.int64, llindex: dace.float64[5, 5, D],
+                                               zsinksum: dace.float64[5, D]):
     for i in dace.map[0:5]:
         sym_kidia = kidia
         sym_kfdia = kfdia
@@ -204,18 +213,33 @@ def nested_maps(kidia: dace.int64, kfdia: dace.int64, llindex: dace.float64[5, 5
             zsinksum[i, k] = 0.0
 
 
-EXPANSION_TYPES = ["pure", "CPU", pytest.param("CUDA", marks=pytest.mark.gpu)]
+@dace.program
+def nested_memcpy_maps_with_dynamic_connectors(kidia: dace.int64, kfdia: dace.int64, llindex_in: dace.float64[5, 5, D],
+                                               zsinksum_in: dace.float64[5, D], llindex_out: dace.float64[5, 5, D],
+                                               zsinksum_out: dace.float64[5, D]):
+    for i in dace.map[0:5]:
+        sym_kidia = kidia
+        sym_kfdia = kfdia
+        for j, k in dace.map[0:5, sym_kidia:sym_kfdia:1]:
+            llindex_out[i, j, k] = llindex_in[i, j, k]
+        for k in dace.map[sym_kidia:sym_kfdia:1]:
+            zsinksum_out[i, k] = zsinksum_in[i, k]
 
 
 @pytest.mark.parametrize("expansion_type", EXPANSION_TYPES)
-def test_nested_maps(expansion_type: str):
+def test_nested_memset_maps_with_dynamic_connectors(expansion_type: str):
     if expansion_type == "CUDA":
         import cupy
     xp = cupy if expansion_type == "CUDA" else numpy
 
-    sdfg = nested_maps.to_sdfg()
+    sdfg = nested_memset_maps_with_dynamic_connectors.to_sdfg()
+    sdfg.name = sdfg.name + f"_expansion_type_{expansion_type}"
 
-    AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
+    AssignmentAndCopyKernelToMemsetAndMemcpy(overapproximate_first_dimensions=False).apply_pass(sdfg, {})
+    # We should have 0 memset libnodes
+    assert _get_num_memset_library_nodes(
+        sdfg) == 1, f"Expected 1 memset library nodes, got {_get_num_memset_library_nodes(sdfg)}"
+    AssignmentAndCopyKernelToMemsetAndMemcpy(overapproximate_first_dimensions=True).apply_pass(sdfg, {})
     # We should have 2 memset libnodes
     assert _get_num_memset_library_nodes(
         sdfg) == 2, f"Expected 2 memset library nodes, got {_get_num_memset_library_nodes(sdfg)}"
@@ -233,12 +257,45 @@ def test_nested_maps(expansion_type: str):
 
 
 @pytest.mark.parametrize("expansion_type", EXPANSION_TYPES)
+def test_nested_memcpy_maps_with_dynamic_connectors(expansion_type: str):
+    if expansion_type == "CUDA":
+        import cupy
+    xp = cupy if expansion_type == "CUDA" else numpy
+
+    sdfg = nested_memcpy_maps_with_dynamic_connectors.to_sdfg()
+    sdfg.name = sdfg.name + f"_expansion_type_{expansion_type}"
+
+    AssignmentAndCopyKernelToMemsetAndMemcpy(overapproximate_first_dimensions=False).apply_pass(sdfg, {})
+    # We should have 0 memcpy libnodes
+    assert _get_num_memcpy_library_nodes(
+        sdfg) == 1, f"Expected 1 memcpy library nodes, got {_get_num_memcpy_library_nodes(sdfg)}"
+    AssignmentAndCopyKernelToMemsetAndMemcpy(overapproximate_first_dimensions=True).apply_pass(sdfg, {})
+    # We should have 2 memcpy libnodes
+    assert _get_num_memcpy_library_nodes(
+        sdfg) == 2, f"Expected 2 memcpy library nodes, got {_get_num_memcpy_library_nodes(sdfg)}"
+
+    kidia = 0
+    kfdia = DIM_SIZE
+    A_IN = xp.random.rand(5, 5, DIM_SIZE)
+    A_OUT = xp.random.rand(5, 5, DIM_SIZE)
+    B_IN = xp.random.rand(5, DIM_SIZE)
+    B_OUT = xp.random.rand(5, DIM_SIZE)
+    _set_lib_node_type(sdfg, expansion_type)
+    sdfg.expand_library_nodes(recursive=True)
+    sdfg.validate()
+    sdfg(llindex_in=A_IN, zsinksum_in=B_IN, llindex_out=A_OUT, zsinksum_out=B_OUT, kidia=kidia, kfdia=kfdia, D=DIM_SIZE)
+    assert xp.allclose(A_IN, A_OUT)
+    assert xp.allclose(B_IN, B_OUT)
+
+
+@pytest.mark.parametrize("expansion_type", EXPANSION_TYPES)
 def test_double_memset_with_dynamic_connectors(expansion_type: str):
     if expansion_type == "CUDA":
         import cupy
     xp = cupy if expansion_type == "CUDA" else numpy
 
     sdfg = double_memset_with_dynamic_connectors.to_sdfg()
+    sdfg.name = sdfg.name + f"_expansion_type_{expansion_type}"
 
     A_IN = xp.random.rand(DIM_SIZE, DIM_SIZE)
     B_IN = xp.ones(DIM_SIZE)
@@ -269,6 +326,52 @@ def test_double_memset_with_dynamic_connectors(expansion_type: str):
 
 
 @pytest.mark.parametrize("expansion_type", EXPANSION_TYPES)
+def test_double_memcpy_with_dynamic_connectors(expansion_type: str):
+    if expansion_type == "CUDA":
+        import cupy
+    xp = cupy if expansion_type == "CUDA" else numpy
+
+    sdfg = double_memcpy_with_dynamic_connectors.to_sdfg()
+    sdfg.name = sdfg.name + f"_expansion_type_{expansion_type}"
+
+    A_IN = xp.random.rand(DIM_SIZE, DIM_SIZE)
+    B_IN = xp.random.rand(DIM_SIZE)
+    A_OUT = xp.random.rand(DIM_SIZE, DIM_SIZE)
+    B_OUT = xp.random.rand(DIM_SIZE)
+    sdfg.save("x1.sdfg")
+
+    sdfg.validate()
+    p = AssignmentAndCopyKernelToMemsetAndMemcpy(overapproximate_first_dimensions=True)
+    p.overapproximate_first_dimension = True
+    p.apply_pass(sdfg, {})
+    for n, g in sdfg.all_nodes_recursive():
+        if isinstance(n, dace.nodes.NestedSDFG):
+            p.apply_pass(n.sdfg)
+    sdfg.validate()
+    sdfg.save("x2.sdfg")
+    assert _get_num_memcpy_library_nodes(
+        sdfg) == 2, f"Expected 2 memcpy library node, got {_get_num_memcpy_library_nodes(sdfg)}"
+    assert _get_num_memset_library_nodes(
+        sdfg) == 0, f"Expected 0 memset library nodes, got {_get_num_memset_library_nodes(sdfg)}"
+
+    sdfg.expand_library_nodes(recursive=True)
+    sdfg.validate()
+    _set_lib_node_type(sdfg, expansion_type)
+    sdfg.expand_library_nodes(recursive=True)
+    sdfg.validate()
+    sdfg(llindex3_in=A_IN,
+         zsinksum_in=B_IN,
+         llindex3_out=A_OUT,
+         zsinksum_out=B_OUT,
+         D=DIM_SIZE,
+         kfdia=1,
+         kidia=DIM_SIZE)
+
+    assert xp.all(B_IN == B_OUT)
+    assert xp.all(A_IN == A_OUT)
+
+
+@pytest.mark.parametrize("expansion_type", EXPANSION_TYPES)
 def test_simple_memcpy(expansion_type: str):
     if expansion_type == "CUDA":
         import cupy
@@ -276,6 +379,8 @@ def test_simple_memcpy(expansion_type: str):
 
     sdfg = _get_sdfg(1, 0, False, False, False)
     sdfg.validate()
+    sdfg.name = sdfg.name + f"_simple_memcpy_expansion_type_{expansion_type}"
+
     AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
     sdfg.validate()
     assert _get_num_memcpy_library_nodes(sdfg) == 1
@@ -298,6 +403,8 @@ def test_simple_memset(expansion_type: str):
     xp = cupy if expansion_type == "CUDA" else numpy
 
     sdfg = _get_sdfg(0, 1, False, False, False)
+    sdfg.name = sdfg.name + f"_simple_memset_expansion_type_{expansion_type}"
+
     AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
     assert _get_num_memcpy_library_nodes(sdfg) == 0
     assert _get_num_memset_library_nodes(sdfg) == 1
@@ -319,6 +426,9 @@ def test_multi_memcpy(expansion_type: str):
     xp = cupy if expansion_type == "CUDA" else numpy
 
     sdfg = _get_sdfg(2, 0, False, False, False)
+    sdfg.validate()
+    sdfg.name = sdfg.name + f"_multi_memcpy_expansion_type_{expansion_type}"
+
     AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
     assert _get_num_memcpy_library_nodes(sdfg) == 2
     assert _get_num_memset_library_nodes(sdfg) == 0
@@ -343,6 +453,9 @@ def test_multi_memset(expansion_type: str):
     xp = cupy if expansion_type == "CUDA" else numpy
 
     sdfg = _get_sdfg(0, 2, False, False, False)
+    sdfg.validate()
+    sdfg.name = sdfg.name + f"_multi_memset_expansion_type_{expansion_type}"
+
     AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
     assert _get_num_memcpy_library_nodes(sdfg) == 0
     assert _get_num_memset_library_nodes(sdfg) == 2
@@ -367,6 +480,9 @@ def test_multi_mixed(expansion_type: str):
     xp = cupy if expansion_type == "CUDA" else numpy
 
     sdfg = _get_sdfg(1, 1, False, False, False)
+    sdfg.validate()
+    sdfg.name = sdfg.name + f"_multi_mixed_expansion_type_{expansion_type}"
+
     AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
     assert _get_num_memcpy_library_nodes(sdfg) == 1
     assert _get_num_memset_library_nodes(sdfg) == 1
@@ -391,6 +507,9 @@ def test_simple_with_extra_computation(expansion_type: str):
     xp = cupy if expansion_type == "CUDA" else numpy
 
     sdfg = _get_sdfg(2, 2, True, False, False)
+    sdfg.validate()
+    sdfg.name = sdfg.name + f"_simple_with_extra_computation_expansion_type_{expansion_type}"
+
     AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
 
     A_IN = xp.random.rand(DIM_SIZE, DIM_SIZE)
@@ -419,6 +538,9 @@ def test_simple_non_zero(expansion_type: str):
     xp = cupy if expansion_type == "CUDA" else numpy
 
     sdfg = _get_sdfg(0, 1, False, True, False)
+    sdfg.validate()
+    sdfg.name = sdfg.name + f"_simple_nonzero_expansion_type_{expansion_type}"
+
     AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
 
     A_IN = xp.random.rand(DIM_SIZE, DIM_SIZE)
@@ -438,6 +560,8 @@ def test_mixed_overapprox(expansion_type: str):
     xp = cupy if expansion_type == "CUDA" else numpy
 
     sdfg = _get_sdfg(2, 2, False, False, True)
+    sdfg.name = sdfg.name + f"_mixed_overapprox_expansion_type_{expansion_type}"
+
     AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
     sdfg.validate()
 
@@ -471,4 +595,7 @@ if __name__ == "__main__":
         test_simple_with_extra_computation(expansion_type)
         test_simple_non_zero(expansion_type)
         test_mixed_overapprox(expansion_type)
-        test_nested_maps(expansion_type)
+        test_nested_memset_maps_with_dynamic_connectors(expansion_type)
+        test_nested_memcpy_maps_with_dynamic_connectors(expansion_type)
+        test_double_memset_with_dynamic_connectors(expansion_type)
+        test_double_memcpy_with_dynamic_connectors(expansion_type)
