@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import dace.serialize
 from dace import data, symbolic, dtypes
 import re
@@ -933,24 +933,22 @@ class Range(Subset):
 
     def is_contiguous_subset(self, array: 'dace.data.Array') -> bool:
         """
-        Check if a range list represents a contiguous subset of an array.
+        Check if this subset represents a contiguous subset of the array descriptor provided.
 
         For a subset to be contiguous:
         - In Fortran layout: once a dimension is partial, all subsequent dimensions must have length 1
         - In C layout: same rule applies after reversing dimensions
 
         Args:
-            range_list: List of tuples (begin, end, step) for each dimension
-            array: DaCe array to check against
+            array: array descriptor to check against
 
         Returns:
             True if the subset is contiguous, False otherwise
-
-        Raises:
-            ValueError: If array has neither Fortran nor C strides
+            Returns False on all arrays that are not have a packed layout,
+            meaning that the complete array is contiguously stored in 1D memory.
         """
         # Any step size != 1 -> not contiguous
-        for (b, e, s) in self:
+        for (_, _, s) in self:
             if s != 1:
                 return False
 
