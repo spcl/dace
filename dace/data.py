@@ -1680,6 +1680,31 @@ class Array(Data):
         self._set_shape_dependent_properties(new_shape, strides, total_size, offset)
         self.validate()
 
+    def _get_packed_fortran_strides(self) -> Tuple[int]:
+        accum = 1
+        strides = []
+        for shape in self.shape:
+            strides.append(accum)
+            accum *= shape
+        return tuple(strides)
+
+    def _get_packed_c_strides(self) -> Tuple[int]:
+        accum = 1
+        strides = []
+        # Same as Fortran order if shape is inversed
+        for shape in reversed(self.shape):
+            strides.append(accum)
+            accum *= shape
+        return tuple(list(reversed(strides)))
+
+    def is_packed_fortran_strides(self) -> bool:
+        strides = self._get_packed_fortran_strides()
+        return tuple(strides) == tuple(self.strides)
+
+    def is_packed_c_strides(self) -> bool:
+        strides = self._get_packed_c_strides()
+        return tuple(strides) == tuple(self.strides)
+
 
 @make_properties
 class Stream(Data):

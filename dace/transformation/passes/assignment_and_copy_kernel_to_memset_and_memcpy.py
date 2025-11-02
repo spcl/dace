@@ -21,6 +21,8 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         desc=
         "If True, the first dimension of the map is overapproximated to be contiguous, even if it is not. This is useful for some cases where the first dimension is always contiguous, but the map range is not.",
     )
+    apply_only_on_labels = properties.ListProperty(element_type=str, default=[], allow_none=False)
+
     rmid = 0
 
     def modifies(self) -> ppl.Modifies:
@@ -179,44 +181,13 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         n = {n for n in state.all_nodes_between(node, state.exit_node(node)) if isinstance(n, dace.nodes.Tasklet)}
         return len(n)
 
-    # [(b,e,s), ...] is the range
-    # Need to find out if it is contiguous, this means:
-    # The stride==1 dimension is the first one and strides are ascending where the storage is packed
-    # or stride==1 dimension is the last one and strides are descending where the storage is packed
-    def _get_packed_fortran_strides(self, array: dace.data.Array) -> List[int]:
-        accum = 1
-        strides = []
-        for shape in array.shape:
-            strides.append(accum)
-            accum *= shape
-        return tuple(strides)
-
-    def _get_packed_c_strides(self, array: dace.data.Array) -> List[int]:
-        accum = 1
-        strides = []
-        # Same as Fortran order if shape is inversed
-        for shape in reversed(array.shape):
-            strides.append(accum)
-            accum *= shape
-        return tuple(list(reversed(strides)))
-
-    def _is_packed_fortran_strides(self, array: dace.data.Array, verbose=True) -> bool:
-        strides = self._get_packed_fortran_strides(array)
-        return tuple(strides) == tuple(array.strides)
-
-    def _is_packed_c_strides(self, array: dace.data.Array, verbose=True) -> bool:
-        strides = self._get_packed_c_strides(array)
-        return tuple(strides) == tuple(array.strides)
-
     # let's say arrays strides are [1, N, M*N]
     # then the expression we have needs to cover whole first dimension X-1 if it is not 1 in dimension X
     def _is_contig_subset(self, range_list: List[Tuple], array: dace.data.Array) -> bool:
-        if self._is_packed_fortran_strides(array):
-            print(f"array is packed Fortran")
+        if array.is_packed_fortran_strides():
             range_list = range_list
             expr_lens = [((e + 1) - b) for (b, e, s) in range_list]
-        elif self._is_packed_c_strides(array):
-            print(f"array is packed C")
+        elif array.is_packed_c_strides():
             range_list = list(reversed(range_list))
             expr_lens = [((e + 1) - b) for (b, e, s) in reversed(range_list)]
         else:
@@ -313,8 +284,9 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         if out_edge.data.data is not None:
             contig_subset = self._is_contig_subset(new_out_data_range, state.sdfg.arrays[out_edge.data.data])
             if not contig_subset:
-                warnings.warn(f"Output array {out_edge.data.data} is not contiguous, cannot remove memcpy/memset.",
-                              UserWarning)
+                warnings.warn(
+                    f"Output array {out_edge.data.data} is not contiguous, cannot remove memcpy/memset {new_out_data_range} of ({state.sdfg.arrays[out_edge.data.data]})",
+                    UserWarning)
                 return None, None, None
 
         if in_edge.data.data is not None:
@@ -355,10 +327,8 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
     def remove_memcpy_from_kernel(self, state: dace.SDFGState, node: dace.nodes.MapEntry, verbose=True):
         memcpy_paths = self._detect_contiguous_memcpy_paths(state, node)
         rmed_count = 0
+
         joined_edges = set()
-        for memcpy_path in memcpy_paths:
-            for e in memcpy_path:
-                joined_edges.add(e)
 
         for memcpy_path in memcpy_paths:
             src_access_node = memcpy_path[0].src
@@ -368,11 +338,9 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             dst_access_node = memcpy_path[3].dst
             if src_access_node not in state.nodes() or map_entry not in state.nodes() or tasklet not in state.nodes(
             ) or map_exit not in state.nodes() or dst_access_node not in state.nodes():
-                if verbose:
-                    warnings.warn(
-                        f"Map entry, exit or tasklet not in state: {map_entry} ({map_entry in state.nodes()}), {map_exit} ({map_exit in state.nodes()}), {tasklet} ({tasklet in state.nodes()}). Skipping.",
-                        UserWarning)
-                assert False, f"Map entry, exit or tasklet not in state: {map_entry} ({map_entry in state.nodes()}), {map_exit} ({map_exit in state.nodes()}), {tasklet} ({tasklet in state.nodes()})."
+                raise Exception(
+                    f"Map entry, exit or tasklet not in state: {map_entry} ({map_entry in state.nodes()}), "
+                    f"{map_exit} ({map_exit in state.nodes()}), {tasklet} ({tasklet in state.nodes()}). Skipping.", )
 
             # If src and dst types are not the same, we can't do memcpy
             src_desc = state.sdfg.arrays[src_access_node.data]
@@ -440,18 +408,18 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
 
             rmed_count += 1
 
+            for memcpy_path in memcpy_paths:
+                for e in memcpy_path:
+                    joined_edges.add(e)
+
         self.rm_edges(state, joined_edges)
 
         return rmed_count
 
     def remove_memset_from_kernel(self, state: dace.SDFGState, node: dace.nodes.MapEntry, verbose=True):
         memset_paths = self._detect_contiguous_memset_paths(state, node)
-        print(memset_paths)
 
         joined_edges = set()
-        for memcpy_path in memset_paths:
-            for e in memcpy_path:
-                joined_edges.add(e)
 
         rmed_count = 0
         for memset_path in memset_paths:
@@ -470,24 +438,18 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             # For now, we will just use the original range
             # Needs to be done before removing the memset path
             if map_entry not in state.nodes() or map_exit not in state.nodes() or tasklet not in state.nodes():
-                if verbose:
-                    warnings.warn(
-                        f"Map entry, exit or tasklet not in state: {map_entry} ({map_entry in state.nodes()}), {map_exit} ({map_exit in state.nodes()}), {tasklet} ({tasklet in state.nodes()}). Skipping.",
-                        UserWarning)
-                continue
+                raise Exception(
+                    f"Map entry, exit or tasklet not in state: {map_entry} ({map_entry in state.nodes()}),"
+                    f"{map_exit} ({map_exit in state.nodes()}), {tasklet} ({tasklet in state.nodes()}).", )
             current_tasklets = {
                 n
                 for n in state.all_nodes_between(map_entry, map_exit) if isinstance(n, dace.nodes.Tasklet)
             }
             if len(memset_paths) != len(current_tasklets):
-                if verbose:
-                    warnings.warn(
-                        f"Number of memset paths {len(memset_paths)} does not match number of tasklets in map {len({n for n in state.all_nodes_between(map_entry, map_exit) if isinstance(n, dace.nodes.Tasklet)})}. Was removed before probably.",
-                        UserWarning)
-                if tasklet not in current_tasklets:
-                    if verbose:
-                        warnings.warn(f"Tasklet {tasklet} is not in the current tasklets, skipping.", UserWarning)
-                    continue
+                raise Exception(
+                    f"Number of memset paths {len(memset_paths)} does not match number of tasklets in map "
+                    f"{len({n for n in state.all_nodes_between(map_entry, map_exit) if isinstance(n, dace.nodes.Tasklet)})}. Was removed before probably.",
+                )
 
             begin_subset, exit_subset, copy_length = self._get_write_begin_and_length(state, map_entry, tasklet)
 
@@ -516,6 +478,10 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                     tasklet.add_in_connector(ie.dst_conn)
 
             rmed_count += 1
+
+            for memcpy_path in memset_paths:
+                for e in memcpy_path:
+                    joined_edges.add(e)
 
         self.rm_edges(state, joined_edges)
 
@@ -569,23 +535,26 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         for (node, state) in map_entries:
             sdfg.validate()
             assert node in state.nodes(), f"Map entry {node} not in state {state}"
-            _e = state.exit_node(node)
             assert state.exit_node(node) in state.nodes(), f"Map exit {state.exit_node(node)} not in state {state}"
+
+            if self.apply_only_on_labels != [] and self.apply_only_on_labels is not None and node.label not in self.apply_only_on_labels:
+                continue
 
             if self._get_num_tasklets_within_map(state, node) == 0:
                 continue
 
-            print(node)
             rmed_memcpy = self.remove_memcpy_from_kernel(state, node)
-            print(rmed_memcpy)
+            if rmed_memcpy > 0:
+                print(f"Removed {rmed_memcpy} memcpy from {node.label}")
             sdfg.validate()
 
             # If the map is only used for 1 memcpy, then it might have been already removed
             if node in state.nodes():
                 rmed_memset = self.remove_memset_from_kernel(state, node)
+                if rmed_memset > 0:
+                    print(f"Removed {rmed_memset} memset from {node.label}")
             else:
                 rmed_memset = 0
-            print(rmed_memset)
             sdfg.validate()
 
             assert node not in rmed_memsets

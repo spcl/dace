@@ -194,7 +194,43 @@ def _set_lib_node_type(sdfg: dace.SDFG, expansion_type: str):
             n.implementation = expansion_type
 
 
+@dace.program
+def nested_maps(kidia: dace.int64, kfdia: dace.int64, llindex: dace.float64[5, 5, D], zsinksum: dace.float64[5, D]):
+    for i in dace.map[0:5]:
+        sym_kidia = kidia
+        sym_kfdia = kfdia
+        for j, k in dace.map[0:5, sym_kidia:sym_kfdia:1]:
+            llindex[i, j, k] = 0.0
+        for k in dace.map[sym_kidia:sym_kfdia:1]:
+            zsinksum[i, k] = 0.0
+
+
 EXPANSION_TYPES = ["pure", "CPU", pytest.param("CUDA", marks=pytest.mark.gpu)]
+
+
+@pytest.mark.parametrize("expansion_type", EXPANSION_TYPES)
+def test_nested_maps(expansion_type: str):
+    if expansion_type == "CUDA":
+        import cupy
+    xp = cupy if expansion_type == "CUDA" else numpy
+
+    sdfg = nested_maps.to_sdfg()
+    sdfg.save("nested_maps.sdfg")
+
+    AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
+    sdfg.save("nested_maps_libnodes.sdfg")
+
+    kidia = 0
+    kfdia = DIM_SIZE
+    A_IN = xp.random.rand(5, 5, DIM_SIZE)
+    B_IN = xp.random.rand(5, DIM_SIZE)
+    _set_lib_node_type(sdfg, expansion_type)
+    sdfg.expand_library_nodes(recursive=True)
+    sdfg.save("nested_maps_expanded.sdfg")
+    sdfg.validate()
+    sdfg(llindex=A_IN, zsinksum=B_IN, kidia=kidia, kfdia=kfdia, D=DIM_SIZE)
+    assert xp.allclose(A_IN, 0.0)
+    assert xp.allclose(B_IN, 0.0)
 
 
 @pytest.mark.parametrize("expansion_type", EXPANSION_TYPES)
@@ -436,3 +472,4 @@ if __name__ == "__main__":
         test_simple_with_extra_computation(expansion_type)
         test_simple_non_zero(expansion_type)
         test_mixed_overapprox(expansion_type)
+        test_nested_maps(expansion_type)
