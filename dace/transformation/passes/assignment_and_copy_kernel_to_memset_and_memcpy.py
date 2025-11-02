@@ -17,13 +17,17 @@ from typing import Dict, Iterable, List, Set
 class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
     overapproximate_first_dimension = properties.Property(
         dtype=bool,
-        default=True,
+        default=False,
         desc=
         "If True, the first dimension of the map is overapproximated to be contiguous, even if it is not. This is useful for some cases where the first dimension is always contiguous, but the map range is not.",
     )
     apply_only_on_labels = properties.ListProperty(element_type=str, default=[], allow_none=False)
 
     rmid = 0
+
+    def __init__(self, overapproximate_first_dimensions=False, apply_only_on_labels=list()):
+        self.overapproximate_first_dimension = overapproximate_first_dimensions
+        self.apply_only_on_labels = apply_only_on_labels
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modeifies.Everything
@@ -325,16 +329,6 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                         UserWarning)
                 continue
 
-            # Dynamic in connectors not supported
-            cant_apply = False
-            for inc in map_entry.in_connectors:
-                if not inc.startswith("IN_"):
-                    if verbose:
-                        warnings.warn(f"Dynamic in connectors not supported for memcpy. Skipping.", UserWarning)
-                    cant_apply = True
-                    break
-            if cant_apply:
-                continue
             # To calculate the total range,
             # Take input subset of tasklet replace expression with map range
             # For now, we will just use the original range
@@ -342,8 +336,10 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             begin_subset, exit_subset, copy_length = self._get_write_begin_and_length(
                 state, map_entry, tasklet, verbose)
 
+            if begin_subset is None and exit_subset is None and copy_length is None:
+                continue
+
             # We can now remove the memcpy path
-            dyn_inputs = {ie.dst_conn for ie in state.in_edges(map_entry) if not ie.dst_conn.startswith("IN_")}
             in_edges = state.in_edges(map_entry)
 
             # If src / dst not in the graph anymore, add new ones
