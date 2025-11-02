@@ -15,13 +15,21 @@ class ExpandPure(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
-        inp_name, inp, in_subset, out_name, out, out_subset = node.validate(parent_sdfg, parent_state)
+        inp_name, inp, in_subset, out_name, out, out_subset, dynamic_inputs = node.validate(parent_sdfg, parent_state)
         map_lengths = [(e + 1 - b) // s for (b, e, s) in in_subset]
         cp_size = reduce(operator.mul, map_lengths, 1)
 
         sdfg = dace.SDFG(f"{node.label}_sdfg")
         _, inp_arr = sdfg.add_array(inp_name, inp.shape, inp.dtype, inp.storage, strides=inp.strides)
         _, out_arr = sdfg.add_array(out_name, out.shape, out.dtype, out.storage, strides=out.strides)
+
+        # Add dynamic inputs
+        for dynamic_input_name, datadesc in dynamic_inputs.items():
+            if dynamic_input_name in sdfg.arrays:
+                continue
+            ndesc = copy.deepcopy(datadesc)
+            ndesc.transient = False
+            sdfg.add_datadesc(dynamic_input_name, ndesc)
 
         state = sdfg.add_state(f"{node.label}_state")
         sdfg.schedule = dace.dtypes.ScheduleType.Default
@@ -53,13 +61,22 @@ class ExpandCUDA(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG):
-        inp_name, inp, in_subset, out_name, out, out_subset = node.validate(parent_sdfg, parent_state)
+        inp_name, inp, in_subset, out_name, out, out_subset, dynamic_inputs = node.validate(parent_sdfg, parent_state)
+
         map_lengths = [(e + 1 - b) // s for (b, e, s) in in_subset]
         cp_size = reduce(operator.mul, map_lengths, 1)
 
         sdfg = dace.SDFG(f"{node.label}_sdfg")
         _, inp_arr = sdfg.add_array(inp_name, inp.shape, inp.dtype, inp.storage, strides=inp.strides)
         _, out_arr = sdfg.add_array(out_name, out.shape, out.dtype, out.storage, strides=out.strides)
+
+        # Add dynamic inputs
+        for dynamic_input_name, datadesc in dynamic_inputs.items():
+            if dynamic_input_name in sdfg.arrays:
+                continue
+            ndesc = copy.deepcopy(datadesc)
+            ndesc.transient = False
+            sdfg.add_datadesc(dynamic_input_name, ndesc)
 
         state = sdfg.add_state(f"{node.label}_state")
 
@@ -92,7 +109,7 @@ class ExpandCPU(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG):
-        inp_name, inp, in_subset, out_name, out, out_subset = node.validate(parent_sdfg, parent_state)
+        inp_name, inp, in_subset, out_name, out, out_subset, dynamic_inputs = node.validate(parent_sdfg, parent_state)
         map_lengths = [(e + 1 - b) // s for (b, e, s) in in_subset]
         cp_size = reduce(operator.mul, map_lengths, 1)
 
@@ -101,6 +118,14 @@ class ExpandCPU(ExpandTransformation):
         _, out_arr = sdfg.add_array(out_name, out.shape, out.dtype, out.storage, strides=out.strides)
 
         state = sdfg.add_state(f"{node.label}_state")
+
+        # Add dynamic inputs
+        for dynamic_input_name, datadesc in dynamic_inputs.items():
+            if dynamic_input_name in sdfg.arrays:
+                continue
+            ndesc = copy.deepcopy(datadesc)
+            ndesc.transient = False
+            sdfg.add_datadesc(dynamic_input_name, ndesc)
 
         # Add CPU access nodes
         in_access = state.add_access(inp_name)
@@ -140,20 +165,28 @@ class CopyLibraryNode(nodes.LibraryNode):
         :return: A tuple (inp, out) for the data descriptors in the parent SDFG.
         """
 
-        inp_name, inp, in_subset, out_name, out, out_subset = None, None, None, None, None, None
         if len(state.out_edges(self)) != 1:
             raise ValueError("Number of out edges unequal to one")
-
-        if len(state.in_edges(self)) != 1:
-            state.sdfg.save("x.sdfgz", compress=True)
-            raise ValueError("Number of in edges unequal to one")
 
         oe = next(iter(state.out_edges(self)))
         out = sdfg.arrays[oe.data.data]
         out_subset = oe.data.subset
         out_name = oe.src_conn
 
-        ie = next(iter(state.in_edges(self)))
+        # Add dynamic connectors
+        dynamic_ies = {ie for ie in state.in_edges(self) if ie.dst_conn != "_in"}
+        dynamic_inputs = dict()
+        for ie in dynamic_ies:
+            dataname = ie.data.data
+            datadesc = state.sdfg.arrays[dataname]
+            if not isinstance(datadesc, dace.data.Scalar):
+                raise ValueError("Dynamic inputs (not connected to `_in`) need to be all scalars")
+            dynamic_inputs[ie.dst_conn] = datadesc
+
+        data_ies = {ie for ie in state.in_edges(self) if ie.dst_conn == "_in"}
+        if len(data_ies) != 1:
+            raise ValueError("Only when edge should be to dst connector `_in`")
+        ie = data_ies.pop()
         inp = sdfg.arrays[ie.data.data]
 
         in_subset = ie.data.subset
@@ -169,4 +202,4 @@ class CopyLibraryNode(nodes.LibraryNode):
         if inp.storage != out.storage:
             raise ValueError("The storage of the input and output tensors must match.")
 
-        return inp_name, inp, in_subset, out_name, out, out_subset
+        return inp_name, inp, in_subset, out_name, out, out_subset, dynamic_inputs
