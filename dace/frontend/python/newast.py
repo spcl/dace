@@ -26,7 +26,7 @@ from dace.frontend.python.astutils import rname
 from dace.frontend.python import nested_call, replacements, preprocessing
 from dace.frontend.python.memlet_parser import DaceSyntaxError, parse_memlet, ParseMemlet, inner_eval_ast, MemletExpr
 from dace.sdfg import nodes
-from dace.sdfg.propagation import propagate_memlet, propagate_subset, propagate_states
+from dace.sdfg.propagation import propagate_memlet, propagate_subset, propagate_states, align_memlet
 from dace.memlet import Memlet
 from dace.properties import LambdaProperty, CodeBlock
 from dace.sdfg import SDFG, SDFGState
@@ -535,6 +535,9 @@ def add_indirection_subgraph(sdfg: SDFG,
     if ind_entry:  # Amend newsubset when a range is indirected
         for i, idx in enumerate(nonsqz_dims):
             newsubset[idx] = '__i%d' % i
+
+    # Squeeze size-1 dimensions out of expression
+    newsubset = [s for shp, s in zip(array.shape, newsubset) if shp != 1]
 
     tasklet.code = CodeBlock(
         code.format(arr='__ind_' + local_name, index=', '.join([symbolic.symstr(s) for s in newsubset])))
@@ -2937,7 +2940,12 @@ class ProgramVisitor(ExtNodeVisitor):
                     memlet.other_subset = op_subset
                     if op:
                         memlet.wcr = LambdaProperty.from_string('lambda x, y: x {} y'.format(op))
-                    state.add_nedge(op1, op2, memlet)
+                    if isinstance(self.sdfg.arrays[target_name], data.Reference):
+                        e = state.add_edge(op1, None, op2, 'set', memlet)
+                        # Align memlet to referenced array
+                        e.data = align_memlet(state, e, dst=False)
+                    else:
+                        state.add_nedge(op1, op2, memlet)
             else:
                 memlet = Memlet("{a}[{s}]".format(a=target_name,
                                                   s=','.join(['__i%d' % i for i in range(len(target_subset))])))
@@ -3444,9 +3452,10 @@ class ProgramVisitor(ExtNodeVisitor):
             storage = dtypes.StorageType.Default
             type_name = rname(node.annotation)
             warnings.warn('typeclass {} is not supported'.format(type_name))
-        if node.value is None and dtype is not None:  # Annotating type without assignment
+        if dtype is not None:
             self.annotated_types[rname(node.target)] = dtype
-            return
+            if node.value is None:  # Annotating type without assignment
+                return
         results = self._visit_assign(node, node.target, None, dtype=dtype)
         if storage != dtypes.StorageType.Default:
             self.sdfg.arrays[results[0][0]].storage = storage
@@ -3629,6 +3638,12 @@ class ProgramVisitor(ExtNodeVisitor):
                     result_data = self.sdfg.arrays[result]
                     if (name.startswith('__return') and isinstance(result_data, data.Scalar)):
                         true_name, new_data = self.add_temp_transient([1], result_data.dtype)
+                        self.variables[name] = true_name
+                        defined_vars[name] = true_name
+                    elif name in self.annotated_types and isinstance(self.annotated_types[name], data.Reference):
+                        desc = copy.deepcopy(self.annotated_types[name])
+                        desc.transient = True
+                        true_name = self.sdfg.add_datadesc(name, desc, find_new_name=True)
                         self.variables[name] = true_name
                         defined_vars[name] = true_name
                     elif (not name.startswith('__return')
