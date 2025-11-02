@@ -502,15 +502,11 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                 continue
 
             rmed_memcpy = self.remove_memcpy_from_kernel(state, node)
-            if rmed_memcpy > 0:
-                print(f"Removed {rmed_memcpy} memcpy from {node.label}")
             sdfg.validate()
 
             # If the map is only used for 1 memcpy, then it might have been already removed
             if node in state.nodes():
                 rmed_memset = self.remove_memset_from_kernel(state, node)
-                if rmed_memset > 0:
-                    print(f"Removed {rmed_memset} memset from {node.label}")
             else:
                 rmed_memset = 0
             sdfg.validate()
