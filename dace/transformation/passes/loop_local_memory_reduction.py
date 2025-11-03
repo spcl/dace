@@ -8,7 +8,7 @@ from dace.sdfg.state import LoopRegion, ConditionalBlock
 from dace.data import Scalar
 from dace.transformation import transformation as xf
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.passes.analysis import loop_analysis, StateReachability, FindAccessStates
+from dace.transformation.passes.analysis import loop_analysis, StateReachability, FindAccessStates, ConditionUniqueWrites
 from dace.symbolic import pystr_to_symbolic, issymbolic
 from dace.subsets import Range
 import copy
@@ -115,7 +115,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
         return modified != ppl.Modifies.Nothing
 
     def depends_on(self):
-        return {StateReachability, FindAccessStates}
+        return {StateReachability, FindAccessStates, ConditionUniqueWrites}
 
     def apply_pass(self, sdfg: sd.SDFG, pipeline_results: Dict[str, Any]) -> Optional[Set[str]]:
         self.num_applications = 0
@@ -132,47 +132,10 @@ class LoopLocalMemoryReduction(ppl.Pass):
         else:
             self.access_states = FindAccessStates().apply_pass(sdfg, {})
 
-        # Maps each conditional block to a set of access nodes which are not written to the same location in all paths.
-        self.cond_unique = set()
-        for cfb in sdfg.all_control_flow_blocks(recursive=True):
-            if not isinstance(cfb, ConditionalBlock):
-                continue
-
-            # No else branch -> all access nodes are unique
-            if not any(cnd is None for cnd, br in cfb.branches):
-                self.cond_unique.update(an for an in cfb.data_nodes())
-                continue
-
-            # Build a mapping of access_node -> written subset -> set of branches it appears in
-            access_write_branch = {}
-            for _, br in cfb.branches:
-                for st in br.all_states():
-                    for an in st.data_nodes():
-                        array_name = an.data
-                        write_subsets = set(e.data.dst_subset for e in st.in_edges(an))
-                        wss = str(write_subsets)
-                        if array_name not in access_write_branch:
-                            access_write_branch[array_name] = {}
-                        if wss not in access_write_branch[array_name]:
-                            access_write_branch[array_name][wss] = {"branches": set(), "access_nodes": set()}
-                        access_write_branch[array_name][wss]["branches"].add(br)
-                        access_write_branch[array_name][wss]["access_nodes"].add(an)
-
-            # Eliminate all write subset that appear in all branches
-            for array_name, ws_br in list(access_write_branch.items()):
-                to_remove = []
-                for wss, brd in list(ws_br.items()):
-                    if len(brd["branches"]) == len(cfb.branches):
-                        to_remove.append(wss)
-                for wss in to_remove:
-                    del ws_br[wss]
-                if len(ws_br) == 0:
-                    del access_write_branch[array_name]
-
-            # All remaining access nodes are unique
-            for array_name, ws_br in access_write_branch.items():
-                for wss, brd in ws_br.items():
-                    self.cond_unique.update(brd["access_nodes"])
+        if ConditionUniqueWrites.__name__ in pipeline_results:
+            self.cond_unique = pipeline_results[ConditionUniqueWrites.__name__]
+        else:
+            self.cond_unique = ConditionUniqueWrites().apply_pass(sdfg, {})
 
         # Iterate over all loops in the SDFG
         for node, _ in sdfg.all_nodes_recursive():
