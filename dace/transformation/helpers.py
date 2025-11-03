@@ -827,6 +827,7 @@ def isolate_nested_sdfg(
         node_to_process = to_visit.pop()
         if node_to_process in visited:
             continue
+        visited.add(node_to_process)
         pre_nodes.add(node_to_process)
         to_visit.extend(iedge.src for iedge in state.in_edges(node_to_process))
 
