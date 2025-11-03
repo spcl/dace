@@ -594,7 +594,7 @@ def test_multidimensional2():
             for jj in range(4):
                 a[ii, jj] = ii + jj
 
-        # In theory, in this case, LLMR could be applied
+        # TODO (later): In theory, in this case, LLMR could be applied
         for i in range(2, 14):
             b[i, i] = a[i - 1, i] + a[i - 2, i - 1]
             a[i, i + 1] = c[i] * 2
@@ -733,7 +733,7 @@ def test_nested3():
             for jj in range(3):
                 a[ii, jj] = ii + jj
 
-        # In theory, in this case, LLMR could be applied
+        # TODO (later): In theory, in this case, LLMR could be applied
         for i in range(0, 16):
             for j in range(2, 14):
                 b[i, j] = a[i, j - 1] + a[i, j - 2]
