@@ -2021,9 +2021,33 @@ class ReplaceArrayConstructor(NodeTransformer):
             for i in range(len(node.rval.value_list)):
                 assigns.append(ast_internal_classes.BinOp_Node(
                     lval=ast_internal_classes.Array_Subscript_Node(name=node.lval, indices=[
-                        ast_internal_classes.Int_Literal_Node(value=str(i + 1))], type=node.type, parent=node.parent),
+                        ast_internal_classes.Int_Literal_Node(value=str(i))], type=node.type, parent=node.parent),
                     op="=", rval=node.rval.value_list[i], line_number=node.line_number, parent=node.parent,
-                    typ=node.type))
+                    type=node.type))
+            return ast_internal_classes.Execution_Part_Node(execution=assigns)
+        return self.generic_visit(node)
+
+
+class ReplaceArrayAssignment(NodeTransformer):
+    def visit_BinOp_Node(self, node: ast_internal_classes.BinOp_Node):
+
+        if isinstance(node.rval, ast_internal_classes.Array_Constructor_Node):
+            subscript = node.lval
+            # Find value_list on LHS and point subscript to it.
+            if isinstance(subscript, ast_internal_classes.Data_Ref_Node):
+                while True:
+                    if isinstance(subscript, ast_internal_classes.Data_Ref_Node):
+                        subscript = subscript.part_ref
+
+                    if isinstance(subscript, ast_internal_classes.Array_Subscript_Node):
+                        break
+
+            assigns = []
+            for i in range(len(node.rval.value_list)):
+                subscript.indices = [ast_internal_classes.Int_Literal_Node(value=str(i))]
+                new = copy.deepcopy(node)
+                new.rval = node.rval.value_list[i]
+                assigns.append(new)
             return ast_internal_classes.Execution_Part_Node(execution=assigns)
         return self.generic_visit(node)
 

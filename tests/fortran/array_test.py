@@ -258,6 +258,26 @@ end subroutine main
     assert d[0] == 65
 
 
+def test_array_constructor():
+    """Unroll constant array constructors, like for parameter arrays."""
+    sources, main = SourceCodeBuilder().add_file("""
+subroutine main(var, idx)
+    double precision :: d(3) = [3.14, 0.58, 1.41]
+    double precision :: var(2)
+    integer :: idx
+    var(1) = d(idx)
+    var(2) = d(idx+1)
+end subroutine main
+""").check_with_gfortran().get()
+    sdfg = create_singular_sdfg_from_string(sources, 'main')
+    sdfg.simplify(verbose=True)
+    var = np.full([2], 42, order="F", dtype=np.float64)
+    idx = np.int32(2)
+    sdfg(var=var, idx=idx)
+    assert(var[0] == 0.58)
+    assert(var[1] == 1.41)
+
+
 if __name__ == "__main__":
     test_fortran_frontend_array_3dmap()
     test_fortran_frontend_array_access()
@@ -266,3 +286,4 @@ if __name__ == "__main__":
     test_fortran_frontend_array_multiple_ranges_with_symbols()
     test_fortran_frontend_twoconnector()
     test_fortran_frontend_memlet_in_map_test()
+    test_array_constructor()
