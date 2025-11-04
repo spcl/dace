@@ -3200,3 +3200,56 @@ END SUBROUTINE main
     """.strip()
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+def test_unroll_loops_invalid():
+    """Ignore loops with CYCLE or EXIT"""
+    sources, main = SourceCodeBuilder().add_file("""
+subroutine main(d)
+  implicit none
+  integer :: idx, d
+  do idx=1,2
+    d = d + idx
+  end do
+  do idx=2,3
+    d = d - 2
+    if (d < 1) then
+      CYCLE
+    end if
+  end do
+  do idx=1,4
+    d = d+idx
+    if (idx > 3) then
+      EXIT
+    end if
+  end do
+end subroutine main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = unroll_loops(ast)
+
+    got = ast.tofortran()
+    want = """
+SUBROUTINE main(d)
+  IMPLICIT NONE
+  INTEGER :: idx, d
+  idx = 1
+  d = d + idx
+  idx = 2
+  d = d + idx
+  DO idx = 2, 3
+    d = d - 2
+    IF (d < 1) THEN
+      CYCLE
+    END IF
+  END DO
+  DO idx = 1, 4
+    d = d + idx
+    IF (idx > 3) THEN
+      EXIT
+    END IF
+  END DO
+END SUBROUTINE main
+    """.strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()

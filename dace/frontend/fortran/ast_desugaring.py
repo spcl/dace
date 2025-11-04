@@ -3211,6 +3211,9 @@ def const_eval_nodes(ast: Program) -> Program:
 def unroll_loops(ast: Program, max_iter: int = 16) -> Program:
     """Unroll loops with static bounds."""
     for node in reversed(walk(ast, (Block_Nonlabel_Do_Construct, Block_Label_Do_Construct))):
+        if walk(node, (Cycle_Stmt, Exit_Stmt)):
+            # TODO: Handle loop-altering control flow.
+            continue
         do_stmt = node.children[0]
         assert isinstance(do_stmt, (Label_Do_Stmt, Nonlabel_Do_Stmt))
         assert isinstance(node.children[-1], End_Do_Stmt)
