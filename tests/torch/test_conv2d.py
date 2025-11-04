@@ -8,7 +8,7 @@ import torch.nn.functional as F
 
 import numpy as np
 import dace
-from dace.frontend.python.module import DaceModule
+from dace.ml import DaceModule
 
 
 @pytest.mark.torch

@@ -5,7 +5,7 @@ pytest.importorskip("torch", reason="PyTorch not installed. Please install with:
 import torch
 import torch.nn as nn
 from transformers.models.llama.modeling_llama import LlamaDecoderLayer, LlamaConfig
-from dace.frontend.python.module import DaceModule
+from dace.ml import DaceModule
 from tests.utils import torch_tensors_close
 
 

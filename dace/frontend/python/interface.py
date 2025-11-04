@@ -16,7 +16,7 @@ except ImportError:
     pass  # ONNX transformations not available
 
 try:
-    from dace.frontend.python.module import DaceModule
+    from dace.frontend.ml.torch import DaceModule
 except ImportError:
     DaceModule = None  # PyTorch/ONNX not available
 

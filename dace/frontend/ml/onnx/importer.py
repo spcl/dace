@@ -23,7 +23,7 @@ Key Features:
 
 Typical Workflow:
     >>> import onnx
-    >>> from dace.libraries.onnx import ONNXModel
+    >>> from dace.frontend.ml.onnx import ONNXModel
     >>>
     >>> # Load ONNX model
     >>> onnx_model = onnx.load("model.onnx")

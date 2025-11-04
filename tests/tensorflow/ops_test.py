@@ -6,7 +6,7 @@ import numpy as np
 @pytest.mark.tensorflow
 def test_shapen():
     import tensorflow as tf
-    from dace.frontend.tensorflow import TFSession
+    from dace.ml import TFSession
     myshape = [69, 96, 666]
     num_inputs = 5
 
@@ -28,7 +28,7 @@ def test_shapen():
 @pytest.mark.tensorflow
 def test_mean():
     import tensorflow as tf
-    from dace.frontend.tensorflow import TFSession
+    from dace.ml import TFSession
     shape = [10, 11, 12, 13]
 
     inp = tf.placeholder(tf.float64, shape)
@@ -58,7 +58,7 @@ def test_mean():
 @pytest.mark.tensorflow
 def test_addn():
     import tensorflow as tf
-    from dace.frontend.tensorflow import TFSession
+    from dace.ml import TFSession
     shape = [10, 11, 12, 13]
     inputs = [np.random.rand(*shape) for _ in range(10)]
     addn_test_0 = tf.add_n(inputs)
@@ -81,7 +81,7 @@ def test_addn():
 @pytest.mark.tensorflow
 def test_slice():
     import tensorflow as tf
-    from dace.frontend.tensorflow import TFSession
+    from dace.ml import TFSession
     t = tf.placeholder(tf.int32, [3, 2, 3])
     b = tf.placeholder(tf.int32, [3])
     s = tf.placeholder(tf.int32, [3])

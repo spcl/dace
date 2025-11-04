@@ -15,7 +15,7 @@ from dace.codegen.compiled_sdfg import CompiledSDFG
 
 import dace
 from dace.autodiff import BackwardResult
-from dace.libraries.onnx.onnx_importer import create_output_array
+from dace.frontend.ml.onnx.importer import create_output_array
 from dace.libraries.torch.dispatchers import DaCeMLTorchFunction
 from dace.libraries.torch.dispatchers.common import compile_and_init_sdfgs, \
     get_arglist
@@ -52,7 +52,7 @@ def init_remaining_parameters(module, fwd_arglist, input_names, output_names):
     return constants
 
 
-def callable_for_fwd_module(module: 'dace.frontend.python.module.DaceModule', forward_compiled: CompiledSDFG):
+def callable_for_fwd_module(module: 'dace.frontend.ml.torch.DaceModule', forward_compiled: CompiledSDFG):
     """Create a callable for forward pass execution.
 
     Args:
@@ -90,7 +90,7 @@ def callable_for_fwd_module(module: 'dace.frontend.python.module.DaceModule', fo
     return forward
 
 
-def callable_for_bwd_module(module: 'dace.frontend.python.module.DaceModule', forward_compiled: CompiledSDFG,
+def callable_for_bwd_module(module: 'dace.frontend.ml.torch.DaceModule', forward_compiled: CompiledSDFG,
                             backward_compiled: CompiledSDFG, backward_result: BackwardResult,
                             forwarded_arrays: Dict[str, data.Data]):
 
@@ -197,7 +197,7 @@ def callable_for_bwd_module(module: 'dace.frontend.python.module.DaceModule', fo
     return lambda *args: DifferentiableFunction.apply(*args)
 
 
-def get_ctypes_dispatcher(module: 'dace.frontend.python.module.DaceModule', dummy_inputs) -> DaCeMLTorchFunction:
+def get_ctypes_dispatcher(module: 'dace.frontend.ml.torch.DaceModule', dummy_inputs) -> DaCeMLTorchFunction:
     """
     Get a torch callable for the module. This will compile the sdfg and create a
     wrapper python callable that can be used with PyTorch.

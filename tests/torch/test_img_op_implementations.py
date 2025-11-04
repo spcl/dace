@@ -6,7 +6,7 @@ import torch
 from torch import nn
 import numpy as np
 
-from dace.frontend.python.module import DaceModule
+from dace.ml import DaceModule
 from tests.utils import torch_tensors_close
 
 

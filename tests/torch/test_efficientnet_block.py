@@ -9,7 +9,7 @@ from dace.transformation.interstate import HoistState
 from efficientnet_pytorch import get_model_params
 from efficientnet_pytorch.model import MBConvBlock
 
-from dace.frontend.python.module import DaceModule
+from dace.ml import DaceModule
 from tests.utils import torch_tensors_close
 
 

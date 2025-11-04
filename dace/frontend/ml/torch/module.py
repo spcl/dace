@@ -41,7 +41,7 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
     from dace.libraries.torch import dispatchers
     from dace.autodiff import torch as torch_autodiff
     from dace.autodiff.library import library as autodiff_library
-    from dace.libraries.onnx import ONNXModel
+    from dace.frontend.ml.onnx import ONNXModel
     from dace.util import find_str_not_in_set, auto_optimize_onnx as auto_opt
 else:
     clean_onnx_name = None
@@ -93,7 +93,7 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
             :param debug_transients: if True, the module will have all transients as outputs.
 
             :Example:
-                >>> from dace.frontend.module import DaceModule
+                >>> from dace.frontend.ml.torch import DaceModule
                 >>> class MyModule(nn.Module):
                 ...     def forward(self, x):
                 ...        x = torch.log(x)

@@ -26,7 +26,6 @@ try:
     # This star import is necessary to expose all ONNX operation classes
     from .nodes import *
     from .schema import onnx_representation, ONNXAttributeType, ONNXAttribute, ONNXTypeConstraint, ONNXParameterType, ONNXSchema, ONNXParameter
-    from .onnx_importer import ONNXModel
 
     register_library(__name__, "dace.libraries.onnx")
     _DACE_REGISTERED_LIBRARIES["dace.libraries.onnx"].default_implementation = "pure"

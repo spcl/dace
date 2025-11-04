@@ -10,7 +10,7 @@ import torch
 
 import dace
 
-from dace.frontend.python.module import DaceModule
+from dace.ml import DaceModule
 from tests.utils import torch_tensors_close, tensors_close
 
 

@@ -10,7 +10,7 @@ from dace.autodiff.base_abc import AutoDiffException, BackwardResult
 
 try:
     from dace.libraries.onnx.converters import clean_onnx_name
-    from dace.libraries.onnx.onnx_importer import ONNXModel
+    from dace.frontend.ml.onnx import ONNXModel
     ONNX_AVAILABLE = True
 except ImportError:
     ONNX_AVAILABLE = False

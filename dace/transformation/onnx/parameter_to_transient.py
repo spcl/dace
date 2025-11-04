@@ -8,7 +8,7 @@ from dace import dtypes, nodes
 
 from dace.libraries.onnx.converters import clean_onnx_name
 from dace.libraries.torch import dlpack
-from dace.frontend.python.module import DaceModule
+from dace.frontend.ml.torch import DaceModule
 
 log = logging.getLogger(__name__)
 

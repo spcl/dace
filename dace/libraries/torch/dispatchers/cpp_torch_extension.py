@@ -141,7 +141,7 @@ def tensor_init_for_desc(name: str, desc: data.Data, clean_weights: Dict[str, to
             """
 
 
-def initialize_outputs_code(module: 'dace.frontend.python.DaceModule', output_names: List[str],
+def initialize_outputs_code(module: 'dace.frontend.ml.torch.DaceModule', output_names: List[str],
                             clean_weights: Dict[str, torch.Tensor]) -> str:
     """Generate the code that initializes the output tensors.
 
@@ -385,7 +385,7 @@ def setup_grad_values(backward_result: BackwardResult, sdfg: dace.SDFG, outputs:
     return code
 
 
-def code_for_backward_function(module: 'dace.frontend.python.module.DaceModule', forward_sdfg: dace.SDFG,
+def code_for_backward_function(module: 'dace.frontend.ml.torch.DaceModule', forward_sdfg: dace.SDFG,
                                backward_sdfg: dace.SDFG, backward_result: BackwardResult,
                                forwarded_arrays: Dict[str, data.Data]) -> str:
     """Generate C++ code for a differentiable PyTorch function.
@@ -509,7 +509,7 @@ m.impl("{sdfg_name}", {sdfg_name}_autograd);
 """
 
 
-def code_for_module(module: 'dace.frontend.python.module.DaceModule', compiled_sdfg: CompiledSDFG) -> str:
+def code_for_module(module: 'dace.frontend.ml.torch.DaceModule', compiled_sdfg: CompiledSDFG) -> str:
     """Generate the code for an operator that calls the SDFGs in the module.
 
     :param module: The module.
@@ -591,7 +591,7 @@ def _torch_ext_root() -> str:
     return os.path.join(os.path.expanduser("~"), ".cache", "torch_extensions")
 
 
-def register_and_compile_torch_extension(module: 'dace.frontend.python.module.DaceModule',
+def register_and_compile_torch_extension(module: 'dace.frontend.ml.torch.DaceModule',
                                          dummy_inputs) -> DaCeMLTorchFunction:
     """Get a torch callable for the module. This will compile the SDFG, compile a PyTorch C++ operator, register it
     with PyTorch and return the function that calls it.

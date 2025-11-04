@@ -8,7 +8,7 @@ import torch
 from transformers import BertConfig
 from transformers.models.bert.modeling_bert import BertLayer
 
-from dace.frontend.python.module import DaceModule
+from dace.ml import DaceModule
 from dace.transformation.onnx import parameter_to_transient
 from tests.utils import torch_tensors_close
 

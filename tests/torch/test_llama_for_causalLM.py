@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 from transformers import LlamaForCausalLM, LlamaConfig
-from dace.frontend.python.module import DaceModule
+from dace.ml import DaceModule
 from tests.utils import torch_tensors_close
 
 
