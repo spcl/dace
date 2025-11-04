@@ -463,6 +463,37 @@ def _eval_selected_real_kind(p: int, r: int) -> int:
     return 2
 
 
+def _selected_real_kind(args: Tuple[Union[Int_Literal_Constant, Actual_Arg_Spec]],
+                        alias_map: SPEC_TABLE) -> int:
+    p = np.int32(0)
+    r = np.int32(0)
+    radix_err = NotImplementedError("Cannot handle RADIX argument for SELECTED_REAL_KIND.")
+    if len(args) > 2:
+        raise radix_err
+
+    nextarg = 'p'
+    for arg in args:
+        argname = nextarg
+        argval = arg
+        if isinstance(arg, Actual_Arg_Spec):
+            argname, argval = arg.children
+            assert(isinstance(argname, Name))
+            argname = argname.string.lower()
+
+        if argname == 'p':
+            p = _const_eval_basic_type(argval, alias_map)
+            nextarg = 'r'
+        elif argname == 'r':
+            r = _const_eval_basic_type(argval, alias_map)
+            nextarg = 'p'
+        else:
+            assert(argname == 'radix')
+            raise radix_err
+
+    assert isinstance(p, np.int32) and isinstance(r, np.int32)
+    return np.int32(_eval_selected_real_kind(p, r))
+
+
 def _const_eval_int(expr: Base, alias_map: SPEC_TABLE) -> Optional[int]:
     if isinstance(expr, Name):
         scope_spec = find_scope_spec(expr)
@@ -479,11 +510,7 @@ def _const_eval_int(expr: Base, alias_map: SPEC_TABLE) -> Optional[int]:
         if args:
             args = args.children
         if intr.string == 'SELECTED_REAL_KIND':
-            assert len(args) == 2
-            p, r = args
-            p, r = _const_eval_int(p, alias_map), _const_eval_int(r, alias_map)
-            assert p is not None and r is not None
-            return _eval_selected_real_kind(p, r)
+            return _selected_real_kind(args, alias_map)
         elif intr.string == 'SELECTED_INT_KIND':
             assert len(args) == 1
             p, = args
@@ -691,10 +718,7 @@ def _const_eval_basic_type(expr: Base, alias_map: SPEC_TABLE) -> Optional[NUMPY_
             if all(isinstance(a, (np.float32, np.float64)) for a in avals):
                 return INTR_FNS[intr.string](*avals)
         elif intr.string == 'SELECTED_REAL_KIND':
-            p, r = args
-            p, r = _const_eval_basic_type(p, alias_map), _const_eval_basic_type(r, alias_map)
-            assert isinstance(p, np.int32) and isinstance(r, np.int32)
-            return np.int32(_eval_selected_real_kind(p, r))
+            return _selected_real_kind(args, alias_map)
         elif intr.string == 'SELECTED_INT_KIND':
             p, = args
             p = _const_eval_basic_type(p, alias_map)

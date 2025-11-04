@@ -2541,6 +2541,70 @@ END SUBROUTINE main
     SourceCodeBuilder().add_file(got).check_with_gfortran()
 
 
+def test_exploit_locally_constant_selected_real_kind():
+    sources, main = SourceCodeBuilder().add_file("""
+subroutine main
+  implicit none
+  integer :: dummy
+  integer :: sp, dp, ep, qp, xp, yp, zp
+  ! integer :: ap, bp
+
+  sp = selected_real_kind(6, 37)
+  dummy = sp
+  dp = selected_real_kind(12, 307)
+  dummy = dp
+  ep = selected_real_kind(12)
+  dummy = ep
+  ! TODO: Technically we should return an error code if the precision
+  !       is not available:
+  ! https://gcc.gnu.org/onlinedocs/gfortran/SELECTED_005fREAL_005fKIND.html
+  qp = selected_real_kind(30)
+  dummy = qp
+
+  ! Test the optional argument mechanism:
+  xp = selected_real_kind(r=37)
+  dummy = xp
+  yp = selected_real_kind(p=1)
+  dummy = yp
+  zp = selected_real_kind(p=12,r=1)
+  dummy = zp
+
+  ! TODO: We do not support any of the following:
+  ! ap = selected_real_kind(6, 37, 3)
+  ! dummy = ap
+  ! bp = selected_real_kind(radix=5)
+  ! dummy = bp
+end subroutine main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = exploit_locally_constant_variables(ast)
+
+    got = ast.tofortran()
+    want = """
+SUBROUTINE main
+  IMPLICIT NONE
+  INTEGER :: dummy
+  INTEGER :: sp, dp, ep, qp, xp, yp, zp
+  sp = SELECTED_REAL_KIND(6, 37)
+  dummy = 4
+  dp = SELECTED_REAL_KIND(12, 307)
+  dummy = 8
+  ep = SELECTED_REAL_KIND(12)
+  dummy = 8
+  qp = SELECTED_REAL_KIND(30)
+  dummy = 8
+  xp = SELECTED_REAL_KIND(r = 37)
+  dummy = 4
+  yp = SELECTED_REAL_KIND(p = 1)
+  dummy = 2
+  zp = SELECTED_REAL_KIND(p = 12, r = 1)
+  dummy = 8
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
 def test_consolidate_global_data():
     sources, main = SourceCodeBuilder().add_file("""
 module lib
