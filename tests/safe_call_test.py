@@ -5,14 +5,24 @@ import pytest
 
 
 @dace.program
-def indirect_access(A: dace.float64[5], B: dace.float64[5], ub: dace.int64):
-    for i in range(ub):
-        A[i] = B[i] + 1
+def write_to_null(A: dace.float64[5], B: dace.float64[5], ub: dace.int64):
+    for i in range(5):
+        with dace.tasklet("CPP"):
+            b << B[i]
+            u << ub
+            a >> A[i]
+            """
+                if (u == 0){
+                    void* ptr = nullptr;
+                    *((double*)ptr) = 42.0;
+                }
+                a = b + 1;
+                """
 
 
 @pytest.mark.sequential
-def test_oob():
-    sdfg = indirect_access.to_sdfg()
+def test_wtn():
+    sdfg = write_to_null.to_sdfg()
 
     A = np.zeros((5, ), dtype=np.float64)
     B = np.array([1, 2, 3, 4, 5], dtype=np.float64)
@@ -24,7 +34,7 @@ def test_oob():
     B = np.array([1, 2, 3, 4, 5], dtype=np.float64)
     caught = False
     try:
-        sdfg.safe_call(A, B, 6400)
+        sdfg.safe_call(A, B, 0)
         caught = False
     except Exception as e:
         caught = True
@@ -32,8 +42,8 @@ def test_oob():
 
 
 @pytest.mark.sequential
-def test_oob_precompiled():
-    sdfg = indirect_access.to_sdfg()
+def test_wtn_precompiled():
+    sdfg = write_to_null.to_sdfg()
 
     A = np.zeros((5, ), dtype=np.float64)
     B = np.array([1, 2, 3, 4, 5], dtype=np.float64)
@@ -46,7 +56,7 @@ def test_oob_precompiled():
     B = np.array([1, 2, 3, 4, 5], dtype=np.float64)
     caught = False
     try:
-        obj.safe_call(A, B, 6400)
+        obj.safe_call(A, B, 0)
         caught = False
     except Exception as e:
         caught = True
@@ -55,7 +65,7 @@ def test_oob_precompiled():
 
 @pytest.mark.sequential
 def test_instrumentation():
-    sdfg = indirect_access.to_sdfg()
+    sdfg = write_to_null.to_sdfg()
     sdfg.instrument = dace.InstrumentationType.Timer
 
     A = np.zeros((5, ), dtype=np.float64)
@@ -68,7 +78,7 @@ def test_instrumentation():
 
 @pytest.mark.sequential
 def test_instrumentation_precompiled():
-    sdfg = indirect_access.to_sdfg()
+    sdfg = write_to_null.to_sdfg()
     sdfg.instrument = dace.InstrumentationType.Timer
 
     A = np.zeros((5, ), dtype=np.float64)
@@ -82,7 +92,7 @@ def test_instrumentation_precompiled():
 
 @pytest.mark.sequential
 def test_kwargs():
-    sdfg = indirect_access.to_sdfg()
+    sdfg = write_to_null.to_sdfg()
 
     A = np.zeros((5, ), dtype=np.float64)
     B = np.array([1, 2, 3, 4, 5], dtype=np.float64)
@@ -92,7 +102,7 @@ def test_kwargs():
 
 @pytest.mark.sequential
 def test_kwargs_precompiled():
-    sdfg = indirect_access.to_sdfg()
+    sdfg = write_to_null.to_sdfg()
 
     A = np.zeros((5, ), dtype=np.float64)
     B = np.array([1, 2, 3, 4, 5], dtype=np.float64)
@@ -137,8 +147,8 @@ def test_symbols_precompiled():
 
 
 if __name__ == "__main__":
-    test_oob()
-    test_oob_precompiled()
+    test_wtn()
+    test_wtn_precompiled()
     test_instrumentation()
     test_instrumentation_precompiled()
     test_kwargs()
