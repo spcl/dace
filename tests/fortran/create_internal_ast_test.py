@@ -34,7 +34,7 @@ end subroutine fun
         'subroutine_definitions': [
             M(Subroutine_Subprogram_Node, {
                 'name': M.NAMED('fun'),
-                'args': [M.NAMED('d')],
+                'args': [M.NAMED('d_var_1')],
             }),
         ],
         'structures': M(Structures, has_empty_attr={'structures'})
@@ -70,11 +70,11 @@ end subroutine not_fun
         'subroutine_definitions': [
             M(Subroutine_Subprogram_Node, {
                 'name': M.NAMED('fun'),
-                'args': [M.NAMED('d')],
+                'args': [M.NAMED('d_var_0')],
             }),
             M(Subroutine_Subprogram_Node, {
                 'name': M.NAMED('not_fun'),
-                'args': [M.NAMED('d'), M.NAMED('val')],
+                'args': [M.NAMED('d_var_1'), M.NAMED('val')],
             }),
         ],
         'structures': M(Structures, has_empty_attr={'structures'})
@@ -124,11 +124,11 @@ end program main
             'subroutine_definitions': [
                 M(Subroutine_Subprogram_Node, {
                     'name': M.NAMED('fun'),
-                    'args': [M.NAMED('d')],
+                    'args': [M.NAMED('d_var_0')],
                 }),
                 M(Subroutine_Subprogram_Node, {
                     'name': M.NAMED('not_fun'),
-                    'args': [M.NAMED('d'), M.NAMED('val')],
+                    'args': [M.NAMED('d_var_1'), M.NAMED('val')],
                 }),
             ],
         }, has_empty_attr={'function_definitions', 'interface_blocks'})],
@@ -210,7 +210,7 @@ end program main
             'subroutine_definitions': [
                 M(Subroutine_Subprogram_Node, {
                     'name': M.NAMED('fun'),
-                    'args': [M.NAMED('d')],
+                    'args': [M.NAMED('d_var_0')],
                 }),
             ],
         }, has_empty_attr={'function_definitions', 'interface_blocks'})],
@@ -270,7 +270,7 @@ end subroutine fun
         'subroutine_definitions': [
             M(Subroutine_Subprogram_Node, {
                 'name': M.NAMED('fun'),
-                'args': [M.NAMED('d')],
+                'args': [M.NAMED('d_var_1')],
             }),
         ],
         'structures': M(Structures, {
