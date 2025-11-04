@@ -185,8 +185,6 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
                                                     fromfile='test.sdfg  (first save)',
                                                     tofile='test2.sdfg (after roundtrip)')
                 diff = ''.join(diff)
-                shutil.move(f'{tmp_dir}/test.sdfg', 'test.sdfg')
-                shutil.move(f'{tmp_dir}/test2.sdfg', 'test2.sdfg')
                 raise RuntimeError(f'SDFG serialization failed - files do not match:\n{diff}')
 
     if config.Config.get_bool('optimizer', 'detect_control_flow'):
