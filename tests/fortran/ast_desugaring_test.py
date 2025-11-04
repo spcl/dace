@@ -2484,6 +2484,7 @@ subroutine main()
   end type cfg
   type(cfg) :: c
   real, target :: data = 0.
+  real, target :: arr(3)
   real, pointer :: ptr => null()
   integer, target :: i
   integer, pointer :: iptr => null()
@@ -2503,6 +2504,13 @@ subroutine main()
       iarr(iptr) = iarr(iptr-1) + 1
     end if
   end do
+
+  ptr => arr(2)
+  data = ptr
+  ptr => arr(i)
+  data = ptr  ! Must not do constant replacement
+  ptr => arr(iarr(1))
+  data = ptr  ! Must not do constant replacement
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
@@ -2517,6 +2525,7 @@ SUBROUTINE main
   END TYPE cfg
   TYPE(cfg) :: c
   REAL, TARGET :: data = 0.
+  REAL, TARGET :: arr(3)
   REAL, POINTER :: ptr => NULL()
   INTEGER, TARGET :: i
   INTEGER, POINTER :: iptr => NULL()
@@ -2535,6 +2544,161 @@ SUBROUTINE main
       iarr(i) = iarr(i - 1) + 1
     END IF
   END DO
+  ptr => arr(2)
+  data = arr(2)
+  ptr => arr(i)
+  data = ptr
+  ptr => arr(iarr(1))
+  data = ptr
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+def test_exploit_locally_constant_part_refs():
+    """Test whether _pref_spec can generate specs for Part_Refs."""
+    sources, main = SourceCodeBuilder().add_file("""
+subroutine main
+  implicit none
+  integer :: iarr(4) = 0
+  real :: rarr(4,4) = 0.0
+
+  iarr(2) = 7
+  iarr(3) = iarr(2)
+
+  rarr(1,1) = 3.2
+  rarr(2:3,1) = rarr(1,1)
+  ! TODO: Constant array ranges are not tracked.
+  ! rarr(4,1) = rarr(2,1)
+end subroutine main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = exploit_locally_constant_variables(ast)
+
+    got = ast.tofortran()
+    want = """
+SUBROUTINE main
+  IMPLICIT NONE
+  INTEGER :: iarr(4) = 0
+  REAL :: rarr(4, 4) = 0.0
+  iarr(2) = 7
+  iarr(3) = 7
+  rarr(1, 1) = 3.2
+  rarr(2 : 3, 1) = 3.2
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+def test_exploit_locally_constant_data_refs():
+    """Test find_indexed_dataref_component_spec for Data_Refs."""
+    sources, main = SourceCodeBuilder().add_file("""
+subroutine main
+  implicit none
+  type bar
+    integer :: iarr(4) = 0
+    real :: rarr(4, 4) = 0.0
+    real :: scalar
+  end type bar
+  type foo
+    integer :: iarr(6) = 0
+    type(bar) :: baz(3)
+  end type foo
+  type(foo) :: quux
+  ! integer :: idx
+
+  quux % iarr(2) = 7
+  quux % iarr(1) = quux % iarr(2)
+
+  quux % baz(3) % scalar = 6.8
+  quux % baz(2) % iarr(4) = 9
+  quux % baz(2) % rarr(3,2) = 3.2
+  quux % baz(1) % rarr(1, 1) = quux % baz(3) % scalar
+  quux % iarr(3) = quux % baz(2) % iarr(4)
+  quux % baz(1) % rarr(2, 1) = quux % baz(2) % rarr(3,2)
+
+  ! TODO: Allow variable rhs if idx does not change
+  ! quux % baz(3) % rarr(4, 4) = quux % baz(idx) % scalar
+  ! quux % baz(3) % rarr(3, 4) = quux % baz(3) % rarr(4, 4)
+end subroutine main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = exploit_locally_constant_variables(ast)
+
+    got = ast.tofortran()
+    want = """
+SUBROUTINE main
+  IMPLICIT NONE
+  TYPE :: bar
+    INTEGER :: iarr(4) = 0
+    REAL :: rarr(4, 4) = 0.0
+    REAL :: scalar
+  END TYPE bar
+  TYPE :: foo
+    INTEGER :: iarr(6) = 0
+    TYPE(bar) :: baz(3)
+  END TYPE foo
+  TYPE(foo) :: quux
+  quux % iarr(2) = 7
+  quux % iarr(1) = 7
+  quux % baz(3) % scalar = 6.8
+  quux % baz(2) % iarr(4) = 9
+  quux % baz(2) % rarr(3, 2) = 3.2
+  quux % baz(1) % rarr(1, 1) = 6.8
+  quux % iarr(3) = 9
+  quux % baz(1) % rarr(2, 1) = 3.2
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+def test_exploit_locally_constant_data_ref_pointers():
+    """Test find_indexed_dataref_component_spec for Data_Refs."""
+    sources, main = SourceCodeBuilder().add_file("""
+subroutine main
+  implicit none
+  type foo
+    integer, pointer :: ptr(:, :)
+    integer, pointer :: qtr
+  end type foo
+  type(foo) :: bar(3)
+  integer, target :: x(2,3)
+  integer :: idx
+
+  bar(1) % ptr => x(:,:)
+  bar(1) % ptr(idx,1) = 5
+  bar(1) % ptr(2,2) = 2
+
+  bar(2) % qtr => x(idx, 2)
+  bar(2) % ptr(1,1) = bar(2) % qtr  ! Do not replace
+  bar(3) % ptr(2,2) = bar(1) % ptr(idx,1)
+  bar(3) % ptr(2,3) = bar(1) % ptr(2,2)
+end subroutine main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = exploit_locally_constant_variables(ast)
+
+    got = ast.tofortran()
+    want = """
+SUBROUTINE main
+  IMPLICIT NONE
+  TYPE :: foo
+    INTEGER, POINTER :: ptr(:, :)
+    INTEGER, POINTER :: qtr
+  END TYPE foo
+  TYPE(foo) :: bar(3)
+  INTEGER, TARGET :: x(2, 3)
+  INTEGER :: idx
+  bar(1) % ptr => x(:, :)
+  x(idx, 1) = 5
+  x(2, 2) = 2
+  bar(2) % qtr => x(idx, 2)
+  bar(2) % ptr(1, 1) = bar(2) % qtr
+  bar(3) % ptr(2, 2) = x(idx, 1)
+  bar(3) % ptr(2, 3) = x(2, 2)
 END SUBROUTINE main
 """.strip()
     assert got == want
