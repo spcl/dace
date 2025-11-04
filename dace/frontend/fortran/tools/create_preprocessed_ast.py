@@ -78,6 +78,8 @@ def main():
                            'If nothing is given, then will write to STDOUT.')
     argp.add_argument('--noop', type=str, required=False, action='append', default=[],
                       help='(Optional) Functions or subroutine to make no-op.')
+    argp.add_argument('--unroll_loops', type=int, required=False, default=0,
+                      help='(Optional) Maximum number of iterations to allow for unrolling loops with constant bounds. Negative input unrolls all loops with constant bounds.')
     argp.add_argument('-d', '--checkpoint_dir', type=str, required=False, default=None,
                       help='(Optional) If specified, the AST in various stages of preprocessing will be written as'
                            'Fortran code in there.')
@@ -96,6 +98,8 @@ def main():
 
     noops = [tuple(np.split('.')) for np in args.noop]
     print(f"Will be making these as no-ops: {noops}")
+
+    unroll_loops = args.unroll_loops
 
     checkpoint_dir = args.checkpoint_dir
     if checkpoint_dir:
@@ -118,7 +122,8 @@ def main():
                       make_noop=noops,
                       ast_checkpoint_dir=checkpoint_dir,
                       consolidate_global_data=consolidate_global_data,
-                      rename_uniquely=rename_uniquely)
+                      rename_uniquely=rename_uniquely,
+                      unroll_loops=unroll_loops)
     cfg.sources['_stubs.f90'] = STUBS
     cfg.sources['_builtins.f90'] = BUILTINS
 
