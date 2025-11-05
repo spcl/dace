@@ -464,7 +464,16 @@ class BackwardPassGenerator:
                     current_edge_condition = edge.data.condition.as_string
 
                     # New backward edge condition
-                    new_bwd_edge_condition = f"({src_state_condition}) and {current_edge_condition}" if current_edge_condition != "1" else src_state_condition
+                    # Handle "1" (unconditional) to avoid creating expressions like "1 and condition"
+                    if src_state_condition == "1" and current_edge_condition == "1":
+                        new_bwd_edge_condition = "1"
+                    elif src_state_condition == "1":
+                        new_bwd_edge_condition = current_edge_condition
+                    elif current_edge_condition == "1":
+                        new_bwd_edge_condition = src_state_condition
+                    else:
+                        new_bwd_edge_condition = f"({src_state_condition}) and ({current_edge_condition})"
+
                     bwd_edge = self._get_backward_state_edge(edge)
 
                     # Add the condition to the edge
