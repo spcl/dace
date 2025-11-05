@@ -1327,7 +1327,8 @@ def permute_map(map_entry: nodes.MapEntry, perm: List[int]):
     map_entry.map.range = [map_entry.map.range[p] for p in perm]
 
 
-def extract_map_dims(sdfg: SDFG, map_entry: nodes.MapEntry, dims: List[int]) -> Tuple[nodes.MapEntry, nodes.MapEntry]:
+def extract_map_dims(sdfg: SDFG, map_entry: nodes.MapEntry,
+                     dims: List[int]) -> Tuple[nodes.MapEntry, Optional[nodes.MapEntry]]:
     """
     Helper function that extracts specific map dimensions into an outer map.
 
@@ -1335,6 +1336,7 @@ def extract_map_dims(sdfg: SDFG, map_entry: nodes.MapEntry, dims: List[int]) -> 
     :param map_entry: Map entry node to extract.
     :param dims: A list of dimension indices to extract.
     :return: A 2-tuple containing the extracted map and the remainder map.
+    :note: If all dimensions are extracted, the remainder map is None.
     """
     # Avoid import loop
     from dace.transformation.dataflow import MapCollapse, MapExpansion
@@ -1355,15 +1357,19 @@ def extract_map_dims(sdfg: SDFG, map_entry: nodes.MapEntry, dims: List[int]) -> 
                 permissive=True,  # Since MapExpansion creates sequential maps
             )
 
-        # Collapse remaining maps
-        map_to_collapse = entries[len(dims)]
-        for idx in range(len(dims), len(entries) - 1):
-            map_to_collapse, _ = MapCollapse.apply_to(
-                sdfg,
-                outer_map_entry=map_to_collapse,
-                inner_map_entry=entries[idx + 1],
-                permissive=True,  # Since MapExpansion creates sequential maps
-            )
+        # Collapse remaining maps, if any
+        if len(dims) < len(entries):
+            map_to_collapse = entries[len(dims)]
+            for idx in range(len(dims), len(entries) - 1):
+                map_to_collapse, _ = MapCollapse.apply_to(
+                    sdfg,
+                    outer_map_entry=map_to_collapse,
+                    inner_map_entry=entries[idx + 1],
+                    permissive=True,  # Since MapExpansion creates sequential maps
+                )
+        else:
+            # All dimensions extracted, no remainder
+            map_to_collapse = None
     else:
         extracted_map = map_entry
         map_to_collapse = map_entry
