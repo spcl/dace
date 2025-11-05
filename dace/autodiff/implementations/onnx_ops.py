@@ -14,7 +14,6 @@ The implementations handle various ONNX operations including:
 """
 
 import copy
-import ctypes
 import itertools
 from typing import List, Optional, Tuple, Dict, Union
 
@@ -25,8 +24,7 @@ import dace
 from dace.frontend.common import einsum
 import dace.libraries
 from dace.registry import autoregister_params
-from dace import nodes as nd, dtypes, subsets
-import dace.transformation.transformation as xf
+from dace import nodes as nd
 
 # ONNX-specific imports
 import dace.libraries.onnx as donnx
@@ -42,7 +40,7 @@ from dace.autodiff.base_abc import BackwardImplementation, BackwardContext, Back
 from dace.util import in_desc_with_name
 
 
-def reverse_einsum_wrt_input(forward_node: donnx.ONNXEinsum, input_name: str) -> Tuple[List[str], str]:
+def reverse_einsum_wrt_input(forward_node: 'donnx.nodes.onnx_op.ONNXOp', input_name: str) -> Tuple[List[str], str]:
     """Produce the einsum string that computes the gradient of forward_node w.r.t. input_name.
 
     Note:

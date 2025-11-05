@@ -2,9 +2,10 @@
 
 # Import PyTorch frontend
 try:
-    from dace.frontend.ml.torch import DaceModule
+    from dace.frontend.ml.torch import DaceModule, module
 except ImportError:
     DaceModule = None
+    module = None
 
 # Import ONNX frontend
 try:
@@ -18,4 +19,4 @@ try:
 except ImportError:
     TFSession = None
 
-__all__ = ['DaceModule', 'ONNXModel', 'TFSession']
+__all__ = ['DaceModule', 'module', 'ONNXModel', 'TFSession']
