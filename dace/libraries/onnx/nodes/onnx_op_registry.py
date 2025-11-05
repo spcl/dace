@@ -288,6 +288,14 @@ def _initialize_onnx_registry():
                             return result
 
                 implementation_name = args["name"]
+
+                # Give the Expansion class a unique name and register it in globals
+                # so it can be located during deserialization
+                expansion_class_name = f"{cls_name_ver}_Expansion_{implementation_name}"
+                Expansion.__name__ = expansion_class_name
+                Expansion.__qualname__ = expansion_class_name
+                globals()[expansion_class_name] = Expansion
+
                 cls.register_implementation(implementation_name, Expansion)
                 registered = True
 
