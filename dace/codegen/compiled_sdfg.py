@@ -168,6 +168,12 @@ class ReloadableDLL(object):
     def __exit__(self, *args, **kwargs):
         self.unload()
 
+    def __copy__(self):
+        raise RuntimeError(f'Can not copy ReloadableDLL({self._library_filename})')
+
+    def __deepcopy__(self, memodict={}):
+        raise RuntimeError(f'Can not copy ReloadableDLL({self._library_filename})')
+
 
 class CompiledSDFG(object):
     """ A compiled SDFG object that can be called through Python.
