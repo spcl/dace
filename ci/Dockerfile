@@ -14,5 +14,4 @@ RUN micromamba create -n dace-env python=${PY_VERSION} -c conda-forge -c nvidia 
 
 ARG MAMBA_DOCKERFILE_ACTIVATE=1
 ENV ENV_NAME=dace-env
-RUN python -m pip install --no-cache-dir -e ./dace
 RUN python -m pip install --no-cache-dir pytest
