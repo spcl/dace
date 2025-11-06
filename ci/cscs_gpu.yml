@@ -18,8 +18,8 @@ build_cscs_gh200:
     BASE_IMAGE: jfrog.svc.cscs.ch/dockerhub/nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION}
     CSCS_REBUILD_POLICY: if-not-exists
     DOCKERFILE: ci/Dockerfile
-    DOCKER_BUILD_ARGS: '["BASE_IMAGE", "PY_VERSION", "WORKDIR_PATH"]'
-    PERSIST_IMAGE_NAME: ${CSCS_REGISTRY_PATH}/public/dace-gpu-${PY_VERSION}  # The $DOCKER_TAG tag is added in the before_script of .dynamic-image-name
+    DOCKER_BUILD_ARGS: '["BASE_IMAGE", "WORKDIR_PATH"]'
+    PERSIST_IMAGE_NAME: ${CSCS_REGISTRY_PATH}/public/dace-gpu  # The $DOCKER_TAG tag is added in the before_script of .dynamic-image-name
     WATCH_FILECHANGES: 'ci/Dockerfile ci/cscs_gpu.yml'
   needs: []
 
@@ -27,7 +27,7 @@ test_cscs_gh200:
   stage: test
   extends:
     - .container-runner-daint-gh200
-  image: ${CSCS_REGISTRY_PATH}/public/dace-gpu-${PY_VERSION}:${DOCKER_TAG}
+  image: ${CSCS_REGISTRY_PATH}/public/dace-gpu:${DOCKER_TAG}
   variables:
     TEST_VARIANTS: 'gpu'
     CSCS_CUDA_MPS: 1
