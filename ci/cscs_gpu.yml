@@ -17,6 +17,8 @@ build_cscs_gh200:
     - .dynamic-image-name # Creates a tag (exported as DOCKER_TAG) depending on the files in WATCH_FILECHANGES
     - .container-builder-cscs-gh200
   variables:
+    CUDA_VERSION: ${CUDA_VERSION}
+    UBUNTU_VERSION: ${UBUNTU_VERSION}
     CSCS_REBUILD_POLICY: if-not-exists
     DOCKERFILE: ci/Dockerfile
     DOCKER_BUILD_ARGS: '["CUDA_VERSION", "UBUNTU_VERSION", "PY_VERSION", "WORKDIR_PATH"]'
