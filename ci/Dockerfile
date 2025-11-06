@@ -1,5 +1,4 @@
 ARG BASE_IMAGE=docker.io/mambaorg/micromamba:latest
-ARG PY_VERSION=3.13
 FROM ${BASE_IMAGE}
 
 ENV LANG=C.UTF-8
@@ -9,7 +8,11 @@ ARG WORKDIR_PATH=/workspace
 ENV WORKDIR=${WORKDIR_PATH}
 WORKDIR ${WORKDIR}
 
-RUN micromamba create -n dace-env python=${PY_VERSION} -c conda-forge -c nvidia && \
+RUN apt-get update -qq && apt-get install -qq -y git && \
+    apt-get clean
+
+ARG PY_VERSION=3.13
+RUN micromamba create -n dace-env python=$PY_VERSION -c conda-forge -c nvidia && \
     micromamba clean -a -y
 
 ARG MAMBA_DOCKERFILE_ACTIVATE=1
