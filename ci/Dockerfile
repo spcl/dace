@@ -9,13 +9,6 @@ ARG WORKDIR_PATH=/workspace
 ENV WORKDIR=${WORKDIR_PATH}
 WORKDIR ${WORKDIR}
 
-ARG DEBIAN_FRONTEND=noninteractive
-ARG EXTRA_APTGET=""
-RUN apt-get update -qq && apt-get install -qq -y --no-install-recommends \
-    ${EXTRA_APTGET} && \
-    apt-get clean && \
-    apt-get autoremove -y
-
 RUN micromamba create -n dace-env python=${PY_VERSION} -c conda-forge -c nvidia && \
     micromamba clean -a -y
 
