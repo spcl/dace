@@ -15,4 +15,4 @@ RUN apt-get update -qq && apt-get install -qq -y \
     build-essential && \
     apt-get clean
 
-RUN python -m pip install --no-cache-dir pytest
+RUN python3 -m pip install --no-cache-dir pytest
