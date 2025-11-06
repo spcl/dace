@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=mambaorg/micromamba:latest
+ARG BASE_IMAGE=docker.io/mambaorg/micromamba:latest
 ARG PY_VERSION=3.13
 FROM ${BASE_IMAGE}
 

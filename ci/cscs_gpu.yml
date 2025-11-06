@@ -17,7 +17,7 @@ build_cscs_gh200:
     - .dynamic-image-name # Creates a tag (exported as DOCKER_TAG) depending on the files in WATCH_FILECHANGES
     - .container-builder-cscs-gh200
   variables:
-    BASE_IMAGE: mambaorg/micromamba:cuda${CUDA_VERSION}-ubuntu${UBUNTU_VERSION}
+    BASE_IMAGE: jfrog.svc.cscs.ch/dockerhub/mambaorg/micromamba:cuda${CUDA_VERSION}-ubuntu${UBUNTU_VERSION}
     CSCS_REBUILD_POLICY: if-not-exists
     DOCKERFILE: ci/Dockerfile
     DOCKER_BUILD_ARGS: '["BASE_IMAGE", "PY_VERSION", "WORKDIR_PATH"]'
