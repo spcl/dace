@@ -21,7 +21,7 @@ stages:
     DOCKERFILE: ci/Dockerfile
     DOCKER_BUILD_ARGS: '["BASE_IMAGE", "EXTRA_APTGET", "PY_VERSION", "WORKDIR_PATH" ]'
     PERSIST_IMAGE_NAME: ${CSCS_REGISTRY_PATH}/public/${ARCH}/base/dace-ci-${PY_VERSION}  # The $DOCKER_TAG tag is added in the before_script of .dynamic-image-name
-    WATCH_FILECHANGES: 'ci/Dockerfile ci/cscs-gpu.yml'
+    WATCH_FILECHANGES: 'ci/Dockerfile ci/cscs_gpu.yml'
   parallel:
     matrix:
       - PY_VERSION: *py_versions
