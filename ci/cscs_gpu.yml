@@ -17,11 +17,12 @@ build_cscs_gh200:
     - .dynamic-image-name # Creates a tag (exported as DOCKER_TAG) depending on the files in WATCH_FILECHANGES
     - .container-builder-cscs-gh200
   variables:
+    BASE_IMAGE: mambaorg/micromamba
     CUDA_VERSION: ${CUDA_VERSION}
     UBUNTU_VERSION: ${UBUNTU_VERSION}
     CSCS_REBUILD_POLICY: if-not-exists
     DOCKERFILE: ci/Dockerfile
-    DOCKER_BUILD_ARGS: '["CUDA_VERSION", "UBUNTU_VERSION", "PY_VERSION", "WORKDIR_PATH"]'
+    DOCKER_BUILD_ARGS: '["BASE_IMAGE", "CUDA_VERSION", "UBUNTU_VERSION", "PY_VERSION", "WORKDIR_PATH"]'
     PERSIST_IMAGE_NAME: ${CSCS_REGISTRY_PATH}/public/${ARCH}/base/dace-gpu-ci-${PY_VERSION}  # The $DOCKER_TAG tag is added in the before_script of .dynamic-image-name
     WATCH_FILECHANGES: 'ci/Dockerfile ci/cscs_gpu.yml'
   parallel:
