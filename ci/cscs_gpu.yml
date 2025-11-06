@@ -5,7 +5,7 @@ variables:
   CUDA_VERSION: '12.6.2'
   UBUNTU_VERSION: '24.04'
 
-.py_versions: &py_versions ['3.10', '3.13']
+.py_versions: &py_versions ['3.9', '3.13']
 
 stages:
   - build
@@ -38,7 +38,7 @@ test_cscs_gh200:
     CSCS_CUDA_MPS: 1
     SLURM_GPUS_PER_NODE: 4
     SLURM_JOB_NUM_NODES: 1
-    SLURM_TIMELIMIT: 10
+    SLURM_TIMELIMIT: 20
     GT4PY_BUILD_JOBS: 8
     PYTEST_XDIST_AUTO_NUM_WORKERS: 32
   needs:
