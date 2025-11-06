@@ -1,10 +1,6 @@
 include:
   - remote: 'https://gitlab.com/cscs-ci/recipes/-/raw/master/templates/v2/.ci-ext.yml'
 
-# Note:
-#   block-name-with-dashes      -> defined in remote cscs-ci ext include
-#   block_name_with_underscores -> defined in this file or other file in this repo
-
 variables:
   CUDA_VERSION: '12.6.2'
   UBUNTU_VERSION: '24.04'
@@ -15,8 +11,6 @@ stages:
   - build
   - test
 
-# The base image is built only if dependencies or the pipeline definition change. The repository is cloned during the
-# test stage.
 .build_common:
   stage: build
   extends:
@@ -57,6 +51,7 @@ build_cscs_gh200:
     # The output folder is inside the docker image (${WORKDIR}/dace), so it won't take up
     # space on $SCRATCH but in a ephemeral tmpfs mount in the running node.
     # for git>=2.49: mkdir -p "${WORKDIR}/dace" && git clone --depth 1 --revision "${CI_COMMIT_SHA}" "${CSCS_CI_ORIG_CLONE_URL}" "${WORKDIR}/dace"
+    - python --version
     - mkdir -p "${WORKDIR}/dace" && git clone --recursive --revision "${CI_COMMIT_SHA}" "${CSCS_CI_ORIG_CLONE_URL}" "${WORKDIR}/dace"
     - cd "${WORKDIR}/dace" && pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "${TEST_VARIANTS}"
 
