@@ -8,9 +8,11 @@ ARG WORKDIR_PATH=/workspace
 ENV WORKDIR=${WORKDIR_PATH}
 WORKDIR ${WORKDIR}
 
+USER root
 RUN apt-get update -qq && apt-get install -qq -y git && \
     apt-get clean
 
+USER $MAMBA_USER
 ARG PY_VERSION=3.13
 RUN micromamba create -n dace-env python=$PY_VERSION -c conda-forge -c nvidia && \
     micromamba clean -a -y
