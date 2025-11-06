@@ -54,10 +54,13 @@ build_cscs_gh200:
     - python --version
     - mkdir -p "${WORKDIR}/dace" && git clone --recursive --revision "${CI_COMMIT_SHA}" "${CSCS_CI_ORIG_CLONE_URL}" "${WORKDIR}/dace"
     - cd "${WORKDIR}/dace" && pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "${TEST_VARIANTS}"
+  parallel:
+    matrix:
+      - PY_VERSION: *py_versions
 
 test_cscs_gh200:
   extends:
-    - .container-runner-santis-gh200
+    - .container-runner-daint-gh200
     - .test_common
   needs:
     - build_cscs_gh200
