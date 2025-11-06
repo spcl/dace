@@ -9,7 +9,10 @@ ENV WORKDIR=${WORKDIR_PATH}
 WORKDIR ${WORKDIR}
 
 USER root
-RUN apt-get update -qq && apt-get install -qq -y git && \
+RUN apt-get update -qq && apt-get install -qq -y \
+    ca-certificates \
+    git \
+    build-essential && \
     apt-get clean
 
 USER $MAMBA_USER
