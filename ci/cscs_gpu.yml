@@ -5,8 +5,6 @@ variables:
   CUDA_VERSION: '12.6.2'
   UBUNTU_VERSION: '24.04'
 
-.py_versions: &py_versions ['3.9', '3.13']
-
 stages:
   - build
   - test
@@ -17,15 +15,12 @@ build_cscs_gh200:
     - .dynamic-image-name # Creates a tag (exported as DOCKER_TAG) depending on the files in WATCH_FILECHANGES
     - .container-builder-cscs-gh200
   variables:
-    BASE_IMAGE: jfrog.svc.cscs.ch/dockerhub/mambaorg/micromamba:cuda${CUDA_VERSION}-ubuntu${UBUNTU_VERSION}
+    BASE_IMAGE: jfrog.svc.cscs.ch/dockerhub/nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION}
     CSCS_REBUILD_POLICY: if-not-exists
     DOCKERFILE: ci/Dockerfile
     DOCKER_BUILD_ARGS: '["BASE_IMAGE", "PY_VERSION", "WORKDIR_PATH"]'
     PERSIST_IMAGE_NAME: ${CSCS_REGISTRY_PATH}/public/dace-gpu-${PY_VERSION}  # The $DOCKER_TAG tag is added in the before_script of .dynamic-image-name
     WATCH_FILECHANGES: 'ci/Dockerfile ci/cscs_gpu.yml'
-  parallel:
-    matrix:
-      - PY_VERSION: *py_versions
   needs: []
 
 test_cscs_gh200:
@@ -38,8 +33,7 @@ test_cscs_gh200:
     CSCS_CUDA_MPS: 1
     SLURM_GPUS_PER_NODE: 4
     SLURM_JOB_NUM_NODES: 1
-    SLURM_TIMELIMIT: 20
-    GT4PY_BUILD_JOBS: 8
+    SLURM_TIMELIMIT: 30
     PYTEST_XDIST_AUTO_NUM_WORKERS: 32
   needs:
     - build_cscs_gh200
@@ -47,11 +41,9 @@ test_cscs_gh200:
     # Since the image does not contain the repo, we need to clone it before running the tests.
     # The output folder is inside the docker image (${WORKDIR}/dace), so it won't take up
     # space on $SCRATCH but in a ephemeral tmpfs mount in the running node.
+    - python --version
     - mkdir -p "${WORKDIR}/dace" && git clone --recursive "${CSCS_CI_ORIG_CLONE_URL}" "${WORKDIR}/dace"
     - cd "${WORKDIR}/dace"
     - git checkout "${CI_COMMIT_SHA}"
     - pip install -e ".[testing]"
-    - micromamba run -n dace-env pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "${TEST_VARIANTS}"
-  parallel:
-    matrix:
-      - PY_VERSION: *py_versions
+    - pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "${TEST_VARIANTS}"
