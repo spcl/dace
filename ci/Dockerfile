@@ -9,7 +9,7 @@ ENV WORKDIR=${WORKDIR_PATH}
 WORKDIR ${WORKDIR}
 
 RUN apt-get update -qq && apt-get install -qq -y \
-    python \
+    python3 \
     ca-certificates \
     git \
     build-essential && \
