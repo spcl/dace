@@ -11,41 +11,37 @@ stages:
   - build
   - test
 
-.build_common:
+build_cscs_gh200:
   stage: build
   extends:
     - .dynamic-image-name # Creates a tag (exported as DOCKER_TAG) depending on the files in WATCH_FILECHANGES
+    - .container-builder-cscs-gh200
   variables:
-    BASE_IMAGE: jfrog.svc.cscs.ch/dockerhub/ubuntu:${UBUNTU_VERSION}
     CSCS_REBUILD_POLICY: if-not-exists
     DOCKERFILE: ci/Dockerfile
-    DOCKER_BUILD_ARGS: '["BASE_IMAGE", "EXTRA_APTGET", "PY_VERSION", "WORKDIR_PATH" ]'
-    PERSIST_IMAGE_NAME: ${CSCS_REGISTRY_PATH}/public/${ARCH}/base/dace-ci-${PY_VERSION}  # The $DOCKER_TAG tag is added in the before_script of .dynamic-image-name
+    DOCKER_BUILD_ARGS: '["CUDA_VERSION", "UBUNTU_VERSION", "PY_VERSION", "WORKDIR_PATH"]'
+    PERSIST_IMAGE_NAME: ${CSCS_REGISTRY_PATH}/public/${ARCH}/base/dace-gpu-ci-${PY_VERSION}  # The $DOCKER_TAG tag is added in the before_script of .dynamic-image-name
     WATCH_FILECHANGES: 'ci/Dockerfile ci/cscs_gpu.yml'
   parallel:
     matrix:
       - PY_VERSION: *py_versions
-
-.build_cuda:
-  variables:
-    BASE_IMAGE: jfrog.svc.cscs.ch/dockerhub/nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION}
-
-build_cscs_gh200:
-  extends:
-    - .container-builder-cscs-gh200
-    - .build_common
-    - .build_cuda
   needs: []
 
-.test_common:
+test_cscs_gh200:
   stage: test
-  image: ${CSCS_REGISTRY_PATH}/public/${ARCH}/base/dace-ci-${PY_VERSION}:${DOCKER_TAG}
+  extends:
+    - .container-runner-daint-gh200
+  image: ${CSCS_REGISTRY_PATH}/public/${ARCH}/base/dace-gpu-ci-${PY_VERSION}:${DOCKER_TAG}
   variables:
-    TEST_VARIANTS: 'cpu'
+    TEST_VARIANTS: 'gpu'
     CSCS_CUDA_MPS: 1
     SLURM_GPUS_PER_NODE: 4
     SLURM_JOB_NUM_NODES: 1
     SLURM_TIMELIMIT: 5
+    GT4PY_BUILD_JOBS: 8
+    PYTEST_XDIST_AUTO_NUM_WORKERS: 32
+  needs:
+    - build_cscs_gh200
   script:
     # Since the image does not contain the repo, we need to clone it before running the tests.
     # The output folder is inside the docker image (${WORKDIR}/dace), so it won't take up
@@ -57,14 +53,3 @@ build_cscs_gh200:
   parallel:
     matrix:
       - PY_VERSION: *py_versions
-
-test_cscs_gh200:
-  extends:
-    - .container-runner-daint-gh200
-    - .test_common
-  needs:
-    - build_cscs_gh200
-  variables:
-    TEST_VARIANTS: 'gpu'
-    GT4PY_BUILD_JOBS: 8
-    PYTEST_XDIST_AUTO_NUM_WORKERS: 32
