@@ -34,19 +34,15 @@ ARG PY_VERSION=3.10
 RUN uv venv -p ${PY_VERSION} --link-mode copy ${VIRTUAL_ENV}
 ENV PATH="${VIRTUAL_ENV}/bin:$PATH"
 
-# Install packages
-RUN uv pip install pytest-xdist
+# Install test dependencies
+RUN uv pip install \
+    pytest-xdist \
+    coverage \
+    flake8 \
+    mpi4py \
+    cupy
 
-## Install Miniconda
-#ARG ARCH=x86_64
-#RUN curl https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-${ARCH}.sh -O && \ 
-#    bash Miniconda3-latest-Linux-${ARCH}.sh -b -p /opt/conda && \
-#    rm -rf Miniconda3-latest-Linux-${ARCH}.sh
-#ENV PATH="/opt/conda/bin:$PATH"
-#RUN conda init bash
-#RUN conda tos accept
-#
-## Set up conda dace environment
-#RUN conda create -y --name=dace \
-#    python=${PY_VERSION} \
-#    pytest
+# Install codecov
+RUN curl -Os https://uploader.codecov.io/latest/linux/codecov && \
+    chmod +x codecov && \
+    mv codecov /usr/local/bin/codecov

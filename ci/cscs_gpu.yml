@@ -47,3 +47,14 @@ test_cscs_gh200:
     - git checkout "${CI_COMMIT_SHA}"
     - uv pip install -e ".[testing]"
     - pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -n 4 -m "${TEST_VARIANTS}"
+    - export COVERAGE_RCFILE=`pwd`/.coveragerc
+    - export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
+    - ./tests/cuda_test.sh
+    - coverage combine . */; coverage report; coverage xml
+    - reachable=0
+    - ping -W 2 -c 1 codecov.io || reachable=$?
+    - if [ $reachable -eq 0 ]; then
+    -   ./codecov
+    - else
+    -   echo "Codecov.io is unreachable"
+    - fi
