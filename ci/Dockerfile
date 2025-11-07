@@ -35,7 +35,7 @@ RUN uv venv -p ${PY_VERSION} --link-mode copy ${VIRTUAL_ENV}
 ENV PATH="${VIRTUAL_ENV}/bin:$PATH"
 
 # Install packages
-RUN uv pip install pytest
+RUN uv pip install pytest-xdist
 
 ## Install Miniconda
 #ARG ARCH=x86_64
