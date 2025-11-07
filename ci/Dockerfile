@@ -39,7 +39,6 @@ RUN uv pip install \
     pytest-xdist \
     coverage \
     flake8 \
-    mpi4py \
     cupy
 
 # Install codecov
