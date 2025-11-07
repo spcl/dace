@@ -34,7 +34,7 @@ test_cscs_gh200:
     CSCS_CUDA_MPS: 1
     SLURM_GPUS_PER_NODE: 4
     SLURM_JOB_NUM_NODES: 1
-    SLURM_TIMELIMIT: 30
+    SLURM_TIMELIMIT: 40
     PYTEST_XDIST_AUTO_NUM_WORKERS: 32
   needs:
     - build_cscs_gh200
@@ -46,4 +46,4 @@ test_cscs_gh200:
     - cd "${WORKDIR}/dace"
     - git checkout "${CI_COMMIT_SHA}"
     - uv pip install -e ".[testing]"
-    - pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "${TEST_VARIANTS}"
+    - pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -n 4 -m "${TEST_VARIANTS}"
