@@ -46,7 +46,7 @@ test_cscs_gh200:
     - cd "${WORKDIR}/dace"
     - git checkout "${CI_COMMIT_SHA}"
     - uv pip install -e ".[testing]"
-    - pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "${TEST_VARIANTS}"
+    - pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -n ${PYTEST_XDIST_AUTO_NUM_WORKERS} -m "${TEST_VARIANTS}"
     - export COVERAGE_RCFILE=`pwd`/.coveragerc
     - export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
     - ./tests/cuda_test.sh
