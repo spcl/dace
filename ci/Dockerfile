@@ -8,11 +8,45 @@ ARG WORKDIR_PATH=/workspace
 ENV WORKDIR=${WORKDIR_PATH}
 WORKDIR ${WORKDIR}
 
+# Install basic dependencies
 RUN apt-get update -qq && apt-get install -qq -y \
-    python3 \
     ca-certificates \
+    curl \
     git \
     build-essential && \
     apt-get clean
 
-RUN python3 -m pip install --no-cache-dir pytest
+# Install uv
+ARG UV_VERSION=0.6.12
+ADD https://astral.sh/uv/${UV_VERSION}/install.sh /uv-installer.sh
+RUN UV_UNMANAGED_INSTALL="/opt/uv" sh /uv-installer.sh && rm /uv-installer.sh
+ENV PATH="/opt/uv:$PATH"
+
+# Set up the environment vars with paths for uv
+ARG CACHE_DIR=${WORKDIR_PATH}/cache/
+ENV UV_CACHE_DIR="${CACHE_DIR}/uv"
+ENV UV_PROJECT_ENVIRONMENT=${WORKDIR_PATH}/venv
+ENV UV_PYTHON_INSTALL_DIR="/opt/uv-python"
+
+# Create and activate the python venv
+ARG PY_VERSION=3.10
+ENV VIRTUAL_ENV=${UV_PROJECT_ENVIRONMENT}
+RUN uv venv -p ${PY_VERSION} --link-mode copy ${VIRTUAL_ENV}
+ENV PATH="${VIRTUAL_ENV}/bin:$PATH"
+
+# Install packages
+RUN uv pip install pytest
+
+## Install Miniconda
+#ARG ARCH=x86_64
+#RUN curl https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-${ARCH}.sh -O && \ 
+#    bash Miniconda3-latest-Linux-${ARCH}.sh -b -p /opt/conda && \
+#    rm -rf Miniconda3-latest-Linux-${ARCH}.sh
+#ENV PATH="/opt/conda/bin:$PATH"
+#RUN conda init bash
+#RUN conda tos accept
+#
+## Set up conda dace environment
+#RUN conda create -y --name=dace \
+#    python=${PY_VERSION} \
+#    pytest

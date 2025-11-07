@@ -2,6 +2,7 @@ include:
   - remote: 'https://gitlab.com/cscs-ci/recipes/-/raw/master/templates/v2/.ci-ext.yml'
 
 variables:
+  PY_VERSION: '3.13'
   CUDA_VERSION: '12.6.2'
   UBUNTU_VERSION: '24.04'
 
@@ -16,9 +17,10 @@ build_cscs_gh200:
     - .container-builder-cscs-gh200
   variables:
     BASE_IMAGE: jfrog.svc.cscs.ch/dockerhub/nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION}
+    PY_VERSION: ${PY_VERSION}
     CSCS_REBUILD_POLICY: if-not-exists
     DOCKERFILE: ci/Dockerfile
-    DOCKER_BUILD_ARGS: '["BASE_IMAGE", "WORKDIR_PATH"]'
+    DOCKER_BUILD_ARGS: '["BASE_IMAGE", "PY_VERSION", "WORKDIR_PATH"]'
     PERSIST_IMAGE_NAME: ${CSCS_REGISTRY_PATH}/public/dace-gpu  # The $DOCKER_TAG tag is added in the before_script of .dynamic-image-name
     WATCH_FILECHANGES: 'ci/Dockerfile ci/cscs_gpu.yml'
   needs: []
@@ -41,9 +43,8 @@ test_cscs_gh200:
     # Since the image does not contain the repo, we need to clone it before running the tests.
     # The output folder is inside the docker image (${WORKDIR}/dace), so it won't take up
     # space on $SCRATCH but in a ephemeral tmpfs mount in the running node.
-    - python3 --version
     - mkdir -p "${WORKDIR}/dace" && git clone --recursive "${CSCS_CI_ORIG_CLONE_URL}" "${WORKDIR}/dace"
     - cd "${WORKDIR}/dace"
     - git checkout "${CI_COMMIT_SHA}"
-    - pip install -e ".[testing]"
+    - uv pip install -e ".[testing]"
     - pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "${TEST_VARIANTS}"
