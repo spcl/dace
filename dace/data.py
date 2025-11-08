@@ -1494,6 +1494,10 @@ class Array(Data):
             self.offset = cp.copy(offset)
         else:
             self.offset = [0] * len(shape)
+
+        self._packed_c_strides = None
+        self._packed_fortran_strides = None
+
         self.validate()
 
     def __repr__(self):
@@ -1666,6 +1670,12 @@ class Array(Data):
         else:
             self.offset = [0] * len(shape)
 
+        # Clear cached values and recompute
+        self._packed_c_strides = None
+        self._packed_fortran_strides = None
+        self._packed_c_strides = self._get_packed_c_strides()
+        self._packed_fortran_strides = self._get_packed_fortran_strides()
+
     def set_shape(
         self,
         new_shape,
@@ -1681,23 +1691,18 @@ class Array(Data):
         self.validate()
 
     def _get_packed_fortran_strides(self) -> Tuple[int]:
-        """Compute packed strides, if the array is stored Fortran-style (column-major)."""
-        accum = 1
-        strides = []
-        for shape in self.shape:
-            strides.append(accum)
-            accum *= shape
-        return tuple(strides)
+        """Compute packed strides for Fortran-style (column-major) layout."""
+        # Strides increase along the leading dimensions
+        if self._packed_fortran_strides is None:
+            self._packed_fortran_strides = (1, ) + tuple(np.cumprod(self.shape[:-1], dtype=int))
+        return self._packed_fortran_strides
 
     def _get_packed_c_strides(self) -> Tuple[int]:
-        """Compute packed strides, if the array is stored C-styl (row-major)."""
-        accum = 1
-        strides = []
-        # Same as Fortran order if shape is inversed
-        for shape in reversed(self.shape):
-            strides.append(accum)
-            accum *= shape
-        return tuple(list(reversed(strides)))
+        """Compute packed strides for C-style (row-major) layout."""
+        # Strides increase along the trailing dimensions
+        if self._packed_c_strides is None:
+            self._packed_c_strides = tuple(np.cumprod(self.shape[:0:-1], dtype=int)[::-1]) + (1, )
+        return self._packed_c_strides
 
     def is_packed_fortran_strides(self) -> bool:
         """Return True if strides match Fortran-contiguous (column-major) layout."""

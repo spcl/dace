@@ -948,9 +948,8 @@ class Range(Subset):
             meaning that the complete array is contiguously stored in 1D memory.
         """
         # Any step size != 1 -> not contiguous
-        for (_, _, s) in self:
-            if s != 1:
-                return False
+        if any(s != 1 for (_, _, s) in self):
+            return False
 
         # Determine array layout and calculate expression lengths accordingly
         if array.is_packed_fortran_strides():
@@ -966,22 +965,13 @@ class Range(Subset):
 
         # Check contiguity: once we find a partial dimension, all remaining must be length 1
         for i, (expr_len, dim) in enumerate(zip(expr_lens, shape_dims)):
-            try:
-                # Check if this dimension is partial (less than full shape)
-                if expr_len < dim:
-                    # This dimension is partial - all remaining dimensions must be length 1
-                    for j in range(i + 1, len(expr_lens)):
-                        if expr_lens[j] != 1:
-                            return False
-                    # All remaining dimensions are 1, so this is contiguous
-                    return True
-            except TypeError:
-                # Handle symbolic expressions that can't be compared
-                # Assume it might be partial, so check remaining dimensions
-                for j in range(i + 1, len(expr_lens)):
-                    if expr_lens[j] != 1:
-                        return False
-                # All remaining dimensions are 1
+            # Check if this dimension is partial (less than full shape)
+            if expr_len != dim:
+                # This dimension is partial - all remaining dimensions must be length 1
+                if any(expr_len != 1 for expr_len in expr_lens[i + 1:]):
+                    print(expr_lens[i + 1:])
+                    return False
+                # All remaining dimensions are 1, so this is contiguous
                 return True
 
         # All dimensions are full size - this is contiguous
