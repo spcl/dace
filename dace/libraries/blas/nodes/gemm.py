@@ -192,13 +192,32 @@ class ExpandGemmOpenBLAS(ExpandTransformation):
             opt['alpha'] = '&__alpha'
             opt['beta'] = '&__beta'
 
+        # Handle the case when cin=True and beta != 0 (node has _c as both input and output)
+        # Since BLAS GEMM does in-place read-modify-write on C, and tasklets cannot have
+        # duplicate connectors, we remove the input _c connector. The BLAS call will read
+        # from and write to the same memory location (_c output).
+        #
+        # We also remove the incoming edge and orphaned access node to maintain graph validity.
+        in_connectors = {}
+        for k, v in node.in_connectors.items():
+            if k == '_c':
+                # Remove the incoming edge to _c and the source access node if it becomes isolated
+                for edge in list(state.in_edges_by_connector(node, '_c')):
+                    src_node = edge.src
+                    state.remove_edge(edge)
+                    # Remove the access node if it has no other edges
+                    if state.degree(src_node) == 0:
+                        state.remove_node(src_node)
+            else:
+                in_connectors[k] = v
+
         code += ("cblas_{func}(CblasColMajor, {ta}, {tb}, "
                  "{M}, {N}, {K}, {alpha}, {x}, {lda}, {y}, {ldb}, {beta}, "
                  "_c, {ldc});").format_map(opt)
 
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name,
-            node.in_connectors,
+            in_connectors,
             node.out_connectors,
             code,
             language=dace.dtypes.Language.CPP,

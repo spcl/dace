@@ -110,9 +110,23 @@ def get_gemm_opts(a_strides, b_strides, c_strides) -> Dict[str, Any]:
     #       |    |      |
     #     use these 3 to detect correct option
 
-    sAM, sAK = a_strides[-2:]
-    sBK, sBN = b_strides[-2:]
-    sCM, sCN = c_strides[-2:]
+    # Handle 1D inputs by treating them as column/row vectors
+    # [k] -> treat as [k, 1] with stride [1, k] for column vector
+    if len(a_strides) == 1:
+        sAM, sAK = a_strides[0], 1  # Treat as column vector [k, 1]
+    else:
+        sAM, sAK = a_strides[-2:]
+
+    # Treat as row vector [1, k] -> transposed to [k, 1]
+    if len(b_strides) == 1:
+        sBK, sBN = 1, b_strides[0]
+    else:
+        sBK, sBN = b_strides[-2:]
+
+    if len(c_strides) == 1:
+        sCM, sCN = c_strides[0], 1
+    else:
+        sCM, sCN = c_strides[-2:]
 
     opts = {
         'mkm': {
