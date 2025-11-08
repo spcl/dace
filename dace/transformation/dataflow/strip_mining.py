@@ -371,6 +371,10 @@ class StripMining(transformation.SingleStateTransformation):
         new_map.schedule = map_entry.map.schedule
         map_entry.map.schedule = dtypes.ScheduleType.Sequential
 
+        # Get memlet paths of out edges, necessary to track other subsets
+        # Adding new edges
+        edge_to_src_memlet_paths = {out_edge: graph.memlet_path(out_edge) for out_edge in graph.out_edges(map_entry)}
+
         # Redirect edges
         new_map_entry.in_connectors = dcpy(map_entry.in_connectors)
         sdutil.change_edge_dest(graph, map_entry, new_map_entry)
@@ -381,16 +385,28 @@ class StripMining(transformation.SingleStateTransformation):
         new_in_edges = dict()
         entry_in_conn = {}
         entry_out_conn = {}
-        for _src, src_conn, _dst, _, memlet in graph.out_edges(map_entry):
+        for out_edge in graph.out_edges(map_entry):
+            _src, src_conn, _dst, _, memlet = out_edge
+            # If we have <arr_subset> -> <scalar_data><sclar_subset> pattern (or any kind of other subset)
+            # We need to expand on <arr_subset> and therefore need to get src path (through memlet paths)
+            src_data_name = None
+            if memlet.other_subset is None:
+                src_data_name = memlet.data
+                subset = memlet.subset
+            else:
+                src_edge = edge_to_src_memlet_paths[out_edge][0]
+                src_data_name = src_edge.src.data if isinstance(src_edge.src, dace.nodes.AccessNode) else src_edge.data.data
+                subset = memlet.src_subset
+
             if (src_conn is not None and src_conn[:4] == 'OUT_'
-                    and not isinstance(sdfg.arrays[memlet.data], dace.data.Scalar)):
+                    and not isinstance(sdfg.arrays[src_data_name], dace.data.Scalar)):
                 new_subset = calc_set_image(
                     map_entry.map.params,
                     map_entry.map.range,
-                    memlet.subset,
+                    subset,
                 )
                 conn = src_conn[4:]
-                key = (memlet.data, 'IN_' + conn, 'OUT_' + conn)
+                key = (src_data_name, 'IN_' + conn, 'OUT_' + conn)
                 if key in new_in_edges.keys():
                     old_subset = new_in_edges[key].subset
                     new_in_edges[key].subset = calc_set_union(old_subset, new_subset)
@@ -420,6 +436,7 @@ class StripMining(transformation.SingleStateTransformation):
                 new_in_edges[(memlet.data, in_conn, out_conn)] = dcpy(memlet)
         new_map_entry.out_connectors = entry_out_conn
         map_entry.in_connectors = entry_in_conn
+
         for (_, in_conn, out_conn), memlet in new_in_edges.items():
             graph.add_edge(new_map_entry, out_conn, map_entry, in_conn, memlet)
 
