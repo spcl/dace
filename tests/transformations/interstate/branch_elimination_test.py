@@ -385,6 +385,7 @@ def run_and_compare_sdfg(
 
 
 @pytest.mark.parametrize("use_pass_flag", [True, False])
+@pytest.mark.no_autoopt
 def test_branch_dependent_value_write(use_pass_flag):
     a = np.random.rand(N, N)
     b = np.random.rand(N, N)
@@ -400,6 +401,7 @@ def test_branch_dependent_value_write(use_pass_flag):
                     d=d)
 
 
+@pytest.mark.no_autoopt
 def test_weird_condition():
     a = np.random.rand(N, N)
     b = np.random.rand(N, N)
@@ -408,6 +410,7 @@ def test_weird_condition():
 
 
 @pytest.mark.parametrize("use_pass_flag", [True, False])
+@pytest.mark.no_autoopt
 def test_branch_dependent_value_write_two(use_pass_flag):
     a = np.random.choice([0.001, 3.0], size=(N, N))
     b = np.zeros((N, N))
@@ -424,6 +427,7 @@ def test_branch_dependent_value_write_two(use_pass_flag):
 
 
 @pytest.mark.parametrize("use_pass_flag", [True, False])
+@pytest.mark.no_autoopt
 def test_branch_dependent_value_write_single_branch(use_pass_flag):
     a = np.random.choice([0.001, 3.0], size=(N, N))
     b = np.random.choice([0.001, 5.0], size=(N, N))
@@ -438,6 +442,7 @@ def test_branch_dependent_value_write_single_branch(use_pass_flag):
 
 
 @pytest.mark.parametrize("use_pass_flag", [True, False])
+@pytest.mark.no_autoopt
 def test_complicated_if(use_pass_flag):
     a = np.random.choice([0.001, 3.0], size=(N, N))
     b = np.random.choice([0.001, 5.0], size=(N, N))
@@ -452,6 +457,7 @@ def test_complicated_if(use_pass_flag):
 
 
 @pytest.mark.parametrize("use_pass_flag", [True, False])
+@pytest.mark.no_autoopt
 def test_multi_state_branch_body(use_pass_flag):
     a = np.random.choice([0.001, 3.0], size=(N, N))
     b = np.random.choice([0.001, 5.0], size=(N, N))
@@ -470,6 +476,7 @@ def test_multi_state_branch_body(use_pass_flag):
 
 
 @pytest.mark.parametrize("use_pass_flag", [True, False])
+@pytest.mark.no_autoopt
 def test_nested_if(use_pass_flag):
     a = np.random.choice([0.001, 3.0], size=(N, N))
     b = np.random.choice([0.001, 5.0], size=(N, N))
@@ -487,6 +494,7 @@ def test_nested_if(use_pass_flag):
                     s=s[0])
 
 
+@pytest.mark.no_autoopt
 def test_condition_on_bounds():
     a = np.random.choice([0.001, 3.0], size=(2, 2))
     b = np.random.choice([0.001, 5.0], size=(2, 2))
@@ -507,6 +515,7 @@ def test_condition_on_bounds():
     assert len(nsdfgs) == 1  # Can be applied should return false
 
 
+@pytest.mark.no_autoopt
 def test_nested_if_two():
     a = np.random.choice([0.001, 3.0], size=(N, N))
     b = np.random.choice([0.001, 5.0], size=(N, N))
@@ -516,6 +525,7 @@ def test_nested_if_two():
 
 
 @pytest.mark.parametrize("use_pass_flag", [True, False])
+@pytest.mark.no_autoopt
 def test_tasklets_in_if(use_pass_flag):
     a = np.random.choice([0.001, 3.0], size=(N, N))
     b = np.random.choice([0.001, 5.0], size=(N, N))
@@ -532,6 +542,7 @@ def test_tasklets_in_if(use_pass_flag):
 
 
 @pytest.mark.parametrize("use_pass_flag", [True, False])
+@pytest.mark.no_autoopt
 def test_branch_dependent_value_write_single_branch_nonzero_write(use_pass_flag):
     a = np.random.choice([0.001, 3.0], size=(N, N))
     b = np.random.choice([0.001, 5.0], size=(N, N))
@@ -545,6 +556,7 @@ def test_branch_dependent_value_write_single_branch_nonzero_write(use_pass_flag)
                     d=d)
 
 
+@pytest.mark.no_autoopt
 def test_branch_dependent_value_write_with_transient_reuse():
     a = np.random.choice([0.001, 3.0], size=(N, N))
     b = np.random.choice([0.001, 3.0], size=(N, N))
@@ -559,6 +571,7 @@ def test_branch_dependent_value_write_with_transient_reuse():
 
 
 @pytest.mark.parametrize("use_pass_flag", [True, False])
+@pytest.mark.no_autoopt
 def test_single_branch_connectors(use_pass_flag):
     a = np.random.choice([0.001, 3.0], size=(N, N))
     b = np.random.choice([0.001, 5.0], size=(N, N))
@@ -598,6 +611,7 @@ def test_single_branch_connectors(use_pass_flag):
 
 
 @pytest.mark.parametrize("use_pass_flag", [True, False])
+@pytest.mark.no_autoopt
 def test_disjoint_subsets(use_pass_flag):
     if_cond_58 = np.array([1], dtype=np.int32)
     A = np.random.choice([0.001, 3.0], size=(N, ))
@@ -637,6 +651,7 @@ def _multi_state_nested_if(
             B[6, 0, 2] = A[6] + B[6, 0, 2]
 
 
+@pytest.mark.no_autoopt
 def test_try_clean():
     sdfg1 = _multi_state_nested_if.to_sdfg()
     cblocks = {n for n, g in sdfg1.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
@@ -697,6 +712,7 @@ def test_try_clean():
                          offset=offset[0])
 
 
+@pytest.mark.no_autoopt
 def test_try_clean_as_pass():
     # This is a test to check the different configurations of try clean, applicability depends on the SDFG and the pass
     sdfg = _multi_state_nested_if.to_sdfg()
@@ -777,6 +793,7 @@ def _get_sdfg_with_interstate_array_condition():
     return sdfg
 
 
+@pytest.mark.no_autoopt
 def test_sdfg_with_interstate_array_condition():
     sdfg = _get_sdfg_with_interstate_array_condition()
     llindex = np.ones(shape=(4, 4, 4), dtype=np.int64)
@@ -819,6 +836,7 @@ def repeated_condition_variables(
             c[i, j] = a[i, j] * b[i, j]
 
 
+@pytest.mark.no_autoopt
 def test_repeated_condition_variables():
     a = np.random.choice([0.001, 3.0], size=(N, N))
     b = np.random.choice([0.001, 3.0], size=(N, N))
@@ -834,6 +852,7 @@ def _find_state(root_sdfg: dace.SDFG, node):
     return None
 
 
+@pytest.mark.no_autoopt
 def test_if_over_map():
     sdfg = if_over_map.to_sdfg()
     cblocks = {n for n in sdfg.all_control_flow_regions() if isinstance(n, ConditionalBlock)}
@@ -860,6 +879,7 @@ def test_if_over_map():
                                 sdfg=xform.conditional.parent_graph.sdfg) is True
 
 
+@pytest.mark.no_autoopt
 def test_if_over_map_with_top_level_tasklets():
     sdfg = if_over_map.to_sdfg()
     cblocks = {n for n in sdfg.all_control_flow_regions() if isinstance(n, ConditionalBlock)}
@@ -891,6 +911,7 @@ def test_if_over_map_with_top_level_tasklets():
                                 sdfg=xform.conditional.parent_graph.sdfg) is True
 
 
+@pytest.mark.no_autoopt
 def test_can_be_applied_parameters_on_nested_sdfg():
     sdfg = nested_if.to_sdfg()
     cblocks = {n for n in sdfg.all_control_flow_regions() if isinstance(n, ConditionalBlock)}
@@ -952,6 +973,7 @@ def non_trivial_subset_after_combine_tasklet(
         g[6, 6] = tc4
 
 
+@pytest.mark.no_autoopt
 def test_non_trivial_subset_after_combine_tasklet():
     A = np.random.choice([0.001, 5.0], size=(N, N))
     B = np.random.choice([0.001, 5.0], size=(N, N))
@@ -1012,6 +1034,7 @@ def split_on_disjoint_subsets_nested(
         b[i, 4] = 0.0
 
 
+@pytest.mark.no_autoopt
 def test_split_on_disjoint_subsets():
     A = np.random.choice([0.001, 5.0], size=(N, N, 2))
     B = np.random.choice([0.001, 5.0], size=(N, N))
@@ -1055,6 +1078,7 @@ def test_split_on_disjoint_subsets():
     )
 
 
+@pytest.mark.no_autoopt
 def test_split_on_disjoint_subsets_nested():
     A = np.random.choice([0.001, 5.0], size=(N, N, 2))
     B = np.random.choice([0.001, 5.0], size=(N, N))
@@ -1132,6 +1156,7 @@ def write_to_transient_two(
         b[i, 3] = zmdn
 
 
+@pytest.mark.no_autoopt
 def test_write_to_transient():
     A = np.random.choice([0.001, 5.0], size=(N, N))
     B = np.random.choice([0.001, 5.0], size=(N, N))
@@ -1149,6 +1174,7 @@ def test_write_to_transient():
     )
 
 
+@pytest.mark.no_autoopt
 def test_write_to_transient_two():
     A = np.random.choice([0.001, 5.0], size=(N, N))
     B = np.random.choice([0.001, 5.0], size=(N, N))
@@ -1166,6 +1192,7 @@ def test_write_to_transient_two():
     )
 
 
+@pytest.mark.no_autoopt
 def test_double_empty_state():
     A = np.random.choice([0.001, 5.0], size=(N, N))
     B = np.random.choice([0.001, 5.0], size=(N, N))
@@ -1211,6 +1238,7 @@ def complicated_pattern_for_manual_clean_up_one(
             c[i, 0] = 0.0
 
 
+@pytest.mark.no_autoopt
 def test_complicated_pattern_for_manual_clean_up_one():
     A = np.random.choice([0.001, 5.0], size=(N, N))
     B = np.random.choice([0.001, 5.0], size=(N, N))
@@ -1269,6 +1297,7 @@ def test_complicated_pattern_for_manual_clean_up_one():
                 assert all({isinstance(n, dace.SDFGState) for n in body1.nodes()})
 
 
+@pytest.mark.no_autoopt
 def test_try_clean_on_complicated_pattern_for_manual_clean_up_one():
     A = np.random.choice([0.001, 5.0], size=(N, N))
     B = np.random.choice([0.001, 5.0], size=(N, N))
@@ -1342,6 +1371,7 @@ def complicated_pattern_for_manual_clean_up_two(
         a[i, 3] = zlcrit * 2.0
 
 
+@pytest.mark.no_autoopt
 def test_try_clean_on_complicated_pattern_for_manual_clean_up_two():
     A = np.random.choice([0.001, 5.0], size=(N, N))
     B = np.random.choice([0.001, 5.0], size=(N, N))
@@ -1414,12 +1444,14 @@ def single_assignment_cond_from_scalar(a: dace.float64[512]):
             a[i] = 0.0
 
 
+@pytest.mark.no_autoopt
 def test_single_assignment():
     if_cond_1 = np.array([1], dtype=np.float64)
     A = np.ones(shape=(N, ), dtype=np.float64)
     run_and_compare(single_assignment, 0, True, "single_assignment", a=A, _if_cond_1=if_cond_1[0])
 
 
+@pytest.mark.no_autoopt
 def test_single_assignment_cond_from_scalar():
     A = np.ones(shape=(512, ), dtype=np.float64)
     before = single_assignment_cond_from_scalar.to_sdfg()
@@ -1482,6 +1514,7 @@ def _get_sdfg_with_condition_from_transient_scalar() -> dace.SDFG:
     return sdfg
 
 
+@pytest.mark.no_autoopt
 def test_condition_from_transient_scalar():
     zsolac = np.random.choice([8.0, 11.0], size=(N, ))
     zlcond2 = np.random.choice([8.0, 11.0], size=(N, ))
@@ -1595,6 +1628,7 @@ def _get_disjoint_chain_sdfg() -> dace.SDFG:
 
 
 @pytest.mark.parametrize("rtt_val", [0.0, 4.0, 6.0])
+@pytest.mark.no_autoopt
 def test_disjoint_chain_split_branch_only(rtt_val):
     sdfg, nsdfg_parent_state = _get_disjoint_chain_sdfg()
     sdfg.name = f"disjoint_chain_split_branch_only_rtt_val_{str(rtt_val).replace('.','_')}"
@@ -1630,6 +1664,7 @@ def test_disjoint_chain_split_branch_only(rtt_val):
 
 
 @pytest.mark.parametrize("rtt_val", [0.0, 4.0, 6.0])
+@pytest.mark.no_autoopt
 def test_disjoint_chain(rtt_val):
     sdfg, _ = _get_disjoint_chain_sdfg()
     zsolqa = np.random.choice([0.001, 5.0], size=(N, 5, 5))
@@ -1669,6 +1704,7 @@ def pattern_from_cloudsc_one(
 
 
 @pytest.mark.parametrize("c_val", [0.0, 1.0, 6.0])
+@pytest.mark.no_autoopt
 def test_pattern_from_cloudsc_one(c_val):
     A = np.random.choice([0.001, 5.0], size=(
         2,
@@ -1708,6 +1744,7 @@ def map_param_usage(
         b[i, i] = zmdn
 
 
+@pytest.mark.no_autoopt
 def test_can_be_applied_on_map_param_usage():
     A = np.random.choice([0.001, 5.0], size=(
         N,
@@ -1791,6 +1828,7 @@ def _get_safe_map_param_use_in_nested_sdfg() -> dace.SDFG:
     return outer_sdfg
 
 
+@pytest.mark.no_autoopt
 def test_safe_map_param_use_in_nested_sdfg():
     sdfg = _get_safe_map_param_use_in_nested_sdfg()
     sdfg.validate()
@@ -1887,6 +1925,7 @@ def _get_nsdfg_with_return(return_arr: bool) -> dace.SDFG:
 
 
 @pytest.mark.parametrize("ret_arr", [True, False])
+@pytest.mark.no_autoopt
 def test_nested_sdfg_with_return(ret_arr):
     sdfg = _get_nsdfg_with_return(ret_arr)
     sdfg.validate()
@@ -2011,6 +2050,7 @@ def huge_sdfg(pap: dace.float64[N], ptsphy: dace.float64, r2es: dace.float64, r3
 
 
 @pytest.mark.parametrize("eps_operator_type_for_log_and_div", ["max", "add"])
+@pytest.mark.no_autoopt
 def test_huge_sdfg_with_log_exp_div(eps_operator_type_for_log_and_div: str):
     """Generate test data for the loop body function"""
 
@@ -2091,6 +2131,7 @@ def test_huge_sdfg_with_log_exp_div(eps_operator_type_for_log_and_div: str):
 
 
 @pytest.mark.parametrize("eps_operator_type_for_log_and_div", ["max", "add"])
+@pytest.mark.no_autoopt
 def test_mid_sdfg_with_log_exp_div(eps_operator_type_for_log_and_div: str):
     """Generate test data for the loop body function"""
 
@@ -2190,6 +2231,7 @@ def loop_param_usage(A: dace.float64[6, N, N], B: dace.float64[N, N], C: dace.fl
                     C[i, j] = 2.0 + C[i, j]
 
 
+@pytest.mark.no_autoopt
 def test_loop_param_usage():
     A = np.random.choice([0.001, 5.0], size=(6, N, N))
     B = np.random.choice([0.001, 5.0], size=(N, N))
@@ -2210,6 +2252,7 @@ def test_loop_param_usage():
     run_and_compare_sdfg(sdfg, False, "loop_param_usage", A=A, B=B, C=C)
 
 
+@pytest.mark.no_autoopt
 def test_can_be_applied_on_wcr_edge():
     sdfg = wcr_edge.to_sdfg()
 
