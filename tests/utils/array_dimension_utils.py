@@ -5,6 +5,8 @@ import pytest
 import tempfile
 import os
 
+N = dace.symbol("N")
+
 
 # Helper function
 def create_array(shape, strides):
@@ -278,6 +280,36 @@ def test_sdfg_save_and_reload_strides_tempfile():
         assert after_c == before_c
     finally:
         os.remove(sdfg_path)
+
+
+def test_get_packed_fortran_strides_2d_symbolic_N():
+    """Test Fortran strides for 2D array with symbolic N"""
+    _, array = create_array((10, N), None)  # N added to the second dimension
+    expected = (1, 10)
+    result = array._get_packed_fortran_strides()
+    assert result == expected
+
+
+def test_get_packed_c_strides_3d_symbolic_N():
+    """Test C strides for 3D array with symbolic N"""
+    _, array = create_array((10, N, 30), None)  # N added to the second dimension
+    expected = (30 * N, 30, 1)  # Stride calculation with symbolic N
+    result = array._get_packed_c_strides()
+    assert result == expected
+
+
+def test_is_packed_fortran_strides_true_3d_symbolic_N():
+    """Test 3D array with Fortran strides and symbolic N"""
+    _, array = create_array((10, N, 30), (1, 10, 10 * N))  # Adjust stride for N
+    result = array.is_packed_fortran_strides()
+    assert result is True
+
+
+def test_fortran_and_c_equivalent_for_1d_symbolic_N():
+    """Test that 1D arrays have same strides for both layouts with symbolic N"""
+    _, array = create_array((N, ), (1, ))
+    assert array.is_packed_fortran_strides() is True
+    assert array.is_packed_c_strides() is True
 
 
 if __name__ == "__main__":

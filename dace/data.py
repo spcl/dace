@@ -1694,14 +1694,26 @@ class Array(Data):
         """Compute packed strides for Fortran-style (column-major) layout."""
         # Strides increase along the leading dimensions
         if self._packed_fortran_strides is None:
-            self._packed_fortran_strides = (1, ) + tuple(np.cumprod(self.shape[:-1], dtype=int))
+            strides = [1]
+            accum = 1
+            # Iterate in reversed order except the first dimension
+            for s in self.shape[:-1]:
+                accum *= s
+                strides.append(accum)
+            self._packed_fortran_strides = tuple(strides)
         return self._packed_fortran_strides
 
     def _get_packed_c_strides(self) -> Tuple[int]:
         """Compute packed strides for C-style (row-major) layout."""
         # Strides increase along the trailing dimensions
         if self._packed_c_strides is None:
-            self._packed_c_strides = tuple(np.cumprod(self.shape[:0:-1], dtype=int)[::-1]) + (1, )
+            strides = [1]
+            accum = 1
+            # Iterate in reversed order except the first dimension
+            for s in reversed(self.shape[1:]):
+                accum *= s
+                strides.insert(0, accum)
+            self._packed_c_strides = tuple(strides)
         return self._packed_c_strides
 
     def is_packed_fortran_strides(self) -> bool:
