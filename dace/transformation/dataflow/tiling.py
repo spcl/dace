@@ -46,7 +46,6 @@ class MapTiling(transformation.SingleStateTransformation):
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         return True
 
-    _i = 0
     def apply(self, graph: SDFGState, sdfg: SDFG):
         tile_strides = self.tile_sizes
         if self.strides is not None and len(self.strides) == len(tile_strides):
@@ -123,6 +122,4 @@ class MapTiling(transformation.SingleStateTransformation):
                 mapcollapse.apply(graph, sdfg)
             last_map_entry = graph.in_edges(map_entry)[0].src
 
-        self._i += 1
-        graph.sdfg.save(f"y_{self._i}.sdfg")
         return last_map_entry

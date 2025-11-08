@@ -395,7 +395,8 @@ class StripMining(transformation.SingleStateTransformation):
                 subset = memlet.subset
             else:
                 src_edge = edge_to_src_memlet_paths[out_edge][0]
-                src_data_name = src_edge.src.data if isinstance(src_edge.src, dace.nodes.AccessNode) else src_edge.data.data
+                src_data_name = src_edge.src.data if isinstance(src_edge.src,
+                                                                dace.nodes.AccessNode) else src_edge.data.data
                 subset = memlet.src_subset
 
             if (src_conn is not None and src_conn[:4] == 'OUT_'

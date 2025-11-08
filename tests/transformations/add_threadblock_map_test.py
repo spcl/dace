@@ -6,7 +6,6 @@ import numpy
 import sys
 from dace.transformation.dataflow.add_threadblock_map import AddThreadBlockMap
 
-
 N = dace.symbol("N")
 
 
@@ -41,89 +40,90 @@ def elementwise_with_floor_div(A: dace.float64[512] @ dace.dtypes.StorageType.GP
     for i in dace.map[sym_i_beg:(sym_i_end // 2)] @ dace.dtypes.ScheduleType.GPU_Device:
         A[i] = 2.0 * B[i]
 
+
 def _get_sdfg_with_memlet_tree():
     sdfg = dace.SDFG("test")
     state = sdfg.add_state(is_start_block=True)
 
     for aname in "ab":
         sdfg.add_array(
-                aname,
-                shape=(10, 2),
-                dtype=dace.float64,
-                storage=dace.dtypes.StorageType.GPU_Global,
-                transient=False,
+            aname,
+            shape=(10, 2),
+            dtype=dace.float64,
+            storage=dace.dtypes.StorageType.GPU_Global,
+            transient=False,
         )
     sdfg.add_scalar(
-            "s",
-            dtype=dace.float64,
-            transient=True,
+        "s",
+        dtype=dace.float64,
+        transient=True,
     )
 
     a, b, s = (state.add_access(name) for name in "abs")
     me, mx = state.add_map("comp", ndrange={"__i": "0:10"}, schedule=dace.dtypes.ScheduleType.GPU_Device)
     tlet = state.add_tasklet(
-            "tlet",
-            inputs={"__in"},
-            outputs={"__out"},
-            code="__out = __in + 1.0",
+        "tlet",
+        inputs={"__in"},
+        outputs={"__out"},
+        code="__out = __in + 1.0",
     )
 
     state.add_edge(
-            a,
-            None,
-            me,
-            "IN_a1",
-            dace.Memlet("a[0:10, 0]"),
+        a,
+        None,
+        me,
+        "IN_a1",
+        dace.Memlet("a[0:10, 0]"),
     )
     state.add_edge(
-            me,
-            "OUT_a1",
-            tlet,
-            "__in",
-            dace.Memlet("a[__i, 0]"),
+        me,
+        "OUT_a1",
+        tlet,
+        "__in",
+        dace.Memlet("a[__i, 0]"),
     )
     me.add_scope_connectors("a1")
 
     state.add_edge(
-            tlet,
-            "__out",
-            mx,
-            "IN_b1",
-            dace.Memlet("b[__i, 0]"),
+        tlet,
+        "__out",
+        mx,
+        "IN_b1",
+        dace.Memlet("b[__i, 0]"),
     )
     state.add_edge(
-            mx,
-            "OUT_b1",
-            b,
-            None,
-            dace.Memlet("b[0:10, 0]"),
+        mx,
+        "OUT_b1",
+        b,
+        None,
+        dace.Memlet("b[0:10, 0]"),
     )
     mx.add_scope_connectors("b1")
 
     state.add_edge(
-            me,
-            # It is also important that we read from the same as the tasklet.
-            "OUT_a1",
-            s,
-            None,
-            # According to my understanding the error is here, that the data of this
-            #  Memlet refers to `s` instead of `a` as the outer data does.
-            dace.Memlet("s[0] -> [__i, 0]"),
+        me,
+        # It is also important that we read from the same as the tasklet.
+        "OUT_a1",
+        s,
+        None,
+        # According to my understanding the error is here, that the data of this
+        #  Memlet refers to `s` instead of `a` as the outer data does.
+        dace.Memlet("s[0] -> [__i, 0]"),
     )
 
     state.add_edge(
-            s,
-            None,
-            mx,
-            "IN_b2",
-            dace.Memlet("b[__i, 1] -> [0]"),
+        s,
+        None,
+        mx,
+        "IN_b2",
+        dace.Memlet("b[__i, 1] -> [0]"),
     )
     state.add_edge(
-            mx,
-            "OUT_b2",
-            b,
-            None,
-            dace.Memlet("b[0:10, 1]"),
+        mx,
+        "OUT_b2",
+        b,
+        None,
+        dace.Memlet("b[0:10, 1]"),
     )
     mx.add_scope_connectors("b2")
 
@@ -135,9 +135,9 @@ def test_memlet_tree():
     sdfg = _get_sdfg_with_memlet_tree()
 
     sdfg.apply_transformations_once_everywhere(
-            AddThreadBlockMap,
-            validate=True,
-            validate_all=True,
+        AddThreadBlockMap,
+        validate=True,
+        validate_all=True,
     )
 
     sdfg.validate()
@@ -205,6 +205,8 @@ def test_elementwise_small_constexpr_size():
 
 
 symbol_params = [16, 32, 512]
+
+
 @pytest.mark.gpu
 @pytest.mark.parametrize("symbol_param", symbol_params)
 def test_elementwise_symbolic(symbol_param):
