@@ -221,7 +221,15 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
                     if sdfg.root_sdfg.using_explicit_control_flow:
                         if (not hasattr(xform, '__explicit_cf_compatible__')
                                 or xform.__explicit_cf_compatible__ == False):
-                            warnings.warn(f'Skipping {xform.__class__.__name__} (not explicit_cf_compatible).')
+                            warnings.warn('Pattern matching is skipping transformation ' + xform.__class__.__name__ +
+                                          ' due to incompatibility with experimental control flow blocks. If the ' +
+                                          'SDFG does not contain experimental blocks, ensure the top level SDFG does ' +
+                                          'not have `SDFG.using_explicit_control_flow` set to True. If ' +
+                                          xform.__class__.__name__ + ' is compatible with experimental blocks, ' +
+                                          'please annotate it with the class decorator ' +
+                                          '`@dace.transformation.explicit_cf_compatible`. see ' +
+                                          '`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` ' +
+                                          'for more information.')
                             continue
 
                     applied = True

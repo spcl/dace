@@ -111,7 +111,6 @@ class MapTiling(transformation.SingleStateTransformation):
             map_entry.schedule = original_schedule
 
             if last_map_entry:
-                print("Apply map collapse")
                 new_map_entry = graph.in_edges(map_entry)[0].src
                 mapcollapse_subgraph = {
                     MapCollapse.outer_map_entry: graph.node_id(last_map_entry),
