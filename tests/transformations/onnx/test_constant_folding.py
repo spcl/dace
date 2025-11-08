@@ -8,7 +8,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import dace
-from dace.frontend.python.module import DaceModule
+from dace.frontend.ml.torch.module import DaceModule
 from dace.transformation.onnx.constant_folding import ConstantFolding
 
 

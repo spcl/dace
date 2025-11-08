@@ -14,7 +14,7 @@ import urllib
 import torch
 import torch.nn as nn
 from transformers import BertTokenizer, BertModel
-from dace.frontend.python.module import DaceModule
+from dace.frontend.ml.torch.module import DaceModule
 import dace
 from tests.utils import torch_tensors_close
 
