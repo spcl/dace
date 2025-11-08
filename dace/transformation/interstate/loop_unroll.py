@@ -5,11 +5,11 @@ import ast
 import copy
 from typing import List, Optional, Union
 
-from dace import sdfg as sd, symbolic
+from dace import sdfg as sd, symbolic, serialize
 from dace.properties import Property, make_properties
 from dace.sdfg import InterstateEdge, utils as sdutil
 from dace.sdfg.nodes import NestedSDFG
-from dace.sdfg.state import BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowRegion, LoopRegion, ReturnBlock, SDFGState
+from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
 from dace.frontend.python.astutils import ASTFindReplace
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
@@ -139,22 +139,7 @@ class LoopUnroll(xf.MultiStateTransformation):
 
         for block in loop.nodes():
             # Using to/from JSON copies faster than deepcopy.
-            if isinstance(block, LoopRegion):
-                new_block = LoopRegion.from_json(block.to_json(), context={'sdfg': graph.sdfg})
-            elif isinstance(block, ConditionalBlock):
-                new_block = ConditionalBlock.from_json(block.to_json(), context={'sdfg': graph.sdfg})
-            elif isinstance(block, sd.SDFGState):
-                new_block = sd.SDFGState.from_json(block.to_json(), context={'sdfg': graph.sdfg})
-            elif isinstance(block, ContinueBlock):
-                new_block = ContinueBlock.from_json(block.to_json(), context={'sdfg': graph.sdfg})
-            elif isinstance(block, BreakBlock):
-                new_block = BreakBlock.from_json(block.to_json(), context={'sdfg': graph.sdfg})
-            elif isinstance(block, ReturnBlock):
-                new_block = ReturnBlock.from_json(block.to_json(), context={'sdfg': graph.sdfg})
-            elif isinstance(block, ControlFlowRegion):
-                new_block = ControlFlowRegion.from_json(block.to_json(), context={'sdfg': graph.sdfg})
-            else:
-                raise Exception(f"Unsupported CFG Type {type(block)}")
+            new_block = serialize.from_json(serialize.to_json(block), context={'sdfg': graph.sdfg})
             assert block not in block_map
             block_map[block] = new_block
             new_block.replace(loop.loop_variable, value)

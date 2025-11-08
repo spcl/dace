@@ -3,12 +3,12 @@
 import sympy as sp
 from dace import sdfg as sd, symbolic, properties
 from dace import data as dt
-from dace.sdfg import utils as sdutil
-from dace.sdfg.state import ControlFlowRegion, LoopRegion, ConditionalBlock
+from dace.sdfg import SDFGState
+from dace.sdfg.state import LoopRegion, ConditionalBlock
 from dace.data import Scalar
 from dace.transformation import transformation as xf
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.passes.analysis import loop_analysis, StateReachability, FindAccessStates
+from dace.transformation.passes.analysis import loop_analysis, StateReachability, FindAccessStates, ConditionUniqueWrites
 from dace.symbolic import pystr_to_symbolic, issymbolic
 from dace.subsets import Range
 import copy
@@ -101,6 +101,10 @@ class LoopLocalMemoryReduction(ppl.Pass):
         "Whether or not to round up the reduced memory size to the next power of two (enables bitmasking instead of modulo).",
     )
 
+    assume_positive_symbols = properties.Property(dtype=bool,
+                                                  default=False,
+                                                  desc="Assume symbols are positive when checking for applicability.")
+
     num_applications = 0  # To track number of applications for testing
 
     def modifies(self) -> ppl.Modifies:
@@ -111,12 +115,13 @@ class LoopLocalMemoryReduction(ppl.Pass):
         return modified != ppl.Modifies.Nothing
 
     def depends_on(self):
-        return {StateReachability, FindAccessStates}
+        return {StateReachability, FindAccessStates, ConditionUniqueWrites}
 
     def apply_pass(self, sdfg: sd.SDFG, pipeline_results: Dict[str, Any]) -> Optional[Set[str]]:
         self.num_applications = 0
         self.out_of_loop_states_cache = {}
 
+        # Get analysis results
         if StateReachability.__name__ in pipeline_results:
             self.states_reach = pipeline_results[StateReachability.__name__]
         else:
@@ -127,21 +132,25 @@ class LoopLocalMemoryReduction(ppl.Pass):
         else:
             self.access_states = FindAccessStates().apply_pass(sdfg, {})
 
+        if ConditionUniqueWrites.__name__ in pipeline_results:
+            self.cond_unique = pipeline_results[ConditionUniqueWrites.__name__]
+        else:
+            self.cond_unique = ConditionUniqueWrites().apply_pass(sdfg, {})
+
+        # Iterate over all loops in the SDFG
         for node, _ in sdfg.all_nodes_recursive():
             if isinstance(node, LoopRegion):
                 # Loop step expression must be constant.
                 if not self._has_constant_loop_expressions(sdfg, node):
                     continue
 
-                arrays = set(acc_node.data for acc_node in node.data_nodes())
-                write_states = {}
-                for st in node.all_states():
-                    for an in st.data_nodes():
-                        if st.in_degree(an) > 0:
-                            write_states.setdefault(an.data, set()).add(st)
+                changing_syms = set()
+                for edge in node.all_interstate_edges():
+                    changing_syms.update(edge.data.assignments.keys())
 
+                arrays = set(acc_node.data for acc_node in node.data_nodes())
                 for arr in arrays:
-                    self._apply_for_array(arr, sdfg, node, write_states)
+                    self._apply_for_array(arr, sdfg, node, changing_syms)
 
         self.out_of_loop_states_cache = {}
 
@@ -163,27 +172,33 @@ class LoopLocalMemoryReduction(ppl.Pass):
         return indices
 
     def _get_read_write_indices(
-            self, array_name: str,
-            loop: LoopRegion) -> tuple[list[list[Union[tuple, None]]], list[list[Union[tuple, None]]]]:
+        self, array_name: str, loop: LoopRegion
+    ) -> tuple[list[list[Union[tuple, None]]], list[list[Union[tuple, None]]], list[list[Union[tuple, None]]]]:
         # list of list of tuples of (a, b) for a*i + b
         read_indices = list()
-        write_indices = list()
+        uncond_write_indices = list()
+        all_write_indices = list()
 
-        access_nodes = set(an for an in loop.data_nodes() if an.data == array_name)
-        read_edges = set(e for an in access_nodes for st in loop.all_states() if an in st.data_nodes()
+        read_edges = set(e for st in loop.all_states() for an in st.data_nodes() if an.data == array_name
                          for e in st.out_edges(an))
-        write_edges = set(e for an in access_nodes for st in loop.all_states() if an in st.data_nodes()
-                          for e in st.in_edges(an))
+        uncond_write_edges = set(e for st in loop.all_states() for an in st.data_nodes()
+                                 if an.data == array_name and an not in self.cond_unique for e in st.in_edges(an))
+        all_write_edges = set(e for st in loop.all_states() for an in st.data_nodes() if an.data == array_name
+                              for e in st.in_edges(an))
 
         for edge in read_edges:
             eri = self._get_edge_indices(edge.data.src_subset, loop)
             read_indices.append(eri)
 
-        for edge in write_edges:
+        for edge in uncond_write_edges:
             ewi = self._get_edge_indices(edge.data.dst_subset, loop)
-            write_indices.append(ewi)
+            uncond_write_indices.append(ewi)
 
-        return read_indices, write_indices
+        for edge in all_write_edges:
+            ewi = self._get_edge_indices(edge.data.dst_subset, loop)
+            all_write_indices.append(ewi)
+
+        return read_indices, uncond_write_indices, all_write_indices
 
     def _has_constant_loop_expressions(self, sdfg: sd.SDFG, loop: LoopRegion) -> tuple[bool, Union[int, None]]:
         itervar = loop.loop_variable
@@ -203,7 +218,8 @@ class LoopLocalMemoryReduction(ppl.Pass):
         self,
         array_name: str,
         read_indices: list[list[Union[tuple, None]]],
-        write_indices: list[list[Union[tuple, None]]],
+        uncond_write_indices: list[list[Union[tuple, None]]],
+        all_write_indices: list[list[Union[tuple, None]]],
         step: int,
         sdfg: sd.SDFG,
         loop: LoopRegion,
@@ -215,36 +231,31 @@ class LoopLocalMemoryReduction(ppl.Pass):
         for dim in range(len(read_indices[0])):
             # Get all read and write indices for this dimension
             dim_read_indices = [il[dim] for il in read_indices if il[dim] is not None]
-            dim_write_indices = [il[dim] for il in write_indices if il[dim] is not None]
+            dim_write_indices = [il[dim] for il in all_write_indices if il[dim] is not None]
+            dim_uncond_write_indices = [il[dim] for il in uncond_write_indices if il[dim] is not None]
 
-            if not dim_read_indices or not dim_write_indices:
+            if not dim_read_indices or not dim_uncond_write_indices:
                 k_values.append(None)
                 continue
 
             # Get the minimum read index and maximum write index
-            try:
-                read_lb = min([i[1] for i in dim_read_indices])
-                read_ub = max([i[1] for i in dim_read_indices])
-                write_lb = min([i[1] for i in dim_write_indices])
-                write_ub = max([i[1] for i in dim_write_indices])
-            except TypeError:
-                # If the minimum or maximum cannot be determined (e.g. because of symbolic expressions being uncomparable), we cannot apply the transformation.
-                k_values.append(None)
-                continue
-
-            # TODO: We could also handle cases where write_lb == read_ub if we can prove that the write happens before the read in the loop for larger spans.
+            read_lb = sp.Min(*[i[1] for i in dim_read_indices])
+            read_ub = sp.Max(*[i[1] for i in dim_read_indices])
+            write_ub = sp.Max(*[i[1] for i in dim_write_indices])
+            uncond_write_lb = sp.Min(*[i[1] for i in dim_uncond_write_indices])
+            uncond_write_ub = sp.Max(*[i[1] for i in dim_uncond_write_indices])
 
             # We assume a is the same for all indices, so we can just take the first one.
             a = dim_read_indices[0][0] * step
             if a >= 1:
                 span = (write_ub - read_lb) / a
-                cond = (write_lb > read_ub)  # At least one write index must be higher than all read indices
+                cond = (uncond_write_lb > read_ub)  # At least one write index must be higher than all read indices
             if a == 0:
                 span = len(dim_read_indices + dim_write_indices)
-                cond = (write_lb > read_ub)  # At least one write index must be higher than all read indices
+                cond = True  # No condition needed
             if a <= -1:
                 span = (read_ub - write_ub) / (-a)
-                cond = (write_ub < read_lb)  # At least one write index must be lower than all read indices
+                cond = (uncond_write_ub < read_lb)  # At least one write index must be lower than all read indices
 
             # If we have a span of one, it's enough that reads happen after writes in the loop.
             if span == 0:
@@ -252,30 +263,35 @@ class LoopLocalMemoryReduction(ppl.Pass):
                     st.in_degree(an) > 0 and st.out_degree(an) > 0 for st in loop.all_states()
                     for an in st.data_nodes() if an.data == array_name)
 
+            # Add positive symbol assumption
+            if self.assume_positive_symbols and issymbolic(cond):
+                pos_syms = {s: sp.Symbol(s.name, positive=True) for s in cond.free_symbols}
+                cond = cond.xreplace(pos_syms)
+
             # Take maximum from previous accesses into account
             try:
-                k = max(span, max_indices[dim])
+                k = sp.Max(span, max_indices[dim])
                 not cond  # XXX: This ensures the condition can be evaluated. Do not remove.
             except TypeError:
                 k_values.append(None)
                 continue
 
-            k = symbolic.resolve_symbol_to_constant(k, sdfg)
-            if k is None:
-                k_values.append(None)
-                continue
-            k = int(k)
+            kc = symbolic.resolve_symbol_to_constant(k, sdfg)
+            if kc is not None:
+                k = int(kc)
 
             # Round up to next power of two if enabled
-            if self.next_power_of_two:
+            if self.next_power_of_two and not issymbolic(k):
                 k_p2 = (1 << k.bit_length()) - 1
 
                 # If we're larger than the array size, don't round up.
-                if k_p2 + 1 < sdfg.arrays[array_name].shape[dim]:
+                ineq = symbolic.resolve_symbol_to_constant(k_p2 + 1 >= sdfg.arrays[array_name].shape[dim], sdfg)
+                if ineq is not None and not ineq:
                     k = k_p2
 
             # Condition must hold
-            if not cond or k + 1 >= sdfg.arrays[array_name].shape[dim]:
+            ineq = symbolic.resolve_symbol_to_constant(k + 1 >= sdfg.arrays[array_name].shape[dim], sdfg)
+            if not cond or (ineq is not None and ineq):
                 k_values.append(None)
             else:
                 k_values.append(k + 1)  # +1 because k is the highest index accessed, so size is k+1
@@ -346,8 +362,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
                 indices.append(max_index)
         return indices
 
-    def _apply_for_array(self, array_name: str, sdfg: sd.SDFG, loop: LoopRegion,
-                         write_states: dict[str, set[sd.SDFGState]]) -> bool:
+    def _apply_for_array(self, array_name: str, sdfg: sd.SDFG, loop: LoopRegion, changing_syms: set[str]) -> bool:
         # Must be transient (otherwise it's observable)
         if not sdfg.arrays[array_name].transient:
             return
@@ -357,16 +372,62 @@ class LoopLocalMemoryReduction(ppl.Pass):
             return
 
         # There needs to be at least one read and one write.
-        read_indices, write_indices = self._get_read_write_indices(array_name, loop)
-        if not read_indices or not write_indices:
+        read_indices, uncond_write_indices, all_write_indices = self._get_read_write_indices(array_name, loop)
+        if not read_indices or not all_write_indices:
             return
 
         # All read and write indices must be linear combinations of the loop variable. I.e. a*i + b, where a and b are constants.
-        if any(i is None for il in read_indices + write_indices for i in il):
+        if any(i is None for il in read_indices + all_write_indices for i in il):
             return
 
+        # None of the indices can depend on changing symbols (i.e. symbols updated in the loop).
+        for il in read_indices + all_write_indices:
+            for (a, b) in il:
+                if any(s.name in changing_syms for s in a.free_symbols.union(b.free_symbols)):
+                    return
+
+        # Combine the read and write indices into a 1D array access for easier analysis
+        collapsed_read_indices = []
+        itervar = pystr_to_symbolic(loop.loop_variable)
+        for rd in read_indices:
+            new_rd = pystr_to_symbolic("0")
+            for (a, b), s in zip(rd, sdfg.arrays[array_name].strides):
+                new_rd += (a * itervar + b) * s
+            a = sp.Wild("a", exclude=[itervar])
+            b = sp.Wild("b", exclude=[itervar])
+            m = new_rd.match(a * itervar + b)
+            if m is None:
+                return
+            collapsed_read_indices.append([(m[a], m[b])])
+
+        collapsed_uncond_write_indices = []
+        itervar = pystr_to_symbolic(loop.loop_variable)
+        for wr in uncond_write_indices:
+            new_wr = pystr_to_symbolic("0")
+            for (a, b), s in zip(wr, sdfg.arrays[array_name].strides):
+                new_wr += (a * itervar + b) * s
+            a = sp.Wild("a", exclude=[itervar])
+            b = sp.Wild("b", exclude=[itervar])
+            m = new_wr.match(a * itervar + b)
+            if m is None:
+                return
+            collapsed_uncond_write_indices.append([(m[a], m[b])])
+
+        collapsed_all_write_indices = []
+        itervar = pystr_to_symbolic(loop.loop_variable)
+        for wr in all_write_indices:
+            new_wr = pystr_to_symbolic("0")
+            for (a, b), s in zip(wr, sdfg.arrays[array_name].strides):
+                new_wr += (a * itervar + b) * s
+            a = sp.Wild("a", exclude=[itervar])
+            b = sp.Wild("b", exclude=[itervar])
+            m = new_wr.match(a * itervar + b)
+            if m is None:
+                return
+            collapsed_all_write_indices.append([(m[a], m[b])])
+
         # The scaling factor a must be the same for all indices if a != 0.
-        a_values = set(i[0] for il in read_indices + write_indices for i in il if i[0] != 0)
+        a_values = set(i[0] for il in collapsed_read_indices + collapsed_all_write_indices for i in il if i[0] != 0)
         if len(a_values) > 1:
             return
         if len(a_values) == 0:
@@ -375,30 +436,28 @@ class LoopLocalMemoryReduction(ppl.Pass):
         # The offset b must be multiple of a if a != 0.
         step = symbolic.resolve_symbol_to_constant(loop_analysis.get_loop_stride(loop), sdfg)
         a = a_values.pop() * step
-        if a != 0 and any(i[1] % a != 0 for il in read_indices + write_indices for i in il if i[0] != 0):
+        if a != 0 and any(i[1] % a != 0 for il in collapsed_read_indices + collapsed_all_write_indices
+                          for i in il if i[0] != 0):
             return
 
         # All constants (a == 0) must be in the same dimension.
-        for dim in range(len(read_indices[0])):
-            if any(il[dim][0] == 0 for il in read_indices) and any(il[dim][0] != 0 for il in read_indices):
+        for dim in range(len(collapsed_read_indices[0])):
+            if any(il[dim][0] == 0 for il in collapsed_read_indices + collapsed_all_write_indices) and any(
+                    il[dim][0] != 0 for il in collapsed_read_indices + collapsed_all_write_indices):
                 return
-            if any(il[dim][0] == 0 for il in write_indices) and any(il[dim][0] != 0 for il in write_indices):
-                return
-
-        # None of the write accesses must be within a conditional block. Reads are ok.
-        for st in write_states.get(array_name, set()):
-            pgraph = st.parent_graph
-            while pgraph is not None and pgraph != loop:
-                if isinstance(pgraph, ConditionalBlock):
-                    return
-                pgraph = pgraph.parent_graph
 
         # Outside of the loop, the written subset of the array must be written before read or not read at all.
-        if not self._write_is_loop_local(array_name, write_indices, sdfg, loop):
+        if not self._write_is_loop_local(array_name, collapsed_all_write_indices, sdfg, loop):
+            return
+
+        # A K value must be found for the combined 1D access.
+        collapsed_K = self._get_K_values(array_name, collapsed_read_indices, collapsed_uncond_write_indices,
+                                         collapsed_all_write_indices, step, sdfg, loop)
+        if all(k is None for k in collapsed_K):
             return
 
         # A K value must be found for at least one dimension.
-        Ks = self._get_K_values(array_name, read_indices, write_indices, step, sdfg, loop)
+        Ks = self._get_K_values(array_name, read_indices, uncond_write_indices, all_write_indices, step, sdfg, loop)
         if all(k is None for k in Ks):
             return
 
@@ -422,7 +481,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
                     # we can replace the array with a scalar, so no need for modulo.
                     lb = pystr_to_symbolic("0")
                     ub = pystr_to_symbolic("0")
-                elif self.bitmask_indexing and k & (k - 1) == 0:
+                elif self.bitmask_indexing and not issymbolic(k) and k & (k - 1) == 0:
                     # if k is a power of two, we can use a bitmask instead of modulo.
                     lb = pystr_to_symbolic(f"{subset[i][0]} & ({k - 1})")
                     ub = pystr_to_symbolic(f"{subset[i][1]} & ({k - 1})")
@@ -450,7 +509,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
                     # we can replace the array with a scalar, so no need for modulo.
                     lb = pystr_to_symbolic("0")
                     ub = pystr_to_symbolic("0")
-                elif self.bitmask_indexing and k & (k - 1) == 0:
+                elif self.bitmask_indexing and not issymbolic(k) and k & (k - 1) == 0:
                     # if k is a power of two, we can use a bitmask instead of modulo.
                     lb = pystr_to_symbolic(f"{subset[i][0]} & ({k - 1})")
                     ub = pystr_to_symbolic(f"{subset[i][1]} & ({k - 1})")
