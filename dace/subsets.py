@@ -969,7 +969,6 @@ class Range(Subset):
             if expr_len != dim:
                 # This dimension is partial - all remaining dimensions must be length 1
                 if any(expr_len != 1 for expr_len in expr_lens[i + 1:]):
-                    print(expr_lens[i + 1:])
                     return False
                 # All remaining dimensions are 1, so this is contiguous
                 return True
