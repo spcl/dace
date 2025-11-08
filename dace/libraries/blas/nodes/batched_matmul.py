@@ -141,7 +141,16 @@ class ExpandBatchedMatMulPure(ExpandTransformation):
             num_a_batch = len(array_a.shape) - 2
             # Start from the rightmost batch dimension of output and work backwards
             offset = num_batch_dims - num_a_batch
-            a_batch_indices = ', '.join(['__i%d' % (offset + i) for i in range(num_a_batch)])
+            # Handle broadcasting: if dimension is 1, use index 0 instead of loop variable
+            a_batch_indices_parts = []
+            for i in range(num_a_batch):
+                if array_a.shape[i] == 1:
+                    # Broadcast dimension: always access index 0
+                    a_batch_indices_parts.append('0')
+                else:
+                    # Regular dimension: use loop variable
+                    a_batch_indices_parts.append('__i%d' % (offset + i))
+            a_batch_indices = ', '.join(a_batch_indices_parts)
             memlet_a = f'{a_batch_indices}, __im, __ik'
 
         # For B: if 1D, use [K]; if 2D, use [K, N]; if 3D+, use [batch_indices..., K, N]
@@ -157,7 +166,16 @@ class ExpandBatchedMatMulPure(ExpandTransformation):
             num_b_batch = len(array_b.shape) - 2
             # Start from the rightmost batch dimension of output and work backwards
             offset = num_batch_dims - num_b_batch
-            b_batch_indices = ', '.join(['__i%d' % (offset + i) for i in range(num_b_batch)])
+            # Handle broadcasting: if dimension is 1, use index 0 instead of loop variable
+            b_batch_indices_parts = []
+            for i in range(num_b_batch):
+                if array_b.shape[i] == 1:
+                    # Broadcast dimension: always access index 0
+                    b_batch_indices_parts.append('0')
+                else:
+                    # Regular dimension: use loop variable
+                    b_batch_indices_parts.append('__i%d' % (offset + i))
+            b_batch_indices = ', '.join(b_batch_indices_parts)
             memlet_b = f'{b_batch_indices}, __ik, __in'
 
         # For C: build indices matching the output shape
