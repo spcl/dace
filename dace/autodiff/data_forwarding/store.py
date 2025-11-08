@@ -1,6 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-import re
 from typing import List, Tuple
 import sympy as sp
 
@@ -88,15 +87,7 @@ def _store_data(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState
 
     # Add a new AccessNode and array to the forward pass
     # First, check if a stored array with this name already exists
-    if "stored_" + forward_an.data not in bwd_generator.backward_sdfg.arrays:
-        new_store_node_name = "stored_" + forward_an.data
-    else:
-        i = 0
-        while True:
-            if f"stored_{i}_" + forward_an.data not in bwd_generator.backward_sdfg.arrays:
-                new_store_node_name = f"stored_{i}_" + forward_an.data
-                break
-            i += 1
+    new_store_node_name = forward_state.sdfg._find_new_name("stored_" + forward_an.data)
 
     # Get the new array shape
     # This will be the shape of the current array
@@ -321,14 +312,14 @@ def _store_data(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState
     bfs_nodes = list(forward_state.bfs_nodes(source=forward_an))
 
     # We make sure that views are also compared with their original array to check for conflicts
-    conflict_arryas = [forward_an.data]
+    conflict_arrays = [forward_an.data]
     # Check if the access node is a view
-    if isinstance(forward_an.desc(forward_state), (dt.View, dt.ArrayView)):
+    if isinstance(forward_an.desc(forward_state), dt.View):
         # Get the original array name
         viewed_array = next(forward_state.in_edges_by_connector(forward_an, "views")).data.data
-        conflict_arryas.append(viewed_array)
+        conflict_arrays.append(viewed_array)
 
-    if any(isinstance(n, nodes.AccessNode) and n.data in conflict_arryas and n is not forward_an for n in bfs_nodes):
+    if any(isinstance(n, nodes.AccessNode) and n.data in conflict_arrays and n is not forward_an for n in bfs_nodes):
         to_connect = []
         for out_edge in forward_state.out_edges(forward_an):
             # Get the destination of the edge
@@ -461,8 +452,7 @@ def _connect_stored_data_to_target(bwd_generator: 'BackwardPassGenerator', forwa
             # The stored data will only contain the row and the stride for it should be one
             # This is only a problem if the view points to a NestedSDFG input,
             # that expects a descriptor with the original view stride
-            if isinstance(child_node, nodes.NestedSDFG) and isinstance(forward_node.desc(bwd_generator.sdfg),
-                                                                       (dt.View, dt.ArrayView)):
+            if isinstance(child_node, nodes.NestedSDFG) and isinstance(forward_node.desc(bwd_generator.sdfg), dt.View):
                 # Get the strides of the stored data
                 stored_data_desc = bwd_generator.sdfg.arrays[source_node.data]
                 stored_strides = stored_data_desc.strides
@@ -491,28 +481,14 @@ def _get_assign_tasklet(forward_state: SDFGState,
     # Create the assign tasklet
     assign_tasklet_node_in_connector = "in_stored_" + node.data
     assign_tasklet_node_out_connector = "out_stored_" + node.data
-    assign_tasklet_node = nodes.Tasklet(
-        label=f"__store_{node.data}_assign_",
-        inputs={assign_tasklet_node_in_connector},
-        outputs={assign_tasklet_node_out_connector},
-        code=f"{assign_tasklet_node_out_connector} = {assign_tasklet_node_in_connector}",
-    )
 
-    # Add it to the state
-    forward_state.add_node(assign_tasklet_node)
-
-    # Connect it to the last map entry node
     # Create the memlet for the assignment
     # This will be the same as the memlet going to the tasklet
     assign_memlet_data = copy.deepcopy(last_edge.data)
-    assign_block = assign_tasklet_node
-    assign_block_in_connector = assign_tasklet_node_in_connector
-    return_node = assign_tasklet_node
-    return_connector = assign_tasklet_node_out_connector
     param_dict = {}
     memlet_access_iterators = []
 
-    # We check the incoming memlet volumn
+    # We check the incoming memlet volume
     if assign_memlet_data.volume != 1:
         # We need to add a map to iterate through the missing dimensions
         # For this we will create an assign block containing a map
@@ -526,51 +502,76 @@ def _get_assign_tasklet(forward_state: SDFGState,
             else:
                 # This is a range tuple we need to add an iterator for
                 # Create a random new free symbol
-                free_symbol = "si"
-                i = 0
-                while free_symbol in memlet_access_iterators or free_symbol in forward_state.free_symbols:
-                    free_symbol = f"{free_symbol}_{i}"
-                    i += 1
+                free_symbol = forward_state.sdfg.find_new_symbol("si")
+
+                # Add the new symbol here so that find_new_symbol doesn't return it again
+                forward_state.sdfg.add_symbol(free_symbol, dtypes.int64)
                 memlet_access_iterators.append(free_symbol)
                 param_dict.update({free_symbol: element})
 
-        # Create the map and add it to the SDFG
-        map = nodes.Map("flatten_assignment_map",
-                        params=list(param_dict.keys()),
-                        ndrange=list(param_dict.values()),
-                        schedule=dtypes.ScheduleType.GPU_Device if cuda else dtypes.ScheduleType.Default)
-        map_entry = nodes.MapEntry(map)
-        map_exit = nodes.MapExit(map)
-        forward_state.add_nodes_from([map_entry, map_exit])
-
-        # Add the necessary connectors
-        assert map_entry.add_in_connector(f"IN_store_block")
-        assert map_entry.add_out_connector(f"OUT_store_block")
-        assert map_exit.add_in_connector(f"IN_store_block")
-        assert map_exit.add_out_connector(f"OUT_store_block")
-
-        # Create the memlet from the map entry to the assign tasklet
+        # Build the memlets for input and output
         in_state_access = ','.join(memlet_access_iterators)
-        memlet_data = Memlet(expr=f"{last_edge.data.data}[{in_state_access}]")
+        input_memlet = Memlet(expr=f"{last_edge.data.data}[{in_state_access}]")
+        if loop_iterators:
+            output_memlet = Memlet(expr=f"{stored_node.data}[{loop_iterators},{in_state_access}]")
+        else:
+            output_memlet = Memlet(expr=f"{stored_node.data}[{in_state_access}]")
 
-        # Create the edge between the map entry and assign tasklet
-        forward_state.add_edge(map_entry, "OUT_store_block", assign_tasklet_node, assign_tasklet_node_in_connector,
-                               memlet_data)
+        assign_tasklet_node, map_entry, map_exit = forward_state.add_mapped_tasklet(
+            name=f"__store_{node.data}_assign_",
+            map_ranges=param_dict,
+            inputs={assign_tasklet_node_in_connector: input_memlet},
+            code=f"{assign_tasklet_node_out_connector} = {assign_tasklet_node_in_connector}",
+            outputs={assign_tasklet_node_out_connector: output_memlet},
+            schedule=dtypes.ScheduleType.GPU_Device if cuda else dtypes.ScheduleType.Default,
+            external_edges=False)
 
-        # Create the memlet from the assign tasklet to the map exist
-        memlet_data = Memlet(
-            expr=f"{stored_node.data}[{loop_iterators},{in_state_access}]") if loop_iterators else Memlet(
-                expr=f"{stored_node.data}[{in_state_access}]")
+        # Add the necessary connectors for external connections
+        map_entry.add_in_connector("IN_store_block")
+        map_exit.add_out_connector("OUT_store_block")
 
-        # Create the edge between the map entry and assign tasklet
-        forward_state.add_edge(assign_tasklet_node, assign_tasklet_node_out_connector, map_exit, "IN_store_block",
-                               memlet_data)
+        # Update the internal edges to route through the new connectors
+        # Find and update the edge from map_entry to tasklet
+        for e in list(forward_state.out_edges(map_entry)):
+            if e.dst == assign_tasklet_node:
+                # Update the source connector to route through our external connector
+                forward_state.remove_edge(e)
+                forward_state.add_edge(map_entry, "OUT_store_block", assign_tasklet_node,
+                                       assign_tasklet_node_in_connector, e.data)
+                map_entry.add_out_connector("OUT_store_block")
+                break
+
+        # Find and update the edge from tasklet to map_exit
+        for e in list(forward_state.in_edges(map_exit)):
+            if e.src == assign_tasklet_node:
+                # Update the destination connector to route through our external connector
+                forward_state.remove_edge(e)
+                forward_state.add_edge(assign_tasklet_node, assign_tasklet_node_out_connector, map_exit,
+                                       "IN_store_block", e.data)
+                map_exit.add_in_connector("IN_store_block")
+                break
 
         # Make sure this block is connected correctly
         assign_block = map_entry
         assign_block_in_connector = "IN_store_block"
         return_node = map_exit
         return_connector = "OUT_store_block"
+    else:
+        # Volume is 1, create a simple tasklet without a map
+        assign_tasklet_node = nodes.Tasklet(
+            label=f"__store_{node.data}_assign_",
+            inputs={assign_tasklet_node_in_connector},
+            outputs={assign_tasklet_node_out_connector},
+            code=f"{assign_tasklet_node_out_connector} = {assign_tasklet_node_in_connector}",
+        )
+
+        # Add it to the state
+        forward_state.add_node(assign_tasklet_node)
+
+        assign_block = assign_tasklet_node
+        assign_block_in_connector = assign_tasklet_node_in_connector
+        return_node = assign_tasklet_node
+        return_connector = assign_tasklet_node_out_connector
 
     # Get the last map
     last_map = last_edge.src
@@ -608,16 +609,19 @@ def _get_symbol_upper_bound_from_loop(bwd_generator: 'DataForwardingbwd_generato
             raise AutoDiffException(f"Symbol dimension {s} couldn't be parsed correctly during storing")
         loop_index = str(list(loop_indices)[0])
     elif isinstance(s, str):
-        # Extract the free symbols in the string besides the constants and operators and remove white space
-        variable_regex = r'\b[a-zA-Z_][a-zA-Z0-9_]*\b'
-        loop_indices = re.findall(variable_regex, s)
+        # Convert the string to a symbolic expression and extract free symbols
+        try:
+            expr = sp.sympify(s)
+        except (sp.SympifyError, TypeError, ValueError) as e:
+            raise AutoDiffException(f"Symbol dimension {s} couldn't be parsed as a symbolic expression: {e}")
 
-        # If there are multiple symbols in the string
-        if len(loop_indices) != 1 or loop_indices[0] not in bwd_generator.sdfg.symbols:
+        # We don't want to match global SDFG symbols
+        loop_indices = {symb for symb in expr.free_symbols if str(symb) not in bwd_generator.sdfg.free_symbols}
+        if len(loop_indices) != 1:
             raise AutoDiffException(f"Symbol dimension {s} couldn't be parsed correctly during storing")
-        loop_index = loop_indices[0]
+        loop_index = str(list(loop_indices)[0])
     else:
-        raise AutoDiffException(f"Symbol dimesnion {s} is not a string and not a sympy symbol")
+        raise AutoDiffException(f"Symbol dimension {s} is not a string and not a sympy symbol")
 
     # If the loop bound can be directly extracted from the interstate edges
     if loop_index in bwd_generator.interstate_symbols:
@@ -631,9 +635,24 @@ def _get_symbol_upper_bound_from_loop(bwd_generator: 'DataForwardingbwd_generato
                 # Get the max loop range
                 start, end = ad_utils.extract_loop_region_info(l)
 
-                # If this is the case of exmaple of a loop like 6 - i
-                # TODO: How can we do this better?
-                matched = f"-{loop_index}" in str(s) or f"- {loop_index}" in str(s)
+                # Check if the loop variable has a negative coefficient
+                # by extracting the coefficient from the affine expression
+                s_expr = sp.sympify(s) if isinstance(s, str) else s
+                # Find the actual symbol in the expression that matches loop_index by name
+                loop_symbol = None
+                for sym in s_expr.free_symbols:
+                    if str(sym) == loop_index:
+                        loop_symbol = sym
+                        break
+
+                # Extract the coefficient of the loop variable
+                if loop_symbol is not None:
+                    coeff = s_expr.coeff(loop_symbol)
+                    # If coefficient is negative we need to use smallest instead of largest
+                    matched = coeff is not None and (coeff < 0) == True
+                else:
+                    # Loop variable not found in expression
+                    matched = False
                 smallest, largest = ad_utils.get_loop_end(start, end, l)
                 if not matched:
                     loop_size = largest

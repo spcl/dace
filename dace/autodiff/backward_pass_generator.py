@@ -328,8 +328,6 @@ class BackwardPassGenerator:
                 # Check that all edges are float, int, or boolean
                 ad_utils.check_edges_type_in_state(state_subgraph_view)
 
-                self._disambiguate_direction_dependent_views(state)
-
                 # Recursively reverse the subgraph
                 self._reverse_subgraph(forward_state=state, backward_state=reversed_state, subgraph=state_subgraph_view)
 
@@ -468,7 +466,16 @@ class BackwardPassGenerator:
                     current_edge_condition = edge.data.condition.as_string
 
                     # New backward edge condition
-                    new_bwd_edge_condition = f"({src_state_condition}) and {current_edge_condition}" if current_edge_condition != "1" else src_state_condition
+                    # Handle "1" (unconditional) to avoid creating expressions like "1 and condition"
+                    if src_state_condition == "1" and current_edge_condition == "1":
+                        new_bwd_edge_condition = "1"
+                    elif src_state_condition == "1":
+                        new_bwd_edge_condition = current_edge_condition
+                    elif current_edge_condition == "1":
+                        new_bwd_edge_condition = src_state_condition
+                    else:
+                        new_bwd_edge_condition = f"({src_state_condition}) and ({current_edge_condition})"
+
                     bwd_edge = self._get_backward_state_edge(edge)
 
                     # Add the condition to the edge
@@ -665,7 +672,7 @@ class BackwardPassGenerator:
             raise ValueError(f"Unsupported storage {array_desc.storage}")
 
         # Careful! The order of the ifs here matters since ArrayView is a subclass of Array
-        if isinstance(array_desc, (dt.View, dt.ArrayView)):
+        if isinstance(array_desc, dt.View):
             # No need to initialize: the viewed array will always be visited
             # (since a view can never be a required grad), and thus the viewed array will be initialized.
             pass
@@ -815,7 +822,7 @@ class BackwardPassGenerator:
         required_gradients_all_states = {n for n in self.required_gradients_data}
         given_gradients_all_states = given_gradients_all_states | required_gradients_all_states
 
-        # Do the backward BFS iterativly
+        # Do the backward BFS iteratively
         for state in reversed(self.state_order):
             state_given_gradients: List[nodes.AccessNode] = []
 
@@ -1044,14 +1051,14 @@ class BackwardPassGenerator:
         for g in state_subgraph.nodes():
             if isinstance(g, nodes.NestedSDFG):
 
-                inout_connoctors = set(g.in_connectors).intersection(set(g.out_connectors))
+                inout_connectors = set(g.in_connectors).intersection(set(g.out_connectors))
                 # If there are any inout connectors
-                if len(inout_connoctors) > 0:
+                if len(inout_connectors) > 0:
                     out_connectors = {edge.src_conn: edge for edge in state.out_edges(g)}
                     in_connectors = {edge.dst_conn: edge for edge in state.in_edges(g)}
                     view_out_connectors = {edge.src_conn: edge for edge in state_subgraph.out_edges(g)}
                     view_in_connectors = {edge.dst_conn: edge for edge in state_subgraph.in_edges(g)}
-                    for con in inout_connoctors:
+                    for con in inout_connectors:
                         # Check if it is missing in the out or in connectors of the view
                         if con in view_out_connectors and con not in view_in_connectors:
                             # Get the equivalent in node and connector
@@ -1276,35 +1283,6 @@ class BackwardPassGenerator:
                     expanded_something = True
 
         return expanded_something
-
-    def _disambiguate_direction_dependent_views(self, state: SDFGState):
-        """Disambiguate direction-dependent views for correct reversal.
-
-        Consider the following subgraph:
-        (A) -- y --> (B) -- x --> (C)
-        In DaCe, if B is a View node and A and C are access nodes, and y and x both have data set to A.data and
-        B.data respectively, the semantics of the graph depend on the order in which it is executed, i.e. reversing
-        the subgraph doesn't perform as expected anymore. To disambiguate this case, we set y.data to the View's
-        data.
-        :param state: The state to disambiguate views in.
-        """
-        for n in state.nodes():
-            if isinstance(n, nodes.AccessNode) and type(n.desc(self.sdfg)) is dt.View:
-                in_edges = state.in_edges(n)
-                out_edges = state.out_edges(n)
-
-                if len(in_edges) == 1 and len(out_edges) == 1:
-                    A = in_edges[0].src
-                    y = in_edges[0].data
-                    C = out_edges[0].dst
-                    x = out_edges[0].data
-                    if (isinstance(A, nodes.AccessNode) and isinstance(C, nodes.AccessNode) and y.data == A.data
-                            and x.data == C.data):
-
-                        # flip the memlet
-                        y.subset, y.other_subset = y.other_subset, y.subset
-                        y.data = n.data
-                        y.try_initialize(self.sdfg, state, in_edges[0])
 
     def _get_node_state(self, node: nodes.Node) -> SDFGState:
         """Return the SDFG state that contains this node."""

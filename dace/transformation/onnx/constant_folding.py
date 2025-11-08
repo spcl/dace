@@ -13,7 +13,7 @@ from dace.sdfg import utils as sdutil
 import dace.libraries.onnx as donnx
 from dace.libraries.onnx.converters import clean_onnx_name
 from dace.libraries.onnx.nodes.onnx_op import ONNXOp
-from dace.libraries.onnx import ONNXModel
+from dace.frontend.ml.onnx import ONNXModel
 
 log = logging.getLogger(__name__)
 

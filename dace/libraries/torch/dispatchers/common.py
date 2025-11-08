@@ -17,7 +17,7 @@ import dace
 import torch
 from dace.codegen.compiled_sdfg import CompiledSDFG
 from dace.libraries.onnx.converters import clean_onnx_name
-from dace.libraries.onnx.onnx_importer import create_output_array
+from dace.frontend.ml.onnx.importer import create_output_array
 
 
 @dataclasses.dataclass
@@ -39,7 +39,7 @@ class DaCeMLTorchFunction:
     ptr: List[torch.Tensor]
 
 
-def get_arglist(module: 'dace.frontend.python.module.DaceModule') -> Tuple[List[str], List[str]]:
+def get_arglist(module: 'dace.frontend.ml.torch.DaceModule') -> Tuple[List[str], List[str]]:
     """
     Get the list of forward-pass argument names for a module.
 
@@ -57,7 +57,7 @@ def get_arglist(module: 'dace.frontend.python.module.DaceModule') -> Tuple[List[
 
 
 def compile_and_init_sdfgs(
-    module: 'dace.frontend.python.module.DaceModule', dummy_inputs
+    module: 'dace.frontend.ml.torch.DaceModule', dummy_inputs
 ) -> Union[Tuple[CompiledSDFG, torch.Tensor], Tuple[CompiledSDFG, torch.Tensor, CompiledSDFG, torch.Tensor]]:
     """
     Compile SDFGs and initialize them using the provided dummy inputs.

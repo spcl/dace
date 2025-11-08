@@ -890,7 +890,8 @@ class SympyCleaner(ast.NodeTransformer):
 
     def visit_Name(self, node):
         if node.id == "pi":
-            return ast.copy_location(ast.parse("(3.141592653589)").body[0], node)
+            # Wrap in double() cast to avoid C++ ambiguity when typeless_pi needs explicit type
+            return ast.copy_location(ast.parse("double(dace.math.pi)").body[0].value, node)
         else:
             return self.generic_visit(node)
 

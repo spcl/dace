@@ -1,3 +1,4 @@
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import pytest
 
 pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
@@ -7,7 +8,7 @@ import torch.nn.functional as F
 
 import numpy as np
 import dace
-from dace.frontend.python.module import DaceModule
+from dace.ml import DaceModule
 
 
 @pytest.mark.torch
@@ -27,7 +28,7 @@ def test_conv2d(sdfg_name: str, use_cpp_dispatcher: bool):
     ptmodel = Model()
     x = torch.rand(1, 1, 8, 8)
 
-    @dace.module(sdfg_name=sdfg_name)
+    @dace.ml.module(sdfg_name=sdfg_name)
     class TestDecorator(Model):
         pass
 
