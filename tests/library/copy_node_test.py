@@ -5,6 +5,8 @@ from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
 import pytest
 import numpy as np
 
+# More tests in AssigmentAndCopyKernelToMemsetAndMemcpy tests
+
 
 def _get_sdfg(implementation: str, gpu: bool) -> dace.SDFG:
     sdfg = dace.SDFG("copy_sdfg")
@@ -30,12 +32,12 @@ def _get_sdfg(implementation: str, gpu: bool) -> dace.SDFG:
     a1 = state.add_access(a_name)
     b1 = state.add_access(b_name)
 
-    libnode = CopyLibraryNode(name="cp1", inputs={a_name}, outputs={b_name})
+    libnode = CopyLibraryNode(name="cp1", inputs={"_in"}, outputs={"_out"})
     if implementation is not None:
         libnode.implementation = implementation
 
-    state.add_edge(a1, None, libnode, a_name, dace.memlet.Memlet(f"{a_name}[150:200]"))
-    state.add_edge(libnode, b_name, b1, None, dace.memlet.Memlet(f"{b_name}[50:100]"))
+    state.add_edge(a1, None, libnode, "_in", dace.memlet.Memlet(f"{a_name}[150:200]"))
+    state.add_edge(libnode, "_out", b1, None, dace.memlet.Memlet(f"{b_name}[50:100]"))
 
     return sdfg
 
@@ -111,8 +113,20 @@ def test_copy_cuda_cpu():
         sdfg.compile()
 
 
+@pytest.mark.gpu
+def test_copy_memcpy_cpu():
+    import numpy as np
+
+    sdfg = _get_sdfg("CPU", gpu=False)
+    sdfg.validate()
+    sdfg.expand_library_nodes()
+    sdfg.validate()
+    sdfg.compile()
+
+
 if __name__ == "__main__":
     test_copy_pure_cpu()
     test_copy_pure_gpu()
+    test_copy_memcpy_cpu()
     test_copy_cuda_gpu()
     test_copy_cuda_cpu()
