@@ -13,6 +13,7 @@ RUN apt-get update -qq && apt-get install -qq -y \
     ca-certificates \
     curl \
     git \
+    mpich \
     build-essential && \
     apt-get clean
 
@@ -38,8 +39,9 @@ ENV PATH="${VIRTUAL_ENV}/bin:$PATH"
 RUN uv pip install \
     pytest-xdist \
     coverage \
-    flake8 \
-    cupy
+    flake8
+RUN uv pip install mpi4py
+RUN uv pip install cupy
 
 # Install codecov
 RUN curl -Os https://uploader.codecov.io/latest/linux/codecov && \
