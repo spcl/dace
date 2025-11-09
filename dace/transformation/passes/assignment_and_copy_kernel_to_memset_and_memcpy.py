@@ -218,9 +218,12 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
 
             # If we overapproximate the first dimension, we assume it is contiguous
             if self.overapproximate_first_dimension:
-                arr = state.sdfg.arrays[out_edge.data.data]
+                arr = state.sdfg.arrays[in_edge.data.data]
                 stride_one_dimension = {(i, d) for i, (d, s) in enumerate(zip(arr.shape, arr.strides)) if s == 1}
-                assert len(stride_one_dimension) == 1
+                assert len(stride_one_dimension) <= 1  # If a view inside a nested SDFG it can be 0 too
+                # If no stride-one-dimension then we can't remove this
+                if len(stride_one_dimension) == 0:
+                    return None, None, None
                 dim_offset, stride_one_dimension = stride_one_dimension.pop()
                 new_in_data_range[dim_offset] = ((0, stride_one_dimension - 1, 1))
 
@@ -238,7 +241,10 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         if self.overapproximate_first_dimension:
             arr = state.sdfg.arrays[out_edge.data.data]
             stride_one_dimension = {(i, d) for i, (d, s) in enumerate(zip(arr.shape, arr.strides)) if s == 1}
-            assert len(stride_one_dimension) == 1
+            assert len(stride_one_dimension) <= 1  # If a view inside a nested SDFG it can be 0 too
+            # If no stride-one-dimension then we can't remove this
+            if len(stride_one_dimension) == 0:
+                return None, None, None
             dim_offset, stride_one_dimension = stride_one_dimension.pop()
             new_out_data_range[dim_offset] = ((0, stride_one_dimension - 1, 1))
 
@@ -291,7 +297,9 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             in_length_collapsed = None
 
         if in_length_collapsed is not None:
-            assert in_length_collapsed == out_length_collapsed, f"Input and output lengths must be equal for memcpy detection {in_length_collapsed} != {out_length_collapsed}"
+            # This means the inner access is voer a non-unit stride dimension
+            if in_length_collapsed != out_length_collapsed:
+                return None, None, None
 
         return new_in_data_range, new_out_data_range, out_length_collapsed
 
