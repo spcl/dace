@@ -12,6 +12,7 @@ from dace.libraries.blas.nodes.matmul import (_get_matmul_operands, _get_codegen
 from .. import environments
 import numpy as np
 import warnings
+from dace.codegen.common import sym2cpp
 
 
 def _is_complex(dtype):
@@ -211,9 +212,22 @@ class ExpandGemmOpenBLAS(ExpandTransformation):
             else:
                 in_connectors[k] = v
 
-        code += ("cblas_{func}(CblasColMajor, {ta}, {tb}, "
-                 "{M}, {N}, {K}, {alpha}, {x}, {lda}, {y}, {ldb}, {beta}, "
-                 "_c, {ldc});").format_map(opt)
+        # Check if output is scalar-sized (1x1)
+        is_scalar_output = (sym2cpp(opt['M']) == '1' and sym2cpp(opt['N']) == '1')
+
+        if is_scalar_output:
+            # For scalar outputs, we need to use a local array and copy
+            code += f'''
+            {dtype.ctype} _c_array[1];
+            '''
+            code += ("cblas_{func}(CblasColMajor, {ta}, {tb}, "
+                     "{M}, {N}, {K}, {alpha}, {x}, {lda}, {y}, {ldb}, {beta}, "
+                     "_c_array, {ldc});\n").format_map(opt)
+            code += "_c = _c_array[0];"
+        else:
+            code += ("cblas_{func}(CblasColMajor, {ta}, {tb}, "
+                     "{M}, {N}, {K}, {alpha}, {x}, {lda}, {y}, {ldb}, {beta}, "
+                     "_c, {ldc});").format_map(opt)
 
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name,
