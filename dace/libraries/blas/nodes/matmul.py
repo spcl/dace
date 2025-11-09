@@ -14,26 +14,18 @@ def _get_matmul_operands(node, state, sdfg, name_lhs="_a", name_rhs="_b", name_o
     for edge in state.all_edges(node):
         if edge.dst_conn in [name_lhs, name_rhs]:
             size = edge.data.subset.size()
-            squeezed = dc(edge.data.subset)
-            squeezed_dims = squeezed.squeeze()
-            squeezed_size = squeezed.size()
             outer_array = sdfg.data(dace.sdfg.find_input_arraynode(state, edge).data)
             strides = list(outer_array.strides)
-            squeezed_strides = [s for i, s in enumerate(outer_array.strides) if i in squeezed_dims]
-            res = edge, outer_array, size, strides, squeezed_size, squeezed_strides
+            res = edge, outer_array, size, strides, size, strides
             if edge.dst_conn == name_lhs:
                 res_lhs = res
             else:
                 res_rhs = res
         elif edge.src_conn == name_out:
             size = edge.data.subset.size()
-            squeezed = dc(edge.data.subset)
-            squeezed_dims = squeezed.squeeze()
-            squeezed_size = squeezed.size()
             outer_array = sdfg.data(dace.sdfg.find_output_arraynode(state, edge).data)
             strides = list(outer_array.strides)
-            squeezed_strides = [s for i, s in enumerate(outer_array.strides) if i in squeezed_dims]
-            res_out = edge, outer_array, size, strides, squeezed_size, squeezed_strides
+            res_out = edge, outer_array, size, strides, size, strides
     for res, name in ((res_lhs, name_lhs), (res_rhs, name_rhs), (res_out, name_out)):
         if res is None:
             raise ValueError("Matrix multiplication connector "

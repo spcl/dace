@@ -931,20 +931,14 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
         size_y_in = None
         for _, _, _, dst_conn, memlet in state.in_edges(self):
             if dst_conn == "_A":
-                subset = copy.deepcopy(memlet.subset)
-                subset.squeeze()
-                size_a = subset.size()
+                size_a = memlet.subset.size()
             if dst_conn == "_x":
-                subset = copy.deepcopy(memlet.subset)
-                subset.squeeze()
-                size_x = subset.size()
+                size_x = memlet.subset.size()
             if dst_conn == "_y":
-                subset = copy.deepcopy(memlet.subset)
-                subset.squeeze()
-                size_y_in = subset.size()
+                size_y_in = memlet.subset.size()
 
         if len(size_a) != 2 or len(size_x) != 1:
-            raise ValueError("Matrix-vector product only supported on matrix-vector input")
+            raise ValueError("Matrix-vector product only supported on 2D matrix and 1D vector")
 
         a_cols = size_a[1] if not self.transA else size_a[0]
         a_rows = size_a[0] if not self.transA else size_a[1]
@@ -958,11 +952,11 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
             raise ValueError("Expected exactly one output from matrix-vector product")
         out_memlet = out_edges[0].data
 
-        out_subset = copy.deepcopy(out_memlet.subset)
-        out_subset.squeeze()
-        size_y_out = out_subset.size()
-        if size_y_in is not None and size_y_in != size_y_out:
-            raise ValueError("Input y-vector must match output y-vector.")
+        size_y_out = out_memlet.subset.size()
+
+        if size_y_in is not None:
+            if size_y_in != size_y_out:
+                raise ValueError("Input y-vector must match output y-vector.")
         if (len(size_y_out) != 1 or size_y_out[0] != a_rows):
             raise ValueError("Vector input to GEMV must match matrix rows.")
 

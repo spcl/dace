@@ -49,24 +49,14 @@ class SpecializeEinsum(xf.ExpandTransformation):
         for e in parent_state.in_edges(node):
             inputs.append(e.dst_conn)
             desc = parent_sdfg.arrays[e.data.data]
-            insubset = deepcopy(e.data.src_subset)
-            isqdim = insubset.squeeze()
-            sdfg.add_array(e.dst_conn,
-                           insubset.size(),
-                           desc.dtype,
-                           strides=[s for i, s in enumerate(desc.strides) if i in isqdim],
-                           storage=desc.storage)
+            insubset_size = e.data.src_subset.size()
+            sdfg.add_array(e.dst_conn, insubset_size, desc.dtype, strides=desc.strides, storage=desc.storage)
 
         for e in parent_state.out_edges(node):
             output = e.src_conn
             desc = parent_sdfg.arrays[e.data.data]
-            outsubset = deepcopy(e.data.dst_subset)
-            osqdim = outsubset.squeeze()
-            sdfg.add_array(output,
-                           outsubset.size(),
-                           desc.dtype,
-                           strides=[s for i, s in enumerate(desc.strides) if i in osqdim],
-                           storage=desc.storage)
+            outsubset_size = e.data.dst_subset.size()
+            sdfg.add_array(output, outsubset_size, desc.dtype, strides=desc.strides, storage=desc.storage)
         #######################################
 
         # Fill SDFG with einsum contents
