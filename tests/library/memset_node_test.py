@@ -21,12 +21,12 @@ def _get_sdfg(implementation, gpu=True) -> dace.SDFG:
 
     b1 = state.add_access(name)
 
-    libnode = MemsetLibraryNode(name="memset1", inputs={}, outputs={name})
+    libnode = MemsetLibraryNode(name="memset1", inputs={}, outputs={"_out"})
     if implementation is not None:
         libnode.implementation = implementation
 
     # Only set a slice
-    state.add_edge(libnode, name, b1, None, dace.memlet.Memlet(f"{name}[50:100]"))
+    state.add_edge(libnode, name, "_out", None, dace.memlet.Memlet(f"{name}[50:100]"))
 
     return sdfg
 
