@@ -9,6 +9,18 @@ from dace.codegen.common import sym2cpp
 import copy
 
 
+# Compute collapsed shapes and strides, removing singleton dimensions (length == 1)
+def collapse_shape_and_strides(subset, strides):
+    collapsed_shape = []
+    collapsed_strides = []
+    for (b, e, s), stride in zip(subset, strides):
+        length = (e + 1 - b) // s
+        if length != 1:
+            collapsed_shape.append(length)
+            collapsed_strides.append(stride)
+    return collapsed_shape, collapsed_strides
+
+
 @library.expansion
 class ExpandPure(ExpandTransformation):
     environments = []
@@ -17,11 +29,13 @@ class ExpandPure(ExpandTransformation):
     def expansion(node, parent_state, parent_sdfg):
         inp_name, inp, in_subset, out_name, out, out_subset, dynamic_inputs = node.validate(parent_sdfg, parent_state)
         map_lengths = [(e + 1 - b) // s for (b, e, s) in in_subset]
-        cp_size = reduce(operator.mul, map_lengths, 1)
+
+        in_shape_collapsed, in_strides_collapsed = collapse_shape_and_strides(in_subset, inp.strides)
+        out_shape_collapsed, out_strides_collapsed = collapse_shape_and_strides(out_subset, out.strides)
 
         sdfg = dace.SDFG(f"{node.label}_sdfg")
-        _, inp_arr = sdfg.add_array(inp_name, inp.shape, inp.dtype, inp.storage, strides=inp.strides)
-        _, out_arr = sdfg.add_array(out_name, out.shape, out.dtype, out.storage, strides=out.strides)
+        sdfg.add_array(inp_name, in_shape_collapsed, inp.dtype, inp.storage, strides=in_strides_collapsed)
+        sdfg.add_array(out_name, out_shape_collapsed, out.dtype, out.storage, strides=out_strides_collapsed)
 
         # Add dynamic inputs
         for dynamic_input_name, datadesc in dynamic_inputs.items():
@@ -36,9 +50,10 @@ class ExpandPure(ExpandTransformation):
 
         map_params = [f"__i{i}" for i in range(len(map_lengths))]
         map_rng = {i: f"0:{s}" for i, s in zip(map_params, map_lengths)}
-        access_expr = ','.join(map_params)
-        inputs = {"_memcpy_inp": dace.memlet.Memlet(f"{inp_name}[{access_expr}]")}
-        outputs = {"_memcpy_out": dace.memlet.Memlet(f"{out_name}[{access_expr}]")}
+        in_access_expr = ','.join(map_params)
+        out_access_expr = ','.join(map_params)
+        inputs = {"_memcpy_inp": dace.memlet.Memlet(f"{inp_name}[{in_access_expr}]")}
+        outputs = {"_memcpy_out": dace.memlet.Memlet(f"{out_name}[{out_access_expr}]")}
         code = "_memcpy_out = _memcpy_inp"
         if inp.storage == dace.dtypes.StorageType.GPU_Global:
             schedule = dace.dtypes.ScheduleType.GPU_Device
@@ -66,9 +81,12 @@ class ExpandCUDA(ExpandTransformation):
         map_lengths = [(e + 1 - b) // s for (b, e, s) in in_subset]
         cp_size = reduce(operator.mul, map_lengths, 1)
 
+        in_shape_collapsed, in_strides_collapsed = collapse_shape_and_strides(in_subset, inp.strides)
+        out_shape_collapsed, out_strides_collapsed = collapse_shape_and_strides(out_subset, out.strides)
+
         sdfg = dace.SDFG(f"{node.label}_sdfg")
-        _, inp_arr = sdfg.add_array(inp_name, inp.shape, inp.dtype, inp.storage, strides=inp.strides)
-        _, out_arr = sdfg.add_array(out_name, out.shape, out.dtype, out.storage, strides=out.strides)
+        sdfg.add_array(inp_name, in_shape_collapsed, inp.dtype, inp.storage, strides=in_strides_collapsed)
+        sdfg.add_array(out_name, out_shape_collapsed, out.dtype, out.storage, strides=out_strides_collapsed)
 
         # Add dynamic inputs
         for dynamic_input_name, datadesc in dynamic_inputs.items():
@@ -113,9 +131,12 @@ class ExpandCPU(ExpandTransformation):
         map_lengths = [(e + 1 - b) // s for (b, e, s) in in_subset]
         cp_size = reduce(operator.mul, map_lengths, 1)
 
+        in_shape_collapsed, in_strides_collapsed = collapse_shape_and_strides(in_subset, inp.strides)
+        out_shape_collapsed, out_strides_collapsed = collapse_shape_and_strides(out_subset, out.strides)
+
         sdfg = dace.SDFG(f"{node.label}_sdfg")
-        _, inp_arr = sdfg.add_array(inp_name, inp.shape, inp.dtype, inp.storage, strides=inp.strides)
-        _, out_arr = sdfg.add_array(out_name, out.shape, out.dtype, out.storage, strides=out.strides)
+        sdfg.add_array(inp_name, in_shape_collapsed, inp.dtype, inp.storage, strides=in_strides_collapsed)
+        sdfg.add_array(out_name, out_shape_collapsed, out.dtype, out.storage, strides=out_strides_collapsed)
 
         state = sdfg.add_state(f"{node.label}_state")
 

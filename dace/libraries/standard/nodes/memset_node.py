@@ -16,11 +16,16 @@ class ExpandPure(ExpandTransformation):
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
         out_name, out, out_subset = node.validate(parent_sdfg, parent_state)
-        map_lengths = [(e + 1 - b) // s for (b, e, s) in out_subset]
+        map_lengths = [(e + 1 - b) // s for (b, e, s) in out_subset if (e + 1 - b) // s != 1]
         cp_size = reduce(operator.mul, map_lengths, 1)
 
+        out_shape_collapsed = map_lengths
+        out_strides_collapsed = [
+            stride for (b, e, s), stride in zip(out_subset, out.strides) if ((e + 1 - b) // s) != 1
+        ]
+
         sdfg = dace.SDFG(f"{node.label}_sdfg")
-        _, out_arr = sdfg.add_array(out_name, out.shape, out.dtype, out.storage, strides=out.strides)
+        sdfg.add_array(out_name, out_shape_collapsed, out.dtype, out.storage, strides=out_strides_collapsed)
 
         state = sdfg.add_state(f"{node.label}_state")
         map_params = [f"__i{i}" for i in range(len(map_lengths))]
@@ -53,8 +58,13 @@ class ExpandCUDA(ExpandTransformation):
         map_lengths = [(e + 1 - b) // s for (b, e, s) in out_subset]
         cp_size = reduce(operator.mul, map_lengths, 1)
 
+        out_shape_collapsed = [ml for ml in map_lengths if ml != 1]
+        out_strides_collapsed = [
+            stride for (b, e, s), stride in zip(out_subset, out.strides) if ((e + 1 - b) // s) != 1
+        ]
+
         sdfg = dace.SDFG(f"{node.label}_sdfg")
-        _, out_arr = sdfg.add_array(out_name, out.shape, out.dtype, out.storage, strides=out.strides)
+        sdfg.add_array(out_name, out_shape_collapsed, out.dtype, out.storage, strides=out_strides_collapsed)
 
         state = sdfg.add_state(f"{node.label}_state")
 
@@ -82,11 +92,16 @@ class ExpandCPU(ExpandTransformation):
     @staticmethod
     def expansion(node, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG):
         out_name, out, out_subset = node.validate(parent_sdfg, parent_state)
-        map_lengths = [(e + 1 - b) // s for (b, e, s) in out_subset]
+        map_lengths = [(e + 1 - b) // s for (b, e, s) in out_subset if (e + 1 - b) // s != 1]
         cp_size = reduce(operator.mul, map_lengths, 1)
 
+        out_shape_collapsed = map_lengths
+        out_strides_collapsed = [
+            stride for (b, e, s), stride in zip(out_subset, out.strides) if ((e + 1 - b) // s) != 1
+        ]
+
         sdfg = dace.SDFG(f"{node.label}_sdfg")
-        _, out_arr = sdfg.add_array(out_name, out.shape, out.dtype, out.storage, strides=out.strides)
+        sdfg.add_array(out_name, out_shape_collapsed, out.dtype, out.storage, strides=out_strides_collapsed)
 
         state = sdfg.add_state(f"{node.label}_state")
 
