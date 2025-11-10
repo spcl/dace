@@ -3,7 +3,7 @@ include:
 
 variables:
   PY_VERSION: '3.13'
-  CUDA_VERSION: '12.6.2'
+  CUDA_VERSION: '12.9.1'
   UBUNTU_VERSION: '24.04'
 
 stages:
@@ -46,10 +46,10 @@ test_cscs_gh200:
     - cd "${WORKDIR}/dace"
     - git checkout "${CI_COMMIT_SHA}"
     - uv pip install -e ".[testing]"
+    - export DACE_cache=unique
     - pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -n 4 -m "${TEST_VARIANTS}"
     - export COVERAGE_RCFILE=`pwd`/.coveragerc
     - export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
-    - export DACE_cache=unique
     - ./tests/cuda_test.sh
     - coverage combine . */; coverage report; coverage xml
     - reachable=0

@@ -9,6 +9,7 @@ ENV WORKDIR=${WORKDIR_PATH}
 WORKDIR ${WORKDIR}
 
 # Install basic dependencies
+ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update -qq && apt-get install -qq -y \
     ca-certificates \
     curl \
