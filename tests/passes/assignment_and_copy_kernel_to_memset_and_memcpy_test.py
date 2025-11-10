@@ -246,16 +246,19 @@ def nested_memset_maps_with_dimension_change(kidia: dace.int64, kfdia: dace.int6
         for j in dace.map[sym_kidia:sym_kfdia]:
             pcovptot[i, j] = 0.0
 
+
 def set_dtype_to_gpu_if_expansion_type_is_cuda(sdfg: dace.SDFG, expansion_type: str):
     if expansion_type != "CUDA":
         return
 
     for arr_name, arr in sdfg.arrays.items():
-        arr.storage = dace.dtypes.StorageType.GPU_Global
+        if not isinstance(arr, dace.data.Scalar):
+            arr.storage = dace.dtypes.StorageType.GPU_Global
     for state in sdfg.all_states():
         for node in state.nodes():
             if isinstance(node, dace.nodes.NestedSDFG):
-                set_dtype_to_gpu_if_expansion_type_is_cuda(node.sdfg)
+                set_dtype_to_gpu_if_expansion_type_is_cuda(node.sdfg, expansion_type)
+
 
 @pytest.mark.parametrize("expansion_type", EXPANSION_TYPES)
 def test_nested_memcpy_maps_with_dimension_change(expansion_type: str):
@@ -267,13 +270,11 @@ def test_nested_memcpy_maps_with_dimension_change(expansion_type: str):
     sdfg.name = sdfg.name + f"_expansion_type_{expansion_type}"
     set_dtype_to_gpu_if_expansion_type_is_cuda(sdfg, expansion_type)
 
-
     AssignmentAndCopyKernelToMemsetAndMemcpy(overapproximate_first_dimensions=True).apply_pass(sdfg, {})
     assert _get_num_memcpy_library_nodes(
         sdfg) == 1, f"Expected 1 memcpy library nodes, got {_get_num_memcpy_library_nodes(sdfg)}"
     assert _get_num_memset_library_nodes(
         sdfg) == 0, f"Expected 0 memset library nodes, got {_get_num_memset_library_nodes(sdfg)}"
-
 
     kidia = 0
     kfdia = DIM_SIZE
