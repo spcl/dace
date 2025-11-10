@@ -21,6 +21,42 @@ def collapse_shape_and_strides(subset, strides):
     return collapsed_shape, collapsed_strides
 
 
+def add_dynamic_inputs(dynamic_inputs, sdfg: dace.SDFG, in_subset: dace.subsets.Range, state: dace.SDFGState):
+    # Add dynamic inputs
+    pre_assignments = dict()
+    map_lengths = [dace.symbolic.SymExpr((e + 1 - b) // s) for (b, e, s) in in_subset]
+
+    for dynamic_input_name, datadesc in dynamic_inputs.items():
+        if dynamic_input_name in sdfg.arrays:
+            continue
+
+        if dynamic_input_name in sdfg.symbols:
+            sdfg.replace(str(dynamic_input_name), "sym_" + str(dynamic_input_name))
+            ndesc = copy.deepcopy(datadesc)
+            ndesc.transient = False
+            sdfg.add_datadesc(dynamic_input_name, ndesc)
+            # Should be scalar
+            if isinstance(ndesc, dace.data.Scalar):
+                pre_assignments["sym_" + dynamic_input_name] = f"{dynamic_input_name}"
+            else:
+                assert ndesc.shape == (1, ) or ndesc.shape == [
+                    1,
+                ]
+                pre_assignments["sym_" + dynamic_input_name] = f"{dynamic_input_name}[0]"
+
+            new_map_lengths = []
+            for ml in map_lengths:
+                nml = ml.subs({str(dynamic_input_name): "sym_" + str(dynamic_input_name)})
+                new_map_lengths.append(nml)
+            map_lengths = new_map_lengths
+
+    if pre_assignments != dict():
+        # Add a state for assignments in the beginning
+        sdfg.add_state_before(state=state, label="pre_assign", is_start_block=True, assignments=pre_assignments)
+
+    return map_lengths
+
+
 @library.expansion
 class ExpandPure(ExpandTransformation):
     environments = []
@@ -37,15 +73,10 @@ class ExpandPure(ExpandTransformation):
         sdfg.add_array(inp_name, in_shape_collapsed, inp.dtype, inp.storage, strides=in_strides_collapsed)
         sdfg.add_array(out_name, out_shape_collapsed, out.dtype, out.storage, strides=out_strides_collapsed)
 
-        # Add dynamic inputs
-        for dynamic_input_name, datadesc in dynamic_inputs.items():
-            if dynamic_input_name in sdfg.arrays:
-                continue
-            ndesc = copy.deepcopy(datadesc)
-            ndesc.transient = False
-            sdfg.add_datadesc(dynamic_input_name, ndesc)
+        state = sdfg.add_state(f"{node.label}_state", is_start_block=True)
 
-        state = sdfg.add_state(f"{node.label}_state")
+        map_lengths = add_dynamic_inputs(dynamic_inputs, sdfg, in_subset, state)
+
         sdfg.schedule = dace.dtypes.ScheduleType.Default
 
         map_params = [f"__i{i}" for i in range(len(map_lengths))]
@@ -89,12 +120,7 @@ class ExpandCUDA(ExpandTransformation):
         sdfg.add_array(out_name, out_shape_collapsed, out.dtype, out.storage, strides=out_strides_collapsed)
 
         # Add dynamic inputs
-        for dynamic_input_name, datadesc in dynamic_inputs.items():
-            if dynamic_input_name in sdfg.arrays:
-                continue
-            ndesc = copy.deepcopy(datadesc)
-            ndesc.transient = False
-            sdfg.add_datadesc(dynamic_input_name, ndesc)
+        map_lengths = add_dynamic_inputs(dynamic_inputs, sdfg, in_subset, state)
 
         state = sdfg.add_state(f"{node.label}_state")
 
@@ -141,12 +167,7 @@ class ExpandCPU(ExpandTransformation):
         state = sdfg.add_state(f"{node.label}_state")
 
         # Add dynamic inputs
-        for dynamic_input_name, datadesc in dynamic_inputs.items():
-            if dynamic_input_name in sdfg.arrays:
-                continue
-            ndesc = copy.deepcopy(datadesc)
-            ndesc.transient = False
-            sdfg.add_datadesc(dynamic_input_name, ndesc)
+        map_lengths = add_dynamic_inputs(dynamic_inputs, sdfg, in_subset, state)
 
         # Add CPU access nodes
         in_access = state.add_access(inp_name)
