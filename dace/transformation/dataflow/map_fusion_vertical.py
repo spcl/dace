@@ -378,6 +378,13 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             assert graph.degree(node_to_remove) == 0
             graph.remove_node(node_to_remove)
 
+        # This will ensure that regardless in which order a set of fusable Maps are
+        #  processed the label of the final Map will always be the same.
+        first_map_label = first_map_exit.map.label
+        second_map_label = second_map_entry.map.label
+        if second_map_label < first_map_label:
+            first_map_exit.map.label = second_map_label
+
         # Now turn the second output node into the output node of the first Map.
         second_map_exit.map = first_map_entry.map
 
