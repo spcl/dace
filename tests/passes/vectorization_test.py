@@ -250,6 +250,7 @@ def run_vectorization_test(dace_func,
 
     # Compare results
     for name in arrays.keys():
+        print(arrays_orig[name] - arrays_vec[name])
         assert numpy.allclose(arrays_orig[name], arrays_vec[name]), \
             f"{name} Diff: {arrays_orig[name] - arrays_vec[name]}"
 
@@ -666,20 +667,18 @@ def jacobi2d(A: dace.float64[S, S], B: dace.float64[S, S], tsteps: dace.int64): 
 
 
 def test_jacobi2d():
-    _S = 64
+    _S = 66
     A = numpy.random.random((_S, _S))
     B = numpy.random.random((_S, _S))
 
-    sdfg = jacobi2d.to_sdfg()
-    sdfg.save("s.sdfg")
-
-    run_vectorization_test(dace_func=overlapping_access,
+    run_vectorization_test(dace_func=jacobi2d,
                            arrays={
                                'A': A,
                                'B': B
                            },
                            params={
                                'S': _S,
+                               'tsteps': 5,
                            },
                            vector_width=8,
                            save_sdfgs=True,

@@ -3,7 +3,6 @@ from typing import Iterator
 import dace
 from dace.transformation import Pass, pass_pipeline as ppl
 from dace.transformation.passes.clean_data_to_scalar_slice_to_tasklet_pattern import CleanDataToScalarSliceToTaskletPattern
-from dace.transformation.passes.duplicate_all_memlets_sharing_same_in_connector import DuplicateAllMemletsSharingSingleMapOutConnector
 from dace.transformation.passes.split_tasklets import SplitTasklets
 from dace.transformation.passes.tasklet_preprocessing_passes import PowerOperatorExpansion, RemoveFPTypeCasts, RemoveIntTypeCasts
 from dace.transformation.passes import InlineSDFGs
@@ -94,7 +93,6 @@ __host__ __device__ __forceinline__ void vector_copy(T * __restrict__ dst, const
             SplitTasklets(),
             CleanDataToScalarSliceToTaskletPattern(),
             InlineSDFGs(),
-            DuplicateAllMemletsSharingSingleMapOutConnector(),
             Vectorize(
                 templates={
                     "*": "vector_mult({lhs}, {rhs1}, {rhs2});",

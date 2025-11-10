@@ -76,6 +76,13 @@ class Vectorize(ppl.Pass):
         new_inner_map = inner_map_entry
         new_inner_map.schedule = dace.dtypes.ScheduleType.Sequential
 
+        # If it has any branching out then move the branching one level up.
+        if map_has_branching_memlets(state, new_inner_map):
+            cutil.duplicate_memlets_sharing_single_in_connector(state, new_inner_map)
+            state.validate()
+
+        state.sdfg.save("c.sdfg")
+
         (b, e, s) = new_inner_map.map.range[0]
         assert len(new_inner_map.map.range) == 1
         vector_map_param = new_inner_map.map.params[0]
@@ -839,9 +846,8 @@ class Vectorize(ppl.Pass):
         in_edges = state.in_edges(map_entry)
         # Filter by the data
         data_in_edges = {e for e in in_edges if e.data.data == new_dataname}
-        assert len(data_in_edges) <= 1
-        if len(data_in_edges) == 1:
-            data_in_edge: Edge[Memlet] = next(iter(data_in_edges))
+        #assert len(data_in_edges) <= 1, f"{data_in_edges} length is not <= 1, but {len(data_in_edges)}"
+        for data_in_edge in data_in_edges:
             self._iterate_on_path_from_map_entry_to_exit(state, map_exit, data_in_edge, dataname, new_dataname)
 
         # Now for map exit
@@ -867,7 +873,7 @@ class Vectorize(ppl.Pass):
         while candidate2 in self._used_names:
             candidate2 = candidate + f"_{i}"
             i += 1
-        self._used_names.add(candidate)
+        self._used_names.add(candidate2)
         return candidate2
 
     def _copy_in_and_copy_out(self, state: SDFGState, map_entry: dace.nodes.MapEntry, vectorization_number: int):
@@ -880,6 +886,8 @@ class Vectorize(ppl.Pass):
             if array.storage != self.vector_input_storage:
                 # Add new array, if not there
                 arr_name_to_use = self._find_new_name(f"{ie.data.data}_vec_k{vectorization_number}")
+                print(
+                    f"Called find new name with '{ie.data.data}_vec_k{vectorization_number}' and got {arr_name_to_use}")
                 if arr_name_to_use not in state.parent_graph.sdfg.arrays:
                     state.parent_graph.sdfg.add_array(name=arr_name_to_use,
                                                       shape=(self.vector_width, ),
@@ -901,13 +909,6 @@ class Vectorize(ppl.Pass):
                 memlet: dace.memlet.Memlet = ie.data
                 dataname: str = memlet.data
                 offsets = [b for (b, e, s) in memlet.subset]
-                #for data, _off in data_and_offsets:
-                #    if data == dataname:
-                #        if _off != offsets:
-                #            state.sdfg.save("uwuowo.sdfg")
-                #            raise ValueError(
-                #                f"Cannot handle multiple input edges from the same array {dataname} to the same map {map_entry} in state {state}"
-                #            )
                 data_and_offsets.append((dataname, arr_name_to_use, offsets))
 
         out_datas = set()
@@ -939,6 +940,7 @@ class Vectorize(ppl.Pass):
                 offsets = [b for (b, e, s) in memlet.subset]
                 data_and_offsets.append((dataname, arr_name_to_use, offsets))
 
+        print(data_and_offsets)
         for dataname, new_dataname, offsets in data_and_offsets:
             self._offset_memlets_on_path(state, map_entry, dataname, new_dataname)
 
@@ -1000,6 +1002,7 @@ class Vectorize(ppl.Pass):
                 num_vectorized += 1
                 all_nodes_between = state.all_nodes_between(map_entry, state.exit_node(map_entry))
                 self._vectorize_map(state, map_entry, vectorization_number=i)
+                state.sdfg.save(f"v{i}.sdfgz", compress=True)
                 vectorized_maps.add(map_entry)
                 if len(all_nodes_between) == 1 and isinstance(next(iter(all_nodes_between)), dace.nodes.NestedSDFG):
                     sdfgs_to_vectorize.add((next(iter(all_nodes_between)), state))
