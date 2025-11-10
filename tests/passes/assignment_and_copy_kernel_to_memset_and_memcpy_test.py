@@ -1,5 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
+import functools
 import dace
 import numpy
 import pytest
@@ -184,6 +185,26 @@ def _set_lib_node_type(sdfg: dace.SDFG, expansion_type: str):
             n.implementation = expansion_type
 
 
+def temporarily_disable_autoopt_and_serialization(func):
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        # Save original values
+        orig_autoopt = dace.config.Config.get("optimizer", "autooptimize")
+        orig_serialization = dace.config.Config.get("testing", "serialization")
+        try:
+            # Set both to False
+            dace.config.Config.set("optimizer", "autooptimize", value=False)
+            dace.config.Config.set("testing", "serialization", value=False)
+            return func(*args, **kwargs)
+        finally:
+            # Restore original values
+            dace.config.Config.set("optimizer", "autooptimize", value=orig_autoopt)
+            dace.config.Config.set("testing", "serialization", value=orig_serialization)
+
+    return wrapper
+
+
 @dace.program
 def double_memset_with_dynamic_connectors(kfdia: dace.int32, kidia: dace.int32, llindex3: dace.float64[D, D],
                                           zsinksum: dace.float64[D]):
@@ -261,6 +282,7 @@ def set_dtype_to_gpu_if_expansion_type_is_cuda(sdfg: dace.SDFG, expansion_type: 
 
 
 @pytest.mark.parametrize("expansion_type", EXPANSION_TYPES)
+@temporarily_disable_autoopt_and_serialization
 def test_nested_memcpy_maps_with_dimension_change(expansion_type: str):
     if expansion_type == "CUDA":
         import cupy
@@ -288,6 +310,7 @@ def test_nested_memcpy_maps_with_dimension_change(expansion_type: str):
 
 
 @pytest.mark.parametrize("expansion_type", EXPANSION_TYPES)
+@temporarily_disable_autoopt_and_serialization
 def test_nested_memset_maps_with_dimension_change(expansion_type: str):
     if expansion_type == "CUDA":
         import cupy
@@ -314,6 +337,7 @@ def test_nested_memset_maps_with_dimension_change(expansion_type: str):
 
 
 @pytest.mark.parametrize("expansion_type", EXPANSION_TYPES)
+@temporarily_disable_autoopt_and_serialization
 def test_nested_memset_maps_with_dynamic_connectors(expansion_type: str):
     if expansion_type == "CUDA":
         import cupy
@@ -345,6 +369,7 @@ def test_nested_memset_maps_with_dynamic_connectors(expansion_type: str):
 
 
 @pytest.mark.parametrize("expansion_type", EXPANSION_TYPES)
+@temporarily_disable_autoopt_and_serialization
 def test_nested_memcpy_maps_with_dynamic_connectors(expansion_type: str):
     if expansion_type == "CUDA":
         import cupy
@@ -378,6 +403,7 @@ def test_nested_memcpy_maps_with_dynamic_connectors(expansion_type: str):
 
 
 @pytest.mark.parametrize("expansion_type", EXPANSION_TYPES)
+@temporarily_disable_autoopt_and_serialization
 def test_double_memset_with_dynamic_connectors(expansion_type: str):
     if expansion_type == "CUDA":
         import cupy
@@ -416,6 +442,7 @@ def test_double_memset_with_dynamic_connectors(expansion_type: str):
 
 
 @pytest.mark.parametrize("expansion_type", EXPANSION_TYPES)
+@temporarily_disable_autoopt_and_serialization
 def test_double_memcpy_with_dynamic_connectors(expansion_type: str):
     if expansion_type == "CUDA":
         import cupy
@@ -461,6 +488,7 @@ def test_double_memcpy_with_dynamic_connectors(expansion_type: str):
 
 
 @pytest.mark.parametrize("expansion_type", EXPANSION_TYPES)
+@temporarily_disable_autoopt_and_serialization
 def test_simple_memcpy(expansion_type: str):
     if expansion_type == "CUDA":
         import cupy
@@ -487,6 +515,7 @@ def test_simple_memcpy(expansion_type: str):
 
 
 @pytest.mark.parametrize("expansion_type", EXPANSION_TYPES)
+@temporarily_disable_autoopt_and_serialization
 def test_simple_memset(expansion_type: str):
     if expansion_type == "CUDA":
         import cupy
@@ -511,6 +540,7 @@ def test_simple_memset(expansion_type: str):
 
 
 @pytest.mark.parametrize("expansion_type", EXPANSION_TYPES)
+@temporarily_disable_autoopt_and_serialization
 def test_multi_memcpy(expansion_type: str):
     if expansion_type == "CUDA":
         import cupy
@@ -539,6 +569,7 @@ def test_multi_memcpy(expansion_type: str):
 
 
 @pytest.mark.parametrize("expansion_type", EXPANSION_TYPES)
+@temporarily_disable_autoopt_and_serialization
 def test_multi_memset(expansion_type: str):
     if expansion_type == "CUDA":
         import cupy
@@ -567,6 +598,7 @@ def test_multi_memset(expansion_type: str):
 
 
 @pytest.mark.parametrize("expansion_type", EXPANSION_TYPES)
+@temporarily_disable_autoopt_and_serialization
 def test_multi_mixed(expansion_type: str):
     if expansion_type == "CUDA":
         import cupy
@@ -595,6 +627,7 @@ def test_multi_mixed(expansion_type: str):
 
 
 @pytest.mark.parametrize("expansion_type", EXPANSION_TYPES)
+@temporarily_disable_autoopt_and_serialization
 def test_simple_with_extra_computation(expansion_type: str):
     if expansion_type == "CUDA":
         import cupy
@@ -627,6 +660,7 @@ def test_simple_with_extra_computation(expansion_type: str):
 
 
 @pytest.mark.parametrize("expansion_type", EXPANSION_TYPES)
+@temporarily_disable_autoopt_and_serialization
 def test_simple_non_zero(expansion_type: str):
     if expansion_type == "CUDA":
         import cupy
@@ -650,6 +684,7 @@ def test_simple_non_zero(expansion_type: str):
 
 
 @pytest.mark.parametrize("expansion_type", EXPANSION_TYPES)
+@temporarily_disable_autoopt_and_serialization
 def test_mixed_overapprox(expansion_type: str):
     if expansion_type == "CUDA":
         import cupy
@@ -764,6 +799,7 @@ def _get_nested_memcpy_with_dimension_change_and_fortran_strides(full_inner_rang
 
 
 @pytest.mark.parametrize("expansion_type", EXPANSION_TYPES)
+@temporarily_disable_autoopt_and_serialization
 def test_nested_memcpy_with_dimension_change_and_fortran_strides(expansion_type: str):
     if expansion_type == "CUDA":
         import cupy
@@ -792,6 +828,7 @@ def test_nested_memcpy_with_dimension_change_and_fortran_strides(expansion_type:
 
 
 @pytest.mark.parametrize("expansion_type", EXPANSION_TYPES)
+@temporarily_disable_autoopt_and_serialization
 def test_nested_memcpy_with_dimension_change_and_fortran_strides_with_subset(expansion_type: str):
     if expansion_type == "CUDA":
         import cupy
@@ -819,6 +856,7 @@ def test_nested_memcpy_with_dimension_change_and_fortran_strides_with_subset(exp
 
 
 @pytest.mark.parametrize("expansion_type", EXPANSION_TYPES)
+@temporarily_disable_autoopt_and_serialization
 def test_nested_memcpy_with_dimension_change_and_c_strides(expansion_type: str):
     if expansion_type == "CUDA":
         import cupy
@@ -847,6 +885,7 @@ def test_nested_memcpy_with_dimension_change_and_c_strides(expansion_type: str):
 
 
 @pytest.mark.parametrize("expansion_type", EXPANSION_TYPES)
+@temporarily_disable_autoopt_and_serialization
 def test_nested_memcpy_with_dimension_change_and_c_strides_with_subset(expansion_type: str):
     if expansion_type == "CUDA":
         import cupy
