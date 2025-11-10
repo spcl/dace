@@ -1,4 +1,4 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import aenum
 import copy as cp
 import ctypes
@@ -1679,6 +1679,35 @@ class Array(Data):
         self.shape = new_shape
         self._set_shape_dependent_properties(new_shape, strides, total_size, offset)
         self.validate()
+
+    def _get_packed_fortran_strides(self) -> Tuple[int]:
+        """Compute packed strides, if the array is stored Fortran-style (column-major)."""
+        accum = 1
+        strides = []
+        for shape in self.shape:
+            strides.append(accum)
+            accum *= shape
+        return tuple(strides)
+
+    def _get_packed_c_strides(self) -> Tuple[int]:
+        """Compute packed strides, if the array is stored C-styl (row-major)."""
+        accum = 1
+        strides = []
+        # Same as Fortran order if shape is inversed
+        for shape in reversed(self.shape):
+            strides.append(accum)
+            accum *= shape
+        return tuple(list(reversed(strides)))
+
+    def is_packed_fortran_strides(self) -> bool:
+        """Return True if strides match Fortran-contiguous (column-major) layout."""
+        strides = self._get_packed_fortran_strides()
+        return tuple(strides) == tuple(self.strides)
+
+    def is_packed_c_strides(self) -> bool:
+        """Return True if strides match Fortran-contiguous (row-major) layout."""
+        strides = self._get_packed_c_strides()
+        return tuple(strides) == tuple(self.strides)
 
 
 @make_properties
