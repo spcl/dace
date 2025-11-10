@@ -2840,3 +2840,11 @@ def find_copy_in_state(inner_sdfg: dace.SDFG, nsdfg_node: dace.nodes.NestedSDFG,
     raise Exception("Find copy_in state called, it could not find a state for copy-in,"
                     "this should not occur as this array already exist,"
                     "there needs to be a state where all symbols have been defined")
+
+
+def map_has_branching_memlets(state: dace.SDFGState, map_entry: dace.nodes.MapEntry):
+    for out_conn in map_entry.out_connectors:
+        out_egdges_of_out_conn = set(state.out_edges_by_connector(map_entry, out_conn))
+        if len(out_egdges_of_out_conn) > 1:
+            return True
+    return False

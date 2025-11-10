@@ -1099,7 +1099,6 @@ def propagate_memlets_nested_sdfg(parent_sdfg: 'SDFG', parent_state: 'SDFGState'
                                 fall_back = True
                                 break
                         if fall_back:
-                            sdfg.save("x.sdfg")
                             border_memlet.src_subset[i] = fallback_subset[i]
                 if border_memlet.dst_subset is not None:
                     if border_memlet.data is None:
@@ -1394,6 +1393,7 @@ def propagate_memlet(dfg_state,
         return Memlet()
 
     sdfg = dfg_state.parent
+    sdfg.save(f"{sdfg.name}.sdfgz", compress=True)
     scope_node_symbols = set(conn for conn in entry_node.in_connectors if not conn.startswith('IN_'))
     defined_vars = [
         symbolic.pystr_to_symbolic(s) for s in (dfg_state.symbols_defined_at(entry_node).keys()
