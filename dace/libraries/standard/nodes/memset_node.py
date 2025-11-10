@@ -80,7 +80,7 @@ class ExpandCUDA(ExpandTransformation):
 
         state.add_edge(
             tasklet, "_memset_out", out_access, None,
-            dace.memlet.Memlet(data=out_name, subset=dace.subsets.Range([(0, e - 1, 1) for e in map_lengths])))
+            dace.memlet.Memlet(data=out_name, subset=dace.subsets.Range([(0, e - 1, 1) for e in out_shape_collapsed])))
 
         return sdfg
 
@@ -119,7 +119,7 @@ class ExpandCPU(ExpandTransformation):
         # Connect tasklet to the output
         state.add_edge(
             tasklet, "_memset_out", out_access, None,
-            dace.memlet.Memlet(data=out_name, subset=dace.subsets.Range([(0, e - 1, 1) for e in map_lengths])))
+            dace.memlet.Memlet(data=out_name, subset=dace.subsets.Range([(0, e - 1, 1) for e in out_shape_collapsed])))
 
         return sdfg
 
