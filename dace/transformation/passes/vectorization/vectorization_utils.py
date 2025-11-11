@@ -519,7 +519,6 @@ def process_in_edges(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG, m
         vector_width: Width of the vector
         vector_storage: Storage type for the vector
     """
-    state.sdfg.save("o.sdfg")
     assert isinstance(nsdfg_node, dace.nodes.NestedSDFG)
     inner_sdfg = nsdfg_node.sdfg
 
@@ -1450,7 +1449,6 @@ def duplicate_access(state: dace.SDFGState, node: dace.nodes.AccessNode,
     assert len(ies) == 1
     ie = ies[0]
     src = ie.src
-    state.sdfg.save("o.sdfgz", compress=True)
     assert isinstance(src, dace.nodes.Tasklet), f"Writes to sink nodes need to go through assignment tasklets, do it"
     inc = next(iter(src.in_connectors))
     outc = next(iter(src.out_connectors))
@@ -1946,13 +1944,11 @@ def move_out_reduction(scalar_source_nodes, state: dace.SDFGState, nsdfg: dace.n
     if num_flops <= 1 and is_inout_accumulator:
         source_data = scalar_source_nodes[0][1].data
         sink_data = node_path[-1].data
-        print("Source data", source_data, "Sink data", sink_data)
         replace_arrays_with_new_shape(inner_sdfg, {source_data, sink_data}, (vector_width, ), None)
         replace_arrays_with_new_shape(state.sdfg, {accumulator_name}, (vector_width, ), None)
         replace_all_access_subsets(state, accumulator_name, f"0:{vector_width}")
         expand_assignment_tasklets(state, accumulator_name, vector_width)
         reduce_before_use(state, accumulator_name, vector_width, op)
-        inner_sdfg.save("spmv_mid.sdfg")
 
         return True, source_data, sink_data
     return False, source_data, sink_data
@@ -2848,3 +2844,10 @@ def map_has_branching_memlets(state: dace.SDFGState, map_entry: dace.nodes.MapEn
         if len(out_egdges_of_out_conn) > 1:
             return True
     return False
+
+
+def parse_int_or_default(value, default=8):
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return default

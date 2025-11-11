@@ -1,6 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-from typing import Iterator
+from typing import Iterator, List, Optional
 from dace.transformation import Pass, pass_pipeline as ppl
 from dace.transformation.passes.clean_data_to_scalar_slice_to_tasklet_pattern import CleanDataToScalarSliceToTaskletPattern
 from dace.transformation.passes.split_tasklets import SplitTasklets
@@ -328,7 +328,11 @@ inline void vector_ne_w_scalar(T * __restrict__ out, const T * __restrict__ a, c
 }}
 """
 
-    def __init__(self, vector_width, try_to_demote_symbols_in_nsdfgs=False):
+    def __init__(self,
+                 vector_width: str,
+                 try_to_demote_symbols_in_nsdfgs: bool = False,
+                 fuse_overlapping_loads: bool = False,
+                 apply_on_maps: Optional[List[str]] = None):
         passes = [
             EliminateBranches(),
             RemoveFPTypeCasts(),
@@ -382,6 +386,7 @@ inline void vector_ne_w_scalar(T * __restrict__ out, const T * __restrict__ a, c
                 global_code_location="frame",
                 vector_op_numeric_type=dace.float64,
                 try_to_demote_symbols_in_nsdfgs=try_to_demote_symbols_in_nsdfgs,
+                apply_on_maps=apply_on_maps,
             )
         ]
         super().__init__(passes)
