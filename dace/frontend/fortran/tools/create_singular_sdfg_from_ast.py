@@ -73,6 +73,13 @@ def main():
         default=False,
         help="(Optional) If specified, will avoid pruning struct components.",
     )
+    argp.add_argument(
+        "--rename_uniquely",
+        action=argparse.BooleanOptionalAction,
+        required=False,
+        default=False,
+        help="(Optional) If specified, will rename variables uniquely."
+    )
     args = argp.parse_args()
 
     input_dirs = [Path(p) for p in args.in_src]
@@ -87,6 +94,12 @@ def main():
         print(f"Will avoid pruning struct components")
     else:
         print(f"Will prune unused struct components")
+
+    rename_uniquely: bool = args.rename_uniquely
+    if rename_uniquely:
+        print(f"Will rename variables uniquely")
+    else:
+        print(f"Will not rename variables uniquely")
 
     output_sdfg = args.output_sdfg
     print(f"Will be writing SDFG to: {output_sdfg}")
@@ -105,6 +118,7 @@ def main():
         config_injections=config_injections,
         ast_checkpoint_dir=checkpoint_dir,
         do_not_prune_type_components=keep_components,
+        rename_uniquely=rename_uniquely,
     )
     own_ast, program = create_internal_ast(cfg)
 
