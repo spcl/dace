@@ -958,6 +958,7 @@ class Vectorize(ppl.Pass):
             if array.storage != self.vector_output_storage:
                 # If the name exists in the inputs, reuse the name
                 arr_name_to_use = f"{oe.data.data}_vec_k{vectorization_number}"
+
                 if arr_name_to_use not in state.parent_graph.sdfg.arrays:
                     state.parent_graph.sdfg.add_array(name=arr_name_to_use,
                                                       shape=(self.vector_width, ),

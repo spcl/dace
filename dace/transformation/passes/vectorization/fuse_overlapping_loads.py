@@ -97,6 +97,10 @@ class FuseOverlappingLoads(ppl.Pass):
                     # 2. Add an intermediate access node
                     # 3. Add new edges (need to offset the union subset from individual)
                     for k, v in in_data_and_srcs.items():
+                        # If length is one continue
+                        if len(v) <= 1:
+                            continue
+
                         # Collect out connectors to remove
                         out_connectors = dict()
                         for vitem in v:
