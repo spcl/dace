@@ -5,8 +5,10 @@ import dace
 import copy
 import pytest
 import numpy
+from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg import ControlFlowRegion
+from dace.sdfg.graph import Edge
 from dace.sdfg.state import ConditionalBlock
 from dace.transformation.interstate import branch_elimination
 from dace.transformation.passes.vectorization.vectorize_cpu import VectorizeCPU
@@ -119,22 +121,27 @@ def no_maps(A: dace.float64[N, N], B: dace.float64[N, N]):
 
 
 @dace.program
-def cloudsc_snippet_one(za: dace.float64[klev, kfdia], zliqfrac: dace.float64[klev, kfdia],
-                        zicefrac: dace.float64[klev, kfdia], zqx: dace.float64[klev, kfdia, 5],
-                        zli: dace.float64[klev, kfdia], zy: dace.float64[klev, kfdia, 5],
-                        zx: dace.float64[klev, kfdia, 4], rlmin: dace.float64, z1: dace.int64, z2: dace.int64):
-    for i in range(1, klev + 1):
-        for j in range(kidia + 1, kfdia + 1):
-            za[i - 1, j - 1] = 2.0 * za[i - 1, j - 1] - 5
-            cond1 = rlmin > (0.5 * (zqx[i - 1, j - 1, z1] + zqx[i, j, z2]))
+def cloudsc_snippet_one(
+    za: dace.float64[kfdia, klev],
+    zliqfrac: dace.float64[kfdia, klev],
+    zicefrac: dace.float64[kfdia, klev],
+    zqx: dace.float64[5, klev + 1, kfdia + 1],
+    zli: dace.float64[kfdia, klev],
+    rlmin: dace.float64,
+    z1: dace.int64,
+):
+    # note: outer loop over j (kfdia) first, then i (klev) to match column-major
+    for j in range(kfdia):
+        for i in range(klev):
+            zaji = za[j, i]
+            za[j, i] = 2.0 * zaji - 5
+            cond1 = rlmin > 0.5 * (zqx[z1, i, j] + zqx[z1, j + 1, i + 1])
             if cond1:
-                zliqfrac[i - 1, j - 1] = zqx[i - 1, j - 1, z1] * zli[i - 1, j - 1]
-                zicefrac[i - 1, j - 1] = 1 - zliqfrac[i - 1, j - 1]
+                zliqfrac[j, i] = zqx[z1, j, i] * zli[j, i]
+                zicefrac[j, i] = 1 - zliqfrac[j, i]
             else:
-                zliqfrac[i - 1, j - 1] = 0
-                zicefrac[i - 1, j - 1] = 0
-            for m in dace.map[1:5:1]:
-                zx[i - 1, j - 1, m - 1] = zy[i - 1, z1, z2]
+                zliqfrac[j, i] = 0
+                zicefrac[j, i] = 0
 
 
 @dace.program
@@ -239,14 +246,15 @@ def run_vectorization_test(dace_func,
                            sdfg_name=None,
                            fuse_overlapping_loads=False,
                            insert_copies=True,
-                           filter_map=-1):
+                           filter_map=-1,
+                           cleanup=False):
 
     # Create copies for comparison
     arrays_orig = {k: copy.deepcopy(v) for k, v in arrays.items()}
     arrays_vec = {k: copy.deepcopy(v) for k, v in arrays.items()}
 
     # Original SDFG
-    sdfg = dace_func.to_sdfg(simplify=False)
+    sdfg: dace.SDFG = dace_func.to_sdfg(simplify=False)
     sdfg.name = sdfg_name
     if simplify:
         sdfg.simplify(validate=True, validate_all=True, skip=skip_simplify or set())
@@ -255,8 +263,30 @@ def run_vectorization_test(dace_func,
     c_sdfg = sdfg.compile()
 
     # Vectorized SDFG
-    copy_sdfg = copy.deepcopy(sdfg)
+    copy_sdfg: dace.SDFG = copy.deepcopy(sdfg)
     copy_sdfg.name = copy_sdfg.name + "_vectorized"
+
+    if cleanup:
+        for e, g in copy_sdfg.all_edges_recursive():
+            if isinstance(g, dace.SDFGState):
+                if (isinstance(e.src, dace.nodes.AccessNode) and isinstance(e.dst, dace.nodes.AccessNode)
+                        and isinstance(g.sdfg.arrays[e.dst.data], dace.data.Scalar)
+                        and e.data.other_subset is not None):
+                    # Add assignment taskelt
+                    src_data = e.src.data
+                    src_subset = e.data.subset if e.data.data == src_data else e.data.other_subset
+                    dst_data = e.dst.data
+                    dst_subset = e.data.subset if e.data.data == dst_data else e.data.other_subset
+                    g.remove_edge(e)
+                    t = g.add_tasklet(name=f"assign_dst_{dst_data}_from_{src_data}",
+                                      code="_out = _in",
+                                      inputs={"_in"},
+                                      outputs={"_out"})
+                    g.add_edge(e.src, e.src_conn, t, "_in",
+                               dace.memlet.Memlet(data=src_data, subset=copy.deepcopy(src_subset)))
+                    g.add_edge(t, "_out", e.dst, e.dst_conn,
+                               dace.memlet.Memlet(data=dst_data, subset=copy.deepcopy(dst_subset)))
+        copy_sdfg.validate()
 
     if filter_map != -1:
         map_labels = [n.map.label for (n, g) in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)]
@@ -807,7 +837,7 @@ def test_jacobi2d_with_filter_map():
                            },
                            vector_width=8,
                            save_sdfgs=True,
-                           sdfg_name="jacobi2d",
+                           sdfg_name="jacobi2d_with_filter_map",
                            filter_map=1)
 
 
@@ -1019,6 +1049,135 @@ def test_disjoint_chain_split_branch_only(trivial_if_demote_symbols: Tuple[bool,
         numpy.testing.assert_allclose(out_no_fuse[name], out_fused[name], atol=1e-12)
 
 
+@dace.program
+def cloudsc_snippet_two(
+    A: dace.float64[2, N, N],
+    B: dace.float64[N, N],
+    c: dace.float64,
+    D: dace.float64[N, N],
+    E: dace.float64[N, N],
+):
+    for i in dace.map[0:N]:
+        for j in dace.map[0:N]:
+            B[i, j] = A[1, i, j] + A[0, i, j]
+            _if_cond_5 = B[i, j] > c
+            if _if_cond_5:
+                D[i, j] = B[i, j] / A[0, i, j]
+                E[i, j] = 1.0 - D[i, j]
+            else:
+                D[i, j] = 0.0
+                E[i, j] = 0.0
+
+
+def test_snippet_from_cloudsc_two():
+    _S = 64
+    A = numpy.random.random((2, _S, _S))
+    B = numpy.random.random((_S, _S))
+    c = 0.1
+    D = numpy.random.random((_S, _S))
+    E = numpy.random.random((_S, _S))
+
+    run_vectorization_test(dace_func=cloudsc_snippet_two,
+                           arrays={
+                               'A': A,
+                               'B': B,
+                               'D': D,
+                               'E': E,
+                           },
+                           params={
+                               'c': c,
+                               'N': _S
+                           },
+                           vector_width=8,
+                           save_sdfgs=True,
+                           sdfg_name="cloudsc_snippet_two")
+
+
+def has_no_inner_maps(state: dace.SDFGState, map_entry: dace.nodes.MapEntry):
+    for inode in state.all_nodes_between(map_entry, state.exit_node(map_entry)):
+        if isinstance(inode, dace.nodes.MapEntry):
+            return False
+    return True
+
+
+def test_snippet_from_cloudsc_two_fuse_overlapping_loads():
+    _S = 64
+    A = numpy.random.random((2, _S, _S))
+    B = numpy.random.random((_S, _S))
+    c = 0.1
+    D = numpy.random.random((_S, _S))
+    E = numpy.random.random((_S, _S))
+
+    vectorized_sdfg = run_vectorization_test(dace_func=cloudsc_snippet_two,
+                                             arrays={
+                                                 'A': A,
+                                                 'B': B,
+                                                 'D': D,
+                                                 'E': E,
+                                             },
+                                             params={
+                                                 'c': c,
+                                                 'N': _S
+                                             },
+                                             vector_width=8,
+                                             save_sdfgs=True,
+                                             fuse_overlapping_loads=True,
+                                             sdfg_name="cloudsc_snippet_two_fuse_overlapping_loads")
+
+    # Should have 1 access node between two maps
+    nsdfgs = {(n, g)
+              for n, g in vectorized_sdfg.all_nodes_recursive()
+              if isinstance(n, dace.nodes.MapEntry) and has_no_inner_maps(g, n)}
+    for nsdfg, state in nsdfgs:
+        src_access_nodes = {ie.src for ie in state.in_edges(nsdfg) if isinstance(ie.src, dace.nodes.AccessNode)}
+
+        src_src_access_nodes = set()
+        for src_acc_node in src_access_nodes:
+            src_src_access_nodes = src_src_access_nodes.union(
+                {ie.src
+                 for ie in state.in_edges(src_acc_node) if isinstance(ie.src, dace.nodes.AccessNode)})
+
+        assert len(
+            src_src_access_nodes
+        ) == 1, f"Excepted one access node got {len(src_src_access_nodes)}, ({src_src_access_nodes}) (from: ({src_access_nodes}))"
+
+
+def test_snippet_from_cloudsc_one():
+    klev = 64
+    kfdia = 32
+
+    # reverse dimensions to match Fortran layout
+    za = numpy.random.random((kfdia, klev))
+    zliqfrac = numpy.random.random((kfdia, klev))
+    zicefrac = numpy.random.random((kfdia, klev))
+    zqx = numpy.random.random((5, kfdia + 1, klev + 1))
+    zli = numpy.random.random((kfdia, klev))
+
+    rlmin = 0.1
+    z1 = 1
+
+    run_vectorization_test(
+        dace_func=cloudsc_snippet_one,
+        arrays={
+            'za': za,
+            'zliqfrac': zliqfrac,
+            'zicefrac': zicefrac,
+            'zqx': zqx,
+            'zli': zli,
+        },
+        params={
+            'rlmin': rlmin,
+            'z1': z1,
+            'kfdia': kfdia,
+            'klev': klev,
+        },
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name="cloudsc_snippet_one",
+        cleanup=True,
+    )
+
+
 if __name__ == "__main__":
     test_vsubs_cpu()
     test_vsubs_two_cpu()
@@ -1043,3 +1202,6 @@ if __name__ == "__main__":
     test_division_by_zero_cpu()
     test_memset_with_fuse_and_copyin_enabled()
     test_nested_memset_with_fuse_and_copyin_enabled()
+    test_snippet_from_cloudsc_one()
+    test_snippet_from_cloudsc_two()
+    test_snippet_from_cloudsc_two_fuse_overlapping_loads()
