@@ -52,6 +52,7 @@ class TaskletType(Enum):
     ARRAY_SCALAR_ASSIGNMENT = "array_scalar_assignment"
     SCALAR_ARRAY_ASSIGNMENT = "scalar_array_assignment"
     SCALAR_SCALAR_ASSIGNMENT = "scalar_scalar_assignment"
+    SCALAR_SYMBOL_ASSIGNMENT = "scalar_symbol_assignment"
     SCALAR_SYMBOL = "scalar_symbol"
     ARRAY_SYMBOL = "array_symbol"
     ARRAY_SCALAR = "array_scalar"
@@ -883,7 +884,6 @@ def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
         elif len(scalars) == 2:
             info_dict.update({"type": TaskletType.SCALAR_SCALAR, "rhs1": rhs1, "rhs2": rhs2, "op": op})
             return info_dict
-
     elif n_in == 0:
         free_syms = _extract_non_connector_syms_from_tasklet(node)
         bound_syms = _extract_non_connector_bound_syms_from_tasklet(node.code.as_string)
@@ -940,10 +940,29 @@ def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
                 return info_dict
             else:
                 assert len(bound_syms) == 1
-                # Could be a function call on a constant like `f(2.0)`
-                c1 = bound_syms.pop()
-                ttype = TaskletType.UNARY_SYMBOL
-                info_dict.update({"type": ttype, "constant1": c1, "constant2": None, "op": op})
-                return info_dict
+                # Could be a function call on a constant like `f(2.0)`, but also `= 0.0`
+                if op == "=":
+                    c1 = bound_syms.pop()
+                    # Assignment operators it will return op <- `=` and always populate `rhs1`
+                    if code_str == f"{lhs} = {c1}" or code_str == f"{lhs} = {c1};":
+                        out_edges = {oe for oe in state.out_edges_by_connector(node, lhs)}
+                        assert len(out_edges) == 1, f"expected 1 out-edge for connector {lhs}, found {len(out_edges)}"
+                        lhs_data_name = out_edges.pop().data.data
+                        lhs_data = state.sdfg.arrays[lhs_data_name]
+                        lhs_datadesc = lhs_data
+                        ttype = None
+                        if isinstance(lhs_datadesc, dace.data.Array):
+                            ttype = TaskletType.ARRAY_SYMBOL_ASSIGNMENT
+                        elif isinstance(lhs_datadesc, dace.data.Scalar):
+                            ttype = TaskletType.SCALAR_SYMBOL_ASSIGNMENT
+                        else:
+                            raise ValueError(f"Unsupported Assignment Type {lhs_datadesc} <- {c1}")
+                        info_dict.update({"type": ttype, "op": "=", "constant1": c1})
+                        return info_dict
+                else:
+                    c1 = bound_syms.pop()
+                    ttype = TaskletType.UNARY_SYMBOL
+                    info_dict.update({"type": ttype, "constant1": c1, "constant2": None, "op": op})
+                    return info_dict
 
     raise NotImplementedError("Unhandled case in detect tasklet type")

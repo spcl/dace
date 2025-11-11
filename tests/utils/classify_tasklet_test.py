@@ -444,6 +444,15 @@ tasklet_infos = [
         "constant1": "3.0",
         "constant2": None,
     }),
+    ("out = 0.0", "scalar", {}, {}, {}, {
+        "type": tutil.TaskletType.SCALAR_SYMBOL_ASSIGNMENT,
+        "lhs": "out",
+        "rhs1": None,
+        "rhs2": None,
+        "op": "=",
+        "constant1": "0.0",
+        "constant2": None,
+    }),
 ]
 
 

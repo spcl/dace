@@ -81,6 +81,17 @@ def unsupported_op(A: dace.float64[N, N], B: dace.float64[N, N]):
 
 
 @dace.program
+def division_by_zero(A: dace.float64[N], B: dace.float64[N], c: dace.float64):
+    for i in dace.map[
+            0:N,
+    ]:
+        if A[i] > 0.0:
+            B[i] = c / A[i]
+        else:
+            B[i] = 0.0
+
+
+@dace.program
 def no_maps(A: dace.float64[N, N], B: dace.float64[N, N]):
     i = 8
     j = 7
@@ -208,7 +219,8 @@ def run_vectorization_test(dace_func,
                            save_sdfgs=False,
                            sdfg_name=None,
                            fuse_overlapping_loads=False,
-                           insert_copies=True):
+                           insert_copies=True,
+                           filter_map=-1):
     """
     Run vectorization test and compare results.
 
@@ -239,8 +251,17 @@ def run_vectorization_test(dace_func,
     copy_sdfg = copy.deepcopy(sdfg)
     copy_sdfg.name = copy_sdfg.name + "_vectorized"
 
-    VectorizeCPU(vector_width=vector_width, fuse_overlapping_loads=fuse_overlapping_loads,
-                 insert_copies=insert_copies).apply_pass(copy_sdfg, {})
+    if filter_map != -1:
+        map_labels = [n.map.label for (n, g) in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)]
+        filter_map_labels = map_labels[0:filter_map]
+        filter_map = filter_map_labels
+    else:
+        filter_map = None
+
+    VectorizeCPU(vector_width=vector_width,
+                 fuse_overlapping_loads=fuse_overlapping_loads,
+                 insert_copies=insert_copies,
+                 apply_on_maps=filter_map).apply_pass(copy_sdfg, {})
 
     if save_sdfgs and sdfg_name:
         copy_sdfg.save(f"{sdfg_name}_vectorized.sdfg")
@@ -257,6 +278,24 @@ def run_vectorization_test(dace_func,
             f"{name} Diff: {arrays_orig[name] - arrays_vec[name]}"
 
     return copy_sdfg
+
+
+def test_division_by_zero_cpu():
+    N = 256
+    A = numpy.random.random((N, ))
+    B = numpy.random.random((N, ))
+
+    run_vectorization_test(
+        dace_func=division_by_zero,
+        arrays={
+            'A': A,
+            'B': B
+        },
+        params={'N': N},
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name="division_by_zero",
+    )
 
 
 def test_vsubs_cpu():
@@ -691,6 +730,28 @@ def test_jacobi2d():
                            sdfg_name="jacobi2d")
 
 
+def test_jacobi2d_with_filter_map():
+    _S = 66
+    A = numpy.random.random((_S, _S))
+    B = numpy.random.random((_S, _S))
+
+    sdfg = jacobi2d.to_sdfg()
+
+    run_vectorization_test(dace_func=jacobi2d,
+                           arrays={
+                               'A': A,
+                               'B': B
+                           },
+                           params={
+                               'S': _S,
+                               'tsteps': 5,
+                           },
+                           vector_width=8,
+                           save_sdfgs=True,
+                           sdfg_name="jacobi2d",
+                           filter_map=1)
+
+
 def test_jacobi2d_with_fuse_overlapping_loads():
     _S = 66
     A = numpy.random.random((_S, _S))
@@ -920,3 +981,4 @@ if __name__ == "__main__":
         test_disjoint_chain_split_branch_only(argtuple)
         test_jacobi2d_with_parameters(argtuple)
     test_jacobi2d_with_fuse_overlapping_loads()
+    test_division_by_zero_cpu()
