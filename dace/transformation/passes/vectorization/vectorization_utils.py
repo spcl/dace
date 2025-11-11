@@ -1285,6 +1285,13 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         except ValueError:
             return s
 
+    def _is_number(s: str):
+        try:
+            float(s)
+            return True
+        except ValueError:
+            return False
+
     def _generate_code(rhs1_, rhs2_, const1_, const2_, lhs_, op_):
         """
         Generate the C++ vectorized code string using templates or fallbacks.
@@ -1361,8 +1368,13 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         node.code = dace.properties.CodeBlock(code="\n".join([f"{lhs}[{i}] = {c2};" for i in range(vw)]) + "\n",
                                               language=dace.Language.CPP)
     elif ttype == tutil.TaskletType.ARRAY_SYMBOL_ASSIGNMENT:
-        node.code = dace.properties.CodeBlock(code="\n".join([f"{lhs}[{i}] = {c1}{i};" for i in range(vw)]) + "\n",
-                                              language=dace.Language.CPP)
+        # It is either a symbol or a constant
+        if _is_number(str(c1)):
+            _set_template(None, None, c1, None, lhs, "=", ttype)
+        else:
+            node.code = dace.properties.CodeBlock(code="\n".join([f"{lhs}[{i}] = {c1}{i};" for i in range(vw)]) + "\n",
+                                                  language=dace.Language.CPP)
+
     elif ttype in {tutil.TaskletType.ARRAY_SYMBOL, tutil.TaskletType.ARRAY_ARRAY}:
         _set_template(rhs1, rhs2, c1, c2, lhs, op, ttype)
     elif ttype in {tutil.TaskletType.UNARY_ARRAY}:

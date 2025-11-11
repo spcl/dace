@@ -68,11 +68,15 @@ class Vectorize(ppl.Pass):
     def _vectorize_map(self, state: SDFGState, inner_map_entry: dace.nodes.MapEntry, vectorization_number: int):
         # Get the innermost maps
         assert isinstance(inner_map_entry, dace.nodes.MapEntry)
+        assert inner_map_entry in state.nodes()
 
         tile_sizes = [1 for _ in inner_map_entry.map.range]
         tile_sizes[-1] = self.vector_width
+        assert tile_sizes != []
+        assert tile_sizes != [1 for _ in inner_map_entry.map.range]
+
         MapTiling.apply_to(
-            sdfg=state.parent_graph.sdfg,
+            sdfg=state.sdfg,
             map_entry=inner_map_entry,
             options={
                 "tile_sizes": tile_sizes,
@@ -80,6 +84,7 @@ class Vectorize(ppl.Pass):
                 "divides_evenly": True,
             },
         )
+
         new_inner_map = inner_map_entry
         new_inner_map.schedule = dace.dtypes.ScheduleType.Sequential
 
@@ -618,26 +623,30 @@ class Vectorize(ppl.Pass):
             used_param = map_entry.map.params[
                 -1]  # Regardless of offsets F / C we assume last parameter of the map is used
 
-            new_range_list = [(b, e, s) for (b, e, s) in memlet.subset]
-            stride_offset = 0 if self._stride_type == "F" else -1  # left-contig is Fortran and right-contig is C
-            range_tup: Tuple[dace.symbolic.SymExpr, dace.symbolic.SymExpr,
-                             dace.symbolic.SymExpr] = new_range_list[stride_offset]
-            lb, le, ls = range_tup
-            if isinstance(le, int):
-                le = dace.symbolic.SymExpr(str(le))
-            assert ls == 1, f"Previous checks must have ensured the final dimension should result in unit-stride access"
-            new_range_list[stride_offset] = (
-                lb, le.subs(used_param, dace.symbolic.SymExpr(f"({self.vector_width} - 1) + {used_param}")),
-                ls) if lb == le else (lb,
-                                      le.subs(used_param,
-                                              dace.symbolic.SymExpr(f"({self.vector_width} * {used_param}) - 1")), ls)
+            if memlet.subset is not None:
+                new_range_list = [(b, e, s) for (b, e, s) in memlet.subset]
+                stride_offset = 0 if self._stride_type == "F" else -1  # left-contig is Fortran and right-contig is C
+                range_tup: Tuple[dace.symbolic.SymExpr, dace.symbolic.SymExpr,
+                                 dace.symbolic.SymExpr] = new_range_list[stride_offset]
+                lb, le, ls = range_tup
+                if isinstance(le, int):
+                    le = dace.symbolic.SymExpr(str(le))
+                assert ls == 1, f"Previous checks must have ensured the final dimension should result in unit-stride access"
+                new_range_list[stride_offset] = (
+                    lb, le.subs(used_param, dace.symbolic.SymExpr(f"({self.vector_width} - 1) + {used_param}")),
+                    ls) if lb == le else (lb,
+                                          le.subs(used_param,
+                                                  dace.symbolic.SymExpr(f"({self.vector_width} * {used_param}) - 1")),
+                                          ls)
+
+                new_memlet = dace.memlet.Memlet(
+                    data=memlet.data,
+                    subset=dace.subsets.Range(new_range_list),
+                )
+            else:
+                new_memlet = dace.memlet.Memlet(None)
 
             assert memlet.other_subset is None, f"Other subset not supported in vectorization yet, found {memlet.other_subset} that is None for {memlet} (edge: {edge}) (state: {state})"
-
-            new_memlet = dace.memlet.Memlet(
-                data=memlet.data,
-                subset=dace.subsets.Range(new_range_list),
-            )
             state.remove_edge(edge)
             state.add_edge(edge.src, edge.src_conn, edge.dst, edge.dst_conn, new_memlet)
 
@@ -672,7 +681,8 @@ class Vectorize(ppl.Pass):
             if not isinstance(in_edge.src, dace.nodes.MapEntry):
                 in_edges += state.in_edges(in_edge.src)
             else:
-                input_types.add(type(state.sdfg.arrays[in_edge.data.data]))
+                if in_edge.data.data is not None:
+                    input_types.add(type(state.sdfg.arrays[in_edge.data.data]))
         while out_edges:
             out_edge = out_edges.pop()
             if state.out_degree(out_edge.dst) == 0:
@@ -686,7 +696,8 @@ class Vectorize(ppl.Pass):
             if not isinstance(out_edge.dst, dace.nodes.MapExit):
                 out_edges = state.out_edges(out_edge.dst)
             else:
-                output_types.add(type(state.sdfg.arrays[out_edge.data.data]))
+                if out_edge.data.data is not None:
+                    output_types.add(type(state.sdfg.arrays[out_edge.data.data]))
 
         vectorizable = (all({isinstance(itype, dace.data.Array) or itype == dace.data.Array
                              for itype in input_types}) and
@@ -714,10 +725,14 @@ class Vectorize(ppl.Pass):
                 # that is not writing to an array (all length 1 arrays have been made into scalasr before)
                 # it means they are invariant and we should keep them as they are
                 if ttype in {
-                        tutil.TaskletType.SCALAR_SCALAR, tutil.TaskletType.SCALAR_SYMBOL,
-                        tutil.TaskletType.SCALAR_SYMBOL, tutil.TaskletType.SYMBOL_SYMBOL,
-                        tutil.TaskletType.SCALAR_SCALAR_ASSIGNMENT, tutil.TaskletType.UNARY_SCALAR,
-                        tutil.TaskletType.UNARY_SYMBOL
+                        tutil.TaskletType.SCALAR_SCALAR,
+                        tutil.TaskletType.SCALAR_SYMBOL,
+                        tutil.TaskletType.SCALAR_SYMBOL,
+                        tutil.TaskletType.SYMBOL_SYMBOL,
+                        tutil.TaskletType.SCALAR_SCALAR_ASSIGNMENT,
+                        tutil.TaskletType.UNARY_SCALAR,
+                        tutil.TaskletType.UNARY_SYMBOL,
+                        tutil.TaskletType.SCALAR_SYMBOL_ASSIGNMENT,
                 }:
                     # If output is not an array
                     oe = state.out_edges(node).pop()
@@ -895,6 +910,9 @@ class Vectorize(ppl.Pass):
         in_datas = set()
         for ie in state.in_edges(map_entry):
             # If input storage is not registers need to copy in
+            if ie.data.data is None:
+                continue
+
             array = state.parent_graph.sdfg.arrays[ie.data.data]
             if array.storage != self.vector_input_storage:
                 # Add new array, if not there
@@ -1012,6 +1030,8 @@ class Vectorize(ppl.Pass):
         num_vectorized = 0
         vectorized_maps = set()
         sdfgs_to_vectorize = set()
+
+        applied = 0
         for i, (map_entry, state) in enumerate(map_entries):
             if is_innermost_map(map_entry, state):
                 num_vectorized += 1
@@ -1021,6 +1041,7 @@ class Vectorize(ppl.Pass):
                     continue
 
                 self._vectorize_map(state, map_entry, vectorization_number=i)
+                applied += 1
                 vectorized_maps.add(map_entry)
                 if len(all_nodes_between) == 1 and isinstance(next(iter(all_nodes_between)), dace.nodes.NestedSDFG):
                     sdfgs_to_vectorize.add((next(iter(all_nodes_between)), state))
@@ -1044,4 +1065,4 @@ class Vectorize(ppl.Pass):
 
         sdfg.append_global_code(cpp_code=self.global_code, location=self.global_code_location)
 
-        return None
+        return applied
