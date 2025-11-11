@@ -753,7 +753,7 @@ def check_nsdfg_connector_array_shapes_match(parent_state: dace.SDFGState, nsdfg
     """
     # ===== Validate Input Edges =====
     for in_edge in parent_state.in_edges(nsdfg_node):
-        if in_edge.data is None:
+        if in_edge.data.data is None:
             continue
 
         subset = in_edge.data.subset
@@ -848,7 +848,7 @@ def fix_nsdfg_connector_array_shapes_mismatch(parent_state: dace.SDFGState, nsdf
 
     # ===== Fix Input Edge Connector Arrays =====
     for in_edge in parent_state.in_edges(nsdfg_node):
-        if in_edge.data is None:
+        if in_edge.data.data is None:
             continue
 
         subset = in_edge.data.subset
@@ -2802,10 +2802,10 @@ def add_copies_before_and_after_nsdfg(
     # Remove movable datanames from connectors and replace with "_vec" variant
     for movable_data in movable_datas:
         for ie in state.in_edges(nsdfg_node):
-            if ie.dst_conn in movable_data:
+            if ie.dst_conn is not None and ie.dst_conn in movable_data:
                 ie.dst_conn = movable_data + "_vec"
         for oe in state.out_edges(nsdfg_node):
-            if oe.src_conn in movable_data:
+            if oe.src_conn is not None and oe.src_conn in movable_data:
                 oe.src_conn = movable_data + "_vec"
 
     nsdfg_in_conns = list(nsdfg_node.in_connectors.keys())
