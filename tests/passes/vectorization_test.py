@@ -88,6 +88,17 @@ def memset(A: dace.float64[N, N]):
             A[i, j] = 0.0
 
 
+def foo(A):
+    A = 0.0
+
+
+@dace.program
+def nested_memset(A: dace.float64[N, N]):
+    for i in dace.map[0:N]:
+        for j in dace.map[0:N]:
+            foo(A[i, j])
+
+
 @dace.program
 def division_by_zero(A: dace.float64[N], B: dace.float64[N], c: dace.float64):
     for i in dace.map[
@@ -229,19 +240,7 @@ def run_vectorization_test(dace_func,
                            fuse_overlapping_loads=False,
                            insert_copies=True,
                            filter_map=-1):
-    """
-    Run vectorization test and compare results.
 
-    Args:
-        dace_func: DaCe program function to test
-        arrays: Dict of numpy arrays (will be copied internally)
-        params: Dict of additional parameters to pass to compiled functions
-        vector_width: Vector width for vectorization
-        simplify: Whether to simplify the SDFG
-        skip_simplify: Set of passes to skip during simplification
-        save_sdfgs: Whether to save SDFGs to disk
-        sdfg_name: Base name for saved SDFGs
-    """
     # Create copies for comparison
     arrays_orig = {k: copy.deepcopy(v) for k, v in arrays.items()}
     arrays_vec = {k: copy.deepcopy(v) for k, v in arrays.items()}
@@ -341,6 +340,39 @@ def test_memset():
         save_sdfgs=True,
         sdfg_name="memset",
     )
+
+
+def test_memset_with_fuse_and_copyin_enabled():
+    N = 64
+    A = numpy.random.random((N, N))
+
+    run_vectorization_test(dace_func=memset,
+                           arrays={
+                               'A': A,
+                           },
+                           params={'N': N},
+                           vector_width=8,
+                           save_sdfgs=True,
+                           sdfg_name="memset_with_fuse_and_copy_in_enabled",
+                           fuse_overlapping_loads=True,
+                           insert_copies=True)
+
+
+def test_nested_memset_with_fuse_and_copyin_enabled():
+    N = 64
+    A = numpy.random.random((N, N))
+
+    run_vectorization_test(dace_func=nested_memset,
+                           arrays={
+                               'A': A,
+                           },
+                           params={'N': N},
+                           vector_width=8,
+                           save_sdfgs=True,
+                           sdfg_name="nested_memset_with_fuse_and_copy_in_enabled",
+                           fuse_overlapping_loads=True,
+                           insert_copies=True,
+                           simplify=False)
 
 
 def test_vexp_cpu():
@@ -1009,3 +1041,5 @@ if __name__ == "__main__":
         test_jacobi2d_with_parameters(argtuple)
     test_jacobi2d_with_fuse_overlapping_loads()
     test_division_by_zero_cpu()
+    test_memset_with_fuse_and_copyin_enabled()
+    test_nested_memset_with_fuse_and_copyin_enabled()

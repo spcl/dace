@@ -719,7 +719,6 @@ class Vectorize(ppl.Pass):
         for node in nodes:
             if isinstance(node, dace.nodes.Tasklet):
                 tasklet_info = tutil.classify_tasklet(state, node)
-                print("Tasklet:", node, " has info:", tasklet_info)
                 ttype: tutil.TaskletType = tasklet_info.get("type")
                 # If we still have scalar-scalar or scalar-symbol or symbol-symbol op
                 # that is not writing to an array (all length 1 arrays have been made into scalasr before)
@@ -973,7 +972,6 @@ class Vectorize(ppl.Pass):
                 offsets = [b for (b, e, s) in memlet.subset]
                 data_and_offsets.append((dataname, arr_name_to_use, offsets))
 
-        print(data_and_offsets)
         for dataname, new_dataname, offsets in data_and_offsets:
             self._offset_memlets_on_path(state, map_entry, dataname, new_dataname)
 
