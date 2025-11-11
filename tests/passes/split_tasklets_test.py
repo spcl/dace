@@ -317,7 +317,6 @@ def _count_tasklets_in_map(sdfg: dace.SDFG) -> int:
 def _run_compile_and_comparison_test(sdfg: dace.SDFG, expected_num_statements: int = None):
     sdfg.compile()
     original_sdfg = copy.deepcopy(sdfg)
-    original_sdfg.save("original.sdfgz", compress=True)
     SplitTasklets().apply_pass(sdfg=sdfg, pipeline_results={})
     sdfg.validate()
     sdfg.compile()
