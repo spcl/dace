@@ -221,7 +221,7 @@ def test_c_4d_non_contiguous():
 def test_c_4d_contiguous_first_partial_second_rest_one():
     """Test Fortran 4D array - partial middle dims without trailing size 1"""
     array = create_array((5, 10, 15, 20), (3000, 300, 20, 1))
-    subset = create_subset([(1, 1, 1), (1, 1, 1), (0, 5, 1), (0, 20, 1)])
+    subset = create_subset([(1, 1, 1), (1, 1, 1), (0, 5, 1), (0, 19, 1)])
     result = subset.is_contiguous_subset(array)
     assert result is True
 
