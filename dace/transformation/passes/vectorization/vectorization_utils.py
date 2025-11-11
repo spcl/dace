@@ -410,9 +410,15 @@ def get_vector_max_access_ranges(state: SDFGState, node: dace.nodes.NestedSDFG) 
     return param_max_ranges
 
 
-def prepare_vectorized_array(state: dace.SDFGState, inner_sdfg: dace.SDFG, inner_arr_name: str, orig_dataname: str,
-                             orig_arr: dace.data.Data, subset: dace.subsets.Range, vector_width: dace.symbolic.SymExpr,
-                             vector_storage: dace.dtypes.StorageType):
+def prepare_vectorized_array(state: dace.SDFGState,
+                             inner_sdfg: dace.SDFG,
+                             inner_arr_name: str,
+                             orig_dataname: str,
+                             orig_arr: dace.data.Data,
+                             subset: dace.subsets.Range,
+                             vector_width: dace.symbolic.SymExpr,
+                             vector_storage: dace.dtypes.StorageType,
+                             reuse_name_if_existing: bool = False):
     """
     Prepares a vectorized array by creating the vector array in outer SDFG
     and replacing the inner array with vectorized version.
@@ -426,19 +432,22 @@ def prepare_vectorized_array(state: dace.SDFGState, inner_sdfg: dace.SDFG, inner
         memlet: Memlet for determining offsets
         vector_width: Width of the vector
         vector_storage: Storage type for the vector
-
+        reuse_name_if_existing: Does not find a new name
     Returns:
         tuple: (vector_dataname, inner_offset or 0)
     """
     # Create vector array in outer SDFG
     vector_dataname_candidate = orig_dataname + "_vec_k"
-    vector_dataname, _ = state.sdfg.add_array(name=vector_dataname_candidate,
-                                              shape=(vector_width, ),
-                                              dtype=orig_arr.dtype,
-                                              location=orig_arr.location,
-                                              transient=True,
-                                              find_new_name=True,
-                                              storage=vector_storage)
+    if reuse_name_if_existing:
+        vector_dataname = vector_dataname_candidate
+    else:
+        vector_dataname, _ = state.sdfg.add_array(name=vector_dataname_candidate,
+                                                  shape=(vector_width, ),
+                                                  dtype=orig_arr.dtype,
+                                                  location=orig_arr.location,
+                                                  transient=True,
+                                                  find_new_name=True,
+                                                  storage=vector_storage)
 
     # Replace the array inside inner SDFG
     prev_inner_arr = inner_sdfg.arrays[inner_arr_name]
@@ -574,9 +583,15 @@ def process_out_edges(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG, 
             orig_arr = state.sdfg.arrays[oe.data.data]
             inner_arr_name = oe.src_conn
 
+            # Check inout connector if nsdfg
+            if isinstance(oe.src, dace.nodes.NestedSDFG) and oe.src_conn in oe.src.in_connectors:
+                # Inout connector means, this array should have been added
+                assert inner_arr_name in state.sdfg.arrays
+
             # Prepare vectorized arrays
             vector_dataname, inner_offset = prepare_vectorized_array(state, inner_sdfg, inner_arr_name, oe.data.data,
-                                                                     orig_arr, subset, vector_width, vector_storage)
+                                                                     orig_arr, subset, vector_width, vector_storage,
+                                                                     True)
 
             # Compute copy subset
             copy_subset = compute_edge_subset(oe.data.subset, subset, orig_arr, inner_offset, vector_width)
@@ -2852,6 +2867,7 @@ def add_copies_before_and_after_nsdfg(
     for ie in state.in_edges(nsdfg_node):
         if isinstance(ie.src, dace.nodes.AccessNode) and ie.data.data in inserted_array_names:
             print("Sift up")
+            state.sdfg.save("before_sift_up.sdfgz", compress=True)
             sift_access_node_up(state, ie.src, sdict[ie.src])
 
 
@@ -2928,5 +2944,16 @@ def sift_access_node_up(state: dace.SDFGState, node: dace.nodes.AccessNode, map_
     ies_from_connector = state.in_edges_by_connector(map_entry, ie.src_conn.replace("OUT_", "IN_"))
     for s_ie in ies_from_connector:
         state.remove_edge(s_ie)
-        state.add_edge(s_ie.src, s_ie.src_conn, node, None, copy.deepcopy(s_ie.data))
+
+        # Expand oe.data.subset
+        new_subset_list = []
+        p, (mb, me, ms) = map_entry.map.params[0], map_entry.map.range[0]
+        for (b, e, s) in ie.data.subset:
+            nb = b.subs(p, mb)
+            ne = e.subs(p, mb)
+            ns = s
+            new_subset_list.append((nb, ne, ns))
+        s_ie_subset = dace.subsets.Range(new_subset_list)
+
+        state.add_edge(s_ie.src, s_ie.src_conn, node, None, dace.memlet.Memlet(data=s_ie.data.data, subset=s_ie_subset))
         state.add_edge(node, None, s_ie.dst, s_ie.dst_conn, copy.deepcopy(oe.data))

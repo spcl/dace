@@ -5,6 +5,7 @@ import dace
 import copy
 import pytest
 import numpy
+from dace import InterstateEdge
 from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg import ControlFlowRegion
@@ -1232,7 +1233,199 @@ def test_snippet_from_cloudsc_one():
     )
 
 
+def _get_disjoint_chain_sdfg() -> dace.SDFG:
+    sd1 = dace.SDFG("disjoint_chain")
+    cb1 = ConditionalBlock("cond_if_cond_58", sdfg=sd1, parent=sd1)
+    ss1 = sd1.add_state(label="pre", is_start_block=True)
+    sd1.add_node(cb1, is_start_block=False)
+    sd1.add_symbol("N", dace.int64)
+
+    cfg1 = ControlFlowRegion(label="cond_58_true", sdfg=sd1, parent=cb1)
+    s1 = cfg1.add_state("main_1", is_start_block=True)
+    cfg2 = ControlFlowRegion(label="cond_58_false", sdfg=sd1, parent=cb1)
+    s2 = cfg2.add_state("main_2", is_start_block=True)
+
+    cb1.add_branch(
+        condition=CodeBlock("_if_cond_58 == 1"),
+        branch=cfg1,
+    )
+    cb1.add_branch(
+        condition=None,
+        branch=cfg2,
+    )
+    for arr_name, shape in [
+        ("zsolqa", (5, 5, N)),
+        ("zrainaut", (N, )),
+        ("zrainacc", (N, )),
+        ("ztp1", (N, )),
+    ]:
+        sd1.add_array(arr_name, shape, dace.float64)
+    sd1.add_scalar("rtt", dace.float64)
+    sd1.add_symbol("_if_cond_58", dace.float64)
+    sd1.add_symbol("_for_it_52", dace.int64)
+    sd1.add_edge(src=ss1, dst=cb1, data=InterstateEdge(assignments={
+        "_if_cond_58": "ztp1[_for_it_52] <= rtt",
+    }, ))
+
+    for state, d1_access_str, zsolqa_access_str, zsolqa_access_str_rev in [
+        (s1, "_for_it_52", "3,0,_for_it_52", "0,3,_for_it_52"), (s2, "_for_it_52", "2,0,_for_it_52", "0,2,_for_it_52")
+    ]:
+        zrainaut = state.add_access("zrainaut")
+        zrainacc = state.add_access("zrainacc")
+        zsolqa1 = state.add_access("zsolqa")
+        zsolqa2 = state.add_access("zsolqa")
+        zsolqa3 = state.add_access("zsolqa")
+        zsolqa4 = state.add_access("zsolqa")
+        zsolqa5 = state.add_access("zsolqa")
+        for i, (tasklet_code, in1, instr1, in2, instr2, out, outstr) in enumerate([
+            ("_out = _in1 + _in2", zrainaut, d1_access_str, zsolqa1, zsolqa_access_str, zsolqa2, zsolqa_access_str),
+            ("_out = _in1 + _in2", zrainacc, d1_access_str, zsolqa2, zsolqa_access_str, zsolqa3, zsolqa_access_str),
+            ("_out = (-_in1) + _in2", zrainaut, d1_access_str, zsolqa3, zsolqa_access_str_rev, zsolqa4,
+             zsolqa_access_str_rev),
+            ("_out = (-_in1) + _in2", zrainacc, d1_access_str, zsolqa4, zsolqa_access_str_rev, zsolqa5,
+             zsolqa_access_str_rev),
+        ]):
+            t1 = state.add_tasklet("t1", {"_in1", "_in2"}, {"_out"}, tasklet_code)
+            state.add_edge(in1, None, t1, "_in1", dace.memlet.Memlet(f"{in1.data}[{instr1}]"))
+            state.add_edge(in2, None, t1, "_in2", dace.memlet.Memlet(f"{in2.data}[{instr2}]"))
+            state.add_edge(t1, "_out", out, None, dace.memlet.Memlet(f"{out.data}[{outstr}]"))
+
+    sd1_s2 = sd1.add_state_after(cb1, label="extra")
+
+    z1 = sd1_s2.add_access("zrainacc")
+    z2 = sd1_s2.add_access("zrainacc")
+    t1 = sd1_s2.add_tasklet("increment", {"_in"}, {"_out"}, "_out = _in + 1")
+    sd1_s2.add_edge(z1, None, t1, "_in", dace.memlet.Memlet("zrainacc[_for_it_52]"))
+    sd1_s2.add_edge(t1, "_out", z2, None, dace.memlet.Memlet("zrainacc[_for_it_52]"))
+    sd1.validate()
+
+    sd2 = dace.SDFG("sd2")
+    sd2.add_symbol("N", dace.int64)
+    p_s1 = sd2.add_state("p_s1", is_start_block=True)
+
+    map_entry, map_exit = p_s1.add_map(name="map1", ndrange={"_for_it_52": dace.subsets.Range([(0, N - 1, 1)])})
+    nsdfg = p_s1.add_nested_sdfg(sdfg=sd1,
+                                 inputs={"zsolqa", "ztp1", "zrainaut", "zrainacc", "rtt"},
+                                 outputs={"zsolqa", "zrainacc"},
+                                 symbol_mapping={"_for_it_52": "_for_it_52"})
+    for arr_name, shape in [("zsolqa", (5, 5, N)), ("zrainaut", (N, )), ("zrainacc", (N, )), ("ztp1", (N, ))]:
+        sd2.add_array(arr_name, shape, dace.float64)
+    sd2.add_scalar("rtt", dace.float64)
+
+    for input_name in {"zsolqa", "ztp1", "zrainaut", "zrainacc", "rtt"}:
+        a = p_s1.add_access(input_name)
+        p_s1.add_edge(a, None, map_entry, f"IN_{input_name}",
+                      dace.memlet.Memlet.from_array(input_name, sd2.arrays[input_name]))
+        p_s1.add_edge(map_entry, f"OUT_{input_name}", nsdfg, input_name,
+                      dace.memlet.Memlet.from_array(input_name, sd2.arrays[input_name]))
+        map_entry.add_in_connector(f"IN_{input_name}")
+        map_entry.add_out_connector(f"OUT_{input_name}")
+    for output_name in {"zsolqa", "zrainacc"}:
+        a = p_s1.add_access(output_name)
+        p_s1.add_edge(map_exit, f"OUT_{output_name}", a, None,
+                      dace.memlet.Memlet.from_array(output_name, sd2.arrays[output_name]))
+        p_s1.add_edge(nsdfg, output_name, map_exit, f"IN_{output_name}",
+                      dace.memlet.Memlet.from_array(output_name, sd2.arrays[output_name]))
+        map_exit.add_in_connector(f"IN_{output_name}")
+        map_exit.add_out_connector(f"OUT_{output_name}")
+
+    nsdfg.sdfg.parent_nsdfg_node = nsdfg
+
+    sd1.validate()
+    sd2.validate()
+    return sd2, p_s1
+
+
+def test_disjoint_chain_with_overlapping_region_fusion():
+    sdfg, nsdfg_parent_state = _get_disjoint_chain_sdfg()
+    sdfg.name = f"disjoint_chain_split_branch_only_rtt_val_4_2_with_overlapping_region_fusion"
+    _N = 64
+    zsolqa = numpy.random.choice([0.001, 5.0], size=(5, 5, _N))
+    zrainacc = numpy.random.choice([0.001, 5.0], size=(_N, ))
+    zrainaut = numpy.random.choice([0.001, 5.0], size=(_N, ))
+    ztp1 = numpy.random.choice([3.5, 5.0], size=(_N, ))
+    rtt = numpy.array([4.2], numpy.float64)
+    _N = numpy.array([64], numpy.int64)
+    sdfg.validate()
+    sdfg.save(f"{sdfg.name}.sdfgz", compress=True)
+
+    copy_sdfg = copy.deepcopy(sdfg)
+    copy_sdfg.name = sdfg.name + "_vectorized"
+    arrays = {"zsolqa": zsolqa, "zrainacc": zrainacc, "zrainaut": zrainaut, "ztp1": ztp1, "rtt": rtt[0], "N": _N[0]}
+
+    sdfg.validate()
+    out_no_fuse = {k: v.copy() for k, v in arrays.items()}
+    sdfg(**out_no_fuse)
+    # Run SDFG version (with transformation)
+    VectorizeCPU(vector_width=8, insert_copies=True, fuse_overlapping_loads=True).apply_pass(copy_sdfg, {})
+
+    out_fused = {k: v.copy() for k, v in arrays.items()}
+    copy_sdfg.validate()
+    copy_sdfg.save(f"{copy_sdfg.name}.sdfgz", compress=True)
+
+    # There is should be no `_union` access nodes
+
+    access_nodes_of_unions = set()
+    for state in copy_sdfg.all_states():
+        for node in state.nodes():
+            if isinstance(node, dace.nodes.AccessNode):
+                if node.data.endswith("_union"):
+                    access_nodes_of_unions.add(node)
+    assert len(access_nodes_of_unions) == 0
+
+    copy_sdfg(**out_fused)
+
+    for name in arrays.keys():
+        numpy.testing.assert_allclose(out_no_fuse[name], out_fused[name], atol=1e-12)
+
+
+def test_disjoint_chain():
+    sdfg, nsdfg_parent_state = _get_disjoint_chain_sdfg()
+    sdfg.name = f"disjoint_chain_split_branch_only_rtt_val_4_2"
+    _N = 64
+    zsolqa = numpy.random.choice([0.001, 5.0], size=(5, 5, _N))
+    zrainacc = numpy.random.choice([0.001, 5.0], size=(_N, ))
+    zrainaut = numpy.random.choice([0.001, 5.0], size=(_N, ))
+    ztp1 = numpy.random.choice([3.5, 5.0], size=(_N, ))
+    rtt = numpy.array([4.2], numpy.float64)
+    _N = numpy.array([64], numpy.int64)
+    sdfg.validate()
+    print("z0")
+    sdfg.save(f"{sdfg.name}.sdfgz", compress=True)
+
+    copy_sdfg = copy.deepcopy(sdfg)
+    copy_sdfg.name = sdfg.name + "_vectorized"
+    arrays = {"zsolqa": zsolqa, "zrainacc": zrainacc, "zrainaut": zrainaut, "ztp1": ztp1, "rtt": rtt[0], "N": _N[0]}
+
+    sdfg.validate()
+    out_no_fuse = {k: v.copy() for k, v in arrays.items()}
+    print("x0")
+    sdfg(**out_no_fuse)
+    print("x1")
+    # Run SDFG version (with transformation)
+    VectorizeCPU(vector_width=8, insert_copies=True, fuse_overlapping_loads=False).apply_pass(copy_sdfg, {})
+
+    out_fused = {k: v.copy() for k, v in arrays.items()}
+    copy_sdfg.validate()
+    copy_sdfg.save(f"{copy_sdfg.name}.sdfgz", compress=True)
+
+    for state in copy_sdfg.all_states():
+        for node in state.nodes():
+            if isinstance(node, dace.nodes.AccessNode):
+                if "zrainacc_vec" in node.data or "zrainaut_vec" in node.data:
+                    for ie in state.in_edges(node):
+                        assert ie.data.subset != dace.subsets.Range([(0, N - 1, 1)])
+
+    copy_sdfg(**out_fused)
+    print("x2")
+
+    for name in arrays.keys():
+        numpy.testing.assert_allclose(out_no_fuse[name], out_fused[name], atol=1e-12)
+
+
 if __name__ == "__main__":
+    test_disjoint_chain()
+    test_disjoint_chain_with_overlapping_region_fusion()
     test_vsubs_cpu()
     test_vsubs_two_cpu()
     test_v_const_subs_cpu()
