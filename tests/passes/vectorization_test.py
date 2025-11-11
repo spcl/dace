@@ -208,7 +208,7 @@ def run_vectorization_test(dace_func,
                            save_sdfgs=False,
                            sdfg_name=None,
                            fuse_overlapping_loads=False,
-                           insert_copies=False):
+                           insert_copies=True):
     """
     Run vectorization test and compare results.
 
@@ -706,7 +706,8 @@ def test_jacobi2d_with_fuse_overlapping_loads():
                                                         vector_width=8,
                                                         save_sdfgs=True,
                                                         sdfg_name="jacobi2d_with_fuse_overlapping_loads",
-                                                        fuse_overlapping_loads=True)
+                                                        fuse_overlapping_loads=True,
+                                                        insert_copies=True)
 
     # Should have 1 access node between two maps
     inner_map_entries = {(n, g)
