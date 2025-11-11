@@ -8,6 +8,7 @@ from dace.transformation.passes.tasklet_preprocessing_passes import PowerOperato
 from dace.transformation.passes import InlineSDFGs
 from dace.transformation.passes.vectorization.vectorize import Vectorize
 from dace.transformation.passes.eliminate_branches import EliminateBranches
+from dace.transformation.passes.vectorization.fuse_overlapping_loads import FuseOverlappingLoads
 
 
 class VectorizeGPU(ppl.Pipeline):
@@ -115,6 +116,8 @@ __host__ __device__ __forceinline__ void vector_copy(T * __restrict__ dst, const
                 apply_on_maps=apply_on_maps,
             )
         ]
+        if fuse_overlapping_loads:
+            passes.append(FuseOverlappingLoads())
         super().__init__(passes)
 
     def iterate_over_passes(self, sdfg: dace.SDFG) -> Iterator[Pass]:
