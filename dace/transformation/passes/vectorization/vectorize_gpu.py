@@ -1,5 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Iterator
+from typing import Iterator, List, Optional
 import dace
 from dace.transformation import Pass, pass_pipeline as ppl
 from dace.transformation.passes.clean_data_to_scalar_slice_to_tasklet_pattern import CleanDataToScalarSliceToTaskletPattern
@@ -84,7 +84,11 @@ __host__ __device__ __forceinline__ void vector_copy(T * __restrict__ dst, const
 }}
 """
 
-    def __init__(self, vector_width, try_to_demote_symbols_in_nsdfgs=False):
+    def __init__(self,
+                 vector_width: str,
+                 try_to_demote_symbols_in_nsdfgs: bool = False,
+                 fuse_overlapping_loads: bool = False,
+                 apply_on_maps: Optional[List[str]] = None):
         passes = [
             EliminateBranches(),
             RemoveFPTypeCasts(),
@@ -108,6 +112,7 @@ __host__ __device__ __forceinline__ void vector_copy(T * __restrict__ dst, const
                 global_code_location="frame",
                 vector_op_numeric_type=dace.float64,
                 try_to_demote_symbols_in_nsdfgs=try_to_demote_symbols_in_nsdfgs,
+                apply_on_maps=apply_on_maps,
             )
         ]
         super().__init__(passes)

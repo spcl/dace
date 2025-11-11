@@ -23,28 +23,33 @@ class Vectorize(ppl.Pass):
         key_type=str,
         value_type=str,
     )
-    vector_width = properties.Property(dtype=int, default=4)
+    vector_width = properties.SymbolicProperty(default=8)
     vector_input_storage = properties.Property(dtype=dace.dtypes.StorageType, default=dace.dtypes.StorageType.Register)
     vector_output_storage = properties.Property(dtype=dace.dtypes.StorageType, default=dace.dtypes.StorageType.Register)
     global_code = properties.Property(dtype=str, default="")
     global_code_location = properties.Property(dtype=str, default="")
     vector_op_numeric_type = properties.Property(dtype=typeclass, default=dace.float64)
     try_to_demote_symbols_in_nsdfgs = properties.Property(dtype=bool, default=False)
-    add_copies = properties.Property(dtype=bool, default=True)
+    fuse_overlapping_loads = properties.Property(dtype=bool, default=False)
+    apply_on_maps = properties.ListProperty(element_type=str, default=None, allow_none=True)
 
-    def __init__(self, templates, vector_width, vector_input_storage, vector_output_storage, vector_op_numeric_type,
-                 global_code, global_code_location, try_to_demote_symbols_in_nsdfgs):
+    def __init__(self, templates: Dict[str, str], vector_width: str, vector_input_storage: dace.dtypes.StorageType,
+                 vector_output_storage: dace.dtypes.StorageType, vector_op_numeric_type: typeclass, global_code: str,
+                 global_code_location: str, try_to_demote_symbols_in_nsdfgs: bool, apply_on_maps: Optional[List[str]]):
         super().__init__()
+
         self.templates = templates
-        self.vector_width = vector_width
+        self.vector_width = str(vector_width)
         self.vector_input_storage = vector_input_storage
         self.vector_output_storage = vector_output_storage
         self.global_code = global_code
         self.global_code_location = global_code_location
-        self._tasklet_vectorizable_map = dict()
         self.vector_op_numeric_type = vector_op_numeric_type
         self.try_to_demote_symbols_in_nsdfgs = try_to_demote_symbols_in_nsdfgs
+        self.apply_on_maps = apply_on_maps
+
         self._used_names = set()
+        self._tasklet_vectorizable_map = dict()
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
@@ -70,7 +75,7 @@ class Vectorize(ppl.Pass):
             options={
                 "tile_sizes": tile_sizes,
                 "skew": False,
-                "divides_evenly": False,
+                "divides_evenly": True,
             },
         )
         new_inner_map = inner_map_entry
@@ -81,20 +86,20 @@ class Vectorize(ppl.Pass):
             cutil.duplicate_memlets_sharing_single_in_connector(state, new_inner_map)
             state.validate()
 
-        state.sdfg.save("c.sdfg")
-
         (b, e, s) = new_inner_map.map.range[0]
         assert len(new_inner_map.map.range) == 1
         vector_map_param = new_inner_map.map.params[0]
         try:
             int_size = int(e + 1 - b)
+            int_vwidth = int(self.vector_width)
         except:
             int_size = None
-        assert (int_size is not None and int_size == self.vector_width) or (
+            int_vwidth = None
+        assert (int_size is not None and int_size == int_vwidth) or (
             e - b + 1
         ).approx == self.vector_width, f"MapTiling should have created a map with range of size {self.vector_width}, found {(e - b + 1)}"
         assert s == 1, f"MapTiling should have created a map with stride 1, found {s}"
-        new_inner_map.map.range = dace.subsets.Range([(b, e, self.vector_width)])
+        new_inner_map.map.range = dace.subsets.Range([(b, e, dace.symbolic.SymExpr(self.vector_width))])
 
         # Need to check that all tasklets within the map are vectorizable
         nodes = state.all_nodes_between(new_inner_map, state.exit_node(new_inner_map))
@@ -125,9 +130,8 @@ class Vectorize(ppl.Pass):
             fix_nsdfg_connector_array_shapes_mismatch(state, nsdfg_node)
             check_nsdfg_connector_array_shapes_match(state, nsdfg_node)
             unstructured_data = self._vectorize_nested_sdfg(state, nsdfg_node, vector_map_param)
-            if self.add_copies:
-                add_copies_before_and_after_nsdfg(state, nsdfg_node, self.vector_width, self.vector_input_storage,
-                                                  unstructured_data)
+            add_copies_before_and_after_nsdfg(state, nsdfg_node, self.vector_width, self.vector_input_storage,
+                                              unstructured_data)
 
     def parent_connection_is_scalar(self, state: dace.SDFGState, nsdfg: dace.nodes.NestedSDFG,
                                     scalar_name: str) -> bool:
@@ -325,7 +329,8 @@ class Vectorize(ppl.Pass):
                 and edge.data.data not in scalar_source_data and edge.data.data not in array_data
             }
             old_subset = dace.subsets.Range([(0, 0, 1)])
-            new_subset = dace.subsets.Range([(0, self.vector_width - 1, 1)])
+            new_subset = dace.subsets.Range([(dace.symbolic.SymExpr(0), dace.symbolic.SymExpr(self.vector_width) - 1,
+                                              dace.symbolic.SymExpr(1))])
             replace_memlet_expression(inner_state, edges_to_replace, old_subset, new_subset, True, modified_edges,
                                       self.vector_op_numeric_type)
 
@@ -547,7 +552,7 @@ class Vectorize(ppl.Pass):
                             dtype=self.vector_op_numeric_type,
                             storage=self.vector_input_storage,
                             transient=True,
-                            alignment=self.vector_width * desc.dtype.bytes,
+                            alignment=parse_int_or_default(self.vector_width, 8) * desc.dtype.bytes,
                             find_new_name=False,
                         )
 
@@ -578,7 +583,8 @@ class Vectorize(ppl.Pass):
             if edge.data is not None and edge.data.data in rmed_data_names:
                 new_memlet = dace.memlet.Memlet(
                     data=f"{edge.data.data}_vec",
-                    subset=dace.subsets.Range([(0, self.vector_width - 1, 1)]),
+                    subset=dace.subsets.Range([(dace.symbolic.SymExpr(0), dace.symbolic.SymExpr(self.vector_width) - 1,
+                                                dace.symbolic.SymExpr(1))]),
                 )
                 state.remove_edge(edge)
                 state.add_edge(edge.src, edge.src_conn, edge.dst, edge.dst_conn, new_memlet)
@@ -736,7 +742,8 @@ class Vectorize(ppl.Pass):
 
             new_memlet = dace.memlet.Memlet(
                 data=new_dataname,
-                subset=dace.subsets.Range([(0, self.vector_width - 1, 1)]),
+                subset=dace.subsets.Range([(dace.symbolic.SymExpr(0), dace.symbolic.SymExpr(self.vector_width) - 1,
+                                            dace.symbolic.SymExpr(1))]),
             )
             state.remove_edge(edge)
             state.add_edge(edge.src, edge.src_conn, edge.dst, edge.dst_conn, new_memlet)
@@ -764,7 +771,8 @@ class Vectorize(ppl.Pass):
 
                 new_memlet = dace.memlet.Memlet(
                     data=new_dataname,
-                    subset=dace.subsets.Range([(0, self.vector_width - 1, 1)]),
+                    subset=dace.subsets.Range([(dace.symbolic.SymExpr(0), dace.symbolic.SymExpr(self.vector_width) - 1,
+                                                dace.symbolic.SymExpr(1))]),
                 )
                 state.remove_edge(edge)
                 state.add_edge(edge.src, edge.src_conn, edge.dst, edge.dst_conn, new_memlet)
@@ -805,7 +813,8 @@ class Vectorize(ppl.Pass):
 
                 new_memlet = dace.memlet.Memlet(
                     data=new_dataname,
-                    subset=dace.subsets.Range([(0, self.vector_width - 1, 1)]),
+                    subset=dace.subsets.Range([(dace.symbolic.SymExpr(0), dace.symbolic.SymExpr(self.vector_width) - 1,
+                                                dace.symbolic.SymExpr(1))]),
                 )
                 state.remove_edge(edge)
                 state.add_edge(edge.src, edge.src_conn, edge.dst, edge.dst_conn, new_memlet)
@@ -895,7 +904,8 @@ class Vectorize(ppl.Pass):
                                                       storage=self.vector_input_storage,
                                                       transient=True,
                                                       allow_conflicts=False,
-                                                      alignment=self.vector_width * array.dtype.bytes,
+                                                      alignment=parse_int_or_default(self.vector_width, 8) *
+                                                      array.dtype.bytes,
                                                       find_new_name=False,
                                                       may_alias=False)
                 in_datas.add(arr_name_to_use)
@@ -924,7 +934,8 @@ class Vectorize(ppl.Pass):
                                                       storage=self.vector_input_storage,
                                                       transient=True,
                                                       allow_conflicts=False,
-                                                      alignment=self.vector_width * array.dtype.bytes,
+                                                      alignment=parse_int_or_default(self.vector_width, 8) *
+                                                      array.dtype.bytes,
                                                       find_new_name=False,
                                                       may_alias=False)
                 out_datas.add(arr_name_to_use)
@@ -1001,8 +1012,11 @@ class Vectorize(ppl.Pass):
             if is_innermost_map(map_entry, state):
                 num_vectorized += 1
                 all_nodes_between = state.all_nodes_between(map_entry, state.exit_node(map_entry))
+
+                if self.apply_on_maps is not None and map_entry.map.label not in self.apply_on_maps:
+                    continue
+
                 self._vectorize_map(state, map_entry, vectorization_number=i)
-                state.sdfg.save(f"v{i}.sdfgz", compress=True)
                 vectorized_maps.add(map_entry)
                 if len(all_nodes_between) == 1 and isinstance(next(iter(all_nodes_between)), dace.nodes.NestedSDFG):
                     sdfgs_to_vectorize.add((next(iter(all_nodes_between)), state))
