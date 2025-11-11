@@ -6,6 +6,7 @@ import copy
 import pytest
 import numpy
 from dace.properties import CodeBlock
+from dace.sdfg import ControlFlowRegion
 from dace.sdfg.state import ConditionalBlock
 from dace.transformation.interstate import branch_elimination
 from dace.transformation.passes.vectorization.vectorize_cpu import VectorizeCPU
@@ -78,6 +79,13 @@ def v_const_subs_two_cpu(A: dace.float64[N, N]):
 def unsupported_op(A: dace.float64[N, N], B: dace.float64[N, N]):
     for i, j in dace.map[0:N, 0:N]:
         A[i, j] = math.exp(B[i, j])
+
+
+@dace.program
+def memset(A: dace.float64[N, N]):
+    for i in dace.map[0:N]:
+        for j in dace.map[0:N]:
+            A[i, j] = 0.0
 
 
 @dace.program
@@ -316,6 +324,22 @@ def test_vsubs_cpu():
         vector_width=8,
         save_sdfgs=True,
         sdfg_name="vsubs_one",
+    )
+
+
+def test_memset():
+    N = 64
+    A = numpy.random.random((N, N))
+
+    run_vectorization_test(
+        dace_func=memset,
+        arrays={
+            'A': A,
+        },
+        params={'N': N},
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name="memset",
     )
 
 

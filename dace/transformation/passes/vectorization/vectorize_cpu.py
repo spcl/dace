@@ -127,6 +127,15 @@ inline void vector_copy(T * __restrict__ dst, const T * __restrict__ src) {{
     }}
 }}
 
+template<typename T>
+inline void vector_copy_w_scalar(T * __restrict__ dst, const T a) {{
+    #pragma _dace_vectorize_hint
+    #pragma _dace_vectorize
+    for (int i = 0; i < {vector_width}; i++) {{
+        dst[i] = a;
+    }}
+}}
+
 // ---- Additional elementwise ops ----
 
 template<typename T>
@@ -334,64 +343,69 @@ inline void vector_ne_w_scalar(T * __restrict__ out, const T * __restrict__ a, c
                  try_to_demote_symbols_in_nsdfgs: bool = False,
                  fuse_overlapping_loads: bool = False,
                  apply_on_maps: Optional[List[str]] = None,
-                 insert_copies: bool = False):
-        passes = [
-            EliminateBranches(),
-            RemoveFPTypeCasts(),
-            RemoveIntTypeCasts(),
-            PowerOperatorExpansion(),
-            SplitTasklets(),
-            CleanDataToScalarSliceToTaskletPattern(),
-            InlineSDFGs(),
-            Vectorize(
-                templates={
-                    "*": "vector_mult({lhs}, {rhs1}, {rhs2});",
-                    "+": "vector_add({lhs}, {rhs1}, {rhs2});",
-                    "-": "vector_sub({lhs}, {rhs1}, {rhs2});",
-                    "/": "vector_div({lhs}, {rhs1}, {rhs2});",
-                    "=": "vector_copy({lhs}, {rhs1});",
-                    "log": "vector_log({lhs}, {rhs1});",
-                    "exp": "vector_exp({lhs}, {rhs1});",
-                    "min": "vector_min({lhs}, {rhs1}, {rhs2});",
-                    "max": "vector_max({lhs}, {rhs1}, {rhs2});",
-                    ">": "vector_gt({lhs}, {rhs1}, {rhs2});",
-                    "<": "vector_lt({lhs}, {rhs1}, {rhs2});",
-                    ">=": "vector_ge({lhs}, {rhs1}, {rhs2});",
-                    "<=": "vector_le({lhs}, {rhs1}, {rhs2});",
-                    "==": "vector_eq({lhs}, {rhs1}, {rhs2});",
-                    "!=": "vector_ne({lhs}, {rhs1}, {rhs2});",
-                    # scalar variants type 1
-                    "*c": "vector_mult_w_scalar({lhs}, {rhs1}, {constant});",
-                    "+c": "vector_add_w_scalar({lhs}, {rhs1}, {constant});",
-                    "-c": "vector_sub_w_scalar({lhs}, {rhs1}, {constant});",
-                    "/c": "vector_div_w_scalar({lhs}, {rhs1}, {constant});",
-                    "minc": "vector_min_w_scalar({lhs}, {rhs1}, {constant});",
-                    "maxc": "vector_max_w_scalar({lhs}, {rhs1}, {constant});",
-                    ">c": "vector_gt_w_scalar({lhs}, {rhs1}, {constant});",
-                    "<c": "vector_lt_w_scalar({lhs}, {rhs1}, {constant});",
-                    ">=c": "vector_ge_w_scalar({lhs}, {rhs1}, {constant});",
-                    "<=c": "vector_le_w_scalar({lhs}, {rhs1}, {constant});",
-                    "==c": "vector_eq_w_scalar({lhs}, {rhs1}, {constant});",
-                    "!=c": "vector_ne_w_scalar({lhs}, {rhs1}, {constant});",
-                    # scalar variants type 2 for non-commutative ops
-                    "c-": "vector_sub_w_scalar_c({lhs}, {constant}, {rhs1});",
-                    "c/": "vector_div_w_scalar_c({lhs}, {constant}, {rhs1});",
-                    "c>": "vector_gt_w_scalar_c({lhs}, {constant}, {rhs1});",
-                    "c<": "vector_lt_w_scalar_c({lhs}, {constant}, {rhs1});",
-                    "c>=": "vector_ge_w_scalar_c({lhs}, {constant}, {rhs1});",
-                    "c<=": "vector_le_w_scalar_c({lhs}, {constant}, {rhs1});",
-                },
-                vector_width=vector_width,
-                vector_input_storage=dace.dtypes.StorageType.Register,
-                vector_output_storage=dace.dtypes.StorageType.Register,
-                global_code=VectorizeCPU._cpu_global_code.format(vector_width=vector_width),
-                global_code_location="frame",
-                vector_op_numeric_type=dace.float64,
-                try_to_demote_symbols_in_nsdfgs=try_to_demote_symbols_in_nsdfgs,
-                apply_on_maps=apply_on_maps,
-                insert_copies=insert_copies,
-            )
-        ]
+                 insert_copies: bool = False,
+                 only_apply_vectorization_pass: bool = False):
+        vectorizer = Vectorize(
+            templates={
+                "*": "vector_mult({lhs}, {rhs1}, {rhs2});",
+                "+": "vector_add({lhs}, {rhs1}, {rhs2});",
+                "-": "vector_sub({lhs}, {rhs1}, {rhs2});",
+                "/": "vector_div({lhs}, {rhs1}, {rhs2});",
+                "=": "vector_copy({lhs}, {rhs1});",
+                "=c": "vector_copy_w_scalar({lhs}, {constant});",
+                "log": "vector_log({lhs}, {rhs1});",
+                "exp": "vector_exp({lhs}, {rhs1});",
+                "min": "vector_min({lhs}, {rhs1}, {rhs2});",
+                "max": "vector_max({lhs}, {rhs1}, {rhs2});",
+                ">": "vector_gt({lhs}, {rhs1}, {rhs2});",
+                "<": "vector_lt({lhs}, {rhs1}, {rhs2});",
+                ">=": "vector_ge({lhs}, {rhs1}, {rhs2});",
+                "<=": "vector_le({lhs}, {rhs1}, {rhs2});",
+                "==": "vector_eq({lhs}, {rhs1}, {rhs2});",
+                "!=": "vector_ne({lhs}, {rhs1}, {rhs2});",
+                # scalar variants type 1
+                "*c": "vector_mult_w_scalar({lhs}, {rhs1}, {constant});",
+                "+c": "vector_add_w_scalar({lhs}, {rhs1}, {constant});",
+                "-c": "vector_sub_w_scalar({lhs}, {rhs1}, {constant});",
+                "/c": "vector_div_w_scalar({lhs}, {rhs1}, {constant});",
+                "minc": "vector_min_w_scalar({lhs}, {rhs1}, {constant});",
+                "maxc": "vector_max_w_scalar({lhs}, {rhs1}, {constant});",
+                ">c": "vector_gt_w_scalar({lhs}, {rhs1}, {constant});",
+                "<c": "vector_lt_w_scalar({lhs}, {rhs1}, {constant});",
+                ">=c": "vector_ge_w_scalar({lhs}, {rhs1}, {constant});",
+                "<=c": "vector_le_w_scalar({lhs}, {rhs1}, {constant});",
+                "==c": "vector_eq_w_scalar({lhs}, {rhs1}, {constant});",
+                "!=c": "vector_ne_w_scalar({lhs}, {rhs1}, {constant});",
+                # scalar variants type 2 for non-commutative ops
+                "c-": "vector_sub_w_scalar_c({lhs}, {constant}, {rhs1});",
+                "c/": "vector_div_w_scalar_c({lhs}, {constant}, {rhs1});",
+                "c>": "vector_gt_w_scalar_c({lhs}, {constant}, {rhs1});",
+                "c<": "vector_lt_w_scalar_c({lhs}, {constant}, {rhs1});",
+                "c>=": "vector_ge_w_scalar_c({lhs}, {constant}, {rhs1});",
+                "c<=": "vector_le_w_scalar_c({lhs}, {constant}, {rhs1});",
+            },
+            vector_width=vector_width,
+            vector_input_storage=dace.dtypes.StorageType.Register,
+            vector_output_storage=dace.dtypes.StorageType.Register,
+            global_code=VectorizeCPU._cpu_global_code.format(vector_width=vector_width),
+            global_code_location="frame",
+            vector_op_numeric_type=dace.float64,
+            try_to_demote_symbols_in_nsdfgs=try_to_demote_symbols_in_nsdfgs,
+            apply_on_maps=apply_on_maps,
+            insert_copies=insert_copies,
+        )
+        if not only_apply_vectorization_pass:
+            passes = [
+                EliminateBranches(),
+                RemoveFPTypeCasts(),
+                RemoveIntTypeCasts(),
+                PowerOperatorExpansion(),
+                SplitTasklets(),
+                CleanDataToScalarSliceToTaskletPattern(),
+                InlineSDFGs(), vectorizer
+            ]
+        else:
+            passes = [vectorizer]
         if fuse_overlapping_loads:
             passes.append(FuseOverlappingLoads())
         super().__init__(passes)
