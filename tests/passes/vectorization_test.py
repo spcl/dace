@@ -102,6 +102,60 @@ def nested_memset(A: dace.float64[N, N]):
 
 
 @dace.program
+def max_with_constant(A: dace.float64[N, N], c: dace.float64):
+    for i in dace.map[0:N]:
+        for j in dace.map[0:N]:
+            A[i, j] = max(c, A[i, j])
+
+
+@dace.program
+def max_with_constant_reversed_order(A: dace.float64[N, N], c: dace.float64):
+    for i in dace.map[0:N]:
+        for j in dace.map[0:N]:
+            A[i, j] = max(A[i, j], c)
+
+
+def test_max_with_constant():
+    N = 64
+    A = numpy.random.random((N, N))
+    c = 0.8
+
+    run_vectorization_test(
+        dace_func=max_with_constant,
+        arrays={
+            'A': A,
+        },
+        params={
+            'N': N,
+            'c': c
+        },
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name="max_with_constant",
+    )
+
+
+def test_max_with_constant_reversed_order():
+    N = 64
+    A = numpy.random.random((N, N))
+    c = 0.8
+
+    run_vectorization_test(
+        dace_func=max_with_constant_reversed_order,
+        arrays={
+            'A': A,
+        },
+        params={
+            'N': N,
+            'c': c
+        },
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name="max_with_constant_reversed_order",
+    )
+
+
+@dace.program
 def division_by_zero(A: dace.float64[N], B: dace.float64[N], c: dace.float64):
     for i in dace.map[
             0:N,
@@ -1205,3 +1259,4 @@ if __name__ == "__main__":
     test_snippet_from_cloudsc_one()
     test_snippet_from_cloudsc_two()
     test_snippet_from_cloudsc_two_fuse_overlapping_loads()
+    test_max_with_constant()

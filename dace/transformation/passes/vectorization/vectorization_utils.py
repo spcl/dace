@@ -1328,11 +1328,13 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
                     else:
                         assert constant == const2_
                         cop_ = op_ + "c"
-                    return templates[cop_].format(rhs1=rhs,
-                                                  constant=_str_to_float_or_str(constant),
-                                                  lhs=lhs_,
-                                                  op=op_,
-                                                  vector_width=vw)
+                    # Maybe this constant version is not implemented in templates
+                    if cop_ in templates:
+                        return templates[cop_].format(rhs1=rhs,
+                                                      constant=_str_to_float_or_str(constant),
+                                                      lhs=lhs_,
+                                                      op=op_,
+                                                      vector_width=vw)
 
             else:
                 # Two arrays
@@ -1351,10 +1353,17 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         if rhs_left is None or rhs_right is None:
             raise Exception("Invalid operand configuration for fallback vectorization")
 
-        if rhs_left == const1_:
-            code_lines.append(f"{lhs_expr} = ({rhs_left} {op_} {rhs_right}[_vi]){comparison_suffix};")
+        OPERATORS = {"+", "-", "/", "*", "%"}
+        if op_ in OPERATORS:
+            if rhs_left == const1_:
+                code_lines.append(f"{lhs_expr} = ({rhs_left} {op_} {rhs_right}[_vi]){comparison_suffix};")
+            else:
+                code_lines.append(f"{lhs_expr} = ({rhs_left}[_vi] {op_} {rhs_right}){comparison_suffix};")
         else:
-            code_lines.append(f"{lhs_expr} = ({rhs_left}[_vi] {op_} {rhs_right}){comparison_suffix};")
+            if rhs_left == const1_:
+                code_lines.append(f"{lhs_expr} = ({op_}({rhs_left}, {rhs_right}[_vi])){comparison_suffix};")
+            else:
+                code_lines.append(f"{lhs_expr} = ({op_}({rhs_left}[_vi], {rhs_right})){comparison_suffix};")
 
         code_lines.append("}")
         return "\n".join(code_lines)

@@ -699,10 +699,12 @@ class Vectorize(ppl.Pass):
                 if out_edge.data.data is not None:
                     output_types.add(type(state.sdfg.arrays[out_edge.data.data]))
 
-        vectorizable = (all({isinstance(itype, dace.data.Array) or itype == dace.data.Array
-                             for itype in input_types}) and
-                        all({isinstance(otype, dace.data.Array) or otype == dace.data.Array
-                             for otype in output_types}))
+        vectorizable = (all({
+            isinstance(itype, dace.data.Array) or itype == dace.data.Array or itype == dace.data.Scalar
+            or isinstance(itype, dace.data.Scalar)
+            for itype in input_types
+        }) and all({isinstance(otype, dace.data.Array) or otype == dace.data.Array
+                    for otype in output_types}))
         self._tasklet_vectorizable_map[node] = vectorizable
         return vectorizable
 
@@ -912,6 +914,10 @@ class Vectorize(ppl.Pass):
             if ie.data.data is None:
                 continue
 
+            ie_arr = state.sdfg.arrays[ie.data.data]
+            if isinstance(ie_arr, dace.data.Scalar):
+                continue
+
             array = state.parent_graph.sdfg.arrays[ie.data.data]
             if array.storage != self.vector_input_storage:
                 # Add new array, if not there
@@ -944,6 +950,10 @@ class Vectorize(ppl.Pass):
 
         out_datas = set()
         for oe in state.out_edges(map_exit):
+
+            oe_arr = state.sdfg.arrays[oe.data.data]
+            assert isinstance(oe_arr, dace.data.Array)
+
             array = state.parent_graph.sdfg.arrays[oe.data.data]
             if array.storage != self.vector_output_storage:
                 # If the name exists in the inputs, reuse the name
