@@ -13,6 +13,9 @@ from dace.transformation.passes.vectorization.fuse_overlapping_loads import Fuse
 
 class VectorizeGPU(ppl.Pipeline):
     _gpu_global_code = """
+
+#define _dace_vectorize
+
 template<typename T>
 __host__ __device__ __forceinline__ void vector_mult(T * __restrict__ c, const T * __restrict__ a, const T * __restrict__ b) {{
     #pragma omp unroll

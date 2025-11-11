@@ -1342,7 +1342,7 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
 
         # Fallback: unsupported operator
         comparison_suffix = "? 1.0 : 0.0" if op_ in {">", ">=", "<", "<=", "==", "!="} else ""
-        code_lines = [f"#pragma _dace_vectorize_hint", f"#pragma _dace_vectorize"]
+        code_lines = [f"#pragma _dace_vectorize"]
         code_lines.append(f"for (int _vi = 0; _vi < {vw}; _vi += 1) {{")
 
         # Determine operand order
