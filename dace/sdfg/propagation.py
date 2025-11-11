@@ -1393,7 +1393,6 @@ def propagate_memlet(dfg_state,
         return Memlet()
 
     sdfg = dfg_state.parent
-    sdfg.save(f"{sdfg.name}.sdfgz", compress=True)
     scope_node_symbols = set(conn for conn in entry_node.in_connectors if not conn.startswith('IN_'))
     defined_vars = [
         symbolic.pystr_to_symbolic(s) for s in (dfg_state.symbols_defined_at(entry_node).keys()
