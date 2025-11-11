@@ -32,7 +32,7 @@ class Vectorize(ppl.Pass):
     try_to_demote_symbols_in_nsdfgs = properties.Property(dtype=bool, default=False)
     fuse_overlapping_loads = properties.Property(dtype=bool, default=False)
     apply_on_maps = properties.ListProperty(element_type=str, default=None, allow_none=True)
-    insert_copies = properties.Property(dtype=bool, default=False, allow_none=False)
+    insert_copies = properties.Property(dtype=bool, default=True, allow_none=False)
 
     def __init__(self, templates: Dict[str, str], vector_width: str, vector_input_storage: dace.dtypes.StorageType,
                  vector_output_storage: dace.dtypes.StorageType, vector_op_numeric_type: typeclass, global_code: str,
