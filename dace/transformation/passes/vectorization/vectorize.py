@@ -740,7 +740,7 @@ class Vectorize(ppl.Pass):
                     if not isinstance(state.sdfg.arrays[oe.data.data], dace.data.Array):
                         continue
                 instantiate_tasklet_from_info(state, node, tasklet_info, self.vector_width, self.templates,
-                                              vector_map_param)
+                                              vector_map_param, self.vector_op_numeric_type)
 
     def _offset_all_memlets(self, state: SDFGState, map_entry: dace.nodes.MapEntry, dataname: str, new_dataname: str):
         nodes = list(state.all_nodes_between(map_entry, state.exit_node(map_entry)))
@@ -1071,6 +1071,10 @@ class Vectorize(ppl.Pass):
                     "NestedSDFGs without parent map scopes are not supported, they must have been inlined if the pipeline has been called."
                     "If pipeline has been called verify why InlineSDFG failed, otherwise call InlineSDFG")
 
-        sdfg.append_global_code(cpp_code=self.global_code, location=self.global_code_location)
+        current_global_code = sdfg.global_code[self.global_code_location]
+        if isinstance(current_global_code, CodeBlock):
+            current_global_code = current_global_code.as_string
+        if self.global_code not in current_global_code:
+            sdfg.append_global_code(cpp_code=self.global_code, location=self.global_code_location)
 
         return applied

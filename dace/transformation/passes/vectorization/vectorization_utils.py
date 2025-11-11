@@ -218,13 +218,13 @@ def replace_memlet_expression(state: SDFGState,
 
 
 def expand_memlet_expression(state: SDFGState, edges: Iterable[Edge[Memlet]], edges_to_skip: Set[Edge[Memlet]],
-                             vector_length: int) -> Set[Edge[Memlet]]:
+                             vector_width: int) -> Set[Edge[Memlet]]:
     """
     Expand single-element memlet subsets along stride-1 dimensions to a given vector length.
     Pre-condition: all subset dimensions need to be 1
 
     For each memlet edge, this function modifies subsets that represent a single element
-    and extend them to cover `vector_length` elements when the corresponding array stride is 1.
+    and extend them to cover `vector_width` elements when the corresponding array stride is 1.
     Trying to modify an edge listed in `edges_to_skip` raises an error as it indicates a
     bug in the auto-vectorization logic.
 
@@ -232,7 +232,7 @@ def expand_memlet_expression(state: SDFGState, edges: Iterable[Edge[Memlet]], ed
         state (SDFGState): The SDFG state containing the edges.
         edges (Iterable[Edge[Memlet]]): The memlet edges to inspect and possibly modify.
         edges_to_skip (Set[Edge[Memlet]]): Edges that should not be expanded.
-        vector_length (int): The number of elements to expand contiguous subsets to.
+        vector_width (int): The number of elements to expand contiguous subsets to.
 
     Returns:
         Set[Edge[Memlet]]: The set of edges whose memlets were modified.
@@ -252,7 +252,7 @@ def expand_memlet_expression(state: SDFGState, edges: Iterable[Edge[Memlet]], ed
                 if stride == 1:
                     assert b == e
                     assert s == 1
-                    new_subset_list.append((b, b + vector_length - 1, s))
+                    new_subset_list.append((b, b + vector_width - 1, s))
                 else:
                     assert b == e
                     assert s == 1
@@ -1250,7 +1250,7 @@ def use_laneid_symbol_in_expression(expr_str: str, symbol_to_offset: str, offset
 
 
 def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Tasklet, info: dict, vector_width: int,
-                                  templates: Dict[str, str], vector_map_param: str) -> None:
+                                  templates: Dict[str, str], vector_map_param: str, vector_dtype: typeclass) -> None:
     """
     Instantiates a tasklet's code block in vectorized form based on classification info.
 
@@ -1307,6 +1307,7 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         - Single constant + array/scalar (or array/scalar + constant)
         - Fallback loops if operator not supported (hope compiler will do it)
         """
+        dtype_ = dace.dtypes.TYPECLASS_TO_STRING[vector_dtype]
         # Use template if available
         if op_ in templates:
             # One array + optional constant
@@ -1316,8 +1317,13 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
                 if constant is None:
                     # Single array or repeated array case
                     if is_commutative:
-                        return templates[op_].format(rhs1=rhs, rhs2=rhs, lhs=lhs_, op=op_, vector_width=vw)
-                    return templates[op_].format(rhs1=rhs, rhs2=rhs, lhs=lhs_, op=op_, vector_width=vw)
+                        return templates[op_].format(rhs1=rhs,
+                                                     rhs2=rhs,
+                                                     lhs=lhs_,
+                                                     op=op_,
+                                                     vector_width=vw,
+                                                     dtype=dtype_)
+                    return templates[op_].format(rhs1=rhs, rhs2=rhs, lhs=lhs_, op=op_, vector_width=vw, dtype=dtype_)
                 else:
                     # Single array + constant
                     cop_ = None
@@ -1334,11 +1340,12 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
                                                       constant=_str_to_float_or_str(constant),
                                                       lhs=lhs_,
                                                       op=op_,
-                                                      vector_width=vw)
+                                                      vector_width=vw,
+                                                      dtype=dtype_)
 
             else:
                 # Two arrays
-                return templates[op_].format(rhs1=rhs1_, rhs2=rhs2_, lhs=lhs_, op=op_, vector_width=vw)
+                return templates[op_].format(rhs1=rhs1_, rhs2=rhs2_, lhs=lhs_, op=op_, vector_width=vw, dtype=dtype_)
 
         # Fallback: unsupported operator
         comparison_suffix = "? 1.0 : 0.0" if op_ in {">", ">=", "<", "<=", "==", "!="} else ""
@@ -1864,7 +1871,7 @@ def replace_all_access_subsets(state: dace.SDFGState, name: str, new_subset_expr
             edge.data = nm
 
 
-def expand_assignment_tasklets(state: dace.SDFGState, name: str, vector_length: int):
+def expand_assignment_tasklets(state: dace.SDFGState, name: str, vector_width: int):
     """
     Expands assignment tasklets writing to an array at a to be over the vector length
     over the unit stride dimension a[0] = ..., a[1] = ..., ...
@@ -1873,7 +1880,7 @@ def expand_assignment_tasklets(state: dace.SDFGState, name: str, vector_length: 
     Args:
         state: The SDFG state to modify.
         name: The array being written.
-        vector_length: Length of the vector to expand to.
+        vector_width: Length of the vector to expand to.
     """
     for e in state.edges():
         if (isinstance(e.dst, dace.nodes.AccessNode) and e.dst.data == name and isinstance(e.src, dace.nodes.Tasklet)):
@@ -1887,7 +1894,7 @@ def expand_assignment_tasklets(state: dace.SDFGState, name: str, vector_length: 
             assert code.language == dace.dtypes.Language.Python
             assert code.as_string.startswith(f"{out_conn} =")
             rhs = code.as_string.split("=")[-1].strip()
-            ncode_str = "\n".join([f"{out_conn}[{i}] = {rhs}" for i in range(vector_length)])
+            ncode_str = "\n".join([f"{out_conn}[{i}] = {rhs}" for i in range(vector_width)])
             e.src.code = dace.properties.CodeBlock(ncode_str)
 
 
@@ -1903,7 +1910,7 @@ def reduce_before_use(state: dace.SDFGState, name: str, vector_width: int, op: s
     """
     # TODO: Reduction can be optimized (e.g. logarithmic depth or checking of vector templates have a reduction op)
 
-    # Any time a tasklet reads name[0:vector_length] then we need to reduce it before
+    # Any time a tasklet reads name[0:vector_width] then we need to reduce it before
     # In a reduction tasklet
     for edge in state.edges():
         dst = edge.dst
@@ -2449,7 +2456,7 @@ def is_vector_assign_tasklet(t: dace.nodes.Tasklet) -> bool:
 
 def insert_assignment_tasklet_from_src(state: dace.SDFGState, edge: Edge[Memlet],
                                        vector_storage_type: dace.dtypes.StorageType,
-                                       vector_length: int) -> Tuple[Edge[Memlet], Edge[Memlet], Edge[Memlet]]:
+                                       vector_width: int) -> Tuple[Edge[Memlet], Edge[Memlet], Edge[Memlet]]:
     """
     Insert a vector assignment tasklet after the source node of an edge.
 
@@ -2465,7 +2472,7 @@ def insert_assignment_tasklet_from_src(state: dace.SDFGState, edge: Edge[Memlet]
         state: The SDFG state containing the edge
         edge: The edge to transform
         vector_storage_type: Storage type for the new vector array (e.g., Register, FPGA_Local)
-        vector_length: Length of the vector array
+        vector_width: Length of the vector array
 
     Returns:
         A tuple of three new edges: (src->tasklet, tasklet->access, access->dst)
@@ -2485,7 +2492,7 @@ def insert_assignment_tasklet_from_src(state: dace.SDFGState, edge: Edge[Memlet]
     if vector_dataname not in state.sdfg.arrays:
         orig_arr = state.sdfg.arrays[edge.data.data]
         arr_name, arr = state.sdfg.add_array(name=vector_dataname,
-                                             shape=(vector_length, ),
+                                             shape=(vector_width, ),
                                              dtype=orig_arr.dtype,
                                              location=orig_arr.location,
                                              transient=True,
@@ -2496,11 +2503,12 @@ def insert_assignment_tasklet_from_src(state: dace.SDFGState, edge: Edge[Memlet]
         vector_data = state.sdfg.arrays[vector_dataname]
 
     # Create assignment tasklet
-    t = state.add_tasklet(name="_Assign",
-                          inputs={"_in"},
-                          outputs={"_out"},
-                          code="vector_copy(_out, _in);",
-                          language=dace.dtypes.Language.CPP)
+    t = state.add_tasklet(
+        name="_Assign",
+        inputs={"_in"},
+        outputs={"_out"},
+        code=f"vector_copy<{dace.dtypes.TYPECLASS_TO_STRING[vector_data.dtype]}, {vector_width}>(_out, _in);",
+        language=dace.dtypes.Language.CPP)
 
     # Create access node and edges
     an = state.add_access(vector_dataname)
@@ -2514,7 +2522,7 @@ def insert_assignment_tasklet_from_src(state: dace.SDFGState, edge: Edge[Memlet]
 
 def insert_assignment_tasklet_to_dst(state: dace.SDFGState, edge: Edge[Memlet],
                                      vector_storage_type: dace.dtypes.StorageType,
-                                     vector_length: int) -> Tuple[Edge[Memlet], Edge[Memlet], Edge[Memlet]]:
+                                     vector_width: int) -> Tuple[Edge[Memlet], Edge[Memlet], Edge[Memlet]]:
     """
     Insert a vector assignment tasklet before the destination node of an edge.
 
@@ -2532,7 +2540,7 @@ def insert_assignment_tasklet_to_dst(state: dace.SDFGState, edge: Edge[Memlet],
         state: The SDFG state containing the edge
         edge: The edge to transform
         vector_storage_type: Storage type for the new vector array
-        vector_length: Length of the vector array
+        vector_width: Length of the vector array
 
     Returns:
         A tuple of three new edges: (src->access, access->tasklet, tasklet->dst)
@@ -2552,7 +2560,7 @@ def insert_assignment_tasklet_to_dst(state: dace.SDFGState, edge: Edge[Memlet],
     if vector_dataname not in state.sdfg.arrays:
         orig_arr = state.sdfg.arrays[edge.data.data]
         _, arr = state.sdfg.add_array(name=vector_dataname,
-                                      shape=(vector_length, ),
+                                      shape=(vector_width, ),
                                       dtype=orig_arr.dtype,
                                       location=orig_arr.location,
                                       transient=True,
@@ -2563,11 +2571,12 @@ def insert_assignment_tasklet_to_dst(state: dace.SDFGState, edge: Edge[Memlet],
         vector_data = state.sdfg.arrays[vector_dataname]
 
     # Create assignment tasklet
-    t = state.add_tasklet(name="_Assign",
-                          inputs={"_in"},
-                          outputs={"_out"},
-                          code="vector_copy(_out, _in);",
-                          language=dace.dtypes.Language.CPP)
+    t = state.add_tasklet(
+        name="_Assign",
+        inputs={"_in"},
+        outputs={"_out"},
+        code=f"vector_copy<{dace.dtypes.TYPECLASS_TO_STRING[vector_data.dtype]}, {vector_width}>(_out, _in);",
+        language=dace.dtypes.Language.CPP)
 
     # Create access node and edges
     an = state.add_access(vector_dataname)
@@ -2767,11 +2776,13 @@ def add_copies_before_and_after_nsdfg(
                 # Need to find the copy in state
                 orig_access = copy_in_state.add_access(unmovable_arr_name)
                 v_access = copy_in_state.add_access(vec_arr_name)
-                assign_tasklet = copy_in_state.add_tasklet(name="_Assign",
-                                                           inputs={"_in"},
-                                                           outputs={"_out"},
-                                                           code="vector_copy(_out, _in);",
-                                                           language=dace.dtypes.Language.CPP)
+                vec_arr = copy_in_state.sdfg.arrays[vec_arr_name]
+                assign_tasklet = copy_in_state.add_tasklet(
+                    name="_Assign",
+                    inputs={"_in"},
+                    outputs={"_out"},
+                    code=f"vector_copy<{dace.dtypes.TYPECLASS_TO_STRING[vec_arr.dtype]}, {vector_width}>(_out, _in);",
+                    language=dace.dtypes.Language.CPP)
                 copy_in_state.add_edge(orig_access, None, assign_tasklet, "_in",
                                        dace.memlet.Memlet(data=unmovable_arr_name, subset=copy.deepcopy(subset)))
                 copy_in_state.add_edge(assign_tasklet, "_out", v_access, None,
@@ -2784,11 +2795,13 @@ def add_copies_before_and_after_nsdfg(
                 name_to_subset_map[vec_arr_name] = subset
                 orig_access2 = copy_out_state.add_access(unmovable_arr_name)
                 v_access2 = copy_out_state.add_access(vec_arr_name)
-                assign_tasklet2 = copy_out_state.add_tasklet(name="_Assign",
-                                                             inputs={"_in"},
-                                                             outputs={"_out"},
-                                                             code="vector_copy(_out, _in);",
-                                                             language=dace.dtypes.Language.CPP)
+                vec_arr = copy_out_state.sdfg.arrays[vec_arr_name]
+                assign_tasklet2 = copy_out_state.add_tasklet(
+                    name="_Assign",
+                    inputs={"_in"},
+                    outputs={"_out"},
+                    code=f"vector_copy<{dace.dtypes.TYPECLASS_TO_STRING[vec_arr.dtype]}, {vector_width}>(_out, _in);",
+                    language=dace.dtypes.Language.CPP)
                 copy_out_state.add_edge(v_access2, None, assign_tasklet2, "_in",
                                         dace.memlet.Memlet.from_array(vec_arr_name, inner_sdfg.arrays[vec_arr_name]))
                 copy_out_state.add_edge(assign_tasklet2, "_out", orig_access2, None,
