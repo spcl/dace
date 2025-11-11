@@ -1233,8 +1233,8 @@ def test_snippet_from_cloudsc_one():
     )
 
 
-def _get_disjoint_chain_sdfg() -> dace.SDFG:
-    sd1 = dace.SDFG("disjoint_chain")
+def _get_disjoint_chain_sdfg_two() -> dace.SDFG:
+    sd1 = dace.SDFG("disjoint_chain_two")
     cb1 = ConditionalBlock("cond_if_cond_58", sdfg=sd1, parent=sd1)
     ss1 = sd1.add_state(label="pre", is_start_block=True)
     sd1.add_node(cb1, is_start_block=False)
@@ -1337,8 +1337,8 @@ def _get_disjoint_chain_sdfg() -> dace.SDFG:
 
 
 def test_disjoint_chain_with_overlapping_region_fusion():
-    sdfg, nsdfg_parent_state = _get_disjoint_chain_sdfg()
-    sdfg.name = f"disjoint_chain_split_branch_only_rtt_val_4_2_with_overlapping_region_fusion"
+    sdfg, nsdfg_parent_state = _get_disjoint_chain_sdfg_two()
+    sdfg.name = f"disjoint_chain_split_two_rtt_val_4_2_with_overlapping_region_fusion"
     _N = 64
     zsolqa = numpy.random.choice([0.001, 5.0], size=(5, 5, _N))
     zrainacc = numpy.random.choice([0.001, 5.0], size=(_N, ))
@@ -1380,8 +1380,8 @@ def test_disjoint_chain_with_overlapping_region_fusion():
 
 
 def test_disjoint_chain():
-    sdfg, nsdfg_parent_state = _get_disjoint_chain_sdfg()
-    sdfg.name = f"disjoint_chain_split_branch_only_rtt_val_4_2"
+    sdfg, nsdfg_parent_state = _get_disjoint_chain_sdfg_two()
+    sdfg.name = f"disjoint_chain_two_rtt_val_4_2"
     _N = 64
     zsolqa = numpy.random.choice([0.001, 5.0], size=(5, 5, _N))
     zrainacc = numpy.random.choice([0.001, 5.0], size=(_N, ))
