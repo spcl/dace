@@ -291,7 +291,10 @@ def test_division_by_zero_cpu():
             'A': A,
             'B': B
         },
-        params={'N': N},
+        params={
+            'N': N,
+            "c": 8.9
+        },
         vector_width=8,
         save_sdfgs=True,
         sdfg_name="division_by_zero",
