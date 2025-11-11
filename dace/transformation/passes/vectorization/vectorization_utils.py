@@ -442,12 +442,12 @@ def prepare_vectorized_array(state: dace.SDFGState,
         vector_dataname = vector_dataname_candidate
         if vector_dataname not in state.sdfg.arrays:
             state.sdfg.add_array(name=vector_dataname_candidate,
-                                                  shape=(vector_width, ),
-                                                  dtype=orig_arr.dtype,
-                                                  location=orig_arr.location,
-                                                  transient=True,
-                                                  find_new_name=False,
-                                                  storage=vector_storage)
+                                 shape=(vector_width, ),
+                                 dtype=orig_arr.dtype,
+                                 location=orig_arr.location,
+                                 transient=True,
+                                 find_new_name=False,
+                                 storage=vector_storage)
     else:
         vector_dataname, _ = state.sdfg.add_array(name=vector_dataname_candidate,
                                                   shape=(vector_width, ),
