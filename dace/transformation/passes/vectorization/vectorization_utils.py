@@ -410,8 +410,9 @@ def get_vector_max_access_ranges(state: SDFGState, node: dace.nodes.NestedSDFG) 
     return param_max_ranges
 
 
-def prepare_vectorized_array(state, inner_sdfg, inner_arr_name, orig_dataname, orig_arr, subset, vector_width,
-                             vector_storage):
+def prepare_vectorized_array(state: dace.SDFGState, inner_sdfg: dace.SDFG, inner_arr_name: str, orig_dataname: str,
+                             orig_arr: dace.data.Data, subset: dace.subsets.Range, vector_width: dace.symbolic.SymExpr,
+                             vector_storage: dace.dtypes.StorageType):
     """
     Prepares a vectorized array by creating the vector array in outer SDFG
     and replacing the inner array with vectorized version.
@@ -430,15 +431,14 @@ def prepare_vectorized_array(state, inner_sdfg, inner_arr_name, orig_dataname, o
         tuple: (vector_dataname, inner_offset or 0)
     """
     # Create vector array in outer SDFG
-    vector_dataname = orig_dataname + "_vec"
-    if vector_dataname not in state.sdfg.arrays:
-        state.sdfg.add_array(name=vector_dataname,
-                             shape=(vector_width, ),
-                             dtype=orig_arr.dtype,
-                             location=orig_arr.location,
-                             transient=True,
-                             find_new_name=False,
-                             storage=vector_storage)
+    vector_dataname_candidate = orig_dataname + "_vec_k"
+    vector_dataname, _ = state.sdfg.add_array(name=vector_dataname_candidate,
+                                              shape=(vector_width, ),
+                                              dtype=orig_arr.dtype,
+                                              location=orig_arr.location,
+                                              transient=True,
+                                              find_new_name=True,
+                                              storage=vector_storage)
 
     # Replace the array inside inner SDFG
     prev_inner_arr = inner_sdfg.arrays[inner_arr_name]
@@ -508,9 +508,10 @@ def compute_edge_subset(edge_subset, subset, orig_arr, inner_offset, vector_widt
 
 
 def process_in_edges(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG, movable_arrays: Set[str],
-                     vector_width: int, vector_storage: dace.dtypes.StorageType):
+                     vector_width: int, vector_storage: dace.dtypes.StorageType) -> Set[str]:
     """
     Process input edges for movable arrays.
+    Returns added array names.
 
     Args:
         state: The SDFG state
@@ -522,6 +523,7 @@ def process_in_edges(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG, m
     assert isinstance(nsdfg_node, dace.nodes.NestedSDFG)
     inner_sdfg = nsdfg_node.sdfg
 
+    vectorized_datanames = set()
     for movable_arr_name, subset in movable_arrays:
         print(movable_arr_name, subset, type(subset))
         in_edges = list(state.in_edges_by_connector(nsdfg_node, movable_arr_name))
@@ -534,6 +536,7 @@ def process_in_edges(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG, m
             # Prepare vectorized arrays
             vector_dataname, inner_offset = prepare_vectorized_array(state, inner_sdfg, inner_arr_name, ie.data.data,
                                                                      orig_arr, subset, vector_width, vector_storage)
+            vectorized_datanames.add(vector_dataname)
 
             # Compute copy subset
             copy_subset = compute_edge_subset(ie.data.subset, subset, orig_arr, inner_offset, vector_width)
@@ -545,6 +548,8 @@ def process_in_edges(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG, m
             state.add_edge(ie.src, ie.src_conn, an, None, dace.memlet.Memlet(data=ie.data.data, subset=copy_subset))
             state.add_edge(an, None, ie.dst, ie.dst_conn,
                            dace.memlet.Memlet.from_array(vector_dataname, state.sdfg.arrays[vector_dataname]))
+
+    return vectorized_datanames
 
 
 def process_out_edges(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG, movable_arrays: Set[str],
@@ -2782,7 +2787,7 @@ def add_copies_before_and_after_nsdfg(
 
     # Save intermediate SDFG for debugging
     # Process movable arrays at the nested SDFG boundary
-    process_in_edges(state, nsdfg_node, movable_arrays, vector_width, vector_storage)
+    inserted_array_names = process_in_edges(state, nsdfg_node, movable_arrays, vector_width, vector_storage)
     process_out_edges(state, nsdfg_node, movable_arrays, vector_width, vector_storage)
 
     for inner_state in inner_sdfg.all_states():
@@ -2819,6 +2824,13 @@ def add_copies_before_and_after_nsdfg(
         if outc in movable_datas:
             nsdfg_node.remove_out_connector(outc)
             nsdfg_node.add_out_connector(outc + "_vec", force=True)
+
+    # Move vector data above the vector map, it makes merging overlapping accesses easier
+    sdict = state.scope_dict()
+    for ie in state.in_edges(nsdfg_node):
+        if isinstance(ie.src, dace.nodes.AccessNode) and ie.data.data in inserted_array_names:
+            print("Sift up")
+            sift_access_node_up(state, ie.src, sdict[ie.src])
 
 
 def find_copy_in_state(inner_sdfg: dace.SDFG, nsdfg_node: dace.nodes.NestedSDFG, free_syms: Set[str],
@@ -2863,3 +2875,36 @@ def parse_int_or_default(value, default=8):
         return int(value)
     except (ValueError, TypeError):
         return default
+
+
+def sift_access_node_up(state: dace.SDFGState, node: dace.nodes.AccessNode, map_entry: dace.nodes.MapEntry):
+    # We have MapEntry -> AccessNode -> DstNode
+    # We move it up to be: AccessNode -> MapEntry -> DstNode
+    # If access node's size is multiplied with the loop's dimensions
+
+    in_edges = state.in_edges(node)
+    out_edges = state.out_edges(node)
+    src_nodes = {ie.src for ie in in_edges}
+    assert map_entry in src_nodes
+    assert len(in_edges) == 1
+    assert len(out_edges) == 1
+
+    desc = state.sdfg.arrays[node.data]
+    assert len(desc.shape) == len(map_entry.map.params)
+    map_lengths = tuple([(e + 1 - b) // s for (b, e, s) in map_entry.map.range])
+    # Vector map is one dimensional and has length 1 due to step size
+    assert len(map_entry.map.params) == 1
+    assert map_lengths[0] == 1
+
+    ie = in_edges[0]
+    oe = out_edges[0]
+    # Rm access node's connection
+    state.remove_edge(ie)
+    state.remove_edge(oe)
+    state.add_edge(ie.src, ie.src_conn, oe.dst, oe.dst_conn, copy.deepcopy(oe.data))
+
+    ies_from_connector = state.in_edges_by_connector(map_entry, ie.src_conn.replace("OUT_", "IN_"))
+    for s_ie in ies_from_connector:
+        state.remove_edge(s_ie)
+        state.add_edge(s_ie.src, s_ie.src_conn, node, None, copy.deepcopy(s_ie.data))
+        state.add_edge(node, None, s_ie.dst, s_ie.dst_conn, copy.deepcopy(oe.data))
