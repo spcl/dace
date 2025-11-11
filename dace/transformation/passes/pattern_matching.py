@@ -244,13 +244,17 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
                             applied = True
                             applied_anything = True
                             break
+
+                        # If apply once is set, applied should be forcefully set to True, once we have applied the transformation to all patterns
+                        if apply_once:
+                            break
+
                 if apply_once:
                     break
         else:
             applied = True
             while applied:
                 applied = False
-                # Find and apply one of the chosen transformations
                 for match in match_patterns(sdfg,
                                             permissive=self.permissive,
                                             patterns=xforms,
@@ -267,18 +271,14 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
                 sdfg.validate()
             except InvalidSDFGError as err:
                 if applied and match is not None:
-                    raise InvalidSDFGError("Validation failed after applying {}.".format(match.print_match(self)), self,
+                    raise InvalidSDFGError(f"Validation failed after applying {match.print_match(self)}.", self,
                                            match.state_id) from err
                 else:
                     raise err
 
-        if (len(applied_transformations) > 0
-                and (self.progress or self.print_report or
-                     ((self.progress is None or self.print_report is None) and Config.get_bool('debugprint')))):
-            print('Applied {}.'.format(', '.join(['%d %s' % (len(v), k) for k, v in applied_transformations.items()])))
-
-        if len(applied_transformations) == 0:  # Signal that no transformation was applied
+        if len(applied_transformations) == 0:
             return None
+
         return applied_transformations
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Dict[str, List[Any]]:
