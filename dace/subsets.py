@@ -976,6 +976,16 @@ class Range(Subset):
         # All dimensions are full size - this is contiguous
         return True
 
+    def union(self, other: 'Range') -> 'Range':
+        new_subset_list = list()
+        for (b, e, s), (ob, oe, os) in zip(self, other):
+            new_b = sympy.Min(b, ob).simplify()
+            new_e = sympy.Max(e, oe).simplify()
+            new_subset_list.append((new_b, new_e, s))
+            if s != os:
+                raise Exception("For Range union strides of the two ranges need to be equal")
+        return Range(new_subset_list)
+
 
 @dace.serialize.serializable
 class Indices(Subset):
