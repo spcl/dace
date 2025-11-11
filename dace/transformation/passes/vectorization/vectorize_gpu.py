@@ -89,7 +89,8 @@ __host__ __device__ __forceinline__ void vector_copy(T * __restrict__ dst, const
                  vector_width: str,
                  try_to_demote_symbols_in_nsdfgs: bool = False,
                  fuse_overlapping_loads: bool = False,
-                 apply_on_maps: Optional[List[str]] = None):
+                 apply_on_maps: Optional[List[str]] = None,
+                 insert_copies: bool = False):
         passes = [
             EliminateBranches(),
             RemoveFPTypeCasts(),
@@ -114,6 +115,7 @@ __host__ __device__ __forceinline__ void vector_copy(T * __restrict__ dst, const
                 vector_op_numeric_type=dace.float64,
                 try_to_demote_symbols_in_nsdfgs=try_to_demote_symbols_in_nsdfgs,
                 apply_on_maps=apply_on_maps,
+                insert_copies=insert_copies,
             )
         ]
         if fuse_overlapping_loads:

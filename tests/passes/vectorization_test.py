@@ -206,7 +206,9 @@ def run_vectorization_test(dace_func,
                            simplify=True,
                            skip_simplify=None,
                            save_sdfgs=False,
-                           sdfg_name=None):
+                           sdfg_name=None,
+                           fuse_overlapping_loads=False,
+                           insert_copies=False):
     """
     Run vectorization test and compare results.
 
@@ -237,7 +239,8 @@ def run_vectorization_test(dace_func,
     copy_sdfg = copy.deepcopy(sdfg)
     copy_sdfg.name = copy_sdfg.name + "_vectorized"
 
-    VectorizeCPU(vector_width=vector_width).apply_pass(copy_sdfg, {})
+    VectorizeCPU(vector_width=vector_width, fuse_overlapping_loads=fuse_overlapping_loads,
+                 insert_copies=insert_copies).apply_pass(copy_sdfg, {})
 
     if save_sdfgs and sdfg_name:
         copy_sdfg.save(f"{sdfg_name}_vectorized.sdfg")
@@ -250,9 +253,10 @@ def run_vectorization_test(dace_func,
 
     # Compare results
     for name in arrays.keys():
-        print(arrays_orig[name] - arrays_vec[name])
         assert numpy.allclose(arrays_orig[name], arrays_vec[name]), \
             f"{name} Diff: {arrays_orig[name] - arrays_vec[name]}"
+
+    return copy_sdfg
 
 
 def test_vsubs_cpu():
@@ -685,6 +689,69 @@ def test_jacobi2d():
                            sdfg_name="jacobi2d")
 
 
+def test_jacobi2d_with_fuse_overlapping_loads():
+    _S = 66
+    A = numpy.random.random((_S, _S))
+    B = numpy.random.random((_S, _S))
+
+    vectorized_sdfg: dace.SDFG = run_vectorization_test(dace_func=jacobi2d,
+                                                        arrays={
+                                                            'A': A,
+                                                            'B': B
+                                                        },
+                                                        params={
+                                                            'S': _S,
+                                                            'tsteps': 5,
+                                                        },
+                                                        vector_width=8,
+                                                        save_sdfgs=True,
+                                                        sdfg_name="jacobi2d_with_fuse_overlapping_loads",
+                                                        fuse_overlapping_loads=True)
+
+    # Should have 1 access node between two maps
+    inner_map_entries = {(n, g)
+                         for n, g in vectorized_sdfg.all_nodes_recursive()
+                         if isinstance(n, dace.nodes.MapEntry) and g.scope_dict()[n] is not None}
+    for inner_map_entry, state in inner_map_entries:
+        src_access_nodes = {
+            ie.src
+            for ie in state.in_edges(inner_map_entry) if isinstance(ie.src, dace.nodes.AccessNode)
+        }
+
+        src_src_access_nodes = set()
+        for src_acc_node in src_access_nodes:
+            src_src_access_nodes = src_src_access_nodes.union(
+                {ie.src
+                 for ie in state.in_edges(src_acc_node) if isinstance(ie.src, dace.nodes.AccessNode)})
+
+        assert len(src_src_access_nodes
+                   ) == 1, f"Excepted one access node got {len(src_src_access_nodes)}, ({src_src_access_nodes})"
+
+
+@pytest.mark.parametrize("param_tuple", [(True, True), (True, False), (False, True), (False, False)])
+def test_jacobi2d_with_parameters(param_tuple):
+    fuse_overlapping_loads, insert_copies = param_tuple
+    _S = 66
+    A = numpy.random.random((_S, _S))
+    B = numpy.random.random((_S, _S))
+
+    run_vectorization_test(
+        dace_func=jacobi2d,
+        arrays={
+            'A': A,
+            'B': B
+        },
+        params={
+            'S': _S,
+            'tsteps': 5,
+        },
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name=f"jacobi2d_with_fuse_overlapping_loads_{fuse_overlapping_loads}_with_insert_copies_{insert_copies}",
+        fuse_overlapping_loads=fuse_overlapping_loads,
+        insert_copies=insert_copies)
+
+
 C = 32
 
 
@@ -848,3 +915,5 @@ if __name__ == "__main__":
     test_overlapping_access_same_src_and_dst_in_nestedsdfg()
     for argtuple in [(True, True), (True, False), (False, True), (False, False)]:
         test_disjoint_chain_split_branch_only(argtuple)
+        test_jacobi2d_with_parameters(argtuple)
+    test_jacobi2d_with_fuse_overlapping_loads()
