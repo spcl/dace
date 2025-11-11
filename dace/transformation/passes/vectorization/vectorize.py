@@ -32,10 +32,12 @@ class Vectorize(ppl.Pass):
     try_to_demote_symbols_in_nsdfgs = properties.Property(dtype=bool, default=False)
     fuse_overlapping_loads = properties.Property(dtype=bool, default=False)
     apply_on_maps = properties.ListProperty(element_type=str, default=None, allow_none=True)
+    insert_copies = properties.Property(dtype=bool, default=False, allow_none=False)
 
     def __init__(self, templates: Dict[str, str], vector_width: str, vector_input_storage: dace.dtypes.StorageType,
                  vector_output_storage: dace.dtypes.StorageType, vector_op_numeric_type: typeclass, global_code: str,
-                 global_code_location: str, try_to_demote_symbols_in_nsdfgs: bool, apply_on_maps: Optional[List[str]]):
+                 global_code_location: str, try_to_demote_symbols_in_nsdfgs: bool, apply_on_maps: Optional[List[str]],
+                 insert_copies: bool):
         super().__init__()
 
         self.templates = templates
@@ -47,7 +49,7 @@ class Vectorize(ppl.Pass):
         self.vector_op_numeric_type = vector_op_numeric_type
         self.try_to_demote_symbols_in_nsdfgs = try_to_demote_symbols_in_nsdfgs
         self.apply_on_maps = apply_on_maps
-
+        self.insert_copies = insert_copies
         self._used_names = set()
         self._tasklet_vectorizable_map = dict()
 
@@ -114,7 +116,8 @@ class Vectorize(ppl.Pass):
         self._extend_memlets(state, new_inner_map)
         self._extend_temporary_scalars(state, new_inner_map)
         if not has_single_nested_sdfg:
-            self._copy_in_and_copy_out(state, new_inner_map, vectorization_number)
+            if self.insert_copies:
+                self._copy_in_and_copy_out(state, new_inner_map, vectorization_number)
         # Replactes tasklets of form A op B to vectorized_op(A, B)
         self._replace_tasklets(state, new_inner_map, vector_map_param)
         # Copies in data to the storage needed by the vector unit
@@ -130,8 +133,9 @@ class Vectorize(ppl.Pass):
             fix_nsdfg_connector_array_shapes_mismatch(state, nsdfg_node)
             check_nsdfg_connector_array_shapes_match(state, nsdfg_node)
             unstructured_data = self._vectorize_nested_sdfg(state, nsdfg_node, vector_map_param)
-            add_copies_before_and_after_nsdfg(state, nsdfg_node, self.vector_width, self.vector_input_storage,
-                                              unstructured_data)
+            if self.insert_copies:
+                add_copies_before_and_after_nsdfg(state, nsdfg_node, self.vector_width, self.vector_input_storage,
+                                                  unstructured_data)
 
     def parent_connection_is_scalar(self, state: dace.SDFGState, nsdfg: dace.nodes.NestedSDFG,
                                     scalar_name: str) -> bool:

@@ -333,7 +333,8 @@ inline void vector_ne_w_scalar(T * __restrict__ out, const T * __restrict__ a, c
                  vector_width: str,
                  try_to_demote_symbols_in_nsdfgs: bool = False,
                  fuse_overlapping_loads: bool = False,
-                 apply_on_maps: Optional[List[str]] = None):
+                 apply_on_maps: Optional[List[str]] = None,
+                 insert_copies: bool = False):
         passes = [
             EliminateBranches(),
             RemoveFPTypeCasts(),
@@ -388,6 +389,7 @@ inline void vector_ne_w_scalar(T * __restrict__ out, const T * __restrict__ a, c
                 vector_op_numeric_type=dace.float64,
                 try_to_demote_symbols_in_nsdfgs=try_to_demote_symbols_in_nsdfgs,
                 apply_on_maps=apply_on_maps,
+                insert_copies=insert_copies,
             )
         ]
         if fuse_overlapping_loads:
