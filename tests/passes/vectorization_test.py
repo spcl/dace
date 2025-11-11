@@ -439,6 +439,7 @@ def test_tasklets_in_if():
 
     sdfg = tasklets_in_if.to_sdfg()
     copy_sdfg = copy.deepcopy(sdfg)
+    copy_sdfg.name = sdfg.name + "_vectorized"
     sdfg.save("nested_tasklets_in_if.sdfg")
     VectorizeCPU(vector_width=8).apply_pass(copy_sdfg, {})
     copy_sdfg.save("nested_tasklets_in_if_vectorized.sdfg")
@@ -646,6 +647,7 @@ def test_spmv():
 
     # Vectorized SDFG
     copy_sdfg = copy.deepcopy(sdfg)
+    copy_sdfg.name = sdfg.name + "_vectorized"
     sdfg.save("spmv.sdfg")
     VectorizeCPU(vector_width=8).apply_pass(copy_sdfg, {})
     copy_sdfg.save("spmv_vectorized.sdfg")
