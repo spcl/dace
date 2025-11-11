@@ -3083,6 +3083,138 @@ def test_map_fusion_multiple_top_level_connections_multi_producer(strict_dataflo
     assert all(np.allclose(ref[k], res[k]) for k in ref)
 
 
+def _make_stable_label_fusion_sdfg() -> Tuple[dace.SDFG, dace.nodes.MapExit, dace.nodes.AccessNode, dace.nodes.MapEntry,
+                                              dace.nodes.MapExit, dace.nodes.AccessNode, dace.nodes.MapEntry]:
+    sdfg = dace.SDFG(unique_name("stable_label_sdfg"))
+    state = sdfg.add_state(is_start_block=True)
+
+    for aname in "abcd":
+        sdfg.add_array(
+            aname,
+            shape=(10, 20),
+            dtype=dace.float64,
+            transient=(aname in "bc"),
+        )
+    b = state.add_access("b")
+    c = state.add_access("c")
+
+    _, _, mx_c = state.add_mapped_tasklet(
+        "comp_c",
+        map_ranges={
+            "__i": "0:10",
+            "__j": "0:20",
+        },
+        inputs={"__in": dace.Memlet("a[__i, __j]")},
+        code="__out = __in + 1.3",
+        outputs={"__out": dace.Memlet("b[__i, __j]")},
+        output_nodes={b},
+        external_edges=True,
+    )
+
+    _, me_b, mx_b = state.add_mapped_tasklet(
+        "comp_b",
+        map_ranges={
+            "__i": "0:10",
+            "__j": "0:20",
+        },
+        inputs={"__in": dace.Memlet("b[__i, __j]")},
+        code="__out = __in + 1.2",
+        outputs={"__out": dace.Memlet("c[__i, __j]")},
+        input_nodes={b},
+        output_nodes={c},
+        external_edges=True,
+    )
+
+    _, me_a, _, = state.add_mapped_tasklet(
+        "comp_a",
+        map_ranges={
+            "__i": "0:10",
+            "__j": "0:20",
+        },
+        inputs={"__in": dace.Memlet("c[__i, __j]")},
+        code="__out = __in + 1.7",
+        outputs={"__out": dace.Memlet("d[__i, __j]")},
+        input_nodes={c},
+        external_edges=True,
+    )
+
+    sdfg.validate()
+
+    return sdfg, mx_c, b, me_b, mx_b, c, me_a
+
+
+@pytest.mark.parametrize("forward_fusion", [True, False])
+def test_map_fusion_stable_label(forward_fusion: bool):
+    sdfg, mx_c, b, me_b, mx_b, c, me_a = _make_stable_label_fusion_sdfg()
+
+    initial_maps = count_nodes(sdfg, dace.nodes.MapEntry, True)
+    assert len(initial_maps) == 3
+    assert {"comp_c_map", "comp_b_map", "comp_a_map"} == {me.map.label for me in initial_maps}
+    assert {"a", "b", "c", "d"} == sdfg.arrays.keys()
+
+    ref, res = make_sdfg_args(sdfg)
+    compile_and_run_sdfg(sdfg, **ref)
+
+    if forward_fusion:
+        apply_fusion(
+            sdfg,
+            removed_maps=1,
+            apply_once=True,
+            where={
+                "first_map_exit": mx_c,
+                "array": b,
+                "second_map_entry": me_b,
+            },
+        )
+        assert {"comp_b_map", "comp_a_map"} == {me.map.label for me in count_nodes(sdfg, dace.nodes.MapEntry, True)}
+        assert "b" not in sdfg.arrays
+
+        apply_fusion(
+            sdfg,
+            removed_maps=1,
+            apply_once=True,
+            where={
+                "first_map_exit": mx_b,
+                "array": c,
+                "second_map_entry": me_a,
+            },
+        )
+        assert "c" not in sdfg.arrays
+
+    else:
+        apply_fusion(
+            sdfg,
+            removed_maps=1,
+            apply_once=True,
+            where={
+                "first_map_exit": mx_b,
+                "array": c,
+                "second_map_entry": me_a,
+            },
+        )
+        assert {"comp_c_map", "comp_a_map"} == {me.map.label for me in count_nodes(sdfg, dace.nodes.MapEntry, True)}
+        assert "c" not in sdfg.arrays
+
+        apply_fusion(
+            sdfg,
+            removed_maps=1,
+            apply_once=True,
+            where={
+                "first_map_exit": mx_c,
+                "array": b,
+                "second_map_entry": me_b,
+            },
+        )
+        assert "b" not in sdfg.arrays
+
+    after_maps = count_nodes(sdfg, dace.nodes.MapEntry, True)
+    assert len(after_maps) == 1
+    assert "comp_a_map" == after_maps[0].map.label
+
+    compile_and_run_sdfg(sdfg, **res)
+    assert all(np.allclose(ref[k], res[k]) for k in ref)
+
+
 if __name__ == '__main__':
     test_fusion_intrinsic_memlet_direction()
     test_fusion_dynamic_producer()
@@ -3128,3 +3260,5 @@ if __name__ == '__main__':
     test_map_fusion_multiple_top_level_connections(False)
     test_map_fusion_multiple_top_level_connections_with_shared_intermediate(True)
     test_map_fusion_multiple_top_level_connections_with_shared_intermediate(False)
+    test_map_fusion_stable_label(forward_fusion=True)
+    test_map_fusion_stable_label(forward_fusion=False)
