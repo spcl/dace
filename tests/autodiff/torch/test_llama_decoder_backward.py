@@ -40,6 +40,7 @@ class LlamaDecoderLayerWrapper(nn.Module):
         return outputs[0]
 
 
+@pytest.mark.xdist_group("large_ML_models")
 @pytest.mark.torch
 @pytest.mark.autodiff
 def test_llama_decoder_backward(sdfg_name):

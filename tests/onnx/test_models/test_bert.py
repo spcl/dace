@@ -46,6 +46,7 @@ def get_data_file(url, directory_name=None) -> str:
     return file_path
 
 
+@pytest.mark.xdist_group("large_ML_models")
 @pytest.mark.onnx
 def test_bert_full(sdfg_name):
     bert_tiny_root = 'http://spclstorage.inf.ethz.ch/~rauscho/bert-tiny'
