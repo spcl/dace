@@ -266,19 +266,13 @@ class Ger(LibraryNode):
         size_y = None
         for _, _, _, dst_conn, memlet in state.in_edges(self):
             if dst_conn == "_A":
-                subset = copy.deepcopy(memlet.subset)
-                subset.squeeze()
-                size_a = subset.size()
+                size_a = memlet.subset.size()
                 desc_a = sdfg.arrays[memlet.data]
             if dst_conn == "_x":
-                subset = copy.deepcopy(memlet.subset)
-                subset.squeeze()
-                size_x = subset.size()
+                size_x = memlet.subset.size()
                 desc_x = sdfg.arrays[memlet.data]
             if dst_conn == "_y":
-                subset = copy.deepcopy(memlet.subset)
-                subset.squeeze()
-                size_y = subset.size()
+                size_y = memlet.subset.size()
                 desc_y = sdfg.arrays[memlet.data]
 
         if size_a is None or size_x is None:
@@ -292,7 +286,7 @@ class Ger(LibraryNode):
             return
 
         if len(size_a) != 2:
-            raise ValueError("A must be a matrix")
+            raise ValueError("A must be a 2-dimensional matrix")
         if len(size_x) != 1:
             raise ValueError("x must be a vector")
         if len(size_y) != 1:
@@ -306,9 +300,7 @@ class Ger(LibraryNode):
             raise ValueError("Expected exactly one output from ger rank 1 operation.")
         out_memlet = out_edges[0].data
 
-        out_subset = copy.deepcopy(out_memlet.subset)
-        out_subset.squeeze()
-        size_out = out_subset.size()
+        size_out = out_memlet.subset.size()
 
         if (len(size_out) != 2 or size_out[0] != size_a[0] or size_out[1] != size_a[1]):
             raise ValueError("Output matrix must match input matrix a and outer product x*yT.")

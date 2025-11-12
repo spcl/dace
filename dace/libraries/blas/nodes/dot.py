@@ -547,22 +547,19 @@ class Dot(dace.sdfg.nodes.LibraryNode):
         if desc_x.dtype.base_type != desc_res.dtype.base_type:
             raise TypeError(f"Data types of input and output must be equal: {desc_x.dtype}, {desc_res.dtype}")
 
-        # Squeeze input memlets
-        squeezed1 = copy.deepcopy(in_memlets[0].subset)
-        squeezed2 = copy.deepcopy(in_memlets[1].subset)
-        sqdims1 = squeezed1.squeeze()
-        sqdims2 = squeezed2.squeeze()
+        # Get input sizes
+        size1 = in_memlets[0].subset.size()
+        size2 = in_memlets[1].subset.size()
 
-        if len(squeezed1.size()) != 1 or len(squeezed2.size()) != 1:
+        if len(size1) != 1 or len(size2) != 1:
             raise ValueError("dot product only supported on 1-dimensional arrays")
         if out_memlet.subset.num_elements() != 1:
             raise ValueError("Output of dot product must be a single element")
 
-        # We are guaranteed that there is only one non-squeezed dimension
-        stride_x = desc_x.strides[sqdims1[0]]
-        stride_y = desc_y.strides[sqdims2[0]]
-        n = squeezed1.num_elements()
-        if squeezed1.num_elements() != squeezed2.num_elements():
+        stride_x = desc_x.strides[0]
+        stride_y = desc_y.strides[0]
+        n = size1[0]
+        if size1[0] != size2[0]:
             raise ValueError('Size mismatch in inputs')
 
         return (desc_x, stride_x), (desc_y, stride_y), desc_res, n

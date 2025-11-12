@@ -934,13 +934,9 @@ class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
             raise ValueError("Expected exactly two inputs to batched matrix-matrix product")
         for _, _, _, dst_conn, memlet in state.in_edges(self):
             if dst_conn == '_a':
-                subset = dc(memlet.subset)
-                subset.squeeze()
-                size0 = subset.size()
+                size0 = memlet.subset.size()
             if dst_conn == '_b':
-                subset = dc(memlet.subset)
-                subset.squeeze()
-                size1 = subset.size()
+                size1 = memlet.subset.size()
         out_edges = state.out_edges(self)
         if len(out_edges) != 1:
             raise ValueError("Expected exactly one output from "
