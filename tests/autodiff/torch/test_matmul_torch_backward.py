@@ -20,7 +20,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from dace.frontend.python.module import DaceModule
+from dace.frontend.ml.torch.module import DaceModule
 from tests.utils import torch_tensors_close
 
 ##################################

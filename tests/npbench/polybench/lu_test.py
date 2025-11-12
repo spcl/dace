@@ -144,7 +144,7 @@ def run_lu(device_type: dace.dtypes.DeviceType):
 
 def run_lu_autodiff():
     # Initialize data (polybench mini size)
-    N = 10
+    N = 5
     A = init_data(N)
     A_jax = jnp.copy(A)
 

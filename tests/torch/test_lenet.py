@@ -1,9 +1,10 @@
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import pytest
 
 pytest.importorskip("onnx", reason="ONNX not installed. Please install with: pip install dace[ml]")
 pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
 
-from dace.frontend.python.module import DaceModule
+from dace.ml import DaceModule
 
 import torch
 import torch.nn as nn

@@ -6,7 +6,7 @@ import numpy as np
 
 pytest.importorskip("torch", reason="PyTorch not installed")
 
-from dace.frontend.python.module import DaceModule
+from dace.frontend.ml.torch.module import DaceModule
 from tests.utils import torch_tensors_close
 
 

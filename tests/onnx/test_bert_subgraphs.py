@@ -1,3 +1,4 @@
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Regression tests for BERT subgraphs
 """
@@ -9,7 +10,7 @@ pytest.importorskip("torch", reason="PyTorch not installed. Please install with:
 
 import onnx
 import torch
-from dace.libraries.onnx import ONNXModel
+from dace.ml import ONNXModel
 
 data_directory = os.path.join(os.path.dirname(__file__), "onnx_files")
 

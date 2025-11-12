@@ -1,19 +1,16 @@
 import operator
-import copy
 import logging
-from typing import List, Tuple, Any
 
 import dace
 from dace import dtypes, nodes
 
 from dace.libraries.onnx.converters import clean_onnx_name
 from dace.libraries.torch import dlpack
-from dace.frontend.python.module import DaceModule
 
 log = logging.getLogger(__name__)
 
 
-def parameter_to_transient(dace_module: DaceModule, parameter_path: str):
+def parameter_to_transient(dace_module: 'dace.frontend.ml.torch', parameter_path: str):
     """ Convert the dace array for pytorch parameter found at parameter_path to a persistently allocated transient.
 
         :param dace_module: the module containing the weight to transform.

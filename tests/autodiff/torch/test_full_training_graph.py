@@ -1,3 +1,4 @@
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 
 import pytest
@@ -9,7 +10,7 @@ import torch
 
 import dace
 
-from dace.frontend.python.module import DaceModule
+from dace.ml import DaceModule
 from tests.utils import torch_tensors_close, tensors_close
 
 

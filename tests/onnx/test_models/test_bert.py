@@ -1,3 +1,4 @@
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Test a full model including indexing and input preparation. The model also includes lots of symbolic dimensions.
 """
@@ -13,7 +14,7 @@ import urllib
 import torch
 import torch.nn as nn
 from transformers import BertTokenizer, BertModel
-from dace.frontend.python.module import DaceModule
+from dace.frontend.ml.torch.module import DaceModule
 import dace
 from tests.utils import torch_tensors_close
 

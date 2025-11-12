@@ -1,3 +1,4 @@
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Batch Norm is the only op that has a shared name between inputs and outputs. Test that prepending "in_" and "out_" works
 """
@@ -14,7 +15,7 @@ from torch.nn import functional as F
 
 import dace
 import dace.libraries.onnx as donnx
-from dace.frontend.python.module import DaceModule
+from dace.ml import DaceModule
 
 from tests.utils import torch_tensors_close
 

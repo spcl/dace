@@ -1,3 +1,4 @@
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 import pytest
 
@@ -42,13 +43,19 @@ class SDFGBackwardRunner:
         self.sdfg: dace.SDFG = sdfg
         self.target = target
 
-        assert len(sdfg.nodes()) == 1, f"Expected single-state SDFG, got {len(sdfg.nodes())} states"
-        state = sdfg.nodes()[0]
-        required_grads = list(
-            node for node in state.nodes() if isinstance(node, nd.AccessNode)
-            and node.desc(sdfg).dtype in [dace.float32, dace.float64] and not node.desc(sdfg).transient)
+        # Collect all non-transient float arrays from all states as required gradients
+        required_grads = []
+        seen_names = set()
+        for state in sdfg.states():
+            for node in state.nodes():
+                if isinstance(node, nd.AccessNode):
+                    arr = node.desc(sdfg)
+                    if (arr.dtype in [dace.float32, dace.float64] and not arr.transient
+                            and node.data not in seen_names):
+                        required_grads.append(node)
+                        seen_names.add(node.data)
 
-        add_backward_pass(sdfg=self.sdfg, outputs=[self.target], inputs=required_grads)
+        add_backward_pass(sdfg=self.sdfg, outputs=[self.target], inputs=required_grads, simplify=simplify)
 
     def run(self, **inputs):
 

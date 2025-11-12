@@ -1,3 +1,4 @@
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import pytest
 
 pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
@@ -9,7 +10,7 @@ import dace
 from tests.utils import torch_tensors_close
 
 
-@dace.module(debug_transients=True, sdfg_name="test_debug_transients")
+@dace.ml.module(debug_transients=True, sdfg_name="test_debug_transients")
 class Module(nn.Module):
 
     def forward(self, x):
