@@ -240,7 +240,6 @@ def expand_memlet_expression(state: SDFGState, edges: Iterable[Edge[Memlet]], ed
     modified_edges = set()
     for edge in edges:
         if edge.data is not None:
-            state.sdfg.save("e.sdfg")
             assert all(
                 ((e + 1 - b) // s) == 1 for b, e, s in edge.data.subset
             ), f"Subset: {[(b, e, s) for b, e, s in edge.data.subset]}, is length one: {[((e + 1 - b) // s) == 1 for b, e, s in edge.data.subset]}"
@@ -2874,8 +2873,6 @@ def add_copies_before_and_after_nsdfg(
     sdict = state.scope_dict()
     for ie in state.in_edges(nsdfg_node):
         if isinstance(ie.src, dace.nodes.AccessNode) and ie.data.data in inserted_array_names:
-            print("Sift up")
-            state.sdfg.save("before_sift_up.sdfgz", compress=True)
             sift_access_node_up(state, ie.src, sdict[ie.src])
 
 

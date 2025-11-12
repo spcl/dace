@@ -6,6 +6,7 @@ import copy
 import pytest
 import numpy
 from dace import InterstateEdge
+from dace import Union
 from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg import ControlFlowRegion
@@ -291,7 +292,7 @@ def spmv_csr_two(indptr: dace.int64[n + 1], indices: dace.int64[nnz], data: dace
         y[i] = tmp
 
 
-def run_vectorization_test(dace_func,
+def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                            arrays,
                            params,
                            vector_width=8,
@@ -302,17 +303,22 @@ def run_vectorization_test(dace_func,
                            fuse_overlapping_loads=False,
                            insert_copies=True,
                            filter_map=-1,
-                           cleanup=False):
+                           cleanup=False,
+                           from_sdfg=False):
 
     # Create copies for comparison
     arrays_orig = {k: copy.deepcopy(v) for k, v in arrays.items()}
     arrays_vec = {k: copy.deepcopy(v) for k, v in arrays.items()}
 
     # Original SDFG
-    sdfg: dace.SDFG = dace_func.to_sdfg(simplify=False)
-    sdfg.name = sdfg_name
-    if simplify:
-        sdfg.simplify(validate=True, validate_all=True, skip=skip_simplify or set())
+    if not from_sdfg:
+        sdfg: dace.SDFG = dace_func.to_sdfg(simplify=False)
+        sdfg.name = sdfg_name
+        if simplify:
+            sdfg.simplify(validate=True, validate_all=True, skip=skip_simplify or set())
+    else:
+        sdfg: dace.SDFG = dace_func
+
     if save_sdfgs and sdfg_name:
         sdfg.save(f"{sdfg_name}.sdfg")
     c_sdfg = sdfg.compile()
@@ -354,6 +360,7 @@ def run_vectorization_test(dace_func,
                  fuse_overlapping_loads=fuse_overlapping_loads,
                  insert_copies=insert_copies,
                  apply_on_maps=filter_map).apply_pass(copy_sdfg, {})
+    copy_sdfg.validate()
 
     if save_sdfgs and sdfg_name:
         copy_sdfg.save(f"{sdfg_name}_vectorized.sdfg")
@@ -1421,6 +1428,179 @@ def test_disjoint_chain():
 
     for name in arrays.keys():
         numpy.testing.assert_allclose(out_no_fuse[name], out_fused[name], atol=1e-12)
+
+
+def _get_cloudsc_snippet_three():
+    klon = dace.symbolic.symbol("klon")
+    klev = dace.symbolic.symbol("klev")
+    # Add all arrays to the SDFGs
+    in_arrays = {"tendency_tmp_q", "pa", "pq", "tendency_tmp_t", "tendency_tmp_a", "pt"}
+    in_scalars = {"kfdia", "kidia", "ptsphy"}
+    out_arrays = {"zqx0", "zqx", "ztp1", "zaorig", "za"}
+    arr_shapes = {
+        "tendency_tmp_q": ((klon, klev), (1, klon), dace.float64),
+        "pa": ((klon, klev), (1, klon), dace.float64),
+        "pq": ((klon, klev), (1, klon), dace.float64),
+        "tendency_tmp_t": ((klon, klev), (1, klon), dace.float64),
+        "tendency_tmp_a": ((klon, klev), (1, klon), dace.float64),
+        "pt": ((klon, klev), (1, klon), dace.float64),
+        "zqx0": ((klon, klev, 5), (1, klon, klon * klev), dace.float64),
+        "zqx": ((klon, klev, 5), (1, klon, klon * klev), dace.float64),
+        "ztp1": ((klon, klev), (1, klon), dace.float64),
+        "zaorig": ((klon, klev), (1, klon), dace.float64),
+        "za": ((klon, klev), (1, klon), dace.float64),
+    }
+    scalar_dtypes = {
+        "kfdia": dace.int64,
+        "kidia": dace.int64,
+        "ptsphy": dace.float64,
+    }
+    outer_sdfg = dace.SDFG("outer")
+    inner_sdfg = dace.SDFG("inner")
+    inner_state = inner_sdfg.add_state("inner_compute_state", is_start_block=True)
+    outer_state = outer_sdfg.add_state("outer_compute_state", is_start_block=True)
+
+    symbols = {"i", "j", "klev", "klon"}
+    for sym in symbols:
+        inner_sdfg.add_symbol(sym, dace.int64)
+        outer_sdfg.add_symbol(sym, dace.int64)
+
+    for sdfg in [inner_sdfg, outer_sdfg]:
+        for arr_name in in_arrays.union(out_arrays):
+            shape, strides, dtype = arr_shapes[arr_name]
+            sdfg.add_array(arr_name, shape, dtype, strides=strides, transient=sdfg == outer_sdfg)
+        for scalar_name in in_scalars:
+            if sdfg == inner_sdfg and scalar_name in {"kfdia", "kidia"}:
+                continue
+            sdfg.add_scalar(scalar_name, scalar_dtypes[scalar_name], transient=False)
+
+    for transient_scl in {"t0_s1", "t0_s2", "t0_s3", "t0_s4", "t0_s5"}:
+        inner_sdfg.add_scalar(transient_scl, dace.float64, dace.dtypes.StorageType.Register, True)
+
+    # All tasklets for the inner SDFG
+    tasklets = {
+        ("ptsphy", "0", "tendency_tmp_t", "i, j", "_out = _in2 * _in1", "t0_s1", "0"),
+        ("ptsphy", "0", "tendency_tmp_q", "i, j", "_out = _in2 * _in1", "t0_s2", "0"),
+        ("ptsphy", "0", "tendency_tmp_q", "i, j", "_out = _in2 * _in1", "t0_s3", "0"),
+        ("ptsphy", "0", "tendency_tmp_a", "i, j", "_out = _in2 * _in1", "t0_s4", "0"),
+        ("ptsphy", "0", "tendency_tmp_a", "i, j", "_out = _in2 * _in1", "t0_s5", "0"),
+        ("t0_s1", "0", "pt", "i, j", "_out = _in1 + _in2", "ztp1", "i, j"),
+        ("t0_s2", "0", "pq", "i, j", "_out = _in2 + _in1", "zqx", "i, j, 4"),
+        ("t0_s3", "0", "pq", "i, j", "_out = _in2 + _in1", "zqx0", "i, j, 4"),
+        ("t0_s4", "0", "pa", "i, j", "_out = _in2 + _in1", "za", "i, j"),
+        ("t0_s5", "0", "pa", "i, j", "_out = _in2 + _in1", "zaorig", "i, j"),
+    }
+
+    access_nodes = dict()
+    for in1_arr, in1_subset, in2_arr, in2_subset, tasklet_code, out_arr, out_subset in tasklets:
+        in1_an = inner_state.add_access(in1_arr) if in1_arr not in access_nodes else access_nodes[in1_arr]
+        in2_an = inner_state.add_access(in2_arr) if in2_arr not in access_nodes else access_nodes[in2_arr]
+        out_an = inner_state.add_access(out_arr) if out_arr not in access_nodes else access_nodes[out_arr]
+        access_nodes[in1_arr] = in1_an
+        access_nodes[in2_arr] = in2_an
+        access_nodes[out_arr] = out_an
+
+        t = inner_state.add_tasklet("t_" + out_arr, {"_in1", "_in2"}, {"_out"}, tasklet_code)
+        access_str1 = f"{in1_arr}[{in1_subset}]" if in1_subset != "0" else in1_arr
+        access_str2 = f"{in2_arr}[{in2_subset}]" if in2_subset != "0" else in2_arr
+        inner_state.add_edge(in1_an, None, t, "_in1", dace.memlet.Memlet(access_str1))
+        inner_state.add_edge(in2_an, None, t, "_in2", dace.memlet.Memlet(access_str2))
+
+        access_str3 = f"{out_arr}[{out_subset}]" if out_subset != "0" else out_arr
+        inner_state.add_edge(t, "_out", out_an, None, dace.memlet.Memlet(access_str3))
+
+    inner_symbol_mapping = {sym: sym for sym in symbols}
+    nsdfg = outer_state.add_nested_sdfg(inner_sdfg, in_arrays.union({"ptsphy"}), out_arrays, inner_symbol_mapping)
+
+    m1_entry, m1_exit = outer_state.add_map(name="m1", ndrange={"j": "0:klev:1"})
+    m2_entry, m2_exit = outer_state.add_map(name="m2", ndrange={"i": "kidia-1:kfdia:1"})
+
+    inner_sdfg.validate()
+
+    # Access nodes to map entry
+    for arr in in_arrays.union(in_scalars):
+        outer_state.add_edge(outer_state.add_access(arr), None, m1_entry,
+                             f"IN_{arr}" if arr not in {"kidia", "kfdia"} else arr,
+                             dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]))
+        m1_entry.add_in_connector(f"IN_{arr}" if arr not in {"kidia", "kfdia"} else arr, force=True)
+    # Access nodes to map entry1 to map entry 2 and nsdfg
+    for arr in in_arrays.union({"ptsphy"}):
+        outer_state.add_edge(m1_entry, f"OUT_{arr}", m2_entry, f"IN_{arr}",
+                             dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]))
+        m1_entry.add_out_connector(f"OUT_{arr}", force=True)
+        m2_entry.add_in_connector(f"IN_{arr}", force=True)
+        outer_state.add_edge(m2_entry, f"OUT_{arr}", nsdfg, arr,
+                             dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]))
+        m2_entry.add_out_connector(f"OUT_{arr}", force=True)
+    # Same for exit nodes
+    for arr in out_arrays:
+        outer_state.add_edge(nsdfg, arr, m2_exit, f"IN_{arr}",
+                             dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]))
+        m2_exit.add_in_connector(f"IN_{arr}", force=True)
+        outer_state.add_edge(m2_exit, f"OUT_{arr}", m1_exit, f"IN_{arr}",
+                             dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]))
+        m1_exit.add_in_connector(f"IN_{arr}", force=True)
+        m2_exit.add_out_connector(f"OUT_{arr}", force=True)
+
+    for arr in out_arrays:
+        outer_state.add_edge(m1_exit, f"OUT_{arr}", outer_state.add_access(arr), None,
+                             dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]))
+        m1_exit.add_out_connector(f"OUT_{arr}", force=True)
+    sdfg.save("x.sdfg")
+    sdfg.validate()
+    return sdfg
+
+
+@pytest.mark.parametrize("opt_parameters", [(True, True), (True, False), (False, True), (False, False)])
+def test_snippet_from_cloudsc_three(opt_parameters):
+    fuse_overlapping_loads, insert_copies = opt_parameters
+
+    sdfg = _get_cloudsc_snippet_three()
+    sdfg.name = f"cloudsc_snippet_three_fuse_overlapping_loads_{fuse_overlapping_loads}_insert_copies_{insert_copies}"
+    sdfg.validate()
+
+    # Symbolic values requested by the user
+    klon = 64
+    klev = 64
+    kidia = 1
+    kfdia = 32
+
+    # Map of array shapes (from the SDFG snippet): only the shape tuples matter for creating arrays
+    arr_shapes = {
+        "tendency_tmp_q": (klon, klev),
+        "pa": (klon, klev),
+        "pq": (klon, klev),
+        "tendency_tmp_t": (klon, klev),
+        "tendency_tmp_a": (klon, klev),
+        "pt": (klon, klev),
+        "zqx0": (klon, klev, 5),
+        "zqx": (klon, klev, 5),
+        "ztp1": (klon, klev),
+        "zaorig": (klon, klev),
+        "za": (klon, klev),
+    }
+
+    # Create Fortran-ordered NumPy arrays
+    arrays = {name: numpy.random.random(shape).astype(numpy.float64, order='F') for name, shape in arr_shapes.items()}
+    # Create scalars requested
+    scalars = {
+        "kfdia": numpy.int64(kfdia),
+        "kidia": numpy.int64(kidia),
+        "ptsphy": numpy.float64(0.0),
+        "klev": numpy.int64(klev),
+        "klon": numpy.int64(klon),
+    }
+
+    # Quick verification display: shape and contiguity / strides
+    run_vectorization_test(dace_func=sdfg,
+                           from_sdfg=True,
+                           arrays=arrays,
+                           params=scalars,
+                           vector_width=8,
+                           save_sdfgs=True,
+                           sdfg_name=sdfg.name,
+                           fuse_overlapping_loads=fuse_overlapping_loads,
+                           insert_copies=insert_copies)
 
 
 if __name__ == "__main__":
