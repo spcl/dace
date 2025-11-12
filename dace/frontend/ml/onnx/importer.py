@@ -95,6 +95,154 @@ from dace.libraries.onnx.schema import ONNXParameterType
 
 log = logging.getLogger(__name__)
 
+
+def _preprocess_onnx_model(model: onnx.ModelProto) -> onnx.ModelProto:
+    """
+    Preprocesses ONNX models to handle unsupported operators by replacing them
+    with equivalent supported patterns.
+
+    Currently handles:
+    - SequenceConstruct + ConcatFromSequence -> Concat (for MoE models)
+    - TopK with unused outputs -> Add Identity nodes for unused outputs
+
+    :param model: The ONNX model to preprocess
+    :return: The preprocessed ONNX model
+    """
+    graph = model.graph
+
+    # Handle SequenceConstruct + ConcatFromSequence pattern
+    seq_construct_nodes = {n.name: n for n in graph.node if n.op_type == 'SequenceConstruct'}
+
+    if not seq_construct_nodes:
+        return model
+
+    log.debug(f"Found {len(seq_construct_nodes)} SequenceConstruct nodes, simplifying...")
+
+    nodes_to_remove = set()
+    nodes_to_add_dict = {}
+
+    for seq_node_name, seq_node in seq_construct_nodes.items():
+        sequence_output = seq_node.output[0]
+
+        concat_node = None
+        for node in graph.node:
+            if sequence_output in node.input and node.op_type == 'ConcatFromSequence':
+                concat_node = node
+                break
+
+        if not concat_node:
+            log.debug(f"  SequenceConstruct '{seq_node_name}' not consumed by ConcatFromSequence, skipping")
+            continue
+
+        axis = 0
+        new_axis = 0
+        for attr in concat_node.attribute:
+            if attr.name == 'axis':
+                axis = attr.i
+            elif attr.name == 'new_axis':
+                new_axis = attr.i
+
+        if new_axis != 0:
+            log.debug(f"  ConcatFromSequence with new_axis={new_axis} not supported, skipping")
+            continue
+
+        from onnx import helper
+        concat_replacement = helper.make_node('Concat',
+                                              inputs=list(seq_node.input),
+                                              outputs=concat_node.output,
+                                              name=concat_node.name.replace('ConcatFromSequence', 'Concat_simplified'),
+                                              axis=axis)
+        nodes_to_add_dict[concat_node.name] = concat_replacement
+
+        nodes_to_remove.add(seq_node.name)
+        nodes_to_remove.add(concat_node.name)
+
+    if not nodes_to_remove:
+        return model
+
+    new_nodes = []
+    for node in graph.node:
+        if node.name in nodes_to_remove:
+            if node.op_type == 'ConcatFromSequence' and node.name in nodes_to_add_dict:
+                new_nodes.append(nodes_to_add_dict[node.name])
+        else:
+            new_nodes.append(node)
+
+    del graph.node[:]
+    graph.node.extend(new_nodes)
+
+    log.info(f"Simplified {len(nodes_to_remove) // 2} SequenceConstruct + ConcatFromSequence pairs")
+
+    # Handle TopK nodes with unused outputs
+    _fix_topk_unused_outputs(model)
+
+    return model
+
+
+def _fix_topk_unused_outputs(model: onnx.ModelProto) -> None:
+    """
+    Fixes TopK nodes that have unused outputs by adding Identity nodes.
+
+    TopK in ONNX always produces two outputs (Values and Indices), but in some cases
+    (e.g., when only indices are needed), one output may be unused. This causes
+    validation errors in DaCe because all required outputs must be connected.
+
+    Solution: Add Identity nodes for unused outputs to satisfy validation.
+    """
+    from onnx import helper
+    graph = model.graph
+
+    topk_nodes = [n for n in graph.node if n.op_type == 'TopK']
+    if not topk_nodes:
+        return
+
+    # Find which outputs are used by checking if they appear in other nodes' inputs
+    all_inputs = set()
+    for node in graph.node:
+        all_inputs.update(node.input)
+
+    identity_nodes_added = 0
+
+    for topk_node in topk_nodes:
+        # TopK has two outputs: Values (output[0]) and Indices (output[1])
+        if len(topk_node.output) < 2:
+            # If outputs are missing, add placeholder names
+            while len(topk_node.output) < 2:
+                output_name = f"{topk_node.name}_unused_output_{len(topk_node.output)}"
+                topk_node.output.append(output_name)
+
+        values_output = topk_node.output[0]
+        indices_output = topk_node.output[1]
+
+        # Check if outputs are unused
+        values_unused = values_output not in all_inputs and values_output not in [o.name for o in graph.output]
+        indices_unused = indices_output not in all_inputs and indices_output not in [o.name for o in graph.output]
+
+        # Add Identity nodes for unused outputs
+        if values_unused:
+            identity_output = f"{values_output}_identity_sink"
+            identity_node = helper.make_node('Identity',
+                                             inputs=[values_output],
+                                             outputs=[identity_output],
+                                             name=f"{topk_node.name}_values_identity")
+            graph.node.append(identity_node)
+            identity_nodes_added += 1
+            log.debug(f"Added Identity node for unused TopK Values output: {topk_node.name}")
+
+        if indices_unused:
+            identity_output = f"{indices_output}_identity_sink"
+            identity_node = helper.make_node('Identity',
+                                             inputs=[indices_output],
+                                             outputs=[identity_output],
+                                             name=f"{topk_node.name}_indices_identity")
+            graph.node.append(identity_node)
+            identity_nodes_added += 1
+            log.debug(f"Added Identity node for unused TopK Indices output: {topk_node.name}")
+
+    if identity_nodes_added > 0:
+        log.info(f"Fixed {identity_nodes_added} unused TopK outputs by adding Identity nodes")
+
+
 #: Mapping from NumPy dtypes to PyTorch dtypes for tensor conversion
 if TORCH_AVAILABLE:
     numpy_to_torch_dtype_dict = {
@@ -285,6 +433,7 @@ class ONNXModel:
         :param auto_merge: whether to automatically merge symbolic shapes in symbolic shape inference.
         """
 
+        model = _preprocess_onnx_model(model)
         onnx.checker.check_model(model)
 
         # Use temporary files for intermediate model saves
