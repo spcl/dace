@@ -120,6 +120,7 @@ class Vectorize(ppl.Pass):
         # Updates memlets from [k, i] to [k, i:i+4]
         self._extend_memlets(state, new_inner_map)
         self._extend_temporary_scalars(state, new_inner_map)
+
         if not has_single_nested_sdfg:
             if self.insert_copies:
                 self._copy_in_and_copy_out(state, new_inner_map, vectorization_number)
@@ -774,45 +775,51 @@ class Vectorize(ppl.Pass):
         # Get memlet paths until we reach map exit
         # This will create a problem if the input flows into the exit because we can't distinguish,
         # We will assume the first occurence flow to the exit
-        edges_to_check = state.memlet_path(data_in_edge)
-
+        edges_to_check = {data_in_edge}
+        sink_node = None
+        print(f"Iterate for {dataname} -> {new_dataname}")
         while edges_to_check:
-            for edge in edges_to_check:
-                if edge.dst == map_exit:
-                    edges_to_check = None
-                    break
+            edge = edges_to_check.pop()
+            sink_node = edge.dst
+            if edge.dst == map_exit:
+                continue
 
-                if edge.data.data is None or edge.data.data != dataname:
-                    continue
+            if edge.data.data is None or (edge.data.data != dataname and edge.data.data != new_dataname):
+                continue
 
-                memlet: dace.memlet.Memlet = edge.data
+            memlet: dace.memlet.Memlet = edge.data
 
-                assert memlet.other_subset is None, f"Other subset not supported in vectorization yet, found {memlet.other_subset} that is None for {memlet} (edge: {edge}) (state: {state})"
+            assert memlet.other_subset is None, f"Other subset not supported in vectorization yet, found {memlet.other_subset} that is None for {memlet} (edge: {edge}) (state: {state})"
 
-                new_memlet = dace.memlet.Memlet(
-                    data=new_dataname,
-                    subset=dace.subsets.Range([(dace.symbolic.SymExpr(0), dace.symbolic.SymExpr(self.vector_width) - 1,
-                                                dace.symbolic.SymExpr(1))]),
-                )
-                state.remove_edge(edge)
-                state.add_edge(edge.src, edge.src_conn, edge.dst, edge.dst_conn, new_memlet)
+            new_memlet = dace.memlet.Memlet(
+                data=new_dataname,
+                subset=dace.subsets.Range([(dace.symbolic.SymExpr(0), dace.symbolic.SymExpr(self.vector_width) - 1,
+                                            dace.symbolic.SymExpr(1))]),
+            )
+            state.remove_edge(edge)
+            edge = state.add_edge(edge.src, edge.src_conn, edge.dst, edge.dst_conn, new_memlet)
 
-            if edges_to_check is not None:
-                sink_node = edges_to_check[-1].dst
-                # Tasklet (SSA-ed) or access nodes can appear, this means one edge
-                new_out_edges = state.out_edges(sink_node)
-                assert len(new_out_edges
-                           ) == 1, f"Sink node {sink_node} has out edges {new_out_edges}, excepted to have 1 out-edge"
-                new_out_edge = new_out_edges[0]
-                edges_to_check = state.memlet_path(new_out_edge)
+            if isinstance(edge.dst, dace.nodes.MapEntry):
+                new_edges = {
+                    oe
+                    for oe in state.out_edges_by_connector(edge.dst, edge.dst_conn.replace("IN_", "OUT_"))
+                    if not isinstance(oe.dst, (dace.nodes.AccessNode, dace.nodes.NestedSDFG))
+                }
+            else:
+                new_edges = {
+                    oe
+                    for oe in state.out_edges(edge.dst)
+                    if not isinstance(oe.dst, (dace.nodes.AccessNode, dace.nodes.NestedSDFG))
+                }
+            edges_to_check = edges_to_check.union(new_edges)
 
-            # the sink node is a code node and out data has the same array then we have a problem (not that we can fix but it needs to be preprocessed)
-            if isinstance(sink_node, (CodeNode, dace.nodes.Tasklet)):
-                for ie in state.out_edges(sink_node):
-                    if ie.data.data is not None and ie.data.data == dataname:
-                        print(
-                            f"After sink node, the data {dataname} is still used, dangerous. Implementation assumes, the first one flows out we have two inputs that access the same"
-                        )
+        # the sink node is a code node and out data has the same array then we have a problem (not that we can fix but it needs to be preprocessed)
+        if isinstance(sink_node, (CodeNode, dace.nodes.Tasklet)):
+            for ie in state.out_edges(sink_node):
+                if ie.data.data is not None and ie.data.data == dataname:
+                    print(
+                        f"After sink node, the data {dataname} is still used, dangerous. Implementation assumes, the first one flows out we have two inputs that access the same"
+                    )
 
     def _iterate_on_path_from_map_exit_to_entry(self, state: SDFGState, map_entry: dace.nodes.MapEntry,
                                                 data_out_edge: Edge[Memlet], dataname: str, new_dataname: str):

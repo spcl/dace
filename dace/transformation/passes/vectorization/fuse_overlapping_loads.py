@@ -72,7 +72,6 @@ class FuseOverlappingLoads(ppl.Pass):
             for in_edge, an, out_edge in v[1:]:
                 union_subset = union_subset.union(in_edge.data.subset)
             union_shape = [((e + 1) - b) // s for (b, e, s) in union_subset]
-            #print(k, "->", union_subset, ",", union_shape)
             union_subsets[k] = (union_subset, union_shape)
         return union_subsets
 
@@ -117,7 +116,8 @@ class FuseOverlappingLoads(ppl.Pass):
                         # needed shape should be similar to needed
                         src_desc = state.sdfg.arrays[v[0][1].data]
                         copy_src_desc: dace.data.Array = copy.deepcopy(src_desc)
-                        copy_src_desc.set_shape(new_shape=union_subsets[k][1])
+                        collapsed_shape = [dim for dim in union_subsets[k][1] if dim != 1]
+                        copy_src_desc.set_shape(new_shape=collapsed_shape)
                         arr_name = state.sdfg.add_datadesc(name=f"{k}_union",
                                                            datadesc=copy_src_desc,
                                                            find_new_name=True)
@@ -133,15 +133,21 @@ class FuseOverlappingLoads(ppl.Pass):
                             offset_subset: dace.subsets.Range = dace.subsets.Range([
                                 (b, b, 1) for (b, e, s) in offset_subset_range
                             ])
+                            union_set = union_subsets[k][1]
                             offsetted_range = original_copy_in_subset.offset_new(offset_subset, True)
-
+                            # Need to not include if dimension of the parent thing is 1
+                            assert len(offsetted_range) == len(union_set)
+                            collapsed_offsetted_range = dace.subsets.Range([
+                                (b, e, s) for (b, e, s), dim in zip(offsetted_range, union_set)
+                                if not (b == 0 and e == 0 and s == 1 and dim == 1)
+                            ])
                             state.add_edge(new_access_node, None, vitem[1], None,
                                            dace.memlet.Memlet(
                                                data=arr_name,
-                                               subset=offsetted_range,
+                                               subset=collapsed_offsetted_range,
                                            ))
 
-        state.validate()
+        state.sdfg.validate()
 
         for state in sdfg.all_states():
             for node in state.nodes():

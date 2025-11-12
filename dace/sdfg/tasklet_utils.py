@@ -525,7 +525,8 @@ def _extract_single_op(src: str, default_to_assignment: bool = False) -> str:
             print(f"Found unsupported op {op} in {src}")
 
         if found is not None:
-            raise ValueError("More than one supported operation found")
+            raise ValueError(
+                f"More than one supported operation found, first found: {found}, second: {op} for tasklets {node}")
 
         found = op
 
