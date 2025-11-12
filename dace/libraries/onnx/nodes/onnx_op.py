@@ -175,6 +175,13 @@ class ONNXOp(nd.LibraryNode):
         known_outputs = {outp.name for outp in self.schema.outputs}
 
         missing_outputs = required_outputs.difference(passed_outputs)
+
+        # Special case: TopK outputs can be unused (e.g., when only indices are needed)
+        # This is common in MoE routing where torch.topk(x, k)[1] discards the values
+        if self.schema.name == 'TopK' and missing_outputs:
+            # Allow TopK to have unused outputs - they'll be optimized away
+            missing_outputs = set()
+
         if len(missing_outputs) > 0:
             raise ValueError(get_missing_arguments_message(self.schema.name, missing_outputs, "output"))
 
