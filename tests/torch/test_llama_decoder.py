@@ -40,7 +40,7 @@ class LlamaDecoderLayerWrapper(nn.Module):
         return outputs[0]
 
 
-@pytest.mark.xdist_group("large_models")
+@pytest.mark.xdist_group("large_ML_models")
 @pytest.mark.torch
 def test_llama_decoder(sdfg_name: str):
     # Create configuration
