@@ -39,9 +39,9 @@ sdfg.expand_library_nodes()
 sdfg.simplify()
 
 # Specialize SDFG for input sizes
-m = 512
-k = 512
-n = 512
+m = 16
+k = 16
+n = 16
 
 # Create arrays
 A = np.random.rand(m, k).astype(np.float32)
@@ -51,7 +51,7 @@ C = np.zeros((m, n), dtype=np.float32)
 ## 2. Instrumentation
 
 # set which events should be counted
-pp.PAPIInstrumentation._counters = {'PAPI_SP_OPS', 'PAPI_TOT_INS'}
+pp.PAPIInstrumentation._counters = {'PAPI_SP_OPS', 'PAPI_REF_CYC'}
 
 ## 2.1 Run with whole sdfg instrumentation
 sdfg_complete_papi = copy.deepcopy(sdfg)
@@ -63,15 +63,13 @@ sdfg_complete_papi.instrument = dace.InstrumentationType.PAPI_Counters
 # Node Types that can be instrumented here are: SDFGState, MapEntry, 
 
 sdfg_selected_papi = copy.deepcopy(sdfg)
-sdfg_selected_papi.name = sdfg_selected_papi.name+"_slected"
+sdfg_selected_papi.name = sdfg_selected_papi.name+"_selected"
 for node in sdfg_selected_papi.nodes():
     node.instrument = dace.InstrumentationType.PAPI_Counters
-    if node.name == "SDFGState _MatMult_gemm_state_0":
-        for sub_node in node.nodes():
-            try:
+    for sub_node in node.nodes():
+        if isinstance(sub_node, dace.nodes.MapEntry) and len(sub_node.in_connectors)>0:
                 sub_node.instrument = dace.InstrumentationType.PAPI_Counters
-            except Exception as e:
-                print("Exception while trying to instrument", sub_node, ":", e)
+
 ## 3. Compile and execute
 # During execution, the counters for different parts of the SDFG and different
 # threads are measured by PAPI and written into a performance report
@@ -100,15 +98,27 @@ print("Selected SDFG element instrumentation report:")
 print(report_selected_papi)
 
 # Access counters
-# We will now demonstrate how to access the raw values from the report
-# on the example of number of SP FLOPS. Those are measured
-# when executing the sample with LIKWID_EVENTS="FLOPS_SP".
-#
-# Counter values are grouped by the SDFG element which defines the scope
-# of the intrumentation. Those elements are described as the triplet
-# (cfg_id, state_id, node_id).
-
+# We will now demonstrate how to access the raw values from the report of the complete instrumentation
+# on the example of number of SP FLOPS.
+# For the whole sdfg instrumentation report, the counts are grouped by 1. SDFG element (the entire SDFG in this case) 2. region name 3. Event name 4. Thread number
+measured_flops = 0
+for sdfg_elem in report_complete_papi.counters:
+    print(sdfg_elem)
+    for sdfg_scope in report_complete_papi.counters[sdfg_elem]:
+        print(sdfg_scope)
+        for counter_name in report_complete_papi.counters[sdfg_elem][sdfg_scope]:
+            print(counter_name)
+            sum = 0
+            for thread_num in report_complete_papi.counters[sdfg_elem][sdfg_scope][counter_name]:
+                #And here we can actually then read the values
+                print(report_complete_papi.counters[sdfg_elem][sdfg_scope][counter_name][thread_num])
+                sum+= report_complete_papi.counters[sdfg_elem][sdfg_scope][counter_name][thread_num][0]
+            if counter_name == "PAPI_SP_OPS":
+                 measured_flops = sum
+            
 # ~ expected FLOPS
 expected_flops = m * k * (n * 2)
 
-print(f"Expected {expected_flops} FLOPS, measured {"measured_flops"} FLOPS, diff: {"measured_flops" - expected_flops}")
+print(f"Expected {expected_flops} FLOPS, measured {measured_flops} FLOPS, diff: {measured_flops - expected_flops}")
+
+# Unfortunately, the PAPI instrumentation for selected regions does not yield such a nicely structured report, but iterating 
