@@ -2090,7 +2090,7 @@ def assert_symbols_in_parent_map_symbols(missing_symbols: Set[str], state: dace.
         valid = []
         for s in strings:
             match = re.fullmatch(r'([A-Za-z_]\w*?)(\d+)$', s)
-            assert match
+            assert match, f"No match in {strings} for a variable name"
             if match:
                 name, num = match.groups()
                 valid.append((name, int(num)))

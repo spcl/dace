@@ -82,7 +82,7 @@ class VectorizeCPU(ppl.Pipeline):
                 SplitTasklets(),
                 CleanDataToScalarSliceToTaskletPattern(),
             ]
-            if no_inline:
+            if not no_inline:
                 passes.append(InlineSDFGs())
             passes.append(vectorizer)
         else:
