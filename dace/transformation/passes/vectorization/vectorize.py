@@ -32,11 +32,12 @@ class Vectorize(ppl.Pass):
     try_to_demote_symbols_in_nsdfgs = properties.Property(dtype=bool, default=False)
     fuse_overlapping_loads = properties.Property(dtype=bool, default=False)
     insert_copies = properties.Property(dtype=bool, default=True, allow_none=False)
+    fail_on_unvectorizable = properties.Property(dtype=bool, default=False, allow_none=False)
 
     def __init__(self, templates: Dict[str, str], vector_width: str, vector_input_storage: dace.dtypes.StorageType,
                  vector_output_storage: dace.dtypes.StorageType, vector_op_numeric_type: typeclass, global_code: str,
                  global_code_location: str, try_to_demote_symbols_in_nsdfgs: bool, apply_on_maps: Optional[List[str]],
-                 insert_copies: bool):
+                 insert_copies: bool, fail_on_unvectorizable: bool):
         super().__init__()
 
         self.templates = templates
@@ -48,6 +49,7 @@ class Vectorize(ppl.Pass):
         self.vector_op_numeric_type = vector_op_numeric_type
         self.try_to_demote_symbols_in_nsdfgs = try_to_demote_symbols_in_nsdfgs
         self.insert_copies = insert_copies
+        self.fail_on_unvectorizable = fail_on_unvectorizable
         self._used_names = set()
         self._tasklet_vectorizable_map = dict()
         self._apply_on_maps = apply_on_maps
@@ -995,10 +997,6 @@ class Vectorize(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Set[str]]]:
         stride_type = assert_strides_are_packed_C_or_packed_Fortran(sdfg)
         self._stride_type = stride_type
-        assert_last_dim_of_maps_are_contigous_accesses(sdfg)
-        assert_maps_consist_of_single_nsdfg_or_no_nsdfg(sdfg)
-        assert_no_other_subset(sdfg)
-        assert_no_wcr(sdfg)
 
         if self.vector_input_storage != self.vector_output_storage:
             raise NotImplementedError("Different input and output storage types not implemented yet")
@@ -1048,7 +1046,7 @@ class Vectorize(ppl.Pass):
 
         applied = 0
         for i, (map_entry, state) in enumerate(map_entries):
-            if is_innermost_map(map_entry, state):
+            if is_innermost_map(state, map_entry):
                 num_vectorized += 1
                 all_nodes_between = state.all_nodes_between(map_entry, state.exit_node(map_entry))
 
@@ -1059,6 +1057,29 @@ class Vectorize(ppl.Pass):
                 if has_nsdfg_depth_more_than_one(state, map_entry):
                     print(f"Map {map_entry} in {state} has multiple levels of nested SDFGs inisde, can't vectorize")
                     continue
+
+                if last_dim_of_map_is_contiguous_accesses(state, map_entry):
+                    print(
+                        f"Last dimension of the map does fall on contiguous accesses, indirect accesses might not always be packed {map_entry}, {state}"
+                    )
+
+                if not map_consists_of_single_nsdfg_or_no_nsdfg(state, map_entry):
+                    if self.fail_on_unvectorizable:
+                        raise Exception(f"Map contains more than 1 NSDFG within both, or both {map_entry}, {state}")
+                    else:
+                        continue
+
+                if not no_other_subset(state, map_entry):
+                    if self.fail_on_unvectorizable:
+                        raise Exception(f"Other subset is not supported, it appears in {map_entry}, {state}")
+                    else:
+                        continue
+
+                if not no_wcr(state, map_entry):
+                    if self.fail_on_unvectorizable:
+                        raise Exception(f"WCR is not supported, it appears in {map_entry}, {state}")
+                    else:
+                        continue
 
                 self._vectorize_map(state, map_entry, vectorization_number=i)
                 applied += 1

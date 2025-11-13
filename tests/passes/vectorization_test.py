@@ -457,7 +457,8 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                  fuse_overlapping_loads=fuse_overlapping_loads,
                  insert_copies=insert_copies,
                  apply_on_maps=filter_map,
-                 no_inline=no_inline).apply_pass(copy_sdfg, {})
+                 no_inline=no_inline,
+                 fail_on_unvectorizable=True).apply_pass(copy_sdfg, {})
     copy_sdfg.validate()
 
     if save_sdfgs and sdfg_name:
@@ -733,7 +734,7 @@ def test_tasklets_in_if():
     copy_sdfg = copy.deepcopy(sdfg)
     copy_sdfg.name = sdfg.name + "_vectorized"
     sdfg.save("nested_tasklets_in_if.sdfg")
-    VectorizeCPU(vector_width=8).apply_pass(copy_sdfg, {})
+    VectorizeCPU(vector_width=8, fail_on_unvectorizable=True).apply_pass(copy_sdfg, {})
     copy_sdfg.save("nested_tasklets_in_if_vectorized.sdfg")
 
     c_sdfg = sdfg.compile()
@@ -780,7 +781,7 @@ def test_tasklets_in_if_two():
     copy_sdfg = copy.deepcopy(sdfg)
     copy_sdfg.name = copy_sdfg.name + "_vectorized"
     sdfg.save("nested_tasklets.sdfg")
-    VectorizeCPU(vector_width=8).apply_pass(copy_sdfg, {})
+    VectorizeCPU(vector_width=8, fail_on_unvectorizable=True).apply_pass(copy_sdfg, {})
     copy_sdfg.save("nested_tasklets_vectorized.sdfg")
 
     c_sdfg = sdfg.compile()
@@ -941,7 +942,7 @@ def test_spmv():
     copy_sdfg = copy.deepcopy(sdfg)
     copy_sdfg.name = sdfg.name + "_vectorized"
     sdfg.save("spmv.sdfg")
-    VectorizeCPU(vector_width=8).apply_pass(copy_sdfg, {})
+    VectorizeCPU(vector_width=8, fail_on_unvectorizable=True).apply_pass(copy_sdfg, {})
     copy_sdfg.save("spmv_vectorized.sdfg")
 
     c_sdfg = sdfg.compile()
@@ -1202,7 +1203,7 @@ def test_disjoint_chain_split_branch_only(trivial_if_demote_symbols: Tuple[bool,
 
     out_fused = {k: v.copy() for k, v in arrays.items()}
 
-    vectorizer = VectorizeCPU(vector_width=8)
+    vectorizer = VectorizeCPU(vector_width=8, fail_on_unvectorizable=True)
     vectorizer.try_to_demote_symbols_in_nsdfgs = demote_symbols
     vectorizer.apply_pass(copy_sdfg, {})
     copy_sdfg.save("disjoint_chain_vectorized.sdfg")
@@ -1466,7 +1467,8 @@ def test_disjoint_chain_with_overlapping_region_fusion():
     out_no_fuse = {k: v.copy() for k, v in arrays.items()}
     sdfg(**out_no_fuse)
     # Run SDFG version (with transformation)
-    VectorizeCPU(vector_width=8, insert_copies=True, fuse_overlapping_loads=True).apply_pass(copy_sdfg, {})
+    VectorizeCPU(vector_width=8, insert_copies=True, fuse_overlapping_loads=True,
+                 fail_on_unvectorizable=True).apply_pass(copy_sdfg, {})
 
     out_fused = {k: v.copy() for k, v in arrays.items()}
     copy_sdfg.validate()
@@ -1512,7 +1514,8 @@ def test_disjoint_chain():
     sdfg(**out_no_fuse)
     print("x1")
     # Run SDFG version (with transformation)
-    VectorizeCPU(vector_width=8, insert_copies=True, fuse_overlapping_loads=False).apply_pass(copy_sdfg, {})
+    VectorizeCPU(vector_width=8, insert_copies=True, fuse_overlapping_loads=False,
+                 fail_on_unvectorizable=True).apply_pass(copy_sdfg, {})
 
     out_fused = {k: v.copy() for k, v in arrays.items()}
     copy_sdfg.validate()
@@ -1681,11 +1684,14 @@ def _get_map_inside_nested_map():
     klon = dace.symbolic.symbol("klon")
     # Add all arrays to the SDFGs
     in_arrays = set()
-    in_scalars = {"kfdia", "kidia",}
+    in_scalars = {
+        "kfdia",
+        "kidia",
+    }
     out_arrays = {"int_array", "int_array2"}
     arr_shapes = {
-        "int_array": ((klon, 5, 5), (1, klon, klon*5), dace.int64),
-        "int_array2": ((klon, 5, 5), (1, klon, klon*5), dace.int64),
+        "int_array": ((klon, 5, 5), (1, klon, klon * 5), dace.int64),
+        "int_array2": ((klon, 5, 5), (1, klon, klon * 5), dace.int64),
     }
     scalar_dtypes = {
         "kfdia": dace.int64,
@@ -1708,16 +1714,21 @@ def _get_map_inside_nested_map():
         for scalar_name in in_scalars:
             sdfg.add_scalar(scalar_name, scalar_dtypes[scalar_name], transient=False)
 
-    t, map_entry, map_exit = inner_state.add_mapped_tasklet(
-        name="assign",
-        map_ranges={"j" : dace.subsets.Range([(0, 4, 1)]), "k": dace.subsets.Range([(kfdia - 1, kidia - 1, 1)])},
-        inputs=dict(),
-        code="_out = 0",
-        outputs={"_out": dace.memlet.Memlet("int_array[k, j, i]"),},
-        external_edges=True,
-        input_nodes=dict(),
-        output_nodes={"int_array": inner_state.add_access("int_array"),}
-    )
+    t, map_entry, map_exit = inner_state.add_mapped_tasklet(name="assign",
+                                                            map_ranges={
+                                                                "j": dace.subsets.Range([(0, 4, 1)]),
+                                                                "k": dace.subsets.Range([(kfdia - 1, kidia - 1, 1)])
+                                                            },
+                                                            inputs=dict(),
+                                                            code="_out = 0",
+                                                            outputs={
+                                                                "_out": dace.memlet.Memlet("int_array[k, j, i]"),
+                                                            },
+                                                            external_edges=True,
+                                                            input_nodes=dict(),
+                                                            output_nodes={
+                                                                "int_array": inner_state.add_access("int_array"),
+                                                            })
     for scl_name in {"kfdia", "kidia"}:
         an = inner_state.add_access(scl_name)
         inner_state.add_edge(an, None, map_entry, scl_name, dace.memlet.Memlet(scl_name))
@@ -1731,10 +1742,9 @@ def _get_map_inside_nested_map():
 
     inner_sdfg.validate()
 
-    t2 = inner_state.add_tasklet(
-        "t2", set(), {"_out"}, "_out = 1"
-    )
-    inner_state.add_edge(t2, "_out", inner_state.add_access("int_array2"), None, dace.memlet.Memlet("int_array2[1,1,1]"))
+    t2 = inner_state.add_tasklet("t2", set(), {"_out"}, "_out = 1")
+    inner_state.add_edge(t2, "_out", inner_state.add_access("int_array2"), None,
+                         dace.memlet.Memlet("int_array2[1,1,1]"))
 
     # Access nodes to map entry
     for arr in in_arrays.union(in_scalars):
@@ -1754,6 +1764,7 @@ def _get_map_inside_nested_map():
         m1_exit.add_out_connector(f"OUT_{arr}", force=True)
     sdfg.validate()
     return sdfg
+
 
 @pytest.mark.parametrize("opt_parameters", [(True, True), (True, False), (False, True), (False, False)])
 def test_snippet_from_cloudsc_three(opt_parameters):
@@ -1830,11 +1841,7 @@ def test_map_inside_nested_map(opt_parameters):
     # Create Fortran-ordered NumPy arrays
     arrays = {name: numpy.random.random(shape).astype(numpy.float64, order='F') for name, shape in arr_shapes.items()}
     # Create scalars requested
-    scalars = {
-        "kfdia": numpy.int64(kfdia),
-        "kidia": numpy.int64(kidia),
-        "klon": numpy.int64(klon)
-    }
+    scalars = {"kfdia": numpy.int64(kfdia), "kidia": numpy.int64(kidia), "klon": numpy.int64(klon)}
 
     # Quick verification display: shape and contiguity / strides
     run_vectorization_test(dace_func=sdfg,

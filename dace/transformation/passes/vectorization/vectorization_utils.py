@@ -281,7 +281,7 @@ def has_maps(sdfg: dace.SDFG) -> bool:
     return False
 
 
-def is_innermost_map(map_entry: dace.nodes.MapEntry, state: SDFGState) -> bool:
+def is_innermost_map(state: SDFGState, map_entry: dace.nodes.MapEntry) -> bool:
     """
     Check if a map is innermost (contains no nested maps or maps inside nested SDFGs).
 
@@ -298,6 +298,26 @@ def is_innermost_map(map_entry: dace.nodes.MapEntry, state: SDFGState) -> bool:
     return not any(isinstance(node, dace.nodes.NestedSDFG) and has_maps(node.sdfg) for node in nodes_between)
 
 
+def map_consists_of_single_nsdfg_or_no_nsdfg(graph: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> bool:
+    """
+    Check if a map contains either a single NestedSDFG or none at all.
+
+    Args:
+        map_entry (dace.nodes.MapEntry): The map entry to check.
+        graph: The graph containing the map.
+
+    Returns:
+        bool: True if the map contains a single NestedSDFG or no NestedSDFG, False otherwise.
+    """
+    all_nodes = {
+        k
+        for k in graph.all_nodes_between(map_entry, graph.exit_node(map_entry))
+        if not isinstance(k, (dace.nodes.MapEntry, dace.nodes.MapExit))
+    }
+    return (len(all_nodes) == 1 and isinstance(next(
+        iter(all_nodes)), dace.nodes.NestedSDFG)) or not any(isinstance(_n, dace.nodes.NestedSDFG) for _n in all_nodes)
+
+
 def assert_maps_consist_of_single_nsdfg_or_no_nsdfg(sdfg: dace.SDFG) -> None:
     """
     Assert that each map contains either a single NestedSDFG or none at all.
@@ -310,13 +330,209 @@ def assert_maps_consist_of_single_nsdfg_or_no_nsdfg(sdfg: dace.SDFG) -> None:
     """
     for n, g in sdfg.all_nodes_recursive():
         if isinstance(n, dace.nodes.MapEntry):
-            all_nodes = {
-                k
-                for k in g.all_nodes_between(n, g.exit_node(n))
-                if not isinstance(k, (dace.nodes.MapEntry, dace.nodes.MapExit))
-            }
-            assert (len(all_nodes) == 1 and isinstance(next(iter(all_nodes)), dace.nodes.NestedSDFG)) or not any(
-                isinstance(_n, dace.nodes.NestedSDFG) for _n in all_nodes)
+            if not map_consists_of_single_nsdfg_or_no_nsdfg(g, n):
+                all_nodes = {
+                    k
+                    for k in g.all_nodes_between(n, g.exit_node(n))
+                    if not isinstance(k, (dace.nodes.MapEntry, dace.nodes.MapExit))
+                }
+                nsdfg_count = len(set([node for node in all_nodes if isinstance(node, dace.nodes.NestedSDFG)]))
+                raise AssertionError(f"Got nodes {all_nodes} has {nsdfg_count} nSDFGs")
+
+
+def no_other_subset(state, recursive: bool = True) -> bool:
+    """
+    Check if any edge in the state has an 'other_subset' attribute set.
+
+    Args:
+        state: The state to check
+        recursive: If True, recursively check nested SDFGs
+
+    Returns:
+        bool: True if no edge has other_subset set, False otherwise.
+    """
+    for edge in state.edges():
+        if edge.data.other_subset is not None:
+            return False
+    if recursive:
+        for node in state.nodes():
+            if isinstance(node, dace.nodes.NestedSDFG):
+                if not no_other_subset_sdfg(node.sdfg, True):
+                    return False
+    return True
+
+
+def no_other_subset_sdfg(sdfg: dace.SDFG, recursive: bool = True) -> bool:
+    """
+    Check if any edge in the SDFG has an 'other_subset' attribute set.
+
+    Args:
+        sdfg: The SDFG to check
+        recursive: If True, recursively check nested SDFGs
+
+    Returns:
+        bool: True if no edge has other_subset set, False otherwise.
+    """
+    for state in sdfg.all_states():
+        if not no_other_subset(state, recursive):
+            return False
+    return True
+
+
+def assert_no_other_subset(sdfg: dace.SDFG, recursive: bool = True):
+    """
+    Assert that no edge in the SDFG has an 'other_subset' attribute set.
+
+    This validation is needed because vectorization does not support other subsets.
+
+    Args:
+        sdfg: The SDFG to check
+        recursive: If True, recursively check nested SDFGs
+    """
+    assert no_other_subset_sdfg(sdfg, recursive), "Found edge with other_subset set"
+
+
+def no_wcr(state, recursive: bool = True) -> bool:
+    """
+    Check if any edge in the state has a write-conflict resolution (WCR) operation.
+
+    Args:
+        state: The state to check
+        recursive: If True, recursively check nested SDFGs
+
+    Returns:
+        bool: True if no edge has WCR set, False otherwise.
+    """
+    for edge in state.edges():
+        if edge.data.wcr is not None:
+            return False
+    if recursive:
+        for node in state.nodes():
+            if isinstance(node, dace.nodes.NestedSDFG):
+                if not no_wcr_sdfg(node.sdfg, True):
+                    return False
+    return True
+
+
+def no_wcr_sdfg(sdfg: dace.SDFG, recursive: bool = True) -> bool:
+    """
+    Check if any edge in the SDFG has a write-conflict resolution (WCR) operation.
+
+    Args:
+        sdfg: The SDFG to check
+        recursive: If True, recursively check nested SDFGs
+
+    Returns:
+        bool: True if no edge has WCR set, False otherwise.
+    """
+    for state in sdfg.all_states():
+        if not no_wcr(state, recursive):
+            return False
+    return True
+
+
+def assert_no_wcr(sdfg: dace.SDFG, recursive: bool = True):
+    """
+    Assert that no edge in the SDFG has a write-conflict resolution (WCR) operation.
+
+    WCR operations handle conflicting writes to the same memory location. This assertion
+    ensures that the SDFG doesn't contain such operations, which are not supported by
+    auto-vectorization.
+
+    Args:
+        sdfg: The SDFG to check
+        recursive: If True, recursively check nested SDFGs
+    """
+    assert no_wcr_sdfg(sdfg, recursive), "Found edge with WCR set"
+
+
+def last_dim_of_map_is_contiguous_accesses(state: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> bool:
+    """
+    Check if the last dimension of a map performs contiguous accesses.
+
+    Args:
+        map_entry (dace.nodes.MapEntry): The map entry to check.
+        state: The state containing the map.
+
+    Returns:
+        bool: True if all memlets contain the last map parameter, False otherwise.
+    """
+    nodes = list(state.all_nodes_between(map_entry, state.exit_node(map_entry)))
+    edges = state.all_edges(*nodes)
+    # Currently this enforced the map parameter to be involved in the memlet access
+    # This will fail in a case such as:
+    # _s2 = map_param + 1
+    # A[_s2] as `map_param` will not be detected anymore.
+    # This can be fixed by improving the analysis, as is an open TODO task.
+    for edge in edges:
+        memlet: dace.memlet.Memlet = edge.data
+        if memlet.subset is None:
+            continue
+        stride_one_idx = [i for i, s in enumerate(state.sdfg.arrays[edge.data.data].strides) if s == 1][0]
+        b, e, s = memlet.subset[stride_one_idx]
+        b_free_syms = b.free_symbols if hasattr(b, "free_symbols") else set()
+        e_free_syms = e.free_symbols if hasattr(e, "free_symbols") else set()
+        free_symbols = {str(s) for s in b_free_syms.union(e_free_syms)}
+        last_param = str(list(map_entry.map.params)[-1])
+        if last_param not in free_symbols and free_symbols != set():
+            return False
+    return True
+
+
+def assert_last_dim_of_maps_are_contigous_accesses(sdfg: dace.SDFG):
+    """
+    Assert that the last dimension of all maps in an SDFG performs contiguous accesses.
+
+    For each innermost map, this function checks that the last map parameter
+    appears in every memlet within the map body, ensuring the last dimension
+    corresponds to contiguous memory accesses. It also validates that all tasklets
+    are properly enclosed in map scopes or nested SDFGs.
+
+    Args:
+        sdfg (dace.SDFG): The SDFG to check.
+
+    Raises:
+        Exception: If a tasklet is not enclosed in any map or valid nested SDFG scope.
+        ValueError: If a node's parent scope is not a map, or the last map parameter
+            does not appear in a memlet subset expression.
+        AssertionError: If internal consistency assumptions about map nesting fail.
+    """
+    checked_map_entries = set()
+    for state in sdfg.all_states():
+        for node in state.nodes():
+            # Skip map entries/exits
+            if isinstance(node, (dace.nodes.MapEntry, dace.nodes.MapExit)):
+                continue
+
+            map_entry = state.scope_dict()[node]
+            if map_entry is None:
+                if isinstance(node, dace.nodes.Tasklet):
+                    parent_nsdfg = state.sdfg.parent_nsdfg_node
+                    if parent_nsdfg is None:
+                        continue
+                    parent_state = find_state_of_nsdfg_node(sdfg, node)
+                    parent_scope = parent_state.scope_dict()[parent_nsdfg]
+                    if parent_scope is None or not isinstance(parent_scope, dace.nodes.MapEntry):
+                        raise Exception(f"No NSDFGs that are not within Map scopes should be left, "
+                                        f"check {parent_nsdfg} in state {parent_state}. Call inlineSDFG")
+                else:
+                    continue
+            else:
+                if not isinstance(map_entry, dace.nodes.MapEntry):
+                    raise ValueError(f"Parent scope of node {node} is not a map, found {map_entry} in state {state}.")
+                checked_map_entries.add(map_entry)
+
+            if map_entry not in checked_map_entries:
+                assert isinstance(
+                    map_entry, dace.nodes.MapEntry), f"Parent scope of node {node} is not a map, returned {map_entry}."
+                # Currently this enforced the map parameter to be involved in the memlet access
+                # This will fail in a case such as:
+                # _s2 = map_param + 1
+                # A[_s2] as `map_param` will not be detected anymore.
+                # This can be fixed by improving the analysis, as is an open TODO task.
+                if not last_dim_of_map_is_contiguous_accesses(state, map_entry):
+                    raise ValueError(f"Last map parameter must be in the memlet, "
+                                     f"not in this case {map_entry}, {state}")
 
 
 def to_ints(sym_epxr: dace.symbolic.SymExpr) -> typing.Union[int, None]:
@@ -713,68 +929,6 @@ def find_state_of_nsdfg_node(root_sdfg: dace.SDFG, nsdfg_node: dace.nodes.Nested
         if n == nsdfg_node:
             return root_sdfg
     raise Exception(f"State of the nsdfg node ({nsdfg_node}) not found in the root SDFG ({root_sdfg.label})")
-
-
-def assert_last_dim_of_maps_are_contigous_accesses(sdfg: dace.SDFG):
-    """
-    Assert that the last dimension of all maps in an SDFG performs contiguous accesses.
-
-    For each innermost map, this function checks that the last map parameter
-    appears in every memlet within the map body, ensuring the last dimension
-    corresponds to contiguous memory accesses. It also validates that all tasklets
-    are properly enclosed in map scopes or nested SDFGs.
-
-    Args:
-        sdfg (dace.SDFG): The SDFG to check.
-
-    Raises:
-        Exception: If a tasklet is not enclosed in any map or valid nested SDFG scope.
-        ValueError: If a node's parent scope is not a map, or the last map parameter
-            does not appear in a memlet subset expression.
-        AssertionError: If internal consistency assumptions about map nesting fail.
-    """
-    checked_map_entries = set()
-    for state in sdfg.all_states():
-        for node in state.nodes():
-            # Skip map entries/exits
-            if isinstance(node, (dace.nodes.MapEntry, dace.nodes.MapExit)):
-                continue
-
-            map_entry = state.scope_dict()[node]
-            if map_entry is None:
-                if isinstance(node, dace.nodes.Tasklet):
-                    parent_nsdfg = state.sdfg.parent_nsdfg_node
-                    if parent_nsdfg is None:
-                        continue
-                    parent_state = find_state_of_nsdfg_node(sdfg, node)
-                    parent_scope = parent_state.scope_dict()[parent_nsdfg]
-                    if parent_scope is None or not isinstance(parent_scope, dace.nodes.MapEntry):
-                        raise Exception(f"No NSDFGs that are not within Map scopes should be left, "
-                                        f"check {parent_nsdfg} in state {parent_state}. Call inlineSDFG")
-                else:
-                    continue
-            else:
-                if not isinstance(map_entry, dace.nodes.MapEntry):
-                    raise ValueError(f"Parent scope of node {node} is not a map, found {map_entry} in state {state}.")
-                checked_map_entries.add(map_entry)
-
-            if map_entry not in checked_map_entries:
-                assert isinstance(
-                    map_entry, dace.nodes.MapEntry), f"Parent scope of node {node} is not a map, returned {map_entry}."
-                nodes = list(state.all_nodes_between(map_entry, state.exit_node(map_entry)))
-                edges = state.all_edges(*nodes)
-                # Currently this enforced the map parameter to be involved in the memlet access
-                # This will fail in a case such as:
-                # _s2 = map_param + 1
-                # A[_s2] as `map_param` will not be detected anymore.
-                # This can be fixed by improving the analysis, as is an open TODO task.
-                for edge in edges:
-                    memlet: dace.memlet.Memlet = edge.data
-                    free_symbols = memlet.subset.free_symbols
-                    last_param = list(map_entry.map.params)[-1]
-                    if last_param not in free_symbols:
-                        raise ValueError(f"Last map parameter {last_param} must be in the memlet {memlet}, "
-                                         f"not in this case - edge: {edge}, state: {state}")
 
 
 def check_nsdfg_connector_array_shapes_match(parent_state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG):
@@ -2452,49 +2606,6 @@ def try_demoting_vectorizable_symbols(inner_sdfg: dace.SDFG) -> Set[str]:
         sdutil.demote_symbol_to_scalar(inner_sdfg, demotable_symbol, stype)
 
     return demotable_symbols
-
-
-def assert_no_other_subset(sdfg: dace.SDFG, recursive: bool = True):
-    """
-    Assert that no edge in the SDFG has an 'other_subset' attribute set.
-
-    This validation is needed because vectorization does not support other subsets.
-
-    Args:
-        sdfg: The SDFG to check
-        recursive: If True, recursively check nested SDFGs
-
-    """
-    for state in sdfg.all_states():
-        for edge in state.edges():
-            assert edge.data.other_subset is None
-        if recursive:
-            for node in state.nodes():
-                if isinstance(node, dace.nodes.NestedSDFG):
-                    assert_no_other_subset(node.sdfg, True)
-
-
-def assert_no_wcr(sdfg: dace.SDFG, recursive: bool = True):
-    """
-    Assert that no edge in the SDFG has a write-conflict resolution (WCR) operation.
-
-    WCR operations handle conflicting writes to the same memory location. This assertion
-    ensures that the SDFG doesn't contain such operations, which are not supported by
-    auto-vectorization.
-
-    Args:
-        sdfg: The SDFG to check
-        recursive: If True, recursively check nested SDFGs
-
-
-    """
-    for state in sdfg.all_states():
-        for edge in state.edges():
-            assert edge.data.wcr is None
-        if recursive:
-            for node in state.nodes():
-                if isinstance(node, dace.nodes.NestedSDFG):
-                    assert_no_wcr(node.sdfg, True)  # BUG: Should call assert_no_wcr
 
 
 def collect_all_memlets_to_dataname(sdfg: dace.SDFG) -> Dict[str, Set[dace.subsets.Range]]:

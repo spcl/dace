@@ -93,7 +93,8 @@ __host__ __device__ __forceinline__ void vector_copy(T * __restrict__ dst, const
                  try_to_demote_symbols_in_nsdfgs: bool = False,
                  fuse_overlapping_loads: bool = False,
                  apply_on_maps: Optional[List[dace.nodes.MapEntry]] = None,
-                 insert_copies: bool = False):
+                 insert_copies: bool = False,
+                 fail_on_unvectorizable: bool = False):
         passes = [
             EliminateBranches(),
             RemoveFPTypeCasts(),
@@ -102,24 +103,23 @@ __host__ __device__ __forceinline__ void vector_copy(T * __restrict__ dst, const
             SplitTasklets(),
             CleanDataToScalarSliceToTaskletPattern(),
             InlineSDFGs(),
-            Vectorize(
-                templates={
-                    "*": "vector_mult({lhs}, {rhs1}, {rhs2});",
-                    "+": "vector_add({lhs}, {rhs1}, {rhs2});",
-                    "=": "vector_copy({lhs}, {rhs1});",
-                    "c+": "vector_add({lhs}, {rhs1}, {constant});",
-                    "c*": "vector_mult({lhs}, {rhs1}, {constant});",
-                },
-                vector_width=vector_width,
-                vector_input_storage=dace.dtypes.StorageType.Register,
-                vector_output_storage=dace.dtypes.StorageType.Register,
-                global_code=VectorizeGPU._gpu_global_code.format(vector_width=vector_width),
-                global_code_location="frame",
-                vector_op_numeric_type=dace.float64,
-                try_to_demote_symbols_in_nsdfgs=try_to_demote_symbols_in_nsdfgs,
-                apply_on_maps=apply_on_maps,
-                insert_copies=insert_copies,
-            )
+            Vectorize(templates={
+                "*": "vector_mult({lhs}, {rhs1}, {rhs2});",
+                "+": "vector_add({lhs}, {rhs1}, {rhs2});",
+                "=": "vector_copy({lhs}, {rhs1});",
+                "c+": "vector_add({lhs}, {rhs1}, {constant});",
+                "c*": "vector_mult({lhs}, {rhs1}, {constant});",
+            },
+                      vector_width=vector_width,
+                      vector_input_storage=dace.dtypes.StorageType.Register,
+                      vector_output_storage=dace.dtypes.StorageType.Register,
+                      global_code=VectorizeGPU._gpu_global_code.format(vector_width=vector_width),
+                      global_code_location="frame",
+                      vector_op_numeric_type=dace.float64,
+                      try_to_demote_symbols_in_nsdfgs=try_to_demote_symbols_in_nsdfgs,
+                      apply_on_maps=apply_on_maps,
+                      insert_copies=insert_copies,
+                      fail_on_unvectorizable=fail_on_unvectorizable)
         ]
         if fuse_overlapping_loads:
             passes.append(FuseOverlappingLoads())
