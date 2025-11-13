@@ -64,13 +64,14 @@ sdfg_complete_papi.instrument = dace.InstrumentationType.PAPI_Counters
 
 sdfg_selected_papi = copy.deepcopy(sdfg)
 sdfg_selected_papi.name = sdfg_selected_papi.name+"_slected"
-for _ , node in sdfg_selected_papi.all_nodes_recursive():
-    if isinstance(node, dace.SDFGState):
-        for sub_node in node.nodes(): 
+for node in sdfg_selected_papi.nodes():
+    node.instrument = dace.InstrumentationType.PAPI_Counters
+    if node.name == "SDFGState _MatMult_gemm_state_0":
+        for sub_node in node.nodes():
             try:
                 sub_node.instrument = dace.InstrumentationType.PAPI_Counters
             except Exception as e:
-                print("Exception while setting instrumentation:", e)
+                print("Exception while trying to instrument", sub_node, ":", e)
 ## 3. Compile and execute
 # During execution, the counters for different parts of the SDFG and different
 # threads are measured by PAPI and written into a performance report
