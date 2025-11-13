@@ -675,7 +675,7 @@ class Vectorize(ppl.Pass):
                     input_types.add(type(state.sdfg.arrays[in_edge.src.data]))
                 else:
                     if in_edge.data is not None:
-                        print(in_edge.data, in_edge.data is None)
+                        #print(in_edge.data, in_edge.data is None)
                         raise Exception(
                             f"Unsupported Type for in_edge.src got type {type(in_edge.src)}, need AccessNode ({in_edge.data})"
                         )
@@ -777,7 +777,7 @@ class Vectorize(ppl.Pass):
         # We will assume the first occurence flow to the exit
         edges_to_check = {data_in_edge}
         sink_node = None
-        print(f"Iterate for {dataname} -> {new_dataname}")
+        #print(f"Iterate for {dataname} -> {new_dataname}")
         while edges_to_check:
             edge = edges_to_check.pop()
             sink_node = edge.dst
@@ -818,7 +818,7 @@ class Vectorize(ppl.Pass):
             for ie in state.out_edges(sink_node):
                 if ie.data.data is not None and ie.data.data == dataname:
                     print(
-                        f"After sink node, the data {dataname} is still used, dangerous. Implementation assumes, the first one flows out we have two inputs that access the same"
+                        f"After sink node, the data {dataname} is still used, which read propagates to write can't be reasonably detected. Implementation assumes, the first one flows out we have two inputs that access the same"
                     )
 
     def _iterate_on_path_from_map_exit_to_entry(self, state: SDFGState, map_entry: dace.nodes.MapEntry,
@@ -864,7 +864,7 @@ class Vectorize(ppl.Pass):
                 for ie in state.in_edges(source_node):
                     if ie.data.data is not None and ie.data.data == dataname:
                         print(
-                            f"After source node, the data {dataname} is still used, dangerous. Implementation assumes, the first one flows out we have two inputs that access the same"
+                            f"After source node, the data {dataname} is still used, which read propagates to write can't be reasonably detected. Implementation assumes, the first one flows out we have two inputs that access the same"
                         )
 
     def _offset_memlets_on_path(self, state: SDFGState, map_entry: dace.nodes.MapEntry, dataname: str,
@@ -929,8 +929,8 @@ class Vectorize(ppl.Pass):
             if array.storage != self.vector_input_storage:
                 # Add new array, if not there
                 arr_name_to_use = self._find_new_name(f"{ie.data.data}_vec_k{vectorization_number}")
-                print(
-                    f"Called find new name with '{ie.data.data}_vec_k{vectorization_number}' and got {arr_name_to_use}")
+                #print(
+                #    f"Called find new name with '{ie.data.data}_vec_k{vectorization_number}' and got {arr_name_to_use}")
                 if arr_name_to_use not in state.parent_graph.sdfg.arrays:
                     state.parent_graph.sdfg.add_array(name=arr_name_to_use,
                                                       shape=(self.vector_width, ),
@@ -1054,6 +1054,11 @@ class Vectorize(ppl.Pass):
                 all_nodes_between = state.all_nodes_between(map_entry, state.exit_node(map_entry))
 
                 if self.apply_on_maps is not None and map_entry.map.label not in self.apply_on_maps:
+                    continue
+
+                # If map has a nested SDFG - and that has more nested SDFGs we cant vectorize it
+                if has_nsdfg_depth_more_than_one(state, map_entry):
+                    print(f"Map {map_entry} in {state} has multiple levels of nested SDFGs inisde, can't vectorize")
                     continue
 
                 self._vectorize_map(state, map_entry, vectorization_number=i)

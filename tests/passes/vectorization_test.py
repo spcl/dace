@@ -92,6 +92,83 @@ def memset(A: dace.float64[N, N]):
             A[i, j] = 0.0
 
 
+@dace.program
+def v_const_subs_4d(A: dace.float64[N, N, N, N]):
+    for i, j, k, m in dace.map[0:N, 0:N, 0:N, 0:N]:
+        A[i, j, k, m] = 1.0 - A[i, j, k, m]
+
+
+@dace.program
+def v_const_subs_4d_indirect_access(A: dace.float64[N, N, N, N], c: dace.int64):
+    for i, j, k in dace.map[0:N, 0:N, 0:N]:
+        A[c + 1, i, j, k] = 1.0 - A[c + 1, i, j, k]
+
+
+@dace.program
+def memset_4d(A: dace.float64[N, N, N, N]):
+    for i in dace.map[0:N]:
+        for j in dace.map[0:N]:
+            for k in dace.map[0:N]:
+                for m in dace.map[0:N]:
+                    A[i, j, k, m] = 0.0
+
+
+def test_memset_4d():
+    N = 8
+    A = numpy.random.random((N, N, N, N))
+    c = 0.8
+
+    run_vectorization_test(
+        dace_func=memset_4d,
+        arrays={
+            'A': A,
+        },
+        params={
+            'N': N,
+        },
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name="memset_4d",
+    )
+
+
+def test_v_const_subs_4d():
+    N = 8
+    A = numpy.random.random((N, N, N, N))
+
+    run_vectorization_test(
+        dace_func=v_const_subs_4d,
+        arrays={
+            'A': A,
+        },
+        params={
+            'N': N,
+        },
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name="v_const_subs_4d",
+    )
+
+
+def test_v_const_subs_4d_indirect_access():
+    N = 8
+    A = numpy.random.random((N, N, N, N))
+
+    run_vectorization_test(
+        dace_func=v_const_subs_4d_indirect_access,
+        arrays={
+            'A': A,
+        },
+        params={
+            'N': N,
+            'c': 0,
+        },
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name="v_const_subs_4d_indirect_access",
+    )
+
+
 def foo(A):
     A = 0.0
 
@@ -304,7 +381,9 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                            insert_copies=True,
                            filter_map=-1,
                            cleanup=False,
-                           from_sdfg=False):
+                           from_sdfg=False,
+                           no_inline=False,
+                           exact=None):
 
     # Create copies for comparison
     arrays_orig = {k: copy.deepcopy(v) for k, v in arrays.items()}
@@ -359,7 +438,8 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
     VectorizeCPU(vector_width=vector_width,
                  fuse_overlapping_loads=fuse_overlapping_loads,
                  insert_copies=insert_copies,
-                 apply_on_maps=filter_map).apply_pass(copy_sdfg, {})
+                 apply_on_maps=filter_map,
+                 no_inline=no_inline).apply_pass(copy_sdfg, {})
     copy_sdfg.validate()
 
     if save_sdfgs and sdfg_name:
@@ -375,7 +455,10 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
     for name in arrays.keys():
         assert numpy.allclose(arrays_orig[name], arrays_vec[name]), \
             f"{name} Diff: {arrays_orig[name] - arrays_vec[name]}"
-
+        if exact is not None:
+            diff = arrays_vec[name] - exact
+            assert numpy.allclose(arrays_vec[name], exact, rtol=0, atol=1e-300), \
+                f"{name} Diff: max abs diff = {numpy.max(numpy.abs(diff))}"
     return copy_sdfg
 
 
@@ -422,16 +505,15 @@ def test_memset():
     N = 64
     A = numpy.random.random((N, N))
 
-    run_vectorization_test(
-        dace_func=memset,
-        arrays={
-            'A': A,
-        },
-        params={'N': N},
-        vector_width=8,
-        save_sdfgs=True,
-        sdfg_name="memset",
-    )
+    run_vectorization_test(dace_func=memset,
+                           arrays={
+                               'A': A,
+                           },
+                           params={'N': N},
+                           vector_width=8,
+                           save_sdfgs=True,
+                           sdfg_name="memset",
+                           exact=0.0)
 
 
 def test_memset_with_fuse_and_copyin_enabled():
@@ -447,7 +529,8 @@ def test_memset_with_fuse_and_copyin_enabled():
                            save_sdfgs=True,
                            sdfg_name="memset_with_fuse_and_copy_in_enabled",
                            fuse_overlapping_loads=True,
-                           insert_copies=True)
+                           insert_copies=True,
+                           exact=0.0)
 
 
 def test_nested_memset_with_fuse_and_copyin_enabled():
@@ -464,7 +547,8 @@ def test_nested_memset_with_fuse_and_copyin_enabled():
                            sdfg_name="nested_memset_with_fuse_and_copy_in_enabled",
                            fuse_overlapping_loads=True,
                            insert_copies=True,
-                           simplify=False)
+                           simplify=False,
+                           exact=0.0)
 
 
 def test_vexp_cpu():
@@ -1468,7 +1552,7 @@ def _get_cloudsc_snippet_three():
     for sdfg in [inner_sdfg, outer_sdfg]:
         for arr_name in in_arrays.union(out_arrays):
             shape, strides, dtype = arr_shapes[arr_name]
-            sdfg.add_array(arr_name, shape, dtype, strides=strides, transient=sdfg == outer_sdfg)
+            sdfg.add_array(arr_name, shape, dtype, strides=strides, transient=False)
         for scalar_name in in_scalars:
             if sdfg == inner_sdfg and scalar_name in {"kfdia", "kidia"}:
                 continue
@@ -1519,19 +1603,19 @@ def _get_cloudsc_snippet_three():
 
     # Access nodes to map entry
     for arr in in_arrays.union(in_scalars):
-        outer_state.add_edge(outer_state.add_access(arr), None, m1_entry,
-                             f"IN_{arr}" if arr not in {"kidia", "kfdia"} else arr,
+        outer_state.add_edge(outer_state.add_access(arr), None, m1_entry, f"IN_{arr}",
                              dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]))
-        m1_entry.add_in_connector(f"IN_{arr}" if arr not in {"kidia", "kfdia"} else arr, force=True)
+        m1_entry.add_in_connector(f"IN_{arr}")
     # Access nodes to map entry1 to map entry 2 and nsdfg
-    for arr in in_arrays.union({"ptsphy"}):
-        outer_state.add_edge(m1_entry, f"OUT_{arr}", m2_entry, f"IN_{arr}",
+    for arr in in_arrays.union(in_scalars):
+        outer_state.add_edge(m1_entry, f"OUT_{arr}", m2_entry, f"IN_{arr}" if arr not in {"kidia", "kfdia"} else arr,
                              dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]))
         m1_entry.add_out_connector(f"OUT_{arr}", force=True)
-        m2_entry.add_in_connector(f"IN_{arr}", force=True)
-        outer_state.add_edge(m2_entry, f"OUT_{arr}", nsdfg, arr,
-                             dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]))
-        m2_entry.add_out_connector(f"OUT_{arr}", force=True)
+        m2_entry.add_in_connector(f"IN_{arr}" if arr not in {"kidia", "kfdia"} else arr, force=True)
+        if arr not in {"kidia", "kfdia"}:
+            outer_state.add_edge(m2_entry, f"OUT_{arr}", nsdfg, arr,
+                                 dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]))
+            m2_entry.add_out_connector(f"OUT_{arr}", force=True)
     # Same for exit nodes
     for arr in out_arrays:
         outer_state.add_edge(nsdfg, arr, m2_exit, f"IN_{arr}",
@@ -1603,7 +1687,63 @@ def test_snippet_from_cloudsc_three(opt_parameters):
                            insert_copies=insert_copies)
 
 
+@pytest.mark.parametrize("opt_parameters", [(True, True), (True, False), (False, True), (False, False)])
+def test_snippet_from_cloudsc_three_without_inline_sdfgs(opt_parameters):
+    fuse_overlapping_loads, insert_copies = opt_parameters
+
+    sdfg = _get_cloudsc_snippet_three()
+    sdfg.name = f"cloudsc_snippet_three_without_inline_sdfgs_fuse_overlapping_loads_{fuse_overlapping_loads}_insert_copies_{insert_copies}"
+    sdfg.validate()
+
+    # Symbolic values requested by the user
+    klon = 64
+    klev = 64
+    kidia = 1
+    kfdia = 32
+
+    # Map of array shapes (from the SDFG snippet): only the shape tuples matter for creating arrays
+    arr_shapes = {
+        "tendency_tmp_q": (klon, klev),
+        "pa": (klon, klev),
+        "pq": (klon, klev),
+        "tendency_tmp_t": (klon, klev),
+        "tendency_tmp_a": (klon, klev),
+        "pt": (klon, klev),
+        "zqx0": (klon, klev, 5),
+        "zqx": (klon, klev, 5),
+        "ztp1": (klon, klev),
+        "zaorig": (klon, klev),
+        "za": (klon, klev),
+    }
+
+    # Create Fortran-ordered NumPy arrays
+    arrays = {name: numpy.random.random(shape).astype(numpy.float64, order='F') for name, shape in arr_shapes.items()}
+    # Create scalars requested
+    scalars = {
+        "kfdia": numpy.int64(kfdia),
+        "kidia": numpy.int64(kidia),
+        "ptsphy": numpy.float64(0.0),
+        "klev": numpy.int64(klev),
+        "klon": numpy.int64(klon),
+    }
+
+    # Quick verification display: shape and contiguity / strides
+    run_vectorization_test(dace_func=sdfg,
+                           from_sdfg=True,
+                           arrays=arrays,
+                           params=scalars,
+                           vector_width=8,
+                           save_sdfgs=True,
+                           sdfg_name=sdfg.name,
+                           fuse_overlapping_loads=fuse_overlapping_loads,
+                           insert_copies=insert_copies,
+                           no_inline=True)
+
+
 if __name__ == "__main__":
+    test_memset_4d()
+    test_v_const_subs_4d()
+    test_v_const_subs_4d_indirect_access()
     test_disjoint_chain()
     test_disjoint_chain_with_overlapping_region_fusion()
     test_vsubs_cpu()
@@ -1625,6 +1765,8 @@ if __name__ == "__main__":
     for argtuple in [(True, True), (True, False), (False, True), (False, False)]:
         test_disjoint_chain_split_branch_only(argtuple)
         test_jacobi2d_with_parameters(argtuple)
+        test_snippet_from_cloudsc_three(argtuple)
+        test_snippet_from_cloudsc_three_without_inline_sdfgs(argtuple)
     test_jacobi2d_with_fuse_overlapping_loads()
     test_division_by_zero_cpu()
     test_memset_with_fuse_and_copyin_enabled()
