@@ -88,6 +88,7 @@ class Vectorize(ppl.Pass):
 
         new_inner_map = inner_map_entry
         new_inner_map.schedule = dace.dtypes.ScheduleType.Sequential
+        new_inner_map.map.label = "vectorloop_" + new_inner_map.map.label
 
         # If it has any branching out then move the branching one level up.
         if map_has_branching_memlets(state, new_inner_map):
@@ -1051,6 +1052,10 @@ class Vectorize(ppl.Pass):
                 all_nodes_between = state.all_nodes_between(map_entry, state.exit_node(map_entry))
 
                 if self._apply_on_maps is not None and map_entry not in self._apply_on_maps:
+                    continue
+
+                if map_entry.map.label.startswith("vectorloop_"):
+                    print("`vectorloop_` is given by the vectorization transformation to skip to not vectorize double, skipping. Otherwise change name")
                     continue
 
                 # If map has a nested SDFG - and that has more nested SDFGs we cant vectorize it
