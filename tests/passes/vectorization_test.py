@@ -50,6 +50,24 @@ def vadds_cpu(A: dace.float64[N, N], B: dace.float64[N, N]):
 
 
 @dace.program
+def vadd_int(A: dace.int64[N, N], B: dace.int64[N, N]):
+    for i, j in dace.map[0:N, 0:N]:
+        A[i, j] = A[i, j] + B[i, j]
+    for i, j in dace.map[0:N, 0:N]:
+        B[i, j] = 3 * B[i, j] * 2 + 20
+
+
+@dace.program
+def vadd_int_with_scalars(A: dace.int64[N, N], B: dace.int64[N, N], c1: dace.int64, c2: dace.int64):
+    for i, j in dace.map[0:N, 0:N]:
+        c3 = c1 * c2
+        A[i, j] = A[i, j] + B[i, j] + c3
+    for i, j in dace.map[0:N, 0:N]:
+        c4 = c1 + c2
+        B[i, j] = 3 * B[i, j] * 2 + 20 + c4
+
+
+@dace.program
 def vsubs_cpu(A: dace.float64[N, N], B: dace.float64[N, N]):
     for i, j in dace.map[0:N, 0:N]:
         A[i, j] = A[i, j] - B[i, j]
@@ -499,7 +517,6 @@ def test_vsubs_cpu():
         save_sdfgs=True,
         sdfg_name="vsubs_one",
     )
-
 
 
 def test_memset():
@@ -1520,7 +1537,7 @@ def _get_cloudsc_snippet_three(add_scalar: bool):
     klev = dace.symbolic.symbol("klev")
     # Add all arrays to the SDFGs
     in_arrays = {"tendency_tmp_q", "pa", "pq", "tendency_tmp_t", "tendency_tmp_a", "pt"}
-    in_scalars = {"kfdia", "kidia", "ptsphy"} 
+    in_scalars = {"kfdia", "kidia", "ptsphy"}
     if add_scalar:
         in_scalars = in_scalars.union({"ralvdcp"})
     out_arrays = {"zqx0", "zqx", "ztp1", "zaorig", "za"}
@@ -1604,7 +1621,8 @@ def _get_cloudsc_snippet_three(add_scalar: bool):
             access_nodes[in2_arr] = in2_an
         access_nodes[out_arr] = out_an
 
-        t = inner_state.add_tasklet("t_" + out_arr, {"_in1", "_in2"} if in2_arr is not None else {"_in1"}, {"_out"}, tasklet_code)
+        t = inner_state.add_tasklet("t_" + out_arr, {"_in1", "_in2"} if in2_arr is not None else {"_in1"}, {"_out"},
+                                    tasklet_code)
         access_str1 = f"{in1_arr}[{in1_subset}]" if in1_subset != "0" else in1_arr
         if in2_arr is not None:
             access_str2 = f"{in2_arr}[{in2_subset}]" if in2_subset != "0" else in2_arr
@@ -1738,7 +1756,6 @@ def test_snippet_from_cloudsc_three_without_inline_sdfgs(opt_parameters):
         "ztp1": (klon, klev),
         "zaorig": (klon, klev),
         "za": (klon, klev),
-
     }
 
     # Create Fortran-ordered NumPy arrays
@@ -1818,21 +1835,22 @@ def test_snippet_from_cloudsc_three_with_scalar_use(opt_parameters):
                            insert_copies=insert_copies)
 
 
-
 @dace.program
 def vadd_with_unary_scalar_cpu(A: dace.float64[N, N], B: dace.float64[N, N], c: dace.float64):
     for i, j in dace.map[0:N, 0:N]:
-        c2 = - c
+        c2 = -c
         c3 = B[i, j] + c2
         A[i, j] = A[i, j] + c3
+
 
 @dace.program
 def vadd_with_scalar_scalar_cpu(A: dace.float64[N, N], B: dace.float64[N, N], c1: dace.float64, c2: dace.float64):
     for i, j in dace.map[0:N, 0:N]:
-        c3 = - c1
+        c3 = -c1
         c4 = c3 * c2
         c5 = B[i, j] + c4
         A[i, j] = A[i, j] + c5
+
 
 def test_vadd_with_unary_scalar_cpu():
     N = 64
@@ -1846,11 +1864,15 @@ def test_vadd_with_unary_scalar_cpu():
             'A': A,
             'B': B
         },
-        params={'N': N, 'c': c},
+        params={
+            'N': N,
+            'c': c
+        },
         vector_width=8,
         save_sdfgs=True,
         sdfg_name="vadd_with_unary_scalar_cpu",
     )
+
 
 def test_vadd_with_scalar_scalar_cpu():
     N = 64
@@ -1865,15 +1887,63 @@ def test_vadd_with_scalar_scalar_cpu():
             'A': A,
             'B': B
         },
-        params={'N': N, 'c1': c1, 'c2': c2},
+        params={
+            'N': N,
+            'c1': c1,
+            'c2': c2
+        },
         vector_width=8,
         save_sdfgs=True,
         sdfg_name="vadd_with_scalar_scalar_cpu",
     )
 
 
+def test_vadd_int():
+    N = 64
+    A = numpy.random.random((N, N)).astype(numpy.int64)
+    B = numpy.random.random((N, N)).astype(numpy.int64)
+
+    run_vectorization_test(
+        dace_func=vadd_int,
+        arrays={
+            'A': A,
+            'B': B
+        },
+        params={'N': N},
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name="vadd_int",
+    )
+
+
+def test_vadd_with_scalars_int():
+    N = 64
+    A = numpy.random.random((N, N)).astype(numpy.int64)
+    B = numpy.random.random((N, N)).astype(numpy.int64)
+    c1 = numpy.int64(5)
+    c2 = numpy.int64(7)
+
+    run_vectorization_test(
+        dace_func=vadd_int_with_scalars,
+        arrays={
+            'A': A,
+            'B': B
+        },
+        params={
+            'N': N,
+            'c1': c1,
+            'c2': c2
+        },
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name="vadd_int_with_scalars",
+    )
+
+
 if __name__ == "__main__":
     test_memset_4d()
+    test_vadd_int()
+    test_vadd_int_with_scalars()
     test_vadd_with_unary_scalar_cpu()
     test_vadd_with_scalar_scalar_cpu()
     test_v_const_subs_4d()

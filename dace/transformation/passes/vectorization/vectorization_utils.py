@@ -1351,7 +1351,21 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         - Single constant + array/scalar (or array/scalar + constant)
         - Fallback loops if operator not supported (hope compiler will do it)
         """
-        dtype_ = dace.dtypes.TYPECLASS_TO_STRING[vector_dtype]
+
+        # Get out edge and its dtype
+        out_edges = state.out_edges(node)
+        assert len(out_edges) == 1
+        out_edge = out_edges[0]
+
+        if out_edge.data.data is None:
+            dtype_ = dace.dtypes.TYPECLASS_TO_STRING[vector_dtype]
+        else:
+            data_dtype = state.sdfg.arrays[out_edge.data.data].dtype
+            dtype_ = dace.dtypes.TYPECLASS_TO_STRING[data_dtype]
+
+        rhs_left = rhs1_ if rhs1_ is not None else const1_
+        rhs_right = rhs2_ if rhs2_ is not None else const2_
+
         # Use template if available
         if op_ in templates:
             # One array + optional constant
@@ -1404,7 +1418,7 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         if rhs_left is None or rhs_right is None:
             raise Exception("Invalid operand configuration for fallback vectorization")
 
-        OPERATORS = {"+", "-", "/", "*", "%"}
+        OPERATORS = {"+", "-", "/", "*", "%", "&&", "||"}
         if op_ in OPERATORS:
             if rhs_left == const1_:
                 code_lines.append(f"{lhs_expr} = ({rhs_left} {op_} {rhs_right}[_vi]){comparison_suffix};")
@@ -1437,7 +1451,8 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         if _is_number(str(c1)):
             _set_template(None, None, c1, None, lhs, "=", ttype)
         else:
-            node.code = dace.properties.CodeBlock(code="\n".join([f"{lhs}[{i}] = {c1}{i};" for i in range(vw)]) + "\n",
+            node.code = dace.properties.CodeBlock(code="\n".join([f"{lhs}[{i}] = {c1}_laneid_{i};"
+                                                                  for i in range(vw)]) + "\n",
                                                   language=dace.Language.CPP)
 
     elif ttype in {tutil.TaskletType.ARRAY_SYMBOL, tutil.TaskletType.ARRAY_ARRAY}:
@@ -1491,9 +1506,7 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         expr = f"({l_op} {op} {r_op})"
         if isinstance(lhs_data, dace.data.Array):
             node.code = dace.properties.CodeBlock(
-                code="\n".join([f"//{ttype}"] +
-                               [f"{lhs}[{i}] = {expr};"
-                                for i in range(vw)]) + "\n",
+                code="\n".join([f"//{ttype}"] + [f"{lhs}[{i}] = {expr};" for i in range(vw)]) + "\n",
                 language=dace.Language.CPP)
         else:
             node.code = dace.properties.CodeBlock(code=f"{lhs} = {expr};\n", language=dace.Language.CPP)
@@ -1521,9 +1534,7 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         expr = f"{op}({l_op})"
         if isinstance(lhs_data, dace.data.Array):
             node.code = dace.properties.CodeBlock(
-                code="\n".join([f"//{ttype}"] +
-                               [f"{lhs}[{i}] = {expr};"
-                                for i in range(vw)]) + "\n",
+                code="\n".join([f"//{ttype}"] + [f"{lhs}[{i}] = {expr};" for i in range(vw)]) + "\n",
                 language=dace.Language.CPP)
         else:
             node.code = dace.properties.CodeBlock(code=f"{lhs} = {expr};\n", language=dace.Language.CPP)
