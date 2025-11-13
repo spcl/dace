@@ -2066,8 +2066,95 @@ def test_vadd_with_scalars_int():
         sdfg_name="vadd_int_with_scalars",
     )
 
+@dace.program
+def interstate_boolean_op_one(A: dace.float64[N, N], B: dace.float64[N, N], c0: dace.int64):
+    for i, j in dace.map[0:N, 0:N]:
+        c1 = i
+        c2 = j
+        c3 = (c1 > c0) or (c2 > c0)
+        if c3:
+            A[i, j] = A[i, j] + B[i, j]
+
+
+@dace.program
+def interstate_boolean_op_two(A: dace.float64[N, N], B: dace.float64[N, N], c0: dace.int64):
+    for i, j in dace.map[0:N, 0:N]:
+        c1 = i
+        c2 = j
+        c3 = (c1 > c0) or (c2 > c0)
+        c4 = c3 or (A[i, j] > B[i, j])
+        if not c4:
+            A[i, j] = A[i, j] + B[i, j]
+
+def test_interstate_boolean_op_one():
+    N = 64
+    A = numpy.random.random((N, N)).astype(numpy.int64)
+    B = numpy.random.random((N, N)).astype(numpy.int64)
+    c0 = numpy.int64(0)
+
+    run_vectorization_test(
+        dace_func=interstate_boolean_op_one,
+        arrays={
+            'A': A,
+            'B': B
+        },
+        params={
+            'N': N,
+            'c0': c0,
+        },
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name="interstate_boolean_op_one",
+    )
+
+def test_interstate_boolean_op_two():
+    N = 64
+    A = numpy.random.random((N, N)).astype(numpy.int64)
+    B = numpy.random.random((N, N)).astype(numpy.int64)
+    c0 = numpy.int64(0)
+
+    run_vectorization_test(
+        dace_func=interstate_boolean_op_one,
+        arrays={
+            'A': A,
+            'B': B
+        },
+        params={
+            'N': N,
+            'c0': c0,
+        },
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name="interstate_boolean_op_one",
+    )
+
+def test_interstate_boolean_op_three():
+    sdfg = interstate_boolean_op_one.to_sdfg()
+    sdfg.name = "interstate_boolean_op_three"
+    nsdfg = {n for (n,g) in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)}.pop()
+    inner_sdfg: dace.SDFG = nsdfg.sdfg
+    syms = inner_sdfg.symbols
+    last_state = {s for s in inner_sdfg.nodes() if inner_sdfg.out_degree(s) == 0}.pop()
+    last_last_state = inner_sdfg.add_state_after(last_state, "ssss", assignments={"symsym": "__tmp0 or __tmp1"})
+    inner_sdfg.add_symbol("symsym", dace.int64)
+    sdfg.validate()
+    sdfg.save("interstate_boolean_op_three.sdfg")
+    VectorizeCPU(vector_width=8,
+                 fuse_overlapping_loads=True,
+                 insert_copies=True,
+                 apply_on_maps=None,
+                 no_inline=False,
+                 fail_on_unvectorizable=True).apply_pass(sdfg, {})
+    sdfg.validate()
+    sdfg.save("interstate_boolean_op_three_vectorized.sdfg")
+
 
 if __name__ == "__main__":
+    # Nov 14 Fix these
+    test_interstate_boolean_op_one()
+    test_interstate_boolean_op_two()
+    test_interstate_boolean_op_three()
+
     test_memset_4d()
     test_vadd_int()
     test_vadd_with_scalars_int()
