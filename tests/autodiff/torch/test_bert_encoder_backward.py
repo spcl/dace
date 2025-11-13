@@ -10,6 +10,7 @@ from dace.ml import DaceModule
 from tests.utils import torch_tensors_close
 
 
+@pytest.mark.xdist_group("large_ML_models")
 @pytest.mark.long
 @pytest.mark.torch
 @pytest.mark.autodiff

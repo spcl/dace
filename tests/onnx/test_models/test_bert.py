@@ -53,6 +53,7 @@ class BertModelWrapper(nn.Module):
         return outputs.last_hidden_state, outputs.pooler_output
 
 
+@pytest.mark.xdist_group("large_ML_models")
 @pytest.mark.torch
 def test_bert_full(sdfg_name):
     bert_tiny_root = 'http://spclstorage.inf.ethz.ch/~rauscho/bert-tiny'

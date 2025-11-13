@@ -59,6 +59,7 @@ class LlamaWrapper(nn.Module):
         return logits
 
 
+@pytest.mark.xdist_group("large_ML_models")
 @pytest.mark.torch
 @pytest.mark.long
 def test_llama_model(sdfg_name: str):
