@@ -786,8 +786,31 @@ class ExpandGemvOpenBLAS(ExpandTransformation):
         code += f"""cblas_{func}({layout}, {trans}, {m}, {n}, {alpha}, _A, {lda},
                                 _x, {strides_x[0]}, {beta}, _y, {strides_y[0]});"""
 
+        # Handle the case when beta != 0 (node has _y as both input and output)
+        # NOTE: This happens when the Gemv node is created with beta != 0 (see __init__ line 915).
+        # The pure implementation needs y as input to explicitly scale it, but BLAS implementations
+        # handle this internally.
+        #
+        # Since BLAS GEMV does in-place read-modify-write on y, and tasklets cannot have
+        # duplicate connectors, we remove the input _y connector. The BLAS call will read
+        # from and write to the same memory location (_y output).
+        #
+        # We also remove the incoming edge and orphaned access node to maintain graph validity.
+        in_connectors = {}
+        for k, v in node.in_connectors.items():
+            if k == '_y':
+                # Remove the incoming edge to _y and the source access node if it becomes isolated
+                for edge in list(state.in_edges_by_connector(node, '_y')):
+                    src_node = edge.src
+                    state.remove_edge(edge)
+                    # Remove the access node if it has no other edges
+                    if state.degree(src_node) == 0:
+                        state.remove_node(src_node)
+            else:
+                in_connectors[k] = v
+
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
+                                          in_connectors,
                                           node.out_connectors,
                                           code,
                                           language=dace.dtypes.Language.CPP)
@@ -908,20 +931,14 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
         size_y_in = None
         for _, _, _, dst_conn, memlet in state.in_edges(self):
             if dst_conn == "_A":
-                subset = copy.deepcopy(memlet.subset)
-                subset.squeeze()
-                size_a = subset.size()
+                size_a = memlet.subset.size()
             if dst_conn == "_x":
-                subset = copy.deepcopy(memlet.subset)
-                subset.squeeze()
-                size_x = subset.size()
+                size_x = memlet.subset.size()
             if dst_conn == "_y":
-                subset = copy.deepcopy(memlet.subset)
-                subset.squeeze()
-                size_y_in = subset.size()
+                size_y_in = memlet.subset.size()
 
         if len(size_a) != 2 or len(size_x) != 1:
-            raise ValueError("Matrix-vector product only supported on matrix-vector input")
+            raise ValueError("Matrix-vector product only supported on 2D matrix and 1D vector")
 
         a_cols = size_a[1] if not self.transA else size_a[0]
         a_rows = size_a[0] if not self.transA else size_a[1]
@@ -935,11 +952,11 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
             raise ValueError("Expected exactly one output from matrix-vector product")
         out_memlet = out_edges[0].data
 
-        out_subset = copy.deepcopy(out_memlet.subset)
-        out_subset.squeeze()
-        size_y_out = out_subset.size()
-        if size_y_in is not None and size_y_in != size_y_out:
-            raise ValueError("Input y-vector must match output y-vector.")
+        size_y_out = out_memlet.subset.size()
+
+        if size_y_in is not None:
+            if size_y_in != size_y_out:
+                raise ValueError("Input y-vector must match output y-vector.")
         if (len(size_y_out) != 1 or size_y_out[0] != a_rows):
             raise ValueError("Vector input to GEMV must match matrix rows.")
 

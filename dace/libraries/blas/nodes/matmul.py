@@ -14,26 +14,18 @@ def _get_matmul_operands(node, state, sdfg, name_lhs="_a", name_rhs="_b", name_o
     for edge in state.all_edges(node):
         if edge.dst_conn in [name_lhs, name_rhs]:
             size = edge.data.subset.size()
-            squeezed = dc(edge.data.subset)
-            squeezed_dims = squeezed.squeeze()
-            squeezed_size = squeezed.size()
             outer_array = sdfg.data(dace.sdfg.find_input_arraynode(state, edge).data)
             strides = list(outer_array.strides)
-            squeezed_strides = [s for i, s in enumerate(outer_array.strides) if i in squeezed_dims]
-            res = edge, outer_array, size, strides, squeezed_size, squeezed_strides
+            res = edge, outer_array, size, strides, size, strides
             if edge.dst_conn == name_lhs:
                 res_lhs = res
             else:
                 res_rhs = res
         elif edge.src_conn == name_out:
             size = edge.data.subset.size()
-            squeezed = dc(edge.data.subset)
-            squeezed_dims = squeezed.squeeze()
-            squeezed_size = squeezed.size()
             outer_array = sdfg.data(dace.sdfg.find_output_arraynode(state, edge).data)
             strides = list(outer_array.strides)
-            squeezed_strides = [s for i, s in enumerate(outer_array.strides) if i in squeezed_dims]
-            res_out = edge, outer_array, size, strides, squeezed_size, squeezed_strides
+            res_out = edge, outer_array, size, strides, size, strides
     for res, name in ((res_lhs, name_lhs), (res_rhs, name_rhs), (res_out, name_out)):
         if res is None:
             raise ValueError("Matrix multiplication connector "
@@ -104,6 +96,13 @@ def _get_batchmm_opts(a_shape, a_strides, b_shape, b_strides, c_shape, c_strides
     # Calculate strides for batched operations
     # For a tensor with shape [B1, B2, ..., M, K], the stride for batched operations
     # should be M*K (the size of each matrix) to iterate through all matrices in the flattened batch
+    #
+    # For broadcasting cases (e.g., A - [b1, b2, m, k] @ B - [b2, k, n]):
+    # - The flattened batch is b1*b2
+    # - B needs special handling: we need to compute which of the b2 matrices to use
+    #   For batch index i in [0, b1*b2), the B matrix index is (i % b2)
+    #   This can be expressed as: if A has more batch dims than B, use modulo arithmetic
+
     stride_a = 0
     stride_b = 0
     stride_c = 0
@@ -125,10 +124,35 @@ def _get_batchmm_opts(a_shape, a_strides, b_shape, b_strides, c_shape, c_strides
             if res is False:
                 raise ValueError(f'Output batch dimension mismatch: {c_dim} vs {r_dim} at position {i}')
 
+    # For partial broadcasting (3D-4D cases), we need to track additional information
+    # to properly index into the smaller batch dimension tensor
+    a_batch_multiplier = 1  # How many times to cycle through A's batch
+    b_batch_multiplier = 1  # How many times to cycle through B's batch
+
+    if len(a_batch_dims) < len(result_batch_dims):
+        # A has fewer batch dimensions, so it will be broadcast
+        # Calculate the size of the leading dimensions that A doesn't have
+        a_batch_multiplier = prod(result_batch_dims[:len(result_batch_dims) - len(a_batch_dims)])
+
+    if len(b_batch_dims) < len(result_batch_dims):
+        # B has fewer batch dimensions, so it will be broadcast
+        # Calculate the size of the leading dimensions that B doesn't have
+        b_batch_multiplier = prod(result_batch_dims[:len(result_batch_dims) - len(b_batch_dims)])
+
     if batch_size == 1 and not result_batch_dims:
         return {}
 
-    return {'sa': stride_a, 'sb': stride_b, 'sc': stride_c, 'b': batch_size, 'batch_dims': result_batch_dims}
+    return {
+        'sa': stride_a,
+        'sb': stride_b,
+        'sc': stride_c,
+        'b': batch_size,
+        'batch_dims': result_batch_dims,
+        'a_batch_size': prod(a_batch_dims) if a_batch_dims else 1,
+        'b_batch_size': prod(b_batch_dims) if b_batch_dims else 1,
+        'a_batch_multiplier': a_batch_multiplier,
+        'b_batch_multiplier': b_batch_multiplier
+    }
 
 
 def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, cdtype, func) -> Dict[str, Any]:
@@ -155,9 +179,25 @@ def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, 
     opt['xdtype'] = adesc.dtype
     opt['ydtype'] = bdesc.dtype
     opt['cdtype'] = cdesc.dtype
-    opt['M'] = sym2cpp(ashape[-2])
-    opt['N'] = sym2cpp(bshape[-1])
-    opt['K'] = sym2cpp(ashape[-1])
+
+    # Handle 1D inputs: [k] is treated as [1, k] or [k, 1] depending on context
+    if len(ashape) == 1:
+        # [k] @ [..., k, n] -> M=1, K=ashape[0]
+        opt['M'] = sym2cpp(1)
+        opt['K'] = sym2cpp(ashape[0])
+    else:
+        opt['M'] = sym2cpp(ashape[-2])
+        opt['K'] = sym2cpp(ashape[-1])
+
+    if len(bshape) == 1:
+        # [..., m, k] @ [k] -> N=1, K=bshape[0]
+        opt['N'] = sym2cpp(1)
+        if 'K' not in opt:
+            opt['K'] = sym2cpp(bshape[0])
+    else:
+        opt['N'] = sym2cpp(bshape[-1])
+        if 'K' not in opt:
+            opt['K'] = sym2cpp(bshape[-2])
     opt['lda'] = sym2cpp(opt['lda'])
     opt['ldb'] = sym2cpp(opt['ldb'])
     opt['ldc'] = sym2cpp(opt['ldc'])
@@ -165,6 +205,7 @@ def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, 
     if opt['swap']:
         if bopt:
             bopt['sa'], bopt['sb'] = bopt['sb'], bopt['sa']
+            bopt['a_batch_size'], bopt['b_batch_size'] = bopt['b_batch_size'], bopt['a_batch_size']
         opt['lda'], opt['ldb'] = opt['ldb'], opt['lda']
         opt['x'], opt['y'] = opt['y'], opt['x']
         opt['xdtype'], opt['ydtype'] = opt['ydtype'], opt['xdtype']
@@ -180,6 +221,8 @@ def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, 
         opt['stride_b'] = sym2cpp(bopt['sb'])
         opt['stride_c'] = sym2cpp(bopt['sc'])
         opt['BATCH'] = sym2cpp(bopt['b'])
+        opt['a_batch_size'] = sym2cpp(bopt['a_batch_size'])
+        opt['b_batch_size'] = sym2cpp(bopt['b_batch_size'])
     else:
         opt['BATCH'] = None
 
@@ -248,6 +291,15 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
             b[0].dst_conn = "_y"
             c[0].src_conn = "_result"
             result = Dot(node.name + 'dot', location=node.location)
+        elif len(size_a) == 1 and len(size_b) > 2:
+            # Vector @ batched matrix -> batched GEMV (e.g., [k] @ [b, k, n] = [b, n])
+            # This can be viewed as batched y = A^T @ x where x is the vector
+            from dace.libraries.blas.nodes.batched_matmul import BatchedMatMul
+            result = BatchedMatMul(node.name + 'bmm', location=node.location)
+        elif len(size_a) > 2 and len(size_b) == 1:
+            # Batched matrix @ vector -> batched GEMV (e.g., [b, m, k] @ [k] = [b, m])
+            from dace.libraries.blas.nodes.batched_matmul import BatchedMatMul
+            result = BatchedMatMul(node.name + 'bmm', location=node.location)
         else:
             raise NotImplementedError("Matrix multiplication not implemented "
                                       "for shapes: {} and {}".format(size_a, size_b))

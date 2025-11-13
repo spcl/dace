@@ -226,7 +226,9 @@ def _create_einsum_internal(sdfg: SDFG,
     for inp, inpname in zip(einsum.inputs, arrays):
         inparr = sdfg.arrays[inpname]
         if len(inp) != len(inparr.shape):
-            raise ValueError('Dimensionality mismatch in input "%s"' % inpname)
+            raise ValueError(f'Dimensionality mismatch in input "{inpname}": '
+                             f'einsum subscript has {len(inp)} dimensions but array has '
+                             f'{len(inparr.shape)} dimensions')
         for char, shp in zip(inp, inparr.shape):
             if char in chardict and shp != chardict[char]:
                 raise ValueError('Dimension mismatch in einsum expression')

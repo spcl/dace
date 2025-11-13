@@ -86,6 +86,34 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
 
         output_shape = (1, )
 
+    elif len(arr1.shape) == 1 and len(arr2.shape) > 2:  # vector @ batched matrix (e.g., [k] @ [b, k, n])
+
+        res = symbolic.equal(arr1.shape[0], arr2.shape[-2])
+        if res is None:
+            warnings.warn(
+                f'Length of vector {arr1.shape[0]} and second-last dimension of tensor {arr2.shape[-2]} '
+                f'may not match', UserWarning)
+        elif not res:
+            raise SyntaxError(f"Length of vector {arr1.shape[0]} must match "
+                              f"second-last dimension of tensor {arr2.shape[-2]}")
+
+        # Output has all batch dimensions plus the last dimension of arr2
+        output_shape = arr2.shape[:-2] + (arr2.shape[-1], )
+
+    elif len(arr1.shape) > 2 and len(arr2.shape) == 1:  # batched matrix @ vector (e.g., [b, m, k] @ [k])
+
+        res = symbolic.equal(arr1.shape[-1], arr2.shape[0])
+        if res is None:
+            warnings.warn(
+                f'Last dimension of tensor {arr1.shape[-1]} and length of vector {arr2.shape[0]} '
+                f'may not match', UserWarning)
+        elif not res:
+            raise SyntaxError(f"Last dimension of tensor {arr1.shape[-1]} must match "
+                              f"length of vector {arr2.shape[0]}")
+
+        # Output has all batch dimensions plus the second-last dimension of arr1
+        output_shape = arr1.shape[:-1]
+
     else:  # Dunno what this is, bail
 
         raise SyntaxError("Cannot multiply arrays with shapes: {} and {}".format(arr1.shape, arr2.shape))
