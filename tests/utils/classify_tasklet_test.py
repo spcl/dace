@@ -453,6 +453,112 @@ tasklet_infos = [
         "constant1": "0.0",
         "constant2": None,
     }),
+    # === PYTHON LOGICAL OPERATORS ===
+    ("out = in_a and in_b", "array", {"a", "b"}, {}, {}, {
+        "type": tutil.TaskletType.ARRAY_ARRAY,
+        "lhs": "out",
+        "rhs1": "in_a",
+        "rhs2": "in_b",
+        "op": "and",
+        "constant1": None,
+        "constant2": None,
+    }),
+    ("out = in_a or in_b", "array", {"a", "b"}, {}, {}, {
+        "type": tutil.TaskletType.ARRAY_ARRAY,
+        "lhs": "out",
+        "rhs1": "in_a",
+        "rhs2": "in_b",
+        "op": "or",
+        "constant1": None,
+        "constant2": None,
+    }),
+    ("out = not in_a", "array", {"a"}, {}, {}, {
+        "type": tutil.TaskletType.UNARY_ARRAY,
+        "lhs": "out",
+        "rhs1": "in_a",
+        "rhs2": None,
+        "op": "not",
+        "constant1": None,
+        "constant2": None,
+    }),
+
+    # === SCALAR LOGICAL OPERATORS ===
+    ("out = in_scl1 and in_scl2", "scalar", {}, {"scl1", "scl2"}, {}, {
+        "type": tutil.TaskletType.SCALAR_SCALAR,
+        "lhs": "out",
+        "rhs1": "in_scl1",
+        "rhs2": "in_scl2",
+        "op": "and",
+        "constant1": None,
+        "constant2": None,
+    }),
+    ("out = in_scl1 or in_scl2", "scalar", {}, {"scl1", "scl2"}, {}, {
+        "type": tutil.TaskletType.SCALAR_SCALAR,
+        "lhs": "out",
+        "rhs1": "in_scl1",
+        "rhs2": "in_scl2",
+        "op": "or",
+        "constant1": None,
+        "constant2": None,
+    }),
+    ("out = not in_scl1", "scalar", {}, {"scl1"}, {}, {
+        "type": tutil.TaskletType.UNARY_SCALAR,
+        "lhs": "out",
+        "rhs1": "in_scl1",
+        "rhs2": None,
+        "op": "not",
+        "constant1": None,
+        "constant2": None,
+    }),
+
+    # === SYMBOLIC LOGICAL OPERATORS ===
+    ("out = sym_a and sym_b", "scalar", {}, {}, {"sym_a", "sym_b"}, {
+        "type": tutil.TaskletType.SYMBOL_SYMBOL,
+        "lhs": "out",
+        "rhs1": None,
+        "rhs2": None,
+        "op": "and",
+        "constant1": "sym_a",
+        "constant2": "sym_b",
+    }),
+    ("out = sym_a or sym_b", "scalar", {}, {}, {"sym_a", "sym_b"}, {
+        "type": tutil.TaskletType.SYMBOL_SYMBOL,
+        "lhs": "out",
+        "rhs1": None,
+        "rhs2": None,
+        "op": "or",
+        "constant1": "sym_a",
+        "constant2": "sym_b",
+    }),
+    ("out = not sym_a", "scalar", {}, {}, {"sym_a"}, {
+        "type": tutil.TaskletType.UNARY_SYMBOL,
+        "lhs": "out",
+        "rhs1": None,
+        "rhs2": None,
+        "op": "not",
+        "constant1": "sym_a",
+        "constant2": None,
+    }),
+
+    # === CONSTANT LOGICAL EXPRESSIONS ===
+    ("out = True and False", "scalar", {}, {}, {}, {
+        "type": tutil.TaskletType.SYMBOL_SYMBOL,
+        "lhs": "out",
+        "rhs1": None,
+        "rhs2": None,
+        "op": "and",
+        "constant1": "True",
+        "constant2": "False",
+    }),
+    ("out = not True", "scalar", {}, {}, {}, {
+        "type": tutil.TaskletType.UNARY_SYMBOL,
+        "lhs": "out",
+        "rhs1": None,
+        "rhs2": None,
+        "op": "not",
+        "constant1": "True",
+        "constant2": None,
+    }),
 ]
 
 
