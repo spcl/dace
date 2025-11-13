@@ -2794,8 +2794,14 @@ def add_copies_before_and_after_nsdfg(
             oes = {oe for oe in inner_state.out_edges(node) if oe.data.data is not None}
             ie_datanames = {ie.data.data for ie in ies}
             oe_datanames = {oe.data.data for oe in oes}
-            assert len(ie_datanames) <= 1
-            assert len(oe_datanames) <= 1
+            if len(oe_datanames) > 1:
+                state.sdfg.save("c.sdfgz", compress=True)
+            assert len(
+                ie_datanames
+            ) <= 1, f"Input datanames more than one {ie_datanames} in state {state}, sdfg {state.sdfg.label}."
+            assert len(
+                oe_datanames
+            ) <= 1, f"Output datanames more than one {oe_datanames} in state {state}, sdfg {state.sdfg.label}."
             assert len(ie_datanames) + len(oe_datanames) > 0
 
             if len(ie_datanames) == 0:

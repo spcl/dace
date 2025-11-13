@@ -92,7 +92,7 @@ __host__ __device__ __forceinline__ void vector_copy(T * __restrict__ dst, const
                  vector_width: str,
                  try_to_demote_symbols_in_nsdfgs: bool = False,
                  fuse_overlapping_loads: bool = False,
-                 apply_on_maps: Optional[List[str]] = None,
+                 apply_on_maps: Optional[List[dace.nodes.MapEntry]] = None,
                  insert_copies: bool = False):
         passes = [
             EliminateBranches(),

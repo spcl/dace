@@ -31,7 +31,6 @@ class Vectorize(ppl.Pass):
     vector_op_numeric_type = properties.Property(dtype=typeclass, default=dace.float64)
     try_to_demote_symbols_in_nsdfgs = properties.Property(dtype=bool, default=False)
     fuse_overlapping_loads = properties.Property(dtype=bool, default=False)
-    apply_on_maps = properties.ListProperty(element_type=str, default=None, allow_none=True)
     insert_copies = properties.Property(dtype=bool, default=True, allow_none=False)
 
     def __init__(self, templates: Dict[str, str], vector_width: str, vector_input_storage: dace.dtypes.StorageType,
@@ -48,10 +47,10 @@ class Vectorize(ppl.Pass):
         self.global_code_location = global_code_location
         self.vector_op_numeric_type = vector_op_numeric_type
         self.try_to_demote_symbols_in_nsdfgs = try_to_demote_symbols_in_nsdfgs
-        self.apply_on_maps = apply_on_maps
         self.insert_copies = insert_copies
         self._used_names = set()
         self._tasklet_vectorizable_map = dict()
+        self._apply_on_maps = apply_on_maps
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
@@ -1053,7 +1052,7 @@ class Vectorize(ppl.Pass):
                 num_vectorized += 1
                 all_nodes_between = state.all_nodes_between(map_entry, state.exit_node(map_entry))
 
-                if self.apply_on_maps is not None and map_entry.map.label not in self.apply_on_maps:
+                if self._apply_on_maps is not None and map_entry not in self._apply_on_maps:
                     continue
 
                 # If map has a nested SDFG - and that has more nested SDFGs we cant vectorize it
