@@ -22,7 +22,8 @@ class VectorizeCPU(ppl.Pipeline):
                  fuse_overlapping_loads: bool = False,
                  apply_on_maps: Optional[List[str]] = None,
                  insert_copies: bool = False,
-                 only_apply_vectorization_pass: bool = False):
+                 only_apply_vectorization_pass: bool = False,
+                 no_inline: bool = False):
         vectorizer = Vectorize(
             templates={
                 "*": "vector_mult<{dtype}, {vector_width}>({lhs}, {rhs1}, {rhs2});",
@@ -80,8 +81,10 @@ class VectorizeCPU(ppl.Pipeline):
                 PowerOperatorExpansion(),
                 SplitTasklets(),
                 CleanDataToScalarSliceToTaskletPattern(),
-                InlineSDFGs(), vectorizer
             ]
+            if no_inline:
+                passes.append(InlineSDFGs())
+            passes.append(vectorizer)
         else:
             passes = [vectorizer]
         if fuse_overlapping_loads:
