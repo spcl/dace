@@ -31,6 +31,12 @@ class FuseOverlappingLoads(ppl.Pass):
         # Src -(Arr1)> AccessNode -(Arr1_0)> MapEntry
         # Src -(Arr1)> AccessNode -(Arr1_0)> MapEntry
         # Src -(Arr1)> AccessNode -(Arr1_0)> MapEntry
+        # We will connect access nodes through:
+        # Src -(Arr1)(UnionSubset)-> AccessNode0 -> -(Arr1_0)> AccessNode -> MapEntry
+        #                                        -> -(Arr1_0)> AccessNode -> MapEntry
+        #                                        -> -(Arr1_0)> AccessNode -> MapEntry
+        #                                        -> -(Arr1_0)> AccessNode -> MapEntry
+        #                                        -> -(Arr1_0)> AccessNode -> MapEntry
 
         in_edges = state.in_edges(map_entry)
         # Get incoming access nodes
