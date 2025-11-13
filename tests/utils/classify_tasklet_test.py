@@ -559,6 +559,108 @@ tasklet_infos = [
         "constant1": "True",
         "constant2": None,
     }),
+    ("out = in_a == in_b", "array", {"a", "b"}, {}, {}, {
+        "type": tutil.TaskletType.ARRAY_ARRAY,
+        "lhs": "out",
+        "rhs1": "in_a",
+        "rhs2": "in_b",
+        "op": "==",
+        "constant1": None,
+        "constant2": None
+    }),
+    ("out = in_a == in_scl", "array", {"a"}, {"scl"}, {}, {
+        "type": tutil.TaskletType.ARRAY_SCALAR,
+        "lhs": "out",
+        "rhs1": "in_a",
+        "rhs2": "in_scl",
+        "op": "==",
+        "constant1": None,
+        "constant2": None
+    }),
+    ("out = in_scl1 == in_scl2", "array", {}, {"scl1", "scl2"}, {}, {
+        "type": tutil.TaskletType.SCALAR_SCALAR,
+        "lhs": "out",
+        "rhs1": "in_scl1",
+        "rhs2": "in_scl2",
+        "op": "==",
+        "constant1": None,
+        "constant2": None
+    }),
+    # Less than
+    ("out = in_a < in_b", "array", {"a", "b"}, {}, {}, {
+        "type": tutil.TaskletType.ARRAY_ARRAY,
+        "lhs": "out",
+        "rhs1": "in_a",
+        "rhs2": "in_b",
+        "op": "<",
+        "constant1": None,
+        "constant2": None
+    }),
+    ("out = in_a < in_scl", "array", {"a"}, {"scl"}, {}, {
+        "type": tutil.TaskletType.ARRAY_SCALAR,
+        "lhs": "out",
+        "rhs1": "in_a",
+        "rhs2": "in_scl",
+        "op": "<",
+        "constant1": None,
+        "constant2": None
+    }),
+    ("out = in_scl1 < in_scl2", "array", {}, {"scl1", "scl2"}, {}, {
+        "type": tutil.TaskletType.SCALAR_SCALAR,
+        "lhs": "out",
+        "rhs1": "in_scl1",
+        "rhs2": "in_scl2",
+        "op": "<",
+        "constant1": None,
+        "constant2": None
+    }),
+
+    # Greater than or equal
+    ("out = in_a >= in_b", "array", {"a", "b"}, {}, {}, {
+        "type": tutil.TaskletType.ARRAY_ARRAY,
+        "lhs": "out",
+        "rhs1": "in_a",
+        "rhs2": "in_b",
+        "op": ">=",
+        "constant1": None,
+        "constant2": None
+    }),
+    ("out = in_a >= in_scl", "array", {"a"}, {"scl"}, {}, {
+        "type": tutil.TaskletType.ARRAY_SCALAR,
+        "lhs": "out",
+        "rhs1": "in_a",
+        "rhs2": "in_scl",
+        "op": ">=",
+        "constant1": None,
+        "constant2": None
+    }),
+    ("out = in_scl1 >= in_scl2", "array", {}, {"scl1", "scl2"}, {}, {
+        "type": tutil.TaskletType.SCALAR_SCALAR,
+        "lhs": "out",
+        "rhs1": "in_scl1",
+        "rhs2": "in_scl2",
+        "op": ">=",
+        "constant1": None,
+        "constant2": None
+    }),
+    ("out = in_a != in_scl", "array", {"a"}, {"scl"}, {}, {
+        "type": tutil.TaskletType.ARRAY_SCALAR,
+        "lhs": "out",
+        "rhs1": "in_a",
+        "rhs2": "in_scl",
+        "op": "!=",
+        "constant1": None,
+        "constant2": None
+    }),
+    ("out = in_scl1 != in_scl2", "array", {}, {"scl1", "scl2"}, {}, {
+        "type": tutil.TaskletType.SCALAR_SCALAR,
+        "lhs": "out",
+        "rhs1": "in_scl1",
+        "rhs2": "in_scl2",
+        "op": "!=",
+        "constant1": None,
+        "constant2": None
+    })
 ]
 
 
