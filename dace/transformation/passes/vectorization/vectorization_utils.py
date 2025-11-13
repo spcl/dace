@@ -1483,7 +1483,20 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
             code_lines.append(f"{lhs}[{i}] = {expr};")
         node.code = dace.properties.CodeBlock(code="\n".join(code_lines) + "\n", language=dace.Language.CPP)
     elif ttype == tutil.TaskletType.SCALAR_SCALAR:
-        raise Exception("Unhandled: SCALAR_SCALAR tasklets")
+        out_edges = list(state.out_edges_by_connector(node, lhs))
+        assert len(out_edges) == 1
+        lhs_data = state.sdfg.arrays[out_edges[0].data.data]
+        l_op = rhs1 if rhs1 is not None else c1
+        r_op = rhs2 if rhs2 is not None else c2
+        expr = f"({l_op} {op} {r_op})"
+        if isinstance(lhs_data, dace.data.Array):
+            node.code = dace.properties.CodeBlock(
+                code="\n".join([f"//{ttype}"] +
+                               [f"{lhs}[{i}] = {expr};"
+                                for i in range(vw)]) + "\n",
+                language=dace.Language.CPP)
+        else:
+            node.code = dace.properties.CodeBlock(code=f"{lhs} = {expr};\n", language=dace.Language.CPP)
     elif ttype == tutil.TaskletType.SYMBOL_SYMBOL:
         out_edges = list(state.out_edges_by_connector(node, lhs))
         assert len(out_edges) == 1
@@ -1496,6 +1509,20 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
             node.code = dace.properties.CodeBlock(
                 code="\n".join([f"//{ttype}"] +
                                [f"{lhs}[{i}] = {use_laneid_symbol_in_expression(expr, c, i)};"
+                                for i in range(vw)]) + "\n",
+                language=dace.Language.CPP)
+        else:
+            node.code = dace.properties.CodeBlock(code=f"{lhs} = {expr};\n", language=dace.Language.CPP)
+    elif ttype == tutil.TaskletType.UNARY_SCALAR:
+        out_edges = list(state.out_edges_by_connector(node, lhs))
+        assert len(out_edges) == 1
+        lhs_data = state.sdfg.arrays[out_edges[0].data.data]
+        l_op = rhs1 if rhs1 is not None else c1
+        expr = f"{op}({l_op})"
+        if isinstance(lhs_data, dace.data.Array):
+            node.code = dace.properties.CodeBlock(
+                code="\n".join([f"//{ttype}"] +
+                               [f"{lhs}[{i}] = {expr};"
                                 for i in range(vw)]) + "\n",
                 language=dace.Language.CPP)
         else:
@@ -2756,8 +2783,8 @@ def add_copies_before_and_after_nsdfg(
             oes = {oe for oe in inner_state.out_edges(node) if oe.data.data is not None}
             ie_datanames = {ie.data.data for ie in ies}
             oe_datanames = {oe.data.data for oe in oes}
-            assert len(ie_datanames) <= 1 or len(oe_datanames) == vector_width
-            assert len(oe_datanames) <= 1 or len(oe_datanames) == vector_width
+            assert len(ie_datanames) <= 1
+            assert len(oe_datanames) <= 1
             assert len(ie_datanames) + len(oe_datanames) > 0
 
             if len(ie_datanames) == 0:
