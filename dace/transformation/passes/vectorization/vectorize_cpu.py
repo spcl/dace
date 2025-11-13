@@ -23,7 +23,8 @@ class VectorizeCPU(ppl.Pipeline):
                  apply_on_maps: Optional[List[dace.nodes.MapEntry]] = None,
                  insert_copies: bool = False,
                  only_apply_vectorization_pass: bool = False,
-                 no_inline: bool = False):
+                 no_inline: bool = False,
+                 fail_on_unvectorizable: bool = False):
         vectorizer = Vectorize(
             templates={
                 "*": "vector_mult<{dtype}, {vector_width}>({lhs}, {rhs1}, {rhs2});",
@@ -72,6 +73,7 @@ class VectorizeCPU(ppl.Pipeline):
             try_to_demote_symbols_in_nsdfgs=try_to_demote_symbols_in_nsdfgs,
             apply_on_maps=apply_on_maps,
             insert_copies=insert_copies,
+            fail_on_unvectorizable=fail_on_unvectorizable,
         )
         if not only_apply_vectorization_pass:
             passes = [
