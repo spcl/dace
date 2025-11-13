@@ -6,7 +6,7 @@ import numpy as np
 @pytest.mark.tensorflow
 def test_callback():
     import tensorflow as tf
-    from dace.frontend.tensorflow import TFSession
+    from dace.ml import TFSession
 
     input_image = tf.constant(0.69, tf.float64, [2, 2, 5, 5, 2])
     conv_filter = tf.constant(0.01, tf.float64, [1, 1, 1, 2, 2])

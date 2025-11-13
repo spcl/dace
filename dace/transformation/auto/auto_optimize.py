@@ -590,6 +590,7 @@ def auto_optimize(sdfg: SDFG,
     # Simplification and loop parallelization
     transformed = True
     sdfg.apply_transformations_repeated(TrivialMapElimination, validate=validate, validate_all=validate_all)
+
     while transformed:
         sdfg.simplify(validate=False, validate_all=validate_all)
         l2ms = sdfg.apply_transformations_repeated((LoopToMap, RefineNestedAccess),
@@ -612,7 +613,6 @@ def auto_optimize(sdfg: SDFG,
     # fuse subgraphs greedily
     sdfg.simplify()
     sdfg.reset_cfg_list()
-
     greedy_fuse(sdfg, device=device, validate_all=validate_all)
 
     # fuse stencils greedily

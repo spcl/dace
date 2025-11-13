@@ -7,7 +7,7 @@ import numpy as np
 def test_conv():
     import tensorflow as tf
     from tensorflow.python.ops import gen_nn_ops
-    from dace.frontend.tensorflow import TFSession
+    from dace.ml import TFSession
     inp_shape = [10, 10, 10, 10]
     filter_shape = [3, 3, 10, 3]
     strides = [1, 3, 3, 1]

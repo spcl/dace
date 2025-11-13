@@ -6,7 +6,7 @@ import numpy as np
 @pytest.mark.tensorflow
 def test_compile():
     import tensorflow as tf
-    from dace.frontend.tensorflow import TFSession
+    from dace.ml import TFSession
 
     print('DaCe Tensorflow frontend compile API test')
 

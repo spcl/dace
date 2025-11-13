@@ -17,8 +17,8 @@ from dace import SDFG, SDFGState, dtypes
 from dace.data import Scalar
 from dace.sdfg.nodes import Tasklet, NestedSDFG
 from dace.symbolic import symstr, SymExpr
-from dace.frontend.tensorflow.winograd import winograd_convolution
-from dace.frontend.tensorflow.transformations.redundant_array import (TensorflowRedundantArray)
+from .winograd import winograd_convolution
+from .transformations.redundant_array import TensorflowRedundantArray
 
 try:
     import tensorflow as tf
