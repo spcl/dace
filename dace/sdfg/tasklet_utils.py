@@ -450,12 +450,15 @@ _BINOP_SYMBOLS = {
     ast.Sub: "-",
     ast.Mult: "*",
     ast.Div: "/",
+    ast.And: "and",
+    ast.Or: "or",
 }
 """Mapping from AST binary operation nodes to their string representations."""
 
 _UNARY_SYMBOLS = {
     ast.UAdd: "+",
     ast.USub: "-",
+    ast.Not: "not",
 }
 """Mapping from AST unary operation nodes to their string representations."""
 
@@ -469,11 +472,46 @@ _CMP_SYMBOLS = {
 }
 """Mapping from AST comparison operation nodes to their string representations."""
 
-_SUPPORTED_OPS = {'*', '+', '-', '/', '>', '<', '>=', '<=', '==', '!='}
+_SUPPORTED_OPS = {
+    '*',
+    '+',
+    '-',
+    '/',
+    '>',
+    '<',
+    '>=',
+    '<=',
+    '==',
+    '!=',
+    'and',
+    'or',
+    'not',
+}
 """Set of supported binary and comparison operators."""
 
 _SUPPORTED = {
-    '*', '+', '-', '/', '>', '<', '>=', '<=', '==', '!=', 'abs', 'exp', 'sqrt', 'log', 'ln', 'exp', 'pow', 'min', 'max'
+    '*',
+    '+',
+    '-',
+    '/',
+    '>',
+    '<',
+    '>=',
+    '<=',
+    '==',
+    '!=',
+    'abs',
+    'exp',
+    'sqrt',
+    'log',
+    'ln',
+    'exp',
+    'pow',
+    'min',
+    'max',
+    'and',
+    'or',
+    'not',
 }
 """Set of all supported operations including functions."""
 
@@ -509,6 +547,8 @@ def _extract_single_op(src: str, default_to_assignment: bool = False) -> str:
             op = _BINOP_SYMBOLS.get(type(node.op), None)
         elif isinstance(node, ast.UnaryOp):
             op = _UNARY_SYMBOLS.get(type(node.op), None)
+        elif isinstance(node, ast.BoolOp):
+            op = _BINOP_SYMBOLS.get(type(node.op), None)
         elif isinstance(node, ast.Compare):
             assert len(node.ops) == 1
             op = _CMP_SYMBOLS.get(type(node.ops[0]), None)
