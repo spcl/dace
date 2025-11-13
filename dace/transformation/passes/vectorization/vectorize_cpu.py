@@ -20,7 +20,7 @@ class VectorizeCPU(ppl.Pipeline):
                  vector_width: str,
                  try_to_demote_symbols_in_nsdfgs: bool = False,
                  fuse_overlapping_loads: bool = False,
-                 apply_on_maps: Optional[List[str]] = None,
+                 apply_on_maps: Optional[List[dace.nodes.MapEntry]] = None,
                  insert_copies: bool = False,
                  only_apply_vectorization_pass: bool = False,
                  no_inline: bool = False):

@@ -1943,7 +1943,7 @@ def test_vadd_with_scalars_int():
 if __name__ == "__main__":
     test_memset_4d()
     test_vadd_int()
-    test_vadd_int_with_scalars()
+    test_vadd_with_scalars_int()
     test_vadd_with_unary_scalar_cpu()
     test_vadd_with_scalar_scalar_cpu()
     test_v_const_subs_4d()
