@@ -566,7 +566,8 @@ def _extract_single_op(src: str, default_to_assignment: bool = False) -> str:
 
         if found is not None:
             raise ValueError(
-                f"More than one supported operation found, first found: {found}, second: {op} for tasklets {node}")
+                f"More than one supported operation found, first found: {found}, second: {op} for tasklets {node} ({ast.unparse(node)})"
+            )
 
         found = op
 

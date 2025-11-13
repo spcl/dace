@@ -90,12 +90,6 @@ class FuseOverlappingLoads(ppl.Pass):
                         and isinstance(parent_node, dace.nodes.MapEntry)):
                     # Load overlapping nodes
                     in_data_and_srcs = self._collect_loads(state, node)
-                    for k, v in in_data_and_srcs.items():
-                        print(k)
-                        print("->")
-                        for vitem in v:
-                            print("   ", vitem[0].data.data, vitem[0].data.subset, "->", vitem[2].data.data,
-                                  vitem[2].data.subset)
                     union_subsets = self.compute_union_and_offsets(in_data_and_srcs)
 
                     # 1. Remove all in edges to the src node
