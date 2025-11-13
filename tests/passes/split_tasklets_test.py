@@ -10,36 +10,42 @@ from dace.transformation.passes.split_tasklets import SplitTasklets
 
 # Format: (expression, expected_num_statements_after_split)
 example_expressions = [
-    (1,"_out_float__if_cond = ((_if_cond == 1) == 0)", 2),  # 2 ==
-    (2,"out_ci = 5 * in_ci + 4", 2),  # __t0 = 5 * in_ci; out_ci = __t0 + 4
-    (3,"cfl_w_limit_out = (0.85 / dtime_0_in)", 1),  # Single operation
-    (4,"z_w_con_c_out_0 = 0.0", 1),  # Assignment only, no operation
-    (5,"p_diag_out_w_concorr_c_0 = ((p_metrics_0_in_wgtfac_c_0 * z_w_concorr_mc_0_in_0) + ((1.0 - p_metrics_1_in_wgtfac_c_0) * z_w_concorr_mc_1_in_0))",
+    (1, "_out_float__if_cond = ((_if_cond == 1) == 0)", 2),  # 2 ==
+    (2, "out_ci = 5 * in_ci + 4", 2),  # __t0 = 5 * in_ci; out_ci = __t0 + 4
+    (3, "cfl_w_limit_out = (0.85 / dtime_0_in)", 1),  # Single operation
+    (4, "z_w_con_c_out_0 = 0.0", 1),  # Assignment only, no operation
+    (5,
+     "p_diag_out_w_concorr_c_0 = ((p_metrics_0_in_wgtfac_c_0 * z_w_concorr_mc_0_in_0) + ((1.0 - p_metrics_1_in_wgtfac_c_0) * z_w_concorr_mc_1_in_0))",
      4),  # 4 ops: *, -, *, +
-    (6,"rot_vec_out_0 = ((((((vec_e_0_in_0 * ptr_int_0_in_geofac_rot_0) + (vec_e_1_in_0 * ptr_int_1_in_geofac_rot_0)) + (vec_e_2_in_0 * ptr_int_2_in_geofac_rot_0)) + (vec_e_3_in_0 * ptr_int_3_in_geofac_rot_0)) + (vec_e_4_in_0 * ptr_int_4_in_geofac_rot_0)) + (vec_e_5_in_0 * ptr_int_5_in_geofac_rot_0))",
+    (6,
+     "rot_vec_out_0 = ((((((vec_e_0_in_0 * ptr_int_0_in_geofac_rot_0) + (vec_e_1_in_0 * ptr_int_1_in_geofac_rot_0)) + (vec_e_2_in_0 * ptr_int_2_in_geofac_rot_0)) + (vec_e_3_in_0 * ptr_int_3_in_geofac_rot_0)) + (vec_e_4_in_0 * ptr_int_4_in_geofac_rot_0)) + (vec_e_5_in_0 * ptr_int_5_in_geofac_rot_0))",
      11),  # 6 * and 5 +
-    (7,"p_diag_out_ddt_w_adv_pc_0 = (- (z_w_con_c_0_in_0 * (((p_prog_0_in_w_0 * p_metrics_0_in_coeff1_dwdz_0) - (p_prog_1_in_w_0 * p_metrics_1_in_coeff2_dwdz_0)) + (p_prog_2_in_w_0 * (p_metrics_2_in_coeff2_dwdz_0 - p_metrics_3_in_coeff1_dwdz_0)))))",
+    (7,
+     "p_diag_out_ddt_w_adv_pc_0 = (- (z_w_con_c_0_in_0 * (((p_prog_0_in_w_0 * p_metrics_0_in_coeff1_dwdz_0) - (p_prog_1_in_w_0 * p_metrics_1_in_coeff2_dwdz_0)) + (p_prog_2_in_w_0 * (p_metrics_2_in_coeff2_dwdz_0 - p_metrics_3_in_coeff1_dwdz_0)))))",
      8),  # 4 *, 2 -, 1 +, 1 unary -
-    (8,"z_w_con_c_out_0 = ((0.85 * p_metrics_0_in_ddqz_z_half_0) / dtime_0_in)", 2),  # *, /
-    (9,"p_diag_out_max_vcfl_dyn = max_vcfl_dyn_var_152_0_in", 1),  # Assignment only
-    (10,"tmp_call_2_out = (p_diag_0_in_vt_0 ** 2)", 1),  # Single **
-    (11,"z_w_concorr_me_out_0 = ((p_prog_0_in_vn_0 * p_metrics_0_in_ddxn_z_full_0) + (p_diag_0_in_vt_0 * p_metrics_1_in_ddxt_z_full_0))",
+    (8, "z_w_con_c_out_0 = ((0.85 * p_metrics_0_in_ddqz_z_half_0) / dtime_0_in)", 2),  # *, /
+    (9, "p_diag_out_max_vcfl_dyn = max_vcfl_dyn_var_152_0_in", 1),  # Assignment only
+    (10, "tmp_call_2_out = (p_diag_0_in_vt_0 ** 2)", 1),  # Single **
+    (11,
+     "z_w_concorr_me_out_0 = ((p_prog_0_in_vn_0 * p_metrics_0_in_ddxn_z_full_0) + (p_diag_0_in_vt_0 * p_metrics_1_in_ddxt_z_full_0))",
      3),  # 2 *, 1 +
-    (12,"_if_cond_23_out = global_data_0_in_lextra_diffu", 1),  # Assignment only
-    (13,"tmp_arg_18_out = (0.85 - (cfl_w_limit_0_in * dtime_0_in))", 2),  # *, -
-    (14,"levmask_out_0 = 0", 1),  # Assignment only
-    (15,"z_v_grad_w_out_0 = (((z_v_grad_w_0_in_0 * p_metrics_0_in_deepatmo_gradh_ifc_0) + (p_diag_0_in_vn_ie_0 * ((p_diag_1_in_vn_ie_0 * p_metrics_1_in_deepatmo_invr_ifc_0) - p_patch_0_in_edges_ft_e_0))) + (z_vt_ie_0_in_0 * ((z_vt_ie_1_in_0 * p_metrics_2_in_deepatmo_invr_ifc_0) + p_patch_1_in_edges_fn_e_0)))",
+    (12, "_if_cond_23_out = global_data_0_in_lextra_diffu", 1),  # Assignment only
+    (13, "tmp_arg_18_out = (0.85 - (cfl_w_limit_0_in * dtime_0_in))", 2),  # *, -
+    (14, "levmask_out_0 = 0", 1),  # Assignment only
+    (15,
+     "z_v_grad_w_out_0 = (((z_v_grad_w_0_in_0 * p_metrics_0_in_deepatmo_gradh_ifc_0) + (p_diag_0_in_vn_ie_0 * ((p_diag_1_in_vn_ie_0 * p_metrics_1_in_deepatmo_invr_ifc_0) - p_patch_0_in_edges_ft_e_0))) + (z_vt_ie_0_in_0 * ((z_vt_ie_1_in_0 * p_metrics_2_in_deepatmo_invr_ifc_0) + p_patch_1_in_edges_fn_e_0)))",
      9),  # 6 *, 1 -, 2 +
-    (16,"p_diag_out_ddt_w_adv_pc_0 = (p_diag_0_in_ddt_w_adv_pc_0 + ((difcoef_0_in * p_patch_0_in_cells_area_0) * ((((p_prog_0_in_w_0 * p_int_0_in_geofac_n2s_0) + (p_prog_1_in_w_0 * p_int_1_in_geofac_n2s_0)) + (p_prog_2_in_w_0 * p_int_2_in_geofac_n2s_0)) + (p_prog_3_in_w_0 * p_int_3_in_geofac_n2s_0))))",
+    (16,
+     "p_diag_out_ddt_w_adv_pc_0 = (p_diag_0_in_ddt_w_adv_pc_0 + ((difcoef_0_in * p_patch_0_in_cells_area_0) * ((((p_prog_0_in_w_0 * p_int_0_in_geofac_n2s_0) + (p_prog_1_in_w_0 * p_int_1_in_geofac_n2s_0)) + (p_prog_2_in_w_0 * p_int_2_in_geofac_n2s_0)) + (p_prog_3_in_w_0 * p_int_3_in_geofac_n2s_0))))",
      10),  # 7 *, 3 +
-    (17,"tmp_call_15_out = abs(w_con_e_0_in) * 2.0", 2),  # abs(), *
-    (18,"tmp_call_15_out = min(min(w_con_e_0_in, w_con_e_1_in), 0.0)", 2),  # 2 min()
-    (19,"tmp_call_15_out = exp(exp(a))", 2),  # 2 exp()
-    (20,"tmp_call_15_out = log(log(a))", 2),  # 2 log()
-    (21,"out = a or b", 1),  # 1 or
-    (22,"out = a << 2", 1),  # 1 <<
-    (23,"out = a >> 2", 1),  # 1 >>
-    (24,"out = a | 2", 1),  # 1 |
+    (17, "tmp_call_15_out = abs(w_con_e_0_in) * 2.0", 2),  # abs(), *
+    (18, "tmp_call_15_out = min(min(w_con_e_0_in, w_con_e_1_in), 0.0)", 2),  # 2 min()
+    (19, "tmp_call_15_out = exp(exp(a))", 2),  # 2 exp()
+    (20, "tmp_call_15_out = log(log(a))", 2),  # 2 log()
+    (21, "out = a or b", 1),  # 1 or
+    (22, "out = a << 2", 1),  # 1 <<
+    (23, "out = a >> 2", 1),  # 1 >>
+    (24, "out = a | 2", 1),  # 1 |
 ]
 
 # Double-split tasklet test case - Format: ((expr1, expr2), expected_total_statements)
@@ -349,7 +355,7 @@ def _run_compile_and_comparison_test(sdfg: dace.SDFG, expected_num_statements: i
 
 
 @pytest.mark.parametrize("id,expression_str,expected_num_statements", example_expressions)
-def test_single_tasklet_split(id:int, expression_str: str, expected_num_statements: int):
+def test_single_tasklet_split(id: int, expression_str: str, expected_num_statements: int):
     sdfg = _generate_single_tasklet_sdfg(expression_str)
     sdfg.name = sdfg.name + f"_id{id}"
     sdfg.validate()
@@ -368,7 +374,7 @@ def test_single_tasklet_split(id:int, expression_str: str, expected_num_statemen
 
 
 @pytest.mark.parametrize("id,expression_str,expected_num_statements", example_symbol_only_expressions)
-def test_single_tasklet_symbol_only_split(id:int, expression_str: str, expected_num_statements: int):
+def test_single_tasklet_symbol_only_split(id: int, expression_str: str, expected_num_statements: int):
     sdfg = _generate_single_tasklet_symbol_only_sdfg(expression_str)
     sdfg.name = sdfg.name + f"_id{id}"
     sdfg.validate()
@@ -387,7 +393,7 @@ def test_single_tasklet_symbol_only_split(id:int, expression_str: str, expected_
 
 
 @pytest.mark.parametrize("id,expression_strs,expected_num_statements", example_double_expressions)
-def test_double_tasklet_split(id:int, expression_strs: typing.Tuple[str, str], expected_num_statements: int):
+def test_double_tasklet_split(id: int, expression_strs: typing.Tuple[str, str], expected_num_statements: int):
     sdfg = _generate_double_tasklet_sdfg(expression_strs, False)
     sdfg.name = sdfg.name + f"_id{id}"
     sdfg.validate()
@@ -406,7 +412,7 @@ def test_double_tasklet_split(id:int, expression_strs: typing.Tuple[str, str], e
 
 
 @pytest.mark.parametrize("id, expression_strs,expected_num_statements", example_double_expressions)
-def test_double_tasklet_split_direct_tasklet_connection(id:int, expression_strs: typing.Tuple[str, str],
+def test_double_tasklet_split_direct_tasklet_connection(id: int, expression_strs: typing.Tuple[str, str],
                                                         expected_num_statements: int):
     sdfg = _generate_double_tasklet_sdfg(expression_strs, True)
     sdfg.name = sdfg.name + f"_id{id}"
@@ -497,10 +503,12 @@ def _get_sdfg_with_symbol_use_in_tasklet() -> dace.SDFG:
 
     return sdfg
 
+
 def _assert_no_math_dot_call_in_tasklets(sdfg: dace.SDFG):
     for n, g in sdfg.all_nodes_recursive():
         if isinstance(n, dace.nodes.Tasklet):
             assert "math." not in n.code.as_string
+
 
 def test_branch_fusion_tasklets():
     try:
