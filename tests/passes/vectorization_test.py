@@ -2177,7 +2177,100 @@ def test_interstate_boolean_op_three():
     sdfg.save("interstate_boolean_op_three_vectorized.sdfg")
 
 
+def _get_dependency_edge_to_unary_symbol_sdfg():
+    klon = dace.symbolic.symbol("klon")
+    # Add all arrays to the SDFGs
+    in_arrays = {"int_array"}
+    in_scalars = {}
+    out_arrays = {"int_array2"}
+    arr_shapes = {
+        "int_array": ((klon, ), (1, ), dace.int64),
+        "int_array2": ((klon, ), (1, ), dace.int64),
+    }
+    scalar_dtypes = {}
+    outer_sdfg = dace.SDFG("outer")
+    inner_sdfg = dace.SDFG("inner")
+    inner_state = inner_sdfg.add_state("inner_compute_state", is_start_block=True)
+    outer_state = outer_sdfg.add_state("outer_compute_state", is_start_block=True)
+
+    an1_src = inner_state.add_access("int_array")
+    an2_dst = inner_state.add_access("int_array2")
+    an_tmp = inner_state.add_access("tmp0")
+    inner_state.sdfg.add_scalar("tmp0", dace.int64, dace.dtypes.StorageType.Register, True)
+    t1 = inner_state.add_tasklet("t1", set(), {"_out"}, "_out = i + 1")
+    t2 = inner_state.add_tasklet("t2", {"_in1", "_in2"}, {"_out"}, "_out = _in1 > _in2")
+
+    inner_state.add_edge(an1_src, None, t1, None, dace.memlet.Memlet(None))
+    inner_state.add_edge(t1, "_out", an_tmp, None, dace.memlet.Memlet("tmp0"))
+    inner_state.add_edge(an_tmp, None, t2, "_in1", dace.memlet.Memlet("tmp0"))
+    inner_state.add_edge(an1_src, None, t2, "_in2", dace.memlet.Memlet("int_array[i]"))
+    inner_state.add_edge(t2, "_out", an2_dst, None, dace.memlet.Memlet("int_array2[i]"))
+
+    symbols = {"i", "klon"}
+    for sym in symbols:
+        inner_sdfg.add_symbol(sym, dace.int64)
+        outer_sdfg.add_symbol(sym, dace.int64)
+
+    for sdfg in [inner_sdfg, outer_sdfg]:
+        for arr_name in in_arrays.union(out_arrays):
+            shape, strides, dtype = arr_shapes[arr_name]
+            sdfg.add_array(arr_name, shape, dtype, strides=strides, transient=False)
+        for scalar_name in in_scalars:
+            sdfg.add_scalar(scalar_name, scalar_dtypes[scalar_name], transient=False)
+
+    inner_symbol_mapping = {sym: sym for sym in symbols}
+    in_args = in_arrays.union(in_scalars)
+    nsdfg = outer_state.add_nested_sdfg(inner_sdfg, in_args, out_arrays, inner_symbol_mapping)
+
+    m1_entry, m1_exit = outer_state.add_map(name="m1", ndrange={"i": "0:klon:1"})
+
+    inner_sdfg.validate()
+
+    # Access nodes to map entry
+    for arr in in_arrays.union(in_scalars):
+        outer_state.add_edge(outer_state.add_access(arr), None, m1_entry, f"IN_{arr}",
+                             dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]))
+        m1_entry.add_in_connector(f"IN_{arr}")
+        outer_state.add_edge(m1_entry, f"OUT_{arr}", nsdfg, arr,
+                             dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]))
+        m1_entry.add_out_connector(f"OUT_{arr}")
+    # Same for exit nodes
+    for arr in out_arrays:
+        outer_state.add_edge(nsdfg, arr, m1_exit, f"IN_{arr}",
+                             dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]))
+        m1_exit.add_in_connector(f"IN_{arr}", force=True)
+        outer_state.add_edge(m1_exit, f"OUT_{arr}", outer_state.add_access(arr), None,
+                             dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]))
+        m1_exit.add_out_connector(f"OUT_{arr}", force=True)
+    sdfg.validate()
+    return sdfg
+
+
+def test_dependency_edge_to_unary_symbol():
+    sdfg = _get_dependency_edge_to_unary_symbol_sdfg()
+    N = 64
+    A = numpy.random.random((N, )).astype(numpy.float64)
+    B = numpy.random.random((N, )).astype(numpy.float64)
+
+    run_vectorization_test(
+        dace_func=sdfg,
+        arrays={
+            'int_array': A,
+            'int_array2': B
+        },
+        params={
+            'klon': N,
+        },
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name="dependency_edge_to_unary_symbol",
+        from_sdfg=True,
+        no_inline=True,
+    )
+
+
 if __name__ == "__main__":
+    test_dependency_edge_to_unary_symbol()
     test_vabs()
     test_interstate_boolean_op_one()
     test_interstate_boolean_op_two()

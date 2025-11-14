@@ -2261,7 +2261,7 @@ def assert_symbols_in_parent_map_symbols(missing_symbols: Set[str], state: dace.
     Validates that given symbols correspond to loop variables in parent map scopes of a NestedSDFG.
 
     Args:
-        missing_symbols: Symbols to validate (e.g., {"i0", "j1"}).
+        missing_symbols: Symbols to validate (e.g., {"i_laneid_0", "j_laneid_1"}).
         state: The SDFG state.
         nsdfg: NestedSDFG node.
 
@@ -2301,6 +2301,7 @@ def assert_symbols_in_parent_map_symbols(missing_symbols: Set[str], state: dace.
             loop_symbols.add(map_or_loop.loop_variable)
 
     for loop_var in loop_vars:
+        loop_var = loop_var[:-len("_laneid_")] if loop_var.endswith("_laneid_") else loop_var
         assert loop_var in loop_symbols, f"{loop_var} not in {loop_symbols}"
 
     return loop_vars
