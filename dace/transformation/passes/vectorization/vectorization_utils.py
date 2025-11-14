@@ -3342,7 +3342,7 @@ def use_previous_subsets(
             continue
 
         # Find the corresponding incoming edge with IN_<idx> for OUT_<idx>.
-        in_edges = state.in_edges_by_connector(map_entry, out_edge.src_conn.replace("OUT_", "IN_"))
+        in_edges = set(state.in_edges_by_connector(map_entry, out_edge.src_conn.replace("OUT_", "IN_")))
         if not in_edges:
             continue
 
