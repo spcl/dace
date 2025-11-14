@@ -1585,33 +1585,41 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         if rhs_left is None or rhs_right is None:
             #state.sdfg.save("failing.sdfg")
             #assert op in tutil._UNARY_SYMBOLS
-            if op not in UNARY_OPERATORS:
+            if op not in UNARY_OPERATORS and op in OPERATORS:
                 raise Exception(
                     f"Invalid operand configuration for fallback vectorization. {rhs_left}, {rhs_right}, {lhs_expr}, {op}"
                 )
 
-        if op_ in UNARY_OPERATORS and (rhs_left is None or rhs_right is None):
-            rhs = rhs_left if rhs_left is not None else rhs_right
-            const = const1_ if const1_ is not None else const2_
-            if rhs_left == const:
-                code_lines.append(f"{lhs_expr} = ({op_} {rhs}){comparison_suffix};")
+        if rhs_left is None or rhs_right is None:
+            if op_ in UNARY_OPERATORS:
+                rhs = rhs_left if rhs_left is not None else rhs_right
+                const = const1_ if const1_ is not None else const2_
+                if rhs_left == const:
+                    code_lines.append(f"{lhs_expr} = {op_}{rhs}{comparison_suffix};")
+                else:
+                    code_lines.append(f"{lhs_expr} = {op_}({rhs}[_vi]){comparison_suffix};")
             else:
-                code_lines.append(f"{lhs_expr} = ({op_} {rhs}[_vi]){comparison_suffix};")
-        elif op_ in OPERATORS:
-            if rhs_left == const1_:
-                code_lines.append(f"{lhs_expr} = ({rhs_left} {op_} {rhs_right}[_vi]){comparison_suffix};")
-            elif rhs_right == const2_:
-                code_lines.append(f"{lhs_expr} = ({rhs_left}[_vi] {op_} {rhs_right}){comparison_suffix};")
-            else:
-                code_lines.append(f"{lhs_expr} = ({rhs_left}[_vi] {op_} {rhs_right}[_vi]){comparison_suffix};")
-
+                rhs = rhs_left if rhs_left is not None else rhs_right
+                const = const1_ if const1_ is not None else const2_
+                if rhs_left == const:
+                    code_lines.append(f"{lhs_expr} = {op_}({rhs}){comparison_suffix};")
+                else:
+                    code_lines.append(f"{lhs_expr} = {op_}({rhs}[_vi]){comparison_suffix};")
         else:
-            if rhs_left == const1_:
-                code_lines.append(f"{lhs_expr} = ({op_}({rhs_left}, {rhs_right}[_vi])){comparison_suffix};")
-            elif rhs_right == const2_:
-                code_lines.append(f"{lhs_expr} = ({op_}({rhs_left}[_vi], {rhs_right})){comparison_suffix};")
+            if op_ in OPERATORS:
+                if rhs_left == const1_:
+                    code_lines.append(f"{lhs_expr} = ({rhs_left} {op_} {rhs_right}[_vi]){comparison_suffix};")
+                elif rhs_right == const2_:
+                    code_lines.append(f"{lhs_expr} = ({rhs_left}[_vi] {op_} {rhs_right}){comparison_suffix};")
+                else:
+                    code_lines.append(f"{lhs_expr} = ({rhs_left}[_vi] {op_} {rhs_right}[_vi]){comparison_suffix};")
             else:
-                code_lines.append(f"{lhs_expr} = ({op_}({rhs_left}[_vi], {rhs_right}[_vi])){comparison_suffix};")
+                if rhs_left == const1_:
+                    code_lines.append(f"{lhs_expr} = ({op_}({rhs_left}, {rhs_right}[_vi])){comparison_suffix};")
+                elif rhs_right == const2_:
+                    code_lines.append(f"{lhs_expr} = ({op_}({rhs_left}[_vi], {rhs_right})){comparison_suffix};")
+                else:
+                    code_lines.append(f"{lhs_expr} = ({op_}({rhs_left}[_vi], {rhs_right}[_vi])){comparison_suffix};")
 
         code_lines.append("}")
         return "\n".join(code_lines)
@@ -1636,7 +1644,6 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
             node.code = dace.properties.CodeBlock(code="\n".join([f"{lhs}[{i}] = {c1}_laneid_{i};"
                                                                   for i in range(vw)]) + "\n",
                                                   language=dace.Language.CPP)
-
     elif ttype in {tutil.TaskletType.ARRAY_SYMBOL, tutil.TaskletType.ARRAY_ARRAY}:
         _set_template(rhs1, rhs2, c1, c2, lhs, op, ttype)
     elif ttype in {tutil.TaskletType.UNARY_ARRAY}:

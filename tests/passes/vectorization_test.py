@@ -50,6 +50,12 @@ def vadds_cpu(A: dace.float64[N, N], B: dace.float64[N, N]):
 
 
 @dace.program
+def vabs(A: dace.float64[N, N]):
+    for i, j in dace.map[0:N, 0:N]:
+        A[i, j] = abs(A[i, j])
+
+
+@dace.program
 def vadd_int(A: dace.int64[N, N], B: dace.int64[N, N]):
     for i, j in dace.map[0:N, 0:N]:
         A[i, j] = A[i, j] + B[i, j]
@@ -2001,6 +2007,24 @@ def test_vadd_with_unary_scalar_cpu():
     )
 
 
+def test_vabs():
+    N = 64
+    A = numpy.random.random((N, N))
+
+    run_vectorization_test(
+        dace_func=vabs,
+        arrays={
+            'A': A,
+        },
+        params={
+            'N': N,
+        },
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name="vabs",
+    )
+
+
 def test_vadd_with_scalar_scalar_cpu():
     N = 64
     A = numpy.random.random((N, N))
@@ -2154,7 +2178,7 @@ def test_interstate_boolean_op_three():
 
 
 if __name__ == "__main__":
-    # Nov 14 Fix these
+    test_vabs()
     test_interstate_boolean_op_one()
     test_interstate_boolean_op_two()
     test_interstate_boolean_op_three()
