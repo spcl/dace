@@ -634,7 +634,8 @@ def prepare_vectorized_array(state: dace.SDFGState,
                              subset: dace.subsets.Range,
                              vector_width: dace.symbolic.SymExpr,
                              vector_storage: dace.dtypes.StorageType,
-                             reuse_name_if_existing: bool = False):
+                             reuse_name_if_existing: bool = False,
+                             use_name: str = None):
     """
     Prepares a vectorized array by creating the vector array in outer SDFG
     and replacing the inner array with vectorized version.
@@ -655,7 +656,7 @@ def prepare_vectorized_array(state: dace.SDFGState,
     # Create vector array in outer SDFG
     #print(f"perpare, {inner_arr_name}, {orig_dataname}, {subset}")
 
-    vector_dataname_candidate = orig_dataname + "_vec_k"
+    vector_dataname_candidate = orig_dataname + "_vec_k" if use_name is None else use_name
     if reuse_name_if_existing:
         vector_dataname = vector_dataname_candidate
         if vector_dataname not in state.sdfg.arrays:
@@ -820,17 +821,24 @@ def process_out_edges(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG, 
             orig_arr = state.sdfg.arrays[oe.data.data]
             inner_arr_name = oe.src_conn
 
+            inout_data_name = None
             # Check inout connector if nsdfg
             if isinstance(oe.src, dace.nodes.NestedSDFG) and oe.src_conn in oe.src.in_connectors:
                 # Inout connector means, this array should have been added
-                assert inner_arr_name in state.sdfg.arrays
+                ie_datas = {ie.data.data for ie in state.in_edges_by_connector(nsdfg_node, oe.src_conn)}
+                assert len(ie_datas) == 1
+                ie_data = ie_datas.pop()  # This can be vectorized
+                assert oe.data.data == ie_data or ie_data.startswith(
+                    oe.data.data + "_vec"
+                ), f"{oe.data.data} != {ie_data} and {ie_data} not startswith {oe.data.data + '_vec'} (from {inner_arr_name}) not in {state.sdfg.arrays}"
+                inout_data_name = ie_data
 
             # Prepare vectorized arrays
             # Copy it to avoid it changing
             prev_subset = copy.deepcopy(subset)
             vector_dataname, inner_offset = prepare_vectorized_array(state, inner_sdfg, inner_arr_name, oe.data.data,
                                                                      orig_arr, subset, vector_width, vector_storage,
-                                                                     True)
+                                                                     True, inout_data_name)
 
             # Compute copy subset
             copy_subset = compute_edge_subset(oe.data.subset, prev_subset, orig_arr, inner_offset, vector_width)
@@ -1479,6 +1487,9 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
     vw = vector_width
     is_commutative = op in {"+", "*", "==", "!="}
 
+    PYTHON_TO_CPP_OPERATORS = {"and": "&&", "or": "||", "not": "!"}
+    op = PYTHON_TO_CPP_OPERATORS.get(op, op)
+
     def _str_to_float_or_str(s: Union[int, float, str, None]):
         """Convert string constants to float if possible."""
         if s is None:
@@ -1589,10 +1600,9 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
 
     def _set_template(rhs1_, rhs2_, const1_, const2_, lhs_, op_, ttype):
         """Helper to set tasklet code from template/fallback."""
-        node.code = dace.properties.CodeBlock(
-            code=f"//{ttype}\n" +
-            _generate_code(rhs1_, rhs2_, _str_to_float_or_str(const1_), _str_to_float_or_str(const2_), lhs_, op_),
-            language=dace.Language.CPP)
+        node.code = dace.properties.CodeBlock(code=_generate_code(rhs1_, rhs2_, _str_to_float_or_str(const1_),
+                                                                  _str_to_float_or_str(const2_), lhs_, op_),
+                                              language=dace.Language.CPP)
 
     # Dispatch based on tasklet type
     if ttype == tutil.TaskletType.ARRAY_ARRAY_ASSIGNMENT:
@@ -1635,7 +1645,7 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         # For the vector-code scalar is the same as a constant
         _set_template(rhs1, None, None, rhs2, lhs, op, ttype)
     elif ttype == tutil.TaskletType.SCALAR_SYMBOL:
-        code_lines = [f"//{ttype}"]
+        code_lines = []
         symbols = state.symbols_defined_at(node)
         l_op = rhs1 if rhs1 is not None else c1
         r_op = rhs2 if rhs2 is not None else c2
@@ -1649,8 +1659,8 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
                     expr = f"({l_op} {op} {r_op})"
                 else:
                     expr = f"({l_op} {op} {r_op}{i})"
-            code_lines.append(f"{lhs}[{i}] = {expr};")
-        node.code = dace.properties.CodeBlock(code="\n".join(code_lines) + "\n", language=dace.Language.CPP)
+            code_lines.append(f"{lhs}[{i}] = {expr}")
+        node.code = dace.properties.CodeBlock(code="\n".join(code_lines) + "\n", language=dace.Language.Python)
     elif ttype == tutil.TaskletType.SCALAR_SCALAR:
         out_edges = list(state.out_edges_by_connector(node, lhs))
         assert len(out_edges) == 1
@@ -1659,11 +1669,10 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         r_op = rhs2 if rhs2 is not None else c2
         expr = f"({l_op} {op} {r_op})"
         if isinstance(lhs_data, dace.data.Array):
-            node.code = dace.properties.CodeBlock(
-                code="\n".join([f"//{ttype}"] + [f"{lhs}[{i}] = {expr};" for i in range(vw)]) + "\n",
-                language=dace.Language.CPP)
+            node.code = dace.properties.CodeBlock(code="\n".join([f"{lhs}[{i}] = {expr}" for i in range(vw)]) + "\n",
+                                                  language=dace.Language.Python)
         else:
-            node.code = dace.properties.CodeBlock(code=f"{lhs} = {expr};\n", language=dace.Language.CPP)
+            node.code = dace.properties.CodeBlock(code=f"{lhs} = {expr}", language=dace.Language.Python)
     elif ttype == tutil.TaskletType.SYMBOL_SYMBOL:
         out_edges = list(state.out_edges_by_connector(node, lhs))
         assert len(out_edges) == 1
@@ -1674,24 +1683,22 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         expr = f"({l_op} {op} {r_op})"
         if isinstance(lhs_data, dace.data.Array):
             node.code = dace.properties.CodeBlock(
-                code="\n".join([f"//{ttype}"] +
-                               [f"{lhs}[{i}] = {use_laneid_symbol_in_expression(expr, c, i)};"
+                code="\n".join([f"{lhs}[{i}] = {use_laneid_symbol_in_expression(expr, c, i)}"
                                 for i in range(vw)]) + "\n",
-                language=dace.Language.CPP)
+                language=dace.Language.Python)
         else:
-            node.code = dace.properties.CodeBlock(code=f"{lhs} = {expr};\n", language=dace.Language.CPP)
+            node.code = dace.properties.CodeBlock(code=f"{lhs} = {expr}\n", language=dace.Language.Python)
     elif ttype == tutil.TaskletType.UNARY_SCALAR:
         out_edges = list(state.out_edges_by_connector(node, lhs))
         assert len(out_edges) == 1
         lhs_data = state.sdfg.arrays[out_edges[0].data.data]
         l_op = rhs1 if rhs1 is not None else c1
-        expr = f"{op}({l_op})"
+        expr = f"{op}{l_op}"
         if isinstance(lhs_data, dace.data.Array):
-            node.code = dace.properties.CodeBlock(
-                code="\n".join([f"//{ttype}"] + [f"{lhs}[{i}] = {expr};" for i in range(vw)]) + "\n",
-                language=dace.Language.CPP)
+            node.code = dace.properties.CodeBlock(code="\n".join([f"{lhs}[{i}] = {expr}" for i in range(vw)]) + "\n",
+                                                  language=dace.Language.Python)
         else:
-            node.code = dace.properties.CodeBlock(code=f"{lhs} = {expr};\n", language=dace.Language.CPP)
+            node.code = dace.properties.CodeBlock(code=f"{lhs} = {expr}\n", language=dace.Language.Python)
     else:
         raise NotImplementedError(f"Unhandled TaskletType: {ttype}, from: {node.code.as_string} ({node})")
 
@@ -2498,6 +2505,7 @@ def expand_interstate_assignments_to_lanes(inner_sdfg: dace.SDFG, nsdfg_node: da
     parent_map_entry = state.scope_dict()[nsdfg_node]
     assert parent_map_entry is not None and isinstance(parent_map_entry, dace.nodes.MapEntry)
     vectorized_param = parent_map_entry.map.params[-1]
+    inner_sdfg.save("before_expansion.sdfg")
 
     for edge in inner_sdfg.all_interstate_edges():
         new_assignments = dict()
@@ -2558,7 +2566,7 @@ def expand_interstate_assignments_to_lanes(inner_sdfg: dace.SDFG, nsdfg_node: da
                             v_expr = v_expr.subs(free_sym, f"{free_sym}({i})")
 
                 new_v = sympy.pycode(v_expr, allow_unknown_functions=True)
-                #print("NEWV", new_v)
+                new_v = tutil.rewrite_boolean_functions_to_boolean_ops(new_v)
                 # Convert non-standard function calls back to array accesses before assigning
                 new_assignments[new_k] = convert_nonstandard_calls(new_v)
 
@@ -2568,6 +2576,8 @@ def expand_interstate_assignments_to_lanes(inner_sdfg: dace.SDFG, nsdfg_node: da
                     new_assignments[k] = convert_nonstandard_calls(new_v)
 
         edge.data.assignments = new_assignments
+
+    inner_sdfg.save("after_expansion.sdfg")
 
 
 def try_demoting_vectorizable_symbols(inner_sdfg: dace.SDFG) -> Set[str]:

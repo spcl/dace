@@ -2305,7 +2305,35 @@ def test_can_be_applied_on_wcr_edge():
     run_and_compare_sdfg(sdfg, False, "can_be_applied_wcr", A=A)
 
 
+@dace.program
+def interstate_boolean_op(A: dace.float64[N, N], B: dace.float64[N, N], c0: dace.int64):
+    for i, j in dace.map[0:N, 0:N]:
+        c1 = i
+        c2 = j
+        c3 = (c1 > c0) or (c2 > c0)
+        if c3:
+            A[i, j] = A[i, j] + B[i, j]
+
+
+def test_interstate_boolean():
+    sdfg = interstate_boolean_op.to_sdfg()
+    sdfg.name = "interstate_boolean_op"
+    nsdfg = {n for (n, g) in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)}.pop()
+    inner_sdfg: dace.SDFG = nsdfg.sdfg
+    syms = inner_sdfg.symbols
+    last_state = {s for s in inner_sdfg.nodes() if inner_sdfg.out_degree(s) == 0}.pop()
+    last_last_state = inner_sdfg.add_state_after(last_state, "ssss", assignments={"symsym": "__tmp0 or __tmp1"})
+    inner_sdfg.add_symbol("symsym", dace.int64)
+    sdfg.validate()
+    sdfg.save("interstate_boolean_op.sdfg")
+    EliminateBranches().apply_pass(sdfg, {})
+    sdfg.validate()
+    sdfg.save("interstate_boolean_op_transformed.sdfg")
+    sdfg.compile()
+
+
 if __name__ == "__main__":
+    test_interstate_boolean()
     test_huge_sdfg_with_log_exp_div("max")
     test_huge_sdfg_with_log_exp_div("add")
     test_mid_sdfg_with_log_exp_div("max")
