@@ -2117,7 +2117,7 @@ def test_interstate_boolean_op_two():
     c0 = numpy.int64(0)
 
     run_vectorization_test(
-        dace_func=interstate_boolean_op_one,
+        dace_func=interstate_boolean_op_two,
         arrays={
             'A': A,
             'B': B
@@ -2128,7 +2128,7 @@ def test_interstate_boolean_op_two():
         },
         vector_width=8,
         save_sdfgs=True,
-        sdfg_name="interstate_boolean_op_one",
+        sdfg_name="interstate_boolean_op_two",
     )
 
 
