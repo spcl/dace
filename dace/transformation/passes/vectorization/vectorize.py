@@ -383,10 +383,25 @@ class Vectorize(ppl.Pass):
         # Add missing symbols
         # There might be missing expanded loop symbols, they are of form `loop_var{id}` where `{id}` is an integer
         # Construct back the loop variable and add assignments for them
-        inner_sdfg.save("inner.sdfg")
         missing_symbols = set(inner_sdfg.free_symbols - set(nsdfg.symbol_mapping.keys()))
+
+        # We might have missing symbols, because the `laneid_` variants are not generate
         map_symbols = assert_symbols_in_parent_map_symbols(missing_symbols, state, nsdfg)
-        assert len(missing_symbols - map_symbols) == 0
+        # From the previous function we know that the missing symbol is in the map symbols
+        # so we can increment it
+        if len(missing_symbols - map_symbols) != 0:
+            # Add all them to assignments
+            assignments = dict()
+            for missing_sym in missing_symbols - map_symbols:
+                assert "_laneid_" in missing_sym
+                missing_sym_base, laneid = missing_sym.split("_laneid_")
+                if missing_sym_base == vector_map_param:
+                    assignments[missing_sym] = f"{missing_sym_base} + {laneid}"
+                else:
+                    assignments[missing_sym] = missing_sym_base
+            inner_sdfg.add_state_before(inner_sdfg.start_block, "pre_missing_assignment", True, assignments=assignments)
+            # Now no missing symbols should be left
+            assert len(set(inner_sdfg.free_symbols - set(nsdfg.symbol_mapping.keys()))) == 0
 
         return unstructured_data
 
