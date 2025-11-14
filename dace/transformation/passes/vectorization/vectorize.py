@@ -108,6 +108,10 @@ class Vectorize(ppl.Pass):
             e - b + 1
         ).approx == self.vector_width, f"MapTiling should have created a map with range of size {self.vector_width}, found {(e - b + 1)}"
         assert s == 1, f"MapTiling should have created a map with stride 1, found {s}"
+
+        # Copy over the subsets of the map above by just replacing the memlet subsets
+        use_previous_subsets(state, new_inner_map, self.vector_width)
+
         new_inner_map.map.range = dace.subsets.Range([(b, e, dace.symbolic.SymExpr(self.vector_width))])
 
         # Need to check that all tasklets within the map are vectorizable
@@ -209,6 +213,7 @@ class Vectorize(ppl.Pass):
         # 1.1.1
         fix_nsdfg_connector_array_shapes_mismatch(state, nsdfg)
         cutil.replace_length_one_arrays_with_scalars(inner_sdfg, True, True)
+
         # 1.1.2
         transient_arrays = {arr_name for arr_name, arr in inner_sdfg.arrays.items() if arr.transient}
         vector_width_transient_arrays = {
@@ -241,6 +246,7 @@ class Vectorize(ppl.Pass):
 
         # Do not make scalars used only interstate edges into vector-width arrays
         non_vector_width_transient_arrays = transient_arrays - (vector_width_transient_arrays.union(invariant_scalars))
+        print(self.vector_width)
         replace_arrays_with_new_shape(inner_sdfg, vector_width_transient_arrays, (self.vector_width, ),
                                       self.vector_op_numeric_type)
         replace_arrays_with_new_shape(inner_sdfg, non_vector_width_transient_arrays, (self.vector_width, ), None)

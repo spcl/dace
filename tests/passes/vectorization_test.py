@@ -1541,7 +1541,7 @@ def test_disjoint_chain():
         numpy.testing.assert_allclose(out_no_fuse[name], out_fused[name], atol=1e-12)
 
 
-def _get_cloudsc_snippet_three(add_scalar: bool):
+def _get_cloudsc_snippet_three(add_scalar: bool, map_range_dependent_subset: bool = False):
     klon = dace.symbolic.symbol("klon")
     klev = dace.symbolic.symbol("klev")
     # Add all arrays to the SDFGs
@@ -1660,18 +1660,37 @@ def _get_cloudsc_snippet_three(add_scalar: bool):
         m1_entry.add_in_connector(f"IN_{arr}")
     # Access nodes to map entry1 to map entry 2 and nsdfg
     for arr in in_arrays.union(in_scalars):
+        if map_range_dependent_subset:
+            if arr in in_arrays:
+                if arr in {"zqx", "zqx0"}:
+                    mem = dace.memlet.Memlet(f"{arr}[0:i+1, 0:j+1, 0:5]")
+                else:
+                    mem = dace.memlet.Memlet(f"{arr}[0:i+1, 0:j+1]")
+            else:
+                mem = dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr])
+        else:
+            mem = dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr])
+
         outer_state.add_edge(m1_entry, f"OUT_{arr}", m2_entry, f"IN_{arr}" if arr not in {"kidia", "kfdia"} else arr,
                              dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]))
         m1_entry.add_out_connector(f"OUT_{arr}", force=True)
         m2_entry.add_in_connector(f"IN_{arr}" if arr not in {"kidia", "kfdia"} else arr, force=True)
         if arr not in {"kidia", "kfdia"}:
-            outer_state.add_edge(m2_entry, f"OUT_{arr}", nsdfg, arr,
-                                 dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]))
+            outer_state.add_edge(m2_entry, f"OUT_{arr}", nsdfg, arr, copy.deepcopy(mem))
             m2_entry.add_out_connector(f"OUT_{arr}", force=True)
     # Same for exit nodes
     for arr in out_arrays:
-        outer_state.add_edge(nsdfg, arr, m2_exit, f"IN_{arr}",
-                             dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]))
+        if map_range_dependent_subset:
+            if arr in in_arrays:
+                if arr in {"zqx", "zqx0"}:
+                    mem = dace.memlet.Memlet(f"{arr}[0:i+1, 0:j+1, 0:5]")
+                else:
+                    mem = dace.memlet.Memlet(f"{arr}[0:i+1, 0:j+1]")
+            else:
+                mem = dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr])
+        else:
+            mem = dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr])
+        outer_state.add_edge(nsdfg, arr, m2_exit, f"IN_{arr}", copy.deepcopy(mem))
         m2_exit.add_in_connector(f"IN_{arr}", force=True)
         outer_state.add_edge(m2_exit, f"OUT_{arr}", m1_exit, f"IN_{arr}",
                              dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]))
@@ -1822,6 +1841,112 @@ def test_snippet_from_cloudsc_three(opt_parameters):
                            sdfg_name=sdfg.name,
                            fuse_overlapping_loads=fuse_overlapping_loads,
                            insert_copies=insert_copies)
+
+
+@pytest.mark.parametrize("opt_parameters", [(True, True), (True, False), (False, True), (False, False)])
+def test_snippet_from_cloudsc_three_with_partial_subset(opt_parameters):
+    fuse_overlapping_loads, insert_copies = opt_parameters
+
+    sdfg = _get_cloudsc_snippet_three(add_scalar=False, map_range_dependent_subset=True)
+    sdfg.name = f"cloudsc_snippet_three_with_partial_subset_fuse_overlapping_loads_{fuse_overlapping_loads}_insert_copies_{insert_copies}"
+    sdfg.validate()
+
+    # Symbolic values requested by the user
+    klon = 64
+    klev = 64
+    kidia = 1
+    kfdia = 32
+
+    # Map of array shapes (from the SDFG snippet): only the shape tuples matter for creating arrays
+    arr_shapes = {
+        "tendency_tmp_q": (klon, klev),
+        "pa": (klon, klev),
+        "pq": (klon, klev),
+        "tendency_tmp_t": (klon, klev),
+        "tendency_tmp_a": (klon, klev),
+        "pt": (klon, klev),
+        "zqx0": (klon, klev, 5),
+        "zqx": (klon, klev, 5),
+        "ztp1": (klon, klev),
+        "zaorig": (klon, klev),
+        "za": (klon, klev),
+    }
+
+    # Create Fortran-ordered NumPy arrays
+    arrays = {name: numpy.random.random(shape).astype(numpy.float64, order='F') for name, shape in arr_shapes.items()}
+    # Create scalars requested
+    scalars = {
+        "kfdia": numpy.int64(kfdia),
+        "kidia": numpy.int64(kidia),
+        "ptsphy": numpy.float64(0.0),
+        "klev": numpy.int64(klev),
+        "klon": numpy.int64(klon),
+    }
+
+    # Quick verification display: shape and contiguity / strides
+    run_vectorization_test(dace_func=sdfg,
+                           from_sdfg=True,
+                           arrays=arrays,
+                           params=scalars,
+                           vector_width=8,
+                           save_sdfgs=True,
+                           sdfg_name=sdfg.name,
+                           fuse_overlapping_loads=fuse_overlapping_loads,
+                           insert_copies=insert_copies,
+                           no_inline=True)
+
+
+@pytest.mark.parametrize("opt_parameters", [(True, True), (True, False), (False, True), (False, False)])
+def test_snippet_from_cloudsc_three_with_partial_subset_without_inline(opt_parameters):
+    fuse_overlapping_loads, insert_copies = opt_parameters
+
+    sdfg = _get_cloudsc_snippet_three(add_scalar=False, map_range_dependent_subset=True)
+    sdfg.name = f"cloudsc_snippet_three_with_partial_subset_fuse_overlapping_loads_{fuse_overlapping_loads}_insert_copies_{insert_copies}"
+    sdfg.validate()
+
+    # Symbolic values requested by the user
+    klon = 64
+    klev = 64
+    kidia = 1
+    kfdia = 32
+
+    # Map of array shapes (from the SDFG snippet): only the shape tuples matter for creating arrays
+    arr_shapes = {
+        "tendency_tmp_q": (klon, klev),
+        "pa": (klon, klev),
+        "pq": (klon, klev),
+        "tendency_tmp_t": (klon, klev),
+        "tendency_tmp_a": (klon, klev),
+        "pt": (klon, klev),
+        "zqx0": (klon, klev, 5),
+        "zqx": (klon, klev, 5),
+        "ztp1": (klon, klev),
+        "zaorig": (klon, klev),
+        "za": (klon, klev),
+    }
+
+    # Create Fortran-ordered NumPy arrays
+    arrays = {name: numpy.random.random(shape).astype(numpy.float64, order='F') for name, shape in arr_shapes.items()}
+    # Create scalars requested
+    scalars = {
+        "kfdia": numpy.int64(kfdia),
+        "kidia": numpy.int64(kidia),
+        "ptsphy": numpy.float64(0.0),
+        "klev": numpy.int64(klev),
+        "klon": numpy.int64(klon),
+    }
+
+    # Quick verification display: shape and contiguity / strides
+    run_vectorization_test(dace_func=sdfg,
+                           from_sdfg=True,
+                           arrays=arrays,
+                           params=scalars,
+                           vector_width=8,
+                           save_sdfgs=True,
+                           sdfg_name=sdfg.name,
+                           fuse_overlapping_loads=fuse_overlapping_loads,
+                           insert_copies=insert_copies,
+                           no_inline=True)
 
 
 @pytest.mark.parametrize("opt_parameters", [(True, True), (True, False), (False, True), (False, False)])
@@ -2306,6 +2431,8 @@ if __name__ == "__main__":
         test_snippet_from_cloudsc_three(argtuple)
         test_snippet_from_cloudsc_three_with_scalar_use(argtuple)
         test_snippet_from_cloudsc_three_without_inline_sdfgs(argtuple)
+        test_snippet_from_cloudsc_three_with_partial_subset(argtuple)
+        test_snippet_from_cloudsc_three_with_partial_subset_without_inline(argtuple)
         test_map_inside_nested_map(argtuple)
     test_jacobi2d_with_fuse_overlapping_loads()
     test_division_by_zero_cpu()
