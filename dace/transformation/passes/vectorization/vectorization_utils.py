@@ -3210,3 +3210,82 @@ def has_nsdfg_depth_more_than_one(state: dace.SDFGState, map_entry: dace.nodes.M
             if sdfg_has_nested_sdfgs(node.sdfg):
                 return True
     return False
+
+
+def resolve_missing_laneid_symbols(inner_sdfg, nsdfg, state, vector_map_param):
+    """
+    Resolve missing expanded loop symbols of the form ``loop_var_laneid_ID`` inside
+    an SDFG nested in a vectorized map.
+
+    During vectorized code generation, additional symbol variants such as
+    ``i_laneid_0``, ``i_laneid_1`` may appear, but these are often not present in
+    ``nsdfg.symbol_mapping``. This function reconstructs such missing symbols and
+    inserts appropriate symbol assignments before the start block of the inner SDFG.
+
+    Parameters
+    ----------
+    inner_sdfg : dace.SDFG
+        The inner SDFG in which missing free symbols appear.
+
+    nsdfg : dace.nodes.NestedSDFG
+        The nested SDFG node that contains the symbol mapping to the outer SDFG.
+
+    state : dace.SDFGState
+        The state containing the NestedSDFG node. Used to look up parent map symbols.
+
+    vector_map_param : str
+        The name of the map iterator corresponding to the vector lane dimension.
+        Symbols derived from this parameter will be rewritten as `vector_map_param + laneid`.
+
+    Notes
+    -----
+    - Missing symbols must contain ``"_laneid_"``. Symbols not matching this pattern
+      trigger an assertion.
+    - Symbols belonging to the parent map (returned by
+      ``assert_symbols_in_parent_map_symbols``) are *not* rewritten.
+    - All rewritten symbols are assigned immediately before the start block of
+      ``inner_sdfg`` via ``add_state_before``.
+
+    Raises
+    ------
+    AssertionError
+        If unexpected missing symbols remain after processing, or if symbols do not
+        conform to the expected ``*_laneid_*`` pattern.
+
+    """
+    # Find missing symbols
+    missing_symbols = set(inner_sdfg.free_symbols - set(nsdfg.symbol_mapping.keys()))
+
+    # Determine which of the missing symbols correspond to parent map symbols
+    map_symbols = assert_symbols_in_parent_map_symbols(missing_symbols, state, nsdfg)
+
+    # Any symbol not in map_symbols must be auto-constructed
+    unresolved = missing_symbols - map_symbols
+    if len(unresolved) != 0:
+        assignments = {}
+
+        for missing_sym in unresolved:
+            assert "_laneid_" in missing_sym, \
+                f"Unexpected symbol without '_laneid_': {missing_sym}"
+
+            base, laneid = missing_sym.split("_laneid_")
+
+            if base == vector_map_param:
+                # vector iterator -> add lane offset
+                assignments[missing_sym] = f"{base} + {laneid}"
+            else:
+                # other iterators -> simply alias
+                assignments[missing_sym] = base
+
+        # Insert assignment state before the start block
+        inner_sdfg.add_state_before(
+            inner_sdfg.start_block,
+            "pre_missing_assignment",
+            is_start_state=True,
+            assignments=assignments,
+        )
+
+    # Ensure no missing symbols remain
+    remaining = set(inner_sdfg.free_symbols - set(nsdfg.symbol_mapping.keys()))
+    assert len(remaining) == 0, \
+        f"Remaining missing symbols after fix: {remaining}"
