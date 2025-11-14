@@ -1008,3 +1008,41 @@ def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
                     return info_dict
 
     raise NotImplementedError("Unhandled case in detect tasklet type")
+
+
+import ast
+
+
+class FuncToOp(ast.NodeTransformer):
+    """
+    Rewrite:
+        or(a, b)  →  a or b
+        and(a, b) →  a and b
+        not(a)    →  not a
+    """
+
+    def visit_Call(self, node):
+        self.generic_visit(node)
+
+        # Only handle simple function names (not attributes)
+        if isinstance(node.func, ast.Name):
+            fname = node.func.id
+            # NOT
+            if fname.lower() == "not" and len(node.args) == 1:
+                return ast.UnaryOp(op=ast.Not(), operand=node.args[0])
+            # OR
+            if fname.lower() == "or" and len(node.args) == 2:
+                return ast.BoolOp(op=ast.Or(), values=node.args)
+            # AND
+            if fname.lower() == "and" and len(node.args) == 2:
+                return ast.BoolOp(op=ast.And(), values=node.args)
+
+        return node
+
+
+def rewrite_boolean_functions_to_boolean_ops(src: str) -> str:
+    """Parse -> rewrite -> unparse"""
+    tree = ast.parse(src)
+    tree = FuncToOp().visit(tree)
+    ast.fix_missing_locations(tree)
+    return ast.unparse(tree)

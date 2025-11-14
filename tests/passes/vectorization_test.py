@@ -2066,6 +2066,7 @@ def test_vadd_with_scalars_int():
         sdfg_name="vadd_int_with_scalars",
     )
 
+
 @dace.program
 def interstate_boolean_op_one(A: dace.float64[N, N], B: dace.float64[N, N], c0: dace.int64):
     for i, j in dace.map[0:N, 0:N]:
@@ -2085,6 +2086,7 @@ def interstate_boolean_op_two(A: dace.float64[N, N], B: dace.float64[N, N], c0: 
         c4 = c3 or (A[i, j] > B[i, j])
         if not c4:
             A[i, j] = A[i, j] + B[i, j]
+
 
 def test_interstate_boolean_op_one():
     N = 64
@@ -2107,6 +2109,7 @@ def test_interstate_boolean_op_one():
         sdfg_name="interstate_boolean_op_one",
     )
 
+
 def test_interstate_boolean_op_two():
     N = 64
     A = numpy.random.random((N, N)).astype(numpy.int64)
@@ -2128,10 +2131,11 @@ def test_interstate_boolean_op_two():
         sdfg_name="interstate_boolean_op_one",
     )
 
+
 def test_interstate_boolean_op_three():
     sdfg = interstate_boolean_op_one.to_sdfg()
     sdfg.name = "interstate_boolean_op_three"
-    nsdfg = {n for (n,g) in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)}.pop()
+    nsdfg = {n for (n, g) in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)}.pop()
     inner_sdfg: dace.SDFG = nsdfg.sdfg
     syms = inner_sdfg.symbols
     last_state = {s for s in inner_sdfg.nodes() if inner_sdfg.out_degree(s) == 0}.pop()
@@ -2154,7 +2158,6 @@ if __name__ == "__main__":
     test_interstate_boolean_op_one()
     test_interstate_boolean_op_two()
     test_interstate_boolean_op_three()
-
     test_memset_4d()
     test_vadd_int()
     test_vadd_with_scalars_int()

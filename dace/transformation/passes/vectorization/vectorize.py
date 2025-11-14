@@ -383,6 +383,7 @@ class Vectorize(ppl.Pass):
         # Add missing symbols
         # There might be missing expanded loop symbols, they are of form `loop_var{id}` where `{id}` is an integer
         # Construct back the loop variable and add assignments for them
+        inner_sdfg.save("inner.sdfg")
         missing_symbols = set(inner_sdfg.free_symbols - set(nsdfg.symbol_mapping.keys()))
         map_symbols = assert_symbols_in_parent_map_symbols(missing_symbols, state, nsdfg)
         assert len(missing_symbols - map_symbols) == 0
@@ -1055,7 +1056,9 @@ class Vectorize(ppl.Pass):
                     continue
 
                 if map_entry.map.label.startswith("vectorloop_"):
-                    print("`vectorloop_` is given by the vectorization transformation to skip to not vectorize double, skipping. Otherwise change name")
+                    print(
+                        "`vectorloop_` is given by the vectorization transformation to skip to not vectorize double, skipping. Otherwise change name"
+                    )
                     continue
 
                 # If map has a nested SDFG - and that has more nested SDFGs we cant vectorize it
@@ -1063,7 +1066,7 @@ class Vectorize(ppl.Pass):
                     print(f"Map {map_entry} in {state} has multiple levels of nested SDFGs inisde, can't vectorize")
                     continue
 
-                if last_dim_of_map_is_contiguous_accesses(state, map_entry):
+                if not last_dim_of_map_is_contiguous_accesses(state, map_entry):
                     print(
                         f"Last dimension of the map does fall on contiguous accesses, indirect accesses might not always be packed {map_entry}, {state}"
                     )

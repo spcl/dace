@@ -104,12 +104,36 @@ class FuseOverlappingLoads(ppl.Pass):
                         out_connectors = dict()
                         for vitem in v:
                             out_connectors[vitem[0].src_conn] = vitem[0].src
-                            state.remove_edge(vitem[0])
 
                         # Keep on for the new edge
                         out_conn_to_use, src_node = out_connectors.popitem()
                         for outc, src in out_connectors.items():
+                            # Remove the memlet path going up until the parent for all the other paths
+                            # we have decided to remove
+                            in_edges = set(state.in_edges_by_connector(src, outc.replace("OUT_", "IN_")))
+                            assert len(in_edges) == 1
+                            in_edge = in_edges.pop()
+                            edges = state.memlet_path(in_edge)
                             src.remove_out_connector(outc)
+                            ssrc = edges[0].src
+                            sdst = edges[0].dst
+                            for e in edges:
+                                state.remove_edge(e)
+                                if e.src_conn is not None:
+                                    e.src.remove_out_connector(e.src_conn)
+                                if e.dst_conn is not None:
+                                    e.dst.remove_in_connector(e.dst_conn)
+                                if e == in_edge:
+                                    break
+                            if state.degree(ssrc) == 0:
+                                state.remove_node(ssrc)
+                            elif state.out_degree(ssrc) == 0:
+                                for src_in_edge in state.in_edges(ssrc):
+                                    state.add_edge(src_in_edge.src, None, sdst, None, dace.memlet.Memlet(None))
+                                state.remove_node(ssrc)
+
+                        for vitem in v:
+                            state.remove_edge(vitem[0])
 
                         # Create new array for union subset
                         # Get the first access node, properties except the
