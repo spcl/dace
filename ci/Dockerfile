@@ -14,7 +14,6 @@ RUN apt-get update -qq && apt-get install -qq -y \
     ca-certificates \
     curl \
     git \
-    mpich \
     build-essential && \
     apt-get clean
 
@@ -41,7 +40,6 @@ RUN uv pip install \
     pytest-xdist \
     coverage \
     flake8
-RUN uv pip install mpi4py
 RUN uv pip install cupy
 
 # Install codecov
