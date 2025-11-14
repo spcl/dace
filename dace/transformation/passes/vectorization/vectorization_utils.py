@@ -1072,20 +1072,24 @@ def fix_nsdfg_connector_array_shapes_mismatch(parent_state: dace.SDFGState, nsdf
         connector_array = nsdfg_node.sdfg.arrays[connector_name]
         original_shape = connector_array.shape
 
+        print("Subetset", subset)
         # Calculate all possible expected shapes
-        expected_shape_full = tuple([(end + 1 - begin) for begin, end, step in subset])
+        expected_shape_full = tuple([(end + 1 - begin).simplify() for begin, end, step in subset])
+        print("Excepted full shape", expected_shape_full)
 
-        expected_shape_strided = tuple([(end + 1 - begin) // step for begin, end, step in subset])
+        expected_shape_strided = tuple([((end + 1 - begin) // step).simplify() for begin, end, step in subset])
 
-        expected_shape_collapsed_full = tuple([(end + 1 - begin) for begin, end, step in subset
-                                               if (end + 1 - begin) != 1])
+        expected_shape_collapsed_full = tuple([((end + 1 - begin).simplify()) for begin, end, step in subset
+                                               if ((end + 1 - begin).simplify()) != 1])
 
-        expected_shape_collapsed_strided = tuple([(end + 1 - begin) // step for begin, end, step in subset
-                                                  if (end + 1 - begin) // step != 1])
+        expected_shape_collapsed_strided = tuple([((end + 1 - begin) // step).simplify() for begin, end, step in subset
+                                                  if ((end + 1 - begin) // step).simplify() != 1])
 
         # Calculate strides for collapsed shape (excluding size-1 dimensions)
-        strides_collapsed = tuple(
-            [stride for (begin, end, step), stride in zip(subset, connector_array.strides) if (end + 1 - begin) != 1])
+        strides_collapsed = tuple([
+            stride for (begin, end, step), stride in zip(subset, connector_array.strides)
+            if (end + 1 - begin).simplify() != 1
+        ])
 
         # Check if shape matches any expected pattern
         shape_matches = (connector_array.shape == expected_shape_full or connector_array.shape == expected_shape_strided
@@ -1141,15 +1145,15 @@ def fix_nsdfg_connector_array_shapes_mismatch(parent_state: dace.SDFGState, nsdf
         original_shape = connector_array.shape
 
         # Calculate all possible expected shapes
-        expected_shape_full = tuple([(end + 1 - begin) for begin, end, step in subset])
+        expected_shape_full = tuple([(end + 1 - begin).simplify() for begin, end, step in subset])
 
-        expected_shape_strided = tuple([(end + 1 - begin) // step for begin, end, step in subset])
+        expected_shape_strided = tuple([((end + 1 - begin) // step).simplify() for begin, end, step in subset])
 
-        expected_shape_collapsed_full = tuple([(end + 1 - begin) for begin, end, step in subset
-                                               if (end + 1 - begin) != 1])
+        expected_shape_collapsed_full = tuple([((end + 1 - begin).simplify()) for begin, end, step in subset
+                                               if ((end + 1 - begin).simplify()) != 1])
 
-        expected_shape_collapsed_strided = tuple([(end + 1 - begin) // step for begin, end, step in subset
-                                                  if (end + 1 - begin) // step != 1])
+        expected_shape_collapsed_strided = tuple([((end + 1 - begin) // step).simplify() for begin, end, step in subset
+                                                  if ((end + 1 - begin) // step).simplify() != 1])
 
         # Calculate strides for collapsed shape (excluding size-1 dimensions)
         strides_collapsed = tuple(
@@ -1583,8 +1587,6 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         UNARY_OPERATORS = {"+", "!", "-"}
 
         if rhs_left is None or rhs_right is None:
-            #state.sdfg.save("failing.sdfg")
-            #assert op in tutil._UNARY_SYMBOLS
             if op not in UNARY_OPERATORS and op in OPERATORS:
                 raise Exception(
                     f"Invalid operand configuration for fallback vectorization. {rhs_left}, {rhs_right}, {lhs_expr}, {op}"
@@ -2372,6 +2374,8 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
     for arr_name, accesses in all_accesses_to_arrays.items():
         for access_subset in accesses:
             # Get the stride 1 dimension
+            print(sdfg.arrays[arr_name].strides,
+                  [stride == 1 for i, stride in enumerate(sdfg.arrays[arr_name].strides)])
             stride_one_dim = {i for i, stride in enumerate(sdfg.arrays[arr_name].strides) if stride == 1}.pop()
             b, e, s = access_subset[stride_one_dim]
             assert b == e
@@ -2531,7 +2535,6 @@ def expand_interstate_assignments_to_lanes(inner_sdfg: dace.SDFG, nsdfg_node: da
     parent_map_entry = state.scope_dict()[nsdfg_node]
     assert parent_map_entry is not None and isinstance(parent_map_entry, dace.nodes.MapEntry)
     vectorized_param = parent_map_entry.map.params[-1]
-    inner_sdfg.save("before_expansion.sdfg")
 
     for edge in inner_sdfg.all_interstate_edges():
         new_assignments = dict()
@@ -2602,8 +2605,6 @@ def expand_interstate_assignments_to_lanes(inner_sdfg: dace.SDFG, nsdfg_node: da
                     new_assignments[k] = convert_nonstandard_calls(new_v)
 
         edge.data.assignments = new_assignments
-
-    inner_sdfg.save("after_expansion.sdfg")
 
 
 def try_demoting_vectorizable_symbols(inner_sdfg: dace.SDFG) -> Set[str]:
@@ -3289,3 +3290,96 @@ def resolve_missing_laneid_symbols(inner_sdfg, nsdfg, state, vector_map_param):
     remaining = set(inner_sdfg.free_symbols - set(nsdfg.symbol_mapping.keys()))
     assert len(remaining) == 0, \
         f"Remaining missing symbols after fix: {remaining}"
+
+
+def use_previous_subsets(
+    state: dace.SDFGState,
+    map_entry: dace.nodes.MapEntry,
+    vector_width: int,
+):
+    """
+    Rewrite memlet subsets on edges leaving a single-parameter inner map so that
+    structured vector accesses correctly refer to the surrounding parent map.
+
+    The function performs:
+        1. Extract the inner map parameter (e.g., `i`).
+        2. Extract the parent's map lower bound symbol (e.g., `tile_i`).
+        3. For each outgoing memlet:
+             - Identify its corresponding incoming memlet (IN_x -> OUT_x).
+             - Clone its subset.
+             - Substitute outer -> inner symbols for begin/end expressions.
+             - Adjust end bound when the subset length matches `vector_width` (=structured access).
+             - Compute the memlet volume.
+             - Assign a new Memlet with the updated subset and volume.
+
+    Parameters
+    ----------
+    state : dace.SDFGState
+        The current SDFG state containing the map entry.
+    map_entry : dace.nodes.MapEntry
+        The map entry whose outgoing memlet subsets will be rewritten.
+        Must have exactly one map parameter.
+    vector_width : int
+        Width of the structured vector access. If a subset dimension has length
+        equal to `vector_width`, we shrink its end bound by `vector_width - 1`.
+        As in this case we have an exact subset, otherwise we pass a complete dimension or something in that fay that we cant change.
+
+    Notes
+    -----
+    We cast symbolic expressions to string and re-sympify them to force SymPy
+    to reattach the same symbol objects used by DaCe.
+    """
+
+    # Inner map has exactly one parameter, e.g., `i`.
+    assert len(map_entry.map.params) == 1
+    inner_param = map_entry.map.params[0]
+
+    # Extract parent-map lower bound symbol as string, e.g. `[tile_i : ...]`.
+    outer_param = str(map_entry.map.range[0][0])
+
+    for out_edge in state.out_edges(map_entry):
+        if out_edge.src_conn is None:
+            continue
+
+        # Find the corresponding incoming edge with IN_<idx> for OUT_<idx>.
+        in_edges = state.in_edges_by_connector(map_entry, out_edge.src_conn.replace("OUT_", "IN_"))
+        if not in_edges:
+            continue
+
+        # Safe: at most one incoming edge per OUT connector.
+        assert len(in_edges) == 1
+        in_edge = next(iter(in_edges))
+
+        # Copy original subset.
+        orig_subset = copy.deepcopy(in_edge.data.subset)
+
+        new_ranges = []
+        volume = 1
+
+        for (begin, end, stride) in orig_subset:
+            # Rewrite begin expression
+            if hasattr(begin, "subs"):
+                begin_str = str(begin.subs({outer_param: inner_param}))
+                new_begin = dace.symbolic.SymExpr(begin_str).simplify()
+            else:
+                new_begin = begin
+
+            # Rewrite end expression
+            if hasattr(end, "subs"):
+                # Subset extent length
+                extent = (end + 1 - begin) // stride
+                # If exact vector access, shrink by vector_width - 1
+                tail_adjust = vector_width - 1 if extent == vector_width else 0
+                end_str = f"{end.subs({outer_param: inner_param})} - {tail_adjust}"
+                new_end = dace.symbolic.SymExpr(end_str).simplify()
+                volume *= extent
+            else:
+                new_end = end
+            new_ranges.append((new_begin, new_end, stride))
+
+        # Assign new memlet with updated subset and volume
+        out_edge.data = dace.memlet.Memlet(
+            data=out_edge.data.data,
+            subset=dace.subsets.Range(new_ranges),
+            volume=volume,
+        )
