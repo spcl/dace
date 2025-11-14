@@ -683,7 +683,7 @@ def test_unsupported_op_two():
                            params={'N': 64},
                            vector_width=4,
                            save_sdfgs=True,
-                           sdfg_name="unsupported_op")
+                           sdfg_name="unsupported_op_two")
 
 
 def test_nested_sdfg():
