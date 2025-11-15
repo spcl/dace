@@ -6,6 +6,17 @@ variables:
   CUDA_VERSION: '12.9.1'
   UBUNTU_VERSION: '24.04'
 
+workflow:
+  auto_cancel:
+    on_new_commit: interruptible
+    on_job_failure: all
+  rules:
+    - if: '$CI_MERGE_REQUEST_LABELS !~ /no-ci/' # Run if 'skip_build' label is NOT present
+      when: on_success
+    - if: '$CI_MERGE_REQUEST_LABELS =~ /cscs_workflows/' # Run only if 'only_build' label IS present
+      when: on_success
+    - when: never # Otherwise, do not run
+
 stages:
   - build
   - test
@@ -15,6 +26,7 @@ build_cscs_gh200:
   extends:
     - .dynamic-image-name # Creates a tag (exported as DOCKER_TAG) depending on the files in WATCH_FILECHANGES
     - .container-builder-cscs-gh200
+  interruptible: true
   variables:
     BASE_IMAGE: jfrog.svc.cscs.ch/dockerhub/nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION}
     CSCS_REBUILD_POLICY: if-not-exists
@@ -38,6 +50,7 @@ test_cscs_gh200:
     PYTEST_XDIST_AUTO_NUM_WORKERS: 32
   needs:
     - build_cscs_gh200
+  interruptible: true
   script:
     # Since the image does not contain the repo, we need to clone it before running the tests.
     # The output folder is inside the docker image (${WORKDIR}/dace), so it won't take up
