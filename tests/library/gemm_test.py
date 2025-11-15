@@ -63,9 +63,7 @@ def create_gemm_sdfg(dtype, A_shape, B_shape, C_shape, Y_shape, transA, transB, 
     return sdfg
 
 
-_impls = ['pure',
-          pytest.param('MKL', marks=pytest.mark.mkl),
-          pytest.param('cuBLAS', marks=pytest.mark.gpu)]
+_impls = ['pure', pytest.param('MKL', marks=pytest.mark.mkl), pytest.param('cuBLAS', marks=pytest.mark.gpu)]
 _param_grid_trans = dict(
     transA=[True, False],
     transB=[True, False],
@@ -86,11 +84,13 @@ _param_grid_broadcast_C = dict(
     C_shape=[None, ["M", "N"], ["M", 1], ["N"], [1, "N"]],
 )
 
+
 def params_generator(grid):
     keys, values = zip(*grid.items())
     for v in itertools.product(*values):
         params = dict(zip(keys, v))
         yield params
+
 
 _test_params = []
 for param_grid in [_param_grid_trans, _param_grid_scalars, _param_grid_complex, _param_grid_broadcast_C]:
@@ -98,10 +98,8 @@ for param_grid in [_param_grid_trans, _param_grid_scalars, _param_grid_complex, 
         print("Testing params:", params)
         _test_params.append(params)
 
-@pytest.mark.parametrize(
-    ('implementation,params'),
-    itertools.product(_impls, _test_params)
-)
+
+@pytest.mark.parametrize(('implementation,params'), itertools.product(_impls, _test_params))
 def test_library_gemm(implementation, params):
     M = params.get('M', 25)
     N = params.get('N', 24)
