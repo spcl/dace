@@ -63,7 +63,7 @@ test_cscs_gh200:
     - reachable=0
     - ping -W 2 -c 1 codecov.io || reachable=$?
     - if [ $reachable -eq 0 ]; then
-    -   /usr/local/bin/codecov
+    -   codecovcli --verbose upload-process --disable-search -t ${CODECOV_TOKEN} -f coverage.xml
     - else
     -   echo "Codecov.io is unreachable"
     - fi

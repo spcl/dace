@@ -40,10 +40,7 @@ ENV PATH="${VIRTUAL_ENV}/bin:$PATH"
 RUN uv pip install \
     pytest-xdist \
     coverage \
+    codecov-cli \
     flake8
 RUN uv pip install cupy
 
-# Install codecov
-RUN curl -Os https://uploader.codecov.io/latest/linux/codecov && \
-    chmod +x codecov && \
-    mv codecov /usr/local/bin/codecov
