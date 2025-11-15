@@ -13,7 +13,6 @@ from dace import List
 from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg.graph import Edge
-from dace.sdfg.propagation import propagate_memlets_state
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 import dace.sdfg.tasklet_utils as tutil
 import dace.sdfg.construction_utils as cutil
@@ -853,8 +852,6 @@ def process_out_edges(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG, 
             state.add_edge(oe.src, oe.src_conn, an, None,
                            dace.memlet.Memlet.from_array(vector_dataname, state.sdfg.arrays[vector_dataname]))
             state.add_edge(an, None, oe.dst, oe.dst_conn, dace.memlet.Memlet(data=oe.data.data, subset=copy_subset))
-    #assert False
-    propagate_memlets_state(state.sdfg, state)
     state.sdfg.validate()
 
 
