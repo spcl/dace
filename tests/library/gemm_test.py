@@ -99,8 +99,7 @@ for param_grid in [_param_grid_trans, _param_grid_scalars, _param_grid_complex, 
         _test_params.append(params)
 
 
-@pytest.mark.parametrize(('implementation,params'), itertools.product(_impls, _test_params))
-def test_library_gemm(implementation, params):
+def _do_test_gemm(implementation, params):
     M = params.get('M', 25)
     N = params.get('N', 24)
     K = params.get('K', 23)
@@ -169,6 +168,24 @@ def test_library_gemm(implementation, params):
     assert diff <= 1e-5
 
 
+@pytest.mark.parametrize('params', _test_params)
+def do_test_pure(params):
+    impl = 'pure'
+    _do_test_gemm(impl, params):
+
+@pytest.mark.gpu
+@pytest.mark.parametrize('params', _test_params)
+def do_test_cuBLAS(params):
+    impl = 'cuBLAS'
+    _do_test_gemm(impl, params):
+
+@pytest.mark.mkl
+@pytest.mark.parametrize('params', _test_params)
+def do_test_mkl(params):
+    impl = 'MKL'
+    _do_test_gemm(impl, params):
+
+
 def test_gemm_symbolic():
     sdfg = dace.SDFG("gemm")
     state = sdfg.add_state()
@@ -215,9 +232,9 @@ def test_gemm_symbolic_1():
 
 
 if __name__ == "__main__":
-    # FIXME: ensure the test can be run from command line
-    #if len(sys.argv) > 1 and sys.argv[1] == 'gpu':
-    #    test_library_gemm('cuBLAS')
+    if len(sys.argv) > 1 and sys.argv[1] == 'gpu':
+        for params in _test_params:
+            _do_test_gemm('cuBLAS', params)
     # test_library_gemm('pure')
     # test_library_gemm('MKL')
     test_gemm_symbolic()
