@@ -171,19 +171,19 @@ def _do_test_gemm(implementation, params):
 @pytest.mark.parametrize('params', _test_params)
 def do_test_pure(params):
     impl = 'pure'
-    _do_test_gemm(impl, params):
+    _do_test_gemm(impl, params)
 
 @pytest.mark.gpu
 @pytest.mark.parametrize('params', _test_params)
 def do_test_cuBLAS(params):
     impl = 'cuBLAS'
-    _do_test_gemm(impl, params):
+    _do_test_gemm(impl, params)
 
 @pytest.mark.mkl
 @pytest.mark.parametrize('params', _test_params)
 def do_test_mkl(params):
     impl = 'MKL'
-    _do_test_gemm(impl, params):
+    _do_test_gemm(impl, params)
 
 
 def test_gemm_symbolic():
