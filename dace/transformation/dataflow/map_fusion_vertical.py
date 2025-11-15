@@ -407,16 +407,16 @@ class MapFusionVertical(transformation.SingleStateTransformation):
 
         The output edges of the first Map are partitioned into three distinct sets,
         defined as follows:
-        * Pure Output Set `\mathbb{P}`:
+        * Pure Output Set `P`:
             These edges exits the first Map and does not enter the second Map. These
             outputs will be simply be moved to the output of the second Map.
-        * Exclusive Intermediate Set `\mathbb{E}`:
+        * Exclusive Intermediate Set `E`:
             Edges in this set leaves the first MapExit, enters an access node, from
             where a Memlet then leads immediately to the second Map. The memory
             referenced by this access node is not used anywhere else, thus it can
             be removed.
-        * Shared Intermediate Set `\mathbb{S}`:
-            These edges are very similar to the one in `\mathbb{E}` except that they
+        * Shared Intermediate Set `S`:
+            These edges are very similar to the one in `E` except that they
             are used somewhere else, thus they can not be removed and have to be
             recreated as output of the second Map.
 
