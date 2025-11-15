@@ -12,6 +12,7 @@ WORKDIR ${WORKDIR}
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update -qq && apt-get install -qq -y \
     ca-certificates \
+    iputils-ping \
     curl \
     git \
     build-essential && \
