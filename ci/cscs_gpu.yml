@@ -63,7 +63,7 @@ test_cscs_gh200:
     - reachable=0
     - ping -W 2 -c 1 codecov.io || reachable=$?
     - if [ $reachable -eq 0 ]; then
-    -   ./codecov
+    -   /usr/local/bin/codecov
     - else
     -   echo "Codecov.io is unreachable"
     - fi
