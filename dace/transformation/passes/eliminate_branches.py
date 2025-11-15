@@ -17,55 +17,87 @@ class EliminateBranches(ppl.Pass):
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG
 
-    def should_reapply(self, modified: ppl.Modifies) -> bool:
-        return False
+    def _run_transformation(self, sdfg: SDFG, parent_nsdfg_state: Union[SDFG, None] = None) -> bool:
+        from dace.transformation.interstate import branch_elimination
+        # Try applying without cleaning
+        num_applied = 0
+        for node in sdfg.all_control_flow_regions():
+            if isinstance(node, ConditionalBlock):
+                t = branch_elimination.BranchElimination()
+                t.conditional = node
+                t.parent_nsdfg_state = parent_nsdfg_state
+                t.eps_operator_type_for_log_and_div = self.eps_operator_type_for_log_and_div
+                if t.can_be_applied(graph=node.parent_graph, expr_index=0, sdfg=node.sdfg, permissive=self.permissive):
+                    t.apply(graph=node.parent_graph, sdfg=node.sdfg)
+                    num_applied += 1
+        for state in sdfg.all_states():
+            for node in state.nodes():
+                if isinstance(node, nodes.NestedSDFG):
+                    num_applied += self._run_transformation(node.sdfg, state)
+        return num_applied
 
-    def _apply_eliminate_branches(self, root: SDFG, sdfg: SDFG, parent_nsdfg_state: Union[SDFG, None] = None):
+    def _run_clean(self, sdfg: SDFG, parent_nsdfg_state: Union[SDFG, None], lift_multi_state: bool):
+        from dace.transformation.interstate import branch_elimination
+
+        for node in sdfg.all_control_flow_regions():
+            if isinstance(node, ConditionalBlock):
+                t = branch_elimination.BranchElimination()
+                t.conditional = node
+                t.parent_nsdfg_state = parent_nsdfg_state
+                t.eps_operator_type_for_log_and_div = self.eps_operator_type_for_log_and_div
+                if all(t.only_top_level_tasklets(branch) for _, branch in node.branches):
+                    # Try clean might generate multiple conditionals
+                    t.try_clean(node.parent_graph, node.sdfg, lift_multi_state)
+        for state in sdfg.all_states():
+            for node in state.nodes():
+                if isinstance(node, nodes.NestedSDFG):
+                    self._run_clean(node.sdfg, state, lift_multi_state)
+
+    def _apply_eliminate_branches(self, root: SDFG, sdfg: SDFG, parent_nsdfg_state: Union[SDFG, None] = None) -> int:
         """Apply EliminateBranches transformation to all eligible conditionals."""
         from dace.transformation.interstate import branch_elimination
         # Pattern matching with conditional branches to not work (9.10.25), avoid it
         # Depending on the number of nestedness we need to apply that many times because
         # the transformation only runs on top-level ConditionalBlocks
+
+        # Workflow:
+        # 1. Try to apply as much as one can apply without trying to clean
+        # 2. Run try clean without `lift_multi_state` on ifs that where the transformation can't apply to
+        # 3. Try to apply again
+        # 4. Run try clean with `lift_multi_state`
         changed = True
+        num_applied = 0
         while changed:
             changed = False
 
-            for node in sdfg.all_control_flow_blocks():
-                if isinstance(node, ConditionalBlock):
-                    t = branch_elimination.BranchElimination()
-                    t.conditional = node
-                    t.eps_operator_type_for_log_and_div = self.eps_operator_type_for_log_and_div
+            cur_num_applied = self._run_transformation(sdfg, parent_nsdfg_state)
+            num_applied += cur_num_applied
+            changed = changed or (cur_num_applied != 0)
 
-                    if self.try_clean:
-                        t.try_clean(node.parent_graph, sdfg, True)
-                        node = t.conditional
+            # Run try clean, without lifting multistate
+            if self.try_clean:
+                self._run_clean(sdfg, parent_nsdfg_state, False)
 
-            if not self.clean_only:
-                for node in sdfg.all_control_flow_blocks():
-                    if isinstance(node, ConditionalBlock):
-                        t = branch_elimination.BranchElimination()
-                        t.conditional = node
-                        if node.sdfg.parent_nsdfg_node is not None:
-                            t.parent_nsdfg_state = parent_nsdfg_state
-                        t.eps_operator_type_for_log_and_div = self.eps_operator_type_for_log_and_div
-                        if t.can_be_applied(graph=node.parent_graph,
-                                            expr_index=0,
-                                            sdfg=node.sdfg,
-                                            permissive=self.permissive):
-                            t.apply(graph=node.parent_graph, sdfg=node.sdfg)
-                            changed = True
+            # Run transformation again
+            cur_num_applied += self._run_transformation(sdfg, parent_nsdfg_state)
+            num_applied += cur_num_applied
+            changed = changed or (cur_num_applied != 0)
 
-        for state in sdfg.all_states():
-            for node in state.nodes():
-                if isinstance(node, nodes.NestedSDFG):
-                    changed |= self._apply_eliminate_branches(root, node.sdfg, state)
+            # Run try clean, without lifting multistate
+            if self.try_clean:
+                self._run_clean(sdfg, parent_nsdfg_state, True)
 
-        return changed
+            # Run transformation again
+            cur_num_applied += self._run_transformation(sdfg, parent_nsdfg_state)
+            num_applied += cur_num_applied
+            changed = changed or (cur_num_applied != 0)
+
+        return num_applied
 
     def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
         if self.clean_only is True:
             self.try_clean = True
-        self._apply_eliminate_branches(sdfg, sdfg, None)
+        return self._apply_eliminate_branches(sdfg, sdfg, None)
 
     def report(self, pass_retval: int) -> str:
         return f'Fused (andd removed) {pass_retval} branches.'

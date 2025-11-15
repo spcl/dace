@@ -535,7 +535,6 @@ class BranchElimination(transformation.MultiStateTransformation):
 
     def only_top_level_tasklets(self, graph: ControlFlowRegion):
         checked_at_least_one_tasklet = False
-        # Can be applied should ensure this
 
         # Having something other than a state is a problem
         if set(graph.all_states()) != set(graph.nodes()):

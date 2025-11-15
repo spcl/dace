@@ -742,21 +742,6 @@ def test_try_clean_as_pass():
     fbpass.try_clean = False
     fbpass.apply_pass(sdfg, {})
     cblocks = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
-    assert len(cblocks) == 2, f"{cblocks}"
-    fbpass.clean_only = False
-    fbpass.try_clean = False
-    fbpass.apply_pass(sdfg, {})
-    cblocks = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
-    assert len(cblocks) == 1, f"{cblocks}"
-    fbpass.clean_only = False
-    fbpass.try_clean = False
-    fbpass.apply_pass(sdfg, {})
-    cblocks = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
-    assert len(cblocks) == 1, f"{cblocks}"
-    fbpass.clean_only = False
-    fbpass.try_clean = True
-    fbpass.apply_pass(sdfg, {})
-    cblocks = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     assert len(cblocks) == 0, f"{cblocks}"
     sdfg.validate()
 
