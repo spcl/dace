@@ -10,10 +10,6 @@ workflow:
   auto_cancel:
     on_new_commit: interruptible
     on_job_failure: all
-  rules:
-    #- if: '$CI_MERGE_REQUEST_LABELS !~ /no-ci/' # Run if 'skip_build' label is NOT present
-    - if: '$CI_MERGE_REQUEST_LABELS =~ /cscs_workflows/' # Run only if 'only_build' label IS present
-    - when: never # Otherwise, do not run
 
 stages:
   - build
