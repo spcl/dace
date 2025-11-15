@@ -11,10 +11,8 @@ workflow:
     on_new_commit: interruptible
     on_job_failure: all
   rules:
-    - if: '$CI_MERGE_REQUEST_LABELS !~ /no-ci/' # Run if 'skip_build' label is NOT present
-      when: on_success
+    #- if: '$CI_MERGE_REQUEST_LABELS !~ /no-ci/' # Run if 'skip_build' label is NOT present
     - if: '$CI_MERGE_REQUEST_LABELS =~ /cscs_workflows/' # Run only if 'only_build' label IS present
-      when: on_success
     - when: never # Otherwise, do not run
 
 stages:
@@ -46,7 +44,7 @@ test_cscs_gh200:
     CSCS_CUDA_MPS: 1
     SLURM_GPUS_PER_NODE: 4
     SLURM_JOB_NUM_NODES: 1
-    SLURM_TIMELIMIT: 60
+    SLURM_TIMELIMIT: 30
     PYTEST_XDIST_AUTO_NUM_WORKERS: 32
   needs:
     - build_cscs_gh200
