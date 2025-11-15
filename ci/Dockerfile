@@ -43,4 +43,3 @@ RUN uv pip install \
     codecov-cli \
     flake8
 RUN uv pip install cupy
-
