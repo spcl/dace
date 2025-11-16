@@ -150,8 +150,9 @@ def _get_vars(ssa_line: str) -> Tuple[List[str], List[str]]:
         "math",
         "Math",
         "MATH",
-    })
-    # print(f"{ssa_line} -> {dace.symbolic.symbols_in_code(rhs, symbols_to_ignore=function_names)}")
+    }).union({"True", "False"})
+
+    print(f"{ssa_line} -> {dace.symbolic.symbols_in_code(rhs, symbols_to_ignore=function_names)}")
     return [lhs], list(dace.symbolic.symbols_in_code(rhs, symbols_to_ignore=function_names))
 
 
@@ -262,6 +263,8 @@ class SplitTasklets(ppl.Pass):
             added_tasklets = list()
             for i, ssa_statement in enumerate(ssa_statements):  # Since SSA we are going to add in a line
                 lhs_vars, rhs_vars = _get_vars(ssa_statement)
+                assert "True" not in rhs_vars
+                assert "False" not in rhs_vars
 
                 symbol_rhs_vars = {rhs_var for rhs_var in rhs_vars if rhs_var in available_symbols}
                 rhs_vars = set(rhs_vars) - symbol_rhs_vars
@@ -364,4 +367,5 @@ class SplitTasklets(ppl.Pass):
 
             split_access_counter += 1
 
+        sdfg.validate()
         return None

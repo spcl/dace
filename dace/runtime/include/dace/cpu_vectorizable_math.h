@@ -7,12 +7,8 @@
 #define STRINGIZE_IMPL(x) #x
 
 #if defined(__clang__)
-  #define _dace_vectorize(width) \
-    _Pragma("clang loop vectorize(enable)") \
-    _Pragma(STRINGIZE(clang loop vectorize_width(width)))
+  #define _dace_vectorize(width) _Pragma(STRINGIZE(clang loop vectorize(enable) vectorize_width(width)))
 #else
-  #define STRINGIZE(x) STRINGIZE_IMPL(x)
-  #define STRINGIZE_IMPL(x) #x
   #define _dace_vectorize(width) _Pragma(STRINGIZE(omp simd simdlen(width)))
 #endif
 

@@ -1488,6 +1488,7 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
     vw = vector_width
     is_commutative = op in {"+", "*", "==", "!="}
 
+    # Cast boolean constants to C-compatible names
     PYTHON_TO_CPP_OPERATORS = {"and": "&&", "or": "||", "not": "!"}
     op = PYTHON_TO_CPP_OPERATORS.get(op, op)
 
@@ -1628,6 +1629,16 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         node.code = dace.properties.CodeBlock(code=_generate_code(rhs1_, rhs2_, _str_to_float_or_str(const1_),
                                                                   _str_to_float_or_str(const2_), lhs_, op_),
                                               language=dace.Language.CPP)
+
+    # Cast python boolean to C++ compatible string
+    if c1 == "False":
+        c1 = "0"
+    if c1 == "True":
+        c1 = "1"
+    if c2 == "False":
+        c2 = "0"
+    if c2 == "True":
+        c2 = "1"
 
     # Dispatch based on tasklet type
     if ttype == tutil.TaskletType.ARRAY_ARRAY_ASSIGNMENT:

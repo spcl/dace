@@ -46,6 +46,7 @@ example_expressions = [
     (22, "out = a << 2", 1),  # 1 <<
     (23, "out = a >> 2", 1),  # 1 >>
     (24, "out = a | 2", 1),  # 1 |
+    (25, "out = (a or True) and (b and True)", 3),  # 2 and, 1 or
 ]
 
 # Double-split tasklet test case - Format: ((expr1, expr2), expected_total_statements)
@@ -62,8 +63,10 @@ def _get_vars(ssa_line):
     lhs, rhs = ssa_line.split('=', 1)
     lhs_var = lhs.strip()
     rhs_vars = list(
-        set(re.findall(r'\b[a-zA-Z_]\w*\b', rhs)) -
-        {"min", "abs", "exp", "log", "max", "round", "sum", "sqrt", "sin", "cos", "tan", "ceil", "floor", "or", "and"})
+        set(re.findall(r'\b[a-zA-Z_]\w*\b', rhs)) - {
+            "min", "abs", "exp", "log", "max", "round", "sum", "sqrt", "sin", "cos", "tan", "ceil", "floor", "or",
+            "and", "True", "False"
+        })
     return [lhs_var], rhs_vars
 
 
@@ -168,7 +171,7 @@ def _generate_single_tasklet_symbol_only_sdfg(expression_str: str) -> dace.SDFG:
     global _single_tasklet_sdfg_counter
     _single_tasklet_sdfg_counter += 1
 
-    sdfg = dace.SDFG(f"single_tasklet_sdfg_{_single_tasklet_sdfg_counter}")
+    sdfg = dace.SDFG(f"single_tasklet_sdfg_symbol_only_sdfg_{_single_tasklet_sdfg_counter}")
 
     lhs_vars, rhs_vars = _get_vars(expression_str)
 
