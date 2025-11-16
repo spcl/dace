@@ -19,6 +19,14 @@ class EliminateBranches(ppl.Pass):
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG
 
+    def _has_no_parent_maps(self, sdfg: SDFG, parent_nsdfg_state: Union[SDFG, None], node: ConditionalBlock) -> bool:
+        parent_loops_and_maps = {
+            m
+            for m in cutil.get_parent_map_and_loop_scopes(parent_nsdfg_state.sdfg if parent_nsdfg_state is not None else sdfg, node, None)
+            if isinstance(m, nodes.MapEntry)
+        }
+        return len(parent_loops_and_maps) == 0
+
     def _run_transformation(self, sdfg: SDFG, parent_nsdfg_state: Union[SDFG, None] = None) -> bool:
         from dace.transformation.interstate import branch_elimination
         # Try applying without cleaning
@@ -28,12 +36,7 @@ class EliminateBranches(ppl.Pass):
                 t = branch_elimination.BranchElimination()
                 # If branch is top-level do not apply
                 if not self.apply_to_top_level_ifs:
-                    parent_loops_and_maps = {
-                        m
-                        for m in cutil.get_parent_map_and_loop_scopes(sdfg, node, parent_nsdfg_state)
-                        if isinstance(m, nodes.MapEntry)
-                    }
-                    if len(parent_loops_and_maps) == 0:
+                    if self._has_no_parent_maps(sdfg, parent_nsdfg_state, node):
                         continue
 
                 t.conditional = node
@@ -54,12 +57,7 @@ class EliminateBranches(ppl.Pass):
         for node in sdfg.all_control_flow_regions():
             if isinstance(node, ConditionalBlock):
                 if not self.apply_to_top_level_ifs:
-                    parent_loops_and_maps = {
-                        m
-                        for m in cutil.get_parent_map_and_loop_scopes(sdfg, node, parent_nsdfg_state)
-                        if isinstance(m, nodes.MapEntry)
-                    }
-                    if len(parent_loops_and_maps) == 0:
+                    if self._has_no_parent_maps(sdfg, parent_nsdfg_state, node):
                         continue
                 t = branch_elimination.BranchElimination()
                 t.conditional = node
@@ -74,12 +72,7 @@ class EliminateBranches(ppl.Pass):
             for node in sdfg.all_control_flow_regions():
                 if isinstance(node, ConditionalBlock):
                     if not self.apply_to_top_level_ifs:
-                        parent_loops_and_maps = {
-                            m
-                            for m in cutil.get_parent_map_and_loop_scopes(sdfg, node, parent_nsdfg_state)
-                            if isinstance(m, nodes.MapEntry)
-                        }
-                        if len(parent_loops_and_maps) == 0:
+                        if self._has_no_parent_maps(sdfg, parent_nsdfg_state, node):
                             continue
                     t = branch_elimination.BranchElimination()
                     t.conditional = node
