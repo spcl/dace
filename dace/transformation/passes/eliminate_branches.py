@@ -19,15 +19,18 @@ class EliminateBranches(ppl.Pass):
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG
 
-    def _has_no_parent_maps(self, sdfg: SDFG, parent_nsdfg_state: Union[SDFG, None], node: ConditionalBlock) -> bool:
+    def _has_no_parent_maps(self, root: SDFG, sdfg: SDFG, parent_nsdfg_state: Union[SDFG, None],
+                            node: ConditionalBlock) -> bool:
         parent_loops_and_maps = {
             m
-            for m in cutil.get_parent_map_and_loop_scopes(parent_nsdfg_state.sdfg if parent_nsdfg_state is not None else sdfg, node, None)
+            for m in cutil.get_parent_map_and_loop_scopes(
+                parent_nsdfg_state.sdfg if parent_nsdfg_state is not None else sdfg, node, None)
             if isinstance(m, nodes.MapEntry)
         }
         return len(parent_loops_and_maps) == 0
 
-    def _run_transformation(self, sdfg: SDFG, parent_nsdfg_state: Union[SDFG, None] = None) -> bool:
+    def _run_transformation(self, root: SDFG, sdfg: SDFG, parent_nsdfg_state: Union[SDFG, None] = None) -> bool:
+        # Root SDFG is needed to collect all parent maps
         from dace.transformation.interstate import branch_elimination
         # Try applying without cleaning
         num_applied = 0
@@ -36,7 +39,7 @@ class EliminateBranches(ppl.Pass):
                 t = branch_elimination.BranchElimination()
                 # If branch is top-level do not apply
                 if not self.apply_to_top_level_ifs:
-                    if self._has_no_parent_maps(sdfg, parent_nsdfg_state, node):
+                    if self._has_no_parent_maps(root, sdfg, parent_nsdfg_state, node):
                         continue
 
                 t.conditional = node
@@ -48,7 +51,7 @@ class EliminateBranches(ppl.Pass):
         for state in sdfg.all_states():
             for node in state.nodes():
                 if isinstance(node, nodes.NestedSDFG):
-                    num_applied += self._run_transformation(node.sdfg, state)
+                    num_applied += self._run_transformation(root, node.sdfg, state)
         return num_applied
 
     def _run_clean(self, sdfg: SDFG, parent_nsdfg_state: Union[SDFG, None], lift_multi_state: bool):
@@ -107,12 +110,14 @@ class EliminateBranches(ppl.Pass):
         # 2. Run try clean without `lift_multi_state` on ifs that where the transformation can't apply to
         # 3. Try to apply again
         # 4. Run try clean with `lift_multi_state`
+
+        # Root SDFG is needed to collect all parent maps, which is necessary to detect if a conditional is top level
         changed = True
         num_applied = 0
         while changed:
             changed = False
 
-            cur_num_applied = self._run_transformation(sdfg, parent_nsdfg_state)
+            cur_num_applied = self._run_transformation(root, sdfg, parent_nsdfg_state)
             num_applied += cur_num_applied
             changed = changed or (cur_num_applied != 0)
 
@@ -121,7 +126,7 @@ class EliminateBranches(ppl.Pass):
                 self._run_clean(sdfg, parent_nsdfg_state, False)
 
             # Run transformation again
-            cur_num_applied += self._run_transformation(sdfg, parent_nsdfg_state)
+            cur_num_applied += self._run_transformation(root, sdfg, parent_nsdfg_state)
             num_applied += cur_num_applied
             changed = changed or (cur_num_applied != 0)
 
@@ -130,7 +135,7 @@ class EliminateBranches(ppl.Pass):
                 self._run_clean(sdfg, parent_nsdfg_state, True)
 
             # Run transformation again
-            cur_num_applied += self._run_transformation(sdfg, parent_nsdfg_state)
+            cur_num_applied += self._run_transformation(root, sdfg, parent_nsdfg_state)
             num_applied += cur_num_applied
             changed = changed or (cur_num_applied != 0)
 
