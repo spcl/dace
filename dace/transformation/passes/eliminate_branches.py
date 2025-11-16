@@ -30,7 +30,7 @@ class EliminateBranches(ppl.Pass):
                 if not self.apply_to_top_level_ifs:
                     parent_loops_and_maps = {
                         m
-                        for m in cutil.get_parent_map_and_loop_scopes(sdfg, node, None)
+                        for m in cutil.get_parent_map_and_loop_scopes(sdfg, node, parent_nsdfg_state)
                         if isinstance(m, nodes.MapEntry)
                     }
                     if len(parent_loops_and_maps) == 0:
@@ -56,7 +56,7 @@ class EliminateBranches(ppl.Pass):
                 if not self.apply_to_top_level_ifs:
                     parent_loops_and_maps = {
                         m
-                        for m in cutil.get_parent_map_and_loop_scopes(sdfg, node, None)
+                        for m in cutil.get_parent_map_and_loop_scopes(sdfg, node, parent_nsdfg_state)
                         if isinstance(m, nodes.MapEntry)
                     }
                     if len(parent_loops_and_maps) == 0:
@@ -76,7 +76,7 @@ class EliminateBranches(ppl.Pass):
                     if not self.apply_to_top_level_ifs:
                         parent_loops_and_maps = {
                             m
-                            for m in cutil.get_parent_map_and_loop_scopes(sdfg, node, None)
+                            for m in cutil.get_parent_map_and_loop_scopes(sdfg, node, parent_nsdfg_state)
                             if isinstance(m, nodes.MapEntry)
                         }
                         if len(parent_loops_and_maps) == 0:
