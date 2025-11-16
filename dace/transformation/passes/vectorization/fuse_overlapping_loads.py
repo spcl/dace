@@ -12,6 +12,7 @@ from dace.transformation import pass_pipeline as ppl, transformation
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class FuseOverlappingLoads(ppl.Pass):
+    # This pass is testes as part of the vectorization pipeline
     CATEGORY: str = 'Vectorization'
 
     def modifies(self) -> ppl.Modifies:

@@ -4,8 +4,10 @@ from typing import Iterator, List, Optional
 from dace.transformation import Pass, pass_pipeline as ppl
 from dace.transformation.passes.clean_data_to_scalar_slice_to_tasklet_pattern import CleanDataToScalarSliceToTaskletPattern
 from dace.transformation.passes.split_tasklets import SplitTasklets
-from dace.transformation.passes.tasklet_preprocessing_passes import PowerOperatorExpansion, RemoveFPTypeCasts, RemoveIntTypeCasts
+from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import PowerOperatorExpansion, RemoveFPTypeCasts, RemoveIntTypeCasts
 from dace.transformation.passes import InlineSDFGs
+from dace.transformation.passes.vectorization.lower_interstate_conditional_assignments_to_tasklets import LowerInterstateConditionalAssignmentsToTasklets
+from dace.transformation.passes.vectorization.remove_empty_states import RemoveEmptyStates
 from dace.transformation.passes.vectorization.vectorize import Vectorize
 from dace.transformation.passes.eliminate_branches import EliminateBranches
 from dace.transformation.passes.vectorization.fuse_overlapping_loads import FuseOverlappingLoads
@@ -78,6 +80,8 @@ class VectorizeCPU(ppl.Pipeline):
         if not only_apply_vectorization_pass:
             passes = [
                 EliminateBranches(),
+                LowerInterstateConditionalAssignmentsToTasklets(),
+                RemoveEmptyStates(),
                 RemoveFPTypeCasts(),
                 RemoveIntTypeCasts(),
                 PowerOperatorExpansion(),

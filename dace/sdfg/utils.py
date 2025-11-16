@@ -2789,6 +2789,8 @@ def demote_symbol_to_scalar(sdfg: 'dace.SDFG',
                     lhs, rhs = n.code.as_string.split(" = ", 2)
                     tasklet_lhs = lhs.strip()
                     assert symbol_str != tasklet_lhs
+                    assert symbol_str != "True"
+                    assert symbol_str != "False"
                     tutil.tasklet_replace_code(n, {symbol_str: f"_in_{symbol_str}"})
                     n.add_in_connector(f"_in_{symbol_str}")
                     access = g.add_access(scalar_name)

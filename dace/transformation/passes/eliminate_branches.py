@@ -54,13 +54,13 @@ class EliminateBranches(ppl.Pass):
                     num_applied += self._run_transformation(root, node.sdfg, state)
         return num_applied
 
-    def _run_clean(self, sdfg: SDFG, parent_nsdfg_state: Union[SDFG, None], lift_multi_state: bool):
+    def _run_clean(self, root: SDFG, sdfg: SDFG, parent_nsdfg_state: Union[SDFG, None], lift_multi_state: bool):
         from dace.transformation.interstate import branch_elimination
 
         for node in sdfg.all_control_flow_regions():
             if isinstance(node, ConditionalBlock):
                 if not self.apply_to_top_level_ifs:
-                    if self._has_no_parent_maps(sdfg, parent_nsdfg_state, node):
+                    if self._has_no_parent_maps(root, sdfg, parent_nsdfg_state, node):
                         continue
                 t = branch_elimination.BranchElimination()
                 t.conditional = node
@@ -75,14 +75,15 @@ class EliminateBranches(ppl.Pass):
             for node in sdfg.all_control_flow_regions():
                 if isinstance(node, ConditionalBlock):
                     if not self.apply_to_top_level_ifs:
-                        if self._has_no_parent_maps(sdfg, parent_nsdfg_state, node):
+                        if self._has_no_parent_maps(root, sdfg, parent_nsdfg_state, node):
                             continue
                     t = branch_elimination.BranchElimination()
                     t.conditional = node
                     t.parent_nsdfg_state = parent_nsdfg_state
                     first_conditional, second_conditional = t.sequentialize_if_else_branch_for_all_subsets(
                         node.parent_graph)
-                    # We still can't apply the pass on these branches also try to lfit states
+                    # We still can't apply the pass on these branches also try to lift states outside the branch
+                    # because the branch elimination transformation requires the if branch to have one state
                     if first_conditional is not None and second_conditional is not None:
                         t.conditional = first_conditional
                         if not t.can_be_applied(first_conditional.parent_graph, 0, first_conditional.sdfg, False):
@@ -96,7 +97,7 @@ class EliminateBranches(ppl.Pass):
         for state in sdfg.all_states():
             for node in state.nodes():
                 if isinstance(node, nodes.NestedSDFG):
-                    self._run_clean(node.sdfg, state, lift_multi_state)
+                    self._run_clean(root, node.sdfg, state, lift_multi_state)
 
     def _apply_eliminate_branches(self, root: SDFG, sdfg: SDFG, parent_nsdfg_state: Union[SDFG, None] = None) -> int:
         """Apply EliminateBranches transformation to all eligible conditionals."""
@@ -123,7 +124,7 @@ class EliminateBranches(ppl.Pass):
 
             # Run try clean, without lifting multistate
             if self.try_clean:
-                self._run_clean(sdfg, parent_nsdfg_state, False)
+                self._run_clean(root, sdfg, parent_nsdfg_state, False)
 
             # Run transformation again
             cur_num_applied += self._run_transformation(root, sdfg, parent_nsdfg_state)
@@ -132,7 +133,7 @@ class EliminateBranches(ppl.Pass):
 
             # Run try clean, with lifting multistate
             if self.try_clean:
-                self._run_clean(sdfg, parent_nsdfg_state, True)
+                self._run_clean(root, sdfg, parent_nsdfg_state, True)
 
             # Run transformation again
             cur_num_applied += self._run_transformation(root, sdfg, parent_nsdfg_state)
@@ -164,6 +165,7 @@ class EliminateBranches(ppl.Pass):
         #while changed:
         #    changed = self._apply_symbol_removal(sdfg)
 
+        sdfg.validate()
         return num_applied
 
     def report(self, pass_retval: int) -> str:

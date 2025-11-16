@@ -16,6 +16,9 @@ from dace.transformation.passes import FuseStates
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
+    # This pass is testes as part of the vectorization pipeline
+    CATEGORY: str = 'Vectorization'
+
     conditional_assignment_tasklet_prefix = properties.Property(dtype=str,
                                                                 default="condition_symbol_to_scalar",
                                                                 allow_none=False)
@@ -44,12 +47,22 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
                         # If not in inconnectors then it is a symbol
                         all_free_syms = {str(s) for s in syms if str(s) not in node.in_connectors}
                         # Should be empty
-                        func_calls = {str(f) for f in expr.atoms(sympy.Function)}
-                        assert len(func_calls) == 0
-                        #print(all_free_syms)
-                        #print(func_calls)
-                        no_access_fre_syms = all_free_syms - func_calls
-                        free_conditional_symbols = free_conditional_symbols.union(no_access_fre_syms)
+                        # Remove python boolean operators
+                        # Remove array names
+                        # Remove symbols coming from parent sdfg can't be demoted
+                        # => Exclude them
+                        func_calls = {str(f.func) for f in expr.atoms(sympy.Function)}
+                        boolean_func_calls = {
+                            "OR", "Or", "or", "AND", "And", "and", "not", "Not", "NOT", "False", "True", "false",
+                            "true", "FALSE", "TRUE"
+                        }
+                        arr_names = {str(k) for k in cfg.sdfg.arrays.keys()}
+                        parent_symbol_name = {str(k)
+                                              for k in cfg.sdfg.parent_nsdfg_node.symbol_mapping.keys()
+                                              } if cfg.sdfg.parent_nsdfg_node is not None else {}
+                        no_access_free_syms = all_free_syms - func_calls.union(boolean_func_calls).union(
+                            arr_names).union(parent_symbol_name)
+                        free_conditional_symbols = free_conditional_symbols.union(no_access_free_syms)
 
             for additional_demote_sym in self.also_demote:
                 if additional_demote_sym in cfg.sdfg.symbols:
@@ -119,5 +132,8 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> None:
         self._apply(sdfg)
-        self._apply_extended_state_fusion(sdfg)
+        # Results in numerically incorrect SDFGs, TODO:
+        # self._apply_extended_state_fusion(sdfg)
+        sdfg.validate()
+
         return

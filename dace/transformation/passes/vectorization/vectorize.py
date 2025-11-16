@@ -10,7 +10,7 @@ from dace.sdfg.sdfg import InterstateEdge
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.clean_data_to_scalar_slice_to_tasklet_pattern import CleanDataToScalarSliceToTaskletPattern
 from dace.transformation.passes.split_tasklets import SplitTasklets
-from dace.transformation.passes.tasklet_preprocessing_passes import RemoveFPTypeCasts, RemoveIntTypeCasts, PowerOperatorExpansion
+from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import RemoveFPTypeCasts, RemoveIntTypeCasts, PowerOperatorExpansion
 from dace.transformation.dataflow.tiling import MapTiling
 from dace.transformation.passes.vectorization.vectorization_utils import *
 import dace.sdfg.tasklet_utils as tutil
@@ -111,7 +111,7 @@ class Vectorize(ppl.Pass):
 
         # Copy over the subsets of the map above by just replacing the memlet subsets
         use_previous_subsets(state, new_inner_map, self.vector_width)
-
+        state.sdfg.validate()
         new_inner_map.map.range = dace.subsets.Range([(b, e, dace.symbolic.SymExpr(self.vector_width))])
 
         # Need to check that all tasklets within the map are vectorizable
@@ -126,6 +126,7 @@ class Vectorize(ppl.Pass):
         # Updates memlets from [k, i] to [k, i:i+4]
         self._extend_memlets(state, new_inner_map)
         self._extend_temporary_scalars(state, new_inner_map)
+        state.sdfg.validate()
 
         if not has_single_nested_sdfg:
             if self.insert_copies:
@@ -140,6 +141,8 @@ class Vectorize(ppl.Pass):
         # vector_tasklet -> scalar -> vector_tasklet
         # makes the scalar into vector
         # If the inner node is a NestedSDFG we need to vectorize that too
+        state.sdfg.validate()
+
         if has_single_nested_sdfg:
             nsdfg_node = next(iter(nodes))
             fix_nsdfg_connector_array_shapes_mismatch(state, nsdfg_node)
@@ -530,6 +533,7 @@ class Vectorize(ppl.Pass):
                                 dtype=ca_scl.dtype,
                                 storage=ca_scl.storage,
                                 location=ca_scl.location,
+                                alignment=parse_int_or_default(self.vector_width, 8) * ca_scl.dtype.bytes,
                                 transient=True,
                                 lifetime=ca_scl.lifetime,
                                 find_new_name=False,
@@ -1003,6 +1007,8 @@ class Vectorize(ppl.Pass):
         stride_type = assert_strides_are_packed_C_or_packed_Fortran(sdfg)
         self._stride_type = stride_type
 
+        sdfg.validate()
+
         if self.vector_input_storage != self.vector_output_storage:
             raise NotImplementedError("Different input and output storage types not implemented yet")
 
@@ -1092,6 +1098,7 @@ class Vectorize(ppl.Pass):
                     else:
                         continue
 
+                state.sdfg.validate()
                 self._vectorize_map(state, map_entry, vectorization_number=i)
                 applied += 1
                 vectorized_maps.add(map_entry)

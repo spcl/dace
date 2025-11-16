@@ -1,5 +1,4 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-
 import dace
 
 from typing import Any, Dict, Optional, Set
@@ -140,7 +139,7 @@ class PowerOperatorExpansion(ppl.Pass):
                     new_ast_str = _expand_pow(ast_str)
                     if new_ast_str != ast_str:
                         node.code = CodeBlock(new_ast_str, language=dace.Language.Python)
-
+        sdfg.validate()
         return None
 
 
@@ -166,6 +165,7 @@ class RemoveFPTypeCasts(ppl.Pass):
                     new_ast_str = _remove_dace_float_casts(ast_str)
                     if new_ast_str != ast_str:
                         node.code = CodeBlock(new_ast_str, language=dace.Language.Python)
+        sdfg.validate()
 
 
 @properties.make_properties
@@ -190,3 +190,4 @@ class RemoveIntTypeCasts(ppl.Pass):
                     new_ast_str = _remove_dace_int_casts(ast_str)
                     if new_ast_str != ast_str:
                         node.code = CodeBlock(new_ast_str, language=dace.Language.Python)
+        sdfg.validate()

@@ -1498,7 +1498,7 @@ def test_disjoint_chain_with_overlapping_region_fusion():
 
 def test_disjoint_chain():
     sdfg, nsdfg_parent_state = _get_disjoint_chain_sdfg_two()
-    sdfg.name = f"disjoint_chain_two_rtt_val_4_2"
+    sdfg.name = f"disjoint_chain"
     _N = 64
     zsolqa = numpy.random.choice([0.001, 5.0], size=(5, 5, _N))
     zrainacc = numpy.random.choice([0.001, 5.0], size=(_N, ))
@@ -1507,7 +1507,6 @@ def test_disjoint_chain():
     rtt = numpy.array([4.2], numpy.float64)
     _N = numpy.array([64], numpy.int64)
     sdfg.validate()
-    print("z0")
     sdfg.save(f"{sdfg.name}.sdfgz", compress=True)
 
     copy_sdfg = copy.deepcopy(sdfg)
@@ -1516,9 +1515,7 @@ def test_disjoint_chain():
 
     sdfg.validate()
     out_no_fuse = {k: v.copy() for k, v in arrays.items()}
-    print("x0")
     sdfg(**out_no_fuse)
-    print("x1")
     # Run SDFG version (with transformation)
     VectorizeCPU(vector_width=8, insert_copies=True, fuse_overlapping_loads=False,
                  fail_on_unvectorizable=True).apply_pass(copy_sdfg, {})
@@ -1535,10 +1532,11 @@ def test_disjoint_chain():
                         assert ie.data.subset != dace.subsets.Range([(0, N - 1, 1)])
 
     copy_sdfg(**out_fused)
-    print("x2")
 
-    for name in arrays.keys():
+    for name in sorted(arrays.keys()):
+        print(f"Compare {name}")
         numpy.testing.assert_allclose(out_no_fuse[name], out_fused[name], atol=1e-12)
+        print(f"{name} OK")
 
 
 def _get_cloudsc_snippet_three(add_scalar: bool, map_range_dependent_subset: bool = False):
@@ -1901,7 +1899,7 @@ def test_snippet_from_cloudsc_three_with_partial_subset_without_inline(opt_param
     fuse_overlapping_loads, insert_copies = opt_parameters
 
     sdfg = _get_cloudsc_snippet_three(add_scalar=False, map_range_dependent_subset=True)
-    sdfg.name = f"cloudsc_snippet_three_with_partial_subset_fuse_overlapping_loads_{fuse_overlapping_loads}_insert_copies_{insert_copies}"
+    sdfg.name = f"cloudsc_snippet_three_with_partial_subset_without_inline_fuse_overlapping_loads_{fuse_overlapping_loads}_insert_copies_{insert_copies}"
     sdfg.validate()
 
     # Symbolic values requested by the user
