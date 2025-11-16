@@ -300,7 +300,9 @@ class BranchElimination(transformation.MultiStateTransformation):
         arr_inputs = {var for var in free_vars if var in state.sdfg.arrays}
         sym_inputs = {var for var in free_vars if var not in state.sdfg.arrays}
         for sym_name in sym_inputs:
-            assert sym_name in state.sdfg.symbols
+            if sym_name not in state.sdfg.symbols:
+                state.sdfg.add_symbol(sym_name, dace.int32, False)
+            assert sym_name in state.sdfg.symbols, f"{sym_name} not in {state.sdfg.symbols}: assignment is {rhs}"
 
         # Generate the scalar for the float constant
         float_lhs_name, float_lhs = state.sdfg.add_scalar(
@@ -319,7 +321,7 @@ class BranchElimination(transformation.MultiStateTransformation):
 
         assert arr_inputs.union(symbol_inputs) == free_vars
 
-        tasklet = state.add_tasklet(name=f"ieassign_{lhs}_to_{float_lhs_name}_scalar",
+        tasklet = state.add_tasklet(name=f"condition_symbol_to_scalar_{lhs}_to_{float_lhs_name}_scalar",
                                     inputs={f"_in_{arr_input}_{i}"
                                             for i, arr_input in enumerate(arr_inputs)},
                                     outputs={f"_out_{float_lhs_name}"},
@@ -367,42 +369,6 @@ class BranchElimination(transformation.MultiStateTransformation):
 
         state.add_edge(tasklet, f"_out_{float_lhs_name}", state.add_access(float_lhs_name), None,
                        dace.memlet.Memlet(float_lhs_name))
-
-        # We should try to demote symbols used in these tasklets.
-        # Conditionals require them to be symbols -> but having them as scalars will make
-        # vectorization more efficient.
-        for sym_name in sym_inputs:
-            print(f"Try demote {sym_name} from {sym_inputs}")
-            # If a symbol is in the name mapping we will have non-transietn scalar access which needs preparation
-            if state.sdfg.parent_nsdfg_node is not None and sym_name in state.sdfg.parent_nsdfg_node.symbol_mapping:
-                assert state.sdfg.parent_nsdfg_node == parent_nsdfg_node
-                print(state.sdfg.parent_nsdfg_node.symbol_mapping)
-                assert str(state.sdfg.parent_nsdfg_node.symbol_mapping[sym_name]
-                           ) == sym_name, f"Pass only supports identity symbol mapping currently"
-                # Find an in-connector where accesses the `sym_name` data from outside and use that name if exists
-                in_datas_to_sym_name = {
-                    ie.data.data
-                    for ie in parent_nsdfg_state.in_edges(parent_nsdfg_node) if ie.data.data == sym_name
-                }
-                if len(in_datas_to_sym_name) == 1:
-                    out_data_name, scalar_name = {(ie.data.data, ie.dst_conn)
-                                                  for ie in parent_nsdfg_state.in_edges(parent_nsdfg_node)
-                                                  if ie.data.data == sym_name}.pop()
-                    assert isinstance(
-                        parent_nsdfg_state.sdfg.arrays[out_data_name], dace.data.Scalar
-                    ), f"Pass needs to input to inside symbol to be a scalar and not an array access, {parent_nsdfg_state.sdfg.arrays[out_data_name]} is {type(parent_nsdfg_state.sdfg.arrays[out_data_name])}"
-                    #state.sdfg.replace_dict({sym_name: scalar_name})
-                    print("1")
-                    sdutil.demote_symbol_to_scalar(state.sdfg, sym_name, state.sdfg.symbols[sym_name], scalar_name)
-                # else means it is also a symbol outside
-                else:
-                    # demoting parent symbol to a symbol in the nested SDFG might cause issues
-                    # Do not demote
-                    pass
-            else:
-                # If in free-symbols nothing we can do
-                if sym_name not in state.sdfg.free_symbols:
-                    sdutil.demote_symbol_to_scalar(state.sdfg, sym_name, state.sdfg.symbols[sym_name])
 
         return float_lhs_name
 
@@ -997,7 +963,8 @@ class BranchElimination(transformation.MultiStateTransformation):
         }) == 1:
             assign_tasklets = {
                 t
-                for t in cond_prep_state.nodes() if isinstance(t, dace.nodes.Tasklet) and t.label.startswith("ieassign")
+                for t in cond_prep_state.nodes()
+                if isinstance(t, dace.nodes.Tasklet) and t.label.startswith("condition_symbol_to_scalar")
             }
 
             assert cond_prep_state.out_degree(next(iter(assign_tasklets))) == 1
@@ -1015,7 +982,7 @@ class BranchElimination(transformation.MultiStateTransformation):
 
             cp_tasklet = copy.deepcopy(assign_tasklet)
             new_state.add_node(cp_tasklet)
-            tmp_name, tmp_arr = new_state.sdfg.add_scalar(name="tmp_ieassign",
+            tmp_name, tmp_arr = new_state.sdfg.add_scalar(name="tmp_condition_symbol_to_scalar",
                                                           dtype=new_state.sdfg.arrays[dst_data].dtype,
                                                           transient=True,
                                                           find_new_name=True)
