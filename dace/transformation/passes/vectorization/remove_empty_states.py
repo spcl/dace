@@ -60,7 +60,6 @@ class RemoveEmptyStates(ppl.Pass):
                 if isinstance(node, nodes.NestedSDFG):
                     self._apply(node.sdfg)
 
-
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> None:
         self._apply(sdfg)
         sdfg.validate()
