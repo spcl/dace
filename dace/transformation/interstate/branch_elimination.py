@@ -279,7 +279,9 @@ class BranchElimination(transformation.MultiStateTransformation):
 
         return cleaned, extracted
 
-    def _move_interstate_assignment_to_state(self, state: dace.SDFGState, rhs: str, lhs: str):
+    def _move_interstate_assignment_to_state(self, state: dace.SDFGState, rhs: str, lhs: str,
+                                             parent_nsdfg_state: dace.SDFGState,
+                                             parent_nsdfg_node: dace.nodes.NestedSDFG):
         # Parse rhs of itnerstate edge assignment to a symbolic expression
         # array accesses are shown as functions e.g. arr1[i, j] is treated as a function arr1(i, j)
         # do not consider functions that are native python operators as functions (e.g. AND)
@@ -296,6 +298,10 @@ class BranchElimination(transformation.MultiStateTransformation):
 
         # Collect inputs we need
         arr_inputs = {var for var in free_vars if var in state.sdfg.arrays}
+        sym_inputs = {var for var in free_vars if var not in state.sdfg.arrays}
+        for sym_name in sym_inputs:
+            assert sym_name in state.sdfg.symbols
+
         # Generate the scalar for the float constant
         float_lhs_name, float_lhs = state.sdfg.add_scalar(
             name="float_" + lhs,
@@ -361,6 +367,42 @@ class BranchElimination(transformation.MultiStateTransformation):
 
         state.add_edge(tasklet, f"_out_{float_lhs_name}", state.add_access(float_lhs_name), None,
                        dace.memlet.Memlet(float_lhs_name))
+
+        # We should try to demote symbols used in these tasklets.
+        # Conditionals require them to be symbols -> but having them as scalars will make
+        # vectorization more efficient.
+        for sym_name in sym_inputs:
+            print(f"Try demote {sym_name} from {sym_inputs}")
+            # If a symbol is in the name mapping we will have non-transietn scalar access which needs preparation
+            if state.sdfg.parent_nsdfg_node is not None and sym_name in state.sdfg.parent_nsdfg_node.symbol_mapping:
+                assert state.sdfg.parent_nsdfg_node == parent_nsdfg_node
+                print(state.sdfg.parent_nsdfg_node.symbol_mapping)
+                assert str(state.sdfg.parent_nsdfg_node.symbol_mapping[sym_name]
+                           ) == sym_name, f"Pass only supports identity symbol mapping currently"
+                # Find an in-connector where accesses the `sym_name` data from outside and use that name if exists
+                in_datas_to_sym_name = {
+                    ie.data.data
+                    for ie in parent_nsdfg_state.in_edges(parent_nsdfg_node) if ie.data.data == sym_name
+                }
+                if len(in_datas_to_sym_name) == 1:
+                    out_data_name, scalar_name = {(ie.data.data, ie.dst_conn)
+                                                  for ie in parent_nsdfg_state.in_edges(parent_nsdfg_node)
+                                                  if ie.data.data == sym_name}.pop()
+                    assert isinstance(
+                        parent_nsdfg_state.sdfg.arrays[out_data_name], dace.data.Scalar
+                    ), f"Pass needs to input to inside symbol to be a scalar and not an array access, {parent_nsdfg_state.sdfg.arrays[out_data_name]} is {type(parent_nsdfg_state.sdfg.arrays[out_data_name])}"
+                    #state.sdfg.replace_dict({sym_name: scalar_name})
+                    print("1")
+                    sdutil.demote_symbol_to_scalar(state.sdfg, sym_name, state.sdfg.symbols[sym_name], scalar_name)
+                # else means it is also a symbol outside
+                else:
+                    # demoting parent symbol to a symbol in the nested SDFG might cause issues
+                    # Do not demote
+                    pass
+            else:
+                # If in free-symbols nothing we can do
+                if sym_name not in state.sdfg.free_symbols:
+                    sdutil.demote_symbol_to_scalar(state.sdfg, sym_name, state.sdfg.symbols[sym_name])
 
         return float_lhs_name
 
@@ -1030,7 +1072,6 @@ class BranchElimination(transformation.MultiStateTransformation):
         free_syms = {str(s).strip() for s in cond_code_symexpr.free_symbols if str(s) in graph.sdfg.symbols}
         #print("free_syms:", free_syms)
         sym_val_map = dict()
-        symbolic_sym_val_map = dict()
         nodes_to_check = {self.conditional}
 
         # Do reverse BFS from the sink node to get all possible interstate assignments
@@ -1052,10 +1093,6 @@ class BranchElimination(transformation.MultiStateTransformation):
 
         # The symbol can in free symbols
         assigned_syms = {k for k in sym_val_map}
-        unassigned_syms = free_syms - assigned_syms
-        #print("assigned_syms:", assigned_syms)
-        #print("unassigned_syms:", unassigned_syms)
-        #print("sym_val_map:", sym_val_map)
 
         # If 1 free symbol, easy it means it is condition variable,
         # otherwise get the left most
@@ -1088,12 +1125,6 @@ class BranchElimination(transformation.MultiStateTransformation):
         return cond_var, new_cond
 
     def _generate_identity_write(self, state: SDFGState, arr_name: str, subset: dace.subsets.Range):
-        accessed_data = {n.data for n in state.nodes() if isinstance(n, dace.nodes.AccessNode)}
-        #if arr_name in accessed_data:
-        #    print(
-        #        "Adding_a_new identity assign - even though present. Allowed if the ConditionalBlock only has 1 branch."
-        #    )
-
         an1 = state.add_access(arr_name)
         an2 = state.add_access(arr_name)
 
@@ -1284,6 +1315,36 @@ class BranchElimination(transformation.MultiStateTransformation):
 
                 graph.sdfg.reset_cfg_list()
                 sdutil.set_nested_sdfg_parent_references(graph.sdfg)
+
+        # This function my create empty conditionals we need to remove them
+        nodes_to_rm = set()
+        for node in graph.nodes():
+            if isinstance(node, ConditionalBlock):
+                # 1 branch, 1 state, empty state
+                if len(node.branches) == 1 and len(node.branches[0][1].nodes()) == 1 and len(
+                        node.branches[0][1].nodes()[0].nodes()) == 0:
+                    # Remove
+                    nodes_to_rm.add(node)
+
+        for node in nodes_to_rm:
+            in_edges = graph.in_edges(node)
+            out_edges = graph.out_edges(node)
+            graph.remove_node(node)
+
+            assert len(in_edges) <= 1
+            assert len(out_edges) <= 1
+            if len(in_edges) == 0:
+                if len(out_edges) == 1:
+                    new_src_node = graph.add_state("empty_start_state", is_start_block=True)
+                    new_assignments = dict()
+            else:
+                new_src_node = in_edges[0].src
+                new_assignments = in_edges[0].data.assignments
+
+            if len(out_edges) == 1:
+                new_assignments.update(out_edges[0].data.assignments)
+                graph.add_edge(new_src_node, out_edges[0].dst, InterstateEdge(assignments=new_assignments))
+
         return applied
 
     def sequentialize_if_else_branch_if_disjoint_subsets(self, graph: ControlFlowRegion):
@@ -1316,6 +1377,33 @@ class BranchElimination(transformation.MultiStateTransformation):
                     return first_if, second_if
         return None, None
 
+    def sequentialize_if_else_branch_for_all_subsets(self, graph: ControlFlowRegion):
+        # We can split branches if we they are not disjoint subsets (it will add unnecessary data accesses)
+        # if (cond1) {
+        #   body1
+        # } else {
+        #   body2
+        # }
+        # into two sequential ifs:
+        # if (cond1) {
+        #   body1
+        # }
+        # neg_cond1 = !cond1
+        # if (!cond1) {
+        #   body2
+        # }
+        # And thus we can use twice the single branch imlpementaiton
+        # We can do this if we have a conditional with 2 branches and one of them is None
+
+        # We apply do not do this rn
+        if self.can_be_applied(graph, 0, self.conditional.sdfg, True):
+            return None, None
+
+        if len(self.conditional.branches) == 2:
+            return self._split_branches(parent_graph=graph, if_block=self.conditional)
+
+        return None, None
+
     def demote_branch_only_symbols_appearing_only_a_single_branch_to_scalars_and_try_fuse(
             self, graph: ControlFlowRegion, sdfg: dace.SDFG):
         applied = False
@@ -1338,7 +1426,9 @@ class BranchElimination(transformation.MultiStateTransformation):
                         break
 
                 if len(symbols_defined) > 1:
-                    print("Not well tested: More than one symbol in the clean-up is not well tested skipping")
+                    print(
+                        f"Not well tested: More than one symbol in the clean-up is not well tested skipping, {symbols_defined}"
+                    )
                     continue
 
                 applied = True
@@ -1712,7 +1802,9 @@ class BranchElimination(transformation.MultiStateTransformation):
         cond_prep_state = graph.add_state_before(self.conditional,
                                                  f"cond_prep_for_fused_{self.conditional}",
                                                  is_start_block=graph.in_degree(self.conditional) == 0)
-        cond_var_as_float_name = self._move_interstate_assignment_to_state(cond_prep_state, cond_assignment, cond_var)
+        cond_var_as_float_name = self._move_interstate_assignment_to_state(cond_prep_state, cond_assignment, cond_var,
+                                                                           self.parent_nsdfg_state,
+                                                                           cond_prep_state.sdfg.parent_nsdfg_node)
 
         if len(self.conditional.branches) == 2:
             tup0 = self.conditional.branches[0]
@@ -1902,11 +1994,6 @@ class BranchElimination(transformation.MultiStateTransformation):
 
                     if not has_divisions:
                         self._try_simplify_combine_tasklet(new_state, combine_tasklet)
-
-        if self.parent_nsdfg_state is not None:
-            self.parent_nsdfg_state.sdfg.validate()
-        else:
-            self.conditional.sdfg.validate()
 
         # If the symbol is not used anymore
         conditional_strs = {cond.as_string for cond, _ in self.conditional.branches if cond is not None}

@@ -359,6 +359,7 @@ def run_and_compare(
     else:
         apply_branch_elimination(copy_sdfg, 2)
 
+    copy_sdfg.save(f"{copy_sdfg.name}.sdfgz", compress=True)
     c_sdfg(**out_no_fuse)
     c_copy_sdfg(**out_fused)
 
@@ -486,7 +487,7 @@ def test_multi_state_branch_body(use_pass_flag):
     d = np.zeros((N, N))
     s = np.zeros((1, )).astype(np.int64)
     run_and_compare(multi_state_branch_body,
-                    1 if use_pass_flag else 1,
+                    0 if use_pass_flag else 1,
                     use_pass_flag,
                     f"multistate_branch_body_{str(use_pass_flag).lower()}",
                     a=a,

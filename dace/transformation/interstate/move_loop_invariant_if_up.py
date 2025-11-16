@@ -1,3 +1,5 @@
+from ast import AST
+import ast
 import dace
 
 import copy
@@ -47,7 +49,16 @@ class MoveLoopInvariantIfUp(transformation.MultiStateTransformation):
         # All tasklets of the nestedSDFG needs to be inside this if condition
         # Map body needs to consist only of a nested SDFG (+ nested maps)
         # If-block is in top level nodes
-        return
+        return True
+
+    def _find_assignment(self, graph: ControlFlowRegion, start_node: ControlFlowRegion, sym: str):
+        edges_to_check = set(graph.in_edges(start_node))
+        while edges_to_check:
+            edge = edges_to_check.pop()
+            if sym in edge.data.assignments:
+                return edge.data.assignments[sym]
+            edges_to_check = edges_to_check.union(set(graph.in_edges(edge.src)))
+        return None
 
     def apply(self, graph: ControlFlowRegion, sdfg: sd.SDFG):
         # We have
@@ -76,6 +87,66 @@ class MoveLoopInvariantIfUp(transformation.MultiStateTransformation):
 
         new_branches = [(CodeBlock(cond), ControlFlowRegion(label=f"{body.label}", sdfg=new_sdfg, parent=cb))
                         for cond, body in self.if_block.branches]
+
+        # Get assignment of free symbols in the if condition
+        print(self.if_block.branches)
+        conditional_code = [
+            ast.unparse(cond.code[0]) if isinstance(cond.code[0], AST) else cond.code[0].as_string
+            for cond, _ in self.if_block.branches if cond is not None
+        ][0]
+        conditional_symexpr = dace.symbolic.SymExpr(conditional_code)
+        free_syms = conditional_symexpr.free_symbols
+        # For all free syms find if they are a smbol or array
+        syms_to_resolve = {sym for sym in free_syms if sym not in self.if_block.sdfg.parent_nsdfg_node.symbol_mapping}
+        arrs_to_resolve = {
+            arr
+            for arr in free_syms
+            if arr in self.if_block.sdfg.arrays and self.if_block.sdfg.arrays[arr].transient is True
+        }
+        arrs_to_add = {
+            arr
+            for arr in free_syms
+            if arr in self.if_block.sdfg.arrays and self.if_block.sdfg.arrays[arr].transient is False
+        }
+        assert len(arrs_to_resolve) == 0
+
+        # find_assignment
+        assignments_to_move_up = dict()
+        print("Syms to resolve:", syms_to_resolve)
+        for sym in syms_to_resolve:
+            assignment = self._find_assignment(self.if_block.parent_graph, self.if_block, str(sym))
+            if assignment is None:
+                continue
+            print(assignment)
+            assignments_to_move_up[str(sym)] = assignment
+            symexpr = dace.symbolic.SymExpr(assignment)
+            free_syms = symexpr.free_symbols
+            new_syms_to_resolve = {
+                sym
+                for sym in free_syms if sym not in self.if_block.sdfg.parent_nsdfg_node.symbol_mapping
+            }
+            new_arrs_to_resolve = {
+                arr
+                for arr in free_syms
+                if arr in self.if_block.sdfg.arrays and self.if_block.sdfg.arrays[arr].transient is True
+            }
+            assert len(new_arrs_to_resolve) == 0
+            arrs_to_add = arrs_to_add.union({
+                arr
+                for arr in free_syms
+                if arr in self.if_block.sdfg.arrays and self.if_block.sdfg.arrays[arr].transient is False
+            })
+            syms_to_resolve = syms_to_resolve.union(new_syms_to_resolve)
+
+        # Create dictionary to output names
+        arrs_to_add_dict = dict()
+        for arr_name in arrs_to_add:
+            in_edges = set(self.map_state.in_edges_by_connector(self.if_block.sdfg.parent_nsdfg_node, arr_name)).pop()
+            in_data = in_edges.data.data
+            arrs_to_add_dict[arr] = in_data
+        print("Arrs to add due to interstate assignments", arrs_to_add_dict)
+        print("Interstate assignments to move up", assignments_to_move_up)
+
         # Need to generate else branch if the if-block is not the only node
         if_block_sdfg = self.if_block.sdfg
         assert self.if_block in if_block_sdfg.nodes()
@@ -322,7 +393,6 @@ class MoveLoopInvariantIfUp(transformation.MultiStateTransformation):
             for ms in missing_symbols:
                 new_outer_symbol_mapping[ms] = ms
 
-        new_sdfg.save("ns.sdfg")
         nsdfg2 = self.map_state.add_nested_sdfg(sdfg=new_sdfg,
                                                 inputs=set(new_inputs),
                                                 outputs=set(new_outputs),
@@ -352,7 +422,6 @@ class MoveLoopInvariantIfUp(transformation.MultiStateTransformation):
                 new_sdfg.arrays[arr_name].dtype = self.map_state.sdfg.arrays[arr_name].dtype
 
         if "kfdia" in new_inputs:
-            print(new_sdfg.arrays["kfdia"])
             assert str(new_sdfg.arrays["kfdia"].dtype) != "void"
             assert "kfdia" in new_sdfg.arrays
 
@@ -371,6 +440,17 @@ class MoveLoopInvariantIfUp(transformation.MultiStateTransformation):
             missing_symbols = [s for s in symbols if s not in nsdfg_node.symbol_mapping]
             if missing_symbols:
                 raise Exception("uwu")
+            assert isinstance(new_map_content_sdfg, dace.SDFG)
+            for e in new_map_content_sdfg.edges():
+                for ass in assignments_to_move_up:
+                    if ass in e.data.assignments:
+                        del e.data.assignments[ass]
+
+        if assignments_to_move_up != dict():
+            self.map_state.parent_graph.add_state_before(self.map_state,
+                                                         "pre_assign",
+                                                         True,
+                                                         assignments=assignments_to_move_up)
 
         nsdfg_node = new_sdfg.parent_nsdfg_node
         connectors = nsdfg_node.in_connectors | nsdfg_node.out_connectors
@@ -379,4 +459,4 @@ class MoveLoopInvariantIfUp(transformation.MultiStateTransformation):
         if missing_symbols:
             raise Exception("uwu2")
 
-        self.map_state.sdfg.save("applied.sdfgz", compress=True)
+        sdfg.save(f"x_{self.if_block.label}.sdfgz", compress=True)
