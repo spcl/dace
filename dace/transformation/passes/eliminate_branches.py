@@ -48,6 +48,27 @@ class EliminateBranches(ppl.Pass):
                 if all(t.only_top_level_tasklets(branch) for _, branch in node.branches):
                     # Try clean might generate multiple conditionals
                     t.try_clean(node.parent_graph, node.sdfg, lift_multi_state)
+
+        # Try to sequentialize if-else branches that we can't apply right now to make the applyable
+        if lift_multi_state:
+            for node in sdfg.all_control_flow_regions():
+                if isinstance(node, ConditionalBlock):
+                    t = branch_elimination.BranchElimination()
+                    t.conditional = node
+                    t.parent_nsdfg_state = parent_nsdfg_state
+                    first_conditional, second_conditional = t.sequentialize_if_else_branch_for_all_subsets(
+                        node.parent_graph)
+                    # We still can't apply the pass on these branches also try to lfit states
+                    if first_conditional is not None and second_conditional is not None:
+                        t.conditional = first_conditional
+                        if not t.can_be_applied(first_conditional.parent_graph, 0, first_conditional.sdfg, False):
+                            t.duplicate_condition_across_all_top_level_nodes_if_line_graph_and_empty_interstate_edges(
+                                first_conditional.parent_graph)
+                        t.conditional = second_conditional
+                        if not t.can_be_applied(second_conditional.parent_graph, 0, second_conditional.sdfg, False):
+                            t.duplicate_condition_across_all_top_level_nodes_if_line_graph_and_empty_interstate_edges(
+                                second_conditional.parent_graph)
+
         for state in sdfg.all_states():
             for node in state.nodes():
                 if isinstance(node, nodes.NestedSDFG):
@@ -83,7 +104,7 @@ class EliminateBranches(ppl.Pass):
             num_applied += cur_num_applied
             changed = changed or (cur_num_applied != 0)
 
-            # Run try clean, without lifting multistate
+            # Run try clean, with lifting multistate
             if self.try_clean:
                 self._run_clean(sdfg, parent_nsdfg_state, True)
 

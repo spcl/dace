@@ -2726,7 +2726,10 @@ def specialize_scalar(sdfg: 'dace.SDFG', scalar_name: str, scalar_val: Union[flo
     _specialize_scalar_impl(sdfg, sdfg, scalar_name, scalar_val)
 
 
-def demote_symbol_to_scalar(sdfg: 'dace.SDFG', symbol_str: str, default_type: 'dace.dtypes.typeclass' = None):
+def demote_symbol_to_scalar(sdfg: 'dace.SDFG',
+                            symbol_str: str,
+                            default_type: 'dace.dtypes.typeclass' = None,
+                            in_scalar_name: str = None):
     import dace.sdfg.construction_utils as cutil
     import dace.sdfg.tasklet_utils as tutil
 
@@ -2750,11 +2753,22 @@ def demote_symbol_to_scalar(sdfg: 'dace.SDFG', symbol_str: str, default_type: 'd
                         ((not is_top_level) and symbol_str in sdfg.parent_nsdfg_node.symbol_mapping))
 
     if is_transient is False:
-        raise Exception("Scalar to symbol demotion only works if the resulting scalar would be transient")
+        if in_scalar_name is None:
+            raise Exception(
+                "Scalar to symbol demotion only works if the resulting scalar would be transient or an input scalar name is provided"
+            )
 
     if symbol_str in sdfg.symbols:
         sdfg.remove_symbol(symbol_str)
-    sdfg.add_scalar(name=symbol_str, dtype=sym_dtype, storage=dace.dtypes.StorageType.Register, transient=is_transient)
+
+    if is_transient is True:
+        sdfg.add_scalar(name=symbol_str,
+                        dtype=sym_dtype,
+                        storage=dace.dtypes.StorageType.Register,
+                        transient=is_transient)
+        scalar_name = symbol_str
+    else:
+        scalar_name = in_scalar_name
 
     # For any tasklet that uses the symbol - make an access node to the scalar and connect through the in connector
     # 1. Replace all symbols of name appearing
@@ -2777,8 +2791,8 @@ def demote_symbol_to_scalar(sdfg: 'dace.SDFG', symbol_str: str, default_type: 'd
                     assert symbol_str != tasklet_lhs
                     tutil.tasklet_replace_code(n, {symbol_str: f"_in_{symbol_str}"})
                     n.add_in_connector(f"_in_{symbol_str}")
-                    access = g.add_access(symbol_str)
-                    g.add_edge(access, None, n, f"_in_{symbol_str}", dace.memlet.Memlet(expr=f"{symbol_str}[0]"))
+                    access = g.add_access(scalar_name)
+                    g.add_edge(access, None, n, f"_in_{symbol_str}", dace.memlet.Memlet(expr=f"{scalar_name}[0]"))
                     # If parent scope is not None add a dependency edge to it
                     if sdict[n] is not None:
                         g.add_edge(sdict[n], None, access, None, dace.memlet.Memlet())
