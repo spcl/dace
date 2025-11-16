@@ -496,7 +496,7 @@ def get_num_parent_map_and_loop_scopes(root_sdfg: dace.SDFG, node: dace.nodes.Ma
 
 def get_parent_map_and_loop_scopes(root_sdfg: dace.SDFG, node: Union[dace.nodes.MapEntry, ControlFlowRegion,
                                                                      dace.nodes.Tasklet, ConditionalBlock],
-                                   parent_state: dace.SDFGState):
+                                   parent_state: Union[dace.SDFGState, None]):
     scope_dict = parent_state.scope_dict() if parent_state is not None else None
     num_parent_maps_and_loops = 0
     cur_node = node

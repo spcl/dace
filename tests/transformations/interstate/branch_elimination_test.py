@@ -92,6 +92,22 @@ def branch_dependent_value_write_two(
 
 
 @dace.program
+def top_level_if(
+    a: dace.float64[N, N],
+    b: dace.float64[N, N],
+    c: dace.float64[N, N],
+    d: dace.float64[N, N],
+):
+    if a[0, 0] > 0.3:
+        b[0, 0] = 1.1
+        d[0, 0] = 0.8
+    else:
+        b[1, 1] = -1.1
+        d[1, 1] = 2.2
+    c[1, 1] = max(0, b[1, 1])
+
+
+@dace.program
 def weird_condition(a: dace.float64[N, N], b: dace.float64[N, N], ncldtop: dace.int64):
     for i, j in dace.map[0:N:1, 0:N:1]:
         cond = i + 1 > ncldtop
@@ -355,6 +371,7 @@ def run_and_compare(
     if use_pass:
         fb = EliminateBranches()
         fb.try_clean = True
+        fb.apply_to_top_level_ifs = True
         fb.apply_pass(copy_sdfg, {})
     else:
         apply_branch_elimination(copy_sdfg, 2)
@@ -393,6 +410,7 @@ def run_and_compare_sdfg(
 
     fb = EliminateBranches()
     fb.try_clean = True
+    fb.apply_to_top_level_ifs = True
     fb.permissive = permissive
     fb.apply_pass(copy_sdfg, {})
 
@@ -530,7 +548,9 @@ def test_condition_on_bounds():
     out_no_fuse = {k: v.copy() for k, v in arrays.items()}
     sdfg(a=out_no_fuse["a"], b=out_no_fuse["b"], c=out_no_fuse["c"], d=out_no_fuse["d"], s=1, SN=2)
     # Apply transformation
-    EliminateBranches().apply_pass(sdfg, {})
+    eb = EliminateBranches()
+    eb.apply_to_top_level_ifs = True
+    eb.apply_pass(sdfg, {})
     sdfg.validate()
 
     nsdfgs = {(n, g) for n, g in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)}
@@ -610,7 +630,9 @@ def test_single_branch_connectors(use_pass_flag):
     copy_sdfg = copy.deepcopy(sdfg)
     copy_sdfg.name = f"test_single_branch_connectors_use_pass_{str(use_pass_flag).lower()}_branch_eliminated"
     if use_pass_flag:
-        EliminateBranches().apply_pass(copy_sdfg, {})
+        eb = EliminateBranches()
+        eb.apply_to_top_level_ifs = True
+        eb.apply_pass(copy_sdfg, {})
     else:
         apply_branch_elimination(copy_sdfg, 2)
 
@@ -695,6 +717,7 @@ def test_try_clean():
 
     fbpass = EliminateBranches()
     fbpass.try_clean = False
+    fbpass.apply_to_top_level_ifs = True
     fbpass.apply_pass(sdfg1, {})
     cblocks = {n for n, g in sdfg1.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     # 1 left because now the if branch has 2 states
@@ -714,6 +737,7 @@ def test_try_clean():
 
     fbpass = EliminateBranches()
     fbpass.try_clean = False
+    fbpass.apply_to_top_level_ifs = True
     fbpass.apply_pass(sdfg1, {})
     cblocks = {n for n, g in sdfg1.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     assert len(cblocks) == 0, f"{cblocks}"
@@ -741,6 +765,7 @@ def test_try_clean_as_pass():
     fbpass = EliminateBranches()
     fbpass.clean_only = True
     fbpass.try_clean = False
+    fbpass.apply_to_top_level_ifs = True
     fbpass.apply_pass(sdfg, {})
     cblocks = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     assert len(cblocks) == 0, f"{cblocks}"
@@ -1963,6 +1988,7 @@ def test_nested_sdfg_with_return(ret_arr):
     fb = EliminateBranches()
     fb.try_clean = True
     fb.permissive = False
+    fb.apply_to_top_level_ifs = True
     fb.apply_pass(copy_sdfg, {})
     out_fused = {k: v.copy() for k, v in arrays.items()}
     copy_sdfg(**out_fused)
@@ -2119,6 +2145,7 @@ def test_huge_sdfg_with_log_exp_div(eps_operator_type_for_log_and_div: str):
     copy_sdfg.name = f"huge_sdfg_with_log_exp_div_operator_{eps_operator_type_for_log_and_div}_branch_eliminated"
     fb = EliminateBranches()
     fb.try_clean = True
+    fb.apply_to_top_level_ifs = True
     fb.eps_operator_type_for_log_and_div = eps_operator_type_for_log_and_div
     fb.apply_pass(copy_sdfg, {})
 
@@ -2203,6 +2230,7 @@ def test_mid_sdfg_with_log_exp_div(eps_operator_type_for_log_and_div: str):
 
     fb = EliminateBranches()
     fb.try_clean = True
+    fb.apply_to_top_level_ifs = True
     fb.eps_operator_type_for_log_and_div = eps_operator_type_for_log_and_div
     fb.apply_pass(copy_sdfg, {})
 
@@ -2312,13 +2340,38 @@ def test_interstate_boolean():
     inner_sdfg.add_symbol("symsym", dace.int64)
     sdfg.validate()
     sdfg.save("interstate_boolean_op.sdfg")
-    EliminateBranches().apply_pass(sdfg, {})
+    eb = EliminateBranches()
+    eb.apply_to_top_level_ifs = True
+    eb.apply_pass(sdfg, {})
     sdfg.validate()
     sdfg.save("interstate_boolean_op_transformed.sdfg")
     sdfg.compile()
 
 
+@temporarily_disable_autoopt_and_serialization
+def test_top_level_if():
+    sdfg = top_level_if.to_sdfg()
+
+    cblocks = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
+    assert len(cblocks) == 1
+
+    # Can be applied should be true for this top level if
+    for cblock in cblocks:
+        xform = branch_elimination.BranchElimination()
+        xform.conditional = cblock
+        xform.parent_nsdfg_state = _find_state(
+            sdfg, cblock.sdfg.parent_nsdfg_node) if cblock.sdfg.parent_nsdfg_node is not None else None
+        assert xform.can_be_applied(cblock.parent_graph, 0, cblock.sdfg, False) is True
+
+    eb = EliminateBranches()
+    eb.apply_to_top_level_ifs = False
+    eb.apply_pass(sdfg, {})
+    # Pass should not convert top level ifs
+    assert len({n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}) == 1
+
+
 if __name__ == "__main__":
+    test_top_level_if()
     test_interstate_boolean()
     test_huge_sdfg_with_log_exp_div("max")
     test_huge_sdfg_with_log_exp_div("add")
