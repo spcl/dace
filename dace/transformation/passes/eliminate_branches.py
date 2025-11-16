@@ -115,10 +115,30 @@ class EliminateBranches(ppl.Pass):
 
         return num_applied
 
+    def _apply_symbol_removal(self, sdfg: SDFG):
+        from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
+
+        changed = False
+        ret_val = RemoveUnusedSymbols().apply_pass(sdfg, _={})
+        changed = ret_val is not None
+
+        for state in sdfg.all_states():
+            for node in state.nodes():
+                if isinstance(node, nodes.NestedSDFG):
+                    changed |= self._apply_symbol_removal(node.sdfg)
+
+        return changed
+
     def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
         if self.clean_only is True:
             self.try_clean = True
-        return self._apply_eliminate_branches(sdfg, sdfg, None)
+        num_applied = self._apply_eliminate_branches(sdfg, sdfg, None)
+
+        changed = True
+        while changed:
+            changed = self._apply_symbol_removal(sdfg)
+
+        return num_applied
 
     def report(self, pass_retval: int) -> str:
         return f'Fused (andd removed) {pass_retval} branches.'
