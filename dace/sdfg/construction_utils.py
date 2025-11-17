@@ -429,6 +429,8 @@ def replace_length_one_arrays_with_scalars(sdfg: dace.SDFG, recursive: bool = Tr
 
 
 def generate_assignment_as_tasklet_in_state(state: dace.SDFGState, lhs: str, rhs: str):
+    import sympy
+
     rhs = rhs.strip()
     rhs_sym_expr = dace.symbolic.SymExpr(rhs).evalf()
     lhs = lhs.strip()
@@ -437,25 +439,46 @@ def generate_assignment_as_tasklet_in_state(state: dace.SDFGState, lhs: str, rhs
     in_connectors = dict()
     out_connectors = dict()
 
-    # Get functions for indirect accesses
+    # Get functions for indirect accesses and free symbols
     i = 0
-    for free_sym in rhs_sym_expr.free_symbols.union({f.func for f in rhs_sym_expr.atoms(Function)}):
+    for free_sym in rhs_sym_expr.free_symbols:
         if str(free_sym) in state.sdfg.arrays:
-            in_connectors[str(free_sym)] = f"_in_{free_sym}_{i}"
+            in_connectors[free_sym] = f"_in_{free_sym}_{i}"
             i += 1
-    for free_sym in lhs_sym_expr.free_symbols.union({f.func for f in lhs_sym_expr.atoms(Function)}):
-        if str(free_sym) in state.sdfg.arrays:
-            out_connectors[str(free_sym)] = f"_out_{free_sym}_{i}"
-            i += 1
+
+    for f in {f for f in rhs_sym_expr.atoms(Function)}:
+        if str(f.func) in state.sdfg.arrays:
+            # Array access can come from different arrays:
+            if f not in in_connectors:
+                in_connectors[f] = f"_in_{f.func}_{i}"
+                i += 1
+
+    assert len(lhs_sym_expr.free_symbols) == 1
+    free_sym = next(iter(lhs_sym_expr.free_symbols))
+    assert str(free_sym) in state.sdfg.arrays
+    out_access_expr = free_sym
+    out_connectors[free_sym] = f"_out_{free_sym}_{i}"
+    i += 1
+
+    assert len({f for f in lhs_sym_expr.atoms(Function)}) == 0
 
     if in_connectors == {} and out_connectors == {}:
         raise Exception("Generated tasklets result in no or out connectors")
 
     # Process interstate edge, extract brackets for access patterns
-    in_access_exprs = extract_bracket_tokens(token_replace_dict(rhs, in_connectors))
-    out_access_exprs = extract_bracket_tokens(token_replace_dict(lhs, out_connectors))
-    lhs = remove_bracket_tokens(token_replace_dict(lhs, out_connectors))
-    rhs = remove_bracket_tokens(token_replace_dict(rhs, in_connectors))
+    # Collect array accesses
+    in_access_exprs = {f.func: [] for f in rhs_sym_expr.atoms(Function) if str(f.func) in state.sdfg.arrays}
+    for f in rhs_sym_expr.atoms(Function):
+        if str(f.func) not in state.sdfg.arrays:
+            continue
+        in_access_exprs[f.func].append(list(f.args))
+
+    name_mapping = {f: in_connectors[f] for f in rhs_sym_expr.atoms(Function) if str(f.func) in state.sdfg.arrays}
+    name_mapping[out_access_expr] = out_connectors[out_access_expr]
+
+    printer = dace.symbolic.DaceSympyPrinter(arrays=state.sdfg.arrays)
+    rhs = printer.doprint(rhs_sym_expr.subs(name_mapping))
+    lhs = printer.doprint(lhs_sym_expr.subs(name_mapping))
 
     # Ass tasklets
     t = state.add_tasklet(name=f"assign_{lhs}",
@@ -463,27 +486,46 @@ def generate_assignment_as_tasklet_in_state(state: dace.SDFGState, lhs: str, rhs
                           outputs=set(out_connectors.values()),
                           code=f"{lhs} = {rhs}")
 
-    # Add connectors and accesses
+    # Add connectors and accesses, do not duplicate array access nodes
+    # As we might have array accesses to different subsets
     in_access_dict = dict()
     out_access_dict = dict()
+    accesses = dict()
     for k, v in in_connectors.items():
-        in_access_dict[v] = state.add_access(k)
+        if isinstance(k, sympy.Function):
+            if str(k.func) not in accesses:
+                accesses[str(k.func)] = state.add_access(str(k.func))
+            in_access_dict[k] = accesses[str(k.func)]
+        else:
+            if str(k) not in accesses:
+                accesses[str(k)] = state.add_access(str(k))
+            in_access_dict[k] = accesses[str(k)]
+    assert len(out_connectors.items()) == 1
     for k, v in out_connectors.items():
-        out_access_dict[v] = state.add_access(k)
+        if isinstance(k, sympy.Function):
+            out_access_dict[k] = state.add_access(str(k.func))
+        else:
+            out_access_dict[k] = state.add_access(str(k))
 
     # Add in and out connections
-    for k, v in in_access_dict.items():
-        data_name = v.data
-        access_str = in_access_exprs.get(k)
-        if access_str is None:
+    for k, v in in_connectors.items():
+        if hasattr(k, "func"):
+            access_node = in_access_dict[k]
+            data_name = str(k.func)
+            complete_access_str = printer.doprint(k)
+            print(f"Function `{k}` is printed as `{complete_access_str}` by dace.symbolic.DaceSympyPrinter")
+            state.add_edge(access_node, None, t, in_connectors[k], dace.memlet.Memlet(expr=complete_access_str))
+        else:
+            access_node = in_access_dict[k]
             access_str = "0"
-        state.add_edge(v, None, t, k, dace.memlet.Memlet(expr=f"{data_name}[{access_str}]"))
+            data_name = str(k)
+            state.add_edge(access_node, None, t, in_connectors[k],
+                           dace.memlet.Memlet(expr=f"{data_name}[{access_str}]"))
+    assert len(out_access_dict.items()) == 1
     for k, v in out_access_dict.items():
         data_name = v.data
-        access_str = out_access_exprs.get(k)
-        if access_str is None:
-            access_str = "0"
-        state.add_edge(t, k, v, None, dace.memlet.Memlet(expr=f"{data_name}[{access_str}]"))
+        access_str = "0"
+        state.add_edge(t, out_connectors[k], v, None, dace.memlet.Memlet(expr=f"{data_name}[{access_str}]"))
 
 
 def get_num_parent_map_scopes(root_sdfg: dace.SDFG, node: dace.nodes.MapEntry, parent_state: dace.SDFGState):
