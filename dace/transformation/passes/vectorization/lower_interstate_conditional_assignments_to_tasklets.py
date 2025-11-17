@@ -1,8 +1,7 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 from typing import Any, Dict
-
 import sympy
-
+import dace
 from dace import SDFG, data, properties, SDFGState, symbolic
 from dace.sdfg import ControlFlowRegion, nodes
 from dace.sdfg.state import ConditionalBlock, LoopRegion
@@ -78,7 +77,10 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
                 print(f"Demote symbols: {free_conditional_symbols}")
             for conditional_sym in free_conditional_symbols:
                 sdfg = cfg.sdfg if not isinstance(cfg, SDFG) else cfg
-                sdutil.demote_symbol_to_scalar(sdfg, conditional_sym, None, None)
+                print(f"Demote symbol {free_conditional_symbols} to scalar")
+                # Cast all symbols to fp64
+                sdfg.symbols[conditional_sym] = dace.float64
+                sdutil.demote_symbol_to_scalar(sdfg, conditional_sym, dace.float64, None)
                 # Set-zero all of them
                 assert conditional_sym not in sdfg.symbols
                 self._applied += 1

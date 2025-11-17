@@ -367,8 +367,9 @@ class BranchElimination(transformation.MultiStateTransformation):
             if arr.dtype == dace.bool:
                 arr.dtype = dace.float64
 
-        state.add_edge(tasklet, f"_out_{float_lhs_name}", state.add_access(float_lhs_name), None,
-                       dace.memlet.Memlet(float_lhs_name))
+        fan = state.add_access(float_lhs_name)
+        fan.setzero = True
+        state.add_edge(tasklet, f"_out_{float_lhs_name}", fan, None, dace.memlet.Memlet(float_lhs_name))
 
         return float_lhs_name
 
@@ -653,6 +654,7 @@ class BranchElimination(transformation.MultiStateTransformation):
         #assert len(ies) == 1, f"Expected 1 input edge to state0 write access, got {len(ies)}"
         for ie in ies:
             tmp1_access = new_state.add_access(tmp1_name)
+            tmp1_access.setzero = True
             new_state.add_edge(ie.src, ie.src_conn, tmp1_access, None, dace.memlet.Memlet(f"{tmp1_name}"))
             new_state.remove_edge(ie)
 
@@ -661,6 +663,7 @@ class BranchElimination(transformation.MultiStateTransformation):
         #assert len(ies) == 1, f"Expected 1 input edge to state1 write access, got {len(ies)}: {ies}"
         for ie in ies:
             tmp2_access = new_state.add_access(tmp2_name)
+            tmp2_access.setzero = True
             new_state.add_edge(ie.src, ie.src_conn, tmp2_access, None, dace.memlet.Memlet(f"{tmp2_name}"))
 
         # 5. Remove write of state1
@@ -668,6 +671,7 @@ class BranchElimination(transformation.MultiStateTransformation):
 
         # 6. Redirect tmp scalars to the combine tasklet and then to the old write
         float_cond_access = new_state.add_access(cond_var_as_float_name)
+        float_cond_access.setzero = True
 
         # Connect inputs to combine tasklet
         for tmp_access, connector in [(tmp1_access, "_in_left"), (tmp2_access, "_in_right"),
@@ -987,6 +991,7 @@ class BranchElimination(transformation.MultiStateTransformation):
                                                           transient=True,
                                                           find_new_name=True)
             tmp_an = new_state.add_access(tmp_name)
+            tmp_an.setzero = True
             new_state.add_edge(cp_tasklet, next(iter(cp_tasklet.out_connectors)), tmp_an, None,
                                dace.memlet.Memlet(tmp_an.data))
             for src_node in source_nodes:
@@ -1706,6 +1711,25 @@ class BranchElimination(transformation.MultiStateTransformation):
 
         return all_params.intersection(free_syms) != set()
 
+    def _first_access_node(self, cfg: ControlFlowRegion, accessnode: dace.nodes.AccessNode, current_state: SDFGState):
+        assert accessnode in cfg.nodes()
+        dataname = accessnode.data
+        if current_state in in_cfg.nodes():
+            for node in in_cfg.bfs_nodes():
+                if node != current_state:
+                    if dataname in node.read_and_write_sets()[1]:
+                        return False
+                else:
+                    src_nodes = {n for n in current_state.nodes() if current_state.in_degree(n) == 0}
+                    if accessnode in src_nodes:
+                        return True
+                    else:
+                        return False
+        elif dataname in cfg.read_and_write_sets()[1]:
+            return False
+
+        return True
+
     def apply(self, graph: ControlFlowRegion, sdfg: SDFG):
         # If CFG has 1 or two branches
         # If two branches then the write sets to sink nodes are the same
@@ -1879,6 +1903,9 @@ class BranchElimination(transformation.MultiStateTransformation):
                             assert ie.data.other_subset is not None
                             subset_to_use = ie.data.other_subset
                         an1, tasklet, an2 = self._generate_identity_write(state1, write, subset_to_use)
+                        an1.setzero = True
+                        an2.setzero = True
+
                         new_reads[state0_write_access] = (write, ie.data, (an1, tasklet, an2))
 
             # Copy over all identify writes
