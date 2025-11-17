@@ -473,7 +473,9 @@ def generate_assignment_as_tasklet_in_state(state: dace.SDFGState, lhs: str, rhs
             continue
         in_access_exprs[f.func].append(list(f.args))
 
+    # Get scalar and arrays that are free symbols currently
     name_mapping = {f: in_connectors[f] for f in rhs_sym_expr.atoms(Function) if str(f.func) in state.sdfg.arrays}
+    name_mapping.update({s: in_connectors[s] for s in rhs_sym_expr.free_symbols if str(s) in state.sdfg.arrays})
     name_mapping[out_access_expr] = out_connectors[out_access_expr]
 
     printer = dace.symbolic.DaceSympyPrinter(arrays=state.sdfg.arrays)
@@ -485,6 +487,8 @@ def generate_assignment_as_tasklet_in_state(state: dace.SDFGState, lhs: str, rhs
                           inputs=set(in_connectors.values()),
                           outputs=set(out_connectors.values()),
                           code=f"{lhs} = {rhs}")
+
+    print(in_connectors)
 
     # Add connectors and accesses, do not duplicate array access nodes
     # As we might have array accesses to different subsets
