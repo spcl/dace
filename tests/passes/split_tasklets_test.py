@@ -58,6 +58,42 @@ example_symbol_only_expressions = [
 ]
 
 
+def _get_complex_expression_sdfg(some_scalars: bool = False):
+    rhs = "(_in1 + _in2 < _in3) or (_in4 < _in5)"
+    lhs = "_out"
+    sdfg = dace.SDFG(f"single_complex_expression_sdfg_{_single_tasklet_sdfg_counter}")
+    state1 = sdfg.add_state("complex_tasklet_state")
+
+    for inm in ["ramin", "rlmin", "os"]:
+        if not some_scalars:
+            sdfg.add_array(inm, (1, ), dace.float64, dace.dtypes.StorageType.Default, transient=False)
+        else:
+            sdfg.add_scalar(inm, dace.float64, dace.dtypes.StorageType.Default, transient=False)
+
+    sdfg.add_array("za", (
+        5,
+        5,
+    ), dace.float64, dace.dtypes.StorageType.Default, transient=False)
+    sdfg.add_array("zqx", (5, 5, 2), dace.float64, dace.dtypes.StorageType.Default, transient=False)
+
+    t = state1.add_tasklet("t", {"_in1", "_in2", "_in3", "_in4", "_in5"}, {"_out"}, lhs + " = " + rhs)
+
+    ramin = state1.add_access("ramin")
+    rlmin = state1.add_access("rlmin")
+    za = state1.add_access("za")
+    zqx = state1.add_access("zqx")
+
+    state1.add_edge(ramin, None, t, "_in3", dace.memlet.Memlet("ramin[0]"))
+    state1.add_edge(rlmin, None, t, "_in5", dace.memlet.Memlet("rlmin[0]"))
+    state1.add_edge(za, None, t, "_in1", dace.memlet.Memlet("za[2,2]"))
+    state1.add_edge(zqx, None, t, "_in2", dace.memlet.Memlet("zqx[2,2,0]"))
+    state1.add_edge(zqx, None, t, "_in4", dace.memlet.Memlet("zqx[2,2,1]"))
+    state1.add_edge(t, "_out", state1.add_access("os"), None, dace.memlet.Memlet("os[0]"))
+
+    sdfg.validate()
+    return sdfg
+
+
 # This just intendeded to be used with these tests!
 def _get_vars(ssa_line):
     lhs, rhs = ssa_line.split('=', 1)
@@ -708,6 +744,90 @@ def test_symbol_in_tasklet():
     assert numpy.allclose(C_orig, C_vec)
 
 
+def test_complex_expression():
+    za = numpy.random.random((
+        5,
+        5,
+    ))
+    zqx = numpy.random.random((5, 5, 2))
+    rlmin = numpy.random.random((1, ))
+    ramin = numpy.random.random((1, ))
+    os = numpy.random.random((1, ))
+
+    # Create copies for comparison
+    za_orig = za.copy()
+    za_vec = za.copy()
+    zqx_orig = zqx.copy()
+    zqx_vec = zqx.copy()
+    rlmin_orig = rlmin.copy()
+    rlmin_vec = rlmin.copy()
+    ramin_orig = ramin.copy()
+    ramin_vec = ramin.copy()
+    os_orig = os.copy()
+    os_vec = os.copy()
+    # Original SDFG
+    sdfg = _get_complex_expression_sdfg(some_scalars=False)
+    sdfg.validate()
+    c_sdfg = sdfg.compile()
+
+    # Vectorized SDFG
+    copy_sdfg = copy.deepcopy(sdfg)
+    SplitTasklets().apply_pass(copy_sdfg, {})
+    _assert_no_math_dot_call_in_tasklets(copy_sdfg)
+    c_copy_sdfg = copy_sdfg.compile()
+    copy_sdfg.validate()
+
+    c_sdfg(za=za_orig, zqx=zqx_orig, rlmin=rlmin_orig, ramin=ramin_orig, os=os_orig)
+    c_copy_sdfg(za=za_vec, zqx=zqx_vec, rlmin=rlmin_vec, ramin=ramin_vec, os=os_vec)
+
+    assert_all_tasklets_are_ssa(copy_sdfg)
+    # Compare results
+    assert numpy.allclose(os_orig, os_vec)
+
+
+def test_complex_expression_with_scalars():
+    za = numpy.random.random((
+        5,
+        5,
+    ))
+    zqx = numpy.random.random((5, 5, 2))
+    rlmin = numpy.random.random((1, ))
+    ramin = numpy.random.random((1, ))
+    os = numpy.random.random((1, ))
+
+    # Create copies for comparison
+    za_orig = za.copy()
+    za_vec = za.copy()
+    zqx_orig = zqx.copy()
+    zqx_vec = zqx.copy()
+    rlmin_orig = rlmin.copy()
+    rlmin_vec = rlmin.copy()
+    ramin_orig = ramin.copy()
+    ramin_vec = ramin.copy()
+    os_orig = os.copy()
+    os_vec = os.copy()
+    # Original SDFG
+    sdfg = _get_complex_expression_sdfg(some_scalars=True)
+    sdfg.name += "_some_scalars"
+    sdfg.validate()
+    c_sdfg = sdfg.compile()
+
+    # Vectorized SDFG
+    copy_sdfg = copy.deepcopy(sdfg)
+    SplitTasklets().apply_pass(copy_sdfg, {})
+    copy_sdfg.save("x.sdfg")
+    _assert_no_math_dot_call_in_tasklets(copy_sdfg)
+    c_copy_sdfg = copy_sdfg.compile()
+    copy_sdfg.validate()
+
+    c_sdfg(za=za_orig, zqx=zqx_orig, rlmin=rlmin_orig[0], ramin=ramin_orig[0], os=os_orig[0])
+    c_copy_sdfg(za=za_vec, zqx=zqx_vec, rlmin=rlmin_vec[0], ramin=ramin_vec[0], os=os_vec[0])
+
+    assert_all_tasklets_are_ssa(copy_sdfg)
+    # Compare results
+    assert numpy.allclose(os_orig, os_vec)
+
+
 if __name__ == "__main__":
     test_symbol_in_tasklet()
     test_branch_fusion_tasklets()
@@ -722,3 +842,5 @@ if __name__ == "__main__":
         test_double_tasklet_split_direct_tasklet_connection(expression_strs, expected_num_statements)
     for expression_strs, expected_num_statements in example_symbol_only_expressions:
         test_single_tasklet_symbol_only_split(expression_str, expected_num_statements)
+    test_complex_expression()
+    test_complex_expression_with_scalars()
