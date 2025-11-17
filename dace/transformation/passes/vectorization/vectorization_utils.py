@@ -790,6 +790,7 @@ def process_in_edges(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG, m
 
             # Add access node and rewire edges
             an = state.add_access(vector_dataname)
+            an.setzero = True
             state.remove_edge(ie)
             state.add_edge(ie.src, ie.src_conn, an, None, dace.memlet.Memlet(data=ie.data.data, subset=copy_subset))
             state.add_edge(an, None, ie.dst, ie.dst_conn,
@@ -845,6 +846,7 @@ def process_out_edges(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG, 
 
             # Add access node and rewire edges
             an = state.add_access(vector_dataname)
+            an.setzero = True
             state.remove_edge(oe)
             assert oe.src == nsdfg_node
             assert oe.src_conn is not None
@@ -1767,6 +1769,7 @@ def duplicate_access(state: dace.SDFGState, node: dace.nodes.AccessNode,
     src.code = CodeBlock(code="\n".join([f"{outc}[{_i}] = {inc}[{_i}]" for _i in range(vector_width)]))
     touched_nodes.add(src)
     packed_access = state.add_access(f"{node.data}_packed")
+    packed_access.setzero = True
     touched_nodes.add(packed_access)
     state.remove_edge(ie)
     if isinstance(ie, dace.nodes.Node):
@@ -2201,6 +2204,7 @@ def reduce_before_use(state: dace.SDFGState, name: str, vector_width: int, op: s
                                   transient=True,
                                   lifetime=arr.lifetime)
             an = state.add_access(name + "_scl")
+            an.setzero = True
             t = state.add_tasklet(name=f"scalarize_{name}",
                                   inputs={"_in"},
                                   outputs={"_out"},
@@ -2748,6 +2752,7 @@ def insert_assignment_tasklet_from_src(state: dace.SDFGState, edge: Edge[Memlet]
 
     # Create access node and edges
     an = state.add_access(vector_dataname)
+    an.setzero = True
     e1 = state.add_edge(src, src_conn, t, "_in", copy.deepcopy(edge.data))
     e2 = state.add_edge(t, "_out", an, None, dace.memlet.Memlet.from_array(vector_dataname, vector_data))
     e3 = state.add_edge(an, None, dst, dst_conn, dace.memlet.Memlet.from_array(vector_dataname, vector_data))
@@ -2816,6 +2821,7 @@ def insert_assignment_tasklet_to_dst(state: dace.SDFGState, edge: Edge[Memlet],
 
     # Create access node and edges
     an = state.add_access(vector_dataname)
+    an.setzero = True
     e1 = state.add_edge(src, src_conn, an, None, dace.memlet.Memlet.from_array(vector_dataname, vector_data))
     e2 = state.add_edge(an, None, t, "_in", dace.memlet.Memlet.from_array(vector_dataname, vector_data))
     e3 = state.add_edge(t, "_out", dst, dst_conn, copy.deepcopy(edge.data))
@@ -2976,6 +2982,7 @@ def add_copies_before_and_after_nsdfg(
                     node.data = ie_dataname
                     # Add new access node
                     a2 = inner_state.add_access(oe_dataname)
+                    a2.setzero = True
                     for oe in oes:
                         inner_state.remove_edge(oe)
                         inner_state.add_edge(a2, oe.src_conn, oe.dst, oe.dst_conn, copy.deepcopy(oe.data))
@@ -3010,7 +3017,9 @@ def add_copies_before_and_after_nsdfg(
                 # Insert copy-ins
                 # Need to find the copy in state
                 orig_access = copy_in_state.add_access(unmovable_arr_name)
+                orig_access.setzero = True
                 v_access = copy_in_state.add_access(vec_arr_name)
+                v_access.setzero = True
                 vec_arr = copy_in_state.sdfg.arrays[vec_arr_name]
                 assign_tasklet = copy_in_state.add_tasklet(
                     name="_Assign",
@@ -3029,7 +3038,9 @@ def add_copies_before_and_after_nsdfg(
                 vec_arr_name = f"{unmovable_arr_name}_vec_{i}"
                 name_to_subset_map[vec_arr_name] = subset
                 orig_access2 = copy_out_state.add_access(unmovable_arr_name)
+                orig_access2.setzero = True
                 v_access2 = copy_out_state.add_access(vec_arr_name)
+                v_access2.setzero = True
                 vec_arr = copy_out_state.sdfg.arrays[vec_arr_name]
                 assign_tasklet2 = copy_out_state.add_tasklet(
                     name="_Assign",

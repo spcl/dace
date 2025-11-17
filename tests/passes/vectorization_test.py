@@ -478,7 +478,7 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
 
     # Compare results
     for name in arrays.keys():
-        assert numpy.allclose(arrays_orig[name], arrays_vec[name]), \
+        assert numpy.allclose(arrays_orig[name], arrays_vec[name], atol=1e-12), \
             f"{name} Diff: {arrays_orig[name] - arrays_vec[name]}"
         if exact is not None:
             diff = arrays_vec[name] - exact
@@ -749,10 +749,14 @@ def test_tasklets_in_if():
     c_sdfg(a=arrays_orig['a'], b=arrays_orig['b'], c=arrays_orig['c'][0], d=arrays_orig['d'], S=_S)
     c_copy_sdfg(a=arrays_vec['a'], b=arrays_vec['b'], c=arrays_vec['c'][0], d=arrays_vec['d'], S=_S)
 
-    assert numpy.allclose(arrays_orig['a'], arrays_vec['a']), f"A Diff: {arrays_orig['a'] - arrays_vec['a']}"
-    assert numpy.allclose(arrays_orig['b'], arrays_vec['b']), f"B Diff: {arrays_orig['b'] - arrays_vec['b']}"
-    assert numpy.allclose(arrays_orig['c'], arrays_vec['c']), f"C Diff: {arrays_orig['c'] - arrays_vec['c']}"
-    assert numpy.allclose(arrays_orig['d'], arrays_vec['d']), f"D Diff: {arrays_orig['d'] - arrays_vec['d']}"
+    assert numpy.allclose(arrays_orig['a'], arrays_vec['a'],
+                          atol=1e-12), f"A Diff: {arrays_orig['a'] - arrays_vec['a']}"
+    assert numpy.allclose(arrays_orig['b'], arrays_vec['b'],
+                          atol=1e-12), f"B Diff: {arrays_orig['b'] - arrays_vec['b']}"
+    assert numpy.allclose(arrays_orig['c'], arrays_vec['c'],
+                          atol=1e-12), f"C Diff: {arrays_orig['c'] - arrays_vec['c']}"
+    assert numpy.allclose(arrays_orig['d'], arrays_vec['d'],
+                          atol=1e-12), f"D Diff: {arrays_orig['d'] - arrays_vec['d']}"
 
 
 # There was a non-deterministic bug, therefore run it multiple times
@@ -808,12 +812,12 @@ def test_tasklets_in_if_two():
                 f=arrays_vec['f'][0],
                 S=_S)
 
-    assert numpy.allclose(arrays_orig['a'], arrays_vec['a']), f"{arrays_orig['a'] - arrays_vec['a']}"
-    assert numpy.allclose(arrays_orig['b'], arrays_vec['b']), f"{arrays_orig['b'] - arrays_vec['b']}"
-    assert numpy.allclose(arrays_orig['c'], arrays_vec['c']), f"{arrays_orig['c'] - arrays_vec['c']}"
-    assert numpy.allclose(arrays_orig['d'], arrays_vec['d']), f"{arrays_orig['d'] - arrays_vec['d']}"
-    assert numpy.allclose(arrays_orig['e'], arrays_vec['e']), f"{arrays_orig['e'] - arrays_vec['e']}"
-    assert numpy.allclose(arrays_orig['f'], arrays_vec['f']), f"{arrays_orig['f'] - arrays_vec['f']}"
+    assert numpy.allclose(arrays_orig['a'], arrays_vec['a'], atol=1e-12), f"{arrays_orig['a'] - arrays_vec['a']}"
+    assert numpy.allclose(arrays_orig['b'], arrays_vec['b'], atol=1e-12), f"{arrays_orig['b'] - arrays_vec['b']}"
+    assert numpy.allclose(arrays_orig['c'], arrays_vec['c'], atol=1e-12), f"{arrays_orig['c'] - arrays_vec['c']}"
+    assert numpy.allclose(arrays_orig['d'], arrays_vec['d'], atol=1e-12), f"{arrays_orig['d'] - arrays_vec['d']}"
+    assert numpy.allclose(arrays_orig['e'], arrays_vec['e'], atol=1e-12), f"{arrays_orig['e'] - arrays_vec['e']}"
+    assert numpy.allclose(arrays_orig['f'], arrays_vec['f'], atol=1e-12), f"{arrays_orig['f'] - arrays_vec['f']}"
 
 
 def _dense_to_csr(dense: numpy.ndarray):
@@ -958,7 +962,7 @@ def test_spmv():
     c_copy_sdfg(data=data, indices=indices, indptr=indptr, x=x, y=y_vec, n=_N, nnz=_nnz)
 
     # Compare results
-    assert numpy.allclose(y_orig, y_vec), f"{y_orig - y_vec}"
+    assert numpy.allclose(y_orig, y_vec, atol=1e-12), f"{y_orig - y_vec}"
 
 
 @dace.program

@@ -453,6 +453,7 @@ class Vectorize(ppl.Pass):
                         modified_data.add(src_node.data)
 
                         non_packed_access = state.add_access(old_data_name)
+                        non_packed_access.setzero = True
                         modified_nodes.add(non_packed_access)
                         modified_nodes.add(src_node)
 
@@ -577,6 +578,7 @@ class Vectorize(ppl.Pass):
                         )
 
                 new_an = state.add_access(f"{node.data}_vec")
+                new_an.setzero = True
 
                 for ie in state.in_edges(node):
                     new_edge_tuple = (ie.src, ie.src_conn, new_an, None, copy.deepcopy(ie.data))
@@ -954,6 +956,7 @@ class Vectorize(ppl.Pass):
                                                       may_alias=False)
                 in_datas.add(arr_name_to_use)
                 an = state.add_access(arr_name_to_use)
+                an.setzero = True
                 src, src_conn, dst, dst_conn, data = ie
                 state.remove_edge(ie)
                 state.add_edge(src, src_conn, an, None, copy.deepcopy(data))
@@ -989,6 +992,7 @@ class Vectorize(ppl.Pass):
                                                       may_alias=False)
                 out_datas.add(arr_name_to_use)
                 an = state.add_access(arr_name_to_use)
+                an.setzero = True
                 src, src_conn, dst, dst_conn, data = oe
                 state.remove_edge(oe)
                 state.add_edge(map_exit, src_conn, an, None,

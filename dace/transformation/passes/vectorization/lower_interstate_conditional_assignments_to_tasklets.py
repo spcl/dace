@@ -3,7 +3,7 @@ from typing import Any, Dict
 
 import sympy
 
-from dace import SDFG, properties, SDFGState, symbolic
+from dace import SDFG, data, properties, SDFGState, symbolic
 from dace.sdfg import ControlFlowRegion, nodes
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation import pass_pipeline as ppl, transformation
@@ -11,6 +11,7 @@ import dace.sdfg.construction_utils as cutil
 import dace.sdfg.utils as sdutil
 from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
 from dace.transformation.passes import FuseStates
+from dace import dtypes
 
 
 @properties.make_properties
@@ -23,6 +24,7 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
                                                                 default="condition_symbol_to_scalar",
                                                                 allow_none=False)
     also_demote = properties.ListProperty(element_type=str, default=list())
+    apply_once = properties.Property(dtype=bool, default=False)
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.AccessNodes | ppl.Modifies.InterstateEdges | ppl.Modifies.Tasklets | ppl.Modifies.Edges
@@ -34,6 +36,9 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
         return {}
 
     def _apply(self, cfg: ControlFlowRegion):
+        if self._applied > 0 and self.apply_once:
+            return False
+
         if all({isinstance(n, SDFGState) for n in cfg.nodes()}):
             tasklets = set()
             free_conditional_symbols = set()
@@ -74,34 +79,46 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
             for conditional_sym in free_conditional_symbols:
                 sdfg = cfg.sdfg if not isinstance(cfg, SDFG) else cfg
                 sdutil.demote_symbol_to_scalar(sdfg, conditional_sym, None, None)
+                # Set-zero all of them
                 assert conditional_sym not in sdfg.symbols
+                self._applied += 1
+                if self._applied > 0 and self.apply_once:
+                    return True
 
         for n in cfg.nodes():
             if isinstance(n, SDFGState):
                 for sn in n.nodes():
                     if isinstance(sn, nodes.NestedSDFG):
-                        self._apply(sn.sdfg)
+                        if self._apply(sn.sdfg) and self.apply_once:
+                            return True
             elif isinstance(n, ConditionalBlock):
                 for _, branch in n.branches:
-                    self._apply(branch)
+                    if self._apply(branch) and self.apply_once:
+                        return True
             elif isinstance(n, LoopRegion):
                 for ln in n.nodes():
                     if not isinstance(ln, SDFGState):
-                        self._apply(ln)
+                        if self._apply(ln) and self.apply_once:
+                            return True
                     else:
                         for sn in ln.nodes():
                             if isinstance(sn, nodes.NestedSDFG):
-                                self._apply(sn.sdfg)
+                                if self._apply(sn.sdfg) and self.apply_once:
+                                    return True
             elif isinstance(n, ControlFlowRegion):
                 for ln in n.nodes():
                     if not isinstance(ln, SDFGState):
-                        self._apply(ln)
+                        if self._apply(ln) and self.apply_once:
+                            return True
                     else:
                         for sn in ln.nodes():
                             if isinstance(sn, nodes.NestedSDFG):
-                                self._apply(sn.sdfg)
+                                if self._apply(sn.sdfg) and self.apply_pass:
+                                    return True
             else:
                 raise Exception(f"Unsupported node type for pass node {n} type {type(n)}")
+
+        return False
 
     def _apply_extended_state_fusion(self, sdfg: SDFG):
         FuseStates().apply_pass(sdfg, {})
@@ -130,10 +147,23 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
                 if isinstance(node, nodes.NestedSDFG):
                     self._apply_extended_state_fusion(node.sdfg)
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> None:
-        self._apply(sdfg)
+    def _setzero_true_for_all_transient_scalars(self, sdfg: SDFG):
+        for state in sdfg.all_states():
+            for node in state.data_nodes():
+                if (isinstance(state.sdfg.arrays[node.data], data.Scalar)
+                        and state.sdfg.arrays[node.data].transient is True
+                        and (state.sdfg.arrays[node.data].lifetime == dtypes.AllocationLifetime.Scope)):
+                    node.setzero = True
+            for node in state.nodes():
+                if isinstance(node, nodes.NestedSDFG):
+                    self._setzero_true_for_all_transient_scalars(node.sdfg)
+
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> bool:
+        self._applied = 0
+        self._setzero_true_for_all_transient_scalars(sdfg)
+        has_applied = self._apply(sdfg)
         # Results in numerically incorrect SDFGs, TODO:
         # self._apply_extended_state_fusion(sdfg)
         sdfg.validate()
 
-        return
+        return has_applied
