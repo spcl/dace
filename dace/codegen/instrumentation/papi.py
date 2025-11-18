@@ -115,32 +115,32 @@ class PAPIInstrumentation(InstrumentationProvider):
             # start a counter on every available thread
             counter_start_code = """
 int max_threads = omp_get_max_threads();
-int event_sets[max_threads];
-std::vector<std::string> events = {{{events}}};
-int nevents = events.size();
+int _papi_event_sets[max_threads];
+std::vector<std::string> _papi_events = {{{events}}};
+int _papi_nevents = _papi_events.size();
 #pragma omp parallel num_threads(max_threads)
 {{
-    int EventSet = PAPI_NULL;
-    int tretval = PAPI_create_eventset(&EventSet);
+    int _papi_EventSet = PAPI_NULL;
+    int tretval = PAPI_create_eventset(&_papi_EventSet);
     if (tretval != PAPI_OK){{
         std::cerr << "PAPI error: " << "Create EventSet" << " -> " << PAPI_strerror(tretval) << std::endl;
         std::exit(EXIT_FAILURE);
     }}
-    event_sets[omp_get_thread_num()] = EventSet;
-    for (int i = 0; i < events.size(); ++i) {{
-        tretval = PAPI_add_named_event(EventSet, events[i].c_str());
+    _papi_event_sets[omp_get_thread_num()] = _papi_EventSet;
+    for (unsigned int i = 0; i < _papi_events.size(); ++i) {{
+        tretval = PAPI_add_named_event(_papi_EventSet, _papi_events[i].c_str());
         if (tretval != PAPI_OK) {{
             // If some event isn't available, print a warning and continue (but exit if critical)
             std::cerr << "Warning: PAPI_add_event failed for event " << i
                     << " (" << PAPI_strerror(tretval) << ").\\n";
-            nevents--;
+            _papi_nevents--;
         }}
     }}
 }}
 #pragma omp parallel num_threads(max_threads)
 {{
-    if(nevents>0){{
-        PAPI_start(event_sets[omp_get_thread_num()]);
+    if(_papi_nevents>0){{
+        PAPI_start(_papi_event_sets[omp_get_thread_num()]);
     }}
 }}
 """.format(events=f"\"{'\", \"'.join(self._counters)}\"")
@@ -172,26 +172,26 @@ dace::perf::PAPIValueStore<%s> __perf_store (__state->report);''' % (', '.join(s
 #pragma omp parallel num_threads(max_threads)
 {{
     size_t thread_num = omp_get_thread_num();
-    int EventSet = event_sets[thread_num];
-    long long counts[nevents] = {{0}};
-    int tretval = PAPI_stop(EventSet, counts);
+    int _papi_EventSet = _papi_event_sets[thread_num];
+    long long _papi_counts[_papi_nevents] = {{0}};
+    int tretval = PAPI_stop(_papi_EventSet, _papi_counts);
     if (tretval != PAPI_OK){{
         std::cerr << "PAPI error: " << "Stop Counters" << " -> " << PAPI_strerror(tretval) << std::endl;
         std::exit(EXIT_FAILURE);
     }}
-    tretval = PAPI_cleanup_eventset(EventSet);
+    tretval = PAPI_cleanup_eventset(_papi_EventSet);
     if (tretval != PAPI_OK) {{
         std::cerr << "Warning: PAPI_cleanup_eventset: " << PAPI_strerror(tretval) << "\\n";
     }}
-    tretval = PAPI_destroy_eventset(&EventSet);
+    tretval = PAPI_destroy_eventset(&_papi_EventSet);
     if (tretval != PAPI_OK) {{
         std::cerr << "Warning: PAPI_destroy_eventset: " << PAPI_strerror(tretval) << "\\n";
     }}
     #pragma omp critical
     {{  
         
-        for(int i = 0; i<nevents; i++){{
-            __state->report.add_counter("{region_name}", "PAPI", events[i].c_str(), (unsigned long) counts[i], thread_num, {cfg_id}, {state_id}, {node_id});
+        for(int i = 0; i<_papi_nevents; i++){{
+            __state->report.add_counter("{region_name}", "PAPI", _papi_events[i].c_str(), (unsigned long) _papi_counts[i], thread_num, {cfg_id}, {state_id}, {node_id});
         }}
     }} 
 }}
