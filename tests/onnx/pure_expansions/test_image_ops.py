@@ -15,11 +15,6 @@ def assert_allclose(a, b, rtol=1e-5, atol=1e-8):
     np.testing.assert_allclose(a, b, rtol=rtol, atol=atol)
 
 
-# ==============================================================================
-# MaxPool Tests
-# ==============================================================================
-
-
 @pytest.mark.onnx
 @pytest.mark.parametrize("kernel_size, stride", [
     ((2, 2), (2, 2)),
@@ -104,11 +99,6 @@ def test_maxpool_2d_with_padding(kernel_size, stride, padding, sdfg_name):
     result = sdfg(inp=inp)
 
     assert_allclose(result, expected, rtol=1e-5, atol=1e-6)
-
-
-# ==============================================================================
-# BatchNormalization Tests
-# ==============================================================================
 
 
 @pytest.mark.onnx
@@ -228,11 +218,6 @@ def test_batch_normalization_2d(sdfg_name):
     result = sdfg(inp=inp, scale=scale, bias=bias, mean=mean, var=var)
 
     assert_allclose(result, expected, rtol=1e-4, atol=1e-5)
-
-
-# ==============================================================================
-# GlobalAveragePool Tests
-# ==============================================================================
 
 
 @pytest.mark.onnx

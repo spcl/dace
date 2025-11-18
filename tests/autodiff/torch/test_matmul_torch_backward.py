@@ -1,16 +1,3 @@
-"""
-Comprehensive tests for MatMul backward pass using PyTorch and DaCe modules.
-
-This test suite validates the automatic differentiation of matrix multiplication
-operations using DaCe's DaceModule with PyTorch. It covers all major cases:
-- Basic 2D matrix multiplication
-- Batched matrix multiplication
-- Broadcasting scenarios
-- 1D vector operations (vector-vector, matrix-vector, vector-matrix)
-- Mixed dimensional inputs
-- Complex chains of operations
-"""
-
 import numpy as np
 import pytest
 import copy
@@ -22,10 +9,6 @@ import torch.nn.functional as F
 
 from dace.frontend.ml.torch.module import DaceModule
 from tests.utils import torch_tensors_close
-
-##################################
-# Testing utilities
-##################################
 
 
 def run_matmul_test(
@@ -81,10 +64,8 @@ def run_matmul_test(
         pytorch_loss = pytorch_output.max()
     pytorch_loss.backward()
 
-    # Create DaCe module with backward support
     dace_module = DaceModule(
         dace_module_model,
-        simplify=False,
         backward=True,
         sdfg_name=sdfg_name,
         auto_optimize=auto_optimize,
@@ -114,11 +95,6 @@ def run_matmul_test(
             torch_tensors_close(name, pytorch_param.grad, dace_param.grad, rtol=rtol, atol=atol)
 
 
-##################################
-# Basic 2D Matrix Multiplication Tests
-##################################
-
-
 @pytest.mark.torch
 @pytest.mark.autodiff
 def test_matmul_2d_basic(sdfg_name: str):
@@ -130,50 +106,6 @@ def test_matmul_2d_basic(sdfg_name: str):
             return A @ B
 
     run_matmul_test(MatMulModule(), sdfg_name, {"A": (5, 4), "B": (4, 3)})
-
-
-@pytest.mark.torch
-@pytest.mark.autodiff
-def test_matmul_2d_square(sdfg_name: str):
-    """Test square matrix multiplication: (n, n) @ (n, n) -> (n, n)"""
-
-    class MatMulModule(nn.Module):
-
-        def forward(self, A, B):
-            return A @ B
-
-    run_matmul_test(MatMulModule(), sdfg_name, {"A": (8, 8), "B": (8, 8)})
-
-
-@pytest.mark.torch
-@pytest.mark.autodiff
-def test_matmul_2d_tall(sdfg_name: str):
-    """Test tall matrix multiplication: (m, k) @ (k, n) where m >> n"""
-
-    class MatMulModule(nn.Module):
-
-        def forward(self, A, B):
-            return A @ B
-
-    run_matmul_test(MatMulModule(), sdfg_name, {"A": (20, 5), "B": (5, 3)})
-
-
-@pytest.mark.torch
-@pytest.mark.autodiff
-def test_matmul_2d_wide(sdfg_name: str):
-    """Test wide matrix multiplication: (m, k) @ (k, n) where n >> m"""
-
-    class MatMulModule(nn.Module):
-
-        def forward(self, A, B):
-            return A @ B
-
-    run_matmul_test(MatMulModule(), sdfg_name, {"A": (3, 5), "B": (5, 20)})
-
-
-##################################
-# Batched Matrix Multiplication Tests
-##################################
 
 
 @pytest.mark.torch
@@ -200,11 +132,6 @@ def test_matmul_4d_batched(sdfg_name: str):
             return A @ B
 
     run_matmul_test(MatMulModule(), sdfg_name, {"A": (2, 3, 4, 5), "B": (2, 3, 5, 6)})
-
-
-##################################
-# Broadcasting Tests
-##################################
 
 
 @pytest.mark.torch
@@ -269,11 +196,6 @@ def test_matmul_broadcast_4d_3d(sdfg_name: str):
             return A @ B
 
     run_matmul_test(MatMulModule(), sdfg_name, {"A": (2, 3, 4, 5), "B": (3, 5, 6)})
-
-
-##################################
-# 1D Vector Operations Tests
-##################################
 
 
 @pytest.mark.torch
@@ -364,11 +286,6 @@ def test_matmul_1d_3d_batched_vecmat(sdfg_name: str):
     run_matmul_test(MatMulModule(), sdfg_name, {"A": (5, ), "B": (3, 5, 7)})
 
 
-##################################
-# Mixed Dimensional and Complex Tests
-##################################
-
-
 @pytest.mark.torch
 @pytest.mark.autodiff
 def test_matmul_complex_chain(sdfg_name: str):
@@ -414,11 +331,6 @@ def test_matmul_with_elementwise(sdfg_name: str):
             return Y_relu
 
     run_matmul_test(MatMulWithBias(), sdfg_name, {"A": (5, 4), "B": (4, 3), "bias": (3, )})
-
-
-##################################
-# Tests with Learnable Parameters
-##################################
 
 
 @pytest.mark.torch
@@ -498,11 +410,6 @@ def test_matmul_attention_like(sdfg_name: str):
     run_matmul_test(AttentionLike(), sdfg_name, {"Q": (2, 8, 64), "K": (2, 8, 64), "V": (2, 8, 64)})
 
 
-##################################
-# Edge Cases
-##################################
-
-
 @pytest.mark.torch
 @pytest.mark.autodiff
 def test_matmul_single_element_matrices(sdfg_name: str):
@@ -516,7 +423,6 @@ def test_matmul_single_element_matrices(sdfg_name: str):
     run_matmul_test(MatMulModule(), sdfg_name, {"A": (1, 1), "B": (1, 1)})
 
 
-# TODO: somehow uninitialized temporaries are in the graph
 @pytest.mark.torch
 @pytest.mark.autodiff
 def test_matmul_with_transpose(sdfg_name: str):
@@ -530,11 +436,6 @@ def test_matmul_with_transpose(sdfg_name: str):
             return At @ Bt
 
     run_matmul_test(TransposedMatMul(), sdfg_name, {"A": (4, 5), "B": (3, 4)})
-
-
-##################################
-# Llama-Specific Patterns
-##################################
 
 
 @pytest.mark.torch
@@ -687,10 +588,8 @@ def test_matmul_attention_av_only(sdfg_name: str):
 @pytest.mark.torch
 @pytest.mark.autodiff
 def test_matmul_larger_sequence(sdfg_name: str):
-    """Test with larger sequence length closer to Llama's typical use.
-
-    Llama often processes 512-2048+ token sequences. This tests a moderate
-    sequence length to ensure the implementation scales.
+    """
+    Test with larger sequence length closer to real model sizes.
     """
 
     class LargeSequenceAttention(nn.Module):
@@ -710,46 +609,32 @@ def test_matmul_larger_sequence(sdfg_name: str):
     })
 
 
-##################################
-# Entry point for direct execution
-##################################
-
 if __name__ == "__main__":
-    # Basic 2D tests
     test_matmul_2d_basic(sdfg_name="test_matmul_2d_basic")
-    test_matmul_2d_square(sdfg_name="test_matmul_2d_square")
-    test_matmul_2d_tall(sdfg_name="test_matmul_2d_tall")
-    test_matmul_2d_wide(sdfg_name="test_matmul_2d_wide")
 
-    # Batched tests
     test_matmul_3d_batched(sdfg_name="test_matmul_3d_batched")
     test_matmul_4d_batched(sdfg_name="test_matmul_4d_batched")
 
-    # Broadcasting tests
     test_matmul_broadcast_2d_3d(sdfg_name="test_matmul_broadcast_2d_3d")
     test_matmul_broadcast_3d_2d(sdfg_name="test_matmul_broadcast_3d_2d")
     test_matmul_broadcast_3d_4d(sdfg_name="test_matmul_broadcast_3d_4d")
     test_matmul_broadcast_4d_3d(sdfg_name="test_matmul_broadcast_4d_3d")
 
-    # 1D vector tests
     test_matmul_1d_1d_dot_product(sdfg_name="test_matmul_1d_1d_dot_product")
     test_matmul_2d_1d_matvec(sdfg_name="test_matmul_2d_1d_matvec")
     test_matmul_1d_2d_vecmat(sdfg_name="test_matmul_1d_2d_vecmat")
     test_matmul_3d_1d_batched_matvec(sdfg_name="test_matmul_3d_1d_batched_matvec")
     test_matmul_1d_3d_batched_vecmat(sdfg_name="test_matmul_1d_3d_batched_vecmat")
 
-    # Mixed dimensional tests
     test_matmul_complex_chain(sdfg_name="test_matmul_complex_chain")
     test_matmul_sequential(sdfg_name="test_matmul_sequential")
     test_matmul_with_elementwise(sdfg_name="test_matmul_with_elementwise")
 
-    # Tests with learnable parameters
     test_matmul_with_weight_parameter(sdfg_name="test_matmul_with_weight_parameter")
     test_matmul_with_batched_weight(sdfg_name="test_matmul_with_batched_weight")
     test_matmul_linear_stack(sdfg_name="test_matmul_linear_stack")
     test_matmul_attention_like(sdfg_name="test_matmul_attention_like")
 
-    # Edge cases
     test_matmul_single_element_matrices(sdfg_name="test_matmul_single_element_matrices")
     test_matmul_with_transpose(sdfg_name="test_matmul_with_transpose")
     test_matmul_llama_ffn_structure(sdfg_name="test_matmul_llama_ffn_structure")

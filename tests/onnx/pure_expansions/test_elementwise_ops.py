@@ -14,11 +14,6 @@ def assert_allclose(a, b, rtol=1e-5, atol=1e-8):
     np.testing.assert_allclose(a, b, rtol=rtol, atol=atol)
 
 
-# ==============================================================================
-# Unary Mathematical Operations
-# ==============================================================================
-
-
 @pytest.mark.onnx
 def test_log(sdfg_name):
     """Test Log operation."""
@@ -191,11 +186,6 @@ def test_neg(sdfg_name):
     assert_allclose(result, expected)
 
 
-# ==============================================================================
-# Activation Functions
-# ==============================================================================
-
-
 @pytest.mark.onnx
 def test_relu(sdfg_name):
     """Test Relu operation."""
@@ -257,7 +247,6 @@ def test_sigmoid(sdfg_name):
 
     sdfg = sigmoid_prog.to_sdfg()
 
-    # Note: Sigmoid might have a specialized implementation
     result = sdfg(inp=inp)
     expected = 1 / (1 + np.exp(-inp))
 
@@ -284,11 +273,6 @@ def test_softplus(sdfg_name):
     expected = np.log(1 + np.exp(inp))
 
     assert_allclose(result, expected, atol=1e-6)
-
-
-# ==============================================================================
-# Binary Operations
-# ==============================================================================
 
 
 @pytest.mark.onnx
@@ -428,11 +412,6 @@ def test_pow(shape_a, shape_b, sdfg_name):
     assert_allclose(result, expected, atol=1e-5)
 
 
-# ==============================================================================
-# Utility Operations
-# ==============================================================================
-
-
 @pytest.mark.onnx
 @pytest.mark.parametrize("min_val, max_val", [
     (-1.0, 1.0),
@@ -562,7 +541,6 @@ if __name__ == "__main__":
     test_pow(shape_a=[5, 5], shape_b=[5, 5], sdfg_name="test_pow_1")
     test_pow(shape_a=[5, 1], shape_b=[1, 5], sdfg_name="test_pow_2")
 
-    # Utility operations
     test_clip_dynamic(min_val=-1.0, max_val=1.0, sdfg_name="test_clip_dynamic_1")
     test_clip_dynamic(min_val=0.0, max_val=1.0, sdfg_name="test_clip_dynamic_2")
     test_clip_dynamic(min_val=-5.0, max_val=5.0, sdfg_name="test_clip_dynamic_3")

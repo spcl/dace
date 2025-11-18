@@ -14,11 +14,6 @@ def assert_allclose(a, b, rtol=1e-4, atol=1e-5):
     np.testing.assert_allclose(a, b, rtol=rtol, atol=atol)
 
 
-# ==============================================================================
-# Softmax Tests
-# ==============================================================================
-
-
 @pytest.mark.onnx
 @pytest.mark.parametrize("axis", [-1, 0, 1, 2])
 def test_softmax(axis, sdfg_name):
@@ -78,11 +73,6 @@ def test_softmax_2d(sdfg_name):
     assert_allclose(result, expected, rtol=1e-5, atol=1e-6)
 
 
-# ==============================================================================
-# LogSoftmax Tests
-# ==============================================================================
-
-
 @pytest.mark.onnx
 @pytest.mark.parametrize("axis", [-1, 0, 1])
 def test_log_softmax(axis, sdfg_name):
@@ -132,11 +122,6 @@ def test_log_softmax_2d(sdfg_name):
     expected = torch.log_softmax(torch.from_numpy(inp), dim=1).numpy()
 
     assert_allclose(result, expected, rtol=1e-5, atol=1e-6)
-
-
-# ==============================================================================
-# LayerNormalization Tests
-# ==============================================================================
 
 
 @pytest.mark.onnx
@@ -217,11 +202,6 @@ def test_layer_normalization_2d(sdfg_name):
     expected = torch.nn.functional.layer_norm(torch_inp, [10], torch_scale, torch_bias, eps=1e-5).numpy()
 
     assert_allclose(result, expected, rtol=1e-4, atol=1e-5)
-
-
-# ==============================================================================
-# Dropout Tests
-# ==============================================================================
 
 
 @pytest.mark.onnx

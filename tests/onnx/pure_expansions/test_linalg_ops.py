@@ -15,11 +15,6 @@ def assert_allclose(a, b, rtol=1e-4, atol=1e-5):
     np.testing.assert_allclose(a, b, rtol=rtol, atol=atol)
 
 
-# ==============================================================================
-# MatMul Tests (various dimensions and broadcasting)
-# ==============================================================================
-
-
 @pytest.mark.onnx
 @pytest.mark.parametrize("a_shape, b_shape", [
     ([10, 20], [20, 30]),
@@ -175,11 +170,6 @@ def test_matmul_broadcast(a_shape, b_shape, sdfg_name):
     result = sdfg(X=X, Z=Z)
 
     assert_allclose(expected_result, result)
-
-
-# ==============================================================================
-# Gemm Tests
-# ==============================================================================
 
 
 @pytest.mark.onnx

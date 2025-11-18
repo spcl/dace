@@ -4,10 +4,8 @@ import pytest
 pytest.importorskip("torch", reason="PyTorch not installed")
 pytest.importorskip("onnx", reason="ONNX not installed")
 
-import numpy as np
 import torch
 import torch.nn as nn
-import dace
 from dace.frontend.ml.torch.module import DaceModule
 from dace.transformation.onnx.constant_folding import ConstantFolding
 
@@ -74,7 +72,6 @@ def test_range_constant_folding():
     class RangeModel(nn.Module):
 
         def forward(self, x):
-            # Use arange which creates Range internally
             indices = torch.arange(0, x.size(0), dtype=torch.int64)
             return x[indices]
 

@@ -16,7 +16,6 @@ The implementations handle various ONNX operations including:
 import copy
 import itertools
 from typing import List, Optional, Tuple, Dict, Union
-
 import numpy as np
 
 # DaCe core imports
@@ -24,7 +23,8 @@ import dace
 from dace.frontend.common import einsum
 import dace.libraries
 from dace.registry import autoregister_params
-from dace import nodes as nd
+from dace import nodes as nd, subsets
+from dace.libraries.blas.nodes.matmul import MatMul
 
 # ONNX-specific imports
 import dace.libraries.onnx as donnx
@@ -34,8 +34,7 @@ from dace.transformation.onnx.replacement import onnx_constant_or_none
 
 # Autodiff imports
 import dace.autodiff.utils as butils
-from dace.autodiff.base_abc import BackwardImplementation, BackwardContext, BackwardResult
-
+from dace.autodiff.base_abc import AutoDiffException, BackwardImplementation, BackwardContext, BackwardResult
 # Utility imports
 from dace.util import in_desc_with_name
 
@@ -161,8 +160,6 @@ class DefaultMatMulBackward(BackwardImplementation):
     def backward(forward_node: nd.Node, context: BackwardContext, given_gradients: List[Optional[str]],
                  required_gradients: List[Optional[str]]) -> Tuple[nd.Node, BackwardResult]:
 
-        from dace.libraries.blas.nodes.matmul import MatMul
-
         nsdfg = dace.SDFG(forward_node.label + "_backward")
         nstate = nsdfg.add_state()
 
@@ -174,7 +171,7 @@ class DefaultMatMulBackward(BackwardImplementation):
         # Setup result
         result = BackwardResult.empty()
 
-        # Add gradient of output Y (given gradient)
+        # Add gradient of Y which is the given gradient
         result.given_grad_names["Y"] = butils.add_backward_desc(nsdfg, context.forward_sdfg, Y_desc, "Y")
         Y_grad_access = nstate.add_read(result.given_grad_names["Y"])
 
@@ -202,18 +199,18 @@ class DefaultMatMulBackward(BackwardImplementation):
 
             # Transpose B: we need to transpose the last two dimensions
             # For shape [b1, b2, ..., k, n] -> [b1, b2, ..., n, k]
-            # Special case for 1D: B stays as is (transpose will be identity)
             if B_rank >= 2:
-                # Create permutation: [..., -1, -2] (swap last two dims)
+                # Swap last two dims
                 perm = list(range(B_rank - 2)) + [B_rank - 1, B_rank - 2]
             else:
-                # For 1D case, no transpose needed (identity permutation)
+                # For 1D case, no transpose needed
                 perm = list(range(B_rank))
 
             # Add transposed B descriptor
             B_transposed_shape = list(B_desc.shape)
             if B_rank >= 2:
                 B_transposed_shape[-2], B_transposed_shape[-1] = B_transposed_shape[-1], B_transposed_shape[-2]
+
             # Create new array descriptor to avoid stride mismatch issues
             B_T_desc = dace.data.Array(dtype=B_desc.dtype,
                                        shape=B_transposed_shape,
@@ -222,7 +219,7 @@ class DefaultMatMulBackward(BackwardImplementation):
             nsdfg.add_datadesc("B_T", B_T_desc)
 
             # Only create Transpose node if B_rank >= 2 and not a 1x1 matrix
-            # For 1x1 matrices, transpose is a no-op and causes validation issues
+            # For 1x1 matrices, transpose is a no-op
             is_1x1_matrix = B_rank == 2 and B_desc.shape[-2] == 1 and B_desc.shape[-1] == 1
             if B_rank >= 2 and not is_1x1_matrix:
                 transpose_B = donnx.ONNXTranspose(forward_node.label + "_B_transpose", perm=perm)
@@ -241,24 +238,25 @@ class DefaultMatMulBackward(BackwardImplementation):
             # Need to handle different cases based on Y_rank and tensor dimensions
             # Y_grad @ B^T computation shape logic:
             # - Y has shape that results from A @ B
-            # - For 1d @ 1d: Y is scalar, dA = dY * B (element-wise, not matmul)
+            # - For 1d @ 1d: Y is scalar, dA = dY * B (element-wise multiplication)
             # - For 2d @ 1d: Y is (m,), dA shape (m, k) = dY.unsqueeze(-1) @ B.unsqueeze(0)
             # - For 1d @ 2d: Y is (n,), dA shape (m,) = Y @ B^T -> reduce properly
             # - For higher dims with broadcasting: need to sum over broadcast dims
 
             if Y_rank == 1 and A_rank == 1 and B_rank == 1:
-                # 1d @ 1d case (dot product): Y is shape (1,) or (), dA = dY * B
+                # 1d @ 1d case: Y is shape (1,) or (), dA = dY * B
                 # ONNX export creates shape (1,) for scalar outputs from 1d @ 1d
                 # Use ONNX Mul for element-wise scalar multiplication
                 mul_node = donnx.ONNXMul(forward_node.label + "_A_grad_mul")
                 nstate.add_node(mul_node)
 
-                # Connect dY and B to Mul node
+                # Add dY and B as inputs to Mul node
                 nstate.add_edge(Y_grad_access, None, mul_node, "A",
                                 nsdfg.make_array_memlet(result.given_grad_names["Y"]))
                 nstate.add_edge(B_T_access, None, mul_node, "B", nsdfg.make_array_memlet("B_T"))
 
                 # Output to A_grad with WCR
+                # The WCR is needed in case of multiple contributions to the same gradient element
                 A_grad_memlet = nsdfg.make_array_memlet(result.required_grad_names["A"])
                 A_grad_memlet.wcr = "lambda x, y: x + y"
                 nstate.add_edge(mul_node, "C", nstate.add_write(result.required_grad_names["A"]), None, A_grad_memlet)
@@ -273,21 +271,21 @@ class DefaultMatMulBackward(BackwardImplementation):
                 tasklet = nstate.add_tasklet("outer_prod", {"dY_elem", "B_elem"}, {"dA_elem"},
                                              "dA_elem = dY_elem * B_elem")
 
-                # Connect Y_grad -> tasklet (through map)
+                # Connect Y_grad -> tasklet
                 nstate.add_memlet_path(Y_grad_access,
                                        map_entry,
                                        tasklet,
                                        dst_conn="dY_elem",
                                        memlet=dace.Memlet(data=result.given_grad_names["Y"], subset="i"))
 
-                # Connect B_T -> tasklet (through map)
+                # Connect B_T -> tasklet
                 nstate.add_memlet_path(B_T_access,
                                        map_entry,
                                        tasklet,
                                        dst_conn="B_elem",
                                        memlet=dace.Memlet(data="B_T", subset="j"))
 
-                # Connect tasklet -> A_grad (through map)
+                # Connect tasklet -> A_grad
                 A_grad_write = nstate.add_write(result.required_grad_names["A"])
                 A_grad_memlet = dace.Memlet(data=result.required_grad_names["A"],
                                             subset="i,j",
@@ -297,9 +295,9 @@ class DefaultMatMulBackward(BackwardImplementation):
                 # Vector @ batched-matrix case: A is (m,) and B is (..., m, n), Y is (..., n)
                 # dA[i] = sum over all batch and column dims: sum_{...,j} B[...,i,j] * dY[...,j]
                 # Build dynamic map range based on B shape
-                batch_dims = B_desc.shape[:-2]  # All dimensions except last 2
-                m_dim = B_desc.shape[-2]  # Number of rows (= size of A)
-                n_dim = B_desc.shape[-1]  # Number of columns
+                batch_dims = B_desc.shape[:-2]
+                m_dim = B_desc.shape[-2]
+                n_dim = B_desc.shape[-1]
 
                 # Create map indices: one for each batch dim, plus i (rows of B), plus j (cols of B)
                 map_params = {}
@@ -347,9 +345,9 @@ class DefaultMatMulBackward(BackwardImplementation):
                 # Batched matrix-vector case: A is (..., m, k) and B is (k,), Y is (..., m)
                 # dA[...,i,j] = dY[...,i] * B[j] (outer product per batch element)
                 # Build dynamic map range based on A shape
-                batch_dims = A_desc.shape[:-2]  # All dimensions except last 2
-                m_dim = A_desc.shape[-2]  # Number of rows
-                k_dim = A_desc.shape[-1]  # Number of columns (= size of B)
+                batch_dims = A_desc.shape[:-2]
+                m_dim = A_desc.shape[-2]
+                k_dim = A_desc.shape[-1]
 
                 # Create map indices: one for each batch dim, plus i (rows), plus j (cols)
                 map_params = {}
@@ -366,7 +364,8 @@ class DefaultMatMulBackward(BackwardImplementation):
                 tasklet = nstate.add_tasklet("batched_outer_A", {"dY_elem", "B_elem"}, {"dA_elem"},
                                              "dA_elem = dY_elem * B_elem")
 
-                # Read from Y_grad - subset is batch indices + i
+                # Read from Y_grad
+                # Subset is batch indices + i
                 Y_subset = ",".join(batch_indices + ["i"])
                 nstate.add_memlet_path(Y_grad_access,
                                        map_entry,
@@ -374,14 +373,16 @@ class DefaultMatMulBackward(BackwardImplementation):
                                        dst_conn="dY_elem",
                                        memlet=dace.Memlet(data=result.given_grad_names["Y"], subset=Y_subset))
 
-                # Read from B - subset is just j
+                # Read from B
+                # Subset is just j
                 nstate.add_memlet_path(B_T_access,
                                        map_entry,
                                        tasklet,
                                        dst_conn="B_elem",
                                        memlet=dace.Memlet(data="B_T", subset="j"))
 
-                # Write to A_grad - subset is batch indices + i,j
+                # Write to A_grad
+                # Subset is batch indices + i,j
                 A_grad_subset = ",".join(batch_indices + ["i", "j"])
                 A_grad_write = nstate.add_write(result.required_grad_names["A"])
                 A_grad_memlet = dace.Memlet(data=result.required_grad_names["A"],
@@ -399,7 +400,7 @@ class DefaultMatMulBackward(BackwardImplementation):
                 elif Y_rank == 1:
                     Y_batch_dims = []
                     Y_m = Y_desc.shape[0]
-                    Y_n = 1  # Will be unsqueezed
+                    Y_n = 1
                 else:
                     Y_batch_dims = []
                     Y_m = 1
@@ -427,18 +428,18 @@ class DefaultMatMulBackward(BackwardImplementation):
 
                 matmul_output_shape = matmul_batch_dims + [Y_m, B_k] if matmul_batch_dims else [Y_m, B_k]
 
-                # Check if we need reduction (when matmul output has more dims than A_grad target)
+                # Check if we need reduction
+                # This is neccesary when matmul output has more dims than A_grad target
                 needs_reduction = len(matmul_output_shape) > A_rank
 
                 if needs_reduction:
-                    # Create intermediate array for MatMul output before reduction
                     A_grad_before_reduction_desc = dace.data.Array(dtype=A_desc.dtype,
                                                                    shape=matmul_output_shape,
                                                                    transient=True,
                                                                    storage=A_desc.storage)
                     nsdfg.add_datadesc("A_grad_tmp", A_grad_before_reduction_desc)
 
-                    # Create MatMul node: A_grad_tmp = Y_grad @ B^T
+                    # A_grad_tmp = Y_grad @ B^T
                     matmul_A_grad = MatMul(forward_node.label + "_A_grad", alpha=1.0, beta=1.0)
                     nstate.add_node(matmul_A_grad)
 
@@ -475,18 +476,18 @@ class DefaultMatMulBackward(BackwardImplementation):
                     nstate.add_edge(axes_tasklet, "out", axes_access, None,
                                     dace.Memlet.from_array(axes_name, axes_desc))
 
-                    # Connect ReduceSum
+                    # Connect ReduceSum node
                     nstate.add_edge(A_grad_tmp_access, None, reduce_sum, "data", nsdfg.make_array_memlet("A_grad_tmp"))
                     nstate.add_edge(axes_access, None, reduce_sum, "axes", nsdfg.make_array_memlet(axes_name))
 
-                    # Output to A_grad with write-conflict resolution for gradient accumulation
+                    # Output to A_grad with WCR for gradient accumulation
                     A_grad_memlet = nsdfg.make_array_memlet(result.required_grad_names["A"])
                     A_grad_memlet.wcr = "lambda x, y: x + y"
                     nstate.add_edge(reduce_sum, "reduced", nstate.add_write(result.required_grad_names["A"]), None,
                                     A_grad_memlet)
                 else:
                     # No reduction needed - direct matmul to A_grad
-                    # Create MatMul node: A_grad = Y_grad @ B^T
+                    # A_grad = Y_grad @ B^T
                     matmul_A_grad = MatMul(forward_node.label + "_A_grad", alpha=1.0, beta=1.0)
                     nstate.add_node(matmul_A_grad)
 
@@ -495,7 +496,7 @@ class DefaultMatMulBackward(BackwardImplementation):
                                     nsdfg.make_array_memlet(result.given_grad_names["Y"]))
                     nstate.add_edge(B_T_access, None, matmul_A_grad, "_b", nsdfg.make_array_memlet("B_T"))
 
-                    # Output to A_grad with write-conflict resolution for gradient accumulation
+                    # Output to A_grad with WCR for gradient accumulation
                     A_grad_memlet = nsdfg.make_array_memlet(result.required_grad_names["A"])
                     A_grad_memlet.wcr = "lambda x, y: x + y"
                     nstate.add_edge(matmul_A_grad, "_c", nstate.add_write(result.required_grad_names["A"]), None,
@@ -503,7 +504,7 @@ class DefaultMatMulBackward(BackwardImplementation):
 
         # Compute gradient for B if required: dB = A^T @ dY
         if "B" in required_gradients:
-            # Add forward input A (needed for computing B gradient)
+            # Add forward input A (needed for computing dB)
             if "A" not in required_forward_inputs:
                 A_desc_copy = copy.deepcopy(A_desc)
                 A_desc_copy.transient = False
@@ -516,7 +517,6 @@ class DefaultMatMulBackward(BackwardImplementation):
 
             # Transpose A: we need to transpose the last two dimensions
             # For shape [b1, b2, ..., m, k] -> [b1, b2, ..., k, m]
-            # Special case for 1D: A stays as is (transpose will be identity)
             if A_rank >= 2:
                 # Create permutation: [..., -1, -2] (swap last two dims)
                 perm = list(range(A_rank - 2)) + [A_rank - 1, A_rank - 2]
@@ -536,7 +536,7 @@ class DefaultMatMulBackward(BackwardImplementation):
             nsdfg.add_datadesc("A_T", A_T_desc)
 
             # Only create Transpose node if A_rank >= 2 and not a 1x1 matrix
-            # For 1x1 matrices, transpose is a no-op and causes validation issues
+            # For 1x1 matrices, transpose is a no-op
             is_A_1x1_matrix = A_rank == 2 and A_desc.shape[-2] == 1 and A_desc.shape[-1] == 1
             if A_rank >= 2 and not is_A_1x1_matrix:
                 transpose_A = donnx.ONNXTranspose(forward_node.label + "_A_transpose", perm=perm)
@@ -612,9 +612,9 @@ class DefaultMatMulBackward(BackwardImplementation):
                 # Vector @ batched-matrix case: A is (m,) and B is (..., m, n), Y is (..., n)
                 # dB[...,i,j] = A[i] * dY[...,j] (outer product per batch element)
                 # Build dynamic map range based on B shape
-                batch_dims = B_desc.shape[:-2]  # All dimensions except last 2
-                m_dim = B_desc.shape[-2]  # Number of rows (= size of A)
-                n_dim = B_desc.shape[-1]  # Number of columns
+                batch_dims = B_desc.shape[:-2]
+                m_dim = B_desc.shape[-2]
+                n_dim = B_desc.shape[-1]
 
                 # Create map indices: one for each batch dim, plus i (rows), plus j (cols)
                 map_params = {}
@@ -657,9 +657,9 @@ class DefaultMatMulBackward(BackwardImplementation):
                 # Batched matrix-vector case: A is (..., m, k) and B is (k,), Y is (..., m)
                 # dB[j] = sum over all batch and row dimensions: sum_{...,i} A[...,i,j] * dY[...,i]
                 # Build dynamic map range based on A shape
-                batch_dims = A_desc.shape[:-2]  # All dimensions except last 2
-                m_dim = A_desc.shape[-2]  # Number of rows
-                k_dim = A_desc.shape[-1]  # Number of columns (= size of B)
+                batch_dims = A_desc.shape[:-2]
+                m_dim = A_desc.shape[-2]
+                k_dim = A_desc.shape[-1]
 
                 # Create map indices: one for each batch dim, plus i (rows), plus j (cols)
                 map_params = {}
@@ -724,13 +724,13 @@ class DefaultMatMulBackward(BackwardImplementation):
                 elif Y_rank == 1:
                     Y_batch_dims = []
                     Y_m = Y_desc.shape[0]
-                    Y_n = 1  # Will be unsqueezed
+                    Y_n = 1
                 else:
                     Y_batch_dims = []
                     Y_m = 1
                     Y_n = 1
 
-                # Determine matmul output shape (broadcast batch dims)
+                # Determine matmul output shape
                 max_batch_rank = max(len(A_batch_dims), len(Y_batch_dims))
                 matmul_batch_dims = []
                 for i in range(max_batch_rank):
@@ -795,7 +795,7 @@ class DefaultMatMulBackward(BackwardImplementation):
                     nstate.add_edge(B_grad_tmp_access, None, reduce_sum, "data", nsdfg.make_array_memlet("B_grad_tmp"))
                     nstate.add_edge(axes_access, None, reduce_sum, "axes", nsdfg.make_array_memlet(axes_name))
 
-                    # Output to B_grad with write-conflict resolution for gradient accumulation
+                    # Output to B_grad with WCR for gradient accumulation
                     B_grad_memlet = nsdfg.make_array_memlet(result.required_grad_names["B"])
                     B_grad_memlet.wcr = "lambda x, y: x + y"
                     nstate.add_edge(reduce_sum, "reduced", nstate.add_write(result.required_grad_names["B"]), None,
@@ -811,14 +811,13 @@ class DefaultMatMulBackward(BackwardImplementation):
                     nstate.add_edge(Y_grad_access, None, matmul_B_grad, "_b",
                                     nsdfg.make_array_memlet(result.given_grad_names["Y"]))
 
-                    # Output to B_grad with write-conflict resolution for gradient accumulation
+                    # Output to B_grad with WCR for gradient accumulation
                     B_grad_memlet = nsdfg.make_array_memlet(result.required_grad_names["B"])
                     B_grad_memlet.wcr = "lambda x, y: x + y"
                     nstate.add_edge(matmul_B_grad, "_c", nstate.add_write(result.required_grad_names["B"]), None,
                                     B_grad_memlet)
 
-        # Mark all required gradients for zero initialization (needed for WCR accumulation)
-        # Use the internal SDFG array names (values from required_grad_names) as zero_init keys
+        # Mark all required gradients for zero initialization
         for grad_array_name in result.required_grad_names.values():
             if grad_array_name:
                 result.zero_init[grad_array_name] = True
@@ -1886,6 +1885,8 @@ class DefaultSliceBackward(BackwardImplementation):
 
     Forward: output = data[starts:ends:steps along axes]
     Backward: data_grad = zeros_like(data); data_grad[starts:ends:steps along axes] = output_grad
+    # TODO: Implement optimized version that avoids full zero tensor creation.
+    # TODO: Implement a pure SDFG version without using CPP tasklets.
     """
 
     @staticmethod
@@ -1913,7 +1914,7 @@ class DefaultSliceBackward(BackwardImplementation):
         output_grad_desc.transient = False
         nsdfg.add_datadesc("output_grad", output_grad_desc)
 
-        # Add data gradient descriptor (temporary)
+        # Add tmp data gradient descriptor
         data_grad_tmp_desc = copy.deepcopy(data_desc)
         data_grad_tmp_desc.transient = True
         nsdfg.add_datadesc("data_grad_tmp", data_grad_tmp_desc)
@@ -1925,16 +1926,13 @@ class DefaultSliceBackward(BackwardImplementation):
 
         # Check if slice parameters were constant-folded (removed) in forward pass
         # This happens when the forward Slice uses the optimized memlet-based implementation
-        import warnings
         try:
             starts_desc = butils.forward_in_desc_with_name(forward_node, context, "starts")
             ends_desc = butils.forward_in_desc_with_name(forward_node, context, "ends")
             has_dynamic_params = True
-            warnings.warn(f"Slice backward: DYNAMIC path, starts_desc={starts_desc}")
-        except (StopIteration, KeyError) as e:
+        except (StopIteration, KeyError):
             # Constant case: parameters were removed, need to extract from nested SDFG
             has_dynamic_params = False
-            warnings.warn(f"Slice backward: CONSTANT path, exception={e}")
 
         if not has_dynamic_params:
             # For constant case, extract slice params from the forward node's nested SDFG memlet
@@ -1967,19 +1965,13 @@ class DefaultSliceBackward(BackwardImplementation):
                 raise AutoDiffException("Slice backward: cannot find data->output edge in constant slice")
 
             # Extract slice parameters from the memlet subset
-            from dace import subsets
             subset = data_to_output_edge.data.subset
             if not isinstance(subset, subsets.Range):
                 raise AutoDiffException(f"Slice backward: expected Range subset, got {type(subset)}")
 
             # Build slice parameter arrays from the subset ranges
-            import warnings
-            warnings.warn(f"Extracting slice params from memlet subset: {subset}")
-            warnings.warn(f"Data shape: {data_desc.shape}")
-
             slice_params = []
             for dim_idx, (start, end, step) in enumerate(subset.ranges):
-                warnings.warn(f"  Dim {dim_idx}: start={start}, end={end}, step={step}")
                 # Only include dimensions that are actually sliced (not identity)
                 if not (start == 0 and end == data_desc.shape[dim_idx] - 1 and step == 1):
                     slice_params.append((dim_idx, int(start), int(end) + 1, int(step)))  # +1 because Range is inclusive
@@ -1988,7 +1980,6 @@ class DefaultSliceBackward(BackwardImplementation):
                 # No-op slice, treat as identity
                 slice_params = [(0, 0, data_desc.shape[0], 1)]
 
-            warnings.warn(f"Extracted slice_params: {slice_params}")
             num_slices = len(slice_params)
 
             # Create constant arrays for slice parameters
@@ -2019,7 +2010,6 @@ class DefaultSliceBackward(BackwardImplementation):
 
         else:
             # Dynamic case: parameters are available as inputs from forward node
-            # Use connector names - the backward framework will map them to actual arrays
             nsdfg.add_datadesc("starts", copy.deepcopy(starts_desc))
             nsdfg.add_datadesc("ends", copy.deepcopy(ends_desc))
             nsdfg.arrays["starts"].transient = False
@@ -2170,8 +2160,8 @@ class DefaultSliceBackward(BackwardImplementation):
             nstate.add_edge(steps_read, None, tasklet, "__steps",
                             dace.Memlet.from_array("steps", nsdfg.arrays["steps"]))
 
-        # Write to temporary array (no WCR)
-        data_grad_tmp_write.setzero = True  # Initialize to zero
+        # Write to temporary array
+        data_grad_tmp_write.setzero = True
         nstate.add_edge(tasklet, "__data_grad", data_grad_tmp_write, None,
                         dace.Memlet.from_array("data_grad_tmp", data_grad_tmp_desc))
 
@@ -2185,7 +2175,6 @@ class DefaultSliceBackward(BackwardImplementation):
         inputs = {"output_grad"}
         if has_dynamic_params:
             # Only add these as inputs if they come from outside (dynamic case)
-            # Use connector names - backward framework will map them to actual arrays
             inputs.add("starts")
             inputs.add("ends")
             if has_axes:

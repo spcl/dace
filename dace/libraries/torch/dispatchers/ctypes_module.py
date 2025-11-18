@@ -117,7 +117,7 @@ def callable_for_bwd_module(module: 'dace.frontend.ml.torch.DaceModule', forward
 
     for _, grad_name in backward_result.required_grad_names.items():
         # Always zero-initialize gradient arrays to ensure correctness
-        # This is necessary because gradients may use WCR (write-conflict resolution)
+        # This is necessary for gradient accumulation
         # and must start from zero for proper accumulation
         zero_init = True
         desc = backward_compiled.sdfg.arrays[grad_name]

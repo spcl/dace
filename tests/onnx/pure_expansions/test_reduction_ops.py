@@ -7,15 +7,12 @@ pytest.importorskip("torch", reason="PyTorch not installed. Please install with:
 import numpy as np
 import dace
 import dace.libraries.onnx as donnx
+from onnx import helper, TensorProto
+from dace.libraries.onnx import ONNXModel
 
 
 def assert_allclose(a, b, rtol=1e-5, atol=1e-8):
     np.testing.assert_allclose(a, b, rtol=rtol, atol=atol)
-
-
-# ==============================================================================
-# CumSum Tests
-# ==============================================================================
 
 
 @pytest.mark.onnx
@@ -112,11 +109,6 @@ def test_cumsum_1d(sdfg_name):
     assert_allclose(result, expected)
 
 
-# ==============================================================================
-# ReduceMin Tests
-# ==============================================================================
-
-
 @pytest.mark.onnx
 @pytest.mark.parametrize("keepdims, axes", [
     (True, [0]),
@@ -189,11 +181,6 @@ def test_reduce_min_all_axes(sdfg_name):
     result = sdfg(X=X)
 
     assert_allclose(expected, result)
-
-
-# ==============================================================================
-# Additional ReduceSum Tests (complementing test_expansions.py)
-# ==============================================================================
 
 
 @pytest.mark.onnx
@@ -320,10 +307,6 @@ def test_reduce_scalar(sdfg_name):
 def test_reduce_l2():
     """Test ReduceL2 operator with DaCe ONNX frontend."""
 
-    # Test requires creating an ONNX model since ReduceL2 needs axes parameter
-    import onnx
-    from onnx import helper, TensorProto
-
     # Create a simple ReduceL2 model
     # In opset 13, axes is an attribute, not an input
     input_tensor = helper.make_tensor_value_info('data', TensorProto.FLOAT, [4, 5, 6])
@@ -335,8 +318,6 @@ def test_reduce_l2():
     model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 13)])
     model.ir_version = 8  # Use IR version 8 for compatibility
 
-    # Test with DaCe
-    from dace.libraries.onnx import ONNXModel
     dace_model = ONNXModel("reduce_l2", model)
 
     X = np.random.randn(4, 5, 6).astype(np.float32)
@@ -347,7 +328,6 @@ def test_reduce_l2():
 
 
 if __name__ == "__main__":
-    # CumSum tests (only basic ones, exclusive/reverse not implemented)
     cumsum_params = [
         (0, 0, 0),
         (1, 0, 0),
@@ -374,7 +354,6 @@ if __name__ == "__main__":
 
     test_reduce_min_all_axes(sdfg_name="test_reduce_min_all_axes")
 
-    # Additional ReduceSum tests
     reduce_sum_params = [
         (True, [1]),
         (False, [2]),

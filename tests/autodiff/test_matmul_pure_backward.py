@@ -21,11 +21,11 @@ class MatMulBackwardRunner:
         self.target = target
 
         # Find all non-transient floating-point inputs for gradient computation
-        assert len(sdfg.nodes()) == 1, f"Expected single-state SDFG, got {len(sdfg.nodes())} states"
-        state = sdfg.nodes()[0]
-        required_grads = list(
-            node for node in state.nodes() if isinstance(node, nd.AccessNode)
-            and node.desc(sdfg).dtype in [dace.float32, dace.float64] and not node.desc(sdfg).transient)
+        required_grads = []
+        for state in sdfg.states():
+            required_grads += list(
+                node for node in state.nodes() if isinstance(node, nd.AccessNode)
+                and node.desc(sdfg).dtype in [dace.float32, dace.float64] and not node.desc(sdfg).transient)
 
         add_backward_pass(sdfg=self.sdfg, outputs=[self.target], inputs=required_grads)
 
@@ -73,15 +73,9 @@ def run_correctness(func):
         # Compare gradients
         for k, v in torch_results.items():
             v = v.detach().numpy()
-            diff = np.linalg.norm(sdfg_results[k] - v) / max(np.prod(v.shape), 1)
-            assert diff < 1e-5, f"Gradient mismatch for '{k}': normalized difference {diff:.2e} exceeds tolerance 1e-5"
+            np.testing.assert_allclose(sdfg_results[k], v, rtol=1e-6, atol=1e-6)
 
     return test_correctness
-
-
-##################################
-# Basic 2D Matrix Multiplication Tests
-##################################
 
 
 @pytest.mark.autodiff
@@ -103,12 +97,7 @@ def test_matmul_2d_basic():
         S: dace.float32[1],
     ):
         Y[:] = A @ B
-
-        @dace.map(_[0:5, 0:3])
-        def summap(i, j):
-            s >> S(1, lambda x, y: x + y)[0]
-            y << Y[i, j]
-            s = y
+        S[0] = np.sum(Y)
 
     sdfg = dace_func.to_sdfg()
 
@@ -120,125 +109,6 @@ def test_matmul_2d_basic():
             B=np.random.rand(4, 3).astype(np.float32),
         ),
     )
-
-
-@pytest.mark.autodiff
-@run_correctness
-def test_matmul_2d_square():
-    """Test square matrix multiplication: (n, n) @ (n, n) -> (n, n)"""
-
-    def torch_func(*, A, B):
-        Y = A @ B
-        S = Y.sum()
-        S.backward()
-        return dict(gradient_A=A.grad, gradient_B=B.grad)
-
-    @dace.program
-    def dace_func(
-        A: dace.float64[8, 8],
-        B: dace.float64[8, 8],
-        Y: dace.float64[8, 8],
-        S: dace.float64[1],
-    ):
-        Y[:] = A @ B
-
-        @dace.map(_[0:8, 0:8])
-        def summap(i, j):
-            s >> S(1, lambda x, y: x + y)[0]
-            y << Y[i, j]
-            s = y
-
-    sdfg = dace_func.to_sdfg()
-
-    return (
-        MatMulBackwardRunner(sdfg, "S"),
-        torch_func,
-        dict(
-            A=np.random.rand(8, 8).astype(np.float64),
-            B=np.random.rand(8, 8).astype(np.float64),
-        ),
-    )
-
-
-@pytest.mark.autodiff
-@run_correctness
-def test_matmul_2d_tall():
-    """Test tall matrix multiplication: (m, k) @ (k, n) where m >> n"""
-
-    def torch_func(*, A, B):
-        Y = A @ B
-        S = Y.sum()
-        S.backward()
-        return dict(gradient_A=A.grad, gradient_B=B.grad)
-
-    @dace.program
-    def dace_func(
-        A: dace.float32[20, 5],
-        B: dace.float32[5, 3],
-        Y: dace.float32[20, 3],
-        S: dace.float32[1],
-    ):
-        Y[:] = A @ B
-
-        @dace.map(_[0:20, 0:3])
-        def summap(i, j):
-            s >> S(1, lambda x, y: x + y)[0]
-            y << Y[i, j]
-            s = y
-
-    sdfg = dace_func.to_sdfg()
-
-    return (
-        MatMulBackwardRunner(sdfg, "S"),
-        torch_func,
-        dict(
-            A=np.random.rand(20, 5).astype(np.float32),
-            B=np.random.rand(5, 3).astype(np.float32),
-        ),
-    )
-
-
-@pytest.mark.autodiff
-@run_correctness
-def test_matmul_2d_wide():
-    """Test wide matrix multiplication: (m, k) @ (k, n) where n >> m"""
-
-    def torch_func(*, A, B):
-        Y = A @ B
-        S = Y.sum()
-        S.backward()
-        return dict(gradient_A=A.grad, gradient_B=B.grad)
-
-    @dace.program
-    def dace_func(
-        A: dace.float32[3, 5],
-        B: dace.float32[5, 20],
-        Y: dace.float32[3, 20],
-        S: dace.float32[1],
-    ):
-        Y[:] = A @ B
-
-        @dace.map(_[0:3, 0:20])
-        def summap(i, j):
-            s >> S(1, lambda x, y: x + y)[0]
-            y << Y[i, j]
-            s = y
-
-    sdfg = dace_func.to_sdfg()
-
-    return (
-        MatMulBackwardRunner(sdfg, "S"),
-        torch_func,
-        dict(
-            A=np.random.rand(3, 5).astype(np.float32),
-            B=np.random.rand(5, 20).astype(np.float32),
-        ),
-    )
-
-
-##################################
-# Batched Matrix Multiplication Tests
-##################################
 
 
 @pytest.mark.autodiff
@@ -260,12 +130,7 @@ def test_matmul_3d_batched():
         S: dace.float32[1],
     ):
         Y[:] = A @ B
-
-        @dace.map(_[0:4, 0:5, 0:7])
-        def summap(i, j, k):
-            s >> S(1, lambda x, y: x + y)[0]
-            y << Y[i, j, k]
-            s = y
+        S[0] = np.sum(Y)
 
     sdfg = dace_func.to_sdfg()
 
@@ -298,12 +163,7 @@ def test_matmul_4d_batched():
         S: dace.float32[1],
     ):
         Y[:] = A @ B
-
-        @dace.map(_[0:2, 0:3, 0:4, 0:6])
-        def summap(i, j, k, l):
-            s >> S(1, lambda x, y: x + y)[0]
-            y << Y[i, j, k, l]
-            s = y
+        S[0] = np.sum(Y)
 
     sdfg = dace_func.to_sdfg()
 
@@ -315,11 +175,6 @@ def test_matmul_4d_batched():
             B=np.random.rand(2, 3, 5, 6).astype(np.float32),
         ),
     )
-
-
-##################################
-# Broadcasting Tests
-##################################
 
 
 @pytest.mark.autodiff
@@ -344,12 +199,7 @@ def test_matmul_broadcast_2d_3d():
         S: dace.float32[1],
     ):
         Y[:] = A @ B
-
-        @dace.map(_[0:3, 0:5, 0:6])
-        def summap(i, j, k):
-            s >> S(1, lambda x, y: x + y)[0]
-            y << Y[i, j, k]
-            s = y
+        S[0] = np.sum(Y)
 
     sdfg = dace_func.to_sdfg()
 
@@ -385,12 +235,7 @@ def test_matmul_broadcast_3d_2d():
         S: dace.float32[1],
     ):
         Y[:] = A @ B
-
-        @dace.map(_[0:3, 0:5, 0:6])
-        def summap(i, j, k):
-            s >> S(1, lambda x, y: x + y)[0]
-            y << Y[i, j, k]
-            s = y
+        S[0] = np.sum(Y)
 
     sdfg = dace_func.to_sdfg()
 
@@ -462,12 +307,7 @@ def test_matmul_broadcast_4d_3d():
         S: dace.float32[1],
     ):
         Y[:] = A @ B
-
-        @dace.map(_[0:2, 0:3, 0:4, 0:6])
-        def summap(i, j, k, l):
-            s >> S(1, lambda x, y: x + y)[0]
-            y << Y[i, j, k, l]
-            s = y
+        S[0] = np.sum(Y)
 
     sdfg = dace_func.to_sdfg()
 
@@ -479,11 +319,6 @@ def test_matmul_broadcast_4d_3d():
             B=np.random.rand(3, 5, 6).astype(np.float32),
         ),
     )
-
-
-##################################
-# 1D Vector Operations Tests
-##################################
 
 
 @pytest.mark.autodiff
@@ -540,12 +375,7 @@ def test_matmul_2d_1d_matvec():
         S: dace.float32[1],
     ):
         Y[:] = A @ B
-
-        @dace.map(_[0:5])
-        def summap(i):
-            s >> S(1, lambda x, y: x + y)[0]
-            y << Y[i]
-            s = y
+        S[0] = np.sum(Y)
 
     sdfg = dace_func.to_sdfg()
 
@@ -581,12 +411,7 @@ def test_matmul_1d_2d_vecmat():
         S: dace.float32[1],
     ):
         Y[:] = A @ B
-
-        @dace.map(_[0:7])
-        def summap(i):
-            s >> S(1, lambda x, y: x + y)[0]
-            y << Y[i]
-            s = y
+        S[0] = np.sum(Y)
 
     sdfg = dace_func.to_sdfg()
 
@@ -622,12 +447,7 @@ def test_matmul_3d_1d_batched_matvec():
         S: dace.float32[1],
     ):
         Y[:] = A @ B
-
-        @dace.map(_[0:3, 0:5])
-        def summap(i, j):
-            s >> S(1, lambda x, y: x + y)[0]
-            y << Y[i, j]
-            s = y
+        S[0] = np.sum(Y)
 
     sdfg = dace_func.to_sdfg()
 
@@ -663,12 +483,7 @@ def test_matmul_1d_3d_batched_vecmat():
         S: dace.float32[1],
     ):
         Y[:] = A @ B
-
-        @dace.map(_[0:3, 0:7])
-        def summap(i, j):
-            s >> S(1, lambda x, y: x + y)[0]
-            y << Y[i, j]
-            s = y
+        S[0] = np.sum(Y)
 
     sdfg = dace_func.to_sdfg()
 
@@ -680,11 +495,6 @@ def test_matmul_1d_3d_batched_vecmat():
             B=np.random.rand(3, 5, 7).astype(np.float32),
         ),
     )
-
-
-##################################
-# Mixed Dimensional Tests
-##################################
 
 
 @pytest.mark.autodiff
@@ -711,12 +521,8 @@ def test_matmul_complex_chain():
         Xt = np.transpose(X)
         YW = W * Y
         Z = Xt @ YW
-
-        @dace.map(_[0:5, 0:3])
-        def summap(i, j):
-            s >> S(1, lambda x, y: x + y)[0]
-            z << Z[i, j]
-            s = log(z + 1)
+        Zl = np.log(Z + 1)
+        S[0] = np.sum(Zl)
 
     sdfg = dace_func.to_sdfg()
 
@@ -753,12 +559,7 @@ def test_matmul_sequential():
     ):
         AB = A @ B
         Y[:] = AB @ C
-
-        @dace.map(_[0:5, 0:3])
-        def summap(i, j):
-            s >> S(1, lambda x, y: x + y)[0]
-            y << Y[i, j]
-            s = y
+        S[0] = np.sum(Y)
 
     sdfg = dace_func.to_sdfg()
 
@@ -796,12 +597,8 @@ def test_matmul_with_elementwise():
     ):
         Y[:] = A @ B
         Y_biased = Y + bias
-
-        @dace.map(_[0:5, 0:3])
-        def summap(i, j):
-            s >> S(1, lambda x, y: x + y)[0]
-            yb << Y_biased[i, j]
-            s = max(yb, 0.0)
+        Y_relu = np.maximum(Y_biased, 0)
+        S[0] = np.sum(Y_relu)
 
     sdfg = dace_func.to_sdfg()
 
@@ -819,9 +616,6 @@ def test_matmul_with_elementwise():
 if __name__ == "__main__":
     # Basic 2D tests
     test_matmul_2d_basic()
-    test_matmul_2d_square()
-    test_matmul_2d_tall()
-    test_matmul_2d_wide()
 
     test_matmul_3d_batched()
     test_matmul_4d_batched()

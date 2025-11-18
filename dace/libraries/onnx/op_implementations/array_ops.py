@@ -47,20 +47,19 @@ class PurePad(ONNXForward):
     Pure implementation of ONNX Pad operator.
 
     Pads a tensor with a constant value along specified dimensions.
+    The ONNX Pad operator takes:
+        - data: input tensor
+        - pads: padding values in ONNX format [x1_begin, x2_begin, ..., x1_end, x2_end, ...]
+                Length is 2 * rank of data
+        - constant_value (optional): value to pad with (default 0)
     """
 
     @staticmethod
     def forward_can_be_applied(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> bool:
-        # For now, only support constant padding with pads as an input
         return True
 
     @staticmethod
     def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
-        # The ONNX Pad operator takes:
-        # - data: input tensor
-        # - pads: padding values in ONNX format [x1_begin, x2_begin, ..., x1_end, x2_end, ...]
-        #         Length is 2 * rank of data
-        # - constant_value (optional): value to pad with (default 0)
 
         # Get descriptors
         data_desc = in_desc_with_name(node, state, sdfg, "data")
@@ -123,10 +122,7 @@ class PurePad(ONNXForward):
 
         tasklet_code = '\n'.join(code_lines)
 
-        # Build memlet strings that read full arrays (for indexing in tasklet)
-        # The pads array is read in full
         pads_memlet_str = f"pads[0:{pads_desc.shape[0]}]"
-        # The data array is read in full
         data_memlet_str = "data[" + ", ".join([f"0:{input_shape[d]}" for d in range(ndim)]) + "]"
 
         # Build tasklet inputs with proper memlet strings
@@ -341,8 +337,6 @@ class PureExpand(ONNXForward):
 
     @staticmethod
     def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
-        from dace.libraries.onnx.op_implementations.common import broadcast_indices
-        from dace.transformation.onnx import constant_folding
 
         # Get input and output descriptors
         input_desc = in_desc_with_name(node, state, sdfg, "input")
@@ -362,7 +356,7 @@ class PureExpand(ONNXForward):
         nsdfg.arrays["input"].transient = False
         nsdfg.arrays["output"].transient = False
 
-        # Generate broadcast-aware indexing using the common helper
+        # Generate broadcast-aware indexing
         input_indices = broadcast_indices(input_desc.shape, output_desc.shape)
         input_memlet_str = create_memlet_str("input", input_indices, input_desc.shape)
 
@@ -492,7 +486,6 @@ class PureSlice(ONNXForward):
 
     @staticmethod
     def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
-        # Always applicable - handles both constant and dynamic inputs
         return True
 
     @staticmethod
@@ -564,10 +557,8 @@ class PureSlice(ONNXForward):
                             end = -1
 
                     # For negative steps, if end >= start, the slice is empty (wrong direction)
-                    # This shouldn't happen with correct ONNX, but handle it
-                    if end >= start:
-                        # This is likely a bug - set end to allow full backwards slice
-                        end = -1
+                    # This shouldn't happen
+                    assert end < start
 
                     # DaCe Range with negative step: (start, end, step) where start > end
                     # The range includes indices from start down to (but NOT including) end
@@ -588,7 +579,6 @@ class PureSlice(ONNXForward):
             sbs = subsets.Range(rng)
             osbs = subsets.Range.from_array(odesc)
 
-            # Make copy / view
             rnode = nstate.add_read("data")
             wnode = nstate.add_write("output")
 
@@ -799,14 +789,15 @@ class SplitPure(ONNXForward):
         if not (has_split_input or has_num_outputs):
             return False
 
-        # If split input is provided, it must be a constant (if we can check)
+        # If split input is provided, it must be a constant
         if has_split_input:
             split_node = next(state.in_edges_by_connector(node, "split")).src
             try:
                 if not onnx_constant_or_none(sdfg, split_node):
                     return False
             except AttributeError:
-                # No _parent_onnx_model - can't verify if constant, but allow anyway
+                # No _parent_onnx_model
+                # can't verify if constant
                 pass
 
         return True
@@ -1014,7 +1005,6 @@ class PureGather(ONNXForward):
 
         # required to make underlying code to see it as a pointer and enable index-based access
         # even if the data contains just a single element
-        # IMPORTANT: Use data_desc.dtype, not out_desc.dtype!
         tasklet.in_connectors["__data"] = dace.pointer(data_desc.dtype)
 
         return nsdfg
@@ -1144,7 +1134,6 @@ class PureConstantOfShape(ONNXForward):
 
     @staticmethod
     def forward_can_be_applied(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> bool:
-        # Always applicable - handles both constant and runtime shape inputs
         return True
 
     @staticmethod
@@ -1160,8 +1149,7 @@ class PureConstantOfShape(ONNXForward):
         # Get fill value (default is 0)
         fill_value = 0
         if hasattr(node, 'value') and node.value is not None:
-            # node.value is already a numpy array (converted during ONNX import)
-            fill_value = float(node.value.flat[0])  # Extract scalar from array and convert to Python type
+            fill_value = float(node.value.flat[0])
 
         output_desc = out_desc_with_name(node, state, sdfg, "output")
 
@@ -1180,14 +1168,13 @@ class PureConstantOfShape(ONNXForward):
             output_indices = ', '.join(f'__i{i}' for i in range(len(output_desc.shape)))
 
             # Use add_mapped_tasklet for simpler construction
-            tasklet, map_entry, map_exit = nstate.add_mapped_tasklet(
-                name='fill',
-                map_ranges=map_ranges,
-                inputs={},
-                code=f'__out = {output_desc.dtype.ctype}({fill_value})',
-                outputs={'__out': dace.Memlet(f'output[{output_indices}]')},
-                external_edges=True,
-                output_nodes={'output': nstate.add_write('output')})
+            tasklet, _, _ = nstate.add_mapped_tasklet(name='fill',
+                                                      map_ranges=map_ranges,
+                                                      inputs={},
+                                                      code=f'__out = {output_desc.dtype.ctype}({fill_value})',
+                                                      outputs={'__out': dace.Memlet(f'output[{output_indices}]')},
+                                                      external_edges=True,
+                                                      output_nodes={'output': nstate.add_write('output')})
         else:
             # Shape is not constant, need to handle it at runtime
             # Add input shape array to nested SDFG
@@ -1247,7 +1234,6 @@ class PureConstantOfShape(ONNXForward):
                                          language=dace.Language.CPP)
 
             # Connect edges
-            # For scalar input (single element), use from_array which will optimize to scalar
             nstate.add_edge(input_node, None, tasklet, '__input', dace.Memlet.from_array('input', input_desc))
             nstate.add_edge(tasklet, '__output', output_node, None, dace.Memlet.from_array('output', output_desc))
 

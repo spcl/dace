@@ -9,15 +9,12 @@ import numpy as np
 import dace
 import dace.libraries.onnx as donnx
 from dace import transformation, data as dt
+from dace.libraries.onnx import ONNXModel
+from onnx import helper, TensorProto, numpy_helper
 
 
 def assert_allclose(a, b, rtol=1e-5, atol=1e-8):
     np.testing.assert_allclose(a, b, rtol=rtol, atol=atol)
-
-
-# ==============================================================================
-# Concatenation Tests
-# ==============================================================================
 
 
 @pytest.mark.onnx
@@ -69,11 +66,6 @@ def test_concat_2_inputs(sdfg_name):
     expected = np.concatenate([A, B], axis=1)
 
     assert_allclose(result, expected)
-
-
-# ==============================================================================
-# Squeeze Tests
-# ==============================================================================
 
 
 @pytest.mark.onnx
@@ -129,11 +121,6 @@ def test_squeeze_multiple_axes(sdfg_name):
     assert_allclose(result, expected)
 
 
-# ==============================================================================
-# Expand Tests
-# ==============================================================================
-
-
 @pytest.mark.onnx
 def test_expand_broadcast(sdfg_name):
     """Test Expand operation broadcasting to larger shape."""
@@ -180,11 +167,6 @@ def test_expand_higher_rank(sdfg_name):
     expected = np.broadcast_to(inp, (2, 1, 3))
 
     assert_allclose(result, expected)
-
-
-# ==============================================================================
-# Transpose Tests
-# ==============================================================================
 
 
 @pytest.mark.onnx
@@ -235,11 +217,6 @@ def test_transpose_2d(sdfg_name):
     expected = np.transpose(inp)
 
     assert_allclose(result, expected)
-
-
-# ==============================================================================
-# Slice Tests
-# ==============================================================================
 
 
 @pytest.mark.onnx
@@ -417,11 +394,6 @@ def test_slice_different_ranges(start, end, sdfg_name):
     assert_allclose(result, expected)
 
 
-# ==============================================================================
-# Split Tests
-# ==============================================================================
-
-
 @pytest.mark.onnx
 def test_split_equal(sdfg_name):
     """Test Split operation with equal splits."""
@@ -453,7 +425,6 @@ def test_split_equal(sdfg_name):
 
     sdfg.expand_library_nodes()
 
-    # Allocate output arrays
     out0 = np.zeros([2, 4], dtype=np.float32)
     out1 = np.zeros([2, 4], dtype=np.float32)
     out2 = np.zeros([2, 4], dtype=np.float32)
@@ -465,11 +436,6 @@ def test_split_equal(sdfg_name):
     assert_allclose(out0, expected[0])
     assert_allclose(out1, expected[1])
     assert_allclose(out2, expected[2])
-
-
-# ==============================================================================
-# Where Tests
-# ==============================================================================
 
 
 @pytest.mark.onnx
@@ -522,11 +488,6 @@ def test_where_broadcast(sdfg_name):
     assert_allclose(result, expected)
 
 
-# ==============================================================================
-# Identity Tests
-# ==============================================================================
-
-
 @pytest.mark.onnx
 def test_identity(sdfg_name):
     """Test Identity operation (pass-through)."""
@@ -571,9 +532,6 @@ def test_greater_or_equal():
 def test_topk():
     """Test TopK operator with DaCe ONNX frontend."""
 
-    import onnx
-    from onnx import helper, TensorProto
-
     # Create a TopK model
     input_tensor = helper.make_tensor_value_info('X', TensorProto.FLOAT, [2, 5])
     k_tensor = helper.make_tensor('K', TensorProto.INT64, [], [3])
@@ -586,12 +544,10 @@ def test_topk():
     model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 13)])
     model.ir_version = 8  # Use IR version 8 for compatibility
 
-    # Test with DaCe
-    from dace.libraries.onnx import ONNXModel
     dace_model = ONNXModel("test_topk", model)
 
     X = np.array([[3, 1, 4, 1, 5], [9, 2, 6, 5, 3]], dtype=np.float32)
-    values, indices = dace_model(X=X)
+    values, _ = dace_model(X=X)
 
     # Check if values are correct (indices might differ for ties)
     for i in range(X.shape[0]):
@@ -607,9 +563,6 @@ def test_topk():
 def test_range():
     """Test Range operator with DaCe ONNX frontend."""
 
-    import onnx
-    from onnx import helper, TensorProto
-
     # Create a Range model
     start_tensor = helper.make_tensor('start', TensorProto.INT64, [], [2])
     limit_tensor = helper.make_tensor('limit', TensorProto.INT64, [], [10])
@@ -622,8 +575,6 @@ def test_range():
     model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 13)])
     model.ir_version = 8  # Use IR version 8 for compatibility
 
-    # Test with DaCe
-    from dace.libraries.onnx import ONNXModel
     dace_model = ONNXModel("range", model)
 
     result = dace_model()
@@ -635,9 +586,6 @@ def test_range():
 @pytest.mark.onnx
 def test_constant_of_shape():
     """Test ConstantOfShape operator with DaCe ONNX frontend."""
-
-    import onnx
-    from onnx import helper, TensorProto, numpy_helper
 
     # Create a ConstantOfShape model
     shape_tensor = helper.make_tensor('shape', TensorProto.INT64, [2], [3, 4])
@@ -652,8 +600,6 @@ def test_constant_of_shape():
     model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 13)])
     model.ir_version = 8  # Use IR version 8 for compatibility
 
-    # Test with DaCe
-    from dace.libraries.onnx import ONNXModel
     dace_model = ONNXModel("constant_of_shape", model)
 
     result = dace_model()
@@ -666,9 +612,6 @@ def test_constant_of_shape():
 def test_gather_nd():
     """Test GatherND operator with DaCe ONNX frontend."""
 
-    import onnx
-    from onnx import helper, TensorProto
-
     # Create a GatherND model
     data_tensor = helper.make_tensor_value_info('data', TensorProto.FLOAT, [2, 2])
     indices_tensor = helper.make_tensor_value_info('indices', TensorProto.INT64, [2, 2])
@@ -680,8 +623,6 @@ def test_gather_nd():
     model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 13)])
     model.ir_version = 8  # Use IR version 8 for compatibility
 
-    # Test with DaCe
-    from dace.libraries.onnx import ONNXModel
     dace_model = ONNXModel("gather_nd", model)
 
     data = np.array([[0, 1], [2, 3]], dtype=np.float32)
@@ -780,9 +721,6 @@ def test_cast_float_to_long(sdfg_name):
 def test_scatter_nd():
     """Test ScatterND operator with DaCe ONNX frontend."""
 
-    import onnx
-    from onnx import helper, TensorProto
-
     # Create a ScatterND model
     data_tensor = helper.make_tensor_value_info('data', TensorProto.FLOAT, [4, 4])
     indices_tensor = helper.make_tensor_value_info('indices', TensorProto.INT64, [3, 2])
@@ -795,8 +733,6 @@ def test_scatter_nd():
     model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 13)])
     model.ir_version = 8  # Use IR version 8 for compatibility
 
-    # Test with DaCe
-    from dace.libraries.onnx import ONNXModel
     dace_model = ONNXModel("scatter_nd", model)
 
     data = np.zeros((4, 4), dtype=np.float32)
@@ -975,7 +911,7 @@ def test_shape():
 
 @pytest.mark.onnx
 def test_gather_onnx_1():
-    # gather in ONNX operators.md
+
     @dace.program
     def gather(inp: dace.float64[3, 2], indices: dace.int64[2, 2]):
         output = dace.define_local([2, 2, 2], dace.float64)
@@ -994,7 +930,7 @@ def test_gather_onnx_1():
 
 @pytest.mark.onnx
 def test_gather_bert():
-    # gather found at start of bert model
+
     @dace.program
     def gather(embs: dace.float64[64, 8], input_ids: dace.int64[8, 16]):
         output = dace.define_local([8, 16, 8], dace.float64)
@@ -1013,7 +949,7 @@ def test_gather_bert():
 
 @pytest.mark.onnx
 def test_gather_scalar():
-    # gather test 2 in BERT model (third last op)
+
     @dace.program
     def gather(inp: dace.float64[1, 8, 32], indices: dace.int64):
         output = dace.define_local([1, 32], dace.float64)
@@ -1034,7 +970,7 @@ def test_gather_scalar():
 
 @pytest.mark.onnx
 def test_gather_onnx_2():
-    # gather test 2 in ONNX operators.md
+
     @dace.program
     def gather(inp: dace.float64[3, 3], indices: dace.int64[1, 2]):
         output = dace.define_local([3, 1, 2], dace.float64)

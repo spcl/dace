@@ -91,7 +91,6 @@ class PureMaxPool2D(ONNXForward):
         input_size_x, input_size_y = X.shape[2:]
         output_size_x, output_size_y = Y.shape[2:]
 
-        # Create new SDFG
         nsdfg = dace.SDFG(node.label + "_expansion")
         nstate = nsdfg.add_state()
 
@@ -216,7 +215,6 @@ class PureConv2D(ONNXForward):
         if B is not None and B.shape[0] != num_filters:
             return False
 
-        # Support NOTSET (explicit pads), SAME_UPPER, SAME_LOWER, and VALID
         if node.auto_pad not in ['NOTSET', 'SAME_UPPER', 'SAME_LOWER', 'VALID', None]:
             return False
 
@@ -298,9 +296,6 @@ class PureConv2D(ONNXForward):
             # Should not happen due to can_be_applied check
             pad_x, pad_y = 0, 0
 
-        dtype = X.dtype
-
-        # Create new SDFG
         nsdfg = dace.SDFG(node.label + "_expansion")
         nstate = nsdfg.add_state()
 
@@ -586,7 +581,6 @@ class PureGlobalAveragePool(ONNXForward):
         X_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, "X"))
         Y_desc = copy.deepcopy(out_desc_with_name(node, state, sdfg, "Y"))
 
-        # Create new SDFG
         nsdfg = dace.SDFG(node.label + "_expansion")
         nstate = nsdfg.add_state()
 

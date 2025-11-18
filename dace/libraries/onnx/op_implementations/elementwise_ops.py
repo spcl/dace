@@ -382,7 +382,6 @@ class PureClip(ONNXForward):
 
     @staticmethod
     def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
-        # Always applicable - supports both constant and dynamic min/max
         return True
 
     @staticmethod

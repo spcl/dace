@@ -275,7 +275,7 @@ class ConstantFolding(transformation.SingleStateTransformation):
                 else:
                     inputs[edge.dst_conn] = np.array(input_data)
 
-            # Get A and B (ONNX uses A and B connectors)
+            # Get A and B
             # Can't use 'or' with numpy arrays, need explicit None check
             A = inputs.get('A') if 'A' in inputs else inputs.get('a') if 'a' in inputs else list(inputs.values())[0]
             B = inputs.get('B') if 'B' in inputs else inputs.get('b') if 'b' in inputs else list(inputs.values())[1]
@@ -320,7 +320,6 @@ class ConstantFolding(transformation.SingleStateTransformation):
                     inputs[edge.dst_conn] = np.array(input_data)
 
             # Get A and B
-            # Can't use 'or' with numpy arrays, need explicit None check
             A = inputs.get('A') if 'A' in inputs else inputs.get('a') if 'a' in inputs else list(inputs.values())[0]
             B = inputs.get('B') if 'B' in inputs else inputs.get('b') if 'b' in inputs else list(inputs.values())[1]
 
@@ -359,6 +358,7 @@ class ConstantFolding(transformation.SingleStateTransformation):
 
         elif node.schema.name == "Where":
             # Where operation with all constant inputs
+            # Where has inputs: condition, X, Y
             assert len(state.in_edges(node)) == 3
 
             # Get the three input values (condition, X, Y)
@@ -371,8 +371,6 @@ class ConstantFolding(transformation.SingleStateTransformation):
                 else:
                     inputs[edge.dst_conn] = np.array(input_data)
 
-            # Where has inputs: condition, X, Y
-            # Can't use 'or' with numpy arrays, need explicit None check
             condition = inputs.get('condition') if 'condition' in inputs else list(inputs.values())[0]
             X = inputs.get('X') if 'X' in inputs else list(inputs.values())[1]
             Y = inputs.get('Y') if 'Y' in inputs else list(inputs.values())[2]
@@ -641,18 +639,18 @@ class ConstantFolding(transformation.SingleStateTransformation):
                 # ONNX uses TensorProto data types (integers)
                 # Map ONNX type to numpy dtype
                 onnx_to_numpy_dtype = {
-                    1: np.float32,  # FLOAT
-                    2: np.uint8,  # UINT8
-                    3: np.int8,  # INT8
-                    5: np.int16,  # INT16
-                    6: np.int32,  # INT32
-                    7: np.int64,  # INT64
-                    9: np.bool_,  # BOOL
-                    10: np.float16,  # FLOAT16
-                    11: np.float64,  # DOUBLE
-                    12: np.uint32,  # UINT32
-                    13: np.uint64,  # UINT64
-                    16: np.float16,  # BFLOAT16 (map to float16)
+                    1: np.float32,
+                    2: np.uint8,
+                    3: np.int8,
+                    5: np.int16,
+                    6: np.int32,
+                    7: np.int64,
+                    9: np.bool_,
+                    10: np.float16,
+                    11: np.float64,
+                    12: np.uint32,
+                    13: np.uint64,
+                    16: np.float16,
                 }
 
                 target_dtype = onnx_to_numpy_dtype.get(node.to, np.float32)

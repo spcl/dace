@@ -10,7 +10,7 @@ from dace.frontend.ml.torch.module import DaceModule
 from tests.utils import torch_tensors_close
 
 
-def compare_gradients(pt_model, dace_model, rtol=1e-5, atol=1e-4):
+def compare_gradients(pt_model, dace_model, rtol=1e-6, atol=1e-6):
     """Compare gradients between PyTorch and DaCe models."""
 
     for (pt_name, pt_param), (dace_name, dace_param) in zip(pt_model.named_parameters(), dace_model.named_parameters()):
@@ -21,6 +21,7 @@ def compare_gradients(pt_model, dace_model, rtol=1e-5, atol=1e-4):
 
 
 @pytest.mark.torch
+@pytest.mark.autodiff
 def test_single_layernorm(sdfg_name):
     """Test a single LayerNorm layer."""
     torch.manual_seed(42)
@@ -61,6 +62,7 @@ def test_single_layernorm(sdfg_name):
 
 
 @pytest.mark.torch
+@pytest.mark.autodiff
 def test_two_sequential_layernorms(sdfg_name):
     """Test two LayerNorm layers applied sequentially."""
     torch.manual_seed(42)
@@ -104,6 +106,7 @@ def test_two_sequential_layernorms(sdfg_name):
 
 
 @pytest.mark.torch
+@pytest.mark.autodiff
 def test_layernorm_with_residual(sdfg_name):
     """Test LayerNorm with residual connection."""
     torch.manual_seed(42)
@@ -149,6 +152,7 @@ def test_layernorm_with_residual(sdfg_name):
 
 
 @pytest.mark.torch
+@pytest.mark.autodiff
 def test_two_layernorms_with_residuals(sdfg_name):
     """Test two LayerNorms with residual connections (similar to BERT structure)."""
     torch.manual_seed(42)
@@ -204,8 +208,9 @@ def test_two_layernorms_with_residuals(sdfg_name):
 
 
 @pytest.mark.torch
+@pytest.mark.autodiff
 def test_ffn_layernorm(sdfg_name):
-    """Test LayerNorm after feed-forward network (FFN)."""
+    """Test LayerNorm after feed-forward network."""
     torch.manual_seed(42)
 
     batch_size = 2
@@ -254,6 +259,7 @@ def test_ffn_layernorm(sdfg_name):
 
 
 @pytest.mark.torch
+@pytest.mark.autodiff
 def test_attention_then_layernorm(sdfg_name):
     """Test LayerNorm after a simplified attention mechanism."""
     torch.manual_seed(42)
@@ -277,7 +283,6 @@ def test_attention_then_layernorm(sdfg_name):
         def forward(self, x):
             batch_size, seq_len, hidden_size = x.shape
 
-            # Multi-head attention (simplified)
             Q = self.query(x).view(batch_size, seq_len, num_heads, head_dim).transpose(1, 2)
             K = self.key(x).view(batch_size, seq_len, num_heads, head_dim).transpose(1, 2)
             V = self.value(x).view(batch_size, seq_len, num_heads, head_dim).transpose(1, 2)
@@ -286,7 +291,6 @@ def test_attention_then_layernorm(sdfg_name):
             scores = torch.matmul(Q, K.transpose(-2, -1)) / (head_dim**0.5)
             attn = torch.softmax(scores, dim=-1)
 
-            # Apply attention to values
             context = torch.matmul(attn, V)
             context = context.transpose(1, 2).contiguous().view(batch_size, seq_len, hidden_size)
 
@@ -324,6 +328,7 @@ def test_attention_then_layernorm(sdfg_name):
 
 
 @pytest.mark.torch
+@pytest.mark.autodiff
 def test_simplified_bert_block(sdfg_name):
     """Test a simplified BERT block with attention and FFN, each followed by LayerNorm."""
     torch.manual_seed(42)
@@ -406,6 +411,7 @@ def test_simplified_bert_block(sdfg_name):
 
 
 @pytest.mark.torch
+@pytest.mark.autodiff
 def test_bert_block_with_dropout_in_eval(sdfg_name):
     """Test BERT block with Dropout layers in eval mode"""
     torch.manual_seed(42)
