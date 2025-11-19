@@ -92,7 +92,7 @@ class Vectorize(ppl.Pass):
 
         # If it has any branching out then move the branching one level up.
         if map_has_branching_memlets(state, new_inner_map):
-            cutil.duplicate_memlets_sharing_single_in_connector(state, new_inner_map)
+            cutil.duplicate_memlets_sharing_single_in_connector(state, new_inner_map, True)
             state.validate()
 
         (b, e, s) = new_inner_map.map.range[0]

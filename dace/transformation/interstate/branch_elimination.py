@@ -1863,8 +1863,8 @@ class BranchElimination(transformation.MultiStateTransformation):
 
                 has_divisions = self.make_division_tasklets_safe_for_unconditional_execution(new_state, float_type)
 
-                if not has_divisions:
-                    self._try_simplify_combine_tasklet(new_state, combine_tasklet)
+                #if not has_divisions:
+                self._try_simplify_combine_tasklet(new_state, combine_tasklet)
 
         else:
             assert len(self.conditional.branches) == 1
@@ -1986,8 +1986,8 @@ class BranchElimination(transformation.MultiStateTransformation):
 
                     has_divisions = self.make_division_tasklets_safe_for_unconditional_execution(new_state, float_type)
 
-                    if not has_divisions:
-                        self._try_simplify_combine_tasklet(new_state, combine_tasklet)
+                    #if not has_divisions:
+                    self._try_simplify_combine_tasklet(new_state, combine_tasklet)
 
         # If the symbol is not used anymore
         conditional_strs = {cond.as_string for cond, _ in self.conditional.branches if cond is not None}
