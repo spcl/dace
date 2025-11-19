@@ -138,12 +138,11 @@ class PurePow(ONNXForward):
 
         # Special case for constant exponents
         y_value = None
-        try:
-            if hasattr(sdfg, "_parent_onnx_model") and in_edge_with_name(
-                    node, state, "Y").src.data in sdfg._parent_onnx_model.clean_weights:
-                y_value = sdfg._parent_onnx_model.clean_weights[in_edge_with_name(node, state, "Y").src.data].numpy()
-        except ValueError:
-            pass
+        y_edges = list(state.in_edges_by_connector(node, "Y"))
+        if y_edges and hasattr(sdfg, "_parent_onnx_model"):
+            y_data = y_edges[0].src.data
+            if y_data in sdfg._parent_onnx_model.clean_weights:
+                y_value = sdfg._parent_onnx_model.clean_weights[y_data].numpy()
 
         if y_value is not None and y_value.ndim == 0:
             y_value = int(y_value)
@@ -409,18 +408,14 @@ class PureClip(ONNXForward):
         max_const = None
 
         if has_min:
-            try:
-                min_edge = next(state.in_edges_by_connector(node, 'min'))
-                min_const = onnx_constant_or_none(sdfg, min_edge.src)
-            except (StopIteration, AttributeError):
-                pass
+            min_edges = list(state.in_edges_by_connector(node, 'min'))
+            if min_edges and hasattr(sdfg, '_parent_onnx_model'):
+                min_const = onnx_constant_or_none(sdfg, min_edges[0].src)
 
         if has_max:
-            try:
-                max_edge = next(state.in_edges_by_connector(node, 'max'))
-                max_const = onnx_constant_or_none(sdfg, max_edge.src)
-            except (StopIteration, AttributeError):
-                pass
+            max_edges = list(state.in_edges_by_connector(node, 'max'))
+            if max_edges and hasattr(sdfg, '_parent_onnx_model'):
+                max_const = onnx_constant_or_none(sdfg, max_edges[0].src)
 
         # Determine clipping strategy based on what's available
         dtype_str = input_desc.dtype.to_string()

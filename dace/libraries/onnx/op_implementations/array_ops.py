@@ -25,7 +25,7 @@ import dace
 import numpy as np
 from dace import SDFG, SDFGState, subsets
 from dace.sdfg.nodes import Node
-from dace.util import in_desc_with_name, in_edge_with_name, iterables_equal, out_desc_with_name
+from dace.util import in_desc_with_name, out_desc_with_name
 
 from dace.libraries.onnx.forward_implementation_abc import ONNXForward
 from dace.libraries.onnx.nodes import onnx_op
@@ -35,7 +35,8 @@ from dace.libraries.onnx.op_implementations.common import broadcast_indices, cre
 from dace.transformation.onnx import constant_folding
 from dace.transformation.onnx.replacement import onnx_constant_or_none
 from dace.libraries.onnx import converters
-
+from dace.transformation.onnx.replacement import onnx_constant_or_none
+import onnx
 # ==============================================================================
 # Pad Operations
 # ==============================================================================
@@ -466,21 +467,14 @@ class PureSlice(ONNXForward):
     @staticmethod
     def _get_constant(conn: str, node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG):
         """Try to get constant value for an input connector."""
-        try:
-            srcnode = next(state.in_edges_by_connector(node, conn)).src
-        except StopIteration:
-            # Input not provided - return None (will use defaults)
+        edges = list(state.in_edges_by_connector(node, conn))
+        if not edges:
             return None
-        # Handle GPU scalar copies
-        if 'gpu_' in srcnode.data:
-            srcnode = state.predecessors(srcnode)[0]
 
-        # Try to get constant value - only works if _parent_onnx_model is available
-        try:
-            if hasattr(sdfg, '_parent_onnx_model'):
-                return onnx_constant_or_none(sdfg, srcnode)
-        except:
-            pass
+        srcnode = edges[0].src
+
+        if hasattr(sdfg, '_parent_onnx_model'):
+            return onnx_constant_or_none(sdfg, srcnode)
         return None
 
     @staticmethod
@@ -494,23 +488,15 @@ class PureSlice(ONNXForward):
             return False
 
         # axes and steps are optional, but if provided must be constant
-        # Check if axes input exists
-        try:
-            next(state.in_edges_by_connector(node, "axes"))
+        if list(state.in_edges_by_connector(node, "axes")):
             axes_const = PureSlice._get_constant('axes', node, state, sdfg)
             if axes_const is None:
                 return False
-        except StopIteration:
-            pass  # axes not provided, which is fine
 
-        # Check if steps input exists
-        try:
-            next(state.in_edges_by_connector(node, "steps"))
+        if list(state.in_edges_by_connector(node, "steps")):
             steps_const = PureSlice._get_constant('steps', node, state, sdfg)
             if steps_const is None:
                 return False
-        except StopIteration:
-            pass  # steps not provided, which is fine
 
         return True
 
@@ -646,13 +632,9 @@ class SplitPure(ONNXForward):
         # If split input is provided, it must be a constant
         if has_split_input:
             split_node = next(state.in_edges_by_connector(node, "split")).src
-            try:
+            if hasattr(sdfg, '_parent_onnx_model'):
                 if not onnx_constant_or_none(sdfg, split_node):
                     return False
-            except AttributeError:
-                # No _parent_onnx_model
-                # can't verify if constant
-                pass
 
         return True
 
@@ -674,27 +656,19 @@ class SplitPure(ONNXForward):
         if len(list(state.in_edges_by_connector(node, "split"))) > 0:
             # Get split sizes from input tensor
             split_node = next(state.in_edges_by_connector(node, "split")).src
-            try:
+
+            if hasattr(sdfg, '_parent_onnx_model'):
                 split_sizes = onnx_constant_or_none(sdfg, split_node)
-            except AttributeError:
-                # No _parent_onnx_model - try to get from array descriptor initial value
-                split_desc_orig = sdfg.arrays[split_node.data]
-                if hasattr(split_desc_orig, 'start_offset') and split_desc_orig.start_offset is not None:
-                    # Has initial value - this is a workaround for tests
-                    split_sizes = None  # Will be handled dynamically
-                else:
-                    split_sizes = None
+            else:
+                split_sizes = None
 
             if split_sizes is None:
-                # For now, we require split sizes to be constant
-                # In the future, this could be made dynamic
                 raise ValueError("Split sizes must be constant. Use num_outputs attribute instead.")
 
             # Add split input as a data descriptor
             split_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, "split"))
             split_desc.transient = False
             nsdfg.add_datadesc("split", split_desc)
-            split_read = nstate.add_read("split")
         else:
             # Compute split sizes from num_outputs
             num_outputs = node.num_outputs
@@ -723,8 +697,6 @@ class SplitPure(ONNXForward):
             odesc.transient = False
             nsdfg.add_datadesc(oname, odesc)
             wnode = nstate.add_write(oname)
-
-            # Perform copy (view)
             nstate.add_nedge(rnode, wnode,
                              dace.Memlet(data="input", subset=rng, other_subset=subsets.Range.from_array(odesc)))
 
@@ -743,10 +715,8 @@ class PureShape(ONNXForward):
     def forward_can_be_applied(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> bool:
         data_desc = in_desc_with_name(node, state, sdfg, "data")
 
-        try:
-            np.array(data_desc.shape, np.int64)
-        except Exception:
-            # this happens if the shape is symbolic, for example
+        # Check if shape contains symbolic values
+        if any(dace.symbolic.issymbolic(dim) for dim in data_desc.shape):
             return False
 
         return True
@@ -1110,13 +1080,15 @@ class PureRange(ONNXForward):
     @staticmethod
     def forward_can_be_applied(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> bool:
         # Check if all inputs are constants
+        if not hasattr(sdfg, '_parent_onnx_model'):
+            return False
+
         for conn in ["start", "limit", "delta"]:
-            try:
-                input_node = next(state.in_edges_by_connector(node, conn)).src
-                if onnx_constant_or_none(sdfg, input_node) is None:
-                    return False
-            except (StopIteration, ValueError, AttributeError):
-                # AttributeError occurs when _parent_onnx_model is not available
+            edges = list(state.in_edges_by_connector(node, conn))
+            if not edges:
+                return False
+            input_node = edges[0].src
+            if onnx_constant_or_none(sdfg, input_node) is None:
                 return False
         return True
 

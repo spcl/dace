@@ -179,16 +179,19 @@ class PureReduceMean(ONNXForward):
     @staticmethod
     def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
         # Check that all the inputs (even the optional ones) are present and constant
-        # optional inputs
-        is_axes_present = True
-        try:
-            if hasattr(sdfg, "_parent_onnx_model") and in_edge_with_name(
-                    node, state, "axes").src.data not in sdfg._parent_onnx_model.clean_weights:
-                return False
-        except ValueError:
-            is_axes_present = False
+        # When not in ONNX context (no _parent_onnx_model), axes can be implicit
+        is_axes_present = not hasattr(sdfg, "_parent_onnx_model")
 
-        if not is_axes_present and hasattr(node, "axes"):
+        # Check if axes is provided as an input connector
+        axes_edges = list(state.in_edges_by_connector(node, "axes"))
+        if axes_edges:
+            is_axes_present = True
+            # If we have parent ONNX model, verify the axes is a constant
+            if hasattr(sdfg, "_parent_onnx_model"):
+                axes_data = axes_edges[0].src.data
+                if axes_data not in sdfg._parent_onnx_model.clean_weights:
+                    return False
+        elif hasattr(node, "axes"):
             is_axes_present = True
 
         # Current constraints: axes must be explict. Axes must be zero
@@ -202,13 +205,14 @@ class PureReduceMean(ONNXForward):
         # We treat both cases where axes is an attribute and where it is an input
         # Since can be applied is true, we know that axes is present and valid
         axes = None
-        # TODO: avoid catching Exceptions
-        try:
-            if hasattr(sdfg, "_parent_onnx_model") and in_edge_with_name(
-                    node, state, "axes").src.data in sdfg._parent_onnx_model.clean_weights:
-                axes = sdfg._parent_onnx_model.clean_weights[in_edge_with_name(node, state, "axes").src.data].numpy()
-        except ValueError:
-            pass
+
+        # Check if axes is provided as an input connector
+        axes_edges = list(state.in_edges_by_connector(node, "axes"))
+        if axes_edges and hasattr(sdfg, "_parent_onnx_model"):
+            axes_data = axes_edges[0].src.data
+            if axes_data in sdfg._parent_onnx_model.clean_weights:
+                axes = sdfg._parent_onnx_model.clean_weights[axes_data].numpy()
+
         if axes is not None:
             if len(axes) == 1:
                 axes = axes[0]
@@ -277,16 +281,18 @@ class PureReduceSum(ONNXForward):
     @staticmethod
     def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
         # Check that all the inputs (even the optional ones) are present and constant
-        # optional inputs
-        is_axes_present = True
-        try:
-            if hasattr(sdfg, "_parent_onnx_model") and in_edge_with_name(
-                    node, state, "axes").src.data not in sdfg._parent_onnx_model.clean_weights:
-                return False
-        except ValueError:
-            is_axes_present = False
+        is_axes_present = False
 
-        if not is_axes_present and hasattr(node, "axes"):
+        # Check if axes is provided as an input connector
+        axes_edges = list(state.in_edges_by_connector(node, "axes"))
+        if axes_edges:
+            is_axes_present = True
+            # If we have parent ONNX model, verify the axes is a constant
+            if hasattr(sdfg, "_parent_onnx_model"):
+                axes_data = axes_edges[0].src.data
+                if axes_data not in sdfg._parent_onnx_model.clean_weights:
+                    return False
+        elif hasattr(node, "axes"):
             is_axes_present = True
 
         # Current constraints: axes must be explict.
@@ -300,13 +306,14 @@ class PureReduceSum(ONNXForward):
         # We treat both cases where axes is an attribute and where it is an input
         # Since can be applied is true, we know that axes is present and valid
         axes = None
-        # TODO: avoid catching Exceptions
-        try:
-            if hasattr(sdfg, "_parent_onnx_model") and in_edge_with_name(
-                    node, state, "axes").src.data in sdfg._parent_onnx_model.clean_weights:
-                axes = sdfg._parent_onnx_model.clean_weights[in_edge_with_name(node, state, "axes").src.data].numpy()
-        except ValueError:
-            pass
+
+        # Check if axes is provided as an input connector
+        axes_edges = list(state.in_edges_by_connector(node, "axes"))
+        if axes_edges and hasattr(sdfg, "_parent_onnx_model"):
+            axes_data = axes_edges[0].src.data
+            if axes_data in sdfg._parent_onnx_model.clean_weights:
+                axes = sdfg._parent_onnx_model.clean_weights[axes_data].numpy()
+
         if axes is not None:
             if len(axes) == 1:
                 axes = axes[0]
@@ -338,16 +345,19 @@ class PureReduceMax(ONNXForward):
     @staticmethod
     def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
         # Check that all the inputs (even the optional ones) are present and constant
-        # optional inputs
-        is_axes_present = True
-        try:
-            if hasattr(sdfg, "_parent_onnx_model") and in_edge_with_name(
-                    node, state, "axes").src.data not in sdfg._parent_onnx_model.clean_weights:
-                return False
-        except ValueError:
-            is_axes_present = False
+        # When not in ONNX context (no _parent_onnx_model), axes can be implicit
+        is_axes_present = not hasattr(sdfg, "_parent_onnx_model")
 
-        if not is_axes_present and hasattr(node, "axes"):
+        # Check if axes is provided as an input connector
+        axes_edges = list(state.in_edges_by_connector(node, "axes"))
+        if axes_edges:
+            is_axes_present = True
+            # If we have parent ONNX model, verify the axes is a constant
+            if hasattr(sdfg, "_parent_onnx_model"):
+                axes_data = axes_edges[0].src.data
+                if axes_data not in sdfg._parent_onnx_model.clean_weights:
+                    return False
+        elif hasattr(node, "axes"):
             is_axes_present = True
 
         # Current constraints: axes must be explict. Axes must be zero
@@ -361,13 +371,14 @@ class PureReduceMax(ONNXForward):
         # We treat both cases where axes is an attribute and where it is an input
         # Since can be applied is true, we know that axes is present and valid
         axes = None
-        # TODO: avoid catching Exceptions
-        try:
-            if hasattr(sdfg, "_parent_onnx_model") and in_edge_with_name(
-                    node, state, "axes").src.data in sdfg._parent_onnx_model.clean_weights:
-                axes = sdfg._parent_onnx_model.clean_weights[in_edge_with_name(node, state, "axes").src.data].numpy()
-        except ValueError:
-            pass
+
+        # Check if axes is provided as an input connector
+        axes_edges = list(state.in_edges_by_connector(node, "axes"))
+        if axes_edges and hasattr(sdfg, "_parent_onnx_model"):
+            axes_data = axes_edges[0].src.data
+            if axes_data in sdfg._parent_onnx_model.clean_weights:
+                axes = sdfg._parent_onnx_model.clean_weights[axes_data].numpy()
+
         if axes is not None:
             if len(axes) == 1:
                 axes = axes[0]
@@ -494,15 +505,19 @@ class PureReduceL2(ONNXForward):
     @staticmethod
     def forward_can_be_applied(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> bool:
         # Check that axes are present and constant
-        is_axes_present = True
-        try:
-            if hasattr(sdfg, "_parent_onnx_model") and in_edge_with_name(
-                    node, state, "axes").src.data not in sdfg._parent_onnx_model.clean_weights:
-                return False
-        except ValueError:
-            is_axes_present = False
+        # When not in ONNX context (no _parent_onnx_model), axes can be implicit
+        is_axes_present = not hasattr(sdfg, "_parent_onnx_model")
 
-        if not is_axes_present and hasattr(node, "axes"):
+        # Check if axes is provided as an input connector
+        axes_edges = list(state.in_edges_by_connector(node, "axes"))
+        if axes_edges:
+            is_axes_present = True
+            # If we have parent ONNX model, verify the axes is a constant
+            if hasattr(sdfg, "_parent_onnx_model"):
+                axes_data = axes_edges[0].src.data
+                if axes_data not in sdfg._parent_onnx_model.clean_weights:
+                    return False
+        elif hasattr(node, "axes"):
             is_axes_present = True
 
         if not is_axes_present:
@@ -514,12 +529,13 @@ class PureReduceL2(ONNXForward):
     def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
         # Get axes
         axes = None
-        try:
-            if hasattr(sdfg, "_parent_onnx_model") and in_edge_with_name(
-                    node, state, "axes").src.data in sdfg._parent_onnx_model.clean_weights:
-                axes = sdfg._parent_onnx_model.clean_weights[in_edge_with_name(node, state, "axes").src.data].numpy()
-        except ValueError:
-            pass
+
+        # Check if axes is provided as an input connector
+        axes_edges = list(state.in_edges_by_connector(node, "axes"))
+        if axes_edges and hasattr(sdfg, "_parent_onnx_model"):
+            axes_data = axes_edges[0].src.data
+            if axes_data in sdfg._parent_onnx_model.clean_weights:
+                axes = sdfg._parent_onnx_model.clean_weights[axes_data].numpy()
 
         if axes is not None:
             if len(axes) == 1:

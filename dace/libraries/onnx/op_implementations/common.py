@@ -91,15 +91,12 @@ def create_memlet_str(data_name, indices, shape):
         Memlet string (e.g., "A" for scalar, "A[i0, i1]" for array)
     """
     if len(shape) == 0:
-        # Scalar - no subscript needed
+        # No subscript needed for scalars
         return data_name
-    elif indices:
-        # Array with indices
-        return f"{data_name}[{', '.join(indices)}]"
     else:
-        # Edge case: array but no indices (shouldn't normally happen in broadcast context)
-        # Use [0] as fallback
-        return f"{data_name}[0]"
+        # Array with indices
+        assert indices, "Indices list cannot be empty for non-scalar arrays."
+        return f"{data_name}[{', '.join(indices)}]"
 
 
 def setup_reduction_sdfg(node: 'ONNXOp', state: SDFGState, sdfg: SDFG, operation_name: str):

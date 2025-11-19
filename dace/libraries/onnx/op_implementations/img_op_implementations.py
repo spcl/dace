@@ -169,9 +169,11 @@ class PureConv2D(ONNXForward):
         """
         X = in_desc_with_name(node, state, sdfg, "X")
         W = in_desc_with_name(node, state, sdfg, "W")
-        try:
+
+        # Check if optional bias input exists
+        if list(state.in_edges_by_connector(node, "B")):
             B = in_desc_with_name(node, state, sdfg, "B")
-        except Exception as e:
+        else:
             B = None
 
         image_dims = len(X.shape) - 2
