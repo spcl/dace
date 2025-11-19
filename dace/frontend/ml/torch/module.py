@@ -25,7 +25,6 @@ except ImportError:
 
 try:
     import onnx
-    from dace.transformation.onnx import ConstantFolding
     ONNX_AVAILABLE = True
 except ImportError:
     onnx = None
@@ -43,6 +42,7 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
     from dace.autodiff.library import library as autodiff_library
     from dace.frontend.ml.onnx import ONNXModel
     from dace.util import find_str_not_in_set, auto_optimize_onnx as auto_opt
+    from dace.transformation.onnx import ConstantFolding
 else:
     clean_onnx_name = None
     dispatchers = None
