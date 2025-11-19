@@ -67,6 +67,7 @@ def run_matmul_test(
     dace_module = DaceModule(
         dace_module_model,
         backward=True,
+        simplify=False,
         sdfg_name=sdfg_name,
         auto_optimize=auto_optimize,
     )

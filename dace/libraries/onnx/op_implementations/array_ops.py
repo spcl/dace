@@ -454,14 +454,13 @@ def Flatten(input, output):
 @op_implementation(op="Slice", name="pure")
 class PureSlice(ONNXForward):
     """
-    Unified Slice implementation supporting both constant and dynamic inputs.
+    Slice implementation that requires constant inputs for slicing parameters.
 
     Handles ONNX Slice operator with:
-    - Required inputs: data, starts, ends
-    - Optional inputs: axes (default: [0, 1, ..., len(starts)-1]), steps (default: all 1s)
+    - Required inputs: data, starts, ends (must be constant)
+    - Optional inputs: axes (must be constant if provided), steps (must be constant if provided)
 
-    For constant inputs, uses efficient memlet slicing.
-    For dynamic inputs, generates runtime slicing code.
+    Uses efficient memlet slicing for constant parameters.
     """
 
     @staticmethod
@@ -486,292 +485,147 @@ class PureSlice(ONNXForward):
 
     @staticmethod
     def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
+        # Check that all non-data inputs are constant
+        # starts and ends are required
+        starts_const = PureSlice._get_constant('starts', node, state, sdfg)
+        ends_const = PureSlice._get_constant('ends', node, state, sdfg)
+
+        if starts_const is None or ends_const is None:
+            return False
+
+        # axes and steps are optional, but if provided must be constant
+        # Check if axes input exists
+        try:
+            next(state.in_edges_by_connector(node, "axes"))
+            axes_const = PureSlice._get_constant('axes', node, state, sdfg)
+            if axes_const is None:
+                return False
+        except StopIteration:
+            pass  # axes not provided, which is fine
+
+        # Check if steps input exists
+        try:
+            next(state.in_edges_by_connector(node, "steps"))
+            steps_const = PureSlice._get_constant('steps', node, state, sdfg)
+            if steps_const is None:
+                return False
+        except StopIteration:
+            pass  # steps not provided, which is fine
+
         return True
 
     @staticmethod
     def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
-        # Try to get constant values for all inputs
+        # Get constant values for all inputs (already validated in forward_can_be_applied)
         axes_const = PureSlice._get_constant('axes', node, state, sdfg)
         ends_const = PureSlice._get_constant('ends', node, state, sdfg)
         starts_const = PureSlice._get_constant('starts', node, state, sdfg)
         steps_const = PureSlice._get_constant('steps', node, state, sdfg)
 
-        # Check if all required inputs are constant
-        all_constant = (starts_const is not None and ends_const is not None)
+        # Verify that required inputs are constant (should have been checked in forward_can_be_applied)
+        if starts_const is None or ends_const is None:
+            raise ValueError("Slice operation requires constant starts and ends parameters")
 
-        # For fully constant case, use optimized memlet slicing
-        if all_constant and axes_const is not None and (steps_const is not None or steps_const == 1):
-            # Remove constant inputs
+        # Use optimized memlet slicing for constant parameters
+        # Remove constant inputs
+        if axes_const is not None:
             constant_folding.remove_node_and_computation(sdfg, state, node, "axes")
-            constant_folding.remove_node_and_computation(sdfg, state, node, "ends")
-            constant_folding.remove_node_and_computation(sdfg, state, node, "starts")
-            if steps_const is not None:
-                constant_folding.remove_node_and_computation(sdfg, state, node, "steps")
+        constant_folding.remove_node_and_computation(sdfg, state, node, "ends")
+        constant_folding.remove_node_and_computation(sdfg, state, node, "starts")
+        if steps_const is not None:
+            constant_folding.remove_node_and_computation(sdfg, state, node, "steps")
 
-            nsdfg = dace.SDFG(node.label + "_expansion")
-            nstate = nsdfg.add_state()
+        nsdfg = dace.SDFG(node.label + "_expansion")
+        nstate = nsdfg.add_state()
 
-            idesc = in_desc_with_name(node, state, sdfg, "data")
-            odesc = out_desc_with_name(node, state, sdfg, "output")
-            nsdfg.add_datadesc("data", copy.deepcopy(idesc))
-            nsdfg.add_datadesc("output", copy.deepcopy(odesc))
-            nsdfg.arrays["data"].transient = False
-            nsdfg.arrays["output"].transient = False
+        idesc = in_desc_with_name(node, state, sdfg, "data")
+        odesc = out_desc_with_name(node, state, sdfg, "output")
+        nsdfg.add_datadesc("data", copy.deepcopy(idesc))
+        nsdfg.add_datadesc("output", copy.deepcopy(odesc))
+        nsdfg.arrays["data"].transient = False
+        nsdfg.arrays["output"].transient = False
 
-            # Normalize to lists
-            if not isinstance(axes_const, (tuple, list)):
-                axes_const = [int(axes_const)]
-                ends_const = [int(ends_const)]
-                starts_const = [int(starts_const)]
-                if steps_const is not None:
-                    steps_const = [int(steps_const)]
-                else:
-                    steps_const = [1]
+        # If axes_const is None, use default axes [0, 1, ..., len(starts)-1]
+        if axes_const is None:
+            # Default axes for when not specified
+            if isinstance(starts_const, (list, tuple)):
+                axes_const = list(range(len(starts_const)))
+            else:
+                axes_const = [0]
 
-            # Set up slicing memlet
-            rng = [(0, int(s) - 1, 1) for s in idesc.shape]
-            for i, axis in enumerate(axes_const):
-                axis = int(axis)
-                start = int(starts_const[i])
-                end = int(ends_const[i])
-                step = int(steps_const[i]) if i < len(steps_const) else 1
+        # Normalize to lists
+        if not isinstance(axes_const, (tuple, list)):
+            axes_const = [int(axes_const)]
+        if not isinstance(ends_const, (tuple, list)):
+            ends_const = [int(ends_const)]
+        if not isinstance(starts_const, (tuple, list)):
+            starts_const = [int(starts_const)]
 
-                s = int(idesc.shape[axis])
-
-                # Handle negative steps separately as they have different semantics
-                if step < 0:
-                    # For negative steps, normalize start
-                    if start < 0:
-                        start = s + start
-                    # Clamp start to valid range
-                    if start >= s:
-                        start = s - 1
-
-                    # For negative end: convert to positive index
-                    if end < 0:
-                        end = s + end
-                        # If end becomes negative, it means "go to/past beginning"
-                        # DaCe Range with negative step needs end to be < start
-                        # If we want to include index 0, end should be -1
-                        if end < 0:
-                            end = -1
-
-                    # For negative steps, if end >= start, the slice is empty (wrong direction)
-                    # This shouldn't happen
-                    assert end < start
-
-                    # DaCe Range with negative step: (start, end, step) where start > end
-                    # The range includes indices from start down to (but NOT including) end
-                    rng[axis] = (start, end, step)
-                else:
-                    # Positive steps: normalize negative indices
-                    if start < 0:
-                        start = s + start
-                    if end < 0:
-                        end = s + end
-
-                    # Handle out of bounds for positive steps
-                    if end > s:
-                        end = s
-                    # For positive steps, DaCe Range uses inclusive end, so end - 1
-                    rng[axis] = (start, end - 1, step)
-
-            sbs = subsets.Range(rng)
-            osbs = subsets.Range.from_array(odesc)
-
-            rnode = nstate.add_read("data")
-            wnode = nstate.add_write("output")
-
-            nstate.add_nedge(rnode, wnode, dace.Memlet(data="data", subset=sbs, other_subset=osbs))
-
-            return nsdfg
-
-        # Dynamic case: generate runtime slicing code
+        if steps_const is not None:
+            if not isinstance(steps_const, (tuple, list)):
+                steps_const = [int(steps_const)]
         else:
-            nsdfg = dace.SDFG(node.label + "_expansion")
-            nstate = nsdfg.add_state()
+            steps_const = [1] * len(starts_const)
 
-            idesc = in_desc_with_name(node, state, sdfg, "data")
-            odesc = out_desc_with_name(node, state, sdfg, "output")
+        # Set up slicing memlet
+        rng = [(0, int(s) - 1, 1) for s in idesc.shape]
+        for i, axis in enumerate(axes_const):
+            axis = int(axis)
+            start = int(starts_const[i])
+            end = int(ends_const[i])
+            step = int(steps_const[i]) if i < len(steps_const) else 1
 
-            nsdfg.add_datadesc("data", copy.deepcopy(idesc))
-            nsdfg.add_datadesc("output", copy.deepcopy(odesc))
-            nsdfg.arrays["data"].transient = False
-            nsdfg.arrays["output"].transient = False
+            s = int(idesc.shape[axis])
 
-            # Add input descriptors for dynamic inputs
-            starts_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, "starts"))
-            ends_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, "ends"))
-            nsdfg.add_datadesc("starts", starts_desc)
-            nsdfg.add_datadesc("ends", ends_desc)
-            nsdfg.arrays["starts"].transient = False
-            nsdfg.arrays["ends"].transient = False
+            # Handle negative steps separately as they have different semantics
+            if step < 0:
+                # For negative steps, normalize start
+                if start < 0:
+                    start = s + start
+                # Clamp start to valid range
+                if start >= s:
+                    start = s - 1
 
-            # Check for optional axes and steps
-            has_axes = False
-            has_steps = False
-            try:
-                next(state.in_edges_by_connector(node, "axes"))
-                has_axes = True
-                axes_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, "axes"))
-                nsdfg.add_datadesc("axes", axes_desc)
-                nsdfg.arrays["axes"].transient = False
-            except (StopIteration, ValueError):
-                pass
+                # For negative end: convert to positive index
+                if end < 0:
+                    end = s + end
+                    # If end becomes negative, it means "go to/past beginning"
+                    # DaCe Range with negative step needs end to be < start
+                    # If we want to include index 0, end should be -1
+                    if end < 0:
+                        end = -1
 
-            try:
-                next(state.in_edges_by_connector(node, "steps"))
-                has_steps = True
-                steps_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, "steps"))
-                nsdfg.add_datadesc("steps", steps_desc)
-                nsdfg.arrays["steps"].transient = False
-            except (StopIteration, ValueError):
-                pass
+                # For negative steps, if end >= start, the slice is empty (wrong direction)
+                # This shouldn't happen
+                assert end < start
 
-            # Generate C++ code for dynamic slicing
-            num_dims = len(idesc.shape)
-            num_slices = int(np.prod(starts_desc.shape))
+                # DaCe Range with negative step: (start, end, step) where start > end
+                # The range includes indices from start down to (but NOT including) end
+                rng[axis] = (start, end, step)
+            else:
+                # Positive steps: normalize negative indices
+                if start < 0:
+                    start = s + start
+                if end < 0:
+                    end = s + end
 
-            # Check if inputs are scalars (shape () or size 1)
-            starts_is_scalar = (starts_desc.shape == () or (len(starts_desc.shape) == 1 and starts_desc.shape[0] == 1))
-            ends_is_scalar = (ends_desc.shape == () or (len(ends_desc.shape) == 1 and ends_desc.shape[0] == 1))
-            axes_is_scalar = has_axes and (axes_desc.shape == () or
-                                           (len(axes_desc.shape) == 1 and axes_desc.shape[0] == 1))
-            steps_is_scalar = has_steps and (steps_desc.shape == () or
-                                             (len(steps_desc.shape) == 1 and steps_desc.shape[0] == 1))
+                # Handle out of bounds for positive steps
+                if end > s:
+                    end = s
+                # For positive steps, DaCe Range uses inclusive end, so end - 1
+                rng[axis] = (start, end - 1, step)
 
-            # Build tasklet inputs - use scalar type for scalar inputs, pointer for arrays
-            tasklet_inputs = {
-                "__data": dace.pointer(idesc.dtype),
-                "__starts": starts_desc.dtype if starts_is_scalar else dace.pointer(starts_desc.dtype),
-                "__ends": ends_desc.dtype if ends_is_scalar else dace.pointer(ends_desc.dtype)
-            }
-            if has_axes:
-                tasklet_inputs["__axes"] = axes_desc.dtype if axes_is_scalar else dace.pointer(axes_desc.dtype)
-            if has_steps:
-                tasklet_inputs["__steps"] = steps_desc.dtype if steps_is_scalar else dace.pointer(steps_desc.dtype)
+        sbs = subsets.Range(rng)
+        osbs = subsets.Range.from_array(odesc)
 
-            # Pre-compute shape information for code generation
-            out_shape_strs = [f'({odesc.shape[dim_i]})' for dim_i in range(num_dims)]
-            in_shape_strs = [f'({idesc.shape[dim_i]})' for dim_i in range(num_dims)]
+        rnode = nstate.add_read("data")
+        wnode = nstate.add_write("output")
 
-            # Generate shape arrays as comma-separated lists
-            out_shapes_list = ', '.join(out_shape_strs)
-            in_shapes_list = ', '.join(in_shape_strs)
+        nstate.add_nedge(rnode, wnode, dace.Memlet(data="data", subset=sbs, other_subset=osbs))
 
-            # Generate slicing code
-            code = f"""
-            // Define shapes
-            long long out_shape[{num_dims}] = {{{out_shapes_list}}};
-            long long in_shape[{num_dims}] = {{{in_shapes_list}}};
-
-            // Compute output strides (row-major order)
-            long long out_strides[{num_dims}];
-            out_strides[{num_dims - 1}] = 1;
-            for (int i = {num_dims} - 2; i >= 0; i--) {{
-                out_strides[i] = out_strides[i + 1] * out_shape[i + 1];
-            }}
-
-            // Compute input strides (row-major order)
-            long long in_strides[{num_dims}];
-            in_strides[{num_dims - 1}] = 1;
-            for (int i = {num_dims} - 2; i >= 0; i--) {{
-                in_strides[i] = in_strides[i + 1] * in_shape[i + 1];
-            }}
-
-            // Create mapping from axis to slice parameters
-            long long slice_start[{num_dims}];
-            long long slice_step[{num_dims}];
-            bool axis_is_sliced[{num_dims}];
-
-            // Initialize: non-sliced axes have identity mapping
-            for (int i = 0; i < {num_dims}; i++) {{
-                slice_start[i] = 0;
-                slice_step[i] = 1;
-                axis_is_sliced[i] = false;
-            }}
-
-            // Fill in slice parameters for sliced axes
-            {"// Single slice case - parameters may be scalars after simplification" if num_slices == 1 else ""}
-            for (int slice_i = 0; slice_i < {num_slices}; slice_i++) {{
-                int axis = slice_i;  // Default: axes = [0, 1, ..., num_slices-1]
-                {"if (__axes) axis = (int)__axes;" if has_axes and num_slices == 1 and axes_is_scalar else ""}
-                {"if (__axes) axis = (int)(*__axes);" if has_axes and num_slices == 1 and not axes_is_scalar else ""}
-                {"if (__axes) axis = (int)__axes[slice_i];" if has_axes and num_slices > 1 else ""}
-
-                long long start = (long long){("__starts" if num_slices == 1 and starts_is_scalar else ("(*__starts)" if num_slices == 1 else "__starts[slice_i]"))};
-                long long end = (long long){("__ends" if num_slices == 1 and ends_is_scalar else ("(*__ends)" if num_slices == 1 else "__ends[slice_i]"))};
-                long long step = 1;
-                {"if (__steps) step = (long long)__steps;" if has_steps and num_slices == 1 and steps_is_scalar else ""}
-                {"if (__steps) step = (long long)(*__steps);" if has_steps and num_slices == 1 and not steps_is_scalar else ""}
-                {"if (__steps) step = (long long)__steps[slice_i];" if has_steps and num_slices > 1 else ""}
-
-                // Handle negative indices
-                if (start < 0) start += in_shape[axis];
-                if (end < 0) end += in_shape[axis];
-
-                slice_start[axis] = start;
-                slice_step[axis] = step;
-                axis_is_sliced[axis] = true;
-            }}
-
-            // Process each output element
-            long long out_total = 1;
-            for (int i = 0; i < {num_dims}; i++) {{
-                out_total *= out_shape[i];
-            }}
-
-            for (long long out_idx = 0; out_idx < out_total; out_idx++) {{
-                // Convert flat output index to multi-dimensional coordinates
-                long long out_coords[{num_dims}];
-                long long tmp = out_idx;
-                for (int i = 0; i < {num_dims}; i++) {{
-                    out_coords[i] = (tmp / out_strides[i]) % out_shape[i];
-                }}
-
-                // Map output coordinates to input coordinates
-                long long in_idx = 0;
-                for (int i = 0; i < {num_dims}; i++) {{
-                    long long in_coord = slice_start[i] + out_coords[i] * slice_step[i];
-                    in_idx += in_coord * in_strides[i];
-                }}
-
-                // Copy data
-                __output[out_idx] = __data[in_idx];
-            }}
-            """
-
-            # Create tasklet
-            tasklet = nstate.add_tasklet(name=node.label + "_tasklet",
-                                         inputs=tasklet_inputs,
-                                         outputs={"__output": dace.pointer(odesc.dtype)},
-                                         code=code,
-                                         language=dace.Language.CPP)
-
-            # Connect inputs
-            data_read = nstate.add_read("data")
-            starts_read = nstate.add_read("starts")
-            ends_read = nstate.add_read("ends")
-            output_write = nstate.add_write("output")
-
-            nstate.add_edge(data_read, None, tasklet, "__data", dace.Memlet.from_array("data", idesc))
-            nstate.add_edge(starts_read, None, tasklet, "__starts", dace.Memlet.from_array("starts", starts_desc))
-            nstate.add_edge(ends_read, None, tasklet, "__ends", dace.Memlet.from_array("ends", ends_desc))
-
-            if has_axes:
-                axes_read = nstate.add_read("axes")
-                nstate.add_edge(axes_read, None, tasklet, "__axes", dace.Memlet.from_array("axes", axes_desc))
-            if has_steps:
-                steps_read = nstate.add_read("steps")
-                nstate.add_edge(steps_read, None, tasklet, "__steps", dace.Memlet.from_array("steps", steps_desc))
-
-            nstate.add_edge(tasklet, "__output", output_write, None, dace.Memlet.from_array("output", odesc))
-
-            return nsdfg
+        return nsdfg
 
 
-# ==============================================================================
-# Split Operations
 # ==============================================================================
 
 
