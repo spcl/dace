@@ -11,6 +11,7 @@ from dace.transformation.passes.vectorization.remove_empty_states import RemoveE
 from dace.transformation.passes.vectorization.vectorize import Vectorize
 from dace.transformation.passes.eliminate_branches import EliminateBranches
 from dace.transformation.passes.vectorization.fuse_overlapping_loads import FuseOverlappingLoads
+from dace.transformation.passes.vectorization.remove_reduntant_assignments import RemoveRedundantAssignments
 
 
 class VectorizeCPU(ppl.Pipeline):
@@ -80,6 +81,7 @@ class VectorizeCPU(ppl.Pipeline):
         if not only_apply_vectorization_pass:
             passes = [
                 EliminateBranches(),
+                RemoveRedundantAssignments(),
                 LowerInterstateConditionalAssignmentsToTasklets(),
                 RemoveEmptyStates(),
                 RemoveFPTypeCasts(),

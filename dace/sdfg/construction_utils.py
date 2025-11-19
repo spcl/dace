@@ -644,10 +644,15 @@ def _find_new_name(base: str, existing_names: Set[str]) -> str:
     return candidate
 
 
-def duplicate_memlets_sharing_single_in_connector(state: dace.SDFGState, map_entry: dace.nodes.MapEntry):
+def duplicate_memlets_sharing_single_in_connector(state: dace.SDFGState, map_entry: dace.nodes.MapEntry,
+                                                  if_subsets_are_not_equal: bool):
     for _i, out_conn in enumerate(list(map_entry.out_connectors.keys())):
         out_edges_of_out_conn = set(state.out_edges_by_connector(map_entry, out_conn))
         if len(out_edges_of_out_conn) > 1:
+            if if_subsets_are_not_equal:
+                subsets = {e.data.subset for e in out_edges_of_out_conn}
+                if len(subsets) <= 1:
+                    continue
             base_in_edge = next(iter(out_edges_of_out_conn))
 
             # Get all parent maps (including this)
