@@ -19,7 +19,6 @@ def module(moduleclass,
            training: bool = False,
            backward=False,
            inputs_to_skip: Optional[List[str]] = None,
-           onnx_simplify: bool = True,
            simplify: bool = True,
            auto_optimize: bool = True,
            sdfg_name: Optional[str] = None,
@@ -50,7 +49,6 @@ def module(moduleclass,
         :param backward: whether to enable the backward pass.
         :param inputs_to_skip: if provided, a list of inputs to skip computing gradients for.
                                (only relevant when the backward pass is enabled)
-        :param onnx_simplify: whether to apply onnx simplification using onnxsim.
         :param simplify: whether to apply simplification transforms after conversion (this generally improves performance,
                              but can be slow).
         :param auto_optimize: whether to apply automatic optimizations.
@@ -74,7 +72,6 @@ def module(moduleclass,
                           training=training,
                           backward=backward,
                           inputs_to_skip=inputs_to_skip,
-                          onnx_simplify=onnx_simplify,
                           simplify=simplify,
                           auto_optimize=auto_optimize,
                           sdfg_name=sdfg_name,
