@@ -845,6 +845,138 @@ def test_unsqueeze():
     assert_allclose(result, np_result)
 
 
+@pytest.mark.onnx
+def test_gather_elements():
+    """Test GatherElements operator with DaCe ONNX frontend."""
+
+    # Create a GatherElements model for axis=0
+    data_tensor = helper.make_tensor_value_info('data', TensorProto.FLOAT, [2, 2])
+    indices_tensor = helper.make_tensor_value_info('indices', TensorProto.INT64, [2, 2])
+    output_tensor = helper.make_tensor_value_info('output', TensorProto.FLOAT, [2, 2])
+
+    node = helper.make_node('GatherElements', inputs=['data', 'indices'], outputs=['output'], axis=0)
+
+    graph = helper.make_graph([node], 'gather_elements_test', [data_tensor, indices_tensor], [output_tensor])
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 13)])
+    model.ir_version = 8
+
+    dace_model = ONNXModel("gather_elements", model)
+
+    data = np.array([[1, 2], [3, 4]], dtype=np.float32)
+    indices = np.array([[0, 0], [1, 0]], dtype=np.int64)
+    result = dace_model(data=data, indices=indices)
+    expected = np.take_along_axis(data, indices, axis=0)
+
+    np.testing.assert_array_equal(result, expected, err_msg="GatherElements output mismatch")
+
+
+@pytest.mark.onnx
+@pytest.mark.parametrize("axis", [0, 1, 2])
+def test_gather_elements_3d(axis, sdfg_name):
+    """Test GatherElements operator with 3D tensors."""
+
+    shape = [3, 4, 5]
+    data_tensor = helper.make_tensor_value_info('data', TensorProto.FLOAT, shape)
+    indices_tensor = helper.make_tensor_value_info('indices', TensorProto.INT64, shape)
+    output_tensor = helper.make_tensor_value_info('output', TensorProto.FLOAT, shape)
+
+    node = helper.make_node('GatherElements', inputs=['data', 'indices'], outputs=['output'], axis=axis)
+
+    graph = helper.make_graph([node], 'gather_elements_3d_test', [data_tensor, indices_tensor], [output_tensor])
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 13)])
+    model.ir_version = 8
+
+    dace_model = ONNXModel(sdfg_name, model)
+
+    data = np.random.randn(3, 4, 5).astype(np.float32)
+
+    if axis == 0:
+        indices = np.random.randint(0, 3, size=(3, 4, 5), dtype=np.int64)
+    elif axis == 1:
+        indices = np.random.randint(0, 4, size=(3, 4, 5), dtype=np.int64)
+    else:
+        indices = np.random.randint(0, 5, size=(3, 4, 5), dtype=np.int64)
+
+    result = dace_model(data=data, indices=indices)
+    expected = np.take_along_axis(data, indices, axis=axis)
+
+    assert_allclose(result, expected)
+
+
+@pytest.mark.onnx
+def test_scatter_elements():
+    """Test ScatterElements operator with DaCe ONNX frontend."""
+
+    # Create a ScatterElements model for axis=0
+    data_tensor = helper.make_tensor_value_info('data', TensorProto.FLOAT, [3, 3])
+    indices_tensor = helper.make_tensor_value_info('indices', TensorProto.INT64, [2, 3])
+    updates_tensor = helper.make_tensor_value_info('updates', TensorProto.FLOAT, [2, 3])
+    output_tensor = helper.make_tensor_value_info('output', TensorProto.FLOAT, [3, 3])
+
+    node = helper.make_node('ScatterElements', inputs=['data', 'indices', 'updates'], outputs=['output'], axis=0)
+
+    graph = helper.make_graph([node], 'scatter_elements_test', [data_tensor, indices_tensor, updates_tensor],
+                              [output_tensor])
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 13)])
+    model.ir_version = 8
+
+    dace_model = ONNXModel("scatter_elements", model)
+
+    data = np.zeros((3, 3), dtype=np.float32)
+    indices = np.array([[1, 0, 2], [0, 2, 1]], dtype=np.int64)
+    updates = np.array([[1.0, 1.1, 1.2], [2.0, 2.1, 2.2]], dtype=np.float32)
+
+    result = dace_model(data=data, indices=indices, updates=updates)
+
+    # Compute expected result manually
+    expected = data.copy()
+    expected[1, 0] = 1.0
+    expected[0, 1] = 1.1
+    expected[2, 2] = 1.2
+    expected[0, 0] = 2.0
+    expected[2, 1] = 2.1
+    expected[1, 2] = 2.2
+
+    assert_allclose(result, expected)
+
+
+@pytest.mark.onnx
+@pytest.mark.parametrize("axis", [0, 1])
+def test_scatter_elements_2d(axis, sdfg_name):
+    """Test ScatterElements operator with 2D tensors and different axes."""
+
+    data_tensor = helper.make_tensor_value_info('data', TensorProto.FLOAT, [3, 3])
+    indices_tensor = helper.make_tensor_value_info('indices', TensorProto.INT64, [2, 2])
+    updates_tensor = helper.make_tensor_value_info('updates', TensorProto.FLOAT, [2, 2])
+    output_tensor = helper.make_tensor_value_info('output', TensorProto.FLOAT, [3, 3])
+
+    node = helper.make_node('ScatterElements', inputs=['data', 'indices', 'updates'], outputs=['output'], axis=axis)
+
+    graph = helper.make_graph([node], 'scatter_elements_2d_test', [data_tensor, indices_tensor, updates_tensor],
+                              [output_tensor])
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 13)])
+    model.ir_version = 8
+
+    dace_model = ONNXModel(sdfg_name, model)
+
+    data = np.arange(9, dtype=np.float32).reshape(3, 3).copy()
+    indices = np.array([[0, 1], [2, 0]], dtype=np.int64)
+    updates = np.array([[10.0, 11.0], [12.0, 13.0]], dtype=np.float32)
+
+    result = dace_model(data=data, indices=indices, updates=updates)
+
+    # Compute expected result using numpy's put_along_axis (inverse of take_along_axis)
+    expected = data.copy()
+    for i in range(indices.shape[0]):
+        for j in range(indices.shape[1]):
+            if axis == 0:
+                expected[indices[i, j], j] = updates[i, j]
+            else:  # axis == 1
+                expected[i, indices[i, j]] = updates[i, j]
+
+    assert_allclose(result, expected)
+
+
 if __name__ == "__main__":
     for axis in [0, 1, 2]:
         test_concat_3_inputs(axis=axis, sdfg_name=f"test_concat_3_inputs_axis_{axis}")

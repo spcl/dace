@@ -962,111 +962,51 @@ class PureConstantOfShape(ONNXForward):
 
     @staticmethod
     def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
-        # Get the shape value (if constant)
-        shape_node = next(state.in_edges_by_connector(node, "input")).src
-        shape_val = onnx_constant_or_none(sdfg, shape_node)
-
-        # Remove shape input if it's constant
-        if shape_val is not None:
-            constant_folding.remove_node_and_computation(sdfg, state, node, "input")
-
         # Get fill value (default is 0)
         fill_value = 0
         if hasattr(node, 'value') and node.value is not None:
             fill_value = float(node.value.flat[0])
 
         output_desc = out_desc_with_name(node, state, sdfg, "output")
+        ndims = len(output_desc.shape)
 
-        # Create a simple nested SDFG that fills the output with the constant value
-        nsdfg = SDFG(node.label + "_expansion")
-        nstate = nsdfg.add_state()
+        # Create Python program based on number of dimensions
+        if ndims == 1:
 
-        # Add output array to nested SDFG
-        nsdfg.add_array('output', output_desc.shape, output_desc.dtype)
-        nsdfg.arrays['output'].transient = False
+            def prog(output):
+                for i in range(output.shape[0]):
+                    output[i] = fill_value
+        elif ndims == 2:
 
-        # If shape is constant, we can use static maps
-        if shape_val is not None:
-            # Create a map and tasklet to fill the output
-            map_ranges = {f'__i{i}': f'0:{s}' for i, s in enumerate(output_desc.shape)}
-            output_indices = ', '.join(f'__i{i}' for i in range(len(output_desc.shape)))
+            def prog(output):
+                for i in range(output.shape[0]):
+                    for j in range(output.shape[1]):
+                        output[i, j] = fill_value
+        elif ndims == 3:
 
-            # Use add_mapped_tasklet for simpler construction
-            tasklet, _, _ = nstate.add_mapped_tasklet(name='fill',
-                                                      map_ranges=map_ranges,
-                                                      inputs={},
-                                                      code=f'__out = {output_desc.dtype.ctype}({fill_value})',
-                                                      outputs={'__out': dace.Memlet(f'output[{output_indices}]')},
-                                                      external_edges=True,
-                                                      output_nodes={'output': nstate.add_write('output')})
+            def prog(output):
+                for i in range(output.shape[0]):
+                    for j in range(output.shape[1]):
+                        for k in range(output.shape[2]):
+                            output[i, j, k] = fill_value
+        elif ndims == 4:
+
+            def prog(output):
+                for i in range(output.shape[0]):
+                    for j in range(output.shape[1]):
+                        for k in range(output.shape[2]):
+                            for l in range(output.shape[3]):
+                                output[i, j, k, l] = fill_value
         else:
-            # Shape is not constant, need to handle it at runtime
-            # Add input shape array to nested SDFG
-            input_desc = in_desc_with_name(node, state, sdfg, "input")
-            nsdfg.add_datadesc('input', copy.deepcopy(input_desc))
-            nsdfg.arrays['input'].transient = False
+            raise NotImplementedError(f"ConstantOfShape not implemented for {ndims}D arrays")
 
-            # Since the shape is dynamic, we can't use static maps
-            # Instead, we'll create a tasklet that fills the entire output tensor
-            # using nested loops based on the runtime shape values
+        # Remove the shape input if it's constant (handled by program_for_node)
+        shape_node = next(state.in_edges_by_connector(node, "input")).src
+        shape_val = onnx_constant_or_none(sdfg, shape_node)
+        if shape_val is not None:
+            constant_folding.remove_node_and_computation(sdfg, state, node, "input")
 
-            # Get the number of dimensions from the output descriptor
-            ndims = len(output_desc.shape)
-
-            # Create a single tasklet that fills the entire output
-            # Generate C++ code for nested loops based on the shape array
-            code_lines = []
-
-            # Read shape values into local variables
-            # Handle both scalar input (when ndims=1) and array input
-            if ndims == 1 and prod(input_desc.shape) == 1:
-                # Special case: single dimension, input might be passed as scalar
-                code_lines.append(f'const auto dim0 = __input;')
-            else:
-                for i in range(ndims):
-                    code_lines.append(f'const auto dim{i} = __input[{i}];')
-
-            # Generate nested loops
-            indent = ''
-            for i in range(ndims):
-                code_lines.append(f'{indent}for (auto i{i} = 0; i{i} < dim{i}; ++i{i}) {{')
-                indent += '    '
-
-            # Fill the output
-            if ndims == 1:
-                code_lines.append(f'{indent}__output[i0] = {fill_value};')
-            else:
-                output_indices = ', '.join(f'i{i}' for i in range(ndims))
-                code_lines.append(f'{indent}__output[{output_indices}] = {fill_value};')
-
-            # Close loops
-            for i in range(ndims):
-                indent = indent[:-4]
-                code_lines.append(f'{indent}}}')
-
-            tasklet_code = '\n'.join(code_lines)
-
-            # Create access nodes
-            input_node = nstate.add_read('input')
-            output_node = nstate.add_write('output')
-
-            # Create tasklet
-            tasklet = nstate.add_tasklet(name='fill',
-                                         inputs={'__input'},
-                                         outputs={'__output'},
-                                         code=tasklet_code,
-                                         language=dace.Language.CPP)
-
-            # Connect edges
-            nstate.add_edge(input_node, None, tasklet, '__input', dace.Memlet.from_array('input', input_desc))
-            nstate.add_edge(tasklet, '__output', output_node, None, dace.Memlet.from_array('output', output_desc))
-
-        return nsdfg
-
-
-# ============================================================================
-# Range Operation
-# ============================================================================
+        return program_for_node(prog, sdfg, state, node)
 
 
 @op_implementation(op="Range", name="pure")
@@ -1137,11 +1077,6 @@ class PureRange(ONNXForward):
         return nsdfg
 
 
-# ============================================================================
-# GatherND Operation
-# ============================================================================
-
-
 @op_implementation(op="GatherND", name="pure")
 class PureGatherND(ONNXForward):
     """
@@ -1156,55 +1091,57 @@ class PureGatherND(ONNXForward):
 
     @staticmethod
     def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
-        nsdfg, nstate, input_nodes, output_nodes = empty_sdfg_for_node(sdfg, state, node, add_access_nodes=True)
-
-        data_desc = in_desc_with_name(node, state, sdfg, "data")
         indices_desc = in_desc_with_name(node, state, sdfg, "indices")
-        output_desc = out_desc_with_name(node, state, sdfg, "output")
-
-        batch_dims = getattr(node, 'batch_dims', 0)
 
         # Get index depth (last dimension of indices)
         indices_shape = indices_desc.shape
-        index_depth = indices_shape[-1]
+        index_depth = int(indices_shape[-1])
 
-        # Calculate output shape for mapping
-        output_shape = output_desc.shape
+        # Create Python program based on index_depth
+        if index_depth == 1:
 
-        # Generate code for GatherND operation
-        data_idx_expr = " + ".join(
-            [f"indices_flat[i * {index_depth} + {j}] * {data_desc.strides[j]}" for j in range(index_depth)])
+            def prog(data, indices, output):
+                for i in range(indices.shape[0]):
+                    idx0 = indices[i, 0]
+                    output[i] = data[idx0]
+        elif index_depth == 2:
+            if len(indices_shape) == 2:
 
-        num_indices = int(np.prod(indices_shape[:-1]))
+                def prog(data, indices, output):
+                    for i in range(indices.shape[0]):
+                        idx0 = indices[i, 0]
+                        idx1 = indices[i, 1]
+                        output[i] = data[idx0, idx1]
+            else:  # 3D indices
 
-        code = f"""
-        for (int i = 0; i < {num_indices}; i++) {{
-            long long data_idx = {data_idx_expr};
-            __output[i] = __data[data_idx];
-        }}
-        """
+                def prog(data, indices, output):
+                    for i in range(indices.shape[0]):
+                        for j in range(indices.shape[1]):
+                            idx0 = indices[i, j, 0]
+                            idx1 = indices[i, j, 1]
+                            output[i, j] = data[idx0, idx1]
+        elif index_depth == 3:
+            if len(indices_shape) == 2:
 
-        tasklet = nstate.add_tasklet(name=node.label + "_tasklet",
-                                     inputs={
-                                         "__data": dace.pointer(data_desc.dtype),
-                                         "indices_flat": dace.pointer(indices_desc.dtype)
-                                     },
-                                     outputs={"__output": dace.pointer(output_desc.dtype)},
-                                     language=dace.Language.CPP,
-                                     code=code)
+                def prog(data, indices, output):
+                    for i in range(indices.shape[0]):
+                        idx0 = indices[i, 0]
+                        idx1 = indices[i, 1]
+                        idx2 = indices[i, 2]
+                        output[i] = data[idx0, idx1, idx2]
+            else:  # More dimensions
 
-        nstate.add_edge(input_nodes["data"], None, tasklet, "__data", dace.Memlet.from_array("data", data_desc))
-        nstate.add_edge(input_nodes["indices"], None, tasklet, "indices_flat",
-                        dace.Memlet.from_array("indices", indices_desc))
-        nstate.add_edge(tasklet, "__output", output_nodes["output"], None,
-                        dace.Memlet.from_array("output", output_desc))
+                def prog(data, indices, output):
+                    for i in range(indices.shape[0]):
+                        for j in range(indices.shape[1]):
+                            idx0 = indices[i, j, 0]
+                            idx1 = indices[i, j, 1]
+                            idx2 = indices[i, j, 2]
+                            output[i, j] = data[idx0, idx1, idx2]
+        else:
+            raise NotImplementedError(f"GatherND not implemented for index_depth={index_depth}")
 
-        return nsdfg
-
-
-# ============================================================================
-# ScatterND Operation
-# ============================================================================
+        return program_for_node(prog, sdfg, state, node)
 
 
 @op_implementation(op="ScatterND", name="pure")
@@ -1221,309 +1158,62 @@ class PureScatterND(ONNXForward):
 
     @staticmethod
     def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
-        nsdfg, nstate, input_nodes, output_nodes = empty_sdfg_for_node(sdfg, state, node, add_access_nodes=True)
-
-        data_desc = in_desc_with_name(node, state, sdfg, "data")
         indices_desc = in_desc_with_name(node, state, sdfg, "indices")
-        updates_desc = in_desc_with_name(node, state, sdfg, "updates")
-        output_desc = out_desc_with_name(node, state, sdfg, "output")
 
         # Get index depth (last dimension of indices)
         indices_shape = indices_desc.shape
-        index_depth = indices_shape[-1]
+        index_depth = int(indices_shape[-1])
 
-        num_updates = int(np.prod(indices_shape[:-1]))
-        data_size = int(np.prod(data_desc.shape))
+        # Create Python program based on index_depth
+        if index_depth == 1:
 
-        # Generate code for ScatterND operation
-        code = f"""
-        // Copy input data to output
-        for (int i = 0; i < {data_size}; i++) {{
-            __output[i] = __data[i];
-        }}
+            def prog(data, indices, updates, output):
+                output[:] = data[:]
+                for i in range(indices.shape[0]):
+                    idx0 = indices[i, 0]
+                    output[idx0] = updates[i]
+        elif index_depth == 2:
+            if len(indices_shape) == 2:
 
-        // Scatter updates
-        for (int i = 0; i < {num_updates}; i++) {{
-            long long idx = 0;
-            """ + "\n            ".join(
-            [f"idx += __indices[i * {index_depth} + {j}] * {data_desc.strides[j]};" for j in range(index_depth)]) + f"""
-            __output[idx] = __updates[i];
-        }}
-        """
+                def prog(data, indices, updates, output):
+                    output[:] = data[:]
+                    for i in range(indices.shape[0]):
+                        idx0 = indices[i, 0]
+                        idx1 = indices[i, 1]
+                        output[idx0, idx1] = updates[i]
+            else:  # 3D indices
 
-        tasklet = nstate.add_tasklet(name=node.label + "_tasklet",
-                                     inputs={
-                                         "__data": dace.pointer(data_desc.dtype),
-                                         "__indices": dace.pointer(indices_desc.dtype),
-                                         "__updates": dace.pointer(updates_desc.dtype)
-                                     },
-                                     outputs={"__output": dace.pointer(output_desc.dtype)},
-                                     language=dace.Language.CPP,
-                                     code=code)
+                def prog(data, indices, updates, output):
+                    output[:] = data[:]
+                    for i in range(indices.shape[0]):
+                        for j in range(indices.shape[1]):
+                            idx0 = indices[i, j, 0]
+                            idx1 = indices[i, j, 1]
+                            output[idx0, idx1] = updates[i, j]
+        elif index_depth == 3:
+            if len(indices_shape) == 2:
 
-        nstate.add_edge(input_nodes["data"], None, tasklet, "__data", dace.Memlet.from_array("data", data_desc))
-        nstate.add_edge(input_nodes["indices"], None, tasklet, "__indices",
-                        dace.Memlet.from_array("indices", indices_desc))
-        nstate.add_edge(input_nodes["updates"], None, tasklet, "__updates",
-                        dace.Memlet.from_array("updates", updates_desc))
-        nstate.add_edge(tasklet, "__output", output_nodes["output"], None,
-                        dace.Memlet.from_array("output", output_desc))
+                def prog(data, indices, updates, output):
+                    output[:] = data[:]
+                    for i in range(indices.shape[0]):
+                        idx0 = indices[i, 0]
+                        idx1 = indices[i, 1]
+                        idx2 = indices[i, 2]
+                        output[idx0, idx1, idx2] = updates[i]
+            else:  # More dimensions
 
-        return nsdfg
+                def prog(data, indices, updates, output):
+                    output[:] = data[:]
+                    for i in range(indices.shape[0]):
+                        for j in range(indices.shape[1]):
+                            idx0 = indices[i, j, 0]
+                            idx1 = indices[i, j, 1]
+                            idx2 = indices[i, j, 2]
+                            output[idx0, idx1, idx2] = updates[i, j]
+        else:
+            raise NotImplementedError(f"ScatterND not implemented for index_depth={index_depth}")
 
-
-# ============================================================================
-# TopK Operation
-# ============================================================================
-
-
-@op_implementation(op="TopK", name="pure")
-class PureTopK(ONNXForward):
-    """
-    Pure implementation of ONNX TopK operator.
-
-    Finds the top K largest (or smallest) elements along a given axis.
-    """
-
-    @staticmethod
-    def forward_can_be_applied(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> bool:
-        return True
-
-    @staticmethod
-    def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
-        # Check if K is constant
-        k_node = next(state.in_edges_by_connector(node, "K")).src
-        k_val = onnx_constant_or_none(sdfg, k_node)
-
-        if k_val is None:
-            return DynamicTopK.forward(node, state, sdfg)
-
-        k_val = int(k_val)
-
-        # Remove K input since it's constant
-        constant_folding.remove_node_and_computation(sdfg, state, node, "K")
-
-        input_desc = in_desc_with_name(node, state, sdfg, "X")
-
-        # Check if Values output is connected (it may be unused in MoE routing)
-        has_values = len(list(state.out_edges_by_connector(node, "Values"))) > 0
-        values_desc = out_desc_with_name(node, state, sdfg, "Values") if has_values else None
-        indices_desc = out_desc_with_name(node, state, sdfg, "Indices")
-
-        axis = getattr(node, 'axis', -1)
-        largest = getattr(node, 'largest', 1)
-        sorted_output = getattr(node, 'sorted', 1)
-
-        # Normalize axis
-        if axis < 0:
-            axis = len(input_desc.shape) + axis
-
-        nsdfg = dace.SDFG(node.label + "_expansion")
-        nstate = nsdfg.add_state()
-
-        nsdfg.add_datadesc("X", copy.deepcopy(input_desc))
-        if has_values:
-            nsdfg.add_datadesc("Values", copy.deepcopy(values_desc))
-        nsdfg.add_datadesc("Indices", copy.deepcopy(indices_desc))
-        nsdfg.arrays["X"].transient = False
-        if has_values:
-            nsdfg.arrays["Values"].transient = False
-        nsdfg.arrays["Indices"].transient = False
-
-        input_read = nstate.add_read("X")
-        values_write = nstate.add_write("Values") if has_values else None
-        indices_write = nstate.add_write("Indices")
-
-        # Generate code for partial sort along axis
-        input_shape = input_desc.shape
-        axis_size = input_shape[axis]
-
-        # Calculate strides for iteration
-        outer_size = int(np.prod(input_shape[:axis])) if axis > 0 else 1
-        inner_size = int(np.prod(input_shape[axis + 1:])) if axis < len(input_shape) - 1 else 1
-
-        # Simple bubble sort for top K (not optimal but works for pure SDFG)
-        # For production, we'd use a more efficient algorithm
-        comparison_op = ">" if largest else "<"
-
-        # Generate code - conditionally write to Values output
-        values_write_code = f"""
-                    __Values[out_idx] = temp_vals[i];""" if has_values else ""
-
-        code = f"""
-        for (int outer = 0; outer < {outer_size}; outer++) {{
-            for (int inner = 0; inner < {inner_size}; inner++) {{
-                // Create temporary arrays for sorting
-                {input_desc.dtype.ctype} temp_vals[{axis_size}];
-                long long temp_idxs[{axis_size}];
-
-                // Copy slice to temporary array
-                for (int i = 0; i < {axis_size}; i++) {{
-                    int idx = outer * {axis_size * inner_size} + i * {inner_size} + inner;
-                    temp_vals[i] = __X[idx];
-                    temp_idxs[i] = i;
-                }}
-
-                // Partial sort to find top K
-                for (int i = 0; i < {k_val}; i++) {{
-                    for (int j = i + 1; j < {axis_size}; j++) {{
-                        if (temp_vals[j] {comparison_op} temp_vals[i]) {{
-                            // Swap values
-                            {input_desc.dtype.ctype} tmp_v = temp_vals[i];
-                            temp_vals[i] = temp_vals[j];
-                            temp_vals[j] = tmp_v;
-
-                            // Swap indices
-                            long long tmp_i = temp_idxs[i];
-                            temp_idxs[i] = temp_idxs[j];
-                            temp_idxs[j] = tmp_i;
-                        }}
-                    }}
-                }}
-
-                // Write top K results
-                for (int i = 0; i < {k_val}; i++) {{
-                    int out_idx = outer * {k_val * inner_size} + i * {inner_size} + inner;{values_write_code}
-                    __Indices[out_idx] = temp_idxs[i];
-                }}
-            }}
-        }}
-        """
-
-        # Build tasklet outputs based on which outputs are connected
-        tasklet_outputs = {"__Indices": dace.pointer(indices_desc.dtype)}
-        if has_values:
-            tasklet_outputs["__Values"] = dace.pointer(values_desc.dtype)
-
-        tasklet = nstate.add_tasklet(name=node.label + "_tasklet",
-                                     inputs={"__X": dace.pointer(input_desc.dtype)},
-                                     outputs=tasklet_outputs,
-                                     language=dace.Language.CPP,
-                                     code=code)
-
-        nstate.add_edge(input_read, None, tasklet, "__X", dace.Memlet.from_array("X", input_desc))
-        if has_values:
-            nstate.add_edge(tasklet, "__Values", values_write, None, dace.Memlet.from_array("Values", values_desc))
-        nstate.add_edge(tasklet, "__Indices", indices_write, None, dace.Memlet.from_array("Indices", indices_desc))
-
-        return nsdfg
-
-
-@op_implementation(op="TopK", name="dynamic")
-class DynamicTopK(ONNXForward):
-    """
-    Dynamic implementation of ONNX TopK operator that supports runtime K values.
-    This handles cases where K is not a compile-time constant (e.g., from Gather).
-    """
-
-    @staticmethod
-    def forward_can_be_applied(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> bool:
-        return True
-
-    @staticmethod
-    def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
-        input_desc = in_desc_with_name(node, state, sdfg, "X")
-        k_desc = in_desc_with_name(node, state, sdfg, "K")
-
-        has_values = len(list(state.out_edges_by_connector(node, "Values"))) > 0
-        values_desc = out_desc_with_name(node, state, sdfg, "Values") if has_values else None
-        indices_desc = out_desc_with_name(node, state, sdfg, "Indices")
-
-        axis = getattr(node, 'axis', -1)
-        largest = getattr(node, 'largest', 1)
-
-        if axis < 0:
-            axis = len(input_desc.shape) + axis
-
-        nsdfg = dace.SDFG(node.label + "_expansion")
-        nstate = nsdfg.add_state()
-
-        nsdfg.add_datadesc("X", copy.deepcopy(input_desc))
-        nsdfg.add_datadesc("K", copy.deepcopy(k_desc))
-        if has_values:
-            nsdfg.add_datadesc("Values", copy.deepcopy(values_desc))
-        nsdfg.add_datadesc("Indices", copy.deepcopy(indices_desc))
-
-        nsdfg.arrays["X"].transient = False
-        nsdfg.arrays["K"].transient = False
-        if has_values:
-            nsdfg.arrays["Values"].transient = False
-        nsdfg.arrays["Indices"].transient = False
-
-        input_read = nstate.add_read("X")
-        k_read = nstate.add_read("K")
-        values_write = nstate.add_write("Values") if has_values else None
-        indices_write = nstate.add_write("Indices")
-
-        input_shape = input_desc.shape
-        axis_size = input_shape[axis]
-        outer_size = int(np.prod(input_shape[:axis])) if axis > 0 else 1
-        inner_size = int(np.prod(input_shape[axis + 1:])) if axis < len(input_shape) - 1 else 1
-
-        comparison_op = ">" if largest else "<"
-
-        values_write_code = f"""
-                    __Values[out_base + i * {inner_size} + inner] = temp_vals[i];""" if has_values else ""
-
-        code = f"""
-        long long k_val = __K;
-
-        for (long long outer = 0; outer < {outer_size}; outer++) {{
-            for (long long inner = 0; inner < {inner_size}; inner++) {{
-                {input_desc.dtype.ctype} temp_vals[{axis_size}];
-                long long temp_idxs[{axis_size}];
-
-                for (long long i = 0; i < {axis_size}; i++) {{
-                    long long idx = outer * {axis_size * inner_size} + i * {inner_size} + inner;
-                    temp_vals[i] = __X[idx];
-                    temp_idxs[i] = i;
-                }}
-
-                for (long long i = 0; i < k_val && i < {axis_size}; i++) {{
-                    for (long long j = i + 1; j < {axis_size}; j++) {{
-                        if (temp_vals[j] {comparison_op} temp_vals[i]) {{
-                            {input_desc.dtype.ctype} tmp_v = temp_vals[i];
-                            temp_vals[i] = temp_vals[j];
-                            temp_vals[j] = tmp_v;
-
-                            long long tmp_i = temp_idxs[i];
-                            temp_idxs[i] = temp_idxs[j];
-                            temp_idxs[j] = tmp_i;
-                        }}
-                    }}
-                }}
-
-                long long out_base = outer * k_val * {inner_size};
-                for (long long i = 0; i < k_val && i < {axis_size}; i++) {{{values_write_code}
-                    __Indices[out_base + i * {inner_size} + inner] = temp_idxs[i];
-                }}
-            }}
-        }}
-        """
-
-        tasklet_inputs = {"__X": dace.pointer(input_desc.dtype), "__K": dace.pointer(k_desc.dtype)}
-        tasklet_outputs = {"__Indices": dace.pointer(indices_desc.dtype)}
-        if has_values:
-            tasklet_outputs["__Values"] = dace.pointer(values_desc.dtype)
-
-        tasklet = nstate.add_tasklet(name=node.label + "_tasklet",
-                                     inputs=tasklet_inputs,
-                                     outputs=tasklet_outputs,
-                                     language=dace.Language.CPP,
-                                     code=code)
-
-        nstate.add_edge(input_read, None, tasklet, "__X", dace.Memlet.from_array("X", input_desc))
-        nstate.add_edge(k_read, None, tasklet, "__K", dace.Memlet.from_array("K", k_desc))
-        if has_values:
-            nstate.add_edge(tasklet, "__Values", values_write, None, dace.Memlet.from_array("Values", values_desc))
-        nstate.add_edge(tasklet, "__Indices", indices_write, None, dace.Memlet.from_array("Indices", indices_desc))
-
-        return nsdfg
-
-
-# ==============================================================================
-# GatherElements Operation
-# ==============================================================================
+        return program_for_node(prog, sdfg, state, node)
 
 
 @op_implementation(op="GatherElements", name="pure")
@@ -1543,72 +1233,63 @@ class PureGatherElements(ONNXForward):
 
     @staticmethod
     def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
-        nsdfg, nstate, input_nodes, output_nodes = empty_sdfg_for_node(sdfg, state, node, add_access_nodes=True)
-
+        axis_val = node.axis if hasattr(node, 'axis') else 0
         data_desc = in_desc_with_name(node, state, sdfg, "data")
         indices_desc = in_desc_with_name(node, state, sdfg, "indices")
         output_desc = out_desc_with_name(node, state, sdfg, "output")
 
-        axis = node.axis if hasattr(node, 'axis') else 0
-        if axis < 0:
-            axis += len(output_desc.shape)
+        # Normalize negative axis
+        if axis_val < 0:
+            axis_val += len(output_desc.shape)
 
-        output_shape = output_desc.shape
-        data_shape = data_desc.shape
+        # Create numpy program that manually implements gather_elements logic
+        # We need to iterate over each output element and gather from data
+        ndim = len(output_desc.shape)
 
-        # Calculate total number of elements in output
-        num_elements = int(np.prod(output_shape))
+        if ndim == 1:
 
-        # Build strides for multi-dimensional indexing
-        output_strides = [int(np.prod(output_shape[i + 1:])) for i in range(len(output_shape))]
-        data_strides = [int(np.prod(data_shape[i + 1:])) for i in range(len(data_shape))]
+            def prog(data, indices, output):
+                for i in range(output.shape[0]):
+                    output[i] = data[indices[i]]
+        elif ndim == 2:
+            if axis_val == 0:
 
-        # Generate loop code
-        loop_code = f"""
-        for (int flat_idx = 0; flat_idx < {num_elements}; flat_idx++) {{
-            // Convert flat index to multi-dimensional indices
-            int output_idx[{len(output_shape)}];
-            int temp_idx = flat_idx;
-"""
-        for i in range(len(output_shape)):
-            if i < len(output_shape) - 1:
-                loop_code += f"            output_idx[{i}] = temp_idx / {output_strides[i]};\n"
-                loop_code += f"            temp_idx = temp_idx % {output_strides[i]};\n"
-            else:
-                loop_code += f"            output_idx[{i}] = temp_idx;\n"
+                def prog(data, indices, output):
+                    for i in range(output.shape[0]):
+                        for j in range(output.shape[1]):
+                            output[i, j] = data[indices[i, j], j]
+            else:  # axis == 1
 
-        loop_code += f"\n            // Build data index\n"
-        loop_code += f"            int data_flat_idx = 0;\n"
-        for i in range(len(data_shape)):
-            if i == axis:
-                loop_code += f"            data_flat_idx += __indices[flat_idx] * {data_strides[i]};\n"
-            else:
-                loop_code += f"            data_flat_idx += output_idx[{i}] * {data_strides[i]};\n"
+                def prog(data, indices, output):
+                    for i in range(output.shape[0]):
+                        for j in range(output.shape[1]):
+                            output[i, j] = data[i, indices[i, j]]
+        elif ndim == 3:
+            if axis_val == 0:
 
-        loop_code += f"\n            __output[flat_idx] = __data[data_flat_idx];\n"
-        loop_code += f"        }}\n"
+                def prog(data, indices, output):
+                    for i in range(output.shape[0]):
+                        for j in range(output.shape[1]):
+                            for k in range(output.shape[2]):
+                                output[i, j, k] = data[indices[i, j, k], j, k]
+            elif axis_val == 1:
 
-        tasklet = nstate.add_tasklet(name=node.label + "_tasklet",
-                                     inputs={
-                                         "__data": dace.pointer(data_desc.dtype),
-                                         "__indices": dace.pointer(indices_desc.dtype)
-                                     },
-                                     outputs={"__output": dace.pointer(output_desc.dtype)},
-                                     language=dace.Language.CPP,
-                                     code=loop_code)
+                def prog(data, indices, output):
+                    for i in range(output.shape[0]):
+                        for j in range(output.shape[1]):
+                            for k in range(output.shape[2]):
+                                output[i, j, k] = data[i, indices[i, j, k], k]
+            else:  # axis == 2
 
-        nstate.add_edge(input_nodes["data"], None, tasklet, "__data", dace.Memlet.from_array("data", data_desc))
-        nstate.add_edge(input_nodes["indices"], None, tasklet, "__indices",
-                        dace.Memlet.from_array("indices", indices_desc))
-        nstate.add_edge(tasklet, "__output", output_nodes["output"], None,
-                        dace.Memlet.from_array("output", output_desc))
+                def prog(data, indices, output):
+                    for i in range(output.shape[0]):
+                        for j in range(output.shape[1]):
+                            for k in range(output.shape[2]):
+                                output[i, j, k] = data[i, j, indices[i, j, k]]
+        else:
+            raise NotImplementedError(f"GatherElements not implemented for {ndim}D arrays")
 
-        return nsdfg
-
-
-# ==============================================================================
-# ScatterElements Operation
-# ==============================================================================
+        return program_for_node(prog, sdfg, state, node)
 
 
 @op_implementation(op="ScatterElements", name="pure")
@@ -1629,73 +1310,67 @@ class PureScatterElements(ONNXForward):
 
     @staticmethod
     def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
-        nsdfg, nstate, input_nodes, output_nodes = empty_sdfg_for_node(sdfg, state, node, add_access_nodes=True)
-
-        data_desc = in_desc_with_name(node, state, sdfg, "data")
+        axis_val = node.axis if hasattr(node, 'axis') else 0
         indices_desc = in_desc_with_name(node, state, sdfg, "indices")
-        updates_desc = in_desc_with_name(node, state, sdfg, "updates")
         output_desc = out_desc_with_name(node, state, sdfg, "output")
 
-        axis = node.axis if hasattr(node, 'axis') else 0
-        if axis < 0:
-            axis += len(output_desc.shape)
+        # Normalize negative axis
+        if axis_val < 0:
+            axis_val += len(output_desc.shape)
 
-        indices_shape = indices_desc.shape
-        data_shape = data_desc.shape
+        # Create Python program based on dimensionality
+        ndim = len(indices_desc.shape)
 
-        num_elements = int(np.prod(indices_shape))
-        indices_strides = [int(np.prod(indices_shape[i + 1:])) for i in range(len(indices_shape))]
-        data_strides = [int(np.prod(data_shape[i + 1:])) for i in range(len(data_shape))]
+        if ndim == 1:
 
-        loop_code = f"""
-        // First copy data to output
-        for (int i = 0; i < {int(np.prod(data_shape))}; i++) {{
-            __output[i] = __data[i];
-        }}
+            def prog(data, indices, updates, output):
+                output[:] = data[:]
+                for i in range(indices.shape[0]):
+                    output[indices[i]] = updates[i]
+        elif ndim == 2:
+            if axis_val == 0:
 
-        // Then scatter updates
-        for (int flat_idx = 0; flat_idx < {num_elements}; flat_idx++) {{
-            // Convert flat index to multi-dimensional indices
-            int indices_idx[{len(indices_shape)}];
-            int temp_idx = flat_idx;
-"""
-        for i in range(len(indices_shape)):
-            if i < len(indices_shape) - 1:
-                loop_code += f"            indices_idx[{i}] = temp_idx / {indices_strides[i]};\n"
-                loop_code += f"            temp_idx = temp_idx % {indices_strides[i]};\n"
-            else:
-                loop_code += f"            indices_idx[{i}] = temp_idx;\n"
+                def prog(data, indices, updates, output):
+                    output[:] = data[:]
+                    for i in range(indices.shape[0]):
+                        for j in range(indices.shape[1]):
+                            output[indices[i, j], j] = updates[i, j]
+            else:  # axis == 1
 
-        loop_code += f"\n            // Build output index\n"
-        loop_code += f"            int output_flat_idx = 0;\n"
-        for i in range(len(data_shape)):
-            if i == axis:
-                loop_code += f"            output_flat_idx += __indices[flat_idx] * {data_strides[i]};\n"
-            else:
-                loop_code += f"            output_flat_idx += indices_idx[{i}] * {data_strides[i]};\n"
+                def prog(data, indices, updates, output):
+                    output[:] = data[:]
+                    for i in range(indices.shape[0]):
+                        for j in range(indices.shape[1]):
+                            output[i, indices[i, j]] = updates[i, j]
+        elif ndim == 3:
+            if axis_val == 0:
 
-        loop_code += f"\n            __output[output_flat_idx] = __updates[flat_idx];\n"
-        loop_code += f"        }}\n"
+                def prog(data, indices, updates, output):
+                    output[:] = data[:]
+                    for i in range(indices.shape[0]):
+                        for j in range(indices.shape[1]):
+                            for k in range(indices.shape[2]):
+                                output[indices[i, j, k], j, k] = updates[i, j, k]
+            elif axis_val == 1:
 
-        tasklet = nstate.add_tasklet(name=node.label + "_tasklet",
-                                     inputs={
-                                         "__data": dace.pointer(data_desc.dtype),
-                                         "__indices": dace.pointer(indices_desc.dtype),
-                                         "__updates": dace.pointer(updates_desc.dtype)
-                                     },
-                                     outputs={"__output": dace.pointer(output_desc.dtype)},
-                                     language=dace.Language.CPP,
-                                     code=loop_code)
+                def prog(data, indices, updates, output):
+                    output[:] = data[:]
+                    for i in range(indices.shape[0]):
+                        for j in range(indices.shape[1]):
+                            for k in range(indices.shape[2]):
+                                output[i, indices[i, j, k], k] = updates[i, j, k]
+            else:  # axis == 2
 
-        nstate.add_edge(input_nodes["data"], None, tasklet, "__data", dace.Memlet.from_array("data", data_desc))
-        nstate.add_edge(input_nodes["indices"], None, tasklet, "__indices",
-                        dace.Memlet.from_array("indices", indices_desc))
-        nstate.add_edge(input_nodes["updates"], None, tasklet, "__updates",
-                        dace.Memlet.from_array("updates", updates_desc))
-        nstate.add_edge(tasklet, "__output", output_nodes["output"], None,
-                        dace.Memlet.from_array("output", output_desc))
+                def prog(data, indices, updates, output):
+                    output[:] = data[:]
+                    for i in range(indices.shape[0]):
+                        for j in range(indices.shape[1]):
+                            for k in range(indices.shape[2]):
+                                output[i, j, indices[i, j, k]] = updates[i, j, k]
+        else:
+            raise NotImplementedError(f"ScatterElements not implemented for {ndim}D arrays")
 
-        return nsdfg
+        return program_for_node(prog, sdfg, state, node)
 
 
 # ==============================================================================
