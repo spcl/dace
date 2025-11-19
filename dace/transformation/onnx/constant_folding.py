@@ -53,7 +53,10 @@ SUPPORTED_OPS = {'ONNXShape',
                  'ONNXConcat',
                  'ONNXReshape',
                  'ONNXTrilu',
-                 'ONNXCast'}
+                 'ONNXCast',
+                 'ONNXSlice',
+                 'ONNXGather',
+                 'ONNXTranspose'}
 # yapf: enable
 
 
@@ -296,8 +299,13 @@ class ConstantFolding(transformation.SingleStateTransformation):
             output_access_node = output_edge.dst if isinstance(output_edge.dst, nd.AccessNode) else output_edge.src
             constant_name = output_access_node.data
 
-            # Update array descriptor
+            # Update array descriptor and cast to expected dtype
             result = np.asarray(result)
+            expected_dtype = sdfg.arrays[constant_name].dtype.as_numpy_dtype()
+            result = result.astype(expected_dtype)
+
+            # Update shape in case it changed
+            sdfg.arrays[constant_name].shape = result.shape
 
             # Add to weights
             parent.weights[constant_name] = torch.from_numpy(result)
@@ -671,6 +679,156 @@ class ConstantFolding(transformation.SingleStateTransformation):
             constant_name = output_access_node.data
 
             # Update array descriptor (shape should be same, just dtype changes)
+            sdfg.arrays[constant_name].shape = result.shape
+
+            # Add to weights
+            parent.weights[constant_name] = torch.from_numpy(result)
+
+            # Mark as non-transient
+            sdfg.arrays[constant_name].transient = False
+
+        elif node.schema.name == "Slice":
+            # Slice operation with constant inputs
+            # Get data input and other inputs (starts, ends, axes, steps)
+            data_input = None
+            starts_input = None
+            ends_input = None
+            axes_input = None
+            steps_input = None
+
+            for edge in state.in_edges(node):
+                input_name = edge.src.data
+                input_data = parent.clean_weights[input_name]
+                if hasattr(input_data, 'cpu'):
+                    input_value = input_data.cpu().numpy()
+                else:
+                    input_value = np.array(input_data)
+
+                if edge.dst_conn == "data":
+                    data_input = input_value
+                elif edge.dst_conn == "starts":
+                    starts_input = input_value
+                elif edge.dst_conn == "ends":
+                    ends_input = input_value
+                elif edge.dst_conn == "axes":
+                    axes_input = input_value
+                elif edge.dst_conn == "steps":
+                    steps_input = input_value
+
+            # Convert to lists
+            starts = starts_input.tolist() if hasattr(starts_input, 'tolist') else starts_input
+            ends = ends_input.tolist() if hasattr(ends_input, 'tolist') else ends_input
+
+            # Handle axes (if not provided, default to [0, 1, 2, ...])
+            if axes_input is not None:
+                axes = axes_input.tolist() if hasattr(axes_input, 'tolist') else axes_input
+            else:
+                axes = list(range(len(starts)))
+
+            # Handle steps (if not provided, default to [1, 1, 1, ...])
+            if steps_input is not None:
+                steps = steps_input.tolist() if hasattr(steps_input, 'tolist') else steps_input
+            else:
+                steps = [1] * len(starts)
+
+            # Create slice objects for each axis
+            slices = [slice(None)] * len(data_input.shape)
+            for axis, start, end, step in zip(axes, starts, ends, steps):
+                slices[axis] = slice(start, end, step)
+
+            # Perform slice
+            result = data_input[tuple(slices)]
+
+            # Get output name
+            assert len(state.out_edges(node)) == 1
+            output_edge = state.out_edges(node)[0]
+            output_access_node = output_edge.dst if isinstance(output_edge.dst, nd.AccessNode) else output_edge.src
+            constant_name = output_access_node.data
+
+            # Update array descriptor
+            sdfg.arrays[constant_name].shape = result.shape
+
+            # Add to weights
+            parent.weights[constant_name] = torch.from_numpy(result)
+
+            # Mark as non-transient
+            sdfg.arrays[constant_name].transient = False
+
+        elif node.schema.name == "Gather":
+            # Gather operation with constant inputs
+            # Get data input and indices
+            data_input = None
+            indices_input = None
+            axis = 0
+
+            for edge in state.in_edges(node):
+                input_name = edge.src.data
+                input_data = parent.clean_weights[input_name]
+                if hasattr(input_data, 'cpu'):
+                    input_value = input_data.cpu().numpy()
+                else:
+                    input_value = np.array(input_data)
+
+                if edge.dst_conn == "data":
+                    data_input = input_value
+                elif edge.dst_conn == "indices":
+                    indices_input = input_value
+
+            # Get axis from node attribute (default is 0)
+            if hasattr(node, 'axis') and node.axis is not None:
+                axis = node.axis
+
+            # Perform gather operation
+            result = np.take(data_input, indices_input, axis=axis)
+
+            # Get output name
+            assert len(state.out_edges(node)) == 1
+            output_edge = state.out_edges(node)[0]
+            output_access_node = output_edge.dst if isinstance(output_edge.dst, nd.AccessNode) else output_edge.src
+            constant_name = output_access_node.data
+
+            # Update array descriptor
+            sdfg.arrays[constant_name].shape = result.shape
+
+            # Add to weights
+            parent.weights[constant_name] = torch.from_numpy(result)
+
+            # Mark as non-transient
+            sdfg.arrays[constant_name].transient = False
+
+        elif node.schema.name == "Transpose":
+            # Transpose operation with constant input
+            # Get data input
+            data_input = None
+
+            for edge in state.in_edges(node):
+                if edge.dst_conn == "data":
+                    input_name = edge.src.data
+                    input_data = parent.clean_weights[input_name]
+                    if hasattr(input_data, 'cpu'):
+                        data_input = input_data.cpu().numpy()
+                    else:
+                        data_input = np.array(input_data)
+
+            # Get perm attribute (permutation order)
+            perm = None
+            if hasattr(node, 'perm') and node.perm is not None:
+                perm = node.perm
+
+            # Perform transpose
+            if perm is not None:
+                result = np.transpose(data_input, axes=perm)
+            else:
+                # If no perm specified, reverse all dimensions
+                result = np.transpose(data_input)
+
+            # Get output name
+            assert len(state.out_edges(node)) == 1
+            output_edge = state.out_edges(node)[0]
+            output_access_node = output_edge.dst if isinstance(output_edge.dst, nd.AccessNode) else output_edge.src
+            constant_name = output_access_node.data
+
+            # Update array descriptor
             sdfg.arrays[constant_name].shape = result.shape
 
             # Add to weights
