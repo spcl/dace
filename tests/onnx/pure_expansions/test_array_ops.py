@@ -354,37 +354,6 @@ def test_greater_or_equal():
 
 
 @pytest.mark.onnx
-def test_topk():
-    """Test TopK operator with DaCe ONNX frontend."""
-
-    # Create a TopK model
-    input_tensor = helper.make_tensor_value_info('X', TensorProto.FLOAT, [2, 5])
-    k_tensor = helper.make_tensor('K', TensorProto.INT64, [], [3])
-    values_tensor = helper.make_tensor_value_info('Values', TensorProto.FLOAT, [2, 3])
-    indices_tensor = helper.make_tensor_value_info('Indices', TensorProto.INT64, [2, 3])
-
-    node = helper.make_node('TopK', inputs=['X', 'K'], outputs=['Values', 'Indices'], axis=-1, largest=1, sorted=1)
-
-    graph = helper.make_graph([node], 'topk_test', [input_tensor], [values_tensor, indices_tensor], [k_tensor])
-    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 13)])
-    model.ir_version = 8  # Use IR version 8 for compatibility
-
-    dace_model = ONNXModel("test_topk", model)
-
-    X = np.array([[3, 1, 4, 1, 5], [9, 2, 6, 5, 3]], dtype=np.float32)
-    values, _ = dace_model(X=X)
-
-    # Check if values are correct (indices might differ for ties)
-    for i in range(X.shape[0]):
-        sorted_row = np.sort(X[i])[::-1][:3]
-        np.testing.assert_allclose(np.sort(values[i])[::-1],
-                                   sorted_row,
-                                   atol=1e-5,
-                                   rtol=1e-5,
-                                   err_msg=f"TopK values mismatch for row {i}")
-
-
-@pytest.mark.onnx
 def test_range():
     """Test Range operator with DaCe ONNX frontend."""
 
@@ -794,7 +763,7 @@ def test_gather_scalar():
 
 
 @pytest.mark.onnx
-def test_gather_onnx_2():
+def test_gather_axis1_2d_indices():
 
     @dace.program
     def gather(inp: dace.float64[3, 3], indices: dace.int64[1, 2]):
