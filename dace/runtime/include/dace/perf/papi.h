@@ -461,7 +461,7 @@ public:
         {
             if(e == 0) continue; // Skip unnecessary/invalid entries
             const char *counter_name = (entry_name + std::to_string(e)).c_str();
-            
+
             /*char buff[PAPI_MAX_STR_LEN] = {0};
             PAPI_event_code_to_name(e, buff);
             std::string event_name(buff);*/

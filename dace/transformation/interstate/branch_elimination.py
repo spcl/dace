@@ -600,7 +600,7 @@ class BranchElimination(transformation.MultiStateTransformation):
             index: Index for unique naming of temporaries
 
         Returns:
-            tuple: (combine_tasklet, tmp1_access, tmp2_access, float_cond_access)
+            tuple: (combine_tasklet, tmp1_access, tmp2_access, float_cond_access, added_scalar_names)
         """
 
         # Prepare write subset for non-tasklet inputs
@@ -617,8 +617,11 @@ class BranchElimination(transformation.MultiStateTransformation):
         assert write_subset.num_elements_exact() == 1
 
         # Generate unique names for temporary scalars
-        tmp1_name = f"if_body_tmp_{index}"
-        tmp2_name = f"else_body_tmp_{index}"
+        tmp1_name = f"if_body_tmp_{self._index}"
+        self._index += 1
+        tmp2_name = f"else_body_tmp_{self._index}"
+        self._index += 1
+        # Candidate names might change
 
         # Get array information for dtype
         arr = new_state.sdfg.arrays[state0_in_new_state_write_access.data]
@@ -640,6 +643,7 @@ class BranchElimination(transformation.MultiStateTransformation):
             transient=True,
             find_new_name=True,
         )
+        added_scalar_names = {tmp1_name, tmp2_name}
 
         # 3. Add the combine tasklet which performs: float_cond1 * tmp1 + (1 - float_cond1) * tmp2
         combine_tasklet = new_state.add_tasklet(
@@ -692,7 +696,7 @@ class BranchElimination(transformation.MultiStateTransformation):
             combine_tasklet, "_out", state0_in_new_state_write_access, None,
             dace.memlet.Memlet(data=state0_in_new_state_write_access.data, subset=copy.deepcopy(subset_to_use)))
 
-        return combine_tasklet, tmp1_access, tmp2_access, float_cond_access
+        return combine_tasklet, tmp1_access, tmp2_access, float_cond_access, added_scalar_names
 
     def has_wcr_edges(self, state: dace.SDFGState):
         for e in state.edges():
@@ -937,6 +941,7 @@ class BranchElimination(transformation.MultiStateTransformation):
         if node.language != dace.dtypes.Language.Python:
             return
 
+        removed_names = set()
         for ie in state.in_edges(node):
             if isinstance(ie.src, dace.nodes.AccessNode):
                 rettup = self._scalar_is_assigned_symbolic_value(state, ie.src)
@@ -957,9 +962,16 @@ class BranchElimination(transformation.MultiStateTransformation):
 
                     state.remove_edge(ie)
                     if state.degree(ie.src) == 0:
+                        if isinstance(ie.src, dace.nodes.AccessNode):
+                            removed_names.add(ie.src.data)
                         state.remove_node(ie.src)
 
-    def _try_fuse(self, graph: ControlFlowRegion, new_state: SDFGState, cond_prep_state: SDFGState):
+        return removed_names
+
+    def _try_fuse(self, graph: ControlFlowRegion, new_state: SDFGState,
+                  cond_prep_state: SDFGState) -> Tuple[Set[str], Set[str]]:
+        added_scalars = set()
+        removed_scalars = set()
         if len({
                 t
                 for t in cond_prep_state.nodes()
@@ -986,10 +998,12 @@ class BranchElimination(transformation.MultiStateTransformation):
 
             cp_tasklet = copy.deepcopy(assign_tasklet)
             new_state.add_node(cp_tasklet)
-            tmp_name, tmp_arr = new_state.sdfg.add_scalar(name="tmp_condition_symbol_to_scalar",
+            tmp_name, tmp_arr = new_state.sdfg.add_scalar(name=f"tmp_condition_symbol_to_scalar_{self._index}",
                                                           dtype=new_state.sdfg.arrays[dst_data].dtype,
                                                           transient=True,
                                                           find_new_name=True)
+            self._index += 1
+            added_scalars.add(tmp_name)
             tmp_an = new_state.add_access(tmp_name)
             tmp_an.setzero = True
             new_state.add_edge(cp_tasklet, next(iter(cp_tasklet.out_connectors)), tmp_an, None,
@@ -1007,6 +1021,9 @@ class BranchElimination(transformation.MultiStateTransformation):
                 cond_prep_state.remove_edge(ie)
                 if cond_prep_state.degree(ie.src) == 0:
                     cond_prep_state.remove_node(ie.src)
+                    removed_scalars.add(ie.src.data)
+                if isinstance(oe.dst, dace.nodes.AccessNode):
+                    removed_scalars.add(oe.dst.data)
             cond_prep_state.remove_edge(oe)
             cond_prep_state.remove_node(oe.dst)
             cond_prep_state.remove_node(assign_tasklet)
@@ -1030,6 +1047,7 @@ class BranchElimination(transformation.MultiStateTransformation):
                             graph.add_node(new_state, is_start_block=True)
                             for oe2 in oes2:
                                 graph.add_edge(new_state, oe2.dst, copy.deepcopy(oe2.data))
+        return added_scalars, removed_scalars
 
     def _extract_condition_var_and_assignment(self, graph: ControlFlowRegion) -> Tuple[str, str]:
         non_none_conds = [cond for cond, _ in self.conditional.branches if cond is not None]
@@ -1730,7 +1748,9 @@ class BranchElimination(transformation.MultiStateTransformation):
 
         return True
 
-    def apply(self, graph: ControlFlowRegion, sdfg: SDFG):
+    _index = 0
+
+    def apply(self, graph: ControlFlowRegion, sdfg: SDFG) -> Set[str]:
         # If CFG has 1 or two branches
         # If two branches then the write sets to sink nodes are the same
 
@@ -1740,6 +1760,7 @@ class BranchElimination(transformation.MultiStateTransformation):
         assert graph == self.conditional.parent_graph
         cond_var, cond_assignment = self._extract_condition_var_and_assignment(graph)
         orig_cond_var = cond_var
+        added_scalar_names = set()
 
         if len(self.conditional.branches) == 2:
             tup0 = self.conditional.branches[0]
@@ -1776,7 +1797,7 @@ class BranchElimination(transformation.MultiStateTransformation):
                 # Right now can_be_applied False because the is reused, but we do not care about
                 # this type of a reuse - so call permissive=True
                 assert t1.can_be_applied(graph=graph, expr_index=0, sdfg=sdfg, permissive=True)
-                t1.apply(graph=graph, sdfg=sdfg)
+                added_scalar_names = added_scalar_names.union(t1.apply(graph=graph, sdfg=sdfg))
 
                 t2 = BranchElimination()
                 t2.conditional = second_if
@@ -1785,10 +1806,10 @@ class BranchElimination(transformation.MultiStateTransformation):
                 # Right now can_be_applied False because the is reused, but we do not care about
                 # this type of a reuse - so call permissive=True
                 assert t2.can_be_applied(graph=graph, expr_index=0, sdfg=sdfg, permissive=True)
-                t2.apply(graph=graph, sdfg=sdfg)
+                added_scalar_names = added_scalar_names.union(t2.apply(graph=graph, sdfg=sdfg))
                 # Create two single branch SDFGs
                 # Then call apply on each one of them
-                return
+                return added_scalar_names
 
         cond_prep_state = graph.add_state_before(self.conditional,
                                                  f"cond_prep_for_fused_{self.conditional}",
@@ -1796,6 +1817,7 @@ class BranchElimination(transformation.MultiStateTransformation):
         cond_var_as_float_name = self._move_interstate_assignment_to_state(cond_prep_state, cond_assignment, cond_var,
                                                                            self.parent_nsdfg_state,
                                                                            cond_prep_state.sdfg.parent_nsdfg_node)
+        added_scalar_names.add(cond_var_as_float_name)
 
         if len(self.conditional.branches) == 2:
             tup0 = self.conditional.branches[0]
@@ -1850,13 +1872,14 @@ class BranchElimination(transformation.MultiStateTransformation):
                 state0_in_new_state_write_access = state0_write_accesses_in_new_state.pop()
                 state1_in_new_state_write_access = state1_write_accesses_in_new_state.pop()
 
-                combine_tasklet, tmp1_access, tmp2_access, float_cond_access = self.add_conditional_write_combination(
+                combine_tasklet, tmp1_access, tmp2_access, float_cond_access, new_scalar_names = self.add_conditional_write_combination(
                     new_state=new_state,
                     state0_in_new_state_write_access=state0_in_new_state_write_access,
                     state1_in_new_state_write_access=state1_in_new_state_write_access,
                     cond_var_as_float_name=cond_var_as_float_name,
                     write_name=write,
                     index=0)
+                added_scalar_names = added_scalar_names.union(new_scalar_names)
 
                 new_state.remove_node(state1_in_new_state_write_access)
                 float_type = new_state.sdfg.arrays[float_cond_access.data].dtype
@@ -1864,8 +1887,8 @@ class BranchElimination(transformation.MultiStateTransformation):
                 has_divisions = self.make_division_tasklets_safe_for_unconditional_execution(new_state, float_type)
 
                 #if not has_divisions:
-                self._try_simplify_combine_tasklet(new_state, combine_tasklet)
-
+                removed_scalar_names = self._try_simplify_combine_tasklet(new_state, combine_tasklet)
+                added_scalar_names = added_scalar_names.difference(removed_scalar_names)
         else:
             assert len(self.conditional.branches) == 1
             tup0 = self.conditional.branches[0]
@@ -1966,13 +1989,14 @@ class BranchElimination(transformation.MultiStateTransformation):
                     # If state 1 access should have setzero defined to be true to avoid writing trash
                     state1_in_new_state_write_access.setzero = True
 
-                    combine_tasklet, tmp1_access, tmp2_access, float_cond_access = self.add_conditional_write_combination(
+                    combine_tasklet, tmp1_access, tmp2_access, float_cond_access, new_access_names = self.add_conditional_write_combination(
                         new_state=new_state,
                         state0_in_new_state_write_access=state0_in_new_state_write_access,
                         state1_in_new_state_write_access=state1_in_new_state_write_access,
                         cond_var_as_float_name=cond_var_as_float_name,
                         write_name=write,
                         index=i)
+                    added_scalar_names = added_scalar_names.union(new_access_names)
 
                     # If we detect a previous right, for correctness we need to connect to that
                     self._connect_rhs_identity_assignment_to_previous_read(new_state=new_state,
@@ -1987,7 +2011,8 @@ class BranchElimination(transformation.MultiStateTransformation):
                     has_divisions = self.make_division_tasklets_safe_for_unconditional_execution(new_state, float_type)
 
                     #if not has_divisions:
-                    self._try_simplify_combine_tasklet(new_state, combine_tasklet)
+                    removed_scalar_names = self._try_simplify_combine_tasklet(new_state, combine_tasklet)
+                    added_scalar_names = added_scalar_names.difference(removed_scalar_names)
 
         # If the symbol is not used anymore
         conditional_strs = {cond.as_string for cond, _ in self.conditional.branches if cond is not None}
@@ -2019,7 +2044,9 @@ class BranchElimination(transformation.MultiStateTransformation):
         else:
             self.conditional.sdfg.validate()
 
-        self._try_fuse(graph, new_state, cond_prep_state)
+        added_scalars, removed_scalars = self._try_fuse(graph, new_state, cond_prep_state)
+        added_scalar_names = added_scalar_names.union(added_scalars)
+        added_scalar_names = added_scalar_names.difference(removed_scalars)
 
         graph.sdfg.reset_cfg_list()
         sdutil.set_nested_sdfg_parent_references(graph.sdfg)
@@ -2028,6 +2055,8 @@ class BranchElimination(transformation.MultiStateTransformation):
             self.parent_nsdfg_state.sdfg.validate()
         else:
             self.conditional.sdfg.validate()
+
+        return added_scalar_names
 
     def _find_previous_write(self, state: dace.SDFGState, sink: dace.nodes.Tasklet, data: str,
                              skip_set: Set[dace.nodes.Node]):
