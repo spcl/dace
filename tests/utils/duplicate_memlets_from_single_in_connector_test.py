@@ -1,5 +1,6 @@
 import copy
 import numpy
+import pytest
 import dace
 import dace.sdfg.construction_utils as cutil
 
@@ -10,6 +11,12 @@ S = dace.symbol("S")
 def overlapping_access(A: dace.float64[2, 2, S], B: dace.float64[S]):
     for i in dace.map[0:S:1]:
         B[i] = A[0, 0, i] + A[1, 0, i]
+
+
+@dace.program
+def non_overlapping_access(A: dace.float64[2, 2, S], B: dace.float64[S]):
+    for i in dace.map[0:S:1]:
+        B[i] = A[0, 0, i] + 1.2 * A[0, 0, i]
 
 
 @dace.program
@@ -53,7 +60,6 @@ def run_comparison(sdfg1, sdfg2, arrays, params):
     copy_sdfg.name = copy_sdfg.name + "_transformed"
 
     c_copy_sdfg = copy_sdfg.compile()
-    copy_sdfg.save("x.sdfg")
 
     # Run both
     c_sdfg(**arrays_orig, **params)
@@ -65,8 +71,10 @@ def run_comparison(sdfg1, sdfg2, arrays, params):
             f"{name} Diff: {arrays_orig[name] - arrays_vec[name]}"
 
 
-def test_jacobi2d():
+@pytest.mark.parametrize("apply_only_if_subsets_not_equal", [True, False])
+def test_jacobi2d(apply_only_if_subsets_not_equal: bool):
     sdfg = jacobi2d.to_sdfg()
+    sdfg.name += "_apply_only_if_subsets_not_equal_" + str(apply_only_if_subsets_not_equal)
     sdfg.validate()
 
     copy_sdfg = copy.deepcopy(sdfg)
@@ -76,10 +84,13 @@ def test_jacobi2d():
     map_entry1, state1 = map_entries.pop()
     map_entry2, state2 = map_entries.pop()
 
-    cutil.duplicate_memlets_sharing_single_in_connector(state1, map_entry1)
+    applied1 = cutil.duplicate_memlets_sharing_single_in_connector(state1, map_entry1, apply_only_if_subsets_not_equal)
     copy_sdfg.validate()
-    cutil.duplicate_memlets_sharing_single_in_connector(state2, map_entry2)
+    applied2 = cutil.duplicate_memlets_sharing_single_in_connector(state2, map_entry2, apply_only_if_subsets_not_equal)
     copy_sdfg.validate()
+
+    assert applied1
+    assert applied2
 
     _S = 64
     tsteps = 5
@@ -88,8 +99,10 @@ def test_jacobi2d():
     run_comparison(sdfg, copy_sdfg, arrays={"A": A, "B": B}, params={"tsteps": tsteps, "S": _S})
 
 
-def test_overlapping_access():
+@pytest.mark.parametrize("apply_only_if_subsets_not_equal", [True, False])
+def test_overlapping_access(apply_only_if_subsets_not_equal: bool):
     sdfg = overlapping_access.to_sdfg()
+    sdfg.name += "_apply_only_if_subsets_not_equal_" + str(apply_only_if_subsets_not_equal)
     sdfg.validate()
 
     copy_sdfg = copy.deepcopy(sdfg)
@@ -97,8 +110,10 @@ def test_overlapping_access():
     assert len(map_entries) == 1
     map_entry, state = map_entries.pop()
 
-    cutil.duplicate_memlets_sharing_single_in_connector(state, map_entry)
+    applied1 = cutil.duplicate_memlets_sharing_single_in_connector(state, map_entry, apply_only_if_subsets_not_equal)
     copy_sdfg.validate()
+
+    assert applied1
 
     _S = 64
     tsteps = 5
@@ -107,8 +122,36 @@ def test_overlapping_access():
     run_comparison(sdfg, copy_sdfg, arrays={"A": A, "B": B}, params={"tsteps": tsteps, "S": _S})
 
 
-def test_overlapping_access_with_previous_write():
+@pytest.mark.parametrize("apply_only_if_subsets_not_equal", [True, False])
+def test_non_overlapping_access(apply_only_if_subsets_not_equal: bool):
+    sdfg = non_overlapping_access.to_sdfg()
+    sdfg.name += "_apply_only_if_subsets_not_equal_" + str(apply_only_if_subsets_not_equal)
+    sdfg.validate()
+
+    copy_sdfg = copy.deepcopy(sdfg)
+    map_entries = {(n, g) for n, g in copy_sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)}
+    assert len(map_entries) == 1
+    map_entry, state = map_entries.pop()
+
+    applied1 = cutil.duplicate_memlets_sharing_single_in_connector(state, map_entry, apply_only_if_subsets_not_equal)
+    copy_sdfg.validate()
+
+    if apply_only_if_subsets_not_equal:
+        assert not applied1
+    else:
+        assert applied1
+
+    _S = 64
+    tsteps = 5
+    A = numpy.random.random((2, 2, _S))
+    B = numpy.random.random((_S, ))
+    run_comparison(sdfg, copy_sdfg, arrays={"A": A, "B": B}, params={"tsteps": tsteps, "S": _S})
+
+
+@pytest.mark.parametrize("apply_only_if_subsets_not_equal", [True, False])
+def test_overlapping_access_with_previous_write(apply_only_if_subsets_not_equal: bool):
     sdfg = overlapping_access_with_previous_write.to_sdfg()
+    sdfg.name += "_apply_only_if_subsets_not_equal_" + str(apply_only_if_subsets_not_equal)
     sdfg.validate()
 
     copy_sdfg = copy.deepcopy(sdfg)
@@ -116,8 +159,10 @@ def test_overlapping_access_with_previous_write():
     assert len(map_entries) == 1
     map_entry, state = map_entries.pop()
 
-    cutil.duplicate_memlets_sharing_single_in_connector(state, map_entry)
+    applied1 = cutil.duplicate_memlets_sharing_single_in_connector(state, map_entry, apply_only_if_subsets_not_equal)
     copy_sdfg.validate()
+
+    assert applied1
 
     _S = 64
     tsteps = 5
@@ -126,8 +171,10 @@ def test_overlapping_access_with_previous_write():
     run_comparison(sdfg, copy_sdfg, arrays={"A": A, "B": B}, params={"tsteps": tsteps, "S": _S})
 
 
-def test_overlapping_access_with_intermediate_access_node():
+@pytest.mark.parametrize("apply_only_if_subsets_not_equal", [True, False])
+def test_overlapping_access_with_intermediate_access_node(apply_only_if_subsets_not_equal: bool):
     sdfg = overlapping_with_intermediate_access_node.to_sdfg()
+    sdfg.name += "_apply_only_if_subsets_not_equal_" + str(apply_only_if_subsets_not_equal)
     sdfg.validate()
 
     copy_sdfg = copy.deepcopy(sdfg)
@@ -137,11 +184,9 @@ def test_overlapping_access_with_intermediate_access_node():
     assert len(map_entries) == 1
     map_entry, state = map_entries.pop()
 
-    sdfg.save("x.sdfg")
-
-    cutil.duplicate_memlets_sharing_single_in_connector(state, map_entry)
+    applied1 = cutil.duplicate_memlets_sharing_single_in_connector(state, map_entry, apply_only_if_subsets_not_equal)
     copy_sdfg.validate()
-    sdfg.save("y.sdfg")
+    assert applied1
 
     _S = 64
     tsteps = 5
@@ -155,7 +200,9 @@ def test_overlapping_access_with_intermediate_access_node():
 
 
 if __name__ == "__main__":
-    test_overlapping_access()
-    test_overlapping_access_with_previous_write()
-    test_overlapping_access_with_intermediate_access_node()
-    test_jacobi2d()
+    for p in [True, False]:
+        test_overlapping_access(p)
+        test_non_overlapping_access(p)
+        test_overlapping_access_with_previous_write(p)
+        test_overlapping_access_with_intermediate_access_node(p)
+        test_jacobi2d(p)

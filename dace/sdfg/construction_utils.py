@@ -645,7 +645,8 @@ def _find_new_name(base: str, existing_names: Set[str]) -> str:
 
 
 def duplicate_memlets_sharing_single_in_connector(state: dace.SDFGState, map_entry: dace.nodes.MapEntry,
-                                                  if_subsets_are_not_equal: bool):
+                                                  if_subsets_are_not_equal: bool) -> bool:
+    applied = False
     for _i, out_conn in enumerate(list(map_entry.out_connectors.keys())):
         out_edges_of_out_conn = set(state.out_edges_by_connector(map_entry, out_conn))
         if len(out_edges_of_out_conn) > 1:
@@ -653,7 +654,7 @@ def duplicate_memlets_sharing_single_in_connector(state: dace.SDFGState, map_ent
                 subsets = {e.data.subset for e in out_edges_of_out_conn}
                 if len(subsets) <= 1:
                     continue
-            base_in_edge = next(iter(out_edges_of_out_conn))
+            applied = True
 
             # Get all parent maps (including this)
             parent_maps: Set[dace.nodes.MapEntry] = {map_entry}
@@ -706,7 +707,9 @@ def duplicate_memlets_sharing_single_in_connector(state: dace.SDFGState, map_ent
             # Remove the old edge
             state.remove_edge(src_edge)
 
-    propagate_memlets_state(state.sdfg, state)
+    if applied:
+        propagate_memlets_state(state.sdfg, state)
+    return applied
 
 
 def array_is_used_in_sdfg_states(sdfg: dace.SDFG,

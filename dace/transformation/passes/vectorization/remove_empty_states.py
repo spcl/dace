@@ -27,11 +27,14 @@ class RemoveEmptyStates(ppl.Pass):
             if len(state.nodes()) != 0:
                 continue
             g = state.parent_graph
+
+            # With structured controlflow this should not happen but check in case
             if len(g.in_edges(state)) > 1:
                 continue
             if len(g.out_edges(state)) > 1:
                 continue
 
+            # Case distinction depending on if it is the starting block or not
             if len(g.in_edges(state)) == 0:
                 if len(g.out_edges(state)) == 1:
                     out_edge = g.out_edges(state)[0]
@@ -47,11 +50,12 @@ class RemoveEmptyStates(ppl.Pass):
             else:
                 if len(g.in_edges(state)) == 1:
                     if len(g.out_edges(state)) == 1:
-                        in_edge = g.in_edge(state)[0]
+                        in_edge = g.in_edges(state)[0]
                         out_edge = g.out_edges(state)[0]
-                        joined_assignments = copy.deepcopy(in_edge.data.assignments).update(out_edge.data.assignments)
+                        joined_assignments = copy.deepcopy(in_edge.data.assignments)
+                        joined_assignments.update(out_edge.data.assignments)
                         src = in_edge.src
-                        dst = in_edge.dst
+                        dst = out_edge.dst
                         g.remove_node(state)
                         g.add_edge(src, dst, InterstateEdge(assignments=joined_assignments))
 
