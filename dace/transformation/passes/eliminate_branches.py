@@ -1,9 +1,10 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 from dace import properties, SDFG, nodes
+from dace.sdfg.nodes import Dict
 from dace.sdfg.state import ConditionalBlock
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
-from typing import Union, Optional
+from typing import Set, Tuple, Union, Optional
 import dace.sdfg.construction_utils as cutil
 
 
@@ -29,11 +30,15 @@ class EliminateBranches(ppl.Pass):
         }
         return len(parent_loops_and_maps) == 0
 
-    def _run_transformation(self, root: SDFG, sdfg: SDFG, parent_nsdfg_state: Union[SDFG, None] = None) -> bool:
+    def _run_transformation(self,
+                            root: SDFG,
+                            sdfg: SDFG,
+                            parent_nsdfg_state: Union[SDFG, None] = None) -> Tuple[int, Set[str]]:
         # Root SDFG is needed to collect all parent maps
         from dace.transformation.interstate import branch_elimination
         # Try applying without cleaning
         num_applied = 0
+        added_scalar_names = set()
         for node in sdfg.all_control_flow_regions():
             if isinstance(node, ConditionalBlock):
                 t = branch_elimination.BranchElimination()
@@ -46,13 +51,16 @@ class EliminateBranches(ppl.Pass):
                 t.parent_nsdfg_state = parent_nsdfg_state
                 t.eps_operator_type_for_log_and_div = self.eps_operator_type_for_log_and_div
                 if t.can_be_applied(graph=node.parent_graph, expr_index=0, sdfg=node.sdfg, permissive=self.permissive):
-                    t.apply(graph=node.parent_graph, sdfg=node.sdfg)
+                    newly_added_scalar_names = t.apply(graph=node.parent_graph, sdfg=node.sdfg)
+                    added_scalar_names = added_scalar_names.union(newly_added_scalar_names)
                     num_applied += 1
         for state in sdfg.all_states():
             for node in state.nodes():
                 if isinstance(node, nodes.NestedSDFG):
-                    num_applied += self._run_transformation(root, node.sdfg, state)
-        return num_applied
+                    new_num_applied, newly_added_scalar_names = self._run_transformation(root, node.sdfg, state)
+                    num_applied += new_num_applied
+                    added_scalar_names = added_scalar_names.union(newly_added_scalar_names)
+        return num_applied, added_scalar_names
 
     def _run_clean(self, root: SDFG, sdfg: SDFG, parent_nsdfg_state: Union[SDFG, None], lift_multi_state: bool):
         from dace.transformation.interstate import branch_elimination
@@ -99,7 +107,10 @@ class EliminateBranches(ppl.Pass):
                 if isinstance(node, nodes.NestedSDFG):
                     self._run_clean(root, node.sdfg, state, lift_multi_state)
 
-    def _apply_eliminate_branches(self, root: SDFG, sdfg: SDFG, parent_nsdfg_state: Union[SDFG, None] = None) -> int:
+    def _apply_eliminate_branches(self,
+                                  root: SDFG,
+                                  sdfg: SDFG,
+                                  parent_nsdfg_state: Union[SDFG, None] = None) -> Tuple[int, Set[str]]:
         """Apply EliminateBranches transformation to all eligible conditionals."""
         from dace.transformation.interstate import branch_elimination
         # Pattern matching with conditional branches to not work (9.10.25), avoid it
@@ -115,32 +126,37 @@ class EliminateBranches(ppl.Pass):
         # Root SDFG is needed to collect all parent maps, which is necessary to detect if a conditional is top level
         changed = True
         num_applied = 0
+        added_scalar_names = set()
+
         while changed:
             changed = False
 
-            cur_num_applied = self._run_transformation(root, sdfg, parent_nsdfg_state)
+            cur_num_applied, newly_added_scalars = self._run_transformation(root, sdfg, parent_nsdfg_state)
             num_applied += cur_num_applied
             changed = changed or (cur_num_applied != 0)
+            added_scalar_names = added_scalar_names.union(newly_added_scalars)
 
             # Run try clean, without lifting multistate
             if self.try_clean:
                 self._run_clean(root, sdfg, parent_nsdfg_state, False)
 
             # Run transformation again
-            cur_num_applied += self._run_transformation(root, sdfg, parent_nsdfg_state)
-            num_applied += cur_num_applied
-            changed = changed or (cur_num_applied != 0)
+            cur_num_applied2, newly_added_scalars2 = self._run_transformation(root, sdfg, parent_nsdfg_state)
+            num_applied += cur_num_applied2
+            changed = changed or (cur_num_applied2 != 0)
+            added_scalar_names = added_scalar_names.union(newly_added_scalars2)
 
             # Run try clean, with lifting multistate
             if self.try_clean:
                 self._run_clean(root, sdfg, parent_nsdfg_state, True)
 
             # Run transformation again
-            cur_num_applied += self._run_transformation(root, sdfg, parent_nsdfg_state)
-            num_applied += cur_num_applied
-            changed = changed or (cur_num_applied != 0)
+            cur_num_applied3, newly_added_scalars3 = self._run_transformation(root, sdfg, parent_nsdfg_state)
+            num_applied += cur_num_applied3
+            changed = changed or (cur_num_applied3 != 0)
+            added_scalar_names = added_scalar_names.union(newly_added_scalars3)
 
-        return num_applied
+        return num_applied, added_scalar_names
 
     def _apply_symbol_removal(self, sdfg: SDFG):
         from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
@@ -156,17 +172,17 @@ class EliminateBranches(ppl.Pass):
 
         return changed
 
-    def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, d: Dict) -> Tuple[int, Set[str]]:
         if self.clean_only is True:
             self.try_clean = True
-        num_applied = self._apply_eliminate_branches(sdfg, sdfg, None)
+        num_applied, added_scalar_names = self._apply_eliminate_branches(sdfg, sdfg, None)
 
         #changed = True
         #while changed:
         #    changed = self._apply_symbol_removal(sdfg)
 
         sdfg.validate()
-        return num_applied
+        return num_applied, added_scalar_names
 
     def report(self, pass_retval: int) -> str:
         return f'Fused (andd removed) {pass_retval} branches.'

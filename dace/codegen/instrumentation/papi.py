@@ -102,16 +102,19 @@ class PAPIInstrumentation(InstrumentationProvider):
         self._papi_used = True
 
     def on_sdfg_begin(self, sdfg, local_stream, global_stream, codegen):
-        if sdfg.parent is None and sdfg.instrument is dtypes.InstrumentationType.PAPI_Counters and PAPIUtils.is_papi_used(sdfg):
-            raise Exception("You cannot instrument the SDFG object in addition to inner regions. Please remove the instrumentation either from the sdfg nodes or from the sdfg object!")
-        elif sdfg.parent is None and sdfg.instrument is dtypes.InstrumentationType.PAPI_Counters and not PAPIUtils.is_papi_used(sdfg):
+        if sdfg.parent is None and sdfg.instrument is dtypes.InstrumentationType.PAPI_Counters and PAPIUtils.is_papi_used(
+                sdfg):
+            raise Exception(
+                "You cannot instrument the SDFG object in addition to inner regions. Please remove the instrumentation either from the sdfg nodes or from the sdfg object!"
+            )
+        elif sdfg.parent is None and sdfg.instrument is dtypes.InstrumentationType.PAPI_Counters and not PAPIUtils.is_papi_used(
+                sdfg):
             # Configure CMake project and counters
             self.configure_papi_native()
 
             # Add instrumentation includes and initialize PAPI
             global_stream.write('#include <dace/perf/papi.h>', sdfg)
-            local_stream.write(
-                '''dace::perf::PAPI::init();''')
+            local_stream.write('''dace::perf::PAPI::init();''')
             # start a counter on every available thread
             counter_start_code = """
 int max_threads = omp_get_max_threads();
@@ -165,8 +168,9 @@ dace::perf::PAPIValueStore<%s> __perf_store (__state->report);''' % (', '.join(s
     def on_sdfg_end(self, sdfg, local_stream, global_stream):
         if not self._papi_used:
             return
-        
-        if sdfg.parent is None and sdfg.instrument is dtypes.InstrumentationType.PAPI_Counters and not PAPIUtils.is_papi_used(sdfg):
+
+        if sdfg.parent is None and sdfg.instrument is dtypes.InstrumentationType.PAPI_Counters and not PAPIUtils.is_papi_used(
+                sdfg):
             counter_stop_code = """
 // Stop counters
 #pragma omp parallel num_threads(max_threads)
@@ -188,19 +192,17 @@ dace::perf::PAPIValueStore<%s> __perf_store (__state->report);''' % (', '.join(s
         std::cerr << "Warning: PAPI_destroy_eventset: " << PAPI_strerror(tretval) << "\\n";
     }}
     #pragma omp critical
-    {{  
-        
+    {{
+
         for(int i = 0; i<_papi_nevents; i++){{
             __state->report.add_counter("{region_name}", "PAPI", _papi_events[i].c_str(), (unsigned long) _papi_counts[i], thread_num, {cfg_id}, {state_id}, {node_id});
         }}
-    }} 
+    }}
 }}
-""".format(region_name = (f"{sdfg.name}_{sdfg.cfg_id}"), cfg_id=sdfg.cfg_id, state_id=-1, node_id=-1)
+""".format(region_name=(f"{sdfg.name}_{sdfg.cfg_id}"), cfg_id=sdfg.cfg_id, state_id=-1, node_id=-1)
             local_stream.write(counter_stop_code)
         else:
-             local_stream.write('__perf_store.flush();', sdfg)
-        
-
+            local_stream.write('__perf_store.flush();', sdfg)
 
     def on_state_begin(self, sdfg, cfg, state, local_stream, global_stream):
         if not self._papi_used:
