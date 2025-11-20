@@ -164,7 +164,6 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
         self._applied = 0
         self._setzero_true_for_all_transient_scalars(sdfg)
         has_applied = self._apply(sdfg)
-        # Results in numerically incorrect SDFGs, TODO:
         # self._apply_extended_state_fusion(sdfg)
         sdfg.validate()
 
