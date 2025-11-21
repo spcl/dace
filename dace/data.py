@@ -1,4 +1,4 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import aenum
 import copy as cp
 import ctypes
@@ -1494,6 +1494,10 @@ class Array(Data):
             self.offset = cp.copy(offset)
         else:
             self.offset = [0] * len(shape)
+
+        self._packed_c_strides = None
+        self._packed_fortran_strides = None
+
         self.validate()
 
     def __repr__(self):
@@ -1666,6 +1670,12 @@ class Array(Data):
         else:
             self.offset = [0] * len(shape)
 
+        # Clear cached values and recompute
+        self._packed_c_strides = None
+        self._packed_fortran_strides = None
+        self._packed_c_strides = self._get_packed_c_strides()
+        self._packed_fortran_strides = self._get_packed_fortran_strides()
+
     def set_shape(
         self,
         new_shape,
@@ -1679,6 +1689,42 @@ class Array(Data):
         self.shape = new_shape
         self._set_shape_dependent_properties(new_shape, strides, total_size, offset)
         self.validate()
+
+    def _get_packed_fortran_strides(self) -> Tuple[int]:
+        """Compute packed strides for Fortran-style (column-major) layout."""
+        # Strides increase along the leading dimensions
+        if self._packed_fortran_strides is None:
+            strides = [1]
+            accum = 1
+            # Iterate in reversed order except the first dimension
+            for s in self.shape[:-1]:
+                accum *= s
+                strides.append(accum)
+            self._packed_fortran_strides = tuple(strides)
+        return self._packed_fortran_strides
+
+    def _get_packed_c_strides(self) -> Tuple[int]:
+        """Compute packed strides for C-style (row-major) layout."""
+        # Strides increase along the trailing dimensions
+        if self._packed_c_strides is None:
+            strides = [1]
+            accum = 1
+            # Iterate in reversed order except the first dimension
+            for s in reversed(self.shape[1:]):
+                accum *= s
+                strides.insert(0, accum)
+            self._packed_c_strides = tuple(strides)
+        return self._packed_c_strides
+
+    def is_packed_fortran_strides(self) -> bool:
+        """Return True if strides match Fortran-contiguous (column-major) layout."""
+        strides = self._get_packed_fortran_strides()
+        return tuple(strides) == tuple(self.strides)
+
+    def is_packed_c_strides(self) -> bool:
+        """Return True if strides match Fortran-contiguous (row-major) layout."""
+        strides = self._get_packed_c_strides()
+        return tuple(strides) == tuple(self.strides)
 
 
 @make_properties
