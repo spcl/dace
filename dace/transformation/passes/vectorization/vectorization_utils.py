@@ -699,7 +699,9 @@ def prepare_vectorized_array(state: dace.SDFGState,
 
         #print("IJ", inner_offset, inner_offset2)
         #print("B", subset)
-        offset_memlets(inner_sdfg, inner_arr_name, inner_offset2)
+        # Input must have offset this already
+        if not (reuse_name_if_existing is True and use_name is not None):
+            offset_memlets(inner_sdfg, inner_arr_name, inner_offset2)
         #print("A", subset)
 
     return vector_dataname, inner_offset
@@ -854,6 +856,7 @@ def process_out_edges(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG, 
             state.add_edge(oe.src, oe.src_conn, an, None,
                            dace.memlet.Memlet.from_array(vector_dataname, state.sdfg.arrays[vector_dataname]))
             state.add_edge(an, None, oe.dst, oe.dst_conn, dace.memlet.Memlet(data=oe.data.data, subset=copy_subset))
+
     state.sdfg.validate()
 
 
@@ -1071,10 +1074,8 @@ def fix_nsdfg_connector_array_shapes_mismatch(parent_state: dace.SDFGState, nsdf
         connector_array = nsdfg_node.sdfg.arrays[connector_name]
         original_shape = connector_array.shape
 
-        print("Subetset", subset)
         # Calculate all possible expected shapes
         expected_shape_full = tuple([(end + 1 - begin).simplify() for begin, end, step in subset])
-        print("Excepted full shape", expected_shape_full)
 
         expected_shape_strided = tuple([((end + 1 - begin) // step).simplify() for begin, end, step in subset])
 
@@ -2386,8 +2387,6 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
     for arr_name, accesses in all_accesses_to_arrays.items():
         for access_subset in accesses:
             # Get the stride 1 dimension
-            print(sdfg.arrays[arr_name].strides,
-                  [stride == 1 for i, stride in enumerate(sdfg.arrays[arr_name].strides)])
             stride_one_dim = {i for i, stride in enumerate(sdfg.arrays[arr_name].strides) if stride == 1}.pop()
             b, e, s = access_subset[stride_one_dim]
             assert b == e
@@ -2881,7 +2880,6 @@ def add_copies_before_and_after_nsdfg(
         - Calls process_in_edges and process_out_edges (which must be defined elsewhere)
     """
     # Fix offset bug here, test_snippet_from_cloudsc_three -> incorrect offests
-
     # Collect all arrays that are accessed in the nested SDFG
     inner_sdfg = nsdfg_node.sdfg
     dataname_to_subsets = collect_all_memlets_to_dataname(inner_sdfg)
@@ -2941,6 +2939,7 @@ def add_copies_before_and_after_nsdfg(
     # First replace all memlets, then access nodes
 
     # If there is discrepancy between in and out data names, then duplicate access nodes and add a dependency edge
+
     # First work on interstate edges
     for inner_state in inner_sdfg.all_states():
         for edge in inner_state.edges():
@@ -2956,38 +2955,41 @@ def add_copies_before_and_after_nsdfg(
             oes = {oe for oe in inner_state.out_edges(node) if oe.data.data is not None}
             ie_datanames = {ie.data.data for ie in ies}
             oe_datanames = {oe.data.data for oe in oes}
-            if len(oe_datanames) > 1:
-                state.sdfg.save("c.sdfgz", compress=True)
             assert len(
                 ie_datanames
             ) <= 1, f"Input datanames more than one {ie_datanames} in state {state}, sdfg {state.sdfg.label}."
-            assert len(
-                oe_datanames
-            ) <= 1, f"Output datanames more than one {oe_datanames} in state {state}, sdfg {state.sdfg.label}."
             assert len(ie_datanames) + len(oe_datanames) > 0
 
-            if len(ie_datanames) == 0:
-                oe_dataname = oe_datanames.pop()
-                node.data = oe_dataname
-            elif len(oe_datanames) == 0:
+            if len(oe_datanames) == 0:
                 ie_dataname = ie_datanames.pop()
                 node.data = ie_dataname
             else:
-                ie_dataname = ie_datanames.pop()
-                oe_dataname = oe_datanames.pop()
+                if len(oe_datanames) == 1:
+                    oe_dataname = oe_datanames.pop()
+                    node.data = oe_dataname
 
-                if ie_dataname == oe_dataname:
-                    node.data = ie_dataname
+                    # If there is discrepancy between in and out data names, then duplicate access nodes and add a dependency edge
+                    if len(ie_datanames) == 1:
+                        ie_dataname = ie_datanames.pop()
+                        if ie_dataname != oe_dataname:
+                            # Need to duplicate the access node
+                            an_in = inner_state.add_access(ie_dataname)
+                            for ie in ies:
+                                inner_state.remove_edge(ie)
+                                inner_state.add_edge(ie.src, ie.src_conn, an_in, None, copy.deepcopy(ie.data))
+                            # Add dependency edge
+                            inner_state.add_edge(an_in, None, node, None, dace.memlet.Memlet(None))
                 else:
-                    node.data = ie_dataname
-                    # Add new access node
-                    a2 = inner_state.add_access(oe_dataname)
-                    a2.setzero = True
+                    assert len(
+                        ie_datanames
+                    ) == 0, f"If multiple out edges, no in edges allowed, found {ie_datanames} for {oe_datanames} in {inner_state}"
+                    assert inner_state.in_degree(
+                        node
+                    ) == 0, f"If multiple out edges, no in edges allowed, found {ie_datanames} for {oe_datanames} in {inner_state}"
+                    inner_state.remove_node(node)
                     for oe in oes:
-                        inner_state.remove_edge(oe)
-                        inner_state.add_edge(a2, oe.src_conn, oe.dst, oe.dst_conn, copy.deepcopy(oe.data))
-                    # Add the dependency edge
-                    inner_state.add_edge(node, None, a2, None, dace.memlet.Memlet(None))
+                        an = inner_state.add_access(oe.data.data)
+                        inner_state.add_edge(an, oe.src_conn, oe.dst, oe.dst_conn, copy.deepcopy(oe.data))
 
     # Handle unmovable arrays by adding copies at the beginning and at the end of the inner SDFG
     # Copy in can't be always the first state, we need to traverse the SDFG to find it
@@ -3083,12 +3085,10 @@ def add_copies_before_and_after_nsdfg(
 
     for inc in nsdfg_in_conns:
         if inc in movable_datas:
-            #print(inc, "->", inc + "_vec")
             nsdfg_node.add_in_connector(inc + "_vec", force=True)
 
     for outc in nsdfg_out_conns:
         if outc in movable_datas:
-            #print(outc, "->", outc + "_vec")
             nsdfg_node.add_out_connector(outc + "_vec", force=True)
 
     # Update connector names
@@ -3099,7 +3099,6 @@ def add_copies_before_and_after_nsdfg(
     # and top of that check if the vector-suffixed data is in the in connectors
     for movable_data in movable_datas:
         for ie in state.in_edges(nsdfg_node):
-            #print(ie.dst_conn, movable_data, nsdfg_node.in_connectors)
             if ie.dst_conn is not None and ie.dst_conn == movable_data and ie.dst_conn + "_vec" in nsdfg_node.in_connectors:
                 assert movable_data + "_vec" in nsdfg_node.in_connectors, f"{movable_data}_vec not in {nsdfg_node.in_connectors}"
                 assert len(

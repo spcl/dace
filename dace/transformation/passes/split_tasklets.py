@@ -152,7 +152,6 @@ def _get_vars(ssa_line: str) -> Tuple[List[str], List[str]]:
         "MATH",
     }).union({"True", "False"})
 
-    print(f"{ssa_line} -> {dace.symbolic.symbols_in_code(rhs, symbols_to_ignore=function_names)}")
     return [lhs], list(dace.symbolic.symbols_in_code(rhs, symbols_to_ignore=function_names))
 
 
@@ -248,7 +247,6 @@ class SplitTasklets(ppl.Pass):
         # For the case a tasklet goes to a taskelt that needs to be split
         # If we have t1 -> t2 but then split t1 to (t1.1, t1.2) -> t2
         # For each tasklet we split we need to track the new input and output maps
-        print(tasklets_to_split)
         for tasklet, state, ssa_statements, input_type in tasklets_to_split:
             assert isinstance(state, dace.SDFGState)
             assert isinstance(tasklet, dace.nodes.Tasklet)
