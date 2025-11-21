@@ -1226,12 +1226,10 @@ class BranchElimination(transformation.MultiStateTransformation):
         # If all top-level nodes are connected through empty interstate edges
         # And we have a line graph, put each state to the same if condition
         applied = False
-        print(len(self.conditional.branches))
         if len(self.conditional.branches) == 1:
             cond, body = self.conditional.branches[0]
 
             nodes = [n for n in body.bfs_nodes()]
-            print(len(nodes), nodes)
             if len(nodes) <= 1:
                 return False
 
@@ -1399,8 +1397,6 @@ class BranchElimination(transformation.MultiStateTransformation):
         applied = False
         for branch, body in self.conditional.branches:
             # 2 states, first state empty and only thing is interstate assignments
-            print(body.nodes())
-            print(body.start_block.nodes())
             if (len(body.nodes()) == 2 and all({isinstance(n, dace.SDFGState)
                                                 for n in body.nodes()}) and len(body.start_block.nodes()) == 0
                     and len(body.edges()) == 1):
@@ -1439,7 +1435,6 @@ class BranchElimination(transformation.MultiStateTransformation):
                         # It might be that the symbol is not defined (defined through an interstate edge)
                         #if symbol_str not in sdfg.symbols:
                         #    sdfg.add_symbol(symbol_str, dace.float64)
-                        print(symbol_str)
                         sdutil.demote_symbol_to_scalar(sdfg, symbol_str, dace.float64)
                         # Get edges of the first nodes
                         edges = list(body.all_edges(*(list(body.bfs_nodes()))[0:2]))

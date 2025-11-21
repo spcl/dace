@@ -148,6 +148,7 @@ class Vectorize(ppl.Pass):
             fix_nsdfg_connector_array_shapes_mismatch(state, nsdfg_node)
             check_nsdfg_connector_array_shapes_match(state, nsdfg_node)
             unstructured_data = self._vectorize_nested_sdfg(state, nsdfg_node, vector_map_param)
+
             if self.insert_copies:
                 add_copies_before_and_after_nsdfg(state, nsdfg_node, self.vector_width, self.vector_input_storage,
                                                   unstructured_data)
@@ -249,7 +250,6 @@ class Vectorize(ppl.Pass):
 
         # Do not make scalars used only interstate edges into vector-width arrays
         non_vector_width_transient_arrays = transient_arrays - (vector_width_transient_arrays.union(invariant_scalars))
-        print(self.vector_width)
         replace_arrays_with_new_shape(inner_sdfg, vector_width_transient_arrays, (self.vector_width, ),
                                       self.vector_op_numeric_type)
         replace_arrays_with_new_shape(inner_sdfg, non_vector_width_transient_arrays, (self.vector_width, ), None)
@@ -328,7 +328,6 @@ class Vectorize(ppl.Pass):
 
         # 3
         check_writes_to_scalar_sinks_happen_through_assign_tasklets(inner_sdfg, scalar_sink_nodes)
-
         new_mn, new_me = self._duplicate_unstructured_writes(inner_sdfg, non_vectorizable_arrays)
         modified_nodes = modified_nodes.union(new_mn)
         modified_edges = modified_edges.union(new_me)
@@ -687,7 +686,6 @@ class Vectorize(ppl.Pass):
                     input_types.add(type(state.sdfg.arrays[in_edge.src.data]))
                 else:
                     if in_edge.data is not None:
-                        #print(in_edge.data, in_edge.data is None)
                         raise Exception(
                             f"Unsupported Type for in_edge.src got type {type(in_edge.src)}, need AccessNode ({in_edge.data})"
                         )
@@ -789,7 +787,6 @@ class Vectorize(ppl.Pass):
         # We will assume the first occurence flow to the exit
         edges_to_check = {data_in_edge}
         sink_node = None
-        #print(f"Iterate for {dataname} -> {new_dataname}")
         while edges_to_check:
             edge = edges_to_check.pop()
             sink_node = edge.dst
@@ -941,8 +938,6 @@ class Vectorize(ppl.Pass):
             if array.storage != self.vector_input_storage:
                 # Add new array, if not there
                 arr_name_to_use = self._find_new_name(f"{ie.data.data}_vec_k{vectorization_number}")
-                #print(
-                #    f"Called find new name with '{ie.data.data}_vec_k{vectorization_number}' and got {arr_name_to_use}")
                 if arr_name_to_use not in state.parent_graph.sdfg.arrays:
                     state.parent_graph.sdfg.add_array(name=arr_name_to_use,
                                                       shape=(self.vector_width, ),
@@ -1070,7 +1065,7 @@ class Vectorize(ppl.Pass):
 
                 if map_entry.map.label.startswith("vectorloop_"):
                     print(
-                        "`vectorloop_` is given by the vectorization transformation to skip to not vectorize double, skipping. Otherwise change name"
+                        "`vectorloop_` is given by the vectorization transformation to skip to not vectorize double, skipping. Otherwise change the name"
                     )
                     continue
 

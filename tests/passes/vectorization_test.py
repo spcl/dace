@@ -1707,6 +1707,128 @@ def _get_cloudsc_snippet_three(add_scalar: bool, map_range_dependent_subset: boo
     return sdfg
 
 
+def _get_cloudsc_snippet_four():
+    klon = dace.symbolic.symbol("klon")
+    klev = dace.symbolic.symbol("klev")
+    kidia = dace.symbolic.symbol("kidia")
+    kfdia = dace.symbolic.symbol("kfdia")
+    # Add all arrays to the SDFGs
+    in_arrays = {"zsolqb", "zfallsink", "zqlhs"}
+    out_arrays = {"zqlhs"}
+    arr_shapes = {
+        "zqlhs": ((klon, 5, 5), (1, klon, 5 * klon), dace.float64),
+        "zfallsink": ((
+            klon,
+            5,
+        ), (
+            1,
+            klon,
+        ), dace.float64),
+        "zsolqb": ((klon, 5, 5), (1, klon, 5 * klon), dace.float64),
+    }
+    outer_sdfg = dace.SDFG("outer")
+    inner_sdfg = dace.SDFG("inner")
+    inner_state = inner_sdfg.add_state("inner_compute_state", is_start_block=True)
+    outer_state = outer_sdfg.add_state("outer_compute_state", is_start_block=True)
+
+    symbols = {"_for_it_93", "_for_it_91", "_for_it_92", "for_i", "klev", "klon", "kfdia", "kidia"}
+    for sym in symbols:
+        inner_sdfg.add_symbol(sym, dace.int64)
+        outer_sdfg.add_symbol(sym, dace.int64)
+
+    for sdfg in [inner_sdfg, outer_sdfg]:
+        for arr_name in in_arrays.union(out_arrays):
+            shape, strides, dtype = arr_shapes[arr_name]
+            sdfg.add_array(arr_name, shape, dtype, strides=strides, transient=False)
+
+    for transient_scl in {"t0_s1", "t0_s2", "t0_s3", "t0_s4", "t0_s5"}:
+        inner_sdfg.add_scalar(transient_scl, dace.float64, dace.dtypes.StorageType.Register, True)
+
+    tasklets = {
+        ("zfallsink", "_for_it_93, _for_it_91", None, None, "_out = _in1 + 1.0", "zqlhs@1",
+         "_for_it_93, _for_it_92, _for_it_91"),
+        ("zqlhs@1", "_for_it_93, _for_it_92, _for_it_91", "zsolqb", "_for_it_93, 0, _for_it_91", "_out = _in1 + _in2",
+         "zqlhs@2", "_for_it_93, _for_it_92, _for_it_91"),
+        ("zqlhs@2", "_for_it_93, _for_it_92, _for_it_91", "zsolqb", "_for_it_93, 1, _for_it_91", "_out = _in1 + _in2",
+         "zqlhs@3", "_for_it_93, _for_it_92, _for_it_91"),
+        ("zqlhs@3", "_for_it_93, _for_it_92, _for_it_91", "zsolqb", "_for_it_93, 2, _for_it_91", "_out = _in1 + _in2",
+         "zqlhs@4", "_for_it_93, _for_it_92, _for_it_91"),
+        ("zqlhs@4", "_for_it_93, _for_it_92, _for_it_91", "zsolqb", "_for_it_93, 3, _for_it_91", "_out = _in1 + _in2",
+         "zqlhs@5", "_for_it_93, _for_it_92, _for_it_91"),
+        ("zqlhs@5", "_for_it_93, _for_it_92, _for_it_91", "zsolqb", "_for_it_93, 4, _for_it_91", "_out = _in1 + _in2",
+         "zqlhs@6", "_for_it_93, _for_it_92, _for_it_91"),
+    }
+    zqlhs_ans = list()
+    for i in range(6):
+        zqlhs_an = inner_state.add_access("zqlhs")
+        zqlhs_ans.append(zqlhs_an)
+
+    access_nodes = dict()
+    for in1_arr, in1_subset, in2_arr, in2_subset, tasklet_code, out_arr, out_subset in tasklets:
+        if in1_arr.startswith("zqlhs@"):
+            in1_an = zqlhs_ans[int(in1_arr.split("@")[1]) - 1]
+            in1_arr = "zqlhs"
+        else:
+            in1_an = inner_state.add_access(in1_arr) if in1_arr not in access_nodes else access_nodes[in1_arr]
+
+        if in2_arr is not None:
+            if in2_arr.startswith("zqlhs@"):
+                in2_an = zqlhs_ans[int(in2_arr.split("@")[1]) - 1]
+                in2_arr = "zqlhs"
+            else:
+                in2_an = inner_state.add_access(in2_arr) if in2_arr not in access_nodes else access_nodes[in2_arr]
+
+        if out_arr.startswith("zqlhs@"):
+            out_an = zqlhs_ans[int(out_arr.split("@")[1]) - 1]
+            out_arr = "zqlhs"
+        else:
+            out_an = inner_state.add_access(out_arr) if out_arr not in access_nodes else access_nodes[out_arr]
+
+        access_nodes[in1_arr] = in1_an
+        if in2_arr is not None:
+            access_nodes[in2_arr] = in2_an
+        access_nodes[out_arr] = out_an
+
+        t = inner_state.add_tasklet("t_" + out_arr, {"_in1", "_in2"} if in2_arr is not None else {"_in1"}, {"_out"},
+                                    tasklet_code)
+        access_str1 = f"{in1_arr}[{in1_subset}]" if in1_subset != "0" else in1_arr
+        if in2_arr is not None:
+            access_str2 = f"{in2_arr}[{in2_subset}]" if in2_subset != "0" else in2_arr
+        inner_state.add_edge(in1_an, None, t, "_in1", dace.memlet.Memlet(access_str1))
+        if in2_arr is not None:
+            inner_state.add_edge(in2_an, None, t, "_in2", dace.memlet.Memlet(access_str2))
+
+        access_str3 = f"{out_arr}[{out_subset}]" if out_subset != "0" else out_arr
+        inner_state.add_edge(t, "_out", out_an, None, dace.memlet.Memlet(access_str3))
+
+    inner_symbol_mapping = {sym: sym for sym in symbols}
+    in_args = in_arrays
+    nsdfg = outer_state.add_nested_sdfg(inner_sdfg, in_args, out_arrays, inner_symbol_mapping)
+
+    m1_entry, m1_exit = outer_state.add_map(name="m1", ndrange={"_for_it_93": "kidia-1:kfdia:1"})
+
+    inner_sdfg.validate()
+
+    # Access nodes to map entry
+    for arr in in_arrays:
+        outer_state.add_edge(outer_state.add_access(arr), None, m1_entry, f"IN_{arr}",
+                             dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]))
+        m1_entry.add_in_connector(f"IN_{arr}")
+        mem = dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr])
+        m1_entry.add_out_connector(f"OUT_{arr}", force=True)
+        outer_state.add_edge(m1_entry, f"OUT_{arr}", nsdfg, arr, copy.deepcopy(mem))
+    # Same for exit nodes
+    for arr in out_arrays:
+        mem = dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr])
+        outer_state.add_edge(nsdfg, arr, m1_exit, f"IN_{arr}", copy.deepcopy(mem))
+        outer_state.add_edge(m1_exit, f"OUT_{arr}", outer_state.add_access(arr), None,
+                             dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]))
+        m1_exit.add_out_connector(f"OUT_{arr}", force=True)
+        m1_exit.add_in_connector(f"IN_{arr}", force=True)
+    sdfg.validate()
+    return sdfg
+
+
 def _get_map_inside_nested_map():
     klon = dace.symbolic.symbol("klon")
     # Add all arrays to the SDFGs
@@ -1791,6 +1913,50 @@ def _get_map_inside_nested_map():
         m1_exit.add_out_connector(f"OUT_{arr}", force=True)
     sdfg.validate()
     return sdfg
+
+
+def test_snippet_from_cloudsc_four():
+    sdfg = _get_cloudsc_snippet_four()
+    sdfg.name = f"cloudsc_snippet_four"
+    sdfg.validate()
+
+    # Symbolic values requested by the user
+    klon = 64
+    klev = 64
+    kidia = 1
+    kfdia = 32
+    _for_it_92 = 0
+    _for_it_91 = 0
+
+    # Map of array shapes (from the SDFG snippet): only the shape tuples matter for creating arrays
+    arr_shapes = {
+        "zfallsink": (klon, klev, 5),
+        "zqlhs": (klon, klev, 5),
+        "zsolqb": (klon, klev, 5),
+    }
+
+    # Create Fortran-ordered NumPy arrays
+    arrays = {name: numpy.random.random(shape).astype(numpy.float64, order='F') for name, shape in arr_shapes.items()}
+    # Create scalars requested
+    scalars = {
+        "kfdia": numpy.int64(kfdia),
+        "kidia": numpy.int64(kidia),
+        "klev": numpy.int64(klev),
+        "klon": numpy.int64(klon),
+        "_for_it_92": numpy.int64(_for_it_92),
+        "_for_it_91": numpy.int64(_for_it_91),
+    }
+
+    # Quick verification display: shape and contiguity / strides
+    run_vectorization_test(dace_func=sdfg,
+                           from_sdfg=True,
+                           arrays=arrays,
+                           params=scalars,
+                           vector_width=8,
+                           save_sdfgs=True,
+                           sdfg_name=sdfg.name,
+                           fuse_overlapping_loads=False,
+                           insert_copies=True)
 
 
 @pytest.mark.parametrize("opt_parameters", [(True, True), (True, False), (False, True), (False, False)])
@@ -2443,4 +2609,5 @@ if __name__ == "__main__":
     test_snippet_from_cloudsc_one()
     test_snippet_from_cloudsc_two()
     test_snippet_from_cloudsc_two_fuse_overlapping_loads()
+    test_snippet_from_cloudsc_four()
     test_max_with_constant()

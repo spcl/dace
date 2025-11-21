@@ -384,7 +384,6 @@ def replace_length_one_arrays_with_scalars(sdfg: dace.SDFG, recursive: bool = Tr
                                 debuginfo=arr.debuginfo,
                                 find_new_name=False)
                 scalarized_arrays.add(arr_name)
-                print(f"Making {arr_name} into scalar")
 
     # Replace [0] accesses of scalars (formerly array ones) on interstate edges
     for edge in sdfg.all_interstate_edges():
@@ -488,8 +487,6 @@ def generate_assignment_as_tasklet_in_state(state: dace.SDFGState, lhs: str, rhs
                           outputs=set(out_connectors.values()),
                           code=f"{lhs} = {rhs}")
 
-    print(in_connectors)
-
     # Add connectors and accesses, do not duplicate array access nodes
     # As we might have array accesses to different subsets
     in_access_dict = dict()
@@ -517,7 +514,6 @@ def generate_assignment_as_tasklet_in_state(state: dace.SDFGState, lhs: str, rhs
             access_node = in_access_dict[k]
             data_name = str(k.func)
             complete_access_str = printer.doprint(k)
-            print(f"Function `{k}` is printed as `{complete_access_str}` by dace.symbolic.DaceSympyPrinter")
             state.add_edge(access_node, None, t, in_connectors[k], dace.memlet.Memlet(expr=complete_access_str))
         else:
             access_node = in_access_dict[k]

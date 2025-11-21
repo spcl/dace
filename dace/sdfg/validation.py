@@ -249,7 +249,6 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
                 continue
             blocks = cfg.nodes()
             if len(blocks) != len(set([s.label for s in blocks])):
-                print(blocks, "\n", [s.label for s in blocks])
                 raise InvalidSDFGError('Found multiple blocks with the same name in ' + cfg.name, sdfg, None)
 
         # Check the names of data descriptors and co.
@@ -828,7 +827,6 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 arr = sdfg.arrays[e.data.data]
                 # Dimensionality
                 if e.data.subset.dims() != len(arr.shape):
-                    print((len(arr.shape), e.data.subset.dims()), arr, e.data)
                     raise InvalidSDFGEdgeError(
                         "Memlet subset does not match node dimension "
                         "(expected %d, got %d)" % (len(arr.shape), e.data.subset.dims()), sdfg, state_id, eid)

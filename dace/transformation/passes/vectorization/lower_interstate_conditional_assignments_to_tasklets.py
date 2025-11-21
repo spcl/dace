@@ -73,11 +73,8 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
                     free_conditional_symbols.add(additional_demote_sym)
 
             # We should demote all the free conditional symbols
-            if len(free_conditional_symbols) != 0:
-                print(f"Demote symbols: {free_conditional_symbols}")
             for conditional_sym in free_conditional_symbols:
                 sdfg = cfg.sdfg if not isinstance(cfg, SDFG) else cfg
-                print(f"Demote symbol {free_conditional_symbols} to scalar")
                 # Cast all symbols to fp64
                 sdfg.symbols[conditional_sym] = dace.float64
                 sdutil.demote_symbol_to_scalar(sdfg, conditional_sym, dace.float64, None)
