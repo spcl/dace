@@ -64,6 +64,14 @@ def vadd_int(A: dace.int64[N, N], B: dace.int64[N, N]):
 
 
 @dace.program
+def vadd_with_different_types(A: dace.int64[N, N], B: dace.float64[N, N]):
+    for i, j in dace.map[0:N, 0:N]:
+        A[i, j] = A[i, j] + B[i, j]
+    for i, j in dace.map[0:N, 0:N]:
+        B[i, j] = 3 * B[i, j] * 2 + 20
+
+
+@dace.program
 def vadd_int_with_scalars(A: dace.int64[N, N], B: dace.int64[N, N], c1: dace.int64, c2: dace.int64):
     for i, j in dace.map[0:N, 0:N]:
         c3 = c1 * c2
@@ -2360,6 +2368,24 @@ def test_vadd_int():
     )
 
 
+def test_vadd_with_different_types():
+    N = 64
+    A = numpy.random.random((N, N)).astype(numpy.int64)
+    B = numpy.random.random((N, N)).astype(numpy.float64)
+
+    run_vectorization_test(
+        dace_func=vadd_with_different_types,
+        arrays={
+            'A': A,
+            'B': B
+        },
+        params={'N': N},
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name="vadd_with_different_types",
+    )
+
+
 def test_vadd_with_scalars_int():
     N = 64
     A = numpy.random.random((N, N)).astype(numpy.int64)
@@ -2611,3 +2637,4 @@ if __name__ == "__main__":
     test_snippet_from_cloudsc_two_fuse_overlapping_loads()
     test_snippet_from_cloudsc_four()
     test_max_with_constant()
+    test_vadd_with_different_types()
