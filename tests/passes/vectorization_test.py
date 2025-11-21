@@ -56,6 +56,12 @@ def vabs(A: dace.float64[N, N]):
 
 
 @dace.program
+def unary_symbol(A: dace.float64[N, N]):
+    for i, j in dace.map[0:N, 0:N]:
+        A[i, j] = -999
+
+
+@dace.program
 def vadd_int(A: dace.int64[N, N], B: dace.int64[N, N]):
     for i, j in dace.map[0:N, 0:N]:
         A[i, j] = A[i, j] + B[i, j]
@@ -2326,6 +2332,24 @@ def test_vabs():
     )
 
 
+def test_unary_symbol():
+    N = 64
+    A = numpy.random.random((N, N))
+
+    run_vectorization_test(
+        dace_func=unary_symbol,
+        arrays={
+            'A': A,
+        },
+        params={
+            'N': N,
+        },
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name="unary_symbol",
+    )
+
+
 def test_vadd_with_scalar_scalar_cpu():
     N = 64
     A = numpy.random.random((N, N))
@@ -2638,3 +2662,4 @@ if __name__ == "__main__":
     test_snippet_from_cloudsc_four()
     test_max_with_constant()
     test_vadd_with_different_types()
+    test_unary_symbol()

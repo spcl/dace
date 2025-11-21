@@ -1749,7 +1749,7 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
                 language=dace.Language.Python)
         else:
             node.code = dace.properties.CodeBlock(code=f"{lhs} = {expr}\n", language=dace.Language.Python)
-    elif ttype == tutil.TaskletType.UNARY_SCALAR:
+    elif ttype == tutil.TaskletType.UNARY_SCALAR or ttype == tutil.TaskletType.UNARY_SYMBOL:
         out_edges = list(state.out_edges_by_connector(node, lhs))
         assert len(out_edges) == 1
         lhs_data = state.sdfg.arrays[out_edges[0].data.data]
@@ -2768,7 +2768,7 @@ def insert_assignment_tasklet_from_src(state: dace.SDFGState, edge: Edge[Memlet]
 
     # Create assignment tasklet
     t = state.add_tasklet(
-        name="_Assign",
+        name="_AssignT3",
         inputs={"_in"},
         outputs={"_out"},
         code=f"vector_copy<{dace.dtypes.TYPECLASS_TO_STRING[vector_data.dtype]}, {vector_width}>(_out, _in);",
@@ -2837,7 +2837,7 @@ def insert_assignment_tasklet_to_dst(state: dace.SDFGState, edge: Edge[Memlet],
 
     # Create assignment tasklet
     t = state.add_tasklet(
-        name="_Assign",
+        name="_AssignT4",
         inputs={"_in"},
         outputs={"_out"},
         code=f"vector_copy<{dace.dtypes.TYPECLASS_TO_STRING[vector_data.dtype]}, {vector_width}>(_out, _in);",
@@ -3049,7 +3049,7 @@ def add_copies_before_and_after_nsdfg(
                 v_access.setzero = True
                 vec_arr = copy_in_state.sdfg.arrays[vec_arr_name]
                 assign_tasklet = copy_in_state.add_tasklet(
-                    name="_Assign",
+                    name="_AssignT1",
                     inputs={"_in"},
                     outputs={"_out"},
                     code=f"vector_copy<{dace.dtypes.TYPECLASS_TO_STRING[vec_arr.dtype]}, {vector_width}>(_out, _in);",
@@ -3070,7 +3070,7 @@ def add_copies_before_and_after_nsdfg(
                 v_access2.setzero = True
                 vec_arr = copy_out_state.sdfg.arrays[vec_arr_name]
                 assign_tasklet2 = copy_out_state.add_tasklet(
-                    name="_Assign",
+                    name="_AssignT2",
                     inputs={"_in"},
                     outputs={"_out"},
                     code=f"vector_copy<{dace.dtypes.TYPECLASS_TO_STRING[vec_arr.dtype]}, {vector_width}>(_out, _in);",
