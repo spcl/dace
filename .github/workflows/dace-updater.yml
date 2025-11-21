@@ -1,0 +1,42 @@
+name: Inforrm the Python package index about a new DaCe release
+# Must be installed into the DaCe fork.
+
+on:
+  push:
+    # Only run once a new tag has been created.
+    # TODO: Make sure that the tag is passed to the index update workflow.
+    tags:
+      - __gt4py-next-integration_*
+  workflow_dispatch:
+
+  # We need this until this file is not in `main`, without it the web interface will not pick it up.
+  #  See https://stackoverflow.com/a/71057825
+  pull_request:
+
+jobs:
+  update-dace:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Print all variables
+        shell: bash
+        run: |
+          INDEX_ORGANIZATION="gridtools"
+          INDEX_REPO="python-pkg-index"
+
+          # Only needed for installation
+          exit 0
+
+          # We use `github.ref_name` here because we only run for a tag and they should be unique.
+          # If we would use `github.ref` then we would have `refs/tags/<tag_name>`. An alternative
+          # would also be `github.sha`.
+          DEPENDENCY_REF="${{ github.ref_name }}"
+          SOURCE_REPO="dace"
+          SOURCE_OWNER="gridtools"
+
+          curl -L -v \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.PKG_UPDATE_TOKEN }}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${INDEX_ORGANIZATION}/${INDEX_REPO}/dispatches" \
+            -d '{"event_type":"update_package_index","client_payload":{"source_repo":"'"${SOURCE_REPO}"'","source_org":"'"${SOURCE_ORG}"'","dependency_ref":"'"${DEPENDENCY_REF}"'"}}'
