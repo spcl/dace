@@ -1495,6 +1495,14 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
     PYTHON_TO_CPP_OPERATORS = {"and": "&&", "or": "||", "not": "!"}
     op = PYTHON_TO_CPP_OPERATORS.get(op, op)
 
+    ies = state.in_edges(node)
+    oes = state.out_edges(node)
+    in_dtypes = {state.sdfg.arrays[ie.data.data].dtype for ie in ies if ie.data.data is not None}
+    out_dtypes = {state.sdfg.arrays[oe.data.data].dtype for oe in oes if oe.data.data is not None}
+    all_dtypes = in_dtypes.union(out_dtypes)
+
+    fallbackcode_due_to_types = len(all_dtypes) != 1
+
     def _str_to_float_or_str(s: Union[int, float, str, None]):
         """Convert string constants to float if possible."""
         if s is None:
@@ -1536,44 +1544,56 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         rhs_left = rhs1_ if rhs1_ is not None else const1_
         rhs_right = rhs2_ if rhs2_ is not None else const2_
 
-        # Use template if available
-        if op_ in templates:
-            # One array + optional constant
-            if rhs1_ is None or rhs2_ is None:
-                rhs = rhs1_ if rhs1_ is not None else rhs2_
-                constant = const1_ if const1_ is not None else const2_
-                if constant is None:
-                    # Single array or repeated array case
-                    if is_commutative:
+        # Multiple dtypes involved - fallback code should be used
+        if not fallbackcode_due_to_types:
+            # Use template if available
+            if op_ in templates:
+                # One array + optional constant
+                if rhs1_ is None or rhs2_ is None:
+                    rhs = rhs1_ if rhs1_ is not None else rhs2_
+                    constant = const1_ if const1_ is not None else const2_
+                    if constant is None:
+                        # Single array or repeated array case
+                        if is_commutative:
+                            return templates[op_].format(rhs1=rhs,
+                                                         rhs2=rhs,
+                                                         lhs=lhs_,
+                                                         op=op_,
+                                                         vector_width=vw,
+                                                         dtype=dtype_)
                         return templates[op_].format(rhs1=rhs,
                                                      rhs2=rhs,
                                                      lhs=lhs_,
                                                      op=op_,
                                                      vector_width=vw,
                                                      dtype=dtype_)
-                    return templates[op_].format(rhs1=rhs, rhs2=rhs, lhs=lhs_, op=op_, vector_width=vw, dtype=dtype_)
-                else:
-                    # Single array + constant
-                    cop_ = None
-                    if is_commutative or op_ == "=":
-                        cop_ = op_ + "c"
-                    elif constant == const1_:
-                        cop_ = "c" + op_
                     else:
-                        assert constant == const2_
-                        cop_ = op_ + "c"
-                    # Maybe this constant version is not implemented in templates
-                    if cop_ in templates:
-                        return templates[cop_].format(rhs1=rhs,
-                                                      constant=_str_to_float_or_str(constant),
-                                                      lhs=lhs_,
-                                                      op=op_,
-                                                      vector_width=vw,
-                                                      dtype=dtype_)
+                        # Single array + constant
+                        cop_ = None
+                        if is_commutative or op_ == "=":
+                            cop_ = op_ + "c"
+                        elif constant == const1_:
+                            cop_ = "c" + op_
+                        else:
+                            assert constant == const2_
+                            cop_ = op_ + "c"
+                        # Maybe this constant version is not implemented in templates
+                        if cop_ in templates:
+                            return templates[cop_].format(rhs1=rhs,
+                                                          constant=_str_to_float_or_str(constant),
+                                                          lhs=lhs_,
+                                                          op=op_,
+                                                          vector_width=vw,
+                                                          dtype=dtype_)
 
-            else:
-                # Two arrays
-                return templates[op_].format(rhs1=rhs1_, rhs2=rhs2_, lhs=lhs_, op=op_, vector_width=vw, dtype=dtype_)
+                else:
+                    # Two arrays
+                    return templates[op_].format(rhs1=rhs1_,
+                                                 rhs2=rhs2_,
+                                                 lhs=lhs_,
+                                                 op=op_,
+                                                 vector_width=vw,
+                                                 dtype=dtype_)
 
         # Fallback: unsupported operator
         comparison_suffix = "? 1.0 : 0.0" if op_ in {">", ">=", "<", "<=", "==", "!="} else ""
@@ -1594,16 +1614,19 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
                 )
 
         if rhs_left is None or rhs_right is None:
+            rhs = rhs_left if rhs_left is not None else rhs_right
+            const = const1_ if const1_ is not None else const2_
             if op_ in UNARY_OPERATORS:
-                rhs = rhs_left if rhs_left is not None else rhs_right
-                const = const1_ if const1_ is not None else const2_
                 if rhs_left == const:
                     code_lines.append(f"{lhs_expr} = {op_}{rhs}{comparison_suffix};")
                 else:
                     code_lines.append(f"{lhs_expr} = {op_}({rhs}[_vi]){comparison_suffix};")
+            elif op_ == "=":
+                if rhs_left == const1_:
+                    code_lines.append(f"{lhs_expr} = {rhs};")
+                else:
+                    code_lines.append(f"{lhs_expr} = {rhs}[_vi];")
             else:
-                rhs = rhs_left if rhs_left is not None else rhs_right
-                const = const1_ if const1_ is not None else const2_
                 if rhs_left == const:
                     code_lines.append(f"{lhs_expr} = {op_}({rhs}){comparison_suffix};")
                 else:
@@ -2395,7 +2418,7 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
             # Evaluate the expression (b == e)
             if isinstance(b, (dace.symbolic.SymExpr, dace.symbolic.symbol)):
                 if isinstance(b, dace.symbolic.SymExpr):
-                    free_syms = {str(s) for s in b.free_syms}.union({f.func for f in b.atoms(sympy.Function)})
+                    free_syms = {str(s) for s in b.free_syms}
                 else:
                     free_syms = {b}
                 for free_sym in free_syms:
@@ -2406,6 +2429,8 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
                         # Other free symbols should not have indirect accesses
                         # Analysis tries find the first assignment in the CFG
                         assignment = find_symbol_assignment(sdfg, str(free_sym))
+                        if assignment is None:
+                            sdfg.save("failing_vectorization.sdfg")
                         assert assignment is not None
                         assignment_expr = dace.symbolic.SymExpr(assignment)
                         # Define functions to ignore (common arithmetic + piecewise + rounding)
