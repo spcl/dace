@@ -2,11 +2,11 @@ name: Inforrm the Python package index about a new DaCe release
 # Must be installed into the DaCe fork.
 
 on:
-  push:
+  #push:
     # Only run once a new tag has been created.
     # TODO: Make sure that the tag is passed to the index update workflow.
-    tags:
-      - __gt4py-next-integration_*
+    #tags:
+      #- __gt4py-next-integration_*
   workflow_dispatch:
 
   # We need this until this file is not in `main`, without it the web interface will not pick it up.
