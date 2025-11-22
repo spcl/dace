@@ -163,7 +163,6 @@ class ExpandGemmOpenBLAS(ExpandTransformation):
         node.validate(sdfg, state)
         (_, adesc, _, _, _, _), (_, bdesc, _, _, _, _), _ = _get_matmul_operands(node, state, sdfg)
         dtype = adesc.dtype.base_type
-        opt['cast'] = "(float *)" if dtype == dace.float32sr else ""
 
         func = to_blastype(dtype.type).lower() + 'gemm'
         alpha = f'{dtype.ctype}({node.alpha})'
@@ -180,6 +179,7 @@ class ExpandGemmOpenBLAS(ExpandTransformation):
         check_access(dtypes.ScheduleType.CPU_Multicore, adesc, bdesc, cdesc)
 
         opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, dtype.ctype, func)
+        opt['cast'] = "(float *)" if dtype == dace.float32sr else ""
 
         # Adaptations for BLAS API
         opt['ta'] = 'CblasNoTrans' if opt['ta'] == 'N' else 'CblasTrans'
