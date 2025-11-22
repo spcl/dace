@@ -68,6 +68,7 @@ If you use DaCe, cite us:
    codegen/codegen
    extensions/extensions
    general/errors
+   useful_utility_functions_and_transformations/useful_utility_functions_and_transformations
 
 .. toctree::
    :caption: Module Reference
