@@ -25,20 +25,25 @@ private:
     float value;
 
     static constexpr double FLOATMIN_F32 = 1.1754943508222875e-38;
-    static thread_local uint64_t rng_state_64;
 
     #if !defined(__CUDA_ARCH__)
-
-    DACE_HOST_DEVICE static inline uint64_t lcg64() {
-        rng_state_64 = rng_state_64 * 6364136223846793005ULL + 1442695040888963407ULL; // 64-bit LCG constants
+    DACE_HOST_DEVICE static inline uint64_t& get_rng_state_64() {
+        static thread_local uint64_t rng_state_64 = 1;
         return rng_state_64;
     }
 
+    DACE_HOST_DEVICE static inline uint64_t lcg64() {
+        uint64_t& rng_state = get_rng_state_64();
+        rng_state = rng_state * 6364136223846793005ULL + 1442695040888963407ULL; // 64-bit LCG constants
+        return rng_state;
+    }
+
     DACE_HOST_DEVICE static inline uint64_t xorshift64() {
-        rng_state_64 ^= rng_state_64 << 13;
-        rng_state_64 ^= rng_state_64 >> 7;
-        rng_state_64 ^= rng_state_64 << 17;
-        return rng_state_64;
+        uint64_t& rng_state = get_rng_state_64();
+        rng_state ^= rng_state << 13;
+        rng_state ^= rng_state >> 7;
+        rng_state ^= rng_state << 17;
+        return rng_state;
     }
     #endif
 
@@ -335,10 +340,6 @@ public:
     }
 
 };
-
-#if !defined(__CUDA_ARCH__) && !defined(__CUDACC__)
-thread_local uint64_t float32sr::rng_state_64 = 1;
-#endif
 
 inline std::istream& operator>>(std::istream& is, float32sr& obj) {
     is >> obj.value;
