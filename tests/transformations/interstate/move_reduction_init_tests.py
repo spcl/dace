@@ -364,6 +364,66 @@ def test_move_reduce_init_multiple_reductions():
     assert np.allclose(D_after, A.sum())
 
 
+def test_move_reduce_init_dimension_mismatch():
+    """Test transformation when inner array has fewer dimensions than outer array.
+
+    This tests the case where the nested SDFG's array is a squeezed view of the
+    outer array (e.g., inner 3D array mapping to outer 4D array with size-1 dim).
+    """
+    outer_sdfg = SDFG('outer')
+    outer_sdfg.add_array('A', [2, 8, 128, 64], dace.float64)
+    outer_sdfg.add_array('B', [2, 8, 128, 1], dace.float64)
+
+    nsdfg = SDFG('nested_reduce')
+    nsdfg.add_array('_A', [2, 8, 128, 64], dace.float64)
+    nsdfg.add_array('_B', [2, 8, 128], dace.float64)
+
+    init_state = nsdfg.add_state('reduce_init')
+    init_state.add_mapped_tasklet('reduce_init_map', {
+        '_o0': '0:2',
+        '_o1': '0:8',
+        '_o2': '0:128'
+    }, {},
+                                  '__out = 0.0', {'__out': Memlet('_B[_o0, _o1, _o2]')},
+                                  external_edges=True)
+
+    reduce_state = nsdfg.add_state('reduce')
+    reduce_state.add_mapped_tasklet('reduce_map', {
+        'i': '0:2',
+        'j': '0:8',
+        'k': '0:128',
+        'l': '0:64'
+    }, {'__in': Memlet('_A[i, j, k, l]')},
+                                    '__out = __in', {'__out': Memlet('_B[i, j, k]', wcr='lambda a, b: a + b')},
+                                    external_edges=True)
+
+    nsdfg.add_edge(init_state, reduce_state, dace.InterstateEdge())
+
+    outer_state = outer_sdfg.add_state('main')
+    read_a = outer_state.add_read('A')
+    write_b = outer_state.add_write('B')
+
+    nsdfg_node = outer_state.add_nested_sdfg(nsdfg, {'_A'}, {'_B'})
+    outer_state.add_edge(read_a, None, nsdfg_node, '_A', Memlet('A[0:2, 0:8, 0:128, 0:64]'))
+    outer_state.add_edge(nsdfg_node, '_B', write_b, None, Memlet('B[0:2, 0:8, 0:128, 0]'))
+
+    A = np.random.rand(2, 8, 128, 64)
+    B_before = np.zeros((2, 8, 128, 1))
+    outer_sdfg(A=A.copy(), B=B_before)
+
+    applied = outer_sdfg.apply_transformations(MoveReduceInitOutOfNestedSDFG)
+    assert applied == 1
+
+    outer_sdfg.validate()
+
+    B_after = np.zeros((2, 8, 128, 1))
+    outer_sdfg(A=A.copy(), B=B_after)
+
+    assert np.allclose(B_before, B_after)
+    expected = A.sum(axis=3, keepdims=True)
+    assert np.allclose(B_after, expected)
+
+
 if __name__ == '__main__':
     test_move_reduce_init_basic()
     test_move_reduce_init_enables_inlining()
@@ -374,3 +434,4 @@ if __name__ == '__main__':
     test_move_reduce_init_from_library_node_enables_inlining()
     test_move_reduce_init_from_library_node_max_reduction()
     test_move_reduce_init_multiple_reductions()
+    test_move_reduce_init_dimension_mismatch()

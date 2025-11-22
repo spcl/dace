@@ -106,6 +106,44 @@ def _substitute_symbols(nsdfg_node: nodes.NestedSDFG, rng: tuple) -> tuple:
     return tuple(new_rng)
 
 
+def _compose_subsets(inner_subset: dace.subsets.Range, outer_subset: dace.subsets.Range,
+                     nsdfg_node: nodes.NestedSDFG) -> dace.subsets.Range:
+    """
+    Compose inner and outer subsets when inner array has fewer dimensions.
+
+    For example:
+    - Inner subset: [_o0, _o1, _o2] (3D)
+    - Outer subset: [0:2, 0:8, 0:128, 0] (4D, last dim is squeezed)
+    - Result: [_o0, _o1, _o2, 0] (4D)
+
+    The composition replaces ranges in the outer subset with the corresponding
+    inner subset indices, keeping fixed dimensions (size 1) as-is.
+    """
+    inner_ranges = list(inner_subset)
+    outer_ranges = list(outer_subset)
+
+    if len(inner_ranges) == len(outer_ranges):
+        return dace.subsets.Range([_substitute_symbols(nsdfg_node, rng) for rng in inner_ranges])
+
+    result_ranges = []
+    inner_idx = 0
+
+    for outer_rng in outer_ranges:
+        start, end, _ = outer_rng
+        size = (end - start + 1) if not symbolic.issymbolic(end - start) else None
+
+        if size == 1:
+            result_ranges.append(_substitute_symbols(nsdfg_node, outer_rng))
+        else:
+            if inner_idx < len(inner_ranges):
+                result_ranges.append(_substitute_symbols(nsdfg_node, inner_ranges[inner_idx]))
+                inner_idx += 1
+            else:
+                result_ranges.append(_substitute_symbols(nsdfg_node, outer_rng))
+
+    return dace.subsets.Range(result_ranges)
+
+
 @make_properties
 @transformation.explicit_cf_compatible
 class MoveReduceInitOutOfNestedSDFG(transformation.SingleStateTransformation):
@@ -185,11 +223,13 @@ class MoveReduceInitOutOfNestedSDFG(transformation.SingleStateTransformation):
         sdfg.add_edge(init_state, old_start, InterstateEdge())
         sdfg.start_block = sdfg.node_id(init_state)
 
-        # Build mapping from inner array names to outer (outside NestedSDFG) array names.
-        # If the destination is a View, resolve to the underlying array.
-        connector_map = {}
+        # Build mapping from inner array names to outer (outside NestedSDFG) array names
+        # and their subsets. If the destination is a View, resolve to the underlying array.
+        connector_map = {}  # inner_name -> outer_name
+        outer_subsets = {}  # inner_name -> outer_subset (for dimension composition)
         for e in state.out_edges(nsdfg_node):
             if e.src_conn in _get_init_output_arrays(start_state):
+                outer_subset = e.data.subset
                 if isinstance(e.dst, nodes.AccessNode):
                     arr_name = e.dst.data
                     arr = sdfg.arrays.get(arr_name)
@@ -197,9 +237,12 @@ class MoveReduceInitOutOfNestedSDFG(transformation.SingleStateTransformation):
                         view_edge = sdutil.get_view_edge(state, e.dst)
                         if view_edge is not None:
                             arr_name = view_edge.data.data
+                            outer_subset = view_edge.data.subset
                     connector_map[e.src_conn] = arr_name
+                    outer_subsets[e.src_conn] = outer_subset
                 else:
                     connector_map[e.src_conn] = e.data.data
+                    outer_subsets[e.src_conn] = outer_subset
 
         # Copy map nodes first
 
@@ -247,8 +290,12 @@ class MoveReduceInitOutOfNestedSDFG(transformation.SingleStateTransformation):
                 new_memlet.data = outer_name
 
                 if new_memlet.subset is not None:
-                    new_subset = [_substitute_symbols(nsdfg_node, rng) for rng in new_memlet.subset]
-                    new_memlet.subset = dace.subsets.Range(new_subset)
+                    outer_subset = outer_subsets.get(inner_name)
+                    if outer_subset is not None and len(outer_subset) != len(new_memlet.subset):
+                        new_memlet.subset = _compose_subsets(new_memlet.subset, outer_subset, nsdfg_node)
+                    else:
+                        new_subset = [_substitute_symbols(nsdfg_node, rng) for rng in new_memlet.subset]
+                        new_memlet.subset = dace.subsets.Range(new_subset)
 
             init_state.add_edge(src, edge.src_conn, dst, edge.dst_conn, new_memlet)
 
