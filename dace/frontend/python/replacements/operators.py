@@ -113,7 +113,7 @@ def _is_op_boolean(op: str):
     return False
 
 
-def _handle_casting_for_stochastically_rounded_types(input_datatypes, result_type, cast_types):
+def _handle_casting_for_stochastically_rounded_types(input_datatypes, restype, cast_types):
     float_to_sr = {
         dace.float32: dace.float32sr,
     }
@@ -132,15 +132,15 @@ def _handle_casting_for_stochastically_rounded_types(input_datatypes, result_typ
 
     if stochastically_rounded:
         # make the result SR
-        if result_type in float_to_sr:
-            result_type = float_to_sr[result_type]
+        if restype in float_to_sr:
+            restype = float_to_sr[restype]
 
         # cast the intermediate types
         for i, dtype in enumerate(cast_types):
             if dtype in float_to_sr:
                 cast_types[i] = float_to_sr[dtype]
 
-    return result_type
+    return restype
 
 
 def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic]],
@@ -370,11 +370,11 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
     else:  # Operators with 3 or more arguments
         restype = np_result_type(dtypes_for_result)
         coarse_result_type = None
-        if result_type in complex_types:
+        if restype in complex_types:
             coarse_result_type = 3  # complex
-        elif result_type in float_types:
+        elif restype in float_types:
             coarse_result_type = 2  # float
-        elif result_type in signed_types:
+        elif restype in signed_types:
             coarse_result_type = 1  # signed integer, bool
         else:
             coarse_result_type = 0  # unsigned integer
@@ -382,7 +382,7 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
             if t != coarse_result_type:
                 casting[i] = cast_str(restype)
 
-    result_type = _handle_casting_for_stochastically_rounded_types(datatypes, restype, casting)
+    restype = _handle_casting_for_stochastically_rounded_types(datatypes, restype, casting)
 
     return restype, casting
 

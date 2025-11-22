@@ -163,7 +163,7 @@ class ExpandGemmOpenBLAS(ExpandTransformation):
         node.validate(sdfg, state)
         (_, adesc, _, _, _, _), (_, bdesc, _, _, _, _), _ = _get_matmul_operands(node, state, sdfg)
         dtype = adesc.dtype.base_type
-        cast = "(float *)" if dtype == dace.float32sr else ""
+        opt['cast'] = "(float *)" if dtype == dace.float32sr else ""
 
         func = to_blastype(dtype.type).lower() + 'gemm'
         alpha = f'{dtype.ctype}({node.alpha})'
