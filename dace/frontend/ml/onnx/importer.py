@@ -725,12 +725,7 @@ class ONNXModel:
         onnx_node_expander(self.sdfg)
 
     def auto_optimize(self):
-        auto_opt(
-            self.sdfg,
-            self.cuda,
-            simplify=self.simplify,
-            # constants have been folded before GPU transforms
-            fold_constants=False)
+        auto_opt(self.sdfg, device=dace.DeviceType.GPU if self.cuda else dace.DeviceType.CPU)
 
 
 def create_output_array(inferred_symbols: Dict[str, int],

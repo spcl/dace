@@ -1,21 +1,26 @@
 import collections
 import functools
 import logging
-from typing import Optional, Set, Callable
+from typing import Dict, Optional, Set, Callable
 import copy
 
-from functools import wraps
+import sympy
 
 import dace
 from dace import nodes as nd, data as dt
 from dace.libraries import blas
+from dace.sdfg import infer_types
 from dace.sdfg.state import MultiConnectorEdge
-from dace.transformation import interstate, dataflow
+from dace.transformation import dataflow
 from dace import SDFG, SDFGState, dtypes
 import dace.data as dt
-from dace import dtypes
-from dace.transformation.auto.auto_optimize import set_fast_implementations
+from dace import dtypes, config
+from dace.transformation.auto.auto_optimize import greedy_fuse, make_transients_persistent, move_small_arrays_to_stack, set_fast_implementations, tile_wcrs
 from dace.transformation.dataflow import CopyToMap
+from dace.transformation.dataflow.map_collapse import MapCollapse
+from dace.transformation.dataflow.trivial_map_elimination import TrivialMapElimination
+from dace.transformation.interstate.loop_to_map import LoopToMap
+from dace.transformation.interstate.sdfg_nesting import RefineNestedAccess
 
 log = logging.getLogger(__name__)
 
@@ -189,37 +194,135 @@ def expand_nodes(sdfg: dace.SDFG, predicate: Callable[[nd.Node], bool]):
             states.append(state)  # Nodes have changed. Check state again
 
 
-def auto_optimize_onnx(sdfg: dace.SDFG, cuda, simplify=False, fold_constants=True):
-    """ Automatically optimize ``sdfg``.
+def auto_optimize_onnx(sdfg: SDFG,
+                       device: dtypes.DeviceType,
+                       validate: bool = True,
+                       validate_all: bool = False,
+                       symbols: Dict[str, int] = None) -> SDFG:
+    """ Automatically optimize an ``sdfg`` from the ONNX frontend.
+    Runs a basic sequence of transformations to optimize a given SDFG to decent
+    performance. In particular, performs the following:
 
-        :param sdfg: the sdfg to optimize (inplace).
-        :param cuda: whether to optimize for cuda.
-        :param simplify: whether to apply simplification transformations to the sdfg after optimization.
-        :param fold_constants: whether to apply constant folding.
+        * Simplify
+        * Auto-parallelization (loop-to-map)
+        * Greedy application of SubgraphFusion
+        * Tiled write-conflict resolution (MapTiling -> AccumulateTransient)
+        * Tiled stream accumulation (MapTiling -> AccumulateTransient)
+        * Collapse all maps to parallelize across all dimensions
+        * Set all library nodes to expand to ``fast`` expansion, which calls
+          the fastest library on the target device
+
+    :param sdfg: The SDFG to optimize.
+    :param device: the device to optimize for.
+    :param validate: If True, validates the SDFG after all transformations
+                     have been applied.
+    :param validate_all: If True, validates the SDFG after every step.
+    :param symbols: Optional dict that maps symbols (str/symbolic) to int/float
+    :param use_gpu_storage: If True, changes the storage of non-transient data to GPU global memory.
+    :return: The optimized SDFG.
+    :note: Operates in-place on the given SDFG.
+    :note: This function is still experimental and may harm correctness in
+           certain cases. Please report an issue if it does.
     """
-
+    debugprint = config.Config.get_bool('debugprint')
     try:
         from dace.transformation.onnx import ConstantFolding  # avoid import loop
     except ImportError:
         raise ImportError("auto_optimize_onnx requires ONNX. Install with: pip install dace[ml]")
 
-    log.debug("Applying automatic optimizations")
-    if fold_constants:
-        log.debug("Applying constant folding")
-        sdfg.apply_transformations_repeated([ConstantFolding, dataflow.RedundantSecondArray], validate_all=True)
-    log.debug("Expanding ONNX nodes")
+    log.debug("ONNX-AutoOpt: Applying ONNX automatic optimizations")
+
+    log.debug("ONNX-AutoOpt: Applying constant folding")
+    sdfg.apply_transformations_repeated([ConstantFolding, dataflow.RedundantSecondArray], validate_all=True)
+
+    log.debug("ONNX-AutoOpt: Expanding ONNX nodes")
     expand_onnx_nodes(sdfg)
+
+    # Simplification and loop parallelization
+    transformed = True
+    sdfg.apply_transformations_repeated(TrivialMapElimination, validate=validate, validate_all=validate_all)
+
+    while transformed:
+        sdfg.simplify(validate=False, validate_all=validate_all)
+        l2ms = sdfg.apply_transformations_repeated((LoopToMap, RefineNestedAccess),
+                                                   validate=False,
+                                                   validate_all=validate_all)
+        transformed = l2ms > 0
+
+    # Collapse maps and eliminate trivial dimensions
+    sdfg.simplify()
+    sdfg.apply_transformations_repeated(MapCollapse, validate=False, validate_all=validate_all)
+
+    sdfg.simplify()
+    sdfg.reset_cfg_list()
+
     log.debug("Setting fast implementations")
-    set_fast_implementations(sdfg, dace.DeviceType.GPU if cuda else dace.DeviceType.CPU)
-    if simplify:
-        log.debug("Applying simplification transforms")
-        # there is a nondeterministic bug in redundant array that appears if
-        # we don't apply inline first
-        sdfg.apply_transformations_repeated(interstate.InlineSDFG)
-        remove_unnecessary_views(sdfg)
-        sdfg.simplify(skip=["ArrayElimination"])
-        if cuda:
-            sdfg.apply_transformations_once_everywhere(CopyToMap)
+    set_fast_implementations(sdfg, device)
+
+    # NOTE: We need to `infer_types` in case a LibraryNode expands to other LibraryNodes (e.g., np.linalg.solve)
+    infer_types.infer_connector_types(sdfg)
+    infer_types.set_default_schedule_and_storage_types(sdfg, None)
+    sdfg.expand_library_nodes()
+
+    # fuse subgraphs greedily
+    sdfg.simplify()
+    sdfg.reset_cfg_list()
+
+    greedy_fuse(sdfg, device=device, validate_all=validate_all)
+
+    # fuse stencils greedily
+    greedy_fuse(sdfg, device=device, validate_all=validate_all, recursive=False, stencil=True)
+
+    # Move Loops inside Maps when possible
+    from dace.transformation.interstate import MoveLoopIntoMap
+    sdfg.apply_transformations_repeated([MoveLoopIntoMap])
+
+    # Tiled WCR and streams
+    for nsdfg in list(sdfg.all_sdfgs_recursive()):
+        tile_wcrs(nsdfg, validate_all)
+
+    # Collapse maps
+    sdfg.apply_transformations_repeated(MapCollapse, validate=False, validate_all=validate_all)
+    for node, _ in sdfg.all_nodes_recursive():
+        # Set OMP collapse property to map length
+        if isinstance(node, dace.nodes.MapEntry):
+            # FORNOW: Leave out
+            # node.map.collapse = len(node.map.range)
+            pass
+
+    for nsdfg in sdfg.all_sdfgs_recursive():
+        nsdfg.openmp_sections = False
+
+    # Set all Default storage types that are constant sized to registers
+    move_small_arrays_to_stack(sdfg)
+
+    # Make all independent arrays persistent
+    make_transients_persistent(sdfg, device)
+
+    if symbols:
+        # Specialize for all known symbols
+        known_symbols = {}
+        for (s, v) in symbols.items():
+            if s in sdfg.free_symbols:
+                if isinstance(v, (int, float)):
+                    known_symbols[s] = v
+                if isinstance(v, sympy.Integer):
+                    try:
+                        known_symbols[s] = int(v)
+                    except TypeError:
+                        pass
+
+        if debugprint and len(known_symbols) > 0:
+            print("Specializing the SDFG for symbols", known_symbols)
+        sdfg.specialize(known_symbols)
+
+    sdfg.reset_cfg_list()
+
+    # Validate at the end
+    if validate or validate_all:
+        sdfg.validate()
+
+    return sdfg
 
 
 def remove_unnecessary_views(sdfg: dace.SDFG):
