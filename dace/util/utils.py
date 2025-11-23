@@ -1,6 +1,7 @@
 import collections
 import functools
 import logging
+import time
 from typing import Dict, Optional, Set, Callable
 import copy
 
@@ -16,11 +17,19 @@ from dace import SDFG, SDFGState, dtypes
 import dace.data as dt
 from dace import dtypes, config
 from dace.transformation.auto.auto_optimize import greedy_fuse, make_transients_persistent, move_small_arrays_to_stack, set_fast_implementations, tile_wcrs
-from dace.transformation.dataflow import CopyToMap
 from dace.transformation.dataflow.map_collapse import MapCollapse
+from dace.transformation.dataflow.map_fusion import MapFusion
+from dace.transformation.dataflow.mapreduce import MapReduceFusion
+from dace.transformation.dataflow.otf_map_fusion import OTFMapFusion
+from dace.transformation.dataflow.redundant_array import RedundantArray
+from dace.transformation.dataflow.redundant_array_copying import RedundantArrayCopying
+from dace.transformation.dataflow.tasklet_fusion import TaskletFusion
 from dace.transformation.dataflow.trivial_map_elimination import TrivialMapElimination
+from dace.transformation.dataflow.matrix_product_transpose import MatrixProductTranspose
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.interstate.sdfg_nesting import RefineNestedAccess
+from dace.transformation.interstate.state_fusion import StateFusion
+from dace.transformation.interstate import MoveReduceInitOutOfNestedSDFG
 
 log = logging.getLogger(__name__)
 
@@ -206,6 +215,14 @@ def auto_optimize_onnx(sdfg: SDFG,
         * Simplify
         * Auto-parallelization (loop-to-map)
         * Greedy application of SubgraphFusion
+        * State fusion to merge states and enable more fusion
+        * Map parameter normalization for enabling MapFusion
+        * Sequential MapFusion for producer-consumer patterns
+        * On-the-fly MapFusion (OTFMapFusion) for broadcast patterns
+        * Map-Reduce fusion for LayerNorm/Softmax patterns
+        * Matrix product transpose optimization
+        * Redundant array elimination
+        * Tasklet fusion within maps
         * Tiled write-conflict resolution (MapTiling -> AccumulateTransient)
         * Tiled stream accumulation (MapTiling -> AccumulateTransient)
         * Collapse all maps to parallelize across all dimensions
@@ -218,7 +235,6 @@ def auto_optimize_onnx(sdfg: SDFG,
                      have been applied.
     :param validate_all: If True, validates the SDFG after every step.
     :param symbols: Optional dict that maps symbols (str/symbolic) to int/float
-    :param use_gpu_storage: If True, changes the storage of non-transient data to GPU global memory.
     :return: The optimized SDFG.
     :note: Operates in-place on the given SDFG.
     :note: This function is still experimental and may harm correctness in
@@ -231,7 +247,6 @@ def auto_optimize_onnx(sdfg: SDFG,
         raise ImportError("auto_optimize_onnx requires ONNX. Install with: pip install dace[ml]")
 
     log.debug("ONNX-AutoOpt: Applying ONNX automatic optimizations")
-
     log.debug("ONNX-AutoOpt: Applying constant folding")
     sdfg.apply_transformations_repeated([ConstantFolding, dataflow.RedundantSecondArray], validate_all=True)
 
@@ -264,14 +279,60 @@ def auto_optimize_onnx(sdfg: SDFG,
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
     sdfg.expand_library_nodes()
 
+    # Move reductions init out of nested SDFGs
+    sdfg.apply_transformations_repeated([MoveReduceInitOutOfNestedSDFG])
+
     # fuse subgraphs greedily
     sdfg.simplify()
     sdfg.reset_cfg_list()
 
     greedy_fuse(sdfg, device=device, validate_all=validate_all)
 
-    # fuse stencils greedily
-    greedy_fuse(sdfg, device=device, validate_all=validate_all, recursive=False, stencil=True)
+    # State fusion to merge states and enable more fusion opportunities
+    log.debug("ONNX-AutoOpt: Applying StateFusion")
+    sdfg.apply_transformations_repeated(StateFusion, validate=False, validate_all=validate_all)
+
+    # Sequential map fusion for producer-consumer patterns
+    log.debug("ONNX-AutoOpt: Applying MapFusion")
+    sdfg.simplify(validate=False)
+    map_fusions = sdfg.apply_transformations_repeated(MapFusion, validate=False, validate_all=validate_all)
+    if debugprint and map_fusions > 0:
+        print(f"Applied {map_fusions} MapFusion transformations")
+
+    # On-the-fly map fusion for broadcast patterns (smaller map feeding larger map)
+    log.debug("ONNX-AutoOpt: Applying OTFMapFusion")
+    otf_fusions = sdfg.apply_transformations_repeated(OTFMapFusion, validate=False, validate_all=validate_all)
+    if debugprint and otf_fusions > 0:
+        print(f"Applied {otf_fusions} OTFMapFusion transformations")
+
+    # Map-Reduce fusion for patterns like LayerNorm and Softmax
+    # Fuses a map with an immediately following reduction
+    log.debug("ONNX-AutoOpt: Applying MapReduceFusion")
+    mr_fusions = sdfg.apply_transformations_repeated(MapReduceFusion, validate=False, validate_all=validate_all)
+    if debugprint and mr_fusions > 0:
+        print(f"Applied {mr_fusions} MapReduceFusion transformations")
+
+    # Matrix product transpose optimization: T(A) @ T(B) = T(B @ A)
+    # Eliminates explicit transposes before matmuls
+    log.debug("ONNX-AutoOpt: Applying MatrixProductTranspose")
+    mpt_opts = sdfg.apply_transformations_repeated(MatrixProductTranspose, validate=False, validate_all=validate_all)
+    if debugprint and mpt_opts > 0:
+        print(f"Applied {mpt_opts} MatrixProductTranspose transformations")
+
+    # Eliminate redundant intermediate arrays created by fusion
+    log.debug("ONNX-AutoOpt: Eliminating redundant arrays")
+    sdfg.simplify(validate=False)
+    redundant = sdfg.apply_transformations_repeated([RedundantArray, RedundantArrayCopying],
+                                                    validate=False,
+                                                    validate_all=validate_all)
+    if debugprint and redundant > 0:
+        print(f"Eliminated {redundant} redundant arrays")
+
+    # Tasklet fusion within maps to reduce overhead
+    log.debug("ONNX-AutoOpt: Applying TaskletFusion")
+    tasklet_fusions = sdfg.apply_transformations_repeated(TaskletFusion, validate=False, validate_all=validate_all)
+    if debugprint and tasklet_fusions > 0:
+        print(f"Applied {tasklet_fusions} TaskletFusion transformations")
 
     # Move Loops inside Maps when possible
     from dace.transformation.interstate import MoveLoopIntoMap
