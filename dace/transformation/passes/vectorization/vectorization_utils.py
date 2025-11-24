@@ -1604,7 +1604,7 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         lhs_expr = lhs_ + "[_vi]"
         rhs_left = rhs1_ if rhs1_ is not None else const1_
         rhs_right = rhs2_ if rhs2_ is not None else const2_
-        OPERATORS = {"+", "-", "/", "*", "%", "&&", "||"}
+        OPERATORS = {"+", "-", "/", "*", "%", "&&", "||", "==", "!=", "<", "<=", ">", ">="}
         UNARY_OPERATORS = {"+", "!", "-"}
 
         if rhs_left is None or rhs_right is None:
@@ -3426,3 +3426,21 @@ def use_previous_subsets(
             subset=dace.subsets.Range(new_ranges),
             volume=volume,
         )
+
+
+def reset_connectors(inner_sdfg: dace.SDFG, nsdfg: dace.nodes.NestedSDFG):
+    for in_conn in nsdfg.in_connectors:
+        #in_arr = inner_sdfg.arrays[in_conn]
+        #print(in_arr, type(in_arr), nsdfg.in_connectors[in_conn], type(nsdfg.in_connectors[in_conn]))
+        nsdfg.in_connectors[in_conn] = dace.dtypes.typeclass(None)
+    for out_conn in nsdfg.out_connectors:
+        #out_arr = inner_sdfg.arrays[out_conn]
+        nsdfg.out_connectors[out_conn] = dace.dtypes.typeclass(None)
+
+    for state in inner_sdfg.all_states():
+        for node in state.nodes():
+            if isinstance(node, dace.nodes.Tasklet):
+                for in_conn in node.in_connectors:
+                    node.in_connectors[in_conn] = dace.dtypes.typeclass(None)
+                for out_conn in node.out_connectors:
+                    node.out_connectors[out_conn] = dace.dtypes.typeclass(None)

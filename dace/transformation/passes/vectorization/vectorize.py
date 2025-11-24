@@ -224,6 +224,7 @@ class Vectorize(ppl.Pass):
             arr_name
             for arr_name in transient_arrays if inner_sdfg.arrays[arr_name].shape == (self.vector_width, )
         }
+
         # If a scalar is only used on an interstate edge we have a pattern such as:
         # scalar1 = i + scalar0
         # A[scalar1]
@@ -392,6 +393,11 @@ class Vectorize(ppl.Pass):
         # There might be missing expanded loop symbols, they are of form `loop_var{id}` where `{id}` is an integer
         # Construct back the loop variable and add assignments for them
         resolve_missing_laneid_symbols(inner_sdfg, nsdfg, state, vector_map_param)
+
+        # Fix in connectors, if scalar it might be already set to float64, but not it should be None
+        # If the connector type is not void (typeclass(None)) then it means it was prob. set to its scalar type before,
+        # reset it
+        reset_connectors(inner_sdfg, nsdfg)
 
         return unstructured_data
 
