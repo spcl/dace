@@ -1052,8 +1052,7 @@ class Map(object):
                                  serialize_if=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
 
     gpu_maxnreg = Property(dtype=int,
-                           default=None,
-                           allow_none=True,
+                           default=0,
                            desc="Maximum number of registers per thread for GPU kernel",
                            serialize_if=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
 

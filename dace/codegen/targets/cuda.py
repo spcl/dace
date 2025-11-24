@@ -1719,7 +1719,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         node = dfg_scope.source_nodes()[0]
 
         # Set maxnreg and launch bounds
-        if node.gpu_maxnreg is None:
+        assert node.gpu_maxnreg is not None and node.gpu_maxnreg >= 0
+        if node.gpu_maxnreg == 0:
             maxnreg_str = ''
             # Set kernel launch bounds
             if node.gpu_launch_bounds == "-1":
