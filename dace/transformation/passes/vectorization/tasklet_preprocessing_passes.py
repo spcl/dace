@@ -191,3 +191,61 @@ class RemoveIntTypeCasts(ppl.Pass):
                     if new_ast_str != ast_str:
                         node.code = CodeBlock(new_ast_str, language=dace.Language.Python)
         sdfg.validate()
+
+
+class RemoveMathPrefix(ast.NodeTransformer):
+    """
+    Transform calls of the form math.xxx(...) → xxx(...).
+    Only removes the module prefix; does not touch anything else.
+    """
+
+    def visit_Call(self, node):
+        # Transform children first
+        self.generic_visit(node)
+
+        # Check if the function being called is an attribute: A.B
+        if isinstance(node.func, ast.Attribute):
+            # Check if it is "math.xxx"
+            if isinstance(node.func.value, ast.Name) and node.func.value.id == "math":
+                # Replace math.xxx(...) → xxx(...)
+                node.func = ast.Name(id=node.func.attr, ctx=ast.Load())
+
+        return node
+
+
+def remove_math_prefix_from_source(source: str) -> str:
+    """Returns transformed Python source with math.xxx → xxx."""
+    tree = ast.parse(source)
+    tree = RemoveMathPrefix().visit(tree)
+    ast.fix_missing_locations(tree)
+    return ast.unparse(tree)
+
+
+@properties.make_properties
+@transformation.explicit_cf_compatible
+class RemoveMathCall(ppl.Pass):
+    CATEGORY: str = 'Optimization Preparation'
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Tasklets
+
+    def should_reapply(self, modified: ppl.Modifies):
+        return False
+
+    def depends_on(self):
+        return {}
+
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Set[str]]]:
+        for node, _ in sdfg.all_nodes_recursive():
+            if isinstance(node, dace.sdfg.nodes.Tasklet):
+                if node.code.language == dace.dtypes.Language.Python:
+                    ast_str = node.code.as_string
+                    ast_left, ast_right = ast_str.split(" = ")
+                    ast_left = ast_left.strip()
+                    ast_right = ast_right.strip()
+                    new_ast_right = remove_math_prefix_from_source(ast_right)
+                    if new_ast_right != ast_right:
+                        node.code = CodeBlock(ast_left + " = " + new_ast_right, language=dace.Language.Python)
+                    assert "math." not in new_ast_right
+                    assert "math." not in node.code.as_string
+        sdfg.validate()
