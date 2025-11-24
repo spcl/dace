@@ -1738,7 +1738,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         # Write kernel prototype
         self._localcode.write(
             '__global__ void %s %s %s(%s) {\n' %
-            (maxnreg_str, launch_bounds, kernel_name, ', '.join(kernel_args_typed + extra_kernel_args_typed)), cfg, state_id, node)
+            (maxnreg_str, launch_bounds, kernel_name, ', '.join(kernel_args_typed + extra_kernel_args_typed)), cfg,
+            state_id, node)
 
         # Write constant expressions in GPU code
         self._frame.generate_constants(sdfg, self._localcode)
