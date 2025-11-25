@@ -17,6 +17,7 @@ from dace.sdfg.state import ConditionalBlock, LoopRegion
 import dace.sdfg.tasklet_utils as tutil
 import dace.sdfg.construction_utils as cutil
 import dace.sdfg.utils as sdutil
+from dace.symbolic import DaceSympyPrinter
 
 
 def repl_subset(subset: dace.subsets.Range, repl_dict: Dict[str, str]) -> dace.subsets.Range:
@@ -2860,7 +2861,7 @@ def add_copies_before_and_after_nsdfg(
     vector_width: int,
     vector_storage: dace.dtypes.StorageType,
     skip: Set[str],
-):
+) -> Set[str]:
     """
     Add vector copy operations before and after a nested SDFG node.
     If the copy can't be inserted before, then it is done inside as a fallback,
@@ -3143,6 +3144,8 @@ def add_copies_before_and_after_nsdfg(
     for ie in state.in_edges(nsdfg_node):
         if isinstance(ie.src, dace.nodes.AccessNode) and ie.data.data in inserted_array_names:
             sift_access_node_up(state, ie.src, sdict[ie.src])
+
+    return inserted_array_names
 
 
 def find_copy_in_state(inner_sdfg: dace.SDFG, nsdfg_node: dace.nodes.NestedSDFG, free_syms: Set[str],
@@ -3444,3 +3447,70 @@ def reset_connectors(inner_sdfg: dace.SDFG, nsdfg: dace.nodes.NestedSDFG):
                     node.in_connectors[in_conn] = dace.dtypes.typeclass(None)
                 for out_conn in node.out_connectors:
                     node.out_connectors[out_conn] = dace.dtypes.typeclass(None)
+
+
+def remove_map(map_entry: dace.nodes.MapEntry, state: dace.SDFGState):
+    assert map_entry in state.nodes()
+    map_exit = state.exit_node(map_entry)
+
+    # Replace symbol dictionary
+    repldict = {str(p): str(r[0]) for p, r in zip(map_entry.map.params, map_entry.map.range)}
+
+    # Redirect map entry's out edges
+    write_only_map = True
+    for edge in state.out_edges(map_entry):
+        if edge.data.is_empty():
+            continue
+        # Add an edge directly from the previous source connector to the destination
+        path = state.memlet_path(edge)
+        index = path.index(edge)
+        state.add_edge(path[index - 1].src, path[index - 1].src_conn, edge.dst, edge.dst_conn, edge.data)
+        write_only_map = False
+
+    # Redirect map exit's in edges.
+    for edge in state.in_edges(map_exit):
+        path = state.memlet_path(edge)
+        index = path.index(edge)
+
+        # Add an edge directly from the source to the next destination connector
+        if len(path) > index + 1:
+            state.add_edge(edge.src, edge.src_conn, path[index + 1].dst, path[index + 1].dst_conn, edge.data)
+
+            if write_only_map:
+                outer_exit = path[index + 1].dst
+                outer_entry = state.entry_node(outer_exit)
+                if outer_entry is not None:
+                    if any({e.src == map_entry for e in state.in_edges(edge.src)}):
+                        state.add_edge(outer_entry, None, edge.src, None, Memlet(None))
+                    else:
+                        for src in {e.src for e in state.in_edges(edge.src)}:
+                            state.add_edge(outer_entry, None, src, None, Memlet(None))
+
+            else:
+                outer_exit = path[index + 1].dst
+                outer_entry = state.entry_node(outer_exit)
+
+    state.remove_node(map_entry)
+    state.remove_node(map_exit)
+
+    # Replace symbols
+    all_nodes = state.all_nodes_between(outer_entry, outer_exit)
+    all_edges = state.all_edges(*all_nodes)
+    for n in all_nodes:
+        if isinstance(n, dace.nodes.Tasklet):
+            tutil.tasklet_replace_code(n, repldict)
+        if isinstance(n, dace.nodes.NestedSDFG):
+            for k, v in repldict.items():
+                if k in n.symbol_mapping:
+                    sym_expr = dace.symbolic.SymExpr(n.symbol_mapping[k])
+                    if k in {str(s) for s in sym_expr.free_symbols}:
+                        printer = DaceSympyPrinter(arrays=state.sdfg.arrays)
+                        n.symbol_mapping[v] = printer.doprint(sym_expr.subs(k, v))
+                    else:
+                        n.symbol_mapping[v] = n.symbol_mapping[k]
+                    del n.symbol_mapping[k]
+            n.sdfg.replace_dict(repldict)
+    for e in all_edges:
+        if e.data.data is None:
+            continue
+        e.data.subset.replace(repldict)

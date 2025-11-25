@@ -12,6 +12,7 @@ from dace.transformation.passes.vectorization.vectorize import Vectorize
 from dace.transformation.passes.eliminate_branches import EliminateBranches
 from dace.transformation.passes.vectorization.fuse_overlapping_loads import FuseOverlappingLoads
 from dace.transformation.passes.vectorization.remove_reduntant_assignments import RemoveRedundantAssignments
+from dace.transformation.passes.vectorization.remove_vector_maps import RemoveVectorMaps
 
 
 class VectorizeCPU(ppl.Pipeline):
@@ -27,7 +28,8 @@ class VectorizeCPU(ppl.Pipeline):
                  insert_copies: bool = False,
                  only_apply_vectorization_pass: bool = False,
                  no_inline: bool = False,
-                 fail_on_unvectorizable: bool = False):
+                 fail_on_unvectorizable: bool = False,
+                 eliminate_trivial_vector_map: bool = True):
         vectorizer = Vectorize(
             templates={
                 "*": "vector_mult<{dtype}, {vector_width}>({lhs}, {rhs1}, {rhs2});",
@@ -77,7 +79,7 @@ class VectorizeCPU(ppl.Pipeline):
             apply_on_maps=apply_on_maps,
             insert_copies=insert_copies,
             fail_on_unvectorizable=fail_on_unvectorizable,
-        )
+            eliminate_trivial_vector_map=eliminate_trivial_vector_map)
         if not only_apply_vectorization_pass:
             passes = [
                 EliminateBranches(),
@@ -97,6 +99,8 @@ class VectorizeCPU(ppl.Pipeline):
             passes = [RemoveMathCall(), vectorizer]
         if fuse_overlapping_loads:
             passes.append(FuseOverlappingLoads())
+        if eliminate_trivial_vector_map:
+            passes.append(RemoveVectorMaps())
         super().__init__(passes)
 
     def iterate_over_passes(self, sdfg: dace.SDFG) -> Iterator[Pass]:

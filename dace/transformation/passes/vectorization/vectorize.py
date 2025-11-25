@@ -14,6 +14,7 @@ from dace.transformation.passes.vectorization.tasklet_preprocessing_passes impor
 from dace.transformation.dataflow.tiling import MapTiling
 from dace.transformation.passes.vectorization.vectorization_utils import *
 import dace.sdfg.tasklet_utils as tutil
+from dace.transformation.dataflow.trivial_map_elimination import TrivialMapElimination
 
 
 @properties.make_properties
@@ -33,11 +34,12 @@ class Vectorize(ppl.Pass):
     fuse_overlapping_loads = properties.Property(dtype=bool, default=False)
     insert_copies = properties.Property(dtype=bool, default=True, allow_none=False)
     fail_on_unvectorizable = properties.Property(dtype=bool, default=False, allow_none=False)
+    eliminate_trivial_vector_map = properties.Property(dtype=bool, default=True, allow_none=False)
 
     def __init__(self, templates: Dict[str, str], vector_width: str, vector_input_storage: dace.dtypes.StorageType,
                  vector_output_storage: dace.dtypes.StorageType, vector_op_numeric_type: typeclass, global_code: str,
                  global_code_location: str, try_to_demote_symbols_in_nsdfgs: bool, apply_on_maps: Optional[List[str]],
-                 insert_copies: bool, fail_on_unvectorizable: bool):
+                 insert_copies: bool, fail_on_unvectorizable: bool, eliminate_trivial_vector_map: bool):
         super().__init__()
 
         self.templates = templates
@@ -53,6 +55,7 @@ class Vectorize(ppl.Pass):
         self._used_names = set()
         self._tasklet_vectorizable_map = dict()
         self._apply_on_maps = apply_on_maps
+        self.eliminate_trivial_vector_map = eliminate_trivial_vector_map
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
@@ -150,8 +153,8 @@ class Vectorize(ppl.Pass):
             unstructured_data = self._vectorize_nested_sdfg(state, nsdfg_node, vector_map_param)
 
             if self.insert_copies:
-                add_copies_before_and_after_nsdfg(state, nsdfg_node, self.vector_width, self.vector_input_storage,
-                                                  unstructured_data)
+                inserted_array_names = add_copies_before_and_after_nsdfg(state, nsdfg_node, self.vector_width,
+                                                                         self.vector_input_storage, unstructured_data)
 
     def parent_connection_is_scalar(self, state: dace.SDFGState, nsdfg: dace.nodes.NestedSDFG,
                                     scalar_name: str) -> bool:
