@@ -2,6 +2,8 @@
 import pytest
 
 pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
+pytest.importorskip("efficientnet_pytorch",
+                    reason="efficientnet_pytorch not installed. Please install with: pip install dace[ml-testing]")
 import torch
 import numpy as np
 from dace.transformation.dataflow import TrivialMapElimination

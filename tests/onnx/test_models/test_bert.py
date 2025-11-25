@@ -8,6 +8,8 @@ import pytest
 pytest.importorskip("onnx", reason="ONNX not installed. Please install with: pip install dace[ml]")
 pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
 pytest.importorskip("onnxsim", reason="ONNX Simplifier not installed. Please install with: pip install dace[ml]")
+pytest.importorskip("transformers",
+                    reason="transformers not installed. Please install with: pip install dace[ml-testing]")
 import os
 
 import onnx

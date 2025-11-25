@@ -9,6 +9,8 @@ from dace.fpga_testing import fpga_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.autodiff import add_backward_pass
+
+pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
 import jax
 import jax.numpy as jnp
 

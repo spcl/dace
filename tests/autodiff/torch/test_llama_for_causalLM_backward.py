@@ -2,6 +2,8 @@
 import pytest
 
 pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
+pytest.importorskip("transformers",
+                    reason="transformers not installed. Please install with: pip install dace[ml-testing]")
 import torch
 import torch.nn as nn
 from transformers import LlamaForCausalLM, LlamaConfig
@@ -77,7 +79,6 @@ def test_llama_model_backward(sdfg_name):
         pad_token_id=0,
         bos_token_id=1,
         eos_token_id=2,
-        attn_implementation="eager",
     )
 
     # Create the full model

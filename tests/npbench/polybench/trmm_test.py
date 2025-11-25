@@ -12,6 +12,8 @@ from dace.transformation.dataflow import StreamingMemory, StreamingComposition
 from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
 from dace.config import set_temporary
 from dace.autodiff import add_backward_pass
+
+pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
 import jax
 import jax.numpy as jnp
 import jax.lax as lax

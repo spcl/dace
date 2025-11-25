@@ -2,6 +2,8 @@
 import pytest
 
 pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
+pytest.importorskip("transformers",
+                    reason="transformers not installed. Please install with: pip install dace[ml-testing]")
 import torch
 import torch.nn as nn
 from transformers.models.llama.modeling_llama import LlamaDecoderLayer, LlamaConfig
@@ -55,7 +57,6 @@ def test_llama_decoder_backward(sdfg_name):
         rope_theta=10000.0,
         attention_dropout=0.0,
         hidden_act="silu",
-        attn_implementation="eager",
     )
 
     # Create decoder layer

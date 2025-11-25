@@ -6,6 +6,8 @@ import pytest
 import numpy as np
 
 pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
+pytest.importorskip("transformers",
+                    reason="transformers not installed. Please install with: pip install dace[ml-testing]")
 import torch
 from torch import nn, optim
 from transformers import BertConfig
@@ -103,7 +105,7 @@ def test_bert(sdfg_name):
 
         def __init__(self):
             super(BertTokenSoftmaxClf, self).__init__()
-            self.bert = BertLayer(BertConfig(hidden_act="relu", attn_implementation="eager")).eval()
+            self.bert = BertLayer(BertConfig(hidden_act="relu")).eval()
             self.sm = nn.LogSoftmax(dim=-1)
 
         def forward(self, x):
