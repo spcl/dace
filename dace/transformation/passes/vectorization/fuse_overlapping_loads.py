@@ -178,6 +178,7 @@ class FuseOverlappingLoads(ppl.Pass):
             for node in state.nodes():
                 if isinstance(node, dace.nodes.NestedSDFG):
                     self._apply(node.sdfg)
+        sdfg.save("f.sdfg")
 
     def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
         self._apply(sdfg)

@@ -209,7 +209,10 @@ def tasklet_has_symbol(tasklet: dace.nodes.Tasklet, symbol_str: str) -> bool:
         return token_match(tasklet.code.as_string, symbol_str)
 
 
-def replace_code(code_str: str, code_lang: dace.dtypes.Language, repldict: Dict[str, str]) -> str:
+def replace_code(code_str: str,
+                 code_lang: dace.dtypes.Language,
+                 repldict: Dict[str, str],
+                 py_only: bool = False) -> str:
     """
     Replaces variables in a code string according to a replacement dictionary.
     Supports Python symbolic substitution and fallback string-based replacement.
@@ -222,7 +225,8 @@ def replace_code(code_str: str, code_lang: dace.dtypes.Language, repldict: Dict[
         The programming language of the code.
     repldict : Dict[str, str]
         Mapping from variable names to their replacements.
-
+    py_only: bool
+        Replace only if python tasklet
     Returns
     -------
     str
@@ -244,15 +248,22 @@ def replace_code(code_str: str, code_lang: dace.dtypes.Language, repldict: Dict[
                 cleaned_expr = sympy.pycode(new_rhs_sym_expr, allow_unknown_functions=True).strip()
                 return f"{cleaned_expr}"
             except Exception as e:
-                return _str_replace(code_str)
+                return code_str
         try:
             new_rhs_sym_expr = dace.symbolic.SymExpr(rhs).subs(repldict)
             cleaned_expr = sympy.pycode(new_rhs_sym_expr, allow_unknown_functions=True).strip()
             return f"{lhs.strip()} = {cleaned_expr}"
         except Exception as e:
-            return _str_replace(rhs)
+            return _str_replace(lhs, rhs)
     else:
-        return _str_replace(rhs)
+        if not py_only:
+            try:
+                lhs, rhs = code_str.split(" = ")
+                lhs = lhs.strip()
+                rhs = rhs.strip()
+                return _str_replace(lhs, rhs)
+            except Exception as e:
+                return code_str
 
 
 def tasklet_replace_code(tasklet: dace.nodes.Tasklet, repldict: Dict[str, str]):
