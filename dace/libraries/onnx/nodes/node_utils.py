@@ -19,25 +19,20 @@ from dace.libraries.onnx.schema import ONNXParameterType, ONNXSchema
 
 
 def parse_variadic_param(param: str) -> Tuple[str, int]:
-    """
-    Parse a variadic parameter name into its base name and index.
+    """Parse a variadic parameter name into its base name and index.
 
     ONNX operations can have variadic inputs/outputs, which are named using
     the convention 'base_name__index' (e.g., 'input__0', 'input__1').
     This function extracts the base name and numeric index.
 
-    Args:
-        param: The variadic parameter name in format 'name__number'.
+    :param param: The variadic parameter name in format 'name__number'.
+    :return: A tuple of (base_name, index) where base_name is the parameter name
+             and index is the variadic position (zero-indexed).
+    :raises ValueError: If the parameter format is invalid, has leading zeros
+                        in the number, or the number is negative.
 
-    Returns:
-        A tuple of (base_name, index) where base_name is the parameter name
-        and index is the variadic position (zero-indexed).
+    Example::
 
-    Raises:
-        ValueError: If the parameter format is invalid, has leading zeros
-                   in the number, or the number is negative.
-
-    Examples:
         >>> parse_variadic_param("input__0")
         ('input', 0)
         >>> parse_variadic_param("output__5")
@@ -62,17 +57,12 @@ def parse_variadic_param(param: str) -> Tuple[str, int]:
 def get_position(schema: ONNXSchema, is_input: bool, parameter_name: str):
     """Get the position that the parameter has in the ONNX op.
 
-    Args:
-        schema: The ONNX schema containing parameter definitions
-        is_input: True if looking for input parameters, False for output parameters
-        parameter_name: The name of the parameter to find position for
-
-    Returns:
-        The position index of the parameter in the operation signature
-
-    Raises:
-        ValueError: If parameter is not found, has incorrect variadic format,
-                   or schema validation fails
+    :param schema: The ONNX schema containing parameter definitions.
+    :param is_input: True if looking for input parameters, False for output parameters.
+    :param parameter_name: The name of the parameter to find position for.
+    :return: The position index of the parameter in the operation signature.
+    :raises ValueError: If parameter is not found, has incorrect variadic format,
+                        or schema validation fails.
     """
     if "__" in parameter_name:
         parameter_name, variadic_number = parse_variadic_param(parameter_name)

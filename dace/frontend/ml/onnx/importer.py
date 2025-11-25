@@ -133,14 +133,12 @@ def _nested_HasField(obj, full_attr: str) -> bool:
     This function performs a nested hasattr check by traversing dot-separated
     attribute names on a protobuf object.
 
-    Args:
-        obj: The protobuf object to check.
-        full_attr: Dot-separated attribute path (e.g., "graph.node").
+    :param obj: The protobuf object to check.
+    :param full_attr: Dot-separated attribute path (e.g., "graph.node").
+    :return: True if all attributes in the path exist, False otherwise.
 
-    Returns:
-        True if all attributes in the path exist, False otherwise.
+    Example::
 
-    Example:
         >>> _nested_HasField(model, "graph.node")
         True
     """
@@ -161,14 +159,11 @@ def infer_shapes_onnx_model(model: onnx.ModelProto, auto_merge: bool = False) ->
     better support for symbolic dimensions and dynamic shapes compared to ONNX's
     built-in shape inference.
 
-    Args:
-        model: The ONNX model to perform shape inference on.
-        auto_merge: Whether to automatically merge symbolic dimensions when possible.
+    :param model: The ONNX model to perform shape inference on.
+    :param auto_merge: Whether to automatically merge symbolic dimensions when possible.
+    :return: The ONNX model with inferred shapes.
 
-    Returns:
-        The ONNX model with inferred shapes.
-
-    Note:
+    .. note::
         Falls back to ONNX's built-in shape inference if ONNXRuntime is not available
         or if symbolic shape inference produces incomplete results.
     """
@@ -241,18 +236,13 @@ def simplify_onnx_model(model: onnx.ModelProto, auto_merge: bool) -> onnx.ModelP
     - Shape inference
     - Operator fusion (except batch normalization)
 
-    Args:
-        model: The ONNX model to simplify.
-        auto_merge: Whether to automatically merge nodes (passed to onnxsim).
+    :param model: The ONNX model to simplify.
+    :param auto_merge: Whether to automatically merge nodes (passed to onnxsim).
+    :return: The simplified ONNX model.
+    :raises ImportError: If onnxsim is not installed.
+    :raises RuntimeError: If onnx-simplifier optimizations fail validation.
 
-    Returns:
-        The simplified ONNX model.
-
-    Raises:
-        ImportError: If onnxsim is not installed.
-        RuntimeError: If onnx-simplifier optimizations fail validation.
-
-    Note:
+    .. note::
         Batch normalization fusion is skipped (skip_fuse_bn=True) to maintain
         numerical accuracy and allow separate optimization strategies.
     """

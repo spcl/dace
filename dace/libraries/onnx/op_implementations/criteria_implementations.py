@@ -22,13 +22,10 @@ class PureSoftmaxCrossEntropyLoss(ONNXForward):
     def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
         """Check if this implementation can be applied to the given node.
 
-        Args:
-            node: The SoftmaxCrossEntropyLoss ONNX node
-            state: The SDFG state containing the node
-            sdfg: The parent SDFG
-
-        Returns:
-            True if the implementation can be applied, False otherwise
+        :param node: The SoftmaxCrossEntropyLoss ONNX node.
+        :param state: The SDFG state containing the node.
+        :param sdfg: The parent SDFG.
+        :return: True if the implementation can be applied, False otherwise.
         """
         # Softmax is weird in opset 11, so let's stick to 2D for now
         if len(in_desc_with_name(node, state, sdfg, "scores").shape) != 2:
@@ -50,13 +47,10 @@ class PureSoftmaxCrossEntropyLoss(ONNXForward):
     def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> Union[nd.Node, SDFG]:
         """Generate the forward pass implementation for SoftmaxCrossEntropyLoss.
 
-        Args:
-            node: The SoftmaxCrossEntropyLoss ONNX node
-            state: The SDFG state containing the node
-            sdfg: The parent SDFG
-
-        Returns:
-            A nested SDFG implementing the SoftmaxCrossEntropyLoss operation
+        :param node: The SoftmaxCrossEntropyLoss ONNX node.
+        :param state: The SDFG state containing the node.
+        :param sdfg: The parent SDFG.
+        :return: A nested SDFG implementing the SoftmaxCrossEntropyLoss operation.
         """
 
         if node.reduction == 'mean':

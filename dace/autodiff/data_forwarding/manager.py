@@ -324,7 +324,8 @@ class DataForwardingManager:
                 bwd_dst = self.bwd_generator._find_backward_entry_node_for_map_entry(backward_state=backward_state,
                                                                                      entry_node=dst)
                 # Add the dst connector to the map
-                assert bwd_dst.add_in_connector(bwd_dst_conn)
+                added = bwd_dst.add_in_connector(bwd_dst_conn)
+                assert added
 
             # If the destination is a map entry,
             if isinstance(src, nodes.MapEntry):
@@ -332,7 +333,8 @@ class DataForwardingManager:
                 bwd_src = self.bwd_generator._find_backward_entry_node_for_map_entry(backward_state=backward_state,
                                                                                      entry_node=src)
                 # Add the src connector to the map
-                assert bwd_src.add_out_connector(bwd_src_conn)
+                added = bwd_src.add_out_connector(bwd_src_conn)
+                assert added
 
             if src is forward_node:
                 # If this is the node we replicated

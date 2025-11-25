@@ -85,7 +85,8 @@ class DaceNodeBackwardImplementations:
 
                 # (2)
                 node.sdfg.arrays[name].transient = False
-                assert node.add_out_connector(name, force=True)
+                added = node.add_out_connector(name, force=True)
+                assert added
                 write = forward_state.add_write(new_name)
                 forward_state.add_edge(node, name, write, None, self.bwd_engine.sdfg.make_array_memlet(new_name))
 
@@ -172,10 +173,12 @@ class DaceNodeBackwardImplementations:
         rev = nodes.MapExit(self.bwd_engine.reverse_map[node.map])
 
         for _, conn in sorted(given_grad_names.items()):
-            assert rev.add_in_connector(conn)
+            added = rev.add_in_connector(conn)
+            assert added
 
         for _, conn in sorted(required_grad_names.items()):
-            assert rev.add_out_connector(conn)
+            added = rev.add_out_connector(conn)
+            assert added
 
         backward_state.add_node(rev)
         return rev, result
@@ -192,10 +195,12 @@ class DaceNodeBackwardImplementations:
 
         rev = nodes.MapEntry(self.bwd_engine.reverse_map[node.map])
         for conn in sorted(node.in_connectors):
-            assert rev.add_in_connector(conn)
+            added = rev.add_in_connector(conn)
+            assert added
 
         for conn in sorted(node.out_connectors):
-            assert rev.add_out_connector(conn)
+            added = rev.add_out_connector(conn)
+            assert added
 
         backward_state.add_node(rev)
         # yapf: disable
@@ -305,34 +310,24 @@ class DaceNodeBackwardImplementations:
         given_gradients: List[str],
         required_gradients: List[str],
     ):
-        """
-        Performs symbolic differentiation on tasklet code to generate the backward-pass tasklet.
+        """Performs symbolic differentiation on tasklet code to generate the backward-pass tasklet.
 
         This method uses SymPy to symbolically differentiate expressions in a tasklet's code,
         applying the chain rule to compute gradients with respect to input variables.
 
-        Args:
-            sdfg: The parent SDFG containing the tasklet
-            code_str: Code string from the tasklet to differentiate
-            forward_state: The SDFGState containing the forward tasklet
-            tasklet: The forward tasklet node being differentiated
-            given_gradients: List of output connector names for which gradients are provided
-                            (∂L/∂output)
-            required_gradients: List of input connector names for which gradients must be computed
-                            (∂L/∂input)
+        :param sdfg: The parent SDFG containing the tasklet.
+        :param code_str: Code string from the tasklet to differentiate.
+        :param forward_state: The SDFGState containing the forward tasklet.
+        :param tasklet: The forward tasklet node being differentiated.
+        :param given_gradients: List of output connector names for which gradients are provided (∂L/∂output).
+        :param required_gradients: List of input connector names for which gradients must be computed (∂L/∂input).
+        :return: A 4-tuple containing (code, rev_inputs, rev_outputs, result) where code is the generated
+                 Python code for the backward tasklet, rev_inputs is the set of input connector names,
+                 rev_outputs is the set of output connector names, and result is the BackwardResult mapping.
+        :raises AutoDiffException: If symbolic differentiation fails (e.g., non-differentiable operations,
+                                   unexpected graph structure, missing input edges).
 
-        Returns:
-            tuple: A 4-tuple containing:
-                - code (str): Generated Python code for the backward tasklet
-                - rev_inputs (set): Set of input connector names for the backward tasklet
-                - rev_outputs (set): Set of output connector names for the backward tasklet
-                - result (BackwardResult): Mapping of forward connectors to backward gradient names
-
-        Raises:
-            AutoDiffException: If symbolic differentiation fails (e.g., non-differentiable operations,
-                            unexpected graph structure, missing input edges)
-
-        Notes:
+        .. note::
             - Uses SymPy's symbolic differentiation and common subexpression elimination (CSE)
             - Supports indexed array accesses (e.g., A[i, j]) via IndexedBase
             - Handles constant assignments by zeroing gradients
@@ -341,11 +336,12 @@ class DaceNodeBackwardImplementations:
             - Type casting ensures gradient types match forward pass data types
             - Applies chain rule: ∂L/∂input = ∂L/∂output * (∂output/∂input)
 
-        Example:
-            Forward tasklet: `y = x * x + 2 * x`
+        Example::
+
+            Forward tasklet: y = x * x + 2 * x
             Given gradient: dy (∂L/∂y)
             Required gradient: dx (∂L/∂x)
-            Generated code: `dx_gradient = dy_gradient * (2*x + 2)`
+            Generated code: dx_gradient = dy_gradient * (2*x + 2)
         """
         output_exprs, indexed_objects_map = ad_utils.code_to_exprs(code_str, tasklet, list(sdfg.symbols.keys()))
 

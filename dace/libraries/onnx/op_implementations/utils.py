@@ -54,15 +54,12 @@ def program_for_node(program,
     All inputs that are not specified as parameters will be removed using
     constant_folding.remove_node_and_computation.
 
-    Args:
-        program: The function to expand into a DaCe program
-        sdfg: The parent SDFG
-        state: The SDFG state containing the node
-        node: The ONNX node to create a program for
-        extra_vars: Optional extra variables to add to the program
-
-    Returns:
-        A new SDFG implementing the program
+    :param program: The function to expand into a DaCe program.
+    :param sdfg: The parent SDFG.
+    :param state: The SDFG state containing the node.
+    :param node: The ONNX node to create a program for.
+    :param extra_vars: Optional extra variables to add to the program.
+    :return: A new SDFG implementing the program.
     """
 
     from dace.transformation.onnx import constant_folding  # avoid import loop
@@ -116,14 +113,11 @@ def empty_sdfg_for_node(
 
     The dtypes for the arguments will be extracted by matching the parameter names to edges.
 
-    Args:
-        sdfg: The parent SDFG
-        state: The SDFG state containing the node
-        node: The ONNX node to create an SDFG for
-        add_access_nodes: Whether to add access nodes to the SDFG
-
-    Returns:
-        A tuple containing (nested SDFG, nested state, input nodes dict, output nodes dict)
+    :param sdfg: The parent SDFG.
+    :param state: The SDFG state containing the node.
+    :param node: The ONNX node to create an SDFG for.
+    :param add_access_nodes: Whether to add access nodes to the SDFG.
+    :return: A tuple containing (nested SDFG, nested state, input nodes dict, output nodes dict).
     """
     nsdfg = SDFG(node.label + "_expansion")
     nstate = nsdfg.add_state()

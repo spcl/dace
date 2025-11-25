@@ -4,9 +4,8 @@ from typing import List, Tuple
 import sympy as sp
 
 # DaCe imports
-import dace
 import dace.sdfg.nodes as nodes
-from dace import dtypes, data as dt
+from dace import dtypes, data as dt, symbolic
 from dace.sdfg import SDFGState, graph as dgraph, state as dstate
 from dace.memlet import Memlet
 from dace.sdfg.state import LoopRegion
@@ -94,8 +93,8 @@ def _store_data(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState
     shape: List[int] = list(bwd_generator.sdfg.arrays[forward_an.data].shape)
 
     # If the shape is an expression:
-    if any((isinstance(s, dace.symbol) or isinstance(s, sp.Expr)) and not (str(s) in bwd_generator.sdfg.free_symbols)
-           for s in shape):
+    free_symbols_dict = {sym: None for sym in bwd_generator.sdfg.free_symbols}
+    if any(symbolic.issymbolic(s, free_symbols_dict) for s in shape):
         # Otherwise, replace all the loop dependant allocations with the max length of the loop
         # For example, an array of size [i+1] in a range(2, 10) loop will be stored in a [10, 10] array (1)
         # Additionally, an array of size [32-i] in the same loop will be stored in a [10, 30]  (2)
@@ -108,10 +107,11 @@ def _store_data(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState
                     loop_size, loop_index = _get_symbol_upper_bound_from_loop(bwd_generator, s, loops)
                     # Replace the symbol with the loop size and evaluate the expression
                     # Check if loop size can be converted to an integer
+                    loop_index_sym = symbolic.pystr_to_symbolic(loop_index)
                     if isinstance(loop_size, int) or (isinstance(loop_size, str) and ad_utils.is_int(loop_size)):
-                        shape[i] = s.subs(sp.Symbol(loop_index), loop_size)
+                        shape[i] = s.subs(loop_index_sym, loop_size)
                     else:
-                        shape[i] = s.subs(sp.Symbol(loop_index), dace.symbol(loop_size))
+                        shape[i] = s.subs(loop_index_sym, symbolic.pystr_to_symbolic(loop_size))
 
     # Plus the size of any enclosing loops
     enclosed, _ = ad_utils.state_within_loop(forward_state=forward_state)
@@ -140,14 +140,15 @@ def _store_data(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState
             if ad_utils.shape_has_symbols_to_replace(bwd_generator.sdfg, new_dim):
                 # Take the expression to sympy for easier processing
                 if isinstance(new_dim, str):
-                    new_dim = sp.Symbol(new_dim)
+                    new_dim = symbolic.pystr_to_symbolic(new_dim)
 
                 # Try to replace the symbols with the loop size
                 loop_size, loop_index = _get_symbol_upper_bound_from_loop(bwd_generator, new_dim, all_encolsing_loops)
+                loop_index_sym = symbolic.pystr_to_symbolic(loop_index)
                 if isinstance(loop_size, int) or (isinstance(loop_size, str) and ad_utils.is_int(loop_size)):
-                    new_dim = new_dim.subs(sp.Symbol(loop_index), loop_size)
+                    new_dim = new_dim.subs(loop_index_sym, loop_size)
                 else:
-                    new_dim = new_dim.subs(sp.Symbol(loop_index), dace.symbol(loop_size))
+                    new_dim = new_dim.subs(loop_index_sym, symbolic.pystr_to_symbolic(loop_size))
             shape.insert(0, new_dim)
             loop_param_list.insert(0, loop.loop_variable)
 
@@ -176,7 +177,6 @@ def _store_data(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState
         dtype=original_desc.dtype,
         transient=True,
     )
-    new_store_node.setzero = True
 
     # Connect the edge source and connector to the new access node
     # We will save the memlets we create and return them
@@ -227,8 +227,10 @@ def _store_data(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState
             # Add the Connectors to the map
             map_exit_in_connector = f"IN_stored_{new_store_node.label}"
             map_exit_out_connector = f"OUT_stored_{new_store_node.label}"
-            assert map_exist.add_in_connector(map_exit_in_connector)
-            assert map_exist.add_out_connector(map_exit_out_connector)
+            added = map_exist.add_in_connector(map_exit_in_connector)
+            assert added
+            added = map_exist.add_out_connector(map_exit_out_connector)
+            assert added
 
             # Prepare the memlet data for this edge
             access_list = []
@@ -415,16 +417,18 @@ def _connect_stored_data_to_target(bwd_generator: 'BackwardPassGenerator', forwa
 
             # Add a new in connector to the mapexit
             parent_node_in_connector = "IN_stored_" + source_node.data + "_" + next_conn
-            assert bwd_map_entry.add_in_connector(parent_node_in_connector)
+            added = bwd_map_entry.add_in_connector(parent_node_in_connector)
+            assert added
 
             # Add a new out connector to the mapexit
-            pranet_node_out_connector = "OUT_stored_" + source_node.data + "_" + next_conn
-            assert bwd_map_entry.add_out_connector(pranet_node_out_connector)
+            parent_node_out_connector = "OUT_stored_" + source_node.data + "_" + next_conn
+            added = bwd_map_entry.add_out_connector(parent_node_out_connector)
+            assert added
 
             memlet_data = copy.deepcopy(memlets.pop(0))
 
             # Add the edge with the corresponding memlet
-            backward_state.add_edge(bwd_map_entry, pranet_node_out_connector, child_node, child_node_in_connector,
+            backward_state.add_edge(bwd_map_entry, parent_node_out_connector, child_node, child_node_in_connector,
                                     memlet_data)
 
             child_node = bwd_map_entry

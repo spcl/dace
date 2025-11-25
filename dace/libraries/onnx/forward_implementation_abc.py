@@ -56,54 +56,42 @@ class ONNXForward(abc.ABC):
 
     @staticmethod
     def forward_can_be_applied(node: ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
-        """
-        Check whether this implementation can be applied to the given node.
+        """Check whether this implementation can be applied to the given node.
 
         This method is called during SDFG expansion to determine if this
         implementation is suitable for the given context. The default
         implementation returns True (always applicable).
 
-        Args:
-            node: The ONNX operation node to expand.
-            state: The SDFG state containing the node.
-            sdfg: The parent SDFG.
-
-        Returns:
-            True if this implementation can be applied, False otherwise.
+        :param node: The ONNX operation node to expand.
+        :param state: The SDFG state containing the node.
+        :param sdfg: The parent SDFG.
+        :return: True if this implementation can be applied, False otherwise.
         """
         return True
 
     @staticmethod
     @abc.abstractmethod
     def forward(node: ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
-        """
-        Expand an ONNX operation node into DaCe SDFG constructs.
+        """Expand an ONNX operation node into DaCe SDFG constructs.
 
         This is the main method that must be implemented by subclasses. It takes
         an ONNX operation node and replaces it with equivalent DaCe constructs
         (tasklets, nested SDFGs, library nodes, etc.).
 
-        Args:
-            node: The ONNX operation node to expand.
-            state: The SDFG state containing the node.
-            sdfg: The parent SDFG.
-
-        Returns:
-            The expanded node or a nested SDFG representing the operation.
+        :param node: The ONNX operation node to expand.
+        :param state: The SDFG state containing the node.
+        :param sdfg: The parent SDFG.
+        :return: The expanded node or a nested SDFG representing the operation.
         """
         ...
 
     @classmethod
     def registered_implementations(cls, op_name: str) -> typing.List[typing.Tuple[str, "ONNXForward"]]:
-        """
-        Get all registered implementations for a specific ONNX operation.
+        """Get all registered implementations for a specific ONNX operation.
 
-        Args:
-            op_name: The ONNX operation name (e.g., "Conv", "MatMul").
-
-        Returns:
-            List of tuples (implementation_name, implementation_class) for
-            all registered implementations of the given operation.
+        :param op_name: The ONNX operation name (e.g., "Conv", "MatMul").
+        :return: List of tuples (implementation_name, implementation_class) for
+                 all registered implementations of the given operation.
         """
         impls = []
         for impl, args in cls.extensions().items():

@@ -37,11 +37,8 @@ _REPLACED_CTYPES = {dace.int64: "int64_t", dace.uint64: "uint64_t", dace.float16
 def torch_ctype(dtype: dace.typeclass) -> str:
     """Convert a DaCe type to the corresponding PyTorch C++ type string.
 
-    Args:
-        dtype: The DaCe typeclass to convert
-
-    Returns:
-        The corresponding C++ type string for PyTorch
+    :param dtype: The DaCe typeclass to convert.
+    :return: The corresponding C++ type string for PyTorch.
     """
     if isinstance(dtype, dace.pointer):
         # assuming pointers are 64 bit
@@ -69,11 +66,8 @@ _TYPECLASS_TO_TORCH_DTYPE_STR = {
 def typeclass_to_torch_cpp_type(type: dace.typeclass) -> str:
     """Convert a DaCe typeclass to PyTorch C++ tensor type string.
 
-    Args:
-        type: The DaCe typeclass to convert
-
-    Returns:
-        The corresponding PyTorch tensor type string (e.g., 'kFloat32')
+    :param type: The DaCe typeclass to convert.
+    :return: The corresponding PyTorch tensor type string (e.g., 'kFloat32').
     """
     if isinstance(type, dace.pointer):
         # assuming pointers are 64 bit
@@ -85,14 +79,11 @@ def typeclass_to_torch_cpp_type(type: dace.typeclass) -> str:
 def tensor_init_for_desc(name: str, desc: data.Data, clean_weights: Dict[str, torch.Tensor], zeros=True) -> str:
     """Emit the initialization code for a descriptor.
 
-    Args:
-        name: The name of the tensor
-        desc: The data descriptor
-        clean_weights: Dictionary of constant weights
-        zeros: Whether to initialize with zeros (True) or empty (False)
-
-    Returns:
-        C++ code string for tensor initialization
+    :param name: The name of the tensor.
+    :param desc: The data descriptor.
+    :param clean_weights: Dictionary of constant weights.
+    :param zeros: Whether to initialize with zeros (True) or empty (False).
+    :return: C++ code string for tensor initialization.
     """
 
     # Check if name is in clean_weights
@@ -242,11 +233,8 @@ def argument_codegen(sdfg: dace.SDFG,
 def item_to_cpp_literal(item) -> str:
     """Convert a numpy item to a C++ literal string.
 
-    Args:
-        item: The numpy item to convert
-
-    Returns:
-        The C++ literal representation as a string
+    :param item: The numpy item to convert.
+    :return: The C++ literal representation as a string.
     """
     dtype = str(item.dtype)
     if np.isneginf(item):
@@ -271,13 +259,10 @@ def item_to_cpp_literal(item) -> str:
 def constant_initializer_code(name: str, desc: data.Data, value) -> str:
     """Generate C++ code for initializing a constant value.
 
-    Args:
-        name: The name of the constant
-        desc: The data descriptor
-        value: The constant value
-
-    Returns:
-        C++ code string for constant initialization
+    :param name: The name of the constant.
+    :param desc: The data descriptor.
+    :param value: The constant value.
+    :return: C++ code string for constant initialization.
     """
     gpu_storage = dt.can_access(dt.ScheduleType.GPU_Device, desc.storage)
     gpu_storage = False
@@ -316,11 +301,8 @@ def constant_initializer_code(name: str, desc: data.Data, value) -> str:
 def return_type_str(outputs: List[str]) -> str:
     """Generate the return type string for the given outputs.
 
-    Args:
-        outputs: List of output names
-
-    Returns:
-        The C++ return type string
+    :param outputs: List of output names.
+    :return: The C++ return type string.
     """
     return f"""{"Tensor" if len(outputs) == 1 else f"variable_list"}"""
 
@@ -328,11 +310,8 @@ def return_type_str(outputs: List[str]) -> str:
 def save_non_inputs_outputs(names: List[str]):
     """Generate code to save non-input/output tensors for backward pass.
 
-    Args:
-        names: List of tensor names to save
-
-    Returns:
-        C++ code string for saving tensors
+    :param names: List of tensor names to save.
+    :return: C++ code string for saving tensors.
     """
     return "\n".join(f'ctx->saved_data["{n}"] = {n};' for n in names)
 
@@ -340,12 +319,9 @@ def save_non_inputs_outputs(names: List[str]):
 def recover_saved_inputs_outputs(saved_inputs_outputs: List[str], other_saved: List[str]):
     """Generate code to recover saved tensors in backward pass.
 
-    Args:
-        saved_inputs_outputs: List of saved input/output tensor names
-        other_saved: List of other saved tensor names
-
-    Returns:
-        C++ code string for recovering saved tensors
+    :param saved_inputs_outputs: List of saved input/output tensor names.
+    :param other_saved: List of other saved tensor names.
+    :return: C++ code string for recovering saved tensors.
     """
     code = ""
     if saved_inputs_outputs:
@@ -363,14 +339,11 @@ def setup_grad_values(backward_result: BackwardResult, sdfg: dace.SDFG, outputs:
                       clean_weights: Dict[str, torch.Tensor]) -> str:
     """Generate code to setup gradient values for backward pass.
 
-    Args:
-        backward_result: The backward pass result containing gradient information
-        sdfg: The SDFG
-        outputs: List of output names
-        clean_weights: Dictionary of constant weights
-
-    Returns:
-        C++ code string for gradient setup
+    :param backward_result: The backward pass result containing gradient information.
+    :param sdfg: The SDFG.
+    :param outputs: List of output names.
+    :param clean_weights: Dictionary of constant weights.
+    :return: C++ code string for gradient setup.
     """
     code = "// input grads"
     for param_name, grad_name in sorted(backward_result.required_grad_names.items()):
@@ -390,15 +363,12 @@ def code_for_backward_function(module: 'dace.frontend.ml.torch.DaceModule', forw
                                forwarded_arrays: Dict[str, data.Data]) -> str:
     """Generate C++ code for a differentiable PyTorch function.
 
-    Args:
-        module: The DaCe module
-        forward_sdfg: The forward SDFG
-        backward_sdfg: The backward SDFG
-        backward_result: The backward pass result
-        forwarded_arrays: Arrays forwarded from forward to backward pass
-
-    Returns:
-        Complete C++ code string for the differentiable function
+    :param module: The DaCe module.
+    :param forward_sdfg: The forward SDFG.
+    :param backward_sdfg: The backward SDFG.
+    :param backward_result: The backward pass result.
+    :param forwarded_arrays: Arrays forwarded from forward to backward pass.
+    :return: Complete C++ code string for the differentiable function.
     """
 
     inputs, outputs = get_arglist(module)
@@ -555,15 +525,12 @@ TORCH_LIBRARY_IMPL(dace_{sdfg_name}, {'CUDA' if module.use_cuda else 'CPU'}, m) 
 def get_header(fwd_sdfg: dace.SDFG, bwd_sdfg: Optional[dace.SDFG], inputs, outputs, use_cuda: bool) -> str:
     """Generate the C++ header code for the PyTorch extension.
 
-    Args:
-        fwd_sdfg: The forward SDFG
-        bwd_sdfg: The backward SDFG (optional)
-        inputs: List of input names
-        outputs: List of output names
-        use_cuda: Whether CUDA is used
-
-    Returns:
-        C++ header code string
+    :param fwd_sdfg: The forward SDFG.
+    :param bwd_sdfg: The backward SDFG (optional).
+    :param inputs: List of input names.
+    :param outputs: List of output names.
+    :param use_cuda: Whether CUDA is used.
+    :return: C++ header code string.
     """
     return f"""
 #include <torch/torch.h>
@@ -696,11 +663,8 @@ def register_and_compile_torch_extension(module: 'dace.frontend.ml.torch.DaceMod
 def get_env_for_sdfg(compiled: CompiledSDFG):
     """Create an environment for the given compiled SDFG.
 
-    Args:
-        compiled: The compiled SDFG
-
-    Returns:
-        The environment class for the SDFG
+    :param compiled: The compiled SDFG.
+    :return: The environment class for the SDFG.
     """
     sdfg_build_path = os.path.abspath(compiled.sdfg.build_folder)
 
@@ -729,11 +693,8 @@ def get_env_for_sdfg(compiled: CompiledSDFG):
 def indent_code(code: str) -> str:
     """Indent the given code string properly.
 
-    Args:
-        code: The code string to indent
-
-    Returns:
-        The indented code string
+    :param code: The code string to indent.
+    :return: The indented code string.
     """
     stream = CodeIOStream()
     stream.write(code)

@@ -24,49 +24,37 @@ from dace.autodiff.base_abc import AutoDiffException, BackwardContext, BackwardR
 
 
 def forward_in_desc_with_name(forward_node: nd.Node, context: BackwardContext, name: str) -> dt.Data:
-    """
-    Find the descriptor of the data that connects to input connector `name`.
+    """Find the descriptor of the data that connects to input connector ``name``.
 
-    Args:
-        forward_node: The node in the forward pass.
-        context: The backward context containing forward SDFG and state information.
-        name: The input connector name to find the descriptor for.
-
-    Returns:
-        The data descriptor that connects to the specified connector.
+    :param forward_node: The node in the forward pass.
+    :param context: The backward context containing forward SDFG and state information.
+    :param name: The input connector name to find the descriptor for.
+    :return: The data descriptor that connects to the specified connector.
     """
     return utils.in_desc_with_name(forward_node, context.forward_state, context.forward_sdfg, name)
 
 
 def forward_out_desc_with_name(forward_node: nd.Node, context: BackwardContext, name: str) -> dt.Data:
-    """
-    Find the descriptor of the data that connects to output connector `name`.
+    """Find the descriptor of the data that connects to output connector ``name``.
 
-    Args:
-        forward_node: The node in the forward pass.
-        context: The backward context containing forward SDFG and state information.
-        name: The output connector name to find the descriptor for.
-
-    Returns:
-        The data descriptor that connects to the specified connector.
+    :param forward_node: The node in the forward pass.
+    :param context: The backward context containing forward SDFG and state information.
+    :param name: The output connector name to find the descriptor for.
+    :return: The data descriptor that connects to the specified connector.
     """
     return utils.out_desc_with_name(forward_node, context.forward_state, context.forward_sdfg, name)
 
 
 def add_backward_desc_for_connector(backward_sdfg: dace.SDFG, forward_node: nd.Node, context: BackwardContext,
                                     connector: str, input: bool) -> str:
-    """
-    Adds the backward array for the connector of ``forward_node``.
+    """Adds the backward array for the connector of ``forward_node``.
 
-    Args:
-        backward_sdfg: The SDFG to add the backward array descriptor to.
-        forward_node: The forward node with the connector to create a descriptor for.
-        context: The backward context containing forward SDFG and state information.
-        connector: The connector name on the forward node.
-        input: True if the connector is an input, False if it's an output.
-
-    Returns:
-        The name of the newly added gradient array in ``backward_sdfg``.
+    :param backward_sdfg: The SDFG to add the backward array descriptor to.
+    :param forward_node: The forward node with the connector to create a descriptor for.
+    :param context: The backward context containing forward SDFG and state information.
+    :param connector: The connector name on the forward node.
+    :param input: True if the connector is an input, False if it's an output.
+    :return: The name of the newly added gradient array in ``backward_sdfg``.
     """
 
     if input:
@@ -84,17 +72,13 @@ def add_backward_desc_for_connector(backward_sdfg: dace.SDFG, forward_node: nd.N
 
 def add_backward_desc(backward_sdfg: dace.SDFG, forward_sdfg: dace.SDFG, forward_desc: dt.Data,
                       forward_name: str) -> str:
-    """
-    Adds the backward array for the given descriptor.
+    """Adds the backward array for the given descriptor.
 
-    Args:
-        backward_sdfg: The SDFG to add the backward array descriptor to.
-        forward_sdfg: The forward SDFG used for finding unique names.
-        forward_desc: The data descriptor of the forward array.
-        forward_name: A name for the forward array (doesn't have to match its actual name).
-
-    Returns:
-        The name of the newly added gradient array in ``backward_sdfg``.
+    :param backward_sdfg: The SDFG to add the backward array descriptor to.
+    :param forward_sdfg: The forward SDFG used for finding unique names.
+    :param forward_desc: The data descriptor of the forward array.
+    :param forward_name: A name for the forward array (doesn't have to match its actual name).
+    :return: The name of the newly added gradient array in ``backward_sdfg``.
     """
     backward_name = utils.find_str_not_in_set(forward_sdfg.arrays, forward_name + "_grad")
     new_desc = copy.deepcopy(forward_desc)
@@ -256,23 +240,22 @@ def connect_output_from_forward(forward_node: nd.Node, backward_node: nd.Node, c
 
 
 def cast_consts_to_type(code: str, dtype: dace.typeclass) -> str:
-    """
-    Convert a piece of code so that constants are wrapped in casts to ``dtype``.
+    """Convert a piece of code so that constants are wrapped in casts to ``dtype``.
 
-    For example:
+    For example::
+
         x * (3 / 2)
-    becomes:
+
+    becomes::
+
         x * (dace.float32(3) / dace.float32(2))
 
     This is only done when it is required due to a Div operator to ensure proper
     type casting in mathematical expressions during automatic differentiation.
 
-    Args:
-        code: The code string to convert.
-        dtype: The DaCe typeclass to cast constants to.
-
-    Returns:
-        A string of the converted code with properly typed constants.
+    :param code: The code string to convert.
+    :param dtype: The DaCe typeclass to cast constants to.
+    :return: A string of the converted code with properly typed constants.
     """
 
     class CastConsts(ast.NodeTransformer):
@@ -316,21 +299,17 @@ def cast_consts_to_type(code: str, dtype: dace.typeclass) -> str:
 
 
 def init_grad(data: str, sdfg: SDFG, current_state: SDFGState) -> None:
-    """
-    Add a state where `data` is initialized with zero.
+    """Add a state where ``data`` is initialized with zero.
 
     This function creates a new state before the current state that initializes
     the gradient array with zeros. It handles different storage types (CPU/GPU)
     and array types appropriately.
 
-    Args:
-        data: The name of the data array to initialize.
-        sdfg: The SDFG to add the initialization state to.
-        current_state: The current state; initialization will be done before this state.
-
-    Raises:
-        ValueError: If the storage type is not supported.
-        AutoDiffException: If the data descriptor type is not supported.
+    :param data: The name of the data array to initialize.
+    :param sdfg: The SDFG to add the initialization state to.
+    :param current_state: The current state; initialization will be done before this state.
+    :raises ValueError: If the storage type is not supported.
+    :raises AutoDiffException: If the data descriptor type is not supported.
     """
     arr = sdfg.arrays[data]
 
@@ -367,19 +346,16 @@ def symbols_to_strings(symbs: Set[sp.Symbol]) -> Set[str]:
 
 
 def extract_indices(expression: str) -> Dict[str, List[str]]:
-    """
-    Extracts indexed array names and their indices from a given string expression.
+    """Extracts indexed array names and their indices from a given string expression.
 
     This function uses regular expressions to find patterns like "array[i, j, k]"
     and returns a dictionary mapping array names to their index lists.
 
-    Args:
-        expression: The string expression to analyze.
+    :param expression: The string expression to analyze.
+    :return: A dictionary mapping array names to lists of their indices.
 
-    Returns:
-        A dictionary mapping array names to lists of their indices.
+    Example::
 
-    Example:
         >>> extract_indices("a[i, j] + b[k]")
         {'a': ['i', 'j'], 'b': ['k']}
     """
@@ -527,17 +503,13 @@ def path_src_node_in_subgraph(edge: dgraph.MultiConnectorEdge, subgraph: dstate.
 
 
 def get_read_only_arrays(sdfg: SDFG) -> Set[str]:
-    """
-    Get the arrays that are only read in SDFG.
+    """Get the arrays that are only read in SDFG.
 
     This function identifies arrays that are never written to (only have outgoing
     edges with data or only empty memlets on incoming edges).
 
-    Args:
-        sdfg: The SDFG to analyze.
-
-    Returns:
-        A set of array names that are read-only in the SDFG.
+    :param sdfg: The SDFG to analyze.
+    :return: A set of array names that are read-only in the SDFG.
     """
     written_to_arrays = set()
     for node, parent in sdfg.all_nodes_recursive():
@@ -573,9 +545,9 @@ def get_state_topological_order(graph) -> List[SDFGState]:
 
 def shape_has_symbols_to_replace(sdfg: SDFG, shape: Union[str, sp.Symbol, sp.Expr]) -> bool:
     """"
-        Check if the shape dimension passed as a parameter has a symbol that needs to be replaced.
-        We do not replace global SDFG symbols but rather the loop indicies only
-        """
+    Check if the shape dimension passed as a parameter has a symbol that needs to be replaced.
+    We do not replace global SDFG symbols but rather the loop indicies only
+    """
     symbol_not_numeric_and_not_sdfg_symb = False
 
     # Get interstate edges symbols

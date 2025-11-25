@@ -43,17 +43,14 @@ from dace.util import in_desc_with_name
 def reverse_einsum_wrt_input(forward_node: 'donnx.nodes.onnx_op.ONNXOp', input_name: str) -> Tuple[List[str], str]:
     """Produce the einsum string that computes the gradient of forward_node w.r.t. input_name.
 
-    Note:
+    .. note::
         There is an edge case we currently don't handle (can be implemented though).
         Something like 'ii->i' would become 'i->ii'. This is invalid because 'i' is repeated in the output.
 
-    Args:
-        forward_node: The einsum node to reverse
-        input_name: The connector on the forward node to produce the gradient computation for
-
-    Returns:
-        Tuple of (list of forward node connectors required as inputs, einsum string)
-        The first parameter of the produced einsum string is implicitly the grad of Output
+    :param forward_node: The einsum node to reverse.
+    :param input_name: The connector on the forward node to produce the gradient computation for.
+    :return: Tuple of (list of forward node connectors required as inputs, einsum string).
+             The first parameter of the produced einsum string is implicitly the grad of Output.
     """
 
     _, input_idx = donnx.parse_variadic_param(input_name)
@@ -348,15 +345,10 @@ class DefaultSoftmaxBackward(BackwardImplementation):
 def _find_map_by_param(sdfg: dace.SDFG, pname: str) -> dace.nodes.MapEntry:
     """Find the first map entry node by the given parameter name.
 
-    Args:
-        sdfg: The SDFG to search
-        pname: The parameter name to look for
-
-    Returns:
-        The first MapEntry node containing the specified parameter
-
-    Raises:
-        StopIteration: If no MapEntry with the parameter is found
+    :param sdfg: The SDFG to search.
+    :param pname: The parameter name to look for.
+    :return: The first MapEntry node containing the specified parameter.
+    :raises StopIteration: If no MapEntry with the parameter is found.
     """
     return next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry) and pname in n.params)
 

@@ -80,17 +80,13 @@ DLManagedTensor._fields_ = [("dl_tensor", DLTensor), ("manager_ctx", ctypes.c_vo
 
 
 def make_manager_ctx(obj) -> ctypes.c_void_p:
-    """
-    Create a manager context from a Python object.
+    """Create a manager context from a Python object.
 
     This function wraps a Python object in a ctypes void pointer and increments
     its reference count to prevent garbage collection while in use by DLPack.
 
-    Args:
-        obj: The Python object to create a context for.
-
-    Returns:
-        A ctypes void pointer to the object.
+    :param obj: The Python object to create a context for.
+    :return: A ctypes void pointer to the object.
     """
     pyobj = ctypes.py_object(obj)
     void_p = ctypes.c_void_p.from_buffer(pyobj)
@@ -100,14 +96,12 @@ def make_manager_ctx(obj) -> ctypes.c_void_p:
 
 @DeleterFunc
 def dl_managed_tensor_deleter(_dl_managed_tensor_handle) -> None:
-    """
-    Deleter function for DLPack managed tensors.
+    """Deleter function for DLPack managed tensors.
 
     This is a no-op deleter because the underlying data is managed by DaCe
     and will be freed when the SDFG state struct is deallocated.
 
-    Args:
-        _dl_managed_tensor_handle: Handle to the managed tensor (unused).
+    :param _dl_managed_tensor_handle: Handle to the managed tensor (unused).
     """
     # Do nothing: the data is freed in the state struct
     pass
@@ -139,21 +133,15 @@ class PyCapsule:
 
 
 def array_to_torch_tensor(ptr: ctypes.c_void_p, desc: data.Array) -> torch.Tensor:
-    """
-    Convert a DaCe array descriptor to a PyTorch tensor that points to the same data.
+    """Convert a DaCe array descriptor to a PyTorch tensor that points to the same data.
 
     This function performs zero-copy conversion using the DLPack protocol,
     allowing PyTorch to access DaCe arrays without data duplication.
 
-    Args:
-        ptr: The pointer to the memory of the array.
-        desc: The DaCe array descriptor containing shape, strides, and dtype information.
-
-    Returns:
-        A PyTorch tensor that shares memory with the DaCe array.
-
-    Raises:
-        ValueError: If the storage type or dtype is unsupported.
+    :param ptr: The pointer to the memory of the array.
+    :param desc: The DaCe array descriptor containing shape, strides, and dtype information.
+    :return: A PyTorch tensor that shares memory with the DaCe array.
+    :raises ValueError: If the storage type or dtype is unsupported.
     """
 
     if desc.storage is dtypes.StorageType.GPU_Global:

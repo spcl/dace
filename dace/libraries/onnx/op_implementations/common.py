@@ -20,17 +20,13 @@ log = logging.getLogger(__name__)
 
 
 def strides_from_shape(shape, *, order="C", itemsize=1, in_bytes=False):
-    """
-    Compute contiguous array strides for a given shape.
+    """Compute contiguous array strides for a given shape.
 
-    Args:
-        shape (tuple[int]): e.g. (2, 8, 128, 1)
-        order ("C"|"F"): row-major ("C") or column-major ("F")
-        itemsize (int): size of one element in bytes (used if in_bytes=True)
-        in_bytes (bool): return strides in bytes instead of elements
-
-    Returns:
-        tuple[int]: strides per dimension
+    :param shape: Shape tuple, e.g. (2, 8, 128, 1).
+    :param order: Row-major ("C") or column-major ("F").
+    :param itemsize: Size of one element in bytes (used if in_bytes=True).
+    :param in_bytes: Return strides in bytes instead of elements.
+    :return: Strides per dimension.
     """
     if not shape:
         return ()
@@ -76,17 +72,14 @@ def broadcast_indices(input_shape, output_shape):
 
 
 def setup_reduction_sdfg(node: 'ONNXOp', state: SDFGState, sdfg: SDFG, operation_name: str):
-    """
-    Helper function to set up the common SDFG structure for reduction operations.
+    """Helper function to set up the common SDFG structure for reduction operations.
 
-    Args:
-        node: The ONNX operation node
-        state: The SDFG state
-        sdfg: The parent SDFG
-        operation_name: Name of the reduction operation (e.g., 'reduce_mean', 'reduce_sum')
-
-    Returns:
-        tuple: (nsdfg, nstate, data_desc, reduced_desc, data_read, reduced_write, axes_node, axes_desc, num_reduce_axes)
+    :param node: The ONNX operation node.
+    :param state: The SDFG state.
+    :param sdfg: The parent SDFG.
+    :param operation_name: Name of the reduction operation (e.g., 'reduce_mean', 'reduce_sum').
+    :return: Tuple of (nsdfg, nstate, data_desc, reduced_desc, data_read, reduced_write,
+             axes_node, axes_desc, num_reduce_axes).
     """
     # Get attributes
     keepdims = getattr(node, 'keepdims', 1)
@@ -164,19 +157,15 @@ def setup_reduction_sdfg(node: 'ONNXOp', state: SDFGState, sdfg: SDFG, operation
 
 
 def generate_reduction_tasklet_code(data_desc, reduced_desc, num_reduce_axes, keepdims, reduction_type, **kwargs):
-    """
-    Helper function to generate the C++ tasklet code for reduction operations.
+    """Helper function to generate the C++ tasklet code for reduction operations.
 
-    Args:
-        data_desc: Input data descriptor
-        reduced_desc: Output data descriptor
-        num_reduce_axes: Number of reduction axes
-        keepdims: Whether to keep dimensions
-        reduction_type: Type of reduction ('sum', 'mean', 'max', 'min')
-        **kwargs: Additional arguments for specific reduction types
-
-    Returns:
-        str: The generated C++ tasklet code
+    :param data_desc: Input data descriptor.
+    :param reduced_desc: Output data descriptor.
+    :param num_reduce_axes: Number of reduction axes.
+    :param keepdims: Whether to keep dimensions.
+    :param reduction_type: Type of reduction ('sum', 'mean', 'max', 'min').
+    :param kwargs: Additional arguments for specific reduction types.
+    :return: The generated C++ tasklet code.
     """
     axes_arr_code = f"long long reduce_dims [num_reduce_dims] = {{{', '.join([f'axes_arr[{i}]' for i in range(num_reduce_axes)])}}};"
 

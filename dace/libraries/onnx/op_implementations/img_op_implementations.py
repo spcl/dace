@@ -28,13 +28,10 @@ class PureMaxPool2D(ONNXForward):
     def forward_can_be_applied(node: ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
         """Check if this implementation can be applied to the given node.
 
-        Args:
-            node: The MaxPool ONNX node
-            state: The SDFG state containing the node
-            sdfg: The parent SDFG
-
-        Returns:
-            True if the implementation can be applied, False otherwise
+        :param node: The MaxPool ONNX node.
+        :param state: The SDFG state containing the node.
+        :param sdfg: The parent SDFG.
+        :return: True if the implementation can be applied, False otherwise.
         """
         X = in_desc_with_name(node, state, sdfg, "X")
 
@@ -68,13 +65,10 @@ class PureMaxPool2D(ONNXForward):
     def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[nodes.Node, SDFG]:
         """Generate the forward pass implementation for MaxPool2D.
 
-        Args:
-            node: The MaxPool ONNX node
-            state: The SDFG state containing the node
-            sdfg: The parent SDFG
-
-        Returns:
-            A nested SDFG implementing the MaxPool operation
+        :param node: The MaxPool ONNX node.
+        :param state: The SDFG state containing the node.
+        :param sdfg: The parent SDFG.
+        :return: A nested SDFG implementing the MaxPool operation.
         """
         X = in_desc_with_name(node, state, sdfg, "X")
         Y = out_desc_with_name(node, state, sdfg, "Y")
@@ -160,13 +154,10 @@ class PureConv2D(ONNXForward):
     def forward_can_be_applied(node: ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
         """Check if this implementation can be applied to the given node.
 
-        Args:
-            node: The Conv ONNX node
-            state: The SDFG state containing the node
-            sdfg: The parent SDFG
-
-        Returns:
-            True if the implementation can be applied, False otherwise
+        :param node: The Conv ONNX node.
+        :param state: The SDFG state containing the node.
+        :param sdfg: The parent SDFG.
+        :return: True if the implementation can be applied, False otherwise.
         """
         X = in_desc_with_name(node, state, sdfg, "X")
         W = in_desc_with_name(node, state, sdfg, "W")
@@ -225,13 +216,10 @@ class PureConv2D(ONNXForward):
     def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[nodes.Node, SDFG]:
         """Generate the forward pass implementation for Conv2D.
 
-        Args:
-            node: The Conv ONNX node
-            state: The SDFG state containing the node
-            sdfg: The parent SDFG
-
-        Returns:
-            A nested SDFG implementing the Conv operation
+        :param node: The Conv ONNX node.
+        :param state: The SDFG state containing the node.
+        :param sdfg: The parent SDFG.
+        :return: A nested SDFG implementing the Conv operation.
         """
         X = in_desc_with_name(node, state, sdfg, "X")
         W = in_desc_with_name(node, state, sdfg, "W")
@@ -388,13 +376,10 @@ class PureBatchNormalization(ONNXForward):
     def forward_can_be_applied(node: ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
         """Check if this implementation can be applied to the given node.
 
-        Args:
-            node: The BatchNormalization ONNX node
-            state: The SDFG state containing the node
-            sdfg: The parent SDFG
-
-        Returns:
-            True if the implementation can be applied, False otherwise
+        :param node: The BatchNormalization ONNX node.
+        :param state: The SDFG state containing the node.
+        :param sdfg: The parent SDFG.
+        :return: True if the implementation can be applied, False otherwise.
         """
         X = in_desc_with_name(node, state, sdfg, "X")
         if len(X.shape) != 4:
@@ -420,13 +405,10 @@ class PureBatchNormalization(ONNXForward):
     def forward(node: ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[nodes.Node, SDFG]:
         """Generate the forward pass implementation for BatchNormalization.
 
-        Args:
-            node: The BatchNormalization ONNX node
-            state: The SDFG state containing the node
-            sdfg: The parent SDFG
-
-        Returns:
-            A nested SDFG implementing the BatchNormalization operation
+        :param node: The BatchNormalization ONNX node.
+        :param state: The SDFG state containing the node.
+        :param sdfg: The parent SDFG.
+        :return: A nested SDFG implementing the BatchNormalization operation.
         """
         shape = copy.deepcopy(in_desc_with_name(node, state, sdfg, "X").shape)
         reduce_axes = list(shape)
@@ -512,13 +494,10 @@ class PureGlobalAveragePool(ONNXForward):
     def forward_can_be_applied(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> bool:
         """Check if this implementation can be applied to the given node.
 
-        Args:
-            node: The GlobalAveragePool ONNX node
-            state: The SDFG state containing the node
-            sdfg: The parent SDFG
-
-        Returns:
-            Always True for this implementation
+        :param node: The GlobalAveragePool ONNX node.
+        :param state: The SDFG state containing the node.
+        :param sdfg: The parent SDFG.
+        :return: Always True for this implementation.
         """
         return True
 
@@ -526,13 +505,10 @@ class PureGlobalAveragePool(ONNXForward):
     def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
         """Generate the forward pass implementation for GlobalAveragePool.
 
-        Args:
-            node: The GlobalAveragePool ONNX node
-            state: The SDFG state containing the node
-            sdfg: The parent SDFG
-
-        Returns:
-            A nested SDFG implementing the GlobalAveragePool operation
+        :param node: The GlobalAveragePool ONNX node.
+        :param state: The SDFG state containing the node.
+        :param sdfg: The parent SDFG.
+        :return: A nested SDFG implementing the GlobalAveragePool operation.
         """
         from dace.libraries.onnx.nodes.onnx_op_registry import ONNXReduceMean
 

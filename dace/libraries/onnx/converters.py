@@ -28,23 +28,17 @@ log = logging.getLogger(__name__)
 
 
 def get_proto_attr(proto, name: str):
-    """
-    Safely access a protobuf attribute with encoding validation.
+    """Safely access a protobuf attribute with encoding validation.
 
     This function provides defensive checks against encoding issues when accessing
     protobuf attributes. Python's getattr expects strings, but protobuf uses UTF-8.
 
-    Args:
-        proto: The protobuf object to access.
-        name: The attribute name to retrieve (must be ASCII).
+    :param proto: The protobuf object to access.
+    :param name: The attribute name to retrieve (must be ASCII).
+    :return: The value of the requested attribute.
+    :raises ValueError: If the name is not ASCII-encodable.
 
-    Returns:
-        The value of the requested attribute.
-
-    Raises:
-        ValueError: If the name is not ASCII-encodable.
-
-    Note:
+    .. note::
         HasField checks may break in proto3, but ONNX doesn't use proto3 yet.
     """
 
@@ -226,21 +220,19 @@ def onnx_type_str_to_typeclass(onnx_str) -> Union[typeclass, None]:
 
 
 def clean_onnx_name(name: str) -> str:
-    """
-    Sanitize an ONNX name to make it a valid DaCe identifier.
+    """Sanitize an ONNX name to make it a valid DaCe identifier.
 
     This function transforms ONNX names that may contain invalid characters
     or patterns into valid DaCe identifiers by:
+
     - Prefixing names starting with digits with "ONNX_"
     - Replacing special characters with their textual equivalents
 
-    Args:
-        name: The ONNX name to sanitize.
+    :param name: The ONNX name to sanitize.
+    :return: A valid DaCe identifier based on the ONNX name.
 
-    Returns:
-        A valid DaCe identifier based on the ONNX name.
+    Example::
 
-    Examples:
         >>> clean_onnx_name("123_layer")
         'ONNX_123_layer'
         >>> clean_onnx_name("my.tensor:0")

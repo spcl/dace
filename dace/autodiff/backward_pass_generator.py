@@ -41,26 +41,24 @@ class BackwardPassGenerator:
     using reverse-mode AD. It handles gradient computation, data forwarding between
     forward and backward passes, and complex control flow structures.
 
-    Args:
-        sdfg: The forward SDFG to differentiate.
-        given_gradients: Output arrays for which gradients are provided (seed gradients).
-        required_gradients: Input arrays for which gradients should be computed.
-        backward_sdfg: SDFG to contain the backward pass. Can be same as forward SDFG.
-        array_grad_map: Optional mapping from array names to gradient array names.
-        conflicted_gradient_buffers: Arrays with potential write conflicts requiring special handling.
-        data_forwarding_strategy: Strategy for forwarding data ('store_all', 'recompute_all', 'user_defined').
-        data_to_recompute: Arrays to recompute instead of storing (when strategy='user_defined').
+    :param sdfg: The forward SDFG to differentiate.
+    :param given_gradients: Output arrays for which gradients are provided (seed gradients).
+    :param required_gradients: Input arrays for which gradients should be computed.
+    :param backward_sdfg: SDFG to contain the backward pass. Can be same as forward SDFG.
+    :param array_grad_map: Optional mapping from array names to gradient array names.
+    :param conflicted_gradient_buffers: Arrays with potential write conflicts requiring special handling.
+    :param data_forwarding_strategy: Strategy for forwarding data ('store_all', 'recompute_all', 'user_defined').
+    :param data_to_recompute: Arrays to recompute instead of storing (when strategy='user_defined').
+    :raises AutoDiffException: If the backward pass generation fails.
 
-    Raises:
-        AutoDiffException: If the backward pass generation fails.
+    Example::
 
-    Example:
-        >>> gen = BackwardPassGenerator(
-        ...     sdfg=forward_sdfg,
-        ...     given_gradients=['loss'],
-        ...     required_gradients=['weights', 'input']
-        ... )
-        >>> gen.backward()
+        gen = BackwardPassGenerator(
+            sdfg=forward_sdfg,
+            given_gradients=['loss'],
+            required_gradients=['weights', 'input']
+        )
+        gen.backward()
     """
 
     def __init__(
@@ -185,13 +183,10 @@ class BackwardPassGenerator:
                                   given_gradients: List[nodes.AccessNode]) -> None:
         """Setup SDFG configuration for separate or combined forward/backward passes.
 
-        Args:
-            sdfg: Forward SDFG.
-            backward_sdfg: Backward SDFG.
-            given_gradients: List of gradient output nodes.
-
-        Raises:
-            AutoDiffException: If configuration is invalid for combined SDFG mode.
+        :param sdfg: Forward SDFG.
+        :param backward_sdfg: Backward SDFG.
+        :param given_gradients: List of gradient output nodes.
+        :raises AutoDiffException: If configuration is invalid for combined SDFG mode.
         """
         if sdfg is backward_sdfg:
             # Combined mode requires single scalar output
@@ -1494,10 +1489,9 @@ class BackwardPassGenerator:
                           subgraph: dstate.StateSubgraphView) -> None:
         """Reverse a given subgraph by reversing all nodes within it.
 
-        Args:
-            forward_state: The forward state containing the subgraph
-            backward_state: The backward state to add reversed nodes to
-            subgraph: The subgraph view containing nodes to reverse
+        :param forward_state: The forward state containing the subgraph.
+        :param backward_state: The backward state to add reversed nodes to.
+        :param subgraph: The subgraph view containing nodes to reverse.
         """
 
         # Conditional assignment nodes
@@ -1629,10 +1623,9 @@ class BackwardPassGenerator:
         If this AccessNode represents a gradient that has already been used elsewhere,
         we want to accumulate the gradients rather than overwrite them.
 
-        Args:
-            backward_state: The backward state containing the edge
-            backward_node: The backward node (should be AccessNode for gradients)
-            edge: The edge that may need WCR for gradient accumulation
+        :param backward_state: The backward state containing the edge.
+        :param backward_node: The backward node (should be AccessNode for gradients).
+        :param edge: The edge that may need WCR for gradient accumulation.
         """
 
         # Check if the forward node is an AccessNode
@@ -1647,14 +1640,11 @@ class BackwardPassGenerator:
                                  subgraph: dstate.StateSubgraphView, forward_node: nodes.Node) -> Optional[SDFGState]:
         """Connect output gradients of forward_node as inputs to the corresponding reverse node.
 
-        Args:
-            forward_state: The forward state containing the node
-            backward_state: The backward state to add connections to
-            subgraph: The subgraph view for the current operation
-            forward_node: The forward node whose output gradients to connect
-
-        Returns:
-            The backward state (possibly modified) or None
+        :param forward_state: The forward state containing the node.
+        :param backward_state: The backward state to add connections to.
+        :param subgraph: The subgraph view for the current operation.
+        :param forward_node: The forward node whose output gradients to connect.
+        :return: The backward state (possibly modified) or None.
         """
         new_backward_state = None
         # First, create the data descriptor if this is an access node and it hasn't been added before
@@ -1826,15 +1816,12 @@ class BackwardPassGenerator:
 
         Currently supports two strategies: store-all and recompute-all.
 
-        Args:
-            state: Forward state containing the forward node
-            backward_state: Backward state containing the backward node
-            forward_node: The forward pass node
-            backward_node: The backward pass node (not necessarily a reversed node)
-            required_inputs: Maps forward pass connector names to backward pass connector names
-
-        Raises:
-            AutoDiffException: If required connectors don't exist on forward node
+        :param state: Forward state containing the forward node.
+        :param backward_state: Backward state containing the backward node.
+        :param forward_node: The forward pass node.
+        :param backward_node: The backward pass node (not necessarily a reversed node).
+        :param required_inputs: Maps forward pass connector names to backward pass connector names.
+        :raises AutoDiffException: If required connectors don't exist on forward node.
         """
 
         if set(required_inputs).difference(forward_node.in_connectors):
@@ -1962,15 +1949,10 @@ class BackwardPassGenerator:
     def _lookup_required_grad_name(self, node: nodes.Node, connector: str) -> str:
         """Look up the required gradient name for a given node and connector.
 
-        Args:
-            node: The forward pass node
-            connector: The connector name to look up
-
-        Returns:
-            The required gradient name for the connector
-
-        Raises:
-            AutoDiffException: If the node's backward result is not available
+        :param node: The forward pass node.
+        :param connector: The connector name to look up.
+        :return: The required gradient name for the connector.
+        :raises AutoDiffException: If the node's backward result is not available.
         """
         if node not in self.result_map:
             raise AutoDiffException(f"Attempted to access required gradient of {node} "
@@ -1980,15 +1962,10 @@ class BackwardPassGenerator:
     def _lookup_given_grad_name(self, node: nodes.Node, connector: str) -> str:
         """Look up the given gradient name for a given node and connector.
 
-        Args:
-            node: The forward pass node
-            connector: The connector name to look up
-
-        Returns:
-            The given gradient name for the connector
-
-        Raises:
-            AutoDiffException: If the node's backward result is not available
+        :param node: The forward pass node.
+        :param connector: The connector name to look up.
+        :return: The given gradient name for the connector.
+        :raises AutoDiffException: If the node's backward result is not available.
         """
         if node not in self.result_map:
             raise AutoDiffException(f"Attempted to access given gradient of {node} "
@@ -1999,15 +1976,10 @@ class BackwardPassGenerator:
                                                 entry_node: nodes.MapEntry) -> nodes.MapEntry:
         """Find the entry node in the backward pass corresponding to a forward pass entry node.
 
-        Args:
-            backward_state: The backward state to search in
-            entry_node: The MapEntry node from the forward pass
-
-        Returns:
-            The corresponding MapEntry node in the backward pass
-
-        Raises:
-            AutoDiffException: If exactly one corresponding node is not found
+        :param backward_state: The backward state to search in.
+        :param entry_node: The MapEntry node from the forward pass.
+        :return: The corresponding MapEntry node in the backward pass.
+        :raises AutoDiffException: If exactly one corresponding node is not found.
         """
         src_candidates = [
             node for node in backward_state.nodes()
@@ -2028,18 +2000,13 @@ class BackwardPassGenerator:
         1) Check for methods on this class
         2) Check the backward pass repository
 
-        Args:
-            state: Forward state containing the node
-            backward_state: Backward state to add the reverse node to
-            node: Node from the forward pass to reverse
-            given_gradients: Output names on the forward node for gradient input connections
-            required_gradients: Input names on the forward node that need gradients generated
-
-        Returns:
-            Tuple of (reversed node, BackwardResult with gradient connector names)
-
-        Raises:
-            AutoDiffException: If no backward implementation is found for the node type
+        :param state: Forward state containing the node.
+        :param backward_state: Backward state to add the reverse node to.
+        :param node: Node from the forward pass to reverse.
+        :param given_gradients: Output names on the forward node for gradient input connections.
+        :param required_gradients: Input names on the forward node that need gradients generated.
+        :return: Tuple of (reversed node, BackwardResult with gradient connector names).
+        :raises AutoDiffException: If no backward implementation is found for the node type.
         """
 
         # (1)

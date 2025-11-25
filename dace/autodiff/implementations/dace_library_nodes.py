@@ -44,13 +44,10 @@ class ReverseReduce(BackwardImplementation):
     def backward_can_be_applied(node: Node, state: SDFGState, sdfg: SDFG) -> bool:
         """Check if backward pass can be applied to this reduction node.
 
-        Args:
-            node: The reduction node to check
-            state: The SDFG state containing the node (unused but required by interface)
-            sdfg: The SDFG containing the state (unused but required by interface)
-
-        Returns:
-            True if backward pass can be applied, False otherwise
+        :param node: The reduction node to check.
+        :param state: The SDFG state containing the node (unused but required by interface).
+        :param sdfg: The SDFG containing the state (unused but required by interface).
+        :return: True if backward pass can be applied, False otherwise.
         """
         reduction_type = detect_reduction_type(node.wcr)
         if reduction_type not in (dtypes.ReductionType.Sum, dtypes.ReductionType.Max, dtypes.ReductionType.Min):

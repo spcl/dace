@@ -35,42 +35,36 @@ from dace.util import in_desc_with_name, out_desc_with_name
 
 @python_pure_op_implementation
 def Log(input, output):
-    """
-    ONNX Log operation implementation.
+    """ONNX Log operation implementation.
 
     Computes the natural logarithm of the input tensor element-wise.
 
-    Args:
-        input: Input tensor of any numeric type.
-        output: Output tensor with the same shape and type as input.
+    :param input: Input tensor of any numeric type.
+    :param output: Output tensor with the same shape and type as input.
     """
     output[:] = np.log(input)
 
 
 @python_pure_op_implementation
 def Exp(input, output):
-    """
-    ONNX Exp operation implementation.
+    """ONNX Exp operation implementation.
 
     Computes the exponential of the input tensor element-wise.
 
-    Args:
-        input: Input tensor of any numeric type.
-        output: Output tensor with the same shape and type as input.
+    :param input: Input tensor of any numeric type.
+    :param output: Output tensor with the same shape and type as input.
     """
     output[:] = np.exp(input)
 
 
 @python_pure_op_implementation
 def Sqrt(X, Y):
-    """
-    ONNX Sqrt operation implementation.
+    """ONNX Sqrt operation implementation.
 
     Computes the square root of the input tensor element-wise.
 
-    Args:
-        X: Input tensor of any numeric type.
-        Y: Output tensor with the same shape and type as X.
+    :param X: Input tensor of any numeric type.
+    :param Y: Output tensor with the same shape and type as X.
     """
     Y[:] = dace.elementwise(lambda x: sqrt(x), X)
 

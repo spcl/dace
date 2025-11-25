@@ -25,17 +25,12 @@ from dace.util import is_cuda
 def init_remaining_parameters(module, fwd_arglist, input_names, output_names):
     """Initialize remaining parameters that are not inputs or outputs.
 
-    Args:
-        module: The DaCe module containing the weights.
-        fwd_arglist: Forward pass argument list.
-        input_names: Names of input tensors.
-        output_names: Names of output tensors.
-
-    Returns:
-        dict: Dictionary of constant parameters.
-
-    Raises:
-        ValueError: If a parameter is neither an input/output nor a constant.
+    :param module: The DaCe module containing the weights.
+    :param fwd_arglist: Forward pass argument list.
+    :param input_names: Names of input tensors.
+    :param output_names: Names of output tensors.
+    :return: Dictionary of constant parameters.
+    :raises ValueError: If a parameter is neither an input/output nor a constant.
     """
     # initialize all remaining parameters
     remaining = set(fwd_arglist).difference(itertools.chain(input_names, output_names))
@@ -55,12 +50,9 @@ def init_remaining_parameters(module, fwd_arglist, input_names, output_names):
 def callable_for_fwd_module(module: 'dace.frontend.ml.torch.DaceModule', forward_compiled: CompiledSDFG):
     """Create a callable for forward pass execution.
 
-    Args:
-        module: The DaCe module containing the model.
-        forward_compiled: Compiled SDFG for forward pass.
-
-    Returns:
-        callable: Function that executes the forward pass.
+    :param module: The DaCe module containing the model.
+    :param forward_compiled: Compiled SDFG for forward pass.
+    :return: Function that executes the forward pass.
     """
     assert forward_compiled._initialized
 
