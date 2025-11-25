@@ -159,7 +159,7 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> bool:
         self._applied = 0
-        self._setzero_true_for_all_transient_scalars(sdfg)
+        #self._setzero_true_for_all_transient_scalars(sdfg)
         has_applied = self._apply(sdfg)
         # self._apply_extended_state_fusion(sdfg)
         sdfg.validate()
