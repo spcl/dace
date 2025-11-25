@@ -54,7 +54,7 @@ def module(moduleclass,
         :param simplify: whether to apply simplification transforms after conversion (this generally improves performance,
                              but can be slow).
         :param auto_optimize: whether to apply automatic optimizations.
-        :param sdfg_name: the name to give to the sdfg (defaults to ``dace_model``).
+        :param sdfg_name: the name to give to the sdfg (defaults to moduleclass name).
         :param compile_torch_extension: if True, a torch C++ extension will be compiled and used for this module.
                                         Otherwise, a python ctypes implementation will be used.
         :param debug_transients: if True, the module will have all transients as outputs.

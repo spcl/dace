@@ -30,7 +30,7 @@ def get_data_file(url, directory_name=None) -> str:
 
         :param url: the url to download from.
         :param directory_name: an optional relative directory path where the file will be downloaded to.
-        :returns: the path of the downloaded file.
+        :return: the path of the downloaded file.
     """
 
     data_directory = (pathlib.Path(dace.__file__).parent.parent / 'tests' / 'data')

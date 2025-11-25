@@ -26,6 +26,8 @@ def add_backward_pass(sdfg: SDFG,
         * AccessNodes
         * Reductions (Sum, Min, Max)
         * ONNXOps
+        * Multiple states
+        * LoopRegions
         * NestedSDFGs (subject to the same constraints)
 
         When differentiating an :class:`~dace.libraries.onnx.nodes.onnx_op.ONNXOp`, the ONNXBackward registry will be checked
@@ -33,6 +35,9 @@ def add_backward_pass(sdfg: SDFG,
         matching pure implementations. If one is found, symbolic differentiation of the pure implementation will be
         attempted. If this fails, or no pure forward implementation is found, the method will fail.
 
+        .. note::
+            This function modifies the input SDFG in-place. Even if ``separate_sdfgs`` is ``True``, modifications
+            such as storing intermediate results and inlining ControlFlowRegions can be applied to the original SDFG.
 
         :param sdfg: the SDFG to add the backward pass to.
         :param outputs: the forward pass outputs of the function to differentiate.

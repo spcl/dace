@@ -34,8 +34,6 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y libyaml-dev cmake
         sudo apt-get install -y libblas-dev libopenblas-dev liblapacke-dev
-        sudo apt-get install -y libpapi-dev papi-tools  # Instrumentation dependencies
-        sudo apt-get install -y verilator # RTL simulation dependencies
         python -m pip install --upgrade pip
         pip install flake8 pytest-xdist coverage
         pip install -e ".[ml-testing,ml]"
@@ -59,7 +57,7 @@ jobs:
         else
             export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         fi
-        pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -v -m "torch or onnx or autodiff and not gpu"
+        pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -v -m "(torch or onnx or autodiff) and not gpu"
         ./codecov
 
     - uses: codecov/codecov-action@v4

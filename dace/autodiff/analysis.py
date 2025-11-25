@@ -19,7 +19,7 @@ def dependency_analysis(sdfg: SDFG) -> Dict[str, Set[str]]:
     Analyze read dependencies of arrays in the SDFG.
 
     :param sdfg: SDFG to analyze
-    :returns: A dictionary mapping array names to a list of read dependencies.
+    :return: A dictionary mapping array names to a list of read dependencies.
     """
 
     # FIXME can be made more efficient
@@ -68,7 +68,7 @@ def is_previously_written(sdfg: SDFG,
     :param state: the state containing the node
     :param node: the node to check
     :param array_name: the array name to check
-    :returns: True if the array was written before the node, False otherwise.
+    :return: True if the array was written before the node, False otherwise.
     """
 
     if access_sets is None:
