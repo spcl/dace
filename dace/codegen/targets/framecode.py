@@ -911,16 +911,6 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 interstate_symbols.update(symbols)
                 global_symbols.update(symbols)
 
-            for e in cfr.dfs_edges(cfr.start_block):
-                symbols = e.data.new_symbols(sdfg, global_symbols)
-                # Inferred symbols only take precedence if global symbol not defined or None
-                symbols = {
-                    k: v if (k not in global_symbols or global_symbols[k] is None) else global_symbols[k]
-                    for k, v in symbols.items()
-                }
-                interstate_symbols.update(symbols)
-                global_symbols.update(symbols)
-
         for isvarName, isvarType in interstate_symbols.items():
             if isvarType is None:
                 raise TypeError(f'Type inference failed for symbol {isvarName}')

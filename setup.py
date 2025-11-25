@@ -80,9 +80,19 @@ setup(name='dace',
       extras_require={
           'ml': ['onnx', 'torch', 'onnxsim', 'onnxscript', 'onnxruntime', 'protobuf', 'ninja'],
           'testing': [
-              'coverage', 'pytest-cov', 'scipy', 'absl-py', 'opt_einsum', 'pymlir', 'click', 'ipykernel', 'nbconvert',
-              'pytest-timeout', 'transformers == 4.50', 'jax <= 0.6.2', 'efficientnet_pytorch'
+              'coverage',
+              'pytest-cov',
+              'scipy',
+              'absl-py',
+              'opt_einsum',
+              'pymlir',
+              'click',
+              'ipykernel',
+              'nbconvert',
+              'pytest-timeout',
           ],
+          'ml-testing':
+          ['coverage', 'pytest-cov', 'pytest-timeout', 'transformers == 4.50', 'jax <= 0.6.2', 'efficientnet_pytorch'],
           'docs': ['jinja2<3.2.0', 'sphinx-autodoc-typehints', 'sphinx-rtd-theme>=0.5.1'],
           'linting': ['pre-commit==4.1.0', 'yapf==0.43.0'],
       },
