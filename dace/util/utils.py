@@ -1,16 +1,14 @@
-import collections
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+
 import functools
 import logging
 from typing import Optional, Set, Callable
-import copy
-
-from functools import wraps
 
 import dace
 from dace import nodes as nd, data as dt
 from dace.libraries import blas
 from dace.sdfg.state import MultiConnectorEdge
-from dace.transformation import interstate, dataflow
+from dace.transformation import dataflow
 from dace import SDFG, SDFGState, dtypes
 import dace.data as dt
 from dace import dtypes
@@ -18,16 +16,6 @@ from dace.transformation.auto.auto_optimize import set_fast_implementations
 from dace.transformation.dataflow import CopyToMap
 
 log = logging.getLogger(__name__)
-
-
-def is_desc_contiguous(desc: dt.Data) -> bool:
-    if type(desc) is dt.Scalar:
-        return True
-    elif type(desc) is dt.Array:
-        contiguous_strides = [dt._prod(desc.shape[i + 1:]) for i in range(len(desc.shape))]
-        return desc.strides == contiguous_strides
-    else:
-        raise ValueError("Unsupported data descriptor type {}".format(type(desc)))
 
 
 def in_desc_with_name(node: nd.Node, state: SDFGState, sdfg: SDFG, name: str) -> dt.Data:
@@ -95,48 +83,6 @@ def find_str_not_in_set(existing: Set[str], target_str: Optional[str]) -> str:
     while (base_name + "_" + str(i)) in existing:
         i += 1
     return base_name + "_" + str(i)
-
-
-def vectorize_array_and_memlet(sdfg, array_name, type: dtypes.typeclass):
-    '''
-       Adjust the shape of a data container according to the vec width (only the last dimension).
-       This will change its shape and strides
-       together with the all the ingoin/outgoing memlets
-    '''
-    # find the array
-    data = sdfg.arrays[array_name]
-    if type == data.dtype:
-        return
-    #change the type
-    data.dtype = type
-
-    #adjust the shape
-    vec_width = type.veclen
-    if data.shape[-1] % vec_width != 0:
-        raise ValueError("Shape of {} is not divisible by {}".format(data, vec_width))
-    data.shape = data.shape[:-1] + (data.shape[-1] // vec_width, )
-
-    # #adjust all the strides
-    for stride in data.strides[:-1]:
-        if stride % vec_width != 0:
-            raise ValueError("Stride of {} is not divisible by {}".format(data.name, vec_width))
-
-    data.strides = tuple(ti // vec_width for ti in data.strides[:-1]) + (data.strides[-1], )
-
-    # Search for all the memlets
-    for state in sdfg.nodes():
-        for edge in state.edges():
-            if edge.data.data == array_name:
-                # get the range
-                start, stop, skip = edge.data.subset.ranges[-1]
-
-                # Let's be conservative for the moment
-                if start != 0 or skip != 1 or (stop + 1) % vec_width != 0:
-                    raise ValueError("Memlet {} not able to convert its range".format(edge.data))
-
-                #update the range
-                new_stop = (stop + 1) // vec_width - 1
-                edge.data.subset.ranges[-1] = (start, new_stop, skip)
 
 
 def expand_onnx_nodes(sdfg: dace.SDFG, predicate: Optional[Callable[[nd.Node], bool]] = None):
@@ -214,52 +160,9 @@ def auto_optimize_onnx(sdfg: dace.SDFG, cuda, simplify=False, fold_constants=Tru
     if simplify:
         log.debug("Applying simplification transforms")
         # there is a nondeterministic bug in redundant array that appears if
-        # we don't apply inline first
-        sdfg.apply_transformations_repeated(interstate.InlineSDFG)
-        remove_unnecessary_views(sdfg)
-        sdfg.simplify(skip=["ArrayElimination"])
+        sdfg.simplify()
         if cuda:
             sdfg.apply_transformations_once_everywhere(CopyToMap)
-
-
-def remove_unnecessary_views(sdfg: dace.SDFG):
-    """
-    InlineSDFG generates some unnecessary views that make the SDFG more complex.
-    Detect the pattern AN -> View -> reduction, check that the same data is being used and remove the view
-    """
-    for state in sdfg.nodes():
-        for node in state.nodes():
-            # If this is a view
-            if isinstance(node, nd.AccessNode) and isinstance(sdfg.arrays[node.data], dt.ArrayView):
-                # Check that the same data is passed to the view as the original AN
-                if len(state.in_edges(node)) != 1 or len(state.out_edges(node)) != 1:
-                    continue
-                incoming_edge = state.in_edges(node)[0]
-                outgoing_edge = state.out_edges(node)[0]
-                view_desc = sdfg.arrays[node.data]
-                if not isinstance(incoming_edge.src, nd.AccessNode) or isinstance(sdfg.arrays[incoming_edge.src.data],
-                                                                                  dt.ArrayView):
-                    continue
-                original_node = incoming_edge.src
-                original_desc = sdfg.arrays[original_node.data]
-
-                # Additional restrictive condition: this should only cause a problem for library nodes
-                if not isinstance(outgoing_edge.dst, nd.LibraryNode):
-                    continue
-
-                # They need to have the same shape
-                if original_desc.shape != view_desc.shape:
-                    continue
-
-                # The memlet subsets need to be the same for the outgoing edge and incoming edge
-                if not (incoming_edge.data.subset == outgoing_edge.data.subset
-                        and incoming_edge.data.other_subset == outgoing_edge.data.other_subset):
-                    continue
-
-                # Remove the view node
-                state.add_edge(incoming_edge.src, None, outgoing_edge.dst, outgoing_edge.dst_conn,
-                               copy.deepcopy(incoming_edge.data))
-                state.remove_node(node)
 
 
 def iterables_equal(a, b) -> bool:
@@ -294,57 +197,6 @@ def platform_library_name(libname: str) -> str:
     prefix = dace.Config.get('compiler', 'library_prefix')
     suffix = dace.Config.get('compiler', 'library_extension')
     return f"{prefix}{libname}.{suffix}"
-
-
-def remove_output_connector(sdfg: dace.SDFG, state: dace.SDFGState, node: nd.Node, conn_name: str):
-    """ Remove an output connector (only possible if the connector doesn't write to a non-transient).
-
-        :param sdfg: the sdfg containing the node.
-        :param state: the state containing the node.
-        :param node: the node
-        :param conn_name: the name of the connector to remove
-    """
-    queue = collections.deque(e.dst for e in state.out_edges_by_connector(node, conn_name))
-    while len(queue) > 0:
-        current_node = queue.popleft()
-
-        edges = state.out_edges(current_node)
-        state.remove_node(current_node)
-        for e in edges:
-            if not sdfg.arrays[e.data.data].transient:
-                raise ValueError("Tried to remove a connector that wrote to a non-transient")
-
-            queue.append(e.dst)
-
-
-def get_library_node_by_name(sdfg, name):
-    '''
-    Searches for a library node with @param name
-    in the SDFG @param sdfg and returns the library
-    node and the associated state
-    '''
-
-    for node, state in sdfg.all_nodes_recursive():
-        if isinstance(node, dace.sdfg.nodes.LibraryNode):
-            if node.label == name:
-                return node, state
-
-    raise Exception(f"LibraryNode {name} not found")
-
-
-def get_access_node_by_name(sdfg, name):
-    '''
-    Searches for an access node with @param name
-    in the SDFG @param sdfg and returns the library
-    node and the associated state
-    '''
-
-    for node, state in sdfg.all_nodes_recursive():
-        if isinstance(node, dace.sdfg.nodes.AccessNode):
-            if node.label == name:
-                return node, state
-
-    raise Exception("DataNode {} not found".format(name))
 
 
 def all_equal(a, b) -> bool:

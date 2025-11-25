@@ -157,7 +157,7 @@ def _prune_descendants_recomputation_nsdfg(forward_state: SDFGState, target_an: 
         # TODO: if there is an overwrite to the same array in the decendnat computation
         # We need to make a special case for the last iteration of the loop where the
         # else branch of this if is executed and a special version of the loop is added
-        pass
+        raise AutoDiffException("Recomputation with overwrites within loops is not supported yet.")
     else:
         # If the target state is not within a loop
         # We remove all the descendant computation from the graph
