@@ -77,3 +77,11 @@ def compile_and_run_sdfg(
         csdfg = sdfg_clone.compile()
         csdfg(*args, **kwargs)
     return csdfg
+
+
+def compare_sdfg_res(
+    ref: dict[str, Any],
+    res: dict[str, Any],
+) -> bool:
+    """Compares if `res` and  `ref` are the same."""
+    return all(np.allclose(ref[name], res[name]) for name in ref.keys())

@@ -31,12 +31,12 @@ jobs:
         python-version: ${{ matrix.python-version }}
     - name: Install dependencies
       run: |
+        # Make dependency setup faster
+        echo 'set man-db/auto-update false' | sudo debconf-communicate >/dev/null
+        sudo dpkg-reconfigure man-db
+        # Install dependencies
         sudo apt-get update
-        sudo apt-get install -y libyaml-dev cmake
-        sudo apt-get install -y libblas-dev libopenblas-dev liblapacke-dev
-        sudo apt-get install -y libpapi-dev papi-tools  # Instrumentation dependencies
-        sudo apt-get install -y verilator # RTL simulation dependencies
-        python -m pip install --upgrade pip
+        sudo apt-get install -y libyaml-dev cmake libblas-dev libopenblas-dev liblapacke-dev libpapi-dev papi-tools
         pip install flake8 pytest-xdist coverage
         pip install -e ".[testing]"
         curl -Os https://uploader.codecov.io/latest/linux/codecov
