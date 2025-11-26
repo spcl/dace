@@ -259,8 +259,6 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
                     self._apply_and_validate(match, sdfg, start, pipeline_results, applied_transformations)
                     applied = True
                     break
-                if apply_once:
-                    break
 
         if self.validate:
             try:
