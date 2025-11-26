@@ -8,7 +8,6 @@ find_program(SHCC_COMPILER
         ${GVSOC_PATH}/third_party/toolchain/install/bin
         ${GVSOC_DIR}/third_party/toolchain/install/bin
         $ENV{PATH}
-    NO_DEFAULT_PATH
     DOC "SHCC Compiler"
 )
 

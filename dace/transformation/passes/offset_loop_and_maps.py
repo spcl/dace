@@ -148,12 +148,13 @@ class OffsetLoopsAndMaps(ppl.Pass):
                     code_str = self._token_replace_dict(code_str, repldict)
                 node.code = CodeBlock(code_str, code.language)
 
-    def _repl_maps_on_node_list(self, state: dace.SDFGState, nodes: List[dace.nodes.Node], multipliers: Dict[str, dace.symbolic.SymExpr]):
+    def _repl_maps_on_node_list(self, state: dace.SDFGState, nodes: List[dace.nodes.Node],
+                                multipliers: Dict[str, dace.symbolic.SymExpr]):
         multipliers = {str(k): str(k) + " * " + str(v) for k, v in multipliers.items()}
         for node in nodes:
             if isinstance(node, dace.nodes.MapEntry):
                 new_range_list = []
-                for (b, e, s)in node.map.range:
+                for (b, e, s) in node.map.range:
                     new_b = b.subs(multipliers)
                     new_e = e.subs(multipliers)
                     new_s = s.subs(multipliers)

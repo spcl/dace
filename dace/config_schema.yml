@@ -895,7 +895,7 @@ required:
                         title: HBM_NUM_CHANNELS
                         description: >
                             HBM_NUM_CHANNELS
-                    
+
                     TEST_MODE:
                         type: str,
                         default: 'perf_only'

@@ -9,6 +9,7 @@ from dace.transformation import pass_pipeline as ppl, transformation
 import ast
 from dace.sdfg.nodes import CodeBlock
 
+
 @transformation.explicit_cf_compatible
 class DetectAndRenameSoftHierTasklets(ppl.Pass):
     CATEGORY: str = 'Optimization Preparation'

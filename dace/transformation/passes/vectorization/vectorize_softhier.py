@@ -28,8 +28,8 @@ inline void _softhier_vi_vadd_(
     uint32_t vb_addr,
     uint32_t vc_addr)
 {{
-    flex_intra_cluster_sync();
-    if (flex_is_first_core()) {{
+    //flex_intra_cluster_sync();
+    //if (flex_is_first_core()) {{
         uint32_t vlen = {vector_width};
         uint32_t avl;
         while(vlen > 0){{
@@ -43,8 +43,8 @@ inline void _softhier_vi_vadd_(
             vb_addr += 4*avl;
             vc_addr += 4*avl;
         }}
-    }}
-    flex_intra_cluster_sync();
+    //}}
+    //flex_intra_cluster_sync();
 }}
 
 /*vc = va * vb*/
@@ -53,8 +53,8 @@ inline void _softhier_vi_vmul_(
     uint32_t vb_addr,
     uint32_t vc_addr)
 {{
-    flex_intra_cluster_sync();
-    if (flex_is_first_core()) {{
+    //flex_intra_cluster_sync();
+    //if (flex_is_first_core()) {{
         uint32_t vlen = {vector_width};
         uint32_t avl;
         while(vlen > 0){{
@@ -68,8 +68,8 @@ inline void _softhier_vi_vmul_(
             vb_addr += 2*avl;
             vc_addr += 2*avl;
         }}
-    }}
-    flex_intra_cluster_sync();
+    //}}
+    //flex_intra_cluster_sync();
 }}
 
 /*vc = va - vb*/
@@ -78,8 +78,8 @@ inline void _softhier_vi_vsub_(
     uint32_t vb_addr,
     uint32_t vc_addr)
 {{
-    flex_intra_cluster_sync();
-    if (flex_is_first_core()) {{    
+    //flex_intra_cluster_sync();
+    //if (flex_is_first_core()) {{
         uint32_t vlen = {vector_width};
         uint32_t avl;
         while(vlen > 0){{
@@ -93,8 +93,8 @@ inline void _softhier_vi_vsub_(
             vb_addr += 2*avl;
             vc_addr += 2*avl;
         }}
-    }}
-    flex_intra_cluster_sync();
+    //}}
+    //flex_intra_cluster_sync();
 }}
 
 
@@ -104,8 +104,8 @@ inline void _softhier_vi_vdiv_(
     uint32_t vb_addr,
     uint32_t vc_addr)
 {{
-    flex_intra_cluster_sync();
-    if (flex_is_first_core()) {{    
+    //flex_intra_cluster_sync();
+    //if (flex_is_first_core()) {{
         uint32_t vlen = {vector_width};
         uint32_t avl;
         while(vlen > 0){{
@@ -119,11 +119,10 @@ inline void _softhier_vi_vdiv_(
             vb_addr += 2*avl;
             vc_addr += 2*avl;
         }}
-    }}
-    flex_intra_cluster_sync();
+    //}}
+    //flex_intra_cluster_sync();
 }}
 """
-
 
     def __init__(self,
                  vector_width: str,
@@ -136,22 +135,21 @@ inline void _softhier_vi_vdiv_(
                  fail_on_unvectorizable: bool = False,
                  eliminate_trivial_vector_map: bool = True,
                  no_copy_out: bool = True):
-        vectorizer = Vectorize(
-            templates={
-                "+": "_softhier_vi_vadd_({rhs1}, {rhs2}, {lhs});",
-            },
-            vector_width=vector_width,
-            vector_input_storage=dace.dtypes.StorageType.Register,
-            vector_output_storage=dace.dtypes.StorageType.Register,
-            global_code=VectorizeSoftHier._softhier_global_code.format(vector_width=vector_width),
-            global_code_location="frame",
-            vector_op_numeric_type=dace.float16,
-            try_to_demote_symbols_in_nsdfgs=try_to_demote_symbols_in_nsdfgs,
-            apply_on_maps=apply_on_maps,
-            insert_copies=insert_copies,
-            fail_on_unvectorizable=fail_on_unvectorizable,
-            eliminate_trivial_vector_map=eliminate_trivial_vector_map,
-            no_copy_out=no_copy_out)
+        vectorizer = Vectorize(templates={
+            "+": "_softhier_vi_vadd_({rhs1}, {rhs2}, {lhs});",
+        },
+                               vector_width=vector_width,
+                               vector_input_storage=dace.dtypes.StorageType.SoftHier_TCDM,
+                               vector_output_storage=dace.dtypes.StorageType.SoftHier_TCDM,
+                               global_code=VectorizeSoftHier._softhier_global_code.format(vector_width=vector_width),
+                               global_code_location="soft_hier",
+                               vector_op_numeric_type=dace.float16,
+                               try_to_demote_symbols_in_nsdfgs=try_to_demote_symbols_in_nsdfgs,
+                               apply_on_maps=apply_on_maps,
+                               insert_copies=insert_copies,
+                               fail_on_unvectorizable=fail_on_unvectorizable,
+                               eliminate_trivial_vector_map=eliminate_trivial_vector_map,
+                               no_copy_out=no_copy_out)
         if not only_apply_vectorization_pass:
             passes = [
                 EliminateBranches(),

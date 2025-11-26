@@ -45,6 +45,15 @@ set(DACE_ENABLE_INTELFPGA OFF)
 set(DACE_ENABLE_RTL OFF)
 set(DACE_ENABLE_SOFTHIER OFF)
 
+if(DEFINED ENV{C_PATH})
+    include_directories($ENV{C_PATH})
+endif()
+
+if(DEFINED ENV{C_PLUS_PATH})
+    include_directories($ENV{C_PLUS_PATH})
+endif()
+
+
 # Split list by target
 foreach(DACE_FILE ${DACE_FILES})
   # Extract the target from the folder name
@@ -643,23 +652,40 @@ message(STATUS "Linking with ${DACE_PROGRAM_NAME}")
 
 # SoftHier executable
 if(DACE_ENABLE_SOFTHIER)
-  if (NOT SOFTHIER_INSTALL_PATH)
-    set(SOFTHIER_INSTALL_PATH /usr/scratch/badile111/dace4softhier/gvsoc/soft_hier/flex_cluster_sdk/runtime CACHE PATH "Path to SoftHier installation")
-  endif()
-  # Set the linker script
-  set(SHCC_LINKER_SCRIPT ${SOFTHIER_INSTALL_PATH}/flex_memory.ld)
-
-  if (NOT SOFTHIER_INCLUDE_DIRS)
-    set(SOFTHIER_INCLUDE_DIRS ${SOFTHIER_INSTALL_PATH}/include)
+  # Prefer environment variable GVSOC_DIR if set
+  if(DEFINED ENV{GVSOC_DIR})
+    set(GVSOC_ENV_DIR $ENV{GVSOC_DIR})
+  else()
+    message(ERROR "PROVIDE GVSOC_DIR")
   endif()
 
-  if (NOT GVSOC_DIR)
-    set(GVSOC_DIR "/usr/scratch/badile111/dace4softhier/gvsoc")
-  endif()
+  # Set install path using env var or default
+  set(SOFTHIER_INSTALL_PATH
+      "${GVSOC_ENV_DIR}/soft_hier/flex_cluster_sdk/runtime"
+      CACHE PATH "Path to SoftHier installation"
+  )
 
-  if (NOT GVSOC_INSTALL_PATH)
-    set(GVSOC_INSTALL_PATH "/usr/scratch/badile111/dace4softhier/gvsoc")
-  endif()
+  # Linker script
+  set(SHCC_LINKER_SCRIPT
+      "${SOFTHIER_INSTALL_PATH}/flex_memory.ld"
+  )
+
+  # Include dirs
+  set(SOFTHIER_INCLUDE_DIRS
+      "${SOFTHIER_INSTALL_PATH}/include"
+  )
+
+  # GVSOC_DIR (cached value)
+  set(GVSOC_DIR
+      "${GVSOC_ENV_DIR}"
+      CACHE PATH "Path to GVSOC root directory"
+  )
+
+  # GVSOC_INSTALL_PATH
+  set(GVSOC_INSTALL_PATH
+      "${GVSOC_ENV_DIR}"
+      CACHE PATH "Path to GVSOC installation"
+  )
 
   configure_file(
     ${DACE_SOFTHIER_SHCC_CMAKE_PATH}/dace.sh.in

@@ -58,6 +58,7 @@ class Vectorize(ppl.Pass):
         self._tasklet_vectorizable_map = dict()
         self._apply_on_maps = apply_on_maps
         self.eliminate_trivial_vector_map = eliminate_trivial_vector_map
+        self.no_copy_out = no_copy_out
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
@@ -157,7 +158,8 @@ class Vectorize(ppl.Pass):
 
             if self.insert_copies:
                 inserted_array_names = add_copies_before_and_after_nsdfg(state, nsdfg_node, self.vector_width,
-                                                                         self.vector_input_storage, unstructured_data)
+                                                                         self.vector_input_storage, unstructured_data,
+                                                                         self.no_copy_out)
 
     def parent_connection_is_scalar(self, state: dace.SDFGState, nsdfg: dace.nodes.NestedSDFG,
                                     scalar_name: str) -> bool:
@@ -387,7 +389,8 @@ class Vectorize(ppl.Pass):
         # `sym = A[_for_it] + 1`
         # Would become:
         # `sym_laneid_0 = A[_for_it + 0] + 1`, `sym = sym_laneid_0`, `sym_laneid_1 = A[_for_it + 1] + 1`, ...
-        expand_interstate_assignments_to_lanes(inner_sdfg, nsdfg, state, self.vector_width, invariant_scalars, self.vector_op_numeric_type)
+        expand_interstate_assignments_to_lanes(inner_sdfg, nsdfg, state, self.vector_width, invariant_scalars,
+                                               self.vector_op_numeric_type)
 
         # 5
         for inner_state in inner_sdfg.all_states():
@@ -975,41 +978,42 @@ class Vectorize(ppl.Pass):
                 offsets = [b for (b, e, s) in memlet.subset]
                 data_and_offsets.append((dataname, arr_name_to_use, offsets))
 
-        out_datas = set()
-        for oe in state.out_edges(map_exit):
+        if not self.no_copy_out:
+            out_datas = set()
+            for oe in state.out_edges(map_exit):
 
-            oe_arr = state.sdfg.arrays[oe.data.data]
-            assert isinstance(oe_arr, dace.data.Array)
+                oe_arr = state.sdfg.arrays[oe.data.data]
+                assert isinstance(oe_arr, dace.data.Array)
 
-            array = state.parent_graph.sdfg.arrays[oe.data.data]
-            if array.storage != self.vector_output_storage:
-                # If the name exists in the inputs, reuse the name
-                arr_name_to_use = f"{oe.data.data}_vec_k{vectorization_number}"
+                array = state.parent_graph.sdfg.arrays[oe.data.data]
+                if array.storage != self.vector_output_storage:
+                    # If the name exists in the inputs, reuse the name
+                    arr_name_to_use = f"{oe.data.data}_vec_k{vectorization_number}"
 
-                if arr_name_to_use not in state.parent_graph.sdfg.arrays:
-                    state.parent_graph.sdfg.add_array(name=arr_name_to_use,
-                                                      shape=(self.vector_width, ),
-                                                      dtype=array.dtype,
-                                                      storage=self.vector_input_storage,
-                                                      transient=True,
-                                                      allow_conflicts=False,
-                                                      alignment=parse_int_or_default(self.vector_width, 8) *
-                                                      array.dtype.bytes,
-                                                      find_new_name=False,
-                                                      may_alias=False)
-                out_datas.add(arr_name_to_use)
-                an = state.add_access(arr_name_to_use)
-                #an.setzero = True
-                src, src_conn, dst, dst_conn, data = oe
-                state.remove_edge(oe)
-                state.add_edge(map_exit, src_conn, an, None,
-                               dace.memlet.Memlet(f"{arr_name_to_use}[0:{self.vector_width}]"))
-                state.add_edge(an, None, dst, dst_conn, copy.deepcopy(data))
+                    if arr_name_to_use not in state.parent_graph.sdfg.arrays:
+                        state.parent_graph.sdfg.add_array(name=arr_name_to_use,
+                                                          shape=(self.vector_width, ),
+                                                          dtype=array.dtype,
+                                                          storage=self.vector_input_storage,
+                                                          transient=True,
+                                                          allow_conflicts=False,
+                                                          alignment=parse_int_or_default(self.vector_width, 8) *
+                                                          array.dtype.bytes,
+                                                          find_new_name=False,
+                                                          may_alias=False)
+                    out_datas.add(arr_name_to_use)
+                    an = state.add_access(arr_name_to_use)
+                    #an.setzero = True
+                    src, src_conn, dst, dst_conn, data = oe
+                    state.remove_edge(oe)
+                    state.add_edge(map_exit, src_conn, an, None,
+                                   dace.memlet.Memlet(f"{arr_name_to_use}[0:{self.vector_width}]"))
+                    state.add_edge(an, None, dst, dst_conn, copy.deepcopy(data))
 
-                memlet: dace.memlet.Memlet = oe.data
-                dataname: str = memlet.data
-                offsets = [b for (b, e, s) in memlet.subset]
-                data_and_offsets.append((dataname, arr_name_to_use, offsets))
+                    memlet: dace.memlet.Memlet = oe.data
+                    dataname: str = memlet.data
+                    offsets = [b for (b, e, s) in memlet.subset]
+                    data_and_offsets.append((dataname, arr_name_to_use, offsets))
 
         for dataname, new_dataname, offsets in data_and_offsets:
             self._offset_memlets_on_path(state, map_entry, dataname, new_dataname)
@@ -1133,7 +1137,10 @@ class Vectorize(ppl.Pass):
                     "NestedSDFGs without parent map scopes are not supported, they must have been inlined if the pipeline has been called."
                     "If pipeline has been called verify why InlineSDFG failed, otherwise call InlineSDFG")
 
-        current_global_code = sdfg.global_code[self.global_code_location]
+        if self.global_code_location not in sdfg.global_code:
+            sdfg.global_code[self.global_code_location] = CodeBlock("// SoftHier Global Code",
+                                                                    language=dace.dtypes.Language.CPP)
+            current_global_code = sdfg.global_code[self.global_code_location]
         if isinstance(current_global_code, CodeBlock):
             current_global_code = current_global_code.as_string
         if self.global_code not in current_global_code:
