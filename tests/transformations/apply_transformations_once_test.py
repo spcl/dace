@@ -90,7 +90,24 @@ def sdfg_with_two_simple_maps():
 
 def test_apply_transformations_once():
     sdfg = sdfg_with_two_simple_maps()
-    sdfg.apply_transformations_once_everywhere(DummyTransformation, validate=True)
+    count = sdfg.apply_transformations_once_everywhere(DummyTransformation, validate=True)
+    assert count == 2
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, dace_nodes.Tasklet):
             assert "1.0" not in node.code.as_string
+
+
+def test_apply_transformations_once_no_order_by_transformation():
+    sdfg = sdfg_with_two_simple_maps()
+    count = sdfg.apply_transformations_once_everywhere(DummyTransformation,
+                                                       validate=True,
+                                                       order_by_transformation=False)
+    assert count == 2
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, dace_nodes.Tasklet):
+            assert "1.0" not in node.code.as_string
+
+
+if __name__ == "__main__":
+    test_apply_transformations_once()
+    test_apply_transformations_once_no_order_by_transformation()
