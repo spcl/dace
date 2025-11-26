@@ -36,12 +36,13 @@ class Vectorize(ppl.Pass):
     fail_on_unvectorizable = properties.Property(dtype=bool, default=False, allow_none=False)
     eliminate_trivial_vector_map = properties.Property(dtype=bool, default=True, allow_none=False)
     no_copy_out = properties.Property(dtype=bool, default=True, allow_none=False)
+    tasklet_prefix = properties.Property(dtype=str, default="", allow_none=True)
 
     def __init__(self, templates: Dict[str, str], vector_width: str, vector_input_storage: dace.dtypes.StorageType,
                  vector_output_storage: dace.dtypes.StorageType, vector_op_numeric_type: typeclass, global_code: str,
                  global_code_location: str, try_to_demote_symbols_in_nsdfgs: bool, apply_on_maps: Optional[List[str]],
                  insert_copies: bool, fail_on_unvectorizable: bool, eliminate_trivial_vector_map: bool,
-                 no_copy_out: bool):
+                 no_copy_out: bool, tasklet_prefix: str):
         super().__init__()
 
         self.templates = templates
@@ -59,6 +60,7 @@ class Vectorize(ppl.Pass):
         self._apply_on_maps = apply_on_maps
         self.eliminate_trivial_vector_map = eliminate_trivial_vector_map
         self.no_copy_out = no_copy_out
+        self.tasklet_prefix = tasklet_prefix
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
@@ -766,7 +768,7 @@ class Vectorize(ppl.Pass):
                     if not isinstance(state.sdfg.arrays[oe.data.data], dace.data.Array):
                         continue
                 instantiate_tasklet_from_info(state, node, tasklet_info, self.vector_width, self.templates,
-                                              vector_map_param, self.vector_op_numeric_type)
+                                              vector_map_param, self.vector_op_numeric_type, self.tasklet_prefix)
 
     def _offset_all_memlets(self, state: SDFGState, map_entry: dace.nodes.MapEntry, dataname: str, new_dataname: str):
         nodes = list(state.all_nodes_between(map_entry, state.exit_node(map_entry)))

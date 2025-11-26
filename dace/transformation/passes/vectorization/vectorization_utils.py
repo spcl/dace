@@ -1461,7 +1461,8 @@ def use_laneid_symbol_in_expression(expr_str: str, symbol_to_offset: str, offset
 
 
 def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Tasklet, info: dict, vector_width: int,
-                                  templates: Dict[str, str], vector_map_param: str, vector_dtype: typeclass) -> None:
+                                  templates: Dict[str, str], vector_map_param: str, vector_dtype: typeclass,
+                                  tasklet_prefix:str, fail_on_fallback: bool = True) -> None:
     """
     Instantiates a tasklet's code block in vectorized form based on classification info.
 
@@ -1520,7 +1521,7 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         except ValueError:
             return False
 
-    def _generate_code(rhs1_, rhs2_, const1_, const2_, lhs_, op_):
+    def _generate_code(rhs1_, rhs2_, const1_, const2_, lhs_, op_, tasklet: dace.nodes.Tasklet):
         """
         Generate the C++ vectorized code string using templates or fallbacks.
 
@@ -1556,12 +1557,14 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
                     if constant is None:
                         # Single array or repeated array case
                         if is_commutative:
+                            tasklet.label = tasklet_prefix + tasklet.label
                             return templates[op_].format(rhs1=rhs,
                                                          rhs2=rhs,
                                                          lhs=lhs_,
                                                          op=op_,
                                                          vector_width=vw,
                                                          dtype=dtype_)
+                        tasklet.label = tasklet_prefix + tasklet.label
                         return templates[op_].format(rhs1=rhs,
                                                      rhs2=rhs,
                                                      lhs=lhs_,
@@ -1580,6 +1583,7 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
                             cop_ = op_ + "c"
                         # Maybe this constant version is not implemented in templates
                         if cop_ in templates:
+                            tasklet.label = tasklet_prefix + tasklet.label
                             return templates[cop_].format(rhs1=rhs,
                                                           constant=_str_to_float_or_str(constant),
                                                           lhs=lhs_,
@@ -1589,6 +1593,7 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
 
                 else:
                     # Two arrays
+                    tasklet.label = tasklet_prefix + tasklet.label
                     return templates[op_].format(rhs1=rhs1_,
                                                  rhs2=rhs2_,
                                                  lhs=lhs_,
@@ -1596,7 +1601,7 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
                                                  vector_width=vw,
                                                  dtype=dtype_)
 
-        # Fallback: unsupported operator
+
         comparison_suffix = "? 1.0 : 0.0" if op_ in {">", ">=", "<", "<=", "==", "!="} else ""
         code_lines = [f"#pragma _dace_vectorize"]
         code_lines.append(f"for (int _vi = 0; _vi < {vw}; _vi += 1) {{")
@@ -1651,10 +1656,10 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         code_lines.append("}")
         return "\n".join(code_lines)
 
-    def _set_template(rhs1_, rhs2_, const1_, const2_, lhs_, op_, ttype):
+    def _set_template(rhs1_, rhs2_, const1_, const2_, lhs_, op_, ttype, tasklet):
         """Helper to set tasklet code from template/fallback."""
         node.code = dace.properties.CodeBlock(code=_generate_code(rhs1_, rhs2_, _str_to_float_or_str(const1_),
-                                                                  _str_to_float_or_str(const2_), lhs_, op_),
+                                                                  _str_to_float_or_str(const2_), lhs_, op_, tasklet),
                                               language=dace.Language.CPP)
 
     # Cast python boolean to C++ compatible string
@@ -1669,43 +1674,43 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
 
     # Dispatch based on tasklet type
     if ttype == tutil.TaskletType.ARRAY_ARRAY_ASSIGNMENT:
-        _set_template(rhs1, rhs2, c1, c2, lhs, "=", ttype)
+        _set_template(rhs1, rhs2, c1, c2, lhs, "=", ttype, node)
     elif ttype == tutil.TaskletType.ARRAY_SCALAR_ASSIGNMENT:
         node.code = dace.properties.CodeBlock(code="\n".join([f"{lhs}[{i}] = {c2};" for i in range(vw)]) + "\n",
                                               language=dace.Language.CPP)
     elif ttype == tutil.TaskletType.ARRAY_SYMBOL_ASSIGNMENT:
         # It is either a symbol or a constant
         if _is_number(str(c1)):
-            _set_template(None, None, c1, None, lhs, "=", ttype)
+            _set_template(None, None, c1, None, lhs, "=", ttype, node)
         else:
             node.code = dace.properties.CodeBlock(code="\n".join([f"{lhs}[{i}] = {c1}_laneid_{i};"
                                                                   for i in range(vw)]) + "\n",
                                                   language=dace.Language.CPP)
     elif ttype in {tutil.TaskletType.ARRAY_SYMBOL, tutil.TaskletType.ARRAY_ARRAY}:
-        _set_template(rhs1, rhs2, c1, c2, lhs, op, ttype)
+        _set_template(rhs1, rhs2, c1, c2, lhs, op, ttype, node)
     elif ttype in {tutil.TaskletType.UNARY_ARRAY}:
         arr_name = rhs1 if rhs1 is not None else rhs2
         occurences = tutil.count_name_occurrences(node.code.as_string.split(" = ")[1].strip(), arr_name)
         assert occurences == 1
         if op == "-":
             # Implement (-A) as (0 - A)
-            _set_template(None, arr_name, "0.0", None, lhs, op, tutil.TaskletType.ARRAY_SYMBOL)
+            _set_template(None, arr_name, "0.0", None, lhs, op, tutil.TaskletType.ARRAY_SYMBOL, node)
         elif op == "+":
             raise Exception("Unary + operator is not supported")
         else:
-            _set_template(rhs1, rhs2, c1, c2, lhs, op, ttype)
+            _set_template(rhs1, rhs2, c1, c2, lhs, op, ttype, node)
     elif ttype in {
             tutil.TaskletType.SCALAR_ARRAY,
     }:
         # The tasklet-info treads scalars as arrays and only symbols as constants
         # For the vector-code scalar is the same as a constant
-        _set_template(None, rhs2, rhs1, None, lhs, op, ttype)
+        _set_template(None, rhs2, rhs1, None, lhs, op, ttype, node)
     elif ttype in {
             tutil.TaskletType.ARRAY_SCALAR,
     }:
         # The tasklet-info treads scalars as arrays and only symbols as constants
         # For the vector-code scalar is the same as a constant
-        _set_template(rhs1, None, None, rhs2, lhs, op, ttype)
+        _set_template(rhs1, None, None, rhs2, lhs, op, ttype, node)
     elif ttype == tutil.TaskletType.SCALAR_SYMBOL:
         code_lines = []
         symbols = state.symbols_defined_at(node)
