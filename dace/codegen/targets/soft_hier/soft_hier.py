@@ -483,25 +483,23 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
 {softhier_global_code}
 
 {localcode}
-""".format(
-            params=params_comma,
-            sdfg_state_name=mangle_dace_state_struct_name(self._global_sdfg),
-            initcode=initcode.getvalue(),
-            exitcode=exitcode.getvalue(),
-            other_globalcode=self._globalcode.getvalue(),
-            localcode=self._localcode.getvalue(),
-            file_header=fileheader.getvalue(),
-            nstreams=max(1, self._cuda_streams),
-            nevents=max(1, self._cuda_events),
-            backend=self.backend,
-            backend_header=backend_header,
-            pool_header=pool_header,
-            sdfg=self._global_sdfg,
-            hbm_address_space=dace.config.Config.get("backend", "softhier", "HBM_ADDRESS_SPACE"),
-            hbm_address_base=dace.config.Config.get("backend", "softhier", "HBM_ADDRESS_BASE"),
-            hbm_num_channels=dace.config.Config.get("backend", "softhier", "HBM_NUM_CHANNELS"),
-            softhier_global_code=softhier_global_code
-        )
+""".format(params=params_comma,
+           sdfg_state_name=mangle_dace_state_struct_name(self._global_sdfg),
+           initcode=initcode.getvalue(),
+           exitcode=exitcode.getvalue(),
+           other_globalcode=self._globalcode.getvalue(),
+           localcode=self._localcode.getvalue(),
+           file_header=fileheader.getvalue(),
+           nstreams=max(1, self._cuda_streams),
+           nevents=max(1, self._cuda_events),
+           backend=self.backend,
+           backend_header=backend_header,
+           pool_header=pool_header,
+           sdfg=self._global_sdfg,
+           hbm_address_space=dace.config.Config.get("backend", "softhier", "HBM_ADDRESS_SPACE"),
+           hbm_address_base=dace.config.Config.get("backend", "softhier", "HBM_ADDRESS_BASE"),
+           hbm_num_channels=dace.config.Config.get("backend", "softhier", "HBM_NUM_CHANNELS"),
+           softhier_global_code=softhier_global_code)
         #s = ""
         #for k, v in self._global_sdfg.global_code.items():
         #    print(k, v.as_string)
@@ -1051,8 +1049,14 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
             callsite_stream.write(f'// is_sync = {is_sync}')
             self._has_async_dma = (not is_sync) or self._has_async_dma
             if dims == 1:
+                subset: subsets.Range = memlet.subset
                 other_subset: subsets.Range = memlet.other_subset
-                beg, end, step = other_subset.ranges[0]
+                # We can have A -> localA by having only subset (then we copy the subset to complete range of localA)
+                # Otherwise we copy other subset
+                if other_subset is not None:
+                    beg, end, step = other_subset.ranges[0]
+                else:
+                    beg, end, step = subset.ranges[0]
                 print(f"subset = {subset}; index_0: {src_name} -> {dst_name}, {beg}, {end}, {step}")
                 length = (end + 1) - beg
                 data_size = nodedesc.dtype.bytes  # Number of bytes per element
@@ -1439,6 +1443,7 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                           function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         cdtype = src_node.out_connectors[edge.src_conn]
         write_type = 'uint32_t'
+        callsite_stream.write(f'// SoftHier define out memlet', cfg, state_id, src_node)
         if isinstance(sdfg.arrays[edge.data.data], dt.Stream):
             pass
         elif isinstance(cdtype, dtypes.pointer):  # If pointer, also point to output
@@ -1457,9 +1462,14 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
             else:
                 callsite_stream.write(f'{cdtype.as_arg(edge.src_conn)};', cfg, state_id, src_node)
         else:
-            callsite_stream.write(f'{cdtype.ctype} {edge.src_conn};', cfg, state_id, src_node)
-        
-       
+            desc = sdfg.arrays[edge.data.data]
+
+            ptrname = cpp.ptr(edge.data.data, desc, sdfg, self._frame)
+            is_global = desc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent,
+                                          dtypes.AllocationLifetime.External)
+            defined_type, _ = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
+            base_ptr = cpp.cpp_ptr_expr(sdfg, edge.data, defined_type, codegen=self._frame)
+            callsite_stream.write(f'{write_type} {edge.src_conn} = {base_ptr};', cfg, state_id, src_node)
 
     def process_out_memlets(self, *args, **kwargs):
         # Call CPU implementation with this code generator as callback
@@ -1937,7 +1947,8 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                     tiles_of_channel_list.append(str(len([j for j in arr.hbm_placement_scheme if j == i])))
                 tiles_per_channel_initializer_list = "{" + ", ".join(tiles_of_channel_list) + "};"
 
-                self._globalcode.write(f"const unsigned long tiles_per_channel_{arr_name}[] = {tiles_per_channel_initializer_list}\n")
+                self._globalcode.write(
+                    f"const unsigned long tiles_per_channel_{arr_name}[] = {tiles_per_channel_initializer_list}\n")
                 dump_str += "for (int i = 0; i < HBM_NUM_CHANNELS; i++){\n"
                 dump_str += f'//printf("Dumping file: %s \\n", {arr_name});\n'
                 #dump_str += f"static_assert(sizeof({arr.dtype.ctype}) == 2);\n"
@@ -2900,14 +2911,14 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
         self._dispatcher.defined_vars.exit_scope(node)
 
     def _generate_reduction_Tasklet(self,
-                                   sdfg: SDFG,
-                                   cfg: ControlFlowRegion,
-                                   dfg: StateSubgraphView,
-                                   state_id: int,
-                                   node: nodes.Tasklet,
-                                   function_stream: CodeIOStream,
-                                   callsite_stream: CodeIOStream,
-                                   codegen=None):
+                                    sdfg: SDFG,
+                                    cfg: ControlFlowRegion,
+                                    dfg: StateSubgraphView,
+                                    state_id: int,
+                                    node: nodes.Tasklet,
+                                    function_stream: CodeIOStream,
+                                    callsite_stream: CodeIOStream,
+                                    codegen=None):
 
         # Allow other code generators to call this with a callback
         codegen = codegen or self
@@ -3113,14 +3124,14 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
         self._dispatcher.defined_vars.exit_scope(node)
 
     def _generate_SoftHier_Tasklet(self,
-                          sdfg: SDFG,
-                          cfg: ControlFlowRegion,
-                          dfg: StateSubgraphView,
-                          state_id: int,
-                          node: nodes.Tasklet,
-                          function_stream: CodeIOStream,
-                          callsite_stream: CodeIOStream,
-                          codegen=None):
+                                   sdfg: SDFG,
+                                   cfg: ControlFlowRegion,
+                                   dfg: StateSubgraphView,
+                                   state_id: int,
+                                   node: nodes.Tasklet,
+                                   function_stream: CodeIOStream,
+                                   callsite_stream: CodeIOStream,
+                                   codegen=None):
 
         print("Generating Tasklet Using SoftHier Codegen")
         # Allow other code generators to call this with a callback
@@ -3140,7 +3151,6 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
         # GPU->CPU copy)
         if state_dfg.entry_node(node) is None:
             cpp.presynchronize_streams(sdfg, cfg, state_dfg, state_id, node, callsite_stream)
-
 
         self._dispatcher.defined_vars.enter_scope(node)
 
@@ -3199,11 +3209,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                         if src_expr != memlet.data:
                             src_expr = f'{src_expr} * {desc.dtype.bytes}'
                         assign_str = (f"{write_type} {edge.dst_conn} = {src_expr};")
-                        inner_stream.write(
-                            assign_str,
-                            cfg,
-                            state_id
-                        )
+                        inner_stream.write(assign_str, cfg, state_id)
                         self._dispatcher.defined_vars.add(edge.dst_conn, DefinedType.Pointer, ctype)
 
                 # Also define variables in the C++ unparser scope
@@ -3275,7 +3281,6 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                 self._locals.define(edge.src_conn, -1, self._ldepth + 1, ctype)
                 locals_defined = True
 
-
         # Instrumentation: Pre-tasklet
         instr = self._dispatcher.instrumentation[node.instrument]
         if instr is not None:
@@ -3284,24 +3289,25 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
         inner_stream.write("\n    ///////////////////\n", cfg, state_id, node)
 
         self._cpu_codegen.unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, inner_stream, self._locals,
-                                self._ldepth, self._toplevel_schedule)
+                                          self._ldepth, self._toplevel_schedule)
 
         inner_stream.write("    ///////////////////\n\n", cfg, state_id, node)
 
-       
-
         # Process outgoing memlets
-        codegen.process_out_memlets(
-            sdfg,
-            cfg,
-            state_id,
-            node,
-            dfg,
-            self._dispatcher,
-            inner_stream,
-            True,
-            function_stream,
-        )
+        # Generates the output assignment
+        # SoftHier only has poitners should be ok
+        if False:
+            codegen.process_out_memlets(
+                sdfg,
+                cfg,
+                state_id,
+                node,
+                dfg,
+                self._dispatcher,
+                inner_stream,
+                True,
+                function_stream,
+            )
 
         # Instrumentation: Post-tasklet
         if instr is not None:
@@ -3315,7 +3321,6 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 
         self._locals.clear_scope(self._ldepth + 1)
         self._dispatcher.defined_vars.exit_scope(node)
-
 
     def _generate_Tasklet(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                           node: nodes.Tasklet, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
@@ -3336,7 +3341,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
             self._cpu_codegen.calling_codegen = self
             self._generate_RedMule_Tasklet(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
             self._cpu_codegen.calling_codegen = old_codegen
-        elif node.name == "split_K_reduction" :
+        elif node.name == "split_K_reduction":
             old_codegen = self._cpu_codegen.calling_codegen
             self._cpu_codegen.calling_codegen = self
             self._generate_reduction_Tasklet(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
@@ -3359,6 +3364,18 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 
     def make_ptr_vector_cast(self, *args, **kwargs):
         return cpp.make_ptr_vector_cast(*args, **kwargs)
+
+    def make_ptr_assignment(self, src_expr, src_dtype, dst_expr, dst_dtype, codegen=None):
+        """
+        Write source to destination, where the source is a scalar, and the
+        destination is a pointer.
+
+        :return: String of C++ performing the write.
+        """
+        codegen = codegen or self
+        # If there is a type mismatch, cast pointer
+        dst_expr = codegen.make_ptr_vector_cast(dst_expr, dst_dtype, src_dtype, True, DefinedType.Pointer)
+        return f"{dst_expr} = {src_expr};"
 
 
 ########################################################################

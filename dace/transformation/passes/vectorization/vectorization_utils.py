@@ -2856,13 +2856,12 @@ def insert_assignment_tasklet_to_dst(state: dace.SDFGState, edge: Edge[Memlet],
     return (e1, e2, e3)
 
 
-def add_copies_before_and_after_nsdfg(
-    state: SDFGState,
-    nsdfg_node: dace.nodes.NestedSDFG,
-    vector_width: int,
-    vector_storage: dace.dtypes.StorageType,
-    skip: Set[str],
-) -> Set[str]:
+def add_copies_before_and_after_nsdfg(state: SDFGState,
+                                      nsdfg_node: dace.nodes.NestedSDFG,
+                                      vector_width: int,
+                                      vector_storage: dace.dtypes.StorageType,
+                                      skip: Set[str],
+                                      no_copy_out: bool = False) -> Set[str]:
     """
     Add vector copy operations before and after a nested SDFG node.
     If the copy can't be inserted before, then it is done inside as a fallback,
@@ -3061,31 +3060,36 @@ def add_copies_before_and_after_nsdfg(
                 copy_in_state.add_edge(assign_tasklet, "_out", v_access, None,
                                        dace.memlet.Memlet.from_array(vec_arr_name, inner_sdfg.arrays[vec_arr_name]))
 
-        # Insert corresponding copy-out
-        if unmovable_arr_name in write_set:
-            for i, subset in enumerate(subsets):
-                vec_arr_name = f"{unmovable_arr_name}_vec_{i}"
-                name_to_subset_map[vec_arr_name] = subset
-                orig_access2 = copy_out_state.add_access(unmovable_arr_name)
-                #orig_access2.setzero = True
-                v_access2 = copy_out_state.add_access(vec_arr_name)
-                #v_access2.setzero = True
-                vec_arr = copy_out_state.sdfg.arrays[vec_arr_name]
-                assign_tasklet2 = copy_out_state.add_tasklet(
-                    name="_AssignT2",
-                    inputs={"_in"},
-                    outputs={"_out"},
-                    code=f"vector_copy<{dace.dtypes.TYPECLASS_TO_STRING[vec_arr.dtype]}, {vector_width}>(_out, _in);",
-                    language=dace.dtypes.Language.CPP)
-                copy_out_state.add_edge(v_access2, None, assign_tasklet2, "_in",
-                                        dace.memlet.Memlet.from_array(vec_arr_name, inner_sdfg.arrays[vec_arr_name]))
-                copy_out_state.add_edge(assign_tasklet2, "_out", orig_access2, None,
-                                        dace.memlet.Memlet(data=unmovable_arr_name, subset=copy.deepcopy(subset)))
+        if not no_copy_out:
+            # Insert corresponding copy-out
+            if unmovable_arr_name in write_set:
+                for i, subset in enumerate(subsets):
+                    vec_arr_name = f"{unmovable_arr_name}_vec_{i}"
+                    name_to_subset_map[vec_arr_name] = subset
+                    orig_access2 = copy_out_state.add_access(unmovable_arr_name)
+                    #orig_access2.setzero = True
+                    v_access2 = copy_out_state.add_access(vec_arr_name)
+                    #v_access2.setzero = True
+                    vec_arr = copy_out_state.sdfg.arrays[vec_arr_name]
+                    assign_tasklet2 = copy_out_state.add_tasklet(
+                        name="_AssignT2",
+                        inputs={"_in"},
+                        outputs={"_out"},
+                        code=
+                        f"vector_copy<{dace.dtypes.TYPECLASS_TO_STRING[vec_arr.dtype]}, {vector_width}>(_out, _in);",
+                        language=dace.dtypes.Language.CPP)
+                    copy_out_state.add_edge(
+                        v_access2, None, assign_tasklet2, "_in",
+                        dace.memlet.Memlet.from_array(vec_arr_name, inner_sdfg.arrays[vec_arr_name]))
+                    copy_out_state.add_edge(assign_tasklet2, "_out", orig_access2, None,
+                                            dace.memlet.Memlet(data=unmovable_arr_name, subset=copy.deepcopy(subset)))
 
     # Save intermediate SDFG for debugging
     # Process movable arrays at the nested SDFG boundary
     inserted_array_names = process_in_edges(state, nsdfg_node, movable_arrays, vector_width, vector_storage)
-    process_out_edges(state, nsdfg_node, movable_arrays, vector_width, vector_storage)
+
+    if not no_copy_out:
+        process_out_edges(state, nsdfg_node, movable_arrays, vector_width, vector_storage)
 
     for inner_state in inner_sdfg.all_states():
         for (dataname, subset) in movable_arrays:
