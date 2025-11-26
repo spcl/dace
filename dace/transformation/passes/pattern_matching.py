@@ -246,8 +246,8 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
                             break
 
                         # If apply once is set, applied should be forcefully set to True, once we have applied the transformation to all patterns
-                        if apply_once:
-                            break
+                        # if apply_once:
+                        #     break
 
                 if apply_once:
                     break
