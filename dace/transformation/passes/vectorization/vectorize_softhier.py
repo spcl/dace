@@ -58,15 +58,15 @@ inline void _softhier_vi_vmul_(
         uint32_t vlen = {vector_width};
         uint32_t avl;
         while(vlen > 0){{
-            asm volatile("vsetvli %0, %1, e" XSTR(16) ", m8, ta, ma" : "=r"(avl) : "r"(vlen));
-            asm volatile("vle" XSTR(16) ".v v8,  (%0)" ::"r"(va_addr));
-            asm volatile("vle" XSTR(16) ".v v0,  (%0)" ::"r"(vb_addr));
+            asm volatile("vsetvli %0, %1, e" XSTR(32) ", m8, ta, ma" : "=r"(avl) : "r"(vlen));
+            asm volatile("vle" XSTR(32) ".v v8,  (%0)" ::"r"(va_addr));
+            asm volatile("vle" XSTR(32) ".v v0,  (%0)" ::"r"(vb_addr));
             asm volatile("vfmul.vv v8, v8, v0");
-            asm volatile("vse" XSTR(16) ".v v8,  (%0)" ::"r"(vc_addr));
+            asm volatile("vse" XSTR(32) ".v v8,  (%0)" ::"r"(vc_addr));
             vlen -= avl;
-            va_addr += 2*avl;
-            vb_addr += 2*avl;
-            vc_addr += 2*avl;
+            va_addr += 4*avl;
+            vb_addr += 4*avl;
+            vc_addr += 4*avl;
         }}
     //}}
     //flex_intra_cluster_sync();
@@ -83,15 +83,15 @@ inline void _softhier_vi_vsub_(
         uint32_t vlen = {vector_width};
         uint32_t avl;
         while(vlen > 0){{
-            asm volatile("vsetvli %0, %1, e" XSTR(16) ", m8, ta, ma" : "=r"(avl) : "r"(vlen));
-            asm volatile("vle" XSTR(16) ".v v8,  (%0)" ::"r"(va_addr));
-            asm volatile("vle" XSTR(16) ".v v0,  (%0)" ::"r"(vb_addr));
+            asm volatile("vsetvli %0, %1, e" XSTR(32) ", m8, ta, ma" : "=r"(avl) : "r"(vlen));
+            asm volatile("vle" XSTR(32) ".v v8,  (%0)" ::"r"(va_addr));
+            asm volatile("vle" XSTR(32) ".v v0,  (%0)" ::"r"(vb_addr));
             asm volatile("vfsub.vv v8, v8, v0");
-            asm volatile("vse" XSTR(16) ".v v8,  (%0)" ::"r"(vc_addr));
+            asm volatile("vse" XSTR(32) ".v v8,  (%0)" ::"r"(vc_addr));
             vlen -= avl;
-            va_addr += 2*avl;
-            vb_addr += 2*avl;
-            vc_addr += 2*avl;
+            va_addr += 4*avl;
+            vb_addr += 4*avl;
+            vc_addr += 4*avl;
         }}
     //}}
     //flex_intra_cluster_sync();
@@ -109,15 +109,15 @@ inline void _softhier_vi_vdiv_(
         uint32_t vlen = {vector_width};
         uint32_t avl;
         while(vlen > 0){{
-            asm volatile("vsetvli %0, %1, e" XSTR(16) ", m8, ta, ma" : "=r"(avl) : "r"(vlen));
-            asm volatile("vle" XSTR(16) ".v v8,  (%0)" ::"r"(va_addr));
-            asm volatile("vle" XSTR(16) ".v v0,  (%0)" ::"r"(vb_addr));
+            asm volatile("vsetvli %0, %1, e" XSTR(32) ", m8, ta, ma" : "=r"(avl) : "r"(vlen));
+            asm volatile("vle" XSTR(32) ".v v8,  (%0)" ::"r"(va_addr));
+            asm volatile("vle" XSTR(32) ".v v0,  (%0)" ::"r"(vb_addr));
             asm volatile("vfdiv.vv v8, v8, v0");
-            asm volatile("vse" XSTR(16) ".v v8,  (%0)" ::"r"(vc_addr));
+            asm volatile("vse" XSTR(32) ".v v8,  (%0)" ::"r"(vc_addr));
             vlen -= avl;
-            va_addr += 2*avl;
-            vb_addr += 2*avl;
-            vc_addr += 2*avl;
+            va_addr += 4*avl;
+            vb_addr += 4*avl;
+            vc_addr += 4*avl;
         }}
     //}}
     //flex_intra_cluster_sync();
@@ -143,13 +143,14 @@ inline void _softhier_vi_vdiv_(
                                vector_output_storage=dace.dtypes.StorageType.SoftHier_TCDM,
                                global_code=VectorizeSoftHier._softhier_global_code.format(vector_width=vector_width),
                                global_code_location="soft_hier",
-                               vector_op_numeric_type=dace.float16,
+                               vector_op_numeric_type=dace.float32,
                                try_to_demote_symbols_in_nsdfgs=try_to_demote_symbols_in_nsdfgs,
                                apply_on_maps=apply_on_maps,
                                insert_copies=insert_copies,
                                fail_on_unvectorizable=fail_on_unvectorizable,
                                eliminate_trivial_vector_map=eliminate_trivial_vector_map,
-                               no_copy_out=no_copy_out)
+                               no_copy_out=no_copy_out,
+                               tasklet_prefix="_softhier_")
         if not only_apply_vectorization_pass:
             passes = [
                 EliminateBranches(),

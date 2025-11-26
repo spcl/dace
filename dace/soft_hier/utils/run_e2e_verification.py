@@ -274,8 +274,8 @@ def compare(hardware_config: HardwareConfig,
 
 def setup_architecture(hw_config: HardwareConfig):
     generate_arg_cfg(
-        cluster_tcdm_size=hex(hw_config.tcdm_size),
-        cluster_zomem_size=hex(hw_config.cluster_zomem_size),
+        cluster_tcdm_size=hex(hw_config.tcdm_size) if isinstance(hw_config.tcdm_size, int) else hw_config.tcdm_size,
+        cluster_zomem_size=hex(hw_config.cluster_zomem_size) if isinstance(hw_config.cluster_zomem_size, int) else hw_config.cluster_zomem_size,
         num_cluster_x=hw_config.hardware_thread_group_dims[0],
         num_cluster_y=hw_config.hardware_thread_group_dims[1],
         spatz_num_vlsu_port=hw_config.spatz_num_vlsu_port,
@@ -283,8 +283,8 @@ def setup_architecture(hw_config: HardwareConfig):
         redmule_ce_height=hw_config.redmule_ce_height,
         redmule_ce_width=hw_config.redmule_ce_width,
         redmule_ce_pipe=hw_config.redmule_ce_pipe,
-        hbm_start_base=hex(hw_config.hbm_addr_base),
-        hbm_node_addr_space=hex(hw_config.hbm_addr_space),
+        hbm_start_base=hex(hw_config.hbm_addr_base) if isinstance(hw_config.hbm_addr_base, int) else hw_config.hbm_addr_base,
+        hbm_node_addr_space=hex(hw_config.hbm_addr_space) if isinstance(hw_config.hbm_addr_space, int) else hw_config.hbm_add_space,
         hbm_placement=hw_config.hbm_placement,
         num_node_per_ctrl=hw_config.num_node_per_ctrl,
         noc_link_width=hw_config.noc_link_width,
@@ -325,33 +325,39 @@ def run_e2e_verification(hw_config: HardwareConfig,
                          sdfg_fn: Callable,
                          tolerance: float = 1e-3) -> Dict[str, Any]:
     # Step 1 Setup
+    print("[Pipeline Info] Setup SoftHier HW and DaCe ENV")
     setup_hw_env_dace(hw_config)
 
     # Step 2 Copy Data
+    print("[Pipeline Info] Duplicate CPU Data")
     numpy_data = data
     sdfg_data = copy.deepcopy(data)
 
     # Step 3 Run Numpy reference
-    if hw_config.test_mode == 'functional':
-        data["C"] = numpy_fn()
+    print("[Pipeline Info] Run CPU SDFG")
+    # if hw_config.test_mode == 'functional':
+    # data["C"] = 
+    numpy_fn()
 
     # Step 4 Run SoftHier simulator
+    print("[Pipeline Info] Run SoftHier SDFG")
     ret_dict = sdfg_fn()
     sdfg = ret_dict["sdfg"]
 
     # Step 5 Compare Data
-    if hw_config.test_mode == 'perf_only':
-        return {
-            'all_match': True,
-            'details': {},
-            'execution_period_ns': ret_dict.get('execution_period_ns', None),
-            'interleave_handlers': interleave_handlers
-        }
-    elif hw_config.test_mode == 'functional':
-        comparison = compare(hw_config, numpy_data, sdfg_data, interleave_handlers, sdfg, tolerance)
-        return {
-            'all_match': comparison['all_match'],
-            'details': {},
-            'execution_period_ns': ret_dict.get('execution_period_ns', None),
-            'interleave_handlers': interleave_handlers
-        }
+    print("[Pipeline Info] Run Comparison")
+    #if hw_config.test_mode == 'perf_only':
+    #    return {
+    #        'all_match': True,
+    #        'details': {},
+    #        'execution_period_ns': ret_dict.get('execution_period_ns', None),
+    #        'interleave_handlers': interleave_handlers
+    #    }
+    #elif hw_config.test_mode == 'functional':
+    comparison = compare(hw_config, numpy_data, sdfg_data, interleave_handlers, sdfg, tolerance)
+    return {
+        'all_match': comparison['all_match'],
+        'details': {},
+        'execution_period_ns': ret_dict.get('execution_period_ns', None),
+        'interleave_handlers': interleave_handlers
+    }

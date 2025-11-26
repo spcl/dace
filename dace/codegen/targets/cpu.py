@@ -1309,10 +1309,15 @@ class CPUCodeGen(TargetCodeGenerator):
                                 decouple_array_interfaces=decouple_array_interfaces)
 
         result = ''
-        expr = (cpp.cpp_array_expr(sdfg, memlet, with_brackets=False, codegen=self._frame)
+        expr = (cpp.cpp_array_expr(sdfg, memlet, with_brackets=False, codegen=self._frame, referenced_array=sdfg.arrays[ptr])
                 if var_type in [DefinedType.Pointer, DefinedType.StreamArray, DefinedType.ArrayInterface] else ptr)
+        #from dace.sdfg.tasklet_utils import token_replace_dict
+        #expr = token_replace_dict(expr, {"X": ptr})
         print(f"expr: {expr}")
         print(f"ptr: {ptr}")
+        print(sdfg.arrays[ptr].strides)
+        sdfg.save("tmp.sdfg")
+        print(sdfg.arrays.keys())
         if expr != ptr:
             expr = '%s[%s]' % (ptr, expr)
         # If there is a type mismatch, cast pointer
