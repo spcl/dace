@@ -192,6 +192,32 @@ def initialize_3mm(b_NI: int,
 
 
 @pytest.mark.mpi
+def test_direct_use_of_MPICOMM_all_reduce():
+    from mpi4py import MPI
+
+    commworld = MPI.COMM_WORLD
+    rank = commworld.Get_rank()
+    size = commworld.Get_size()
+
+    @dace.program
+    def simple_all_reduce(a):
+        MPI.COMM_WORLD.Allreduce(MPI.IN_PLACE, a, op=MPI.MAX)
+
+    A = np.zeros(5)
+    A[3] = commworld.Get_rank()
+    commworld.Barrier()
+
+    sdfg = None
+    if rank == 0:
+        sdfg = simple_all_reduce.to_sdfg(a=A)
+    func = utils.distributed_compile(sdfg, commworld)
+
+    func(a=A)
+    commworld.Barrier()
+
+    assert A[3] == size - 1
+
+@pytest.mark.mpi
 def test_3mm():
 
     from mpi4py import MPI
