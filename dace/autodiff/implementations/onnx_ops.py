@@ -205,11 +205,13 @@ class DefaultDropoutBackward(BackwardImplementation):
 
         nstate = result_node.sdfg.add_state()
 
-        shape = butils.forward_in_desc_with_name(forward_node, context, "data").shape
+        data_desc = butils.forward_in_desc_with_name(forward_node, context, "data")
+        shape = data_desc.shape
+        dtype = data_desc.dtype
         map_ranges = {f"i{i}": f"0:{s}" for i, s in enumerate(shape)}
         index_str = f"{', '.join(map_ranges.keys())}"
         code = f"""
-scale = dace.float32(1.0) / (1 - __ratio)
+scale = dace.{dtype}(1.0) / (1 - __ratio)
 __data_grad = __output_grad * __mask * scale
         """
         nstate.add_mapped_tasklet(forward_node.label + "_backward",

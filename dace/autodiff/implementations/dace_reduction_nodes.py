@@ -58,6 +58,15 @@ class ReverseReduce(BackwardImplementation):
     @staticmethod
     def backward(forward_node: Node, context: BackwardContext, given_gradients: typing.List[typing.Optional[str]],
                  required_gradients: typing.List[typing.Optional[str]]) -> typing.Tuple[Node, BackwardResult]:
+        """Generate the backward pass for a reduction node.
+
+        :param forward_node: The forward reduction node.
+        :param context: The backward pass context.
+        :param given_gradients: List of gradient names provided to this node.
+        :param required_gradients: List of gradient names required by this node.
+        :return: Tuple of the backward node and the backward result.
+        :raises AutoDiffException: If the node has invalid number of edges.
+        """
         reduction_type = detect_reduction_type(forward_node.wcr)
 
         if len(given_gradients) != 1:
@@ -80,309 +89,147 @@ class ReverseReduce(BackwardImplementation):
 
         result = BackwardResult.empty()
 
-        if reduction_type is dtypes.ReductionType.Sum:
-            # in this case, we need to simply scatter the grad across the axes that were reduced
+        return ReverseReduce._backward_reduction(forward_node, context, result, reduction_type, input_name, output_name,
+                                                 in_desc, out_desc, all_axes, non_reduce_axes)
 
-            sdfg = SDFG("_reverse_" + str(reduction_type).replace(".", "_") + "_")
-            # Create a name with a random number to avoid name clashes
-            # but sometimes simplify will inline these SDFGs and create states with the same label
-            state_label = f"block_{id(forward_node)}"
-            state = sdfg.add_state(state_label)
+    @staticmethod
+    def _backward_reduction(forward_node: Node, context: BackwardContext, result: BackwardResult,
+                            reduction_type: dtypes.ReductionType, input_name: str, output_name: str, in_desc, out_desc,
+                            all_axes: typing.List[int],
+                            non_reduce_axes: typing.List[int]) -> typing.Tuple[Node, BackwardResult]:
+        """Backward pass for Sum/Max/Min reductions.
 
-            rev_input_conn_name = "input_gradient"
-            rev_output_conn_name = "output_gradient"
-            result.required_grad_names[output_name] = rev_output_conn_name
-            result.given_grad_names[input_name] = rev_input_conn_name
+        - Sum: Broadcasts gradients uniformly across reduced dimensions
+        - Max/Min: Routes gradients only to positions that achieved the extremal value
 
-            # It is important to add the strides in the case of accesses to a view where the shape is not enough
-            sdfg.add_array(rev_input_conn_name, shape=out_desc.shape, dtype=out_desc.dtype, strides=out_desc.strides)
-            sdfg.add_array(rev_output_conn_name, shape=in_desc.shape, dtype=in_desc.dtype, strides=in_desc.strides)
+        :param forward_node: The forward reduction node.
+        :param context: The backward pass context.
+        :param result: The backward result to populate.
+        :param reduction_type: The type of reduction (Sum, Max, or Min).
+        :param input_name: Name of the input connector.
+        :param output_name: Name of the output connector.
+        :param in_desc: Input data descriptor.
+        :param out_desc: Output data descriptor.
+        :param all_axes: List of all axes indices.
+        :param non_reduce_axes: List of axes not being reduced.
+        :return: Tuple of the nested SDFG node and the backward result.
+        """
+        is_extremal = reduction_type in (dtypes.ReductionType.Max, dtypes.ReductionType.Min)
+        type_name = {
+            dtypes.ReductionType.Sum: "sum",
+            dtypes.ReductionType.Max: "max",
+            dtypes.ReductionType.Min: "min"
+        }[reduction_type]
 
-            # Make sure the output is set to zero
-            reduce_all_axes = forward_node.axes is None or set(range(len(in_desc.shape))) == set(forward_node.axes)
+        sdfg = SDFG("_reverse_" + str(reduction_type).replace(".", "_") + "_")
+        state_label = f"block_{id(forward_node)}"
+        state = sdfg.add_state(state_label)
 
-            _, _, exit_map = state.add_mapped_tasklet(
-                "_distribute_grad_" + str(reduction_type).replace(".", "_") + "_", {
-                    "i" + str(i): "0:{}".format(shape)
-                    for i, shape in enumerate(in_desc.shape)
-                }, {
-                    "__in":
-                    Memlet.simple(rev_input_conn_name, "0" if reduce_all_axes else ",".join("i" + str(i)
-                                                                                            for i in non_reduce_axes))
-                },
-                "__out = __in", {
-                    "__out":
-                    Memlet.simple(
-                        rev_output_conn_name, ",".join("i" + str(i) for i in all_axes), wcr_str="lambda x, y: x + y")
-                },
-                external_edges=True)
+        rev_input_conn_name = "input_gradient"
+        rev_output_conn_name = "output_gradient"
 
-            # Get the output AccessNode and setzero
-            out_edges = state.out_edges(exit_map)
-            if len(out_edges) != 1:
-                raise AutoDiffException(f"Expected exactly one output edge from map exit, got {len(out_edges)}")
-            out_edge = out_edges[0]
-            out_node = out_edge.dst
-            if not isinstance(out_node, dace.nodes.AccessNode):
-                raise AutoDiffException(f"Expected AccessNode as output, got {type(out_node)}")
-            out_node.setzero = True
-            return context.backward_state.add_nested_sdfg(sdfg, {rev_input_conn_name}, {rev_output_conn_name}), result
+        result.required_grad_names[output_name] = rev_output_conn_name
+        result.given_grad_names[input_name] = rev_input_conn_name
 
-        # TODO: Remove code duplication between Max and Min reductions
-        elif reduction_type is dtypes.ReductionType.Max:
+        sdfg.add_array(rev_input_conn_name, shape=out_desc.shape, dtype=out_desc.dtype, strides=out_desc.strides)
+        sdfg.add_array(rev_output_conn_name, shape=in_desc.shape, dtype=in_desc.dtype, strides=in_desc.strides)
 
-            # In this case, we need to get the index of the minimum value
-            sdfg = SDFG("_reverse_" + str(reduction_type).replace(".", "_") + "_")
-            # Create a name with a random number to avoid name clashes
-            # but sometimes simplify will inline these SDFGs and create states with the same label
-            state_label = f"block_{id(forward_node)}"
-            state = sdfg.add_state(state_label)
+        nsdfg_inputs = {rev_input_conn_name}
 
-            rev_input_conn_name = "input_gradient"
-            rev_output_conn_name = "output_gradient"
-            max_conn_name = "input_max"
-            max_idx_conn_name = "input_max_idx"
-            rev_output_conn_name = "output_gradient"
-            result.required_grad_names[output_name] = rev_output_conn_name
-            result.given_grad_names[input_name] = rev_input_conn_name
+        if is_extremal:
+            extremal_conn_name = f"input_{type_name}"
+            extremal_idx_conn_name = f"input_{type_name}_idx"
+            sdfg.add_array(extremal_conn_name, shape=out_desc.shape, dtype=out_desc.dtype, strides=out_desc.strides)
+            sdfg.add_array(extremal_idx_conn_name, shape=in_desc.shape, dtype=in_desc.dtype, strides=in_desc.strides)
+            nsdfg_inputs.update({extremal_conn_name, extremal_idx_conn_name})
 
-            # It is important to add the strides in the case of accesses to a view where the shape is not enough
-            _, rev_input_arr = sdfg.add_array(rev_input_conn_name,
-                                              shape=out_desc.shape,
-                                              dtype=out_desc.dtype,
-                                              strides=out_desc.strides)
+        reduce_all_axes = forward_node.axes is None or set(range(len(in_desc.shape))) == set(forward_node.axes)
 
-            _, rev_output_arr = sdfg.add_array(rev_output_conn_name,
-                                               shape=in_desc.shape,
-                                               dtype=in_desc.dtype,
-                                               strides=in_desc.strides)
+        reduction_memlet = Memlet.simple(rev_input_conn_name,
+                                         "0" if reduce_all_axes else ",".join("i" + str(i) for i in non_reduce_axes))
+        reverse_reduction_memlet = Memlet.simple(rev_output_conn_name,
+                                                 ",".join("i" + str(i) for i in all_axes),
+                                                 wcr_str="lambda x, y: x + y")
 
-            # Get the forwarded data descriptors for the max operation and add them to the new SDFG
-            sdfg.add_array(max_conn_name, shape=out_desc.shape, dtype=out_desc.dtype, strides=out_desc.strides)
-
-            sdfg.add_array(max_idx_conn_name, shape=in_desc.shape, dtype=in_desc.dtype, strides=in_desc.strides)
-
-            reduce_all_axes = forward_node.axes is None or set(range(len(in_desc.shape))) == set(forward_node.axes)
-
-            # prepare memlets for the tasklet
-            reduction_memlet = Memlet.simple(
-                rev_input_conn_name, "0" if reduce_all_axes else ",".join("i" + str(i) for i in non_reduce_axes))
-            reverse_reduction_memlet = Memlet.simple(rev_output_conn_name,
-                                                     ",".join("i" + str(i) for i in all_axes),
-                                                     wcr_str="lambda x, y: x + y")
-
-            max_val_memlet = Memlet.simple(max_conn_name,
-                                           "0" if reduce_all_axes else ",".join("i" + str(i) for i in non_reduce_axes))
-
-            max_val_index_memlet = Memlet.simple(max_idx_conn_name, ",".join("i" + str(i) for i in all_axes))
-            tasklet_code = "__out = __in if __max_val == __max_val_idx else 0"
-            _, _, exit_map = state.add_mapped_tasklet("_max_grad_" + str(reduction_type).replace(".", "_") + "_", {
-                "i" + str(i): "0:{}".format(shape)
-                for i, shape in enumerate(in_desc.shape)
-            }, {
+        if is_extremal:
+            extremal_val_memlet = Memlet.simple(
+                extremal_conn_name, "0" if reduce_all_axes else ",".join("i" + str(i) for i in non_reduce_axes))
+            extremal_val_index_memlet = Memlet.simple(extremal_idx_conn_name, ",".join("i" + str(i) for i in all_axes))
+            tasklet_inputs = {
                 "__in": reduction_memlet,
-                "__max_val": max_val_memlet,
-                "__max_val_idx": max_val_index_memlet
-            },
-                                                      tasklet_code, {"__out": reverse_reduction_memlet},
-                                                      external_edges=True)
+                "__extremal_val": extremal_val_memlet,
+                "__extremal_val_idx": extremal_val_index_memlet
+            }
+            tasklet_code = "__out = __in if __extremal_val == __extremal_val_idx else 0"
+        else:
+            tasklet_inputs = {"__in": reduction_memlet}
+            tasklet_code = "__out = __in"
 
-            # Add the nested SDFG to the backward state
-            nsdfg = context.backward_state.add_nested_sdfg(sdfg,
-                                                           {rev_input_conn_name, max_conn_name, max_idx_conn_name},
-                                                           {rev_output_conn_name})
+        _, _, exit_map = state.add_mapped_tasklet(f"_{type_name}_grad_" + str(reduction_type).replace(".", "_") + "_", {
+            "i" + str(i): "0:{}".format(shape)
+            for i, shape in enumerate(in_desc.shape)
+        },
+                                                  tasklet_inputs,
+                                                  tasklet_code, {"__out": reverse_reduction_memlet},
+                                                  external_edges=True)
 
-            # Get the output AccessNode and setzero
-            out_edges = state.out_edges(exit_map)
-            if len(out_edges) != 1:
-                raise AutoDiffException(f"Expected exactly one output edge from map exit, got {len(out_edges)}")
-            out_edge = out_edges[0]
-            out_node = out_edge.dst
-            if not isinstance(out_node, dace.nodes.AccessNode):
-                raise AutoDiffException(f"Expected AccessNode as output, got {type(out_node)}")
-            out_node.setzero = True
+        nsdfg = context.backward_state.add_nested_sdfg(sdfg, nsdfg_inputs, {rev_output_conn_name})
 
-            # We need to manually add the required inputs here
-            backward_state = context.backward_state
-            fwd_in_edges = context.forward_state.in_edges(forward_node)
-            if len(fwd_in_edges) != 1:
-                raise AutoDiffException(f"Expected exactly one input edge to forward node, got {len(fwd_in_edges)}")
-            fwd_in_edge = fwd_in_edges[0]
-            fwd_in_node = fwd_in_edge.src
-            if not isinstance(fwd_in_node, dace.nodes.AccessNode):
-                raise AutoDiffException(f"Expected AccessNode as input source, got {type(fwd_in_node)}")
-            bwd_read = backward_state.add_read(fwd_in_node.data)
-            backward_state.add_edge(bwd_read, None, nsdfg, max_idx_conn_name, copy.deepcopy(fwd_in_edge.data))
-            # if this is a view
-            if isinstance(context.forward_sdfg.arrays[fwd_in_node.data], (dace.data.View, dace.data.ArrayView)):
-                # Get incoming edge
-                in_edge = context.forward_state.in_edges(fwd_in_node)
-                if len(in_edge) != 1:
-                    raise AutoDiffException(f"Expected exactly one input edge to view node, got {len(in_edge)}")
-                in_edge = in_edge[0]
-                in_node = in_edge.src
-                if isinstance(in_node, dace.nodes.AccessNode):
-                    # Make sure this is not a view itself
-                    if isinstance(context.forward_sdfg.arrays[in_node.data], (dace.data.View, dace.data.ArrayView)):
-                        raise AutoDiffException(f"Nested views are not supported: {in_node.data}")
-                    # Add the read node
-                    bwd_in_read = backward_state.add_read(in_node.data)
-                    # Add the edge
-                    backward_state.add_edge(bwd_in_read, None, bwd_read, "views", copy.deepcopy(in_edge.data))
+        out_edges = state.out_edges(exit_map)
+        if len(out_edges) != 1:
+            raise AutoDiffException(f"Expected exactly one output edge from map exit, got {len(out_edges)}")
+        out_edge = out_edges[0]
+        out_node = out_edge.dst
+        if not isinstance(out_node, dace.nodes.AccessNode):
+            raise AutoDiffException(f"Expected AccessNode as output, got {type(out_node)}")
+        out_node.setzero = True
 
-            fwd_out_edges = context.forward_state.out_edges(forward_node)
-            if len(fwd_out_edges) != 1:
-                raise AutoDiffException(f"Expected exactly one output edge from forward node, got {len(fwd_out_edges)}")
-            fwd_out_edge = fwd_out_edges[0]
-            fwd_out_node = fwd_out_edge.dst
-            if not isinstance(fwd_out_node, dace.nodes.AccessNode):
-                raise AutoDiffException(f"Expected AccessNode as output destination, got {type(fwd_out_node)}")
-            bwd_out_read = backward_state.add_read(fwd_out_node.data)
-            backward_state.add_edge(bwd_out_read, None, nsdfg, max_conn_name, copy.deepcopy(fwd_out_edge.data))
-            # avoid ambiguous views
-            # if this is a view
-            if isinstance(context.forward_sdfg.arrays[fwd_out_node.data], (dace.data.View, dace.data.ArrayView)):
-                # Get incoming edge
-                out_edge = context.forward_state.out_edges(fwd_out_node)
-                if len(out_edge) != 1:
-                    raise AutoDiffException(f"Expected exactly one output edge from view node, got {len(out_edge)}")
-                out_edge = out_edge[0]
-                out_node = out_edge.dst
-                if isinstance(out_node, dace.nodes.AccessNode):
-                    # Make sure this is not a view itself
-                    assert not isinstance(context.forward_sdfg.arrays[out_node.data],
-                                          (dace.data.View, dace.data.ArrayView))
-                    # Add the read node
-                    bwd_in_read = backward_state.add_read(out_node.data)
-                    # Add the edge
-                    backward_state.add_edge(bwd_in_read, None, bwd_out_read, "views", copy.deepcopy(out_edge.data))
+        if not is_extremal:
             return nsdfg, result
-        elif reduction_type is dtypes.ReductionType.Min:
 
-            # In this case, we need to get the index of the minimum value
-            sdfg = SDFG("_reverse_" + str(reduction_type).replace(".", "_") + "_")
-            # Create a name with a random number to avoid name clashes
-            # but sometimes simplify will inline these SDFGs and create states with the same label
-            state_label = f"block_{id(forward_node)}"
-            state = sdfg.add_state(state_label)
+        backward_state = context.backward_state
+        fwd_in_edges = context.forward_state.in_edges(forward_node)
+        if len(fwd_in_edges) != 1:
+            raise AutoDiffException(f"Expected exactly one input edge to forward node, got {len(fwd_in_edges)}")
+        fwd_in_edge = fwd_in_edges[0]
+        fwd_in_node = fwd_in_edge.src
+        if not isinstance(fwd_in_node, dace.nodes.AccessNode):
+            raise AutoDiffException(f"Expected AccessNode as input source, got {type(fwd_in_node)}")
+        bwd_read = backward_state.add_read(fwd_in_node.data)
+        backward_state.add_edge(bwd_read, None, nsdfg, extremal_idx_conn_name, copy.deepcopy(fwd_in_edge.data))
 
-            rev_input_conn_name = "input_gradient"
-            rev_output_conn_name = "output_gradient"
-            min_conn_name = "input_min"
-            min_idx_conn_name = "input_min_idx"
-            rev_output_conn_name = "output_gradient"
-            result.required_grad_names[output_name] = rev_output_conn_name
-            result.given_grad_names[input_name] = rev_input_conn_name
+        if isinstance(context.forward_sdfg.arrays[fwd_in_node.data], (dace.data.View, dace.data.ArrayView)):
+            in_edge = context.forward_state.in_edges(fwd_in_node)
+            if len(in_edge) != 1:
+                raise AutoDiffException(f"Expected exactly one input edge to view node, got {len(in_edge)}")
+            in_edge = in_edge[0]
+            in_node = in_edge.src
+            if isinstance(in_node, dace.nodes.AccessNode):
+                if isinstance(context.forward_sdfg.arrays[in_node.data], (dace.data.View, dace.data.ArrayView)):
+                    raise AutoDiffException(f"Nested views are not supported: {in_node.data}")
+                bwd_in_read = backward_state.add_read(in_node.data)
+                backward_state.add_edge(bwd_in_read, None, bwd_read, "views", copy.deepcopy(in_edge.data))
 
-            # It is important to add the strides in the case of accesses to a view where the shape is not enough
-            _, rev_input_arr = sdfg.add_array(rev_input_conn_name,
-                                              shape=out_desc.shape,
-                                              dtype=out_desc.dtype,
-                                              strides=out_desc.strides)
+        fwd_out_edges = context.forward_state.out_edges(forward_node)
+        if len(fwd_out_edges) != 1:
+            raise AutoDiffException(f"Expected exactly one output edge from forward node, got {len(fwd_out_edges)}")
+        fwd_out_edge = fwd_out_edges[0]
+        fwd_out_node = fwd_out_edge.dst
+        if not isinstance(fwd_out_node, dace.nodes.AccessNode):
+            raise AutoDiffException(f"Expected AccessNode as output destination, got {type(fwd_out_node)}")
+        bwd_out_read = backward_state.add_read(fwd_out_node.data)
+        backward_state.add_edge(bwd_out_read, None, nsdfg, extremal_conn_name, copy.deepcopy(fwd_out_edge.data))
 
-            _, rev_output_arr = sdfg.add_array(rev_output_conn_name,
-                                               shape=in_desc.shape,
-                                               dtype=in_desc.dtype,
-                                               strides=in_desc.strides)
-
-            # Get the forwarded data descriptors for the min operation and add them to the new SDFG
-            sdfg.add_array(min_conn_name, shape=out_desc.shape, dtype=out_desc.dtype, strides=out_desc.strides)
-
-            sdfg.add_array(min_idx_conn_name, shape=in_desc.shape, dtype=in_desc.dtype, strides=in_desc.strides)
-
-            reduce_all_axes = forward_node.axes is None or set(range(len(in_desc.shape))) == set(forward_node.axes)
-
-            # prepare memlets for the tasklet
-            reduction_memlet = Memlet.simple(
-                rev_input_conn_name, "0" if reduce_all_axes else ",".join("i" + str(i) for i in non_reduce_axes))
-            reverse_reduction_memlet = Memlet.simple(rev_output_conn_name,
-                                                     ",".join("i" + str(i) for i in all_axes),
-                                                     wcr_str="lambda x, y: x + y")
-
-            min_val_memlet = Memlet.simple(min_conn_name,
-                                           "0" if reduce_all_axes else ",".join("i" + str(i) for i in non_reduce_axes))
-
-            min_val_index_memlet = Memlet.simple(min_idx_conn_name, ",".join("i" + str(i) for i in all_axes))
-            tasklet_code = "__out = __in if __min_val == __min_val_idx else 0"
-            _, _, exit_map = state.add_mapped_tasklet("_min_grad_" + str(reduction_type).replace(".", "_") + "_", {
-                "i" + str(i): "0:{}".format(shape)
-                for i, shape in enumerate(in_desc.shape)
-            }, {
-                "__in": reduction_memlet,
-                "__min_val": min_val_memlet,
-                "__min_val_idx": min_val_index_memlet
-            },
-                                                      tasklet_code, {"__out": reverse_reduction_memlet},
-                                                      external_edges=True)
-
-            # Add the nested SDFG to the backward state
-            nsdfg = context.backward_state.add_nested_sdfg(sdfg,
-                                                           {rev_input_conn_name, min_conn_name, min_idx_conn_name},
-                                                           {rev_output_conn_name})
-
-            # Get the output AccessNode and setzero
-            out_edges = state.out_edges(exit_map)
-            if len(out_edges) != 1:
-                raise AutoDiffException(f"Expected exactly one output edge from map exit, got {len(out_edges)}")
-            out_edge = out_edges[0]
+        if isinstance(context.forward_sdfg.arrays[fwd_out_node.data], (dace.data.View, dace.data.ArrayView)):
+            out_edge = context.forward_state.out_edges(fwd_out_node)
+            if len(out_edge) != 1:
+                raise AutoDiffException(f"Expected exactly one output edge from view node, got {len(out_edge)}")
+            out_edge = out_edge[0]
             out_node = out_edge.dst
-            if not isinstance(out_node, dace.nodes.AccessNode):
-                raise AutoDiffException(f"Expected AccessNode as output, got {type(out_node)}")
-            out_node.setzero = True
+            if isinstance(out_node, dace.nodes.AccessNode):
+                if isinstance(context.forward_sdfg.arrays[out_node.data], (dace.data.View, dace.data.ArrayView)):
+                    raise AutoDiffException(f"Nested views are not supported: {out_node.data}")
+                bwd_in_read = backward_state.add_read(out_node.data)
+                backward_state.add_edge(bwd_in_read, None, bwd_out_read, "views", copy.deepcopy(out_edge.data))
 
-            # We need to manually add the required inputs here
-            backward_state = context.backward_state
-            fwd_in_edges = context.forward_state.in_edges(forward_node)
-            if len(fwd_in_edges) != 1:
-                raise AutoDiffException(f"Expected exactly one input edge to forward node, got {len(fwd_in_edges)}")
-            fwd_in_edge = fwd_in_edges[0]
-            fwd_in_node = fwd_in_edge.src
-            if not isinstance(fwd_in_node, dace.nodes.AccessNode):
-                raise AutoDiffException(f"Expected AccessNode as input source, got {type(fwd_in_node)}")
-            bwd_read = backward_state.add_read(fwd_in_node.data)
-            backward_state.add_edge(bwd_read, None, nsdfg, min_idx_conn_name, copy.deepcopy(fwd_in_edge.data))
-            # if this is a view
-            if isinstance(context.forward_sdfg.arrays[fwd_in_node.data], (dace.data.View, dace.data.ArrayView)):
-                # Get incoming edge
-                in_edge = context.forward_state.in_edges(fwd_in_node)
-                if len(in_edge) != 1:
-                    raise AutoDiffException(f"Expected exactly one input edge to view node, got {len(in_edge)}")
-                in_edge = in_edge[0]
-                in_node = in_edge.src
-                if isinstance(in_node, dace.nodes.AccessNode):
-                    # Make sure this is not a view itself
-                    if isinstance(context.forward_sdfg.arrays[in_node.data], (dace.data.View, dace.data.ArrayView)):
-                        raise AutoDiffException(f"Nested views are not supported: {in_node.data}")
-                    # Add the read node
-                    bwd_in_read = backward_state.add_read(in_node.data)
-                    # Add the edge
-                    backward_state.add_edge(bwd_in_read, None, bwd_read, "views", copy.deepcopy(in_edge.data))
-
-            fwd_out_edges = context.forward_state.out_edges(forward_node)
-            if len(fwd_out_edges) != 1:
-                raise AutoDiffException(f"Expected exactly one output edge from forward node, got {len(fwd_out_edges)}")
-            fwd_out_edge = fwd_out_edges[0]
-            fwd_out_node = fwd_out_edge.dst
-            if not isinstance(fwd_out_node, dace.nodes.AccessNode):
-                raise AutoDiffException(f"Expected AccessNode as output destination, got {type(fwd_out_node)}")
-            bwd_out_read = backward_state.add_read(fwd_out_node.data)
-            backward_state.add_edge(bwd_out_read, None, nsdfg, min_conn_name, copy.deepcopy(fwd_out_edge.data))
-            # avoid ambiguous views
-            # if this is a view
-            if isinstance(context.forward_sdfg.arrays[fwd_out_node.data], (dace.data.View, dace.data.ArrayView)):
-                # Get incoming edge
-                out_edge = context.forward_state.out_edges(fwd_out_node)
-                if len(out_edge) != 1:
-                    raise AutoDiffException(f"Expected exactly one output edge from view node, got {len(out_edge)}")
-                out_edge = out_edge[0]
-                out_node = out_edge.dst
-                if isinstance(out_node, dace.nodes.AccessNode):
-                    # Make sure this is not a view itself
-                    assert not isinstance(context.forward_sdfg.arrays[out_node.data],
-                                          (dace.data.View, dace.data.ArrayView))
-                    # Add the read node
-                    bwd_in_read = backward_state.add_read(out_node.data)
-                    # Add the edge
-                    backward_state.add_edge(bwd_in_read, None, bwd_out_read, "views", copy.deepcopy(out_edge.data))
-
-            return nsdfg, result
+        return nsdfg, result

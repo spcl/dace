@@ -75,8 +75,8 @@ setup(
     include_package_data=True,
     #TODO: remove networkx version pin when issue with 3.6 is resolved
     install_requires=[
-        'numpy', 'networkx == 3.5', 'astunparse', 'sympy >= 1.9', 'pyyaml', 'ply', 'fparser >= 0.1.3', 'aenum >= 3.1',
-        'dataclasses; python_version < "3.7"', 'dill', 'pyreadline;platform_system=="Windows"',
+        'numpy', 'networkx > 2.5, < 3.6', 'astunparse', 'sympy >= 1.9', 'pyyaml', 'ply', 'fparser >= 0.1.3',
+        'aenum >= 3.1', 'dataclasses; python_version < "3.7"', 'dill', 'pyreadline;platform_system=="Windows"',
         'typing-compat; python_version < "3.8"', 'packaging'
     ] + cmake_requires,
     extras_require={

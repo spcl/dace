@@ -441,7 +441,7 @@ class PureBatchNormalization(ONNXForward):
                 batch_var = np.add.reduce(X_minus_mean * X_minus_mean, axis=axis) / N
                 batch_var_eps = np.reshape(batch_var + eps, broadcast_shape)
 
-                inv_std = dace.elementwise(lambda x: dace.float32(1.0) / sqrt(x), batch_var_eps)
+                inv_std = dace.elementwise(lambda x: dtype(1.0) / sqrt(x), batch_var_eps)
                 normalized = X_minus_mean * inv_std
 
                 scale_reshaped = np.reshape(scale, broadcast_shape)
@@ -474,7 +474,7 @@ class PureBatchNormalization(ONNXForward):
                 var_b[:] = input_var
 
                 X_minus_mean = X - mean_b
-                inv_std = dace.elementwise(lambda x: dace.float32(1.0) / sqrt(x + eps), var_b)
+                inv_std = dace.elementwise(lambda x: dtype(1.0) / sqrt(x + eps), var_b)
 
                 normalized = X_minus_mean * inv_std
                 scale_b = np.reshape(scale, broadcast_shape)

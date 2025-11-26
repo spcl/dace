@@ -6,15 +6,16 @@
 import ast
 import collections
 import copy
+import numbers
 import astunparse
 import sympy as sp
-import numpy as np
 from typing import List, Tuple
 
 # DaCe imports
 import dace
 import dace.sdfg.nodes as nodes
 from dace import dtypes
+from dace.data import Reference, Structure
 from dace.sdfg import SDFGState
 from dace.util import find_str_not_in_set
 
@@ -142,6 +143,12 @@ class DaceNodeBackwardImplementations:
         given_gradients: List[str],
         required_gradients: List[str],
     ) -> Tuple[nodes.Node, BackwardResult]:
+
+        desc = self.bwd_engine.sdfg.arrays[node.data]
+        if isinstance(desc, Reference):
+            raise AutoDiffException(f"AccessNode '{node.data}' points to a Reference, which is not yet supported")
+        if isinstance(desc, Structure):
+            raise AutoDiffException(f"AccessNode '{node.data}' points to a Structure, which is not yet supported")
 
         rev = nodes.AccessNode(self.bwd_engine.array_grad_name(node.data))
         # We want all gradient arrays to be initialized to zero
@@ -338,10 +345,10 @@ class DaceNodeBackwardImplementations:
 
         Example::
 
-            Forward tasklet: y = x * x + 2 * x
+            Forward tasklet: ``y = x * x + 2 * x``
             Given gradient: dy (∂L/∂y)
             Required gradient: dx (∂L/∂x)
-            Generated code: dx_gradient = dy_gradient * (2*x + 2)
+            Generated code: ``dx_gradient = dy_gradient * (2*x + 2)``
         """
         output_exprs, indexed_objects_map = ad_utils.code_to_exprs(code_str, tasklet, list(sdfg.symbols.keys()))
 
@@ -389,7 +396,7 @@ class DaceNodeBackwardImplementations:
 
                 output_expr = output_exprs[output_conn]
                 # if the expression is a constant assignment, we need to cast the float to the sympy equivalent
-                if type(output_expr) in [np.float64, np.float32, np.float16]:
+                if isinstance(output_expr, numbers.Real):
                     output_expr = sp.Float(output_expr)
 
                 # We need to prepare the w.r.t expression
