@@ -27,7 +27,6 @@ class DummyTransformation(dace_transformation.SingleStateTransformation):
         permissive: bool = False,
     ) -> bool:
         my_tasklet: dace_nodes.Tasklet = self.tasklet
-        print(f"\n\nChecking tasklet code: {my_tasklet}\n\n", flush=True)
         return "1.0" in my_tasklet.code.as_string
 
     def apply(
@@ -43,19 +42,19 @@ class DummyTransformation(dace_transformation.SingleStateTransformation):
 def sdfg_with_two_simple_maps():
     sdfg = dace.SDFG("two_simple_maps")
     state = sdfg.add_state(is_start_block=True)
-    A, A_desc = sdfg.add_array("A", [N], dace.float32)
-    B, B_desc = sdfg.add_array("B", [N], dace.float32)
-    C, C_desc = sdfg.add_array("C", [N], dace.float32)
-    D, D_desc = sdfg.add_array("D", [N], dace.float32)
-    E, E_desc = sdfg.add_array("E", [N], dace.float32)
-    F, F_desc = sdfg.add_array("F", [N], dace.float32)
+    A, _ = sdfg.add_array("A", [N], dace.float32)
+    B, _ = sdfg.add_array("B", [N], dace.float32)
+    C, _ = sdfg.add_array("C", [N], dace.float32)
+    D, _ = sdfg.add_array("D", [N], dace.float32)
+    E, _ = sdfg.add_array("E", [N], dace.float32)
+    F, _ = sdfg.add_array("F", [N], dace.float32)
     A_node = state.add_access("A")
     B_node = state.add_access("B")
     C_node = state.add_access("C")
     D_node = state.add_access("D")
     E_node = state.add_access("E")
     F_node = state.add_access("F")
-    _, first_map_entry, first_map_exit = state.add_mapped_tasklet(
+    state.add_mapped_tasklet(
         "plus1_A",
         {"i": "0:N"},
         code="_out = _inp + 1.0",
@@ -65,7 +64,7 @@ def sdfg_with_two_simple_maps():
         output_nodes={B_node},
         external_edges=True,
     )
-    _, second_map_entry, second_map_exit = state.add_mapped_tasklet(
+    state.add_mapped_tasklet(
         "plus2_C",
         {"i": "0:N"},
         code="_out = _inp + 2.0",
@@ -75,7 +74,7 @@ def sdfg_with_two_simple_maps():
         output_nodes={D_node},
         external_edges=True,
     )
-    _, third_map_entry, third_map_exit = state.add_mapped_tasklet(
+    state.add_mapped_tasklet(
         "plus1_E",
         {"i": "0:N"},
         code="_out = _inp + 1.0",
@@ -92,8 +91,6 @@ def sdfg_with_two_simple_maps():
 def test_apply_transformations_once():
     sdfg = sdfg_with_two_simple_maps()
     sdfg.apply_transformations_once_everywhere(DummyTransformation, validate=True)
-    sdfg.view()
-    breakpoint()
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, dace_nodes.Tasklet):
             assert "1.0" not in node.code.as_string
