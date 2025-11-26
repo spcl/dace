@@ -216,7 +216,11 @@ def _pgrid_bcast(pv: ProgramVisitor,
 def _mpi4py_to_MPI(MPI, op):
     if op is MPI.SUM:
         return 'MPI_SUM'
-    raise NotImplementedError
+    elif op is MPI.MAX:
+        return 'MPI_MAX'
+    elif op is MPI.MIN:
+        return 'MPI_MIN'
+    raise NotImplementedError(f"[DaCe MPI4Py replacement] Operator {op} is not implemented")
 
 
 @oprepo.replaces('mpi4py.MPI.COMM_WORLD.Reduce')
@@ -289,10 +293,15 @@ def _pgrid_alltoall(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, pgrid: str
 
 @oprepo.replaces('mpi4py.MPI.COMM_WORLD.Allreduce')
 @oprepo.replaces('dace.comm.Allreduce')
-def _allreduce(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, buffer: str, op: str, grid: str = None):
+def _allreduce(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, inp_buffer: 'InPlace', buffer: str, op: str, grid: str = None):
 
     from dace.libraries.mpi.nodes.allreduce import Allreduce
 
+    from mpi4py import MPI
+    if isinstance(op, MPI.Op):
+        op = _mpi4py_to_MPI(MPI, op)
+    if inp_buffer != MPI.IN_PLACE:
+        raise ValueError('DaCe currently supports in-place Allreduce only.')
     libnode = Allreduce('_Allreduce_', op, grid)
     desc = sdfg.arrays[buffer]
     in_buffer = state.add_read(buffer)
@@ -309,27 +318,17 @@ def _intracomm_allreduce(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, icomm
     """ Equivalent to `dace.comm.Allreduce(out_buffer, op)`. """
 
     from mpi4py import MPI
-    icomm_name, icomm_obj = icomm, pv.globals[icomm]
+    icomm_obj = pv.globals[icomm]
     if icomm_obj != MPI.COMM_WORLD:
         raise ValueError('Only the mpi4py.MPI.COMM_WORLD Intracomm is supported in DaCe Python programs.')
-    if inp_buffer != MPI.IN_PLACE:
-        raise ValueError('DaCe currently supports in-place Allreduce only.')
-    if isinstance(op, MPI.Op):
-        op = _mpi4py_to_MPI(MPI, op)
-    return _allreduce(pv, sdfg, state, out_buffer, op)
+    return _allreduce(pv, sdfg, state, inp_buffer, out_buffer, op)
 
 
 @oprepo.replaces_method('ProcessGrid', 'Allreduce')
 def _pgrid_allreduce(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, pgrid: str, inp_buffer: 'InPlace',
                      out_buffer: str, op: str):
     """ Equivalent to `dace.comm.Allreduce(out_buffer, op, grid=pgrid)`. """
-
-    from mpi4py import MPI
-    if inp_buffer != MPI.IN_PLACE:
-        raise ValueError('DaCe currently supports in-place Allreduce only.')
-    if isinstance(op, MPI.Op):
-        op = _mpi4py_to_MPI(MPI, op)
-    return _allreduce(pv, sdfg, state, out_buffer, op, grid=pgrid)
+    return _allreduce(pv, sdfg, state, inp_buffer, out_buffer, op, grid=pgrid)
 
 
 @oprepo.replaces('mpi4py.MPI.COMM_WORLD.Scatter')
