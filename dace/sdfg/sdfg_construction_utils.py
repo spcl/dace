@@ -175,7 +175,6 @@ def try_to_add_missing_arrays_to_nsdfgs(sdfg: dace.SDFG):
                             if array_is_written_to_in_the_sdfg(node.sdfg, arr_name):
                                 print(f"{arr_name} is written to too, add to parent nSDFG's out connectors")
                                 node.add_out_connector(arr_name, force=True)
-                                print(state.sdfg.arrays)
                                 an = state.add_access(arr_name)
                                 if arr_name in node.sdfg.arrays and arr_name not in state.sdfg.arrays:
                                     cpdesc = copy.deepcopy(node.sdfg.arrays[arr_name])

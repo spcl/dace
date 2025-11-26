@@ -1,7 +1,7 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
-from dace.sdfg.propagation import propagate_memlets_sdfg
+from dace.sdfg.propagation import propagate_memlets_sdfg, propagate_memlets_state
 
 
 def test_conditional():
@@ -62,6 +62,31 @@ def test_runtime_conditional():
     expected = inp.copy()
     expected[1:] = inp[0:-1]
     assert np.allclose(outp, expected)
+
+
+S = dace.symbol("S")
+S1 = dace.symbol("S1")
+S2 = dace.symbol("S2")
+
+
+@dace.program
+def tasklet_in_nested_sdfg(
+    a: dace.float64[S, S],
+    b: dace.float64[S, S],
+    offset1: dace.int64,
+    offset2: dace.int64,
+):
+    for i, j in dace.map[S1:S2:1, S1:S2:1] @ dace.dtypes.ScheduleType.Sequential:
+        a[i + offset1, j + offset2] = ((1.5 * b[i + offset1, j + offset2]) + (2.0 * a[i + offset1, j + offset2])) / 3.5
+
+
+def test_nsdfg_memlet_propagation():
+    sdfg = tasklet_in_nested_sdfg.to_sdfg(simplify=False)
+    propagate_memlets_sdfg(sdfg)
+
+    for n, g in sdfg.all_nodes_recursive():
+        if isinstance(n, dace.SDFGState):
+            propagate_memlets_state(n.sdfg, n)
 
 
 def test_nsdfg_memlet_propagation_with_one_sparse_dimension():

@@ -8,8 +8,6 @@ import warnings
 import networkx as nx
 import time
 
-import sympy
-
 import dace.sdfg.nodes
 from dace.codegen import compiled_sdfg as csdfg
 from dace.sdfg.graph import MultiConnectorEdge
@@ -596,6 +594,167 @@ def merge_maps(
     return merged_entry, merged_exit
 
 
+def canonicalize_memlet_trees_of_scope_node(
+    state: SDFGState,
+    scope_node: Union[nd.EntryNode, nd.ExitNode],
+) -> int:
+    """Canonicalize the Memlet trees of a single scope nodes.
+
+    The function will modify all Memlets that are adjacent to `scope_node` such that
+    the Memlet always refers to the data that is on the outside.
+    This function only operates on a single scope node, i.e. either a `MapEntry` or
+    a `MapExit`, if you want to process a whole Map then you should use
+    `canonicalize_memlet_trees_for_map()`.
+
+    :param state: The SDFG state in which the scope to consolidate resides.
+    :param scope_node: The scope node whose edges will be consolidated.
+    :return: Number of modified Memlets.
+
+    :note: This is the "historical" expected format of Memlet trees at scope nodes,
+        which was present before the introduction of `other_subset`. Running this
+        transformation might fix some issues.
+    """
+    if isinstance(scope_node, nd.EntryNode):
+        may_have_dynamic_map_range = True
+        is_downward_tree = True
+        outer_edges = state.in_edges(scope_node)
+        get_outer_edge_connector = lambda e: e.dst_conn
+        inner_edges_for = lambda conn: state.out_edges_by_connector(scope_node, conn)
+        inner_prefix = 'OUT_'
+        outer_prefix = 'IN_'
+
+        def get_outer_data(e: MultiConnectorEdge[dace.Memlet]):
+            mpath = state.memlet_path(e)
+            assert isinstance(mpath[0].src, nd.AccessNode)
+            return mpath[0].src.data
+
+    else:
+        may_have_dynamic_map_range = False
+        is_downward_tree = False
+        outer_edges = state.out_edges(scope_node)
+        get_outer_edge_connector = lambda e: e.src_conn
+        inner_edges_for = lambda conn: state.in_edges_by_connector(scope_node, conn)
+        inner_prefix = 'IN_'
+        outer_prefix = 'OUT_'
+
+        def get_outer_data(e: MultiConnectorEdge[dace.Memlet]):
+            mpath = state.memlet_path(e)
+            assert isinstance(mpath[-1].dst, nd.AccessNode)
+            return mpath[-1].dst.data
+
+    def swap_prefix(conn: str) -> str:
+        if conn.startswith(inner_prefix):
+            return outer_prefix + conn[len(inner_prefix):]
+        else:
+            assert conn.startswith(
+                outer_prefix), f"Expected connector to start with '{outer_prefix}', but it was '{conn}'."
+            return inner_prefix + conn[len(outer_prefix):]
+
+    modified_memlet = 0
+    for outer_edge in outer_edges:
+        outer_edge_connector = get_outer_edge_connector(outer_edge)
+        if may_have_dynamic_map_range and (not outer_edge_connector.startswith(outer_prefix)):
+            continue
+        assert outer_edge_connector.startswith(outer_prefix)
+        corresponding_inner_connector = swap_prefix(outer_edge_connector)
+
+        # In case `scope_node` is at the global scope it should be enough to run
+        #  `outer_edge.data.data` but this way it is more in line with consolidate.
+        outer_data = get_outer_data(outer_edge)
+
+        for inner_edge in inner_edges_for(corresponding_inner_connector):
+            for mtree in state.memlet_tree(inner_edge).traverse_children(include_self=True):
+                medge: MultiConnectorEdge[dace.Memlet] = mtree.edge
+                if medge.data.data == outer_data:
+                    # This edge is already referring to the outer data, so no change is needed.
+                    continue
+
+                # Now we have to extract subset from the Memlet.
+                if is_downward_tree:
+                    subset = medge.data.get_src_subset(medge, state)
+                    other_subset = medge.data.dst_subset
+                else:
+                    subset = medge.data.get_dst_subset(medge, state)
+                    other_subset = medge.data.src_subset
+
+                # Now update them correctly.
+                medge.data._data = outer_data
+                medge.data._subset = subset
+                medge.data._other_subset = other_subset
+                medge.data.try_initialize(state.sdfg, state, medge)
+                modified_memlet += 1
+
+    return modified_memlet
+
+
+def canonicalize_memlet_trees_for_map(
+    state: SDFGState,
+    map_node: Union[nd.EntryNode, nd.ExitNode],
+) -> int:
+    """Canonicalize the Memlets of an entire Map scope.
+
+    This function is similar to `canonicalize_memlet_trees_of_scope_node()`, but it acts
+    on both scope nodes, i.e. `MapEntry` and `MapExit`, that constitute the Map scope.
+    The function returns the number of canonicalized Memlets.
+
+    :param state: The state that contains the Map.
+    :param map_node: Either the `MapEntry` or `MapExit` node of the map that should be canonicalized.
+    """
+    if isinstance(map_node, nd.MapEntry):
+        me = map_node
+        mx = state.exit_node(me)
+    else:
+        assert isinstance(map_node, nd.MapExit)
+        mx = map_node
+        me = state.entry_node(mx)
+
+    ret = canonicalize_memlet_trees_of_scope_node(state, me)
+    ret += canonicalize_memlet_trees_of_scope_node(state, mx)
+    return ret
+
+
+def canonicalize_memlet_trees(
+    sdfg: 'dace.SDFG',
+    starting_scope: Optional['dace.sdfg.scope.ScopeTree'] = None,
+) -> int:
+    """Canonicalize the Memlet trees of all scopes in the SDFG.
+
+    This function runs `canonicalize_memlet_trees_of_scope_node()` on all scopes
+    in the SDFG. Note that this function does not recursively processes
+    nested SDFGs.
+
+    :param sdfg: The SDFG to consolidate.
+    :param starting_scope: If not None, starts with a certain scope. Note in that
+        mode only the state in which the scope is located will be processes.
+    :return: Number of modified Memlets.
+    """
+
+    total_modified_memlets = 0
+    for state in sdfg.states():
+        # Start bottom-up
+        if starting_scope is not None and starting_scope.entry not in state.nodes():
+            continue
+
+        queue = [starting_scope] if starting_scope else state.scope_leaves()
+        next_queue = []
+        while len(queue) > 0:
+            for scope in queue:
+                if scope.entry is not None:
+                    total_modified_memlets += canonicalize_memlet_trees_of_scope_node(state, scope.entry)
+                if scope.exit is not None:
+                    total_modified_memlets += canonicalize_memlet_trees_of_scope_node(state, scope.exit)
+                if scope.parent is not None:
+                    next_queue.append(scope.parent)
+            queue = next_queue
+            next_queue = []
+
+        if starting_scope is not None:
+            # No need to traverse other states
+            break
+
+    return total_modified_memlets
+
+
 def consolidate_edges_scope(state: SDFGState, scope_node: Union[nd.EntryNode, nd.ExitNode]) -> int:
     """
         Union scope-entering memlets relating to the same data node in a scope.
@@ -618,6 +777,18 @@ def consolidate_edges_scope(state: SDFGState, scope_node: Union[nd.EntryNode, nd
         remove_outer_connector = scope_node.remove_in_connector
         remove_inner_connector = scope_node.remove_out_connector
         prefix, oprefix = 'IN_', 'OUT_'
+
+        def get_outer_data(e: MultiConnectorEdge[dace.Memlet]):
+            mpath = state.memlet_path(e)
+            assert isinstance(mpath[0].src, nd.AccessNode)
+            return mpath[0].src.data
+
+        def get_outer_subset(e: MultiConnectorEdge[dace.Memlet]):
+            return e.data.get_src_subset(e, state)
+
+        def set_outer_subset(e: MultiConnectorEdge[dace.Memlet], new_subset: sbs.Subset):
+            e.data.src_subset = new_subset
+
     else:
         outer_edges = state.out_edges
         inner_edges = state.in_edges
@@ -626,6 +797,17 @@ def consolidate_edges_scope(state: SDFGState, scope_node: Union[nd.EntryNode, nd
         remove_inner_connector = scope_node.remove_in_connector
         prefix, oprefix = 'OUT_', 'IN_'
 
+        def get_outer_data(e: MultiConnectorEdge[dace.Memlet]):
+            mpath = state.memlet_path(e)
+            assert isinstance(mpath[-1].dst, nd.AccessNode)
+            return mpath[-1].dst.data
+
+        def get_outer_subset(e: MultiConnectorEdge[dace.Memlet]):
+            return e.data.get_dst_subset(e, state)
+
+        def set_outer_subset(e: MultiConnectorEdge[dace.Memlet], new_subset: sbs.Subset):
+            e.data.dst_subset = new_subset
+
     edges_by_connector = collections.defaultdict(list)
     connectors_to_remove = set()
     for e in inner_edges(scope_node):
@@ -633,16 +815,18 @@ def consolidate_edges_scope(state: SDFGState, scope_node: Union[nd.EntryNode, nd
             continue
         conn = inner_conn(e)
         edges_by_connector[conn].append(e)
-        if e.data.data not in data_to_conn:
-            data_to_conn[e.data.data] = conn
-        elif data_to_conn[e.data.data] != conn:  # Need to consolidate
+        odata = get_outer_data(e)
+        if odata not in data_to_conn:
+            data_to_conn[odata] = conn
+        elif data_to_conn[odata] != conn:  # Need to consolidate
             connectors_to_remove.add(conn)
 
     for conn in connectors_to_remove:
         e = edges_by_connector[conn][0]
+        odata = get_outer_data(e)
         offset = 3 if conn.startswith('IN_') else (4 if conn.startswith('OUT_') else len(oprefix))
         # Outer side of the scope - remove edge and union subsets
-        target_conn = prefix + data_to_conn[e.data.data][offset:]
+        target_conn = prefix + data_to_conn[odata][offset:]
         conn_to_remove = prefix + conn[offset:]
         remove_outer_connector(conn_to_remove)
         if isinstance(scope_node, nd.EntryNode):
@@ -654,7 +838,7 @@ def consolidate_edges_scope(state: SDFGState, scope_node: Union[nd.EntryNode, nd
         assert len(edges_to_remove) == 1 and len(out_edges) == 1
         edge_to_remove = edges_to_remove[0]
         out_edge = out_edges[0]
-        out_edge.data.subset = sbs.union(out_edge.data.subset, edge_to_remove.data.subset)
+        set_outer_subset(out_edge, sbs.union(get_outer_subset(out_edge), get_outer_subset(edge_to_remove)))
 
         # Check if dangling connectors have been created and remove them,
         # as well as their parent edges
@@ -665,11 +849,11 @@ def consolidate_edges_scope(state: SDFGState, scope_node: Union[nd.EntryNode, nd
         if isinstance(scope_node, nd.EntryNode):
             remove_inner_connector(e.src_conn)
             for e in edges_by_connector[conn]:
-                e._src_conn = data_to_conn[e.data.data]
+                e._src_conn = data_to_conn[odata]
         else:
             remove_inner_connector(e.dst_conn)
             for e in edges_by_connector[conn]:
-                e._dst_conn = data_to_conn[e.data.data]
+                e._dst_conn = data_to_conn[odata]
 
     return consolidated
 
@@ -721,7 +905,11 @@ def remove_edge_and_dangling_path(state: SDFGState, edge: MultiConnectorEdge):
             state.remove_node(root_node)
 
 
-def consolidate_edges(sdfg: SDFG, starting_scope=None) -> int:
+def consolidate_edges(
+    sdfg: SDFG,
+    starting_scope=None,
+    propagate: bool = True,
+) -> int:
     """
     Union scope-entering memlets relating to the same data node in all states.
     This effectively reduces the number of connectors and allows more
@@ -758,7 +946,8 @@ def consolidate_edges(sdfg: SDFG, starting_scope=None) -> int:
                     propagate_exit = True
 
                 # Repropagate memlets
-                propagate_memlets_scope(sdfg, state, scope, propagate_entry, propagate_exit)
+                if propagate:
+                    propagate_memlets_scope(sdfg, state, scope, propagate_entry, propagate_exit)
 
                 if scope.parent is not None:
                     next_queue.append(scope.parent)
@@ -2510,7 +2699,9 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
         _specialize_scalar_impl(root, nsdfg, scalar_name, scalar_val)
 
 
-def specialize_scalar(sdfg: 'dace.SDFG', scalar_name: str, scalar_val: Union[float, int, str, sympy.Number]):
+def specialize_scalar(sdfg: 'dace.SDFG', scalar_name: str, scalar_val: Union[float, int, str]):
+    import sympy
+
     assert isinstance(scalar_name, str), f"Expected scalar name to be str got {type(scalar_val)}"
 
     def _sympy_to_python_number(val):
@@ -2535,11 +2726,24 @@ def specialize_scalar(sdfg: 'dace.SDFG', scalar_name: str, scalar_val: Union[flo
     _specialize_scalar_impl(sdfg, sdfg, scalar_name, scalar_val)
 
 
-def demote_symbol_to_scalar(sdfg: 'dace.SDFG', symbol_str: str):
+def demote_symbol_to_scalar(sdfg: 'dace.SDFG',
+                            symbol_str: str,
+                            default_type: 'dace.dtypes.typeclass' = None,
+                            in_scalar_name: str = None):
     import dace.sdfg.construction_utils as cutil
+    import dace.sdfg.tasklet_utils as tutil
+
+    if default_type is None:
+        default_type = dace.int32
 
     # If assignment is to symbol_str, append it to last scalar before
-    sym_dtype = sdfg.symbols[symbol_str]
+    if symbol_str in sdfg.symbols:
+        sym_dtype = sdfg.symbols[symbol_str]
+    else:
+        print(
+            f"Symbol {symbol_str} not in the symbols of {sdfg.label} ({sdfg.symbols}), setting to default type {default_type}"
+        )
+        sym_dtype = default_type
 
     # If top-level and in free symbols
     # Or not top-level and in symbol mapping need to make it non transient
@@ -2549,10 +2753,22 @@ def demote_symbol_to_scalar(sdfg: 'dace.SDFG', symbol_str: str):
                         ((not is_top_level) and symbol_str in sdfg.parent_nsdfg_node.symbol_mapping))
 
     if is_transient is False:
-        raise Exception("Scalar to symbol demotion only works if the resulting scalar would be transient")
+        if in_scalar_name is None:
+            raise Exception(
+                "Scalar to symbol demotion only works if the resulting scalar would be transient or an input scalar name is provided"
+            )
 
-    sdfg.remove_symbol(symbol_str)
-    sdfg.add_scalar(name=symbol_str, dtype=sym_dtype, storage=dace.dtypes.StorageType.Register, transient=is_transient)
+    if symbol_str in sdfg.symbols:
+        sdfg.remove_symbol(symbol_str)
+
+    if is_transient is True:
+        sdfg.add_scalar(name=symbol_str,
+                        dtype=sym_dtype,
+                        storage=dace.dtypes.StorageType.Register,
+                        transient=is_transient)
+        scalar_name = symbol_str
+    else:
+        scalar_name = in_scalar_name
 
     # For any tasklet that uses the symbol - make an access node to the scalar and connect through the in connector
     # 1. Replace all symbols of name appearing
@@ -2566,17 +2782,19 @@ def demote_symbol_to_scalar(sdfg: 'dace.SDFG', symbol_str: str):
             if isinstance(n, dace.nodes.Tasklet):
                 assert isinstance(g, dace.SDFGState)
                 sdict = g.scope_dict()
-                if cutil.tasklet_has_symbol(n, symbol_str):
+                if tutil.tasklet_has_symbol(n, symbol_str):
                     # 2. If used in tasklet try to replace symbol name with an in connector and add an access to the scalar
 
                     # Sanity check no tasklet should assign to a symbol
-                    lhs, rhs = n.code.as_string.split(" = ")
+                    lhs, rhs = n.code.as_string.split(" = ", 2)
                     tasklet_lhs = lhs.strip()
-                    assert symbol_str not in tasklet_lhs
-                    cutil.tasklet_replace_code(n, {symbol_str: f"_in_{symbol_str}"})
+                    assert symbol_str != tasklet_lhs
+                    assert symbol_str != "True"
+                    assert symbol_str != "False"
+                    tutil.tasklet_replace_code(n, {symbol_str: f"_in_{symbol_str}"})
                     n.add_in_connector(f"_in_{symbol_str}")
-                    access = g.add_access(symbol_str)
-                    g.add_edge(access, None, n, f"_in_{symbol_str}", dace.memlet.Memlet(expr=f"{symbol_str}[0]"))
+                    access = g.add_access(scalar_name)
+                    g.add_edge(access, None, n, f"_in_{symbol_str}", dace.memlet.Memlet(expr=f"{scalar_name}[0]"))
                     # If parent scope is not None add a dependency edge to it
                     if sdict[n] is not None:
                         g.add_edge(sdict[n], None, access, None, dace.memlet.Memlet())
@@ -2585,7 +2803,6 @@ def demote_symbol_to_scalar(sdfg: 'dace.SDFG', symbol_str: str):
     for e in sdfg.all_interstate_edges():
         matching_assignments = {(k, v) for k, v in e.data.assignments.items() if k.strip() == symbol_str}
         if len(matching_assignments) > 0:
-            print(matching_assignments)
             # Add them to the next state
             state = e.dst.parent_graph.add_state_before(e.dst,
                                                         label=f"_{e.dst}_sym_assign",

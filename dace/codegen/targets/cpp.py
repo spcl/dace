@@ -367,10 +367,10 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
 
     elif defined_type == DefinedType.ArrayInterface:
         base_ctype = conntype.base_type.ctype
-        typedef = f"{base_ctype}*" if is_write else f"const {base_ctype}*"
+        typedef = f"{base_ctype}* __restrict__" if is_write else f"const {base_ctype}* __restrict__"
         is_scalar = False
     elif defined_type == DefinedType.Scalar:
-        typedef = defined_ctype if is_scalar else (defined_ctype + '*')
+        typedef = defined_ctype if is_scalar else (defined_ctype + '* __restrict__')
         if is_write is False and not isinstance(desc, data.Structure):
             typedef = make_const(typedef)
         ref = '&' if is_scalar else ''
