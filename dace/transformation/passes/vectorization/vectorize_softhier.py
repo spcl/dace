@@ -36,7 +36,7 @@ inline void _softhier_vi_vadd_(
             asm volatile("vsetvli %0, %1, e" XSTR(32) ", m8, ta, ma" : "=r"(avl) : "r"(vlen));
             asm volatile("vle" XSTR(32) ".v v8,  (%0)" ::"r"(va_addr));
             asm volatile("vle" XSTR(32) ".v v0,  (%0)" ::"r"(vb_addr));
-            asm volatile("vadd.vv v8, v8, v0");
+            asm volatile("vfadd.vv v8, v8, v0");
             asm volatile("vse" XSTR(32) ".v v8,  (%0)" ::"r"(vc_addr));
             vlen -= avl;
             va_addr += 4*avl;
