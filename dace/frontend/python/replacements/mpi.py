@@ -293,7 +293,13 @@ def _pgrid_alltoall(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, pgrid: str
 
 @oprepo.replaces('mpi4py.MPI.COMM_WORLD.Allreduce')
 @oprepo.replaces('dace.comm.Allreduce')
-def _allreduce(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, inp_buffer: 'InPlace', buffer: str, op: str, grid: str = None):
+def _allreduce(pv: ProgramVisitor,
+               sdfg: SDFG,
+               state: SDFGState,
+               inp_buffer: 'InPlace',
+               buffer: str,
+               op: str,
+               grid: str = None):
 
     from dace.libraries.mpi.nodes.allreduce import Allreduce
 

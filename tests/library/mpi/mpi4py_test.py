@@ -217,6 +217,7 @@ def test_direct_use_of_MPICOMM_all_reduce():
 
     assert A[3] == size - 1
 
+
 @pytest.mark.mpi
 def test_3mm():
 
