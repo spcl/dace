@@ -245,10 +245,6 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
                             applied_anything = True
                             break
 
-                        # If apply once is set, applied should be forcefully set to True, once we have applied the transformation to all patterns
-                        if apply_once:
-                            break
-
                 if apply_once:
                     break
         else:
@@ -262,8 +258,6 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
                                             metadata=self._metadata):
                     self._apply_and_validate(match, sdfg, start, pipeline_results, applied_transformations)
                     applied = True
-                    break
-                if apply_once:
                     break
 
         if self.validate:
