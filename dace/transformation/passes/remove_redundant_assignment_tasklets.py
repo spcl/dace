@@ -14,7 +14,7 @@ import dace.sdfg.construction_utils as cutil
 
 
 @transformation.explicit_cf_compatible
-class RemoveAssignmentTasklets(ppl.Pass):
+class RemoveRedundantAssignmentTasklets(ppl.Pass):
     copy_tasklet_pattern = properties.Property(dtype=str, default='', allow_none=False)
 
     def modifies(self) -> ppl.Modifies:

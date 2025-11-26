@@ -16,8 +16,7 @@ class CleanDataToScalarSliceToTaskletPattern(ppl.Pass):
         return ppl.Modifies.Tasklets | ppl.Modifies.AccessNodes | ppl.Modifies.Edges
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
-        return (modified & ppl.Modifies.Tasklets) or (modified & ppl.Modifies.AccessNodes) or (modified
-                                                                                               & ppl.Modifies.Edges)
+        return False
 
     def depends_on(self):
         return {}
@@ -29,45 +28,35 @@ class CleanDataToScalarSliceToTaskletPattern(ppl.Pass):
         if not (isinstance(middle_data, dace.data.Scalar) or
                 (isinstance(middle_data, dace.data.Array) and
                  (middle_data.shape == (1, ) or middle_data.shape == [1]))):
-            print(f"Return None: middle_data {middle_node.data} is not a scalar or 1-element array: {middle_data}")
             return None
         if isinstance(middle_data, dace.data.View):
-            print("Return None: middle_data is a View", middle_data)
             return None
         if middle_data.transient is False:
-            print("Return None: middle_data is not transient", middle_data)
             return None
 
         ies = state.in_edges(middle_node)
         oes = state.out_edges(middle_node)
         if len(ies) != 1:
-            print("Return None: number of in-edges != 1", len(ies))
             return None
         if len(oes) != 1:
-            print("Return None: number of out-edges != 1", len(oes))
             return None
 
         ie: MultiConnectorEdge = ies[0]
         oe: MultiConnectorEdge = oes[0]
         if not isinstance(ie.src, dace.nodes.AccessNode):
-            print("Return None: source of in-edge is not AccessNode", type(ie.src))
             return None
         if not isinstance(oe.dst, dace.nodes.Tasklet):
-            print("Return None: destination of out-edge is not Tasklet", type(oe.dst))
             return None
 
         src_data = state.sdfg.arrays[ie.src.data]
         if not isinstance(src_data, (dace.data.Array, dace.data.Scalar)):
-            print("Return None: source data is not Array or Scalar", type(src_data))
             return None
 
         if ie.dst_conn is not None:
-            print("Return None: in-edge has destination connector", ie.dst_conn)
             return None
 
         in_memlet: dace.Memlet = ie.data
         if in_memlet.volume != 1:
-            print("Return None: memlet volume != 1", in_memlet.volume)
             return None
 
         # Expensive check, need to ensure that there are no other writes to this array
@@ -83,7 +72,6 @@ class CleanDataToScalarSliceToTaskletPattern(ppl.Pass):
                 if c_state.in_degree(c_node) > 0:
                     for ie in c_state.in_edges(c_node):
                         if ie.data is not None:
-                            print("Return None: found another write to middle_data in state", c_state, "node", c_node)
                             return None
 
         return ie, oe

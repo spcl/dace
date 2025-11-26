@@ -249,7 +249,6 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
                 continue
             blocks = cfg.nodes()
             if len(blocks) != len(set([s.label for s in blocks])):
-                print(blocks, "\n", [s.label for s in blocks])
                 raise InvalidSDFGError('Found multiple blocks with the same name in ' + cfg.name, sdfg, None)
 
         # Check the names of data descriptors and co.

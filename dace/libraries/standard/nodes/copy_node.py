@@ -9,28 +9,82 @@ from dace.codegen.common import sym2cpp
 import copy
 
 
+# Compute collapsed shapes and strides, removing singleton dimensions (length == 1)
+def collapse_shape_and_strides(subset, strides):
+    collapsed_shape = []
+    collapsed_strides = []
+    for (b, e, s), stride in zip(subset, strides):
+        length = (e + 1 - b) // s
+        if length != 1:
+            collapsed_shape.append(length)
+            collapsed_strides.append(stride)
+    return collapsed_shape, collapsed_strides
+
+
+def add_dynamic_inputs(dynamic_inputs, sdfg: dace.SDFG, in_subset: dace.subsets.Range, state: dace.SDFGState):
+    # Add dynamic inputs
+    pre_assignments = dict()
+    map_lengths = [dace.symbolic.SymExpr((e + 1 - b) // s) for (b, e, s) in in_subset]
+
+    for dynamic_input_name, datadesc in dynamic_inputs.items():
+        if dynamic_input_name in sdfg.arrays:
+            continue
+
+        if dynamic_input_name in sdfg.symbols:
+            sdfg.replace(str(dynamic_input_name), "sym_" + str(dynamic_input_name))
+            ndesc = copy.deepcopy(datadesc)
+            ndesc.transient = False
+            sdfg.add_datadesc(dynamic_input_name, ndesc)
+            # Should be scalar
+            if isinstance(ndesc, dace.data.Scalar):
+                pre_assignments["sym_" + dynamic_input_name] = f"{dynamic_input_name}"
+            else:
+                assert ndesc.shape == (1, ) or ndesc.shape == [
+                    1,
+                ]
+                pre_assignments["sym_" + dynamic_input_name] = f"{dynamic_input_name}[0]"
+
+            new_map_lengths = []
+            for ml in map_lengths:
+                nml = ml.subs({str(dynamic_input_name): "sym_" + str(dynamic_input_name)})
+                new_map_lengths.append(nml)
+            map_lengths = new_map_lengths
+
+    if pre_assignments != dict():
+        # Add a state for assignments in the beginning
+        sdfg.add_state_before(state=state, label="pre_assign", is_start_block=True, assignments=pre_assignments)
+
+    return map_lengths
+
+
 @library.expansion
 class ExpandPure(ExpandTransformation):
     environments = []
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
-        inp_name, inp, in_subset, out_name, out, out_subset = node.validate(parent_sdfg, parent_state)
+        inp_name, inp, in_subset, out_name, out, out_subset, dynamic_inputs = node.validate(parent_sdfg, parent_state)
         map_lengths = [(e + 1 - b) // s for (b, e, s) in in_subset]
-        cp_size = reduce(operator.mul, map_lengths, 1)
+
+        in_shape_collapsed, in_strides_collapsed = collapse_shape_and_strides(in_subset, inp.strides)
+        out_shape_collapsed, out_strides_collapsed = collapse_shape_and_strides(out_subset, out.strides)
 
         sdfg = dace.SDFG(f"{node.label}_sdfg")
-        _, inp_arr = sdfg.add_array(inp_name, inp.shape, inp.dtype, inp.storage, strides=inp.strides)
-        _, out_arr = sdfg.add_array(out_name, out.shape, out.dtype, out.storage, strides=out.strides)
+        sdfg.add_array(inp_name, in_shape_collapsed, inp.dtype, inp.storage, strides=in_strides_collapsed)
+        sdfg.add_array(out_name, out_shape_collapsed, out.dtype, out.storage, strides=out_strides_collapsed)
 
-        state = sdfg.add_state(f"{node.label}_state")
+        state = sdfg.add_state(f"{node.label}_state", is_start_block=True)
+
+        map_lengths = add_dynamic_inputs(dynamic_inputs, sdfg, in_subset, state)
+
         sdfg.schedule = dace.dtypes.ScheduleType.Default
 
         map_params = [f"__i{i}" for i in range(len(map_lengths))]
         map_rng = {i: f"0:{s}" for i, s in zip(map_params, map_lengths)}
-        access_expr = ','.join(map_params)
-        inputs = {"_memcpy_inp": dace.memlet.Memlet(f"{inp_name}[{access_expr}]")}
-        outputs = {"_memcpy_out": dace.memlet.Memlet(f"{out_name}[{access_expr}]")}
+        in_access_expr = ','.join(map_params)
+        out_access_expr = ','.join(map_params)
+        inputs = {"_memcpy_inp": dace.memlet.Memlet(f"{inp_name}[{in_access_expr}]")}
+        outputs = {"_memcpy_out": dace.memlet.Memlet(f"{out_name}[{out_access_expr}]")}
         code = "_memcpy_out = _memcpy_inp"
         if inp.storage == dace.dtypes.StorageType.GPU_Global:
             schedule = dace.dtypes.ScheduleType.GPU_Device
@@ -53,13 +107,20 @@ class ExpandCUDA(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG):
-        inp_name, inp, in_subset, out_name, out, out_subset = node.validate(parent_sdfg, parent_state)
+        inp_name, inp, in_subset, out_name, out, out_subset, dynamic_inputs = node.validate(parent_sdfg, parent_state)
+
         map_lengths = [(e + 1 - b) // s for (b, e, s) in in_subset]
         cp_size = reduce(operator.mul, map_lengths, 1)
 
+        in_shape_collapsed, in_strides_collapsed = collapse_shape_and_strides(in_subset, inp.strides)
+        out_shape_collapsed, out_strides_collapsed = collapse_shape_and_strides(out_subset, out.strides)
+
         sdfg = dace.SDFG(f"{node.label}_sdfg")
-        _, inp_arr = sdfg.add_array(inp_name, inp.shape, inp.dtype, inp.storage, strides=inp.strides)
-        _, out_arr = sdfg.add_array(out_name, out.shape, out.dtype, out.storage, strides=out.strides)
+        sdfg.add_array(inp_name, in_shape_collapsed, inp.dtype, inp.storage, strides=in_strides_collapsed)
+        sdfg.add_array(out_name, out_shape_collapsed, out.dtype, out.storage, strides=out_strides_collapsed)
+
+        # Add dynamic inputs
+        map_lengths = add_dynamic_inputs(dynamic_inputs, sdfg, in_subset, state)
 
         state = sdfg.add_state(f"{node.label}_state")
 
@@ -86,9 +147,55 @@ class ExpandCUDA(ExpandTransformation):
         return sdfg
 
 
+@library.expansion
+class ExpandCPU(ExpandTransformation):
+    environments = [environments.CPU]
+
+    @staticmethod
+    def expansion(node, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG):
+        inp_name, inp, in_subset, out_name, out, out_subset, dynamic_inputs = node.validate(parent_sdfg, parent_state)
+        map_lengths = [(e + 1 - b) // s for (b, e, s) in in_subset]
+        cp_size = reduce(operator.mul, map_lengths, 1)
+
+        in_shape_collapsed, in_strides_collapsed = collapse_shape_and_strides(in_subset, inp.strides)
+        out_shape_collapsed, out_strides_collapsed = collapse_shape_and_strides(out_subset, out.strides)
+
+        sdfg = dace.SDFG(f"{node.label}_sdfg")
+        sdfg.add_array(inp_name, in_shape_collapsed, inp.dtype, inp.storage, strides=in_strides_collapsed)
+        sdfg.add_array(out_name, out_shape_collapsed, out.dtype, out.storage, strides=out_strides_collapsed)
+
+        state = sdfg.add_state(f"{node.label}_state")
+
+        # Add dynamic inputs
+        map_lengths = add_dynamic_inputs(dynamic_inputs, sdfg, in_subset, state)
+
+        # Add CPU access nodes
+        in_access = state.add_access(inp_name)
+        out_access = state.add_access(out_name)
+
+        # Tasklet performing standard CPU memcpy
+        tasklet = state.add_tasklet(
+            name=f"memcpy_tasklet",
+            inputs={"_memcpy_in"},
+            outputs={"_memcpy_out"},
+            code=f"memcpy(_memcpy_out, _memcpy_in, {sym2cpp(cp_size)} * sizeof({inp.dtype.ctype}));",
+            language=dace.Language.CPP,
+            code_global="#include <cstring>")
+
+        # Connect input and output to the tasklet
+        state.add_edge(
+            in_access, None, tasklet, "_memcpy_in",
+            dace.memlet.Memlet(data=inp_name, subset=dace.subsets.Range([(0, e - 1, 1) for e in map_lengths])))
+        state.add_edge(
+            tasklet, "_memcpy_out", out_access, None,
+            dace.memlet.Memlet(data=out_name, subset=dace.subsets.Range([(0, e - 1, 1) for e in map_lengths])))
+
+        return sdfg
+
+
 @library.node
 class CopyLibraryNode(nodes.LibraryNode):
-    implementations = {"pure": ExpandPure, "CUDA": ExpandCUDA}
+    implementations = {"pure": ExpandPure, "CUDA": ExpandCUDA, "CPU": ExpandCPU}
     default_implementation = 'pure'
 
     def __init__(self, name, *args, **kwargs):
@@ -100,25 +207,32 @@ class CopyLibraryNode(nodes.LibraryNode):
         :return: A tuple (inp, out) for the data descriptors in the parent SDFG.
         """
 
-        inp_name, inp, in_subset, out_name, out, out_subset = None, None, None, None, None, None
         if len(state.out_edges(self)) != 1:
             raise ValueError("Number of out edges unequal to one")
-        if len(state.in_edges(self)) != 1:
-            raise ValueError("Number of in edges unequal to one")
 
         oe = next(iter(state.out_edges(self)))
         out = sdfg.arrays[oe.data.data]
         out_subset = oe.data.subset
         out_name = oe.src_conn
 
-        ie = next(iter(state.in_edges(self)))
+        # Add dynamic connectors
+        dynamic_ies = {ie for ie in state.in_edges(self) if ie.dst_conn != "_in"}
+        dynamic_inputs = dict()
+        for ie in dynamic_ies:
+            dataname = ie.data.data
+            datadesc = state.sdfg.arrays[dataname]
+            if not isinstance(datadesc, dace.data.Scalar):
+                raise ValueError("Dynamic inputs (not connected to `_in`) need to be all scalars")
+            dynamic_inputs[ie.dst_conn] = datadesc
+
+        data_ies = {ie for ie in state.in_edges(self) if ie.dst_conn == "_in"}
+        if len(data_ies) != 1:
+            raise ValueError("Only when edge should be to dst connector `_in`")
+        ie = data_ies.pop()
         inp = sdfg.arrays[ie.data.data]
 
         in_subset = ie.data.subset
         inp_name = ie.dst_conn
-        print("IN-OUT-NAMES", inp_name, out_name)
-        print("ARRANAMES", sdfg.arrays)
-
         if not inp:
             raise ValueError("Missing the input tensor.")
         if not out:
@@ -130,4 +244,4 @@ class CopyLibraryNode(nodes.LibraryNode):
         if inp.storage != out.storage:
             raise ValueError("The storage of the input and output tensors must match.")
 
-        return inp_name, inp, in_subset, out_name, out, out_subset
+        return inp_name, inp, in_subset, out_name, out, out_subset, dynamic_inputs
