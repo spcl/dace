@@ -2556,7 +2556,8 @@ def convert_nonstandard_calls(expr: str) -> str:
 
 
 def expand_interstate_assignments_to_lanes(inner_sdfg: dace.SDFG, nsdfg_node: dace.nodes.NestedSDFG,
-                                           state: dace.SDFGState, vector_width: int, invariant_data: Set[str]):
+                                           state: dace.SDFGState, vector_width: int, invariant_data: Set[str],
+                                           vector_dtype: typeclass):
     # `sym = 0`
     # Would become
     # `sym_laneid_0 = 0, sym=sym_laneid_0, sym_laneid_1 = 0, sym_laneid_2 = 0, ....`
@@ -2595,7 +2596,7 @@ def expand_interstate_assignments_to_lanes(inner_sdfg: dace.SDFG, nsdfg_node: da
 
                 new_k = f"{k}_laneid_{i}"
                 if new_k not in inner_sdfg.symbols:
-                    inner_sdfg.add_symbol(new_k, inner_sdfg.symbols.get(k, dace.float64))
+                    inner_sdfg.add_symbol(new_k, inner_sdfg.symbols.get(k, vector_dtype))
 
                 # Replace map param `_for_it` with `_for_it + laneid`
                 v_expr = v_expr.subs(vectorized_param, f"({vectorized_param} + {i})")
@@ -2621,7 +2622,7 @@ def expand_interstate_assignments_to_lanes(inner_sdfg: dace.SDFG, nsdfg_node: da
                         # Add the new symbol to the symbols
                         if f"{free_sym}_laneid_{i}" not in inner_sdfg.symbols:
                             inner_sdfg.add_symbol(f"{free_sym}_laneid_{i}",
-                                                  inner_sdfg.symbols.get(str(free_sym), dace.float64))
+                                                  inner_sdfg.symbols.get(str(free_sym), vector_dtype))
                     else:
                         if isinstance(inner_sdfg.arrays[free_sym_str], dace.data.Scalar):
                             #print(f"Subs {free_sym} with {free_sym}")

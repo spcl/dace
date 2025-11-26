@@ -35,11 +35,13 @@ class Vectorize(ppl.Pass):
     insert_copies = properties.Property(dtype=bool, default=True, allow_none=False)
     fail_on_unvectorizable = properties.Property(dtype=bool, default=False, allow_none=False)
     eliminate_trivial_vector_map = properties.Property(dtype=bool, default=True, allow_none=False)
+    no_copy_out = properties.Property(dtype=bool, default=True, allow_none=False)
 
     def __init__(self, templates: Dict[str, str], vector_width: str, vector_input_storage: dace.dtypes.StorageType,
                  vector_output_storage: dace.dtypes.StorageType, vector_op_numeric_type: typeclass, global_code: str,
                  global_code_location: str, try_to_demote_symbols_in_nsdfgs: bool, apply_on_maps: Optional[List[str]],
-                 insert_copies: bool, fail_on_unvectorizable: bool, eliminate_trivial_vector_map: bool):
+                 insert_copies: bool, fail_on_unvectorizable: bool, eliminate_trivial_vector_map: bool,
+                 no_copy_out: bool):
         super().__init__()
 
         self.templates = templates
@@ -385,7 +387,7 @@ class Vectorize(ppl.Pass):
         # `sym = A[_for_it] + 1`
         # Would become:
         # `sym_laneid_0 = A[_for_it + 0] + 1`, `sym = sym_laneid_0`, `sym_laneid_1 = A[_for_it + 1] + 1`, ...
-        expand_interstate_assignments_to_lanes(inner_sdfg, nsdfg, state, self.vector_width, invariant_scalars)
+        expand_interstate_assignments_to_lanes(inner_sdfg, nsdfg, state, self.vector_width, invariant_scalars, self.vector_op_numeric_type)
 
         # 5
         for inner_state in inner_sdfg.all_states():
