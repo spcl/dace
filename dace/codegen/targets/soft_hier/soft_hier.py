@@ -1048,20 +1048,16 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                 is_sync = True
             callsite_stream.write(f'// is_sync = {is_sync}')
             self._has_async_dma = (not is_sync) or self._has_async_dma
+            print(copy_shape, )
             if dims == 1:
                 subset: subsets.Range = memlet.subset
                 other_subset: subsets.Range = memlet.other_subset
                 # We can have A -> localA by having only subset (then we copy the subset to complete range of localA)
                 # Otherwise we copy other subset
-                if other_subset is not None:
-                    beg, end, step = other_subset.ranges[0]
-                else:
-                    beg, end, step = subset.ranges[0]
-                print(f"subset = {subset}; index_0: {src_name} -> {dst_name}, {beg}, {end}, {step}")
-                length = (end + 1) - beg
+                length = copy_shape[0]
                 data_size = nodedesc.dtype.bytes  # Number of bytes per element
                 if (src_storage == dtypes.StorageType.SoftHier_HBM and dst_storage == dtypes.StorageType.SoftHier_TCDM):
-                    callsite_stream.write("// SoftHier_HBM -> SoftHier_TCDM")
+                    callsite_stream.write("// SoftHier_HBM -> SoftHier_TCDM 1D")
                     callsite_stream.write("if(flex_is_dm_core())")
                     callsite_stream.write("{", cfg, state_id, src_node)
                     funcname = "flex_dma_async_1d"
@@ -1075,7 +1071,7 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                     #     callsite_stream.write("flex_intra_cluster_sync();")
                 elif (src_storage == dtypes.StorageType.SoftHier_TCDM
                       and dst_storage == dtypes.StorageType.SoftHier_TCDM):
-                    callsite_stream.write("// SoftHier_TCDM -> SoftHier_TCDM")
+                    callsite_stream.write("// SoftHier_TCDM -> SoftHier_TCDM 1D")
                     # when src_node name is same as dst_node name then no need to copy
                     if src_name == dst_name:
                         # do nothing
@@ -1098,6 +1094,7 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                 elif (src_storage == dtypes.StorageType.SoftHier_TCDM
                       and dst_storage == dtypes.StorageType.SoftHier_HBM):
                     callsite_stream.write("// SoftHier_TCDM -> SoftHier_HBM")
+                    callsite_stream.write("flex_intra_cluster_sync();")
                     callsite_stream.write("if(flex_is_dm_core())")
                     callsite_stream.write("{", cfg, state_id, src_node)
                     funcname = "flex_dma_async_1d"
@@ -1118,10 +1115,10 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
 
                 beg, end, step = subset.ranges[0]
                 # print(f'index_0: {src_name} -> {dst_name}, {beg}, {end}, {step}')
-                length_0 = (end + 1) - beg
+                length_0 = copy_shape[0]
 
                 beg, end, step = subset.ranges[1]
-                length_1 = (end + 1) - beg
+                length_1 = copy_shape[1]
 
                 # print(f'index_1: {src_name} -> {dst_name}, {beg}, {end}, {step}')
                 data_size = nodedesc.dtype.bytes
@@ -1163,6 +1160,7 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                         # do nothing
                         pass
                     else:
+                        callsite_stream.write("flex_intra_cluster_sync();")
                         callsite_stream.write("if(flex_is_dm_core())")
                         callsite_stream.write("{", cfg, state_id, src_node)
                         funcname = "flex_dma_sync_2d"
