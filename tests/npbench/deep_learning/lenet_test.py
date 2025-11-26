@@ -5,18 +5,10 @@ import numpy as np
 import dace as dc
 import pytest
 import argparse
-from dace.fpga_testing import fpga_test, xilinx_test
+from dace.fpga_testing import fpga_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
-from dace.transformation.dataflow import StreamingMemory, StreamingComposition
-from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
-from dace.config import temporary_config, Config
-import os
+from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.autodiff import add_backward_pass
-
-pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
-import jax
-import jax.numpy as jnp
-import jax.lax as lax
 
 N, H, W, C_before_fc1, S0, S1, S2, S3, S4, S5 = (dc.symbol(s, dtype=dc.int64)
                                                  for s in ('N', 'H', 'W', 'C_before_fc1', 'S0', 'S1', 'S2', 'S3', 'S4',
@@ -152,7 +144,7 @@ def lenet5_np(input, conv1, conv1bias, conv2, conv2bias, fc1w, fc1b, fc2w, fc2b,
     return x @ fc3w + fc3b
 
 
-def conv2d_lax(input, weights):
+def conv2d_lax(jnp, lax, input, weights):
     # Kernel size, number of input images, and output dimensions.
     K = weights.shape[0]  # Assuming square kernel of size K x K.
     N = input.shape[0]  # Batch size.
@@ -185,7 +177,7 @@ def conv2d_lax(input, weights):
     return output
 
 
-def maxpool2d_lax(x):
+def maxpool2d_lax(jnp, lax, x):
     output = jnp.empty([x.shape[0], x.shape[1] // 2, x.shape[2] // 2, x.shape[3]], dtype=x.dtype)
 
     def row_update(output, i):
@@ -203,20 +195,20 @@ def maxpool2d_lax(x):
     return output
 
 
-def jax_relu(x):
+def jax_relu(jnp, x):
     return jnp.maximum(x, 0)
 
 
-def lenet_jax_kernel(input, conv1, conv1bias, conv2, conv2bias, fc1w, fc1b, fc2w, fc2b, fc3w, fc3b):
+def lenet_jax_kernel(jnp, lax, input, conv1, conv1bias, conv2, conv2bias, fc1w, fc1b, fc2w, fc2b, fc3w, fc3b):
     C_before_fc1 = fc1w.shape[0]
     N = input.shape[0]
-    x = jax_relu(conv2d_lax(input, conv1) + conv1bias)
-    x = maxpool2d_lax(x)
-    x = jax_relu(conv2d_lax(x, conv2) + conv2bias)
-    x = maxpool2d_lax(x)
+    x = jax_relu(jnp, conv2d_lax(jnp, lax, input, conv1) + conv1bias)
+    x = maxpool2d_lax(jnp, lax, x)
+    x = jax_relu(jnp, conv2d_lax(jnp, lax, x, conv2) + conv2bias)
+    x = maxpool2d_lax(jnp, lax, x)
     x = jnp.reshape(x, (N, C_before_fc1))
-    x = jax_relu(x @ fc1w + fc1b)
-    x = jax_relu(x @ fc2w + fc2b)
+    x = jax_relu(jnp, x @ fc1w + fc1b)
+    x = jax_relu(jnp, x @ fc2w + fc2b)
     return jnp.sum(x @ fc3w + fc3b)
 
 
@@ -270,6 +262,10 @@ def run_lenet(device_type: dace.dtypes.DeviceType):
 
 
 def run_lenet_autodiff():
+    import jax
+    import jax.numpy as jnp
+    import jax.lax as lax
+
     # Initialize data (npbench test size)
     N, H, W = 4, 16, 16
     input, conv1, conv1bias, conv2, conv2bias, fc1w, fc1b, fc2w, fc2b, fc3w, fc3b, C_before_fc1 = initialize(N, H, W)
@@ -310,7 +306,9 @@ def run_lenet_autodiff():
          gradient___return=gradient___return)
 
     # Numerically validate vs JAX
-    jax_grad = jax.jit(jax.grad(lenet_jax_kernel, argnums=0))
+    jax_kernel = lambda input, conv1, conv1bias, conv2, conv2bias, fc1w, fc1b, fc2w, fc2b, fc3w, fc3b: lenet_jax_kernel(
+        jnp, lax, input, conv1, conv1bias, conv2, conv2bias, fc1w, fc1b, fc2w, fc2b, fc3w, fc3b)
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=0))
     jax_grad_input = jax_grad(input, conv1, conv1bias, conv2, conv2bias, fc1w, fc1b, fc2w, fc2b, fc3w, fc3b)
     np.testing.assert_allclose(gradient_input, jax_grad_input, rtol=1e-6)
 
@@ -329,6 +327,7 @@ def test_gpu():
 
 @pytest.mark.autodiff
 def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
     run_lenet_autodiff()
 
 

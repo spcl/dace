@@ -11,11 +11,6 @@ from dace.transformation.dataflow import StreamingMemory
 from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
 from dace.autodiff import add_backward_pass
 
-pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
-import jax
-import jax.numpy as jnp
-import jax.lax as lax
-
 # Data set sizes
 # W, H
 sizes = {
@@ -82,7 +77,7 @@ def initialize(W, H, datatype=np.float64):
     return alpha, imgIn
 
 
-def deriche_jax_kernel(alpha, imgIn):
+def deriche_jax_kernel(jnp, lax, alpha, imgIn):
 
     k = (1.0 - jnp.exp(-alpha))**2 / (1.0 + alpha * jnp.exp(-alpha) - jnp.exp(2.0 * alpha))
     a1 = a5 = k
@@ -221,6 +216,10 @@ def run_deriche(device_type: dace.dtypes.DeviceType):
 
 
 def run_deriche_autodiff():
+    import jax
+    import jax.numpy as jnp
+    import jax.lax as lax
+
     # Initialize data (test size for efficiency)
     W, H = sizes["mini"]
     alpha, imgIn = initialize(W, H)
@@ -244,7 +243,8 @@ def run_deriche_autodiff():
     jax.config.update("jax_enable_x64", True)
 
     # Numerically validate vs JAX
-    jax_grad = jax.jit(jax.grad(deriche_jax_kernel, argnums=1))
+    jax_kernel = lambda alpha, imgIn: deriche_jax_kernel(jnp, lax, alpha, imgIn)
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=1))
     alpha_jax, imgIn_jax = initialize(W, H)
     jax_grad_imgIn = jax_grad(alpha_jax, imgIn_jax)
     np.testing.assert_allclose(gradient_imgIn, jax_grad_imgIn)
@@ -261,6 +261,7 @@ def test_gpu():
 
 @pytest.mark.autodiff
 def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
     run_deriche_autodiff()
 
 

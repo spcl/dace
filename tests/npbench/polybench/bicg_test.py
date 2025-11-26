@@ -11,10 +11,6 @@ from dace.transformation.dataflow import StreamingMemory
 from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
 from dace.autodiff import add_backward_pass
 
-pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
-import jax
-import jax.numpy as jnp
-
 # Data set sizes
 # M, N
 sizes = {
@@ -41,7 +37,7 @@ def bicg_kernel(A: dc.float64[N, M], p: dc.float64[M], r: dc.float64[N]):
     return r @ A, A @ p
 
 
-def bicg_jax_kernel(A, p, r):
+def bicg_jax_kernel(jnp, A, p, r):
     B, D = r @ A, A @ p
     return jnp.sum(D)
 
@@ -98,6 +94,9 @@ def run_bicg(device_type: dace.dtypes.DeviceType):
 
 
 def run_bicg_autodiff():
+    import jax
+    import jax.numpy as jnp
+
     # Initialize data (polybench mini size)
     M, N = sizes["mini"]
     A, p, r = initialize(M, N)
@@ -123,7 +122,8 @@ def run_bicg_autodiff():
     jax.config.update("jax_enable_x64", True)
 
     # Numerically validate vs JAX
-    jax_grad = jax.jit(jax.grad(bicg_jax_kernel, argnums=0))
+    jax_kernel = lambda A, p, r: bicg_jax_kernel(jnp, A, p, r)
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=0))
     jax_grad_A = jax_grad(A, p, r)
     np.testing.assert_allclose(gradient_A, jax_grad_A)
 
@@ -139,6 +139,7 @@ def test_gpu():
 
 @pytest.mark.autodiff
 def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
     run_bicg_autodiff()
 
 

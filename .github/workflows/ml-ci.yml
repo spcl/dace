@@ -40,10 +40,6 @@ jobs:
         curl -Os https://uploader.codecov.io/latest/linux/codecov
         chmod +x codecov
 
-    - name: Test dependencies
-      run: |
-        papi_avail
-
     - name: Test with pytest
       run: |
         export NOSTATUSBAR=1

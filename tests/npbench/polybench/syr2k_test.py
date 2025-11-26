@@ -10,11 +10,6 @@ from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.autodiff import add_backward_pass
 
-pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
-import jax
-import jax.numpy as jnp
-import jax.lax as lax
-
 # Data set sizes
 # M, N
 sizes = {"mini": (20, 30), "small": (60, 80), "medium": (200, 240), "large": (1000, 1200), "extra-large": (2000, 2600)}
@@ -41,7 +36,7 @@ def initialize(M, N, datatype=np.float64):
     return alpha, beta, C, A, B
 
 
-def syr2k_jax_kernel(alpha, beta, C, A, B):
+def syr2k_jax_kernel(jnp, lax, alpha, beta, C, A, B):
     m = A.shape[0]  # outer loop range
     n = A.shape[1]  # inner loop range
 
@@ -128,6 +123,10 @@ def run_syr2k(device_type: dace.dtypes.DeviceType):
 
 
 def run_syr2k_autodiff():
+    import jax
+    import jax.numpy as jnp
+    import jax.lax as lax
+
     # Initialize data (polybench mini size)
     M, N = sizes["mini"]
     alpha, beta, C, A, B = initialize(M, N)
@@ -152,7 +151,8 @@ def run_syr2k_autodiff():
     jax.config.update("jax_enable_x64", True)
 
     # Numerically validate vs JAX
-    jax_grad = jax.jit(jax.grad(syr2k_jax_kernel, argnums=3), static_argnums=(0, 1))
+    jax_kernel = lambda alpha, beta, C, A, B: syr2k_jax_kernel(jnp, lax, alpha, beta, C, A, B)
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=3), static_argnums=(0, 1))
     alpha, beta, C_jax, A_jax, B_jax = initialize(M, N)
     jax_grad_A = jax_grad(alpha, beta, C_jax, A_jax, B_jax)
     np.testing.assert_allclose(gradient_A, jax_grad_A)
@@ -169,6 +169,7 @@ def test_gpu():
 
 @pytest.mark.autodiff
 def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
     run_syr2k_autodiff()
 
 

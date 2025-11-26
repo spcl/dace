@@ -12,11 +12,6 @@ from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.config import set_temporary
 from dace.autodiff import add_backward_pass
 
-pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
-import jax
-import jax.numpy as jnp
-import jax.lax as lax
-
 # Dataset sizes
 # TSTEPS, N
 sizes = {"mini": (20, 40), "small": (40, 120), "medium": (100, 400), "large": (500, 2000), "extra-large": (1000, 4000)}
@@ -41,7 +36,7 @@ def initialize(N, datatype=np.float64):
     return A
 
 
-def seidel_2d_jax_kernel(TSTEPS, A):
+def seidel_2d_jax_kernel(jnp, lax, TSTEPS, A):
     """JAX implementation using efficient lax.scan operations"""
     N = A.shape[0]
 
@@ -120,6 +115,10 @@ def run_seidel_2d(device_type: dace.dtypes.DeviceType):
 
 
 def run_seidel_2d_autodiff():
+    import jax
+    import jax.numpy as jnp
+    import jax.lax as lax
+
     # Initialize data (test size for efficiency)
     TSTEPS, N = (2, 8)
     A = initialize(N)
@@ -149,7 +148,8 @@ def run_seidel_2d_autodiff():
     jax.config.update("jax_enable_x64", True)
 
     # Numerically validate vs JAX
-    jax_grad = jax.jit(jax.grad(seidel_2d_jax_kernel, argnums=1), static_argnums=(0, ))
+    jax_kernel = lambda TSTEPS, A: seidel_2d_jax_kernel(jnp, lax, TSTEPS, A)
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=1), static_argnums=(0, ))
     A_jax = initialize(N)
     jax_grad_A = jax_grad(TSTEPS, A_jax)
     np.testing.assert_allclose(gradient_A, jax_grad_A)
@@ -166,6 +166,7 @@ def test_gpu():
 
 @pytest.mark.autodiff
 def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
     run_seidel_2d_autodiff()
 
 

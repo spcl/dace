@@ -386,6 +386,3 @@ class ReverseReduce(BackwardImplementation):
                     backward_state.add_edge(bwd_in_read, None, bwd_out_read, "views", copy.deepcopy(out_edge.data))
 
             return nsdfg, result
-        else:
-            raise AutoDiffException(f"Unsupported reduction type '{reduction_type}'. "
-                                    f"Supported types: Sum, Max, Min")

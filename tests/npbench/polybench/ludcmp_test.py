@@ -13,11 +13,6 @@ from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.config import set_temporary
 from dace.autodiff import add_backward_pass
 
-pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
-import jax
-import jax.numpy as jnp
-import jax.lax as lax
-
 # Dataset sizes
 # TSTEPS, N
 sizes = {"mini": 40, "small": 120, "medium": 400, "large": 2000, "extra-large": 4000}
@@ -76,7 +71,7 @@ def ground_truth(A, b):
     return x, y
 
 
-def ludcmp_jax_kernel(A, b):
+def ludcmp_jax_kernel(jnp, lax, A, b):
     n = A.shape[0]
     x = jnp.zeros_like(b)
     y = jnp.zeros_like(b)
@@ -136,6 +131,10 @@ def ludcmp_jax_kernel(A, b):
 
 
 def run_ludcmp_autodiff():
+    import jax
+    import jax.numpy as jnp
+    import jax.lax as lax
+
     # Initialize data (polybench mini size)
     N = sizes["mini"]
     A, b = initialize(N)
@@ -159,7 +158,8 @@ def run_ludcmp_autodiff():
     jax.config.update("jax_enable_x64", True)
 
     # Numerically validate vs JAX
-    jax_grad = jax.jit(jax.grad(ludcmp_jax_kernel, argnums=0))
+    jax_kernel = lambda A, b: ludcmp_jax_kernel(jnp, lax, A, b)
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=0))
     A_jax, b_jax = initialize(N)
     jax_grad_A = jax_grad(A_jax, b_jax)
     np.testing.assert_allclose(gradient_A, jax_grad_A)
@@ -213,6 +213,7 @@ def test_gpu():
 
 @pytest.mark.autodiff
 def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
     # Serialization causes issues, we temporarily disable it
     # TODO: open an issue to fix the serialization stability problem
     last_value = os.environ.get('DACE_testing_serialization', '0')

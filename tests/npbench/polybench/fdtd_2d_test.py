@@ -12,11 +12,6 @@ from dace.transformation.auto.auto_optimize import auto_optimize
 import argparse
 from dace.autodiff import add_backward_pass
 
-pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
-import jax
-import jax.numpy as jnp
-import jax.lax as lax
-
 # Data set sizes
 # TMAX, NX, NY
 sizes = {
@@ -56,7 +51,7 @@ def init_data(TMAX, NX, NY):
     return ex, ey, hz, _fict_
 
 
-def fdtd_2d_jax_kernel(ex, ey, hz, _fict_):
+def fdtd_2d_jax_kernel(jnp, lax, ex, ey, hz, _fict_):
     """JAX implementation using efficient lax.scan operations"""
     TMAX = _fict_.shape[0]
 
@@ -140,6 +135,10 @@ def run_fdtd_2d(device_type: dace.dtypes.DeviceType):
 
 
 def run_fdtd_2d_autodiff():
+    import jax
+    import jax.numpy as jnp
+    import jax.lax as lax
+
     # Initialize data (test size for efficiency)
     TMAX, NX, NY = (2, 10, 12)
     ex, ey, hz, _fict_ = init_data(TMAX, NX, NY)
@@ -161,7 +160,8 @@ def run_fdtd_2d_autodiff():
     sdfg(ex, ey, hz, _fict_, TMAX=TMAX, NX=NX, NY=NY, gradient_ex=gradient_ex, gradient___return=gradient___return)
 
     # Numerically validate vs JAX (use float32 consistent with kernel)
-    jax_grad = jax.jit(jax.grad(fdtd_2d_jax_kernel, argnums=0))
+    jax_kernel = lambda ex, ey, hz, _fict_: fdtd_2d_jax_kernel(jnp, lax, ex, ey, hz, _fict_)
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=0))
     ex_jax, ey_jax, hz_jax, _fict_jax = init_data(TMAX, NX, NY)
     jax_grad_ex = jax_grad(ex_jax, ey_jax, hz_jax, _fict_jax)
     np.testing.assert_allclose(gradient_ex, jax_grad_ex)
@@ -178,6 +178,7 @@ def test_gpu():
 
 @pytest.mark.autodiff
 def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
     run_fdtd_2d_autodiff()
 
 

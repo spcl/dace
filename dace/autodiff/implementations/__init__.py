@@ -12,9 +12,8 @@ Implementation Categories
    - Fundamental building blocks for all DaCe programs
    - Registered in DaceNodeBackwardImplementations
 
-2. **DaCe Library Nodes** (dace_library_nodes.py):
-   - High-level library operations: MatMul, Conv2D, etc.
-   - Optimized implementations from dace.libraries
+2. **DaCe Reduction Nodes** (dace_reduction_nodes.py):
+   - Reduction operations: Sum, Max, Min
    - Registered using @autoregister decorator
 
 3. **ONNX Operations** (onnx_ops.py):
@@ -23,7 +22,7 @@ Implementation Categories
    - Supports ONNX model differentiation
 """
 
-import dace.autodiff.implementations.dace_library_nodes
+import dace.autodiff.implementations.dace_reduction_nodes
 from dace.autodiff.implementations.dace_nodes import DaceNodeBackwardImplementations
 
 # ONNX ops are optional

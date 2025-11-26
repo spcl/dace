@@ -11,10 +11,6 @@ from dace.transformation.dataflow import StreamingMemory, StreamingComposition
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.autodiff import add_backward_pass
 
-pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
-import jax
-import jax.numpy as jnp
-import jax.lax as lax
 # Sample constants
 BET_M = 0.5
 BET_P = 0.5
@@ -99,7 +95,7 @@ def vadv_kernel(utens_stage: dc.float64[I, J, K], u_stage: dc.float64[I, J, K], 
         utens_stage[:, :, k] = dtr_stage * (data_col - u_pos[:, :, k])
 
 
-def vadv_jax_kernel(utens_stage, u_stage, wcon, u_pos, utens, dtr_stage):
+def vadv_jax_kernel(jnp, lax, utens_stage, u_stage, wcon, u_pos, utens, dtr_stage):
     I, J, K = utens_stage.shape[0], utens_stage.shape[1], utens_stage.shape[2]
     # Allocate working arrays.
     ccol = jnp.empty((I, J, K), dtype=utens_stage.dtype)
@@ -301,6 +297,10 @@ def run_vadv(device_type: dace.dtypes.DeviceType):
 
 
 def run_vadv_autodiff():
+    import jax
+    import jax.numpy as jnp
+    import jax.lax as lax
+
     # Initialize data (npbench small size)
     I, J, K = 4, 4, 3
     dtr_stage, utens_stage, u_stage, wcon, u_pos, utens = initialize(I, J, K)
@@ -338,7 +338,9 @@ def run_vadv_autodiff():
     jax.config.update("jax_enable_x64", True)
 
     # Numerically validate vs JAX
-    jax_grad = jax.jit(jax.grad(vadv_jax_kernel, argnums=4))
+    jax_kernel = lambda utens_stage, u_stage, wcon, u_pos, utens, dtr_stage: vadv_jax_kernel(
+        jnp, lax, utens_stage, u_stage, wcon, u_pos, utens, dtr_stage)
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=4))
     jax_grad_utens = jax_grad(utens_stage_jax, u_stage_jax, wcon_jax, u_pos_jax, utens_jax, dtr_stage_jax)
     np.testing.assert_allclose(gradient_utens, jax_grad_utens)
 
@@ -356,6 +358,7 @@ def test_gpu():
 
 @pytest.mark.autodiff
 def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
     run_vadv_autodiff()
 
 

@@ -9,10 +9,6 @@ import argparse
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.autodiff import add_backward_pass
 
-pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
-import jax
-import jax.numpy as jnp
-
 # Data set sizes
 # M, N
 sizes = {"mini": (28, 32), "small": (80, 100), "medium": (240, 260), "large": (1200, 1400), "extra-large": (2600, 3000)}
@@ -47,7 +43,7 @@ def initialize(M, N, datatype=np.float64):
     return float_n, data
 
 
-def correlation_jax_kernel(float_n, data):
+def correlation_jax_kernel(jnp, float_n, data):
     mean = jnp.mean(data, axis=0)
     M = data.shape[1]
     stddev = jnp.sqrt(jnp.mean(jnp.subtract(data, mean)**2, axis=0))
@@ -108,6 +104,9 @@ def run_correlation(device_type: dace.dtypes.DeviceType):
 
 
 def run_correlation_autodiff():
+    import jax
+    import jax.numpy as jnp
+
     # Initialize data (polybench mini size)
     M, N = sizes["mini"]
     float_n, data = initialize(M, N)
@@ -131,7 +130,8 @@ def run_correlation_autodiff():
     jax.config.update("jax_enable_x64", True)
 
     # Numerically validate vs JAX
-    jax_grad = jax.jit(jax.grad(correlation_jax_kernel, argnums=1), static_argnums=(0, ))
+    jax_kernel = lambda float_n, data: correlation_jax_kernel(jnp, float_n, data)
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=1), static_argnums=(0, ))
     _, data_jax = initialize(M, N)
     jax_grad_data = jax_grad(float_n, data_jax)
     np.testing.assert_allclose(gradient_data, jax_grad_data, rtol=1e-8, atol=1e-8)
@@ -148,6 +148,7 @@ def test_gpu():
 
 @pytest.mark.autodiff
 def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
     # Serialization causes issues, we temporarily disable it
     # TODO: open an issue to fix the serialization stability problem
     last_value = os.environ.get('DACE_testing_serialization', '0')

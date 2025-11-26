@@ -10,11 +10,6 @@ from dace.fpga_testing import fpga_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.autodiff import add_backward_pass
 
-pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
-import jax
-import jax.numpy as jnp
-import jax.lax as lax
-
 # Dataset sizes
 # TSTEPS, N
 sizes = {"mini": (20, 20), "small": (40, 60), "medium": (100, 200), "large": (500, 1000), "extra-large": (1000, 2000)}
@@ -124,7 +119,7 @@ def initialize(N, datatype=np.float64):
     return u
 
 
-def adi_jax_kernel(TSTEPS, u):
+def adi_jax_kernel(jnp, lax, TSTEPS, u):
     N = u.shape[0]
     v = jnp.zeros_like(u)
     p = jnp.zeros_like(u)
@@ -237,6 +232,10 @@ def run_adi(device_type: dace.dtypes.DeviceType):
 
 
 def run_adi_autodiff():
+    import jax
+    import jax.numpy as jnp
+    import jax.lax as lax
+
     # Initialize data (polybench mini size for smaller problem)
     _, N = sizes["mini"]
 
@@ -264,7 +263,8 @@ def run_adi_autodiff():
     jax.config.update("jax_enable_x64", True)
 
     # Numerically validate vs JAX
-    jax_grad = jax.jit(jax.grad(adi_jax_kernel, argnums=1), static_argnums=0)
+    jax_kernel = lambda TSTEPS, u: adi_jax_kernel(jnp, lax, TSTEPS, u)
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=1), static_argnums=0)
     u_jax = np.copy(initialize(N))
     jax_grad_u = jax_grad(TSTEPS, u_jax)
 
@@ -282,6 +282,7 @@ def test_gpu():
 
 @pytest.mark.autodiff
 def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
     run_adi_autodiff()
 
 

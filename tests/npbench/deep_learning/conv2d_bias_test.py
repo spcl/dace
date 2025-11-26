@@ -12,11 +12,6 @@ from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
 from dace.config import set_temporary
 from dace.autodiff import add_backward_pass
 
-pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
-import jax
-import jax.numpy as jnp
-import jax.lax as lax
-
 C_in, C_out, H, K, N, W = (dc.symbol(s, dc.int64) for s in ('C_in', 'C_out', 'H', 'K', 'N', 'W'))
 
 
@@ -78,7 +73,7 @@ def conv2d_bias_np(input, weights, bias):
     return conv2d_np(input, weights) + bias
 
 
-def conv2d_lax(input, weights):
+def conv2d_lax(jnp, lax, input, weights):
     # Kernel size, number of input images, and output dimensions.
     K = weights.shape[0]  # Assuming square kernel of size K x K.
     N = input.shape[0]  # Batch size.
@@ -111,8 +106,8 @@ def conv2d_lax(input, weights):
     return output
 
 
-def conv2d_bias_jax_kernel(input, weights, bias):
-    return jnp.sum(conv2d_lax(input, weights) + bias)
+def conv2d_bias_jax_kernel(jnp, lax, input, weights, bias):
+    return jnp.sum(conv2d_lax(jnp, lax, input, weights) + bias)
 
 
 def run_conv2d_bias(device_type: dace.dtypes.DeviceType):
@@ -151,6 +146,10 @@ def run_conv2d_bias(device_type: dace.dtypes.DeviceType):
 
 
 def run_conv2d_bias_autodiff():
+    import jax
+    import jax.numpy as jnp
+    import jax.lax as lax
+
     # Initialize data (npbench test size)
     N, C_in, C_out, K, H, W = 4, 3, 8, 2, 12, 12
     input, weights, bias = initialize(C_in, C_out, H, K, N, W)
@@ -186,7 +185,8 @@ def run_conv2d_bias_autodiff():
     jax.config.update("jax_enable_x64", False)
 
     # Numerically validate vs JAX
-    jax_grad = jax.jit(jax.grad(conv2d_bias_jax_kernel, argnums=0))
+    jax_kernel = lambda input, weights, bias: conv2d_bias_jax_kernel(jnp, lax, input, weights, bias)
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=0))
     jax_grad_input = jax_grad(input, weights, bias)
     np.testing.assert_allclose(gradient_input, jax_grad_input, atol=1e-6, rtol=1e-6)
 
@@ -203,6 +203,7 @@ def test_gpu():
 
 @pytest.mark.autodiff
 def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
     run_conv2d_bias_autodiff()
 
 

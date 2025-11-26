@@ -12,10 +12,6 @@ from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
 from dace.config import set_temporary
 from dace.autodiff import add_backward_pass
 
-pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
-import jax
-import jax.numpy as jnp
-
 C_in, N, S0, S1, S2, N1, N2 = (dc.symbol(s, dtype=dc.int64) for s in ('C_in', 'N', 'S0', 'S1', 'S2', 'N1', 'N2'))
 
 
@@ -83,22 +79,22 @@ def mlp_np(input, w1, b1, w2, b2, w3, b3):
     return x
 
 
-def jax_relu(x):
+def jax_relu(jnp, x):
     return jnp.maximum(x, 0)
 
 
 # Numerically-stable version of softmax
-def jax_softmax(x):
+def jax_softmax(jnp, x):
     tmp_max = jnp.max(x, axis=-1, keepdims=True)
     tmp_out = jnp.exp(x - tmp_max)
     tmp_sum = jnp.sum(tmp_out, axis=-1, keepdims=True)
     return tmp_out / tmp_sum
 
 
-def mlp_jax_kernel(input, w1, b1, w2, b2, w3, b3):
-    x = jax_relu(input @ w1 + b1)
-    x = jax_relu(x @ w2 + b2)
-    x = jax_softmax(x @ w3 + b3)  # Softmax call can be omitted if necessary
+def mlp_jax_kernel(jnp, input, w1, b1, w2, b2, w3, b3):
+    x = jax_relu(jnp, input @ w1 + b1)
+    x = jax_relu(jnp, x @ w2 + b2)
+    x = jax_softmax(jnp, x @ w3 + b3)  # Softmax call can be omitted if necessary
     return jnp.sum(x)
 
 
@@ -140,6 +136,9 @@ def run_mlp(device_type: dace.dtypes.DeviceType):
 
 
 def run_mlp_autodiff():
+    import jax
+    import jax.numpy as jnp
+
     # Initialize data (npbench test size)
     C_in, N, S0, S1, S2 = 3, 8, 30, 20, 20
     input, w1, b1, w2, b2, w3, b3 = initialize(C_in, N, S0, S1, S2)
@@ -177,7 +176,8 @@ def run_mlp_autodiff():
          gradient___return=gradient___return)
 
     # Numerically validate vs JAX
-    jax_grad = jax.jit(jax.grad(mlp_jax_kernel, argnums=0))
+    jax_kernel = lambda input, w1, b1, w2, b2, w3, b3: mlp_jax_kernel(jnp, input, w1, b1, w2, b2, w3, b3)
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=0))
     jax_grad_input = jax_grad(input, w1, b1, w2, b2, w3, b3)
     np.testing.assert_allclose(gradient_input, jax_grad_input, rtol=1e-4, atol=1e-10)
 
@@ -193,6 +193,7 @@ def test_gpu():
 
 @pytest.mark.autodiff
 def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
     run_mlp_autodiff()
 
 

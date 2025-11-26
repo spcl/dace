@@ -12,11 +12,6 @@ from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
 from dace.config import set_temporary
 from dace.autodiff import add_backward_pass
 
-pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
-import jax
-import jax.numpy as jnp
-import jax.lax as lax
-
 # Data set sizes
 # N
 sizes = {"mini": 40, "small": 120, "medium": 400, "large": 2000, "extra-large": 4000}
@@ -69,7 +64,7 @@ def ground_truth(r):
     return y
 
 
-def durbin_jax_kernel(r):
+def durbin_jax_kernel(jnp, lax, r):
     # Initialize y, alpha, and beta.
     y = jnp.empty_like(r)
     alpha = -r[0]
@@ -145,6 +140,10 @@ def run_durbin(device_type: dace.dtypes.DeviceType):
 
 
 def run_durbin_autodiff():
+    import jax
+    import jax.numpy as jnp
+    import jax.lax as lax
+
     # Initialize data (polybench small size)
     N = sizes["small"]
     r = initialize(N)
@@ -168,7 +167,8 @@ def run_durbin_autodiff():
     jax.config.update("jax_enable_x64", True)
 
     # Numerically validate vs JAX
-    jax_grad = jax.jit(jax.grad(durbin_jax_kernel))
+    jax_kernel = lambda r: durbin_jax_kernel(jnp, lax, r)
+    jax_grad = jax.jit(jax.grad(jax_kernel))
     r_jax = initialize(N)
     jax_grad_r = jax_grad(r_jax)
     np.testing.assert_allclose(gradient_r, jax_grad_r)
@@ -185,6 +185,7 @@ def test_gpu():
 
 @pytest.mark.autodiff
 def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
     run_durbin_autodiff()
 
 

@@ -9,13 +9,7 @@ from dace.fpga_testing import fpga_test, xilinx_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory, StreamingComposition
 from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
-from dace.config import set_temporary
 from dace.autodiff import add_backward_pass
-
-pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
-import jax
-import jax.numpy as jnp
-import jax.lax as lax
 
 # Data set sizes
 # N
@@ -36,7 +30,7 @@ def initialize(N, datatype=np.float64):
     return L, x, b
 
 
-def trisolv_jax_kernel(L, x, b):
+def trisolv_jax_kernel(jnp, lax, L, x, b):
 
     def scan_body(carry, i):
         L, x, b = carry
@@ -92,6 +86,10 @@ def run_trisolv(device_type: dace.dtypes.DeviceType):
 
 
 def run_trisolv_autodiff():
+    import jax
+    import jax.numpy as jnp
+    import jax.lax as lax
+
     # Initialize data (polybench mini size)
     N = sizes["mini"]
     L, x, b = initialize(N)
@@ -115,7 +113,8 @@ def run_trisolv_autodiff():
     jax.config.update("jax_enable_x64", True)
 
     # Numerically validate vs JAX
-    jax_grad = jax.jit(jax.grad(trisolv_jax_kernel, argnums=0))
+    jax_kernel = lambda L, x, b: trisolv_jax_kernel(jnp, lax, L, x, b)
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=0))
     L_jax, x_jax, b_jax = initialize(N)
     jax_grad_L = jax_grad(L_jax, x_jax, b_jax)
     np.testing.assert_allclose(gradient_L, jax_grad_L)
@@ -132,6 +131,7 @@ def test_gpu():
 
 @pytest.mark.autodiff
 def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
     run_trisolv_autodiff()
 
 

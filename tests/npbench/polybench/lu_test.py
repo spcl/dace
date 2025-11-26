@@ -12,11 +12,6 @@ from dace.transformation.dataflow import StreamingMemory, MapFusionVertical, Str
 from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
 from dace.autodiff import add_backward_pass
 
-pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
-import jax
-import jax.numpy as jnp
-import jax.lax as lax
-
 N = dc.symbol('N', dtype=dc.int32)
 
 
@@ -58,7 +53,7 @@ def init_data(N):
     return A
 
 
-def lu_jax_kernel(A):
+def lu_jax_kernel(jnp, lax, A):
     n = A.shape[0]
 
     def outer_loop_body(A, i):
@@ -145,6 +140,10 @@ def run_lu(device_type: dace.dtypes.DeviceType):
 
 
 def run_lu_autodiff():
+    import jax
+    import jax.numpy as jnp
+    import jax.lax as lax
+
     # Initialize data (polybench mini size)
     N = 5
     A = init_data(N)
@@ -166,7 +165,8 @@ def run_lu_autodiff():
     sdfg(A, N=N, gradient_A=gradient_A, gradient___return=gradient___return)
 
     # Numerically validate vs JAX
-    jax_grad = jax.jit(jax.grad(lu_jax_kernel))
+    jax_kernel = lambda A: lu_jax_kernel(jnp, lax, A)
+    jax_grad = jax.jit(jax.grad(jax_kernel))
     jax_grad_A = jax_grad(A_jax)
     np.testing.assert_allclose(gradient_A, jax_grad_A, rtol=1e-5, atol=1e-5)
 
@@ -182,6 +182,7 @@ def test_gpu():
 
 @pytest.mark.autodiff
 def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
     run_lu_autodiff()
 
 

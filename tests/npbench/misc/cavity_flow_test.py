@@ -10,10 +10,6 @@ from dace.fpga_testing import fpga_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.autodiff import add_backward_pass
 
-pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
-import jax
-import jax.numpy as jnp
-
 nx, ny, nit = (dace.symbol(s, dace.int64) for s in ('nx', 'ny', 'nit'))
 
 
@@ -160,7 +156,7 @@ def jax_build_up_b(b, rho, dt, u, v, dx, dy):
     return b
 
 
-def jax_pressure_poisson(nit, p, dx, dy, b):
+def jax_pressure_poisson(jnp, nit, p, dx, dy, b):
     pn = jnp.empty_like(p)
     pn = p.copy()
 
@@ -176,7 +172,7 @@ def jax_pressure_poisson(nit, p, dx, dy, b):
     return p
 
 
-def cavity_flow_jax_kernel(nx, ny, nt, nit, u, v, dt, dx, dy, p, rho, nu):
+def cavity_flow_jax_kernel(jnp, nx, ny, nt, nit, u, v, dt, dx, dy, p, rho, nu):
     un = jnp.empty_like(u)
     vn = jnp.empty_like(v)
     b = jnp.zeros((ny, nx))
@@ -186,7 +182,7 @@ def cavity_flow_jax_kernel(nx, ny, nt, nit, u, v, dt, dx, dy, p, rho, nu):
         vn = v.copy()
 
         b = jax_build_up_b(b, rho, dt, u, v, dx, dy)
-        p = jax_pressure_poisson(nit, p, dx, dy, b)
+        p = jax_pressure_poisson(jnp, nit, p, dx, dy, b)
 
         u = u.at[1:-1, 1:-1].set(
             (un[1:-1, 1:-1] - un[1:-1, 1:-1] * dt / dx * (un[1:-1, 1:-1] - un[1:-1, 0:-2]) - vn[1:-1, 1:-1] * dt / dy *
@@ -251,6 +247,9 @@ def run_cavity_flow(device_type: dace.dtypes.DeviceType):
 
 
 def run_cavity_flow_autodiff():
+    import jax
+    import jax.numpy as jnp
+
     # Initialize data (test size from benchmark)
     ny, nx, nt, nit, rho, nu = (4, 4, 4, 5, 1.0, 0.1)
     u, v, p, dx, dy, dt = initialize(ny, nx)
@@ -292,7 +291,9 @@ def run_cavity_flow_autodiff():
     jax.config.update("jax_enable_x64", True)
 
     # Numerically validate vs JAX
-    jax_grad = jax.jit(jax.grad(cavity_flow_jax_kernel, argnums=4), static_argnums=(0, 1, 2, 3))
+    jax_kernel = lambda nx, ny, nt, nit, u, v, dt, dx, dy, p, rho, nu: cavity_flow_jax_kernel(
+        jnp, nx, ny, nt, nit, u, v, dt, dx, dy, p, rho, nu)
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=4), static_argnums=(0, 1, 2, 3))
     jax_grad_u = jax_grad(nx, ny, nt, nit, jax_u, jax_v, dt, dx, dy, jax_p, rho, nu)
     np.testing.assert_allclose(gradient_u, jax_grad_u, rtol=1e-6, atol=1e-10)
 
@@ -308,6 +309,7 @@ def test_gpu():
 
 @pytest.mark.autodiff
 def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
     run_cavity_flow_autodiff()
 
 

@@ -10,10 +10,6 @@ from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.autodiff import add_backward_pass
 
-pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
-import jax
-import jax.numpy as jnp
-
 # Data set sizes
 # NQ, NR, NP
 sizes = {
@@ -43,7 +39,7 @@ def initialize(NR, NQ, NP, datatype=np.float64):
     return A, C4
 
 
-def doitgen_jax_kernel(A, C4):
+def doitgen_jax_kernel(jnp, A, C4):
     NR = A.shape[0]
     NQ = A.shape[1]
     NP = A.shape[2]
@@ -98,6 +94,9 @@ def run_doitgen(device_type: dace.dtypes.DeviceType):
 
 
 def run_doitgen_autodiff():
+    import jax
+    import jax.numpy as jnp
+
     # Initialize data (polybench mini size)
     NQ, NR, NP = sizes["mini"]
     A, C4 = initialize(NR, NQ, NP)
@@ -121,7 +120,8 @@ def run_doitgen_autodiff():
     jax.config.update("jax_enable_x64", True)
 
     # Numerically validate vs JAX
-    jax_grad = jax.jit(jax.grad(doitgen_jax_kernel, argnums=0))
+    jax_kernel = lambda A, C4: doitgen_jax_kernel(jnp, A, C4)
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=0))
     A_jax, C4_jax = initialize(NR, NQ, NP)
     jax_grad_A = jax_grad(A_jax, C4_jax)
     np.testing.assert_allclose(gradient_A, jax_grad_A)
@@ -138,6 +138,7 @@ def test_gpu():
 
 @pytest.mark.autodiff
 def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
     run_doitgen_autodiff()
 
 

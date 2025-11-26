@@ -12,11 +12,6 @@ from dace.transformation.dataflow import StreamingMemory, StreamingComposition
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.autodiff import add_backward_pass
 
-pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
-import jax
-import jax.numpy as jnp
-import jax.lax as lax
-
 # Data set sizes
 # N
 sizes = {"mini": 40, "small": 120, "medium": 400, "large": 2000, "extra-large": 4000}
@@ -49,7 +44,7 @@ def init_data(N):
     return A
 
 
-def cholesky_jax_kernel(A):
+def cholesky_jax_kernel(jnp, lax, A):
     A = A.at[0, 0].set(jnp.sqrt(A[0, 0]))
 
     def row_update_body(A, i):
@@ -131,6 +126,10 @@ def run_cholesky(device_type: dace.dtypes.DeviceType):
 
 
 def run_cholesky_autodiff():
+    import jax
+    import jax.numpy as jnp
+    import jax.lax as lax
+
     # Initialize data (polybench mini size)
     N = 20
     A = init_data(N)
@@ -152,7 +151,8 @@ def run_cholesky_autodiff():
     sdfg(A, N=N, gradient_A=gradient_A, gradient___return=gradient___return)
 
     # Numerically validate vs JAX
-    jax_grad = jax.jit(jax.grad(cholesky_jax_kernel))
+    jax_kernel = lambda A: cholesky_jax_kernel(jnp, lax, A)
+    jax_grad = jax.jit(jax.grad(jax_kernel))
     jax_grad_A = jax_grad(A_jax)
     np.testing.assert_allclose(gradient_A, jax_grad_A, rtol=1e-4, atol=1e-4)
 
@@ -168,6 +168,7 @@ def test_gpu():
 
 @pytest.mark.autodiff
 def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
     run_cholesky_autodiff()
 
 

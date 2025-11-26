@@ -11,11 +11,6 @@ from dace.transformation.dataflow import StreamingMemory, StreamingComposition
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.autodiff import add_backward_pass
 
-pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
-import jax
-import jax.numpy as jnp
-import jax.lax as lax
-
 I, J, K = (dc.symbol(s, dtype=dc.int64) for s in ('I', 'J', 'K'))
 
 
@@ -44,7 +39,7 @@ def hdiff_kernel(in_field: dc.float64[I + 4, J + 4, K], out_field: dc.float64[I,
                                                                            fly_field[:, 1:, :] - fly_field[:, :-1, :])
 
 
-def hdiff_jax_kernel(in_field, out_field, coeff):
+def hdiff_jax_kernel(jnp, in_field, out_field, coeff):
     I, J, K = out_field.shape[0], out_field.shape[1], out_field.shape[2]
     lap_field = 4.0 * in_field[1:I + 3, 1:J + 3, :] - (in_field[2:I + 4, 1:J + 3, :] + in_field[0:I + 2, 1:J + 3, :] +
                                                        in_field[1:I + 3, 2:J + 4, :] + in_field[1:I + 3, 0:J + 2, :])
@@ -138,6 +133,9 @@ def run_hdiff(device_type: dace.dtypes.DeviceType):
 
 
 def run_hdiff_autodiff():
+    import jax
+    import jax.numpy as jnp
+
     # Initialize data (npbench small size)
     I, J, K = 64, 64, 60
     in_field, out_field, coeff = initialize(I, J, K)
@@ -169,7 +167,8 @@ def run_hdiff_autodiff():
     jax.config.update("jax_enable_x64", True)
 
     # Numerically validate vs JAX
-    jax_grad = jax.jit(jax.grad(hdiff_jax_kernel, argnums=0))
+    jax_kernel = lambda in_field, out_field, coeff: hdiff_jax_kernel(jnp, in_field, out_field, coeff)
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=0))
     jax_grad_in_field = jax_grad(in_field, out_field, coeff)
     np.testing.assert_allclose(gradient_in_field, jax_grad_in_field)
 
@@ -185,6 +184,7 @@ def test_gpu():
 
 @pytest.mark.autodiff
 def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
     run_hdiff_autodiff()
 
 

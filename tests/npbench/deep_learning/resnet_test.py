@@ -12,11 +12,6 @@ from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
 from dace.config import set_temporary
 from dace.autodiff import add_backward_pass
 
-pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
-import jax
-import jax.numpy as jnp
-import jax.lax as lax
-
 N, H, W, C1, C2, S0, S1, S2, S3, S4, S5 = (dc.symbol(s, dtype=dc.int64)
                                            for s in ('N', 'H', 'W', 'C1', 'C2', 'S0', 'S1', 'S2', 'S3', 'S4', 'S5'))
 
@@ -174,7 +169,7 @@ def resnet_basicblock_np(input, conv1, conv2, conv3):
     return relu_np(x + input)
 
 
-def conv2d_lax(input, weights):
+def conv2d_lax(jnp, lax, input, weights):
     # Kernel size, number of input images, and output dimensions.
     K = weights.shape[0]  # Assuming square kernel of size K x K.
     N = input.shape[0]  # Batch size.
@@ -207,30 +202,30 @@ def conv2d_lax(input, weights):
     return output
 
 
-def jax_relu(x):
+def jax_relu(jnp, x):
     return jnp.maximum(x, 0)
 
 
 # Batch normalization operator, as used in ResNet
-def jax_batchnorm2d(x, eps=1e-5):
+def jax_batchnorm2d(jnp, x, eps=1e-5):
     mean = jnp.mean(x, axis=0, keepdims=True)
     std = jnp.std(x, axis=0, keepdims=True)
     return (x - mean) / jnp.sqrt(std + eps)
 
 
-def resnet_jax_kernel(input, conv1, conv2, conv3):
+def resnet_jax_kernel(jnp, lax, input, conv1, conv2, conv3):
     # Pad output of first convolution for second convolution
     padded = jnp.zeros((input.shape[0], input.shape[1] + 2, input.shape[2] + 2, conv1.shape[3]), dtype=input.dtype)
-    padded = lax.dynamic_update_slice(padded, conv2d_lax(input, conv1), (0, 1, 1, 0))
-    x = jax_batchnorm2d(padded)
-    x = jax_relu(x)
+    padded = lax.dynamic_update_slice(padded, conv2d_lax(jnp, lax, input, conv1), (0, 1, 1, 0))
+    x = jax_batchnorm2d(jnp, padded)
+    x = jax_relu(jnp, x)
 
-    x = conv2d_lax(x, conv2)
-    x = jax_batchnorm2d(x)
-    x = jax_relu(x)
-    x = conv2d_lax(x, conv3)
-    x = jax_batchnorm2d(x)
-    return jnp.sum(jax_relu(x + input))
+    x = conv2d_lax(jnp, lax, x, conv2)
+    x = jax_batchnorm2d(jnp, x)
+    x = jax_relu(jnp, x)
+    x = conv2d_lax(jnp, lax, x, conv3)
+    x = jax_batchnorm2d(jnp, x)
+    return jnp.sum(jax_relu(jnp, x + input))
 
 
 def run_resnet(device_type: dace.dtypes.DeviceType):
@@ -269,6 +264,10 @@ def run_resnet(device_type: dace.dtypes.DeviceType):
 
 
 def run_resnet_autodiff():
+    import jax
+    import jax.numpy as jnp
+    import jax.lax as lax
+
     # Initialize data (npbench test size)
     N, W, H, C1, C2 = 2, 8, 8, 8, 4
     input, conv1, conv2, conv3 = initialize(N, W, H, C1, C2)
@@ -302,7 +301,8 @@ def run_resnet_autodiff():
          gradient___return=gradient___return)
 
     # Numerically validate vs JAX
-    jax_grad = jax.jit(jax.grad(resnet_jax_kernel, argnums=0))
+    jax_kernel = lambda input, conv1, conv2, conv3: resnet_jax_kernel(jnp, lax, input, conv1, conv2, conv3)
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=0))
     jax_grad_input = jax_grad(input, conv1, conv2, conv3)
 
     # The tolerance if fairly high with float32 inputs
@@ -322,6 +322,7 @@ def test_gpu():
 
 @pytest.mark.autodiff
 def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
     run_resnet_autodiff()
 
 

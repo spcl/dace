@@ -11,11 +11,6 @@ from dace.transformation.dataflow import StreamingMemory, MapFusionVertical
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.autodiff import add_backward_pass
 
-pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
-import jax
-import jax.numpy as jnp
-import jax.lax as lax
-
 N = dc.symbol('N', dtype=dc.int32)
 
 
@@ -27,7 +22,7 @@ def kernel(TSTEPS: dc.int32, A: dc.float32[N, N], B: dc.float32[N, N]):
         A[1:-1, 1:-1] = 0.2 * (B[1:-1, 1:-1] + B[1:-1, :-2] + B[1:-1, 2:] + B[2:, 1:-1] + B[:-2, 1:-1])
 
 
-def kernel_jax(TSTEPS: int, A: jax.Array, B: jax.Array):
+def kernel_jax(jnp, lax, TSTEPS, A, B):
 
     def body_fn(carry, t):
         A, B = carry
@@ -102,6 +97,10 @@ def run_jacobi_2d(device_type: dace.dtypes.DeviceType):
 
 
 def run_jacobi_2d_autodiff():
+    import jax
+    import jax.numpy as jnp
+    import jax.lax as lax
+
     # Initialize data (polybench mini size)
     TSTEPS, N = (20, 30)
     A, B = init_data(N)
@@ -123,7 +122,8 @@ def run_jacobi_2d_autodiff():
     sdfg(TSTEPS, A, B, gradient_A=gradient_A, gradient___return=gradient___return)
 
     # Numerically validate vs JAX
-    jax_grad = jax.jit(jax.grad(kernel_jax, argnums=1), static_argnums=0)
+    jax_kernel = lambda TSTEPS, A, B: kernel_jax(jnp, lax, TSTEPS, A, B)
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=1), static_argnums=0)
     jax_grad_A = jax_grad(TSTEPS, jax_A, jax_B)
     np.testing.assert_allclose(gradient_A, jax_grad_A, rtol=1e-6, atol=1e-6)
 
@@ -139,6 +139,7 @@ def test_gpu():
 
 @pytest.mark.autodiff
 def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
     run_jacobi_2d_autodiff()
 
 

@@ -9,12 +9,8 @@ from dace.fpga_testing import fpga_test, xilinx_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory, StreamingComposition
 from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
-from dace.config import set_temporary
 from dace.autodiff import add_backward_pass
 
-pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
-import jax
-import jax.numpy as jnp
 # Data set sizes
 # NI, NJ, NK, NL, NM
 sizes = {
@@ -34,7 +30,7 @@ def k3mm_kernel(A: dc.float64[NI, NK], B: dc.float64[NK, NJ], C: dc.float64[NJ, 
     return A @ B @ C @ D
 
 
-def k3mm_jax(A, B, C, D):
+def k3mm_jax(jnp, A, B, C, D):
     E = A @ B @ C @ D
     return jnp.sum(E)
 
@@ -83,6 +79,9 @@ def run_k3mm(device_type: dace.dtypes.DeviceType):
 
 
 def run_k3mm_autodiff():
+    import jax
+    import jax.numpy as jnp
+
     # Initialize forward data
     NI, NJ, NK, NL, NM = sizes["small"]
     A, B, C, D = initialize(NI, NJ, NK, NL, NM)
@@ -106,7 +105,8 @@ def run_k3mm_autodiff():
     jax.config.update("jax_enable_x64", True)
 
     # Numerically validate vs JAX
-    jax_grad = jax.jit(jax.grad(k3mm_jax, argnums=0))
+    jax_kernel = lambda A, B, C, D: k3mm_jax(jnp, A, B, C, D)
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=0))
     jax_grad_A = jax_grad(A, B, C, D)
     np.testing.assert_allclose(gradient_A, jax_grad_A)
 
@@ -122,6 +122,7 @@ def test_gpu():
 
 @pytest.mark.autodiff
 def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
     run_k3mm_autodiff()
 
 

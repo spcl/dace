@@ -9,12 +9,7 @@ from dace.fpga_testing import fpga_test, xilinx_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory, StreamingComposition
 from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
-from dace.config import set_temporary
 from dace.autodiff import add_backward_pass
-
-pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
-import jax
-import jax.numpy as jnp
 
 # Data set sizes
 # M, N
@@ -47,7 +42,7 @@ def init_data(M, N):
     return A, x, y
 
 
-def atax_jax_kernel(A, x):
+def atax_jax_kernel(jnp, A, x):
     B = (A @ x) @ A
     return jnp.sum(B)
 
@@ -102,6 +97,9 @@ def run_atax(device_type: dace.dtypes.DeviceType):
 
 
 def run_atax_autodiff():
+    import jax
+    import jax.numpy as jnp
+
     # Initialize data (polybench mini size)
     M, N = sizes["mini"]
     A, x, y = init_data(M, N)
@@ -122,7 +120,8 @@ def run_atax_autodiff():
     sdfg(A, x, M=M, N=N, gradient_A=gradient_A, gradient___return=gradient___return)
 
     # Numerically validate vs JAX
-    jax_grad = jax.jit(jax.grad(atax_jax_kernel, argnums=0))
+    jax_kernel = lambda A, x: atax_jax_kernel(jnp, A, x)
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=0))
     jax_grad_A = jax_grad(A, x)
     np.testing.assert_allclose(gradient_A, jax_grad_A, rtol=1e-6, atol=1e-6)
 
@@ -138,6 +137,7 @@ def test_gpu():
 
 @pytest.mark.autodiff
 def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
     run_atax_autodiff()
 
 

@@ -12,11 +12,6 @@ from dace.transformation.dataflow import StreamingMemory, MapFusionVertical, Str
 from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
 from dace.autodiff import add_backward_pass
 
-pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
-import jax
-import jax.numpy as jnp
-import jax.lax as lax
-
 # M, N
 sizes = {"mini": (20, 30), "small": (60, 80), "medium": (200, 240), "large": (1000, 1200), "extra-large": (2000, 2600)}
 
@@ -48,7 +43,7 @@ def init_data(N, M):
     return alpha, beta, C, A
 
 
-def syrk_jax_kernel(alpha, beta, C, A):
+def syrk_jax_kernel(jnp, lax, alpha, beta, C, A):
     m = A.shape[0]  # number of rows
     n = A.shape[1]  # number of columns
 
@@ -135,6 +130,10 @@ def run_syrk(device_type: dace.dtypes.DeviceType):
 
 
 def run_syrk_autodiff():
+    import jax
+    import jax.numpy as jnp
+    import jax.lax as lax
+
     # Initialize data (polybench mini size) - note the order swap for this test
     M, N = sizes["mini"]
     alpha, beta, C, A = init_data(N, M)
@@ -155,7 +154,8 @@ def run_syrk_autodiff():
     sdfg(alpha=alpha, beta=beta, C=C, A=A, M=M, N=N, gradient_A=gradient_A, gradient___return=gradient___return)
 
     # Numerically validate vs JAX
-    jax_grad = jax.jit(jax.grad(syrk_jax_kernel, argnums=3), static_argnums=(0, 1))
+    jax_kernel = lambda alpha, beta, C, A: syrk_jax_kernel(jnp, lax, alpha, beta, C, A)
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=3), static_argnums=(0, 1))
     alpha, beta, C_jax, A_jax = init_data(N, M)
     jax_grad_A = jax_grad(alpha, beta, C_jax, A_jax)
     np.testing.assert_allclose(gradient_A, jax_grad_A, rtol=1e-6, atol=1e-5)
@@ -172,6 +172,7 @@ def test_gpu():
 
 @pytest.mark.autodiff
 def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
     run_syrk_autodiff()
 
 

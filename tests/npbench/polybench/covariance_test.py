@@ -15,10 +15,6 @@ from dace.libraries.standard import Reduce
 from dace.libraries.blas import Gemv
 from dace.autodiff import add_backward_pass
 
-pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
-import jax
-import jax.numpy as jnp
-
 # Data set sizes
 # M, N
 sizes = {"mini": (28, 32), "small": (80, 100), "medium": (240, 260), "large": (1200, 1400), "extra-large": (2600, 3000)}
@@ -42,7 +38,7 @@ def covariance_kernel(float_n: dc.float32, data: dc.float32[N, M]):
     return cov
 
 
-def covariance_jax_kernel(float_n, data):
+def covariance_jax_kernel(jnp, float_n, data):
     mean = jnp.mean(data, axis=0)
     M = data.shape[1]
     data -= mean
@@ -141,6 +137,9 @@ def run_covariance(device_type: dace.dtypes.DeviceType):
 
 
 def run_covariance_autodiff():
+    import jax
+    import jax.numpy as jnp
+
     # Initialize data (polybench mini size)
     M, N = sizes["mini"]
     float_n, data = init_data(M, N)
@@ -162,7 +161,8 @@ def run_covariance_autodiff():
     sdfg(float_n, data, M=M, N=N, gradient_data=gradient_data, gradient___return=gradient___return)
 
     # Numerically validate vs JAX
-    jax_grad = jax.jit(jax.grad(covariance_jax_kernel, argnums=1), static_argnums=(0, ))
+    jax_kernel = lambda float_n, data: covariance_jax_kernel(jnp, float_n, data)
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=1), static_argnums=(0, ))
     jax_grad_data = jax_grad(float_n, data_jax)
     np.testing.assert_allclose(gradient_data, jax_grad_data, rtol=1e-5, atol=1e-8)
 
@@ -180,6 +180,7 @@ def test_gpu():
 
 @pytest.mark.autodiff
 def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
     # Serialization causes issues, we temporarily disable it
     # TODO: open an issue to fix the serialization stability problem
     last_value = os.environ.get('DACE_testing_serialization', '0')

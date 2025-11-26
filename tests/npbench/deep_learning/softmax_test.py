@@ -12,10 +12,6 @@ from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
 from dace.config import set_temporary
 from dace.autodiff import add_backward_pass
 
-pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
-import jax
-import jax.numpy as jnp
-
 N, H, SM = (dc.symbol(s, dc.int64) for s in ('N', 'H', 'SM'))
 
 
@@ -42,7 +38,7 @@ def ground_truth(x):
     return tmp_out / tmp_sum
 
 
-def softmax_jax_kernel(x):
+def softmax_jax_kernel(jnp, x):
     tmp_max = jnp.max(x, axis=-1, keepdims=True)
     tmp_out = jnp.exp(x - tmp_max)
     tmp_sum = jnp.sum(tmp_out, axis=-1, keepdims=True)
@@ -85,6 +81,9 @@ def run_softmax(device_type: dace.dtypes.DeviceType):
 
 
 def run_softmax_autodiff():
+    import jax
+    import jax.numpy as jnp
+
     # Initialize data (npbench test size)
     N, H, SM = 4, 4, 32
     x = initialize(N, H, SM)
@@ -105,7 +104,8 @@ def run_softmax_autodiff():
     sdfg(x, out, N=N, H=H, SM=SM, gradient_x=gradient_x, gradient___return=gradient___return)
 
     # Numerically validate vs JAX
-    jax_grad = jax.jit(jax.grad(softmax_jax_kernel, argnums=0))
+    jax_kernel = lambda x: softmax_jax_kernel(jnp, x)
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=0))
     jax_grad_x = jax_grad(x)
     np.testing.assert_allclose(gradient_x, jax_grad_x, atol=1e-6)
 
@@ -121,6 +121,7 @@ def test_gpu():
 
 @pytest.mark.autodiff
 def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
     run_softmax_autodiff()
 
 

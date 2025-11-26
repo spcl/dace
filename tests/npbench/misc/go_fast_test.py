@@ -12,11 +12,6 @@ from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
 from dace.config import set_temporary
 from dace.autodiff import add_backward_pass
 
-pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
-import jax
-import jax.numpy as jnp
-import jax.lax as lax
-
 N = dc.symbol('N', dtype=dc.int64)
 
 
@@ -72,7 +67,7 @@ def run_go_fast(device_type: dace.dtypes.DeviceType):
     return sdfg
 
 
-def go_fast_jax_kernel(a):
+def go_fast_jax_kernel(jnp, lax, a):
 
     def body_fn(trace, i):
         # Update the trace by adding tanh(a[i, i])
@@ -84,6 +79,10 @@ def go_fast_jax_kernel(a):
 
 
 def run_go_fast_autodiff():
+    import jax
+    import jax.numpy as jnp
+    import jax.lax as lax
+
     # Initialize forward data (using smaller size for AD test)
     N = 20
     a = initialize(N)
@@ -107,7 +106,8 @@ def run_go_fast_autodiff():
     jax.config.update("jax_enable_x64", True)
 
     # Numerically validate vs JAX
-    jax_grad = jax.jit(jax.grad(go_fast_jax_kernel, argnums=0))
+    jax_kernel = lambda a: go_fast_jax_kernel(jnp, lax, a)
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=0))
     jax_grad_a = jax_grad(a)
     np.testing.assert_allclose(gradient_a, jax_grad_a)
 
@@ -123,6 +123,7 @@ def test_gpu():
 
 @pytest.mark.autodiff
 def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
     run_go_fast_autodiff()
 
 

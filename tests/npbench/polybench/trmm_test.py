@@ -6,17 +6,11 @@ import numpy as np
 import dace as dc
 import pytest
 import argparse
-from dace.fpga_testing import fpga_test, xilinx_test
+from dace.fpga_testing import fpga_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory, StreamingComposition
 from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
-from dace.config import set_temporary
 from dace.autodiff import add_backward_pass
-
-pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
-import jax
-import jax.numpy as jnp
-import jax.lax as lax
 
 # Data set sizes
 # M, N
@@ -44,7 +38,7 @@ def initialize(M, N, datatype=np.float64):
     return alpha, A, B
 
 
-def trmm_jax_kernel(alpha, A, B):
+def trmm_jax_kernel(jnp, lax, alpha, A, B):
 
     def outer_body(carry, i):
         B = carry
@@ -109,6 +103,10 @@ def run_trmm(device_type: dace.dtypes.DeviceType):
 
 
 def run_trmm_autodiff():
+    import jax
+    import jax.numpy as jnp
+    import jax.lax as lax
+
     # Initialize data (polybench mini size)
     M, N = sizes["mini"]
     alpha, A, B = initialize(M, N)
@@ -132,7 +130,8 @@ def run_trmm_autodiff():
     jax.config.update("jax_enable_x64", True)
 
     # Numerically validate vs JAX
-    jax_grad = jax.jit(jax.grad(trmm_jax_kernel, argnums=1), static_argnums=(0, ))
+    jax_kernel = lambda alpha, A, B: trmm_jax_kernel(jnp, lax, alpha, A, B)
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=1), static_argnums=(0, ))
     alpha, A_jax, B_jax = initialize(M, N)
     jax_grad_A = jax_grad(alpha, A_jax, B_jax)
     np.testing.assert_allclose(gradient_A, jax_grad_A)
@@ -149,6 +148,7 @@ def test_gpu():
 
 @pytest.mark.autodiff
 def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
     # Serialization causes issues, we temporarily disable it
     # TODO: open an issue to fix the serialization stability problem
     last_value = os.environ.get('DACE_testing_serialization', '0')
