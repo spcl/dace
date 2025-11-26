@@ -2195,6 +2195,12 @@ class CPUCodeGen(TargetCodeGenerator):
                     node,
                 )
 
+        #if hasattr(node.map, "_is_softhier_sequential"):
+        #    if node.map._is_softhier_sequential is True:
+        #        assert self.is_soft_hier is True
+        if self.is_soft_hier is True:
+            callsite_stream.write("flex_intra_cluster_sync();")
+
         callsite_stream.write(inner_stream.getvalue())
 
         # Emit internal transient array allocation
