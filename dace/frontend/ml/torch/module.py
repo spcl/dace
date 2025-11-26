@@ -35,6 +35,7 @@ from dace import data
 from dace.codegen import compiled_sdfg
 from dace.sdfg import SDFG, nodes
 from dace.frontend.python import common as pycommon
+from dace.data import find_new_name
 
 if TORCH_AVAILABLE and ONNX_AVAILABLE:
     from dace.libraries.onnx.converters import clean_onnx_name
@@ -42,14 +43,13 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
     from dace.autodiff import torch as torch_autodiff
     from dace.autodiff.library import library as autodiff_library
     from dace.frontend.ml.onnx import ONNXModel
-    from dace.util import find_str_not_in_set, auto_optimize_onnx as auto_opt
+    from dace.util import auto_optimize_onnx as auto_opt
 else:
     clean_onnx_name = None
     dispatchers = None
     torch_autodiff = None
     autodiff_library = None
     ONNXModel = None
-    find_str_not_in_set = None
     auto_opt = None
 
 log = logging.getLogger(__name__)
@@ -223,7 +223,7 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
             if self.function is not None:
                 log.warning(f"Added a hook after the model was already initialized. This hook "
                             f"(with name {name}) will not be executed!")
-            name = find_str_not_in_set(set(self.post_onnx_hooks), name)
+            name = find_new_name(name, self.post_onnx_hooks)
             self.post_onnx_hooks[name] = func
             self.post_onnx_hooks.move_to_end(name, last=False)
 
@@ -237,7 +237,7 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
             if self.function is not None:
                 log.warning(f"Added a hook after the model was already initialized. This hook "
                             f"(with name {name}) will not be executed!")
-            name = find_str_not_in_set(set(self.post_onnx_hooks), name)
+            name = find_new_name(name, self.post_onnx_hooks)
             self.post_onnx_hooks[name] = func
 
         def prepend_post_autodiff_hook(self, name: str, func: Callable[[SDFG, SDFG], None]) -> None:
@@ -250,7 +250,7 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
             if self.function is not None:
                 log.warning(f"Added a hook after the model was already initialized. This hook "
                             f"(with name {name}) will not be executed!")
-            name = find_str_not_in_set(set(self.post_autodiff_hooks), name)
+            name = find_new_name(name, self.post_autodiff_hooks)
             self.post_autodiff_hooks[name] = func
             self.post_autodiff_hooks.move_to_end(name, last=False)
 
@@ -264,7 +264,7 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
             if self.function is not None:
                 log.warning(f"Added a hook after the model was already initialized. This hook "
                             f"(with name {name}) will not be executed!")
-            name = find_str_not_in_set(set(self.post_autodiff_hooks), name)
+            name = find_new_name(name, self.post_autodiff_hooks)
             self.post_autodiff_hooks[name] = func
 
         def prepend_post_compile_hook(self, name: str, func: Callable[[compiled_sdfg.CompiledSDFG], None]) -> None:
@@ -277,7 +277,7 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
             if self.function is not None:
                 log.warning(f"Added a hook after the model was already initialized. This hook "
                             f"(with name {name}) will not be executed!")
-            name = find_str_not_in_set(set(self.post_compile_hooks), name)
+            name = find_new_name(name, self.post_compile_hooks)
             self.post_compile_hooks[name] = func
             self.post_compile_hooks.move_to_end(name, last=False)
 
@@ -291,7 +291,7 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
             if self.function is not None:
                 log.warning(f"Added a hook after the model was already initialized. This hook "
                             f"(with name {name}) will not be executed!")
-            name = find_str_not_in_set(set(self.post_compile_hooks), name)
+            name = find_new_name(name, self.post_compile_hooks)
             self.post_compile_hooks[name] = func
 
         def _initialize_sdfg(self, dummy_inputs):

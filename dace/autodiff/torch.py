@@ -25,7 +25,7 @@ def make_backward_function(
     required_grads: List[str],
 ) -> Tuple[dace.SDFG, dace.SDFG, BackwardResult, Dict[str, dt.Data]]:
     """ Convert an ONNXModel to a PyTorch differentiable function. This method should not be used on its own.
-        Instead use the ``backward=True`` parameter of :class:`dace.frontend.python.DaceModule`.
+        Instead use the ``backward=True`` parameter of :class:`dace.ml.DaceModule`.
 
         :param model: the model to convert.
         :param required_grads: the list of inputs names of the module that we must compute gradients for.

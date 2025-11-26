@@ -13,7 +13,6 @@ from dace import dtypes, data as dt
 from dace.sdfg import SDFG, SDFGState, state as dstate, utils as dace_utils
 from dace.sdfg.state import LoopRegion
 from dace.memlet import Memlet
-from dace.util import find_str_not_in_set
 
 try:
     from dace.libraries.onnx.forward_implementation_abc import ONNXForward
@@ -615,14 +614,22 @@ class BackwardPassGenerator:
         return False
 
     def _zero_out_gradient(self, forward_state: SDFGState, forward_node: nodes.AccessNode, memlet: Memlet) -> None:
-        """Zero out gradients for overwritten arrays in the forward pass.
+        """
+        Zero out gradients for overwritten arrays in the forward pass.
 
-        Overwritten arrays in the forward pass will need to have their gradients zeroed out for gradient accumulation to work.
-        This function will:
-            1- Copy the current gradient values to a temporary array. These values will still be used in the backward pass one last time.
-            2- Zero-out the overwritten access in the backward pass.
-            3- Add the new temporary to a dictionary so that the new read is made to the temporary and not the original gradient array.
-        We will also try to avoid doing this as much as possible to optimize performance.
+        Overwritten arrays need their gradients zeroed for gradient accumulation
+        to work correctly. This method:
+
+        1. Copies current gradient values to a temporary array (for one last use
+           in the backward pass)
+        2. Zeros out the overwritten access in the backward pass
+        3. Updates the read mapping to use the temporary instead of the original
+
+        The operation is skipped when possible to optimize performance.
+
+        :param forward_state: The state in the forward pass containing the write.
+        :param forward_node: The access node being overwritten.
+        :param memlet: The memlet describing the write operation.
         """
         # Extra checks to only do this if necessary
         # If this access node is not written to in the forward pass except for this one time, we don't need to zero it out
@@ -884,7 +891,7 @@ class BackwardPassGenerator:
         """Return the gradient name of a name from the forward pass."""
         if forward_name not in self.array_grad_map:
             self.array_grad_map[forward_name] = \
-                find_str_not_in_set(set(self.backward_sdfg.arrays), "gradient_" + forward_name)
+                self.backward_sdfg._find_new_name("gradient_" + forward_name)
 
         return self.array_grad_map[forward_name]
 
@@ -1406,7 +1413,8 @@ class BackwardPassGenerator:
                     # sanity check
                     if single_boolean_edge_found:
                         # we expect there to be a single AccessNode where the booleans come from
-                        raise AutoDiffException()
+                        raise AutoDiffException(
+                            "Multiple boolean edges found for conditional assignment. Expected only one.")
                     tasklet_boolean_edge = edge
                     single_boolean_edge_found = True
 

@@ -20,6 +20,10 @@ Implementation Categories
    - ONNX-specific operations from dace.libraries.onnx
    - Neural network layers and operators
    - Supports ONNX model differentiation
+
+4. **PyTorch Operations** (pytorch_ops.py):
+   - Operations using PyTorch CUDA kernels
+   - Depthwise convolution backward pass
 """
 
 import dace.autodiff.implementations.dace_reduction_nodes
@@ -29,7 +33,12 @@ from dace.autodiff.implementations.dace_nodes import DaceNodeBackwardImplementat
 try:
     import dace.autodiff.implementations.onnx_ops
 except ImportError:
-    # ONNX backward implementations not available
+    pass
+
+# PyTorch ops are optional
+try:
+    import dace.autodiff.implementations.pytorch_ops
+except ImportError:
     pass
 
 __all__ = [

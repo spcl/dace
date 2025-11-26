@@ -2,6 +2,7 @@
 """
 Hooks for PyTorch tensors to make them compatible with dace
 """
+import copy
 
 try:
     import torch
@@ -28,19 +29,10 @@ if TORCH_AVAILABLE:
 
         if not self.requires_grad:
             return desc
-        # initialize with no gradient buffer
-        new_desc = ParameterArray(desc.dtype,
-                                  desc.shape,
-                                  storage=desc.storage,
-                                  location=desc.location,
-                                  allow_conflicts=desc.allow_conflicts,
-                                  transient=desc.transient,
-                                  strides=desc.strides,
-                                  offset=desc.offset,
-                                  lifetime=desc.lifetime,
-                                  alignment=desc.alignment,
-                                  debuginfo=desc.debuginfo,
-                                  total_size=desc.total_size)
+
+        new_desc = copy.deepcopy(desc)
+        new_desc.__class__ = ParameterArray
+        new_desc.gradient = None
         return new_desc
 
     # register with pytorch

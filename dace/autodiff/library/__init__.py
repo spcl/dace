@@ -14,11 +14,11 @@ from . import library
 # PyTorch integrations are optional
 try:
     from . import torch_integration
-    from . import python_frontend
+    from dace.frontend.python.replacements import torch_autodiff
     TORCH_INTEGRATION_AVAILABLE = True
 except ImportError:
     torch_integration = None
-    python_frontend = None
+    torch_autodiff = None
     TORCH_INTEGRATION_AVAILABLE = False
 
 dace.library.register_library(__name__, "autodiff")
@@ -28,4 +28,4 @@ __all__ = [
 ]
 
 if TORCH_INTEGRATION_AVAILABLE:
-    __all__.extend(["torch_integration", "python_frontend"])
+    __all__.extend(["torch_integration", "torch_autodiff"])

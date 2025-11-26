@@ -2,7 +2,7 @@
 
 import functools
 import logging
-from typing import Optional, Set, Callable
+from typing import Optional, Callable
 
 import dace
 from dace import nodes as nd, data as dt
@@ -65,24 +65,6 @@ def out_edge_with_name(node: nd.Node, state: SDFGState, name: str) -> MultiConne
     if len(cands) != 1:
         raise ValueError("Expected to find exactly one edge with name '{}', found {}".format(name, len(cands)))
     return cands[0]
-
-
-def find_str_not_in_set(existing: Set[str], target_str: Optional[str]) -> str:
-    """ Try to find a new str that is not in the set.
-
-        :param existing: the existing strs.
-        :param target_str: (optional) a target_str that should be used as a base for the new str.
-        :return: a new str that is not in `existing`.
-    """
-    base_name = target_str or "temp"
-
-    if base_name not in existing:
-        return base_name
-
-    i = 0
-    while (base_name + "_" + str(i)) in existing:
-        i += 1
-    return base_name + "_" + str(i)
 
 
 def expand_onnx_nodes(sdfg: dace.SDFG, predicate: Optional[Callable[[nd.Node], bool]] = None):

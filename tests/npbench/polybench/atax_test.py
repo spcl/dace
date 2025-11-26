@@ -9,6 +9,7 @@ from dace.fpga_testing import fpga_test, xilinx_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory, StreamingComposition
 from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
+from dace.config import set_temporary
 from dace.autodiff import add_backward_pass
 
 # Data set sizes

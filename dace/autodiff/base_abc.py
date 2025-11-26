@@ -6,10 +6,14 @@ import abc
 import dataclasses
 import logging
 import typing
+from typing import TYPE_CHECKING
 
 import dace.registry
 from dace.sdfg import SDFG, SDFGState, nodes as nd
 import dace.transformation.transformation as xf
+
+if TYPE_CHECKING:
+    from dace.autodiff.backward_pass_generator import BackwardPassGenerator
 
 try:
     from dace.libraries.onnx.nodes.onnx_op import ONNXOp
@@ -33,7 +37,7 @@ class BackwardContext:
     forward_state: SDFGState  #: The forward SDFG state
     backward_sdfg: SDFG  #: The backward SDFG
     backward_state: SDFGState  #: The backward SDFG state
-    backward_generator: 'dace.autodiff.BackwardPassGenerator'  #: The backward pass generator
+    backward_generator: 'BackwardPassGenerator'  #: The backward pass generator
 
 
 @dataclasses.dataclass
