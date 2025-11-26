@@ -1961,10 +1961,17 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                     continue
 
                 HBM_NUM_CHANNELS = dace.config.Config.get("backend", "softhier", "HBM_NUM_CHANNELS")
-                tiles_of_channel_list = []
-                for i in range(int(HBM_NUM_CHANNELS)):
-                    tiles_of_channel_list.append(str(len([j for j in arr.hbm_placement_scheme if j == i])))
-                tiles_per_channel_initializer_list = "{" + ", ".join(tiles_of_channel_list) + "};"
+                if arr.is_hbm_interleaved is True:
+                    tiles_of_channel_list = []
+                    for i in range(int(HBM_NUM_CHANNELS)):
+                        tiles_of_channel_list.append(str(len([j for j in arr.hbm_placement_scheme if j == i])))
+                    tiles_per_channel_initializer_list = "{" + ", ".join(tiles_of_channel_list) + "};"
+                else:
+                    tiles_of_channel_list = []
+                    for i in range(int(HBM_NUM_CHANNELS)):
+                        tiles_of_channel_list.append("1" if i == 0 else "0")
+                    tiles_per_channel_initializer_list = "{" + ", ".join(tiles_of_channel_list) + "};"
+
 
                 self._globalcode.write(
                     f"const unsigned long tiles_per_channel_{arr_name}[] = {tiles_per_channel_initializer_list}\n")

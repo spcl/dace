@@ -179,6 +179,8 @@ def get_address_and_read_from_file(i: int,
         line_contents = parsed_sections[array_name][channel_id][tiles_before_me_on_the_same_channel][line_id:line_id +
                                                                                                      lines_needed]
     except KeyError:
+        print(parsed_sections)
+
         raise KeyError(
             f"Could not find data for array '{array_name}' on channel {channel_id} at tile index {tiles_before_me_on_the_same_channel}, line {line_id}. Available sections: {list(parsed_sections.get(array_name, {}).get(channel_id, {}).keys())}"
         )

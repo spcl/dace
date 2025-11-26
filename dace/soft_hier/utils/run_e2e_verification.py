@@ -18,10 +18,10 @@ class HardwareConfig:
             self,
             hardware_thread_group_dims=(2, 2),
             dace_thread_group_dims=None,
-            hbm_addr_base="0xc0000000",
-            hbm_addr_space="0x04000000",
-            tcdm_size="0x00100000",
-            cluster_zomem_size="0x00100000",
+            hbm_addr_base=0xc0000000,
+            hbm_addr_space=0x04000000,
+            tcdm_size=0x00100000,
+            cluster_zomem_size=0x00100000,
             spatz_num_vlsu_port=8,
             spatz_num_function_unit=8,
             redmule_ce_height=64,
@@ -124,6 +124,7 @@ def _parse_hbm_dump(filepath: str, num_channels: int,
                 sections[section_id] = []
             elif line.startswith("0x"):
                 sections[section_id].append(line)
+    #print("Sections", sections)
 
     array_names_and_data_sorted = sorted(array_names_and_data, key=lambda x: x[0])
     tiles_of_channel = dict()
@@ -131,31 +132,37 @@ def _parse_hbm_dump(filepath: str, num_channels: int,
         tiles_of_channel[arr_name] = dict()
         for i in range(num_channels):
             tiles_of_channel[arr_name][i] = len([j for j in arr.hbm_placement_scheme if j == i])
+    #print("Tiles of channel", tiles_of_channel)
 
     # Re-arrange into dictionary structure
     parsed = {}
     for i, (name, data) in enumerate(array_names_and_data_sorted):
         parsed[name] = {}
 
-        for j in range(num_channels):
-            parsed[name][j] = {}
-            for k in range(tiles_of_channel[name][j]):
-                # calculate how many sections before me of different arrays
-                sections_before_me = 0
-                for ii in range(i):
-                    other_name, other_data = array_names_and_data_sorted[ii]
-                    sections_before_me += sum(tiles_of_channel[other_name].values())
+        if data.is_hbm_interleaved:
+            for j in range(num_channels):
+                parsed[name][j] = {}
+                for k in range(tiles_of_channel[name][j]):
+                    # calculate how many sections before me of different arrays
+                    sections_before_me = 0
+                    for ii in range(i):
+                        other_name, other_data = array_names_and_data_sorted[ii]
+                        sections_before_me += sum(tiles_of_channel[other_name].values())
 
-                # calculate how many sections before me of the same array on the different channels
-                tiles_before_me_on_the_different_channel = 0
-                for jj in range(j):
-                    tiles_before_me_on_the_different_channel += tiles_of_channel[name][jj]
+                    # calculate how many sections before me of the same array on the different channels
+                    tiles_before_me_on_the_different_channel = 0
+                    for jj in range(j):
+                        tiles_before_me_on_the_different_channel += tiles_of_channel[name][jj]
 
-                offset = sections_before_me + tiles_before_me_on_the_different_channel + k
+                    offset = sections_before_me + tiles_before_me_on_the_different_channel + k
 
-                if offset in sections:
-                    parsed[name][j][k] = sections[offset]
-
+                    if offset in sections:
+                        parsed[name][j][k] = sections[offset]
+        else:
+            offset = i
+            parsed[name][0] = {}
+            if offset in sections:
+                parsed[name][0][0] = sections[offset]
     return parsed
 
 
@@ -249,19 +256,26 @@ def compare(hardware_config: HardwareConfig,
         status = "✓ MATCH" if matches else "✗ MISMATCH"
         print(f"  {name}: {status} (max_diff={max_diff:.6e}, mean_diff={mean_diff:.6e})")
 
+        print(f"  {name}: Reference")
+        print(numpy_array)
+        print(f"  {name}: Result")
+        print(sdfg_array)
+
+
         if not matches:
             all_match = False
 
         diff = sdfg_array - numpy_array
+        print(f"  {name}: Difference")
         print(diff)
 
         # dump with 3 decimal places
-        with open(f"array_dump_{name}_sdfg.txt", "w") as f:
-            np.savetxt(f, sdfg_array, fmt="%08x")
-        with open(f"array_dump_{name}_numpy.txt", "w") as f:
-            np.savetxt(f, numpy_array, fmt="%08x")
-        with open(f"array_dump_{name}_diff.txt", "w") as f:
-            np.savetxt(f, diff, fmt="%08x")
+        #with open(f"array_dump_{name}_sdfg.txt", "w") as f:
+        #    np.savetxt(f, sdfg_array, fmt="%08x")
+        #with open(f"array_dump_{name}_numpy.txt", "w") as f:
+        #    np.savetxt(f, numpy_array, fmt="%08x")
+        #with open(f"array_dump_{name}_diff.txt", "w") as f:
+        #    np.savetxt(f, diff, fmt="%08x")
 
     print()
     print("=" * 80)
@@ -274,8 +288,8 @@ def compare(hardware_config: HardwareConfig,
 
 def setup_architecture(hw_config: HardwareConfig):
     generate_arg_cfg(
-        cluster_tcdm_size=hex(hw_config.tcdm_size) if isinstance(hw_config.tcdm_size, int) else hw_config.tcdm_size,
-        cluster_zomem_size=hex(hw_config.cluster_zomem_size) if isinstance(hw_config.cluster_zomem_size, int) else hw_config.cluster_zomem_size,
+        cluster_tcdm_size=hex(hw_config.tcdm_size),
+        cluster_zomem_size=hex(hw_config.cluster_zomem_size),
         num_cluster_x=hw_config.hardware_thread_group_dims[0],
         num_cluster_y=hw_config.hardware_thread_group_dims[1],
         spatz_num_vlsu_port=hw_config.spatz_num_vlsu_port,
@@ -283,8 +297,8 @@ def setup_architecture(hw_config: HardwareConfig):
         redmule_ce_height=hw_config.redmule_ce_height,
         redmule_ce_width=hw_config.redmule_ce_width,
         redmule_ce_pipe=hw_config.redmule_ce_pipe,
-        hbm_start_base=hex(hw_config.hbm_addr_base) if isinstance(hw_config.hbm_addr_base, int) else hw_config.hbm_addr_base,
-        hbm_node_addr_space=hex(hw_config.hbm_addr_space) if isinstance(hw_config.hbm_addr_space, int) else hw_config.hbm_add_space,
+        hbm_start_base=hex(hw_config.hbm_addr_base),
+        hbm_node_addr_space=hex(hw_config.hbm_addr_space),
         hbm_placement=hw_config.hbm_placement,
         num_node_per_ctrl=hw_config.num_node_per_ctrl,
         noc_link_width=hw_config.noc_link_width,
