@@ -10,6 +10,7 @@ from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory, StreamingComposition
 from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
 from dace.config import set_temporary
+from dace.autodiff import add_backward_pass
 
 # Data set sizes
 # M, N
@@ -45,6 +46,39 @@ def initialize(M, N, datatype=np.float64):
         A = rng.random((M, N), dtype=datatype)
 
     return A
+
+
+def gramschmidt_jax_kernel(jnp, lax, A):
+    n = A.shape[1]
+    Q = jnp.zeros_like(A)
+    R = jnp.zeros((n, n), dtype=A.dtype)
+
+    def body_fun(carry, k):
+        Q, R, A = carry
+
+        nrm = jnp.dot(A[:, k], A[:, k])
+        R = R.at[k, k].set(jnp.sqrt(nrm))
+        Q = Q.at[:, k].set(A[:, k] / R[k, k])
+
+        def inner_body_fun(carry_inner, j):
+            Q, R, A = carry_inner
+
+            def do_update(_):
+                new_R = R.at[k, j].set(jnp.dot(Q[:, k], A[:, j]))
+                new_A = A.at[:, j].add(-Q[:, k] * new_R[k, j])
+                return (Q, new_R, new_A)
+
+            def no_update(_):
+                return (Q, R, A)
+
+            Q, R, A = lax.cond(j >= (k + 1), do_update, no_update, operand=None)
+            return (Q, R, A), None
+
+        (Q, R, A), _ = lax.scan(inner_body_fun, (Q, R, A), jnp.arange(n))
+        return (Q, R, A), None
+
+    (Q, R, A), _ = lax.scan(body_fun, (Q, R, A), jnp.arange(n))
+    return jnp.sum(A)
 
 
 def ground_truth(A):
@@ -100,6 +134,41 @@ def run_gramschmidt(device_type: dace.dtypes.DeviceType):
     return sdfg
 
 
+def run_gramschmidt_autodiff():
+    import jax
+    import jax.numpy as jnp
+    import jax.lax as lax
+
+    # Initialize data (polybench mini size)
+    M, N = sizes["mini"]
+    A = initialize(M, N)
+
+    # Initialize gradient computation data
+    gradient_A = np.zeros_like(A)
+    gradient___return = np.ones((1, ), dtype=np.float64)
+
+    # Define sum reduction for the output
+    @dc.program
+    def autodiff_kernel(A: dc.float64[M, N]):
+        Q, R = gramschmidt_kernel(A)
+        return np.sum(A)  # Sum the modified A matrix
+
+    # Add the backward pass to the SDFG
+    sdfg = autodiff_kernel.to_sdfg()
+    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"])
+    sdfg(A, M=M, N=N, gradient_A=gradient_A, gradient___return=gradient___return)
+
+    # Enable float64 support
+    jax.config.update("jax_enable_x64", True)
+
+    # Numerically validate vs JAX
+    jax_kernel = lambda A: gramschmidt_jax_kernel(jnp, lax, A)
+    jax_grad = jax.jit(jax.grad(jax_kernel))
+    A_jax = initialize(M, N)
+    jax_grad_A = jax_grad(A_jax)
+    np.testing.assert_allclose(gradient_A, jax_grad_A)
+
+
 def test_cpu():
     run_gramschmidt(dace.dtypes.DeviceType.CPU)
 
@@ -107,6 +176,12 @@ def test_cpu():
 @pytest.mark.gpu
 def test_gpu():
     run_gramschmidt(dace.dtypes.DeviceType.GPU)
+
+
+@pytest.mark.autodiff
+def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
+    run_gramschmidt_autodiff()
 
 
 @fpga_test(assert_ii_1=False)
@@ -124,6 +199,7 @@ if __name__ == "__main__":
 
     if target == "cpu":
         run_gramschmidt(dace.dtypes.DeviceType.CPU)
+        run_gramschmidt_autodiff()
     elif target == "gpu":
         run_gramschmidt(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":

@@ -2,3 +2,6 @@
 *.from_serialized
 *.serialized
 *.txt
+
+# Ignore downloaded files for tests
+data/

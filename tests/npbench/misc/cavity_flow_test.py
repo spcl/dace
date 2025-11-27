@@ -8,6 +8,7 @@ import argparse
 from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
 from dace.fpga_testing import fpga_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
+from dace.autodiff import add_backward_pass
 
 nx, ny, nit = (dace.symbol(s, dace.int64) for s in ('nx', 'ny', 'nit'))
 
@@ -146,6 +147,67 @@ def initialize(ny, nx):
     return u, v, p, dx, dy, dt
 
 
+def jax_build_up_b(b, rho, dt, u, v, dx, dy):
+    b = b.at[1:-1, 1:-1].set(
+        (rho * (1 / dt * ((u[1:-1, 2:] - u[1:-1, 0:-2]) / (2 * dx) + (v[2:, 1:-1] - v[0:-2, 1:-1]) /
+                          (2 * dy)) - ((u[1:-1, 2:] - u[1:-1, 0:-2]) / (2 * dx))**2 - 2 *
+                ((u[2:, 1:-1] - u[0:-2, 1:-1]) / (2 * dy) * (v[1:-1, 2:] - v[1:-1, 0:-2]) /
+                 (2 * dx)) - ((v[2:, 1:-1] - v[0:-2, 1:-1]) / (2 * dy))**2)))
+    return b
+
+
+def jax_pressure_poisson(jnp, nit, p, dx, dy, b):
+    pn = jnp.empty_like(p)
+    pn = p.copy()
+
+    for q in range(nit):
+        pn = p.copy()
+        p = p.at[1:-1, 1:-1].set((((pn[1:-1, 2:] + pn[1:-1, 0:-2]) * dy**2 + (pn[2:, 1:-1] + pn[0:-2, 1:-1]) * dx**2) /
+                                  (2 * (dx**2 + dy**2)) - dx**2 * dy**2 / (2 * (dx**2 + dy**2)) * b[1:-1, 1:-1]))
+
+        p = p.at[:, -1].set(p[:, -2])  # dp/dx = 0 at x = 2
+        p = p.at[0, :].set(p[1, :])  # dp/dy = 0 at y = 0
+        p = p.at[:, 0].set(p[:, 1])  # dp/dx = 0 at x = 0
+        p = p.at[-1, :].set(0)  # p = 0 at y = 2
+    return p
+
+
+def cavity_flow_jax_kernel(jnp, nx, ny, nt, nit, u, v, dt, dx, dy, p, rho, nu):
+    un = jnp.empty_like(u)
+    vn = jnp.empty_like(v)
+    b = jnp.zeros((ny, nx))
+
+    for n in range(nt):
+        un = u.copy()
+        vn = v.copy()
+
+        b = jax_build_up_b(b, rho, dt, u, v, dx, dy)
+        p = jax_pressure_poisson(jnp, nit, p, dx, dy, b)
+
+        u = u.at[1:-1, 1:-1].set(
+            (un[1:-1, 1:-1] - un[1:-1, 1:-1] * dt / dx * (un[1:-1, 1:-1] - un[1:-1, 0:-2]) - vn[1:-1, 1:-1] * dt / dy *
+             (un[1:-1, 1:-1] - un[0:-2, 1:-1]) - dt / (2 * rho * dx) * (p[1:-1, 2:] - p[1:-1, 0:-2]) + nu *
+             (dt / dx**2 * (un[1:-1, 2:] - 2 * un[1:-1, 1:-1] + un[1:-1, 0:-2]) + dt / dy**2 *
+              (un[2:, 1:-1] - 2 * un[1:-1, 1:-1] + un[0:-2, 1:-1]))))
+
+        v = v.at[1:-1, 1:-1].set(
+            (vn[1:-1, 1:-1] - un[1:-1, 1:-1] * dt / dx * (vn[1:-1, 1:-1] - vn[1:-1, 0:-2]) - vn[1:-1, 1:-1] * dt / dy *
+             (vn[1:-1, 1:-1] - vn[0:-2, 1:-1]) - dt / (2 * rho * dy) * (p[2:, 1:-1] - p[0:-2, 1:-1]) + nu *
+             (dt / dx**2 * (vn[1:-1, 2:] - 2 * vn[1:-1, 1:-1] + vn[1:-1, 0:-2]) + dt / dy**2 *
+              (vn[2:, 1:-1] - 2 * vn[1:-1, 1:-1] + vn[0:-2, 1:-1]))))
+
+        u = u.at[0, :].set(0)
+        u = u.at[:, 0].set(0)
+        u = u.at[:, -1].set(0)
+        u = u.at[-1, :].set(1)
+        v = v.at[0, :].set(0)
+        v = v.at[-1, :].set(0)
+        v = v.at[:, 0].set(0)
+        v = v.at[:, -1].set(0)
+
+    return jnp.sum(v)
+
+
 def run_cavity_flow(device_type: dace.dtypes.DeviceType):
     '''
     Runs cavity-flow for the given device
@@ -184,6 +246,58 @@ def run_cavity_flow(device_type: dace.dtypes.DeviceType):
     return sdfg
 
 
+def run_cavity_flow_autodiff():
+    import jax
+    import jax.numpy as jnp
+
+    # Initialize data (test size from benchmark)
+    ny, nx, nt, nit, rho, nu = (4, 4, 4, 5, 1.0, 0.1)
+    u, v, p, dx, dy, dt = initialize(ny, nx)
+    jax_u, jax_v, jax_p = u.copy(), v.copy(), p.copy()
+
+    # Initialize gradient computation data
+    gradient_u = np.zeros_like(u)
+    gradient___return = np.ones((1, ), dtype=np.float64)
+
+    # Define cavity flow kernel based on benchmark with __return pattern
+    @dace.program
+    def autodiff_kernel(nt: dace.int64, nit: dace.int64, u: dace.float64[ny, nx], v: dace.float64[ny, nx],
+                        dt: dace.float64, dx: dace.float64, dy: dace.float64, p: dace.float64[ny, nx],
+                        rho: dace.float64, nu: dace.float64):
+
+        dace_cavity_flow(nt, nit, u, v, dt, dx, dy, p, rho, nu)
+        return np.sum(v)
+
+    # Add the backward pass to the SDFG
+    sdfg = autodiff_kernel.to_sdfg(simplify=True)
+    add_backward_pass(sdfg=sdfg, inputs=["u"], outputs=["__return"])
+    sdfg(nt,
+         nit,
+         u,
+         v,
+         dt,
+         dx,
+         dy,
+         p,
+         rho,
+         nu,
+         ny=ny,
+         nx=nx,
+         nit=nit,
+         gradient_u=gradient_u,
+         gradient___return=gradient___return)
+
+    # Enable float64 support
+    jax.config.update("jax_enable_x64", True)
+
+    # Numerically validate vs JAX
+    jax_kernel = lambda nx, ny, nt, nit, u, v, dt, dx, dy, p, rho, nu: cavity_flow_jax_kernel(
+        jnp, nx, ny, nt, nit, u, v, dt, dx, dy, p, rho, nu)
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=4), static_argnums=(0, 1, 2, 3))
+    jax_grad_u = jax_grad(nx, ny, nt, nit, jax_u, jax_v, dt, dx, dy, jax_p, rho, nu)
+    np.testing.assert_allclose(gradient_u, jax_grad_u, rtol=1e-6, atol=1e-10)
+
+
 def test_cpu():
     run_cavity_flow(dace.dtypes.DeviceType.CPU)
 
@@ -191,6 +305,12 @@ def test_cpu():
 @pytest.mark.gpu
 def test_gpu():
     run_cavity_flow(dace.dtypes.DeviceType.GPU)
+
+
+@pytest.mark.autodiff
+def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
+    run_cavity_flow_autodiff()
 
 
 @pytest.mark.skip(reason="Intel FPGA kernel arguments")
@@ -209,6 +329,7 @@ if __name__ == "__main__":
 
     if target == "cpu":
         run_cavity_flow(dace.dtypes.DeviceType.CPU)
+        run_cavity_flow_autodiff()
     elif target == "gpu":
         run_cavity_flow(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":

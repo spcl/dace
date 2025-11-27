@@ -7,7 +7,7 @@ import numpy as np
 def test_fused_batch_norm():
     import tensorflow as tf
     from tensorflow.python.ops import gen_nn_ops
-    from dace.frontend.tensorflow import TFSession
+    from dace.frontend.ml.tensorflow import TFSession
 
     num_channels = 3
     size = [8, 224, 224, num_channels]

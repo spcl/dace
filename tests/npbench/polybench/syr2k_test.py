@@ -5,11 +5,10 @@ import numpy as np
 import dace as dc
 import pytest
 import argparse
-from dace.fpga_testing import fpga_test, xilinx_test
+from dace.fpga_testing import fpga_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
-from dace.transformation.dataflow import StreamingMemory, StreamingComposition
-from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
-from dace.config import set_temporary
+from dace.transformation.auto.auto_optimize import auto_optimize
+from dace.autodiff import add_backward_pass
 
 # Data set sizes
 # M, N
@@ -35,6 +34,51 @@ def initialize(M, N, datatype=np.float64):
     B = np.fromfunction(lambda i, j: ((i * j + 2) % M) / M, (N, M), dtype=datatype)
 
     return alpha, beta, C, A, B
+
+
+def syr2k_jax_kernel(jnp, lax, alpha, beta, C, A, B):
+    m = A.shape[0]  # outer loop range
+    n = A.shape[1]  # inner loop range
+
+    def outer_body_fun(carry, i):
+        # Unpack loop variables for the outer loop.
+        alpha, beta, C, A, B = carry
+
+        # Outer-loop update: scale row i of C by beta, but only for columns < i+1.
+        C_slice = jnp.where(jnp.arange(C.shape[1]) < (i + 1), C[i, :], 0.0)
+        C_slice = C_slice * beta
+        C_slice = jnp.where(jnp.arange(C.shape[1]) < (i + 1), C_slice, C[i, :])
+        C = lax.dynamic_update_slice(C, C_slice[None, :], (i, 0))
+
+        # Define the inner scan that will update row i of C using index k.
+        def inner_body_fun(inner_carry, k):
+            # Unpack inner loop variables.
+            alpha_inner, C_inner, A_inner, B_inner = inner_carry
+
+            # For A_update_slice and B_update_slice, only entries for indices < i+1 are used.
+            A_update_slice = jnp.where(jnp.arange(A_inner.shape[0]) < (i + 1), A_inner[:, k], 0.0)
+            A_update_slice = A_update_slice * (alpha_inner * B_inner[i, k])
+
+            B_update_slice = jnp.where(jnp.arange(B_inner.shape[0]) < (i + 1), B_inner[:, k], 0.0)
+            B_update_slice = B_update_slice * (alpha_inner * A_inner[i, k])
+
+            # Compute an update for row i of C: take its current values (only for indices < i+1)
+            # and add the contributions from A_update_slice and B_update_slice.
+            C_update_slice = jnp.where(jnp.arange(C_inner.shape[1]) < (i + 1), C_inner[i, :], 0.0)
+            C_update_slice = C_update_slice + A_update_slice + B_update_slice
+            # For indices not less than i+1, keep the original C[i, :].
+            C_update_slice = jnp.where(jnp.arange(C_inner.shape[1]) < (i + 1), C_update_slice, C_inner[i, :])
+            # Update row i of C.
+            C_inner = lax.dynamic_update_slice(C_inner, C_update_slice[None, :], (i, 0))
+            return (alpha_inner, C_inner, A_inner, B_inner), None
+
+        # Run the inner scan over k from 0 to n-1.
+        (alpha, C, A, B), _ = lax.scan(inner_body_fun, (alpha, C, A, B), jnp.arange(n))
+        return (alpha, beta, C, A, B), None
+
+    # Run the outer scan over i from 0 to m-1.
+    (alpha, beta, C, A, B), _ = lax.scan(outer_body_fun, (alpha, beta, C, A, B), jnp.arange(m))
+    return jnp.sum(C)
 
 
 def ground_truth(alpha, beta, C, A, B):
@@ -78,6 +122,42 @@ def run_syr2k(device_type: dace.dtypes.DeviceType):
     return sdfg
 
 
+def run_syr2k_autodiff():
+    import jax
+    import jax.numpy as jnp
+    import jax.lax as lax
+
+    # Initialize data (polybench mini size)
+    M, N = sizes["mini"]
+    alpha, beta, C, A, B = initialize(M, N)
+
+    # Initialize gradient computation data
+    gradient_A = np.zeros_like(A)
+    gradient___return = np.ones((1, ), dtype=np.float64)
+
+    # Define sum reduction for the output
+    @dc.program
+    def autodiff_kernel(alpha: dc.float64, beta: dc.float64, C: dc.float64[N, N], A: dc.float64[N, M],
+                        B: dc.float64[N, M]):
+        syr2k_kernel(alpha, beta, C, A, B)
+        return np.sum(C)
+
+    # Add the backward pass to the SDFG
+    sdfg = autodiff_kernel.to_sdfg()
+    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"])
+    sdfg(alpha, beta, C, A, B, M=M, N=N, gradient_A=gradient_A, gradient___return=gradient___return)
+
+    # Enable float64 support
+    jax.config.update("jax_enable_x64", True)
+
+    # Numerically validate vs JAX
+    jax_kernel = lambda alpha, beta, C, A, B: syr2k_jax_kernel(jnp, lax, alpha, beta, C, A, B)
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=3), static_argnums=(0, 1))
+    alpha, beta, C_jax, A_jax, B_jax = initialize(M, N)
+    jax_grad_A = jax_grad(alpha, beta, C_jax, A_jax, B_jax)
+    np.testing.assert_allclose(gradient_A, jax_grad_A)
+
+
 def test_cpu():
     run_syr2k(dace.dtypes.DeviceType.CPU)
 
@@ -85,6 +165,12 @@ def test_cpu():
 @pytest.mark.gpu
 def test_gpu():
     run_syr2k(dace.dtypes.DeviceType.GPU)
+
+
+@pytest.mark.autodiff
+def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
+    run_syr2k_autodiff()
 
 
 @fpga_test(assert_ii_1=False)
@@ -102,6 +188,7 @@ if __name__ == "__main__":
 
     if target == "cpu":
         run_syr2k(dace.dtypes.DeviceType.CPU)
+        run_syr2k_autodiff()
     elif target == "gpu":
         run_syr2k(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":

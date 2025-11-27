@@ -8,6 +8,7 @@ import argparse
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.fpga_testing import fpga_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
+from dace.autodiff import add_backward_pass
 
 
 def relerror(val, ref):
@@ -69,6 +70,10 @@ def run_compute(device_type: dace.dtypes.DeviceType):
     ref = compute.f(array_1, array_2, a, b, c)
     assert (np.allclose(val, ref) or relerror(val, ref) < 1e-10)
     return sdfg
+
+
+def compute_jax_kernel(jnp, array_1, array_2, a, b, c, S):
+    return jnp.sum(jnp.minimum(jnp.maximum(array_1, 2), 10) * a + array_2 * b + c)
 
 
 def test_cpu():

@@ -37,7 +37,7 @@ jobs:
         pip install mpi4py
         pip install cupy
         pip uninstall -y dace
-        pip install -e ".[testing]"
+        pip install -e ".[testing,ml]"
         curl -Os https://uploader.codecov.io/latest/linux/codecov
         chmod +x codecov
 

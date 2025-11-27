@@ -10,6 +10,7 @@ from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory, StreamingComposition
 from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
 from dace.config import set_temporary
+from dace.autodiff import add_backward_pass
 
 N, H, SM = (dc.symbol(s, dc.int64) for s in ('N', 'H', 'SM'))
 
@@ -35,6 +36,13 @@ def ground_truth(x):
     tmp_out = np.exp(x - tmp_max)
     tmp_sum = np.sum(tmp_out, axis=-1, keepdims=True)
     return tmp_out / tmp_sum
+
+
+def softmax_jax_kernel(jnp, x):
+    tmp_max = jnp.max(x, axis=-1, keepdims=True)
+    tmp_out = jnp.exp(x - tmp_max)
+    tmp_sum = jnp.sum(tmp_out, axis=-1, keepdims=True)
+    return jnp.sum(tmp_out / tmp_sum)
 
 
 def run_softmax(device_type: dace.dtypes.DeviceType):
@@ -72,6 +80,36 @@ def run_softmax(device_type: dace.dtypes.DeviceType):
     return sdfg
 
 
+def run_softmax_autodiff():
+    import jax
+    import jax.numpy as jnp
+
+    # Initialize data (npbench test size)
+    N, H, SM = 4, 4, 32
+    x = initialize(N, H, SM)
+    out = np.zeros_like(x)
+
+    # Initialize gradient computation data
+    gradient_x = np.zeros_like(x)
+    gradient___return = np.ones((1, ), dtype=np.float32)
+
+    # Define sum reduction for the output
+    @dc.program
+    def softmax_autodiff_kernel(x: dc.float32[N, H, SM, SM]):
+        return np.sum(softmax_kernel(x))
+
+    # Add the backward pass to the SDFG
+    sdfg = softmax_autodiff_kernel.to_sdfg()
+    add_backward_pass(sdfg=sdfg, inputs=["x"], outputs=["__return"])
+    sdfg(x, out, N=N, H=H, SM=SM, gradient_x=gradient_x, gradient___return=gradient___return)
+
+    # Numerically validate vs JAX
+    jax_kernel = lambda x: softmax_jax_kernel(jnp, x)
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=0))
+    jax_grad_x = jax_grad(x)
+    np.testing.assert_allclose(gradient_x, jax_grad_x, atol=1e-6)
+
+
 def test_cpu():
     run_softmax(dace.dtypes.DeviceType.CPU)
 
@@ -79,6 +117,12 @@ def test_cpu():
 @pytest.mark.gpu
 def test_gpu():
     run_softmax(dace.dtypes.DeviceType.GPU)
+
+
+@pytest.mark.autodiff
+def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
+    run_softmax_autodiff()
 
 
 @fpga_test(assert_ii_1=False)
@@ -96,6 +140,7 @@ if __name__ == "__main__":
 
     if target == "cpu":
         run_softmax(dace.dtypes.DeviceType.CPU)
+        run_softmax_autodiff()
     elif target == "gpu":
         run_softmax(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":

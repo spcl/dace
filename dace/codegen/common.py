@@ -171,3 +171,14 @@ def get_gpu_runtime() -> gpu_runtime.GPURuntime:
                            'environment variable to point to the libraries.')
 
     return gpu_runtime.GPURuntime(backend, libpath)
+
+
+def platform_library_name(libname: str) -> str:
+    """ Get the filename of a library.
+
+        :param libname: the name of the library.
+        :return: the filename of the library.
+    """
+    prefix = config.Config.get('compiler', 'library_prefix')
+    suffix = config.Config.get('compiler', 'library_extension')
+    return f"{prefix}{libname}.{suffix}"

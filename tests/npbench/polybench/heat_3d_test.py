@@ -10,6 +10,7 @@ from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory, StreamingComposition
 from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
 from dace.config import set_temporary
+from dace.autodiff import add_backward_pass
 
 # Dataset sizes
 # TSTEPS, N
@@ -37,6 +38,29 @@ def initialize(N, datatype=np.float64):
     B = np.copy(A)
 
     return A, B
+
+
+def heat_3d_jax_kernel(jnp, lax, TSTEPS, A, B):
+
+    def time_step(carry, t):
+        A, B = carry
+        B_new = B.at[1:-1, 1:-1,
+                     1:-1].set(0.125 * (A[2:, 1:-1, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[:-2, 1:-1, 1:-1]) + 0.125 *
+                               (A[1:-1, 2:, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, :-2, 1:-1]) + 0.125 *
+                               (A[1:-1, 1:-1, 2:] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, 1:-1, :-2]) +
+                               A[1:-1, 1:-1, 1:-1])
+        A_new = A.at[1:-1, 1:-1,
+                     1:-1].set(0.125 *
+                               (B_new[2:, 1:-1, 1:-1] - 2.0 * B_new[1:-1, 1:-1, 1:-1] + B_new[:-2, 1:-1, 1:-1]) +
+                               0.125 *
+                               (B_new[1:-1, 2:, 1:-1] - 2.0 * B_new[1:-1, 1:-1, 1:-1] + B_new[1:-1, :-2, 1:-1]) +
+                               0.125 *
+                               (B_new[1:-1, 1:-1, 2:] - 2.0 * B_new[1:-1, 1:-1, 1:-1] + B_new[1:-1, 1:-1, :-2]) +
+                               B_new[1:-1, 1:-1, 1:-1])
+        return (A_new, B_new), None
+
+    (A_final, B_final), _ = lax.scan(time_step, (A, B), jnp.arange(1, TSTEPS))
+    return jnp.sum(A_final)
 
 
 def ground_truth(TSTEPS, A, B):
@@ -101,6 +125,41 @@ def run_heat_3d(device_type: dace.dtypes.DeviceType):
     return sdfg
 
 
+def run_heat_3d_autodiff():
+    import jax
+    import jax.numpy as jnp
+    import jax.lax as lax
+
+    # Initialize data (polybench small size)
+    TSTEPS, N = sizes["small"]
+    A, B = initialize(N)
+
+    # Initialize gradient computation data
+    gradient_A = np.zeros_like(A)
+    gradient___return = np.ones((1, ), dtype=np.float64)
+
+    # Define sum reduction for the output
+    @dc.program
+    def autodiff_kernel(TSTEPS: dc.int64, A: dc.float64[N, N, N], B: dc.float64[N, N, N]):
+        heat_3d_kernel(TSTEPS, A, B)
+        return np.sum(A)
+
+    # Add the backward pass to the SDFG
+    sdfg = autodiff_kernel.to_sdfg()
+    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"])
+    sdfg(TSTEPS, A, B, N=N, gradient_A=gradient_A, gradient___return=gradient___return)
+
+    # Enable float64 support
+    jax.config.update("jax_enable_x64", True)
+
+    # Numerically validate vs JAX
+    jax_kernel = lambda TSTEPS, A, B: heat_3d_jax_kernel(jnp, lax, TSTEPS, A, B)
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=1), static_argnums=(0, ))
+    A_jax, B_jax = initialize(N)
+    jax_grad_A = jax_grad(TSTEPS, A_jax, B_jax)
+    np.testing.assert_allclose(gradient_A, jax_grad_A)
+
+
 def test_cpu():
     run_heat_3d(dace.dtypes.DeviceType.CPU)
 
@@ -108,6 +167,12 @@ def test_cpu():
 @pytest.mark.gpu
 def test_gpu():
     run_heat_3d(dace.dtypes.DeviceType.GPU)
+
+
+@pytest.mark.autodiff
+def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
+    run_heat_3d_autodiff()
 
 
 @fpga_test(assert_ii_1=False)
@@ -125,6 +190,7 @@ if __name__ == "__main__":
 
     if target == "cpu":
         run_heat_3d(dace.dtypes.DeviceType.CPU)
+        run_heat_3d_autodiff()
     elif target == "gpu":
         run_heat_3d(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":

@@ -10,6 +10,7 @@ from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory, StreamingComposition
 from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
 from dace.config import set_temporary
+from dace.autodiff import add_backward_pass
 
 N = dc.symbol('N', dtype=dc.int64)
 
@@ -66,6 +67,51 @@ def run_go_fast(device_type: dace.dtypes.DeviceType):
     return sdfg
 
 
+def go_fast_jax_kernel(jnp, lax, a):
+
+    def body_fn(trace, i):
+        # Update the trace by adding tanh(a[i, i])
+        new_trace = trace + jnp.tanh(a[i, i])
+        return new_trace, None  # Return a dummy output.
+
+    trace, _ = lax.scan(body_fn, 0.0, jnp.arange(a.shape[0]))
+    return jnp.sum(a + trace)
+
+
+def run_go_fast_autodiff():
+    import jax
+    import jax.numpy as jnp
+    import jax.lax as lax
+
+    # Initialize forward data (using smaller size for AD test)
+    N = 20
+    a = initialize(N)
+
+    # Initialize gradient computation data
+    gradient_a = np.zeros_like(a)
+    gradient___return = np.ones((1, ), dtype=np.float64)
+
+    # Define sum reduction for the output
+    @dc.program
+    def autodiff_kernel(a: dc.float64[N, N]):
+        result = go_fast_kernel(a)
+        return np.sum(result)
+
+    # Add the backward pass to the SDFG
+    sdfg = autodiff_kernel.to_sdfg()
+    add_backward_pass(sdfg=sdfg, inputs=["a"], outputs=["__return"])
+    sdfg(a, N=N, gradient_a=gradient_a, gradient___return=gradient___return)
+
+    # Enable float64 support
+    jax.config.update("jax_enable_x64", True)
+
+    # Numerically validate vs JAX
+    jax_kernel = lambda a: go_fast_jax_kernel(jnp, lax, a)
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=0))
+    jax_grad_a = jax_grad(a)
+    np.testing.assert_allclose(gradient_a, jax_grad_a)
+
+
 def test_cpu():
     run_go_fast(dace.dtypes.DeviceType.CPU)
 
@@ -73,6 +119,12 @@ def test_cpu():
 @pytest.mark.gpu
 def test_gpu():
     run_go_fast(dace.dtypes.DeviceType.GPU)
+
+
+@pytest.mark.autodiff
+def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
+    run_go_fast_autodiff()
 
 
 @pytest.mark.skip(reason="Operand type in binary expressions")
@@ -91,6 +143,7 @@ if __name__ == "__main__":
 
     if target == "cpu":
         run_go_fast(dace.dtypes.DeviceType.CPU)
+        run_go_fast_autodiff()
     elif target == "gpu":
         run_go_fast(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":
