@@ -6,6 +6,7 @@
 #define STRINGIZE(x) STRINGIZE_IMPL(x)
 #define STRINGIZE_IMPL(x) #x
 
+
 #if defined(__clang__)
   #define _dace_vectorize(width) _Pragma(STRINGIZE(clang loop vectorize(enable)))
 #else
