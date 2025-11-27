@@ -784,8 +784,8 @@ def extract_conditional_expressions(tasklet_node: nd.Tasklet) -> Tuple[str, str,
 
 def check_edges_type_in_state(subgraph: dstate.StateSubgraphView) -> None:
     """
-        Check if all the edges in this state are of type float, int, or boolean.
-        """
+    Check if all the edges in this state are of type float, int, or boolean.
+    """
     for edge, parent_subgraph in subgraph.all_edges_recursive():
         if isinstance(parent_subgraph, SDFGState):
             parent_sdfg = parent_subgraph.parent

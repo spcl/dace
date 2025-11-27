@@ -95,7 +95,7 @@ def _store_data(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState
     # If the shape is an expression:
     free_symbols_dict = {sym: None for sym in bwd_generator.sdfg.free_symbols}
     if any(symbolic.issymbolic(s, free_symbols_dict) for s in shape):
-        # Otherwise, replace all the loop dependant allocations with the max length of the loop
+        # Otherwise, replace all the loop dependent allocations with the max length of the loop
         # For example, an array of size [i+1] in a range(2, 10) loop will be stored in a [10, 10] array (1)
         # Additionally, an array of size [32-i] in the same loop will be stored in a [10, 30]  (2)
         loops = _get_all_enclosing_loops(forward_state)
@@ -396,7 +396,7 @@ def _connect_stored_data_to_target(bwd_generator: 'BackwardPassGenerator', forwa
     child_node = reversed_child_node
     child_node_in_connector = all_edges[-1].dst_conn
 
-    # Itetarte through the maps in the path in reverse
+    # Iterate through the maps in the path in reverse
     for edge in reversed(all_edges):
         edge_src = edge.src
         if isinstance(edge_src, nodes.MapEntry):
@@ -598,9 +598,9 @@ def _find_map_exist_for_map_entry(map_entry: nodes.MapEntry, state: SDFGState) -
 def _get_symbol_upper_bound_from_loop(bwd_generator: 'DataForwardingbwd_generator', s: sp.Symbol,
                                       loops: List[LoopRegion]) -> int:
     """
-        Given a symbol and a list of loops, get the upper bound of the symbol from the loops.
-        Raises an error if the symbol is not a loop index or the upper bound cannot be extracted correctly.
-        """
+    Given a symbol and a list of loops, get the upper bound of the symbol from the loops.
+    Raises an error if the symbol is not a loop index or the upper bound cannot be extracted correctly.
+    """
     # Get the symbol to match
     if isinstance(s, (sp.Symbol, sp.Expr)):
         # We don't want to match global SDFG symbols

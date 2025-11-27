@@ -2110,7 +2110,6 @@ class SDFG(ControlFlowRegion):
                     if isinstance(v, dt.Data):
                         _add_symbols(sdfg, v)
             for sym in desc.free_symbols:
-                # TODO: add extra checks for arg names (dtype etc)
                 if sym.name not in sdfg.symbols and sym.name not in sdfg.arg_names:
                     sdfg.add_symbol(sym.name, sym.dtype)
 
