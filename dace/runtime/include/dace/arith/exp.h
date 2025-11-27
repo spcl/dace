@@ -70,12 +70,7 @@ static inline double dace_exp_d(double initial_x) {
     
     /* Build 2^n in double */
     x *= uint64_to_double((((uint64_t)n) + 1023) << 52);
-    
-    if (initial_x > EXP_LIMIT)
-        x = INFINITY;
-    if (initial_x < -EXP_LIMIT)
-        x = 0.0;
-    
+
     return x;
 }
 
@@ -84,10 +79,16 @@ static inline double dace_exp_d(double initial_x) {
  * Checks for NaN inputs and returns NaN if input is NaN
  */
 static inline double dace_exp_d_safe(double initial_x) {
-    if (isnan(initial_x))
+    if (isnan(initial_x)){
         return NAN;
-    
-    return dace_exp_d(initial_x);
+    }
+    double x = dace_exp_d(initial_x);
+    if (initial_x > EXP_LIMIT){
+        x = INFINITY;
+    }
+    if (initial_x < -EXP_LIMIT){
+        x = 0.0;
+    }
 }
 
 /**
@@ -120,11 +121,7 @@ static inline float dace_exp_f(float initial_x) {
     /* multiply by power of 2 */
     z *= uint32_to_float((n + 0x7f) << 23);
     
-    if (initial_x > MAXLOGF)
-        z = INFINITY;
-    if (initial_x < MINLOGF)
-        z = 0.0f;
-    
+
     return z;
 }
 
@@ -133,10 +130,18 @@ static inline float dace_exp_f(float initial_x) {
  * Checks for NaN inputs and returns NaN if input is NaN
  */
 static inline float dace_exp_f_safe(float initial_x) {
-    if (isnan(initial_x))
+    if (isnan(initial_x)){
         return NAN;
+    }
     
-    return dace_exp_f(initial_x);
+    double x = dace_exp_f(initial_x);
+
+    if (initial_x > MAXLOGF){
+        x = INFINITY;
+    }
+    if (initial_x < MINLOGF) {
+        x = 0.0f;
+    }
 }
 
 
