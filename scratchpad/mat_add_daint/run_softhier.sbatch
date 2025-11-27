@@ -17,7 +17,7 @@ mkdir ${SOFTHIER_TEMP_RUN_PATH}
 CUR_DIR=$(pwd)
 
 # Change to the directory containing your Python script
-source /users/ashen/dace4softhier/.venv/bin/activate 
+source /users/ashen/dace4softhier/.venv/bin/activate
 
 # Run the Python script
 python mat_add.py

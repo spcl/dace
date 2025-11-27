@@ -30,18 +30,18 @@ from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
 from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
 
 from dace.transformation.passes import ConstantPropagation, InlineSDFGs
-from dace.transformation.passes.explicit_vectorization_gpu import ExplicitVectorizationPipelineGPU
 from dace.transformation.passes.offset_loop_and_maps import OffsetLoopsAndMaps
 from softhier_dace_artifacts.offload_to_softhier import offload_to_softhier, _gpu_to_softhier
 # import cupy as cp
 import numpy as np
 
-from dace.transformation.passes.explicit_vectorization_softhier import ExplicitVectorizationPipelineSoftHier
-from dace.transformation.passes.remove_assignment_tasklets import RemoveAssignmentTasklets
+from dace.transformation.passes.vectorization.vectorize_softhier import VectorizeSoftHier
+#from dace.transformation.passes.remove_assignment_tasklets import RemoveAssignmentTasklets
 from dace.transformation.dataflow.move_alloc_up import move_access_node_up, move_exit_access_node_down, offset_tblock_param
 
 import dace.sdfg.construction_utils as cutil
 from dace.sdfg.fp_utils.change_fp_types import change_fptype
+
 
 ########################################################################
 # Initializer: Called ONCE in each worker process
@@ -63,6 +63,7 @@ def init_worker(slots, lock):
     # redirect ccache path
     os.environ["CCACHE_DIR"] = ccache_path
 
+
 # Blocked version for SoftHier (Note: GPU names are used by the names will be moved be SoftHier compatible)
 Y = dace.symbol("X")
 X = dace.symbol("Y")
@@ -73,6 +74,7 @@ BLOCK_Y = dace.symbol("BLOCK_Y")
 NUM_BLOCKS_X = dace.symbol("NUM_BLOCKS_X")
 NUM_BLOCKS_Y = dace.symbol("NUM_BLOCKS_Y")
 
+
 # Blocked version for SoftHier (Note: GPU names are used by the names will be moved be SoftHier compatible)
 @dace.program
 def matrix_addition(A: dace.float64[Y, X] @ dace.dtypes.StorageType.GPU_Global,
@@ -80,13 +82,15 @@ def matrix_addition(A: dace.float64[Y, X] @ dace.dtypes.StorageType.GPU_Global,
                     C: dace.float64[Y, X] @ dace.dtypes.StorageType.GPU_Global):
     for i, j in dace.map[0:Y:(BLOCK_Y * CORES_Y * NUM_BLOCKS_Y),
                          0:X:(BLOCK_X * CORES_X * NUM_BLOCKS_X)] @ dace.dtypes.ScheduleType.GPU_Device:
-        for c_i, c_j in dace.map[i:i + (BLOCK_Y * CORES_Y * NUM_BLOCKS_Y):(BLOCK_Y * NUM_BLOCKS_Y),
-                                 j:j + (BLOCK_X * CORES_X * NUM_BLOCKS_X):(BLOCK_X * NUM_BLOCKS_X)] @ dace.dtypes.ScheduleType.GPU_ThreadBlock:
-            for b_i, b_j in dace.map[c_i:c_i + (BLOCK_Y * NUM_BLOCKS_Y):BLOCK_Y,
-                                     c_j:c_j + (BLOCK_X * NUM_BLOCKS_X):BLOCK_X] @ dace.dtypes.ScheduleType.Sequential:
+        for c_i, c_j in dace.map[i:i + (BLOCK_Y * CORES_Y * NUM_BLOCKS_Y):(BLOCK_Y * NUM_BLOCKS_Y), j:j +
+                                 (BLOCK_X * CORES_X * NUM_BLOCKS_X):
+                                 (BLOCK_X * NUM_BLOCKS_X)] @ dace.dtypes.ScheduleType.GPU_ThreadBlock:
+            for b_i, b_j in dace.map[c_i:c_i + (BLOCK_Y * NUM_BLOCKS_Y):BLOCK_Y, c_j:c_j +
+                                     (BLOCK_X * NUM_BLOCKS_X):BLOCK_X] @ dace.dtypes.ScheduleType.Sequential:
                 for k_i, k_j in dace.map[b_i:b_i + BLOCK_Y:1,
                                          b_j:b_j + BLOCK_X:1] @ dace.dtypes.ScheduleType.Sequential:
                     C[k_i, k_j] = A[k_i, k_j] + B[k_i, k_j]
+
 
 def move_up(sdfg: dace.SDFG, prefix: str, offset_memlets: bool):
     for state in sdfg.all_states():
@@ -95,6 +99,7 @@ def move_up(sdfg: dace.SDFG, prefix: str, offset_memlets: bool):
                 move_access_node_up(state, node, offset_memlets)
                 return
 
+
 def move_down(sdfg: dace.SDFG, prefix: str, offset_memlets: bool):
     for state in sdfg.all_states():
         for node in state.nodes():
@@ -102,8 +107,9 @@ def move_down(sdfg: dace.SDFG, prefix: str, offset_memlets: bool):
                 move_exit_access_node_down(state, node, offset_memlets)
                 return
 
+
 def try_dealias_map_connectors(sdfg: dace.SDFG, var_1: bool):
-   for state in sdfg.all_states():
+    for state in sdfg.all_states():
         top_level_maps = set()
         sdict = state.scope_dict()
         for node in state.nodes():
@@ -113,7 +119,10 @@ def try_dealias_map_connectors(sdfg: dace.SDFG, var_1: bool):
         for map_entry in top_level_maps:
             # Collect names
             in_data_names = {ie.data.data for ie in state.in_edges(map_entry) if ie.data.data is not None}
-            out_data_names = {oe.data.data for oe in state.out_edges(state.exit_node(map_entry)) if oe.data.data is not None}
+            out_data_names = {
+                oe.data.data
+                for oe in state.out_edges(state.exit_node(map_entry)) if oe.data.data is not None
+            }
             data_names = in_data_names.union(out_data_names)
 
             nodes_to_check = {oe.dst for oe in state.out_edges(map_entry)}
@@ -140,11 +149,10 @@ def try_dealias_map_connectors(sdfg: dace.SDFG, var_1: bool):
                             assert False
 
 
-
 def _get_gvsoc_path() -> str:
     """Get GVSOC path from environment or by locating gvsoc binary"""
     # set gvsoc path
-    os.environ["GVSOC_PATH"] = "/users/ashen/dace4softhier/gvsoc"
+    os.environ["GVSOC_PATH"] = "/home/primrose/Work/SoftHier/gvsoc"
 
     # First try environment variable
     if "GVSOC_PATH" in os.environ:
@@ -161,31 +169,55 @@ _get_gvsoc_path()
 
 # Configuration
 config = HardwareConfig(
-    hardware_thread_group_dims=(4, 4),
+    hardware_thread_group_dims=(2, 2),
     hbm_addr_base=0xc0000000,
-    hbm_addr_space=0x01000000,
+    hbm_addr_space=0x04000000,
     tcdm_size=0x00100000,
-    cluster_zomem_size=0x00100000,
     redmule_ce_height=64,
-    redmule_ce_width=16,
-    redmule_ce_pipe=3,
-    hbm_placement="4,0,0,4",
+    redmule_ce_width=64,
+    redmule_ce_pipe=1,
+    hbm_placement="2,2,2,2",
     num_node_per_ctrl=1,
     noc_link_width=4096,
-    num_hbm_channels=4*4,
+    num_hbm_channels=8,
     dtype_input=np.uint16,
     dtype_output=np.uint16,
     dace_input_type=dace.uint16,
     dace_output_type=dace.uint16,
 )
 
+def rm_assignment_tasklets(sdfg: dace.SDFG):
+    for state in sdfg.all_states():
+        for node in state.nodes():
+            if isinstance(node, dace.nodes.Tasklet) and node.label.startswith("assign"):
+                ies = state.in_edges(node)
+                oes = state.out_edges(node)
+                assert len(ies) == 1
+                assert len(oes) == 1
+                ie = ies[0]
+                oe = oes[0]
+                src_data = ie.data.data
+                src_subset = ie.data.subset
+                dst_data = oe.data.data
+                dst_subset = oe.data.subset
 
-def create_data_and_handlers(M_val, N_val, K_val, hw_config: HardwareConfig, hwM, hwN, hwK,  thread_group_dims_dace: tuple):
+                new_data = dst_data
+                new_other_subset = src_subset
+                new_subset = dst_subset
+                state.remove_node(node)
+                state.add_edge(
+                    ie.src, ie.src_conn, oe.dst, oe.dst_conn,
+                    dace.memlet.Memlet(data=new_data, other_subset=new_other_subset, subset=new_subset)
+                )
+
+
+
+def create_data_and_handlers(M_val, N_val, K_val, hw_config: HardwareConfig, hwM, hwN, hwK,
+                             thread_group_dims_dace: tuple):
     DTYPE_INPUT = hw_config.dtype_input
     DTYPE_OUTPUT = hw_config.dtype_output
     hardware_thread_group_dims = hw_config.hardware_thread_group_dims
     dim_x_real, dim_y_real = hardware_thread_group_dims
-    
 
     A_host = np.fromfunction(lambda i, j: i + j, (M_val, K_val), dtype=DTYPE_INPUT)
     B_host = np.fromfunction(lambda i, j: 2 * i + 2 * j, (K_val, N_val), dtype=DTYPE_INPUT)
@@ -236,7 +268,7 @@ def run_sdfg_in_tempdir(combo, interleavers: Dict[str, InterleaveHandler], hw_co
     combo_summary = (f"SLOT={slot_id}, "
                      f"M={M_val}, N={N_val}, K={K_val}, "
                      f"hwMNK={hardware_matmul_mnk}")
-    
+
     # Redirect stdout and stderr to a log file
     slot_dir = f"./slot_{slot_id}"
     # log_file_path = ""
@@ -247,11 +279,11 @@ def run_sdfg_in_tempdir(combo, interleavers: Dict[str, InterleaveHandler], hw_co
         os.chdir(tmp_dir)
         interleaver_list = [interleavers["A"], interleavers["B"], interleavers["C"]]
         make_preload_elf_hbm_interleaved_new("output.elf",
-                                            interleaver_list,
-                                            KMN=[K_val, M_val, N_val],
-                                            hbm_node_addr_base=hw_config.hbm_addr_base,
-                                            hbm_node_addr_space=hw_config.hbm_addr_space,
-                                            args_only=True if hw_config.test_mode == 'perf_only' else False)
+                                             interleaver_list,
+                                             KMN=[K_val, M_val, N_val],
+                                             hbm_node_addr_base=hw_config.hbm_addr_base,
+                                             hbm_node_addr_space=hw_config.hbm_addr_space,
+                                             args_only=True if hw_config.test_mode == 'perf_only' else False)
 
         M = M_val
         N = N_val
@@ -280,16 +312,12 @@ def run_sdfg_in_tempdir(combo, interleavers: Dict[str, InterleaveHandler], hw_co
                 "CORES_X": CORES_X_val,
                 "NUM_BLOCKS_Y": NUM_BLOCKS_Y_val,
                 "NUM_BLOCKS_X": NUM_BLOCKS_X_val,
-            }
-        )
+            })
         # sdfg.save("s0.sdfg")
         sdfg.validate()
 
         copy_sdfg = copy.deepcopy(sdfg)
-        change_fptype(sdfg=copy_sdfg,
-                    src_fptype=dace.float64,
-                    dst_fptype=dace.uint16,
-                    cast_in_and_out_data=False)
+        change_fptype(sdfg=copy_sdfg, src_fptype=dace.float64, dst_fptype=dace.uint16, cast_in_and_out_data=False)
         # copy_sdfg.save("s1.sdfg")
 
         #_gpu_to_softhier(copy_sdfg)
@@ -297,7 +325,8 @@ def run_sdfg_in_tempdir(combo, interleavers: Dict[str, InterleaveHandler], hw_co
         copy_sdfg.validate()
         # copy_sdfg.save("s2.sdfg")
         #ExplicitVectorizationPipelineCPU(32).apply_pass(copy_sdfg, {})
-        ExplicitVectorizationPipelineSoftHier(32).apply_pass(copy_sdfg, {})
+
+        VectorizeSoftHier(vector_width=32, insert_copies=True, eliminate_trivial_vector_map=True, dtype=dace.uint16).apply_pass(copy_sdfg, {})
 
         # You can play around moving up when data is moved from HBM to TCDM
         # First moveup/movedown require offsetting memelts
@@ -314,7 +343,6 @@ def run_sdfg_in_tempdir(combo, interleavers: Dict[str, InterleaveHandler], hw_co
         move_down(copy_sdfg, "C_vec", False)
         copy_sdfg.validate()
         # copy_sdfg.save("s4.sdfg")
-
 
         # Offset TBlock map (Make sure you run this before Remove assignment tasklets)
         # This pass does not handle other subset well
@@ -334,35 +362,26 @@ def run_sdfg_in_tempdir(combo, interleavers: Dict[str, InterleaveHandler], hw_co
             squeeze_maps=True,
         ).apply_pass(copy_sdfg, {})
         # copy_sdfg.save("s5.sdfg")
+        copy_sdfg.save("/home/primrose/Work/dace/scratchpad/mat_add_daint/x.sdfg")
 
-        RemoveAssignmentTasklets().apply_pass(copy_sdfg, {})
+        #RemoveAssignmentTasklets().apply_pass(copy_sdfg, {})
         # copy_sdfg.save("s6.sdfg")
 
         # Match TCDM names to be local_<HBM_name>
         # Make sure everything is fp16
-        cutil.connect_array_names(
-            sdfg=copy_sdfg,
-            local_storage=dace.dtypes.StorageType.SoftHier_TCDM,
-            src_storage=dace.dtypes.StorageType.SoftHier_HBM,
-            local_name_prefix="local_"
-        )
-        change_fptype(sdfg=copy_sdfg,
-                    src_fptype=dace.float64,
-                    dst_fptype=dace.uint16,
-                    cast_in_and_out_data=False)
-        change_fptype(sdfg=copy_sdfg,
-                    src_fptype=dace.uint16,
-                    dst_fptype=dace.uint16,
-                    cast_in_and_out_data=False)
-        DetectAndRenameSoftHierTasklets().apply_pass(sdfg=copy_sdfg, pipeline_results={})
+        #cutil.connect_array_names(sdfg=copy_sdfg,
+        #                          local_storage=dace.dtypes.StorageType.SoftHier_TCDM,
+        #                          src_storage=dace.dtypes.StorageType.SoftHier_HBM,
+        #                          local_name_prefix="local_")
+        change_fptype(sdfg=copy_sdfg, src_fptype=dace.float64, dst_fptype=dace.uint16, cast_in_and_out_data=False)
+        change_fptype(sdfg=copy_sdfg, src_fptype=dace.uint16, dst_fptype=dace.uint16, cast_in_and_out_data=False)
+        #DetectAndRenameSoftHierTasklets().apply_pass(sdfg=copy_sdfg, pipeline_results={})
         # copy_sdfg.save("s7.sdfg")
-        copy2_sdfg = copy.deepcopy(copy_sdfg)
 
-        try_dealias_map_connectors(
-            sdfg=copy_sdfg,
-            var_1=True
-        )
-        
+        try_dealias_map_connectors(sdfg=copy_sdfg, var_1=True)
+        rm_assignment_tasklets(copy_sdfg)
+
+
         # copy_sdfg = dace.SDFG.from_file("/scratch/dace4softhier/scratchpad/mat_add/s8.sdfg")
         for array_name in copy_sdfg.arrays:
             data_desc = copy_sdfg.arrays[array_name]
@@ -420,10 +439,11 @@ def mat_add(A: np.ndarray, B: np.ndarray, C: np.ndarray):
     C = A + B
     return C
 
+
 def run_combo_in_worker(combo, config):
     """
     A wrapper function to be executed by each pool worker.
-    
+
     It handles the creation of a temporary directory, setting up
     the environment, and running the e2e verification for a
     single combination.
@@ -435,15 +455,13 @@ def run_combo_in_worker(combo, config):
         # 2. Create a temporary directory *for this worker*
         # This directory will only exist for the duration of this task.
         with tempfile.TemporaryDirectory() as tmp_dir:
-            
+
             # 3. Change directory *within the worker*
             # This is safe as it only affects this worker process.
             os.chdir(tmp_dir)
 
             # 4. Prepare data and functions (this logic is moved from the main loop)
-            data_and_interleavers = create_data_and_handlers(
-                M, N, K, config, hwM, hwN, hwK, thread_group_dims_dace
-            )
+            data_and_interleavers = create_data_and_handlers(M, N, K, config, hwM, hwN, hwK, thread_group_dims_dace)
 
             data = data_and_interleavers["numpy_data"]
             interleavers = data_and_interleavers["interleavers"]
@@ -453,14 +471,12 @@ def run_combo_in_worker(combo, config):
 
             # 5. Run the actual verification function
             # This is the same call you had commented out
-            ret_dict = run_e2e_verification(
-                hw_config=config,
-                data=data,
-                interleave_handlers=interleavers,
-                numpy_fn=run_numpy_fn,
-                sdfg_fn=run_sdfg_fn
-            )
-            
+            ret_dict = run_e2e_verification(hw_config=config,
+                                            data=data,
+                                            interleave_handlers=interleavers,
+                                            numpy_fn=run_numpy_fn,
+                                            sdfg_fn=run_sdfg_fn)
+
             # 6. Return the result dictionary to the callback
             return ret_dict
 
@@ -469,32 +485,30 @@ def run_combo_in_worker(combo, config):
         # This helps in debugging parallel failures
         print(f"Error in worker (PID: {os.getpid()}) processing {combo}: {e}", flush=True)
         # You might want to log to a file here, but be careful of race conditions
-        return None # Return None so the callback can handle it
+        return None  # Return None so the callback can handle it
 
-script_start_time=time.time()
+
+script_start_time = time.time()
 SLURM_JOB_ID = str(os.environ.get("SLURM_JOB_ID"))
 max_procs = int(os.environ.get("MAX_PROCS", 1))
-gvsoc_path = "/users/ashen/dace4softhier/gvsoc"
-ccache_path = "/capstor/scratch/cscs/ashen/.ccache"
+gvsoc_path = "/home/primrose/Work/SoftHier/gvsoc"
+ccache_path = "/usr/bin/ccache"
 python_script_path = os.path.dirname(os.path.realpath(__file__))
 temp_run_dir = str(os.environ.get("SOFTHIER_TEMP_RUN_PATH", python_script_path))
 job_array_id = str(os.environ.get("SLURM_ARRAY_TASK_ID", "10"))
 log_path = f"{python_script_path}/sweeplog_{SLURM_JOB_ID}.txt"
 csv_filename = f"id_{job_array_id}.csv"
 config.test_mode = 'perf_only'
-config.skip_build_hw = True 
+config.skip_build_hw = True
 
 if __name__ == "__main__":
-    
+
     M, N, K, hwM, hwN, hwK, thread_group_dims_dace = 256, 256, 256, 32, 32, 32, (4, 4)
     config.dace_thread_group_dims = thread_group_dims_dace
     combo_1 = (M, N, K, hwM, hwN, hwK, thread_group_dims_dace)
     M, N, K, hwM, hwN, hwK, thread_group_dims_dace = 128, 128, 128, 32, 32, 32, (4, 4)
     combo_2 = (M, N, K, hwM, hwN, hwK, thread_group_dims_dace)
-    all_combinations = [
-        combo_1,
-        combo_2
-    ]
+    all_combinations = [combo_1, combo_2]
 
     # How many processes (slots) you want
     MAX_PROCS = max_procs
@@ -504,7 +518,7 @@ if __name__ == "__main__":
     lock = manager.Lock()
     slots = manager.dict()
     slots['counter'] = 0
-    
+
     # create a log file
     log_file = open(log_path, "w")
     print(f"Starting parallel execution of {len(all_combinations)} combinations...", flush=True, file=log_file)
@@ -513,9 +527,7 @@ if __name__ == "__main__":
     print(all_combinations)
 
     # exit(0)
-    fieldnames = [
-        "execution_period_ns"
-    ]
+    fieldnames = ["execution_period_ns"]
 
     # Use a Lock to ensure only one callback writes at a time
     csv_lock = multiprocessing.Lock()
@@ -530,7 +542,7 @@ if __name__ == "__main__":
             if ret_dict is not None:
                 with csv_lock:
                     execution_period_ns = ret_dict.get('execution_period_ns', None)
-                    writer.writerow({"execution_period_ns":execution_period_ns})
+                    writer.writerow({"execution_period_ns": execution_period_ns})
                     # flush to ensure data is written immediately
                     csvfile.flush()
             else:
@@ -538,23 +550,18 @@ if __name__ == "__main__":
                 print("A worker task failed and returned None.", flush=True)
 
         # Create pool
-        pool = multiprocessing.Pool(
-            processes=MAX_PROCS,
-            initializer=init_worker,
-            initargs=(slots, lock)
-        )
+        pool = multiprocessing.Pool(processes=MAX_PROCS, initializer=init_worker, initargs=(slots, lock))
 
         # --- THIS IS THE MODIFIED PART ---
-        
+
         # Submit each combo to the pool via apply_async, using the new wrapper
         for combo in all_combinations:
             # We pass the wrapper function, and its arguments: (combo, config)
             # The callback 'on_result_returned' remains the same.
             pool.apply_async(
-                run_combo_in_worker,       # The new wrapper function
-                args=(combo, config),      # Arguments for the wrapper
-                callback=on_result_returned
-            )
+                run_combo_in_worker,  # The new wrapper function
+                args=(combo, config),  # Arguments for the wrapper
+                callback=on_result_returned)
 
         # --- END OF MODIFIED PART ---
 
