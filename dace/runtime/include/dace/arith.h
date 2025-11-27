@@ -139,6 +139,51 @@ static inline double dace_log_d(double x) {
     return res;
 }
 
+static inline double dace_log_d_safe(double x) {
+    double fe;
+    const double LOG_UPPER_LIMIT = 1e307;
+    const double LOG_LOWER_LIMIT = 0;
+    double original_x = x;
+
+    /* Separate mantissa from exponent */
+    x = get_mant_exponent_d(x, &fe);
+    
+    /* Blending */
+    if (x > SQRTH) {
+        fe += 1.0;
+    } else {
+        x += x;
+    }
+    x -= 1.0;
+    
+    /* Rational form P(x)/Q(x) */
+    double px = get_log_px(x);
+    
+    /* For the final formula */
+    const double x2 = x * x;
+    px *= x;
+    px *= x2;
+    
+    const double qx = get_log_qx(x);
+    
+    double res = px / qx;
+    
+    res -= fe * 2.121944400546905827679e-4;
+    res -= 0.5 * x2;
+    
+    res = x + res;
+    res += fe * 0.693359375;
+
+    if (original_x > LOG_UPPER_LIMIT){
+        res = INFINITY;
+    }
+    if (original_x < LOG_LOWER_LIMIT){   /* THIS IS NAN! */
+        res = -NAN;
+    }
+
+    return res;
+}
+
 // ============================================================================
 // SINGLE PRECISION LOG
 // ============================================================================
@@ -195,6 +240,38 @@ static inline float dace_log_f(float x) {
     
     float res = get_log_poly_f(x);
     res *= x2 * x;
+
+    res += -2.12194440e-4f * fe;
+    res += -0.5f * x2;
+
+    res = x + res;
+
+    res += 0.693359375f * fe;
+
+    return res;
+}
+
+
+static inline float dace_log_f_safe(float x) {
+    float fe;
+    const double original_x = x;
+
+    const double LOG_UPPER_LIMIT = 3.4028234663852885981170418348451692544e38f;
+    const double LOG_LOWER_LIMIT = 0;
+
+    x = get_mant_exponent_f(x, &fe);
+    
+    if (x > SQRTHF) {
+        fe += 1.0f;
+    } else {
+        x += x;
+    }
+    x -= 1.0f;
+    
+    const float x2 = x * x;
+    
+    float res = get_log_poly_f(x);
+    res *= x2 * x;
     
     res += -2.12194440e-4f * fe;
     res += -0.5f * x2;
@@ -202,6 +279,13 @@ static inline float dace_log_f(float x) {
     res = x + res;
     
     res += 0.693359375f * fe;
-    
+
+    if (original_x > LOG_UPPER_LIMIT){
+        res = INFINITY;
+    }
+    if (original_x < LOG_LOWER_LIMIT){   /* THIS IS NAN! */
+        res = -NAN;
+    }
+
     return res;
 }

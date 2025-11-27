@@ -274,6 +274,7 @@ class RemoveMathCall(ppl.Pass):
 @transformation.explicit_cf_compatible
 class ReplaceSTDLogWithDaCeLog(ppl.Pass):
     CATEGORY: str = 'Optimization Preparation'
+    use_safe_implementation = dace.properties.Property(dtype=bool, default=False, allow_none=False)
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Tasklets
@@ -306,7 +307,8 @@ class ReplaceSTDLogWithDaCeLog(ppl.Pass):
                                 (ie_arr.dtype == dace.float64 and oe_arr.dtype == dace.float64)):
                                 ast_str = node.code.as_string
                                 suffix = "f" if (ie_arr.dtype == dace.float32 and oe_arr.dtype == dace.float32) else "d"
-                                new_ast_str = _replace_function_names(ast_str, "log", f"dace_log_{suffix}")
+                                safe_infix = "" if self.use_safe_implementation is False else "safe_"
+                                new_ast_str = _replace_function_names(ast_str, "log", f"dace_log_{safe_infix}{suffix}")
                                 if new_ast_str != ast_str:
                                     node.code = CodeBlock(new_ast_str, language=dace.Language.Python)
         
