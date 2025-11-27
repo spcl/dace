@@ -15,7 +15,7 @@ from dace.sdfg import SDFG, SDFGState, graph, nodes
 
 from dace.autodiff import backward_pass_generator as engine, analysis as autodiff_analysis
 from dace.autodiff.utils import init_grad
-from dace.util import in_edge_with_name
+from dace.sdfg.utils import in_edge_with_name
 from dace.transformation.passes.analysis import AccessSets
 
 
@@ -25,7 +25,7 @@ class ParameterArray(data.Array):
     An array for which a gradient can be computed.
     """
     # since this can be None, this is not a DataProperty
-    gradient = properties.Property(dtype=str, desc="The corresponding gradient buffer", default=None)
+    gradient = properties.Property(dtype=str, desc="The corresponding gradient buffer", default=None, allow_none=True)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

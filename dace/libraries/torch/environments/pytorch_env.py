@@ -8,7 +8,7 @@ except ImportError as e:
 
 import dace.library
 
-from dace.util import platform_library_name
+from dace.codegen.common import platform_library_name
 
 
 @dace.library.environment

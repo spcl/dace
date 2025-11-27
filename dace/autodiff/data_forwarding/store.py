@@ -31,8 +31,8 @@ def resolve_overwrite_with_store(bwd_generator: 'BackwardPassGenerator', forward
                                             target_node=target_node,
                                             edge=starting_edge)
 
-    # Check if this data needs to be forwarded through a SDFGs
-    if bwd_generator.separate_sdfgs or ad_utils.within_nested_sdfg(forward_state):
+    # Check if this data needs to be forwarded through NestedSDFGs
+    if bwd_generator.separate_sdfgs or forward_state.sdfg.parent_sdfg is not None:
         # We need to make sure the new array is forwarded to the backward SDFG
         if new_stored_array.data not in bwd_generator.backward_input_arrays:
             # If the data is needed inside a NestedSDFG
@@ -108,10 +108,8 @@ def _store_data(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState
                     # Replace the symbol with the loop size and evaluate the expression
                     # Check if loop size can be converted to an integer
                     loop_index_sym = symbolic.pystr_to_symbolic(loop_index)
-                    if isinstance(loop_size, int) or (isinstance(loop_size, str) and ad_utils.is_int(loop_size)):
-                        shape[i] = s.subs(loop_index_sym, loop_size)
-                    else:
-                        shape[i] = s.subs(loop_index_sym, symbolic.pystr_to_symbolic(loop_size))
+                    loop_size_sym = loop_size if isinstance(loop_size, int) else symbolic.pystr_to_symbolic(loop_size)
+                    shape[i] = s.subs(loop_index_sym, loop_size_sym)
 
     # Plus the size of any enclosing loops
     enclosed, _ = ad_utils.state_within_loop(forward_state=forward_state)
@@ -145,10 +143,8 @@ def _store_data(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState
                 # Try to replace the symbols with the loop size
                 loop_size, loop_index = _get_symbol_upper_bound_from_loop(bwd_generator, new_dim, all_encolsing_loops)
                 loop_index_sym = symbolic.pystr_to_symbolic(loop_index)
-                if isinstance(loop_size, int) or (isinstance(loop_size, str) and ad_utils.is_int(loop_size)):
-                    new_dim = new_dim.subs(loop_index_sym, loop_size)
-                else:
-                    new_dim = new_dim.subs(loop_index_sym, symbolic.pystr_to_symbolic(loop_size))
+                loop_size_sym = loop_size if isinstance(loop_size, int) else symbolic.pystr_to_symbolic(loop_size)
+                new_dim = new_dim.subs(loop_index_sym, loop_size_sym)
             shape.insert(0, new_dim)
             loop_param_list.insert(0, loop.loop_variable)
 

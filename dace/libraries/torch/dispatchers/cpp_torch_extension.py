@@ -21,11 +21,10 @@ from dace.codegen import targets, compiler
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.compiled_sdfg import CompiledSDFG
 from dace.codegen.prettycode import CodeIOStream
-from dace.codegen.common import sym2cpp
+from dace.codegen.common import sym2cpp, platform_library_name
 
 from dace.autodiff import BackwardResult
 from dace.libraries.torch.environments import PyTorch
-from dace.util import is_cuda, platform_library_name
 
 from dace.libraries.torch.dispatchers.common import DaCeMLTorchFunction, compile_and_init_sdfgs, get_arglist
 
@@ -117,7 +116,7 @@ def tensor_init_for_desc(name: str, desc: data.Data, clean_weights: Dict[str, to
                 {{{', '.join(str(s) for s in desc.shape)}}},
                 torch::TensorOptions()
                     .dtype(torch::{typeclass_to_torch_cpp_type(desc.dtype)})
-                    .device(torch::{'kCUDA' if is_cuda(desc.storage) else 'kCPU'})
+                    .device(torch::{'kCUDA' if desc.storage in dace.dtypes.GPU_STORAGES else 'kCPU'})
                     .layout(torch::kStrided)).clone();
             """
     else:
@@ -127,7 +126,7 @@ def tensor_init_for_desc(name: str, desc: data.Data, clean_weights: Dict[str, to
                 {{{', '.join(str(s) for s in desc.shape)}}},
                 torch::TensorOptions()
                     .dtype(torch::{typeclass_to_torch_cpp_type(desc.dtype)})
-                    .device(torch::{'kCUDA' if is_cuda(desc.storage) else 'kCPU'})
+                    .device(torch::{'kCUDA' if desc.storage in dace.dtypes.GPU_STORAGES else 'kCPU'})
                     .layout(torch::kStrided));
             """
 

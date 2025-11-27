@@ -43,7 +43,7 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
     from dace.autodiff import torch as torch_autodiff
     from dace.autodiff.library import library as autodiff_library
     from dace.frontend.ml.onnx import ONNXModel
-    from dace.util import auto_optimize_onnx as auto_opt
+    from dace.transformation.onnx import auto_optimize_onnx as auto_opt
 else:
     clean_onnx_name = None
     dispatchers = None

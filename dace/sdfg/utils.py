@@ -2691,3 +2691,87 @@ def specialize_scalar(sdfg: 'dace.SDFG', scalar_name: str, scalar_val: Union[flo
     assert isinstance(scalar_name, str)
     assert isinstance(scalar_val, (float, int, str))
     _specialize_scalar_impl(sdfg, sdfg, scalar_name, scalar_val)
+
+
+def in_edge_with_name(node: nd.Node, state: SDFGState, name: str) -> MultiConnectorEdge:
+    """
+    Find the edge that connects to input connector `name` on `node`.
+
+    :param node: the node.
+    :param state: the state.
+    :param name: the input connector name.
+    :return: the edge that connects to connector `name`.
+    """
+    cands = list(state.in_edges_by_connector(node, name))
+    if len(cands) != 1:
+        raise ValueError("Expected to find exactly one edge with name '{}', found {}".format(name, len(cands)))
+    return cands[0]
+
+
+def out_edge_with_name(node: nd.Node, state: SDFGState, name: str) -> MultiConnectorEdge:
+    """
+    Find the edge that connects to output connector `name` on `node`.
+
+    :param node: the node.
+    :param state: the state.
+    :param name: the output connector name.
+    :return: the edge that connects to connector `name`.
+    """
+    cands = list(state.out_edges_by_connector(node, name))
+    if len(cands) != 1:
+        raise ValueError("Expected to find exactly one edge with name '{}', found {}".format(name, len(cands)))
+    return cands[0]
+
+
+def in_desc_with_name(node: nd.Node, state: SDFGState, sdfg: SDFG, name: str) -> dt.Data:
+    """
+    Find the descriptor of the data that connects to input connector `name`.
+
+    :param node: the node.
+    :param state: the state.
+    :param sdfg: the sdfg.
+    :param name: the input connector name.
+    :return: the descriptor of the data that connects to connector `name`.
+    """
+    return sdfg.arrays[in_edge_with_name(node, state, name).data.data]
+
+
+def out_desc_with_name(node: nd.Node, state: SDFGState, sdfg: SDFG, name: str) -> dt.Data:
+    """
+    Find the descriptor of the data that connects to output connector `name`.
+
+    :param node: the node.
+    :param state: the state.
+    :param sdfg: the sdfg.
+    :param name: the output connector name.
+    :return: the descriptor of the data that connects to connector `name`.
+    """
+    return sdfg.arrays[out_edge_with_name(node, state, name).data.data]
+
+
+def expand_nodes(sdfg: SDFG, predicate: Callable[[nd.Node], bool]):
+    """
+    Recursively expand library nodes in the SDFG using a given predicate.
+
+    :param sdfg: the sdfg to expand nodes on.
+    :param predicate: a predicate that will be called to check if a node should be expanded.
+    """
+    if sdfg is None:
+        return
+    states = list(sdfg.states())
+    while len(states) > 0:
+        state = states.pop()
+        expanded_something = False
+        for node in list(state.nodes()):
+            if isinstance(node, nd.NestedSDFG):
+                expand_nodes(node.sdfg, predicate=predicate)
+            elif isinstance(node, nd.LibraryNode):
+                if predicate(node):
+                    impl_name = node.expand(sdfg, state)
+                    if config.Config.get_bool('debugprint'):
+                        print("Automatically expanded library node \"{}\" with implementation \"{}\".".format(
+                            str(node), impl_name))
+                    expanded_something = True
+
+        if expanded_something:
+            states.append(state)

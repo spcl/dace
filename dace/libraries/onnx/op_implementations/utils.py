@@ -13,7 +13,7 @@ from dace.registry import autoregister
 from dace.libraries.onnx.nodes import onnx_op
 from dace.libraries.onnx.forward_implementation_abc import ONNXForward
 from dace.libraries.onnx.nodes.node_utils import parse_variadic_param
-from dace.util import in_desc_with_name, out_desc_with_name
+from dace.sdfg.utils import in_desc_with_name, out_desc_with_name
 
 
 def op_implementation(op, name):

@@ -13,7 +13,7 @@ including:
 import copy
 import logging
 import dace
-from dace.util import (in_desc_with_name, out_desc_with_name)
+from dace.sdfg.utils import in_desc_with_name, out_desc_with_name
 from dace import SDFG, SDFGState
 
 log = logging.getLogger(__name__)
@@ -287,3 +287,10 @@ def generate_reduction_tasklet_code(data_desc, reduced_desc, num_reduce_axes, ke
     tasklet_code = setup_code + "\n" + init_code + "\n" + loop_code + "\n"
 
     return tasklet_code
+
+
+def iterables_equal(a, b) -> bool:
+    """ Return whether the two iterables ``a`` and ``b`` are equal. """
+    if len(a) != len(b):
+        return False
+    return all(x == y for x, y in zip(a, b))

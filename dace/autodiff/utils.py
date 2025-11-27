@@ -12,11 +12,11 @@ import sympy as sp
 
 # DaCe imports
 import dace
-import dace.util.utils as utils
+import dace.sdfg.utils as utils
 from dace import dtypes
 from dace import data as dt
 from dace.frontend.python.parser import DaceProgram
-from dace.sdfg import SDFG, SDFGState, graph as dgraph, nodes as nd, state as dstate, utils as dutils
+from dace.sdfg import SDFG, SDFGState, graph as dgraph, nodes as nd, state as dstate
 from dace.sdfg.state import LoopRegion
 
 # Autodiff imports
@@ -341,10 +341,6 @@ def init_grad(data: str, sdfg: SDFG, current_state: SDFGState) -> None:
         raise AutoDiffException("Unsupported data descriptor {}".format(arr))
 
 
-def symbols_to_strings(symbs: Set[sp.Symbol]) -> Set[str]:
-    return {str(symb) for symb in symbs}
-
-
 def extract_indices(expression: str) -> Dict[str, List[str]]:
     """Extracts indexed array names and their indices from a given string expression.
 
@@ -470,14 +466,6 @@ def symbolic_execution({}):
             "Exception occurred while attempting to symbolically execute code:\n{}".format(code)) from e
 
 
-def is_int(s: str) -> bool:
-    try:
-        int(s)
-        return True
-    except ValueError:
-        return False
-
-
 def is_int_eq_value(value, target_value: int) -> bool:
     if isinstance(value, numbers.Integral):
         return value == target_value
@@ -525,7 +513,7 @@ def get_state_topological_order(graph) -> List[SDFGState]:
     """
     Returns the SDFG states in topological order.
     """
-    all_nodes = list(dutils.dfs_topological_sort(graph, graph.source_nodes()))
+    all_nodes = list(utils.dfs_topological_sort(graph, graph.source_nodes()))
     state_order = []
     for node in all_nodes:
         if isinstance(node, SDFGState):
@@ -544,37 +532,25 @@ def get_state_topological_order(graph) -> List[SDFGState]:
 
 
 def shape_has_symbols_to_replace(sdfg: SDFG, shape: Union[str, sp.Symbol, sp.Expr]) -> bool:
-    """"
-    Check if the shape dimension passed as a parameter has a symbol that needs to be replaced.
-    We do not replace global SDFG symbols but rather the loop indicies only
     """
-    symbol_not_numeric_and_not_sdfg_symb = False
-
-    # Get interstate edges symbols
+    Check if the shape dimension passed as a parameter has a symbol that needs to be replaced.
+    We do not replace global SDFG symbols but rather the loop indices only.
+    """
     defined_symbols = sdfg.free_symbols | set(sdfg.arg_names)
-    if isinstance(shape, (sp.Symbol, sp.Expr)):
-        # TODO: we should check the type of the symbol if it is in arg_names
-        if any(str(s) not in defined_symbols for s in shape.free_symbols):
-            # Check if any of these symbols will be given as a parameter to the SDFG
-            symbol_not_numeric_and_not_sdfg_symb = True
-
-    string_not_int_and_not_sdfg_symb = False
     if isinstance(shape, str):
-        variable_regex = r'\b[a-zA-Z_][a-zA-Z0-9_]*\b'
-        loop_size_indices = re.findall(variable_regex, shape)
-        if any(str(symb) not in defined_symbols for symb in loop_size_indices):
-            string_not_int_and_not_sdfg_symb = True
-    return string_not_int_and_not_sdfg_symb or symbol_not_numeric_and_not_sdfg_symb
+        shape = dace.symbolic.pystr_to_symbolic(shape)
+    return dace.symbolic.issymbolic(shape, defined_symbols)
 
 
 def get_loop_end(start: str, end: str, loop: LoopRegion) -> str:
     """
-        Get the smallest and largest index of a loop given the start and end values.
-        This is an attempt at estimating the number of iterations of the loop.
-        """
-    # TODO: This function only accepts for-loops that starts or end at zero
-    if is_int(start) and is_int(end):
-        int_start, int_end = int(start), int(end)
+    Get the smallest and largest index of a loop given the start and end values.
+    This is an attempt at estimating the number of iterations of the loop.
+    """
+    start_sym = dace.symbolic.pystr_to_symbolic(start)
+    end_sym = dace.symbolic.pystr_to_symbolic(end)
+    if not dace.symbolic.issymbolic(start_sym) and not dace.symbolic.issymbolic(end_sym):
+        int_start, int_end = int(start_sym), int(end_sym)
         if int_start < int_end:
             # Increasing loop
             largest_index = int_end
@@ -669,18 +645,6 @@ def get_map_nest_information(
     # Create a dictionary mapping parameters to their start and end ranges
     param_dict = {param: (start, end) for param, start, end in zip(param_list, start_range, shape_list)}
     return start_range, param_list, shape_list, param_dict
-
-
-def within_nested_sdfg(forward_state: SDFGState) -> bool:
-    """
-    Check if the state is within a nested SDFG
-    """
-    parent = forward_state.parent
-    while parent is not None:
-        if isinstance(parent, nd.NestedSDFG):
-            return True
-        parent = parent.parent
-    return False
 
 
 def get_all_path_edges(state: SDFGState, source: nd.Node,
@@ -862,10 +826,8 @@ class SympyCleaner(ast.NodeTransformer):
 
     def visit_Name(self, node):
         if node.id == "pi":
-            # Wrap in double() cast to avoid C++ ambiguity when typeless_pi needs explicit type
-            return ast.copy_location(ast.parse("double(dace.math.pi)").body[0].value, node)
-        else:
-            return self.generic_visit(node)
+            return ast.copy_location(ast.parse("dace.math.pi").body[0].value, node)
+        return self.generic_visit(node)
 
 
 def extract_loop_region_info(loop: LoopRegion) -> Tuple[str, str]:

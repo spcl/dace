@@ -11,7 +11,7 @@ from dace.libraries.onnx.op_implementations.utils import op_implementation, prog
 from dace.libraries.onnx.nodes import onnx_op
 from dace.libraries.onnx.forward_implementation_abc import ONNXForward
 
-from dace.util import in_desc_with_name
+from dace.sdfg.utils import in_desc_with_name
 
 
 @op_implementation(op="SoftmaxCrossEntropyLoss", name="pure")

@@ -27,7 +27,7 @@ from dace.registry import autoregister_params
 from dace.autodiff.base_abc import BackwardImplementation, BackwardContext, BackwardResult, AutoDiffException
 
 # Utility imports
-from dace.util import in_desc_with_name, out_desc_with_name
+from dace.sdfg.utils import in_desc_with_name, out_desc_with_name
 
 
 @autoregister_params(node_type=dace.libraries.standard.nodes.Reduce, name="pure")

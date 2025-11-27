@@ -13,7 +13,7 @@ from dace.libraries.onnx.converters import clean_onnx_name
 
 import dace.autodiff.utils as butils
 from dace.autodiff.base_abc import BackwardImplementation, BackwardContext, BackwardResult
-from dace.util import in_desc_with_name
+from dace.sdfg.utils import in_desc_with_name
 
 
 @autoregister_params(op="Conv", name="PyTorch-dwise")

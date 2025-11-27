@@ -25,9 +25,9 @@ import dace
 import numpy as np
 from dace import SDFG, SDFGState, subsets
 from dace.sdfg.nodes import Node
-from dace.util import in_desc_with_name, in_edge_with_name, iterables_equal, out_desc_with_name
-
+from dace.sdfg.utils import in_desc_with_name, in_edge_with_name, out_desc_with_name
 from dace.libraries.onnx.forward_implementation_abc import ONNXForward
+from dace.libraries.onnx.op_implementations.common import iterables_equal
 from dace.libraries.onnx.nodes import onnx_op
 from dace.libraries.onnx.op_implementations.utils import (empty_sdfg_for_node, op_implementation, program_for_node,
                                                           python_pure_op_implementation)
@@ -122,87 +122,6 @@ class PureUnsqueeze(ONNXForward):
 
     @staticmethod
     def forward_can_be_applied(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> bool:
-        # Avoid this expansion if the backward pass will be constructed
-        # TODO pass the backward flag to the functions
-        return False
-
-    @staticmethod
-    def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
-        # Create new SDFG
-        nsdfg = dace.SDFG(node.label + "_expansion")
-        nstate = nsdfg.add_state()
-
-        # Get input/output descriptors
-        data_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, "data"))
-        expanded_desc = copy.deepcopy(out_desc_with_name(node, state, sdfg, "expanded"))
-
-        # Add data descriptors to SDFG
-        nsdfg.add_datadesc("data", data_desc)
-        nsdfg.add_datadesc("expanded", expanded_desc)
-        nsdfg.arrays["data"].transient = False
-        nsdfg.arrays["expanded"].transient = False
-
-        # Add access nodes
-        data_read = nstate.add_read("data")
-        expanded_write = nstate.add_write("expanded")
-
-        # Handle axes based on ONNX version
-        if node.schema.since_version < 13:
-            # axes is attribute - create transient array and initialize it
-            axes_values = node.axes if hasattr(node, 'axes') else []
-            axes_arr_shape = [len(axes_values)]
-            axes_arr_dtype = dace.int64
-            _, axes_desc = nsdfg.add_array("axes", axes_arr_shape, axes_arr_dtype, transient=True)
-            axes_node = nstate.add_access("axes")
-
-            # Add tasklet to initialize axes array
-            axes_init_tasklet = nstate.add_tasklet(
-                f"init_axes",
-                set(), {"out": dace.pointer(axes_arr_dtype)},
-                "\n".join([f"out [{idx}] = {val};" for idx, val in enumerate(axes_values)]),
-                language=dace.Language.CPP)
-            nstate.add_edge(axes_init_tasklet, "out", axes_node, None, dace.Memlet(f"axes[0:{len(axes_values)}]"))
-        else:
-            # axes is input - get from input connector
-            axes_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, "axes"))
-            nsdfg.add_datadesc("axes", axes_desc)
-            nsdfg.arrays["axes"].transient = False
-            axes_node = nstate.add_read("axes")
-
-        is_scalar_input = not isinstance(node.in_connectors['data'], dace.dtypes.pointer) and data_desc.total_size == 1
-        if is_scalar_input:
-            data_str = "(&__data)"
-        else:
-            data_str = "__data"
-
-        # Create tasklet that performs the unsqueeze operation
-        data_size = int(np.prod(data_desc.shape))
-        tasklet = nstate.add_tasklet(name=node.label + "_tasklet",
-                                     inputs={
-                                         "__data": dace.pointer(data_desc.dtype),
-                                         "__axes": dace.pointer(axes_desc.dtype),
-                                     },
-                                     outputs={"__unsqueezed": dace.pointer(expanded_desc.dtype)},
-                                     code=f"""
-            for (int i = 0; i < {data_size}; i++) {{
-                __unsqueezed[i] = {data_str}[i];
-            }}
-            """,
-                                     language=dace.Language.CPP)
-
-        # Connect the tasklet with memlets
-        nstate.add_edge(data_read, None, tasklet, "__data", dace.Memlet("data"))
-        nstate.add_edge(axes_node, None, tasklet, "__axes", dace.Memlet("axes"))
-        nstate.add_edge(tasklet, "__unsqueezed", expanded_write, None, dace.Memlet("expanded"))
-
-        return nsdfg
-
-
-@op_implementation(op="Unsqueeze", name="pure")
-class PureUnsqueeze(ONNXForward):
-
-    @staticmethod
-    def forward_can_be_applied(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> bool:
         return True
 
     @staticmethod
@@ -231,63 +150,12 @@ class PureSqueeze(ONNXForward):
 
     @staticmethod
     def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
-        # Create new SDFG
-        nsdfg = dace.SDFG(node.label + "_expansion")
-        nstate = nsdfg.add_state()
-
-        # Get input/output descriptors
-        data_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, "data"))
         squeezed_desc = copy.deepcopy(out_desc_with_name(node, state, sdfg, "squeezed"))
 
-        # Add data descriptors to SDFG
-        nsdfg.add_datadesc("data", data_desc)
-        nsdfg.add_datadesc("squeezed", squeezed_desc)
-        nsdfg.arrays["data"].transient = False
-        nsdfg.arrays["squeezed"].transient = False
+        def prog(data, squeezed):
+            squeezed[:] = np.reshape(data, squeezed_desc.shape)
 
-        # Add access nodes
-        data_read = nstate.add_read("data")
-        squeezed_write = nstate.add_write("squeezed")
-
-        # Check if axes input is provided
-        has_axes = len(list(state.in_edges_by_connector(node, "axes"))) > 0
-
-        # Prepare tasklet inputs
-        tasklet_inputs = {"__data": dace.pointer(data_desc.dtype)}
-        if has_axes:
-            # Get axes descriptor and add to SDFG
-            axes_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, "axes"))
-            nsdfg.add_datadesc("axes", axes_desc)
-            nsdfg.arrays["axes"].transient = False
-            axes_read = nstate.add_read("axes")
-            tasklet_inputs["__axes"] = dace.pointer(axes_desc.dtype)
-
-        is_scalar_input = not isinstance(node.in_connectors['data'], dace.dtypes.pointer) and data_desc.total_size == 1
-        is_scalar_input = False
-        if is_scalar_input:
-            data_str = "(&__data)"
-        else:
-            data_str = "__data"
-
-        # Create tasklet that performs the squeeze operation
-        data_size = int(np.prod(data_desc.shape))
-        tasklet = nstate.add_tasklet(name=node.label + "_tasklet",
-                                     inputs=tasklet_inputs,
-                                     outputs={"__squeezed": dace.pointer(squeezed_desc.dtype)},
-                                     code=f"""
-            for (int i = 0; i < {data_size}; i++) {{
-                __squeezed[i] = {data_str}[i];
-            }}
-            """,
-                                     language=dace.Language.CPP)
-
-        # Connect the tasklet with memlets
-        nstate.add_edge(data_read, None, tasklet, "__data", dace.Memlet("data"))
-        if has_axes:
-            nstate.add_edge(axes_read, None, tasklet, "__axes", dace.Memlet("axes"))
-        nstate.add_edge(tasklet, "__squeezed", squeezed_write, None, dace.Memlet("squeezed"))
-
-        return nsdfg
+        return program_for_node(prog, sdfg, state, node)
 
 
 # ==============================================================================

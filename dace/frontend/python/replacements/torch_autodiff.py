@@ -19,7 +19,8 @@ from dace.frontend.common import op_repository
 from dace.frontend.python import newast
 from dace.transformation.passes.fusion_inline import InlineControlFlowRegions
 from dace.data import find_new_name
-from dace.util import all_equal, expand_nodes
+from dace.sdfg.utils import expand_nodes
+from dace.libraries.onnx.op_implementations.common import iterables_equal
 from dace.autodiff import analysis as autodiff_analysis
 
 from dace.autodiff.library.library import ParameterArray, BackwardPass
@@ -81,7 +82,7 @@ def backward(pv: newast.ProgramVisitor,
 
         grad_desc = sdfg.arrays[grad] if grad in sdfg.arrays else sdfg.constants_prop[grad][0]
 
-        if not all_equal(grad_desc.shape, sdfg.arrays[tensor].shape):
+        if not iterables_equal(grad_desc.shape, sdfg.arrays[tensor].shape):
             raise common.DaceSyntaxError(pv, None,
                                          "Gradient {} and tensor {} have different shapes".format(grad, tensor))
 

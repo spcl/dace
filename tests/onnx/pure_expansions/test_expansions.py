@@ -13,7 +13,7 @@ from dace.libraries import blas
 import dace.library
 
 import dace.libraries.onnx as donnx
-from dace.util import utils
+from dace.transformation.onnx import expand_onnx_nodes
 
 
 def assert_allclose(a, b, rtol=1e-5, atol=1e-8):
@@ -346,7 +346,7 @@ def test_einsum():
         return Y
 
     sdfg = test_einsum.to_sdfg()
-    utils.expand_onnx_nodes(sdfg)
+    expand_onnx_nodes(sdfg)
     assert any(isinstance(n, blas.Gemm) for n, _ in sdfg.all_nodes_recursive())
 
     A = np.random.rand(5, 4, 3).astype(np.float64)

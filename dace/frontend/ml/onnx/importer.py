@@ -93,9 +93,8 @@ from dace.codegen import compiled_sdfg
 from dace.frontend.python import parser
 from dace.sdfg import utils as sdfg_utils
 from dace.symbolic import pystr_to_symbolic
-from dace.util import auto_optimize_onnx as auto_opt
-from dace.util import expand_onnx_nodes as onnx_node_expander
-from dace.util import is_cuda
+from dace.transformation.onnx import auto_optimize_onnx as auto_opt
+from dace.transformation.onnx import expand_onnx_nodes as onnx_node_expander
 
 from dace.libraries.onnx.converters import clean_onnx_name, convert_attribute_proto, onnx_tensor_type_to_typeclass
 from dace.libraries.onnx.nodes.onnx_op_registry import get_onnx_node, has_onnx_node
@@ -174,14 +173,14 @@ def infer_shapes_onnx_model(model: onnx.ModelProto, auto_merge: bool = False) ->
         return onnx.shape_inference.infer_shapes(model, check_type=False, strict_mode=False, data_prop=True)
 
     try:
-        # Try newer API first
-        ssi = SymbolicShapeInference(
-            int_max=2**31 - 1,  # upper bound for unknown ints
-            auto_merge=auto_merge,  # merge symbolic dims when possible
+        # Use static method API
+        model = SymbolicShapeInference.infer_shapes(
+            model,
+            int_max=2**31 - 1,
+            auto_merge=auto_merge,
             guess_output_rank=False,
             verbose=0,
         )
-        model = ssi.infer_shapes(model)
 
         # Check if shape inference completed successfully for all value_infos
         incomplete_shapes = False
@@ -190,7 +189,6 @@ def infer_shapes_onnx_model(model: onnx.ModelProto, auto_merge: bool = False) ->
                 incomplete_shapes = True
                 break
 
-        # If symbolic shape inference produced incomplete results, use ONNX fallback
         if incomplete_shapes:
             log.warning("ONNXRuntime symbolic shape inference produced incomplete results, "
                         "falling back to ONNX shape inference.")
@@ -198,32 +196,11 @@ def infer_shapes_onnx_model(model: onnx.ModelProto, auto_merge: bool = False) ->
             return onnx.shape_inference.infer_shapes(model, check_type=False, strict_mode=False, data_prop=True)
 
         return model
-    except TypeError:
-        # Older API: no-argument constructor
-        try:
-            ssi = SymbolicShapeInference()
-            model = ssi.infer_shapes(model)
-
-            # Check completeness for older API too
-            incomplete_shapes = False
-            for value in model.graph.value_info:
-                if not _nested_HasField(value, "type.tensor_type.shape"):
-                    incomplete_shapes = True
-                    break
-
-            if incomplete_shapes:
-                log.warning("ONNXRuntime symbolic shape inference produced incomplete results, "
-                            "falling back to ONNX shape inference.")
-                import onnx.shape_inference
-                return onnx.shape_inference.infer_shapes(model, check_type=False, strict_mode=False, data_prop=True)
-
-            return model
-        except Exception as e:
-            # If all else fails, fall back to ONNX shape inference
-            log.warning(f"ONNXRuntime symbolic shape inference failed ({e}), "
-                        "falling back to ONNX shape inference.")
-            import onnx.shape_inference
-            return onnx.shape_inference.infer_shapes(model, check_type=False, strict_mode=False, data_prop=True)
+    except Exception as e:
+        log.warning(f"ONNXRuntime symbolic shape inference failed ({e}), "
+                    "falling back to ONNX shape inference.")
+        import onnx.shape_inference
+        return onnx.shape_inference.infer_shapes(model, check_type=False, strict_mode=False, data_prop=True)
 
 
 def simplify_onnx_model(model: onnx.ModelProto, auto_merge: bool) -> onnx.ModelProto:
@@ -630,7 +607,7 @@ class ONNXModel:
         for name, arr in self.weights.items():
             if clean_onnx_name(name) in compiled_sdfg.sdfg.arrays:
                 desc = self.sdfg.arrays[clean_onnx_name(name)]
-                cuda = is_cuda(desc.storage)
+                cuda = desc.storage in dace.dtypes.GPU_STORAGES
                 if type(desc) is dt.Scalar:
                     self.initialized_parameters[clean_onnx_name(name)] = arr.cuda() if cuda else arr.cpu().numpy()[()]
                 else:
@@ -735,8 +712,9 @@ class ONNXModel:
         inferred_symbols = {k: int(v) for k, v in inferred_symbols.items()}
 
         if torch_outputs is None:
-            torch_outputs = any(is_cuda(self.sdfg.arrays[clean_onnx_name(o)].storage) for o in self.outputs) or any(
-                isinstance(inp, torch.Tensor) for _, inp in clean_inputs.items())
+            torch_outputs = any(self.sdfg.arrays[clean_onnx_name(o)].storage in dace.dtypes.GPU_STORAGES
+                                for o in self.outputs) or any(
+                                    isinstance(inp, torch.Tensor) for _, inp in clean_inputs.items())
 
         outputs = collections.OrderedDict()
         # create numpy arrays for the outputs
@@ -786,7 +764,7 @@ def create_output_array(inferred_symbols: Dict[str, int],
             dim = dim.subs(sym, inferred_symbols[sym.name])
         return dim
 
-    cuda = is_cuda(desc.storage)
+    cuda = desc.storage in dace.dtypes.GPU_STORAGES
     if cuda and not use_torch:
         raise ValueError("Got use_torch=False, but received a GPU descriptor")
 

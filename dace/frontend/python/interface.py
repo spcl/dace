@@ -3,7 +3,7 @@
 
 import inspect
 from functools import wraps
-from typing import Any, Callable, Deque, Dict, List, Generator, Optional, Tuple, TypeVar, Union, overload, TYPE_CHECKING
+from typing import Any, Callable, Deque, Dict, Generator, Optional, Tuple, TypeVar, Union, overload, TYPE_CHECKING
 
 from dace import dtypes
 from dace.dtypes import paramdec

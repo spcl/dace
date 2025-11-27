@@ -37,7 +37,7 @@ import dace.autodiff.utils as butils
 from dace.autodiff.base_abc import BackwardImplementation, BackwardContext, BackwardResult
 
 # Utility imports
-from dace.util import in_desc_with_name
+from dace.sdfg.utils import in_desc_with_name
 
 
 def reverse_einsum_wrt_input(forward_node: 'donnx.nodes.onnx_op.ONNXOp', input_name: str) -> Tuple[List[str], str]:

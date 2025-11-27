@@ -24,9 +24,8 @@ from dace.libraries.onnx.nodes import onnx_op
 from dace.libraries.onnx.op_implementations.common import broadcast_indices
 from dace.libraries.onnx.op_implementations.utils import (op_implementation, out_desc_with_name, program_for_node,
                                                           python_pure_op_implementation)
-from dace.util import in_desc_with_name, in_edge_with_name
+from dace.sdfg.utils import in_desc_with_name, in_edge_with_name, out_desc_with_name
 from dace.transformation.onnx.replacement import onnx_constant_or_none
-from dace.util import in_desc_with_name, out_desc_with_name
 
 # ============================================================================
 # Unary Mathematical Operations

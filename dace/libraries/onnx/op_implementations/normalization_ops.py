@@ -17,7 +17,7 @@ import dace
 import numpy as np
 from dace import SDFG, SDFGState, nodes
 from dace.sdfg.nodes import Node
-from dace.util import in_desc_with_name, out_desc_with_name
+from dace.sdfg.utils import in_desc_with_name, out_desc_with_name
 
 from dace.libraries.onnx.forward_implementation_abc import ONNXForward
 from dace.libraries.onnx.op_implementations.common import strides_from_shape

@@ -19,7 +19,6 @@ from dace.frontend.ml.onnx.importer import create_output_array
 from dace.libraries.torch.dispatchers import DaCeMLTorchFunction
 from dace.libraries.torch.dispatchers.common import compile_and_init_sdfgs, \
     get_arglist
-from dace.util import is_cuda
 
 
 def init_remaining_parameters(module, fwd_arglist, input_names, output_names):
@@ -42,7 +41,7 @@ def init_remaining_parameters(module, fwd_arglist, input_names, output_names):
                              f"not an input or output of the PyTorch Module, and not a"
                              f" constant.")
         constants[name] = module.dace_model.clean_weights[name]
-        if is_cuda(fwd_arglist[name].storage):
+        if fwd_arglist[name].storage in dace.dtypes.GPU_STORAGES:
             constants[name] = constants[name].cuda()
     return constants
 

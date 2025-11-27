@@ -433,7 +433,7 @@ class DaceNodeBackwardImplementations:
                     .union(s for _, e in sub_expressions for s in e.free_symbols)\
                     .difference(e for e, _ in sub_expressions)
 
-                string_symbols = ad_utils.symbols_to_strings(input_symbols)
+                string_symbols = {str(symb) for symb in input_symbols}
 
                 # If there are any symbols that are defined at the global SDFG scope
                 # We do not need to add these as inputs to the reverse tasklet
