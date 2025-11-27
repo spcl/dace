@@ -37,7 +37,7 @@ static inline float uint32_to_float(uint32_t x);
  * Fast exponential function for double precision
  * Does not check for NaN inputs
  */
-static inline double exp_d(double initial_x) {
+static inline double dace_exp_d(double initial_x) {
     double x = initial_x;
     double px = fpfloor_f64(LOG2E * x + 0.5);
     
@@ -83,18 +83,18 @@ static inline double exp_d(double initial_x) {
  * Safe fast exponential function for double precision
  * Checks for NaN inputs and returns NaN if input is NaN
  */
-static inline double exp_d_safe(double initial_x) {
+static inline double dace_exp_d_safe(double initial_x) {
     if (isnan(initial_x))
         return NAN;
     
-    return exp_d(initial_x);
+    return dace_exp_d(initial_x);
 }
 
 /**
  * Fast exponential function for single precision
  * Does not check for NaN inputs
  */
-static inline float exp_f(float initial_x) {
+static inline float dace_exp_f(float initial_x) {
     float x = initial_x;
     float z = fpfloor_f32(LOG2EF * x + 0.5f);
     
@@ -132,11 +132,11 @@ static inline float exp_f(float initial_x) {
  * Safe fast exponential function for single precision
  * Checks for NaN inputs and returns NaN if input is NaN
  */
-static inline float exp_f_safe(float initial_x) {
+static inline float dace_exp_f_safe(float initial_x) {
     if (isnan(initial_x))
         return NAN;
     
-    return exp_f(initial_x);
+    return dace_exp_f(initial_x);
 }
 
 
