@@ -57,12 +57,22 @@ def _layernorm_axis(node, X):
 
 def _layernorm_norm_size(node, X):
     axis = node.axis if hasattr(node, 'axis') and node.axis >= 0 else len(X.shape) + node.axis
-    return np.prod([X.shape[i] for i in range(axis, len(X.shape))])
+    return int(np.prod([X.shape[i] for i in range(axis, len(X.shape))]))
+
+
+def _layernorm_epsilon(node, X):
+    eps = getattr(node, 'epsilon', 1e-5)
+    return X.dtype.type(eps)
+
+
+def _layernorm_one(X):
+    return X.dtype.type(1)
 
 
 layernorm_compute = dict(axis=_layernorm_axis,
-                         epsilon=lambda node: getattr(node, 'epsilon', 1e-5),
-                         norm_size=_layernorm_norm_size)
+                         epsilon=_layernorm_epsilon,
+                         norm_size=_layernorm_norm_size,
+                         one=_layernorm_one)
 
 
 @python_pure_op_implementation(**layernorm_compute)
@@ -72,7 +82,7 @@ def LayerNormalization(X, Scale, B, Y):
     diff = X - mean
     sum_sq = np.add.reduce(diff * diff, axis=axis, keepdims=True)
     variance = sum_sq / norm_size
-    inv_std = 1.0 / np.sqrt(variance + epsilon)
+    inv_std = one / np.sqrt(variance + epsilon)
     normalized = diff * inv_std
     Y[:] = normalized * Scale + B
 
