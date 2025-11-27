@@ -97,20 +97,18 @@ class FunctionRenamer(ast.NodeTransformer):
         self.generic_visit(node)
 
         # Case 1: Attribute call like math.src_function_name(...)
-        # Case 1: For now, only handle math.<src_function_name>(...)
         if isinstance(node.func, ast.Attribute):
-            if (isinstance(node.func.value, ast.Name) 
-                and node.func.value.id == 'math' 
+            if (isinstance(node.func.value, ast.Name)
+                and node.func.value.id == 'math'
                 and node.func.attr == self.src_function_name):
                 node.func.attr = self.dst_function_name
 
         # Case 2: Direct call like src_function_name(...)
         elif isinstance(node.func, ast.Name):
             if node.func.id == self.src_function_name:
-                # Replace the function name with dst_function_name
                 node.func.id = self.dst_function_name
 
-        return 
+        return node 
 
 
 class RemoveMathPrefix(ast.NodeTransformer):
@@ -311,4 +309,6 @@ class ReplaceSTDLogWithDaCeLog(ppl.Pass):
                                 new_ast_str = _replace_function_names(ast_str, "log", f"dace_log_{suffix}")
                                 if new_ast_str != ast_str:
                                     node.code = CodeBlock(new_ast_str, language=dace.Language.Python)
+        
+        sdfg.append_global_code('#include "dace/arith.h"')
         sdfg.validate()
