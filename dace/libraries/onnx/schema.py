@@ -49,28 +49,24 @@ _KNOWN_ONNX_PROTOS = {}
 
 
 def onnx_representation(represents, **mapping):
-    """ Decorator for python representations of ONNX protobufs.
+    """Decorator for python representations of ONNX protobufs.
 
-        The decorator will monkey patch in the following methods:
+    The decorator will monkey patch in the following methods:
 
-        * ``__init__`` (a constructor based on the class properties)
-        * ``construct_from_onnx_proto``
-        * ``construct_from_json``
+    * ``__init__`` - a constructor based on the class properties
+    * ``construct_from_onnx_proto``
+    * ``construct_from_json``
 
-        :param represents: The onnx protobuf type that the decorated class represents
+    :param represents: The ONNX protobuf type that the decorated class represents.
+    :param mapping: A mapping from class property names to either:
 
-        :param mapping: a mapping from class property names to either:
+        * A string ``s`` - ``convert_onnx_attribute`` will be applied on the
+          protobuf attribute with the name ``s`` to get the property value.
+        * A function ``f`` - ``f`` will be called with the protobuf, and the
+          property value will be set to the return value of that call.
 
-                        a string ``s``
-                            In this case, ``convert_onnx_attribute`` will be applied on the protobuf
-                            attribute with the name ``s`` to get the property value.
-
-                        a function ``f``
-                            In this case, ``f`` will be called with the protobuf, and the property value
-                            will be set to the return value of that call.
-
-                        If a property name is not present in ``mapping``, the property name itself will be used to access
-                        the protobuf attribute.
+        If a property name is not present in ``mapping``, the property name
+        itself will be used to access the protobuf attribute.
     """
 
     def decorator(cls):

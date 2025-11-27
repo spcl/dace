@@ -40,13 +40,12 @@ class DaceNodeBackwardImplementations:
     ) -> Tuple[nodes.Node, BackwardResult]:
         reverse_nsdfg = dace.SDFG(node.sdfg.name + "_backward")
 
-        # Create a new backward pass generator object for the nested SDFG
-        gen = self.bwd_engine.__class__(sdfg=node.sdfg,
-                                        given_gradients=given_gradients,
-                                        required_gradients=required_gradients,
-                                        backward_sdfg=reverse_nsdfg,
-                                        data_forwarding_strategy=self.bwd_engine.data_forwarding_strategy,
-                                        data_to_recompute=self.bwd_engine.data_to_recompute)
+        gen = self.bwd_engine.create_child_generator(
+            sdfg=node.sdfg,
+            given_gradients=given_gradients,
+            required_gradients=required_gradients,
+            backward_sdfg=reverse_nsdfg,
+        )
         backward_result, _, backward_input_arrays = gen.backward()
 
         # we need to defer add edges until after the arrays have been added because creation of the nested

@@ -577,16 +577,12 @@ def get_loop_end(start: str, end: str, loop: LoopRegion) -> str:
 
 
 def analyze_loop_change(code: str, loop_variable: str) -> str:
+    """Analyze if the given loop variable in the provided code increases or decreases.
+
+    :param code: The Python code to analyze.
+    :param loop_variable: The name of the loop variable to analyze.
+    :return: ``'increase'``, ``'decrease'``, or ``'unknown'``.
     """
-        Analyze if the given loop variable in the provided code increases or decreases.
-
-        Parameters:
-            code (str): The Python code to analyze.
-            loop_variable (str): The name of the loop variable to analyze.
-
-        Returns:
-            str: 'increase', 'decrease', or 'unknown'
-        """
     tree = ast.parse(code)
     change_type = "unknown"
 
@@ -895,10 +891,12 @@ def extract_loop_region_info(loop: LoopRegion) -> Tuple[str, str]:
 
 
 def get_stride_sign(loop: LoopRegion) -> int:
+    """Check if the stride for this loop is positive or negative.
+
+    :param loop: The loop region to analyze.
+    :return: ``1`` if the stride is positive, ``-1`` if negative.
+    :raises AutoDiffException: If the loop has an unsupported structure.
     """
-        Check if the stride for this loop is positive or negative.
-        returns: 1 if the stride is positive and -1 if it is negative
-        """
     if loop.update_statement is None:
         raise AutoDiffException("While loops are not yet supported in DaCe AD")
     update_statement = loop.update_statement.as_string

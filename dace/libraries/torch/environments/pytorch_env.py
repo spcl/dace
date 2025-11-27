@@ -8,7 +8,7 @@ except ImportError as e:
 
 import dace.library
 
-from dace.codegen.common import platform_library_name
+from dace.codegen.common import platform_library_name, get_gpu_backend
 
 
 @dace.library.environment
@@ -24,11 +24,8 @@ class PyTorch:
     def cmake_libraries():
         """Get the required PyTorch library paths for linking.
 
-        Returns:
-            List of library paths for PyTorch CPU libraries
-
-        Raises:
-            RuntimeError: If a required library cannot be found
+        :return: List of library paths for PyTorch CPU libraries.
+        :raises RuntimeError: If a required library cannot be found.
         """
         library_names = ["c10", "torch", "torch_cpu", "torch_python"]
         library_paths = []
@@ -57,7 +54,7 @@ class PyTorch:
 
 @dace.library.environment
 class PyTorchGPU:
-    """Environment used to build PyTorch C++ Operators (with CUDA)."""
+    """Environment used to build PyTorch C++ Operators (with CUDA/HIP)."""
 
     cmake_minimum_version = None
     cmake_packages = []
@@ -66,19 +63,23 @@ class PyTorchGPU:
 
     @staticmethod
     def cmake_libraries():
-        """Get the required PyTorch library paths for linking with CUDA support.
-
-        Returns:
-            List of library paths for PyTorch CUDA libraries
-
-        Raises:
-            RuntimeError: If a required library cannot be found
         """
-        library_names = ["c10", "torch", "torch_cpu", "torch_cuda", "torch_python", "c10_cuda"]
-        library_paths = []
+        Get the required PyTorch library paths for linking with GPU support.
 
+        :return: List of library paths for PyTorch GPU libraries.
+        :raises RuntimeError: If a required library cannot be found.
+        """
+        backend = get_gpu_backend()
+        if backend == 'hip':
+            library_names = ["c10", "torch", "torch_cpu", "torch_hip", "torch_python", "c10_hip"]
+            runtime_lib = "amdhip64"
+        else:
+            library_names = ["c10", "torch", "torch_cpu", "torch_cuda", "torch_python", "c10_cuda"]
+            runtime_lib = "cudart"
+
+        library_paths = []
         for name in library_names:
-            for path in torch.utils.cpp_extension.library_paths(cuda=True):
+            for path in torch.utils.cpp_extension.library_paths(device_type=backend):
                 path = os.path.join(path, platform_library_name(name))
                 if os.path.isfile(path):
                     library_paths.append(path)
@@ -86,7 +87,7 @@ class PyTorchGPU:
             else:
                 raise RuntimeError(f"Couldn't locate shared library {name} in PyTorch library paths")
 
-        return library_paths + ["cudart"]
+        return library_paths + [runtime_lib]
 
     cmake_compile_flags = ["-D_GLIBCXX_USE_CXX11_ABI=0"]
     cmake_link_flags = []

@@ -13,10 +13,4 @@ try:
 except ImportError:
     ONNXModel = None
 
-# Import TensorFlow frontend
-try:
-    from dace.frontend.ml.tensorflow import TFSession
-except ImportError:
-    TFSession = None
-
-__all__ = ['DaceModule', 'module', 'ONNXModel', 'TFSession']
+__all__ = ['DaceModule', 'module', 'ONNXModel']

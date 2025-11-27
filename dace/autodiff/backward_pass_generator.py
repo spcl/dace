@@ -198,6 +198,23 @@ class BackwardPassGenerator:
         else:
             self.separate_sdfgs = True
 
+    def create_child_generator(self, **kwargs) -> 'BackwardPassGenerator':
+        """Create a child generator for nested SDFG differentiation.
+
+        This factory method creates a new BackwardPassGenerator instance for differentiating
+        nested SDFGs, propagating relevant configuration from the parent generator.
+
+        :param kwargs: Parameters to pass to the child generator constructor.
+                       Required: sdfg, given_gradients, required_gradients, backward_sdfg.
+        :return: A new BackwardPassGenerator instance configured for the nested SDFG.
+        """
+        defaults = {
+            'data_forwarding_strategy': self.data_forwarding_strategy,
+            'data_to_recompute': self.data_to_recompute,
+        }
+        defaults.update(kwargs)
+        return BackwardPassGenerator(**defaults)
+
     def backward(self) -> Tuple[BackwardResult, Dict[str, dt.Array], Dict[str, dt.Array]]:
         """Generate the backward pass in backward_sdfg."""
         return self.reverse_sdfg()
@@ -208,14 +225,13 @@ class BackwardPassGenerator:
         Processes all states in the SDFG and creates their backward counterparts,
         connecting them with appropriate control flow for gradient computation.
 
-        Returns:
-            A tuple containing:
-            - BackwardResult: Contains gradient mappings and metadata
-            - Dict[str, dt.Array]: Gradient array descriptors (backward pass outputs)
-            - Dict[str, dt.Array]: Forward pass arrays required by backward pass
+        :return: A tuple containing:
 
-        Raises:
-            AutoDiffException: If backward pass was already applied to this generator.
+            * ``BackwardResult`` - Contains gradient mappings and metadata.
+            * ``Dict[str, dt.Array]`` - Gradient array descriptors (backward pass outputs).
+            * ``Dict[str, dt.Array]`` - Forward pass arrays required by backward pass.
+
+        :raises AutoDiffException: If backward pass was already applied to this generator.
         """
 
         if self._applied:

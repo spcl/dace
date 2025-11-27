@@ -90,7 +90,7 @@ def test_llama_model_backward(sdfg_name):
     wrapped_model = LlamaWrapper(model)
 
     # Avoid the simplify pass since it takes too long for this model
-    dace_model = DaceModule(wrapped_model, backward=True, onnx_simplify=True, simplify=False, sdfg_name=sdfg_name)
+    dace_model = DaceModule(wrapped_model, backward=True, onnx_simplify=True, sdfg_name=sdfg_name)
 
     wrapped_model(input.clone()).sum().backward()
     dace_model(input.clone()).sum().backward()

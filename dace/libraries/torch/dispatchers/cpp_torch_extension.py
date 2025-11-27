@@ -56,6 +56,8 @@ _TYPECLASS_TO_TORCH_DTYPE_STR = {
     dt.float16: "kFloat16",
     dt.float32: "kFloat32",
     dt.float64: "kFloat64",
+    dt.complex64: "kComplexFloat",
+    dt.complex128: "kComplexDouble",
 }
 
 

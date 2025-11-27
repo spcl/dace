@@ -6,7 +6,7 @@ import numpy as np
 @pytest.mark.tensorflow
 def test_pooling():
     import tensorflow as tf
-    from dace.ml import TFSession
+    from dace.frontend.ml.tensorflow import TFSession
     size_in = [1, 112, 112, 3]
     # size_in = [4, 4, 4, 4]
     np.random.seed(0)

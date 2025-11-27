@@ -321,7 +321,7 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
                     self.model,
                     dummy_inputs,
                     export_name,
-                    verbose=logging.root.level <= logging.DEBUG,
+                    verbose=config.Config.get_bool('debugprint'),
                     # Some models will require training even when we don't want to train:
                     # when training is set to EVAL, pytorch currently performs an optimization pass ("onnx_eval_peephole")
                     # that renames weights and thus breaks the model in some settings.

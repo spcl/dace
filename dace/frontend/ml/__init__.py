@@ -10,9 +10,4 @@ try:
 except ImportError:
     ONNXModel = None
 
-try:
-    from .tensorflow import TFSession
-except ImportError:
-    TFSession = None
-
-__all__ = ['DaceModule', 'ONNXModel', 'TFSession']
+__all__ = ['DaceModule', 'ONNXModel']
