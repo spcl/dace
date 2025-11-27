@@ -18,9 +18,9 @@ from dace import SDFG, SDFGState, nodes
 from dace.sdfg.nodes import Node
 from dace.sdfg.utils import in_desc_with_name, out_desc_with_name
 
+from dace import config
 from dace.libraries.onnx.forward_implementation_abc import ONNXForward
 from dace.libraries.onnx.nodes import onnx_op
-from dace.libraries.onnx.op_implementations.common import log
 from dace.libraries.onnx.op_implementations.utils import in_desc_with_name, op_implementation, out_desc_with_name
 from dace.frontend.common import create_einsum_sdfg
 
@@ -76,16 +76,18 @@ class PureMatMul(ONNXForward):
             result = 'ij'
             if input0_dim[-2] != input0_dim[-1]:
                 if dace.symbolic.issymbolic(input0_dim[-2]):
-                    log.warning(
-                        f"overriding symbol {input0_dim[-2]} with value {input1_dim[-1]} in descriptor of input A of node {node}"
-                    )
+                    if config.Config.get_bool('debugprint'):
+                        print(
+                            f"Warning: overriding symbol {input0_dim[-2]} with value {input1_dim[-1]} in descriptor of input A of node {node}"
+                        )
                     new_shape = list(A_desc.shape)
                     new_shape[-1] = input1_dim[-2]
                     A_desc.shape = new_shape
                 elif dace.symbolic.issymbolic(input1_dim[-1]):
-                    log.warning(
-                        f"overriding symbol {input0_dim[-1]} with value {input0_dim[-2]} in descriptor of input B of node {node}"
-                    )
+                    if config.Config.get_bool('debugprint'):
+                        print(
+                            f"Warning: overriding symbol {input0_dim[-1]} with value {input0_dim[-2]} in descriptor of input B of node {node}"
+                        )
                     new_shape = list(B_desc.shape)
                     new_shape[-2] = input0_dim[-1]
                     B_desc.shape = new_shape
@@ -223,16 +225,18 @@ class PureGemm(ONNXForward):
             result = 'ij'
             if input0_dim[-2] != input0_dim[-1]:
                 if dace.symbolic.issymbolic(input0_dim[-2]):
-                    log.warning(
-                        f"overriding symbol {input0_dim[-2]} with value {input1_dim[-1]} in descriptor of input A of node {node}"
-                    )
+                    if config.Config.get_bool('debugprint'):
+                        print(
+                            f"Warning: overriding symbol {input0_dim[-2]} with value {input1_dim[-1]} in descriptor of input A of node {node}"
+                        )
                     new_shape = list(A_desc.shape)
                     new_shape[-1] = input1_dim[-2]
                     A_desc.shape = new_shape
                 elif dace.symbolic.issymbolic(input1_dim[-1]):
-                    log.warning(
-                        f"overriding symbol {input0_dim[-1]} with value {input0_dim[-2]} in descriptor of input B of node {node}"
-                    )
+                    if config.Config.get_bool('debugprint'):
+                        print(
+                            f"Warning: overriding symbol {input0_dim[-1]} with value {input0_dim[-2]} in descriptor of input B of node {node}"
+                        )
                     new_shape = list(B_desc.shape)
                     new_shape[-2] = input0_dim[-1]
                     B_desc.shape = new_shape

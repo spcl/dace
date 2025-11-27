@@ -1,12 +1,11 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-
-import logging
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 import numpy as np
 
 import dace
 import torch
+from dace import config
 from dace.properties import make_properties
 from dace.transformation import transformation
 from dace.sdfg import nodes as nd
@@ -15,9 +14,9 @@ from dace.sdfg import utils as sdutil
 import dace.libraries.onnx as donnx
 from dace.libraries.onnx.converters import clean_onnx_name
 from dace.libraries.onnx.nodes.onnx_op import ONNXOp
-from dace.frontend.ml.onnx import ONNXModel
 
-log = logging.getLogger(__name__)
+if TYPE_CHECKING:
+    from dace.frontend.ml.onnx import ONNXModel
 
 # blocklist of nondeterministic ops
 # yapf: disable
@@ -103,9 +102,10 @@ class ConstantFolding(transformation.SingleStateTransformation):
         return "Precompute outputs of {}".format(node)
 
     def apply(self, state: dace.SDFGState, sdfg: dace.SDFG):
-        parent: ONNXModel = sdfg._parent_onnx_model
+        parent: "ONNXModel" = sdfg._parent_onnx_model
         node = self.onnx_node
-        log.debug(f"Applying constant folding: {node} in {state}")
+        if config.Config.get_bool('debugprint'):
+            print(f"Applying constant folding: {node} in {state}")
 
         if isinstance(node, donnx.ONNXShape):
             # if we have a shape node, replace it with a constant

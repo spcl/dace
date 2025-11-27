@@ -31,7 +31,6 @@ Example:
         data_type: int
 """
 
-import logging
 from itertools import chain
 from typing import List
 
@@ -40,11 +39,10 @@ import numpy as np
 import onnx
 
 import dace
+from dace import config
 from dace.dtypes import typeclass
 from dace.libraries.onnx.converters import convert_onnx_proto, get_proto_attr, onnx_type_str_to_typeclass
 from dace.properties import DictProperty, ListProperty, Property, make_properties
-
-log = logging.getLogger(__name__)
 
 #: Global registry of known ONNX protobuf types and their Python representations
 _KNOWN_ONNX_PROTOS = {}
@@ -305,7 +303,8 @@ class ONNXSchema:
                 parsed_typeclass = onnx_type_str_to_typeclass(param.type_str)
 
                 if parsed_typeclass is None:
-                    log.debug("Could not parse typeStr '{}' for parameter '{}'".format(param.type_str, param.name))
+                    if config.Config.get_bool('debugprint'):
+                        print("Could not parse typeStr '{}' for parameter '{}'".format(param.type_str, param.name))
 
                 cons = ONNXTypeConstraint(cons_name, [parsed_typeclass] if parsed_typeclass is not None else [])
                 self.type_constraints[cons_name] = cons

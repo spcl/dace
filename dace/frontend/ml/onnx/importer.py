@@ -48,7 +48,6 @@ Note:
 
 import collections
 import copy
-import logging
 import tempfile
 from itertools import chain, repeat
 from typing import Any, Callable, Dict, List, Optional, OrderedDict, Tuple, Union
@@ -88,7 +87,7 @@ except ImportError:
     ONNXSIM_AVAILABLE = False
 
 import dace
-from dace import SDFG, SDFGState, data as dt, dtypes, nodes
+from dace import config, SDFG, SDFGState, data as dt, dtypes, nodes
 from dace.codegen import compiled_sdfg
 from dace.frontend.python import parser
 from dace.sdfg import utils as sdfg_utils
@@ -99,8 +98,6 @@ from dace.transformation.onnx import expand_onnx_nodes as onnx_node_expander
 from dace.libraries.onnx.converters import clean_onnx_name, convert_attribute_proto, onnx_tensor_type_to_typeclass
 from dace.libraries.onnx.nodes.onnx_op_registry import get_onnx_node, has_onnx_node
 from dace.libraries.onnx.schema import ONNXParameterType
-
-log = logging.getLogger(__name__)
 
 #: Mapping from NumPy dtypes to PyTorch dtypes for tensor conversion
 if TORCH_AVAILABLE:
@@ -167,7 +164,8 @@ def infer_shapes_onnx_model(model: onnx.ModelProto, auto_merge: bool = False) ->
         or if symbolic shape inference produces incomplete results.
     """
     if not ONNXRUNTIME_AVAILABLE:
-        log.warning("ONNXRuntime not available, falling back to ONNX shape inference. ")
+        if config.Config.get_bool('debugprint'):
+            print("Warning: ONNXRuntime not available, falling back to ONNX shape inference.")
         # Fallback to ONNX's built-in shape inference
         import onnx.shape_inference
         return onnx.shape_inference.infer_shapes(model, check_type=False, strict_mode=False, data_prop=True)
@@ -190,15 +188,17 @@ def infer_shapes_onnx_model(model: onnx.ModelProto, auto_merge: bool = False) ->
                 break
 
         if incomplete_shapes:
-            log.warning("ONNXRuntime symbolic shape inference produced incomplete results, "
-                        "falling back to ONNX shape inference.")
+            if config.Config.get_bool('debugprint'):
+                print("Warning: ONNXRuntime symbolic shape inference produced incomplete results, "
+                      "falling back to ONNX shape inference.")
             import onnx.shape_inference
             return onnx.shape_inference.infer_shapes(model, check_type=False, strict_mode=False, data_prop=True)
 
         return model
     except Exception as e:
-        log.warning(f"ONNXRuntime symbolic shape inference failed ({e}), "
-                    "falling back to ONNX shape inference.")
+        if config.Config.get_bool('debugprint'):
+            print(f"Warning: ONNXRuntime symbolic shape inference failed ({e}), "
+                  "falling back to ONNX shape inference.")
         import onnx.shape_inference
         return onnx.shape_inference.infer_shapes(model, check_type=False, strict_mode=False, data_prop=True)
 
@@ -234,7 +234,8 @@ def simplify_onnx_model(model: onnx.ModelProto, auto_merge: bool) -> onnx.ModelP
     except (onnx.checker.ValidationError, ValueError) as e:
         # If simplification fails due to validation errors (e.g., missing shape info),
         # return the original model
-        log.warning(f"ONNX simplification failed with error: {e}. Continuing without simplification.")
+        if config.Config.get_bool('debugprint'):
+            print(f"Warning: ONNX simplification failed with error: {e}. Continuing without simplification.")
         return model
 
 

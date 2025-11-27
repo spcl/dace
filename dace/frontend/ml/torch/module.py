@@ -4,7 +4,6 @@ from dataclasses import dataclass
 import collections
 import itertools
 import tempfile
-import logging
 import copy
 import os
 from typing import Any, Callable, Dict, OrderedDict, List, Optional, Set, Sequence, Tuple, Union
@@ -31,7 +30,7 @@ except ImportError:
     ONNX_AVAILABLE = False
 
 import dace
-from dace import data
+from dace import config, data
 from dace.codegen import compiled_sdfg
 from dace.sdfg import SDFG, nodes
 from dace.frontend.python import common as pycommon
@@ -51,8 +50,6 @@ else:
     autodiff_library = None
     ONNXModel = None
     auto_opt = None
-
-log = logging.getLogger(__name__)
 
 if TORCH_AVAILABLE and ONNX_AVAILABLE:
 
@@ -221,8 +218,9 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
             :param func: Callable to execute after ONNX import.
             """
             if self.function is not None:
-                log.warning(f"Added a hook after the model was already initialized. This hook "
-                            f"(with name {name}) will not be executed!")
+                if config.Config.get_bool('debugprint'):
+                    print(f"Warning: Added a hook after the model was already initialized. This hook "
+                          f"(with name {name}) will not be executed!")
             name = find_new_name(name, self.post_onnx_hooks)
             self.post_onnx_hooks[name] = func
             self.post_onnx_hooks.move_to_end(name, last=False)
@@ -235,8 +233,9 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
             :param func: Callable to execute after ONNX import.
             """
             if self.function is not None:
-                log.warning(f"Added a hook after the model was already initialized. This hook "
-                            f"(with name {name}) will not be executed!")
+                if config.Config.get_bool('debugprint'):
+                    print(f"Warning: Added a hook after the model was already initialized. This hook "
+                          f"(with name {name}) will not be executed!")
             name = find_new_name(name, self.post_onnx_hooks)
             self.post_onnx_hooks[name] = func
 
@@ -248,8 +247,9 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
             :param func: Callable to execute after autodiff, receiving forward and backward SDFGs.
             """
             if self.function is not None:
-                log.warning(f"Added a hook after the model was already initialized. This hook "
-                            f"(with name {name}) will not be executed!")
+                if config.Config.get_bool('debugprint'):
+                    print(f"Warning: Added a hook after the model was already initialized. This hook "
+                          f"(with name {name}) will not be executed!")
             name = find_new_name(name, self.post_autodiff_hooks)
             self.post_autodiff_hooks[name] = func
             self.post_autodiff_hooks.move_to_end(name, last=False)
@@ -262,8 +262,9 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
             :param func: Callable to execute after autodiff, receiving forward and backward SDFGs.
             """
             if self.function is not None:
-                log.warning(f"Added a hook after the model was already initialized. This hook "
-                            f"(with name {name}) will not be executed!")
+                if config.Config.get_bool('debugprint'):
+                    print(f"Warning: Added a hook after the model was already initialized. This hook "
+                          f"(with name {name}) will not be executed!")
             name = find_new_name(name, self.post_autodiff_hooks)
             self.post_autodiff_hooks[name] = func
 
@@ -275,8 +276,9 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
             :param func: Callable to execute after compilation, receiving the compiled SDFG.
             """
             if self.function is not None:
-                log.warning(f"Added a hook after the model was already initialized. This hook "
-                            f"(with name {name}) will not be executed!")
+                if config.Config.get_bool('debugprint'):
+                    print(f"Warning: Added a hook after the model was already initialized. This hook "
+                          f"(with name {name}) will not be executed!")
             name = find_new_name(name, self.post_compile_hooks)
             self.post_compile_hooks[name] = func
             self.post_compile_hooks.move_to_end(name, last=False)
@@ -289,8 +291,9 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
             :param func: Callable to execute after compilation, receiving the compiled SDFG.
             """
             if self.function is not None:
-                log.warning(f"Added a hook after the model was already initialized. This hook "
-                            f"(with name {name}) will not be executed!")
+                if config.Config.get_bool('debugprint'):
+                    print(f"Warning: Added a hook after the model was already initialized. This hook "
+                          f"(with name {name}) will not be executed!")
             name = find_new_name(name, self.post_compile_hooks)
             self.post_compile_hooks[name] = func
 

@@ -11,7 +11,6 @@ This module contains pure implementations of elementwise mathematical operations
 All operations support broadcasting where applicable.
 """
 
-import copy
 import typing
 
 import dace
@@ -21,7 +20,6 @@ from dace.sdfg.nodes import Node
 
 from dace.libraries.onnx.forward_implementation_abc import ONNXForward
 from dace.libraries.onnx.nodes import onnx_op
-from dace.libraries.onnx.op_implementations.common import broadcast_indices
 from dace.libraries.onnx.op_implementations.utils import (op_implementation, out_desc_with_name, program_for_node,
                                                           python_pure_op_implementation)
 from dace.sdfg.utils import in_desc_with_name, in_edge_with_name, out_desc_with_name
@@ -147,204 +145,24 @@ class PurePow(ONNXForward):
         return program_for_node(prog, sdfg, state, node)
 
 
-@op_implementation(op="Add", name="pure")
-class PureAdd(ONNXForward):
-
-    @staticmethod
-    def forward_can_be_applied(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> bool:
-        return True
-
-    @staticmethod
-    def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
-        # Create new SDFG
-        nsdfg = dace.SDFG(node.label + "_expansion")
-        nstate = nsdfg.add_state()
-
-        # Get input/output descriptors
-        A_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, "A"))
-        B_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, "B"))
-        C_desc = copy.deepcopy(out_desc_with_name(node, state, sdfg, "C"))
-
-        # Add data descriptors to SDFG
-        nsdfg.add_datadesc("A", A_desc)
-        nsdfg.add_datadesc("B", B_desc)
-        nsdfg.add_datadesc("C", C_desc)
-        nsdfg.arrays["A"].transient = False
-        nsdfg.arrays["B"].transient = False
-        nsdfg.arrays["C"].transient = False
-
-        # Create mapped tasklet for element-wise addition with broadcasting
-        map_ranges = {f"i{i}": f"0:{C_desc.shape[i]}" for i in range(len(C_desc.shape))}
-        index_str = ", ".join(map_ranges.keys())
-
-        # Generate broadcasting-aware indexing for inputs
-        A_indices = broadcast_indices(A_desc.shape, C_desc.shape)
-        A_index_str = ", ".join(A_indices) if A_indices else "0"
-
-        B_indices = broadcast_indices(B_desc.shape, C_desc.shape)
-        B_index_str = ", ".join(B_indices) if B_indices else "0"
-
-        tasklet, map_entry, map_exit = nstate.add_mapped_tasklet(name=node.label + "_tasklet",
-                                                                 map_ranges=map_ranges,
-                                                                 inputs={
-                                                                     "__A": dace.Memlet(f"A[{A_index_str}]"),
-                                                                     "__B": dace.Memlet(f"B[{B_index_str}]")
-                                                                 },
-                                                                 code="__C = __A + __B",
-                                                                 outputs={"__C": dace.Memlet(f"C[{index_str}]")},
-                                                                 external_edges=True)
-
-        return nsdfg
+@python_pure_op_implementation
+def Add(A, B, C):
+    C[:] = A + B
 
 
-@op_implementation(op="Sub", name="pure")
-class PureSub(ONNXForward):
-
-    @staticmethod
-    def forward_can_be_applied(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> bool:
-        return True
-
-    @staticmethod
-    def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
-        # Create new SDFG
-        nsdfg = dace.SDFG(node.label + "_expansion")
-        nstate = nsdfg.add_state()
-
-        # Get input/output descriptors
-        A_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, "A"))
-        B_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, "B"))
-        C_desc = copy.deepcopy(out_desc_with_name(node, state, sdfg, "C"))
-
-        # Add data descriptors to SDFG
-        nsdfg.add_datadesc("A", A_desc)
-        nsdfg.add_datadesc("B", B_desc)
-        nsdfg.add_datadesc("C", C_desc)
-        nsdfg.arrays["A"].transient = False
-        nsdfg.arrays["B"].transient = False
-        nsdfg.arrays["C"].transient = False
-
-        # Create mapped tasklet for element-wise subtraction with broadcasting
-        map_ranges = {f"i{i}": f"0:{C_desc.shape[i]}" for i in range(len(C_desc.shape))}
-        index_str = ", ".join(map_ranges.keys())
-
-        # Generate broadcasting-aware indexing for inputs
-        A_indices = broadcast_indices(A_desc.shape, C_desc.shape)
-        A_index_str = ", ".join(A_indices) if A_indices else "0"
-
-        B_indices = broadcast_indices(B_desc.shape, C_desc.shape)
-        B_index_str = ", ".join(B_indices) if B_indices else "0"
-
-        tasklet, map_entry, map_exit = nstate.add_mapped_tasklet(name=node.label + "_tasklet",
-                                                                 map_ranges=map_ranges,
-                                                                 inputs={
-                                                                     "__A": dace.Memlet(f"A[{A_index_str}]"),
-                                                                     "__B": dace.Memlet(f"B[{B_index_str}]")
-                                                                 },
-                                                                 code="__C = __A - __B",
-                                                                 outputs={"__C": dace.Memlet(f"C[{index_str}]")},
-                                                                 external_edges=True)
-
-        return nsdfg
+@python_pure_op_implementation
+def Sub(A, B, C):
+    C[:] = A - B
 
 
-@op_implementation(op="Mul", name="pure")
-class PureMul(ONNXForward):
-
-    @staticmethod
-    def forward_can_be_applied(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> bool:
-        return True
-
-    @staticmethod
-    def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
-        # Create new SDFG
-        nsdfg = dace.SDFG(node.label + "_expansion")
-        nstate = nsdfg.add_state()
-
-        # Get input/output descriptors
-        A_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, "A"))
-        B_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, "B"))
-        C_desc = copy.deepcopy(out_desc_with_name(node, state, sdfg, "C"))
-
-        # Add data descriptors to SDFG
-        nsdfg.add_datadesc("A", A_desc)
-        nsdfg.add_datadesc("B", B_desc)
-        nsdfg.add_datadesc("C", C_desc)
-        nsdfg.arrays["A"].transient = False
-        nsdfg.arrays["B"].transient = False
-        nsdfg.arrays["C"].transient = False
-
-        # Create mapped tasklet for element-wise multiplication with broadcasting
-        map_ranges = {f"i{i}": f"0:{C_desc.shape[i]}" for i in range(len(C_desc.shape))}
-        index_str = ", ".join(map_ranges.keys())
-
-        # Generate broadcasting-aware indexing for inputs
-        A_indices = broadcast_indices(A_desc.shape, C_desc.shape)
-        A_index_str = ", ".join(A_indices) if A_indices else "0"
-
-        B_indices = broadcast_indices(B_desc.shape, C_desc.shape)
-        B_index_str = ", ".join(B_indices) if B_indices else "0"
-
-        tasklet, map_entry, map_exit = nstate.add_mapped_tasklet(name=node.label + "_tasklet",
-                                                                 map_ranges=map_ranges,
-                                                                 inputs={
-                                                                     "__A": dace.Memlet(f"A[{A_index_str}]"),
-                                                                     "__B": dace.Memlet(f"B[{B_index_str}]")
-                                                                 },
-                                                                 code="__C = __A * __B",
-                                                                 outputs={"__C": dace.Memlet(f"C[{index_str}]")},
-                                                                 external_edges=True)
-
-        return nsdfg
+@python_pure_op_implementation
+def Mul(A, B, C):
+    C[:] = A * B
 
 
-@op_implementation(op="Div", name="pure")
-class PureDiv(ONNXForward):
-
-    @staticmethod
-    def forward_can_be_applied(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> bool:
-        return True
-
-    @staticmethod
-    def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
-        # Create new SDFG
-        nsdfg = dace.SDFG(node.label + "_expansion")
-        nstate = nsdfg.add_state()
-
-        # Get input/output descriptors
-        A_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, "A"))
-        B_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, "B"))
-        C_desc = copy.deepcopy(out_desc_with_name(node, state, sdfg, "C"))
-
-        # Add data descriptors to SDFG
-        nsdfg.add_datadesc("A", A_desc)
-        nsdfg.add_datadesc("B", B_desc)
-        nsdfg.add_datadesc("C", C_desc)
-        nsdfg.arrays["A"].transient = False
-        nsdfg.arrays["B"].transient = False
-        nsdfg.arrays["C"].transient = False
-
-        # Create mapped tasklet for element-wise division with broadcasting
-        map_ranges = {f"i{i}": f"0:{C_desc.shape[i]}" for i in range(len(C_desc.shape))}
-        index_str = ", ".join(map_ranges.keys())
-
-        # Generate broadcasting-aware indexing for inputs
-        A_indices = broadcast_indices(A_desc.shape, C_desc.shape)
-        A_index_str = ", ".join(A_indices) if A_indices else "0"
-
-        B_indices = broadcast_indices(B_desc.shape, C_desc.shape)
-        B_index_str = ", ".join(B_indices) if B_indices else "0"
-
-        tasklet, map_entry, map_exit = nstate.add_mapped_tasklet(name=node.label + "_tasklet",
-                                                                 map_ranges=map_ranges,
-                                                                 inputs={
-                                                                     "__A": dace.Memlet(f"A[{A_index_str}]"),
-                                                                     "__B": dace.Memlet(f"B[{B_index_str}]")
-                                                                 },
-                                                                 code="__C = __A / __B",
-                                                                 outputs={"__C": dace.Memlet(f"C[{index_str}]")},
-                                                                 external_edges=True)
-
-        return nsdfg
+@python_pure_op_implementation
+def Div(A, B, C):
+    C[:] = A / B
 
 
 # ============================================================================

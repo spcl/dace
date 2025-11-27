@@ -1,19 +1,16 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-import logging
 from typing import List, Tuple, Optional
 
 # DaCe imports
 import dace.sdfg.nodes as nodes
-from dace import data as dt
+from dace import config, data as dt
 from dace.sdfg import SDFGState, graph as dgraph
 
 # Autodiff imports
 from dace.autodiff.base_abc import AutoDiffException
 import dace.autodiff.utils as ad_utils
 import dace.autodiff.data_forwarding as data_forwarding
-
-log = logging.getLogger(__name__)
 
 
 class DataForwardingManager:
@@ -91,7 +88,10 @@ class DataForwardingManager:
                         choice = "recompute"
                     except Exception as e:
                         # If anything goes wrong, print a warning and fall back to storing
-                        log.warning(f"Couldn't get the recomputation nested SDFG for {access_node.label} because {e}")
+                        if config.Config.get_bool('debugprint'):
+                            print(
+                                f"Warning: Couldn't get the recomputation nested SDFG for {access_node.label} because {e}"
+                            )
                         nsdfg = None
                         choice = "store"
                     recomputation_nsdfgs.append(nsdfg)
@@ -143,7 +143,8 @@ class DataForwardingManager:
                                                                      starting_edge=starting_edge)
             except Exception as e:
                 # If anything goes bad, print a warning and fall back to storing
-                log.warning(f"Failed to recompute {forward_node.data}: {e}. Falling back to storing")
+                if config.Config.get_bool('debugprint'):
+                    print(f"Warning: Failed to recompute {forward_node.data}: {e}. Falling back to storing")
                 fallback = True
 
         if strategy == "store" or (strategy == "recompute" and not recomputable) or fallback:

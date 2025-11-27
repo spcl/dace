@@ -205,7 +205,7 @@ User Code: loss.backward()  # Backward pass
 ```
 dace/libraries/torch/
 ├── __init__.py                          # Library exports
-│   └── Exports: PyTorch, PyTorchCUDA environment classes
+│   └── Exports: PyTorch, PyTorchGPU environment classes
 │
 ├── dlpack.py                            # Zero-copy tensor sharing
 │   ├── DLPack structure definitions
@@ -238,7 +238,7 @@ dace/libraries/torch/
     ├── __init__.py                      # Package exports (1 line)
     └── pytorch_env.py                   # PyTorch environments
         ├── PyTorch (CPU environment)
-        └── PyTorchCUDA (GPU environment)
+        └── PyTorchGPU (GPU environment)
 
 ```
 
@@ -460,11 +460,11 @@ class PyTorch:
     cmake_compile_flags = ["-D_GLIBCXX_USE_CXX11_ABI=0"]  # ABI compatibility
 ```
 
-#### PyTorchCUDA Environment (GPU)
+#### PyTorchGPU Environment (GPU)
 
 ```python
 @dace.library.environment
-class PyTorchCUDA:
+class PyTorchGPU:
     """Environment for building PyTorch C++ operators (CUDA)."""
 
     cmake_includes = torch.utils.cpp_extension.include_paths()

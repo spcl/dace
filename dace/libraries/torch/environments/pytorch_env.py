@@ -56,7 +56,7 @@ class PyTorch:
 
 
 @dace.library.environment
-class PyTorchCUDA:
+class PyTorchGPU:
     """Environment used to build PyTorch C++ Operators (with CUDA)."""
 
     cmake_minimum_version = None

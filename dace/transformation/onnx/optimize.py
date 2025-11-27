@@ -1,16 +1,13 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-import logging
 from typing import Optional, Callable
 
 import dace
-from dace import nodes as nd
+from dace import config, nodes as nd
 from dace.libraries import blas
 from dace.sdfg.utils import expand_nodes
 from dace.transformation import dataflow
 from dace.transformation.auto.auto_optimize import set_fast_implementations
 from dace.transformation.dataflow import CopyToMap
-
-log = logging.getLogger(__name__)
 
 
 def expand_onnx_nodes(sdfg: dace.SDFG, predicate: Optional[Callable[[nd.Node], bool]] = None):
@@ -48,16 +45,21 @@ def auto_optimize_onnx(sdfg: dace.SDFG, cuda, simplify=False, fold_constants=Tru
     except ImportError:
         raise ImportError("auto_optimize_onnx requires ONNX. Install with: pip install dace[ml]")
 
-    log.debug("Applying automatic optimizations")
+    if config.Config.get_bool('debugprint'):
+        print("Applying automatic optimizations")
     if fold_constants:
-        log.debug("Applying constant folding")
+        if config.Config.get_bool('debugprint'):
+            print("Applying constant folding")
         sdfg.apply_transformations_repeated([ConstantFolding, dataflow.RedundantSecondArray], validate_all=True)
-    log.debug("Expanding ONNX nodes")
+    if config.Config.get_bool('debugprint'):
+        print("Expanding ONNX nodes")
     expand_onnx_nodes(sdfg)
-    log.debug("Setting fast implementations")
+    if config.Config.get_bool('debugprint'):
+        print("Setting fast implementations")
     set_fast_implementations(sdfg, dace.DeviceType.GPU if cuda else dace.DeviceType.CPU)
     if simplify:
-        log.debug("Applying simplification transforms")
+        if config.Config.get_bool('debugprint'):
+            print("Applying simplification transforms")
         sdfg.simplify()
         if cuda:
             sdfg.apply_transformations_once_everywhere(CopyToMap)

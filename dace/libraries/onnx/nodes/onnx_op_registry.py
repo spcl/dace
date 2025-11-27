@@ -1,5 +1,4 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-import logging
 import collections
 from typing import Iterator, Tuple, List, Dict, Type
 
@@ -8,7 +7,7 @@ import dace.library
 import dace.sdfg.nodes as nd
 import dace.frontend.common.op_repository as dace_op_repo
 from dace.frontend.python.newast import ProgramVisitor
-from dace import SDFG, SDFGState, dtypes, data
+from dace import config, SDFG, SDFGState, dtypes, data
 from dace.properties import Property, ListProperty, make_properties
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.transformation.transformation import ExpandTransformation
@@ -20,8 +19,6 @@ import dace.libraries.onnx.nodes.onnx_op as onnx_op
 from dace.frontend.python.common import StringLiteral
 
 import onnx
-
-log = logging.getLogger(__name__)
 
 
 def _get_typecons_docstring(cons: ONNXTypeConstraint) -> str:
@@ -172,7 +169,8 @@ def _initialize_onnx_registry():
                 out_cands[0].name = "out_" + name
 
         except Exception as e:
-            log.debug("Import of {} failed: {}".format(schema.name, e))
+            if config.Config.get_bool('debugprint'):
+                print("Import of {} failed: {}".format(schema.name, e))
             continue
 
         attrs = {}

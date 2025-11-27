@@ -1,3 +1,4 @@
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """ General class for pattern replacement transformations. """
 import abc
 import dace

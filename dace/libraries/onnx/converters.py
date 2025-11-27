@@ -15,16 +15,13 @@ Key Functions:
 - clean_onnx_name: Sanitize ONNX names for valid DaCe identifiers
 """
 
-import logging
 import re
 from typing import Union
 
 import onnx
-from dace import dtypes as dt
+from dace import config, dtypes as dt
 from dace.dtypes import typeclass
 from onnx.numpy_helper import to_array
-
-log = logging.getLogger(__name__)
 
 
 def get_proto_attr(proto, name: str):
@@ -95,7 +92,8 @@ def convert_onnx_proto(attribute):
         elif attribute == onnx.defs.OpSchema.AttrType.TENSOR:
             return ONNXAttributeType.Tensor
         else:
-            log.debug("Got unsupported attribute type {}".format(attribute))
+            if config.Config.get_bool('debugprint'):
+                print("Got unsupported attribute type {}".format(attribute))
             return ONNXAttributeType.Unsupported
 
     if type(attribute) is onnx.AttributeProto:

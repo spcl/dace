@@ -4,11 +4,11 @@ Abstract Base Classes for Autodiff
 """
 import abc
 import dataclasses
-import logging
 import typing
 from typing import TYPE_CHECKING
 
 import dace.registry
+from dace import config
 from dace.sdfg import SDFG, SDFGState, nodes as nd
 import dace.transformation.transformation as xf
 
@@ -21,8 +21,6 @@ try:
 except ImportError:
     ONNXOp = None
     ONNX_AVAILABLE = False
-
-log = logging.getLogger(__name__)
 
 
 class AutoDiffException(Exception):
@@ -151,8 +149,9 @@ def find_backward_implementation(forward_sdfg: SDFG, forward_state: SDFGState,
         if filtered_impls:
             return filtered_impls[0]
 
-        log.warning(f"Set backward_implementation {node.backward_implementation} on {node}, but it could not be"
-                    f" applied. Falling back to default selection.")
+        if config.Config.get_bool('debugprint'):
+            print(f"Warning: Set backward_implementation {node.backward_implementation} on {node}, but it could not be"
+                  f" applied. Falling back to default selection.")
     if valid_impls:
         return valid_impls[0][1]
     else:

@@ -1,6 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-import logging
 from typing import List, Tuple, Set, Dict, Union, Optional, Sequence
 import sympy as sp
 
@@ -29,8 +28,6 @@ from dace.autodiff.base_abc import (BackwardContext, BackwardResult, AutoDiffExc
 import dace.autodiff.utils as ad_utils
 from dace.autodiff.implementations.dace_nodes import DaceNodeBackwardImplementations
 from dace.autodiff.data_forwarding.manager import DataForwardingManager
-
-log = logging.getLogger(__name__)
 
 
 class BackwardPassGenerator:

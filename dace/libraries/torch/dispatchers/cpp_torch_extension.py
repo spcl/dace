@@ -3,8 +3,8 @@
 import copy
 import dataclasses
 from distutils import sysconfig
+import hashlib
 import itertools
-import logging
 import operator
 import os
 import sys
@@ -13,10 +13,9 @@ from typing import List, Tuple, Callable, Optional, Dict, Union
 import dace.library
 import numpy as np
 import torch
-import hashlib, operator
 from torch.utils.cpp_extension import load as torch_load
 import dace
-from dace import dtypes as dt, data
+from dace import config, dtypes as dt, data
 from dace.codegen import targets, compiler
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.compiled_sdfg import CompiledSDFG
@@ -27,8 +26,6 @@ from dace.autodiff import BackwardResult
 from dace.libraries.torch.environments import PyTorch
 
 from dace.libraries.torch.dispatchers.common import DaCeMLTorchFunction, compile_and_init_sdfgs, get_arglist
-
-log = logging.getLogger(__name__)
 
 _REPLACED_CTYPES = {dace.int64: "int64_t", dace.uint64: "uint64_t", dace.float16: "at::Half"}
 
@@ -182,7 +179,7 @@ def argument_codegen(sdfg: dace.SDFG,
 
         if isinstance(arglist[name], data.Array) or dt.can_access(dt.ScheduleType.GPU_Device, arglist[name].storage):
             if name in guard_contiguous:
-                if logging.root.level <= logging.DEBUG:
+                if config.Config.get_bool('debugprint'):
                     ptr_init_code += f"""
                     if (!{name}_.is_contiguous()) {{
                         fprintf(stderr, "{name} was not contiguous!");

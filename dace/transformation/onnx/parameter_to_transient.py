@@ -1,13 +1,11 @@
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import operator
-import logging
 
 import dace
-from dace import dtypes, nodes
+from dace import config, dtypes, nodes
 
 from dace.libraries.onnx.converters import clean_onnx_name
 from dace.libraries.torch import dlpack
-
-log = logging.getLogger(__name__)
 
 
 def parameter_to_transient(dace_module: 'dace.frontend.ml.torch', parameter_path: str):
@@ -17,7 +15,8 @@ def parameter_to_transient(dace_module: 'dace.frontend.ml.torch', parameter_path
         :param weight_path: the dotted path to the weight
     """
 
-    log.debug(f"Converting parameter {parameter_path} to a transient")
+    if config.Config.get_bool('debugprint'):
+        print(f"Converting parameter {parameter_path} to a transient")
 
     pt_weight_name = parameter_path
     pt_tensor = operator.attrgetter(pt_weight_name)(dace_module.model)
@@ -29,7 +28,8 @@ def parameter_to_transient(dace_module: 'dace.frontend.ml.torch', parameter_path
              if isinstance(node, nodes.AccessNode) and node.data == array_name]
 
     if len(cands) == 0:
-        log.warning(f"Could not find access node with name '{array_name}', skipping parameter to transient", )
+        if config.Config.get_bool('debugprint'):
+            print(f"Warning: Could not find access node with name '{array_name}', skipping parameter to transient")
         return
 
     if len(cands) != 1:

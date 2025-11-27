@@ -20,8 +20,7 @@ from dace.sdfg.nodes import Node
 from dace.sdfg.utils import in_desc_with_name, in_edge_with_name, out_desc_with_name
 from dace.libraries.onnx.forward_implementation_abc import ONNXForward
 from dace.libraries.onnx.nodes import onnx_op
-from dace.libraries.onnx.op_implementations.common import (generate_reduction_tasklet_code, iterables_equal,
-                                                           setup_reduction_sdfg)
+from dace.libraries.onnx.op_implementations.common import iterables_equal
 from dace.libraries.onnx.op_implementations.utils import (empty_sdfg_for_node, in_desc_with_name, op_implementation,
                                                           out_desc_with_name, program_for_node)
 
@@ -34,51 +33,25 @@ from dace.libraries.onnx.op_implementations.utils import (empty_sdfg_for_node, i
 class PureCumSum(ONNXForward):
 
     @staticmethod
-    def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
-
+    def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
         if node.exclusive or node.reverse:
-            raise NotImplementedError("CumSum with exclusive or reverse attributes is not implemented")
+            return False
+        try:
+            if hasattr(sdfg, "_parent_onnx_model") and in_edge_with_name(
+                    node, state, "axis").src.data not in sdfg._parent_onnx_model.clean_weights:
+                return False
+        except ValueError:
+            return False
+        return True
 
-        nsdfg, nstate, input_nodes, output_nodes = empty_sdfg_for_node(sdfg, state, node, add_access_nodes=True)
+    @staticmethod
+    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+        axis = sdfg._parent_onnx_model.clean_weights[in_edge_with_name(node, state, "axis").src.data].numpy().item()
 
-        x_desc = in_desc_with_name(node, state, sdfg, "x")
-        axis_desc = in_desc_with_name(node, state, sdfg, "axis")
-        y_desc = out_desc_with_name(node, state, sdfg, "y")
+        def prog(x, y):
+            y[:] = np.cumsum(x, axis=axis)
 
-        x_idx_expr = " + ".join([f"i{i} * {s}" for i, s in enumerate(x_desc.strides)])
-        y_idx_expr = " + ".join([f"i{i} * {s}" for i, s in enumerate(y_desc.strides)])
-
-        num_dims = len(x_desc.shape)
-
-        y_prev_idx_expr = " + ".join([f"(i{i} - is_axis{i}) * {s}" for i, s in enumerate(y_desc.strides)])
-
-        code = ""
-        for i, val in enumerate(y_desc.shape):
-            code += f"for (int i{i} = 0; i{i} < {val}; i{i}++) {{\n"
-            code += f"int is_axis{i} = ({i} == ({num_dims} + __axis) % {num_dims});\n"
-        code += f"__y[{y_idx_expr}] = __x[{x_idx_expr}];\n"
-        code += f"if (" + ' || '.join([f"(i{i} > 0 && is_axis{i})" for i in range(num_dims)]) + ") {\n"
-        code += f"__y[{y_idx_expr}] += __y[{y_prev_idx_expr}];\n"
-        code += "}\n"
-        for _ in y_desc.shape:
-            code += "}\n"
-
-        tasklet = nstate.add_tasklet(
-            name=node.label + "_tasklet",
-            inputs={
-                "__x": dace.pointer(x_desc.dtype),
-                "__axis": axis_desc.dtype,
-            },
-            outputs={"__y": dace.pointer(y_desc.dtype)},
-            language=dace.Language.CPP,
-            code=code,
-        )
-
-        nstate.add_edge(input_nodes["x"], None, tasklet, "__x", dace.Memlet.from_array("x", x_desc))
-        nstate.add_edge(input_nodes["axis"], None, tasklet, "__axis", dace.Memlet.from_array("axis", axis_desc))
-        nstate.add_edge(tasklet, "__y", output_nodes["y"], None, dace.Memlet.from_array("y", y_desc))
-
-        return nsdfg
+        return program_for_node(prog, sdfg, state, node)
 
 
 # ============================================================================
@@ -87,50 +60,10 @@ class PureCumSum(ONNXForward):
 
 
 @op_implementation(op="ReduceMean", name="pure")
-class PureReduceMeanCPP(ONNXForward):
-
-    def forward_can_be_applied(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> bool:
-        # Avoid this expansion if the backward pass will be constructed
-        # TODO pass the backward flag to the functions
-        return False
-
-    @staticmethod
-    def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
-        # Set up the common SDFG structure
-        nsdfg, nstate, data_desc, reduced_desc, data_read, reduced_write, axes_node, axes_desc, num_reduce_axes = setup_reduction_sdfg(
-            node, state, sdfg, "reduce_mean")
-
-        # Generate tasklet code for mean reduction
-        keepdims = getattr(node, 'keepdims', 1)
-        tasklet_code = generate_reduction_tasklet_code(data_desc, reduced_desc, num_reduce_axes, keepdims, 'mean')
-
-        # Create tasklet and connect it
-        uid = state.node_id(node)
-        tasklet = nstate.add_tasklet(f'reduce_mean_{uid}', {
-            'inp': dace.pointer(data_desc.dtype),
-            'axes_arr': dace.pointer(axes_desc.dtype)
-        }, {'out': dace.pointer(reduced_desc.dtype)},
-                                     tasklet_code,
-                                     language=dace.Language.CPP)
-
-        # Add edges for axes input, data input and output
-        nstate.add_edge(data_read, None, tasklet, 'inp', nsdfg.make_array_memlet(data_read.data))
-        nstate.add_edge(axes_node, None, tasklet, 'axes_arr', nsdfg.make_array_memlet(axes_node.data))
-        nstate.add_edge(tasklet, 'out', reduced_write, None, nsdfg.make_array_memlet(reduced_write.data))
-
-        return nsdfg
-
-
-@op_implementation(op="ReduceMean", name="pure")
 class PureReduceMean(ONNXForward):
-    '''
-        ReduceMean expansion
-    '''
 
     @staticmethod
     def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
-        # Check that all the inputs (even the optional ones) are present and constant
-        # optional inputs
         is_axes_present = True
         try:
             if hasattr(sdfg, "_parent_onnx_model") and in_edge_with_name(
@@ -142,7 +75,6 @@ class PureReduceMean(ONNXForward):
         if not is_axes_present and hasattr(node, "axes"):
             is_axes_present = True
 
-        # Current constraints: axes must be explict. Axes must be zero
         if not is_axes_present:
             return False
 
@@ -150,10 +82,7 @@ class PureReduceMean(ONNXForward):
 
     @staticmethod
     def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
-        # We treat both cases where axes is an attribute and where it is an input
-        # Since can be applied is true, we know that axes is present and valid
         axes = None
-        # TODO: avoid catching Exceptions
         try:
             if hasattr(sdfg, "_parent_onnx_model") and in_edge_with_name(
                     node, state, "axes").src.data in sdfg._parent_onnx_model.clean_weights:
@@ -164,18 +93,14 @@ class PureReduceMean(ONNXForward):
             if len(axes) == 1:
                 axes = axes[0]
             else:
-                raise NotImplementedError(
-                    "PureReduceMean in the case where there are multiple axes as input connectors is not implemented yet."
-                )
+                axes = tuple(axes)
         else:
-            # Axes is an attribute of the node
             axes = node.axes if hasattr(node, "axes") else None
 
         def prog(data, reduced):
             reduced[:] = np.mean(data, axis=axes)
 
-        result = program_for_node(prog, sdfg, state, node)
-        return result
+        return program_for_node(prog, sdfg, state, node)
 
 
 # ============================================================================
@@ -184,51 +109,10 @@ class PureReduceMean(ONNXForward):
 
 
 @op_implementation(op="ReduceSum", name="pure")
-class PureReduceSumCPP(ONNXForward):
-
-    @staticmethod
-    def forward_can_be_applied(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> bool:
-        # Avoid this expansion if the backward pass will be contructed
-        # TODO pass the backward flag to the functions
-        return False
-
-    @staticmethod
-    def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
-        # Set up the common SDFG structure
-        nsdfg, nstate, data_desc, reduced_desc, data_read, reduced_write, axes_node, axes_desc, num_reduce_axes = setup_reduction_sdfg(
-            node, state, sdfg, "reduce_sum")
-
-        # Generate tasklet code for sum reduction
-        keepdims = getattr(node, 'keepdims', 1)
-        tasklet_code = generate_reduction_tasklet_code(data_desc, reduced_desc, num_reduce_axes, keepdims, 'sum')
-
-        # Create tasklet and connect it
-        uid = state.node_id(node)
-        tasklet = nstate.add_tasklet(f'reduce_sum_{uid}', {
-            'inp': dace.pointer(data_desc.dtype),
-            'axes_arr': dace.pointer(axes_desc.dtype)
-        }, {'out': dace.pointer(reduced_desc.dtype)},
-                                     tasklet_code,
-                                     language=dace.Language.CPP)
-
-        # Add edges for axes input, data input and output
-        nstate.add_edge(data_read, None, tasklet, 'inp', nsdfg.make_array_memlet(data_read.data))
-        nstate.add_edge(axes_node, None, tasklet, 'axes_arr', nsdfg.make_array_memlet(axes_node.data))
-        nstate.add_edge(tasklet, 'out', reduced_write, None, nsdfg.make_array_memlet(reduced_write.data))
-
-        return nsdfg
-
-
-@op_implementation(op="ReduceSum", name="pure")
 class PureReduceSum(ONNXForward):
-    '''
-        ReduceSum expansion
-    '''
 
     @staticmethod
     def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
-        # Check that all the inputs (even the optional ones) are present and constant
-        # optional inputs
         is_axes_present = True
         try:
             if hasattr(sdfg, "_parent_onnx_model") and in_edge_with_name(
@@ -240,7 +124,6 @@ class PureReduceSum(ONNXForward):
         if not is_axes_present and hasattr(node, "axes"):
             is_axes_present = True
 
-        # Current constraints: axes must be explict.
         if not is_axes_present:
             return False
 
@@ -248,10 +131,7 @@ class PureReduceSum(ONNXForward):
 
     @staticmethod
     def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
-        # We treat both cases where axes is an attribute and where it is an input
-        # Since can be applied is true, we know that axes is present and valid
         axes = None
-        # TODO: avoid catching Exceptions
         try:
             if hasattr(sdfg, "_parent_onnx_model") and in_edge_with_name(
                     node, state, "axes").src.data in sdfg._parent_onnx_model.clean_weights:
@@ -262,11 +142,8 @@ class PureReduceSum(ONNXForward):
             if len(axes) == 1:
                 axes = axes[0]
             else:
-                raise NotImplementedError(
-                    "PureReduceSum in the case where there are multiple axes as input connectors is not implemented yet."
-                )
+                axes = tuple(axes)
         else:
-            # Axes is an attribute of the node
             axes = node.axes if hasattr(node, "axes") else None
 
         def prog(data, reduced):
@@ -282,14 +159,9 @@ class PureReduceSum(ONNXForward):
 
 @op_implementation(op="ReduceMax", name="pure")
 class PureReduceMax(ONNXForward):
-    '''
-        ReduceMax expansion
-    '''
 
     @staticmethod
     def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
-        # Check that all the inputs (even the optional ones) are present and constant
-        # optional inputs
         is_axes_present = True
         try:
             if hasattr(sdfg, "_parent_onnx_model") and in_edge_with_name(
@@ -301,7 +173,6 @@ class PureReduceMax(ONNXForward):
         if not is_axes_present and hasattr(node, "axes"):
             is_axes_present = True
 
-        # Current constraints: axes must be explict. Axes must be zero
         if not is_axes_present:
             return False
 
@@ -309,10 +180,7 @@ class PureReduceMax(ONNXForward):
 
     @staticmethod
     def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
-        # We treat both cases where axes is an attribute and where it is an input
-        # Since can be applied is true, we know that axes is present and valid
         axes = None
-        # TODO: avoid catching Exceptions
         try:
             if hasattr(sdfg, "_parent_onnx_model") and in_edge_with_name(
                     node, state, "axes").src.data in sdfg._parent_onnx_model.clean_weights:
@@ -323,11 +191,8 @@ class PureReduceMax(ONNXForward):
             if len(axes) == 1:
                 axes = axes[0]
             else:
-                raise NotImplementedError(
-                    "PureReduceSum in the case where there are multiple axes as input connectors is not implemented yet."
-                )
+                axes = tuple(axes)
         else:
-            # Axes is an attribute of the node
             axes = node.axes if hasattr(node, "axes") else None
 
         def prog(data, reduced):
@@ -340,34 +205,44 @@ class PureReduceMax(ONNXForward):
 class PureReduceMin(ONNXForward):
 
     @staticmethod
-    def forward_can_be_applied(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> bool:
+    def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
+        is_axes_present = True
+        try:
+            if hasattr(sdfg, "_parent_onnx_model") and in_edge_with_name(
+                    node, state, "axes").src.data not in sdfg._parent_onnx_model.clean_weights:
+                return False
+        except ValueError:
+            is_axes_present = False
+
+        if not is_axes_present and hasattr(node, "axes"):
+            is_axes_present = True
+
+        if not is_axes_present:
+            return False
+
         return True
 
     @staticmethod
-    def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
-        # Set up the common SDFG structure
-        nsdfg, nstate, data_desc, reduced_desc, data_read, reduced_write, axes_node, axes_desc, num_reduce_axes = setup_reduction_sdfg(
-            node, state, sdfg, "reduce_min")
+    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+        axes = None
+        try:
+            if hasattr(sdfg, "_parent_onnx_model") and in_edge_with_name(
+                    node, state, "axes").src.data in sdfg._parent_onnx_model.clean_weights:
+                axes = sdfg._parent_onnx_model.clean_weights[in_edge_with_name(node, state, "axes").src.data].numpy()
+        except ValueError:
+            pass
+        if axes is not None:
+            if len(axes) == 1:
+                axes = axes[0]
+            else:
+                axes = tuple(axes)
+        else:
+            axes = node.axes if hasattr(node, "axes") else None
 
-        # Generate tasklet code for min reduction
-        keepdims = getattr(node, 'keepdims', 1)
-        tasklet_code = generate_reduction_tasklet_code(data_desc, reduced_desc, num_reduce_axes, keepdims, 'min')
+        def prog(data, reduced):
+            reduced[:] = np.min(data, axis=axes)
 
-        # Create tasklet and connect it
-        uid = state.node_id(node)
-        tasklet = nstate.add_tasklet(f'reduce_min_{uid}', {
-            'inp': dace.pointer(data_desc.dtype),
-            'axes_arr': dace.pointer(axes_desc.dtype)
-        }, {'out': dace.pointer(reduced_desc.dtype)},
-                                     tasklet_code,
-                                     language=dace.Language.CPP)
-
-        # Add edges for axes input, data input and output
-        nstate.add_edge(data_read, None, tasklet, 'inp', nsdfg.make_array_memlet(data_read.data))
-        nstate.add_edge(axes_node, None, tasklet, 'axes_arr', nsdfg.make_array_memlet(axes_node.data))
-        nstate.add_edge(tasklet, 'out', reduced_write, None, nsdfg.make_array_memlet(reduced_write.data))
-
-        return nsdfg
+        return program_for_node(prog, sdfg, state, node)
 
 
 # ============================================================================

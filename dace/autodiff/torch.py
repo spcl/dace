@@ -1,5 +1,4 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-import logging
 from typing import Tuple, Dict, List
 
 import dace
@@ -16,8 +15,6 @@ except ImportError:
     ONNX_AVAILABLE = False
     clean_onnx_name = None
     ONNXModel = None
-
-log = logging.getLogger(__name__)
 
 
 def make_backward_function(
