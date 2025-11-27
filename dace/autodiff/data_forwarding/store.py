@@ -56,15 +56,15 @@ def _store_data(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState
                 forward_an: nodes.AccessNode, target_node: nodes.Node,
                 edge: dgraph.MultiConnectorEdge) -> Tuple[nodes.AccessNode, List[Memlet]]:
     """
-        Given an edge leading an AccessNode or a map to the target node in the forward state,
-        add a path from the connector for this AccessNode to store its values for all iterations.
-        This can increase the dimension of the array. i.e. the size of the stored array is
-        greater or equal to the size of the original array.
+    Given an edge leading an AccessNode or a map to the target node in the forward state,
+    add a path from the connector for this AccessNode to store its values for all iterations.
+    This can increase the dimension of the array. i.e. the size of the stored array is
+    greater or equal to the size of the original array.
 
-        :param edge: the edge connecting the AccessNode to save data from to a map node.
-        :return: the new AccessNode which contains the stored data,
-                 a list of memlets connecting an assign tasklet to this new AccessNode.
-        """
+    :param edge: the edge connecting the AccessNode to save data from to a map node.
+    :return: the new AccessNode which contains the stored data,
+             a list of memlets connecting an assign tasklet to this new AccessNode.
+    """
 
     # Get the connector and edge to save
     if isinstance(edge.src, nodes.AccessNode) and edge.src is not forward_an:
