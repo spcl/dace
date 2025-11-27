@@ -1,4 +1,8 @@
+// Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 #pragma once
+
+// Based on CERN VDT (VectoriseD maTh) C++ Library for Fast Math
+// It is a C-compatible rewrite of it https://github.com/drbenmorgan/vdt
 
 #include <stdint.h>
 #include <math.h>

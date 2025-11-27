@@ -1,3 +1,4 @@
+// Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 #pragma once
 
 // Based on CERN VDT (VectoriseD maTh) C++ Library for Fast Math
