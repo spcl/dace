@@ -19,9 +19,9 @@ def resolve_overwrite_with_store(bwd_generator: 'BackwardPassGenerator', forward
                                  backward_state: SDFGState, forward_node: nodes.AccessNode, target_node: nodes.Node,
                                  starting_edge: dstate.MultiConnectorEdge):
     """
-        Given the AccessNode pointing to the data required by the backward pass,
-        We will save the values of this array in a new array and forward it to the backward pass.
-        """
+    Given the AccessNode pointing to the data required by the backward pass,
+    We will save the values of this array in a new array and forward it to the backward pass.
+    """
 
     # Modify the forward pass to save the data in a new array
     new_stored_array, memlets = _store_data(bwd_generator=bwd_generator,
