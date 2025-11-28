@@ -161,105 +161,196 @@ inline void _softhier_vdiv_vs_(uint32_t va_addr, float scalar, uint32_t vc_addr,
     }}
 }}
 
-static const float MAXLOGF = 88.72283905206835f;
-static const float MINLOGF = -88.0f;
-static const float C1F = 0.693359375f;
-static const float C2F = -2.12194440e-4f;
-static const float PX1expf = 1.9875691500E-4f;
-static const float PX2expf = 1.3981999507E-3f;
-static const float PX3expf = 8.3334519073E-3f;
-static const float PX4expf = 4.1665795894E-2f;
-static const float PX5expf = 1.6666665459E-1f;
-static const float PX6expf = 5.0000001201E-1f;
-static const float LOG2EF = 1.44269504088896341f;
-
 // Vector exponent: vb = exp(va)
 static inline void _softhier_vexp_vv_(uint32_t va_addr, uint32_t vb_addr, uint32_t vector_width)
 {{
     if (flex_is_first_core()) {{
         uint32_t vlen = vector_width;
         uint32_t avl;
-        
-        /* Constants */
-        const float const_log2ef = LOG2EF;
-        const float const_05 = 0.5f;
-        const float const_c1f = C1F;
-        const float const_c2f = C2F;
-        const float const_px1 = PX1expf;
-        const float const_px2 = PX2expf;
-        const float const_px3 = PX3expf;
-        const float const_px4 = PX4expf;
-        const float const_px5 = PX5expf;
-        const float const_px6 = PX6expf;
-        const float const_1 = 1.0f;
-        const float const_maxlogf = MAXLOGF;
-        const float const_minlogf = MINLOGF;
-        const float const_inf = INFINITY;
-        const float const_zero = 0.0f;
-        const float const_nan = NAN;
-        const uint32_t const_bias = 0x7f;
-        const uint32_t const_shift = 23;
-        
+
         while(vlen > 0) {{
             /* Set vector length */
             asm volatile("vsetvli %0, %1, e" XSTR(32) ", m8, ta, ma" : "=r"(avl) : "r"(vlen));
-            
+            /* Load input vector into v0 (x@v0) */
+            asm volatile("vle" XSTR(32) ".v v8, (%0)" :: "r"(va_addr));
+            asm volatile(".word %0"::"i"(0x32041857));  // vfexp.vv v16, v8
+            // Store result
+            asm volatile("vse" XSTR(32) ".v v16, (%0)" :: "r"(vb_addr));
+
+            /* Update pointers and length */
+            vlen -= avl;
+            va_addr += 4 * avl;
+            vb_addr += 4 * avl;
+        }}
+    }}
+}}
+
+
+// Vector exponent: vb = log(va)
+static inline void _softhier_vlog_vv_(uint32_t va_addr, uint32_t vb_addr, uint32_t vector_width)
+{{
+    if (flex_is_first_core()) {{
+        uint32_t vlen = vector_width;
+        uint32_t avl;
+        const float SQRTHF = 0.707106781186547524f;
+        const float PX1logf = 7.0376836292E-2f;
+        const float PX2logf = -1.1514610310E-1f;
+        const float PX3logf = 1.1676998740E-1f;
+        const float PX4logf = -1.2420140846E-1f;
+        const float PX5logf = 1.4249322787E-1f;
+        const float PX6logf = -1.6668057665E-1f;
+        const float PX7logf = 2.0000714765E-1f;
+        const float PX8logf = -2.4999993993E-1f;
+        const float PX9logf = 3.3333331174E-1f;
+        const float const_c1 = 0.693359375f;
+        const float const_c2 = -2.12194440e-4f;
+        const float const_half = 0.5f;
+        const float neg_const_half = -0.5f;
+        const float const_1 = 1.0f;
+        const uint32_t exp_mask = 0xff;
+        const uint32_t exp_bias = 127;
+        const uint32_t exp_shift = 23;
+        const uint32_t mant_mask = 0x807fffff;
+        const uint32_t mant_set = 0x3f000000;
+
+
+        while(vlen > 0) {{
+            /* Set vector length */
+            asm volatile("vsetvli %0, %1, e" XSTR(32) ", m8, ta, ma" : "=r"(avl) : "r"(vlen));
+
             /* Load input vector into v0 */
+            // C: x = get_mant_exponent_f(x, &fe);
             asm volatile("vle" XSTR(32) ".v v0, (%0)" :: "r"(va_addr));
-            
-            /* v1 = LOG2EF * v0 */
-            /* v1 = v1 + 0.5 */
-            /* v1 = floor(v1) */
-            asm volatile("vfmul.vf v1, v0, %0" :: "f"(const_log2ef));
-            asm volatile("vfadd.vf v1, v1, %0" :: "f"(const_05));
-            asm volatile("vfcvt.x.f.v v1, v1");
-            asm volatile("vfcvt.f.x.v v1, v1");  // z in v1
-            
-            /* v2 = v1 (z) * C1F */
-            /* v3 -= v2 */
-            asm volatile("vfmul.vf v2, v1, %0" :: "f"(const_c1f));
-            asm volatile("vfsub.vv v3, v3, v2");
-            
-            /* v2 = v1 (z) * C2F */
-            /* v3 (x) -= v2 */
-            asm volatile("vfmul.vf v2, v1, %0" :: "f"(const_c2f));
-            asm volatile("vfsub.vv v3, v3, v2");
-            
-            /* v4 (n) = (int)z */
-            asm volatile("vfcvt.x.f.v v4, v1");
-            
-            /* x2 (v4) = x * x (v3) */
-            asm volatile("vfmul.vv v4, v3, v3");
-            
-            /* Polynomial in v5 (z) = x*PX1 + PX2 */
-            asm volatile("vfmul.vf v5, v0, %0" :: "f"(const_px1));
-            asm volatile("vfadd.vf v5, v5, %0" :: "f"(const_px2));
-            asm volatile("vfmul.vv v5, v5, v0");  // z *= x
-            asm volatile("vfadd.vf v5, v5, %0" :: "f"(const_px3));
-            asm volatile("vfmul.vv v5, v5, v0");  // z *= x
-            asm volatile("vfadd.vf v5, v5, %0" :: "f"(const_px4));
-            asm volatile("vfmul.vv v5, v5, v0");  // z *= x
-            asm volatile("vfadd.vf v5, v5, %0" :: "f"(const_px5));
-            asm volatile("vfmul.vv v5, v5, v0");  // z *= x
-            asm volatile("vfadd.vf v5, v5, %0" :: "f"(const_px6));
-            asm volatile("vfmul.vv v5, v5, v4");  // z *= x2
-            
-            /* v5 += x + 1.0 */
-            asm volatile("vfadd.vf v5, v5, %0" :: "f"(const_1));  // z += 1.0
-            asm volatile("vfadd.vv v5, v5, v3");                   // z += x
-            
-            /* Build 2^n in v4: (n (v4) + 0x7f) << 23 */
-            asm volatile("vadd.vx v4, v4, %0" :: "r"(const_bias));
-            asm volatile("vsll.vx v4, v4, %0" :: "r"(const_shift));
 
-            asm volatile("vfcvt.f.x.v v4, v4");  // cast n (v4) to float
+            /* ===== EXTRACT MANTISSA AND EXPONENT ===== */
+            
+            /* v8 = v0 (copy for bit manipulation) */
+            // C: u.f = x;
+            asm volatile("vmv.v.v v8, v0");
+            
+            /* Reinterpret as integers for bit ops */
+            // C: (u.i >> 23) & 0xff
+            asm volatile("vsrl.vx v16, v8, %0" :: "r"(exp_shift));  // Shift right by 23
+            asm volatile("vand.vx v16, v16, %0" :: "r"(exp_mask));  // Mask to get exponent
+            
+            /* v16 now contains biased exponent, convert to fe (unbiased) */
+            // C: exp -= 127; *fe = (float)exp;
+            asm volatile("vsub.vx v16, v16, %0" :: "r"(exp_bias));  // Remove bias
+            asm volatile("vfcvt.f.x.v v16, v16");                   // Convert to float -> fe in v16
+            
+            /* Extract mantissa: set exponent bits to bias (127) */
+            // C: u.i = (u.i & 0x807fffffU) | 0x3f000000U;
+            asm volatile("vand.vx v8, v8, %0" :: "r"(mant_mask));   // Keep sign and mantissa
+            asm volatile("vor.vx v8, v8, %0" :: "r"(mant_set));     // Set exponent to 0 (bias 127)
+            // v8 now contains mantissa in [0.5, 1.0) -> this is x
+            
+            /* ===== BLENDING ===== */
+            
+            /* Check if x > SQRTHF */
+            // C: if (x > SQRTHF) {{ fe += 1.0f; }} else {{ x += x; }}
+            asm volatile("vmfgt.vf v0, v8, %0" :: "r"(SQRTHF));     // Mask: v0 = (x > SQRTHF)
+            
+            /* For elements where mask is true: fe += 1.0 */
+            // C: fe += 1.0f;
+            asm volatile("vfadd.vf v24, v16, %0" :: "r"(const_1));  // v24 = fe + 1.0
+            asm volatile("vmerge.vvm v16, v16, v24, v0");           // v16 = mask ? v24 : v16
+            
+            /* For elements where mask is false: x += x (i.e., x *= 2) */
+            // C: x += x;
+            asm volatile("vfadd.vv v24, v8, v8");                   // v24 = x + x
+            asm volatile("vmnot.m v1, v0");                         // v1 = ~v0 (inverse mask)
+            asm volatile("vmerge.vvm v8, v8, v24, v1");             // v8 = ~mask ? v24 : v8
+            
+            /* x -= 1.0 */
+            // C: x -= 1.0f;
+            asm volatile("vfsub.vf v8, v8, %0" :: "r"(const_1));    // v8 = x - 1.0
+            
+            /* ===== COMPUTE x^2 ===== */
+            
+            /* x2 = x * x */
+            // C: const float x2 = x * x;
+            asm volatile("vfmul.vv v24, v8, v8");                   // v24 = x^2
+            
+            /* ===== POLYNOMIAL EVALUATION ===== */
+            
+            /* res = get_log_poly_f(x) */
+            // C: float y = x * PX1logf;
+            asm volatile("vfmul.vf v32, v8, %0" :: "r"(PX1logf));
+            
+            // C: y += PX2logf;
+            asm volatile("vfadd.vf v32, v32, %0" :: "r"(PX2logf));
+            
+            // C: y *= x;
+            asm volatile("vfmul.vv v32, v32, v8");
+            
+            // C: y += PX3logf;
+            asm volatile("vfadd.vf v32, v32, %0" :: "r"(PX3logf));
+            
+            // C: y *= x;
+            asm volatile("vfmul.vv v32, v32, v8");
+            
+            // C: y += PX4logf;
+            asm volatile("vfadd.vf v32, v32, %0" :: "r"(PX4logf));
+            
+            // C: y *= x;
+            asm volatile("vfmul.vv v32, v32, v8");
+            
+            // C: y += PX5logf;
+            asm volatile("vfadd.vf v32, v32, %0" :: "r"(PX5logf));
+            
+            // C: y *= x;
+            asm volatile("vfmul.vv v32, v32, v8");
+            
+            // C: y += PX6logf;
+            asm volatile("vfadd.vf v32, v32, %0" :: "r"(PX6logf));
+            
+            // C: y *= x;
+            asm volatile("vfmul.vv v32, v32, v8");
+            
+            // C: y += PX7logf;
+            asm volatile("vfadd.vf v32, v32, %0" :: "r"(PX7logf));
+            
+            // C: y *= x;
+            asm volatile("vfmul.vv v32, v32, v8");
+            
+            // C: y += PX8logf;
+            asm volatile("vfadd.vf v32, v32, %0" :: "r"(PX8logf));
+            
+            // C: y *= x;
+            asm volatile("vfmul.vv v32, v32, v8");
+            
+            // C: y += PX9logf;
+            asm volatile("vfadd.vf v32, v32, %0" :: "r"(PX9logf));
+            
+            /* res *= x2 * x (i.e., res *= x^3) */
+            // C: res *= x2 * x;
+            asm volatile("vfmul.vv v32, v32, v24");                 // res *= x2
+            asm volatile("vfmul.vv v32, v32, v8");                  // res *= x
+            
+            /* ===== FINAL FORMULA ===== */
+            
+            /* res += -2.12194440e-4f * fe */
+            // C: res += -2.12194440e-4f * fe;
+            asm volatile("vfmul.vf v40, v16, %0" :: "r"(const_c2)); // v40 = c2 * fe
+            asm volatile("vfadd.vv v32, v32, v40");                 // res += v40
+            
+            /* res += -0.5f * x2 */
+            // C: res += -0.5f * x2;
+            asm volatile("vfmul.vf v40, v24, %0" :: "r"(neg_const_half)); // v40 = -0.5 * x2
+            asm volatile("vfadd.vv v32, v32, v40");                    // res += v40
+            
+            /* res = x + res */
+            // C: res = x + res;
+            asm volatile("vfadd.vv v32, v8, v32");                  // res = x + res
+            
+            /* res += 0.693359375f * fe */
+            // C: res += 0.693359375f * fe;
+            asm volatile("vfmul.vf v40, v16, %0" :: "r"(const_c1)); // v40 = c1 * fe
+            asm volatile("vfadd.vv v32, v32, v40");                 // res += v40
 
-            /* z *= v4 */
-            asm volatile("vfmul.vv v5, v5, v4");
-            
-            /* Store result from v5 */
-            asm volatile("vse" XSTR(32) ".v v5, (%0)" :: "r"(vb_addr));
-            
+            // Store result
+            asm volatile("vse" XSTR(32) ".v v32, (%0)" :: "r"(vb_addr));
+
             /* Update pointers and length */
             vlen -= avl;
             va_addr += 4 * avl;
@@ -289,6 +380,7 @@ static inline void _softhier_vexp_vv_(uint32_t va_addr, uint32_t vb_addr, uint32
             "*c": f"_softhier_vmul_vs_({{rhs1}}, {{constant}}, {{lhs}}, {vector_width});",
             "/c": f"_softhier_vdiv_vs_({{rhs1}}, {{constant}}, {{lhs}}, {vector_width});",
             "exp": f"_softhier_vexp_vv_({{rhs1}}, {{lhs}}, {vector_width});",
+            "log": f"_softhier_vlog_vv_({{rhs1}}, {{lhs}}, {vector_width});",
         },
                                vector_width=vector_width,
                                vector_input_storage=dace.dtypes.StorageType.SoftHier_TCDM,
