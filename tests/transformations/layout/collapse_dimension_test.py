@@ -4,10 +4,10 @@ import numpy
 from dace.properties import CodeBlock
 import pytest
 
-from dace.transformation.layout.split_dimension import SplitDimensions
+from dace.transformation.layout.collapse_dimension import CollapseDimensions
 
 N = dace.symbol("N")
-
+M = dace.symbol("M")
 
 @dace.program
 def vadd(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N]):
@@ -58,81 +58,20 @@ def _add_interstate_access(sdfg: dace.SDFG, arr_name: str, arr: dace.data.Array)
     second_state.add_edge(t2, "_out", second_state.add_access("sc2"), None, dace.memlet.Memlet(expr=f"sc2[0]"))
 
 
-def test_vector_dim_split_with_block_size():
-    original_sdfg = vadd.to_sdfg()
-    transformed_sdfg = copy.deepcopy(original_sdfg)
-    transformed_sdfg.name = "vadd_split"
 
-    split_map = {
-        "A": ([True], [16]),
-        "B": ([True], [32]),
-    }
-
-    SplitDimensions(split_map=split_map).apply_pass(transformed_sdfg, {})
-    transformed_sdfg.validate()
-
-    _N = 16 * 32
-    A1 = numpy.random.rand(_N)
-    B1 = numpy.random.rand(_N)
-    C1 = numpy.random.rand(_N)
-    original_sdfg(A=A1, B=B1, C=C1, N=_N)
-
-    A2 = A1.reshape(_N // 16, 16).copy()
-    B2 = B1.reshape(_N // 32, 32).copy()
-    C2 = C1.copy()
-    transformed_sdfg(A=A2, B=B2, C=C2, N=_N)
-
-    assert numpy.array_equal(A1, A2.reshape(_N))
-    assert numpy.array_equal(B1, B2.reshape(_N))
-
-    if not numpy.array_equal(C2, C1):
-        print(C2 - C1)
-    assert numpy.array_equal(C2, C1)
-
-
-def test_matrix_dim_split_with_block_size():
-    original_sdfg = madd.to_sdfg()
-    transformed_sdfg = copy.deepcopy(original_sdfg)
-    transformed_sdfg.name = "madd_split"
-
-    split_map = {
-        "A": ([True, True], [16, 4]),
-        "B": ([True, True], [32, 4]),
-    }
-
-    SplitDimensions(split_map=split_map).apply_pass(transformed_sdfg, {})
-    transformed_sdfg.validate()
-
-    _N = 32 * 4 * 2
-    A1 = numpy.random.rand(_N, _N)
-    B1 = numpy.random.rand(_N, _N)
-    C1 = numpy.random.rand(_N, _N)
-    original_sdfg(A=A1, B=B1, C=C1, N=_N)
-
-    A2 = A1.reshape(_N // 16, 16, _N // 4, 4).transpose(0, 2, 1, 3).copy()
-    B2 = B1.reshape(_N // 32, 32, _N // 4, 4).transpose(0, 2, 1, 3).copy()
-    C2 = C1.copy()
-    transformed_sdfg(A=A2, B=B2, C=C2, N=_N)
-
-    assert numpy.array_equal(A1, A2.transpose(0, 2, 1, 3).reshape(_N, _N))
-    assert numpy.array_equal(B1, B2.transpose(0, 2, 1, 3).reshape(_N, _N))
-
-    if not numpy.array_equal(C2, C1):
-        print(C2 - C1)
-    assert numpy.array_equal(C2, C1)
-
-
-def test_tensor_dim_split_with_block_size():
+def test_tensor_add():
     original_sdfg = tadd.to_sdfg()
+    original_sdfg.name = "tensor_add"
     transformed_sdfg = copy.deepcopy(original_sdfg)
-    transformed_sdfg.name = "tadd_split"
+    transformed_sdfg.name = "tensor_add_collapsed"
 
-    split_map = {
-        "A": ([False, True, True], [1, 4, 4]),
-        "B": ([False, True, True], [1, 8, 8]),
+    collapse_map = {
+        "A": (0, 1,),
+        "B": (0, 1,),
+        "C": (0, 1,),
     }
 
-    SplitDimensions(split_map=split_map).apply_pass(transformed_sdfg, {})
+    CollapseDimensions(collapse_map=collapse_map).apply_pass(transformed_sdfg, {})
     transformed_sdfg.validate()
 
     _N = 16
@@ -141,30 +80,32 @@ def test_tensor_dim_split_with_block_size():
     C1 = numpy.random.rand(_N, _N, _N)
     original_sdfg(A=A1, B=B1, C=C1, N=_N)
 
-    A2 = A1.reshape(_N, _N // 4, 4, _N // 4, 4).transpose(0, 1, 3, 2, 4).copy()
-    B2 = B1.reshape(_N, _N // 8, 8, _N // 8, 8).transpose(0, 1, 3, 2, 4).copy()
+    A2 = A1.copy()
+    B2 = B1.copy()
     C2 = C1.copy()
     transformed_sdfg(A=A2, B=B2, C=C2, N=_N)
 
-    assert numpy.array_equal(A1, A2.transpose(0, 1, 3, 2, 4).reshape(_N, _N, _N))
-    assert numpy.array_equal(B1, B2.transpose(0, 1, 3, 2, 4).reshape(_N, _N, _N))
+    assert numpy.array_equal(A1, A2)
+    assert numpy.array_equal(B1, B2)
 
     if not numpy.array_equal(C2, C1):
         print(C2 - C1)
     assert numpy.array_equal(C2, C1)
 
 
-def test_tensor_blocked_dim_split_with_block_size():
+def test_tensor_add_with_tiling():
     original_sdfg = tadd_blocked.to_sdfg()
+    original_sdfg.name = "tensor_add_with_tiling"
     transformed_sdfg = copy.deepcopy(original_sdfg)
-    transformed_sdfg.name = "tadd_split"
+    transformed_sdfg.name = "tensor_add_with_tiling_collapsed"
 
-    split_map = {
-        "A": ([False, True, True], [1, 4, 4]),
-        "B": ([False, True, True], [1, 8, 8]),
+    collapse_map = {
+        "A": (0, 1,),
+        "B": (0, 1,),
+        "C": (0, 1,),
     }
 
-    SplitDimensions(split_map=split_map, verbose=False).apply_pass(transformed_sdfg, {})
+    CollapseDimensions(collapse_map=collapse_map, verbose=False).apply_pass(transformed_sdfg, {})
     transformed_sdfg.validate()
 
     _N = 16
@@ -173,34 +114,37 @@ def test_tensor_blocked_dim_split_with_block_size():
     C1 = numpy.random.rand(_N, _N, _N)
     original_sdfg(A=A1, B=B1, C=C1, N=_N)
 
-    A2 = A1.reshape(_N, _N // 4, 4, _N // 4, 4).transpose(0, 1, 3, 2, 4).copy()
-    B2 = B1.reshape(_N, _N // 8, 8, _N // 8, 8).transpose(0, 1, 3, 2, 4).copy()
+    A2 = A1.copy()
+    B2 = B1.copy()
     C2 = C1.copy()
     transformed_sdfg(A=A2, B=B2, C=C2, N=_N)
 
-    assert numpy.array_equal(A1, A2.transpose(0, 1, 3, 2, 4).reshape(_N, _N, _N))
-    assert numpy.array_equal(B1, B2.transpose(0, 1, 3, 2, 4).reshape(_N, _N, _N))
+    assert numpy.array_equal(A1, A2)
+    assert numpy.array_equal(B1, B2)
 
     if not numpy.array_equal(C2, C1):
         print(C2 - C1)
     assert numpy.array_equal(C2, C1)
 
 
-def test_matrix_dim_split_with_interstate_access():
+def test_matrix_add_with_interstate_access():
     original_sdfg = madd.to_sdfg()
+    original_sdfg.name = "matrix_add_with_iedge"
     transformed_sdfg = copy.deepcopy(original_sdfg)
-    transformed_sdfg.name = "madd_split"
+    transformed_sdfg.name = "matrix_add_with_iedge_collapsed"
     transformed_sdfg.validate()
     _add_interstate_access(sdfg=transformed_sdfg, arr_name="A", arr=transformed_sdfg.arrays["A"])
     transformed_sdfg.validate()
 
-    split_map = {
-        "A": ([True, True], [2, 4]),
-        "B": ([True, True], [2, 4]),
+    collapse_map = {
+        "A": (0, 1),
+        "B": (0, 1),
+        "B": (0, 1),
     }
 
-    SplitDimensions(split_map=split_map).apply_pass(transformed_sdfg, {})
+    CollapseDimensions(collapse_map=collapse_map).apply_pass(transformed_sdfg, {})
     transformed_sdfg.validate()
+
 
     _N = 16 * 4 * 2
     A1 = numpy.random.rand(_N, _N)
@@ -208,29 +152,95 @@ def test_matrix_dim_split_with_interstate_access():
     C1 = numpy.random.rand(_N, _N)
     original_sdfg(A=A1, B=B1, C=C1, N=_N)
 
-    A2 = A1.reshape(_N // 2, 2, _N // 4, 4).transpose(0, 2, 1, 3).copy()
-    B2 = B1.reshape(_N // 2, 2, _N // 4, 4).transpose(0, 2, 1, 3).copy()
+    A2 = A1.copy()
+    B2 = B1.copy()
     C2 = C1.copy()
     SC1 = numpy.random.rand(1)
     SC2 = numpy.random.rand(1)
     transformed_sdfg(A=A2, B=B2, C=C2, N=_N, sc1=SC1, sc2=SC2)
 
-    assert numpy.array_equal(SC1, SC2)
-
-    assert numpy.array_equal(A1, A2.transpose(0, 2, 1, 3).reshape(_N, _N))
-    assert numpy.array_equal(B1, B2.transpose(0, 2, 1, 3).reshape(_N, _N))
+    assert numpy.array_equal(A1, A2)
+    assert numpy.array_equal(B1, B2)
 
     if not numpy.array_equal(C2, C1):
         print(C2 - C1)
     assert numpy.array_equal(C2, C1)
+    assert numpy.array_equal(SC1, SC2)
+    assert numpy.array_equal(SC2[0], A2[2,2])
+    assert numpy.array_equal(SC1[0], A2[2,2])
+
+
+@dace.program
+def matrix_add(A: dace.float64[M, N], B: dace.float64[M, N], C: dace.float64[M, N]):
+    for i, j in dace.map[0:M:1, 0:N:1]:
+        C[i, j] = A[i, j] + B[i, j]
+
+def test_matrix_add():
+    sdfg1 = matrix_add.to_sdfg()
+    sdfg1.name = "matrix_add"
+    sdfg2 = copy.deepcopy(sdfg1)
+    sdfg2.name = "matrix_add"
+    CollapseDimensions(collapse_map={"A": (0, 1), "B": (0, 1), "C": (0, 1)}).apply_pass(sdfg2, {})
+
+    # Create test data
+    Mv, Nv = 64, 32
+    A = numpy.random.rand(Mv, Nv)
+    B = numpy.random.rand(Mv, Nv)
+    C1 = numpy.zeros((Mv, Nv))
+    C2 = numpy.zeros((Mv, Nv))
+
+    # Run original SDFG
+    sdfg1(A=A, B=B, C=C1, M=Mv, N=Nv)
+
+    # Run transformed SDFG
+    sdfg2(A=A, B=B, C=C2, M=Mv, N=Nv)
+
+    # Compare
+    if not numpy.allclose(C1, C2):
+        print("ERROR: Results differ!")
+        max_diff = numpy.max(numpy.abs(C1 - C2))
+        print("Max difference:", max_diff)
+        print("C1:", C1)
+        print("C2:", C2)
+    assert numpy.allclose(C1, C2)
+
+
+def test_matrix_add_partial():
+    sdfg1 = matrix_add.to_sdfg()
+    sdfg1.name = "matrix_add_partial"
+    sdfg2 = copy.deepcopy(sdfg1)
+    sdfg2.name = "matrix_add_partial_collapsed"
+    CollapseDimensions(collapse_map={"A": (0, 1), }).apply_pass(sdfg2, {})
+
+    # Create test data
+    Mv, Nv = 64, 32
+    A = numpy.random.rand(Mv, Nv)
+    B = numpy.random.rand(Mv, Nv)
+    C1 = numpy.zeros((Mv, Nv))
+    C2 = numpy.zeros((Mv, Nv))
+
+    # Run original SDFG
+    sdfg1(A=A, B=B, C=C1, M=Mv, N=Nv)
+
+    # Run transformed SDFG
+    sdfg2(A=A, B=B, C=C2, M=Mv, N=Nv)
+
+    # Compare
+    if not numpy.allclose(C1, C2):
+        print("ERROR: Results differ!")
+        max_diff = numpy.max(numpy.abs(C1 - C2))
+        print("Max difference:", max_diff)
+        print("C1:", C1)
+        print("C2:", C2)
+    assert numpy.allclose(C1, C2)
 
 
 if __name__ == "__main__":
     # Basic tests
-    test_vector_dim_split_with_block_size()
-    test_matrix_dim_split_with_block_size()
-    test_tensor_dim_split_with_block_size()
+    test_matrix_add()
+    test_matrix_add_partial()
+    test_tensor_add()
     # Blocked shape tests (For the perfect match optimization)
-    test_tensor_blocked_dim_split_with_block_size()
+    test_tensor_add_with_tiling()
     # Interstate edge tests
-    test_matrix_dim_split_with_interstate_access()
+    test_matrix_add_with_interstate_access()

@@ -227,10 +227,10 @@ def test_matrix_dim_split_with_interstate_access():
 
 if __name__ == "__main__":
     # Basic tests
-    #test_vector_dim_split_with_block_size()
-    #test_matrix_dim_split_with_block_size()
-    #test_tensor_dim_split_with_block_size()
+    test_vector_dim_split_with_block_size()
+    test_matrix_dim_split_with_block_size()
+    test_tensor_dim_split_with_block_size()
     # Blocked shape tests (For the perfect match optimization)
-    #test_tensor_blocked_dim_split_with_block_size()
+    test_tensor_blocked_dim_split_with_block_size()
     # Interstate edge tests
     test_matrix_dim_split_with_interstate_access()

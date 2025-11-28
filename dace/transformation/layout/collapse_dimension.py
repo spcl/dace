@@ -30,9 +30,7 @@ class CollapseDimensions(ppl.Pass):
 
     def _collapse_dimensions(self, sdfg: dace.SDFG, array_name: str, array: dace.data.Array, dimensions_to_collapse: Tuple[int, int]):
         old_shape = copy.deepcopy(array.shape)
-        old_strides = copy.deepcopy(array.strides)
         array._old_shape = old_shape
-        array._old_strides = old_strides
 
         new_shape = []
         for i, dim in enumerate(old_shape):
@@ -66,7 +64,7 @@ class CollapseDimensions(ppl.Pass):
                                 raise Exception("Partial subsets passed from nestedSDFGs are not supported yet")
 
     def _collapse_memlets(self, sdfg: dace.SDFG, array_name: str, array: dace.data.Array, dimensions_to_collapse: Tuple[int, int]):
-        old_strides = array._old_strides
+        old_shape = array._old_shape
 
         for state in sdfg.all_states():
             for node in state.nodes():
@@ -90,8 +88,8 @@ class CollapseDimensions(ppl.Pass):
                                 next_b,next_e,next_s = subset[i+1]
                                 assert s == 1
                                 assert next_s == 1
-                                new_b = b * old_strides[i] + next_b
-                                new_e = e * old_strides[i] + next_e
+                                new_b = b * old_shape[i+1] + next_b
+                                new_e = e * old_shape[i+1] + next_e
                                 new_s = s
                                 new_range_list.append((new_b, new_e, new_s))
                             elif i == dimensions_to_collapse[1]:
@@ -105,8 +103,8 @@ class CollapseDimensions(ppl.Pass):
                                 next_b,next_e,next_s = subset[i+1]
                                 assert s == 1
                                 assert next_s == 1
-                                new_b = b * old_strides[i] + next_b
-                                new_e = e * old_strides[i] + next_e
+                                new_b = b * old_shape[i+1] + next_b
+                                new_e = e * old_shape[i+1] + next_e
                                 new_s = s
                                 new_range_list.append((new_b, new_e, new_s))
                             elif i == dimensions_to_collapse[1]:
@@ -160,6 +158,7 @@ class CollapseDimensions(ppl.Pass):
             idxs[collapse_idx] = new_idx
 
             # keep_idx stays unchanged (as required)
+            del idxs[keep_idx]
 
             new_idx_list = ", ".join(idxs)
             return f"{arr}[{new_idx_list}]"
@@ -167,15 +166,15 @@ class CollapseDimensions(ppl.Pass):
         return pattern.sub(repl, text)
 
     def _collapse_interstate_edges(self, sdfg: dace.SDFG, array_name: str, array: dace.data.Array, dimensions_to_collapse: Tuple[int, int]):
-        old_strides = array._old_strides
+        old_shape = array._old_shape
 
         # All interstate edge accesses neet be of form <array_name>[d0, d1, d2]
         # With strides [s0, s1, s2]
         # New interstate access needs to be of form [d0 * s1 + d2, d2]
         for edge in sdfg.all_interstate_edges():
             new_assignments = dict()
-            for k, v in edge.data.assignments:
-                new_v = self._collapse_indices(v, dimensions_to_collapse[0], dimensions_to_collapse[1], old_strides[dimensions_to_collapse[0]])
+            for k, v in edge.data.assignments.items():
+                new_v = self._collapse_indices(v, array_name, dimensions_to_collapse[0], dimensions_to_collapse[1], old_shape[dimensions_to_collapse[1]])
                 new_assignments[k] = new_v
             edge.data.assignments = new_assignments
 
