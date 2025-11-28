@@ -2387,6 +2387,7 @@ class SDFG(ControlFlowRegion):
         # Importing these outside creates an import loop
         from dace.codegen import codegen, compiler
 
+        print("Compile 0")
         # Compute build folder path before running codegen
         build_folder = self.build_folder
 
@@ -2399,6 +2400,7 @@ class SDFG(ControlFlowRegion):
         ############################
         # DaCe Compilation Process #
 
+        print("Compile 1")
         if self.regenerate_code or not os.path.isdir(build_folder):
             # Clone SDFG as the other modules may modify its contents
             sdfg = copy.deepcopy(self)
@@ -2439,6 +2441,7 @@ class SDFG(ControlFlowRegion):
             sdfg = self
 
         # Compile the code and get the shared library path
+        print("Compile 2")
         shared_library = compiler.configure_and_compile(program_folder, sdfg.name)
 
         # If provided, save output to path or filename
@@ -2907,12 +2910,15 @@ class SDFG(ControlFlowRegion):
 
         ################################
         # DaCe Code Generation Process #
+        print("Gen code 1")
         sdfg = copy.deepcopy(self)
 
         # Fill in scope entry/exit connectors
+        print("Gen code 2")
         sdfg.fill_scope_connectors()
 
         # Generate code for the program by traversing the SDFG state by state
+        print("Gen code 3")
         program_code = codegen.generate_code(sdfg)
 
         return program_code
