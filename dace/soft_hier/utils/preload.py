@@ -156,6 +156,7 @@ def make_preload_elf_hbm_interleaved_new(output_file_path,
         num_channels = get_num_channels(placement_scheme)
 
         # Basic tile check
+        non_tiled_shapes = array.shape[:-2]
         array_shape = array.shape
         tile_height = array_shape[0] // split_scheme[0]
         tile_length = array_shape[1] // split_scheme[1]
@@ -224,9 +225,9 @@ def make_preload_elf_hbm_interleaved_new(output_file_path,
             num_channels = get_num_channels(placement_scheme)
             array_shape = array.shape
             print(f"array_shape: {array_shape}")
-            tile_height = array_shape[0] // split_scheme[0]
+            tile_height = array_shape[-2] // split_scheme[0]
             print(f"tile_height: {tile_height}")
-            tile_length = array_shape[1] // split_scheme[1]
+            tile_length = array_shape[-1] // split_scheme[1]
             print(f"tile_length: {tile_length}")
             tile_size = tile_length * tile_height * np.dtype(array.dtype).itemsize
             print(f"tile_size: {tile_size}")
@@ -264,8 +265,10 @@ def make_preload_elf_hbm_interleaved_new(output_file_path,
     # replace the args in split_arrays with new args
     split_arrays[0] = args
 
+    print("[Pipeline Info] Call make preload elf")
     make_preload_elf(output_file_path, split_arrays, split_arrays_start_addresses, hbm_node_addr_base,
                      hbm_node_addr_space)
+    print("[Pipeline Info] Called make preload elf")
 
     return args
 
