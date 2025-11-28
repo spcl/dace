@@ -1751,9 +1751,11 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                         hbm_interleaved_args[aname] = arg
                     else:
                         # tile height is the array itself, width is the width of the array itself
-                        assert len(data_desc.shape) <= 2
                         assert data_desc.is_packed_c_strides()
-                        if len(data_desc.shape) == 2:
+                        if len(data_desc.shape) > 2:
+                            self.scope_entry_stream.write(f"size_t {aname}_tile_height = {data_desc.shape[-2]};", cfg, state_id, state_id)
+                            self.scope_entry_stream.write(f"size_t {aname}_tile_width = {data_desc.shape[-1]};", cfg, state_id, state_id)
+                        elif len(data_desc.shape) == 2:
                             self.scope_entry_stream.write(f"size_t {aname}_tile_height = {data_desc.shape[0]};", cfg, state_id, state_id)
                             self.scope_entry_stream.write(f"size_t {aname}_tile_width = {data_desc.shape[1]};", cfg, state_id, state_id)
                         else:
@@ -1790,14 +1792,15 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                         hbm_interleaved_args[aname] = arg
                     else:
                         # tile height is the array itself, width is the width of the array itself
-                        assert len(data_desc.shape) <= 2
                         assert data_desc.is_packed_c_strides()
-                        if len(data_desc.shape) == 2:
+                        if len(data_desc.shape) > 2:
+                            self.scope_entry_stream.write(f"size_t {aname}_tile_height = {data_desc.shape[-2]};", cfg, state_id, state_id)
+                            self.scope_entry_stream.write(f"size_t {aname}_tile_width = {data_desc.shape[-1]};", cfg, state_id, state_id)
+                        elif len(data_desc.shape) == 2:
                             self.scope_entry_stream.write(f"size_t {aname}_tile_height = {data_desc.shape[0]};", cfg, state_id, state_id)
                             self.scope_entry_stream.write(f"size_t {aname}_tile_width = {data_desc.shape[1]};", cfg, state_id, state_id)
                         else:
                             self.scope_entry_stream.write(f"size_t {aname}_tile_width = {data_desc.shape[1]};", cfg, state_id, state_id)
-
 
             prototype_kernel_args[aname] = arg
 
@@ -1976,18 +1979,14 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                 
                 if arr.is_hbm_interleaved is False:
                     assert arr.is_packed_c_strides()
-                    dump_str += f"size_t {arr_name}_tile_width = {arr.shape[1]};\n"
-                    dump_str += f"size_t {arr_name}_tile_height = {arr.shape[0]};\n"
+                    dump_str += f"//size_t {arr_name}_tile_width = {arr.shape[-1]};\n"
+                    dump_str += f"//size_t {arr_name}_tile_height = {arr.shape[-2]};\n"
                 
                 dump_str += "for (int i = 0; i < HBM_NUM_CHANNELS; i++){\n"
-                dump_str += f'//printf("Dumping file: %s \\n", {arr_name});\n'
-                #dump_str += f"static_assert(sizeof({arr.dtype.ctype}) == 2);\n"
                 dump_str += f"unsigned long tile_size = {arr_name}_tile_width * {arr_name}_tile_height * sizeof({arr.dtype.ctype});\n"
                 dump_str += f"unsigned long num_tiles = tiles_per_channel_{arr_name}[i];\n"
                 dump_str += "for (int j = 0; j < num_tiles; j++){\n"
                 dump_str += f"flex_dump_hbm({arr_name} + (i * HBM_ADDRESS_SPACE) + (j * tile_size), tile_size);\n"
-                dump_str += f'//printf("Dumped file: %s. Renaming dump file.\\n", {arr_name});\n'
-                dump_str += f'//printf("Dumping file: %s \\n", {arr_name});\n'
                 dump_str += "}\n"
                 dump_str += "}\n"
 
