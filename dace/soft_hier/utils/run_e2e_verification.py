@@ -191,7 +191,8 @@ def compare(hardware_config: HardwareConfig,
             sdfg_results: Dict[str, Any],
             interleave_handlers: Dict[str, InterleaveHandler],
             sdfg: dace.SDFG,
-            tolerance: float = 1e-5) -> Dict[str, Any]:
+            tolerance: float = 1e-5,
+            skip_numerical_verification: bool = False) -> Dict[str, Any]:
     """
     Step 5: Compare NumPy reference with SDFG results
 
@@ -210,10 +211,20 @@ def compare(hardware_config: HardwareConfig,
             'execution_time_ns': int (if available)
         }
     """
+
+    if skip_numerical_verification:
+        print("=" * 80)
+        print("STEP 5: Compare Results")
+        print("=" * 80)
+        print("!! Skipping because `skip_numerical_verification` was set to True (non default) !!")
+        return {'all_match': True, 'details': {}}
+
     all_match = True
     print("=" * 80)
     print("STEP 5: Compare Results")
     print("=" * 80)
+
+
 
     dump_path = f"{_get_gvsoc_path()}/dump_0"
 
@@ -337,7 +348,8 @@ def run_e2e_verification(hw_config: HardwareConfig,
                          interleave_handlers: Dict[str, Any],
                          numpy_fn: Callable,
                          sdfg_fn: Callable,
-                         tolerance: float = 1e-3) -> Dict[str, Any]:
+                         tolerance: float = 1e-3,
+                         skip_numerical_verification: bool = False) -> Dict[str, Any]:
     # Step 1 Setup
     print("[Pipeline Info] Setup SoftHier HW and DaCe ENV")
     setup_hw_env_dace(hw_config)
@@ -368,7 +380,7 @@ def run_e2e_verification(hw_config: HardwareConfig,
     #        'interleave_handlers': interleave_handlers
     #    }
     #elif hw_config.test_mode == 'functional':
-    comparison = compare(hw_config, numpy_data, sdfg_data, interleave_handlers, sdfg, tolerance)
+    comparison = compare(hw_config, numpy_data, sdfg_data, interleave_handlers, sdfg, tolerance, skip_numerical_verification)
     return {
         'all_match': comparison['all_match'],
         'details': {},
