@@ -143,16 +143,9 @@ def _get_sdfg_with_memlet_tree():
 
 def test_memlet_tree():
     sdfg = _get_sdfg_with_memlet_tree()
-    sdfg.apply_transformations_once_everywhere(
-        MapTiling,
-        validate=True,
-        validate_all=True,
-        options={
-            "tile_sizes": (2, ),
-        },
-        print_report=True,
-    )
-    sdfg.validate()
+    all_maps_and_states = {(n, g) for n, g in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)}
+    for map_entry, state in all_maps_and_states:
+        MapTiling.apply_to(state.sdfg, {}, 0, True, map_entry=map_entry)
 
 
 if __name__ == '__main__':
