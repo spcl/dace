@@ -1918,10 +1918,28 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
         self._localcode.write('''flex_barrier_xy_init();
                 flex_global_barrier_xy();''')
         start_address = 0
+        offset = 0
         for k, v in prototype_kernel_args.items():
-            self._localcode.write(f'{k} = ((uint32_t *)(hbm_addr({start_address})))[0];')
-            start_address += 4
-            #self._localcode.write(f'{k} = hbm_addr({k});')
+            desc = state.sdfg.arrays[k]
+            if desc.storage == dace.dtypes.StorageType.SoftHier_HBM:
+                self._localcode.write(f'{k} = ((uint32_t *)(hbm_addr({start_address})))[0];')
+                start_address += 4
+                #self._localcode.write(f'{k} = hbm_addr({k});')
+            else:
+                assert desc.storage == dace.dtypes.StorageType.SoftHier_TCDM
+                self._localcode.write(f'{k} = {offset};')
+                mapping = {
+                    "float": ctypes.c_float,
+                    "double": ctypes.c_double,
+                    "int32_t": ctypes.c_int32,
+                    "int64_t": ctypes.c_int64,
+                    "uint32_t": ctypes.c_uint32,
+                    "uint64_t": ctypes.c_uint64,
+                }
+                ctype = mapping[desc.dtype.ctype]   # convert your string to a ctypes type
+                size = ctypes.sizeof(ctype)
+                offset += desc.total_size * size
+                #start_address += 4
             pass
 
         for k, v in hbm_interleaved_args.items():
