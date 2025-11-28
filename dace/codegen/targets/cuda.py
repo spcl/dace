@@ -1718,21 +1718,29 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
         node = dfg_scope.source_nodes()[0]
 
-        # Set kernel launch bounds
-        if node.gpu_launch_bounds == "-1":
-            launch_bounds = ''
-        elif node.gpu_launch_bounds == "0":
-            if any(symbolic.issymbolic(b) for b in block_dims):
+        # Set maxnreg and launch bounds
+        assert node.gpu_maxnreg is not None and node.gpu_maxnreg >= 0
+        if node.gpu_maxnreg == 0:
+            maxnreg_str = ''
+            # Set kernel launch bounds
+            if node.gpu_launch_bounds == "-1":
                 launch_bounds = ''
+            elif node.gpu_launch_bounds == "0":
+                if any(symbolic.issymbolic(b) for b in block_dims):
+                    launch_bounds = ''
+                else:
+                    launch_bounds = f'__launch_bounds__({_topy(prod(block_dims))})'
             else:
-                launch_bounds = f'__launch_bounds__({_topy(prod(block_dims))})'
+                launch_bounds = f'__launch_bounds__({node.gpu_launch_bounds})'
         else:
-            launch_bounds = f'__launch_bounds__({node.gpu_launch_bounds})'
+            maxnreg_str = f'__maxnreg__({node.gpu_maxnreg})'
+            launch_bounds = ''
 
         # Write kernel prototype
         self._localcode.write(
-            '__global__ void %s %s(%s) {\n' %
-            (launch_bounds, kernel_name, ', '.join(kernel_args_typed + extra_kernel_args_typed)), cfg, state_id, node)
+            '__global__ void %s %s %s(%s) {\n' %
+            (maxnreg_str, launch_bounds, kernel_name, ', '.join(kernel_args_typed + extra_kernel_args_typed)), cfg,
+            state_id, node)
 
         # Write constant expressions in GPU code
         self._frame.generate_constants(sdfg, self._localcode)
