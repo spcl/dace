@@ -1979,8 +1979,8 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                 
                 if arr.is_hbm_interleaved is False:
                     assert arr.is_packed_c_strides()
-                    dump_str += f"//size_t {arr_name}_tile_width = {arr.shape[-1]};\n"
-                    dump_str += f"//size_t {arr_name}_tile_height = {arr.shape[-2]};\n"
+                    dump_str += f"size_t {arr_name}_tile_width = {arr.shape[-1]};\n"
+                    dump_str += f"size_t {arr_name}_tile_height = {arr.shape[-2]};\n"
                 
                 dump_str += "for (int i = 0; i < HBM_NUM_CHANNELS; i++){\n"
                 dump_str += f"unsigned long tile_size = {arr_name}_tile_width * {arr_name}_tile_height * sizeof({arr.dtype.ctype});\n"
