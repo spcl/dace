@@ -20,7 +20,7 @@ class PartialDict(defaultdict):
         return "{" + key + "}"
     
 class VectorizeSoftHier(ppl.Pipeline):
-    _softhier_global_code = '''
+    _softhier_global_code = f'''
 #ifndef _SOFTHIER_MACROS_DEFINED
 #define _SOFTHIER_MACROS_DEFINED
 #define STR(x) #x
@@ -177,94 +177,94 @@ static const float LOG2EF = 1.44269504088896341f;
 static inline void _softhier_vexp_vv_(uint32_t va_addr, uint32_t vb_addr, uint32_t vector_width)
 {{
     if (flex_is_first_core()) {{
-    uint32_t vlen = vector_width;
-    uint32_t avl;
-    
-    /* Constants */
-    const float const_log2ef = LOG2EF;
-    const float const_05 = 0.5f;
-    const float const_c1f = C1F;
-    const float const_c2f = C2F;
-    const float const_px1 = PX1expf;
-    const float const_px2 = PX2expf;
-    const float const_px3 = PX3expf;
-    const float const_px4 = PX4expf;
-    const float const_px5 = PX5expf;
-    const float const_px6 = PX6expf;
-    const float const_1 = 1.0f;
-    const float const_maxlogf = MAXLOGF;
-    const float const_minlogf = MINLOGF;
-    const float const_inf = INFINITY;
-    const float const_zero = 0.0f;
-    const float const_nan = NAN;
-    const uint32_t const_bias = 0x7f;
-    const uint32_t const_shift = 23;
-    
-    while(vlen > 0) {{
-        /* Set vector length */
-        asm volatile("vsetvli %0, %1, e" XSTR(32) ", m8, ta, ma" : "=r"(avl) : "r"(vlen));
+        uint32_t vlen = vector_width;
+        uint32_t avl;
         
-        /* Load input vector into v0 */
-        asm volatile("vle" XSTR(32) ".v v0, (%0)" :: "r"(va_addr));
+        /* Constants */
+        const float const_log2ef = LOG2EF;
+        const float const_05 = 0.5f;
+        const float const_c1f = C1F;
+        const float const_c2f = C2F;
+        const float const_px1 = PX1expf;
+        const float const_px2 = PX2expf;
+        const float const_px3 = PX3expf;
+        const float const_px4 = PX4expf;
+        const float const_px5 = PX5expf;
+        const float const_px6 = PX6expf;
+        const float const_1 = 1.0f;
+        const float const_maxlogf = MAXLOGF;
+        const float const_minlogf = MINLOGF;
+        const float const_inf = INFINITY;
+        const float const_zero = 0.0f;
+        const float const_nan = NAN;
+        const uint32_t const_bias = 0x7f;
+        const uint32_t const_shift = 23;
         
-        /* v1 = LOG2EF * v0 */
-        /* v1 = v1 + 0.5 */
-        /* v1 = floor(v1) */
-        asm volatile("vfmul.vf v1, v0, %0" :: "f"(const_log2ef));
-        asm volatile("vfadd.vf v1, v1, %0" :: "f"(const_05));
-        asm volatile("vfcvt.x.f.v v1, v1");
-        asm volatile("vfcvt.f.x.v v1, v1");  // z in v1
-        
-        /* v2 = v1 (z) * C1F */
-        /* v3 -= v2 */
-        asm volatile("vfmul.vf v2, v1, %0" :: "f"(const_c1f));
-        asm volatile("vfsub.vv v3, v3, v2");
-        
-        /* v2 = v1 (z) * C2F */
-        /* v3 (x) -= v2 */
-        asm volatile("vfmul.vf v2, v1, %0" :: "f"(const_c2f));
-        asm volatile("vfsub.vv v3, v3, v2");
-        
-        /* v4 (n) = (int)z */
-        asm volatile("vfcvt.x.f.v v4, v1");
-        
-        /* x2 (v4) = x * x (v3) */
-        asm volatile("vfmul.vv v4, v3, v3");
-        
-        /* Polynomial in v5 (z) = x*PX1 + PX2 */
-        asm volatile("vfmul.vf v5, v0, %0" :: "f"(const_px1));
-        asm volatile("vfadd.vf v5, v5, %0" :: "f"(const_px2));
-        asm volatile("vfmul.vv v5, v5, v0");  // z *= x
-        asm volatile("vfadd.vf v5, v5, %0" :: "f"(const_px3));
-        asm volatile("vfmul.vv v5, v5, v0");  // z *= x
-        asm volatile("vfadd.vf v5, v5, %0" :: "f"(const_px4));
-        asm volatile("vfmul.vv v5, v5, v0");  // z *= x
-        asm volatile("vfadd.vf v5, v5, %0" :: "f"(const_px5));
-        asm volatile("vfmul.vv v5, v5, v0");  // z *= x
-        asm volatile("vfadd.vf v5, v5, %0" :: "f"(const_px6));
-        asm volatile("vfmul.vv v5, v5, v4");  // z *= x2
-        
-        /* v5 += x + 1.0 */
-        asm volatile("vfadd.vf v5, v5, %0" :: "f"(const_1));  // z += 1.0
-        asm volatile("vfadd.vv v5, v5, v3");                   // z += x
-        
-        /* Build 2^n in v4: (n (v4) + 0x7f) << 23 */
-        asm volatile("vadd.vx v4, v4, %0" :: "r"(const_bias));
-        asm volatile("vsll.vx v4, v4, %0" :: "r"(const_shift));
+        while(vlen > 0) {{
+            /* Set vector length */
+            asm volatile("vsetvli %0, %1, e" XSTR(32) ", m8, ta, ma" : "=r"(avl) : "r"(vlen));
+            
+            /* Load input vector into v0 */
+            asm volatile("vle" XSTR(32) ".v v0, (%0)" :: "r"(va_addr));
+            
+            /* v1 = LOG2EF * v0 */
+            /* v1 = v1 + 0.5 */
+            /* v1 = floor(v1) */
+            asm volatile("vfmul.vf v1, v0, %0" :: "f"(const_log2ef));
+            asm volatile("vfadd.vf v1, v1, %0" :: "f"(const_05));
+            asm volatile("vfcvt.x.f.v v1, v1");
+            asm volatile("vfcvt.f.x.v v1, v1");  // z in v1
+            
+            /* v2 = v1 (z) * C1F */
+            /* v3 -= v2 */
+            asm volatile("vfmul.vf v2, v1, %0" :: "f"(const_c1f));
+            asm volatile("vfsub.vv v3, v3, v2");
+            
+            /* v2 = v1 (z) * C2F */
+            /* v3 (x) -= v2 */
+            asm volatile("vfmul.vf v2, v1, %0" :: "f"(const_c2f));
+            asm volatile("vfsub.vv v3, v3, v2");
+            
+            /* v4 (n) = (int)z */
+            asm volatile("vfcvt.x.f.v v4, v1");
+            
+            /* x2 (v4) = x * x (v3) */
+            asm volatile("vfmul.vv v4, v3, v3");
+            
+            /* Polynomial in v5 (z) = x*PX1 + PX2 */
+            asm volatile("vfmul.vf v5, v0, %0" :: "f"(const_px1));
+            asm volatile("vfadd.vf v5, v5, %0" :: "f"(const_px2));
+            asm volatile("vfmul.vv v5, v5, v0");  // z *= x
+            asm volatile("vfadd.vf v5, v5, %0" :: "f"(const_px3));
+            asm volatile("vfmul.vv v5, v5, v0");  // z *= x
+            asm volatile("vfadd.vf v5, v5, %0" :: "f"(const_px4));
+            asm volatile("vfmul.vv v5, v5, v0");  // z *= x
+            asm volatile("vfadd.vf v5, v5, %0" :: "f"(const_px5));
+            asm volatile("vfmul.vv v5, v5, v0");  // z *= x
+            asm volatile("vfadd.vf v5, v5, %0" :: "f"(const_px6));
+            asm volatile("vfmul.vv v5, v5, v4");  // z *= x2
+            
+            /* v5 += x + 1.0 */
+            asm volatile("vfadd.vf v5, v5, %0" :: "f"(const_1));  // z += 1.0
+            asm volatile("vfadd.vv v5, v5, v3");                   // z += x
+            
+            /* Build 2^n in v4: (n (v4) + 0x7f) << 23 */
+            asm volatile("vadd.vx v4, v4, %0" :: "r"(const_bias));
+            asm volatile("vsll.vx v4, v4, %0" :: "r"(const_shift));
 
-        asm volatile("vfcvt.f.x.v v4, v4");  // cast n (v4) to float
+            asm volatile("vfcvt.f.x.v v4, v4");  // cast n (v4) to float
 
-        /* z *= v4 */
-        asm volatile("vfmul.vv v5, v5, v4");
-        
-        /* Store result from v5 */
-        asm volatile("vse" XSTR(32) ".v v5, (%0)" :: "r"(vb_addr));
-        
-        /* Update pointers and length */
-        vlen -= avl;
-        va_addr += 4 * avl;
-        vb_addr += 4 * avl;
-    }}
+            /* z *= v4 */
+            asm volatile("vfmul.vv v5, v5, v4");
+            
+            /* Store result from v5 */
+            asm volatile("vse" XSTR(32) ".v v5, (%0)" :: "r"(vb_addr));
+            
+            /* Update pointers and length */
+            vlen -= avl;
+            va_addr += 4 * avl;
+            vb_addr += 4 * avl;
+        }}
     }}
 }}
 '''
@@ -282,13 +282,13 @@ static inline void _softhier_vexp_vv_(uint32_t va_addr, uint32_t vb_addr, uint32
                  no_copy_out: bool = True,
                  dtype: dace.typeclass = dace.float32):
         vectorizer = Vectorize(templates={
-            "+": "_softhier_vadd_vv_({rhs1}, {rhs2}, {lhs}, {vector_width});".format_map(PartialDict(vector_width=vector_width)),
-            "*": "_softhier_vmul_vv_({rhs1}, {rhs2}, {lhs}, {vector_width});".format_map(PartialDict(vector_width=vector_width)),
-            "-": "_softhier_vsub_vv_({rhs1}, {rhs2}, {lhs}, {vector_width});".format_map(PartialDict(vector_width=vector_width)),
-            "+c": "_softhier_vadd_vs_({rhs1}, {constant}, {lhs}, {vector_width});".format_map(PartialDict(vector_width=vector_width)),
-            "*c": "_softhier_vmul_vs_({rhs1}, {constant}, {lhs}, {vector_width});".format_map(PartialDict(vector_width=vector_width)),
-            "/c": "_softhier_vdiv_vs_({rhs1}, {constant}, {lhs}, {vector_width});".format_map(PartialDict(vector_width=vector_width)),
-            "exp": "_softhier_vexp_vv_({rhs1}, {lhs}, {vector_width});".format_map(PartialDict(vector_width=vector_width)),
+            "+": f"_softhier_vadd_vv_({{rhs1}}, {{rhs2}}, {{lhs}}, {vector_width});",
+            "*": f"_softhier_vmul_vv_({{rhs1}}, {{rhs2}}, {{lhs}}, {vector_width});",
+            "-": f"_softhier_vsub_vv_({{rhs1}}, {{rhs2}}, {{lhs}}, {vector_width});",
+            "+c": f"_softhier_vadd_vs_({{rhs1}}, {{constant}}, {{lhs}}, {vector_width});",
+            "*c": f"_softhier_vmul_vs_({{rhs1}}, {{constant}}, {{lhs}}, {vector_width});",
+            "/c": f"_softhier_vdiv_vs_({{rhs1}}, {{constant}}, {{lhs}}, {vector_width});",
+            "exp": f"_softhier_vexp_vv_({{rhs1}}, {{lhs}}, {vector_width});",
         },
                                vector_width=vector_width,
                                vector_input_storage=dace.dtypes.StorageType.SoftHier_TCDM,

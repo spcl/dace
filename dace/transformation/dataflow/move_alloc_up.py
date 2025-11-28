@@ -10,7 +10,8 @@ import copy
 import itertools
 
 
-def offset_memlets(state: dace.SDFGState, offsets: List[Any], entry_node: dace.nodes.MapEntry, name: str):
+def offset_memlets(state: dace.SDFGState, offsets: List[Any],
+                   entry_node: dace.nodes.MapEntry, name: str):
     all_nodes_between = state.all_nodes_between(entry_node, state.exit_node(entry_node))
     all_edges = state.all_edges(*all_nodes_between)
     for edge in set(all_edges):
@@ -21,16 +22,23 @@ def offset_memlets(state: dace.SDFGState, offsets: List[Any], entry_node: dace.n
             continue
 
         old_subset = [(b, e, s) for (b, e, s) in edge.data.subset]
+        print("from", [(str(b),str(e),str(s)) for (b,e,s) in old_subset])
 
         if len(offsets) > len(old_subset):
-            for _ in range(len(offsets) - len(old_subset)):
-                old_subset.insert(0, (dace.symbolic.SymExpr(0), dace.symbolic.SymExpr(0), 1))
+            new_subset = list()
+            for _i in range(len(offsets) - len(old_subset)):
+                parent_map = state.entry_node(edge.src) if not isinstance(edge.src, dace.nodes.MapEntry) else edge.src
+                params = parent_map.map.params
+                param = params[_i]
+                new_subset.append((dace.symbolic.SymExpr(param), dace.symbolic.SymExpr(param), 1))
 
-        if len(offsets) == len(old_subset):
+            new_subset = new_subset + [(b + offset, e + offset, s) for offset, (b, e, s) in zip(offsets[len(offsets) - len(old_subset):], old_subset)]
+        elif len(offsets) == len(old_subset):
             new_subset = [(b + offset, e + offset, s) for offset, (b, e, s) in zip(offsets, old_subset)]
         else:
             raise Exception("hmm")
 
+        print("to", new_subset)
         edge.data = dace.memlet.Memlet(data=edge.data.data, subset=dace.subsets.Range(new_subset))
 
 
@@ -78,6 +86,7 @@ def move_access_node_up(state: dace.SDFGState, access_node: dace.nodes.AccessNod
     new_begs = [b for (b, e, s) in lvl2_ie.data.subset]
     print(new_begs)
     if do_offset_memlets:
+        print(f"Offset {dataname} with {new_begs} starting from {lvl2_map_entry}")
         offset_memlets(state, new_begs, lvl2_map_entry, dataname)
 
 
