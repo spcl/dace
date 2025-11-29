@@ -477,7 +477,7 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
 
     # Compare results
     for name in arrays.keys():
-        assert numpy.allclose(arrays_orig[name], arrays_vec[name], atol=1e-12), \
+        assert numpy.allclose(arrays_orig[name], arrays_vec[name], rtol=1e-32), \
             f"{name} Diff: {arrays_orig[name] - arrays_vec[name]}"
         if exact is not None:
             diff = arrays_vec[name] - exact
