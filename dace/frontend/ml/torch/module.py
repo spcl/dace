@@ -25,11 +25,20 @@ except ImportError:
 
 try:
     import onnx
-    from dace.transformation.onnx import ConstantFolding
     ONNX_AVAILABLE = True
 except ImportError:
     onnx = None
     ONNX_AVAILABLE = False
+
+# ConstantFolding requires both torch and onnx, so import it separately
+# after we know both are available
+if TORCH_AVAILABLE and ONNX_AVAILABLE:
+    try:
+        from dace.transformation.onnx import ConstantFolding
+    except ImportError:
+        ConstantFolding = None
+else:
+    ConstantFolding = None
 
 from dace import data
 from dace.codegen import compiled_sdfg
@@ -359,9 +368,10 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
                 self.sdfg.validate()
 
                 # Apply constant folding pass
-                self.sdfg.apply_transformations_repeated([ConstantFolding],
-                                                         validate=True,
-                                                         print_report=logging.root.level <= logging.DEBUG)
+                if ConstantFolding is not None:
+                    self.sdfg.apply_transformations_repeated([ConstantFolding],
+                                                             validate=True,
+                                                             print_report=logging.root.level <= logging.DEBUG)
 
                 for _, hook in self.post_onnx_hooks.items():
                     hook(self)

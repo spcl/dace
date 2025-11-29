@@ -106,6 +106,16 @@ def tensor_init_for_desc(name: str, desc: data.Data, clean_weights: Dict[str, to
 
         # Format the values based on the data type
         def format_value(v, dtype):
+            import math
+            # Handle special float values (inf, -inf, nan)
+            if isinstance(v, float):
+                if math.isinf(v):
+                    if v > 0:
+                        return 'std::numeric_limits<float>::infinity()' if dtype in [dt.float32, dt.float16] else 'std::numeric_limits<double>::infinity()'
+                    else:
+                        return '-std::numeric_limits<float>::infinity()' if dtype in [dt.float32, dt.float16] else '-std::numeric_limits<double>::infinity()'
+                elif math.isnan(v):
+                    return 'std::numeric_limits<float>::quiet_NaN()' if dtype in [dt.float32, dt.float16] else 'std::numeric_limits<double>::quiet_NaN()'
             if dtype in [dt.float32, dt.float16]:
                 return f'{v}f'
             elif dtype == dt.float64:
@@ -570,6 +580,7 @@ def get_header(fwd_sdfg: dace.SDFG, bwd_sdfg: Optional[dace.SDFG], inputs, outpu
     return f"""
 #include <torch/torch.h>
 #include <torch/script.h>
+#include <limits>
 #include "{fwd_sdfg.name}.h"
 {"" if bwd_sdfg is None else f'#include "{bwd_sdfg.name}.h"'}
 using torch::Tensor;

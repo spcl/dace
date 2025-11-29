@@ -1315,39 +1315,322 @@ class WhereBackward(BackwardImplementation):
     """Backward implementation for ONNX Where operation.
 
     Routes gradients based on the condition: gradients flow to X where condition is True,
-    and to Y where condition is False.
+    and to Y where condition is False. Handles broadcasting by summing over broadcast dimensions.
     """
 
     @staticmethod
     def backward(forward_node: nd.Node, context: BackwardContext, given_gradients: List[Optional[str]],
                  required_gradients: List[Optional[str]]) -> Tuple[nd.Node, BackwardResult]:
-        # condition, X, Y -> Output
-        # Get condition descriptor for shape information
-        _ = butils.forward_in_desc_with_name(forward_node, context, "condition")
+        # condition, X, Y -> output
+        # Get descriptors for shape information
+        cond_desc = butils.forward_in_desc_with_name(forward_node, context, "condition")
+        output_desc = butils.forward_out_desc_with_name(forward_node, context, "output")
+        output_shape = output_desc.shape
 
-        # NOTE: We cannot use ONNX ops for further potential lowering
-        # transformations because ONNXMul does not support boolean inputs.
-        # notcondition = dace.define_local(condition_shape, condition_dtype)
-        # donnx.ONNXMul(A=condition, B=output_grad, C=X_grad)
-        # donnx.ONNXNot(X=condition, Y=notcondition)
-        # donnx.ONNXMul(A=notcondition, B=output_grad, C=Y_grad)
+        # Create backward SDFG manually to handle broadcasting
+        nsdfg = dace.SDFG(forward_node.label + "_backward")
+        nstate = nsdfg.add_state()
 
-        if 'X' in required_gradients and 'Y' not in required_gradients:
+        result = BackwardResult.empty()
 
-            def where_backward(condition, output_grad, X_grad):
-                X_grad[:] = condition * output_grad
-        elif 'Y' in required_gradients and 'X' not in required_gradients:
+        # Add condition and output_grad as inputs
+        cond_desc_copy = copy.deepcopy(cond_desc)
+        cond_desc_copy.transient = False
+        nsdfg.add_datadesc("condition", cond_desc_copy)
 
-            def where_backward(condition, output_grad, Y_grad):
-                Y_grad[:] = ~condition * output_grad
-        elif 'X' in required_gradients and 'Y' in required_gradients:
+        output_grad_desc = copy.deepcopy(output_desc)
+        output_grad_desc.transient = False
+        nsdfg.add_datadesc("output_grad", output_grad_desc)
+        result.given_grad_names["output"] = "output_grad"
 
-            def where_backward(condition, output_grad, X_grad, Y_grad):
-                X_grad[:] = condition * output_grad
-                Y_grad[:] = ~condition * output_grad
+        # Handle X gradient
+        if 'X' in required_gradients:
+            X_desc = butils.forward_in_desc_with_name(forward_node, context, "X")
+            X_shape = X_desc.shape
+            X_grad_desc = copy.deepcopy(X_desc)
+            X_grad_desc.transient = False
+            nsdfg.add_datadesc("X_grad", X_grad_desc)
+            result.required_grad_names["X"] = "X_grad"
 
-        result_node, result = butils.backward_program_for_node(where_backward, context, forward_node)
+            # Compute X gradient: condition * output_grad, summed over broadcast dims
+            if list(X_shape) == list(output_shape):
+                # No broadcasting, direct assignment
+                X_grad_temp_desc = copy.deepcopy(X_grad_desc)
+                X_grad_temp_desc.transient = True
+                nsdfg.add_datadesc("X_grad_temp", X_grad_temp_desc)
 
+                # Create map for element-wise multiply
+                map_ranges = {f"i{i}": f"0:{s}" for i, s in enumerate(output_shape)}
+                idx_str = ", ".join(map_ranges.keys())
+                tasklet, me, mx = nstate.add_mapped_tasklet(
+                    "x_grad_compute",
+                    map_ranges=map_ranges,
+                    inputs={"__cond": dace.Memlet(f"condition[{idx_str}]"),
+                            "__og": dace.Memlet(f"output_grad[{idx_str}]")},
+                    code="__out = __cond * __og",
+                    outputs={"__out": dace.Memlet(f"X_grad[{idx_str}]")},
+                    external_edges=True
+                )
+            else:
+                # Broadcasting case: compute full gradient then reduce
+                full_grad_shape = output_shape
+                full_grad_desc = dace.data.Array(dtype=X_desc.dtype, shape=full_grad_shape, transient=True)
+                nsdfg.add_datadesc("X_grad_full", full_grad_desc)
+
+                # Compute condition * output_grad
+                map_ranges = {f"i{i}": f"0:{s}" for i, s in enumerate(output_shape)}
+                idx_str = ", ".join(map_ranges.keys())
+                tasklet, me, mx = nstate.add_mapped_tasklet(
+                    "x_grad_full",
+                    map_ranges=map_ranges,
+                    inputs={"__cond": dace.Memlet(f"condition[{idx_str}]"),
+                            "__og": dace.Memlet(f"output_grad[{idx_str}]")},
+                    code="__out = __cond * __og",
+                    outputs={"__out": dace.Memlet(f"X_grad_full[{idx_str}]")},
+                    external_edges=True
+                )
+
+                # Reduce to X_grad shape
+                reduce_state = nsdfg.add_state_after(nstate)
+                X_ndim = len(X_shape)
+                out_ndim = len(output_shape)
+
+                if X_ndim == 0 or (X_ndim == 1 and X_shape[0] == 1):
+                    # Scalar case: sum all
+                    reduce_axes = list(range(out_ndim))
+                    reduce_node = reduce_state.add_reduce(wcr="lambda a, b: a + b", axes=reduce_axes, identity=0)
+                    reduce_state.add_edge(reduce_state.add_read("X_grad_full"), None, reduce_node, None,
+                                         dace.Memlet.from_array("X_grad_full", full_grad_desc))
+                    reduce_state.add_edge(reduce_node, None, reduce_state.add_write("X_grad"), None,
+                                         dace.Memlet.from_array("X_grad", X_grad_desc))
+                else:
+                    # General broadcast: sum over leading dimensions
+                    reduce_axes = list(range(out_ndim - X_ndim))
+                    if reduce_axes:
+                        reduce_node = reduce_state.add_reduce(wcr="lambda a, b: a + b", axes=reduce_axes, identity=0)
+                        reduce_state.add_edge(reduce_state.add_read("X_grad_full"), None, reduce_node, None,
+                                             dace.Memlet.from_array("X_grad_full", full_grad_desc))
+                        reduce_state.add_edge(reduce_node, None, reduce_state.add_write("X_grad"), None,
+                                             dace.Memlet.from_array("X_grad", X_grad_desc))
+                    else:
+                        # Just copy
+                        idx_str = ", ".join([f"i{i}" for i in range(X_ndim)])
+                        map_ranges = {f"i{i}": f"0:{s}" for i, s in enumerate(X_shape)}
+                        tasklet2, me2, mx2 = reduce_state.add_mapped_tasklet(
+                            "copy_x_grad",
+                            map_ranges=map_ranges,
+                            inputs={"__in": dace.Memlet(f"X_grad_full[{idx_str}]")},
+                            code="__out = __in",
+                            outputs={"__out": dace.Memlet(f"X_grad[{idx_str}]")},
+                            external_edges=True
+                        )
+
+        # Handle Y gradient
+        if 'Y' in required_gradients:
+            Y_desc = butils.forward_in_desc_with_name(forward_node, context, "Y")
+            Y_shape = Y_desc.shape
+            Y_grad_desc = copy.deepcopy(Y_desc)
+            Y_grad_desc.transient = False
+            nsdfg.add_datadesc("Y_grad", Y_grad_desc)
+            result.required_grad_names["Y"] = "Y_grad"
+
+            # Find the state to add Y gradient computation
+            if 'X' in required_gradients and list(butils.forward_in_desc_with_name(forward_node, context, "X").shape) != list(output_shape):
+                # There's a reduce state, add after that
+                y_state = nsdfg.add_state_after(list(nsdfg.states())[-1])
+            else:
+                y_state = nstate if 'X' not in required_gradients else nsdfg.add_state_after(nstate)
+
+            if list(Y_shape) == list(output_shape):
+                # No broadcasting
+                map_ranges = {f"j{i}": f"0:{s}" for i, s in enumerate(output_shape)}
+                idx_str = ", ".join(map_ranges.keys())
+                tasklet, me, mx = y_state.add_mapped_tasklet(
+                    "y_grad_compute",
+                    map_ranges=map_ranges,
+                    inputs={"__cond": dace.Memlet(f"condition[{idx_str}]"),
+                            "__og": dace.Memlet(f"output_grad[{idx_str}]")},
+                    code="__out = (not __cond) * __og",
+                    outputs={"__out": dace.Memlet(f"Y_grad[{idx_str}]")},
+                    external_edges=True
+                )
+            else:
+                # Broadcasting case
+                full_grad_desc = dace.data.Array(dtype=Y_desc.dtype, shape=output_shape, transient=True)
+                nsdfg.add_datadesc("Y_grad_full", full_grad_desc)
+
+                map_ranges = {f"j{i}": f"0:{s}" for i, s in enumerate(output_shape)}
+                idx_str = ", ".join(map_ranges.keys())
+                tasklet, me, mx = y_state.add_mapped_tasklet(
+                    "y_grad_full",
+                    map_ranges=map_ranges,
+                    inputs={"__cond": dace.Memlet(f"condition[{idx_str}]"),
+                            "__og": dace.Memlet(f"output_grad[{idx_str}]")},
+                    code="__out = (not __cond) * __og",
+                    outputs={"__out": dace.Memlet(f"Y_grad_full[{idx_str}]")},
+                    external_edges=True
+                )
+
+                # Reduce to Y_grad shape
+                reduce_state = nsdfg.add_state_after(y_state)
+                Y_ndim = len(Y_shape)
+                out_ndim = len(output_shape)
+
+                if Y_ndim == 0 or (Y_ndim == 1 and Y_shape[0] == 1):
+                    reduce_axes = list(range(out_ndim))
+                    reduce_node = reduce_state.add_reduce(wcr="lambda a, b: a + b", axes=reduce_axes, identity=0)
+                    reduce_state.add_edge(reduce_state.add_read("Y_grad_full"), None, reduce_node, None,
+                                         dace.Memlet.from_array("Y_grad_full", full_grad_desc))
+                    reduce_state.add_edge(reduce_node, None, reduce_state.add_write("Y_grad"), None,
+                                         dace.Memlet.from_array("Y_grad", Y_grad_desc))
+                else:
+                    reduce_axes = list(range(out_ndim - Y_ndim))
+                    if reduce_axes:
+                        reduce_node = reduce_state.add_reduce(wcr="lambda a, b: a + b", axes=reduce_axes, identity=0)
+                        reduce_state.add_edge(reduce_state.add_read("Y_grad_full"), None, reduce_node, None,
+                                             dace.Memlet.from_array("Y_grad_full", full_grad_desc))
+                        reduce_state.add_edge(reduce_node, None, reduce_state.add_write("Y_grad"), None,
+                                             dace.Memlet.from_array("Y_grad", Y_grad_desc))
+                    else:
+                        idx_str = ", ".join([f"j{i}" for i in range(Y_ndim)])
+                        map_ranges = {f"j{i}": f"0:{s}" for i, s in enumerate(Y_shape)}
+                        tasklet2, me2, mx2 = reduce_state.add_mapped_tasklet(
+                            "copy_y_grad",
+                            map_ranges=map_ranges,
+                            inputs={"__in": dace.Memlet(f"Y_grad_full[{idx_str}]")},
+                            code="__out = __in",
+                            outputs={"__out": dace.Memlet(f"Y_grad[{idx_str}]")},
+                            external_edges=True
+                        )
+
+        # Determine inputs and outputs for the nested SDFG
+        inputs = {"condition", "output_grad"}
+        outputs = set()
+        if 'X' in required_gradients:
+            outputs.add("X_grad")
+        if 'Y' in required_gradients:
+            outputs.add("Y_grad")
+
+        result_node = context.backward_state.add_nested_sdfg(nsdfg, inputs, outputs)
+
+        return result_node, result
+
+
+@autoregister_params(op="Equal", name="default")
+class EqualBackward(BackwardImplementation):
+    """Backward implementation for ONNX Equal operation.
+
+    Comparison operations have zero gradient (they are not differentiable).
+    The output is boolean, so no gradients flow through this node.
+    """
+
+    @staticmethod
+    def backward(forward_node: nd.Node, context: BackwardContext, given_gradients: List[Optional[str]],
+                 required_gradients: List[Optional[str]]) -> Tuple[nd.Node, BackwardResult]:
+        # Equal outputs boolean, which has no gradient. Create an empty nested SDFG
+        # with no input connectors (boolean outputs are skipped in gradient connection).
+        nsdfg = dace.SDFG(forward_node.label + "_backward")
+        nsdfg.add_state()
+
+        result = BackwardResult.empty()
+        # No given_grad_names since output is boolean (gradients don't flow through boolean)
+        # No required_grad_names since comparison ops are not differentiable
+
+        result_node = context.backward_state.add_nested_sdfg(nsdfg, set(), set())
+        return result_node, result
+
+
+@autoregister_params(op="Trilu", name="default")
+class TriluBackward(BackwardImplementation):
+    """Backward implementation for ONNX Trilu operation.
+
+    The gradient flows through the triangular mask: where output equals input,
+    gradient flows unchanged; where output is zero, gradient is zero.
+    """
+
+    @staticmethod
+    def backward(forward_node: nd.Node, context: BackwardContext, given_gradients: List[Optional[str]],
+                 required_gradients: List[Optional[str]]) -> Tuple[nd.Node, BackwardResult]:
+        # Get descriptors
+        input_desc = butils.forward_in_desc_with_name(forward_node, context, "input")
+        output_desc = butils.forward_out_desc_with_name(forward_node, context, "output")
+        upper = getattr(forward_node, 'upper', 1)
+
+        # Check if k input exists
+        has_k = 'k' in forward_node.in_connectors
+
+        # Create backward SDFG
+        nsdfg = dace.SDFG(forward_node.label + "_backward")
+        nstate = nsdfg.add_state()
+
+        result = BackwardResult.empty()
+
+        # Add output_grad as input
+        output_grad_desc = copy.deepcopy(output_desc)
+        output_grad_desc.transient = False
+        nsdfg.add_datadesc("output_grad", output_grad_desc)
+        result.given_grad_names["output"] = "output_grad"
+
+        # Handle k if present
+        if has_k:
+            k_desc = butils.forward_in_desc_with_name(forward_node, context, "k")
+            k_desc_copy = copy.deepcopy(k_desc)
+            k_desc_copy.transient = False
+            nsdfg.add_datadesc("k", k_desc_copy)
+
+        # Add input_grad as output
+        if 'input' in required_gradients:
+            input_grad_desc = copy.deepcopy(input_desc)
+            input_grad_desc.transient = False
+            nsdfg.add_datadesc("input_grad", input_grad_desc)
+            result.required_grad_names["input"] = "input_grad"
+
+            # Get shape information
+            input_shape = input_desc.shape
+            ndim = len(input_shape)
+
+            # Create a map over all dimensions
+            map_ranges = {f"i{d}": f"0:{input_shape[d]}" for d in range(ndim)}
+            output_indices = ', '.join([f'i{d}' for d in range(ndim)])
+
+            row_idx = f"i{ndim-2}"
+            col_idx = f"i{ndim-1}"
+
+            if has_k:
+                if upper:
+                    condition = f"{col_idx} >= {row_idx} + __k"
+                else:
+                    condition = f"{col_idx} <= {row_idx} + __k"
+            else:
+                if upper:
+                    condition = f"{col_idx} >= {row_idx}"
+                else:
+                    condition = f"{col_idx} <= {row_idx}"
+
+            tasklet_code = f"__out = __og if {condition} else 0"
+
+            tasklet_inputs = {"__og": dace.Memlet(f"output_grad[{output_indices}]")}
+            if has_k:
+                tasklet_inputs["__k"] = dace.Memlet("k[0]")
+
+            nstate.add_mapped_tasklet(
+                name="trilu_grad",
+                map_ranges=map_ranges,
+                inputs=tasklet_inputs,
+                code=tasklet_code,
+                outputs={"__out": dace.Memlet(f"input_grad[{output_indices}]")},
+                external_edges=True
+            )
+
+        # Determine inputs and outputs for nested SDFG
+        inputs = {"output_grad"}
+        if has_k:
+            inputs.add("k")
+        outputs = set()
+        if 'input' in required_gradients:
+            outputs.add("input_grad")
+
+        result_node = context.backward_state.add_nested_sdfg(nsdfg, inputs, outputs)
         return result_node, result
 
 

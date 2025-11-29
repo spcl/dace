@@ -275,7 +275,7 @@ class Node(object):
 class AccessNode(Node):
     """ A node that accesses data in the SDFG. Denoted by a circular shape. """
 
-    setzero = Property(dtype=bool, desc="Initialize to zero", default=False)
+    setzero = Property(dtype=bool, desc="Initialize to zero", default=True)
     debuginfo = DebugInfoProperty()
     data = DataProperty(desc="Data (array, stream, scalar) to access")
 

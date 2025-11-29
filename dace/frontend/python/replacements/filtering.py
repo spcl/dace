@@ -54,10 +54,17 @@ def _array_array_where(visitor: ProgramVisitor,
     right_shape = right_arr.shape if right_arr else [1]
     cond_shape = cond_arr.shape if cond_arr else [1]
 
-    (out_shape, all_idx_dict, out_idx, left_idx, right_idx) = broadcast_together(left_shape, right_shape)
+    # First broadcast left and right
+    (temp_shape, _, _, left_idx, right_idx) = broadcast_together(left_shape, right_shape)
 
-    # Broadcast condition with broadcasted left+right
-    _, _, _, cond_idx, _ = broadcast_together(cond_shape, out_shape)
+    # Then broadcast with condition to get the final output shape
+    # numpy.where broadcasts all three arrays together
+    (out_shape, all_idx_dict, out_idx, cond_idx, temp_idx) = broadcast_together(cond_shape, temp_shape)
+
+    # Update left_idx and right_idx for the final output shape if temp_shape != out_shape
+    if list(temp_shape) != list(out_shape):
+        _, _, _, left_idx, _ = broadcast_together(left_shape, out_shape)
+        _, _, _, right_idx, _ = broadcast_together(right_shape, out_shape)
 
     # Fix for Scalars
     if isinstance(left_arr, data.Scalar):
