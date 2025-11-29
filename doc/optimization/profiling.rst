@@ -121,7 +121,8 @@ Instrumentation can also collect performance counters on CPUs and GPUs using `LI
 The :class:`~dace.dtypes.InstrumentationType.LIKWID_Counters` instrumentation type can be configured to collect
 a wide variety of performance counters on CPUs and GPUs. An example use can be found in the
 `LIKWID instrumentation code sample <https://github.com/spcl/dace/blob/main/samples/instrumentation/matmul_likwid.py>`_.
-
+There is also the :class:`~dace.dtypes.InstrumentationType.GPU_TX_MARKERS` instrumentation type which wraps in NVTX or rocTX markers the DaCe program executed on the GPU. Important parts of the execution of the program on the GPU as the different states, SDFGs and initialization and finalization phases are marked with these markers.
+These markers can be used to visualize and measure the GPU activity using the NVIDIA Nsight Systems or ROCm Systems profilers.
 
 Instrumentation file format
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
