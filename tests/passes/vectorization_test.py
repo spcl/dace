@@ -2838,6 +2838,10 @@ def gather_load(src: dace.float64[N], idx: dace.int64[N], dst: dace.float64[N], 
     for i, in dace.map[0:N:1]:
         dst[i] = src[idx[i]] * scale
 
+@dace.program
+def gather_load_matrix_specialized(A: dace.float32[4, 8192], B: dace.int32[4, 8192], C: dace.float32[4, 8192]):
+    for i, j in dace.map[0:4:1, 0:8192:1]:
+        C[i,j] = A[i, B[i, j]] * 2.0
 
 @dace.program
 def strided_load_stride_2(src: dace.float64[2 * N], dst: dace.float64[N], scale: dace.float64):
@@ -2994,6 +2998,26 @@ def test_gather_load():
         sdfg_name="gather_load",
     )
 
+def test_gather_load_matrix_specialized():
+    Y_val = 4
+    X_val = 8192
+    A = numpy.random.rand(Y_val, X_val).astype(numpy.float32)          # Random float32 values
+    B = numpy.random.randint(0, X_val, size=(Y_val, X_val), dtype=numpy.int32)  # Random indices in [0, 8192)
+    C = numpy.zeros((Y_val, X_val), dtype=numpy.float32)              # Output array initialized to zeros
+
+    run_vectorization_test(
+        dace_func=gather_load_matrix_specialized,
+        arrays={
+            "A": A,
+            "B": B,
+            "C": C
+        },
+        params={
+        },
+        vector_width=8192,
+        save_sdfgs=True,
+        sdfg_name="gather_load_matrix_specialized",
+    )
 
 def test_strided_load_stride_2():
     N = 64
@@ -3547,3 +3571,4 @@ if __name__ == "__main__":
     test_strided_store_stride_16()
     test_nested_matrix_gather_load()
     test_nested_matrix_gather_load_specialized()
+    test_gather_load_matrix_specialized()
