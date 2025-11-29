@@ -36,6 +36,7 @@ def generate_headers(sdfg: SDFG, frame: framecode.DaCeCodeGenerator) -> str:
     proto += 'extern "C" %sHandle_t __dace_init_%s(%s);\n' % init_params
     proto += 'extern "C" int __dace_exit_%s(%sHandle_t handle);\n' % exit_params
     proto += 'extern "C" void __program_%s(%sHandle_t handle%s);\n' % params
+
     return proto
 
 
