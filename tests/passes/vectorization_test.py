@@ -2824,6 +2824,590 @@ def test_mid_sdfg_with_log_exp_div():
         numpy.testing.assert_allclose(out_fused[name], out_no_fuse[name], atol=1e-12)
 
 
+ssym = dace.symbolic.symbol("ssym")
+
+
+@dace.program
+def vecscale_unit_stride(src: dace.float64[N], dst: dace.float64[N], scale: dace.float64):
+    for i, in dace.map[0:N:1]:
+        dst[i] = src[i] * scale
+
+
+@dace.program
+def gather_load(src: dace.float64[N], idx: dace.int64[N], dst: dace.float64[N], scale: dace.float64):
+    for i, in dace.map[0:N:1]:
+        dst[i] = src[idx[i]] * scale
+
+
+@dace.program
+def strided_load_stride_2(src: dace.float64[2 * N], dst: dace.float64[N], scale: dace.float64):
+    for i, in dace.map[0:N:1]:
+        dst[i] = src[i * 2] * scale
+
+
+@dace.program
+def strided_load_stride_ssym(src: dace.float64[ssym * N], dst: dace.float64[N], scale: dace.float64):
+    for i, in dace.map[0:N:1]:
+        dst[i] = src[i * ssym] * scale
+
+
+@dace.program
+def strided_load_stride_3(src: dace.float64[3 * N], dst: dace.float64[N], scale: dace.float64):
+    for i, in dace.map[0:N:1]:
+        dst[i] = src[i * 3] * scale
+
+
+@dace.program
+def strided_load_stride_4(src: dace.float64[4 * N], dst: dace.float64[N], scale: dace.float64):
+    for i, in dace.map[0:N:1]:
+        dst[i] = src[i * 4] * scale
+
+
+@dace.program
+def strided_load_stride_5(src: dace.float64[5 * N], dst: dace.float64[N], scale: dace.float64):
+    for i, in dace.map[0:N:1]:
+        dst[i] = src[i * 5] * scale
+
+
+@dace.program
+def strided_load_stride_6(src: dace.float64[6 * N], dst: dace.float64[N], scale: dace.float64):
+    for i, in dace.map[0:N:1]:
+        dst[i] = src[i * 6] * scale
+
+
+@dace.program
+def strided_load_stride_7(src: dace.float64[7 * N], dst: dace.float64[N], scale: dace.float64):
+    for i, in dace.map[0:N:1]:
+        dst[i] = src[i * 7] * scale
+
+
+@dace.program
+def strided_load_stride_8(src: dace.float64[8 * N], dst: dace.float64[N], scale: dace.float64):
+    for i, in dace.map[0:N:1]:
+        dst[i] = src[i * 8] * scale
+
+
+@dace.program
+def strided_load_stride_16(src: dace.float64[16 * N], dst: dace.float64[N], scale: dace.float64):
+    for i, in dace.map[0:N:1]:
+        dst[i] = src[i * 16] * scale
+
+
+@dace.program
+def scatter_store(src: dace.float64[N], idx: dace.int64[N], dst: dace.float64[N], scale: dace.float64):
+    for i, in dace.map[0:N:1]:
+        dst[idx[i]] = src[i] * scale
+
+
+@dace.program
+def strided_store_stride_2(src: dace.float64[N], dst: dace.float64[2 * N], scale: dace.float64):
+    for i, in dace.map[0:N:1]:
+        dst[i * 2] = src[i] * scale
+
+
+@dace.program
+def strided_store_stride_ssym(src: dace.float64[N], dst: dace.float64[ssym * N], scale: dace.float64):
+    for i, in dace.map[0:N:1]:
+        dst[i * ssym] = src[i] * scale
+
+
+@dace.program
+def strided_store_stride_3(src: dace.float64[N], dst: dace.float64[3 * N], scale: dace.float64):
+    for i, in dace.map[0:N:1]:
+        dst[i * 3] = src[i] * scale
+
+
+@dace.program
+def strided_store_stride_4(src: dace.float64[N], dst: dace.float64[4 * N], scale: dace.float64):
+    for i, in dace.map[0:N:1]:
+        dst[i * 4] = src[i] * scale
+
+
+@dace.program
+def strided_store_stride_5(src: dace.float64[N], dst: dace.float64[5 * N], scale: dace.float64):
+    for i, in dace.map[0:N:1]:
+        dst[i * 5] = src[i] * scale
+
+
+@dace.program
+def strided_store_stride_6(src: dace.float64[N], dst: dace.float64[6 * N], scale: dace.float64):
+    for i, in dace.map[0:N:1]:
+        dst[i * 6] = src[i] * scale
+
+
+@dace.program
+def strided_store_stride_7(src: dace.float64[N], dst: dace.float64[7 * N], scale: dace.float64):
+    for i, in dace.map[0:N:1]:
+        dst[i * 7] = src[i] * scale
+
+
+@dace.program
+def strided_store_stride_8(src: dace.float64[N], dst: dace.float64[8 * N], scale: dace.float64):
+    for i, in dace.map[0:N:1]:
+        dst[i * 8] = src[i] * scale
+
+
+@dace.program
+def strided_store_stride_16(src: dace.float64[N], dst: dace.float64[16 * N], scale: dace.float64):
+    for i, in dace.map[0:N:1]:
+        dst[i * 16] = src[i] * scale
+
+
+def test_vecscale_unit_stride():
+    N = 64
+    src = numpy.random.random(N)
+    dst = numpy.zeros(N)
+    run_vectorization_test(
+        dace_func=vecscale_unit_stride,
+        arrays={
+            "src": src,
+            "dst": dst
+        },
+        params={
+            "N": N,
+            "scale": 1.5
+        },
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name="vecscale_unit_stride",
+    )
+
+
+def test_gather_load():
+    N = 64
+    src = numpy.random.random(N)
+    idx = numpy.random.permutation(N).astype(numpy.int64)
+    dst = numpy.zeros(N)
+    run_vectorization_test(
+        dace_func=gather_load,
+        arrays={
+            "src": src,
+            "idx": idx,
+            "dst": dst
+        },
+        params={
+            "N": N,
+            "scale": 1.5
+        },
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name="gather_load",
+    )
+
+
+def test_strided_load_stride_2():
+    N = 64
+    src = numpy.random.random(2 * N)
+    dst = numpy.zeros(N)
+    run_vectorization_test(
+        dace_func=strided_load_stride_2,
+        arrays={
+            "src": src,
+            "dst": dst
+        },
+        params={
+            "N": N,
+            "scale": 1.5
+        },
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name="strided_load_stride_2",
+    )
+
+
+def test_strided_load_stride_ssym():
+    N = 64
+    _ssym = 2
+    src = numpy.random.random(_ssym * N)
+    dst = numpy.zeros(N)
+    run_vectorization_test(
+        dace_func=strided_load_stride_ssym,
+        arrays={
+            "src": src,
+            "dst": dst
+        },
+        params={
+            "N": N,
+            "scale": 1.5,
+            "ssym": _ssym
+        },
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name="strided_load_stride_ssym",
+    )
+
+
+def test_strided_load_stride_3():
+    N = 64
+    src = numpy.random.random(3 * N)
+    dst = numpy.zeros(N)
+    run_vectorization_test(
+        dace_func=strided_load_stride_3,
+        arrays={
+            "src": src,
+            "dst": dst
+        },
+        params={
+            "N": N,
+            "scale": 1.5
+        },
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name="strided_load_stride_3",
+    )
+
+
+def test_strided_load_stride_4():
+    N = 64
+    src = numpy.random.random(4 * N)
+    dst = numpy.zeros(N)
+    run_vectorization_test(
+        dace_func=strided_load_stride_4,
+        arrays={
+            "src": src,
+            "dst": dst
+        },
+        params={
+            "N": N,
+            "scale": 1.5
+        },
+        vector_width=8,
+        save_sdfgs=True,
+        insert_copies=False,
+        sdfg_name="strided_load_stride_4",
+    )
+
+
+def test_strided_load_stride_5():
+    N = 64
+    src = numpy.random.random(5 * N)
+    dst = numpy.zeros(N)
+    run_vectorization_test(
+        dace_func=strided_load_stride_5,
+        arrays={
+            "src": src,
+            "dst": dst
+        },
+        params={
+            "N": N,
+            "scale": 1.5
+        },
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name="strided_load_stride_5",
+    )
+
+
+def test_strided_load_stride_6():
+    N = 64
+    src = numpy.random.random(6 * N)
+    dst = numpy.zeros(N)
+    run_vectorization_test(
+        dace_func=strided_load_stride_6,
+        arrays={
+            "src": src,
+            "dst": dst
+        },
+        params={
+            "N": N,
+            "scale": 1.5
+        },
+        vector_width=8,
+        save_sdfgs=True,
+        insert_copies=True,
+        fuse_overlapping_loads=True,
+        sdfg_name="strided_load_stride_6",
+    )
+
+
+def test_strided_load_stride_7():
+    N = 64
+    src = numpy.random.random(7 * N)
+    dst = numpy.zeros(N)
+    run_vectorization_test(
+        dace_func=strided_load_stride_7,
+        arrays={
+            "src": src,
+            "dst": dst
+        },
+        params={
+            "N": N,
+            "scale": 1.5
+        },
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name="strided_load_stride_7",
+    )
+
+
+def test_strided_load_stride_8():
+    N = 64
+    src = numpy.random.random(8 * N)
+    dst = numpy.zeros(N)
+    run_vectorization_test(
+        dace_func=strided_load_stride_8,
+        arrays={
+            "src": src,
+            "dst": dst
+        },
+        params={
+            "N": N,
+            "scale": 1.5
+        },
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name="strided_load_stride_8",
+    )
+
+
+def test_strided_load_stride_16():
+    N = 64
+    src = numpy.random.random(16 * N)
+    dst = numpy.zeros(N)
+    run_vectorization_test(
+        dace_func=strided_load_stride_16,
+        arrays={
+            "src": src,
+            "dst": dst
+        },
+        params={
+            "N": N,
+            "scale": 1.5
+        },
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name="strided_load_stride_16",
+    )
+
+
+def test_scatter_store():
+    N = 64
+    src = numpy.random.random(N)
+    idx = numpy.random.permutation(N).astype(numpy.int64)
+    dst = numpy.zeros(N)
+    run_vectorization_test(
+        dace_func=scatter_store,
+        arrays={
+            "src": src,
+            "idx": idx,
+            "dst": dst
+        },
+        params={
+            "N": N,
+            "scale": 1.5
+        },
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name="scatter_store",
+    )
+
+
+def test_strided_store_stride_2():
+    N = 64
+    src = numpy.random.random(N)
+    dst = numpy.zeros(2 * N)
+    run_vectorization_test(
+        dace_func=strided_store_stride_2,
+        arrays={
+            "src": src,
+            "dst": dst
+        },
+        params={
+            "N": N,
+            "scale": 1.5
+        },
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name="strided_store_stride_2",
+    )
+
+
+def test_strided_store_stride_ssym():
+    N = 64
+    src = numpy.random.random(N)
+    dst = numpy.zeros(2 * N)
+    _ssym = numpy.int64(2)
+    run_vectorization_test(
+        dace_func=strided_store_stride_ssym,
+        arrays={
+            "src": src,
+            "dst": dst
+        },
+        params={
+            "N": N,
+            "scale": 1.5,
+            "ssym": _ssym
+        },
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name="strided_store_stride_ssym",
+    )
+
+
+def test_strided_store_stride_3():
+    N = 64
+    src = numpy.random.random(N)
+    dst = numpy.zeros(3 * N)
+    run_vectorization_test(
+        dace_func=strided_store_stride_3,
+        arrays={
+            "src": src,
+            "dst": dst
+        },
+        params={
+            "N": N,
+            "scale": 1.5
+        },
+        vector_width=8,
+        save_sdfgs=True,
+        insert_copies=True,
+        fuse_overlapping_loads=True,
+        sdfg_name="strided_store_stride_3",
+    )
+
+
+def test_strided_store_stride_4():
+    N = 64
+    src = numpy.random.random(N)
+    dst = numpy.zeros(4 * N)
+    run_vectorization_test(
+        dace_func=strided_store_stride_4,
+        arrays={
+            "src": src,
+            "dst": dst
+        },
+        params={
+            "N": N,
+            "scale": 1.5
+        },
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name="strided_store_stride_4",
+    )
+
+
+def test_strided_store_stride_5():
+    N = 64
+    src = numpy.random.random(N)
+    dst = numpy.zeros(5 * N)
+    run_vectorization_test(
+        dace_func=strided_store_stride_5,
+        arrays={
+            "src": src,
+            "dst": dst
+        },
+        params={
+            "N": N,
+            "scale": 1.5
+        },
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name="strided_store_stride_5",
+    )
+
+
+def test_strided_store_stride_6():
+    N = 64
+    src = numpy.random.random(N)
+    dst = numpy.zeros(6 * N)
+    run_vectorization_test(
+        dace_func=strided_store_stride_6,
+        arrays={
+            "src": src,
+            "dst": dst
+        },
+        params={
+            "N": N,
+            "scale": 1.5
+        },
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name="strided_store_stride_6",
+    )
+
+
+def test_strided_store_stride_7():
+    N = 64
+    src = numpy.random.random(N)
+    dst = numpy.zeros(7 * N)
+    run_vectorization_test(
+        dace_func=strided_store_stride_7,
+        arrays={
+            "src": src,
+            "dst": dst
+        },
+        params={
+            "N": N,
+            "scale": 1.5
+        },
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name="strided_store_stride_7",
+    )
+
+
+def test_strided_store_stride_8():
+    N = 64
+    src = numpy.random.random(N)
+    dst = numpy.zeros(8 * N)
+    run_vectorization_test(
+        dace_func=strided_store_stride_8,
+        arrays={
+            "src": src,
+            "dst": dst
+        },
+        params={
+            "N": N,
+            "scale": 1.5
+        },
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name="strided_store_stride_8",
+    )
+
+
+def test_strided_store_stride_16():
+    N = 64
+    src = numpy.random.random(N)
+    dst = numpy.zeros(16 * N)
+    run_vectorization_test(
+        dace_func=strided_store_stride_16,
+        arrays={
+            "src": src,
+            "dst": dst
+        },
+        params={
+            "N": N,
+            "scale": 1.5
+        },
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name="strided_store_stride_16",
+    )
+
+
+def test_strided_store_stride_ssym():
+    N = 64
+    _ssym = 2
+    src = numpy.random.random(N)
+    dst = numpy.zeros(2 * N)
+    run_vectorization_test(
+        dace_func=strided_store_stride_ssym,
+        arrays={
+            "src": src,
+            "dst": dst
+        },
+        params={
+            "N": N,
+            "scale": 1.5,
+            "ssym": _ssym
+        },
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name="strided_store_stride_ssym",
+    )
+
+
 if __name__ == "__main__":
     test_dependency_edge_to_unary_symbol()
     test_vabs()
@@ -2877,3 +3461,24 @@ if __name__ == "__main__":
     test_unary_symbol()
     test_mid_sdfg_with_log_exp_div()
     test_huge_sdfg_with_log_exp_div()
+    test_vecscale_unit_stride()
+    test_gather_load()
+    test_strided_load_stride_2()
+    test_strided_load_stride_ssym()
+    test_strided_load_stride_3()
+    test_strided_load_stride_4()
+    test_strided_load_stride_5()
+    test_strided_load_stride_6()
+    test_strided_load_stride_7()
+    test_strided_load_stride_8()
+    test_strided_load_stride_16()
+    test_scatter_store()
+    test_strided_store_stride_2()
+    test_strided_store_stride_ssym()
+    test_strided_store_stride_3()
+    test_strided_store_stride_4()
+    test_strided_store_stride_5()
+    test_strided_store_stride_6()
+    test_strided_store_stride_7()
+    test_strided_store_stride_8()
+    test_strided_store_stride_16()
