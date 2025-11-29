@@ -1316,7 +1316,6 @@ class CPUCodeGen(TargetCodeGenerator):
         print(f"expr: {expr}")
         print(f"ptr: {ptr}")
         print(sdfg.arrays[ptr].strides)
-        sdfg.save("tmp.sdfg")
         print(sdfg.arrays.keys())
         if expr != ptr:
             expr = '%s[%s]' % (ptr, expr)

@@ -1445,6 +1445,8 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
         if isinstance(sdfg.arrays[edge.data.data], dt.Stream):
             pass
         elif isinstance(cdtype, dtypes.pointer):  # If pointer, also point to output
+            callsite_stream.write(f'// SoftHier define out memlet ptr', cfg, state_id, src_node)
+            
             desc = sdfg.arrays[edge.data.data]
 
             # If reference set, do not emit initial assignment
@@ -1460,6 +1462,8 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
             else:
                 callsite_stream.write(f'{cdtype.as_arg(edge.src_conn)};', cfg, state_id, src_node)
         else:
+            callsite_stream.write(f'// SoftHier define out memlet none-ptr', cfg, state_id, src_node)
+
             desc = sdfg.arrays[edge.data.data]
 
             ptrname = cpp.ptr(edge.data.data, desc, sdfg, self._frame)
@@ -1467,7 +1471,7 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                                           dtypes.AllocationLifetime.External)
             defined_type, _ = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
             base_ptr = cpp.cpp_ptr_expr(sdfg, edge.data, defined_type, codegen=self._frame)
-            callsite_stream.write(f'{write_type} {edge.src_conn} = {base_ptr};', cfg, state_id, src_node)
+            callsite_stream.write(f'{write_type} {edge.src_conn} = {base_ptr} * {ctypes.sizeof(desc.dtype.as_ctypes())};', cfg, state_id, src_node)
 
     def process_out_memlets(self, *args, **kwargs):
         # Call CPU implementation with this code generator as callback

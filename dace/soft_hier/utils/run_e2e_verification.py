@@ -312,7 +312,7 @@ def setup_architecture(hw_config: HardwareConfig):
         hbm_node_addr_space=hex(hw_config.hbm_addr_space),
         hbm_placement=hw_config.hbm_placement,
         num_node_per_ctrl=hw_config.num_node_per_ctrl,
-        noc_link_width=hw_config.noc_link_width,
+        noc_link_width=hw_config.noc_link_width
     )
     cwd = os.getcwd()
     subprocess.run(
@@ -385,5 +385,6 @@ def run_e2e_verification(hw_config: HardwareConfig,
         'all_match': comparison['all_match'],
         'details': {},
         'execution_period_ns': ret_dict.get('execution_period_ns', None),
-        'interleave_handlers': interleave_handlers
+        'interleave_handlers': interleave_handlers,
+        'red_dict': ret_dict
     }
