@@ -3408,6 +3408,69 @@ def test_strided_store_stride_ssym():
     )
 
 
+Y = dace.symbolic.symbol("Y")
+X = dace.symbolic.symbol("X")
+
+
+@dace.program
+def nested_matrix_gather_load(A: dace.float32[Y, X], B: dace.int32[Y, X], C: dace.float32[Y, X], scale: dace.float32):
+    for i, j in dace.map[0:Y:1, 0:X:1]:
+        C[i, j] = A[i, B[i, j]] * scale
+
+
+@dace.program
+def nested_matrix_gather_load_specialized(A: dace.float32[Y, X], B: dace.int32[Y, X], C: dace.float32[Y, X]):
+    for i, j in dace.map[0:Y:1, 0:X:1]:
+        C[i, j] = A[i, B[i, j]] * 2.0
+
+
+def test_nested_matrix_gather_load():
+    X_val = 32
+    Y_val = 32
+    A = numpy.random.rand(Y_val, X_val).astype(numpy.float32)
+    B = numpy.random.randint(0, X_val, size=(Y_val, X_val), dtype=numpy.int32)
+    C = numpy.zeros((Y_val, X_val), dtype=numpy.float32)
+    run_vectorization_test(
+        dace_func=nested_matrix_gather_load,
+        arrays={
+            "A": A,
+            "B": B,
+            "C": C,
+        },
+        params={
+            "X": X_val,
+            "Y": Y_val,
+            "scale": 2.0
+        },
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name="nested_matrix_gather_load",
+    )
+
+
+def test_nested_matrix_gather_load_specialized():
+    X_val = 32
+    Y_val = 32
+    A = numpy.random.rand(Y_val, X_val).astype(numpy.float32)
+    B = numpy.random.randint(0, X_val, size=(Y_val, X_val), dtype=numpy.int32)
+    C = numpy.zeros((Y_val, X_val), dtype=numpy.float32)
+    run_vectorization_test(
+        dace_func=nested_matrix_gather_load_specialized,
+        arrays={
+            "A": A,
+            "B": B,
+            "C": C,
+        },
+        params={
+            "X": X_val,
+            "Y": Y_val,
+        },
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name="nested_matrix_gather_load_specialized",
+    )
+
+
 if __name__ == "__main__":
     test_dependency_edge_to_unary_symbol()
     test_vabs()
@@ -3482,3 +3545,5 @@ if __name__ == "__main__":
     test_strided_store_stride_7()
     test_strided_store_stride_8()
     test_strided_store_stride_16()
+    test_nested_matrix_gather_load()
+    test_nested_matrix_gather_load_specialized()

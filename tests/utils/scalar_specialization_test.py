@@ -6,10 +6,12 @@ from dace.sdfg.utils import specialize_scalar
 Y = dace.symbolic.symbol("Y")
 X = dace.symbolic.symbol("X")
 
+
 @dace.program
 def gather_load(A: dace.float64[Y, X], B: dace.int64[Y, X], C: dace.float64[Y, X], scale: dace.float64):
-    for i,j in dace.map[0:Y:1, 0:X:1]:
-        C[i,j] = A[i, B[i, j]] * scale
+    for i, j in dace.map[0:Y:1, 0:X:1]:
+        C[i, j] = A[i, B[i, j]] * scale
+
 
 # Test function
 def test_nested_sdfg():

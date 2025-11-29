@@ -2611,8 +2611,6 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
         if scalar_name in sdfg.symbols:
             sdfg.remove_symbol(scalar_name)
 
-
-    
     c = 0
     for state in sdfg.all_states():
         # Check dynamic inputs
