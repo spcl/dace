@@ -3443,11 +3443,8 @@ def squeeze_memlets_of_packed_arrays(state: dace.SDFGState, map_entry: dace.node
             edge.data = dace.memlet.Memlet(data=edge.data.data, subset=dace.subsets.Range(new_range_list))
 
 
-def use_previous_subsets(
-    state: dace.SDFGState,
-    map_entry: dace.nodes.MapEntry,
-    vector_width: int,
-):
+def use_previous_subsets(state: dace.SDFGState, map_entry: dace.nodes.MapEntry, vector_width: int,
+                         vectorizable_arrays: Set[str]):
     """
     Rewrite memlet subsets on edges leaving a single-parameter inner map so that
     structured vector accesses correctly refer to the surrounding parent map.
@@ -3500,6 +3497,9 @@ def use_previous_subsets(
         # Safe: at most one incoming edge per OUT connector.
         assert len(in_edges) == 1
         in_edge = next(iter(in_edges))
+
+        if in_edge.data.data not in vectorizable_arrays:
+            continue
 
         # Copy original subset.
         orig_subset = copy.deepcopy(in_edge.data.subset)

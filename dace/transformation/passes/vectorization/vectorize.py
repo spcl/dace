@@ -122,8 +122,9 @@ class Vectorize(ppl.Pass):
         if not has_single_nested_sdfg:
             vectorizable_arrays = collect_non_unit_stride_accesses_in_map(state.sdfg, state, new_inner_map)
             #print(vectorizable_arrays)
-
-        use_previous_subsets(state, inner_map_entry, self.vector_width)
+            use_previous_subsets(state, inner_map_entry, self.vector_width, vectorizable_arrays)
+        else:
+            use_previous_subsets(state, inner_map_entry, self.vector_width, set())
 
         state.sdfg.validate()
         new_inner_map.map.range = dace.subsets.Range([(b, e, dace.symbolic.SymExpr(self.vector_width))])
