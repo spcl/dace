@@ -2380,10 +2380,17 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
 
     array_is_vectorizable = {k: True for k in all_accesses_to_arrays}
 
+    state.sdfg.save("d.sdfg")
+
     for arr_name, accesses in all_accesses_to_arrays.items():
         for access_subset in accesses:
             # Get the stride 1 dimension
-            stride_one_dim = {i for i, stride in enumerate(sdfg.arrays[arr_name].strides) if stride == 1}.pop()
+            stride_one_dims = {i for i, stride in enumerate(sdfg.arrays[arr_name].strides) if stride == 1}
+            if len(stride_one_dims) == 0:
+                array_is_vectorizable[arr_name] = False
+                break
+
+            stride_one_dim = stride_one_dims.pop()
             b, e, s = access_subset[stride_one_dim]
             assert b == e
             assert s == 1
@@ -3513,6 +3520,7 @@ def use_previous_subsets(
 
         # Copy original subset.
         orig_subset = copy.deepcopy(in_edge.data.subset)
+        print("orig subset", orig_subset)
 
         new_ranges = []
         volume = 1
@@ -3529,13 +3537,18 @@ def use_previous_subsets(
             if hasattr(end, "subs"):
                 # Subset extent length
                 extent = (end + 1 - begin) // stride
+                print(begin, end, stride, extent)
                 # If exact vector access, shrink by vector_width - 1
-                tail_adjust = vector_width - 1 if extent == vector_width else 0
+                #tail_adjust = vector_width - 1 if extent == vector_width  else 0
+                tail_adjust = 0
                 end_str = f"{end.subs({outer_param: inner_param})} - {tail_adjust}"
+                print(end_str)
                 new_end = dace.symbolic.SymExpr(end_str).simplify()
                 volume *= extent
             else:
                 new_end = end
+            
+            print(new_begin, new_end, stride)
             new_ranges.append((new_begin, new_end, stride))
 
         # Assign new memlet with updated subset and volume

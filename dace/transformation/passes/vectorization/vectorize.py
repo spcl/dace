@@ -128,7 +128,9 @@ class Vectorize(ppl.Pass):
             vectorizable_arrays = collect_non_unit_stride_accesses_in_map(state.sdfg, state, new_inner_map)
             #print(vectorizable_arrays)
 
+        state.sdfg.save("z0.sdfg")
         use_previous_subsets(state, inner_map_entry, self.vector_width)
+        state.sdfg.save("z1.sdfg")
 
         state.sdfg.validate()
         new_inner_map.map.range = dace.subsets.Range([(b, e, dace.symbolic.SymExpr(self.vector_width))])
@@ -160,6 +162,7 @@ class Vectorize(ppl.Pass):
             modified_nodes = set()
             modified_edges = set()
 
+        print("Extend Map Memlets")
         self._extend_memlets(state, new_inner_map, modified_nodes, modified_edges)
         self._extend_temporary_scalars(state, new_inner_map, modified_nodes, modified_edges)
         state.sdfg.validate()
@@ -182,10 +185,14 @@ class Vectorize(ppl.Pass):
 
         if has_single_nested_sdfg:
             nsdfg_node = next(iter(nodes))
+            state.sdfg.save("before_matching_connectors.sdfg")
             fix_nsdfg_connector_array_shapes_mismatch(state, nsdfg_node)
             check_nsdfg_connector_array_shapes_match(state, nsdfg_node)
+            state.sdfg.save("after_matching_connectors.sdfg")
+            print("Vectorize Nested SDFG")
             unstructured_data = self._vectorize_nested_sdfg(state, nsdfg_node, vector_map_param)
 
+            print("Add copies before/after NSDFG")
             if self.insert_copies:
                 inserted_array_names = add_copies_before_and_after_nsdfg(state, nsdfg_node, self.vector_width,
                                                                          self.vector_input_storage, unstructured_data,
@@ -248,6 +255,8 @@ class Vectorize(ppl.Pass):
         # Step 6. Collect all data used, make sure their type matches the vector op type
 
         # 0
+        inner_sdfg.save("vectorize_nsdfg_begin.sdfg")
+
         # Collect all assigned symbols, check what we can demote
         if self.try_to_demote_symbols_in_nsdfgs:
             try_demoting_vectorizable_symbols(inner_sdfg)
@@ -288,6 +297,7 @@ class Vectorize(ppl.Pass):
         }
 
         # Do not make scalars used only interstate edges into vector-width arrays
+        print("Replace Arrays")
         non_vector_width_transient_arrays = transient_arrays - (vector_width_transient_arrays.union(invariant_scalars))
         replace_arrays_with_new_shape(inner_sdfg, vector_width_transient_arrays, (self.vector_width, ),
                                       self.vector_op_numeric_type)
@@ -347,6 +357,7 @@ class Vectorize(ppl.Pass):
         # And the loop parameter is not involved in a multiplication, otherwise wee need to pack it:
         # Consider loop (i=0; i<N; i++) and accessing an array [i*2] this means we have stride-2 access and this also
         # needs to be packed
+        print("Collect vectorizable arrays (nsdfg)")
         vectorizable_arrays_dict = collect_vectorizable_arrays(inner_sdfg, nsdfg, state, invariant_scalars)
         non_vectorizable_arrays = {k for k, v in vectorizable_arrays_dict.items() if v is False} - invariant_scalars
 
@@ -369,6 +380,7 @@ class Vectorize(ppl.Pass):
         unstructured_data = unstructured_data.union(packed_data)
 
         # 3
+        print("Check writes to scalar sinks (nsdfg)")
         check_writes_to_scalar_sinks_happen_through_assign_tasklets(inner_sdfg, scalar_sink_nodes)
         new_mn, new_me = self._duplicate_unstructured_writes(inner_sdfg, non_vectorizable_arrays)
         modified_nodes = modified_nodes.union(new_mn)
@@ -401,6 +413,7 @@ class Vectorize(ppl.Pass):
         # and within the nested SDFG we access A[0, 0, for_it_0] (map parameter), then this is vectorizable
         # and should be expanded to A[0:1, 0:1, for_it_0:for_it_0+8] (exclusive range).
         # This should be performed only for arrays.
+        print("Expand memlet expressions (nsdfg)")
         for inner_state in inner_sdfg.all_states():
             # Skip the data data that are still scalar and source nodes
             array_data = {n.data for _, n in array_source_nodes}.union({n.data for _, n in array_sink_nodes})
@@ -426,6 +439,7 @@ class Vectorize(ppl.Pass):
                                                self.vector_op_numeric_type)
 
         # 5
+        print("Replace tasklets (nsdfg)")
         for inner_state in inner_sdfg.all_states():
             nodes = {n for n in inner_state.nodes() if n not in modified_nodes}
             self._replace_tasklets_from_node_list(inner_state, nodes, vector_map_param)
@@ -1269,6 +1283,7 @@ class Vectorize(ppl.Pass):
         self._stride_type = stride_type
 
         sdfg.validate()
+        sdfg.save("vectorize_begin.sdfg")
 
         if self.vector_input_storage != self.vector_output_storage:
             raise NotImplementedError("Different input and output storage types not implemented yet")
