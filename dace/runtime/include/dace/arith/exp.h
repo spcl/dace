@@ -44,13 +44,13 @@ static inline float uint32_to_float(uint32_t x);
 static inline double dace_exp_d(double initial_x) {
     double x = initial_x;
     double px = fpfloor_f64(LOG2E * x + 0.5);
-    
+
     const int32_t n = (int32_t)px;
     x -= px * 6.93145751953125E-1;
     x -= px * 1.42860682030941723212E-6;
-    
+
     const double xx = x * x;
-    
+
     /* px = x * P(x**2) */
     px = PX1exp;
     px *= xx;
@@ -58,7 +58,6 @@ static inline double dace_exp_d(double initial_x) {
     px *= xx;
     px += PX3exp;
     px *= x;
-    
     /* Evaluate Q(x**2) */
     double qx = QX1exp;
     qx *= xx;
@@ -67,11 +66,11 @@ static inline double dace_exp_d(double initial_x) {
     qx += QX3exp;
     qx *= xx;
     qx += QX4exp;
-    
+
     /* e**x = 1 + 2x P(x**2)/(Q(x**2) - P(x**2)) */
     x = px / (qx - px);
     x = 1.0 + 2.0 * x;
-    
+
     /* Build 2^n in double */
     x *= uint64_to_double((((uint64_t)n) + 1023) << 52);
 
@@ -102,13 +101,13 @@ static inline double dace_exp_d_safe(double initial_x) {
 static inline float dace_exp_f(float initial_x) {
     float x = initial_x;
     float z = fpfloor_f32(LOG2EF * x + 0.5f);
-    
+
     x -= z * C1F;
     x -= z * C2F;
     const int32_t n = (int32_t)z;
-    
+
     const float x2 = x * x;
-    
+
     z = x * PX1expf;
     z += PX2expf;
     z *= x;
@@ -121,10 +120,10 @@ static inline float dace_exp_f(float initial_x) {
     z += PX6expf;
     z *= x2;
     z += x + 1.0f;
-    
+
     /* multiply by power of 2 */
     z *= uint32_to_float((n + 0x7f) << 23);
-    
+
 
     return z;
 }
@@ -137,7 +136,6 @@ static inline float dace_exp_f_safe(float initial_x) {
     if (isnan(initial_x)){
         return NAN;
     }
-    
     double x = dace_exp_f(initial_x);
 
     if (initial_x > MAXLOGF){

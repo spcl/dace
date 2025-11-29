@@ -4,6 +4,7 @@ import dace
 import numpy as np
 
 import dace.codegen.instrumentation.papi as pp
+
 M = dace.symbol('M')
 K = dace.symbol('K')
 N = dace.symbol('N')
@@ -11,14 +12,14 @@ N = dace.symbol('N')
 
 @dace.program
 def matmul_papi(A: dace.float32[M, K], B: dace.float32[K, N], C: dace.float32[M, N]):
-    C = A@B
+    C = A @ B
 
 
 ##### DaCe + PAPI: Matmul Instrumentation #####
 # This sample demonstrates the PAPI instrumentation in DaCe.
 #
-# In order to run the sample, make sure that PAPI is installed on your system and msr access 
-# is granted. (Either set kernel paranoia to 0 or run as root) 
+# In order to run the sample, make sure that PAPI is installed on your system and msr access
+# is granted. (Either set kernel paranoia to 0 or run as root)
 # It is recommended to set the OMP_NUM_THREADS environment variable
 #
 # Example: 'OMP_NUM_THREADS=2 python matmul_papi.py'
@@ -59,16 +60,16 @@ sdfg_complete_papi.name = sdfg_complete_papi.name + "_complete"
 # set the instrumentation of the top-level SDFG to PAPI
 sdfg_complete_papi.instrument = dace.InstrumentationType.PAPI_Counters
 
-## 2.2 Run with instrumentation only at spcific nodes 
-# Node Types that can be instrumented here are: SDFGState, MapEntry, 
+## 2.2 Run with instrumentation only at spcific nodes
+# Node Types that can be instrumented here are: SDFGState, MapEntry,
 
 sdfg_selected_papi = copy.deepcopy(sdfg)
-sdfg_selected_papi.name = sdfg_selected_papi.name+"_selected"
+sdfg_selected_papi.name = sdfg_selected_papi.name + "_selected"
 for node in sdfg_selected_papi.nodes():
     node.instrument = dace.InstrumentationType.PAPI_Counters
     for sub_node in node.nodes():
-        if isinstance(sub_node, dace.nodes.MapEntry) and len(sub_node.in_connectors)>0:
-                sub_node.instrument = dace.InstrumentationType.PAPI_Counters
+        if isinstance(sub_node, dace.nodes.MapEntry) and len(sub_node.in_connectors) > 0:
+            sub_node.instrument = dace.InstrumentationType.PAPI_Counters
 
 ## 3. Compile and execute
 # During execution, the counters for different parts of the SDFG and different
@@ -87,12 +88,10 @@ csdfg_selected_papi(A=A, B=B, C=C, K=k, M=m, N=n)
 report_complete_papi = sdfg_complete_papi.get_latest_report()
 report_selected_papi = sdfg_selected_papi.get_latest_report()
 
-
 # Print human-readable table
 # Tip: Try this feature with only a 1-2 on instrumented states/nodes.
 print("Complete SDFG PAPI instrumentation report:")
 print(report_complete_papi)
-
 
 print("Selected SDFG element instrumentation report:")
 print(report_selected_papi)
@@ -112,13 +111,13 @@ for sdfg_elem in report_complete_papi.counters:
             for thread_num in report_complete_papi.counters[sdfg_elem][sdfg_scope][counter_name]:
                 #And here we can actually then read the values
                 print(report_complete_papi.counters[sdfg_elem][sdfg_scope][counter_name][thread_num])
-                sum+= report_complete_papi.counters[sdfg_elem][sdfg_scope][counter_name][thread_num][0]
+                sum += report_complete_papi.counters[sdfg_elem][sdfg_scope][counter_name][thread_num][0]
             if counter_name == "PAPI_SP_OPS":
-                 measured_flops = sum
-            
+                measured_flops = sum
+
 # ~ expected FLOPS
 expected_flops = m * k * (n * 2)
 
 print(f"Expected {expected_flops} FLOPS, measured {measured_flops} FLOPS, diff: {measured_flops - expected_flops}")
 
-# Unfortunately, the PAPI instrumentation for selected regions does not yield such a nicely structured report, but iterating 
+# Unfortunately, the PAPI instrumentation for selected regions does not yield such a nicely structured report, but iterating
