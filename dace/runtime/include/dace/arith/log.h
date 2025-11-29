@@ -17,17 +17,17 @@ static inline double get_mant_exponent_d(double x, double* __restrict__ fe) {
         double d;
         uint64_t i;
     } u;
-    
+
     u.d = x;
-    
+
     /* Extract exponent */
     int64_t exp = (int64_t)((u.i >> 52) & 0x7ffULL);
     exp -= 1023; /* Remove bias */
     *fe = (double)exp;
-    
+
     /* Set exponent to 0 (bias = 1023) to get mantissa in [0.5, 1) */
     u.i = (u.i & 0x800fffffffffffffULL) | 0x3fe0000000000000ULL;
-    
+
     return u.d;
 }
 
@@ -37,17 +37,17 @@ static inline float get_mant_exponent_f(float x, float* __restrict__ fe) {
         float f;
         uint32_t i;
     } u;
-    
+
     u.f = x;
-    
+
     /* Extract exponent */
     int32_t exp = (int32_t)((u.i >> 23) & 0xffU);
     exp -= 127; /* Remove bias */
     *fe = (float)exp;
-    
+
     /* Set exponent to 0 (bias = 127) to get mantissa in [0.5, 1) */
     u.i = (u.i & 0x807fffffU) | 0x3f000000U;
-    
+
     return u.f;
 }
 
@@ -65,7 +65,7 @@ static inline double get_log_px(double x) {
     const double PX4log = 1.44989225341610930846E1;
     const double PX5log = 1.79368678507819816313E1;
     const double PX6log = 7.70838733755885391666E0;
-    
+
     double px = PX1log;
     px *= x;
     px += PX2log;
@@ -77,7 +77,7 @@ static inline double get_log_px(double x) {
     px += PX5log;
     px *= x;
     px += PX6log;
-    
+
     return px;
 }
 
@@ -88,7 +88,7 @@ static inline double get_log_qx(double x) {
     const double QX3log = 8.29875266912776603211E1;
     const double QX4log = 7.11544750618563894466E1;
     const double QX5log = 2.31251620126765340583E1;
-    
+
     double qx = x;
     qx += QX1log;
     qx *= x;
@@ -99,7 +99,7 @@ static inline double get_log_qx(double x) {
     qx += QX4log;
     qx *= x;
     qx += QX5log;
-    
+
     return qx;
 }
 
@@ -110,7 +110,7 @@ static inline double dace_log_d(double x) {
 
     /* Separate mantissa from exponent */
     x = get_mant_exponent_d(x, &fe);
-    
+
     /* Blending */
     if (x > SQRTH) {
         fe += 1.0;
@@ -118,25 +118,25 @@ static inline double dace_log_d(double x) {
         x += x;
     }
     x -= 1.0;
-    
+
     /* Rational form P(x)/Q(x) */
     double px = get_log_px(x);
-    
+
     /* For the final formula */
     const double x2 = x * x;
     px *= x;
     px *= x2;
-    
+
     const double qx = get_log_qx(x);
-    
+
     double res = px / qx;
-    
+
     res -= fe * 2.121944400546905827679e-4;
     res -= 0.5 * x2;
-    
+
     res = x + res;
     res += fe * 0.693359375;
-    
+
     return res;
 }
 
@@ -148,7 +148,7 @@ static inline double dace_log_d_safe(double x) {
 
     /* Separate mantissa from exponent */
     x = get_mant_exponent_d(x, &fe);
-    
+
     /* Blending */
     if (x > SQRTH) {
         fe += 1.0;
@@ -156,22 +156,22 @@ static inline double dace_log_d_safe(double x) {
         x += x;
     }
     x -= 1.0;
-    
+
     /* Rational form P(x)/Q(x) */
     double px = get_log_px(x);
-    
+
     /* For the final formula */
     const double x2 = x * x;
     px *= x;
     px *= x2;
-    
+
     const double qx = get_log_qx(x);
-    
+
     double res = px / qx;
-    
+
     res -= fe * 2.121944400546905827679e-4;
     res -= 0.5 * x2;
-    
+
     res = x + res;
     res += fe * 0.693359375;
 
@@ -202,7 +202,7 @@ static inline float get_log_poly_f(float x) {
     const float PX7logf = 2.0000714765E-1f;
     const float PX8logf = -2.4999993993E-1f;
     const float PX9logf = 3.3333331174E-1f;
-    
+
     float y = x * PX1logf;
     y += PX2logf;
     y *= x;
@@ -219,7 +219,7 @@ static inline float get_log_poly_f(float x) {
     y += PX8logf;
     y *= x;
     y += PX9logf;
-    
+
     return y;
 }
 
@@ -227,18 +227,18 @@ static inline float get_log_poly_f(float x) {
    Assumes valid input (x > 0, not NaN, not Inf) */
 static inline float dace_log_f(float x) {
     float fe;
-    
+
     x = get_mant_exponent_f(x, &fe);
-    
+
     if (x > SQRTHF) {
         fe += 1.0f;
     } else {
         x += x;
     }
     x -= 1.0f;
-    
+
     const float x2 = x * x;
-    
+
     float res = get_log_poly_f(x);
     res *= x2 * x;
 
@@ -261,24 +261,24 @@ static inline float dace_log_f_safe(float x) {
     const double LOG_LOWER_LIMIT = 0;
 
     x = get_mant_exponent_f(x, &fe);
-    
+
     if (x > SQRTHF) {
         fe += 1.0f;
     } else {
         x += x;
     }
     x -= 1.0f;
-    
+
     const float x2 = x * x;
-    
+
     float res = get_log_poly_f(x);
     res *= x2 * x;
-    
+
     res += -2.12194440e-4f * fe;
     res += -0.5f * x2;
-    
+
     res = x + res;
-    
+
     res += 0.693359375f * fe;
 
     if (original_x > LOG_UPPER_LIMIT){

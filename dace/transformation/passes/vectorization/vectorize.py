@@ -113,29 +113,56 @@ class Vectorize(ppl.Pass):
         assert s == 1, f"MapTiling should have created a map with stride 1, found {s}"
 
         # Copy over the subsets of the map above by just replacing the memlet subsets
-        use_previous_subsets(state, new_inner_map, self.vector_width)
+        # Use the map parameter of the previous map, makes implementation of future parts easier
+
+        # We do this only if we have no nestedSDFGs
+        nodes = state.all_nodes_between(new_inner_map, state.exit_node(new_inner_map))
+        has_single_nested_sdfg = len(nodes) == 1 and isinstance(next(iter(nodes)), dace.nodes.NestedSDFG)
+
+        if not has_single_nested_sdfg:
+            vectorizable_arrays = collect_non_unit_stride_accesses_in_map(state.sdfg, state, new_inner_map)
+            print(vectorizable_arrays)
+
+        use_previous_subsets(state, inner_map_entry, self.vector_width)
+
         state.sdfg.validate()
         new_inner_map.map.range = dace.subsets.Range([(b, e, dace.symbolic.SymExpr(self.vector_width))])
 
         # Need to check that all tasklets within the map are vectorizable
         nodes = state.all_nodes_between(new_inner_map, state.exit_node(new_inner_map))
-        assert all(
-            {self._is_vectorizable(state, node)
-             for node in nodes if isinstance(node, dace.nodes.Tasklet)}
-        ), f"All tasklets within maps need to be vectorizable. This means all inputs / outputs of the maps need to be arrays"
-
-        has_single_nested_sdfg = len(nodes) == 1 and isinstance(next(iter(nodes)), dace.nodes.NestedSDFG)
+        #assert all(
+        #    {self._is_vectorizable(state, node)
+        #     for node in nodes if isinstance(node, dace.nodes.Tasklet)}
+        #), f"All tasklets within maps need to be vectorizable. This means all inputs / outputs of the maps need to be arrays"
 
         # Updates memlets from [k, i] to [k, i:i+4]
-        self._extend_memlets(state, new_inner_map)
-        self._extend_temporary_scalars(state, new_inner_map)
+        if not has_single_nested_sdfg:
+            array_accesses_to_be_packed = {k for k, v in vectorizable_arrays.items() if v is False}
+            print(array_accesses_to_be_packed)
+            # Squeeeze the memlets that have more volume than the vector with (strided access) that need to be packed
+            # e.g. stride-2 access will be something like [2*i:2*i+15] (vector length 8) before packing we need to make it back to [2*i:2*i].
+            squeeze_memlets_of_packed_arrays(state, new_inner_map, array_accesses_to_be_packed)
+            # This function also fixes strided loads
+            modified_nodes, modified_edges = self._generate_strided_loads_to_packed_storage(
+                state.sdfg, state, {vector_map_param}, new_inner_map, array_accesses_to_be_packed)
+            modified_nodes2, modified_edges2 = self._generate_strided_stores_from_packed_storage(
+                state.sdfg, state, {vector_map_param}, new_inner_map, array_accesses_to_be_packed)
+            modified_nodes = modified_nodes.union(modified_nodes2)
+            modified_edges = modified_edges.union(modified_edges2)
+        else:
+            modified_nodes = set()
+            modified_edges = set()
+
+        self._extend_memlets(state, new_inner_map, modified_nodes, modified_edges)
+        self._extend_temporary_scalars(state, new_inner_map, modified_nodes, modified_edges)
         state.sdfg.validate()
 
         if not has_single_nested_sdfg:
             if self.insert_copies:
-                self._copy_in_and_copy_out(state, new_inner_map, vectorization_number)
+                self._copy_in_and_copy_out(state, new_inner_map, vectorization_number, vectorizable_arrays)
+
         # Replactes tasklets of form A op B to vectorized_op(A, B)
-        self._replace_tasklets(state, new_inner_map, vector_map_param)
+        self._replace_tasklets(state, new_inner_map, vector_map_param, modified_nodes)
         # Copies in data to the storage needed by the vector unit
         # Copies out data from the storage needed by the vector unit
         # Copy-in out needs to skip scalars and arrays that pass complete dimensions (over approximation must be due to a reason)
@@ -309,6 +336,9 @@ class Vectorize(ppl.Pass):
         # This can be vectorized but the input shape will not be the (1,) or (vector_width,)
         # use the utility function that returns the accesses that are vectorizable:
         # vectorizable access means that all subets to an array depends purely on constants or loop parameters
+        # And the loop parameter is not involved in a multiplication, otherwise wee need to pack it:
+        # Consider loop (i=0; i<N; i++) and accessing an array [i*2] this means we have stride-2 access and this also
+        # needs to be packed
         vectorizable_arrays_dict = collect_vectorizable_arrays(inner_sdfg, nsdfg, state, invariant_scalars)
         non_vectorizable_arrays = {k for k, v in vectorizable_arrays_dict.items() if v is False} - invariant_scalars
 
@@ -505,6 +535,199 @@ class Vectorize(ppl.Pass):
                         modified_edges.add(edge)
         return modified_nodes, modified_edges, modified_data
 
+    def _generate_strided_loads_to_packed_storage(
+            self, sdfg: dace.SDFG, state: dace.SDFGState, symbols_to_offset: Set[str], map_entry: dace.nodes.MapEntry,
+            array_accessed_to_be_packed: Set[str]) -> Tuple[set[dace.nodes.Node], Set[Edge[Memlet]]]:
+
+        all_nodes = state.all_nodes_between(map_entry, state.exit_node(map_entry))
+
+        modified_nodes = set()
+        modified_edges = set()
+
+        array_loads_to_be_packed = set()
+
+        for edge in state.all_edges(*all_nodes):
+            if edge.data.data in array_accessed_to_be_packed and (isinstance(edge.dst, dace.nodes.AccessNode)
+                                                                  or isinstance(edge.src, dace.nodes.MapEntry)):
+                array_loads_to_be_packed.add(edge.data.data)
+
+        # Then do the other stuff
+        for edge in state.all_edges(*all_nodes):
+            if edge.data is not None and edge.data.data in array_loads_to_be_packed:
+                # Create a packed copy
+                # If it is a source node (no in edges, copy in), otherwise replace with the packed data
+                src = edge.src
+
+                # Distinguish between the first access and consequent accesses
+                if edge.data.data in array_loads_to_be_packed:
+                    if src == map_entry:
+                        new_data_name = f"{edge.data.data}_packed"
+                        old_data_name = f"{edge.data.data}"
+
+                        #non_packed_access = state.add_access(old_data_name)
+                        packed_access = state.add_access(new_data_name)
+                        modified_nodes.add(packed_access)
+
+                        if new_data_name not in sdfg.arrays:
+                            sdfg.add_array(name=new_data_name,
+                                           shape=(self.vector_width, ),
+                                           dtype=self.vector_op_numeric_type,
+                                           storage=dace.dtypes.StorageType.Register,
+                                           transient=True)
+
+                        # Replace all symbols used e.g. i,j with `i`, `j_laneid_0`
+                        # A -[j]> B becomes now
+                        # A -[j_laneid_0,j_laneid_1,...,j_laneid_7]-> A_packed -[0:8]-> B
+                        for i in range(self.vector_width):
+                            #print(edge.data.data, edge.data.subset, i, symbols_to_offset, edge.data.subset.free_symbols)
+                            new_subset = repl_subset_to_use_with_int_offset(sdfg=state.sdfg,
+                                                                            symbols_to_offset=symbols_to_offset,
+                                                                            subset=copy.deepcopy(edge.data.subset),
+                                                                            int_offset=i)
+                            #print(edge.data.subset)
+                            #print(new_subset)
+                            #print(symbols_to_offset)
+                            at = state.add_tasklet(
+                                name=f"assign_{i}",
+                                inputs={
+                                    "_in",
+                                },
+                                outputs={
+                                    "_out",
+                                },
+                                code="_out = _in",
+                            )
+                            at.add_in_connector("_in")
+                            at.add_out_connector("_out")
+
+                            e1 = state.add_edge(edge.src, edge.src_conn, at, "_in",
+                                                dace.memlet.Memlet(
+                                                    data=old_data_name,
+                                                    subset=new_subset,
+                                                ))
+                            e2 = state.add_edge(at, "_out", packed_access, None,
+                                                dace.memlet.Memlet(f"{new_data_name}[{i}]"))
+
+                            modified_edges.add(e1)
+                            modified_edges.add(e2)
+                            modified_nodes.add(at)
+
+                        e3 = state.add_edge(packed_access, None, edge.dst, edge.dst_conn,
+                                            dace.memlet.Memlet(f"{new_data_name}[0:{self.vector_width}]"))
+                        modified_edges.add(e3)
+
+                        state.remove_edge(edge)
+                        modified_edges.add(edge)
+                    else:
+                        new_data_name = f"{edge.data.data}_packed"
+                        old_data_name = f"{edge.data.data}"
+
+                        edge.data = dace.memlet.Memlet(data=new_data_name, subset=copy.deepcopy(edge.data.subset))
+
+                        if isinstance(edge.src, dace.nodes.AccessNode) and edge.src.data == old_data_name:
+                            edge.src.data = new_data_name
+                        if isinstance(edge.dst, dace.nodes.AccessNode) and edge.dst.data == old_data_name:
+                            edge.dst.data = new_data_name
+
+        return modified_nodes, modified_edges
+
+    def _generate_strided_stores_from_packed_storage(
+            self, sdfg: dace.SDFG, state: dace.SDFGState, symbols_to_offset: Set[str], map_entry: dace.nodes.MapEntry,
+            array_accessed_to_be_packed: Set[str]) -> Tuple[set[dace.nodes.Node], Set[Edge[Memlet]]]:
+
+        all_nodes = state.all_nodes_between(map_entry, state.exit_node(map_entry))
+
+        modified_nodes = set()
+        modified_edges = set()
+
+        array_stores_to_be_packed = set()
+
+        for edge in state.all_edges(*all_nodes):
+            if edge.data.data in array_accessed_to_be_packed and isinstance(edge.dst, dace.nodes.MapExit):
+                array_stores_to_be_packed.add(edge.data.data)
+
+        map_exit = state.exit_node(map_entry)
+
+        # Then do the other stuff
+        for edge in state.all_edges(*all_nodes):
+            if edge.data is not None and edge.data.data in array_stores_to_be_packed:
+                # Create a packed copy
+                # If it is a source node (no in edges, copy in), otherwise replace with the packed data
+                dst = edge.dst
+
+                # Distinguish between the first access and consequent accesses
+                if edge.data.data in array_stores_to_be_packed:
+                    if dst == map_exit:
+                        new_data_name = f"{edge.data.data}_packed"
+                        old_data_name = f"{edge.data.data}"
+
+                        #non_packed_access = state.add_access(old_data_name)
+                        packed_access = state.add_access(new_data_name)
+                        modified_nodes.add(packed_access)
+
+                        if new_data_name not in sdfg.arrays:
+                            sdfg.add_array(name=new_data_name,
+                                           shape=(self.vector_width, ),
+                                           dtype=self.vector_op_numeric_type,
+                                           storage=dace.dtypes.StorageType.Register,
+                                           transient=True)
+
+                        # Replace all symbols used e.g. i,j with `i`, `j_laneid_0`
+                        # A -[j]> B becomes now
+                        # A -[j_laneid_0,j_laneid_1,...,j_laneid_7]-> A_packed -[0:8]-> B
+                        for i in range(self.vector_width):
+                            #print(edge.data.data, edge.data.subset, i, symbols_to_offset, edge.data.subset.free_symbols)
+                            new_subset = repl_subset_to_use_with_int_offset(sdfg=state.sdfg,
+                                                                            symbols_to_offset=symbols_to_offset,
+                                                                            subset=copy.deepcopy(edge.data.subset),
+                                                                            int_offset=i)
+                            #print(edge.data.subset)
+                            #print(new_subset)
+                            #print(symbols_to_offset)
+                            at = state.add_tasklet(
+                                name=f"assign_{i}",
+                                inputs={
+                                    "_in",
+                                },
+                                outputs={
+                                    "_out",
+                                },
+                                code="_out = _in",
+                            )
+                            at.add_in_connector("_in")
+                            at.add_out_connector("_out")
+
+                            e1 = state.add_edge(packed_access, None, at, "_in",
+                                                dace.memlet.Memlet(f"{new_data_name}[{i}]"))
+
+                            e2 = state.add_edge(at, "_out", edge.dst, edge.dst_conn,
+                                                dace.memlet.Memlet(
+                                                    data=old_data_name,
+                                                    subset=new_subset,
+                                                ))
+                            modified_edges.add(e1)
+                            modified_edges.add(e2)
+                            modified_nodes.add(at)
+
+                        e3 = state.add_edge(edge.src, edge.src_conn, packed_access, None,
+                                            dace.memlet.Memlet(f"{new_data_name}[0:{self.vector_width}]"))
+                        modified_edges.add(e3)
+
+                        state.remove_edge(edge)
+                        modified_edges.add(edge)
+                    else:
+                        new_data_name = f"{edge.data.data}_packed"
+                        old_data_name = f"{edge.data.data}"
+
+                        edge.data = dace.memlet.Memlet(data=new_data_name, subset=copy.deepcopy(edge.data.subset))
+
+                        if isinstance(edge.src, dace.nodes.AccessNode) and edge.src.data == old_data_name:
+                            edge.src.data = new_data_name
+                        if isinstance(edge.dst, dace.nodes.AccessNode) and edge.dst.data == old_data_name:
+                            edge.dst.data = new_data_name
+
+        return modified_nodes, modified_edges
+
     def _expand_interstate_assignment(self, sdfg: dace.SDFG, edge: Edge[InterstateEdge], syms: Set[str],
                                       candidate_arrays: Set[str]):
         duplicated_symbols = set()
@@ -565,13 +788,19 @@ class Vectorize(ppl.Pass):
                 self._expand_interstate_assignment(sdfg, edge, syms, candidate_arrays))
         return duplicated_symbols
 
-    def _extend_temporary_scalars(self, state: SDFGState, map_entry: dace.nodes.MapEntry):
+    def _extend_temporary_scalars(self,
+                                  state: SDFGState,
+                                  map_entry: dace.nodes.MapEntry,
+                                  modified_nodes: Set[dace.nodes.Node] = set(),
+                                  modified_edges: Set[Edge[Memlet]] = set()):
         nodes = list(state.all_nodes_between(map_entry, state.exit_node(map_entry)))
         edges_to_rm = set()
         edges_to_add = set()
         nodes_to_rm = set()
         for node in nodes:
             if isinstance(node, dace.nodes.AccessNode):
+                if node in modified_nodes:
+                    continue
                 desc = state.parent_graph.sdfg.arrays[node.data]
                 if (isinstance(desc, dace.data.Scalar) or (isinstance(desc, dace.data.Array) and desc.shape == (1, ))):
                     if f"{node.data}_vec" not in state.parent_graph.sdfg.arrays:
@@ -610,6 +839,8 @@ class Vectorize(ppl.Pass):
         # Refresh nodes
         nodes = list(state.all_nodes_between(map_entry, state.exit_node(map_entry)))
         for edge in state.all_edges(*nodes):
+            if edge in modified_edges:
+                continue
             if edge.data is not None and edge.data.data in rmed_data_names:
                 new_memlet = dace.memlet.Memlet(
                     data=f"{edge.data.data}_vec",
@@ -619,13 +850,17 @@ class Vectorize(ppl.Pass):
                 state.remove_edge(edge)
                 state.add_edge(edge.src, edge.src_conn, edge.dst, edge.dst_conn, new_memlet)
 
-    def _extend_memlets(self, state: SDFGState, map_entry: dace.nodes.MapEntry):
+    def _extend_memlets(self,
+                        state: SDFGState,
+                        map_entry: dace.nodes.MapEntry,
+                        modified_nodes: Set[dace.nodes.Node] = set(),
+                        modified_edges: Set[Edge[Memlet]] = set()):
         nodes = list(state.all_nodes_between(map_entry, state.exit_node(map_entry)))
         assert not any({
             isinstance(node, dace.nodes.MapEntry)
             for node in nodes
         }), f"No map entry nodes are allowed within the vectorized map entry - this case is not supported yet"
-        edges = state.all_edges(*nodes)
+        edges = set(state.all_edges(*nodes)) - modified_edges
         self._extend_memlets_from_node_and_edge_list(state, edges)
 
     def _extend_memlets_from_node_and_edge_list(self, state: SDFGState, edges: Iterable[Edge[Memlet]]):
@@ -728,8 +963,9 @@ class Vectorize(ppl.Pass):
         self._tasklet_vectorizable_map[node] = vectorizable
         return vectorizable
 
-    def _replace_tasklets(self, state: SDFGState, map_entry: dace.nodes.MapEntry, vector_map_param: str):
-        nodes = list(state.all_nodes_between(map_entry, state.exit_node(map_entry)))
+    def _replace_tasklets(self, state: SDFGState, map_entry: dace.nodes.MapEntry, vector_map_param: str,
+                          modified_nodes: Set[dace.nodes.AccessNode]):
+        nodes = set(state.all_nodes_between(map_entry, state.exit_node(map_entry))) - modified_nodes
         assert not any({
             isinstance(node, dace.nodes.MapEntry)
             for node in nodes
@@ -930,7 +1166,8 @@ class Vectorize(ppl.Pass):
         self._used_names.add(candidate2)
         return candidate2
 
-    def _copy_in_and_copy_out(self, state: SDFGState, map_entry: dace.nodes.MapEntry, vectorization_number: int):
+    def _copy_in_and_copy_out(self, state: SDFGState, map_entry: dace.nodes.MapEntry, vectorization_number: int,
+                              vectorizable_arrays: Dict[str, bool]):
         map_exit = state.exit_node(map_entry)
         data_and_offsets = list()
         in_datas = set()
@@ -941,6 +1178,9 @@ class Vectorize(ppl.Pass):
 
             ie_arr = state.sdfg.arrays[ie.data.data]
             if isinstance(ie_arr, dace.data.Scalar):
+                continue
+
+            if ie.data.data in vectorizable_arrays and vectorizable_arrays[ie.data.data] is False:
                 continue
 
             array = state.parent_graph.sdfg.arrays[ie.data.data]
@@ -977,6 +1217,9 @@ class Vectorize(ppl.Pass):
 
             oe_arr = state.sdfg.arrays[oe.data.data]
             assert isinstance(oe_arr, dace.data.Array)
+
+            if oe.data.data in vectorizable_arrays and vectorizable_arrays[oe.data.data] is False:
+                continue
 
             array = state.parent_graph.sdfg.arrays[oe.data.data]
             if array.storage != self.vector_output_storage:

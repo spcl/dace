@@ -6,6 +6,7 @@ from dace.sdfg import nodes
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.vectorization.vectorization_utils import *
 
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class RemoveVectorMaps(ppl.Pass):

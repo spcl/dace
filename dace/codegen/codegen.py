@@ -22,7 +22,6 @@ from dace.transformation.pass_pipeline import FixedPointPipeline
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 
 
-
 def generate_headers(sdfg: SDFG, frame: framecode.DaCeCodeGenerator) -> str:
     """ Generate a header file for the SDFG """
     proto = ""
