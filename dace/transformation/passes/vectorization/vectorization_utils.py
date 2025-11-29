@@ -3046,8 +3046,6 @@ def add_copies_before_and_after_nsdfg(
                 vec_subset = dace.subsets.Range([(0, vector_width - 1, 1)])
                 edge.data = dace.memlet.Memlet(data=vec_name, subset=vec_subset)
 
-    state.sdfg.save("l0.sdfg")
-
     for inner_state in inner_sdfg.all_states():
         for node in inner_state.data_nodes():
             # Do not check packed storage
