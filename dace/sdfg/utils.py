@@ -2595,6 +2595,13 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
         else:
             return input.replace(src, dst)
 
+    nsdfgs = []
+    # Before replacing anything collect all nested SDFGs and their in-out edges for recursion
+    for state in sdfg.all_states():
+        for node in state.nodes():
+            if isinstance(node, nd.NestedSDFG):
+                nsdfgs.append((node, state, state.in_edges(node), state.out_edges(node)))
+
     # If we are the root SDFG then we need can't remove non-transient scalar (but will just not use it)
     # For nestedSDFGs we will remove
     if root != sdfg:
@@ -2604,7 +2611,6 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
         if scalar_name in sdfg.symbols:
             sdfg.remove_symbol(scalar_name)
 
-    nsdfgs = set()
     c = 0
     for state in sdfg.all_states():
         # Check dynamic inputs
@@ -2672,8 +2678,6 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
                     _s = s.subs(scalar_name, scalar_val)
                     new_range_list.append((_b, _e, _s))
                 node.map.range = dace.subsets.Range(new_range_list)
-            elif isinstance(node, nd.NestedSDFG):
-                nsdfgs.add(node.sdfg)
 
     # Replace on for CFGs as
     for cfg in sdfg.all_control_flow_regions():
@@ -2695,8 +2699,12 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
         if scalar_name in sdfg.parent_nsdfg_node.symbol_mapping:
             del sdfg.parent_nsdfg_node.symbol_mapping[scalar_name]
 
-    for nsdfg in nsdfgs:
-        _specialize_scalar_impl(root, nsdfg, scalar_name, scalar_val)
+    for nsdfg_node, state, in_edges, out_edges in nsdfgs:
+        in_data_mapping = {ie.data.data: ie.dst_conn for ie in in_edges if ie.data.data is not None}
+        out_data_mapping = {oe.data.data: oe.src_conn for oe in out_edges if oe.data.data is not None}
+        assert scalar_name not in out_data_mapping
+        if scalar_name in in_data_mapping:
+            _specialize_scalar_impl(root, nsdfg_node.sdfg, in_data_mapping[scalar_name], scalar_val)
 
 
 def specialize_scalar(sdfg: 'dace.SDFG', scalar_name: str, scalar_val: Union[float, int, str]):
