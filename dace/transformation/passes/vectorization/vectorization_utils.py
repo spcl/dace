@@ -53,6 +53,7 @@ def repl_subset_to_use_laneid_offset(sdfg: dace.SDFG, subset: dace.subsets.Range
     """
     # Offset needs to be positive integer
     assert symbol_offset.isdigit()
+    prev_sdfg_free_syms = sdfg.free_symbols
 
     free_syms = subset.free_symbols
     #print(f"Symbol offset: {symbol_offset}")
@@ -74,11 +75,11 @@ def repl_subset_to_use_laneid_offset(sdfg: dace.SDFG, subset: dace.subsets.Range
     #print("Subset after symbol offset replacement:", new_subset)
 
     for free_sym in free_syms:
-        if str(free_sym) in sdfg.free_symbols:
+        if str(free_sym) in sdfg.free_symbols - prev_sdfg_free_syms:
             #print(free_sym, "is in free symbols of the sdfg")
             raise Exception(
-                "This will result an invalid SDFG, either call with `add_missing_symbols=True` or fix this issue")
-
+                "`repl_subset_to_use_laneid_offset` has introduced new free symbols (this will cause problems as the new symbols should not be free). This will result an invalid SDFG, either call with `add_missing_symbols=True` or fix this issue"
+            )
     return new_subset
 
 
