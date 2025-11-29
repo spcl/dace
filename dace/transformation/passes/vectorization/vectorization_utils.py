@@ -3076,8 +3076,8 @@ def add_copies_before_and_after_nsdfg(
 
             assert len(ie_datanames) + len(oe_datanames) > 0
 
-            print(len(ie_datanames), ie_datanames)
-            print(len(oe_datanames), oe_datanames)
+            #print(len(ie_datanames), ie_datanames)
+            #print(len(oe_datanames), oe_datanames)
 
             if len(oe_datanames) == 0:
                 ie_dataname = ie_datanames.pop()
@@ -3397,7 +3397,7 @@ def resolve_missing_laneid_symbols(inner_sdfg, nsdfg, state, vector_map_param):
     """
     # Find missing symbols
     missing_symbols = set(inner_sdfg.free_symbols - set(nsdfg.symbol_mapping.keys()))
-    print(missing_symbols)
+    #print(missing_symbols)
 
     # Determine which of the missing symbols correspond to parent map symbols
     map_symbols = assert_symbols_in_parent_map_symbols(missing_symbols, state, nsdfg)
