@@ -121,7 +121,7 @@ class Vectorize(ppl.Pass):
 
         if not has_single_nested_sdfg:
             vectorizable_arrays = collect_non_unit_stride_accesses_in_map(state.sdfg, state, new_inner_map)
-            print(vectorizable_arrays)
+            #print(vectorizable_arrays)
 
         use_previous_subsets(state, inner_map_entry, self.vector_width)
 
@@ -138,7 +138,7 @@ class Vectorize(ppl.Pass):
         # Updates memlets from [k, i] to [k, i:i+4]
         if not has_single_nested_sdfg:
             array_accesses_to_be_packed = {k for k, v in vectorizable_arrays.items() if v is False}
-            print(array_accesses_to_be_packed)
+            #print(array_accesses_to_be_packed)
             # Squeeeze the memlets that have more volume than the vector with (strided access) that need to be packed
             # e.g. stride-2 access will be something like [2*i:2*i+15] (vector length 8) before packing we need to make it back to [2*i:2*i].
             squeeze_memlets_of_packed_arrays(state, new_inner_map, array_accesses_to_be_packed)
