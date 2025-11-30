@@ -121,7 +121,6 @@ class Vectorize(ppl.Pass):
 
         if not has_single_nested_sdfg:
             vectorizable_arrays = collect_non_unit_stride_accesses_in_map(state.sdfg, state, new_inner_map)
-            #print(vectorizable_arrays)
             use_previous_subsets(state, inner_map_entry, self.vector_width, vectorizable_arrays)
         else:
             use_previous_subsets(state, inner_map_entry, self.vector_width, set())
@@ -347,6 +346,8 @@ class Vectorize(ppl.Pass):
         non_vectorizable_array_infos = {(arr_name + "_packed", (self.vector_width, ), self.vector_input_storage,
                                          arr.dtype)
                                         for arr_name, arr in non_vectorizable_array_descs}
+
+        #raise Exception(vectorizable_arrays_dict, non_vectorizable_arrays)
         add_transient_arrays_from_list(inner_sdfg, non_vectorizable_array_infos)
 
         modified_nodes: Set[dace.nodes.Node] = set()
@@ -354,7 +355,7 @@ class Vectorize(ppl.Pass):
 
         # 2 and 2.1
         new_mn, new_me, packed_data = self._generate_loads_to_packed_storage(inner_sdfg, non_vectorizable_arrays,
-                                                                             vector_width_arrays)
+                                                                             vector_width_arrays, vector_map_param)
         modified_nodes = modified_nodes.union(new_mn)
         modified_edges = modified_edges.union(new_me)
 
@@ -363,7 +364,7 @@ class Vectorize(ppl.Pass):
 
         # 3
         check_writes_to_scalar_sinks_happen_through_assign_tasklets(inner_sdfg, scalar_sink_nodes)
-        new_mn, new_me = self._duplicate_unstructured_writes(inner_sdfg, non_vectorizable_arrays)
+        new_mn, new_me = self._duplicate_unstructured_writes(inner_sdfg, non_vectorizable_arrays, vector_map_param)
         modified_nodes = modified_nodes.union(new_mn)
         modified_edges = modified_edges.union(new_me)
 
@@ -415,7 +416,8 @@ class Vectorize(ppl.Pass):
         # `sym = A[_for_it] + 1`
         # Would become:
         # `sym_laneid_0 = A[_for_it + 0] + 1`, `sym = sym_laneid_0`, `sym_laneid_1 = A[_for_it + 1] + 1`, ...
-        expand_interstate_assignments_to_lanes(inner_sdfg, nsdfg, state, self.vector_width, invariant_scalars)
+        expand_interstate_assignments_to_lanes(inner_sdfg, nsdfg, state, self.vector_width, invariant_scalars,
+                                               vector_map_param)
 
         # 5
         for inner_state in inner_sdfg.all_states():
@@ -435,7 +437,8 @@ class Vectorize(ppl.Pass):
 
         return unstructured_data
 
-    def _duplicate_unstructured_writes(self, inner_sdfg: dace.SDFG, non_vectorizable_arrays: Set[str]):
+    def _duplicate_unstructured_writes(self, inner_sdfg: dace.SDFG, non_vectorizable_arrays: Set[str],
+                                       vector_map_param: str):
         modified_edges = set()
         modified_nodes = set()
         for state in inner_sdfg.all_states():
@@ -453,14 +456,15 @@ class Vectorize(ppl.Pass):
                     if arr.transient is False and (isinstance(arr, dace.data.Array) and
                                                    (arr.shape != (1, ) and arr.shape != (self.vector_width, ))
                                                    and node.data in non_vectorizable_arrays):
-                        touched_nodes, touched_edges = duplicate_access(state, node, self.vector_width)
+                        touched_nodes, touched_edges = duplicate_access(state, node, self.vector_width,
+                                                                        vector_map_param)
                         modified_edges = modified_edges.union(touched_edges)
                         modified_nodes = modified_nodes.union(touched_nodes)
         return modified_nodes, modified_edges
 
     def _generate_loads_to_packed_storage(
-            self, sdfg: dace.SDFG, array_accessed_to_be_packed: Set[str],
-            candidate_arrays: Set[str]) -> Tuple[Set[dace.nodes.Node], Set[Edge[Memlet]], Set[str]]:
+            self, sdfg: dace.SDFG, array_accessed_to_be_packed: Set[str], candidate_arrays: Set[str],
+            vector_map_param: str) -> Tuple[Set[dace.nodes.Node], Set[Edge[Memlet]], Set[str]]:
         modified_nodes: Set[dace.nodes.Node] = set()
         modified_edges: Set[Edge[Memlet]] = set()
         expanded_symbols = set()
@@ -502,7 +506,8 @@ class Vectorize(ppl.Pass):
                         for i in range(self.vector_width):
                             new_subset = repl_subset_to_use_laneid_offset(sdfg=state.sdfg,
                                                                           subset=copy.deepcopy(edge.data.subset),
-                                                                          symbol_offset=str(i))
+                                                                          symbol_offset=str(i),
+                                                                          vector_map_param=vector_map_param)
                             at = state.add_tasklet(
                                 name=f"assign_{i}",
                                 inputs={
