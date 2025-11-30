@@ -40,9 +40,7 @@ class DetectGather(ppl.Pass):
     gather_template = """
 {{
 int64_t idx[{vector_length}] = {{ {initializer_values} }};
-for (int i = 0; i < {vector_length}; i += 8){{
-    gather_double_avx512(&_in[i], &idx[i], _out);
-}}
+gather_double(_in, idx, _out, {vector_length});
 }}
 """
 
