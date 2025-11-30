@@ -202,7 +202,6 @@ def _check_tasklet_properties(sdfg: dace.SDFG):
 def _run_compile_and_comparison_test(sdfg: dace.SDFG):
     sdfg.compile()
     original_sdfg = copy.deepcopy(sdfg)
-    original_sdfg.save("original.sdfgz", compress=True)
     SplitTasklets().apply_pass(sdfg=sdfg, pipeline_results={})
     sdfg.validate()
     sdfg.compile()
