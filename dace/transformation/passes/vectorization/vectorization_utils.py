@@ -27,14 +27,16 @@ def repl_subset(subset: dace.subsets.Range, repl_dict: Dict[str, str]) -> dace.s
     return new_subset
 
 
-def repl_subset_to_use_laneid_offset(sdfg: dace.SDFG, subset: dace.subsets.Range,
-                                     symbol_offset: str) -> dace.subsets.Range:
+def repl_subset_to_use_laneid_offset(sdfg: dace.SDFG, subset: dace.subsets.Range, symbol_offset: str,
+                                     vector_map_param: str) -> dace.subsets.Range:
     """
     Apply a symbolic offset to all free symbols in a subset.
 
     This function replaces each free symbol in the subset with a new symbol
     that has the offset appended to its name (e.g., 'i' becomes 'i_{offset}' where offset is an integer).
     New symbols are automatically added to the SDFG if they don't exist.
+
+    If symbol is vector map param always add + 1 instead of laneid
 
     Args:
         sdfg: The SDFG containing the subset
@@ -59,15 +61,22 @@ def repl_subset_to_use_laneid_offset(sdfg: dace.SDFG, subset: dace.subsets.Range
     #print(f"Symbol offset: {symbol_offset}")
     #print("Free symbols in subset:", free_syms)
 
-    repl_dict = {str(free_sym): str(free_sym) + "_laneid_" + str(symbol_offset) for free_sym in free_syms}
+    repl_dict = {
+        str(free_sym):
+        str(free_sym) + "_laneid_" + str(symbol_offset) if str(free_sym) != vector_map_param else "(" + str(free_sym) +
+        " + " + str(symbol_offset) + ")"
+        for free_sym in free_syms
+    }
+
     for free_sym in free_syms:
         if str(free_sym) in sdfg.symbols:
             stype = sdfg.symbols[str(free_sym)]
         else:
             stype = dace.int64
-        offset_symbol_name = str(free_sym) + "_laneid_" + str(symbol_offset)
-        if offset_symbol_name not in sdfg.symbols:
-            sdfg.add_symbol(offset_symbol_name, stype)
+        if str(free_sym) != vector_map_param:
+            offset_symbol_name = str(free_sym) + "_laneid_" + str(symbol_offset)
+            if offset_symbol_name not in sdfg.symbols:
+                sdfg.add_symbol(offset_symbol_name, stype)
     #print("Generated replacement dictionary with offset:", repl_dict)
 
     new_subset = repl_subset(subset=subset, repl_dict=repl_dict)
@@ -1733,8 +1742,8 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         raise NotImplementedError(f"Unhandled TaskletType: {ttype}, from: {node.code.as_string} ({node})")
 
 
-def duplicate_access(state: dace.SDFGState, node: dace.nodes.AccessNode,
-                     vector_width: int) -> Tuple[Set[dace.nodes.Node], Set[Edge[Memlet]]]:
+def duplicate_access(state: dace.SDFGState, node: dace.nodes.AccessNode, vector_width: int,
+                     vector_map_param: str) -> Tuple[Set[dace.nodes.Node], Set[Edge[Memlet]]]:
     """
     Duplicates an access node into a packed vector of a given width, updating all relevant tasklets and memlets.
     It writes to a packed storage by using the duplicated symbols.
@@ -1758,7 +1767,34 @@ def duplicate_access(state: dace.SDFGState, node: dace.nodes.AccessNode,
     assert isinstance(src, dace.nodes.Tasklet), f"Writes to sink nodes need to go through assignment tasklets, do it"
     inc = next(iter(src.in_connectors))
     outc = next(iter(src.out_connectors))
+    if src.code.as_string != f"{outc} = {inc}":
+        # If prev tasklet is not assignment then add an intermediate scalar
+        scl_name, scl = state.sdfg.add_scalar("tmp",
+                                              dtype=state.sdfg.arrays[node.data].dtype,
+                                              storage=dace.dtypes.StorageType.Register,
+                                              transient=True,
+                                              find_new_name=True)
+        scl_an = state.add_access(scl_name)
+        e = state.add_edge(src, ie.src_conn, scl_an, None, dace.memlet.Memlet(scl_name))
+        state.remove_edge(ie)
+        assign_tasklet = state.add_tasklet("assign_t", {"_in"}, {"_out"}, "_out = _in")
+        e2 = state.add_edge(scl_an, None, assign_tasklet, "_in", dace.memlet.Memlet(scl_name))
+        e3 = state.add_edge(assign_tasklet, "_out", ie.dst, ie.dst_conn,
+                            dace.memlet.Memlet(data=ie.data.data, subset=copy.deepcopy(ie.data.subset)))
+        # These edges and nodes still need to be vectorized
+        #touched_edges.add(e)
+        #touched_edges.add(e2)
+        #touched_edges.add(e3)
+        #touched_nodes.add(scl_an)
+        #touched_nodes.add(assign_tasklet)
+        # Update ndoes/edges
+        src = assign_tasklet
+        ie = e3
+        inc = next(iter(src.in_connectors))
+        outc = next(iter(src.out_connectors))
+
     assert src.code.as_string == f"{outc} = {inc}", f"{src.code.as_string} != {inc} = {outc}"
+
     src.code = CodeBlock(code="\n".join([f"{outc}[{_i}] = {inc}[{_i}]" for _i in range(vector_width)]))
     touched_nodes.add(src)
     packed_access = state.add_access(f"{node.data}_packed")
@@ -1800,7 +1836,7 @@ def duplicate_access(state: dace.SDFGState, node: dace.nodes.AccessNode,
             assert False
         touched_edges.add(e1)
 
-        new_subset = repl_subset_to_use_laneid_offset(state.sdfg, ie.data.subset, str(i))
+        new_subset = repl_subset_to_use_laneid_offset(state.sdfg, ie.data.subset, str(i), vector_map_param)
 
         e2 = state.add_edge(t, "_out", ie.dst, None, dace.memlet.Memlet(data=node.data, subset=new_subset))
         if isinstance(e2, dace.nodes.Node):
@@ -2343,6 +2379,36 @@ def find_symbol_assignment(sdfg: dace.SDFG, sym_name: str) -> str:
     #raise Exception("Symbol assignment not found")
 
 
+def _all_atoms(expr, ignored=()):
+    """
+    Return a set of all atomic elements in a SymPy expression, including:
+    - Symbols
+    - Indexed symbols / arrays
+    - Function calls
+    - Numbers (optional)
+
+    ignored: tuple of types to ignore, e.g., (sympy.Number,)
+    """
+    # Use expr.atoms to get all different types of atoms
+    atoms = set()
+
+    # Get all symbols
+    atoms.update(expr.atoms(sympy.Symbol))
+
+    # Get all Indexed (arrays)
+    atoms.update(expr.atoms(sympy.Indexed))
+
+    # Get all function symbols (but not the class, only instances)
+    funcs = expr.atoms(sympy.Function)
+    for f in funcs:
+        if f.func not in ignored:
+            atoms.add(f)
+            # Also include arguments of the function
+            atoms.update(f.args)
+
+    return atoms
+
+
 def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.NestedSDFG, parent_state: SDFGState,
                                 invariant_scalars: Set[str]) -> Set[str]:
     """
@@ -2354,6 +2420,10 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
     The map parameter involve in vectorization should not appear in a multiplicaiton expression.
     E.g. loop (int i = 0; i < N; i ++) and access A[i] is ok but, A[i*2] means it is strided and it
     needs to be packed
+
+    Consider the case A[for_it_88, 0, jo] and interstate assignment has jo = B[for_it_88, 0]
+    And the loop is over 0->for_it_88, this not vectorizable, so if any dimension involved uses the loop map
+    param return false
 
     Args:
         sdfg: The SDFG to analyze.
@@ -2430,7 +2500,7 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
                         assignment = find_symbol_assignment(sdfg, str(free_sym))
                         if assignment is None:
                             sdfg.save("failing_vectorization.sdfg")
-                        assert assignment is not None
+                        assert assignment is not None, f"Could not find an iedge assignment for {free_sym}"
                         assignment_expr = dace.symbolic.SymExpr(assignment)
                         # Define functions to ignore (common arithmetic + piecewise + rounding)
                         ignored = {
@@ -2454,6 +2524,53 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
                         if len(funcs) != 0 or len(scalars) != 0:
                             #print(f"Indirect access detected: ({funcs}, {scalars}) for {arr_name}, is not vectorizable")
                             array_is_vectorizable[arr_name] = False
+
+            # Go through non unit stride dimensions in case it those dimensions have unstructuredness
+            for i, (b, e, s) in enumerate(access_subset):
+                #print(i, ",", (b,e,s), "|", access_subset)
+                if i == stride_one_dim:
+                    continue
+                #print(b, type(b),)
+                free_syms = set()
+                if hasattr(b, "free_syms"):
+                    free_syms = {str(s) for s in b.free_syms}
+                if hasattr(b, "free_symbols"):
+                    free_syms = {str(s) for s in b.free_symbols}
+
+                if free_syms != set():
+                    #print(free_syms)
+                    for free_sym in free_syms:
+                        # Accessing map param is ok
+                        #print("FS", free_syms)
+                        if str(free_sym) == map_param:
+                            continue
+                        else:
+                            # Other free symbols should not have indirect accesses
+                            # Analysis tries find the first assignment in the CFG
+                            assignment = find_symbol_assignment(sdfg, str(free_sym))
+
+                            # If assignment is None, it is probably coming from parent map
+                            parent_syms_defined = parent_state.symbols_defined_at(parent_nsdfg_node)
+                            if assignment is None:
+                                assert str(
+                                    free_sym
+                                ) in parent_syms_defined, f"Could not find an iedge assignment for {free_sym} it is also not defined in symbols defined in nsdfg entry {parent_syms_defined}"
+                                continue
+
+                            assignment_expr = dace.symbolic.SymExpr(assignment)
+                            # Define functions to ignore (common arithmetic + piecewise + rounding)
+                            ignored = {
+                                sympy.sin, sympy.cos, sympy.tan, sympy.exp, sympy.log, sympy.sqrt, sympy.Abs,
+                                sympy.floor, sympy.ceiling, sympy.Min, sympy.Max, sympy.asin, sympy.acos, sympy.atan,
+                                sympy.sinh, sympy.cosh, sympy.tanh, sympy.asinh, sympy.acosh, sympy.atanh
+                            }
+                            all_atoms = _all_atoms(assignment_expr, ignored)
+                            all_atoms_str = {str(s) for s in all_atoms}
+                            #print(all_atoms_str)
+
+                            # Map parameter appears in inddirect access, array is not vectorizable
+                            if map_param in all_atoms_str:
+                                array_is_vectorizable[arr_name] = False
 
     return array_is_vectorizable
 
@@ -2627,7 +2744,8 @@ def convert_nonstandard_calls(expr: str) -> str:
 
 def expand_interstate_assignments_to_lanes(inner_sdfg: dace.SDFG, nsdfg_node: dace.nodes.NestedSDFG,
                                            state: dace.SDFGState, vector_width: int, invariant_data: Set[str],
-                                           vector_dtype: typeclass):
+                                           vector_dtype: typeclass,
+                                           vector_map_param: str):
     # `sym = 0`
     # Would become
     # `sym_laneid_0 = 0, sym=sym_laneid_0, sym_laneid_1 = 0, sym_laneid_2 = 0, ....`
@@ -2642,15 +2760,33 @@ def expand_interstate_assignments_to_lanes(inner_sdfg: dace.SDFG, nsdfg_node: da
     # Pre-condition last dimension is the dimension we vectorize
     parent_map_entry = state.scope_dict()[nsdfg_node]
     assert parent_map_entry is not None and isinstance(parent_map_entry, dace.nodes.MapEntry)
-    vectorized_param = parent_map_entry.map.params[-1]
+    vectorized_param = vector_map_param
+    #print(vector_map_param)
 
     for edge in inner_sdfg.all_interstate_edges():
         new_assignments = dict()
         assignments = edge.data.assignments
+        #print(f"Work expanding interstate edge {edge.src} -> {edge.dst} ({edge.data.assignments})")
         for k, v in assignments.items():
             # Add a new symbol for each lane
             original_v_expr = dace.symbolic.SymExpr(v)
+            #print(f"Update {k} assignments")
             for i in range(vector_width):
+                # I do not know why is it happening but:
+                # This function tries to apply expansion on something such as 'jo_laneid_3'
+                # If 2 symbols need to be expanded then we get 'jo_laneid_3_laneid_0' (for vector length 8 we get 8x8 symbols that are wrong)
+                # The update should be done only when both laneid's match and
+                # in this case the anme should not be updated
+                if "laneid" in k:
+                    m = re.search(r"_(\d+)$", k)
+                    assert m
+                    idx = int(m.group(1))
+                    if i != idx:
+                        continue
+                    new_k = k
+                else:
+                    new_k = f"{k}_laneid_{i}"
+                #print(f"{new_k} is from {k}")
                 v_expr = dace.symbolic.SymExpr(v)
 
                 funcs = {str(f) for f in v_expr.atoms(sympy.Function)}
@@ -2664,12 +2800,13 @@ def expand_interstate_assignments_to_lanes(inner_sdfg: dace.SDFG, nsdfg_node: da
                     new_assignments[k] = v
                     continue
 
-                new_k = f"{k}_laneid_{i}"
                 if new_k not in inner_sdfg.symbols:
                     inner_sdfg.add_symbol(new_k, inner_sdfg.symbols.get(k, vector_dtype))
 
                 # Replace map param `_for_it` with `_for_it + laneid`
+                v_expr_old = copy.deepcopy(v_expr)
                 v_expr = v_expr.subs(vectorized_param, f"({vectorized_param} + {i})")
+                #print(v_expr_old, "->", v_expr)
 
                 # All other symbols are replaced with `s` -> `s{laneid}`, except free symbols
                 # Those are kept as they are
@@ -2687,12 +2824,15 @@ def expand_interstate_assignments_to_lanes(inner_sdfg: dace.SDFG, nsdfg_node: da
                     # If it is a symbol replace with laneid
                     if free_sym_str in inner_sdfg.symbols:
                         #print(f"Subs {free_sym} with {free_sym}_laneid_{i}")
-                        v_expr = v_expr.subs(free_sym, f"{free_sym}_laneid_{i}")
+                        if free_sym_str == vector_map_param:
+                            assert False
+                        else:
+                            v_expr = v_expr.subs(free_sym, f"{free_sym}_laneid_{i}")
 
-                        # Add the new symbol to the symbols
-                        if f"{free_sym}_laneid_{i}" not in inner_sdfg.symbols:
-                            inner_sdfg.add_symbol(f"{free_sym}_laneid_{i}",
-                                                  inner_sdfg.symbols.get(str(free_sym), vector_dtype))
+                            # Add the new symbol to the symbols
+                            if f"{free_sym}_laneid_{i}" not in inner_sdfg.symbols:
+                                inner_sdfg.add_symbol(f"{free_sym}_laneid_{i}",
+                                                      inner_sdfg.symbols.get(str(free_sym), dace.float64))
                     else:
                         if isinstance(inner_sdfg.arrays[free_sym_str], dace.data.Scalar):
                             #print(f"Subs {free_sym} with {free_sym}")
@@ -3638,6 +3778,14 @@ def remove_map(map_entry: dace.nodes.MapEntry, state: dace.SDFGState):
                         n.symbol_mapping[v] = n.symbol_mapping[k]
                     del n.symbol_mapping[k]
             n.sdfg.replace_dict(repldict)
+            for k, v in repldict.items():
+                assert k not in n.sdfg.symbols
+                assert k not in n.sdfg.free_symbols
+            # SDFG repldict does not change edge subsets
+            for _is in n.sdfg.all_states():
+                for _se in _is.edges():
+                    if _se.data.data is not None:
+                        _se.data.subset.replace(repldict)
     for e in all_edges:
         if e.data.data is None:
             continue
