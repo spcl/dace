@@ -2840,6 +2840,12 @@ def gather_load(src: dace.float64[N], idx: dace.int64[N], dst: dace.float64[N], 
 
 
 @dace.program
+def gather_load_matrix_specialized(A: dace.float32[4, 8192], B: dace.int32[4, 8192], C: dace.float32[4, 8192]):
+    for i, j in dace.map[0:4:1, 0:8192:1]:
+        C[i, j] = A[i, B[i, j]] * 2.0
+
+
+@dace.program
 def strided_load_stride_2(src: dace.float64[2 * N], dst: dace.float64[N], scale: dace.float64):
     for i, in dace.map[0:N:1]:
         dst[i] = src[i * 2] * scale
@@ -2992,6 +2998,27 @@ def test_gather_load():
         vector_width=8,
         save_sdfgs=True,
         sdfg_name="gather_load",
+    )
+
+
+def test_gather_load_matrix_specialized():
+    Y_val = 4
+    X_val = 8192
+    A = numpy.random.rand(Y_val, X_val).astype(numpy.float32)  # Random float32 values
+    B = numpy.random.randint(0, X_val, size=(Y_val, X_val), dtype=numpy.int32)  # Random indices in [0, 8192)
+    C = numpy.zeros((Y_val, X_val), dtype=numpy.float32)  # Output array initialized to zeros
+
+    run_vectorization_test(
+        dace_func=gather_load_matrix_specialized,
+        arrays={
+            "A": A,
+            "B": B,
+            "C": C
+        },
+        params={},
+        vector_width=32,
+        save_sdfgs=True,
+        sdfg_name="gather_load_matrix_specialized",
     )
 
 
@@ -3471,6 +3498,229 @@ def test_nested_matrix_gather_load_specialized():
     )
 
 
+def _get_unstructured_access_cloudsc_sdfg(layout: str = "C") -> dace.SDFG:
+    klon = dace.symbolic.symbol("klon")
+    klev = dace.symbolic.symbol("klev")
+    sdfg_outer = dace.SDFG(f"unstructured_access_cloudsc_sdfg_{layout.lower()}")
+    sdfg_inner = dace.SDFG("inner")
+
+    outer_symbols = {("klon", dace.int64), ("klev", dace.int64)}
+    inner_symbols = {
+        ("jo", dace.int64),
+        ("_for_it_88", dace.int64),
+    }  #  ("_for_it_85", dace.int64)
+    # Add inner symbols to inner SDFG
+    for sname, stype in inner_symbols:
+        sdfg_inner.add_symbol(sname, stype)
+
+    # Add outer symbols to both
+    for sdfg in [sdfg_outer, sdfg_inner]:
+        for sname, stype in outer_symbols:
+            sdfg.add_symbol(sname, stype)
+
+    if layout == "Fortran":
+        arrays = {("iorder", dace.int64, (klon, 5), (1, klon)),
+                  ("zqx", dace.float64, (klon, klev, 5), (1, klon, klon * klev)),
+                  ("zsinksum", dace.float64, (klon, 5), (1, klon)), ("zratio", dace.float64, (klon, 5), (1, klon))}
+    else:
+        assert layout == "C"
+        arrays = {("iorder", dace.int64, (5, klon), (klon, 1)),
+                  ("zqx", dace.float64, (5, klev, klon), (klon * klev, klon, 1)),
+                  ("zsinksum", dace.float64, (5, klon), (klon, 1)), ("zratio", dace.float64, (5, klon), (klon, 1))}
+    scalars = {("zmm", dace.float64), ("zrr", dace.float64)}
+
+    # Add arrays
+    for sdfg in [sdfg_outer, sdfg_inner]:
+        for arr_name, dtype, shape, stride in arrays:
+            sdfg.add_array(arr_name, shape, dtype, strides=stride)
+
+    # Add scalars to inner SDFG
+    for sname, dtype in scalars:
+        sdfg.add_scalar(sname, dtype, dace.dtypes.StorageType.Register, True)
+
+    # Add states
+    state_outer = sdfg_outer.add_state("outer_s1", is_start_block=True)
+    state_inner1 = sdfg_inner.add_state("inner_s1", is_start_block=True)
+    state_inner2 = sdfg_inner.add_state("inner_s2")
+
+    # Populate inner SDFG
+    # ==============================
+    if layout == "Fortran":
+        sdfg_inner.add_edge(state_inner1, state_inner2, InterstateEdge(assignments={"jo": "iorder[_for_it_88, 0]"}))
+    else:
+        sdfg_inner.add_edge(state_inner1, state_inner2, InterstateEdge(assignments={"jo": "iorder[0, _for_it_88]"}))
+
+    zqx = state_inner2.add_access("zqx")
+    zsinksum = state_inner2.add_access("zsinksum")
+    zratio = state_inner2.add_access("zratio")
+    zrr = state_inner2.add_access("zrr")
+    zmm = state_inner2.add_access("zmm")
+
+    t1 = state_inner2.add_tasklet("t1", {"_in1"}, {"_out"}, "_out = max(1e-14, _in1)")
+    t2 = state_inner2.add_tasklet("t2", {"_in1", "_in2"}, {"_out"}, "_out = max(_in1, _in2)")
+    t3 = state_inner2.add_tasklet("t3", {"_in1", "_in2"}, {"_out"}, "_out = _in1 / _in2")
+
+    if layout == "Fortran":
+        state_inner2.add_edge(zqx, None, t1, "_in1", dace.memlet.Memlet("zqx[_for_it_88, 0, jo - 1]"))
+    else:
+        state_inner2.add_edge(zqx, None, t1, "_in1", dace.memlet.Memlet("zqx[ jo - 1, 0, _for_it_88]"))
+
+    state_inner2.add_edge(t1, "_out", zmm, None, dace.memlet.Memlet("zmm"))
+
+    if layout == "Fortran":
+        state_inner2.add_edge(zsinksum, None, t2, "_in2", dace.memlet.Memlet("zsinksum[_for_it_88, jo-1]"))
+    else:
+        state_inner2.add_edge(zsinksum, None, t2, "_in2", dace.memlet.Memlet("zsinksum[jo-1, _for_it_88]"))
+
+    state_inner2.add_edge(zmm, None, t2, "_in1", dace.memlet.Memlet("zmm"))
+    state_inner2.add_edge(t2, "_out", zrr, None, dace.memlet.Memlet("zrr"))
+
+    state_inner2.add_edge(zrr, None, t3, "_in2", dace.memlet.Memlet("zrr"))
+    state_inner2.add_edge(zmm, None, t3, "_in1", dace.memlet.Memlet("zmm"))
+
+    if layout == "Fortran":
+        state_inner2.add_edge(t3, "_out", zratio, None, dace.memlet.Memlet("zratio[_for_it_88, jo -1]"))
+    else:
+        state_inner2.add_edge(t3, "_out", zratio, None, dace.memlet.Memlet("zratio[jo -1, _for_it_88]"))
+
+    # ==============================
+
+    map_entry, map_exit = state_outer.add_map("m1", {"_for_it_88": "0:klon:1"})
+
+    nsdfg = state_outer.add_nested_sdfg(sdfg_inner,
+                                        inputs={"zqx", "zsinksum", "iorder"},
+                                        outputs={"zratio"},
+                                        symbol_mapping={"_for_it_88": "_for_it_88"})
+
+    # Add in arrays
+    for arr_name in {"zqx", "zsinksum", "iorder"}:
+        an = state_outer.add_access(arr_name)
+        state_outer.add_edge(an, None, map_entry, f"IN_{arr_name}",
+                             dace.memlet.Memlet.from_array(arr_name, state_outer.sdfg.arrays[arr_name]))
+        state_outer.add_edge(map_entry, f"OUT_{arr_name}", nsdfg, arr_name,
+                             dace.memlet.Memlet.from_array(arr_name, state_outer.sdfg.arrays[arr_name]))
+        map_entry.add_in_connector(f"IN_{arr_name}")
+        map_entry.add_out_connector(f"OUT_{arr_name}")
+
+    # Add out arrays
+    for arr_name in {"zratio"}:
+        an = state_outer.add_access(arr_name)
+        state_outer.add_edge(nsdfg, arr_name, map_exit, f"IN_{arr_name}",
+                             dace.memlet.Memlet.from_array(arr_name, state_outer.sdfg.arrays[arr_name]))
+        state_outer.add_edge(map_exit, f"OUT_{arr_name}", an, None,
+                             dace.memlet.Memlet.from_array(arr_name, state_outer.sdfg.arrays[arr_name]))
+        map_exit.add_in_connector(f"IN_{arr_name}")
+        map_exit.add_out_connector(f"OUT_{arr_name}")
+
+    sdfg_outer.validate()
+    return sdfg_outer
+
+
+@pytest.mark.parametrize("layout", ["C", "Fortran"])
+def test_unstructured_access_pattern(layout: str):
+    klon_val = 32
+    klev_val = 32
+    """
+        arrays = {("iorder", dace.int64, ("klon", 5), (1, "klon")),
+                    ("zqx", dace.float64, ("klon", "klev", 5), (1, "klon", "klon * klev")),
+                    ("zsinksum", dace.float64, ("klon", 5), (1, "klon")),
+                    ("zratio", dace.float64, ("klon", 5), (1, "klon"))}
+    """
+    zqx = numpy.random.rand(5, klev_val, klon_val).astype(numpy.float64)
+    iorder = numpy.random.randint(1, 6, size=(5, klon_val), dtype=numpy.int64)
+    zratio = numpy.zeros((5, klon_val), dtype=numpy.float64)
+    zsinksum = numpy.zeros((5, klon_val), dtype=numpy.float64)
+    run_vectorization_test(
+        dace_func=_get_unstructured_access_cloudsc_sdfg(layout=layout),
+        arrays={
+            "zqx": zqx,
+            "zratio": zratio,
+            "zsinksum": zsinksum,
+            "iorder": iorder,
+        },
+        params={
+            "klon": klon_val,
+            "klev": klev_val,
+        },
+        vector_width=8,
+        save_sdfgs=True,
+        from_sdfg=True,
+        sdfg_name=f"unstructured_access_pattern_layout_{layout.lower()}",
+    )
+
+
+KLON = dace.symbol('KLON')
+KLEV = dace.symbol('KLEV')
+NCLDQL = dace.symbol('NCLDQL')
+NCLDQI = dace.symbol('NCLDQI')
+
+
+@dace.program
+def cloud_fraction_update(
+        ZA: dace.float64[KLEV, KLON],
+        ZQX: dace.float64[5, KLEV, KLON],  # last dim just example
+        ZLI: dace.float64[KLEV, KLON],
+        ZLIQFRAC: dace.float64[KLEV, KLON],
+        ZICEFRAC: dace.float64[KLEV, KLON],
+        RLMIN: dace.float64):
+    # Loop over levels and horizontal domain
+    for jk in dace.map[0:KLEV]:
+        for jl in dace.map[0:KLON]:
+
+            # 1. Clip ZA to [0, 1]
+            ZA[jk, jl] = max(0.0, min(1.0, ZA[jk, jl]))
+
+            # 2. Compute total liquid+ice
+            ZLI[jk, jl] = (ZQX[NCLDQL, jk, jl] + ZQX[NCLDQI, jk, jl])
+
+            if ZLI[jk, jl] > RLMIN:
+                ZLIQFRAC[jk, jl] = (ZQX[NCLDQL, jk, jl] / ZLI[jk, jl])
+                ZICEFRAC[jk, jl] = (1.0 - ZLIQFRAC[jk, jl])
+            else:
+                ZLIQFRAC[jk, jl] = 0.0
+                ZICEFRAC[jk, jl] = 0.0
+
+
+def test_cloud_fraction_update():
+    # Example sizes
+    klev = 16
+    klon = 32
+
+    # Pick any valid indexes for QL/QI
+    ncldql = 0
+    ncldqi = 1
+
+    # Create test arrays
+    ZA = numpy.random.uniform(-0.2, 1.2, size=(klev, klon))
+    ZQX = numpy.abs(numpy.random.randn(5, klev, klon)) * 1e-4
+    ZLI = numpy.zeros((klev, klon))
+    ZLIQFRAC = numpy.zeros((klev, klon))
+    ZICEFRAC = numpy.zeros((klev, klon))
+
+    RLMIN = 1e-12
+
+    run_vectorization_test(
+        dace_func=cloud_fraction_update,
+        arrays={
+            "ZA": ZA,
+            "ZQX": ZQX,
+            "ZLI": ZLI,
+            "ZLIQFRAC": ZLIQFRAC,
+            "ZICEFRAC": ZICEFRAC,
+        },
+        params={
+            "RLMIN": RLMIN,
+            "KLON": klon,
+            "KLEV": klev,
+            "NCLDQL": ncldql,
+            "NCLDQI": ncldqi
+        },
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name=f"cloud_fraction_update",
+    )
+
+
 if __name__ == "__main__":
     test_dependency_edge_to_unary_symbol()
     test_vabs()
@@ -3547,3 +3797,7 @@ if __name__ == "__main__":
     test_strided_store_stride_16()
     test_nested_matrix_gather_load()
     test_nested_matrix_gather_load_specialized()
+    test_gather_load_matrix_specialized()
+    test_unstructured_access_pattern("C")
+    test_unstructured_access_pattern("Fortran")
+    test_cloud_fraction_update()
