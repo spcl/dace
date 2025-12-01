@@ -1519,13 +1519,18 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         rhs_right = rhs2_ if rhs2_ is not None else const2_
 
         # Multiple dtypes involved - fallback code should be used
+        print(op_, templates)
+        print(op_ in templates)
         if not fallbackcode_due_to_types:
             # Use template if available
+            print("C1", op_, op_ in templates)
             if op_ in templates:
                 # One array + optional constant
+                print("C1.1", rhs1_, rhs2_)
                 if rhs1_ is None or rhs2_ is None:
                     rhs = rhs1_ if rhs1_ is not None else rhs2_
                     constant = const1_ if const1_ is not None else const2_
+                    print("C1.1.1", constant)
                     if constant is None:
                         # Single array or repeated array case
                         if is_commutative:
@@ -1554,6 +1559,8 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
                             assert constant == const2_
                             cop_ = op_ + "c"
                         # Maybe this constant version is not implemented in templates
+                        print("C1.1.2", constant)
+                        print(cop_, cop_ in templates)
                         if cop_ in templates:
                             tasklet.label = tasklet_prefix + tasklet.label
                             return templates[cop_].format(rhs1=rhs,
@@ -1564,6 +1571,7 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
                                                           dtype=dtype_)
 
                 else:
+                    print("C1.2", rhs1_, rhs2_)
                     # Two arrays
                     tasklet.label = tasklet_prefix + tasklet.label
                     return templates[op_].format(rhs1=rhs1_,
@@ -1575,7 +1583,7 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
 
 
         comparison_suffix = "? 1.0 : 0.0" if op_ in {">", ">=", "<", "<=", "==", "!="} else ""
-        code_lines = [f"_dace_vectorize({vector_width})"]
+        code_lines = [f""]
         code_lines.append(f"for (int _vi = 0; _vi < {vw}; _vi += 1) {{")
 
         # Determine operand order
@@ -1590,6 +1598,8 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
                 raise Exception(
                     f"Invalid operand configuration for fallback vectorization. {rhs_left}, {rhs_right}, {lhs_expr}, {op}"
                 )
+
+        raise Exception(f"SoftHier backend does not support fallback code, types: {fallbackcode_due_to_types}, op: {op}, ttype:{ttype}")
 
         if rhs_left is None or rhs_right is None:
             rhs = rhs_left if rhs_left is not None else rhs_right
@@ -2832,7 +2842,7 @@ def expand_interstate_assignments_to_lanes(inner_sdfg: dace.SDFG, nsdfg_node: da
                             # Add the new symbol to the symbols
                             if f"{free_sym}_laneid_{i}" not in inner_sdfg.symbols:
                                 inner_sdfg.add_symbol(f"{free_sym}_laneid_{i}",
-                                                      inner_sdfg.symbols.get(str(free_sym), dace.float64))
+                                                      inner_sdfg.symbols.get(str(free_sym), vector_dtype))
                     else:
                         if isinstance(inner_sdfg.arrays[free_sym_str], dace.data.Scalar):
                             #print(f"Subs {free_sym} with {free_sym}")

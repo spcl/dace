@@ -1282,6 +1282,20 @@ class Vectorize(ppl.Pass):
             self._offset_memlets_on_path(state, map_entry, dataname, new_dataname)
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Set[str]]]:
+        def _move_arrays_to_fp32(sdfg: dace.SDFG):
+            for state in sdfg.all_states():
+                for node in state.nodes():
+                    if isinstance(node, dace.nodes.NestedSDFG):
+                        _move_arrays_to_fp32(node.sdfg)
+
+            for arr_name, arr in sdfg.arrays.items():
+                print(arr_name, arr, arr.dtype)
+                if arr.dtype == dace.float64 or arr.dtype == dace.float16:
+                    arr.dtype = dace.float32
+
+            assert all({arr.dtype == dace.float32 for arr in sdfg.arrays.values()})
+        _move_arrays_to_fp32(sdfg)
+
         stride_type = assert_strides_are_packed_C_or_packed_Fortran(sdfg)
         self._stride_type = stride_type
 

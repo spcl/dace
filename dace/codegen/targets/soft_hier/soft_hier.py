@@ -444,12 +444,12 @@ class SoftHierCodeGen(TargetCodeGenerator):
 #define Min(x, y) ((x) < (y) ? (x) : (y))
 #define dace_cluster_index(x,y,dim_x)         ((y)*(dim_x)+(x))
 #define dace_remote_xy(x,y,offset,dim_x)       (ARCH_CLUSTER_TCDM_REMOTE+dace_cluster_index(x,y,dim_x)*ARCH_CLUSTER_TCDM_SIZE+offset)
+
 {file_header}
 
 static const uint64_t HBM_ADDRESS_SPACE = {hbm_address_space};
 static const uint64_t HBM_ADDRESS_BASE = {hbm_address_base};
 static const uint64_t HBM_NUM_CHANNELS = {hbm_num_channels};
-
 
 int __dace_init_cuda(struct {sdfg_state_name} *__state{params});
 int __dace_exit_cuda(struct {sdfg_state_name} *__state);
@@ -459,6 +459,8 @@ typedef struct DacePlacementInfo
     uint32_t channel_id;
     uint32_t tile_offset;
 }} DacePlacementInfo;
+
+{softhier_global_code}
 
 {other_globalcode}
 
@@ -480,7 +482,6 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
     return __err;
 }}
 
-{softhier_global_code}
 
 {localcode}
 """.format(params=params_comma,
