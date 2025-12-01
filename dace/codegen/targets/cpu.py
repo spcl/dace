@@ -2230,11 +2230,16 @@ class CPUCodeGen(TargetCodeGenerator):
         self.generate_scope_postamble(sdfg, dfg, state_id, function_stream, outer_stream, callsite_stream)
         # if self.is_soft_hier:
         #     callsite_stream.write("flex_intra_cluster_sync();", cfg, state_id, node)
+        if self.is_soft_hier is True:
+            callsite_stream.write("flex_intra_cluster_sync();")
+
         if map_node.map.schedule == dtypes.ScheduleType.CPU_Persistent:
             result.write("}", cfg, state_id, node)
         else:
             for _ in map_node.map.range:
                 result.write("}", cfg, state_id, node)
+
+
 
         result.write(outer_stream.getvalue())
 
