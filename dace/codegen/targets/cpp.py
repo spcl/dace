@@ -168,9 +168,18 @@ def memlet_copy_to_absolute_strides(dispatcher: 'TargetDispatcher',
     is_src_write = not memlet._is_data_src
 
     if dispatcher is not None:
+        src_data = src_node.data
+        dst_data = dst_node.data
+        tokens = memlet.data.split('.')
+        if len(tokens) > 1:
+            parent_data = ".".join(tokens[:-1])
+            if parent_data == src_data:
+                src_data = memlet.data
+            elif parent_data == dst_data:
+                dst_data = memlet.data
         src_expr = copy_expr(dispatcher,
                              sdfg,
-                             src_node.data,
+                             src_data,
                              memlet,
                              is_write=is_src_write,
                              offset=src_subset,
@@ -178,7 +187,7 @@ def memlet_copy_to_absolute_strides(dispatcher: 'TargetDispatcher',
                              packed_types=packed_types)
         dst_expr = copy_expr(dispatcher,
                              sdfg,
-                             dst_node.data,
+                             dst_data,
                              memlet,
                              is_write=(not is_src_write),
                              offset=dst_subset,
@@ -296,7 +305,7 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
                           decouple_array_interfaces: bool = False) -> Tuple[str, str, str]:
     """
     Returns a tuple of three strings with a definition of a reference to an
-    existing memlet. Used in nested SDFG arguments.
+    existing memlet. Original version, only used for FPGA code generation.
 
     :param device_code: boolean flag indicating whether we are in the process of generating FPGA device code
     :param decouple_array_interfaces: boolean flag, used for Xilinx FPGA code generation. It indicates whether or not
@@ -423,6 +432,187 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
     expr = expr.replace('.', '->')
 
     return (typedef + ref, pointer_name, expr)
+
+
+def emit_memlet_reference_nsdfg(dispatcher: 'TargetDispatcher',
+                                parent_sdfg: SDFG,
+                                nested_sdfg: SDFG,
+                                memlet: mmlt.Memlet,
+                                conn_name: str,
+                                conn_type: dtypes.typeclass,
+                                ancestor: int = 1,
+                                is_write: bool = None,
+                                device_code: bool = False,
+                                decouple_array_interfaces: bool = False) -> Tuple[str, str, str]:
+    """
+    Returns a tuple of three strings with a definition of a reference to an
+    existing memlet. Only used for generating nested SDFG arguments.
+
+    :param parent_sdfg: The parent SDFG.
+    :param nested_sdfg: The nested SDFG.
+    :param memlet: The parent-graph memlet carrying the parent data from/to the nested SDFG.
+    :param conn_name: The name of the nested SDFG connector.
+    :param conn_type: The type of the nested SDFG connector.
+    :param device_code: boolean flag indicating whether we are in the process of generating FPGA device code
+    :param decouple_array_interfaces: boolean flag, used for Xilinx FPGA code generation. It indicates whether or not
+        we are generating code by decoupling reads/write from memory.
+    :return: A tuple of the form (type, name, value).
+    """
+
+    parent_desc = parent_sdfg.arrays[memlet.data]
+    nested_desc = nested_sdfg.arrays[conn_name]
+
+    if fpga.is_fpga_array(parent_desc) or fpga.is_fpga_array(nested_desc):
+        return emit_memlet_reference(dispatcher, parent_sdfg, memlet, conn_name, conn_type, ancestor, is_write,
+                                     device_code, decouple_array_interfaces)
+
+    parent_ptrname = ptr(memlet.data, parent_desc, parent_sdfg, dispatcher.frame)
+    arg_name = conn_name
+
+    is_read = is_write is not None and not is_write
+
+    if isinstance(nested_desc, data.Scalar):
+        assert not isinstance(nested_desc.dtype, (dtypes.pointer, dtypes.vector, dtypes.struct))
+        arg_type = f"{nested_desc.dtype.ctype}&"
+        if is_read:
+            arg_type = f"const {arg_type}"
+        if isinstance(parent_desc, data.Scalar):
+            arg_value = parent_ptrname
+        else:
+            # data.Array
+            arg_value = f"{parent_ptrname}[{cpp_offset_expr(parent_desc, memlet.subset)}]"
+        defined_type = DefinedType.Scalar
+
+    elif isinstance(nested_desc, data.Structure):
+        # NOTE: Structures are "currently" always pointers.
+        assert isinstance(nested_desc.dtype, dtypes.pointer)
+        assert isinstance(nested_desc.dtype.base_type, dtypes.struct)
+        arg_type = f"{nested_desc.ctype}"
+        if is_read:
+            arg_type = f"const {arg_type} const"  # Both pointer and data are const
+        else:
+            arg_type = f"{arg_type} const"  # Pointer is const
+        if not nested_desc.may_alias:  # NOTE: Is this always true for Structures?
+            arg_type = f"{arg_type} __restrict__"
+        if isinstance(parent_desc, data.Structure):
+            arg_value = parent_ptrname
+        else:
+            # data.ContainerArray
+            arg_value = f"{parent_ptrname}[{cpp_offset_expr(parent_desc, memlet.subset)}]"
+        defined_type = DefinedType.Pointer
+
+    elif isinstance(nested_desc, data.Array):
+        if isinstance(nested_desc, data.ContainerArray):
+            # NOTE: Elements of ContainerArrays (Structures and other ContainerArrays) are "currently" always pointers.
+            assert isinstance(nested_desc.dtype, dtypes.pointer)
+            if isinstance(nested_desc.stype, data.Structure):
+                assert isinstance(nested_desc.dtype.base_type, dtypes.struct)
+        arg_type = f"{nested_desc.dtype.ctype}"
+        if is_read:
+            if isinstance(nested_desc.dtype, dtypes.pointer):
+                arg_type = f"{arg_type} const"  # Data is const pointer.
+            else:
+                arg_type = f"const {arg_type}"  # Data is const.
+        arg_type = f"{arg_type}* const"  # Const pointer.
+        if not nested_desc.may_alias:
+            arg_type = f"{arg_type} __restrict__"
+        arg_value = f"&{parent_ptrname}[{cpp_offset_expr(parent_desc, memlet.subset)}]"
+        # NOTE: Special case: nested data is Array of size 1 and parent data is Scalar/Structure
+        if isinstance(parent_desc, (data.Scalar, data.Structure)):
+            assert data._prod(nested_desc.shape) == 1
+            arg_value = f"&{parent_ptrname}"
+        defined_type = DefinedType.Pointer
+
+    else:
+        return emit_memlet_reference(dispatcher, parent_sdfg, memlet, conn_name, conn_type, ancestor, is_write,
+                                     device_code, decouple_array_interfaces)
+
+    # Cast as necessary (e.g., reinterpretation of types or vector types)
+    if nested_desc.dtype != parent_desc.dtype:
+        nested_dtype = nested_desc.dtype
+        if isinstance(nested_desc, data.Array):
+            nested_dtype = dtypes.pointer(nested_dtype.dtype)
+        nested_ctype = nested_dtype.ctype
+        arg_value = f"({nested_ctype})({arg_value})"
+
+    dispatcher.defined_vars.add(arg_name, defined_type, arg_type, allow_shadowing=True)
+
+    return arg_type, arg_name, arg_value
+
+
+def emit_memlet_reference_view(dispatcher: 'TargetDispatcher',
+                               sdfg: SDFG,
+                               memlet: mmlt.Memlet,
+                               pointer_name: str,
+                               conntype: dtypes.typeclass,
+                               ancestor: int = 1,
+                               is_write: bool = None,
+                               device_code: bool = False,
+                               decouple_array_interfaces: bool = False) -> Tuple[str, str, str]:
+    """
+    Returns a tuple of three strings with a definition of a reference to an
+    existing memlet. Only used for generating Views.
+
+    :param device_code: boolean flag indicating whether we are in the process of generating FPGA device code
+    :param decouple_array_interfaces: boolean flag, used for Xilinx FPGA code generation. It indicates whether or not
+        we are generating code by decoupling reads/write from memory.
+    :return: A tuple of the form (type, name, value).
+    """
+    viewed_name = memlet.data
+    viewed_desc = sdfg.arrays[viewed_name]
+    viewed_ptrname = ptr(viewed_name, viewed_desc, sdfg, dispatcher.frame)
+    view_name = pointer_name
+    view_desc = sdfg.arrays[view_name]
+    assert issubclass(type(view_desc), data.View)
+
+    if fpga.is_fpga_array(viewed_desc):
+        return emit_memlet_reference(dispatcher, sdfg, memlet, pointer_name, conntype, ancestor, is_write, device_code,
+                                     decouple_array_interfaces)
+
+    is_read = is_write is not None and not is_write
+    view_deftype = DefinedType.Pointer
+
+    if issubclass(type(view_desc), data.Structure):
+        assert isinstance(view_desc.dtype, dtypes.pointer)
+        assert isinstance(view_desc.dtype.base_type, dtypes.struct)
+        assert view_desc.dtype.ctype == viewed_desc.ctype
+        view_ctype = view_desc.ctype
+        arg_type = f"{view_desc.ctype}"
+        if is_read:
+            arg_type = f"const {arg_type}"  # Data are const
+        if isinstance(viewed_desc, (data.Structure, data.StructureReference, data.StructureView)):
+            arg_value = viewed_ptrname
+        else:
+            # data.ContainerArray
+            arg_value = f"{viewed_ptrname}[{cpp_offset_expr(viewed_desc, memlet.subset)}]"
+    elif issubclass(type(view_desc), data.Array):
+        # ArrayView, ContainerView
+        view_ctype = view_desc.ctype
+        if isinstance(view_desc, data.ContainerView):
+            assert isinstance(view_desc.dtype, dtypes.pointer)
+            if isinstance(view_desc.stype, data.Structure):
+                assert isinstance(view_desc.dtype.base_type, dtypes.struct)
+        view_dtype = dtypes.pointer(view_desc.dtype)
+        view_ctype = view_dtype.ctype
+        arg_type = f"{view_ctype}"
+        if is_read:
+            if isinstance(view_desc.dtype, dtypes.pointer):
+                arg_type = f"{arg_type} const"  # Data are const pointer.
+            else:
+                arg_type = f"const {arg_type}"  # Data are const.
+        arg_value = f"&{viewed_ptrname}[{cpp_offset_expr(viewed_desc, memlet.subset)}]"
+        if isinstance(viewed_desc, data.Scalar):
+            assert data._prod(view_desc.shape) == 1
+            arg_value = f"&{viewed_ptrname}"
+    else:
+        return emit_memlet_reference(dispatcher, sdfg, memlet, pointer_name, conntype, ancestor, is_write, device_code,
+                                     decouple_array_interfaces)
+
+    if viewed_desc.dtype != view_desc.dtype:
+        arg_value = f"({view_ctype})({arg_value})"
+
+    dispatcher.defined_vars.add(view_name, view_deftype, arg_type, allow_shadowing=True)
+    return arg_type, view_name, arg_value
 
 
 def reshape_strides(subset, strides, original_strides, copy_shape):
