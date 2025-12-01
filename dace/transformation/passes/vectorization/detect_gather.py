@@ -7,19 +7,21 @@ from dace import SDFG, InterstateEdge, properties
 from dace.sdfg import nodes
 from dace.transformation import pass_pipeline as ppl, transformation
 
+
 def sort_tasklets_by_number(tasklets):
     """
     Sort tasklets with labels of the form 'assign_<number>' by the numeric part.
     """
     pattern = re.compile(r"^assign_(\d+)$")
-    
+
     def get_number(tasklet):
         m = pattern.match(tasklet.label)
         if m is None:
             raise ValueError(f"Tasklet label {tasklet.label} does not match pattern 'assign_<number>'")
         return int(m.group(1))
-    
+
     return sorted(tasklets, key=get_number)
+
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
@@ -35,7 +37,6 @@ class DetectGather(ppl.Pass):
 
     def depends_on(self):
         return {}
-
 
     gather_template = """
 {{
@@ -101,34 +102,33 @@ gather_double(_in, idx, _out, {vector_length});
                         idx_data_and_subset.append((data, subset))
                         idx_data.add(data)
 
-
                     if len(idx_data) != 1:
                         continue
                     # dtypes should be float64
                     if state.sdfg.arrays[next(iter(idx_data))].dtype != dace.float64:
                         continue
-                    
-                    initializer_values = ", ".join([str(s) for d,s in idx_data_and_subset])
-                    gather_code = DetectGather.gather_template.format(initializer_values=initializer_values, vector_length=vector_length)
+
+                    initializer_values = ", ".join([str(s) for d, s in idx_data_and_subset])
+                    gather_code = DetectGather.gather_template.format(initializer_values=initializer_values,
+                                                                      vector_length=vector_length)
 
                     # Get the array we are gathering from
                     tasklet_srcs = set()
                     for src in tasklet_srcs_sorted:
-                        tasklet_srcs = tasklet_srcs.union(
-                            {ie.src for ie in state.in_edges(src)}
-                        )
+                        tasklet_srcs = tasklet_srcs.union({ie.src for ie in state.in_edges(src)})
                     assert len(tasklet_srcs) == 1
                     indirect_src = tasklet_srcs.pop()
 
                     # Remove scalar assignment tasklets
                     for src in tasklet_srcs_sorted:
                         state.remove_node(src)
-                    
-                    t1 = state.add_tasklet(
-                        "gather_load", {"_in"}, {"_out"}, gather_code, dace.dtypes.Language.CPP
-                    )
-                    state.add_edge(indirect_src, None, t1, "_in", dace.memlet.Memlet.from_array(indirect_src.data, state.sdfg.arrays[indirect_src.data]))
-                    state.add_edge(t1, "_out", node, None, dace.memlet.Memlet.from_array(node.data, state.sdfg.arrays[node.data]))
+
+                    t1 = state.add_tasklet("gather_load", {"_in"}, {"_out"}, gather_code, dace.dtypes.Language.CPP)
+                    state.add_edge(
+                        indirect_src, None, t1, "_in",
+                        dace.memlet.Memlet.from_array(indirect_src.data, state.sdfg.arrays[indirect_src.data]))
+                    state.add_edge(t1, "_out", node, None,
+                                   dace.memlet.Memlet.from_array(node.data, state.sdfg.arrays[node.data]))
 
                     found_gathers += 1
 
