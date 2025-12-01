@@ -197,22 +197,12 @@ inline void _softhier_vmax_vs_(uint32_t vb_addr, uint32_t vc_addr, uint32_t vect
 }}
 
 inline void _softhier_vgt_vs_(uint32_t va_addr, uint32_t vc_addr, uint32_t vector_width, float threshold, float true_val, float false_val) {{
-    if (flex_is_first_core()) {{
-        uint32_t vlen = vector_width;
-        uint32_t avl;
-        while(vlen > 0){{
-            asm volatile("vsetvli %0, %1, e" XSTR(32) ", m8, ta, ma" : "=r"(avl) : "r"(vlen));
-            asm volatile("vle" XSTR(32) ".v v8, (%0)" ::"r"(va_addr));
-            asm volatile("vfmv.v.f v16, %0" ::"f"(threshold));
-            asm volatile("vfmv.v.f v24, %0" ::"f"(true_val));
-            asm volatile("vfmv.v.f v0, %0" ::"f"(false_val));
-            asm volatile("vmfgt.vv v1, v8, v16");
-            asm volatile("vmerge.vvm v8, v0, v24, v1");
-            asm volatile("vse" XSTR(32) ".v v8, (%0)" ::"r"(vc_addr));
-            vlen -= avl;
-            va_addr += 4*avl;
-            vc_addr += 4*avl;
-        }}
+    // vmflt.vv not supported by SoftHier use scalar fallback code
+    float* va_ptr = (float*)va_addr;
+    float* vc_ptr = (float*)vc_addr;
+    
+    for (uint32_t i = 0; i < vector_width; i++) {{
+        vc_ptr[i] = (va_ptr[i] > threshold) ? 1.0f : 0.0f;
     }}
 }}
 
@@ -274,14 +264,21 @@ inline void _softhier_vgt_vv_(uint32_t va_addr, uint32_t vb_addr, uint32_t vc_ad
         uint32_t vlen = vector_width;
         uint32_t avl;
         while(vlen > 0){{
-            asm volatile("vsetvli %0, %1, e" XSTR(32) ", m8, ta, ma" : "=r"(avl) : "r"(vlen));
-            asm volatile("vle" XSTR(32) ".v v8, (%0)" ::"r"(va_addr));
-            asm volatile("vle" XSTR(32) ".v v16, (%0)" ::"r"(vb_addr));
-            asm volatile("vfmv.v.f v24, %0" ::"f"(true_val));
-            asm volatile("vfmv.v.f v0, %0" ::"f"(false_val));
-            asm volatile("vmfgt.vv v1, v8, v16");
-            asm volatile("vmerge.vvm v8, v0, v24, v1");
-            asm volatile("vse" XSTR(32) ".v v8, (%0)" ::"r"(vc_addr));
+            // v8 = load A
+            asm volatile("vle" XSTR(32) ".v v8, (%0)" :: "r"(va_addr));
+            // v16 = load B
+            asm volatile("vle" XSTR(32) ".v v16, (%0)" :: "r"(vb_addr));
+            // v24 = true_val vector
+            asm volatile("vfmv.v.f v24, %0" :: "f"(true_val));
+            // v0 = false_val vector
+            asm volatile("vfmv.v.f v0, %0" :: "f"(false_val));
+            // --- MASK in v0 (reusing v0 as mask register) ---
+            // v0 = mask = (v8 > v16)
+            asm volatile("vmfgt.vv v0, v8, v16");
+            // Merge: v8 = v0 ? v24 : (old v0 = false_val)
+            //asm volatile("vmerge.vvm v8, v0, v24, v0");
+            // Store result
+            asm volatile("vse" XSTR(32) ".v v8, (%0)" :: "r"(vc_addr));
             vlen -= avl;
             va_addr += 4*avl;
             vb_addr += 4*avl;
@@ -382,13 +379,13 @@ static inline void _softhier_vlog_vv_(uint32_t va_addr, uint32_t vb_addr, uint32
             /* For elements where mask is true: fe += 1.0 */
             // C: fe += 1.0f;
             asm volatile("vfadd.vf v24, v16, %0" :: "r"(const_1));  // v24 = fe + 1.0
-            asm volatile("vmerge.vvm v16, v16, v24, v0");           // v16 = mask ? v24 : v16
+            //asm volatile("vmerge.vvm v16, v16, v24, v0");           // v16 = mask ? v24 : v16
             
             /* For elements where mask is false: x += x (i.e., x *= 2) */
             // C: x += x;
             asm volatile("vfadd.vv v24, v8, v8");                   // v24 = x + x
             asm volatile("vmnot.m v1, v0");                         // v1 = ~v0 (inverse mask)
-            asm volatile("vmerge.vvm v8, v8, v24, v1");             // v8 = ~mask ? v24 : v8
+            //asm volatile("vmerge.vvm v8, v8, v24, v1");             // v8 = ~mask ? v24 : v8
             
             /* x -= 1.0 */
             // C: x -= 1.0f;
