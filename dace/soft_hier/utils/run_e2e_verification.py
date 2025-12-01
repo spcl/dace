@@ -38,7 +38,8 @@ class HardwareConfig:
             test_mode='functional',  # 'functional' or 'perf_only'
             skip_build_hw=False,
             cluster_tcdm_bank_width=64,
-            cluster_tcdm_bank_nb=64):
+            cluster_tcdm_bank_nb=64,
+            num_core_per_cluster=3):
         self.hardware_thread_group_dims = hardware_thread_group_dims
         if dace_thread_group_dims is None:
             self.dace_thread_group_dims = hardware_thread_group_dims
@@ -67,6 +68,7 @@ class HardwareConfig:
         self.skip_build_hw = skip_build_hw
         self.cluster_tcdm_bank_width=cluster_tcdm_bank_width
         self.cluster_tcdm_bank_nb=cluster_tcdm_bank_nb
+        self.num_core_per_cluster=num_core_per_cluster
 
 
 def _get_gvsoc_path() -> str:
@@ -307,6 +309,7 @@ def setup_architecture(hw_config: HardwareConfig):
         cluster_zomem_size=hex(hw_config.cluster_zomem_size),
         num_cluster_x=hw_config.hardware_thread_group_dims[0],
         num_cluster_y=hw_config.hardware_thread_group_dims[1],
+        num_core_per_cluster=hw_config.num_core_per_cluster,
         spatz_num_vlsu_port=hw_config.spatz_num_vlsu_port,
         spatz_num_function_unit=hw_config.spatz_num_function_unit,
         redmule_ce_height=hw_config.redmule_ce_height,

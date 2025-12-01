@@ -14,11 +14,38 @@ from dace.transformation.passes.eliminate_branches import EliminateBranches
 from dace.transformation.passes.vectorization.fuse_overlapping_loads import FuseOverlappingLoads
 from dace.transformation.passes.vectorization.remove_reduntant_assignments import RemoveRedundantAssignments
 from dace.transformation.passes.vectorization.remove_vector_maps import RemoveVectorMaps
-
+import os
 class PartialDict(defaultdict):
     def __missing__(self, key):
         return "{" + key + "}"
+
+skip_scalar = os.getenv('SOFTHIER_SKIP_SCALAR_FALLBACK', '0') == '1'
+
+f1 = f'''
+inline void _softhier_vgt_vs_(uint32_t va_addr, uint32_t vc_addr, uint32_t vector_width, float threshold, float true_val, float false_val) {{
+    // Uncommenting this 36% to 1.5%
+    // Empty body due to skip scalar
+}}
+'''
+
+f2 = f'''
+inline void _softhier_vgt_vs_(uint32_t va_addr, uint32_t vc_addr, uint32_t vector_width, float threshold, float true_val, float false_val) {{
+    // Uncommenting this 36% to 1.5%
+    float* va_ptr = (float*)va_addr;
+    float* vc_ptr = (float*)vc_addr;
     
+    uint32_t num_cores = {os.getenv('SOFTHIER_CORES_PER_CLUSTER', 1)};
+    uint32_t core_id = flex_get_core_id();
+    uint32_t per_core_length = vector_width / num_cores;
+    if (core_id < num_cores){{
+        #pragma GCC unroll 32
+        for (uint32_t i = core_id * per_core_length; i < (core_id + 1) * per_core_length; i++) {{
+            vc_ptr[i] = (va_ptr[i] > threshold) ? 1.0f : 0.0f;
+        }}
+    }}
+}}
+'''
+
 class VectorizeSoftHier(ppl.Pipeline):
     _softhier_global_code = f'''
 #ifndef _SOFTHIER_MACROS_DEFINED
@@ -196,15 +223,7 @@ inline void _softhier_vmax_vs_(uint32_t vb_addr, uint32_t vc_addr, uint32_t vect
     }}
 }}
 
-inline void _softhier_vgt_vs_(uint32_t va_addr, uint32_t vc_addr, uint32_t vector_width, float threshold, float true_val, float false_val) {{
-    // vmflt.vv not supported by SoftHier use scalar fallback code
-    float* va_ptr = (float*)va_addr;
-    float* vc_ptr = (float*)vc_addr;
-    
-    for (uint32_t i = 0; i < vector_width; i++) {{
-        vc_ptr[i] = (va_ptr[i] > threshold) ? 1.0f : 0.0f;
-    }}
-}}
+{f1 if skip_scalar else f2}
 
 inline void _softhier_vsub_sv_(uint32_t vb_addr, uint32_t vc_addr, uint32_t vector_width, float scalar) {{
     if (flex_is_first_core()) {{
