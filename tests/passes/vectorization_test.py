@@ -3649,6 +3649,78 @@ def test_unstructured_access_pattern(layout: str):
     )
 
 
+KLON = dace.symbol('KLON')
+KLEV = dace.symbol('KLEV')
+NCLDQL = dace.symbol('NCLDQL')
+NCLDQI = dace.symbol('NCLDQI')
+
+
+@dace.program
+def cloud_fraction_update(
+        ZA: dace.float64[KLEV, KLON],
+        ZQX: dace.float64[5, KLEV, KLON],  # last dim just example
+        ZLI: dace.float64[KLEV, KLON],
+        ZLIQFRAC: dace.float64[KLEV, KLON],
+        ZICEFRAC: dace.float64[KLEV, KLON],
+        RLMIN: dace.float64):
+    # Loop over levels and horizontal domain
+    for jk in dace.map[0:KLEV]:
+        for jl in dace.map[0:KLON]:
+
+            # 1. Clip ZA to [0, 1]
+            ZA[jk, jl] = max(0.0, min(1.0, ZA[jk, jl]))
+
+            # 2. Compute total liquid+ice
+            ZLI[jk, jl] = (ZQX[NCLDQL, jk, jl] + ZQX[NCLDQI, jk, jl])
+
+            if ZLI[jk, jl] > RLMIN:
+                ZLIQFRAC[jk, jl] = (ZQX[NCLDQL, jk, jl] / ZLI[jk, jl])
+                ZICEFRAC[jk, jl] = (1.0 - ZLIQFRAC[jk, jl])
+            else:
+                ZLIQFRAC[jk, jl] = 0.0
+                ZICEFRAC[jk, jl] = 0.0
+
+
+def test_cloud_fraction_update():
+    # Example sizes
+    klev = 16
+    klon = 32
+
+    # Pick any valid indexes for QL/QI
+    ncldql = 0
+    ncldqi = 1
+
+    # Create test arrays
+    ZA = numpy.random.uniform(-0.2, 1.2, size=(klev, klon))
+    ZQX = numpy.abs(numpy.random.randn(5, klev, klon)) * 1e-4
+    ZLI = numpy.zeros((klev, klon))
+    ZLIQFRAC = numpy.zeros((klev, klon))
+    ZICEFRAC = numpy.zeros((klev, klon))
+
+    RLMIN = 1e-12
+
+    run_vectorization_test(
+        dace_func=cloud_fraction_update,
+        arrays={
+            "ZA": ZA,
+            "ZQX": ZQX,
+            "ZLI": ZLI,
+            "ZLIQFRAC": ZLIQFRAC,
+            "ZICEFRAC": ZICEFRAC,
+        },
+        params={
+            "RLMIN": RLMIN,
+            "KLON": klon,
+            "KLEV": klev,
+            "NCLDQL": ncldql,
+            "NCLDQI": ncldqi
+        },
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name=f"cloud_fraction_update",
+    )
+
+
 if __name__ == "__main__":
     test_dependency_edge_to_unary_symbol()
     test_vabs()
@@ -3728,3 +3800,4 @@ if __name__ == "__main__":
     test_gather_load_matrix_specialized()
     test_unstructured_access_pattern("C")
     test_unstructured_access_pattern("Fortran")
+    test_cloud_fraction_update()
