@@ -15,6 +15,10 @@ from dace.transformation.passes.eliminate_branches import EliminateBranches
 class RemoveRedundantAssignments(ppl.Pass):
     # This pass is testes as part of the vectorization pipeline
     CATEGORY: str = 'Vectorization'
+    permissive = dace.properties.Property(dtype=bool, default=False, allow_none=False)
+
+    def __init__(self, permissive: bool = False):
+        self.permissive = permissive
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Edges | ppl.Modifies.AccessNodes | ppl.Modifies.Memlets
@@ -79,6 +83,7 @@ class RemoveRedundantAssignments(ppl.Pass):
         return False
 
     def _apply(self, sdfg: SDFG, potential_scalars: Set[str]) -> None:
+        i=0
         for state in sdfg.all_states():
             for node in state.nodes():
                 if isinstance(node, dace.nodes.Tasklet):
@@ -89,7 +94,8 @@ class RemoveRedundantAssignments(ppl.Pass):
 
                     if res is not None:
                         in_access, tasklet, out_access = res
-                        if ((in_access.data in potential_scalars and out_access.data in potential_scalars)
+                        print(in_access, tasklet, out_access)
+                        if  ((in_access.data in potential_scalars and out_access.data in potential_scalars)
                                 or (in_access.data not in potential_scalars and out_access.data in potential_scalars)):
                             oes = state.out_edges(out_access)
                             ie_memlet = state.in_edges(tasklet)[0].data
@@ -104,11 +110,34 @@ class RemoveRedundantAssignments(ppl.Pass):
 
                             for oe in oes:
                                 state.add_edge(in_access, None, oe.dst, oe.dst_conn, copy.deepcopy(ie_memlet))
+                        elif self.permissive:
+                            ies = state.in_edges(in_access)
+                            oe_memlet = state.out_edges(tasklet)[0].data
+                            print("Permissive mode", in_access, tasklet, out_access)
+                            oes = state.out_edges(in_access)
+                            state.remove_node(in_access)
+                            state.remove_node(tasklet)
+
+                            # If number of out edges are more than 1
+                            if len(oes) > 1:
+                                for oe in oes:
+                                    if oe.dst == tasklet:
+                                        continue
+                                    new_memlet = dace.memlet.Memlet(data=oe_memlet.data, subset=oe_memlet.subset)
+                                    state.add_edge(out_access, None, oe.dst, oe.dst_conn, new_memlet)
+
+                            for ie in ies:
+                                new_memlet = dace.memlet.Memlet(data=oe_memlet.data, subset=oe_memlet.subset)
+                                print(f"Add edge from {ie.src} -> {out_access}")
+                                state.add_edge(ie.src, ie.src_conn, out_access, None, new_memlet)
+
+                            i+=1
 
                 if isinstance(node, dace.nodes.NestedSDFG):
                     self._apply(node.sdfg, potential_scalars)
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
         potential_scalars = pipeline_results[EliminateBranches.__name__][1]  # [0] is num_applied
+        print(potential_scalars)
         self._apply(sdfg, potential_scalars)
         sdfg.validate()

@@ -161,6 +161,135 @@ inline void _softhier_vdiv_vs_(uint32_t va_addr, float scalar, uint32_t vc_addr,
     }}
 }}
 
+
+inline void _softhier_vmin_vs_(uint32_t vb_addr, uint32_t vc_addr, uint32_t vector_width, float scalar) {{
+    if (flex_is_first_core()) {{
+        uint32_t vlen = vector_width;
+        uint32_t avl;
+        while(vlen > 0){{
+            asm volatile("vsetvli %0, %1, e" XSTR(32) ", m8, ta, ma" : "=r"(avl) : "r"(vlen));
+            asm volatile("vle" XSTR(32) ".v v8, (%0)" ::"r"(vb_addr));
+            asm volatile("vfmv.v.f v0, %0" ::"f"(scalar));
+            asm volatile("vfmin.vv v8, v8, v0");
+            asm volatile("vse" XSTR(32) ".v v8, (%0)" ::"r"(vc_addr));
+            vlen -= avl;
+            vb_addr += 4*avl;
+            vc_addr += 4*avl;
+        }}
+    }}
+}}
+
+inline void _softhier_vmax_vs_(uint32_t vb_addr, uint32_t vc_addr, uint32_t vector_width, float scalar) {{
+    if (flex_is_first_core()) {{
+        uint32_t vlen = vector_width;
+        uint32_t avl;
+        while(vlen > 0){{
+            asm volatile("vsetvli %0, %1, e" XSTR(32) ", m8, ta, ma" : "=r"(avl) : "r"(vlen));
+            asm volatile("vle" XSTR(32) ".v v8, (%0)" ::"r"(vb_addr));
+            asm volatile("vfmv.v.f v0, %0" ::"f"(scalar));
+            asm volatile("vfmax.vv v8, v8, v0");
+            asm volatile("vse" XSTR(32) ".v v8, (%0)" ::"r"(vc_addr));
+            vlen -= avl;
+            vb_addr += 4*avl;
+            vc_addr += 4*avl;
+        }}
+    }}
+}}
+
+inline void _softhier_vgt_vs_(uint32_t va_addr, uint32_t vc_addr, uint32_t vector_width, float threshold, float true_val, float false_val) {{
+    if (flex_is_first_core()) {{
+        uint32_t vlen = vector_width;
+        uint32_t avl;
+        while(vlen > 0){{
+            asm volatile("vsetvli %0, %1, e" XSTR(32) ", m8, ta, ma" : "=r"(avl) : "r"(vlen));
+            asm volatile("vle" XSTR(32) ".v v8, (%0)" ::"r"(va_addr));
+            asm volatile("vfmv.v.f v16, %0" ::"f"(threshold));
+            asm volatile("vfmv.v.f v24, %0" ::"f"(true_val));
+            asm volatile("vfmv.v.f v0, %0" ::"f"(false_val));
+            asm volatile("vmfgt.vv v1, v8, v16");
+            asm volatile("vmerge.vvm v8, v0, v24, v1");
+            asm volatile("vse" XSTR(32) ".v v8, (%0)" ::"r"(vc_addr));
+            vlen -= avl;
+            va_addr += 4*avl;
+            vc_addr += 4*avl;
+        }}
+    }}
+}}
+
+inline void _softhier_vsub_sv_(uint32_t vb_addr, uint32_t vc_addr, uint32_t vector_width, float scalar) {{
+    if (flex_is_first_core()) {{
+        uint32_t vlen = vector_width;
+        uint32_t avl;
+        while(vlen > 0){{
+            asm volatile("vsetvli %0, %1, e" XSTR(32) ", m8, ta, ma" : "=r"(avl) : "r"(vlen));
+            asm volatile("vle" XSTR(32) ".v v8, (%0)" ::"r"(vb_addr));
+            asm volatile("vfmv.v.f v0, %0" ::"f"(scalar));
+            asm volatile("vfsub.vv v8, v0, v8");
+            asm volatile("vse" XSTR(32) ".v v8, (%0)" ::"r"(vc_addr));
+            vlen -= avl;
+            vb_addr += 4*avl;
+            vc_addr += 4*avl;
+        }}
+    }}
+}}
+
+inline void _softhier_vmin_vv_(uint32_t va_addr, uint32_t vb_addr, uint32_t vc_addr, uint32_t vector_width) {{
+    if (flex_is_first_core()) {{
+        uint32_t vlen = vector_width;
+        uint32_t avl;
+        while(vlen > 0){{
+            asm volatile("vsetvli %0, %1, e" XSTR(32) ", m8, ta, ma" : "=r"(avl) : "r"(vlen));
+            asm volatile("vle" XSTR(32) ".v v8, (%0)" ::"r"(va_addr));
+            asm volatile("vle" XSTR(32) ".v v0, (%0)" ::"r"(vb_addr));
+            asm volatile("vfmin.vv v8, v8, v0");
+            asm volatile("vse" XSTR(32) ".v v8, (%0)" ::"r"(vc_addr));
+            vlen -= avl;
+            va_addr += 4*avl;
+            vb_addr += 4*avl;
+            vc_addr += 4*avl;
+        }}
+    }}
+}}
+
+inline void _softhier_vmax_vv_(uint32_t va_addr, uint32_t vb_addr, uint32_t vc_addr, uint32_t vector_width) {{
+    if (flex_is_first_core()) {{
+        uint32_t vlen = vector_width;
+        uint32_t avl;
+        while(vlen > 0){{
+            asm volatile("vsetvli %0, %1, e" XSTR(32) ", m8, ta, ma" : "=r"(avl) : "r"(vlen));
+            asm volatile("vle" XSTR(32) ".v v8, (%0)" ::"r"(va_addr));
+            asm volatile("vle" XSTR(32) ".v v0, (%0)" ::"r"(vb_addr));
+            asm volatile("vfmax.vv v8, v8, v0");
+            asm volatile("vse" XSTR(32) ".v v8, (%0)" ::"r"(vc_addr));
+            vlen -= avl;
+            va_addr += 4*avl;
+            vb_addr += 4*avl;
+            vc_addr += 4*avl;
+        }}
+    }}
+}}
+
+inline void _softhier_vgt_vv_(uint32_t va_addr, uint32_t vb_addr, uint32_t vc_addr, uint32_t vector_width, float true_val, float false_val) {{
+    if (flex_is_first_core()) {{
+        uint32_t vlen = vector_width;
+        uint32_t avl;
+        while(vlen > 0){{
+            asm volatile("vsetvli %0, %1, e" XSTR(32) ", m8, ta, ma" : "=r"(avl) : "r"(vlen));
+            asm volatile("vle" XSTR(32) ".v v8, (%0)" ::"r"(va_addr));
+            asm volatile("vle" XSTR(32) ".v v16, (%0)" ::"r"(vb_addr));
+            asm volatile("vfmv.v.f v24, %0" ::"f"(true_val));
+            asm volatile("vfmv.v.f v0, %0" ::"f"(false_val));
+            asm volatile("vmfgt.vv v1, v8, v16");
+            asm volatile("vmerge.vvm v8, v0, v24, v1");
+            asm volatile("vse" XSTR(32) ".v v8, (%0)" ::"r"(vc_addr));
+            vlen -= avl;
+            va_addr += 4*avl;
+            vb_addr += 4*avl;
+            vc_addr += 4*avl;
+        }}
+    }}
+}}
+
 // Vector exponent: vb = exp(va)
 static inline void _softhier_vexp_vv_(uint32_t va_addr, uint32_t vb_addr, uint32_t vector_width)
 {{
@@ -376,11 +505,23 @@ static inline void _softhier_vlog_vv_(uint32_t va_addr, uint32_t vb_addr, uint32
             "+": f"_softhier_vadd_vv_({{rhs1}}, {{rhs2}}, {{lhs}}, {vector_width});",
             "*": f"_softhier_vmul_vv_({{rhs1}}, {{rhs2}}, {{lhs}}, {vector_width});",
             "-": f"_softhier_vsub_vv_({{rhs1}}, {{rhs2}}, {{lhs}}, {vector_width});",
+            "/": f"_softhier_vdiv_vv_({{rhs1}}, {{rhs2}}, {{lhs}}, {vector_width});",
             "+c": f"_softhier_vadd_vs_({{rhs1}}, {{constant}}, {{lhs}}, {vector_width});",
             "*c": f"_softhier_vmul_vs_({{rhs1}}, {{constant}}, {{lhs}}, {vector_width});",
             "/c": f"_softhier_vdiv_vs_({{rhs1}}, {{constant}}, {{lhs}}, {vector_width});",
+            "-c": f"_softhier_vsub_vs_({{rhs1}}, {{constant}}, {{lhs}}, {vector_width});",
+            "c-": f"_softhier_vsub_sv_({{rhs1}}, {{lhs}}, {vector_width}, {{constant}});",
+            "minc": f"_softhier_vmin_vs_({{rhs1}}, {{lhs}}, {vector_width}, {{constant}});",
+            "cmin": f"_softhier_vmin_vs_({{rhs1}}, {{lhs}}, {vector_width}, {{constant}});",
+            "maxc": f"_softhier_vmax_vs_({{rhs1}}, {{lhs}}, {vector_width}, {{constant}});",
+            "cmax": f"_softhier_vmax_vs_({{rhs1}}, {{lhs}}, {vector_width}, {{constant}});",
+            ">c": f"_softhier_vgt_vs_({{rhs1}}, {{lhs}}, {vector_width}, {{constant}}, 1.0, 0.0);",
+            "c>": f"_softhier_vgt_vs_({{rhs1}}, {{lhs}}, {vector_width}, {{constant}}, 1.0, 0.0);",
+            ">": f"_softhier_vgt_vv_({{rhs1}}, {{rhs2}}, {{lhs}}, {vector_width}, 1.0, 0.0);",
             "exp": f"_softhier_vexp_vv_({{rhs1}}, {{lhs}}, {vector_width});",
             "log": f"_softhier_vlog_vv_({{rhs1}}, {{lhs}}, {vector_width});",
+            "min": f"_softhier_vmin_vv_({{rhs1}}, {{rhs2}}, {{lhs}}, {vector_width});",
+            "max": f"_softhier_vmax_vv_({{rhs1}}, {{rhs2}}, {{lhs}}, {vector_width});",
         },
                                vector_width=vector_width,
                                vector_input_storage=dace.dtypes.StorageType.SoftHier_TCDM,
@@ -399,7 +540,6 @@ static inline void _softhier_vlog_vv_(uint32_t va_addr, uint32_t vb_addr, uint32
         if not only_apply_vectorization_pass:
             passes = [
                 EliminateBranches(),
-                RemoveRedundantAssignments(),
                 LowerInterstateConditionalAssignmentsToTasklets(),
                 RemoveEmptyStates(),
                 RemoveFPTypeCasts(),
@@ -407,6 +547,7 @@ static inline void _softhier_vlog_vv_(uint32_t va_addr, uint32_t vb_addr, uint32
                 PowerOperatorExpansion(),
                 SplitTasklets(),
                 CleanDataToScalarSliceToTaskletPattern(),
+                RemoveRedundantAssignments(permissive=True),
             ]
             if not no_inline:
                 passes.append(InlineSDFGs())
