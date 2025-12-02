@@ -214,10 +214,10 @@ dace/libraries/torch/
 │
 ├── dispatchers/                         # Dispatcher implementations
 │   ├── __init__.py                      # Package exports
-│   │   └── Exports: get_ctypes_dispatcher, register_and_compile_torch_extension
+│   │   └── Exports: DaceTorchFunction, get_ctypes_dispatcher, register_and_compile_torch_extension
 │   │
 │   ├── common.py                        # Shared utilities
-│   │   ├── DaCeMLTorchFunction dataclass
+│   │   ├── DaceTorchFunction dataclass
 │   │   ├── get_arglist()
 │   │   └── compile_and_init_sdfgs()
 │   │
@@ -246,13 +246,15 @@ dace/libraries/torch/
 
 | Component | Lines | Purpose |
 |-----------|-------|---------|
-| `cpp_torch_extension.py` | 717 | C++ code generation for PyTorch operators |
-| `ctypes_module.py` | 230 | CTypes-based dispatcher for large models |
-| `dlpack.py` | 199 | Zero-copy tensor sharing via DLPack |
-| `common.py` | 122 | Shared dispatcher utilities |
-| `pytorch_env.py` | 94 | CMake build configuration |
-| `__init__.py` (dispatchers) | 25 | Dispatcher exports |
-| `__init__.py` (main) | 17 | Library exports |
+| `cpp_torch_extension.py` | 699 | C++ code generation for PyTorch operators |
+| `ctypes_module.py` | 222 | CTypes-based dispatcher for large models |
+| `dlpack.py` | 188 | Zero-copy tensor sharing via DLPack |
+| `common.py` | 112 | Shared dispatcher utilities |
+| `pytorch_env.py` | 100 | CMake build configuration |
+| `__init__.py` (dispatchers) | 22 | Dispatcher exports |
+| `__init__.py` (main) | 23 | Library exports |
+
+**Note**: DaceModule is located at [dace/frontend/ml/torch/module.py](../../frontend/ml/torch/module.py) (581 lines).
 
 ---
 
@@ -260,7 +262,7 @@ dace/libraries/torch/
 
 ### 4.1 DaceModule: The Main Entry Point
 
-**Location**: [dace/frontend/python/module.py](../../frontend/python/module.py)
+**Location**: [dace/frontend/ml/torch/module.py](../../frontend/ml/torch/module.py)
 
 #### Constructor Signature
 
@@ -381,11 +383,11 @@ dace_to_dldtype_dict = {
 
 **Location**: [dispatchers/common.py](dispatchers/common.py)
 
-#### DaCeMLTorchFunction Dataclass
+#### DaceTorchFunction Dataclass
 
 ```python
 @dataclasses.dataclass
-class DaCeMLTorchFunction:
+class DaceTorchFunction:
     """Encapsulates a compiled DaCe module with PyTorch interface."""
     function: Callable              # The callable (torch op or Python function)
     compiled_sdfgs: List[CompiledSDFG]  # [forward, backward] (or just [forward])
@@ -913,7 +915,7 @@ return DifferentiableFunction.apply
 │       2. Wrap compiled SDFGs with ctypes calls          │
 │       3. Return callable                                │
 │                                                         │
-│ Return DaCeMLTorchFunction(function,compiled_sdfgs,ptrs)│
+│ Return DaceTorchFunction(function,compiled_sdfgs,ptrs)│
 └──────────────────────┬──────────────────────────────────┘
                        ▼
 ┌─────────────────────────────────────────────────────────┐

@@ -54,19 +54,19 @@ ONNX is an open standard for representing machine learning models, supported by 
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    USER INTERFACE                            │
-│  ┌──────────────┐  ┌──────────────┐  ┌─────────────────┐   │
-│  │  ONNXModel   │  │ ONNX Backend │  │ Direct ONNX Op  │   │
-│  │ (main API)   │  │   (testing)  │  │   calls         │   │
-│  └──────┬───────┘  └──────┬───────┘  └────────┬────────┘   │
-└─────────┼──────────────────┼───────────────────┼────────────┘
-          │                  │                   │
-          └──────────────────┼───────────────────┘
-                             ▼
+│                    USER INTERFACE                           │
+│  ┌──────────────┐  ┌──────────────┐  ┌─────────────────┐    │
+│  │  ONNXModel   │  │ ONNX Backend │  │ Direct ONNX Op  │    │
+│  │ (main API)   │  │   (testing)  │  │   calls         │    │
+│  └──────┬───────┘  └──────┬───────┘  └────────┬────────┘    │
+└─────────┼─────────────────┼───────────────────┼─────────────┘
+          │                 │                   │
+          └─────────────────┼───────────────────┘
+                            ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                   IMPORT PIPELINE                            │
+│                   IMPORT PIPELINE                           │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │    ONNXImporter (onnx_importer.py)                   │   │
+│  │    ONNXModel (frontend/ml/onnx/importer.py)          │   │
 │  │  1. Load Model    → 4. Graph Construction            │   │
 │  │  2. Simplify      → 5. Weight Management             │   │
 │  │  3. Shape Infer   → 6. Compilation                   │   │
@@ -83,8 +83,8 @@ ONNX is an open standard for representing machine learning models, supported by 
 │              │ │         │ │ (Microsoft impl) │
 │ • 100+ ops   │ │ • Valid-│ │                  │
 │ • Versioning │ │   ation │ │ • Dynamic dims   │
-│ • Properties │ │ • Constr-│ │ • Auto-merge     │
-│ • Connectors │ │   aints │ │ • Concrete eval  │
+│ • Properties │ │ • Const-│ │ • Auto-merge     │
+│ • Connectors │ │   raints│ │ • Concrete eval  │
 └──────────────┘ └─────────┘ └──────────────────┘
          │            │            │
          └────────────┼────────────┘
@@ -155,11 +155,10 @@ Execution:
 
 ```
 dace/libraries/onnx/
-├── __init__.py                          # Library registration
-│   └── Exports: ONNXModel, ONNXOp, schemas, backend
+├── __init__.py                          # Library registration (61 lines)
+│   └── Exports: ONNXModel (lazy), get_onnx_node, has_onnx_node, schema types
 │
-├── onnx_importer.py                     # Main entry point
-│   └── ONNXModel class - Import pipeline orchestrator
+├── (Note: ONNXModel is at dace/frontend/ml/onnx/importer.py)
 │
 ├── schema.py                            # Type system
 │   ├── @onnx_representation decorator
@@ -188,22 +187,24 @@ dace/libraries/onnx/
 │       └── parse_variadic_param()
 │
 ├── op_implementations/                  # Implementation strategies
-│   ├── pure_implementations.py          # Reference impl
-│   │   └── 40+ operations (Add, Conv, MatMul, Softmax, etc.)
-│   ├── img_op_implementations.py        # Image ops
-│   │   └── Optimized Conv, Pool, BatchNorm
-│   ├── criteria_implementations.py      # Conditional selection
-│   └── utils.py                         # Helpers
+│   ├── __init__.py                      # Package exports (11 lines)
+│   ├── elementwise_ops.py               # Element-wise operations (212 lines)
+│   ├── reduction_ops.py                 # Reduction operations (304 lines)
+│   ├── array_ops.py                     # Array operations (681 lines)
+│   ├── linalg_ops.py                    # Linear algebra ops (359 lines)
+│   ├── normalization_ops.py             # Normalization ops (281 lines)
+│   ├── image_ops.py                     # Image operations (443 lines)
+│   ├── img_op_implementations.py        # Optimized image ops (563 lines)
+│   ├── criteria_implementations.py      # Conditional selection (90 lines)
+│   ├── common.py                        # Common utilities (11 lines)
+│   └── utils.py                         # Helpers (223 lines)
 │       ├── @op_implementation decorator
 │       ├── @python_pure_op_implementation
 │       ├── program_for_node()
 │       └── empty_sdfg_for_node()
 │
 └── shape_inference/                     # Dynamic shape support
-    ├── symbolic_shape_infer.py          # Symbolic inference
-    │   └── SymbolicShapeInference class
-    └── shape_inference.py               # Wrapper
-        └── infer_shapes()
+    └── (Empty - uses onnxruntime.tools.symbolic_shape_infer instead)
 
 ```
 
@@ -211,15 +212,21 @@ dace/libraries/onnx/
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `pure_implementations.py` | 3052 | Reference implementations for correctness |
-| `symbolic_shape_infer.py` | 1976 | Symbolic shape inference (Microsoft) |
-| `onnx_importer.py` | 711 | Main import pipeline orchestrator |
-| `img_op_implementations.py` | 586 | Optimized image operations |
-| `schema.py` | 390 | Type system and validation |
-| `onnx_op_registry.py` | 325 | Dynamic node class generation |
-| `onnx_op.py` | 294 | Base class for ONNX operations |
-| `converters.py` | 257 | Type conversion utilities |
-| `utils.py` | 228 | Implementation helpers |
+| `array_ops.py` | 681 | Array operations (Concat, Gather, etc.) |
+| `img_op_implementations.py` | 563 | Optimized image operations |
+| `image_ops.py` | 443 | Image operation implementations |
+| `linalg_ops.py` | 359 | Linear algebra operations |
+| `onnx_op_registry.py` | 351 | Dynamic node class generation |
+| `schema.py` | 333 | Type system and validation |
+| `reduction_ops.py` | 304 | Reduction operations |
+| `onnx_op.py` | 295 | Base class for ONNX operations |
+| `normalization_ops.py` | 281 | Normalization operations |
+| `converters.py` | 247 | Type conversion utilities |
+| `utils.py` | 223 | Implementation helpers |
+| `elementwise_ops.py` | 212 | Element-wise operations |
+| `forward_implementation_abc.py` | 105 | Implementation interface |
+
+**Note**: ONNXModel (794 lines) is located at [dace/frontend/ml/onnx/importer.py](../../frontend/ml/onnx/importer.py).
 
 ---
 
@@ -227,7 +234,7 @@ dace/libraries/onnx/
 
 ### 4.1 ONNXModel: The Main Entry Point
 
-**Location**: [onnx_importer.py](onnx_importer.py)
+**Location**: [dace/frontend/ml/onnx/importer.py](../../frontend/ml/onnx/importer.py)
 
 The `ONNXModel` class is the primary interface for importing and executing ONNX models.
 
@@ -586,11 +593,12 @@ Shape inference computes tensor shapes either symbolically or concretely for all
 
 ### 6.2 Integration
 
-**Location**: [shape_inference/symbolic_shape_infer.py](shape_inference/symbolic_shape_infer.py)
+Shape inference uses `onnxruntime.tools.symbolic_shape_infer.SymbolicShapeInference` from the ONNX Runtime library.
 
 Called during model import:
 ```python
-model = shape_inference.infer_shapes(model, auto_merge=auto_merge)
+from onnxruntime.tools.symbolic_shape_infer import SymbolicShapeInference
+model = SymbolicShapeInference.infer_shapes(model, auto_merge=auto_merge)
 ```
 
 ### 6.3 Capabilities
@@ -625,7 +633,7 @@ model = shape_inference.infer_shapes(model, auto_merge=auto_merge)
 
 ### 6.4 Implementation Details
 
-The symbolic shape inference is based on a **Microsoft-sourced implementation** that includes:
+Shape inference uses the **ONNX Runtime implementation** (`onnxruntime.tools.symbolic_shape_infer`) which provides:
 
 - Helper functions for dimension extraction and axis handling
 - `SymbolicShapeInference` class with per-operation rules
@@ -679,7 +687,13 @@ class ONNXForward(abc.ABC):
 
 #### 1. Pure Implementations
 
-**Location**: [op_implementations/pure_implementations.py](op_implementations/pure_implementations.py)
+**Location**: Implementations are organized across multiple files in [op_implementations/](op_implementations/):
+- `elementwise_ops.py` - Element-wise operations (Add, Mul, Div, etc.)
+- `reduction_ops.py` - Reduction operations (ReduceMean, ReduceSum, etc.)
+- `array_ops.py` - Array operations (Concat, Gather, Reshape, etc.)
+- `linalg_ops.py` - Linear algebra operations (MatMul, Gemm, etc.)
+- `normalization_ops.py` - Normalization operations (BatchNorm, LayerNorm, etc.)
+- `image_ops.py` - Image operations (Conv, Pool, etc.)
 
 **Purpose**: Provides reference implementations focused on correctness
 
@@ -688,13 +702,6 @@ class ONNXForward(abc.ABC):
 - Automatically parsed via the DaCe Python frontend
 - Semantically correct according to ONNX specifications
 - May not be optimally performant until further transformations are applied
-
-**Example Operations**:
-- Mathematical: Log, Exp, Sqrt, Pow, Abs
-- Reductions: ReduceMean, ReduceSum, ReduceMax
-- Shape manipulation: Reshape, Transpose, Squeeze, Unsqueeze
-- Array operations: Concat, Split, Gather, Scatter
-- Element-wise: Add, Sub, Mul, Div
 
 **Implementation Pattern**:
 ```python

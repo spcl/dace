@@ -140,31 +140,31 @@ dace/autodiff/
 │           get_recomputation_nsdfg()
 │
 ├── implementations/                 # Backward rules for node types
-│   ├── __init__.py                  # Package exports
-│   ├── dace_nodes.py                # Pure SDFG elements
+│   ├── __init__.py                  # Package exports (46 lines)
+│   ├── dace_nodes.py                # Pure SDFG elements (487 lines)
 │   │   └── DaceNodeBackwardImplementations
 │   │       ├── _reverse_AccessNode()
 │   │       ├── _reverse_Tasklet()
 │   │       ├── _reverse_MapEntry()
 │   │       ├── _reverse_MapExit()
 │   │       └── _reverse_NestedSDFG()
-│   ├── dace_library_nodes.py        # Library operations
+│   ├── dace_reduction_nodes.py      # Reduction operations (307 lines)
 │   │   ├── ReverseReduce
-│   │   ├── ReverseTranspose
-│   │   └── ... (other library nodes)
-│   └── onnx_ops.py                  # ONNX operations
-│       ├── ONNXConvBackward
-│       ├── ONNXMatMulBackward
-│       └── ... (50+ ONNX ops)
+│   │   └── ... (reduction backward implementations)
+│   ├── onnx_ops.py                  # ONNX operations (1045 lines)
+│   │   ├── ONNXConvBackward
+│   │   ├── ONNXMatMulBackward
+│   │   └── ... (50+ ONNX ops)
+│   └── pytorch_ops.py               # PyTorch operations (128 lines)
+│       └── Depthwise convolution backward pass
 │
 └── library/                         # Library integrations
-    ├── __init__.py                  # Package exports
-    ├── library.py                   # BackwardPass node
+    ├── __init__.py                  # Package exports (31 lines)
+    ├── library.py                   # BackwardPass node (286 lines)
     │   ├── ParameterArray (data descriptor)
     │   ├── BackwardPass (LibraryNode)
     │   └── ExpandBackwardPass (expansion)
-    ├── torch_integration.py         # PyTorch hooks
-    └── python_frontend.py           # Frontend hooks
+    └── torch_integration.py         # PyTorch hooks (39 lines)
 ```
 
 
@@ -645,11 +645,11 @@ for i in reversed(range(N)):
 
 ---
 
-### 5.2 DaCe Library Nodes: `dace_library_nodes.py`
+### 5.2 DaCe Reduction Nodes: `dace_reduction_nodes.py`
 
-**Location**: [implementations/dace_library_nodes.py](implementations/dace_library_nodes.py)
+**Location**: [implementations/dace_reduction_nodes.py](implementations/dace_reduction_nodes.py)
 
-Implements backward passes for DaCe library nodes.
+Implements backward passes for DaCe reduction operations (307 lines).
 
 #### 5.2.1 Key Implementations
 
@@ -657,11 +657,6 @@ Implements backward passes for DaCe library nodes.
 |-----------|------------------------|-------|
 | **Reduce (Sum)** | Broadcast gradient to match input shape | Handles axis reduction |
 | **Reduce (Max/Min)** | Gradient flows only to max/min elements | Requires forward values |
-| **Transpose** | Transpose gradient with inverted axes | Simple permutation |
-| **MatMul** | Matrix multiplications with transposed matrices | BLAS operations |
-| **Conv2D** | Convolution with rotated/transposed kernels | Uses backward_data/backward_filter |
-| **Pooling** | Unpool gradient to input locations | Requires pooling indices |
-| **BatchNorm** | Compute mean/variance gradients | Requires saved statistics |
 
 ---
 
@@ -684,6 +679,22 @@ Implements backward passes for 50+ ONNX operations. Each implementation follows 
 - **Advanced**: Gather, Scatter, Einsum, etc.
 
 Each ONNX backward implementation is registered with `@dace.registry.autoregister_params(op="OpName")`.
+
+---
+
+### 5.4 PyTorch Operations: `pytorch_ops.py`
+
+**Location**: [implementations/pytorch_ops.py](implementations/pytorch_ops.py)
+
+Implements backward passes using PyTorch's optimized CUDA kernels (128 lines).
+
+#### 5.4.1 Key Implementations
+
+| Operation | Backward Implementation | Notes |
+|-----------|------------------------|-------|
+| **Conv (depthwise)** | `PyTorchConvBackward` | Uses `at::thnn_conv_depthwise2d_backward_out` |
+
+This implementation leverages PyTorch's C++ ATen library for GPU-accelerated depthwise convolution backward passes.
 
 ---
 
