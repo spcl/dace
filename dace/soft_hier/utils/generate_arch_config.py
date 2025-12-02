@@ -44,10 +44,11 @@ def generate_arg_cfg(output_path="generated_arch.py",
                      soc_register_wakeup="0x90000004",
                      sync_base="0x40000000",
                      sync_interleave="0x00000080",
-                     sync_special_mem="0x00000040"):
+                     sync_special_mem="0x00000040",
+                     num_vector_units:int = 0):
     # Process hbm_placement from string to a list
     hbm_placement_list = [p.strip() for p in hbm_placement.split(",")]
-
+    vector_list = ",".join([str(s) for s in range(num_vector_units)]) if num_vector_units > 0 else "0"
     code = f'''"""
 Auto-generated FlexClusterArch class
 ------------------------------------
@@ -83,7 +84,7 @@ class FlexClusterArch:
         self.cluster_reg_size        = {cluster_reg_size}
 
         # Spatz Vector Unit
-        self.spatz_attaced_core_list = [0]  # Default empty
+        self.spatz_attaced_core_list = [{vector_list}]  # Default empty
         self.spatz_num_vlsu_port     = {spatz_num_vlsu_port}
         self.spatz_num_function_unit = {spatz_num_function_unit}
 
