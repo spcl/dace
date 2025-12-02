@@ -46,6 +46,260 @@ inline void _softhier_vgt_vs_(uint32_t va_addr, uint32_t vc_addr, uint32_t vecto
 }}
 '''
 
+vadd_vv_single_core = f'''
+if (flex_is_first_core()) {{
+    uint32_t vlen = vector_width;
+    uint32_t avl;
+    while(vlen > 0){{
+        asm volatile("vsetvli %0, %1, e" XSTR(32) ", m8, ta, ma" : "=r"(avl) : "r"(vlen));
+        asm volatile("vle" XSTR(32) ".v v8,  (%0)" ::"r"(va_addr));
+        asm volatile("vle" XSTR(32) ".v v0,  (%0)" ::"r"(vb_addr));
+        asm volatile("vfadd.vv v8, v8, v0");
+        asm volatile("vse" XSTR(32) ".v v8,  (%0)" ::"r"(vc_addr));
+        vlen -= avl;
+        va_addr += 4*avl;
+        vb_addr += 4*avl;
+        vc_addr += 4*avl;
+    }}
+}}
+'''
+
+vadd_vv_multi_core = f'''
+    uint32_t num_cores = {os.getenv('SOFTHIER_NUM_VECTOR_UNITS', 1)};
+    uint32_t core_id = flex_get_core_id();
+    if (core_id < num_cores) {{
+        uint32_t length_per_vu = (vector_width / num_cores);
+        uint32_t vu_offset = core_id * length_per_vu * 4;
+        va_addr += vu_offset;
+        vb_addr += vu_offset;
+        vc_addr += vu_offset;
+        uint32_t vlen = length_per_vu;
+        uint32_t avl;
+        while(vlen > 0){{
+            asm volatile("vsetvli %0, %1, e" XSTR(32) ", m8, ta, ma" : "=r"(avl) : "r"(vlen));
+            asm volatile("vle" XSTR(32) ".v v8,  (%0)" ::"r"(va_addr));
+            asm volatile("vle" XSTR(32) ".v v0,  (%0)" ::"r"(vb_addr));
+            asm volatile("vfadd.vv v8, v8, v0");
+            asm volatile("vse" XSTR(32) ".v v8,  (%0)" ::"r"(vc_addr));
+            vlen -= avl;
+            va_addr += 4*avl;
+            vb_addr += 4*avl;
+            vc_addr += 4*avl;
+        }}
+    }}
+'''
+
+vmul_vv_single_core = f'''
+if (flex_is_first_core()) {{
+    uint32_t vlen = vector_width;
+    uint32_t avl;
+    while(vlen > 0) {{
+        asm volatile("vsetvli %0, %1, e32, m8, ta, ma" : "=r"(avl) : "r"(vlen));
+        asm volatile("vle32.v v8, (%0)" :: "r"(va_addr));
+        asm volatile("vle32.v v0, (%0)" :: "r"(vb_addr));
+        asm volatile("vfmul.vv v8, v8, v0");
+        asm volatile("vse32.v v8, (%0)" :: "r"(vc_addr));
+        vlen -= avl;
+        va_addr += 4 * avl;
+        vb_addr += 4 * avl;
+        vc_addr += 4 * avl;
+    }}
+}}
+'''
+
+vsub_vv_single_core = f'''
+if (flex_is_first_core()) {{
+    uint32_t vlen = vector_width;
+    uint32_t avl;
+    while(vlen > 0) {{
+        asm volatile("vsetvli %0, %1, e32, m8, ta, ma" : "=r"(avl) : "r"(vlen));
+        asm volatile("vle32.v v8, (%0)" :: "r"(va_addr));
+        asm volatile("vle32.v v0, (%0)" :: "r"(vb_addr));
+        asm volatile("vfsub.vv v8, v8, v0");
+        asm volatile("vse32.v v8, (%0)" :: "r"(vc_addr));
+        vlen -= avl;
+        va_addr += 4 * avl;
+        vb_addr += 4 * avl;
+        vc_addr += 4 * avl;
+    }}
+}}
+'''
+
+vadd_vs_single_core = f'''
+if (flex_is_first_core()) {{
+    uint32_t avl;
+    while(vector_width > 0) {{
+        asm volatile("vsetvli %0, %1, e32, m8, ta, ma" : "=r"(avl) : "r"(vector_width));
+        asm volatile("vle32.v v8, (%0)" :: "r"(va_addr));
+        asm volatile("vfmv.v.f v0, %0" :: "f"(scalar));
+        asm volatile("vfadd.vv v8, v8, v0");
+        asm volatile("vse32.v v8, (%0)" :: "r"(vc_addr));
+        vector_width -= avl;
+        va_addr += 4 * avl;
+        vc_addr += 4 * avl;
+    }}
+}}
+'''
+
+vmul_vs_single_core = f'''
+if (flex_is_first_core()) {{
+    uint32_t avl;
+    while(vector_width > 0) {{
+        asm volatile("vsetvli %0, %1, e32, m8, ta, ma" : "=r"(avl) : "r"(vector_width));
+        asm volatile("vle32.v v8, (%0)" :: "r"(va_addr));
+        asm volatile("vfmv.v.f v0, %0" :: "f"(scalar));
+        asm volatile("vfmul.vv v8, v8, v0");
+        asm volatile("vse32.v v8, (%0)" :: "r"(vc_addr));
+        vector_width -= avl;
+        va_addr += 4 * avl;
+        vc_addr += 4 * avl;
+    }}
+}}
+'''
+
+vdiv_vv_single_core = f'''
+if (flex_is_first_core()) {{
+    uint32_t avl;
+    while(vector_width > 0) {{
+        asm volatile("vsetvli %0, %1, e32, m8, ta, ma" : "=r"(avl) : "r"(vector_width));
+        asm volatile("vle32.v v8, (%0)" :: "r"(va_addr));
+        asm volatile("vle32.v v0, (%0)" :: "r"(vb_addr));
+        asm volatile("vfdiv.vv v8, v8, v0");
+        asm volatile("vse32.v v8, (%0)" :: "r"(vc_addr));
+        vector_width -= avl;
+        va_addr += 4 * avl;
+        vb_addr += 4 * avl;
+        vc_addr += 4 * avl;
+    }}
+}}
+'''
+
+
+# ---------------------------
+# Multi-core implementations
+# ---------------------------
+
+vmul_vv_multi_core = f'''
+uint32_t num_cores = {os.getenv("SOFTHIER_NUM_VECTOR_UNITS", 1)};
+uint32_t core_id = flex_get_core_id();
+if (core_id < num_cores) {{
+    uint32_t length_per_vu = (vector_width / num_cores);
+    uint32_t vu_offset = core_id * length_per_vu * 4;
+    va_addr += vu_offset;
+    vb_addr += vu_offset;
+    vc_addr += vu_offset;
+    uint32_t vlen = length_per_vu;
+    uint32_t avl;
+    while(vlen > 0) {{
+        asm volatile("vsetvli %0, %1, e32, m8, ta, ma" : "=r"(avl) : "r"(vlen));
+        asm volatile("vle32.v v8, (%0)" :: "r"(va_addr));
+        asm volatile("vle32.v v0, (%0)" :: "r"(vb_addr));
+        asm volatile("vfmul.vv v8, v8, v0");
+        asm volatile("vse32.v v8, (%0)" :: "r"(vc_addr));
+        vlen -= avl;
+        va_addr += 4 * avl;
+        vb_addr += 4 * avl;
+        vc_addr += 4 * avl;
+    }}
+}}
+'''
+
+vsub_vv_multi_core = f'''
+uint32_t num_cores = {os.getenv("SOFTHIER_NUM_VECTOR_UNITS", 1)};
+uint32_t core_id = flex_get_core_id();
+if (core_id < num_cores) {{
+    uint32_t length_per_vu = (vector_width / num_cores);
+    uint32_t vu_offset = core_id * length_per_vu * 4;
+    va_addr += vu_offset;
+    vb_addr += vu_offset;
+    vc_addr += vu_offset;
+    uint32_t vlen = length_per_vu;
+    uint32_t avl;
+    while(vlen > 0) {{
+        asm volatile("vsetvvli %0, %1, e32, m8, ta, ma" : "=r"(avl) : "r"(vlen));
+        asm volatile("vle32.v v8, (%0)" :: "r"(va_addr));
+        asm volatile("vle32.v v0, (%0)" :: "r"(vb_addr));
+        asm volatile("vfsub.vv v8, v8, v0");
+        asm volatile("vse32.v v8, (%0)" :: "r"(vc_addr));
+        vlen -= avl;
+        va_addr += 4 * avl;
+        vb_addr += 4 * avl;
+        vc_addr += 4 * avl;
+    }}
+}}
+'''
+
+vadd_vs_multi_core = f'''
+uint32_t num_cores = {os.getenv("SOFTHIER_NUM_VECTOR_UNITS", 1)};
+uint32_t core_id = flex_get_core_id();
+if (core_id < num_cores) {{
+    uint32_t length_per_vu = (vector_width / num_cores);
+    uint32_t vu_offset = core_id * length_per_vu * 4;
+    va_addr += vu_offset;
+    vc_addr += vu_offset;
+    uint32_t vlen = length_per_vu;
+    uint32_t avl;
+    while(vlen > 0) {{
+        asm volatile("vsetvli %0, %1, e32, m8, ta, ma" : "=r"(avl) : "r"(vlen));
+        asm volatile("vle32.v v8, (%0)" :: "r"(va_addr));
+        asm volatile("vfmv.v.f v0, %0" :: "f"(scalar));
+        asm volatile("vfadd.vv v8, v8, v0");
+        asm volatile("vse32.v v8, (%0)" :: "r"(vc_addr));
+        vlen -= avl;
+        va_addr += 4 * avl;
+        vc_addr += 4 * avl;
+    }}
+}}
+'''
+
+vmul_vs_multi_core = f'''
+uint32_t num_cores = {os.getenv("SOFTHIER_NUM_VECTOR_UNITS", 1)};
+uint32_t core_id = flex_get_core_id();
+if (core_id < num_cores) {{
+    uint32_t length_per_vu = (vector_width / num_cores);
+    uint32_t vu_offset = core_id * length_per_vu * 4;
+    va_addr += vu_offset;
+    vc_addr += vu_offset;
+    uint32_t vlen = length_per_vu;
+    uint32_t avl;
+    while(vlen > 0) {{
+        asm volatile("vsetvli %0, %1, e32, m8, ta, ma" : "=r"(avl) : "r"(vlen));
+        asm volatile("vle32.v v8, (%0)" :: "r"(va_addr));
+        asm volatile("vfmv.v.f v0, %0" :: "f"(scalar));
+        asm volatile("vfmul.vv v8, v8, v0");
+        asm volatile("vse32.v v8, (%0)" :: "r"(vc_addr));
+        vlen -= avl;
+        va_addr += 4 * avl;
+        vc_addr += 4 * avl;
+    }}
+}}
+'''
+
+vdiv_vv_multi_core = f'''
+uint32_t num_cores = {os.getenv("SOFTHIER_NUM_VECTOR_UNITS", 1)};
+uint32_t core_id = flex_get_core_id();
+if (core_id < num_cores) {{
+    uint32_t length_per_vu = (vector_width / num_cores);
+    uint32_t vu_offset = core_id * length_per_vu * 4;
+    va_addr += vu_offset;
+    vb_addr += vu_offset;
+    vc_addr += vu_offset;
+    uint32_t vlen = length_per_vu;
+    uint32_t avl;
+    while(vlen > 0) {{
+        asm volatile("vsetvli %0, %1, e32, m8, ta, ma" : "=r"(avl) : "r"(vlen));
+        asm volatile("vle32.v v8, (%0)" :: "r"(va_addr));
+        asm volatile("vle32.v v0, (%0)" :: "r"(vb_addr));
+        asm volatile("vfdiv.vv v8, v8, v0");
+        asm volatile("vse32.v v8, (%0)" :: "r"(vc_addr));
+        vlen -= avl;
+        va_addr += 4 * avl;
+        vb_addr += 4 * avl;
+        vc_addr += 4 * avl;
+    }}
+}}
+'''
+
 class VectorizeSoftHier(ppl.Pipeline):
     _softhier_global_code = f'''
 #ifndef _SOFTHIER_MACROS_DEFINED
@@ -56,119 +310,35 @@ class VectorizeSoftHier(ppl.Pipeline):
 
 inline void _softhier_vadd_vv_(uint32_t va_addr, uint32_t vb_addr, uint32_t vc_addr, uint32_t vector_width)
 {{
-    //flex_intra_cluster_sync();
-    if (flex_is_first_core()) {{
-        uint32_t vlen = vector_width;
-        uint32_t avl;
-        while(vlen > 0){{
-            asm volatile("vsetvli %0, %1, e" XSTR(32) ", m8, ta, ma" : "=r"(avl) : "r"(vlen));
-            asm volatile("vle" XSTR(32) ".v v8,  (%0)" ::"r"(va_addr));
-            asm volatile("vle" XSTR(32) ".v v0,  (%0)" ::"r"(vb_addr));
-            asm volatile("vfadd.vv v8, v8, v0");
-            asm volatile("vse" XSTR(32) ".v v8,  (%0)" ::"r"(vc_addr));
-            vlen -= avl;
-            va_addr += 4*avl;
-            vb_addr += 4*avl;
-            vc_addr += 4*avl;
-        }}
-    }}
-    //flex_intra_cluster_sync();
+    {vadd_vv_single_core if int(os.getenv('SOFTHIER_NUM_VECTOR_UNITS', 1)) == 1 else vadd_vv_multi_core}
 }}
 
 /*vc = va * vb*/
 inline void _softhier_vmul_vv_(uint32_t va_addr, uint32_t vb_addr, uint32_t vc_addr, uint32_t vector_width) {{
-    //flex_intra_cluster_sync();
-    if (flex_is_first_core()) {{
-        uint32_t vlen = vector_width;
-        uint32_t avl;
-        while(vlen > 0){{
-            asm volatile("vsetvli %0, %1, e" XSTR(32) ", m8, ta, ma" : "=r"(avl) : "r"(vlen));
-            asm volatile("vle" XSTR(32) ".v v8,  (%0)" ::"r"(va_addr));
-            asm volatile("vle" XSTR(32) ".v v0,  (%0)" ::"r"(vb_addr));
-            asm volatile("vfmul.vv v8, v8, v0");
-            asm volatile("vse" XSTR(32) ".v v8,  (%0)" ::"r"(vc_addr));
-            vlen -= avl;
-            va_addr += 4*avl;
-            vb_addr += 4*avl;
-            vc_addr += 4*avl;
-        }}
-    }}
-    //flex_intra_cluster_sync();
+    {vmul_vv_single_core if int(os.getenv('SOFTHIER_NUM_VECTOR_UNITS', 1)) == 1 else vmul_vv_multi_core}
 }}
 
 /*vc = va - vb*/
 inline void _softhier_vsub_vv_(uint32_t va_addr, uint32_t vb_addr, uint32_t vc_addr, uint32_t vector_width) {{
-    //flex_intra_cluster_sync();
-    if (flex_is_first_core()) {{
-        uint32_t vlen = vector_width;
-        uint32_t avl;
-        while(vlen > 0){{
-            asm volatile("vsetvli %0, %1, e" XSTR(32) ", m8, ta, ma" : "=r"(avl) : "r"(vlen));
-            asm volatile("vle" XSTR(32) ".v v8,  (%0)" ::"r"(va_addr));
-            asm volatile("vle" XSTR(32) ".v v0,  (%0)" ::"r"(vb_addr));
-            asm volatile("vfsub.vv v8, v8, v0");
-            asm volatile("vse" XSTR(32) ".v v8,  (%0)" ::"r"(vc_addr));
-            vlen -= avl;
-            va_addr += 4*avl;
-            vb_addr += 4*avl;
-            vc_addr += 4*avl;
-        }}
-    }}
-    //flex_intra_cluster_sync();
+    {vsub_vv_single_core if int(os.getenv('SOFTHIER_NUM_VECTOR_UNITS', 1)) == 1 else vsub_vv_multi_core}
+
 }}
 
 
 // Vector addition with scalar: vc = va + scalar
 inline void _softhier_vadd_vs_(uint32_t va_addr, float scalar, uint32_t vc_addr, uint32_t vector_width) {{
-    if (flex_is_first_core()) {{
-        uint32_t avl;
-        while(vector_width > 0) {{
-            asm volatile("vsetvli %0, %1, e32, m8, ta, ma": "=r"(avl) : "r"(vector_width));
-            asm volatile("vle32.v v8, (%0)" ::"r"(va_addr));
-            asm volatile("vfmv.v.f v0, %0" ::"f"(scalar));
-            asm volatile("vfadd.vv v8, v8, v0");
-            asm volatile("vse32.v v8, (%0)" ::"r"(vc_addr));
-            vector_width -= avl;
-            va_addr += 4*avl;
-            vc_addr += 4*avl;
-        }}
-    }}
+    {vadd_vs_single_core if int(os.getenv('SOFTHIER_NUM_VECTOR_UNITS', 1)) == 1 else vadd_vs_multi_core}
 }}
 
 
 // Vector multiplication with scalar: vc = va * scalar
 inline void _softhier_vmul_vs_(uint32_t va_addr, float scalar, uint32_t vc_addr, uint32_t vector_width) {{
-    if (flex_is_first_core()) {{
-        uint32_t avl;
-        while(vector_width > 0) {{
-            asm volatile("vsetvli %0, %1, e32, m8, ta, ma" : "=r"(avl) : "r"(vector_width));
-            asm volatile("vle32.v v8, (%0)" ::"r"(va_addr));
-            asm volatile("vfmv.v.f v0, %0" ::"f"(scalar));
-            asm volatile("vfmul.vv v8, v8, v0");
-            asm volatile("vse32.v v8, (%0)" ::"r"(vc_addr));
-            vector_width -= avl;
-            va_addr += 4*avl;
-            vc_addr += 4*avl;
-        }}
-    }}
+    {vmul_vs_single_core if int(os.getenv('SOFTHIER_NUM_VECTOR_UNITS', 1)) == 1 else vmul_vs_multi_core}
 }}
 
 // Vector division: vc = va / vb
 inline void _softhier_vdiv_vv_(uint32_t va_addr, uint32_t vb_addr, uint32_t vc_addr, uint32_t vector_width) {{
-    if (flex_is_first_core()) {{
-        uint32_t avl;
-        while(vector_width > 0) {{
-            asm volatile("vsetvli %0, %1, e32, m8, ta, ma" : "=r"(avl) : "r"(vector_width));
-            asm volatile("vle32.v v8, (%0)" ::"r"(va_addr));
-            asm volatile("vle32.v v0, (%0)" ::"r"(vb_addr));
-            asm volatile("vfdiv.vv v8, v8, v0");
-            asm volatile("vse32.v v8, (%0)" ::"r"(vc_addr));
-            vector_width -= avl;
-            va_addr += 4*avl;
-            vb_addr += 4*avl;
-            vc_addr += 4*avl;
-        }}
-    }}
+    {vdiv_vv_single_core if int(os.getenv('SOFTHIER_NUM_VECTOR_UNITS', 1)) == 1 else vdiv_vv_multi_core}
 }}
 
 // Vector division with scalar: vc = va / scalar

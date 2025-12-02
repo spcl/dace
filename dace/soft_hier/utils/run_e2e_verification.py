@@ -39,7 +39,8 @@ class HardwareConfig:
             skip_build_hw=False,
             cluster_tcdm_bank_width=64,
             cluster_tcdm_bank_nb=64,
-            num_core_per_cluster=3):
+            num_core_per_cluster=3,
+            num_vector_units=1):
         self.hardware_thread_group_dims = hardware_thread_group_dims
         if dace_thread_group_dims is None:
             self.dace_thread_group_dims = hardware_thread_group_dims
@@ -69,6 +70,7 @@ class HardwareConfig:
         self.cluster_tcdm_bank_width=cluster_tcdm_bank_width
         self.cluster_tcdm_bank_nb=cluster_tcdm_bank_nb
         self.num_core_per_cluster=num_core_per_cluster
+        self.num_vector_units = num_vector_units
 
 
 def _get_gvsoc_path() -> str:
@@ -321,7 +323,8 @@ def setup_architecture(hw_config: HardwareConfig):
         num_node_per_ctrl=hw_config.num_node_per_ctrl,
         noc_link_width=hw_config.noc_link_width,
         cluster_tcdm_bank_nb=hw_config.cluster_tcdm_bank_nb,
-        cluster_tcdm_bank_width=hw_config.cluster_tcdm_bank_width
+        cluster_tcdm_bank_width=hw_config.cluster_tcdm_bank_width,
+        num_vector_units=hw_config.num_vector_units
     )
     cwd = os.getcwd()
     subprocess.run(
