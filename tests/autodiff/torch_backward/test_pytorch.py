@@ -51,9 +51,9 @@ def run_pytorch_module(
 
     dace_module = DaceModule(
         pt_model_for_dace,
+        sdfg_name=sdfg_name,
         simplify=False,
         backward=True,
-        sdfg_name=sdfg_name,
         auto_optimize=auto_optimize,
         compile_torch_extension=True,
     )
@@ -75,7 +75,7 @@ def run_pytorch_module(
 
 @pytest.mark.torch
 @pytest.mark.autodiff
-def test_simple(sdfg_name: str):
+def test_simple():
 
     class Module(torch.nn.Module):
 
@@ -84,12 +84,12 @@ def test_simple(sdfg_name: str):
             x = torch.log(x)
             return x
 
-    run_pytorch_module(Module(), sdfg_name)
+    run_pytorch_module(Module(), sdfg_name="test_simple")
 
 
 @pytest.mark.torch
 @pytest.mark.autodiff
-def test_repeated(sdfg_name):
+def test_repeated():
 
     class Module(torch.nn.Module):
 
@@ -98,12 +98,12 @@ def test_repeated(sdfg_name):
             x = torch.sqrt(x)
             return x
 
-    run_pytorch_module(Module(), sdfg_name)
+    run_pytorch_module(Module(), sdfg_name="test_repeated")
 
 
 @pytest.mark.torch
 @pytest.mark.autodiff
-def test_softmax(sdfg_name):
+def test_softmax():
 
     class Module(torch.nn.Module):
 
@@ -111,12 +111,12 @@ def test_softmax(sdfg_name):
             x = F.softmax(x, dim=1)
             return x
 
-    run_pytorch_module(Module(), sdfg_name, use_max=True)
+    run_pytorch_module(Module(), sdfg_name="test_softmax", use_max=True)
 
 
 @pytest.mark.torch
 @pytest.mark.autodiff
-def test_reshape_on_memlet_path(sdfg_name):
+def test_reshape_on_memlet_path():
     # required test: this function in a nn.Module, with apply simplify so that the reshape is
     # inlined and copy is removed
     class Module(torch.nn.Module):
@@ -125,12 +125,12 @@ def test_reshape_on_memlet_path(sdfg_name):
             reshaped = torch.reshape(x + 1, [3, 3])
             return torch.log(reshaped) + torch.reshape(torch.tensor([[3, 2, 1]], device=reshaped.device), [3])
 
-    run_pytorch_module(Module(), sdfg_name, shape=(9, ))
+    run_pytorch_module(Module(), sdfg_name="test_reshape_on_memlet_path", shape=(9, ))
 
 
 @pytest.mark.torch
 @pytest.mark.autodiff
-def test_weights_ln(sdfg_name):
+def test_weights_ln():
 
     class Module(torch.nn.Module):
 
@@ -148,12 +148,12 @@ def test_weights_ln(sdfg_name):
             x = self.fc3(x)
             return x
 
-    run_pytorch_module(Module(), sdfg_name, shape=(4, 784), auto_optimize=False)
+    run_pytorch_module(Module(), sdfg_name="test_weights_ln", shape=(4, 784), auto_optimize=False)
 
 
 @pytest.mark.torch
 @pytest.mark.autodiff
-def test_layernorm(sdfg_name):
+def test_layernorm():
 
     class Module(torch.nn.Module):
 
@@ -164,12 +164,12 @@ def test_layernorm(sdfg_name):
         def forward(self, x):
             return self.ln(x)
 
-    run_pytorch_module(Module(), sdfg_name, shape=(2, 3), use_max=True, atol=1e-2)
+    run_pytorch_module(Module(), sdfg_name="test_layernorm", shape=(2, 3), use_max=True, atol=1e-2)
 
 
 @pytest.mark.torch
 @pytest.mark.autodiff
-def test_weights(sdfg_name):
+def test_weights():
 
     class Module(torch.nn.Module):
 
@@ -185,12 +185,12 @@ def test_weights(sdfg_name):
             x = self.fc3(x)
             return x
 
-    run_pytorch_module(Module(), sdfg_name, shape=(4, 784), use_max=False, auto_optimize=False)
+    run_pytorch_module(Module(), sdfg_name="test_weights", shape=(4, 784), use_max=False, auto_optimize=False)
 
 
 @pytest.mark.torch
 @pytest.mark.autodiff
-def test_nested_gradient_summation(sdfg_name):
+def test_nested_gradient_summation():
 
     class Module(torch.nn.Module):
 
@@ -203,12 +203,16 @@ def test_nested_gradient_summation(sdfg_name):
             z = x * 2
             return z + y
 
-    run_pytorch_module(Module(), sdfg_name, shape=(4, 10), use_max=False, auto_optimize=False)
+    run_pytorch_module(Module(),
+                       sdfg_name="test_nested_gradient_summation",
+                       shape=(4, 10),
+                       use_max=False,
+                       auto_optimize=False)
 
 
 @pytest.mark.torch
 @pytest.mark.autodiff
-def test_trans_add(sdfg_name):
+def test_trans_add():
 
     class Module(torch.nn.Module):
 
@@ -220,12 +224,12 @@ def test_trans_add(sdfg_name):
             x = torch.transpose(x.reshape(4, 4), 1, 0)
             return x
 
-    run_pytorch_module(Module(), sdfg_name, shape=(16, ), use_max=False)
+    run_pytorch_module(Module(), sdfg_name="test_trans_add", shape=(16, ), use_max=False)
 
 
 @pytest.mark.torch
 @pytest.mark.autodiff
-def test_batched_matmul(sdfg_name):
+def test_batched_matmul():
 
     class Module(torch.nn.Module):
 
@@ -236,12 +240,12 @@ def test_batched_matmul(sdfg_name):
         def forward(self, x):
             return self.fc1 @ x
 
-    run_pytorch_module(Module(), sdfg_name, use_max=False, auto_optimize=False)
+    run_pytorch_module(Module(), sdfg_name="test_batched_matmul", use_max=False, auto_optimize=False)
 
 
 @pytest.mark.torch
 @pytest.mark.autodiff
-def test_scalar_forwarding(sdfg_name):
+def test_scalar_forwarding():
 
     class Module(torch.nn.Module):
 
@@ -252,12 +256,12 @@ def test_scalar_forwarding(sdfg_name):
         def forward(self, x):
             return self.factor * x
 
-    run_pytorch_module(Module(), sdfg_name, use_max=False, auto_optimize=False)
+    run_pytorch_module(Module(), sdfg_name="test_scalar_forwarding", use_max=False, auto_optimize=False)
 
 
 @pytest.mark.torch
 @pytest.mark.autodiff
-def test_scalar_buffer(sdfg_name):
+def test_scalar_buffer():
 
     class Module(torch.nn.Module):
 
@@ -268,13 +272,13 @@ def test_scalar_buffer(sdfg_name):
         def forward(self, x):
             return self.factor * x
 
-    run_pytorch_module(Module(), sdfg_name, use_max=False)
+    run_pytorch_module(Module(), sdfg_name="test_scalar_buffer", use_max=False)
 
 
 @pytest.mark.torch
 @pytest.mark.autodiff
 @pytest.mark.skip(reason="Requires pure implementation of expand")
-def test_simple_broadcasted_mul(sdfg_name):
+def test_simple_broadcasted_mul():
 
     class Module(torch.nn.Module):
 
@@ -282,20 +286,20 @@ def test_simple_broadcasted_mul(sdfg_name):
             y = x.sum(axis=0)
             return x * y
 
-    run_pytorch_module(Module(), sdfg_name)
+    run_pytorch_module(Module(), sdfg_name="test_simple_broadcasted_mul")
 
 
 if __name__ == "__main__":
-    test_simple(sdfg_name="test_simple")
-    test_repeated(sdfg_name="test_repeated")
-    test_softmax(sdfg_name="test_softmax")
-    test_reshape_on_memlet_path(sdfg_name="test_reshape_on_memlet_path")
-    test_weights_ln(sdfg_name="test_weights_ln")
-    test_layernorm(sdfg_name="test_layernorm")
-    test_weights(sdfg_name="test_weights")
-    test_nested_gradient_summation(sdfg_name="test_nested_gradient_summation")
-    test_trans_add(sdfg_name="test_trans_add")
-    test_batched_matmul(sdfg_name="test_batched_matmul")
-    test_scalar_forwarding(sdfg_name="test_scalar_forwarding")
-    test_scalar_buffer(sdfg_name="test_scalar_buffer")
+    test_simple()
+    test_repeated()
+    test_softmax()
+    test_reshape_on_memlet_path()
+    test_weights_ln()
+    test_layernorm()
+    test_weights()
+    test_nested_gradient_summation()
+    test_trans_add()
+    test_batched_matmul()
+    test_scalar_forwarding()
+    test_scalar_buffer()
     # test_simple_broadcasted_mul is skipped

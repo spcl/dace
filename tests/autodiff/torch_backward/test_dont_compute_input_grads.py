@@ -11,7 +11,7 @@ from tests.utils import torch_tensors_close
 
 @pytest.mark.torch
 @pytest.mark.autodiff
-def test_skip_input_grads(sdfg_name: str, use_cpp_dispatcher: bool):
+def test_skip_input_grads(use_cpp_dispatcher: bool):
 
     class Module(torch.nn.Module):
 
@@ -39,11 +39,12 @@ def test_skip_input_grads(sdfg_name: str, use_cpp_dispatcher: bool):
     dace_input.copy_(input_value)
 
     # TODO: provide a better API for input names
+    dispatcher_suffix = "cpp" if use_cpp_dispatcher else "ctypes"
     dace_module = DaceModule(dace_module,
+                             sdfg_name=f"test_skip_input_grads_{dispatcher_suffix}",
                              backward=True,
                              inputs_to_skip=["onnx::MatMul_0"],
-                             compile_torch_extension=use_cpp_dispatcher,
-                             sdfg_name=sdfg_name)
+                             compile_torch_extension=use_cpp_dispatcher)
 
     dy = torch.rand(8, 10)
 
@@ -63,5 +64,5 @@ def test_skip_input_grads(sdfg_name: str, use_cpp_dispatcher: bool):
 
 
 if __name__ == "__main__":
-    test_skip_input_grads(sdfg_name="test_skip_input_grads_cpp_True", use_cpp_dispatcher=True)
-    test_skip_input_grads(sdfg_name="test_skip_input_grads_cpp_False", use_cpp_dispatcher=False)
+    test_skip_input_grads(use_cpp_dispatcher=True)
+    test_skip_input_grads(use_cpp_dispatcher=False)

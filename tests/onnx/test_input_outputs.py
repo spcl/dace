@@ -20,9 +20,9 @@ import dace.libraries.onnx as donnx
 
 @pytest.mark.onnx
 @pytest.mark.parametrize("simplify", [True, False])
-def test_squeeze(simplify: bool, sdfg_name: str):
+def test_squeeze(simplify: bool):
 
-    sdfg = dace.SDFG(sdfg_name)
+    sdfg = dace.SDFG("test_squeeze")
 
     sdfg.add_array("X_arr", [1], dace.float32)
     sdfg.add_array("axes", [1], dace.int64, transient=True)
@@ -73,8 +73,8 @@ def test_squeeze(simplify: bool, sdfg_name: str):
 
 @pytest.mark.onnx
 @pytest.mark.parametrize("simplify", [True, False])
-def test_shape(simplify: bool, sdfg_name: str):
-    sdfg = dace.SDFG(sdfg_name)
+def test_shape(simplify: bool):
+    sdfg = dace.SDFG("test_shape")
 
     sdfg.add_array("X_arr", [2, 4], dace.float32)
     sdfg.add_array("__return", [2], dace.int64)
@@ -104,8 +104,8 @@ def test_shape(simplify: bool, sdfg_name: str):
 
 @pytest.mark.onnx
 @pytest.mark.parametrize("simplify", [True, False])
-def test_unsqueeze(simplify: bool, sdfg_name: str):
-    sdfg = dace.SDFG(sdfg_name)
+def test_unsqueeze(simplify: bool):
+    sdfg = dace.SDFG("test_unsqueeze")
 
     sdfg.add_scalar("X_arr", dace.float32)
     sdfg.add_array("axes", [1], dace.int64, transient=True)
@@ -149,8 +149,8 @@ def test_unsqueeze(simplify: bool, sdfg_name: str):
 @pytest.mark.onnx
 @pytest.mark.parametrize("scalars", [True, False])
 @pytest.mark.parametrize("simplify", [True, False])
-def test_add(scalars: bool, simplify: bool, sdfg_name: str):
-    sdfg = dace.SDFG(sdfg_name)
+def test_add(scalars: bool, simplify: bool):
+    sdfg = dace.SDFG("test_add")
 
     if scalars:
         sdfg.add_scalar("X_arr", dace.float32)
@@ -219,12 +219,11 @@ def test_add(scalars: bool, simplify: bool, sdfg_name: str):
 
 
 if __name__ == "__main__":
-    # Test with different parameter combinations
     for simplify in [True, False]:
-        test_squeeze(simplify=simplify, sdfg_name=f"test_squeeze_simplify_{simplify}")
-        test_shape(simplify=simplify, sdfg_name=f"test_shape_simplify_{simplify}")
-        test_unsqueeze(simplify=simplify, sdfg_name=f"test_unsqueeze_simplify_{simplify}")
+        test_squeeze(simplify=simplify)
+        test_shape(simplify=simplify)
+        test_unsqueeze(simplify=simplify)
 
     for scalars in [True, False]:
         for simplify in [True, False]:
-            test_add(scalars=scalars, simplify=simplify, sdfg_name=f"test_add_scalars_{scalars}_simplify_{simplify}")
+            test_add(scalars=scalars, simplify=simplify)

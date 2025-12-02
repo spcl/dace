@@ -64,7 +64,7 @@ class LlamaWrapper(nn.Module):
 @pytest.mark.torch
 @pytest.mark.autodiff
 @pytest.mark.long
-def test_llama_model_backward(sdfg_name):
+def test_llama_model_backward():
     # Create a small LLaMA configuration
     config = LlamaConfig(
         vocab_size=32000,
@@ -90,7 +90,7 @@ def test_llama_model_backward(sdfg_name):
     wrapped_model = LlamaWrapper(model)
 
     # Avoid the simplify pass since it takes too long for this model
-    dace_model = DaceModule(wrapped_model, backward=True, onnx_simplify=True, sdfg_name=sdfg_name)
+    dace_model = DaceModule(wrapped_model, sdfg_name="test_llama_model_backward", backward=True, onnx_simplify=True)
 
     wrapped_model(input.clone()).sum().backward()
     dace_model(input.clone()).sum().backward()
@@ -102,4 +102,4 @@ def test_llama_model_backward(sdfg_name):
 
 
 if __name__ == "__main__":
-    test_llama_model_backward(sdfg_name="test_llama_model_backward")
+    test_llama_model_backward()

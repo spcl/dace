@@ -45,7 +45,7 @@ class LlamaDecoderLayerWrapper(nn.Module):
 @pytest.mark.xdist_group("large_ML_models")
 @pytest.mark.torch
 @pytest.mark.autodiff
-def test_llama_decoder_backward(sdfg_name):
+def test_llama_decoder_backward():
     # Create configuration
     config = LlamaConfig(
         hidden_size=512,
@@ -77,7 +77,7 @@ def test_llama_decoder_backward(sdfg_name):
     # Avoid the simplify pass since it takes too long for this model
     dace_model = DaceModule(
         wrapped_model,
-        sdfg_name=sdfg_name,
+        sdfg_name="test_llama_decoder_backward",
         onnx_simplify=True,
         backward=True,
     )
@@ -104,4 +104,4 @@ def test_llama_decoder_backward(sdfg_name):
 
 
 if __name__ == "__main__":
-    test_llama_decoder_backward(sdfg_name="test_llama_decoder_backward")
+    test_llama_decoder_backward()

@@ -9,9 +9,9 @@ import dace.libraries.onnx as donnx
 
 
 @pytest.mark.onnx
-def test_shadowing(sdfg_name: str):
+def test_shadowing():
     new_shape = [8, 10]
-    sdfg = dace.SDFG(sdfg_name)
+    sdfg = dace.SDFG("test_shadowing")
 
     sdfg.add_array("X", [2, 4, 10], dace.float32)
     sdfg.add_array("shape", [len(new_shape)], dace.int64)
@@ -34,4 +34,4 @@ def test_shadowing(sdfg_name: str):
 
 
 if __name__ == "__main__":
-    test_shadowing(sdfg_name="test_shadowing")
+    test_shadowing()

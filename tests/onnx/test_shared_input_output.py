@@ -96,7 +96,7 @@ def test_bn_in_import():
 
     dace_module.load_state_dict(pt_module.state_dict())
 
-    dace_module = DaceModule(dace_module)
+    dace_module = DaceModule(dace_module, sdfg_name="test_bn_in_import")
 
     X = torch.randn(8, 3, 32, 32)
     pt_result = pt_module(X)

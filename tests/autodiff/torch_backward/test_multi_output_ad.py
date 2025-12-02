@@ -10,7 +10,7 @@ from tests.utils import torch_tensors_close
 
 @pytest.mark.torch
 @pytest.mark.autodiff
-def test_multi_output(sdfg_name: str, use_cpp_dispatcher: bool):
+def test_multi_output(use_cpp_dispatcher: bool):
 
     class Module(torch.nn.Module):
 
@@ -43,10 +43,11 @@ def test_multi_output(sdfg_name: str, use_cpp_dispatcher: bool):
     pytorch_y1.backward(torch_dy)
     pytorch_y2.backward(torch_dy)
 
+    dispatcher_suffix = "cpp" if use_cpp_dispatcher else "ctypes"
     dace_module = DaceModule(
         module,
+        sdfg_name=f"test_multi_output_ad_{dispatcher_suffix}",
         backward=True,
-        sdfg_name=sdfg_name,
         compile_torch_extension=use_cpp_dispatcher,
     )
 
@@ -59,5 +60,5 @@ def test_multi_output(sdfg_name: str, use_cpp_dispatcher: bool):
 
 
 if __name__ == "__main__":
-    test_multi_output(sdfg_name="test_multi_output_cpp_True", use_cpp_dispatcher=True)
-    test_multi_output(sdfg_name="test_multi_output_cpp_False", use_cpp_dispatcher=False)
+    test_multi_output(use_cpp_dispatcher=True)
+    test_multi_output(use_cpp_dispatcher=False)

@@ -20,14 +20,14 @@ class Model(nn.Module):
 
 
 @pytest.mark.torch
-def test_reshape_module(sdfg_name: str):
+def test_reshape_module():
 
     ptmodel = Model([5, 5])
     x = torch.rand([25])
 
     torch_output = ptmodel(torch.clone(x))
 
-    dace_model = DaceModule(ptmodel, auto_optimize=False, dummy_inputs=(x, ), sdfg_name=sdfg_name)
+    dace_model = DaceModule(ptmodel, sdfg_name="test_reshape_module", auto_optimize=False, dummy_inputs=(x, ))
 
     dace_output = dace_model(x)
 
@@ -35,4 +35,4 @@ def test_reshape_module(sdfg_name: str):
 
 
 if __name__ == "__main__":
-    test_reshape_module(sdfg_name="test_reshape_module")
+    test_reshape_module()

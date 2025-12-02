@@ -15,12 +15,6 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
             os._exit(1)
 
 
-# Fixture to generate a unique SDFG name based on the test name
-@pytest.fixture
-def sdfg_name(request):
-    return request.node.name.replace("[", "-").replace("]", "").replace("-", "_")
-
-
 def pytest_generate_tests(metafunc):
     """
     This method sets up the parametrizations for the custom fixtures

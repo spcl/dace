@@ -11,7 +11,7 @@ from tests.utils import torch_tensors_close
 
 
 @pytest.mark.torch
-def test_attn(sdfg_name: str, use_cpp_dispatcher: bool):
+def test_attn(use_cpp_dispatcher: bool):
     B = 2
     H = 16
     P = 64
@@ -22,8 +22,9 @@ def test_attn(sdfg_name: str, use_cpp_dispatcher: bool):
 
     pt_outputs = ptmodel(Q, K, V)
 
+    dispatcher_suffix = "cpp" if use_cpp_dispatcher else "ctypes"
     dace_model = DaceModule(ptmodel,
-                            sdfg_name=sdfg_name,
+                            sdfg_name=f"test_attn_{dispatcher_suffix}",
                             compile_torch_extension=use_cpp_dispatcher,
                             auto_optimize=False)
 
@@ -34,5 +35,5 @@ def test_attn(sdfg_name: str, use_cpp_dispatcher: bool):
 
 
 if __name__ == "__main__":
-    test_attn(sdfg_name="test_attn_cpp_True", use_cpp_dispatcher=True)
-    test_attn(sdfg_name="test_attn_cpp_False", use_cpp_dispatcher=False)
+    test_attn(use_cpp_dispatcher=True)
+    test_attn(use_cpp_dispatcher=False)

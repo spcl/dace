@@ -101,9 +101,9 @@ def test_extension():
 
 
 @pytest.mark.torch
-def test_module_with_constant(sdfg_name: str):
+def test_module_with_constant():
 
-    @dace.ml.module(sdfg_name=sdfg_name)
+    @dace.ml.module(sdfg_name="test_module_with_constant")
     class Module(nn.Module):
 
         def forward(self, x):
@@ -117,4 +117,4 @@ def test_module_with_constant(sdfg_name: str):
 
 if __name__ == "__main__":
     test_extension()
-    test_module_with_constant(sdfg_name="test_module_with_constant")
+    test_module_with_constant()

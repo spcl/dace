@@ -11,7 +11,7 @@ from dace.libraries import onnx as donnx
 
 
 @pytest.mark.onnx
-def test_onnx_return_scalars(sdfg_name: str):
+def test_onnx_return_scalars():
     # Dace programs can't return scalars.
     # this test checks that we correctly copy out the scalars using a size [1] array
 
@@ -49,7 +49,7 @@ def test_onnx_return_scalars(sdfg_name: str):
     onnx.checker.check_model(model_def)
 
     # now we can test the backend
-    dace_model = donnx.ONNXModel(sdfg_name, model_def)
+    dace_model = donnx.ONNXModel("test_onnx_return_scalars", model_def)
     inp = torch.arange(5).type(torch.float32)
 
     result = dace_model(inp)
@@ -58,4 +58,4 @@ def test_onnx_return_scalars(sdfg_name: str):
 
 
 if __name__ == "__main__":
-    test_onnx_return_scalars(sdfg_name="test_onnx_return_scalars")
+    test_onnx_return_scalars()

@@ -50,7 +50,7 @@ def get_data_file(url, directory_name=None) -> str:
 
 @pytest.mark.xdist_group("large_ML_models")
 @pytest.mark.onnx
-def test_bert_full(sdfg_name):
+def test_bert_full():
     bert_tiny_root = 'http://spclstorage.inf.ethz.ch/~rauscho/bert-tiny'
     get_data_file(bert_tiny_root + "/config.json", directory_name='bert-tiny')
     vocab = get_data_file(bert_tiny_root + "/vocab.txt", directory_name='bert-tiny')
@@ -78,7 +78,7 @@ def test_bert_full(sdfg_name):
                                                   token_type_ids=segments_tensors.shape,
                                                   attention_mask=attention_mask.shape))
 
-    dace_model = donnx.ONNXModel(sdfg_name, model, auto_merge=True)
+    dace_model = donnx.ONNXModel("test_bert_full", model, auto_merge=True)
 
     dace_output = dace_model(input_ids=tokens_tensor, token_type_ids=segments_tensors, attention_mask=attention_mask)
 
@@ -89,4 +89,4 @@ def test_bert_full(sdfg_name):
 
 
 if __name__ == "__main__":
-    test_bert_full(sdfg_name="test_bert_full")
+    test_bert_full()

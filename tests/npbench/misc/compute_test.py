@@ -72,10 +72,6 @@ def run_compute(device_type: dace.dtypes.DeviceType):
     return sdfg
 
 
-def compute_jax_kernel(jnp, array_1, array_2, a, b, c, S):
-    return jnp.sum(jnp.minimum(jnp.maximum(array_1, 2), 10) * a + array_2 * b + c)
-
-
 def test_cpu():
     run_compute(dace.dtypes.DeviceType.CPU)
 

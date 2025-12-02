@@ -22,9 +22,9 @@ def assert_allclose(a, b, rtol=1e-5, atol=1e-8):
 
 @pytest.mark.onnx
 @pytest.mark.parametrize("a_shape, b_shape", [([2, 4], [4, 3])])
-def test_matmul_expansion(a_shape, b_shape, sdfg_name):
+def test_matmul_expansion(a_shape, b_shape):
     blas.Gemm.default_implementation = "pure"
-    sdfg = dace.SDFG(sdfg_name)
+    sdfg = dace.SDFG("test_matmul_expansion")
 
     X = np.random.rand(*a_shape).astype(np.float32)
     Z = np.random.rand(*b_shape).astype(np.float32)
@@ -58,8 +58,8 @@ def test_matmul_expansion(a_shape, b_shape, sdfg_name):
 
 
 @pytest.mark.onnx
-def test_cast_int_to_float(sdfg_name):
-    sdfg = dace.SDFG(sdfg_name)
+def test_cast_int_to_float():
+    sdfg = dace.SDFG("test_cast_int_to_float")
 
     sdfg.add_array("X", [2, 4], dace.int32)
     sdfg.add_array("__return", [2, 4], dace.float32)
@@ -89,8 +89,8 @@ def test_cast_int_to_float(sdfg_name):
 
 
 @pytest.mark.onnx
-def test_cast_float_to_int(sdfg_name):
-    sdfg = dace.SDFG(sdfg_name)
+def test_cast_float_to_int():
+    sdfg = dace.SDFG("test_cast_float_to_int")
 
     sdfg.add_array("X", [2, 4], dace.float32)
     sdfg.add_array("__return", [2, 4], dace.int32)
@@ -120,8 +120,8 @@ def test_cast_float_to_int(sdfg_name):
 
 
 @pytest.mark.onnx
-def test_cast_float_to_long(sdfg_name):
-    sdfg = dace.SDFG(sdfg_name)
+def test_cast_float_to_long():
+    sdfg = dace.SDFG("test_cast_float_to_long")
 
     sdfg.add_array("X", [2, 4], dace.float32)
     sdfg.add_array("__return", [2, 4], dace.int64)
@@ -163,11 +163,11 @@ def test_cast_float_to_long(sdfg_name):
                           ('Mean', True,  [0, -1]),
                           ('Mean', False, [0])])
 #+yapf: enable
-def test_reduce(keepdims, reduce_type, axes, sdfg_name):
+def test_reduce(keepdims, reduce_type, axes):
 
     X = np.random.normal(scale=10, size=(2, 4, 10)).astype(np.float32)
 
-    sdfg = dace.SDFG(sdfg_name)
+    sdfg = dace.SDFG("test_reduce")
 
     sdfg.add_array("X", [2, 4, 10], dace.float32)
 
@@ -201,10 +201,10 @@ def test_reduce(keepdims, reduce_type, axes, sdfg_name):
 
 
 @pytest.mark.onnx
-def test_reduce_scalar(sdfg_name):
+def test_reduce_scalar():
     X = np.random.normal(scale=10, size=(2, 4, 10)).astype(np.float32)
 
-    sdfg = dace.SDFG(sdfg_name)
+    sdfg = dace.SDFG("test_reduce_scalar")
 
     numpy_result = np.mean(X)
 
@@ -239,10 +239,10 @@ def test_reduce_scalar(sdfg_name):
 
 @pytest.mark.onnx
 @pytest.mark.parametrize("new_shape", [[8, 10], [80], [2, 40]])
-def test_reshape(new_shape, sdfg_name):
+def test_reshape(new_shape):
     X = np.random.normal(scale=10, size=(2, 4, 10)).astype(np.float32)
 
-    sdfg = dace.SDFG(sdfg_name)
+    sdfg = dace.SDFG("test_reshape")
 
     numpy_result = X.reshape(*new_shape)
 
@@ -274,12 +274,12 @@ def test_reshape(new_shape, sdfg_name):
 
 
 @pytest.mark.onnx
-def test_flatten(sdfg_name):
+def test_flatten():
 
     new_shape = [2, 40]
     X = np.random.normal(scale=10, size=(2, 4, 10)).astype(np.float32)
 
-    sdfg = dace.SDFG(sdfg_name)
+    sdfg = dace.SDFG("test_flatten")
 
     numpy_result = X.reshape(*new_shape)
 
@@ -305,11 +305,11 @@ def test_flatten(sdfg_name):
 
 
 @pytest.mark.onnx
-def test_reciprocal(sdfg_name):
+def test_reciprocal():
     X = np.random.normal(scale=10, size=(2, 4, 10)).astype(np.float32)
 
     numpy_result = 1 / X
-    sdfg = dace.SDFG(sdfg_name)
+    sdfg = dace.SDFG("test_reciprocal")
 
     sdfg.add_array("X", [2, 4, 10], dace.float32)
     sdfg.add_array("__return", numpy_result.shape, dace.float32)
@@ -378,7 +378,7 @@ def test_reshape_add():
 
 @pytest.mark.onnx
 @pytest.mark.parametrize("input_desc", [dace.float32[2, 3], dace.float32[1], dace.float32])
-def test_sum_arrays(input_desc, sdfg_name):
+def test_sum_arrays(input_desc):
 
     if isinstance(input_desc, dt.Array):
         shape = input_desc.shape
@@ -390,7 +390,7 @@ def test_sum_arrays(input_desc, sdfg_name):
         donnx.ONNXSum(data_0__0=inp0, data_0__1=inp1, data_0__2=inp2, sum=result)
         return result
 
-    prog.__name__ = sdfg_name
+    prog.__name__ = "test_sum_arrays"
     prog = dace.program(prog)
 
     inputs = [np.random.randn(*shape).astype(np.float32) for _ in range(3)]
@@ -532,36 +532,29 @@ def test_unsqueeze():
 
 
 if __name__ == "__main__":
-    # Run all test functions
-    test_matmul_expansion(a_shape=[2, 4], b_shape=[4, 3], sdfg_name="test_matmul_expansion")
-    test_cast_int_to_float(sdfg_name="test_cast_int_to_float")
-    test_cast_float_to_int(sdfg_name="test_cast_float_to_int")
-    test_cast_float_to_long(sdfg_name="test_cast_float_to_long")
+    test_matmul_expansion(a_shape=[2, 4], b_shape=[4, 3])
+    test_cast_int_to_float()
+    test_cast_float_to_int()
+    test_cast_float_to_long()
 
-    # Test reduce with multiple parameter combinations
     reduce_params = [(True, 'Sum', [0]), (False, 'Sum', [-1]), (True, 'Sum', [0, -1]), (False, 'Max', [0, -1]),
                      (True, 'Max', [0]), (True, 'Max', [-1]), (True, 'Mean', [-1]), (True, 'Mean', [0, -1]),
                      (False, 'Mean', [0])]
     for keepdims, reduce_type, axes in reduce_params:
-        test_reduce(keepdims=keepdims,
-                    reduce_type=reduce_type,
-                    axes=axes,
-                    sdfg_name=f"test_reduce_{reduce_type}_{keepdims}_{axes}")
+        test_reduce(keepdims=keepdims, reduce_type=reduce_type, axes=axes)
 
-    test_reduce_scalar(sdfg_name="test_reduce_scalar")
+    test_reduce_scalar()
 
-    # Test reshape with multiple shapes
     for new_shape in [[8, 10], [80], [2, 40]]:
-        test_reshape(new_shape=new_shape, sdfg_name=f"test_reshape_{'_'.join(map(str, new_shape))}")
+        test_reshape(new_shape=new_shape)
 
-    test_flatten(sdfg_name="test_flatten")
-    test_reciprocal(sdfg_name="test_reciprocal")
+    test_flatten()
+    test_reciprocal()
     test_einsum()
     test_reshape_add()
 
-    # Test sum_arrays with different input types
     for input_desc in [dace.float32[2, 3], dace.float32[1], dace.float32]:
-        test_sum_arrays(input_desc=input_desc, sdfg_name=f"test_sum_arrays_{input_desc}")
+        test_sum_arrays(input_desc=input_desc)
 
     test_shape()
     test_gather_onnx_1()

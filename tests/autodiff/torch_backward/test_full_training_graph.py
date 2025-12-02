@@ -23,7 +23,12 @@ def test_module():
     torch_module = copy.deepcopy(module)
     dace_module = copy.deepcopy(module)
 
-    dace_module = DaceModule(dace_module, simplify=False, backward=True, training=True, auto_optimize=False)
+    dace_module = DaceModule(dace_module,
+                             sdfg_name="test_full_training_graph_module",
+                             simplify=False,
+                             backward=True,
+                             training=True,
+                             auto_optimize=False)
 
     x = torch.randn(8, 12)
 

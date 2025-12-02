@@ -20,16 +20,17 @@ class Model(nn.Module):
 
 
 @pytest.mark.torch
-def test_multiple_outputs(sdfg_name: str, use_cpp_dispatcher: bool):
+def test_multiple_outputs(use_cpp_dispatcher: bool):
 
     ptmodel = Model([5, 5])
     x = torch.rand([25])
 
     torch_outputs = ptmodel(torch.clone(x))
 
+    dispatcher_suffix = "cpp" if use_cpp_dispatcher else "ctypes"
     dace_model = DaceModule(ptmodel,
+                            sdfg_name=f"test_multi_output_{dispatcher_suffix}",
                             auto_optimize=False,
-                            sdfg_name=sdfg_name,
                             compile_torch_extension=use_cpp_dispatcher)
 
     dace_outputs = dace_model(x)
@@ -39,5 +40,5 @@ def test_multiple_outputs(sdfg_name: str, use_cpp_dispatcher: bool):
 
 
 if __name__ == "__main__":
-    test_multiple_outputs(sdfg_name="test_multiple_outputs_cpp_True", use_cpp_dispatcher=True)
-    test_multiple_outputs(sdfg_name="test_multiple_outputs_cpp_False", use_cpp_dispatcher=False)
+    test_multiple_outputs(use_cpp_dispatcher=True)
+    test_multiple_outputs(use_cpp_dispatcher=False)

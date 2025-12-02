@@ -49,7 +49,7 @@ class BatchNorm2dMeanVar(nn.Module):
 
 
 @pytest.mark.torch
-def test_bn(sdfg_name: str):
+def test_bn():
 
     inputs = torch.rand(1, 64, 60, 60)
 
@@ -64,7 +64,7 @@ def test_bn(sdfg_name: str):
 
     dace_model.load_state_dict(pt_model.state_dict())
 
-    dace_model = DaceModule(dace_model, sdfg_name=sdfg_name, training=True)
+    dace_model = DaceModule(dace_model, sdfg_name="test_bn", training=True)
     dace_output, dace_mean, dace_var = dace_model(inputs)
     pt_output, pt_mean, pt_var = pt_model(inputs)
 
@@ -74,7 +74,7 @@ def test_bn(sdfg_name: str):
 
 
 @pytest.mark.torch
-def test_global_avg_pool(sdfg_name: str):
+def test_global_avg_pool():
     inputs = torch.rand(1, 64, 60, 60)
 
     pt_model = nn.AdaptiveAvgPool2d(1)
@@ -83,7 +83,7 @@ def test_global_avg_pool(sdfg_name: str):
     # Note: AdaptiveAvgPool2d has no parameters, but load_state_dict ensures compatibility
     dace_model.load_state_dict(pt_model.state_dict())
 
-    dace_model = DaceModule(dace_model, sdfg_name=sdfg_name, training=True)
+    dace_model = DaceModule(dace_model, sdfg_name="test_global_avg_pool", training=True)
     dace_output = dace_model(inputs)
     pt_output = pt_model(inputs)
 
@@ -91,5 +91,5 @@ def test_global_avg_pool(sdfg_name: str):
 
 
 if __name__ == "__main__":
-    test_bn(sdfg_name="test_bn")
-    test_global_avg_pool(sdfg_name="test_global_avg_pool")
+    test_bn()
+    test_global_avg_pool()

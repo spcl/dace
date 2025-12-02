@@ -9,8 +9,8 @@ import dace.libraries.onnx as donnx
 
 
 @pytest.mark.onnx
-def test_sum(sdfg_name: str):
-    sdfg = dace.SDFG(sdfg_name)
+def test_sum():
+    sdfg = dace.SDFG("test_sum")
 
     sdfg.add_array("A_arr", [2, 2], dace.float32)
     sdfg.add_array("B_arr", [2, 2], dace.float32)
@@ -50,4 +50,4 @@ def test_sum(sdfg_name: str):
 
 
 if __name__ == "__main__":
-    test_sum(sdfg_name="test_sum")
+    test_sum()

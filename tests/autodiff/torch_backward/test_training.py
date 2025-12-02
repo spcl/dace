@@ -30,7 +30,7 @@ def training_step(
     for dace_value, value in zip(pt_model.state_dict().values(), dace_model.state_dict().values()):
         assert torch.allclose(dace_value, value), "State dict copy verification failed"
 
-    dace_model = DaceModule(dace_model, backward=True, simplify=True, training=True, sdfg_name=sdfg_name)
+    dace_model = DaceModule(dace_model, sdfg_name=sdfg_name, backward=True, simplify=True, training=True)
 
     x, y = train_batch
 
@@ -63,7 +63,7 @@ def training_step(
 
 @pytest.mark.torch
 @pytest.mark.autodiff
-def test_mnist(sdfg_name: str):
+def test_mnist():
     input_size = 784
     hidden_sizes = [128, 64]
     output_size = 10
@@ -90,13 +90,13 @@ def test_mnist(sdfg_name: str):
     images = torch.randn(64, 784)
     labels = torch.randint(0, 10, [64], dtype=torch.long)
 
-    training_step(dace_model, model, (images, labels), sdfg_name)
+    training_step(dace_model, model, (images, labels), sdfg_name="test_mnist_training")
 
 @pytest.mark.xdist_group("large_ML_models")
 @pytest.mark.torch
 @pytest.mark.autodiff
 @pytest.mark.skip(reason="Requires pure implementation of expand")
-def test_bert(sdfg_name):
+def test_bert():
     batch_size = 2
     seq_len = 512
     hidden_size = 768
@@ -116,9 +116,9 @@ def test_bert(sdfg_name):
     input = torch.randn([batch_size, seq_len, hidden_size])
     labels = torch.tensor([0, 123], dtype=torch.long)
 
-    training_step(BertTokenSoftmaxClf(), BertTokenSoftmaxClf(), (input, labels), sdfg_name)
+    training_step(BertTokenSoftmaxClf(), BertTokenSoftmaxClf(), (input, labels), sdfg_name="test_bert_training")
 
 
 if __name__ == "__main__":
-    test_mnist(sdfg_name="test_mnist")
+    test_mnist()
     # test_bert is skipped

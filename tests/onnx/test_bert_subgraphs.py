@@ -72,9 +72,9 @@ def make_reshape_model():
 
 
 @pytest.mark.onnx
-def test_slice(sdfg_name: str):
+def test_slice():
     model = make_slice_model()
-    dace_model = ONNXModel(sdfg_name, model, onnx_simplify=False)
+    dace_model = ONNXModel("test_slice", model, onnx_simplify=False)
 
     data = torch.ones(2)
 
@@ -84,23 +84,23 @@ def test_slice(sdfg_name: str):
 
 
 @pytest.mark.onnx
-def test_reshape(sdfg_name: str):
+def test_reshape():
     model = make_reshape_model()
-    dace_model = ONNXModel(sdfg_name, model)
+    dace_model = ONNXModel("test_reshape", model)
     dace_model()
 
 
 @pytest.mark.onnx
-def test_save_transients(sdfg_name: str):
+def test_save_transients():
     model = make_reshape_model()
     transients = {}
-    dace_model = ONNXModel(sdfg_name, model, save_transients=transients)
+    dace_model = ONNXModel("test_save_transients", model, save_transients=transients)
     dace_model()
     assert torch.allclose(transients["bertSLASHembeddingsSLASHReshape_4COLON0"].cpu(),
                           dace_model.weights["bert/embeddings/Reshape_4:0"])
 
 
 if __name__ == "__main__":
-    test_slice(sdfg_name="test_slice")
-    test_reshape(sdfg_name="test_reshape")
-    test_save_transients(sdfg_name="test_save_transients")
+    test_slice()
+    test_reshape()
+    test_save_transients()

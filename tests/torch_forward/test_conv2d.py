@@ -12,7 +12,7 @@ from dace.ml import DaceModule
 
 
 @pytest.mark.torch
-def test_conv2d(sdfg_name: str, use_cpp_dispatcher: bool):
+def test_conv2d(use_cpp_dispatcher: bool):
 
     class Model(nn.Module):
 
@@ -28,11 +28,15 @@ def test_conv2d(sdfg_name: str, use_cpp_dispatcher: bool):
     ptmodel = Model()
     x = torch.rand(1, 1, 8, 8)
 
-    @dace.ml.module(sdfg_name=sdfg_name)
+    dispatcher_suffix = "cpp" if use_cpp_dispatcher else "ctypes"
+
+    @dace.ml.module(sdfg_name=f"test_conv2d_decorator_{dispatcher_suffix}")
     class TestDecorator(Model):
         pass
 
-    dace_model = DaceModule(ptmodel, sdfg_name=sdfg_name + "_wrapped", compile_torch_extension=use_cpp_dispatcher)
+    dace_model = DaceModule(ptmodel,
+                            sdfg_name=f"test_conv2d_{dispatcher_suffix}",
+                            compile_torch_extension=use_cpp_dispatcher)
     dace_output = dace_model(x)
 
     dace_model_decorated = TestDecorator()
@@ -47,5 +51,5 @@ def test_conv2d(sdfg_name: str, use_cpp_dispatcher: bool):
 
 
 if __name__ == "__main__":
-    test_conv2d(sdfg_name="test_conv2d_cpp_True", use_cpp_dispatcher=True)
-    test_conv2d(sdfg_name="test_conv2d_cpp_False", use_cpp_dispatcher=False)
+    test_conv2d(use_cpp_dispatcher=True)
+    test_conv2d(use_cpp_dispatcher=False)

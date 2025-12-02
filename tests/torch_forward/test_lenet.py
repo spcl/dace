@@ -36,14 +36,17 @@ class LeNet(nn.Module):
 
 
 @pytest.mark.torch
-def test_lenet(sdfg_name: str, use_cpp_dispatcher: bool):
+def test_lenet(use_cpp_dispatcher: bool):
 
     input = torch.rand(8, 1, 32, 32, dtype=torch.float32)
 
     net = LeNet()
     dace_net = LeNet()
     dace_net.load_state_dict(net.state_dict())
-    dace_net = DaceModule(dace_net, sdfg_name=sdfg_name, compile_torch_extension=use_cpp_dispatcher)
+    dispatcher_suffix = "cpp" if use_cpp_dispatcher else "ctypes"
+    dace_net = DaceModule(dace_net,
+                          sdfg_name=f"test_lenet_{dispatcher_suffix}",
+                          compile_torch_extension=use_cpp_dispatcher)
 
     torch_output = net(torch.clone(input))
     dace_output = dace_net(torch.clone(input))
@@ -53,5 +56,5 @@ def test_lenet(sdfg_name: str, use_cpp_dispatcher: bool):
 
 
 if __name__ == "__main__":
-    test_lenet(sdfg_name="test_lenet_cpp_True", use_cpp_dispatcher=True)
-    test_lenet(sdfg_name="test_lenet_cpp_False", use_cpp_dispatcher=False)
+    test_lenet(use_cpp_dispatcher=True)
+    test_lenet(use_cpp_dispatcher=False)
