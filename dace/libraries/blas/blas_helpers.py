@@ -181,7 +181,7 @@ def get_gemm_opts(a_strides, b_strides, c_strides) -> Dict[str, Any]:
         },
     }
 
-    if sAM == 1:
+    if sAM == 1 and sAK != 1:
         optA = 'm'
     elif sAK == 1:
         optA = 'k'
