@@ -62,9 +62,8 @@ def convert_onnx_proto(attribute):
     if type(attribute) in _KNOWN_ONNX_PROTOS:
         return _KNOWN_ONNX_PROTOS[type(attribute)].from_onnx_proto(attribute)
 
-    if isinstance(attribute, (int, str, bool, float)):
-        return attribute
-
+    # Check ONNX enum types BEFORE basic types, because ONNX enums derive from
+    # IntEnum and would incorrectly match isinstance(attribute, int)
     if type(attribute) is onnx.defs.OpSchema.FormalParameterOption:
         if attribute == onnx.defs.OpSchema.FormalParameterOption.Single:
             return ONNXParameterType.Single
@@ -98,6 +97,10 @@ def convert_onnx_proto(attribute):
 
     if type(attribute) is onnx.AttributeProto:
         return convert_attribute_proto(attribute)
+
+    # Check basic Python types after ONNX enums (must be after enum checks)
+    if isinstance(attribute, (int, str, bool, float)):
+        return attribute
 
     raise NotImplementedError("No conversion implemented for {} (type {})".format(attribute, type(attribute)))
 
