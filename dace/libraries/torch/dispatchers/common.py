@@ -21,7 +21,7 @@ from dace.frontend.ml.onnx.importer import create_output_array
 
 
 @dataclasses.dataclass
-class DaCeMLTorchFunction:
+class DaceTorchFunction:
     """
     An initialized, callable function for a DaceModule and its associated state.
 

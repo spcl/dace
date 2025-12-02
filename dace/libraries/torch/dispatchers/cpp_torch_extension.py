@@ -25,7 +25,7 @@ from dace.codegen.common import sym2cpp, platform_library_name
 from dace.autodiff import BackwardResult
 from dace.libraries.torch.environments import PyTorch
 
-from dace.libraries.torch.dispatchers.common import DaCeMLTorchFunction, compile_and_init_sdfgs, get_arglist
+from dace.libraries.torch.dispatchers.common import DaceTorchFunction, compile_and_init_sdfgs, get_arglist
 
 _REPLACED_CTYPES = {dace.int64: "int64_t", dace.uint64: "uint64_t", dace.float16: "at::Half"}
 
@@ -557,7 +557,7 @@ def _torch_ext_root() -> str:
 
 
 def register_and_compile_torch_extension(module: 'dace.frontend.ml.torch.DaceModule',
-                                         dummy_inputs) -> DaCeMLTorchFunction:
+                                         dummy_inputs) -> DaceTorchFunction:
     """Get a torch callable for the module. This will compile the SDFG, compile a PyTorch C++ operator, register it
     with PyTorch and return the function that calls it.
 
@@ -655,7 +655,7 @@ def register_and_compile_torch_extension(module: 'dace.frontend.ml.torch.DaceMod
 
     torch_function = operator.attrgetter(f"dace_{compiled.sdfg.name}.{compiled.sdfg.name}")(torch.ops)
 
-    return DaCeMLTorchFunction(function=torch_function, compiled_sdfgs=compiled_sdfgs, ptr=ptrs)
+    return DaceTorchFunction(function=torch_function, compiled_sdfgs=compiled_sdfgs, ptr=ptrs)
 
 
 def get_env_for_sdfg(compiled: CompiledSDFG):

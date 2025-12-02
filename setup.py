@@ -50,64 +50,62 @@ with open("README.md", "r") as fp:
 with open(os.path.join(dace_path, "version.py"), "r") as fp:
     version = fp.read().strip().split(' ')[-1][1:-1]
 
-setup(
-    name='dace',
-    version=version,
-    url='https://github.com/spcl/dace',
-    author='SPCL @ ETH Zurich',
-    author_email='talbn@inf.ethz.ch',
-    description='Data-Centric Parallel Programming Framework',
-    long_description=long_description,
-    long_description_content_type='text/markdown',
-    classifiers=[
-        "Programming Language :: Python :: 3",
-        "License :: OSI Approved :: BSD License",
-        "Operating System :: OS Independent",
-    ],
-    python_requires='>=3.9, <3.14',
-    packages=find_packages(exclude=["*.tests", "*.tests.*", "tests.*", "tests"]),
-    package_data={
-        '': [
-            '*.yml', 'codegen/CMakeLists.txt', 'codegen/tools/*.cpp', 'external/moodycamel/*.h',
-            'external/moodycamel/LICENSE.md', 'codegen/Xilinx_HLS.tcl.in'
-        ] + runtime_files + cub_files + viewer_files + hlslib_files + library_files + rtllib_files + cmake_files
-    },
-    include_package_data=True,
-    #TODO: remove networkx version pin when issue with 3.6 is resolved
-    install_requires=[
-        'numpy', 'networkx > 2.5, < 3.6', 'astunparse', 'sympy >= 1.9', 'pyyaml', 'ply', 'fparser >= 0.1.3',
-        'aenum >= 3.1', 'dataclasses; python_version < "3.7"', 'dill', 'pyreadline;platform_system=="Windows"',
-        'typing-compat; python_version < "3.8"', 'packaging'
-    ] + cmake_requires,
-    extras_require={
-        'ml': ['onnx', 'torch', 'onnxsim', 'onnxscript', 'onnxruntime', 'protobuf', 'ninja'],
-        'testing': [
-            'coverage',
-            'pytest-cov',
-            'scipy',
-            'absl-py',
-            'opt_einsum',
-            'pymlir',
-            'click',
-            'ipykernel',
-            'nbconvert',
-            'pytest-timeout',
-        ],
-        'ml-testing': [
-            'coverage', 'pytest-cov', 'scipy', 'absl-py', 'opt_einsum', 'pymlir', 'click', 'ipykernel', 'nbconvert',
-            'pytest-timeout', 'transformers == 4.50', 'jax <= 0.6.2', 'efficientnet_pytorch'
-        ],
-        'docs': ['jinja2<3.2.0', 'sphinx-autodoc-typehints', 'sphinx-rtd-theme>=0.5.1'],
-        'linting': ['pre-commit==4.1.0', 'yapf==0.43.0'],
-    },
-    entry_points={
-        'console_scripts': [
-            'dacelab = dace.cli.dacelab:main',
-            'sdfv = dace.cli.sdfv:main',
-            'sdfgcc = dace.cli.sdfgcc:main',
-            'sdfg-diff = dace.cli.sdfg_diff:main',
-            'fcfd = dace.cli.fcdc:main',
-            'daceprof = dace.cli.daceprof:main',
-            'dace-external-transformation-registry = dace.cli.external_transformation_registry:main',
-        ],
-    })
+setup(name='dace',
+      version=version,
+      url='https://github.com/spcl/dace',
+      author='SPCL @ ETH Zurich',
+      author_email='talbn@inf.ethz.ch',
+      description='Data-Centric Parallel Programming Framework',
+      long_description=long_description,
+      long_description_content_type='text/markdown',
+      classifiers=[
+          "Programming Language :: Python :: 3",
+          "License :: OSI Approved :: BSD License",
+          "Operating System :: OS Independent",
+      ],
+      python_requires='>=3.9, <3.14',
+      packages=find_packages(exclude=["*.tests", "*.tests.*", "tests.*", "tests"]),
+      package_data={
+          '': [
+              '*.yml', 'codegen/CMakeLists.txt', 'codegen/tools/*.cpp', 'external/moodycamel/*.h',
+              'external/moodycamel/LICENSE.md', 'codegen/Xilinx_HLS.tcl.in'
+          ] + runtime_files + cub_files + viewer_files + hlslib_files + library_files + rtllib_files + cmake_files
+      },
+      include_package_data=True,
+      install_requires=[
+          'numpy', 'networkx >= 2.5, <= 3.5', 'astunparse', 'sympy >= 1.9', 'pyyaml', 'ply', 'fparser >= 0.1.3',
+          'aenum >= 3.1', 'dataclasses; python_version < "3.7"', 'dill', 'pyreadline;platform_system=="Windows"',
+          'typing-compat; python_version < "3.8"', 'packaging'
+      ] + cmake_requires,
+      extras_require={
+          'ml': ['onnx', 'torch', 'onnxsim', 'onnxscript', 'onnxruntime', 'protobuf', 'ninja'],
+          'testing': [
+              'coverage',
+              'pytest-cov',
+              'scipy',
+              'absl-py',
+              'opt_einsum',
+              'pymlir',
+              'click',
+              'ipykernel',
+              'nbconvert',
+              'pytest-timeout',
+          ],
+          'ml-testing': [
+              'coverage', 'pytest-cov', 'scipy', 'absl-py', 'opt_einsum', 'pymlir', 'click', 'ipykernel', 'nbconvert',
+              'pytest-timeout', 'transformers == 4.50', 'jax <= 0.6.2', 'efficientnet_pytorch'
+          ],
+          'docs': ['jinja2<3.2.0', 'sphinx-autodoc-typehints', 'sphinx-rtd-theme>=0.5.1'],
+          'linting': ['pre-commit==4.1.0', 'yapf==0.43.0'],
+      },
+      entry_points={
+          'console_scripts': [
+              'dacelab = dace.cli.dacelab:main',
+              'sdfv = dace.cli.sdfv:main',
+              'sdfgcc = dace.cli.sdfgcc:main',
+              'sdfg-diff = dace.cli.sdfg_diff:main',
+              'fcfd = dace.cli.fcdc:main',
+              'daceprof = dace.cli.daceprof:main',
+              'dace-external-transformation-registry = dace.cli.external_transformation_registry:main',
+          ],
+      })
