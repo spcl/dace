@@ -1384,14 +1384,14 @@ inline void vector_eq_w_scalar(T* __restrict__ out,
     }
 
 #else
-
     for (int i = 0; i < vector_width; ++i)
         out[i] = (a[i] == constant) ? T(1.0) : T(0.0);
 
 #endif
 }
 
-// vector_ne
+#include <arm_neon.h>
+
 template<typename T, int vector_width>
 inline void vector_ne(T* __restrict__ out,
                       const T* __restrict__ a,
@@ -1399,93 +1399,54 @@ inline void vector_ne(T* __restrict__ out,
 {
 #if defined(__ARM_NEON)
 
+    // ---------------------------------------------------------
+    // FLOAT32 version (W = 4)
+    // ---------------------------------------------------------
     if constexpr (std::is_same<T,float>::value) {
         constexpr int W = 4;
         int i = 0;
+
         for (; i + W <= vector_width; i += W) {
             float32x4_t va = vld1q_f32(a + i);
             float32x4_t vb = vld1q_f32(b + i);
             uint32x4_t meq = vceqq_f32(va, vb);
-            uint32x4_t m   = vmvnq_u32(meq);
-            float32x4_t vc = neon_select_0_1_f32(m);
+            uint32x4_t mne = vmvnq_u32(meq);
+            uint32x4_t onezero = vshrq_n_u32(mne, 31);
+            float32x4_t vc = vcvtq_f32_u32(onezero);
             vst1q_f32(out + i, vc);
         }
+
         for (; i < vector_width; ++i)
-            out[i] = (a[i] != b[i]) ? T(1.0) : T(0.0);
+            out[i] = (a[i] != b[i]) ? 1.0f : 0.0f;
+
         return;
     }
 
     if constexpr (std::is_same<T,double>::value) {
         constexpr int W = 2;
         int i = 0;
+
         for (; i + W <= vector_width; i += W) {
             float64x2_t va = vld1q_f64(a + i);
             float64x2_t vb = vld1q_f64(b + i);
             uint64x2_t meq = vceqq_f64(va, vb);
-            uint64x2_t m   = vmvnq_u64(meq);
-            float64x2_t vc = neon_select_0_1_f64(m);
+            const uint64x2_t all1 = vdupq_n_u64(~0ULL);
+            uint64x2_t mne = veorq_u64(meq, all1);
+            uint64x2_t onezero = vshrq_n_u64(mne, 63);
+            float64x2_t vc = vcvtq_f64_u64(onezero);
             vst1q_f64(out + i, vc);
         }
+
         for (; i < vector_width; ++i)
-            out[i] = (a[i] != b[i]) ? T(1.0) : T(0.0);
+            out[i] = (a[i] != b[i]) ? 1.0 : 0.0;
+
         return;
     }
-
-#else
-
+#endif
     for (int i = 0; i < vector_width; ++i)
         out[i] = (a[i] != b[i]) ? T(1.0) : T(0.0);
-
-#endif
 }
 
-// vector_ne_w_scalar
-template<typename T, int vector_width>
-inline void vector_ne_w_scalar(T* __restrict__ out,
-                               const T* __restrict__ a,
-                               const T constant)
-{
-#if defined(__ARM_NEON)
-
-    if constexpr (std::is_same<T,float>::value) {
-        constexpr int W = 4;
-        float32x4_t vconst = vdupq_n_f32(constant);
-        int i = 0;
-        for (; i + W <= vector_width; i += W) {
-            float32x4_t va  = vld1q_f32(a + i);
-            uint32x4_t meq  = vceqq_f32(va, vconst);
-            uint32x4_t m    = vmvnq_u32(meq);
-            float32x4_t vc  = neon_select_0_1_f32(m);
-            vst1q_f32(out + i, vc);
-        }
-        for (; i < vector_width; ++i)
-            out[i] = (a[i] != constant) ? T(1.0) : T(0.0);
-        return;
-    }
-
-    if constexpr (std::is_same<T,double>::value) {
-        constexpr int W = 2;
-        float64x2_t vconst = vdupq_n_f64(constant);
-        int i = 0;
-        for (; i + W <= vector_width; i += W) {
-            float64x2_t va  = vld1q_f64(a + i);
-            uint64x2_t meq  = vceqq_f64(va, vconst);
-            uint64x2_t m    = vmvnq_u64(meq);
-            float64x2_t vc  = neon_select_0_1_f64(m);
-            vst1q_f64(out + i, vc);
-        }
-        for (; i < vector_width; ++i)
-            out[i] = (a[i] != constant) ? T(1.0) : T(0.0);
-        return;
-    }
-
-#else
-
-    for (int i = 0; i < vector_width; ++i)
-        out[i] = (a[i] != constant) ? T(1.0) : T(0.0);
-
-#endif
-}
 
 // ============================================================================
 // Elementwise non-linear (always scalar)
