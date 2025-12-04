@@ -57,6 +57,9 @@ Singleton = TensorIndexSingleton
 Range = TensorIndexRange
 Offset = TensorIndexOffset
 
+# ML-related data descriptors
+from dace.data.ml import ParameterArray
+
 # Descriptor creation and array creation from descriptors
 from dace.data.creation import (
     create_datadescriptor,
@@ -102,6 +105,8 @@ __all__ = [
     'Singleton',
     'Range',
     'Offset',
+    # ML descriptors
+    'ParameterArray',
     # Functions
     'create_datadescriptor',
     'make_array_from_descriptor',
