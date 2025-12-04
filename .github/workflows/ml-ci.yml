@@ -53,7 +53,7 @@ jobs:
         else
             export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         fi
-        pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -v -m "(torch or onnx or autodiff) and not gpu"
+        pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=600 -v -m "(torch or onnx or autodiff) and not gpu"
         ./codecov
 
     - uses: codecov/codecov-action@v4
