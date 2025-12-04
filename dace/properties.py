@@ -123,10 +123,16 @@ class Property(Generic[T]):
         self._category = category
         if desc is not None and len(desc) > 0:
             self.__doc__ = desc
-        elif self.dtype is not None:
-            self.__doc__ = "Object property of type %s" % self.dtype.__name__
         else:
-            self.__doc__ = "Object property of type %s" % type(self).__name__
+            try:
+                dtype = self.dtype
+                if dtype is not None:
+                    self.__doc__ = "Object property of type %s" % dtype.__name__
+                else:
+                    self.__doc__ = "Object property of type %s" % type(self).__name__
+            except (ImportError, AttributeError):
+                # Handle circular import case - defer docstring generation
+                self.__doc__ = "Object property of type %s" % type(self).__name__
 
     def __get__(self, obj, objtype=None) -> T:
         if obj is None:
