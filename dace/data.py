@@ -1320,6 +1320,10 @@ class Scalar(Data):
         return False
 
     def is_equivalent(self, other):
+        # Special case: array of size 1
+        if isinstance(other, Array) and other.shape == (1, ) and other.dtype == self.dtype:
+            return True
+
         if not isinstance(other, Scalar):
             return False
         if self.dtype != other.dtype:
@@ -1591,6 +1595,10 @@ class Array(Data):
 
     # Checks for equivalent shape and type
     def is_equivalent(self, other):
+        # Special case: Scalar
+        if isinstance(other, Scalar) and self.shape == (1, ) and self.dtype == other.dtype:
+            return True
+
         if not isinstance(other, Array):
             return False
 
@@ -1607,6 +1615,21 @@ class Array(Data):
             # Any other case (constant vs. constant), check for equality
             if otherdim != dim:
                 return False
+
+        # Test strides
+        for stride, otherstride in zip(self.strides, other.strides):
+            if otherstride != stride:
+                return False
+
+        # Test total size
+        # if self.total_size != other.total_size:
+        #     return False
+
+        # Test offset
+        # for off, otheroff in zip(self.offset, other.offset):
+        #     if otheroff != off:
+        #         return False
+
         return True
 
     def as_arg(self, with_types=True, for_call=False, name=None):
@@ -1819,6 +1842,11 @@ class Stream(Data):
         for dim, otherdim in zip(self.shape, other.shape):
             if dim != otherdim:
                 return False
+
+        # Test buffer size
+        if self.buffer_size != other.buffer_size:
+            return False
+
         return True
 
     def as_arg(self, with_types=True, for_call=False, name=None):
