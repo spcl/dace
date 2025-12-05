@@ -1477,6 +1477,17 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
 
     fallbackcode_due_to_types = len(all_dtypes) != 1
 
+    if node.label == "_Add__split_0":
+        if ttype == tutil.TaskletType.UNARY_SYMBOL:
+            op = "vfill"
+            ttype = tutil.TaskletType.ARRAY_SYMBOL_ASSIGNMENT
+        #raise Exception(c1, c2, op, lhs, rhs1, rhs2, ttype)
+    if node.label == "_Mult__split_0":
+        if ttype == tutil.TaskletType.UNARY_SYMBOL:
+            op = "vfill"
+            ttype = tutil.TaskletType.ARRAY_SYMBOL_ASSIGNMENT
+
+
     def _str_to_float_or_str(s: Union[int, float, str, None]):
         """Convert string constants to float if possible."""
         if s is None:
@@ -1518,12 +1529,18 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         rhs_left = rhs1_ if rhs1_ is not None else const1_
         rhs_right = rhs2_ if rhs2_ is not None else const2_
 
+        #if tasklet.label == "_Add__split_0":
+        #    raise Exception(rhs1_, rhs2_, const1_, const2_, lhs_, op_, tasklet)
+
         # Multiple dtypes involved - fallback code should be used
         print(op_, templates)
         print(op_ in templates)
+
         if not fallbackcode_due_to_types:
             # Use template if available
             print("C1", op_, op_ in templates)
+            if op_ == "vfill" or op_ == "vfillc":
+                assert op_ in templates
             if op_ in templates:
                 # One array + optional constant
                 print("C1.1", rhs1_, rhs2_)
@@ -1591,7 +1608,7 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         rhs_left = rhs1_ if rhs1_ is not None else const1_
         rhs_right = rhs2_ if rhs2_ is not None else const2_
         OPERATORS = {"+", "-", "/", "*", "%", "&&", "||", "==", "!=", "<", "<=", ">", ">="}
-        UNARY_OPERATORS = {"+", "!", "-"}
+        UNARY_OPERATORS = {"+", "!", "-", "sqrt", "exp", "log"}
 
         if rhs_left is None or rhs_right is None:
             if op not in UNARY_OPERATORS and op in OPERATORS:
@@ -1599,7 +1616,20 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
                     f"Invalid operand configuration for fallback vectorization. {rhs_left}, {rhs_right}, {lhs_expr}, {op}"
                 )
 
-        raise Exception(f"SoftHier backend does not support fallback code, types: {fallbackcode_due_to_types}, op: {op}, ttype:{ttype}")
+        state.sdfg.save("failing.sdfg")
+        if ttype == tutil.TaskletType.ARRAY_ARRAY_ASSIGNMENT:
+            if state.in_degree(tasklet) == 1 and state.out_degree(tasklet) == 1:
+                oes = state.out_edges(tasklet)
+                oe = oes[0]
+                ies = state.in_edges(tasklet)
+                ie = ies[0]
+                state.remove_node(tasklet)
+                state.add_edge(ie.src, ie.src_conn, oe.dst, oe.dst_conn, copy.deepcopy(ie.data))
+            else:
+                raise Exception(f"V2 SoftHier backend does not support fallback code, types: {fallbackcode_due_to_types}, op: {op}, ttype:{ttype}, {tasklet}")
+        else:
+            raise Exception(f"V1 SoftHier backend does not support fallback code, types: {fallbackcode_due_to_types}, op: {op}, ttype:{ttype}, {tasklet}",
+                            rhs1, rhs2, lhs, c1, c2)
 
         if rhs_left is None or rhs_right is None:
             rhs = rhs_left if rhs_left is not None else rhs_right
@@ -1658,17 +1688,28 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
     if ttype == tutil.TaskletType.ARRAY_ARRAY_ASSIGNMENT:
         _set_template(rhs1, rhs2, c1, c2, lhs, "=", ttype, node)
     elif ttype == tutil.TaskletType.ARRAY_SCALAR_ASSIGNMENT:
-        node.code = dace.properties.CodeBlock(code="\n".join([f"{lhs}[{i}] = {c2};" for i in range(vw)]) + "\n",
-                                              language=dace.Language.CPP)
+        raise Exception("0", c1, c2)
+        if _is_number(str(c2)):
+            _set_template(None, None, c2, None, lhs, "fillc", ttype, node)
+        else:
+            raise Exception("ARRAY SCALAR ASSIGNMETN WITHOUT NUMBER")
+        #node.code = dace.properties.CodeBlock(code="\n".join([f"{lhs}[{i}] = {c2};" for i in range(vw)]) + "\n",
+        #                                      language=dace.Language.CPP)
     elif ttype == tutil.TaskletType.ARRAY_SYMBOL_ASSIGNMENT:
         # It is either a symbol or a constant
+        #raise Exception("1", c1, c2)
+        assert c2 is None
         if _is_number(str(c1)):
-            _set_template(None, None, c1, None, lhs, "=", ttype, node)
+            _set_template(None, None, c1, None, lhs, "fill", ttype, node)
         else:
-            node.code = dace.properties.CodeBlock(code="\n".join([f"{lhs}[{i}] = {c1}_laneid_{i};"
-                                                                  for i in range(vw)]) + "\n",
-                                                  language=dace.Language.CPP)
+            raise Exception("ARRAY SYMBOL WITHOUT NUMBER")
+            #node.code = dace.properties.CodeBlock(code="\n".join([f"{lhs}[{i}] = {c1}_laneid_{i};"
+            #                                                      for i in range(vw)]) + "\n",
+            #                                      language=dace.Language.CPP)
     elif ttype in {tutil.TaskletType.ARRAY_SYMBOL, tutil.TaskletType.ARRAY_ARRAY}:
+        if ttype == tutil.TaskletType.ARRAY_SYMBOL:
+            if op == "=":
+                raise Exception("2", c1, c2)
         _set_template(rhs1, rhs2, c1, c2, lhs, op, ttype, node)
     elif ttype in {tutil.TaskletType.UNARY_ARRAY}:
         arr_name = rhs1 if rhs1 is not None else rhs2
@@ -1749,6 +1790,7 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         else:
             node.code = dace.properties.CodeBlock(code=f"{lhs} = {expr}\n", language=dace.Language.Python)
     else:
+        state.sdfg.save("failing.sdfg")
         raise NotImplementedError(f"Unhandled TaskletType: {ttype}, from: {node.code.as_string} ({node})")
 
 

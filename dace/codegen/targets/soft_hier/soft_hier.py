@@ -1940,6 +1940,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                     "int64_t": ctypes.c_int64,
                     "uint32_t": ctypes.c_uint32,
                     "uint64_t": ctypes.c_uint64,
+                    "int": ctypes.c_int32
                 }
                 ctype = mapping[desc.dtype.ctype]   # convert your string to a ctypes type
                 size = ctypes.sizeof(ctype)

@@ -621,6 +621,8 @@ class NestedSDFG(CodeNode):
 
     unique_name = Property(dtype=str, desc="Unique name of the SDFG", default="")
 
+    is_softhier = Property(dtype=bool, desc="NestedSDFG is in SoftHier code", default=False)
+
     def __init__(self,
                  label,
                  sdfg: Optional['dace.SDFG'],

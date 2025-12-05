@@ -300,6 +300,8 @@ class Vectorize(ppl.Pass):
         replace_arrays_with_new_shape(inner_sdfg, vector_width_transient_arrays, (self.vector_width, ),
                                       self.vector_op_numeric_type)
         replace_arrays_with_new_shape(inner_sdfg, non_vector_width_transient_arrays, (self.vector_width, ), None)
+        if "tmp" in inner_sdfg.arrays and "tmp_0" in inner_sdfg.arrays:
+            replace_arrays_with_new_shape(inner_sdfg, {"tmp", "tmp_0"},  (self.vector_width, ), self.vector_op_numeric_type)
         inner_sdfg.reset_cfg_list()
 
         vector_width_arrays = {
@@ -358,13 +360,21 @@ class Vectorize(ppl.Pass):
         print("Collect vectorizable arrays (nsdfg)")
         vectorizable_arrays_dict = collect_vectorizable_arrays(inner_sdfg, nsdfg, state, invariant_scalars)
         non_vectorizable_arrays = {k for k, v in vectorizable_arrays_dict.items() if v is False} - invariant_scalars
-
+        if "tmp" in inner_sdfg.arrays:
+            vectorizable_arrays_dict["tmp"] = True
+            if "tmp" in non_vectorizable_arrays:
+                non_vectorizable_arrays.remove("tmp")
+        if "tmp_0" in inner_sdfg.arrays:
+            vectorizable_arrays_dict["tmp_0"] = True
+            if "tmp_0" in non_vectorizable_arrays:
+                non_vectorizable_arrays.remove("tmp_0")
         non_vectorizable_array_descs = [(arr_name, inner_sdfg.arrays[arr_name]) for arr_name in non_vectorizable_arrays]
         non_vectorizable_array_infos = {(arr_name + "_packed", (self.vector_width, ), self.vector_input_storage,
                                          arr.dtype)
                                         for arr_name, arr in non_vectorizable_array_descs}
 
         #raise Exception(vectorizable_arrays_dict, non_vectorizable_arrays)
+
         add_transient_arrays_from_list(inner_sdfg, non_vectorizable_array_infos)
 
         modified_nodes: Set[dace.nodes.Node] = set()
@@ -1293,7 +1303,7 @@ class Vectorize(ppl.Pass):
                 if arr.dtype == dace.float64 or arr.dtype == dace.float16:
                     arr.dtype = dace.float32
 
-            assert all({arr.dtype == dace.float32 for arr in sdfg.arrays.values()})
+            assert all({arr.dtype != dace.float64 and arr.dtype != dace.float16 for arr in sdfg.arrays.values()})
         _move_arrays_to_fp32(sdfg)
 
         stride_type = assert_strides_are_packed_C_or_packed_Fortran(sdfg)

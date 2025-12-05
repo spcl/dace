@@ -411,15 +411,15 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                        global_stream: CodeIOStream,
                        callsite_stream: CodeIOStream,
                        generate_state_footer: bool = True):
-        # print(f'Framecode generating state {state.label}...')
+        # print(f'Framecode generating state (generate_state) {state.label}...')
         callsite_stream.write(f'//Framecode generating state {state.label}...', sdfg)
         sid = state.block_id
         # Emit internal transient array allocation
-        # callsite_stream.write("// Start allocate arrays in scope\n")
+        callsite_stream.write("// Start allocate arrays in scope\n")
         # print(f'Allocating arrays in scope for state {state.label}...')
         self.allocate_arrays_in_scope(sdfg, cfg, state, global_stream, callsite_stream)
         # print(f'Finished allocating arrays in scope for state {state.label}.')
-        # callsite_stream.write("// Finish allocate arrays in scope\n")
+        callsite_stream.write("// Finish allocate arrays in scope\n")
 
         # Invoke all instrumentation providers
         for instr in self._dispatcher.instrumentation.values():
@@ -485,13 +485,17 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         def dispatch_state(state: SDFGState) -> str:
             # print(f'Calling dispatch_state {state.label}...')
             stream = CodeIOStream()
+            #callsite_stream.write("//Dispatch state start state")
             self._dispatcher.dispatch_state(state, global_stream, stream)
             opbar.next()
             states_generated.add(state)  # For sanity check
+            #callsite_stream.write("//Dispatch state end state")
             # print(f'Finished dispatch_state {state.label}.')
             return stream.getvalue()
-
+        
+        callsite_stream.write("//Dispatch state start cfg")
         callsite_stream.write(cflow.control_flow_region_to_code(sdfg, dispatch_state, self, sdfg.symbols), sdfg)
+        callsite_stream.write("//Dispatch state end cfg")
 
         opbar.done()
 
