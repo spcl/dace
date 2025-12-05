@@ -1261,6 +1261,9 @@ class CPUCodeGen(TargetCodeGenerator):
                           conntype: Union[data.Data, dtypes.typeclass] = None,
                           allow_shadowing: bool = False,
                           codegen: 'CPUCodeGen' = None):
+
+        
+        
         # TODO: Robust rule set
         if conntype is None:
             raise ValueError('Cannot define memlet for "%s" without connector type' % local_name)
@@ -1308,7 +1311,12 @@ class CPUCodeGen(TargetCodeGenerator):
                                 var_type == DefinedType.ArrayInterface and not isinstance(desc, data.View),
                                 decouple_array_interfaces=decouple_array_interfaces)
 
-        result = ''
+        if self.is_soft_hier:
+            result = "// SoftHier Memlet Def\n"
+        else:
+            result = ''
+        result += '// Memlet definition\n'
+        
         expr = (cpp.cpp_array_expr(sdfg, memlet, with_brackets=False, codegen=self._frame, referenced_array=sdfg.arrays[ptr])
                 if var_type in [DefinedType.Pointer, DefinedType.StreamArray, DefinedType.ArrayInterface] else ptr)
         #from dace.sdfg.tasklet_utils import token_replace_dict
@@ -1323,6 +1331,51 @@ class CPUCodeGen(TargetCodeGenerator):
         expr = codegen.make_ptr_vector_cast(expr, desc.dtype, conntype, is_scalar, var_type)
 
         defined = None
+        from dace import float32, float64, int32, int64, uint32, uint64
+        type_mapping = {
+            float32: "float",
+            float64: "double",
+            int32: "int",
+            int64: "long long",
+            uint32: "unsigned int",
+            uint64: "unsigned long long"
+        }
+        def convert_subscript_to_pointer(expr: str, arr_name: str, array_dtype: str):
+            import re
+            """
+            Convert a C++ array subscript to pointer arithmetic, strictly for the given array name.
+
+            Parameters
+            ----------
+            expr : str
+                C++ assignment string, e.g., "__sym___tmp = arr[i+j];"
+            arr_name : str
+                Array name to check.
+            array_dtype : str
+                C type string, e.g., "float", "int32"
+
+            Returns
+            -------
+            str
+                Pointer arithmetic version.
+            """
+            # Use the exact arr_name in the regex
+            pattern = rf'{re.escape(arr_name)}\[(.*)\]'
+            m = re.match(pattern, expr)
+            if not m:
+                assert False, f"No match found for {arr_name} in {pattern} in {expr}"
+
+            assert len(m.groups()) == 1
+            index_expr = m.groups()[0]
+            lhs = arr_name
+            index_expr = index_expr.strip()
+
+            # Convert to pointer arithmetic
+            new_expr = f"{arr_name} + ({index_expr}) * sizeof({array_dtype});"
+            return new_expr
+        nexpr = expr[1:] if expr[0] == '&' else expr
+        if self.is_soft_hier:
+            result += f"// {memlet.data}: {expr} -> {convert_subscript_to_pointer(nexpr, memlet.data, type_mapping[desc.dtype])}\n"
 
         if var_type in [DefinedType.Scalar, DefinedType.Pointer, DefinedType.ArrayInterface]:
             if output:
@@ -1344,12 +1397,18 @@ class CPUCodeGen(TargetCodeGenerator):
                             result += "const {} {} = {};".format(memlet_type, local_name, expr)
                         else:
                             # Pointer reference
-                            result += "{} __restrict__ {} = {};".format(ctypedef, local_name, expr)
+                            result += f"// P1 {ctypedef} {local_name} {expr}\n"
+                            if self.is_soft_hier:
+                                offset_expr = convert_subscript_to_pointer(nexpr, memlet.data, type_mapping[desc.dtype])
+                                result += "uint32_t {} = {};".format(local_name, offset_expr)
+                            else:
+                                result += "{} __restrict__ {} = {};".format(ctypedef, local_name, expr)
                 else:
                     # Variable number of reads: get a const reference that can
                     # be read if necessary
                     memlet_type = 'const %s' % memlet_type
                     if is_pointer:
+                        result += f"// P2 {ctypedef} {local_name} {expr}\n"
                         result += "{} __restrict__ {} = {};".format(memlet_type, local_name, expr)
                     else:
                         result += "{} &{} = {};".format(memlet_type, local_name, expr)

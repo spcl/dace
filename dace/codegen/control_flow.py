@@ -12,7 +12,7 @@ from dace.sdfg.state import (AbstractControlFlowRegion, BreakBlock, ConditionalB
                              ControlFlowRegion, LoopRegion, ReturnBlock, SDFGState, UnstructuredControlFlow)
 from dace.sdfg.sdfg import SDFG, InterstateEdge
 from dace.sdfg.graph import Edge
-from dace.codegen.common import unparse_interstate_edge
+from dace.codegen.common import unparse_interstate_edge, unparse_softhier_interstate_edge
 
 if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
@@ -56,11 +56,23 @@ def _generate_interstate_edge_code(edge: Edge[InterstateEdge],
     if not edge.data.is_unconditional() and not assignments_only:
         expr += f'if ({condition_string}) {{\n'
 
-    if len(edge.data.assignments) > 0:
-        expr += ';\n'.join([
-            "{} = {}".format(variable, unparse_interstate_edge(value, sdfg, codegen=codegen))
-            for variable, value in edge.data.assignments.items()
-        ] + [''])
+
+    if sdfg.parent_nsdfg_node is not None and sdfg.parent_nsdfg_node.is_softhier:
+        assert assignments_only and edge.data.is_unconditional()
+        if len(edge.data.assignments) > 0:
+            expr += ';\n'.join([
+                "{} = {}".format(variable, unparse_softhier_interstate_edge(value, sdfg, codegen=codegen))
+                for variable, value in edge.data.assignments.items()
+            ] + [''])
+            if "[" in expr or "]" in expr:
+                raise Exception(f"Unparse softhier interstate edge should end up with [ or ] in the expr: {expr}")
+    else:
+        if len(edge.data.assignments) > 0:
+            expr += ';\n'.join([
+                "{} = {}".format(variable, unparse_interstate_edge(value, sdfg, codegen=codegen))
+                for variable, value in edge.data.assignments.items()
+            ] + [''])
+
 
     if not assignments_only:
         dst: ControlFlowBlock = edge.dst

@@ -1162,7 +1162,7 @@ class InterstateEdgeUnparser(cppunparse.CPPUnparser):
         target, rng = subscript_to_slice(t, self.sdfg.arrays)
         rng = subsets.Range(rng)
         if rng.num_elements() != 1:
-            raise SyntaxError('Range subscripts disallowed in interstate edges')
+            raise SyntaxError(f'Range subscripts disallowed in interstate edges, {ast.unparse(t)}')
 
         memlet = mmlt.Memlet(data=target, subset=rng)
 
@@ -1173,6 +1173,99 @@ class InterstateEdgeUnparser(cppunparse.CPPUnparser):
             self.write(cpp_array_expr(self.sdfg, memlet, referenced_array=desc, codegen=self.codegen))
         else:
             self.write(cpp_array_expr(self.sdfg, memlet, codegen=self.codegen))
+
+
+class SoftHierInterstateEdgeUnparser(cppunparse.CPPUnparser):
+    """
+    An extension of the Python->C++ unparser that allows including
+    multidimensional array expressions from an existing SDFGs. Used in
+    inter-state edge code generation.
+    """
+
+    def __init__(self, sdfg: SDFG, tree: ast.AST, file: IO[str], defined_symbols=None, codegen=None):
+        self.sdfg = sdfg
+        self.codegen = codegen
+        super().__init__(tree, 0, cppunparse.CPPLocals(), file, expr_semicolon=False, defined_symbols=defined_symbols)
+
+    def _Name(self, t: ast.Name):
+        if t.id not in self.sdfg.arrays:
+            return super()._Name(t)
+
+        # Replace values with their code-generated names (for example, persistent arrays)
+        desc = self.sdfg.arrays[t.id]
+        ref = '' if not isinstance(desc, data.View) else '*'
+        self.write(ref + ptr(t.id, desc, self.sdfg, self.codegen))
+
+    def _Attribute(self, t: ast.Attribute):
+        from dace.frontend.python.astutils import rname
+        name = rname(t)
+        if name not in self.sdfg.arrays:
+            return super()._Attribute(t)
+
+        # Replace values with their code-generated names (for example, persistent arrays)
+        desc = self.sdfg.arrays[name]
+        self.write(ptr(name, desc, self.sdfg, self.codegen))
+
+    def convert_subscript_to_pointer(self, expr: str, arr_name: str, array_dtype: str):
+        import re
+        """
+        Convert a C++ array subscript to pointer arithmetic, strictly for the given array name.
+
+        Parameters
+        ----------
+        expr : str
+            C++ assignment string, e.g., "__sym___tmp = arr[i+j];"
+        arr_name : str
+            Array name to check.
+        array_dtype : str
+            C type string, e.g., "float", "int32"
+
+        Returns
+        -------
+        str
+            Pointer arithmetic version.
+        """
+        # Use the exact arr_name in the regex
+        pattern = rf'{re.escape(arr_name)}\[(.*)\]'
+        m = re.match(pattern, expr)
+        if not m:
+            assert False, f"No match found for {arr_name} in {pattern} in {expr}"
+
+        assert len(m.groups()) == 1
+        index_expr = m.groups()[0]
+        lhs = arr_name
+        index_expr = index_expr.strip()
+
+        # Convert to pointer arithmetic
+        new_expr = f"{arr_name} + ({index_expr}) * sizeof({array_dtype});"
+        return new_expr
+
+
+    def _Subscript(self, t: ast.Subscript):
+        from dace.frontend.python.astutils import subscript_to_slice
+        target, rng = subscript_to_slice(t, self.sdfg.arrays)
+        rng = subsets.Range(rng)
+        if rng.num_elements() != 1:
+            raise SyntaxError(f'Range subscripts disallowed in interstate edges, {ast.unparse(t)}')
+
+        memlet = mmlt.Memlet(data=target, subset=rng)
+
+        type_mapping = {
+            dace.float32: "float",
+            dace.float64: "double",
+            dace.int32: "int",
+            dace.int64: "long long",
+            dace.uint32: "unsigned int",
+            dace.uint64: "unsigned long long"
+        }
+
+        assert target in self.sdfg.arrays
+        expr = cpp_array_expr(self.sdfg, memlet, codegen=self.codegen)
+        #print(cpp_array_expr(self.sdfg, memlet, codegen=self.codegen))
+        # Create type mapping
+        converted = self.convert_subscript_to_pointer(expr, target, type_mapping[self.sdfg.arrays[target].dtype])
+        #print(converted)
+        self.write(converted)
 
 
 class DaCeKeywordRemover(ExtNodeTransformer):

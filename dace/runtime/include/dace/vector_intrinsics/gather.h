@@ -33,7 +33,6 @@ void gather_double(const double *__restrict__ A,
         _mm256_storeu_pd(&B[i], vdata);                                // store result
     }
 #else
-
     for (int i = 0; i < length; ++i) B[i] = A[idx[i]];
 #endif
 }
