@@ -1330,13 +1330,13 @@ class CPUCodeGen(TargetCodeGenerator):
                             result += "const {} {} = {};".format(memlet_type, local_name, expr)
                         else:
                             # Pointer reference
-                            result += "{} {} = {};".format(ctypedef, local_name, expr)
+                            result += "{} __restrict__ {} = {};".format(ctypedef, local_name, expr)
                 else:
                     # Variable number of reads: get a const reference that can
                     # be read if necessary
                     memlet_type = 'const %s' % memlet_type
                     if is_pointer:
-                        result += "{} {} = {};".format(memlet_type, local_name, expr)
+                        result += "{} __restrict__ {} = {};".format(memlet_type, local_name, expr)
                     else:
                         result += "{} &{} = {};".format(memlet_type, local_name, expr)
                 defined = (DefinedType.Scalar if is_scalar else DefinedType.Pointer)
@@ -1597,7 +1597,8 @@ class CPUCodeGen(TargetCodeGenerator):
                                               dtypes.AllocationLifetime.External)
                 defined_type, _ = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
                 base_ptr = cpp.cpp_ptr_expr(sdfg, edge.data, defined_type, codegen=self._frame)
-                callsite_stream.write(f'{cdtype.ctype} {edge.src_conn} = {base_ptr};', cfg, state_id, src_node)
+                callsite_stream.write(f'{cdtype.ctype} __restrict__ {edge.src_conn} = {base_ptr};', cfg, state_id,
+                                      src_node)
             else:
                 callsite_stream.write(f'{cdtype.as_arg(edge.src_conn)};', cfg, state_id, src_node)
         else:
@@ -1963,6 +1964,9 @@ class CPUCodeGen(TargetCodeGenerator):
                     if node.map.unroll_factor:
                         unroll_pragma += f" {node.map.unroll_factor}"
                     result.write(unroll_pragma, cfg, state_id, node)
+
+                if node.map.vectorize is not None and node.map.vectorize is True:
+                    result.write(f"#pragma clang loop vectorize(enable)\n", cfg, state_id, node)
 
                 result.write(
                     "for (auto %s = %s; %s < %s; %s += %s) {\n" %
