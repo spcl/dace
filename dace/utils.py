@@ -5,18 +5,31 @@ Utility functions for DaCe.
 This module provides general utility functions that are used across various parts of DaCe.
 """
 
-import functools
-from typing import Sequence
+import math
+from typing import Iterable, Sequence, Union
+
+import sympy
+
+# Type alias for numeric or symbolic values
+NumericType = Union[int, float, sympy.Basic]
 
 
-def prod(sequence):
+def prod(sequence: Iterable[NumericType], start: NumericType = 1) -> NumericType:
     """
-    Computes the product of a sequence of numbers.
+    Computes the product of a sequence of numbers or symbolic expressions.
 
-    :param sequence: A sequence of numbers.
-    :return: The product of all elements in the sequence.
+    This function handles both numeric values and SymPy symbolic expressions,
+    making it suitable for use with DaCe's symbolic shape calculations.
+
+    :param sequence: An iterable of numbers or symbolic expressions.
+    :param start: The starting value for the product (default: 1).
+    :return: The product of all elements in the sequence, multiplied by start.
+             Returns start if the sequence is empty.
     """
-    return functools.reduce(lambda a, b: a * b, sequence, 1)
+    result = start
+    for item in sequence:
+        result = result * item
+    return result
 
 
 def find_new_name(name: str, existing_names: Sequence[str]) -> str:
