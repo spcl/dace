@@ -7,6 +7,7 @@ import os
 import pytest
 import argparse
 from dace.transformation.auto.auto_optimize import auto_optimize
+from dace.autodiff import add_backward_pass
 
 # Data set sizes
 # M, N
@@ -40,6 +41,20 @@ def initialize(M, N, datatype=np.float64):
     data = np.fromfunction(lambda i, j: (i * j) / M + i, (N, M), dtype=datatype)
 
     return float_n, data
+
+
+def correlation_jax_kernel(jnp, float_n, data):
+    mean = jnp.mean(data, axis=0)
+    M = data.shape[1]
+    stddev = jnp.sqrt(jnp.mean(jnp.subtract(data, mean)**2, axis=0))
+    stddev = jnp.where(stddev <= 0.1, 1.0, stddev)
+    data = jnp.subtract(data, mean)
+    data = jnp.divide(data, jnp.sqrt(float_n) * stddev)
+    corr = jnp.eye(M, dtype=data.dtype)
+    for i in range(M - 1):
+        corr = corr.at[i, i + 1:M].set(data[:, i] @ data[:, i + 1:M])
+        corr = corr.at[i + 1:M, i].set(corr[i, i + 1:M])
+    return jnp.sum(corr)
 
 
 def ground_truth(M, float_n, data):
@@ -88,6 +103,40 @@ def run_correlation(device_type: dace.dtypes.DeviceType):
     return sdfg
 
 
+def run_correlation_autodiff():
+    import jax
+    import jax.numpy as jnp
+
+    # Initialize data (polybench mini size)
+    M, N = sizes["mini"]
+    float_n, data = initialize(M, N)
+
+    # Initialize gradient computation data
+    gradient_data = np.zeros_like(data)
+    gradient___return = np.ones((1, ), dtype=np.float64)
+
+    # Define sum reduction for the output
+    @dc.program
+    def autodiff_kernel(float_n: dc.float64, data: dc.float64[N, M]):
+        corr = correlation_kernel(float_n, data)
+        return np.sum(corr)
+
+    # Add the backward pass to the SDFG
+    sdfg = autodiff_kernel.to_sdfg()
+    add_backward_pass(sdfg=sdfg, inputs=["data"], outputs=["__return"])
+    sdfg(float_n, data, M=M, N=N, gradient_data=gradient_data, gradient___return=gradient___return)
+
+    # Enable float64 support
+    jax.config.update("jax_enable_x64", True)
+
+    # Numerically validate vs JAX
+    jax_kernel = lambda float_n, data: correlation_jax_kernel(jnp, float_n, data)
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=1), static_argnums=(0, ))
+    _, data_jax = initialize(M, N)
+    jax_grad_data = jax_grad(float_n, data_jax)
+    np.testing.assert_allclose(gradient_data, jax_grad_data, rtol=1e-8, atol=1e-8)
+
+
 def test_cpu():
     run_correlation(dace.dtypes.DeviceType.CPU)
 
@@ -95,6 +144,17 @@ def test_cpu():
 @pytest.mark.gpu
 def test_gpu():
     run_correlation(dace.dtypes.DeviceType.GPU)
+
+
+@pytest.mark.autodiff
+def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
+    # Serialization causes issues, we temporarily disable it
+    # TODO: open an issue to fix the serialization stability problem
+    last_value = os.environ.get('DACE_testing_serialization', '0')
+    os.environ['DACE_testing_serialization'] = '0'
+    run_correlation_autodiff()
+    os.environ['DACE_testing_serialization'] = last_value
 
 
 if __name__ == "__main__":
@@ -107,6 +167,7 @@ if __name__ == "__main__":
 
     if target == "cpu":
         run_correlation(dace.dtypes.DeviceType.CPU)
+        run_correlation_autodiff()
     elif target == "gpu":
         run_correlation(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":

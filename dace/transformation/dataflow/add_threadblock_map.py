@@ -200,6 +200,8 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
         # Set the new kernel_entry's gpu_block_size attribute
         new_kernel_entry, *_ = helpers.get_parent_map(state, kernel_map_entry)
         new_kernel_entry.map.gpu_block_size = gpu_block_size
+        new_kernel_entry.map.gpu_launch_bounds = kernel_map_entry.map.gpu_launch_bounds
+        new_kernel_entry.map.gpu_maxnreg = kernel_map_entry.map.gpu_maxnreg
 
     def preprocess_default_dims(self):
         """
