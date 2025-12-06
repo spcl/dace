@@ -9,14 +9,6 @@ and storage location of data, as well as other properties that affect code gener
 For backward compatibility, all classes and functions are re-exported from the top-level
 `dace.data` module.
 """
-from typing import Any
-
-try:
-    from numpy.typing import ArrayLike
-except (ModuleNotFoundError, ImportError):
-    ArrayLike = Any
-
-from numbers import Number
 
 # Core data descriptors
 from dace.data.core import (
@@ -34,8 +26,10 @@ from dace.data.core import (
     ArrayReference,
     StructureReference,
     ContainerArrayReference,
-    _prod,
 )
+
+# Import prod from utils and expose as _prod for backward compatibility
+from dace.utils import prod as _prod
 
 # Tensor/sparse tensor support
 from dace.data.tensor import (
@@ -113,8 +107,4 @@ __all__ = [
     'make_reference_from_descriptor',
     'make_ctypes_argument',
     'find_new_name',
-    '_prod',
-    # Type hints
-    'ArrayLike',
-    'Number',
 ]

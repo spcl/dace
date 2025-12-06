@@ -9,7 +9,6 @@ This module contains the base ``Data`` class and all core descriptor classes:
 import copy as cp
 import ctypes
 import dataclasses
-import functools
 
 from collections import OrderedDict
 from typing import Any, Dict, List, Set, Tuple, Union
@@ -27,10 +26,10 @@ from dace.codegen import cppunparse
 from dace.properties import (DebugInfoProperty, DictProperty, EnumProperty, ListProperty, NestedDataClassProperty,
                              OrderedDictProperty, Property, ShapeProperty, SymbolicProperty, TypeClassProperty,
                              make_properties)
+from dace.utils import prod
 
-
-def _prod(sequence):
-    return functools.reduce(lambda a, b: a * b, sequence, 1)
+# Backward compatibility alias
+_prod = prod
 
 
 def _arrays_to_json(arrays):

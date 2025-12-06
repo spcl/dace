@@ -5,7 +5,18 @@ Utility functions for DaCe.
 This module provides general utility functions that are used across various parts of DaCe.
 """
 
+import functools
 from typing import Sequence
+
+
+def prod(sequence):
+    """
+    Computes the product of a sequence of numbers.
+
+    :param sequence: A sequence of numbers.
+    :return: The product of all elements in the sequence.
+    """
+    return functools.reduce(lambda a, b: a * b, sequence, 1)
 
 
 def find_new_name(name: str, existing_names: Sequence[str]) -> str:
