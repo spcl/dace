@@ -720,8 +720,8 @@ def test_try_clean():
     fbpass.apply_to_top_level_ifs = True
     fbpass.apply_pass(sdfg1, {})
     cblocks = {n for n, g in sdfg1.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
-    # 1 left because now the if branch has 2 states
-    assert len(cblocks) == 1, f"{cblocks}"
+    # 1 left because now the if branch has 2 states -> not anymore thanks to force fuse and empty state elim
+    assert len(cblocks) == 0, f"{cblocks}"
     sdfg1.validate()
 
     for cblock in cblocks:
@@ -2304,6 +2304,9 @@ def test_can_be_applied_on_wcr_edge():
 
     from dace.transformation.dataflow.wcr_conversion import WCRToAugAssign
     sdfg.apply_transformations_repeated(WCRToAugAssign)
+    sdfg.validate()
+    sdfg.save("x0.sdfg")
+    sdfg.compile()
 
     cblocks = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     for cblock in cblocks:
@@ -2315,6 +2318,7 @@ def test_can_be_applied_on_wcr_edge():
         assert xform.can_be_applied(cblock.parent_graph, 0, cblock.sdfg, True) is True
 
     A = np.random.choice([0.001, 5.0], size=(N, N))
+    sdfg.save("x1.sdfg")
 
     run_and_compare_sdfg(sdfg, False, "can_be_applied_wcr", A=A)
 
@@ -2369,6 +2373,40 @@ def test_top_level_if():
     # Pass should not convert top level ifs
     assert len({n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}) == 1
 
+LEN_1D = 64
+@dace.program
+def dace_s441(a: dace.float64[LEN_1D],
+              b: dace.float64[LEN_1D],
+              c: dace.float64[LEN_1D],
+              d: dace.float64[LEN_1D]):
+    for nl in range(50):  # or iterations parameter
+        for i in range(LEN_1D):
+            if d[i] < 0.0:
+                a[i] = a[i] + b[i] * c[i]
+            elif d[i] == 0.0:
+                a[i] = a[i] + b[i] * b[i]
+            else:
+                a[i] = a[i] + c[i] * c[i]
+
+def test_s441():
+    LEN_1D_val = LEN_1D
+
+    # Allocate random inputs
+    a = np.random.rand(LEN_1D_val).astype(np.float64)
+    b = np.random.rand(LEN_1D_val).astype(np.float64)
+    c = np.random.rand(LEN_1D_val).astype(np.float64)
+    d = np.random.randn(LEN_1D_val).astype(np.float64)  # includes negative, zero, positive
+
+    sdfg = dace_s441.to_sdfg()
+    EliminateBranches().apply_pass(sdfg, {})
+    branches = {n for (n,g) in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
+    if len(branches) > 0:
+        sdfg.save("branch_elimination_failed_s441.sdfg")
+        assert False
+
+    run_and_compare_sdfg(sdfg, False, "branch_elimination_failed_s441", a=a, b=b, c=c, d=d)
+
+    return a
 
 if __name__ == "__main__":
     test_top_level_if()
