@@ -2373,12 +2373,12 @@ def test_top_level_if():
     # Pass should not convert top level ifs
     assert len({n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}) == 1
 
+
 LEN_1D = 64
+
+
 @dace.program
-def dace_s441(a: dace.float64[LEN_1D],
-              b: dace.float64[LEN_1D],
-              c: dace.float64[LEN_1D],
-              d: dace.float64[LEN_1D]):
+def dace_s441(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D], d: dace.float64[LEN_1D]):
     for nl in range(50):  # or iterations parameter
         for i in range(LEN_1D):
             if d[i] < 0.0:
@@ -2387,6 +2387,7 @@ def dace_s441(a: dace.float64[LEN_1D],
                 a[i] = a[i] + b[i] * b[i]
             else:
                 a[i] = a[i] + c[i] * c[i]
+
 
 def test_s441():
     LEN_1D_val = LEN_1D
@@ -2399,7 +2400,7 @@ def test_s441():
 
     sdfg = dace_s441.to_sdfg()
     EliminateBranches().apply_pass(sdfg, {})
-    branches = {n for (n,g) in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
+    branches = {n for (n, g) in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     if len(branches) > 0:
         sdfg.save("branch_elimination_failed_s441.sdfg")
         assert False
@@ -2408,9 +2409,40 @@ def test_s441():
 
     return a
 
+
+@dace.program
+def interstate_boolean_op_two(A: dace.float64[N, N], B: dace.float64[N, N], c0: dace.int64):
+    for i, j in dace.map[0:N, 0:N]:
+        c1 = i
+        c2 = j
+        c3 = (c1 > c0) or (c2 > c0)
+        c4 = c3 or (A[i, j] > B[i, j])
+        if not c4:
+            A[i, j] = A[i, j] + B[i, j]
+
+
+def test_interstate_boolean_op_two():
+    # Allocate random inputs
+    A = np.random.rand(N, N).astype(np.float64)
+    B = np.random.rand(N, N).astype(np.float64)
+    c0 = np.int64(0)
+
+    sdfg = interstate_boolean_op_two.to_sdfg()
+    sdfg.save("interstate_boolean_op_two.sdfg")
+
+    EliminateBranches().apply_pass(sdfg, {})
+    branches = {n for (n, g) in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
+    if len(branches) > 0:
+        sdfg.save("interstate_boolean_op_two.sdfg")
+        assert False
+    sdfg.save("interstate_boolean_op_two_transformed.sdfg")
+    run_and_compare_sdfg(sdfg, False, "interstate_boolean_op_two", A=A, B=B, c0=c0)
+
+
 if __name__ == "__main__":
     test_top_level_if()
     test_interstate_boolean()
+    test_interstate_boolean_op_two()
     test_huge_sdfg_with_log_exp_div("max")
     test_huge_sdfg_with_log_exp_div("add")
     test_mid_sdfg_with_log_exp_div("max")

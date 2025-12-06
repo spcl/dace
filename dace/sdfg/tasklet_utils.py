@@ -212,7 +212,8 @@ def tasklet_has_symbol(tasklet: dace.nodes.Tasklet, symbol_str: str) -> bool:
 def replace_code(code_str: str,
                  code_lang: dace.dtypes.Language,
                  repldict: Dict[str, str],
-                 py_only: bool = False) -> str:
+                 py_only: bool = False,
+                 use_sym_expr: bool = True) -> str:
     """
     Replaces variables in a code string according to a replacement dictionary.
     Supports Python symbolic substitution and fallback string-based replacement.
@@ -237,7 +238,11 @@ def replace_code(code_str: str,
         code_str = token_replace_dict(rhs, repldict)
         return f"{lhs.strip()} = {code_str.strip()}"
 
-    if code_lang == dace.dtypes.Language.Python:
+    def _str_replace_nsplit(code_str: str) -> str:
+        new_code_str = token_replace_dict(code_str, repldict)
+        return new_code_str
+
+    if code_lang == dace.dtypes.Language.Python and use_sym_expr:
         try:
             lhs, rhs = code_str.split(" = ")
             lhs = lhs.strip()
@@ -263,10 +268,18 @@ def replace_code(code_str: str,
                 rhs = rhs.strip()
                 return _str_replace(lhs, rhs)
             except Exception as e:
-                return code_str
+                try:
+                    return _str_replace_nsplit(code_str)
+                except Exception as e:
+                    return code_str
+        else:
+            assert False
 
 
-def tasklet_replace_code(tasklet: dace.nodes.Tasklet, repldict: Dict[str, str]):
+def tasklet_replace_code(tasklet: dace.nodes.Tasklet,
+                         repldict: Dict[str, str],
+                         py_only: bool = True,
+                         use_sym_expr: bool = True):
     """
     Replaces symbols in a tasklet's code according to a replacement dictionary.
     Updates the tasklet's code in place.
@@ -282,7 +295,11 @@ def tasklet_replace_code(tasklet: dace.nodes.Tasklet, repldict: Dict[str, str]):
     -------
     None
     """
-    new_code = replace_code(tasklet.code.as_string, tasklet.code.language, repldict)
+    new_code = replace_code(tasklet.code.as_string,
+                            tasklet.code.language,
+                            repldict,
+                            py_only=py_only,
+                            use_sym_expr=use_sym_expr)
     tasklet.code = CodeBlock(code=new_code, language=tasklet.code.language)
 
 

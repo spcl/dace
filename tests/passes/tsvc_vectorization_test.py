@@ -19,6 +19,7 @@ from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
 
 LEN_1D = dace.symbol("LEN_1D")
 
+
 def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                            arrays,
                            params,
@@ -48,7 +49,6 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
             sdfg.simplify(validate=True, validate_all=True, skip=skip_simplify or set())
     else:
         sdfg: dace.SDFG = dace_func
-
 
     if apply_loop_to_map:
         sdfg.apply_transformations_repeated(LoopToMap())
@@ -122,11 +122,11 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
 def initialise_arrays():
     # Create array handles equivalent to the globals in C
     # Adjust shapes to match your actual code.
-    a  = np.zeros(LEN_1D, dtype=np.float64)
-    b  = np.zeros(LEN_1D, dtype=np.float64)
-    c  = np.zeros(LEN_1D, dtype=np.float64)
-    d  = np.zeros(LEN_1D, dtype=np.float64)
-    e  = np.zeros(LEN_1D, dtype=np.float64)
+    a = np.zeros(LEN_1D, dtype=np.float64)
+    b = np.zeros(LEN_1D, dtype=np.float64)
+    c = np.zeros(LEN_1D, dtype=np.float64)
+    d = np.zeros(LEN_1D, dtype=np.float64)
+    e = np.zeros(LEN_1D, dtype=np.float64)
     aa = np.zeros(LEN_1D, dtype=np.float64)
     bb = np.zeros(LEN_1D, dtype=np.float64)
     cc = np.zeros(LEN_1D, dtype=np.float64)
@@ -152,27 +152,24 @@ def test_s317():
                            sdfg_name="dace_s317",
                            apply_loop_to_map=True)
 
+
 @dace.program
-def dace_s3251(a: dace.float64[LEN_1D],
-               b: dace.float64[LEN_1D],
-               c: dace.float64[LEN_1D],
-               d: dace.float64[LEN_1D],
+def dace_s3251(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D], d: dace.float64[LEN_1D],
                e: dace.float64[LEN_1D]):
     for nl in range(10):
         for i in range(LEN_1D - 1):
             a[i + 1] = b[i] + c[i]
-            b[i]     = c[i] * e[i]
-            d[i]     = a[i] * e[i]
+            b[i] = c[i] * e[i]
+            d[i] = a[i] * e[i]
+
 
 @dace.program
-def dace_s491(a: dace.float64[LEN_1D],
-              b: dace.float64[LEN_1D],
-              c: dace.float64[LEN_1D],
-              d: dace.float64[LEN_1D],
+def dace_s491(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D], d: dace.float64[LEN_1D],
               ip: dace.int32[LEN_1D]):
     for nl in range(10):
         for i in range(LEN_1D):
             a[ip[i]] = b[i] + c[i] * d[i]
+
 
 def test_s491():
     LEN_1D_val = 64
@@ -186,7 +183,13 @@ def test_s491():
 
     run_vectorization_test(
         dace_func=dace_s491,
-        arrays={"a": a, "b": b, "c": c, "d": d, "ip": ip},
+        arrays={
+            "a": a,
+            "b": b,
+            "c": c,
+            "d": d,
+            "ip": ip
+        },
         params={"LEN_1D": LEN_1D_val},
         save_sdfgs=True,
         sdfg_name="dace_s491",
@@ -195,6 +198,7 @@ def test_s491():
 
     return a
 
+
 @dace.program
 def dace_s293(a: dace.float64[LEN_1D]):
     for nl in range(50):
@@ -202,6 +206,7 @@ def dace_s293(a: dace.float64[LEN_1D]):
         a0 = a[0]
         for i in range(LEN_1D):
             a[i] = a0
+
 
 def test_s293():
     LEN_1D_val = 64  # example, adjust as needed
@@ -222,7 +227,6 @@ def test_s293():
     return a
 
 
-
 def test_s3251():
     LEN_1D_val = 64
 
@@ -234,7 +238,13 @@ def test_s3251():
 
     run_vectorization_test(
         dace_func=dace_s3251,
-        arrays={"a": a, "b": b, "c": c, "d": d, "e": e},
+        arrays={
+            "a": a,
+            "b": b,
+            "c": c,
+            "d": d,
+            "e": e
+        },
         params={"LEN_1D": LEN_1D_val},
         save_sdfgs=True,
         sdfg_name="dace_s3251",
@@ -245,10 +255,7 @@ def test_s3251():
 
 
 @dace.program
-def dace_s441(a: dace.float64[LEN_1D],
-              b: dace.float64[LEN_1D],
-              c: dace.float64[LEN_1D],
-              d: dace.float64[LEN_1D]):
+def dace_s441(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D], d: dace.float64[LEN_1D]):
     for nl in range(50):  # or iterations parameter
         for i in range(LEN_1D):
             if d[i] < 0.0:
@@ -257,6 +264,7 @@ def dace_s441(a: dace.float64[LEN_1D],
                 a[i] = a[i] + b[i] * b[i]
             else:
                 a[i] = a[i] + c[i] * c[i]
+
 
 def test_s441():
     LEN_1D_val = 64  # example length
@@ -269,7 +277,7 @@ def test_s441():
 
     sdfg = dace_s441.to_sdfg()
     eliminate_branches.EliminateBranches().apply_pass(sdfg, {})
-    branches = {n for (n,g) in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
+    branches = {n for (n, g) in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     if len(branches) > 0:
         sdfg.save("branch_elimination_failed_s441.sdfg")
         assert False
@@ -277,7 +285,12 @@ def test_s441():
     # Run DaCe test harness (your helper function)
     run_vectorization_test(
         dace_func=dace_s441,
-        arrays={"a": a, "b": b, "c": c, "d": d},
+        arrays={
+            "a": a,
+            "b": b,
+            "c": c,
+            "d": d
+        },
         params={"LEN_1D": LEN_1D_val},
         save_sdfgs=True,
         sdfg_name="dace_s441",

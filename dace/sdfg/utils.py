@@ -2831,6 +2831,7 @@ def demote_symbol_to_scalar(sdfg: 'dace.SDFG',
                                           transient=is_transient)
                 cutil.generate_assignment_as_tasklet_in_state(state, k, v)
 
+
 def in_edge_with_name(node: nd.Node, state: SDFGState, name: str) -> MultiConnectorEdge:
     """
     Find the edge that connects to input connector `name` on `node`.

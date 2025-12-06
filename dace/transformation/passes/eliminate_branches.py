@@ -23,7 +23,7 @@ class EliminateBranches(ppl.Pass):
         return ppl.Modifies.CFG
 
     def _has_no_parent_loops_or_maps(self, root: SDFG, sdfg: SDFG, parent_nsdfg_state: Union[SDFG, None],
-                            node: ConditionalBlock) -> bool:
+                                     node: ConditionalBlock) -> bool:
         parent_loops_and_maps = {
             m
             for m in cutil.get_parent_map_and_loop_scopes(
@@ -183,7 +183,7 @@ class EliminateBranches(ppl.Pass):
 
         num_applied = cur_num_applied
         added_scalar_names = copy.deepcopy(cur_added_scalar_names)
-        while cur_num_applied: 
+        while cur_num_applied:
             cur_num_applied, cur_added_scalar_names = self._apply_eliminate_branches(sdfg, sdfg, None)
             added_scalar_names = added_scalar_names.union(cur_added_scalar_names)
             num_applied += cur_num_applied

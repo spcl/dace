@@ -559,8 +559,8 @@ class BranchElimination(transformation.MultiStateTransformation):
             for node in state.nodes():
                 if isinstance(node, dace.nodes.Tasklet):
                     parent_maps = cutil.get_parent_map_and_loop_scopes_cfg(root_cfg=graph,
-                                                                       node=node,
-                                                                       parent_state=state)
+                                                                           node=node,
+                                                                           parent_state=state)
                     checked_at_least_one_tasklet = True
                     if len(parent_maps) > 0:
                         return False
@@ -2081,7 +2081,7 @@ class BranchElimination(transformation.MultiStateTransformation):
                             self._force_fuse(src_node, new_state)
                             RemoveEmptyStates().apply_pass(graph.sdfg, {})
                     graph.sdfg.validate()
-
+                    graph.sdfg.simplify()
 
         return added_scalar_names
 
