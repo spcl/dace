@@ -289,6 +289,21 @@ def map_consists_of_single_nsdfg_or_no_nsdfg(graph: dace.SDFGState, map_entry: d
     return (len(all_nodes) == 1 and isinstance(next(
         iter(all_nodes)), dace.nodes.NestedSDFG)) or not any(isinstance(_n, dace.nodes.NestedSDFG) for _n in all_nodes)
 
+def get_single_nsdfg_inside_map(graph: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> dace.nodes.NestedSDFG:
+    all_nodes = {
+        k
+        for k in graph.all_nodes_between(map_entry, graph.exit_node(map_entry))
+        if not isinstance(k, (dace.nodes.MapEntry, dace.nodes.MapExit))
+    }
+    if (len(all_nodes) == 1 and isinstance(next(
+        iter(all_nodes)), dace.nodes.NestedSDFG)):
+        return next(iter(all_nodes))
+    return None
+
+def has_only_states(sdfg: dace.SDFG) -> bool:
+    return all(
+        {isinstance(n, dace.SDFGState) for n in sdfg.nodes()}
+    )
 
 def assert_maps_consist_of_single_nsdfg_or_no_nsdfg(sdfg: dace.SDFG) -> None:
     """

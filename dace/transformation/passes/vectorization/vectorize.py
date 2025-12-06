@@ -1342,6 +1342,13 @@ class Vectorize(ppl.Pass):
                         raise Exception(f"Map contains more than 1 NSDFG within both, or both {map_entry}, {state}")
                     else:
                         continue
+                
+                opt_nsdfg = get_single_nsdfg_inside_map(state, map_entry)
+                if opt_nsdfg is not None:
+                    nsdfg: dace.nodes.NestedSDFG = opt_nsdfg
+                    if not has_only_states(nsdfg.sdfg):
+                        print(f"Nested SDFG inside map nodes other than states")
+                        continue
 
                 if not no_other_subset(state, map_entry):
                     if self.fail_on_unvectorizable:

@@ -1,4 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+import copy
 from dace import properties, SDFG, nodes
 from dace.sdfg.nodes import Dict
 from dace.sdfg.state import ConditionalBlock
@@ -16,17 +17,17 @@ class EliminateBranches(ppl.Pass):
     permissive = properties.Property(dtype=bool, default=False, allow_none=False)
     eps_operator_type_for_log_and_div = properties.Property(dtype=str, default="add", allow_none=True)
     apply_to_top_level_ifs = properties.Property(dtype=bool, default=False, allow_none=False)
+    try_demote_and_fuse = properties.Property(dtype=bool, default=True, allow_none=False)
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG
 
-    def _has_no_parent_maps(self, root: SDFG, sdfg: SDFG, parent_nsdfg_state: Union[SDFG, None],
+    def _has_no_parent_loops_or_maps(self, root: SDFG, sdfg: SDFG, parent_nsdfg_state: Union[SDFG, None],
                             node: ConditionalBlock) -> bool:
         parent_loops_and_maps = {
             m
             for m in cutil.get_parent_map_and_loop_scopes(
                 parent_nsdfg_state.sdfg if parent_nsdfg_state is not None else sdfg, node, None)
-            if isinstance(m, nodes.MapEntry)
         }
         return len(parent_loops_and_maps) == 0
 
@@ -44,12 +45,13 @@ class EliminateBranches(ppl.Pass):
                 t = branch_elimination.BranchElimination()
                 # If branch is top-level do not apply
                 if not self.apply_to_top_level_ifs:
-                    if self._has_no_parent_maps(root, sdfg, parent_nsdfg_state, node):
+                    if self._has_no_parent_loops_or_maps(root, sdfg, parent_nsdfg_state, node):
                         continue
 
                 t.conditional = node
                 t.parent_nsdfg_state = parent_nsdfg_state
                 t.eps_operator_type_for_log_and_div = self.eps_operator_type_for_log_and_div
+                t.try_demote_and_fuse = self.try_demote_and_fuse
                 if t.can_be_applied(graph=node.parent_graph, expr_index=0, sdfg=node.sdfg, permissive=self.permissive):
                     newly_added_scalar_names = t.apply(graph=node.parent_graph, sdfg=node.sdfg)
                     added_scalar_names = added_scalar_names.union(newly_added_scalar_names)
@@ -68,12 +70,13 @@ class EliminateBranches(ppl.Pass):
         for node in sdfg.all_control_flow_regions():
             if isinstance(node, ConditionalBlock):
                 if not self.apply_to_top_level_ifs:
-                    if self._has_no_parent_maps(root, sdfg, parent_nsdfg_state, node):
+                    if self._has_no_parent_loops_or_maps(root, sdfg, parent_nsdfg_state, node):
                         continue
                 t = branch_elimination.BranchElimination()
                 t.conditional = node
                 t.parent_nsdfg_state = parent_nsdfg_state
                 t.eps_operator_type_for_log_and_div = self.eps_operator_type_for_log_and_div
+                t.try_demote_and_fuse = self.try_demote_and_fuse
                 if all(t.only_top_level_tasklets(branch) for _, branch in node.branches):
                     # Try clean might generate multiple conditionals
                     t.try_clean(node.parent_graph, node.sdfg, lift_multi_state)
@@ -83,11 +86,12 @@ class EliminateBranches(ppl.Pass):
             for node in sdfg.all_control_flow_regions():
                 if isinstance(node, ConditionalBlock):
                     if not self.apply_to_top_level_ifs:
-                        if self._has_no_parent_maps(root, sdfg, parent_nsdfg_state, node):
+                        if self._has_no_parent_loops_or_maps(root, sdfg, parent_nsdfg_state, node):
                             continue
                     t = branch_elimination.BranchElimination()
                     t.conditional = node
                     t.parent_nsdfg_state = parent_nsdfg_state
+                    t.try_demote_and_fuse = self.try_demote_and_fuse
                     first_conditional, second_conditional = t.sequentialize_if_else_branch_for_all_subsets(
                         node.parent_graph)
                     # We still can't apply the pass on these branches also try to lift states outside the branch
@@ -175,11 +179,14 @@ class EliminateBranches(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, d: Dict) -> Tuple[int, Set[str]]:
         if self.clean_only is True:
             self.try_clean = True
-        num_applied, added_scalar_names = self._apply_eliminate_branches(sdfg, sdfg, None)
+        cur_num_applied, cur_added_scalar_names = self._apply_eliminate_branches(sdfg, sdfg, None)
 
-        #changed = True
-        #while changed:
-        #    changed = self._apply_symbol_removal(sdfg)
+        num_applied = cur_num_applied
+        added_scalar_names = copy.deepcopy(cur_added_scalar_names)
+        while cur_num_applied: 
+            cur_num_applied, cur_added_scalar_names = self._apply_eliminate_branches(sdfg, sdfg, None)
+            added_scalar_names = added_scalar_names.union(cur_added_scalar_names)
+            num_applied += cur_num_applied
 
         sdfg.validate()
         return num_applied, added_scalar_names

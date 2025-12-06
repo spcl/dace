@@ -52,12 +52,13 @@ class RemoveEmptyStates(ppl.Pass):
                     if len(g.out_edges(state)) == 1:
                         in_edge = g.in_edges(state)[0]
                         out_edge = g.out_edges(state)[0]
-                        joined_assignments = copy.deepcopy(in_edge.data.assignments)
-                        joined_assignments.update(out_edge.data.assignments)
-                        src = in_edge.src
-                        dst = out_edge.dst
-                        g.remove_node(state)
-                        g.add_edge(src, dst, InterstateEdge(assignments=joined_assignments))
+                        if out_edge.data.assignments == dict():
+                            joined_assignments = copy.deepcopy(in_edge.data.assignments)
+                            joined_assignments.update(out_edge.data.assignments)
+                            src = in_edge.src
+                            dst = out_edge.dst
+                            g.remove_node(state)
+                            g.add_edge(src, dst, InterstateEdge(assignments=joined_assignments))
 
         for state in sdfg.all_states():
             for node in state.nodes():

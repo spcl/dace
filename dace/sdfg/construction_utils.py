@@ -591,6 +591,30 @@ def get_parent_map_and_loop_scopes(root_sdfg: dace.SDFG, node: Union[dace.nodes.
 
     return parent_scopes
 
+def get_parent_map_and_loop_scopes_cfg(root_cfg: ControlFlowRegion, 
+                                       node: Union[dace.nodes.MapEntry, ControlFlowRegion,
+                                                    dace.nodes.Tasklet, ConditionalBlock],
+                                       parent_state: Union[dace.SDFGState, None]):
+    scope_dict = parent_state.scope_dict() if parent_state is not None else None
+    num_parent_maps_and_loops = 0
+    cur_node = node
+    parent_scopes = list()
+
+    if isinstance(cur_node, (dace.nodes.MapEntry, dace.nodes.Tasklet)):
+        while scope_dict[cur_node] is not None:
+            if isinstance(scope_dict[cur_node], dace.nodes.MapEntry):
+                num_parent_maps_and_loops += 1
+                parent_scopes.append(scope_dict[cur_node])
+            cur_node = scope_dict[cur_node]
+
+    parent_graph = parent_state.parent_graph if parent_state is not None else node.parent_graph
+    while parent_graph != root_cfg:
+        if isinstance(parent_graph, LoopRegion):
+            num_parent_maps_and_loops += 1
+            parent_scopes.append(parent_graph)
+        parent_graph = parent_graph.parent_graph
+
+    return parent_scopes
 
 def get_parent_maps(root_sdfg: dace.SDFG, node: dace.nodes.MapEntry, parent_state: dace.SDFGState):
 

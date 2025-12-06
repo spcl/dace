@@ -17,6 +17,7 @@ import dace.sdfg.tasklet_utils as tutil
 from typing import Tuple, Set, Union
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation.passes import FuseStates
+from dace.transformation.passes.vectorization.remove_empty_states import RemoveEmptyStates
 
 
 def remove_symbol_assignments(graph: ControlFlowRegion, sym_name: str):
@@ -178,6 +179,7 @@ class BranchElimination(transformation.MultiStateTransformation):
                                                             allow_none=False,
                                                             default="add",
                                                             choices=["max", "add"])
+    try_demote_and_fuse = properties.Property(dtype=bool, default=False, allow_none=False)
 
     @classmethod
     def expressions(cls):
@@ -556,7 +558,7 @@ class BranchElimination(transformation.MultiStateTransformation):
                     return False
             for node in state.nodes():
                 if isinstance(node, dace.nodes.Tasklet):
-                    parent_maps = cutil.get_parent_map_and_loop_scopes(root_sdfg=graph.sdfg,
+                    parent_maps = cutil.get_parent_map_and_loop_scopes_cfg(root_cfg=graph,
                                                                        node=node,
                                                                        parent_state=state)
                     checked_at_least_one_tasklet = True
@@ -1789,6 +1791,7 @@ class BranchElimination(transformation.MultiStateTransformation):
                 t1.conditional = first_if
                 if sdfg.parent_nsdfg_node is not None:
                     t1.parent_nsdfg_state = self.parent_nsdfg_state
+                t1.try_demote_and_fuse = self.try_demote_and_fuse
                 # Right now can_be_applied False because the is reused, but we do not care about
                 # this type of a reuse - so call permissive=True
                 assert t1.can_be_applied(graph=graph, expr_index=0, sdfg=sdfg, permissive=True)
@@ -1798,6 +1801,7 @@ class BranchElimination(transformation.MultiStateTransformation):
                 t2.conditional = second_if
                 if sdfg.parent_nsdfg_node is not None:
                     t2.parent_nsdfg_state = self.parent_nsdfg_state
+                t2.try_demote_and_fuse = self.try_demote_and_fuse
                 # Right now can_be_applied False because the is reused, but we do not care about
                 # this type of a reuse - so call permissive=True
                 assert t2.can_be_applied(graph=graph, expr_index=0, sdfg=sdfg, permissive=True)
@@ -2051,7 +2055,84 @@ class BranchElimination(transformation.MultiStateTransformation):
         else:
             self.conditional.sdfg.validate()
 
+        # Right and left side are fused, the new CFG might have still a symbol used for the condition
+        # If this is set try to demote that into a scalar, and then try to demote that symbol
+        if self.try_demote_and_fuse is True:
+            print(graph, graph.nodes(), new_state)
+            if graph.start_block != new_state:
+                src_nodes = {e.src for e in graph.in_edges(new_state)}
+                if len(src_nodes) > 0:
+                    src_edges = {e for e in graph.in_edges(new_state)}
+                    assert len(src_nodes) == 1
+                    assert len(src_edges) == 1
+                    src_edge = src_edges.pop()
+                    for k in {k for k in src_edge.data.assignments.keys()}:
+                        sdutil.demote_symbol_to_scalar(graph.sdfg, k)
+                    RemoveEmptyStates().apply_pass(graph.sdfg, {})
+                    src_nodes = {e.src for e in graph.in_edges(new_state)}
+                    src_edges = {e for e in graph.in_edges(new_state)}
+                    graph.sdfg.validate()
+                    if len(src_nodes) > 0:
+                        assert len(src_edges) == 1
+                        assert len(src_nodes) == 1
+                        src_node = src_nodes.pop()
+                        src_edge = src_edges.pop()
+                        if src_edge.data.assignments == dict():
+                            self._force_fuse(src_node, new_state)
+                            RemoveEmptyStates().apply_pass(graph.sdfg, {})
+                    graph.sdfg.validate()
+
+
         return added_scalar_names
+
+    def _force_fuse(self, state1: dace.SDFGState, state2: dace.SDFGState):
+        state1_sink_nodes = {n for n in state1.data_nodes() if state1.out_degree(n) == 0}
+        state1_sink_data = {n.data for n in state1.data_nodes() if state1.out_degree(n) == 0}
+        state2_src_nodes = {n for n in state2.data_nodes() if state2.in_degree(n) == 0}
+        state2_src_data = {n.data for n in state2.data_nodes() if state2.in_degree(n) == 0}
+
+        g = state1.parent_graph
+        assert g == state2.parent_graph
+
+        assert len({e for e in g.out_edges(state1) if e.dst == state2}) == 1
+        assert {e for e in g.out_edges(state1) if e.dst == state2}.pop().data.assignments == dict()
+
+        node_map = dict()
+        for n in state2.nodes():
+            if n in state2_src_nodes:
+                if n.data in state1_sink_data:
+                    sink_nodes = {n2 for n2 in state1_sink_nodes if n2.data == n.data}
+                    assert len(sink_nodes) == 1
+                    node_map[n] = sink_nodes.pop()
+                else:
+                    cpnode = copy.deepcopy(n)
+                    state1.add_node(cpnode)
+                    node_map[n] = cpnode
+            else:
+                cpnode = copy.deepcopy(n)
+                state1.add_node(cpnode)
+                node_map[n] = cpnode
+
+        for e in state2.edges():
+            nsrc = node_map[e.src]
+            ndst = node_map[e.dst]
+            state1.add_edge(nsrc, e.src_conn, ndst, e.dst_conn, copy.deepcopy(e.data))
+            if e.src_conn is not None and e.src_conn not in nsrc.out_connectors:
+                nsrc.add_out_connector(e.src_conn)
+            if e.dst_conn is not None and e.dst_conn not in ndst.in_connectors:
+                nsrc.add_in_connector(e.dst_conn)
+
+        oes = g.out_edges(state2)
+        g.remove_node(state2)
+        for oe in oes:
+            g.add_edge(state1, oe.dst, copy.deepcopy(oe.data))
+
+        if g.start_block == state1:
+            oes = g.out_edges(state1)
+            g.remove_node(state1)
+            g.add_node(state1, is_start_block=True)
+            for oe in oes:
+                g.add_edge(state1, oe.dst, copy.deepcopy(oe.data))
 
     def _find_previous_write(self, state: dace.SDFGState, sink: dace.nodes.Tasklet, data: str,
                              skip_set: Set[dace.nodes.Node]):
