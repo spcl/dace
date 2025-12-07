@@ -8,6 +8,7 @@ import numpy as np
 from dace.frontend.python.parser import DaceProgram
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes.vectorization.vectorize_cpu import VectorizeCPU
+from dace.transformation.passes.vectorization.detect_gather import DetectGather
 from math import log, exp
 
 ###############################################################################
@@ -501,3 +502,63 @@ def test_intrinsic(func: DaceProgram, config: List[Dict[str, str]]):
         simplify=True,
         skip_simplify=["ScalarToSymbolPromotion"],
     )
+
+
+@dace.program
+def dace_strided_gather(A: dace.float64[N], B: dace.int64[N], C: dace.float64[N], D: dace.float64[N]):
+    for i in dace.map[0:N]:
+        C[i] = A[B[i]] * D[i]
+
+
+@pytest.mark.parametrize("config", select_env_flags())
+def test_strided_gather(config: List[Dict[str, str]]):
+    for k, v in config.items():
+        os.environ[k] = v
+    # -------------------------
+    # Prepare test arrays
+    # -------------------------
+    A = np.random.rand(N)
+    D = np.random.rand(N)
+    B = np.random.randint(0, N, size=N, dtype=np.int64)  # ensures B[i]*2 < N
+    C = np.zeros_like(A)
+
+    arrays = dict(A=A, B=B, C=C, D=D)
+
+    # Deepcopy for baseline and vectorized execution
+    arr_orig = {k: copy.deepcopy(v) for k, v in arrays.items()}
+    arr_vec = {k: copy.deepcopy(v) for k, v in arrays.items()}
+
+    # -------------------------
+    # Build baseline SDFG
+    # -------------------------
+    sdfg = dace_strided_gather.to_sdfg(simplify=False)
+    sdfg.name = "strided_gather"
+
+    simplify_sdfg_if_needed(sdfg, simplify=True, skip_simplify=["ScalarToSymbolPromotion"])
+    sdfg.apply_transformations_repeated(LoopToMap())
+    sdfg.simplify()
+
+    # -------------------------
+    # Build vectorized SDFG
+    # -------------------------
+    vsdfg = copy.deepcopy(sdfg)
+    vsdfg.name = "strided_gather_vec"
+
+    apply_vectorization_pass(vsdfg, vector_width=8)
+    DetectGather().apply_pass(vsdfg, {})
+    vsdfg.simplify()
+
+    # -------------------------
+    # Execute baseline + vectorized
+    # -------------------------
+    compile_and_run(sdfg, arr_orig, params=dict())
+    compile_and_run(vsdfg, arr_vec, params=dict())
+
+    # -------------------------
+    # Compare results
+    # -------------------------
+    for name in arrays:
+        assert np.allclose(arr_orig[name], arr_vec[name], rtol=1e-32), \
+            f"{name} mismatch:\n{arr_orig[name] - arr_vec[name]}"
+
+    return vsdfg
