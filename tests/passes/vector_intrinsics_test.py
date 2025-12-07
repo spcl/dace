@@ -1,5 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import os
+from typing import Dict, List
 import dace
 import pytest
 import copy
@@ -125,7 +126,8 @@ def run_vectorization_test(
     if sdfg_name:
         sdfg.name = sdfg_name
 
-    simplify_sdfg_if_needed(sdfg, simplify, skip_simplify)
+    if simplify:
+        sdfg.simplify(validate=True, validate_all=True, skip=skip_simplify)
 
     if apply_loop_to_map:
         sdfg.apply_transformations_repeated(LoopToMap())
@@ -485,32 +487,27 @@ INTRINSIC_FUNCS = [
 ]
 
 
+@pytest.mark.parametrize("config", select_env_flags())
 @pytest.mark.parametrize("func", INTRINSIC_FUNCS)
-def test_intrinsic(func: DaceProgram):
-    configs = select_env_flags()
+def test_intrinsic(func: DaceProgram, config: List[Dict[str, str]]):
+    for k, v in config.items():
+        os.environ[k] = v
 
-    # Apply env vars for this test run
-    for config in configs:
-        for k, v in config.items():
-            os.environ[k] = v
+    A = np.random.rand(N)
+    B = np.random.rand(N)
+    C = np.zeros_like(A)
 
-        # Prepare test arrays (always same shape)
-        A = np.random.rand(N)
-        B = np.random.rand(N)
-        C = np.zeros_like(A)
+    arrays = {"A": A, "B": B, "C": C}
 
-        arrays = dict(A=A, B=B, C=C)
+    cfg_label = "_".join(f"{k}{v}" for k, v in config.items())
 
-        # Derive SDFG name from function name
-        sdfg_name = func.name
-
-        run_vectorization_test(
-            dace_func=func,
-            arrays=arrays,
-            params={},
-            save_sdfgs=True,
-            sdfg_name=sdfg_name,
-            apply_loop_to_map=True,
-        )
-
-        print(f"[OK] {sdfg_name}")
+    run_vectorization_test(
+        dace_func=func,
+        arrays=arrays,
+        params={},
+        save_sdfgs=True,
+        sdfg_name=f"{func.name}_{cfg_label}",
+        apply_loop_to_map=True,
+        simplify=True,
+        skip_simplify=["ScalarToSymbolPromotion"],
+    )

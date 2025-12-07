@@ -1478,6 +1478,7 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
     c1, c2, op = info.get("constant1"), info.get("constant2"), info.get("op")
     vw = vector_width
     is_commutative = op in {"+", "*", "==", "!="}
+    print(ttype)
 
     # Cast boolean constants to C-compatible names
     PYTHON_TO_CPP_OPERATORS = {"and": "&&", "or": "||", "not": "!"}
