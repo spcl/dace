@@ -409,7 +409,7 @@ def _split_code_on_assignment(code_str: str) -> Tuple[str, str]:
     return lhs_str, rhs_str
 
 
-def _extract_non_connector_syms_from_tasklet(node: dace.nodes.Tasklet) -> typing.Set[str]:
+def _extract_non_connector_syms_from_tasklet(node: dace.nodes.Tasklet, state) -> typing.Set[str]:
     """
     Identify free symbols in tasklet code that are not input/output connectors.
 
@@ -435,7 +435,7 @@ def _extract_non_connector_syms_from_tasklet(node: dace.nodes.Tasklet) -> typing
     connectors = {str(s) for s in set(node.in_connectors.keys()).union(set(node.out_connectors.keys()))}
     code_lhs, code_rhs = _split_code_on_assignment(node.code.as_string)
     code_rhs = code_rhs.replace("math.", "")
-    all_syms = {str(s) for s in dace.symbolic.SymExpr(code_rhs).free_symbols}
+    all_syms = {str(s) for s in dace.symbolic.symbols_in_code(code_rhs, potential_symbols={str(s) for s in state.sdfg.symbols})}
     real_free_syms = all_syms - connectors
     free_non_connector_syms = {str(s) for s in real_free_syms}
     return free_non_connector_syms
@@ -876,7 +876,7 @@ def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
         except Exception:
             has_constant = False
 
-        free_non_connector_syms = _extract_non_connector_syms_from_tasklet(node)
+        free_non_connector_syms = _extract_non_connector_syms_from_tasklet(node, state)
         if len(free_non_connector_syms) == 1:
             has_constant = True
             constant = free_non_connector_syms.pop()
@@ -956,8 +956,9 @@ def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
             info_dict.update({"type": TaskletType.SCALAR_SCALAR, "rhs1": rhs1, "rhs2": rhs2, "op": op})
             return info_dict
     elif n_in == 0:
-        free_syms = _extract_non_connector_syms_from_tasklet(node)
+        free_syms = _extract_non_connector_syms_from_tasklet(node, state)
         bound_syms = _extract_non_connector_bound_syms_from_tasklet(node.code.as_string)
+        print(free_syms, bound_syms, node, node.code.as_string)
         op = _extract_single_op(code_str, default_to_assignment=True)
         if len(free_syms) == 2:
             assert len(bound_syms) == 0

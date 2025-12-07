@@ -660,6 +660,24 @@ tasklet_infos = [
         "op": "!=",
         "constant1": None,
         "constant2": None
+    }),
+    ("out = s1 != 0.5", "array", {}, {}, {"s1"}, {
+        "type": tutil.TaskletType.SYMBOL_SYMBOL,
+        "lhs": "out",
+        "rhs1": None,
+        "rhs2": None,
+        "op": "!=",
+        "constant1": "s1",
+        "constant2": '0.5'
+    }),
+    ("out = s1 == 0.5", "array", {}, {}, {"s1"}, {
+        "type": tutil.TaskletType.SYMBOL_SYMBOL,
+        "lhs": "out",
+        "rhs1": None,
+        "rhs2": None,
+        "op": "==",
+        "constant1": "s1",
+        "constant2": '0.5'
     })
 ]
 

@@ -265,6 +265,17 @@ def dace_s441(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[
             else:
                 a[i] = a[i] + c[i] * c[i]
 
+@dace.program
+def dace_s441_v2(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D],
+              c: dace.float64[LEN_1D], d: dace.float64[LEN_1D]):
+    for i in dace.map[0:LEN_1D:1]:
+        if d[i] < 0.0:
+            a[i] = a[i] + b[i] * c[i]
+        elif d[i] == 0.0:
+            a[i] = a[i] + b[i] * b[i]
+        else:
+            a[i] = a[i] + c[i] * c[i]
+
 
 def test_s441():
     LEN_1D_val = 64  # example length
@@ -294,6 +305,39 @@ def test_s441():
         params={"LEN_1D": LEN_1D_val},
         save_sdfgs=True,
         sdfg_name="dace_s441",
+        apply_loop_to_map=True,
+    )
+
+    return a
+
+def test_s441_v2():
+    LEN_1D_val = 64  # example length
+
+    # Allocate random inputs
+    a = np.random.rand(LEN_1D_val).astype(np.float64)
+    b = np.random.rand(LEN_1D_val).astype(np.float64)
+    c = np.random.rand(LEN_1D_val).astype(np.float64)
+    d = np.random.randn(LEN_1D_val).astype(np.float64)  # includes negative, zero, positive
+
+    sdfg = dace_s441_v2.to_sdfg()
+    eliminate_branches.EliminateBranches().apply_pass(sdfg, {})
+    branches = {n for (n, g) in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
+    if len(branches) > 0:
+        sdfg.save("branch_elimination_failed_s441_v2.sdfg")
+        assert False
+
+    # Run DaCe test harness (your helper function)
+    run_vectorization_test(
+        dace_func=dace_s441_v2,
+        arrays={
+            "a": a,
+            "b": b,
+            "c": c,
+            "d": d
+        },
+        params={"LEN_1D": LEN_1D_val},
+        save_sdfgs=True,
+        sdfg_name="dace_s441_v2",
         apply_loop_to_map=True,
     )
 

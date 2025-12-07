@@ -1742,6 +1742,9 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         assert len(out_edges) == 1
         lhs_data = state.sdfg.arrays[out_edges[0].data.data]
         l_op = rhs1 if rhs1 is not None else c1
+        if op == "!=":
+            state.sdfg.save("x.sdfg")
+            raise Exception(lhs, rhs1, rhs2, c1, c2)
         expr = f"{op}{l_op}"
         if isinstance(lhs_data, dace.data.Array):
             node.code = dace.properties.CodeBlock(code="\n".join([f"{lhs}[{i}] = {expr}" for i in range(vw)]) + "\n",
