@@ -9,7 +9,7 @@ from dace.fpga_testing import fpga_test, xilinx_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory, StreamingComposition
 from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
-from dace.config import set_temporary
+from dace.autodiff import add_backward_pass
 
 # Data set sizes
 # NI, NJ, NK
@@ -38,6 +38,10 @@ def initialize(NI, NJ, NK, datatype=np.float64):
     B = np.fromfunction(lambda k, j: (k * (j + 2) % NJ) / NJ, (NK, NJ), dtype=datatype)
 
     return alpha, beta, C, A, B
+
+
+def gemm_jax_kernel(jnp, alpha, beta, A, B, C):
+    return jnp.sum(alpha * A @ B + beta * C)
 
 
 def run_gemm(device_type: dace.dtypes.DeviceType):
@@ -76,6 +80,40 @@ def run_gemm(device_type: dace.dtypes.DeviceType):
     return sdfg
 
 
+def run_gemm_autodiff():
+    import jax
+    import jax.numpy as jnp
+
+    # Initialize data (polybench mini size)
+    NI, NJ, NK = sizes["mini"]
+    alpha, beta, C, A, B = initialize(NI, NJ, NK)
+
+    # Initialize gradient computation data
+    gradient_A = np.zeros_like(A)
+    gradient___return = np.ones((1, ), dtype=np.float64)
+
+    # Define sum reduction for the output
+    @dc.program
+    def autodiff_kernel(alpha: dc.float64, beta: dc.float64, C: dc.float64[NI, NJ], A: dc.float64[NI, NK],
+                        B: dc.float64[NK, NJ]):
+        gemm_kernel(alpha, beta, C, A, B)
+        return np.sum(C)
+
+    # Add the backward pass to the SDFG
+    sdfg = autodiff_kernel.to_sdfg()
+    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"])
+    sdfg(alpha, beta, C, A, B, NI=NI, NJ=NJ, NK=NK, gradient_A=gradient_A, gradient___return=gradient___return)
+
+    # Enable float64 support
+    jax.config.update("jax_enable_x64", True)
+
+    # Numerically validate vs JAX
+    jax_kernel = lambda alpha, beta, A, B, C: gemm_jax_kernel(jnp, alpha, beta, A, B, C)
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=2), static_argnums=(0, 1))
+    jax_grad_A = jax_grad(alpha, beta, A, B, C)
+    np.testing.assert_allclose(gradient_A, jax_grad_A)
+
+
 def test_cpu():
     run_gemm(dace.dtypes.DeviceType.CPU)
 
@@ -83,6 +121,12 @@ def test_cpu():
 @pytest.mark.gpu
 def test_gpu():
     run_gemm(dace.dtypes.DeviceType.GPU)
+
+
+@pytest.mark.autodiff
+def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
+    run_gemm_autodiff()
 
 
 @fpga_test(assert_ii_1=False, xilinx=False)
@@ -100,6 +144,7 @@ if __name__ == "__main__":
 
     if target == "cpu":
         run_gemm(dace.dtypes.DeviceType.CPU)
+        run_gemm_autodiff()
     elif target == "gpu":
         run_gemm(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":

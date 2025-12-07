@@ -9,7 +9,7 @@ from dace.fpga_testing import fpga_test, xilinx_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory, StreamingComposition
 from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
-from dace.config import set_temporary
+from dace.autodiff import add_backward_pass
 
 # Data set sizes
 # N
@@ -33,6 +33,12 @@ def initialize(N, datatype=np.float64):
     A = np.fromfunction(lambda i, j: (i * j % N) / N, (N, N), dtype=datatype)
 
     return x1, x2, y_1, y_2, A
+
+
+def mvt_jax_kernel(jnp, x1, x2, y_1, y_2, A):
+    x1 += A @ y_1
+    x2 += y_2 @ A
+    return jnp.sum(x2)
 
 
 def run_mvt(device_type: dace.dtypes.DeviceType):
@@ -73,6 +79,41 @@ def run_mvt(device_type: dace.dtypes.DeviceType):
     return sdfg
 
 
+def run_mvt_autodiff():
+    import jax
+    import jax.numpy as jnp
+
+    # Initialize data (polybench mini size)
+    N = sizes["mini"]
+    x1, x2, y_1, y_2, A = initialize(N)
+
+    # Initialize gradient computation data
+    gradient_A = np.zeros_like(A)
+    gradient___return = np.ones((1, ), dtype=np.float64)
+
+    # Define sum reduction for the output
+    @dc.program
+    def autodiff_kernel(x1: dc.float64[N], x2: dc.float64[N], y_1: dc.float64[N], y_2: dc.float64[N], A: dc.float64[N,
+                                                                                                                    N]):
+        mvt_kernel(x1, x2, y_1, y_2, A)
+        return np.sum(x2)
+
+    # Add the backward pass to the SDFG
+    sdfg = autodiff_kernel.to_sdfg()
+    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"])
+    sdfg(x1, x2, y_1, y_2, A, N=N, gradient_A=gradient_A, gradient___return=gradient___return)
+
+    # Enable float64 support
+    jax.config.update("jax_enable_x64", True)
+
+    # Numerically validate vs JAX
+    jax_kernel = lambda x1, x2, y_1, y_2, A: mvt_jax_kernel(jnp, x1, x2, y_1, y_2, A)
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=4))
+    x1_jax, x2_jax, y_1_jax, y_2_jax, A_jax = initialize(N)
+    jax_grad_A = jax_grad(x1_jax, x2_jax, y_1_jax, y_2_jax, A_jax)
+    np.testing.assert_allclose(gradient_A, jax_grad_A)
+
+
 def test_cpu():
     run_mvt(dace.dtypes.DeviceType.CPU)
 
@@ -80,6 +121,12 @@ def test_cpu():
 @pytest.mark.gpu
 def test_gpu():
     run_mvt(dace.dtypes.DeviceType.GPU)
+
+
+@pytest.mark.autodiff
+def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
+    run_mvt_autodiff()
 
 
 @fpga_test(assert_ii_1=False)
@@ -97,6 +144,7 @@ if __name__ == "__main__":
 
     if target == "cpu":
         run_mvt(dace.dtypes.DeviceType.CPU)
+        run_mvt_autodiff()
     elif target == "gpu":
         run_mvt(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":
