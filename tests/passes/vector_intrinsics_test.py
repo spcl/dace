@@ -11,8 +11,9 @@ from dace.transformation.passes.vectorization.vectorize_cpu import VectorizeCPU
 from math import log, exp
 
 ###############################################################################
-# Utility: Detect CPU Vector Capabilities  
+# Utility: Detect CPU Vector Capabilities
 ###############################################################################
+
 
 def detect_cpu_vector_features():
     """
@@ -37,9 +38,9 @@ def detect_cpu_vector_features():
             out = subprocess.check_output(["lscpu"], text=True).lower()
         except Exception:
             out = ""
-        
+
         return {
-            "avx2":   ("avx2" in out),
+            "avx2": ("avx2" in out),
             "avx512": ("avx512" in out),
             "neon": False,
             "sve": False,
@@ -53,9 +54,9 @@ def detect_cpu_vector_features():
             out = ""
 
         return {
-            "neon":  ("asimd" in out or "neon" in out),
-            "sve":   ("sve" in out),
-            "sve2":  ("sve2" in out),
+            "neon": ("asimd" in out or "neon" in out),
+            "sve": ("sve" in out),
+            "sve2": ("sve2" in out),
             "avx2": False,
             "avx512": False,
         }
@@ -65,8 +66,9 @@ def detect_cpu_vector_features():
 
 
 ###############################################################################
-# Core Vectorization Test Harness  
+# Core Vectorization Test Harness
 ###############################################################################
+
 
 def compile_and_run(sdfg, arrays, params):
     """Compile SDFG and execute it."""
@@ -100,8 +102,9 @@ def simplify_sdfg_if_needed(sdfg, simplify, skip_simplify):
 
 
 ###############################################################################
-# Main Test Entry  
+# Main Test Entry
 ###############################################################################
+
 
 def run_vectorization_test(
     dace_func,
@@ -119,7 +122,7 @@ def run_vectorization_test(
 
     # deepcopy input arrays
     arr_orig = {k: copy.deepcopy(v) for k, v in arrays.items()}
-    arr_vec  = {k: copy.deepcopy(v) for k, v in arrays.items()}
+    arr_vec = {k: copy.deepcopy(v) for k, v in arrays.items()}
 
     # === Build original SDFG ===
     sdfg = dace_func.to_sdfg(simplify=False)
@@ -146,8 +149,8 @@ def run_vectorization_test(
         vsdfg.save(f"{sdfg_name}_vec.sdfg")
 
     # === Execute both ===
-    compile_and_run(sdfg,   arr_orig, params)
-    compile_and_run(vsdfg,  arr_vec,  params)
+    compile_and_run(sdfg, arr_orig, params)
+    compile_and_run(vsdfg, arr_vec, params)
 
     # === Compare ===
     for name in arrays:
@@ -160,6 +163,7 @@ def run_vectorization_test(
                 f"{name}: max abs diff = {np.max(np.abs(diff))}"
 
     return vsdfg
+
 
 def select_env_flags():
     """
@@ -175,58 +179,41 @@ def select_env_flags():
     # ------------------------
     # 1. Scalar reference case
     # ------------------------
-    configs.append({
-        "__DACE_USE_INTRINSICS": "0"
-    })
+    configs.append({"__DACE_USE_INTRINSICS": "0"})
 
     # ------------------------
     # 2. AVX-512 available
     # ------------------------
     if feats.get("avx512", False):
         # AVX-512 intrinsics ON
-        configs.append({
-            "__DACE_USE_INTRINSICS": "1",
-            "__DACE_USE_AVX512": "1"
-        })
+        configs.append({"__DACE_USE_INTRINSICS": "1", "__DACE_USE_AVX512": "1"})
 
         # Also test AVX2 mode explicitly
         configs.append({
             "__DACE_USE_INTRINSICS": "1",
-            "__DACE_USE_AVX512": "0"   # forces AVX2 fallback in headers
+            "__DACE_USE_AVX512": "0"  # forces AVX2 fallback in headers
         })
 
     # ------------------------
     # 3. AVX2 but no AVX-512
     # ------------------------
     elif feats.get("avx2", False):
-        configs.append({
-            "__DACE_USE_INTRINSICS": "1",
-            "__DACE_USE_AVX512": "0"
-        })
+        configs.append({"__DACE_USE_INTRINSICS": "1", "__DACE_USE_AVX512": "0"})
 
     # ------------------------
     # 4. SVE2 / SVE available
     # ------------------------
     if feats.get("sve2", False) or feats.get("sve", False):
-        configs.append({
-            "__DACE_USE_INTRINSICS": "1",
-            "__DACE_USE_SVE": "1"
-        })
+        configs.append({"__DACE_USE_INTRINSICS": "1", "__DACE_USE_SVE": "1"})
 
         # Test SVE disabled with intrinsics ON → should fall back to NEON/scalar
-        configs.append({
-            "__DACE_USE_INTRINSICS": "1",
-            "__DACE_USE_SVE": "0"
-        })
+        configs.append({"__DACE_USE_INTRINSICS": "1", "__DACE_USE_SVE": "0"})
 
     # ------------------------
     # 5. NEON-only platform
     # ------------------------
     elif feats.get("neon", False):
-        configs.append({
-            "__DACE_USE_INTRINSICS": "1",
-            "__DACE_USE_SVE": "0"
-        })
+        configs.append({"__DACE_USE_INTRINSICS": "1", "__DACE_USE_SVE": "0"})
 
     print("Generated test configurations:")
     for cfg in configs:
@@ -234,7 +221,9 @@ def select_env_flags():
 
     return configs
 
+
 N = 64
+
 
 @dace.program
 def dace_add(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N]):
@@ -313,6 +302,7 @@ def dace_vector_copy_w_scalar(A: dace.float64[N], B: dace.float64[N], C: dace.fl
     for i in dace.map[0:N]:
         C[i] = 0.5
 
+
 @dace.program
 def dace_vector_exp(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N]):
     for i in dace.map[0:N]:
@@ -323,6 +313,7 @@ def dace_vector_exp(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N]):
 def dace_vector_log(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N]):
     for i in dace.map[0:N]:
         C[i] = log(A[i])
+
 
 @dace.program
 def dace_vector_min(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N]):
@@ -346,6 +337,7 @@ def dace_vector_max(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N]):
 def dace_vector_max_w_scalar(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N]):
     for i in dace.map[0:N]:
         C[i] = min(A[i], 0.5)
+
 
 @dace.program
 def dace_vector_gt(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N]):
@@ -441,8 +433,6 @@ def dace_vector_ne(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N]):
 def dace_vector_ne_w_scalar(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N]):
     for i in dace.map[0:N]:
         C[i] = A[i] != 0.5
-
-
 
 
 ###############################################################################

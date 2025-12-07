@@ -435,7 +435,11 @@ def _extract_non_connector_syms_from_tasklet(node: dace.nodes.Tasklet, state) ->
     connectors = {str(s) for s in set(node.in_connectors.keys()).union(set(node.out_connectors.keys()))}
     code_lhs, code_rhs = _split_code_on_assignment(node.code.as_string)
     code_rhs = code_rhs.replace("math.", "")
-    all_syms = {str(s) for s in dace.symbolic.symbols_in_code(code_rhs, potential_symbols={str(s) for s in state.sdfg.symbols})}
+    all_syms = {
+        str(s)
+        for s in dace.symbolic.symbols_in_code(code_rhs, potential_symbols={str(s)
+                                                                            for s in state.sdfg.symbols})
+    }
     real_free_syms = all_syms - connectors
     free_non_connector_syms = {str(s) for s in real_free_syms}
     return free_non_connector_syms

@@ -265,9 +265,9 @@ def dace_s441(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[
             else:
                 a[i] = a[i] + c[i] * c[i]
 
+
 @dace.program
-def dace_s441_v2(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D],
-              c: dace.float64[LEN_1D], d: dace.float64[LEN_1D]):
+def dace_s441_v2(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D], d: dace.float64[LEN_1D]):
     for i in dace.map[0:LEN_1D:1]:
         if d[i] < 0.0:
             a[i] = a[i] + b[i] * c[i]
@@ -309,6 +309,7 @@ def test_s441():
     )
 
     return a
+
 
 def test_s441_v2():
     LEN_1D_val = 64  # example length
