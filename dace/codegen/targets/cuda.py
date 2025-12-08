@@ -30,6 +30,7 @@ from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
 from dace.transformation import helpers as xfh
 from dace.transformation.passes import analysis as ap
+from dace.transformation.dataflow.add_threadblock_map import AddThreadBlockMap
 
 if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
@@ -84,6 +85,10 @@ class CUDACodeGen(TargetCodeGenerator):
         self._global_sdfg: SDFG = sdfg
         self._toplevel_schedule = None
         self._arglists: Dict[nodes.MapEntry, Dict[str, dt.Data]] = {}
+        """
+        # Keep track of which kernels got a threadBlock map inserted
+        self._kernels_with_inserted_tb_maps: Set[nodes.MapEntry] = set()
+        """
 
         # Keep track of current "scope entry/exit" code streams for extra
         # code generation
@@ -152,6 +157,21 @@ class CUDACodeGen(TargetCodeGenerator):
                                       CUDACodeGen,
                                       'CUDA',
                                       target_type=target_type)
+
+        # TODO: Below implementation is a bit wasteful to iterate over all nodes.
+        # Better: Do this in a dedicated pass and do not e.g. recurse further into
+        # a GPU_Device-scheduled map.
+        # Identify kernels with inserted GPU_ThreadBlock-scheduled maps
+        old_nodes = set(node for node, _ in sdfg.all_nodes_recursive())
+
+        sdfg.apply_transformations_once_everywhere(AddThreadBlockMap, )
+
+        new_nodes = set(node for node, _ in sdfg.all_nodes_recursive()) - old_nodes
+
+        self._kernels_with_inserted_tb_maps = {
+            n
+            for n in new_nodes if isinstance(n, nodes.MapEntry) and n.schedule == dtypes.ScheduleType.GPU_Device
+        }
 
         # Find GPU<->GPU strided copies that cannot be represented by a single copy command
         for e, state in list(sdfg.all_edges_recursive()):
@@ -1702,21 +1722,29 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
         node = dfg_scope.source_nodes()[0]
 
-        # Set kernel launch bounds
-        if node.gpu_launch_bounds == "-1":
-            launch_bounds = ''
-        elif node.gpu_launch_bounds == "0":
-            if any(symbolic.issymbolic(b) for b in block_dims):
+        # Set maxnreg and launch bounds
+        assert node.gpu_maxnreg is not None and node.gpu_maxnreg >= 0
+        if node.gpu_maxnreg == 0:
+            maxnreg_str = ''
+            # Set kernel launch bounds
+            if node.gpu_launch_bounds == "-1":
                 launch_bounds = ''
+            elif node.gpu_launch_bounds == "0":
+                if any(symbolic.issymbolic(b) for b in block_dims):
+                    launch_bounds = ''
+                else:
+                    launch_bounds = f'__launch_bounds__({_topy(prod(block_dims))})'
             else:
-                launch_bounds = f'__launch_bounds__({_topy(prod(block_dims))})'
+                launch_bounds = f'__launch_bounds__({node.gpu_launch_bounds})'
         else:
-            launch_bounds = f'__launch_bounds__({node.gpu_launch_bounds})'
+            maxnreg_str = f'__maxnreg__({node.gpu_maxnreg})'
+            launch_bounds = ''
 
         # Write kernel prototype
         self._localcode.write(
-            '__global__ void %s %s(%s) {\n' %
-            (launch_bounds, kernel_name, ', '.join(kernel_args_typed + extra_kernel_args_typed)), cfg, state_id, node)
+            '__global__ void %s %s %s(%s) {\n' %
+            (maxnreg_str, launch_bounds, kernel_name, ', '.join(kernel_args_typed + extra_kernel_args_typed)), cfg,
+            state_id, node)
 
         # Write constant expressions in GPU code
         self._frame.generate_constants(sdfg, self._localcode)
@@ -2074,8 +2102,18 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
             if len(detected_block_sizes) > 1:
 
-                # Error when both gpu_block_size and thread-block maps were defined and conflict
-                if kernelmap_entry.map.gpu_block_size is not None:
+                # Raise an error if user has manually explicitly  defined both, the gpu_block_size and explicitly
+                # threadBlock maps with conflicting block sizes.
+                # NOTE: Conflicting block sizes from the 'AddThreadBlockMap' transformation are allowed.
+                # For example, if the user sets `gpu_block_size = [13, 5, 12]` on a 2D GPU_Device map
+                # without an inner thread-block map, the transformation inserts one with inferred
+                # size [13, 5, 1] (missing dimension padded with 1). Since the maximum matches the
+                # user-defined size, this is valid.
+                preset_block_size = kernelmap_entry.map.gpu_block_size
+                conflicting_block_sizes = (preset_block_size is not None
+                                           and not kernelmap_entry in self._kernels_with_inserted_tb_maps)
+
+                if conflicting_block_sizes:
                     raise ValueError('Both the `gpu_block_size` property and internal thread-block '
                                      'maps were defined with conflicting sizes for kernel '
                                      f'"{kernelmap_entry.map.label}" (sizes detected: {detected_block_sizes}). '
@@ -2397,6 +2435,9 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                     f'auto {scope_map.params[0]} = {scope_map.range[0][0]} + {dynmap_step} * {dynmap_var};', cfg,
                     state_id, scope_entry)
 
+            # Emit internal array allocation (deallocation handled at MapExit)
+            self._frame.allocate_arrays_in_scope(sdfg, cfg, scope_entry, function_stream, callsite_stream)
+
         elif scope_map.schedule == dtypes.ScheduleType.GPU_Device:
             dfg_kernel = self._kernel_state.scope_subgraph(self._kernel_map)
             grid_dims, block_dims, has_tbmap, has_dtbmap, extra_gdim_offsets = self.get_kernel_dimensions(dfg_kernel)
@@ -2523,6 +2564,10 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                                                   varname=varname,
                                                   expr=expr,
                                               ), cfg, state_id, node)
+
+                # Emit internal array allocation here for GPU_ThreadBlock (deallocation handled at MapExit)
+                self._frame.allocate_arrays_in_scope(sdfg, cfg, scope_entry, function_stream, callsite_stream)
+
             else:  # Device map in Device map
                 brange = subsets.Range(scope_map.range[::-1])
                 kdims = brange.size()
@@ -2548,6 +2593,9 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                     expr = _topy(tidx[i]).replace('__DAPT%d' % i, block_expr)
                     callsite_stream.write('int %s = %s;' % (varname, expr), cfg, state_id, scope_entry)
                     self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, 'int')
+
+                # Emit internal array allocation (deallocation handled at MapExit)
+                self._frame.allocate_arrays_in_scope(sdfg, cfg, scope_entry, function_stream, callsite_stream)
 
                 # Generate conditions for this subgrid's execution using min and max
                 # element, e.g. skipping out-of-bounds threads
@@ -2586,9 +2634,6 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         else:
             for dim in range(len(scope_map.range)):
                 callsite_stream.write('{', cfg, state_id, scope_entry)
-
-        # Emit internal array allocation (deallocation handled at MapExit)
-        self._frame.allocate_arrays_in_scope(sdfg, cfg, scope_entry, function_stream, callsite_stream)
 
         # Generate all index arguments for block
         if scope_map.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
@@ -2631,6 +2676,9 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                     expr = _topy(tidx[i]).replace('__DAPT%d' % i, block_expr)
                     callsite_stream.write('int %s = %s;' % (varname, expr), cfg, state_id, scope_entry)
                     self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, 'int')
+
+            # Emit internal array allocation here (deallocation handled at MapExit)
+            self._frame.allocate_arrays_in_scope(sdfg, cfg, scope_entry, function_stream, callsite_stream)
 
             # Generate conditions for this block's execution using min and max
             # element, e.g. skipping out-of-bounds threads in trailing block
