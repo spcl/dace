@@ -1591,7 +1591,11 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
         # Handle dynamic map inputs
         for e in dace.sdfg.dynamic_map_inputs(state, scope_entry):
-            kernel_args[str(e.src)] = e.src.desc(sdfg)
+            if e.data is None:
+                raise Exception("Dynamic map input's memlet can't be None")
+            data_name = e.data.data
+            data_desc = state.sdfg.arrays[data_name]
+            kernel_args[data_name] = data_desc
 
         # Add data from nested SDFGs to kernel arguments
         extra_call_args = []
@@ -1812,7 +1816,15 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 
         # make sure dynamic map inputs are properly handled
         for e in dace.sdfg.dynamic_map_inputs(state, scope_entry):
+            if e.data is not None and e.data.data == e.dst_conn:
+                warnings.warn(
+                    f"Dynamic map input name {e.data.data} is same as the dst connector. Will result in a name clash, omitting of code for this assignment is skipped."
+                )
+                comment_out_str = "// Omitted name clash on dynamic map input\n//"
+            else:
+                comment_out_str = ""
             self._localcode.write(
+                comment_out_str +
                 self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn]),
                 cfg, state_id, scope_entry)
 
@@ -1883,7 +1895,15 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                 callsite_stream.write(
                     'DACE_GPU_CHECK({backend}EventSynchronize(__state->gpu_context->events[{ev}]));'.format(
                         ev=ev, backend=self.backend), cfg, state_id, [e.src, e.dst])
+            if e.data is not None and e.data.data == e.dst_conn:
+                warnings.warn(
+                    f"Dynamic map input name {e.data.data} is same as the dst connector. Will result in a name clash, omitting of code for this assignment is skipped."
+                )
+                comment_out_str = "// Omitted name clash on dynamic map input\n//"
+            else:
+                comment_out_str = ""
             callsite_stream.write(
+                comment_out_str +
                 self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn]),
                 cfg, state_id, node)
 
@@ -2175,7 +2195,15 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
         # handle dynamic map inputs
         for e in dace.sdfg.dynamic_map_inputs(cfg.node(state_id), dfg_scope.source_nodes()[0]):
+            if e.data is not None and e.data.data == e.dst_conn:
+                warnings.warn(
+                    f"Dynamic map input name {e.data.data} is same as the dst connector. Will result in a name clash, omitting of code for this assignment is skipped."
+                )
+                comment_out_str = "// Omitted name clash on dynamic map input\n//"
+            else:
+                comment_out_str = ""
             kernel_stream.write(
+                comment_out_str +
                 self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn]),
                 cfg, state_id,
                 dfg_scope.source_nodes()[0])
@@ -2353,9 +2381,16 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             # They define outside the schedule the bounds of the dynamic Map's for-loop invocation.
             # NOTE: The value of the dynamic Map's variable may differ inside and outside the schedule.
             for e in dace.sdfg.dynamic_map_inputs(dfg, scope_entry):
+                if e.data is not None and e.data.data == e.dst_conn:
+                    warnings.warn(
+                        f"Dynamic map input name {e.data.data} is same as the dst connector. Will result in a name clash, omitting of code for this assignment is skipped."
+                    )
+                    comment_out_str = "// Omitted name clash on dynamic map input\n//"
+                else:
+                    comment_out_str = ""
                 callsite_stream.write(
-                    self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn,
-                                                        e.dst.in_connectors[e.dst_conn]), cfg, state_id, scope_entry)
+                    comment_out_str + self._cpu_codegen.memlet_definition(
+                        sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn]), cfg, state_id, scope_entry)
 
             dynmap_var = scope_map.params[0]
             dynmap_begin = scope_map.range[0][0]
@@ -2384,9 +2419,16 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                                           param=dynmap_var), cfg, state_id, scope_entry)
 
             for e in dace.sdfg.dynamic_map_inputs(dfg, scope_entry):
+                if e.data is not None and e.data.data == e.dst_conn:
+                    warnings.warn(
+                        f"Dynamic map input name {e.data.data} is same as the dst connector. Will result in a name clash, omitting of code for this assignment is skipped."
+                    )
+                    comment_out_str = "// Omitted name clash on dynamic map input\n//"
+                else:
+                    comment_out_str = ""
                 callsite_stream.write(
-                    self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn,
-                                                        e.dst.in_connectors[e.dst_conn]), cfg, state_id, scope_entry)
+                    comment_out_str + self._cpu_codegen.memlet_definition(
+                        sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn]), cfg, state_id, scope_entry)
 
             if dynmap_step != 1:
                 callsite_stream.write(
@@ -2419,9 +2461,16 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
                 # handle dynamic map inputs
                 for e in dace.sdfg.dynamic_map_inputs(dfg, scope_entry):
+                    if e.data is not None and e.data.data == e.dst_conn:
+                        warnings.warn(
+                            f"Dynamic map input name {e.data.data} is same as the dst connector. Will result in a name clash, omitting of code for this assignment is skipped."
+                        )
+                        comment_out_str = "// Omitted name clash on dynamic map input\n//"
+                    else:
+                        comment_out_str = ""
                     callsite_stream.write(
-                        self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn,
-                                                            e.dst.in_connectors[e.dst_conn]), cfg, state_id,
+                        comment_out_str + self._cpu_codegen.memlet_definition(
+                            sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn]), cfg, state_id,
                         scope_entry)
 
                 # variables that need to be declared + the value they need to be initialized with
