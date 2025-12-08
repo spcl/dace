@@ -233,13 +233,31 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
     else:
         filter_map = None
 
-    #VectorizeCPU(vector_width=vector_width,
-    #             fuse_overlapping_loads=fuse_overlapping_loads,
-    #             insert_copies=insert_copies,
-    #             apply_on_maps=filter_map,
-    #             no_inline=no_inline,
-    #             fail_on_unvectorizable=True).apply_pass(copy_sdfg, {})
+    pass_info = dict()
+    VectorizeCPU(vector_width=vector_width,
+                 fuse_overlapping_loads=fuse_overlapping_loads,
+                 insert_copies=insert_copies,
+                 apply_on_maps=filter_map,
+                 no_inline=no_inline).apply_pass(copy_sdfg, pass_info)
     copy_sdfg.validate()
+    #print(pass_info)
+    #print(copy_sdfg.name, ":", pass_info["Vectorize"])
+
+    from pathlib import Path
+
+    def append_pass_info(log_path, func_name, pass_value):
+        """
+        Append:  <func_name> : <pass_value>
+        to the given log file.
+
+        Creates the file if missing, appends otherwise.
+        """
+        log_path = Path(log_path)
+
+        with log_path.open("a") as f:
+            f.write(f"{func_name} : {pass_value}\n")
+
+    append_pass_info("vectorization_pass_log.txt", copy_sdfg.name, f"{copy_sdfg.name}: {pass_info['Vectorize']}")
 
     if save_sdfgs and sdfg_name:
         copy_sdfg.save(f"{sdfg_name}_vectorized.sdfg")
@@ -254,12 +272,20 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
     for name in arrays.keys():
         diff = arrays_vec[name] - arrays_orig[name]
         print(diff)
-        assert np.allclose(arrays_orig[name], arrays_vec[name], rtol=1e-32), \
-            f"{name} Diff: {arrays_orig[name] - arrays_vec[name]}"
+        allclose = np.allclose(arrays_orig[name], arrays_vec[name], rtol=1e-32)
+        if not allclose:
+            sdfg.save(f"{sdfg_name}.sdfg")
+            copy_sdfg.save(f"{sdfg_name}_vectorized.sdfg")
+        assert allclose,f"{name} Diff: {arrays_orig[name] - arrays_vec[name]}"
+        
         if exact is not None:
             diff = arrays_vec[name] - exact
-            assert np.allclose(arrays_vec[name], exact, rtol=0, atol=1e-300), \
-                f"{name} Diff: max abs diff = {np.max(np.abs(diff))}"
+            allclose = np.allclose(arrays_vec[name], exact, rtol=0, atol=1e-300)
+            if not allclose:
+                if not allclose:
+                    sdfg.save(f"{sdfg_name}.sdfg")
+                    copy_sdfg.save(f"{sdfg_name}_vectorized.sdfg")
+            assert allclose, f"{name} Diff: max abs diff = {np.max(np.abs(diff))}"
     return copy_sdfg
 
 
@@ -5223,7 +5249,7 @@ def test_s4113():
 def test_s4114():
     LEN = 64
     ITERS = 2
-    n1_val = LEN // 2
+    n1_val = 1
 
     a = np.random.rand(LEN).astype(np.float64)
     b = np.random.rand(LEN).astype(np.float64)

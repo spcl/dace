@@ -340,6 +340,8 @@ class Vectorize(ppl.Pass):
         # Consider loop (i=0; i<N; i++) and accessing an array [i*2] this means we have stride-2 access and this also
         # needs to be packed
         vectorizable_arrays_dict = collect_vectorizable_arrays(inner_sdfg, nsdfg, state, invariant_scalars)
+        #state.sdfg.save("x.sdfg")
+        #assert vectorizable_arrays_dict["c"] is False, f"{vectorizable_arrays_dict}"
         non_vectorizable_arrays = {k for k, v in vectorizable_arrays_dict.items() if v is False} - invariant_scalars
 
         non_vectorizable_array_descs = [(arr_name, inner_sdfg.arrays[arr_name]) for arr_name in non_vectorizable_arrays]
@@ -1314,6 +1316,7 @@ class Vectorize(ppl.Pass):
         sdfgs_to_vectorize = set()
 
         applied = 0
+        applied_set = set()
         for i, (map_entry, state) in enumerate(map_entries):
             if is_innermost_map(state, map_entry):
                 num_vectorized += 1
@@ -1366,6 +1369,7 @@ class Vectorize(ppl.Pass):
                 state.sdfg.validate()
                 self._vectorize_map(state, map_entry, vectorization_number=i)
                 applied += 1
+                applied_set.add(map_entry)
                 vectorized_maps.add(map_entry)
                 if len(all_nodes_between) == 1 and isinstance(next(iter(all_nodes_between)), dace.nodes.NestedSDFG):
                     sdfgs_to_vectorize.add((next(iter(all_nodes_between)), state))
@@ -1393,4 +1397,4 @@ class Vectorize(ppl.Pass):
         if self.global_code not in current_global_code:
             sdfg.append_global_code(cpp_code=self.global_code, location=self.global_code_location)
 
-        return applied
+        return applied_set

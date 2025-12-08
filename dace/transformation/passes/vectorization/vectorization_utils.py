@@ -1748,6 +1748,7 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
             raise Exception(lhs, rhs1, rhs2, c1, c2)
         expr = f"{op}{l_op}"
         if isinstance(lhs_data, dace.data.Array):
+            state.sdfg.save("y.sdfg")
             node.code = dace.properties.CodeBlock(code="\n".join([f"{lhs}[{i}] = {expr}" for i in range(vw)]) + "\n",
                                                   language=dace.Language.Python)
         else:
@@ -2359,7 +2360,9 @@ def assert_symbols_in_parent_map_symbols(missing_symbols: Set[str], state: dace.
 
     for loop_var in loop_vars:
         loop_var = loop_var[:-len("_laneid_")] if loop_var.endswith("_laneid_") else loop_var
-        assert loop_var in loop_symbols, f"{loop_var} not in {loop_symbols}"
+        if loop_var not in loop_symbols and loop_var not in nsdfg.symbol_mapping:
+            state.sdfg.save("failing.sdfg")
+        assert loop_var in loop_symbols or loop_var in nsdfg.symbol_mapping, f"{loop_var} not in {loop_symbols}"
 
     return loop_vars
 
@@ -2453,6 +2456,7 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
     parent_map = parent_state.scope_dict()[parent_nsdfg_node]
     assert isinstance(parent_map, dace.nodes.MapEntry)
     map_param = parent_map.map.params[-1]
+    parent_syms_defined = parent_state.symbols_defined_at(parent_nsdfg_node)
 
     all_accesses_to_arrays = collect_accesses_to_array_name(sdfg)
     #print(all_accesses_to_arrays)
@@ -2480,7 +2484,7 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
                 # Check for multipliers
                 # If map_param appears multiplied in the expression, it is strided
                 free_syms = {str(s) for s in access_expr.free_symbols}
-                #print(free_syms)
+                print("Free syms", free_syms)
                 #if map_param in free_syms:
                 #    print(f"Map param {map_param} in free syms {free_syms} of {access_expr}")
                 # If map param appears in a multiplication expression then it is not vectorizable
@@ -2492,11 +2496,12 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
                     array_is_vectorizable[arr_name] = False
                     raise Exception("TODO - I have not analyzed this case yet")
 
-            if isinstance(b, (dace.symbolic.SymExpr, dace.symbolic.symbol)):
-                if isinstance(b, dace.symbolic.SymExpr):
-                    free_syms = {str(s) for s in b.free_syms}
+            if isinstance(b, (dace.symbolic.SymExpr, dace.symbolic.symbol, sympy.Expr)):
+                if isinstance(b, (dace.symbolic.SymExpr, sympy.Expr)):
+                    free_syms = {str(s) for s in b.free_symbols}
                 else:
                     free_syms = {b}
+                print("Free syms2", free_syms)
                 for free_sym in free_syms:
                     # Accessing map param is ok
                     if str(free_sym) == map_param:
@@ -2505,9 +2510,16 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
                         # Other free symbols should not have indirect accesses
                         # Analysis tries find the first assignment in the CFG
                         assignment = find_symbol_assignment(sdfg, str(free_sym))
-                        if assignment is None:
+                        print("Assignment to ", str(free_sym), "are", assignment)
+                        
+                        if assignment is None and str(free_sym) not in parent_syms_defined:
                             sdfg.save("failing_vectorization.sdfg")
-                        assert assignment is not None, f"Could not find an iedge assignment for {free_sym}"
+                        print(assignment, parent_syms_defined, free_sym, str(free_sym) in parent_syms_defined)
+                        assert not (assignment is None and str(free_sym) not in parent_syms_defined), f"Could not find an iedge assignment for {free_sym}, assignemnt {assignment}, parent symbols defined {parent_syms_defined}"
+                        # Loop invariant symbol passed from outside
+                        if assignment is None:
+                            continue
+                        
                         assignment_expr = dace.symbolic.SymExpr(assignment)
                         # Define functions to ignore (common arithmetic + piecewise + rounding)
                         ignored = {

@@ -13,6 +13,7 @@ from dace.sdfg import ControlFlowRegion
 from dace.sdfg.graph import Edge
 from dace.sdfg.state import ConditionalBlock
 from dace.transformation.interstate import branch_elimination
+from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import ReplaceSTDExpWithDaCeExp, ReplaceSTDLogWithDaCeLog, ReplaceSTDPowWithDaCePow
 from dace.transformation.passes.vectorization.vectorize_cpu import VectorizeCPU
 from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
 
@@ -3720,8 +3721,99 @@ def test_cloud_fraction_update():
         sdfg_name=f"cloud_fraction_update",
     )
 
+from math import log, exp, pow
+
+@dace.program
+def log_implementations(A: dace.float64[S], B: dace.float64[S]):
+    for i in dace.map[0:S]:
+        B[i] = log(A[i])
+
+
+@dace.program
+def exp_implementations(A: dace.float64[S], B: dace.float64[S]):
+    for i in dace.map[0:S]:
+        B[i] = exp(A[i])
+
+@dace.program
+def pow_implementations(A: dace.float64[S], B: dace.float64[S]):
+    for i in dace.map[0:S]:
+        B[i] = pow(A[i], 3.3)
+
+def test_log():
+    # Create test arrays
+    _S = 64
+    A = numpy.random.uniform(0.2, 1.2, size=(_S,))
+    B = numpy.abs(numpy.random.randn(_S,)) * 1e-4
+
+    # Baseline SDFG
+    log_implementations_std_sdfg = log_implementations.to_sdfg()
+    ReplaceSTDLogWithDaCeLog().apply_pass(log_implementations_std_sdfg, {})
+
+    run_vectorization_test(
+        dace_func=log_implementations_std_sdfg,
+        arrays={
+            "A": A,
+            "B": B
+        },
+        params={"S": _S},
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name=f"test_log",
+        from_sdfg=True,
+    )
+
+
+def test_exp():
+    # Create test arrays
+    _S = 64
+    A = numpy.random.uniform(0.2, 1.2, size=(_S,))
+    B = numpy.abs(numpy.random.randn(_S,)) * 1e-4
+
+    # Baseline SDFG
+    exp_implementations_std_sdfg = exp_implementations.to_sdfg()
+    ReplaceSTDExpWithDaCeExp().apply_pass(exp_implementations_std_sdfg, {})
+
+    run_vectorization_test(
+        dace_func=exp_implementations_std_sdfg,
+        arrays={
+            "A": A,
+            "B": B
+        },
+        params={"S": _S},
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name=f"test_exp",
+        from_sdfg=True,
+    )
+
+@pytest.mark.skip
+def test_pow():
+    # Create test arrays
+    _S = 64
+    A = numpy.random.uniform(0.2, 1.2, size=(_S,))
+    B = numpy.abs(numpy.random.randn(_S,)) * 1e-4
+
+    # Baseline SDFG
+    pow_implementations_std_sdfg = pow_implementations.to_sdfg()
+    ReplaceSTDPowWithDaCePow().apply_pass(pow_implementations_std_sdfg, {})
+
+    run_vectorization_test(
+        dace_func=pow_implementations,
+        arrays={
+            "A": A,
+            "B": B
+        },
+        params={"S": _S},
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name=f"test_pow",
+        from_sdfg=True
+    )
 
 if __name__ == "__main__":
+    test_log()
+    test_exp()
+    #test_pow()
     test_dependency_edge_to_unary_symbol()
     test_vabs()
     test_interstate_boolean_op_one()

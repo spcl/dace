@@ -678,6 +678,15 @@ tasklet_infos = [
         "op": "==",
         "constant1": "s1",
         "constant2": '0.5'
+    }),
+    ("out = i > in__arr", "array", {"_arr"}, {}, {"i"}, {
+        "type": tutil.TaskletType.ARRAY_SYMBOL,
+        "lhs": "out",
+        "rhs1": None,
+        "rhs2": "in__arr",
+        "op": ">",
+        "constant1": "i",
+        "constant2": None
     })
 ]
 

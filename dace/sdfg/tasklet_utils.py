@@ -363,6 +363,7 @@ def _extract_constant_from_ast_str(src: str) -> str:
         '-5'
     """
     tree = ast.parse(src)
+    print(src)
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Constant):
@@ -438,7 +439,7 @@ def _extract_non_connector_syms_from_tasklet(node: dace.nodes.Tasklet, state) ->
     all_syms = {
         str(s)
         for s in dace.symbolic.symbols_in_code(code_rhs, potential_symbols={str(s)
-                                                                            for s in state.sdfg.symbols})
+                                                                            for s in state.symbols_defined_at(node)})
     }
     real_free_syms = all_syms - connectors
     free_non_connector_syms = {str(s) for s in real_free_syms}
@@ -876,11 +877,14 @@ def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
         constant = None
         try:
             constant = _extract_constant_from_ast_str(code_str)
+            print(constant)
             has_constant = True
-        except Exception:
+        except Exception as e:
+            print("Exception", e)
             has_constant = False
 
         free_non_connector_syms = _extract_non_connector_syms_from_tasklet(node, state)
+        print(free_non_connector_syms)
         if len(free_non_connector_syms) == 1:
             has_constant = True
             constant = free_non_connector_syms.pop()
