@@ -3533,8 +3533,10 @@ class ProgramVisitor(ExtNodeVisitor):
                     while isinstance(last_subscript.value, ast.Subscript):
                         last_subscript = last_subscript.value
                 if isinstance(target, ast.Subscript) and not isinstance(last_subscript.value, ast.Name):
-                    store_target = copy.copy(last_subscript.value)
-                    store_target.ctx = ast.Store()
+                    store_target = astutils.copy_tree(last_subscript.value)
+                    for n in ast.walk(store_target):  # Recursively make attributes into stores
+                        if hasattr(n, 'ctx'):
+                            n.ctx = ast.Store()
                     true_name = self.visit(store_target)
                     # Refresh defined variables and arrays
                     defined_vars = {**self.variables, **self.scope_vars}
