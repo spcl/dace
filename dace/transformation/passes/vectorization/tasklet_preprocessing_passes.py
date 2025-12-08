@@ -366,3 +366,48 @@ class ReplaceSTDExpWithDaCeExp(ppl.Pass):
 
         sdfg.append_global_code('#include "dace/arith/exp.h"')
         sdfg.validate()
+
+@properties.make_properties
+@transformation.explicit_cf_compatible
+class ReplaceSTDPowWithDaCePow(ppl.Pass):
+    CATEGORY: str = 'Optimization Preparation'
+    use_safe_implementation = dace.properties.Property(dtype=bool, default=False, allow_none=False)
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Tasklets
+
+    def should_reapply(self, modified: ppl.Modifies):
+        return False
+
+    def depends_on(self):
+        return {}
+
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Set[str]]]:
+        for node, graph in sdfg.all_nodes_recursive():
+            if isinstance(node, dace.sdfg.nodes.Tasklet):
+                if node.code.language == dace.dtypes.Language.Python:
+                    # We support float->float or double->double
+                    ies = graph.in_edges(node)
+                    oes = graph.out_edges(node)
+                    # Log tasklet should be single input single output
+                    if len(ies) == 1 and len(oes) == 1:
+                        ie = ies[0]
+                        oe = oes[0]
+                        ie_data = ie.data.data
+                        oe_data = oe.data.data
+                        # Check input data exists
+                        if ie_data is not None and oe_data is not None:
+                            ie_arr = graph.sdfg.arrays[ie_data]
+                            oe_arr = graph.sdfg.arrays[oe_data]
+                            # Check dtypes
+                            if ((ie_arr.dtype == dace.float32 and oe_arr.dtype == dace.float32)
+                                    or (ie_arr.dtype == dace.float64 and oe_arr.dtype == dace.float64)):
+                                ast_str = node.code.as_string
+                                suffix = "f" if (ie_arr.dtype == dace.float32 and oe_arr.dtype == dace.float32) else "d"
+                                safe_infix = "" if self.use_safe_implementation is False else "safe_"
+                                new_ast_str = _replace_function_names(ast_str, "pow", f"dace_pow_{safe_infix}{suffix}")
+                                if new_ast_str != ast_str:
+                                    node.code = CodeBlock(new_ast_str, language=dace.Language.Python)
+
+        sdfg.append_global_code('#include "dace/arith/pow.h"')
+        sdfg.validate()
