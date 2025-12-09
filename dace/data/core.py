@@ -1,15 +1,19 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-import aenum
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+"""
+Core data descriptor classes.
+
+This module contains the base ``Data`` class and all core descriptor classes:
+``Scalar``, ``Array``, ``ContainerArray``, ``Stream``, ``Structure``,
+``View``, ``Reference``, and their subclasses.
+"""
 import copy as cp
 import ctypes
-import functools
+import dataclasses
 
-from abc import ABC, abstractmethod
 from collections import OrderedDict
-from numbers import Number
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union
+from typing import Any, Dict, List, Set, Tuple, Union
 
-import numpy
+import numpy as np
 import sympy as sp
 
 try:
@@ -17,148 +21,27 @@ try:
 except (ModuleNotFoundError, ImportError):
     ArrayLike = Any
 
-import dace.dtypes as dtypes
-from dace import serialize, symbolic
+from dace import dtypes, serialize, symbolic
 from dace.codegen import cppunparse
 from dace.properties import (DebugInfoProperty, DictProperty, EnumProperty, ListProperty, NestedDataClassProperty,
                              OrderedDictProperty, Property, ShapeProperty, SymbolicProperty, TypeClassProperty,
                              make_properties)
+from dace.utils import prod
+
+# Backward compatibility alias
+_prod = prod
 
 
-def create_datadescriptor(obj, no_custom_desc=False):
-    """ Creates a data descriptor from various types of objects.
-
-        :see: dace.data.Data
-    """
-    from dace import dtypes  # Avoiding import loops
-    if isinstance(obj, Data):
-        return obj
-    elif not no_custom_desc and hasattr(obj, '__descriptor__'):
-        return obj.__descriptor__()
-    elif not no_custom_desc and hasattr(obj, 'descriptor'):
-        return obj.descriptor
-    elif type(obj).__module__ == "torch" and type(obj).__name__ == "Tensor":
-        # special case for torch tensors. Maybe __array__ could be used here for a more
-        # general solution, but torch doesn't support __array__ for cuda tensors.
-        try:
-            # If torch is importable, define translations between typeclasses and torch types. These are reused by daceml.
-            # conversion happens here in pytorch:
-            # https://github.com/pytorch/pytorch/blob/143ef016ee1b6a39cf69140230d7c371de421186/torch/csrc/utils/tensor_numpy.cpp#L237
-            import torch
-            TYPECLASS_TO_TORCH_DTYPE = {
-                dtypes.bool_: torch.bool,
-                dtypes.int8: torch.int8,
-                dtypes.int16: torch.int16,
-                dtypes.int32: torch.int32,
-                dtypes.int64: torch.int64,
-                dtypes.uint8: torch.uint8,
-                dtypes.float16: torch.float16,
-                dtypes.float32: torch.float32,
-                dtypes.float64: torch.float64,
-                dtypes.complex64: torch.complex64,
-                dtypes.complex128: torch.complex128,
-            }
-
-            TORCH_DTYPE_TO_TYPECLASS = {v: k for k, v in TYPECLASS_TO_TORCH_DTYPE.items()}
-
-            storage = dtypes.StorageType.GPU_Global if obj.device.type == 'cuda' else dtypes.StorageType.Default
-
-            return Array(dtype=TORCH_DTYPE_TO_TYPECLASS[obj.dtype],
-                         strides=obj.stride(),
-                         shape=tuple(obj.shape),
-                         storage=storage)
-        except ImportError:
-            raise ValueError("Attempted to convert a torch.Tensor, but torch could not be imported")
-    elif dtypes.is_array(obj) and (hasattr(obj, '__array_interface__') or hasattr(obj, '__cuda_array_interface__')):
-        if dtypes.is_gpu_array(obj):
-            interface = obj.__cuda_array_interface__
-            storage = dtypes.StorageType.GPU_Global
-        else:
-            interface = obj.__array_interface__
-            storage = dtypes.StorageType.Default
-
-        if hasattr(obj, 'dtype') and obj.dtype.fields is not None:  # Struct
-            dtype = dtypes.struct('unnamed', **{k: dtypes.typeclass(v[0].type) for k, v in obj.dtype.fields.items()})
-        else:
-            if numpy.dtype(interface['typestr']).type is numpy.void:  # Struct from __array_interface__
-                if 'descr' in interface:
-                    dtype = dtypes.struct('unnamed', **{
-                        k: dtypes.typeclass(numpy.dtype(v).type)
-                        for k, v in interface['descr']
-                    })
-                else:
-                    raise TypeError(f'Cannot infer data type of array interface object "{interface}"')
-            else:
-                dtype = dtypes.typeclass(numpy.dtype(interface['typestr']).type)
-        itemsize = numpy.dtype(interface['typestr']).itemsize
-        if len(interface['shape']) == 0:
-            return Scalar(dtype, storage=storage)
-        return Array(dtype=dtype,
-                     shape=interface['shape'],
-                     strides=(tuple(s // itemsize for s in interface['strides']) if interface['strides'] else None),
-                     storage=storage)
-    elif isinstance(obj, (list, tuple)):
-        # Lists and tuples are cast to numpy
-        obj = numpy.array(obj)
-
-        if obj.dtype.fields is not None:  # Struct
-            dtype = dtypes.struct('unnamed', **{k: dtypes.typeclass(v[0].type) for k, v in obj.dtype.fields.items()})
-        else:
-            dtype = dtypes.typeclass(obj.dtype.type)
-        return Array(dtype=dtype, strides=tuple(s // obj.itemsize for s in obj.strides), shape=obj.shape)
-    elif type(obj).__module__ == "cupy" and type(obj).__name__ == "ndarray":
-        # special case for CuPy and HIP, which does not support __cuda_array_interface__
-        storage = dtypes.StorageType.GPU_Global
-        dtype = dtypes.typeclass(obj.dtype.type)
-        itemsize = obj.itemsize
-        return Array(dtype=dtype, shape=obj.shape, strides=tuple(s // itemsize for s in obj.strides), storage=storage)
-    elif symbolic.issymbolic(obj):
-        return Scalar(symbolic.symtype(obj))
-    elif isinstance(obj, dtypes.typeclass):
-        return Scalar(obj)
-    elif (obj is int or obj is float or obj is complex or obj is bool or obj is None):
-        return Scalar(dtypes.typeclass(obj))
-    elif isinstance(obj, type) and issubclass(obj, numpy.number):
-        return Scalar(dtypes.typeclass(obj))
-    elif isinstance(obj, (Number, numpy.number, numpy.bool_)):
-        return Scalar(dtypes.typeclass(type(obj)))
-    elif obj is type(None):
-        # NoneType is void *
-        return Scalar(dtypes.pointer(dtypes.typeclass(None)))
-    elif isinstance(obj, str) or obj is str:
-        return Scalar(dtypes.string)
-    elif callable(obj):
-        # Cannot determine return value/argument types from function object
-        return Scalar(dtypes.callback(None))
-
-    raise TypeError(f'Could not create a DaCe data descriptor from object {obj}. '
-                    'If this is a custom object, consider creating a `__descriptor__` '
-                    'adaptor method to the type hint or object itself.')
+def _arrays_to_json(arrays):
+    if arrays is None:
+        return None
+    return [(k, serialize.to_json(v)) for k, v in arrays.items()]
 
 
-def _prod(sequence):
-    return functools.reduce(lambda a, b: a * b, sequence, 1)
-
-
-def find_new_name(name: str, existing_names: Sequence[str]) -> str:
-    """
-    Returns a name that matches the given ``name`` as a prefix, but does not
-    already exist in the given existing name set. The behavior is typically
-    to append an underscore followed by a unique (increasing) number. If the
-    name does not already exist in the set, it is returned as-is.
-
-    :param name: The given name to find.
-    :param existing_names: The set of existing names.
-    :return: A new name that is not in existing_names.
-    """
-    if name not in existing_names:
-        return name
-    cur_offset = 0
-    new_name = name + '_' + str(cur_offset)
-    while new_name in existing_names:
-        cur_offset += 1
-        new_name = name + '_' + str(cur_offset)
-    return new_name
+def _arrays_from_json(obj, context=None):
+    if obj is None:
+        return {}
+    return OrderedDict((k, serialize.from_json(v, context)) for k, v in obj)
 
 
 @make_properties
@@ -354,840 +237,6 @@ class Data:
         new_desc = cp.deepcopy(self)
         new_desc.storage = storage
         return new_desc
-
-
-def _arrays_to_json(arrays):
-    if arrays is None:
-        return None
-    return [(k, serialize.to_json(v)) for k, v in arrays.items()]
-
-
-def _arrays_from_json(obj, context=None):
-    if obj is None:
-        return {}
-    return OrderedDict((k, serialize.from_json(v, context)) for k, v in obj)
-
-
-@make_properties
-class Structure(Data):
-    """ Base class for structures. """
-
-    members = OrderedDictProperty(default=OrderedDict(),
-                                  desc="Dictionary of structure members",
-                                  from_json=_arrays_from_json,
-                                  to_json=_arrays_to_json)
-    name = Property(dtype=str, desc="Structure type name")
-
-    def __init__(self,
-                 members: Union[Dict[str, Data], List[Tuple[str, Data]]],
-                 name: str = 'Structure',
-                 transient: bool = False,
-                 storage: dtypes.StorageType = dtypes.StorageType.Default,
-                 location: Dict[str, str] = None,
-                 lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope,
-                 debuginfo: dtypes.DebugInfo = None):
-
-        self.members = OrderedDict(members)
-        for k, v in self.members.items():
-            v.transient = transient
-
-        self.name = name
-        fields_and_types = OrderedDict()
-        symbols = set()
-        for k, v in self.members.items():
-            if isinstance(v, Structure):
-                symbols |= v.free_symbols
-                fields_and_types[k] = (v.dtype, str(v.total_size))
-            elif isinstance(v, Array):
-                symbols |= v.free_symbols
-                fields_and_types[k] = (dtypes.pointer(v.dtype), str(_prod(v.shape)))
-            elif isinstance(v, Scalar):
-                symbols |= v.free_symbols
-                fields_and_types[k] = v.dtype
-            elif isinstance(v, (sp.Basic, symbolic.SymExpr)):
-                symbols |= v.free_symbols
-                fields_and_types[k] = symbolic.symtype(v)
-            elif isinstance(v, (int, numpy.integer)):
-                fields_and_types[k] = dtypes.typeclass(type(v))
-            else:
-                raise TypeError(f"Attribute {k}'s value {v} has unsupported type: {type(v)}")
-
-        # NOTE: We will not store symbols in the dtype for now, but leaving it as a comment to investigate later.
-        # NOTE: See discussion about data/object symbols.
-        # for s in symbols:
-        #     if str(s) in fields_and_types:
-        #         continue
-        #     if hasattr(s, "dtype"):
-        #         fields_and_types[str(s)] = s.dtype
-        #     else:
-        #         fields_and_types[str(s)] = dtypes.int32
-
-        dtype = dtypes.pointer(dtypes.struct(name, **fields_and_types))
-        shape = (1, )
-        super(Structure, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
-
-    @staticmethod
-    def from_json(json_obj, context=None):
-        if json_obj['type'] != 'Structure':
-            raise TypeError("Invalid data type")
-
-        # Create dummy object
-        ret = Structure({})
-        serialize.set_properties_from_json(ret, json_obj, context=context)
-
-        return ret
-
-    @property
-    def total_size(self):
-        return -1
-
-    @property
-    def offset(self):
-        return [0]
-
-    @property
-    def start_offset(self):
-        return 0
-
-    @property
-    def strides(self):
-        return [1]
-
-    @property
-    def free_symbols(self) -> Set[symbolic.SymbolicType]:
-        """ Returns a set of undefined symbols in this data descriptor. """
-        result = set()
-        for k, v in self.members.items():
-            result |= v.free_symbols
-        return result
-
-    def __repr__(self):
-        return f"{self.name} ({', '.join([f'{k}: {v}' for k, v in self.members.items()])})"
-
-    def as_arg(self, with_types=True, for_call=False, name=None):
-        if self.storage is dtypes.StorageType.GPU_Global:
-            return Array(self.dtype, [1]).as_arg(with_types, for_call, name)
-        if not with_types or for_call:
-            return name
-        return self.dtype.as_arg(name)
-
-    def __getitem__(self, s):
-        """ This is syntactic sugar that allows us to define an array type
-            with the following syntax: ``Structure[N,M]``
-            :return: A ``data.ContainerArray`` data descriptor.
-        """
-        if isinstance(s, list) or isinstance(s, tuple):
-            return ContainerArray(self, tuple(s))
-        return ContainerArray(self, (s, ))
-
-    # NOTE: Like Scalars?
-    @property
-    def may_alias(self) -> bool:
-        return False
-
-    # TODO: Can Structures be optional?
-    @property
-    def optional(self) -> bool:
-        return False
-
-    def keys(self):
-        result = self.members.keys()
-        for k, v in self.members.items():
-            if isinstance(v, Structure):
-                result |= set(map(lambda x: f"{k}.{x}", v.keys()))
-        return result
-
-    def clone(self):
-        return Structure(self.members, self.name, self.transient, self.storage, self.location, self.lifetime,
-                         self.debuginfo)
-
-    # NOTE: Like scalars?
-    @property
-    def pool(self) -> bool:
-        return False
-
-
-class TensorIterationTypes(aenum.AutoNumberEnum):
-    """
-    Types of tensor iteration capabilities.
-
-    Value (Coordinate Value Iteration) allows to directly iterate over
-    coordinates such as when using the Dense index type.
-
-    Position (Coordinate Position Iteratation) iterates over coordinate
-    positions, at which the actual coordinates lie. This is for example the case
-    with a compressed index, in which the pos array enables one to iterate over
-    the positions in the crd array that hold the actual coordinates.
-    """
-    Value = ()
-    Position = ()
-
-
-class TensorAssemblyType(aenum.AutoNumberEnum):
-    """
-    Types of possible assembly strategies for the individual indices.
-
-    NoAssembly: Assembly is not possible as such.
-
-    Insert: index allows inserting elements at random (e.g. Dense)
-
-    Append: index allows appending to a list of existing coordinates. Depending
-    on append order, this affects whether the index is ordered or not. This
-    could be changed by sorting the index after assembly
-    """
-    NoAssembly = ()
-    Insert = ()
-    Append = ()
-
-
-class TensorIndex(ABC):
-    """
-    Abstract base class for tensor index implementations.
-    """
-
-    @property
-    @abstractmethod
-    def iteration_type(self) -> TensorIterationTypes:
-        """
-        Iteration capability supported by this index.
-
-        See TensorIterationTypes for reference.
-        """
-        pass
-
-    @property
-    @abstractmethod
-    def locate(self) -> bool:
-        """
-        True if the index supports locate (aka random access), False otw.
-        """
-        pass
-
-    @property
-    @abstractmethod
-    def assembly(self) -> TensorAssemblyType:
-        """
-        What assembly type is supported by the index.
-
-        See TensorAssemblyType for reference.
-        """
-        pass
-
-    @property
-    @abstractmethod
-    def full(self) -> bool:
-        """
-        True if the level is full, False otw.
-
-        A level is considered full if it encompasses all valid coordinates along
-        the corresponding tensor dimension.
-        """
-        pass
-
-    @property
-    @abstractmethod
-    def ordered(self) -> bool:
-        """
-        True if the level is ordered, False otw.
-
-        A level is ordered when all coordinates that share the same ancestor are
-        ordered by increasing value (e.g. in typical CSR).
-        """
-        pass
-
-    @property
-    @abstractmethod
-    def unique(self) -> bool:
-        """
-        True if coordinate in the level are unique, False otw.
-
-        A level is considered unique if no collection of coordinates that share
-        the same ancestor contains duplicates. In CSR this is True, in COO it is
-        not.
-        """
-        pass
-
-    @property
-    @abstractmethod
-    def branchless(self) -> bool:
-        """
-        True if the level doesn't branch, false otw.
-
-        A level is considered branchless if no coordinate has a sibling (another
-        coordinate with same ancestor) and all coordinates in parent level have
-        a child. In other words if there is a bijection between the coordinates
-        in this level and the parent level. An example of the is the Singleton
-        index level in the COO format.
-        """
-        pass
-
-    @property
-    @abstractmethod
-    def compact(self) -> bool:
-        """
-        True if the level is compact, false otw.
-
-        A level is compact if no two coordinates are separated by an unlabled
-        node that does not encode a coordinate. An example of a compact level
-        can be found in CSR, while the DIA formats range and offset levels are
-        not compact (they have entries that would coorespond to entries outside
-        the tensors index range, e.g. column -1).
-        """
-        pass
-
-    @abstractmethod
-    def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> Dict[str, Data]:
-        """
-        Generates the fields needed for the index.
-
-        :return: a Dict of fields that need to be present in the struct
-        """
-        pass
-
-    def to_json(self):
-        attrs = serialize.all_properties_to_json(self)
-
-        retdict = {"type": type(self).__name__, "attributes": attrs}
-
-        return retdict
-
-    @classmethod
-    def from_json(cls, json_obj, context=None):
-
-        # Selecting proper subclass
-        if json_obj['type'] == "TensorIndexDense":
-            self = TensorIndexDense.__new__(TensorIndexDense)
-        elif json_obj['type'] == "TensorIndexCompressed":
-            self = TensorIndexCompressed.__new__(TensorIndexCompressed)
-        elif json_obj['type'] == "TensorIndexSingleton":
-            self = TensorIndexSingleton.__new__(TensorIndexSingleton)
-        elif json_obj['type'] == "TensorIndexRange":
-            self = TensorIndexRange.__new__(TensorIndexRange)
-        elif json_obj['type'] == "TensorIndexOffset":
-            self = TensorIndexOffset.__new__(TensorIndexOffset)
-        else:
-            raise TypeError(f"Invalid data type, got: {json_obj['type']}")
-
-        serialize.set_properties_from_json(self, json_obj['attributes'], context=context)
-
-        return self
-
-
-@make_properties
-class TensorIndexDense(TensorIndex):
-    """
-    Dense tensor index.
-
-    Levels of this type encode the the coordinate in the interval [0, N), where
-    N is the size of the corresponding dimension. This level doesn't need any
-    index structure beyond the corresponding dimension size.
-    """
-
-    _ordered = Property(dtype=bool, default=False)
-    _unique = Property(dtype=bool)
-
-    @property
-    def iteration_type(self) -> TensorIterationTypes:
-        return TensorIterationTypes.Value
-
-    @property
-    def locate(self) -> bool:
-        return True
-
-    @property
-    def assembly(self) -> TensorAssemblyType:
-        return TensorAssemblyType.Insert
-
-    @property
-    def full(self) -> bool:
-        return True
-
-    @property
-    def ordered(self) -> bool:
-        return self._ordered
-
-    @property
-    def unique(self) -> bool:
-        return self._unique
-
-    @property
-    def branchless(self) -> bool:
-        return False
-
-    @property
-    def compact(self) -> bool:
-        return True
-
-    def __init__(self, ordered: bool = True, unique: bool = True):
-        self._ordered = ordered
-        self._unique = unique
-
-    def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> Dict[str, Data]:
-        return {}
-
-    def __repr__(self) -> str:
-        s = "Dense"
-
-        non_defaults = []
-        if not self._ordered:
-            non_defaults.append("¬O")
-        if not self._unique:
-            non_defaults.append("¬U")
-
-        if len(non_defaults) > 0:
-            s += f"({','.join(non_defaults)})"
-
-        return s
-
-
-@make_properties
-class TensorIndexCompressed(TensorIndex):
-    """
-    Tensor level that stores coordinates in segmented array.
-
-    Levels of this type are compressed using a segented array. The pos array
-    holds the start and end positions of the segment in the crd (coordinate)
-    array that holds the child coordinates corresponding the parent.
-    """
-
-    _full = Property(dtype=bool, default=False)
-    _ordered = Property(dtype=bool, default=False)
-    _unique = Property(dtype=bool, default=False)
-
-    @property
-    def iteration_type(self) -> TensorIterationTypes:
-        return TensorIterationTypes.Position
-
-    @property
-    def locate(self) -> bool:
-        return False
-
-    @property
-    def assembly(self) -> TensorAssemblyType:
-        return TensorAssemblyType.Append
-
-    @property
-    def full(self) -> bool:
-        return self._full
-
-    @property
-    def ordered(self) -> bool:
-        return self._ordered
-
-    @property
-    def unique(self) -> bool:
-        return self._unique
-
-    @property
-    def branchless(self) -> bool:
-        return False
-
-    @property
-    def compact(self) -> bool:
-        return True
-
-    def __init__(self, full: bool = False, ordered: bool = True, unique: bool = True):
-        self._full = full
-        self._ordered = ordered
-        self._unique = unique
-
-    def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> Dict[str, Data]:
-        return {
-            f"idx{lvl}_pos": dtypes.int32[dummy_symbol],  # TODO (later) choose better length
-            f"idx{lvl}_crd": dtypes.int32[dummy_symbol],  # TODO (later) choose better length
-        }
-
-    def __repr__(self) -> str:
-        s = "Compressed"
-
-        non_defaults = []
-        if self._full:
-            non_defaults.append("F")
-        if not self._ordered:
-            non_defaults.append("¬O")
-        if not self._unique:
-            non_defaults.append("¬U")
-
-        if len(non_defaults) > 0:
-            s += f"({','.join(non_defaults)})"
-
-        return s
-
-
-@make_properties
-class TensorIndexSingleton(TensorIndex):
-    """
-    Tensor index that encodes a single coordinate per parent coordinate.
-
-    Levels of this type hold exactly one coordinate for every coordinate in the
-    parent level. An example can be seen in the COO format, where every
-    coordinate but the first is encoded in this manner.
-    """
-
-    _full = Property(dtype=bool, default=False)
-    _ordered = Property(dtype=bool, default=False)
-    _unique = Property(dtype=bool, default=False)
-
-    @property
-    def iteration_type(self) -> TensorIterationTypes:
-        return TensorIterationTypes.Position
-
-    @property
-    def locate(self) -> bool:
-        return False
-
-    @property
-    def assembly(self) -> TensorAssemblyType:
-        return TensorAssemblyType.Append
-
-    @property
-    def full(self) -> bool:
-        return self._full
-
-    @property
-    def ordered(self) -> bool:
-        return self._ordered
-
-    @property
-    def unique(self) -> bool:
-        return self._unique
-
-    @property
-    def branchless(self) -> bool:
-        return True
-
-    @property
-    def compact(self) -> bool:
-        return True
-
-    def __init__(self, full: bool = False, ordered: bool = True, unique: bool = True):
-        self._full = full
-        self._ordered = ordered
-        self._unique = unique
-
-    def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> Dict[str, Data]:
-        return {
-            f"idx{lvl}_crd": dtypes.int32[dummy_symbol],  # TODO (later) choose better length
-        }
-
-    def __repr__(self) -> str:
-        s = "Singleton"
-
-        non_defaults = []
-        if self._full:
-            non_defaults.append("F")
-        if not self._ordered:
-            non_defaults.append("¬O")
-        if not self._unique:
-            non_defaults.append("¬U")
-
-        if len(non_defaults) > 0:
-            s += f"({','.join(non_defaults)})"
-
-        return s
-
-
-@make_properties
-class TensorIndexRange(TensorIndex):
-    """
-    Tensor index that encodes a interval of coordinates for every parent.
-
-    The interval is computed from an offset for each parent together with the
-    tensor dimension size of this level (M) and the parent level (N) parents
-    corresponding tensor. Given the parent coordinate i, the level encodes the
-    range of coordinates between max(0, -offset[i]) and min(N, M - offset[i]).
-    """
-
-    _ordered = Property(dtype=bool, default=False)
-    _unique = Property(dtype=bool, default=False)
-
-    @property
-    def iteration_type(self) -> TensorIterationTypes:
-        return TensorIterationTypes.Value
-
-    @property
-    def locate(self) -> bool:
-        return False
-
-    @property
-    def assembly(self) -> TensorAssemblyType:
-        return TensorAssemblyType.NoAssembly
-
-    @property
-    def full(self) -> bool:
-        return False
-
-    @property
-    def ordered(self) -> bool:
-        return self._ordered
-
-    @property
-    def unique(self) -> bool:
-        return self._unique
-
-    @property
-    def branchless(self) -> bool:
-        return False
-
-    @property
-    def compact(self) -> bool:
-        return False
-
-    def __init__(self, ordered: bool = True, unique: bool = True):
-        self._ordered = ordered
-        self._unique = unique
-
-    def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> Dict[str, Data]:
-        return {
-            f"idx{lvl}_offset": dtypes.int32[dummy_symbol],  # TODO (later) choose better length
-        }
-
-    def __repr__(self) -> str:
-        s = "Range"
-
-        non_defaults = []
-        if not self._ordered:
-            non_defaults.append("¬O")
-        if not self._unique:
-            non_defaults.append("¬U")
-
-        if len(non_defaults) > 0:
-            s += f"({','.join(non_defaults)})"
-
-        return s
-
-
-@make_properties
-class TensorIndexOffset(TensorIndex):
-    """
-    Tensor index that encodes the next coordinates as offset from parent.
-
-    Given a parent coordinate i and an offset index k, the level encodes the
-    coordinate j = i + offset[k].
-    """
-
-    _ordered = Property(dtype=bool, default=False)
-    _unique = Property(dtype=bool, default=False)
-
-    @property
-    def iteration_type(self) -> TensorIterationTypes:
-        return TensorIterationTypes.Position
-
-    @property
-    def locate(self) -> bool:
-        return False
-
-    @property
-    def assembly(self) -> TensorAssemblyType:
-        return TensorAssemblyType.NoAssembly
-
-    @property
-    def full(self) -> bool:
-        return False
-
-    @property
-    def ordered(self) -> bool:
-        return self._ordered
-
-    @property
-    def unique(self) -> bool:
-        return self._unique
-
-    @property
-    def branchless(self) -> bool:
-        return True
-
-    @property
-    def compact(self) -> bool:
-        return False
-
-    def __init__(self, ordered: bool = True, unique: bool = True):
-        self._ordered = ordered
-        self._unique = unique
-
-    def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> Dict[str, Data]:
-        return {
-            f"idx{lvl}_offset": dtypes.int32[dummy_symbol],  # TODO (later) choose better length
-        }
-
-    def __repr__(self) -> str:
-        s = "Offset"
-
-        non_defaults = []
-        if not self._ordered:
-            non_defaults.append("¬O")
-        if not self._unique:
-            non_defaults.append("¬U")
-
-        if len(non_defaults) > 0:
-            s += f"({','.join(non_defaults)})"
-
-        return s
-
-
-@make_properties
-class Tensor(Structure):
-    """
-    Abstraction for Tensor storage format.
-
-    This abstraction is based on [https://doi.org/10.1145/3276493].
-    """
-
-    value_dtype = TypeClassProperty(default=dtypes.int32, choices=dtypes.Typeclasses)
-    tensor_shape = ShapeProperty(default=[])
-    indices = ListProperty(element_type=TensorIndex)
-    index_ordering = ListProperty(element_type=symbolic.SymExpr)
-    value_count = SymbolicProperty(default=0)
-
-    def __init__(self,
-                 value_dtype: dtypes.Typeclasses,
-                 tensor_shape,
-                 indices: List[Tuple[TensorIndex, Union[int, symbolic.SymExpr]]],
-                 value_count: symbolic.SymExpr,
-                 name: str,
-                 transient: bool = False,
-                 storage: dtypes.StorageType = dtypes.StorageType.Default,
-                 location: Dict[str, str] = None,
-                 lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope,
-                 debuginfo: dtypes.DebugInfo = None):
-        """
-        Constructor for Tensor storage format.
-
-        Below are examples of common matrix storage formats:
-
-        .. code-block:: python
-
-            M, N, nnz = (dace.symbol(s) for s in ('M', 'N', 'nnz'))
-
-            csr = dace.data.Tensor(
-                dace.float32,
-                (M, N),
-                [(dace.data.Dense(), 0), (dace.data.Compressed(), 1)],
-                nnz,
-                "CSR_Matrix",
-            )
-
-            csc = dace.data.Tensor(
-                dace.float32,
-                (M, N),
-                [(dace.data.Dense(), 1), (dace.data.Compressed(), 0)],
-                nnz,
-                "CSC_Matrix",
-            )
-
-            coo = dace.data.Tensor(
-                dace.float32,
-                (M, N),
-                [
-                    (dace.data.Compressed(unique=False), 0),
-                    (dace.data.Singleton(), 1),
-                ],
-                nnz,
-                "CSC_Matrix",
-            )
-
-            num_diags = dace.symbol('num_diags')  # number of diagonals stored
-
-            diag = dace.data.Tensor(
-                dace.float32,
-                (M, N),
-                [
-                    (dace.data.Dense(), num_diags),
-                    (dace.data.Range(), 0),
-                    (dace.data.Offset(), 1),
-                ],
-                nnz,
-                "DIA_Matrix",
-            )
-
-        Below you can find examples of common 3rd order tensor storage formats:
-
-        .. code-block:: python
-
-            I, J, K, nnz = (dace.symbol(s) for s in ('I', 'J', 'K', 'nnz'))
-
-            coo = dace.data.Tensor(
-                dace.float32,
-                (I, J, K),
-                [
-                    (dace.data.Compressed(unique=False), 0),
-                    (dace.data.Singleton(unique=False), 1),
-                    (dace.data.Singleton(), 2),
-                ],
-                nnz,
-                "COO_3D_Tensor",
-            )
-
-            csf = dace.data.Tensor(
-                dace.float32,
-                (I, J, K),
-                [
-                    (dace.data.Compressed(), 0),
-                    (dace.data.Compressed(), 1),
-                    (dace.data.Compressed(), 2),
-                ],
-                nnz,
-                "CSF_3D_Tensor",
-            )
-
-        :param value_type: data type of the explicitly stored values.
-        :param tensor_shape: logical shape of tensor (#rows, #cols, etc...)
-        :param indices:
-            a list of tuples, each tuple represents a level in the tensor
-            storage hirachy, specifying the levels tensor index type, and the
-            corresponding dimension this level encodes (as index of the
-            tensor_shape tuple above). The order of the dimensions may differ
-            from the logical shape of the tensor, e.g. as seen in the CSC
-            format. If an index's dimension is unrelated to the tensor shape
-            (e.g. in diagonal format where the first index's dimension is the
-            number of diagonals stored), a symbol can be specified instead.
-        :param value_count: number of explicitly stored values.
-        :param name: name of resulting struct.
-        :param others: See Structure class for remaining arguments
-        """
-
-        self.value_dtype = value_dtype
-        self.tensor_shape = tensor_shape
-        self.value_count = value_count
-
-        indices, index_ordering = zip(*indices)
-        self.indices, self.index_ordering = list(indices), list(index_ordering)
-
-        num_dims = len(tensor_shape)
-        dimension_order = [idx for idx in self.index_ordering if isinstance(idx, int)]
-
-        # all tensor dimensions must occure exactly once in indices
-        if not sorted(dimension_order) == list(range(num_dims)):
-            raise TypeError((f"All tensor dimensions must be refferenced exactly once in "
-                             f"tensor indices. (referenced dimensions: {dimension_order}; "
-                             f"tensor dimensions: {list(range(num_dims))})"))
-
-        # assembling permanent and index specific fields
-        fields = dict(
-            order=Scalar(dtypes.int32),
-            dim_sizes=dtypes.int32[num_dims],
-            value_count=value_count,
-            values=dtypes.float32[value_count],
-        )
-
-        for (lvl, index) in enumerate(indices):
-            fields.update(index.fields(lvl, value_count))
-
-        super(Tensor, self).__init__(fields, name, transient, storage, location, lifetime, debuginfo)
-
-    def __repr__(self):
-        return f"{self.name} (dtype: {self.value_dtype}, shape: {list(self.tensor_shape)}, indices: {self.indices})"
-
-    @staticmethod
-    def from_json(json_obj, context=None):
-        if json_obj['type'] != 'Tensor':
-            raise TypeError("Invalid data type")
-
-        # Create dummy object
-        tensor = Tensor.__new__(Tensor)
-        serialize.set_properties_from_json(tensor, json_obj, context=context)
-
-        return tensor
 
 
 @make_properties
@@ -1433,6 +482,10 @@ class Array(Data):
             self.offset = cp.copy(offset)
         else:
             self.offset = [0] * len(shape)
+
+        self._packed_c_strides = None
+        self._packed_fortran_strides = None
+
         self.validate()
 
     def __repr__(self):
@@ -1605,6 +658,12 @@ class Array(Data):
         else:
             self.offset = [0] * len(shape)
 
+        # Clear cached values and recompute
+        self._packed_c_strides = None
+        self._packed_fortran_strides = None
+        self._packed_c_strides = self._get_packed_c_strides()
+        self._packed_fortran_strides = self._get_packed_fortran_strides()
+
     def set_shape(
         self,
         new_shape,
@@ -1618,6 +677,96 @@ class Array(Data):
         self.shape = new_shape
         self._set_shape_dependent_properties(new_shape, strides, total_size, offset)
         self.validate()
+
+    def _get_packed_fortran_strides(self) -> Tuple[int]:
+        """Compute packed strides for Fortran-style (column-major) layout."""
+        # Strides increase along the leading dimensions
+        if self._packed_fortran_strides is None:
+            strides = [1]
+            accum = 1
+            # Iterate in reversed order except the first dimension
+            for s in self.shape[:-1]:
+                accum *= s
+                strides.append(accum)
+            self._packed_fortran_strides = tuple(strides)
+        return self._packed_fortran_strides
+
+    def _get_packed_c_strides(self) -> Tuple[int]:
+        """Compute packed strides for C-style (row-major) layout."""
+        # Strides increase along the trailing dimensions
+        if self._packed_c_strides is None:
+            strides = [1]
+            accum = 1
+            # Iterate in reversed order except the first dimension
+            for s in reversed(self.shape[1:]):
+                accum *= s
+                strides.insert(0, accum)
+            self._packed_c_strides = tuple(strides)
+        return self._packed_c_strides
+
+    def is_packed_fortran_strides(self) -> bool:
+        """Return True if strides match Fortran-contiguous (column-major) layout."""
+        strides = self._get_packed_fortran_strides()
+        return tuple(strides) == tuple(self.strides)
+
+    def is_packed_c_strides(self) -> bool:
+        """Return True if strides match Fortran-contiguous (row-major) layout."""
+        strides = self._get_packed_c_strides()
+        return tuple(strides) == tuple(self.strides)
+
+
+@make_properties
+class ContainerArray(Array):
+    """ An array that may contain other data containers (e.g., Structures, other arrays). """
+
+    stype = NestedDataClassProperty(allow_none=True, default=None)
+
+    def __init__(self,
+                 stype: Data,
+                 shape,
+                 transient=False,
+                 allow_conflicts=False,
+                 storage=dtypes.StorageType.Default,
+                 location=None,
+                 strides=None,
+                 offset=None,
+                 may_alias=False,
+                 lifetime=dtypes.AllocationLifetime.Scope,
+                 alignment=0,
+                 debuginfo=None,
+                 total_size=None,
+                 start_offset=None,
+                 optional=None,
+                 pool=False):
+
+        self.stype = stype
+        if stype:
+            if isinstance(stype, Structure):
+                dtype = stype.dtype
+            else:
+                dtype = dtypes.pointer(stype.dtype)
+        else:
+            dtype = dtypes.pointer(dtypes.typeclass(None))  # void*
+        super(ContainerArray,
+              self).__init__(dtype, shape, transient, allow_conflicts, storage, location, strides, offset, may_alias,
+                             lifetime, alignment, debuginfo, total_size, start_offset, optional, pool)
+
+    @classmethod
+    def from_json(cls, json_obj, context=None):
+        # Create dummy object
+        ret = cls(None, ())
+        serialize.set_properties_from_json(ret, json_obj, context=context)
+
+        # Default shape-related properties
+        if not ret.offset:
+            ret.offset = [0] * len(ret.shape)
+        if not ret.strides:
+            # Default strides are C-ordered
+            ret.strides = [_prod(ret.shape[i + 1:]) for i in range(len(ret.shape))]
+        if ret.total_size == 0:
+            ret.total_size = _prod(ret.shape)
+
+        return ret
 
 
 @make_properties
@@ -1783,57 +932,205 @@ class Stream(Data):
 
 
 @make_properties
-class ContainerArray(Array):
-    """ An array that may contain other data containers (e.g., Structures, other arrays). """
+class Structure(Data):
+    """ Base class for structures. """
 
-    stype = NestedDataClassProperty(allow_none=True, default=None)
+    members = OrderedDictProperty(default=OrderedDict(),
+                                  desc="Dictionary of structure members",
+                                  from_json=_arrays_from_json,
+                                  to_json=_arrays_to_json)
+    name = Property(dtype=str, desc="Structure type name")
 
     def __init__(self,
-                 stype: Data,
-                 shape,
-                 transient=False,
-                 allow_conflicts=False,
-                 storage=dtypes.StorageType.Default,
-                 location=None,
-                 strides=None,
-                 offset=None,
-                 may_alias=False,
-                 lifetime=dtypes.AllocationLifetime.Scope,
-                 alignment=0,
-                 debuginfo=None,
-                 total_size=None,
-                 start_offset=None,
-                 optional=None,
-                 pool=False):
+                 members: Union[Dict[str, Data], List[Tuple[str, Data]]],
+                 name: str = 'Structure',
+                 transient: bool = False,
+                 storage: dtypes.StorageType = dtypes.StorageType.Default,
+                 location: Dict[str, str] = None,
+                 lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope,
+                 debuginfo: dtypes.DebugInfo = None):
 
-        self.stype = stype
-        if stype:
-            if isinstance(stype, Structure):
-                dtype = stype.dtype
+        self.members = OrderedDict(members)
+        for k, v in self.members.items():
+            if isinstance(v, dtypes.typeclass):
+                v = Scalar(v)
+                self.members[k] = v
+            v.transient = transient
+
+        self.name = name
+        fields_and_types = OrderedDict()
+        symbols = set()
+        for k, v in self.members.items():
+            if isinstance(v, Structure):
+                symbols |= v.free_symbols
+                fields_and_types[k] = (v.dtype, str(v.total_size))
+            elif isinstance(v, Array):
+                symbols |= v.free_symbols
+                fields_and_types[k] = (dtypes.pointer(v.dtype), str(_prod(v.shape)))
+            elif isinstance(v, Scalar):
+                symbols |= v.free_symbols
+                fields_and_types[k] = v.dtype
+            elif isinstance(v, dtypes.typeclass):
+                fields_and_types[k] = v
+            elif isinstance(v, (sp.Basic, symbolic.SymExpr)):
+                symbols |= v.free_symbols
+                fields_and_types[k] = symbolic.symtype(v)
+            elif isinstance(v, (int, np.integer)):
+                fields_and_types[k] = dtypes.typeclass(type(v))
             else:
-                dtype = dtypes.pointer(stype.dtype)
-        else:
-            dtype = dtypes.pointer(dtypes.typeclass(None))  # void*
-        super(ContainerArray,
-              self).__init__(dtype, shape, transient, allow_conflicts, storage, location, strides, offset, may_alias,
-                             lifetime, alignment, debuginfo, total_size, start_offset, optional, pool)
+                raise TypeError(f"Attribute {k}'s value {v} has unsupported type: {type(v)}")
 
-    @classmethod
-    def from_json(cls, json_obj, context=None):
+        # NOTE: We will not store symbols in the dtype for now, but leaving it as a comment to investigate later.
+        # NOTE: See discussion about data/object symbols.
+        # for s in symbols:
+        #     if str(s) in fields_and_types:
+        #         continue
+        #     if hasattr(s, "dtype"):
+        #         fields_and_types[str(s)] = s.dtype
+        #     else:
+        #         fields_and_types[str(s)] = dtypes.int32
+
+        dtype = dtypes.pointer(dtypes.struct(name, **fields_and_types))
+        dtype.base_type.__descriptor__ = self
+        shape = (1, )
+        super(Structure, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
+
+    @staticmethod
+    def from_json(json_obj, context=None):
+        if json_obj['type'] != 'Structure':
+            raise TypeError("Invalid data type")
+
         # Create dummy object
-        ret = cls(None, ())
+        ret = Structure({})
         serialize.set_properties_from_json(ret, json_obj, context=context)
 
-        # Default shape-related properties
-        if not ret.offset:
-            ret.offset = [0] * len(ret.shape)
-        if not ret.strides:
-            # Default strides are C-ordered
-            ret.strides = [_prod(ret.shape[i + 1:]) for i in range(len(ret.shape))]
-        if ret.total_size == 0:
-            ret.total_size = _prod(ret.shape)
-
         return ret
+
+    @staticmethod
+    def from_dataclass(cls, **overrides) -> 'Structure':
+        """
+        Creates a Structure data descriptor from a dataclass instance.
+
+        :param cls: The dataclass to convert.
+        :param overrides: Optional overrides for the structure fields.
+        :return: A Structure data descriptor.
+        """
+        members = {}
+        for field in dataclasses.fields(cls):
+            # Recursive structures
+            if dataclasses.is_dataclass(field.type):
+                members[field.name] = Structure.from_dataclass(field.type)
+                continue
+            members[field.name] = field.type
+
+        members.update(overrides)
+        return Structure(members, name=cls.__name__)
+
+    @property
+    def total_size(self):
+        return -1
+
+    @property
+    def offset(self):
+        return [0]
+
+    @property
+    def start_offset(self):
+        return 0
+
+    @property
+    def strides(self):
+        return [1]
+
+    @property
+    def free_symbols(self) -> Set[symbolic.SymbolicType]:
+        """ Returns a set of undefined symbols in this data descriptor. """
+        result = set()
+        for k, v in self.members.items():
+            result |= v.free_symbols
+        return result
+
+    def __repr__(self):
+        return f"{self.name} ({', '.join([f'{k}: {v}' for k, v in self.members.items()])})"
+
+    def as_arg(self, with_types=True, for_call=False, name=None):
+        if self.storage is dtypes.StorageType.GPU_Global:
+            return Array(self.dtype, [1]).as_arg(with_types, for_call, name)
+        if not with_types or for_call:
+            return name
+        return self.dtype.as_arg(name)
+
+    def __getitem__(self, s):
+        """ This is syntactic sugar that allows us to define an array type
+            with the following syntax: ``Structure[N,M]``
+            :return: A ``data.ContainerArray`` data descriptor.
+        """
+        if isinstance(s, list) or isinstance(s, tuple):
+            return ContainerArray(self, tuple(s))
+        return ContainerArray(self, (s, ))
+
+    # NOTE: Like Scalars?
+    @property
+    def may_alias(self) -> bool:
+        return False
+
+    # TODO: Can Structures be optional?
+    @property
+    def optional(self) -> bool:
+        return False
+
+    def keys(self):
+        result = self.members.keys()
+        for k, v in self.members.items():
+            if isinstance(v, Structure):
+                result |= set(map(lambda x: f"{k}.{x}", v.keys()))
+        return result
+
+    def clone(self):
+        return Structure(self.members, self.name, self.transient, self.storage, self.location, self.lifetime,
+                         self.debuginfo)
+
+    # NOTE: Like scalars?
+    @property
+    def pool(self) -> bool:
+        return False
+
+    def make_argument(self, **fields) -> ctypes.Structure:
+        """
+        Creates a structure instance from the given field values, which can be used as
+        an argument for DaCe programs.
+
+        :param fields: Dictionary of field names to values.
+        :return: A ctypes Structure instance.
+        """
+        # Import here to avoid circular import
+        from dace.data.ctypes_interop import make_ctypes_argument
+        struct_type: dtypes.struct = self.dtype.base_type
+        struct_ctype = struct_type.as_ctypes()
+
+        def _make_arg(arg: Any, expected_type: Data, name: str) -> Any:
+            if isinstance(expected_type, Structure):
+                return ctypes.pointer(expected_type.make_argument_from_object(arg))
+            return make_ctypes_argument(arg, expected_type, name)
+
+        args = {
+            field_name: _make_arg(field_value, self.members[field_name], field_name)
+            for field_name, field_value in fields.items() if field_name in self.members
+        }
+
+        struct_instance = struct_ctype(**args)
+        return struct_instance
+
+    def make_argument_from_object(self, obj) -> ctypes.Structure:
+        """
+        Creates a structure instance from the given object, which can be used as
+        an argument for DaCe programs. If the object has attributes matching the field names,
+        those attributes are used as field values. Other attributes are ignored.
+
+        :param obj: Object containing field values.
+        :return: A ctypes Structure instance.
+        """
+        return self.make_argument(**{field_name: getattr(obj, field_name) for field_name in self.members})
 
 
 class View:
@@ -2138,118 +1435,3 @@ class ContainerArrayReference(ContainerArray, Reference):
         copy = cp.deepcopy(self)
         copy.__class__ = ContainerArray
         return copy
-
-
-def make_array_from_descriptor(descriptor: Array,
-                               original_array: Optional[ArrayLike] = None,
-                               symbols: Optional[Dict[str, Any]] = None) -> ArrayLike:
-    """
-    Creates an array that matches the given data descriptor, and optionally copies another array to it.
-
-    :param descriptor: The data descriptor to create the array from.
-    :param original_array: An optional array to fill the content of the return value with.
-    :param symbols: An optional symbol mapping between symbol names and their values. Used for creating arrays
-                    with symbolic sizes.
-    :return: A NumPy-compatible array (CuPy for GPU storage) with the specified size and strides.
-    """
-    import numpy as np
-
-    symbols = symbols or {}
-
-    free_syms = set(map(str, descriptor.free_symbols)) - symbols.keys()
-    if free_syms:
-        raise NotImplementedError(f'Cannot make Python references to arrays with undefined symbolic sizes: {free_syms}')
-
-    if descriptor.storage == dtypes.StorageType.GPU_Global:
-        try:
-            import cupy as cp
-        except (ImportError, ModuleNotFoundError):
-            raise NotImplementedError('GPU memory can only be allocated in Python if cupy is installed')
-
-        def create_array(shape: Tuple[int], dtype: np.dtype, total_size: int, strides: Tuple[int]) -> ArrayLike:
-            buffer = cp.ndarray(shape=[total_size], dtype=dtype)
-            view = cp.ndarray(shape=shape,
-                              dtype=dtype,
-                              memptr=buffer.data,
-                              strides=[s * dtype.itemsize for s in strides])
-            return view
-
-        def copy_array(dst, src):
-            dst[:] = cp.asarray(src)
-
-    elif descriptor.storage == dtypes.StorageType.FPGA_Global:
-        raise TypeError('Cannot allocate FPGA array in Python')
-    else:
-
-        def create_array(shape: Tuple[int], dtype: np.dtype, total_size: int, strides: Tuple[int]) -> ArrayLike:
-            buffer = np.ndarray([total_size], dtype=dtype)
-            view = np.ndarray(shape, dtype, buffer=buffer, strides=[s * dtype.itemsize for s in strides])
-            return view
-
-        def copy_array(dst, src):
-            dst[:] = src
-
-    # Make numpy array from data descriptor
-    npdtype = descriptor.dtype.as_numpy_dtype()
-    evaluated_shape = tuple(symbolic.evaluate(s, symbols) for s in descriptor.shape)
-    evaluated_size = symbolic.evaluate(descriptor.total_size, symbols)
-    evaluated_strides = tuple(symbolic.evaluate(s, symbols) for s in descriptor.strides)
-    view = create_array(evaluated_shape, npdtype, evaluated_size, evaluated_strides)
-    if original_array is not None:
-        copy_array(view, original_array)
-
-    return view
-
-
-def make_reference_from_descriptor(descriptor: Array,
-                                   original_array: ctypes.c_void_p,
-                                   symbols: Optional[Dict[str, Any]] = None) -> ArrayLike:
-    """
-    Creates an array that matches the given data descriptor from the given pointer. Shares the memory
-    with the argument (does not create a copy).
-
-    :param descriptor: The data descriptor to create the array from.
-    :param original_array: The array whose memory the return value would be used in.
-    :param symbols: An optional symbol mapping between symbol names and their values. Used for referencing arrays
-                    with symbolic sizes.
-    :return: A NumPy-compatible array (CuPy for GPU storage) with the specified size and strides, sharing memory
-             with the pointer specified in ``original_array``.
-    """
-    import numpy as np
-    symbols = symbols or {}
-
-    original_array: int = ctypes.cast(original_array, ctypes.c_void_p).value
-
-    free_syms = set(map(str, descriptor.free_symbols)) - symbols.keys()
-    if free_syms:
-        raise NotImplementedError(f'Cannot make Python references to arrays with undefined symbolic sizes: {free_syms}')
-
-    if descriptor.storage == dtypes.StorageType.GPU_Global:
-        try:
-            import cupy as cp
-        except (ImportError, ModuleNotFoundError):
-            raise NotImplementedError('GPU memory can only be referenced in Python if cupy is installed')
-
-        def create_array(shape: Tuple[int], dtype: np.dtype, total_size: int, strides: Tuple[int]) -> ArrayLike:
-            buffer = dtypes.ptrtocupy(original_array, descriptor.dtype.as_ctypes(), (total_size, ))
-            view = cp.ndarray(shape=shape,
-                              dtype=dtype,
-                              memptr=buffer.data,
-                              strides=[s * dtype.itemsize for s in strides])
-            return view
-
-    elif descriptor.storage == dtypes.StorageType.FPGA_Global:
-        raise TypeError('Cannot reference FPGA array in Python')
-    else:
-
-        def create_array(shape: Tuple[int], dtype: np.dtype, total_size: int, strides: Tuple[int]) -> ArrayLike:
-            buffer = dtypes.ptrtonumpy(original_array, descriptor.dtype.as_ctypes(), (total_size, ))
-            view = np.ndarray(shape, dtype, buffer=buffer, strides=[s * dtype.itemsize for s in strides])
-            return view
-
-    # Make numpy array from data descriptor
-    npdtype = descriptor.dtype.as_numpy_dtype()
-    evaluated_shape = tuple(symbolic.evaluate(s, symbols) for s in descriptor.shape)
-    evaluated_size = symbolic.evaluate(descriptor.total_size, symbols)
-    evaluated_strides = tuple(symbolic.evaluate(s, symbols) for s in descriptor.strides)
-    return create_array(evaluated_shape, npdtype, evaluated_size, evaluated_strides)

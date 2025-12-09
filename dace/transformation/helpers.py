@@ -19,6 +19,7 @@ from dace.sdfg.scope import ScopeSubgraphView, ScopeTree
 from dace.sdfg import SDFG, SDFGState, InterstateEdge
 from dace.sdfg import graph
 from dace.memlet import Memlet
+from dace import typeclass
 
 
 def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGState] = None) -> SDFGState:
@@ -827,6 +828,7 @@ def isolate_nested_sdfg(
         node_to_process = to_visit.pop()
         if node_to_process in visited:
             continue
+        visited.add(node_to_process)
         pre_nodes.add(node_to_process)
         to_visit.extend(iedge.src for iedge in state.in_edges(node_to_process))
 
@@ -1326,7 +1328,8 @@ def permute_map(map_entry: nodes.MapEntry, perm: List[int]):
     map_entry.map.range = [map_entry.map.range[p] for p in perm]
 
 
-def extract_map_dims(sdfg: SDFG, map_entry: nodes.MapEntry, dims: List[int]) -> Tuple[nodes.MapEntry, nodes.MapEntry]:
+def extract_map_dims(sdfg: SDFG, map_entry: nodes.MapEntry,
+                     dims: List[int]) -> Tuple[nodes.MapEntry, Optional[nodes.MapEntry]]:
     """
     Helper function that extracts specific map dimensions into an outer map.
 
@@ -1334,6 +1337,7 @@ def extract_map_dims(sdfg: SDFG, map_entry: nodes.MapEntry, dims: List[int]) -> 
     :param map_entry: Map entry node to extract.
     :param dims: A list of dimension indices to extract.
     :return: A 2-tuple containing the extracted map and the remainder map.
+    :note: If all dimensions are extracted, the remainder map is None.
     """
     # Avoid import loop
     from dace.transformation.dataflow import MapCollapse, MapExpansion
@@ -1354,15 +1358,19 @@ def extract_map_dims(sdfg: SDFG, map_entry: nodes.MapEntry, dims: List[int]) -> 
                 permissive=True,  # Since MapExpansion creates sequential maps
             )
 
-        # Collapse remaining maps
-        map_to_collapse = entries[len(dims)]
-        for idx in range(len(dims), len(entries) - 1):
-            map_to_collapse, _ = MapCollapse.apply_to(
-                sdfg,
-                outer_map_entry=map_to_collapse,
-                inner_map_entry=entries[idx + 1],
-                permissive=True,  # Since MapExpansion creates sequential maps
-            )
+        # Collapse remaining maps, if any
+        if len(dims) < len(entries):
+            map_to_collapse = entries[len(dims)]
+            for idx in range(len(dims), len(entries) - 1):
+                map_to_collapse, _ = MapCollapse.apply_to(
+                    sdfg,
+                    outer_map_entry=map_to_collapse,
+                    inner_map_entry=entries[idx + 1],
+                    permissive=True,  # Since MapExpansion creates sequential maps
+                )
+        else:
+            # All dimensions extracted, no remainder
+            map_to_collapse = None
     else:
         extracted_map = map_entry
         map_to_collapse = map_entry
@@ -1850,3 +1858,137 @@ def all_isedges_between(src: ControlFlowBlock, dst: ControlFlowBlock) -> Iterabl
                     edges.update(e.dst.all_interstate_edges())
 
         return edges
+
+
+def replace_sdfg_dtypes(
+    sdfg: SDFG,
+    from_type: typeclass,
+    to_type: typeclass,
+) -> int:
+    """
+    Iterate over an SDFG and replace all instances of simple data types
+    like float64 with another data type.
+
+    Returns:
+        int: Number of replacements performed.
+    """
+    swaps_count = 0
+
+    if sdfg.orig_sdfg:
+        for nested_sdfg in sdfg.orig_sdfg.all_sdfgs_recursive():
+            swaps_count = _change_sdfg_type(nested_sdfg, from_type, to_type, swaps_count)
+
+    for nested_sdfg in sdfg.all_sdfgs_recursive():
+        swaps_count = _change_sdfg_type(nested_sdfg, from_type, to_type, swaps_count)
+
+    return swaps_count
+
+
+def _change_sdfg_type(sdfg: SDFG, from_type: typeclass, to_type: typeclass, swaps_count: int) -> int:
+    # Swap nodes
+    for node, _ in sdfg.all_nodes_recursive():
+        if hasattr(node, "in_connectors"):
+            for in_con_name, in_con_type in node.in_connectors.items():
+                if in_con_type == from_type:
+                    node.in_connectors[in_con_name] = to_type
+                    swaps_count += 1
+                elif _is_pointer(in_con_type):
+                    if in_con_type.base_type == from_type:
+                        node.in_connectors[in_con_name] = dtypes.pointer(to_type)
+                        swaps_count += 1
+
+        if hasattr(node, "out_connectors"):
+            for out_con_name, out_con_type in node.out_connectors.items():
+                if out_con_type == from_type:
+                    node.out_connectors[out_con_name] = to_type
+                    swaps_count += 1
+                elif _is_pointer(out_con_type):
+                    if out_con_type.base_type == from_type:
+                        node.out_connectors[out_con_name] = dtypes.pointer(to_type)
+                        swaps_count += 1
+
+    # Swap symbols
+    for sym_name, sym_type in sdfg.symbols.items():
+        if sym_type == from_type:
+            sdfg.symbols[sym_name] = to_type
+            swaps_count += 1
+
+    # Swap array types
+    for array_name, array_desc in sdfg.arrays.items():
+        if array_desc.dtype == from_type:
+            array_desc.dtype = to_type
+            swaps_count += 1
+
+    # Swap structures and structure views
+    for array_desc in sdfg._arrays.values():
+        if _is_structure(array_desc) or _is_structure_view(array_desc):
+            swaps_count = _change_structure_type(array_desc, from_type, to_type, swaps_count)
+
+    # Change dace.data.struct field types
+    for array_desc in sdfg._arrays.values():
+        if _is_structure(array_desc):
+            if _is_pointer(array_desc.dtype):
+                if isinstance(array_desc.dtype.base_type, dtypes.struct):
+                    for field_name, field_desc in array_desc.dtype.base_type.fields.items():
+                        if field_desc == dtypes.pointer(from_type):
+                            array_desc.dtype.base_type.fields[field_name] = dtypes.pointer(to_type)
+                            swaps_count += 1
+
+    return swaps_count
+
+
+def _change_structure_type(descriptor: data.Array, from_type: typeclass, to_type: typeclass, swaps_count: int) -> int:
+    """Change structure type for Structure or StructureView descriptors."""
+    # Swap the Structure dtype definition
+    if _is_pointer(descriptor.dtype):
+        if isinstance(descriptor.dtype.base_type, dtypes.struct):
+            swaps_count = _change_struct_type(descriptor.dtype.base_type, from_type, to_type, swaps_count)
+
+    swaps_count = _change_member_types(descriptor, from_type, to_type, swaps_count)
+    return swaps_count
+
+
+def _change_struct_type(descriptor: dtypes.struct, from_type: typeclass, to_type: typeclass, swaps_count: int) -> int:
+    """Recursively change field types in a struct descriptor."""
+    for field_name, field_desc in descriptor.fields.items():
+        if _is_pointer(field_desc):
+            base_type = field_desc.base_type
+            if isinstance(base_type, dtypes.struct):
+                swaps_count = _change_struct_type(base_type, from_type, to_type, swaps_count)
+            elif base_type == from_type:
+                descriptor.fields[field_name] = dtypes.pointer(to_type)
+                swaps_count += 1
+        elif field_desc == from_type:
+            descriptor.fields[field_name] = to_type
+            swaps_count += 1
+    return swaps_count
+
+
+def _change_member_types(descriptor: data.Array, from_type: typeclass, to_type: typeclass, swaps_count: int) -> int:
+    """Change member types for descriptors with members attribute."""
+    if not hasattr(descriptor, "members"):
+        raise TypeError(f"Expected type with member attr but got {descriptor}")
+
+    for member_name, member_descriptor in descriptor.members.items():
+        if _is_structure(member_descriptor):
+            swaps_count = _change_structure_type(member_descriptor, from_type, to_type, swaps_count)
+        else:
+            if member_descriptor.dtype == from_type:
+                member_descriptor.dtype = to_type
+                swaps_count += 1
+    return swaps_count
+
+
+def _is_structure(obj) -> bool:
+    """Check if object is a Structure."""
+    return isinstance(obj, data.Structure)
+
+
+def _is_pointer(obj) -> bool:
+    """Check if object is a pointer type."""
+    return isinstance(obj, dtypes.pointer)
+
+
+def _is_structure_view(obj) -> bool:
+    """Check if object is a StructureView."""
+    return isinstance(obj, data.StructureView)
