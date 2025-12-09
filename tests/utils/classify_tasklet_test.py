@@ -687,6 +687,15 @@ tasklet_infos = [
         "op": ">",
         "constant1": "i",
         "constant2": None
+    }),
+    ("out = in_sc1", "array", {}, {"sc1"}, {}, {
+        "type": tutil.TaskletType.ARRAY_SCALAR_ASSIGNMENT,
+        "lhs": "out",
+        "rhs1": "in_sc1",
+        "rhs2": None,
+        "op": "=",
+        "constant1": None,
+        "constant2": None
     })
 ]
 

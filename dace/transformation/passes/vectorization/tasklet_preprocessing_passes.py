@@ -367,6 +367,7 @@ class ReplaceSTDExpWithDaCeExp(ppl.Pass):
         sdfg.append_global_code('#include "dace/arith/exp.h"')
         sdfg.validate()
 
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class ReplaceSTDPowWithDaCePow(ppl.Pass):

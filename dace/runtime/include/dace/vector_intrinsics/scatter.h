@@ -82,4 +82,3 @@ void scatter_double(const double* __restrict__ A,
     }
 #endif
 }
-

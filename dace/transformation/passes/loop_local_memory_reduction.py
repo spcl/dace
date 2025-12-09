@@ -549,24 +549,24 @@ class LoopLocalMemoryReduction(ppl.Pass):
 
         # Rename the array to indicate it has been circularly reduced.
         if self.annotation_postfix:
-          new_name, _ = sdfg.add_array(
-            f"{array_name}{self.annotation_postfix}",
-            shape=array.shape,
-            dtype=array.dtype,
-            storage=array.storage,
-            location=array.location,
-            transient=array.transient,
-            strides=array.strides,
-            offset=array.offset,
-            lifetime=array.lifetime,
-            debuginfo=array.debuginfo,
-            allow_conflicts=array.allow_conflicts,
-            total_size=array.total_size,
-            find_new_name=True,
-            alignment=array.alignment,
-            may_alias=array.may_alias,
-          )
-          sdfg.replace(array_name, new_name)
+            new_name, _ = sdfg.add_array(
+                f"{array_name}{self.annotation_postfix}",
+                shape=array.shape,
+                dtype=array.dtype,
+                storage=array.storage,
+                location=array.location,
+                transient=array.transient,
+                strides=array.strides,
+                offset=array.offset,
+                lifetime=array.lifetime,
+                debuginfo=array.debuginfo,
+                allow_conflicts=array.allow_conflicts,
+                total_size=array.total_size,
+                find_new_name=True,
+                alignment=array.alignment,
+                may_alias=array.may_alias,
+            )
+            sdfg.replace(array_name, new_name)
 
         # If the new shape is a single element, we can replace the array with a scalar.
         if all(s == 1 for s in new_shape):
@@ -583,6 +583,3 @@ class LoopLocalMemoryReduction(ppl.Pass):
                 edge.data.src_subset = Range([(0, 0, 1)])
             for edge in write_edges:
                 edge.data.dst_subset = Range([(0, 0, 1)])
-
-        
-            

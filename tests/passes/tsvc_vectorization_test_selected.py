@@ -20,6 +20,7 @@ from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
 LEN_1D = dace.symbol("LEN_1D")
 ITERATIONS = dace.symbol("ITERATIONS")
 
+
 def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                            arrays,
                            params,

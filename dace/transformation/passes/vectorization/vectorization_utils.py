@@ -1659,7 +1659,22 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
     if ttype == tutil.TaskletType.ARRAY_ARRAY_ASSIGNMENT:
         _set_template(rhs1, rhs2, c1, c2, lhs, "=", ttype)
     elif ttype == tutil.TaskletType.ARRAY_SCALAR_ASSIGNMENT:
-        node.code = dace.properties.CodeBlock(code="\n".join([f"{lhs}[{i}] = {c2};" for i in range(vw)]) + "\n",
+        val = None
+        if c1 is not None:
+            val = c1
+            assert c2 is None
+            assert rhs1 is None
+            assert rhs2 is None
+        elif c2 is not None:
+            val = c2
+            assert rhs1 is None
+            assert rhs2 is None
+        elif rhs1 is not None:
+            val = rhs1
+            assert rhs2 is None
+        elif rhs2 is not None:
+            val = rhs2
+        node.code = dace.properties.CodeBlock(code="\n".join([f"{lhs}[{i}] = {val};" for i in range(vw)]) + "\n",
                                               language=dace.Language.CPP)
     elif ttype == tutil.TaskletType.ARRAY_SYMBOL_ASSIGNMENT:
         # It is either a symbol or a constant
@@ -2511,15 +2526,17 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
                         # Analysis tries find the first assignment in the CFG
                         assignment = find_symbol_assignment(sdfg, str(free_sym))
                         print("Assignment to ", str(free_sym), "are", assignment)
-                        
+
                         if assignment is None and str(free_sym) not in parent_syms_defined:
                             sdfg.save("failing_vectorization.sdfg")
                         print(assignment, parent_syms_defined, free_sym, str(free_sym) in parent_syms_defined)
-                        assert not (assignment is None and str(free_sym) not in parent_syms_defined), f"Could not find an iedge assignment for {free_sym}, assignemnt {assignment}, parent symbols defined {parent_syms_defined}"
+                        assert not (
+                            assignment is None and str(free_sym) not in parent_syms_defined
+                        ), f"Could not find an iedge assignment for {free_sym}, assignemnt {assignment}, parent symbols defined {parent_syms_defined}"
                         # Loop invariant symbol passed from outside
                         if assignment is None:
                             continue
-                        
+
                         assignment_expr = dace.symbolic.SymExpr(assignment)
                         # Define functions to ignore (common arithmetic + piecewise + rounding)
                         ignored = {
