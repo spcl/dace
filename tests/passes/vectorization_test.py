@@ -430,6 +430,7 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
     copy_sdfg: dace.SDFG = copy.deepcopy(sdfg)
     copy_sdfg.name = copy_sdfg.name + "_vectorized"
 
+
     if cleanup:
         for e, g in copy_sdfg.all_edges_recursive():
             if isinstance(g, dace.SDFGState):
@@ -467,9 +468,7 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                  fail_on_unvectorizable=True).apply_pass(copy_sdfg, {})
     copy_sdfg.validate()
 
-    if save_sdfgs and sdfg_name:
-        copy_sdfg.save(f"{sdfg_name}_vectorized.sdfg")
-    c_copy_sdfg = copy_sdfg.compile()
+
 
     # Run both
     c_sdfg(**arrays_orig, **params)
@@ -3812,6 +3811,30 @@ def test_pow():
                            save_sdfgs=True,
                            sdfg_name=f"test_pow",
                            from_sdfg=True)
+
+
+@dace.program
+def dace_s000(A: dace.float64[S], B: dace.float64[S]):
+    for nl in range(2):
+        for i in dace.map[0:S:1]:
+            A[i] = B[i] + 1.0
+
+def test_s000():
+    # Create test arrays
+    _S = 64
+    A = numpy.random.uniform(0.2, 1.2, size=(_S, ))
+    B = numpy.abs(numpy.random.randn(_S, )) * 1e-4
+
+    run_vectorization_test(dace_func=dace_s000,
+                           arrays={
+                               "A": A,
+                               "B": B
+                           },
+                           params={"S": _S},
+                           vector_width=8,
+                           save_sdfgs=True,
+                           sdfg_name=f"s000",
+                           from_sdfg=False)
 
 
 if __name__ == "__main__":

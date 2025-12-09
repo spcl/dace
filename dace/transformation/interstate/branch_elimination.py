@@ -2078,8 +2078,11 @@ class BranchElimination(transformation.MultiStateTransformation):
                         src_node = src_nodes.pop()
                         src_edge = src_edges.pop()
                         if src_edge.data.assignments == dict():
-                            self._force_fuse(src_node, new_state)
-                            RemoveEmptyStates().apply_pass(graph.sdfg, {})
+                            graph.sdfg.save("x.sdfg")
+                            print("Src node - new state", src_node, new_state)
+                            if not isinstance(src_node, ConditionalBlock):
+                                self._force_fuse(src_node, new_state)
+                                RemoveEmptyStates().apply_pass(graph.sdfg, {})
                     graph.sdfg.validate()
                     graph.sdfg.simplify()
 

@@ -2438,8 +2438,36 @@ def test_interstate_boolean_op_two():
     sdfg.save("interstate_boolean_op_two_transformed.sdfg")
     run_and_compare_sdfg(sdfg, False, "interstate_boolean_op_two", A=A, B=B, c0=c0)
 
+LEN_1D = dace.symbol("LEN_1D")
+ITERATIONS = dace.symbol("ITERATIONS")
+@dace.program
+def dace_s1161(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D], d: dace.float64[LEN_1D],
+               e: dace.float64[LEN_1D]):
+    for nl in range(ITERATIONS):
+        for i in range(LEN_1D):
+            if c[i] < 0.0:
+                b[i] = a[i] + d[i] * d[i]
+            else:
+                a[i] = c[i] + d[i] * e[i]
+
+def test_s1161():
+    sdfg = dace_s1161.to_sdfg()
+    sdfg.save("s1161.sdfg")
+    from dace.transformation.passes.clean_data_to_scalar_slice_to_tasklet_pattern import CleanDataToScalarSliceToTaskletPattern
+    CleanDataToScalarSliceToTaskletPattern().apply_pass(sdfg, {})
+    sdfg.save("s1161_v2.sdfg")
+    be = branch_elimination.BranchElimination()
+    cblocks = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
+    for cblock in cblocks:
+        xform = branch_elimination.BranchElimination()
+        xform.conditional = cblock
+        xform._split_branches(parent_graph=cblock.parent_graph, if_block=cblock)
+    EliminateBranches().apply_pass(sdfg, {})
+    branches = {n for (n,g) in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
+    assert len(branches) == 0
 
 if __name__ == "__main__":
+    test_s1161()
     test_top_level_if()
     test_interstate_boolean()
     test_interstate_boolean_op_two()

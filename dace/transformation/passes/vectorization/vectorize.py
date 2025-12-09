@@ -242,7 +242,7 @@ class Vectorize(ppl.Pass):
         # 0
         # Collect all assigned symbols, check what we can demote
         if self.try_to_demote_symbols_in_nsdfgs:
-            try_demoting_vectorizable_symbols(inner_sdfg)
+            demoted_scalars = try_demoting_vectorizable_symbols(inner_sdfg)
 
         # 1.1.1
         fix_nsdfg_connector_array_shapes_mismatch(state, nsdfg)
@@ -254,6 +254,11 @@ class Vectorize(ppl.Pass):
             arr_name
             for arr_name in transient_arrays if inner_sdfg.arrays[arr_name].shape == (self.vector_width, )
         }
+        if self.try_to_demote_symbols_in_nsdfgs:
+            for k in demoted_scalars:
+                assert k in transient_arrays
+        if self.try_to_demote_symbols_in_nsdfgs:
+            replace_arrays_with_new_shape(inner_sdfg, demoted_scalars, (self.vector_width, ), None)
 
         # If a scalar is only used on an interstate edge we have a pattern such as:
         # scalar1 = i + scalar0
@@ -284,6 +289,8 @@ class Vectorize(ppl.Pass):
         replace_arrays_with_new_shape(inner_sdfg, vector_width_transient_arrays, (self.vector_width, ),
                                       self.vector_op_numeric_type)
         replace_arrays_with_new_shape(inner_sdfg, non_vector_width_transient_arrays, (self.vector_width, ), None)
+
+
         inner_sdfg.reset_cfg_list()
 
         vector_width_arrays = {
@@ -348,6 +355,9 @@ class Vectorize(ppl.Pass):
         non_vectorizable_array_infos = {(arr_name + "_packed", (self.vector_width, ), self.vector_input_storage,
                                          arr.dtype)
                                         for arr_name, arr in non_vectorizable_array_descs}
+        if self.try_to_demote_symbols_in_nsdfgs:
+            for k in demoted_scalars:
+                assert k in vectorizable_arrays_dict
 
         #raise Exception(vectorizable_arrays_dict, non_vectorizable_arrays)
         add_transient_arrays_from_list(inner_sdfg, non_vectorizable_array_infos)
@@ -1317,12 +1327,15 @@ class Vectorize(ppl.Pass):
 
         applied = 0
         applied_set = set()
+        print(f"Found map entries: {map_entries}")
         for i, (map_entry, state) in enumerate(map_entries):
+            print(is_innermost_map(state, map_entry))
             if is_innermost_map(state, map_entry):
                 num_vectorized += 1
                 all_nodes_between = state.all_nodes_between(map_entry, state.exit_node(map_entry))
 
                 if self._apply_on_maps is not None and map_entry not in self._apply_on_maps:
+                    print(f"{map_entry} not in {self._apply_on_maps}")
                     continue
 
                 if map_entry.map.label.startswith("vectorloop_"):
@@ -1351,8 +1364,12 @@ class Vectorize(ppl.Pass):
                 if opt_nsdfg is not None:
                     nsdfg: dace.nodes.NestedSDFG = opt_nsdfg
                     if not has_only_states(nsdfg.sdfg):
-                        print(f"Nested SDFG inside map nodes other than states")
-                        continue
+                        # If it has a conditional block with only break inside we can still do it
+                        if has_only_states_or_single_block_with_break_only(nsdfg.sdfg):
+                            pass
+                        else:
+                            print(f"Nested SDFG inside map nodes other than states, of the if blocks do not consist only of breaks")
+                            continue
 
                 if not no_other_subset(state, map_entry):
                     if self.fail_on_unvectorizable:

@@ -300,7 +300,7 @@ void s118_run_timed(
 
     auto t1 = clock::now();
     {
-        const int outer = 200 * (iterations / len_2d);
+        const int outer = 4 * (iterations);
         for (int nl = 0; nl < outer; ++nl) {
             for (int i = 1; i < len_2d; ++i) {
                 for (int j = 0; j <= i - 1; ++j) {
@@ -777,7 +777,7 @@ void s161_run_timed(
     auto t1 = clock::now();
     {
         for (int nl = 0; nl < iterations / 2; ++nl) {
-            for (int i = 0; i < len_1d - 1; ++i) {
+            for (int i = 0; i < len_1d; ++i) {
 
                 if (b[i] < 0.0) {
                     // L20
@@ -813,7 +813,7 @@ void s1161_run_timed(
     auto t1 = clock::now();
     {
         for (int nl = 0; nl < iterations; ++nl) {
-            for (int i = 0; i < len_1d - 1; ++i) {
+            for (int i = 0; i < len_1d; ++i) {
                 if (c[i] < 0.0) {
                     b[i] = a[i] + d[i] * d[i];
                 } else {
@@ -1239,7 +1239,7 @@ void s232_run_timed(
     using clock = std::chrono::high_resolution_clock;
     auto t1 = clock::now();
     {
-        int outer = 100 * (iterations / len_2d);
+        int outer = 2 * (iterations);
         for (int nl = 0; nl < outer; ++nl) {
             for (int j = 1; j < len_2d; ++j) {
                 for (int i = 1; i <= j; ++i) {
@@ -3243,35 +3243,6 @@ void s331_run_timed(
             }
         }
         // chksum = (real_t) j;  // ignored in timed version
-    }
-
-    auto t2 = clock_highres::now();
-    time_ns[0] =
-        std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
-}
-
-// s332: first value greater than threshold t
-void s332_run_timed(
-    const double *a,
-    int iterations,
-    int len_1d,
-    std::int64_t* time_ns
-){
-    auto t1 = clock_highres::now();
-
-    int index;
-    double value;
-    for (int nl = 0; nl < iterations; ++nl) {
-        index = -2;
-        value = -1.0;
-        for (int i = 0; i < len_1d; ++i) {
-            if (a[i] > 0.5) {
-                index = i;
-                value = a[i];
-                break;  // corresponds to goto L20
-            }
-        }
-        // chksum = value + (real_t) index;  // ignored
     }
 
     auto t2 = clock_highres::now();

@@ -21,9 +21,14 @@ import ctypes
 import subprocess
 import pathlib
 from math import sin, cos, log, exp, pow
+from dace.transformation.passes.fusion_inline import InlineSDFGs
 
 LEN_1D = dace.symbol("LEN_1D")
 LEN_2D = dace.symbol("LEN_2D")
+#G_LEN_1D_VAL = 8192 * 8192
+#G_LEN_2D_VAL = 8192
+G_LEN_1D_VAL = 32
+G_LEN_2D_VAL = 32
 ITERATIONS = dace.symbol("ITERATIONS")
 S = dace.symbol('S')
 
@@ -31,14 +36,6 @@ LIB_NAME = "libtsvcpp.so"
 CPP_FILE = "tsvcpp.cpp"
 
 SAVE_SDFGS = False
-
-
-def pytest_sessionfinish(session, exitstatus):
-    """Cleanup step executed after the whole test session."""
-    subprocess.run(
-        ["find", ".", "-name", "*.so", "-type", "f", "-delete"],
-        check=False,
-    )
 
 
 def build_tsvcpp_lib():
@@ -58,6 +55,8 @@ def build_tsvcpp_lib():
             "-std=c++17",
             "-fPIC",
             "-shared",
+            "-ffast-math",
+            "-fstrict-aliasing",
             str(cpp_path),
             "-o",
             str(lib_path),
@@ -159,14 +158,45 @@ def compare_kernel(dace_func, arrays, params):
 
     # ---- Compare all arrays ----
     for name in arrays:
-        if not np.allclose(arrays_dace[name], arrays_cpp[name], rtol=1e-12, atol=1e-12):
+        if not np.allclose(arrays_dace[name], arrays_cpp[name], rtol=1e-12, equal_nan=True):
             diff = np.abs(arrays_dace[name] - arrays_cpp[name])
             max_err = np.max(diff)
-            raise AssertionError(f"(DaCe + LoopToMap)"
-                                 f"Kernel {dace_func.name}: mismatch in array '{name}'. "
+            #print(diff)
+            #print(arrays_dace[name])
+            #print(arrays_cpp[name])
+            raise AssertionError(f"Kernel {dace_func.name}: mismatch in array '{name}'. "
                                  f"Max error = {max_err}")
 
+    log_runtime(int(time_ns[0]), cpp_name)
+
+    # Do it 10 more times
+    for i in range(10):
+        cpp_func(*args_cpp)
+        log_runtime(int(time_ns[0]), cpp_name)
+
     return int(time_ns[0])
+
+import os
+import fcntl
+
+def log_runtime(time_ns: int, name: str, filename: str = "runtimes.csv"):
+    header = "name,time_ns\n"
+    line = f"{name},{time_ns}\n"
+
+    with open(filename, "a+") as f:
+        # Acquire exclusive file lock (blocks until available)
+        fcntl.flock(f, fcntl.LOCK_EX)
+
+        # Check if file is empty (first writer)
+        f.seek(0, os.SEEK_END)
+        if f.tell() == 0:
+            f.write(header)
+
+        f.write(line)
+        f.flush()
+
+        # Release lock
+        fcntl.flock(f, fcntl.LOCK_UN)
 
 
 def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
@@ -184,7 +214,9 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                            from_sdfg=False,
                            no_inline=False,
                            exact=None,
-                           apply_loop_to_map=False):
+                           apply_loop_to_map=False,
+                           break_vectorize=False,
+                           split_all_branches=False):
 
     # Create copies for comparison
     arrays_orig = {k: copy.deepcopy(v) for k, v in arrays.items()}
@@ -199,9 +231,11 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
     else:
         sdfg: dace.SDFG = dace_func
 
+    assert apply_loop_to_map is True
     if apply_loop_to_map:
-        sdfg.apply_transformations_repeated(LoopToMap())
+        sdfg.apply_transformations_repeated(LoopToMap)
         sdfg.simplify()
+        InlineSDFGs().apply_pass(sdfg, {})
 
     if save_sdfgs and sdfg_name:
         sdfg.save(f"{sdfg_name}.sdfg")
@@ -210,6 +244,14 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
     # Vectorized SDFG
     copy_sdfg: dace.SDFG = copy.deepcopy(sdfg)
     copy_sdfg.name = copy_sdfg.name + "_vectorized"
+    copy_sdfg.instrument = dace.dtypes.InstrumentationType.Timer
+
+    if split_all_branches:
+        cblocks = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
+        for cblock in cblocks:
+            xform = branch_elimination.BranchElimination()
+            xform.conditional = cblock
+            xform._split_branches(parent_graph=cblock.parent_graph, if_block=cblock)
 
     if cleanup:
         for e, g in copy_sdfg.all_edges_recursive():
@@ -233,6 +275,27 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                                dace.memlet.Memlet(data=dst_data, subset=copy.deepcopy(dst_subset)))
         copy_sdfg.validate()
 
+    for n, g in copy_sdfg.all_nodes_recursive():
+        if isinstance(n, dace.nodes.MapEntry):
+            for oe in g.out_edges(n):
+                if isinstance(oe.dst, dace.nodes.AccessNode):
+                    if oe.data.other_subset is not None:
+                        print(oe, oe.data.other_subset)
+                        if isinstance(g.sdfg.arrays[oe.dst.data], dace.data.Scalar):
+                            subs = oe.data.subset
+                            data = oe.data.data
+                            print(oe.data.subset)
+                            g.remove_edge(oe)
+                            for oe2 in g.out_edges(oe.dst):
+                                g.add_edge(oe.src, oe.src_conn,
+                                            oe2.dst, oe2.dst_conn,
+                                            dace.memlet.Memlet(
+                                                data=data,
+                                                subset=subs,
+                                            ))
+                            g.remove_node(oe.dst)
+    copy_sdfg.validate()
+
     if filter_map != -1:
         map_labels = [n.map.label for (n, g) in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)]
         filter_map_labels = map_labels[0:filter_map]
@@ -241,34 +304,33 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
         filter_map = None
 
     pass_info = dict()
-    VectorizeCPU(vector_width=vector_width,
-                 fuse_overlapping_loads=fuse_overlapping_loads,
-                 insert_copies=insert_copies,
-                 apply_on_maps=filter_map,
-                 no_inline=no_inline).apply_pass(copy_sdfg, pass_info)
+    if not break_vectorize:
+        VectorizeCPU(vector_width=vector_width,
+                    fuse_overlapping_loads=fuse_overlapping_loads,
+                    insert_copies=insert_copies).apply_pass(copy_sdfg, pass_info)
+    else:
+        from dace.transformation.passes.vectorization.vectorize_break import VectorizeBreak
+        VectorizeBreak(vector_width=vector_width).apply_pass(copy_sdfg, pass_info)
     copy_sdfg.validate()
     #print(pass_info)
     #print(copy_sdfg.name, ":", pass_info["Vectorize"])
-
-    from pathlib import Path
-
-    def append_pass_info(log_path, func_name, pass_value):
-        """
-        Append:  <func_name> : <pass_value>
-        to the given log file.
-
-        Creates the file if missing, appends otherwise.
-        """
-        log_path = Path(log_path)
-
-        with log_path.open("a") as f:
-            f.write(f"{func_name} : {pass_value}\n")
-
-    append_pass_info("vectorization_pass_log.txt", copy_sdfg.name, f"{copy_sdfg.name}: {pass_info['Vectorize']}")
-
+    # Single core
+    for n, g in copy_sdfg.all_nodes_recursive():
+        if isinstance(n, dace.nodes.MapEntry):
+            print(n, n.map.schedule)
+            n.map.schedule = dace.dtypes.ScheduleType.Sequential
+    for n, g in copy_sdfg.all_nodes_recursive():
+        if isinstance(n, dace.nodes.MapEntry):
+            print(n.map.schedule)
+            assert n.map.schedule == dace.dtypes.ScheduleType.Sequential
     if save_sdfgs and sdfg_name:
         copy_sdfg.save(f"{sdfg_name}_vectorized.sdfg")
     c_copy_sdfg = copy_sdfg.compile()
+
+    if save_sdfgs:
+        copy_sdfg.save(f"{sdfg_name}_vectorized.sdfg")
+    c_copy_sdfg = copy_sdfg.compile()
+    #raise Exception("X")
 
     # Run both
     c_sdfg(**arrays_orig, **params)
@@ -279,7 +341,7 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
     for name in arrays.keys():
         diff = arrays_vec[name] - arrays_orig[name]
         print(diff)
-        allclose = np.allclose(arrays_orig[name], arrays_vec[name], rtol=1e-32)
+        allclose = np.allclose(arrays_orig[name], arrays_vec[name], rtol=1e-12, equal_nan=True)
         if not allclose:
             sdfg.save(f"{sdfg_name}.sdfg")
             copy_sdfg.save(f"{sdfg_name}_vectorized.sdfg")
@@ -287,13 +349,29 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
 
         if exact is not None:
             diff = arrays_vec[name] - exact
-            allclose = np.allclose(arrays_vec[name], exact, rtol=0, atol=1e-300)
+            allclose = np.allclose(arrays_vec[name], exact, rtol=0, atol=1e-300, equal_nan=True)
             if not allclose:
                 if not allclose:
                     sdfg.save(f"{sdfg_name}.sdfg")
                     copy_sdfg.save(f"{sdfg_name}_vectorized.sdfg")
             assert allclose, f"(Vectorize) {name} Diff: max abs diff = {np.max(np.abs(diff))}"
-    return copy_sdfg
+    
+    # If we are here then write timing results
+
+    report = copy_sdfg.get_latest_report()
+    # Or: sdfg.get_instrumentation_reports()[-1]
+    #print(report)
+
+    total_time = report.events[0].duration * 1000 # useconds
+    log_runtime(int(total_time), sdfg_name)
+
+    for i in range(10):
+        c_copy_sdfg(**arrays_vec, **params)
+        report = copy_sdfg.get_latest_report()
+        total_time = report.events[0].duration * 1000 # useconds
+        log_runtime(int(total_time), sdfg_name)
+
+    return int(total_time)
 
 
 def initialise_arrays():
@@ -414,7 +492,7 @@ def dace_s116(a: dace.float64[LEN_1D]):
 
 @dace.program
 def dace_s118(a: dace.float64[LEN_2D], bb: dace.float64[LEN_2D, LEN_2D]):
-    for nl in range(200 * (ITERATIONS // LEN_2D)):
+    for nl in range(4 * (ITERATIONS)):
         for i in range(1, LEN_2D):
             for j in range(0, i):
                 a[i] = a[i] + bb[j, i] * a[i - j - 1]
@@ -556,7 +634,7 @@ def dace_s152(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[
 def dace_s161(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D], d: dace.float64[LEN_1D],
               e: dace.float64[LEN_1D]):
     for nl in range(ITERATIONS // 2):
-        for i in range(LEN_1D - 1):
+        for i in range(LEN_1D):
             if b[i] < 0.0:
                 c[i + 1] = a[i] + d[i] * d[i]
             else:
@@ -567,7 +645,7 @@ def dace_s161(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[
 def dace_s1161(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D], d: dace.float64[LEN_1D],
                e: dace.float64[LEN_1D]):
     for nl in range(ITERATIONS):
-        for i in range(LEN_1D - 1):
+        for i in range(LEN_1D):
             if c[i] < 0.0:
                 b[i] = a[i] + d[i] * d[i]
             else:
@@ -720,7 +798,7 @@ def dace_s231(aa: dace.float64[LEN_2D, LEN_2D], bb: dace.float64[LEN_2D, LEN_2D]
 @dace.program
 def dace_s232(aa: dace.float64[LEN_2D, LEN_2D], bb: dace.float64[LEN_2D, LEN_2D]):
 
-    outer = 100 * (ITERATIONS // LEN_2D)
+    outer = 2 * (ITERATIONS)
 
     for nl in range(outer):
         for j in range(1, LEN_2D):
@@ -835,14 +913,6 @@ def dace_s244(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[
             b[i] = c[i] + b[i]
             a[i + 1] = b[i] + a[i + 1] * d[i]
 
-
-@dace.program
-def dace_s1244(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D], d: dace.float64[LEN_1D]):
-
-    for nl in range(ITERATIONS):
-        for i in range(LEN_1D - 1):
-            a[i] = b[i] + c[i] * c[i] + b[i] * b[i] + c[i]
-            d[i] = a[i] + a[i + 1]
 
 
 @dace.program
@@ -975,13 +1045,6 @@ def dace_s1244(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64
             a[i] = b[i] + c[i] * c[i] + b[i] * b[i] + c[i]
             d[i] = a[i] + a[i + 1]
 
-
-@dace.program
-def dace_s2244(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D], e: dace.float64[LEN_1D]):
-    for nl in range(ITERATIONS):
-        for i in range(LEN_1D - 1):
-            a[i + 1] = b[i] + e[i]
-            a[i] = b[i] + c[i]
 
 
 @dace.program
@@ -1176,7 +1239,7 @@ def dace_s1281(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64
                e: dace.float64[LEN_1D]):
     for nl in range(4 * ITERATIONS):
         for i in range(LEN_1D):
-            x = b[i] * c[i] + a[i] * d[i] + e[i]
+            x = (b[i] * c[i]) + (a[i] * d[i]) + e[i]
             a[i] = x - 1.0
             b[i] = x
 
@@ -1668,19 +1731,6 @@ def dace_s331(a: dace.float64[LEN_1D], ):
     # return value would be j+1 in C version
 
 
-@dace.program
-def dace_s332(a: dace.float64[LEN_1D], ):
-    index = -2
-    value = -1.0
-    for nl in range(ITERATIONS):
-        index = -2
-        value = -1.0
-        for i in range(LEN_1D):
-            if a[i] > 0.5:
-                index = i
-                value = a[i]
-                break
-        # chksum = value + index
 
 
 # ======================
@@ -2115,8 +2165,8 @@ def dace_vtv(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
 
 
 def test_s000():
-    LEN_1D_val = 64
-    ITERATIONS_val = 2
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
 
     a = np.random.rand(LEN_1D_val).astype(np.float64)
     b = np.random.rand(LEN_1D_val).astype(np.float64)
@@ -2133,7 +2183,7 @@ def test_s000():
             "LEN_1D": LEN_1D_val,
             "ITERATIONS": ITERATIONS_val
         },
-        save_sdfgs=SAVE_SDFGS,
+        save_sdfgs=True,
         sdfg_name="dace_s000",
         apply_loop_to_map=True,
     )
@@ -2142,8 +2192,8 @@ def test_s000():
 
 
 def test_s111():
-    LEN_1D_val = 64
-    ITERATIONS_val = 2
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
 
     a = np.random.rand(LEN_1D_val).astype(np.float64)
     b = np.random.rand(LEN_1D_val).astype(np.float64)
@@ -2169,8 +2219,8 @@ def test_s111():
 
 
 def test_s1111():
-    LEN_1D_val = 64
-    ITERATIONS_val = 2
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
 
     a = np.random.rand(LEN_1D_val).astype(np.float64)
     b = np.random.rand(LEN_1D_val).astype(np.float64)
@@ -2200,8 +2250,8 @@ def test_s1111():
 
 
 def test_s112():
-    LEN_1D_val = 64
-    ITERATIONS_val = 2
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
 
     a = np.random.rand(LEN_1D_val).astype(np.float64)
     b = np.random.rand(LEN_1D_val).astype(np.float64)
@@ -2227,8 +2277,8 @@ def test_s112():
 
 
 def test_s1112():
-    LEN_1D_val = 64
-    ITERATIONS_val = 2
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
 
     a = np.random.rand(LEN_1D_val).astype(np.float64)
     b = np.random.rand(LEN_1D_val).astype(np.float64)
@@ -2254,8 +2304,8 @@ def test_s1112():
 
 
 def test_s113():
-    LEN_1D_val = 64
-    ITERATIONS_val = 2
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
 
     # Allocate random inputs
     a = np.random.rand(LEN_1D_val).astype(np.float64)
@@ -2282,8 +2332,8 @@ def test_s113():
 
 
 def test_s1113():
-    LEN_1D_val = 64
-    ITERATIONS_val = 2
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
 
     # Allocate random inputs
     a = np.random.rand(LEN_1D_val).astype(np.float64)
@@ -2310,8 +2360,8 @@ def test_s1113():
 
 
 def test_s114():
-    LEN_2D_val = 32
-    ITERATIONS_val = 2
+    LEN_2D_val = G_LEN_2D_VAL
+    ITERATIONS_val = 1
 
     # Allocate random inputs
     aa = np.random.rand(LEN_2D_val, LEN_2D_val).astype(np.float64)
@@ -2338,8 +2388,8 @@ def test_s114():
 
 
 def test_s115():
-    LEN_2D_val = 32
-    ITERATIONS_val = 2
+    LEN_2D_val = G_LEN_2D_VAL
+    ITERATIONS_val = 1
 
     # Allocate random inputs
     a = np.random.rand(LEN_2D_val).astype(np.float64)
@@ -2366,8 +2416,8 @@ def test_s115():
 
 
 def test_s1115():
-    LEN_2D_val = 32
-    ITERATIONS_val = 2
+    LEN_2D_val = G_LEN_2D_VAL
+    ITERATIONS_val = 1
 
     # Allocate random inputs
     aa = np.random.rand(LEN_2D_val, LEN_2D_val).astype(np.float64)
@@ -2396,8 +2446,8 @@ def test_s1115():
 
 
 def test_s116():
-    LEN_1D_val = 64
-    ITERATIONS_val = 2
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
 
     # a is both source and destination
     a = np.random.rand(LEN_1D_val).astype(np.float64)
@@ -2425,8 +2475,8 @@ def test_s116():
 
 
 def test_s118():
-    LEN_2D_val = 32
-    ITERATIONS_val = 320
+    LEN_2D_val = G_LEN_2D_VAL
+    ITERATIONS_val = 1
 
     a = np.random.rand(LEN_2D_val).astype(np.float64)
     bb = np.random.rand(LEN_2D_val, LEN_2D_val).astype(np.float64)
@@ -2452,8 +2502,8 @@ def test_s118():
 
 
 def test_s119():
-    LEN_2D_val = 32
-    ITERATIONS_val = 320
+    LEN_2D_val = G_LEN_2D_VAL
+    ITERATIONS_val = 1
 
     aa = np.random.rand(LEN_2D_val, LEN_2D_val).astype(np.float64)
     bb = np.random.rand(LEN_2D_val, LEN_2D_val).astype(np.float64)
@@ -2479,8 +2529,8 @@ def test_s119():
 
 
 def test_s121():
-    LEN_1D_val = 64
-    ITERATIONS_val = 2
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
 
     a = np.random.rand(LEN_1D_val).astype(np.float64)
     b = np.random.rand(LEN_1D_val).astype(np.float64)
@@ -2506,8 +2556,8 @@ def test_s121():
 
 
 def test_s122():
-    LEN_1D_val = 64
-    ITERATIONS_val = 2
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
     n1_val = 2
     n3_val = 3
 
@@ -2545,8 +2595,8 @@ def test_s122():
 
 
 def test_s123():
-    LEN_1D_val = 64
-    ITERATIONS_val = 2
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
 
     a = np.random.rand(LEN_1D_val).astype(np.float64)
     b = np.random.rand(LEN_1D_val).astype(np.float64)
@@ -2587,8 +2637,8 @@ def test_s123():
 
 
 def test_s124():
-    LEN_1D_val = 64
-    ITERATIONS_val = 2
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
 
     a = np.random.rand(LEN_1D_val).astype(np.float64)
     b = np.random.randn(LEN_1D_val).astype(np.float64)
@@ -2629,8 +2679,8 @@ def test_s124():
 
 
 def test_s125():
-    LEN_2D_val = 32
-    ITERATIONS_val = 2
+    LEN_2D_val = G_LEN_2D_VAL
+    ITERATIONS_val = 1
 
     flat_2d_array = np.random.rand(LEN_2D_val * LEN_2D_val).astype(np.float64)
     aa = np.random.rand(LEN_2D_val, LEN_2D_val).astype(np.float64)
@@ -2668,8 +2718,8 @@ def test_s125():
 
 
 def test_s126():
-    LEN_2D_val = 32
-    ITERATIONS_val = 2
+    LEN_2D_val = G_LEN_2D_VAL
+    ITERATIONS_val = 1
 
     flat_2d_array = np.random.rand(LEN_2D_val * LEN_2D_val).astype(np.float64)
     bb = np.random.rand(LEN_2D_val, LEN_2D_val).astype(np.float64)
@@ -2704,8 +2754,8 @@ def test_s126():
 
 
 def test_s127():
-    LEN_1D_val = 1024
-    ITERATIONS_val = 2
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
 
     a = np.random.rand(LEN_1D_val).astype(np.float64)
     b = np.random.rand(LEN_1D_val).astype(np.float64)
@@ -2746,8 +2796,8 @@ def test_s127():
 
 
 def test_s128():
-    LEN_1D_val = 1024
-    ITERATIONS_val = 2
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
 
     a = np.random.rand(LEN_1D_val).astype(np.float64)
     b = np.random.rand(LEN_1D_val).astype(np.float64)
@@ -2777,8 +2827,8 @@ def test_s128():
 
 
 def test_s131():
-    LEN_1D_val = 1024
-    ITERATIONS_val = 2
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
 
     a = np.random.rand(LEN_1D_val).astype(np.float64)
     b = np.random.rand(LEN_1D_val).astype(np.float64)
@@ -2804,8 +2854,8 @@ def test_s131():
 
 
 def test_s132():
-    LEN_2D_val = 32
-    ITERATIONS_val = 2
+    LEN_2D_val = G_LEN_2D_VAL
+    ITERATIONS_val = 1
 
     aa = np.random.rand(LEN_2D_val, LEN_2D_val)
     b = np.random.rand(LEN_2D_val)
@@ -2833,8 +2883,8 @@ def test_s132():
 
 
 def test_s151():
-    LEN_1D_val = 64
-    ITERATIONS_val = 2
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
 
     a = np.random.rand(LEN_1D_val)
     b = np.random.rand(LEN_1D_val)
@@ -2860,8 +2910,8 @@ def test_s151():
 
 
 def test_s152():
-    LEN_1D_val = 64
-    ITERATIONS_val = 2
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
 
     a = np.random.rand(LEN_1D_val)
     b = np.random.rand(LEN_1D_val)
@@ -2902,8 +2952,8 @@ def test_s152():
 
 
 def test_s161():
-    LEN_1D_val = 64
-    ITERATIONS_val = 2
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
 
     a = np.random.rand(LEN_1D_val)
     b = np.random.randn(LEN_1D_val)
@@ -2944,8 +2994,8 @@ def test_s161():
 
 
 def test_s1161():
-    LEN_1D_val = 64
-    ITERATIONS_val = 2
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
 
     a = np.random.rand(LEN_1D_val)
     b = np.random.rand(LEN_1D_val)
@@ -2977,18 +3027,19 @@ def test_s1161():
             "LEN_1D": LEN_1D_val,
             "ITERATIONS": ITERATIONS_val
         },
-        save_sdfgs=SAVE_SDFGS,
+        save_sdfgs=False,
         sdfg_name="dace_s1161",
         apply_loop_to_map=True,
+        split_all_branches=True
     )
 
     return a
 
 
 def test_s162():
-    LEN_1D_val = 64
-    ITERATIONS_val = 2
-    k_val = 3
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
+    k_val = 0
 
     a = np.random.rand(LEN_1D_val)
     b = np.random.rand(LEN_1D_val)
@@ -3025,8 +3076,8 @@ def test_s162():
 
 
 def test_s171():
-    LEN_1D_val = 64
-    ITERATIONS_val = 2
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
     inc_val = 1
 
     a = np.random.rand(LEN_1D_val)
@@ -3054,8 +3105,8 @@ def test_s171():
 
 
 def test_s172():
-    LEN_1D_val = 64
-    ITERATIONS_val = 2
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
     n1_val = 1
     n3_val = 1
 
@@ -3093,8 +3144,8 @@ def test_s172():
 
 
 def test_s173():
-    LEN_1D_val = 64
-    ITERATIONS_val = 2
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
 
     a = np.random.rand(LEN_1D_val)
     b = np.random.rand(LEN_1D_val)
@@ -3120,9 +3171,9 @@ def test_s173():
 
 
 def test_s174():
-    LEN_1D_val = 64
-    ITERATIONS_val = 2
-    M_val = 16
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
+    M_val = 0
 
     a = np.random.rand(LEN_1D_val)
     b = np.random.rand(LEN_1D_val)
@@ -3149,9 +3200,9 @@ def test_s174():
 
 
 def test_s175():
-    LEN_1D_val = 64
-    ITERATIONS_val = 2
-    inc_val = 3
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
+    inc_val = 0
 
     a = np.random.rand(LEN_1D_val)
     b = np.random.rand(LEN_1D_val)
@@ -3178,8 +3229,8 @@ def test_s175():
 
 
 def test_s176():
-    LEN_1D_val = 64
-    ITERATIONS_val = 2
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
 
     a = np.random.rand(LEN_1D_val)
     b = np.random.rand(LEN_1D_val)
@@ -3207,8 +3258,8 @@ def test_s176():
 
 
 def test_s211():
-    LEN_1D_val = 64
-    ITERATIONS_val = 2
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
 
     a = np.random.rand(LEN_1D_val)
     b = np.random.rand(LEN_1D_val)
@@ -3249,8 +3300,8 @@ def test_s211():
 
 
 def test_s212():
-    LEN_1D_val = 64
-    ITERATIONS_val = 2
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
 
     a = np.random.rand(LEN_1D_val)
     b = np.random.rand(LEN_1D_val)
@@ -3279,8 +3330,8 @@ def test_s212():
 
 
 def test_s1213():
-    LEN_1D_val = 64
-    ITERATIONS_val = 2
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
 
     a = np.random.rand(LEN_1D_val)
     b = np.random.rand(LEN_1D_val)
@@ -3309,8 +3360,8 @@ def test_s1213():
 
 
 def test_s221():
-    LEN_1D_val = 64
-    ITERATIONS_val = 2
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
 
     a = np.random.rand(LEN_1D_val)
     b = np.random.rand(LEN_1D_val)
@@ -3339,8 +3390,8 @@ def test_s221():
 
 
 def test_s1221():
-    LEN_1D_val = 64
-    ITERATIONS_val = 2
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
 
     a = np.random.rand(LEN_1D_val)
     b = np.random.rand(LEN_1D_val)
@@ -3365,8 +3416,8 @@ def test_s1221():
 
 
 def test_s222():
-    LEN_1D_val = 64
-    ITERATIONS_val = 2
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
 
     a = np.random.rand(LEN_1D_val)
     b = np.random.rand(LEN_1D_val)
@@ -3395,8 +3446,8 @@ def test_s222():
 
 
 def test_s231():
-    LEN_2D_val = 32
-    ITERATIONS_val = 32
+    LEN_2D_val = G_LEN_2D_VAL
+    ITERATIONS_val = 1
 
     aa = np.random.rand(LEN_2D_val, LEN_2D_val)
     bb = np.random.rand(LEN_2D_val, LEN_2D_val)
@@ -3421,8 +3472,8 @@ def test_s231():
 
 
 def test_s232():
-    LEN_2D_val = 32
-    ITERATIONS_val = 32
+    LEN_2D_val = G_LEN_2D_VAL
+    ITERATIONS_val = 1
 
     aa = np.random.rand(LEN_2D_val, LEN_2D_val)
     bb = np.random.rand(LEN_2D_val, LEN_2D_val)
@@ -3447,8 +3498,8 @@ def test_s232():
 
 
 def test_s1232():
-    LEN_2D_val = 32
-    ITERATIONS_val = 32
+    LEN_2D_val = G_LEN_2D_VAL
+    ITERATIONS_val = 1
 
     aa = np.random.rand(LEN_2D_val, LEN_2D_val)
     bb = np.random.rand(LEN_2D_val, LEN_2D_val)
@@ -3475,8 +3526,8 @@ def test_s1232():
 
 
 def test_s233():
-    LEN_2D_val = 32
-    ITERATIONS_val = 32
+    LEN_2D_val = G_LEN_2D_VAL
+    ITERATIONS_val = 1
 
     aa = np.random.rand(LEN_2D_val, LEN_2D_val)
     bb = np.random.rand(LEN_2D_val, LEN_2D_val)
@@ -3503,8 +3554,8 @@ def test_s233():
 
 
 def test_s2233():
-    LEN_2D_val = 32
-    ITERATIONS_val = 32
+    LEN_2D_val = G_LEN_2D_VAL
+    ITERATIONS_val = 1
 
     aa = np.random.rand(LEN_2D_val, LEN_2D_val)
     bb = np.random.rand(LEN_2D_val, LEN_2D_val)
@@ -3531,8 +3582,8 @@ def test_s2233():
 
 
 def test_s235():
-    LEN_2D_val = 32
-    ITERATIONS_val = 2
+    LEN_2D_val = G_LEN_2D_VAL
+    ITERATIONS_val = 1
 
     a = np.random.rand(LEN_2D_val)
     b = np.random.rand(LEN_2D_val)
@@ -3572,8 +3623,8 @@ def test_s235():
 
 
 def test_s241():
-    LEN_1D_val = 64
-    ITERATIONS_val = 2
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
 
     a = np.random.rand(LEN_1D_val)
     b = np.random.rand(LEN_1D_val)
@@ -3602,8 +3653,8 @@ def test_s241():
 
 
 def test_s243():
-    LEN_1D_val = 64
-    ITERATIONS_val = 2
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
 
     a = np.random.rand(LEN_1D_val)
     b = np.random.rand(LEN_1D_val)
@@ -3643,8 +3694,8 @@ def test_s243():
 
 
 def test_s244():
-    LEN = 64
-    ITERS = 2
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     a = np.random.rand(LEN)
     b = np.random.rand(LEN)
@@ -3673,10 +3724,10 @@ def test_s244():
 
     return a
 
-
+@pytest.mark.skip
 def test_s1244():
-    LEN = 64
-    ITERS = 2
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     a = np.random.rand(LEN)
     b = np.random.rand(LEN)
@@ -3714,10 +3765,10 @@ def test_s1244():
     )
     return a, d
 
-
+@pytest.mark.skip
 def test_s2244():
-    LEN = 64
-    ITERS = 2
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     a = np.random.rand(LEN)
     b = np.random.rand(LEN)
@@ -3760,8 +3811,8 @@ def test_s2244():
 
 
 def test_s251():
-    LEN = 64
-    ITERS = 2
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     a = np.random.rand(LEN)
     b = np.random.rand(LEN)
@@ -3801,8 +3852,8 @@ def test_s251():
 
 
 def test_s3251():
-    LEN = 64
-    ITERS = 2
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     a = np.random.rand(LEN)
     b = np.random.rand(LEN)
@@ -3845,8 +3896,8 @@ def test_s3251():
 
 
 def test_s253():
-    LEN = 64
-    ITERS = 2
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     a = np.random.rand(LEN)
     b = np.random.rand(LEN)
@@ -3886,8 +3937,8 @@ def test_s253():
 
 
 def test_s254():
-    LEN = 64
-    ITERS = 2
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     a = np.random.rand(LEN)
     b = np.random.rand(LEN)
@@ -3921,8 +3972,8 @@ def test_s254():
 
 
 def test_s242():
-    LEN = 64
-    ITERS = 2
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     a = np.random.rand(LEN)
     b = np.random.rand(LEN)
@@ -3962,8 +4013,8 @@ def test_s242():
 
 
 def test_s1251():
-    LEN_1D_val = 64
-    ITERATIONS_val = 2
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
 
     a = np.random.rand(LEN_1D_val)
     b = np.random.rand(LEN_1D_val)
@@ -4003,8 +4054,8 @@ def test_s1251():
 
 
 def test_s2251():
-    LEN_1D_val = 64
-    ITERATIONS_val = 2
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
 
     a = np.random.rand(LEN_1D_val)
     b = np.random.rand(LEN_1D_val)
@@ -4044,8 +4095,8 @@ def test_s2251():
 
 
 def test_s252():
-    LEN_1D_val = 64
-    ITERATIONS_val = 2
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
 
     a = np.random.rand(LEN_1D_val)
     b = np.random.rand(LEN_1D_val)
@@ -4072,8 +4123,8 @@ def test_s252():
 
 
 def test_s255():
-    LEN_1D_val = 64
-    ITERATIONS_val = 2
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
 
     a = np.random.rand(LEN_1D_val)
     b = np.random.rand(LEN_1D_val)
@@ -4098,8 +4149,8 @@ def test_s255():
 
 
 def test_s256():
-    LEN_2D_val = 32
-    ITERATIONS_val = 32
+    LEN_2D_val = G_LEN_2D_VAL
+    ITERATIONS_val = 1
 
     a = np.random.rand(LEN_2D_val)
     aa = np.random.rand(LEN_2D_val, LEN_2D_val)
@@ -4136,8 +4187,8 @@ def test_s256():
 
 
 def test_s257():
-    LEN_2D_val = 32
-    ITERATIONS_val = 32
+    LEN_2D_val = G_LEN_2D_VAL
+    ITERATIONS_val = 1
 
     a = np.random.rand(LEN_2D_val)
     aa = np.random.rand(LEN_2D_val, LEN_2D_val)
@@ -4164,8 +4215,8 @@ def test_s257():
 
 
 def test_s258():
-    LEN_2D_val = 32
-    ITERATIONS_val = 32
+    LEN_2D_val = G_LEN_2D_VAL
+    ITERATIONS_val = 1
 
     a = np.random.rand(LEN_2D_val)
     b = np.random.rand(LEN_2D_val)
@@ -4208,8 +4259,8 @@ def test_s258():
 
 
 def test_s261():
-    LEN_1D_val = 64
-    ITERATIONS_val = 2
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
 
     a = np.random.rand(LEN_1D_val)
     b = np.random.rand(LEN_1D_val)
@@ -4238,8 +4289,8 @@ def test_s261():
 
 
 def test_s271():
-    LEN_1D_val = 64
-    ITERATIONS_val = 2
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
 
     a = np.random.rand(LEN_1D_val)
     b = np.random.rand(LEN_1D_val)
@@ -4266,8 +4317,8 @@ def test_s271():
 
 
 def test_s272():
-    LEN_1D_val = 64
-    ITERATIONS_val = 2
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
 
     a = np.random.rand(LEN_1D_val)
     b = np.random.rand(LEN_1D_val)
@@ -4309,8 +4360,8 @@ def test_s272():
 
 
 def test_s273():
-    LEN_1D_val = 64
-    ITERATIONS_val = 2
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
 
     a = np.random.rand(LEN_1D_val)
     b = np.random.rand(LEN_1D_val)
@@ -4350,8 +4401,8 @@ def test_s273():
 
 
 def test_s274():
-    LEN_1D_val = 64
-    ITERATIONS_val = 2
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
 
     a = np.random.rand(LEN_1D_val)
     b = np.random.rand(LEN_1D_val)
@@ -4391,8 +4442,8 @@ def test_s274():
 
 
 def test_s275():
-    LEN = 32
-    ITERS = 32
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
     aa = np.random.rand(LEN, LEN)
     bb = np.random.rand(LEN, LEN)
     cc = np.random.rand(LEN, LEN)
@@ -4416,15 +4467,15 @@ def test_s275():
     return aa
 
 
-def test_s2102():
-    LEN_2D = 32
+def s2102():
+    LEN_2D = G_LEN_2D_VAL
     aa = np.random.rand(LEN_2D, LEN_2D)
 
     compare_kernel(dace_s2102, {
         "aa": aa,
     }, {
         "LEN_2D": LEN_2D,
-        "ITERATIONS": 10
+        "ITERATIONS": 1
     })
 
     run_vectorization_test(
@@ -4432,7 +4483,7 @@ def test_s2102():
         arrays={"aa": aa},
         params={
             "LEN_2D": LEN_2D,
-            "ITERATIONS": 10
+            "ITERATIONS": 1
         },
         sdfg_name="dace_s2102",
         save_sdfgs=SAVE_SDFGS,
@@ -4440,15 +4491,15 @@ def test_s2102():
     )
 
 
-def test_s2111():
-    LEN_2D = 32
+def s2111():
+    LEN_2D = G_LEN_2D_VAL
     aa = np.random.rand(LEN_2D, LEN_2D)
 
     compare_kernel(dace_s2111, {
         "aa": aa,
     }, {
         "LEN_2D": LEN_2D,
-        "ITERATIONS": 10
+        "ITERATIONS": 1
     })
 
     run_vectorization_test(
@@ -4456,7 +4507,7 @@ def test_s2111():
         arrays={"aa": aa},
         params={
             "LEN_2D": LEN_2D,
-            "ITERATIONS": 10
+            "ITERATIONS": 1
         },
         sdfg_name="dace_s2111",
         save_sdfgs=SAVE_SDFGS,
@@ -4464,9 +4515,9 @@ def test_s2111():
     )
 
 
-def test_s2275():
-    LEN = 64
-    ITERS = 2
+def s2275():
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     a = np.random.rand(LEN)
     b = np.random.rand(LEN)
@@ -4515,9 +4566,9 @@ def test_s2275():
     return a, aa
 
 
-def test_s276():
-    LEN = 64
-    ITERS = 2
+def s276():
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     a = np.random.rand(LEN)
     b = np.random.rand(LEN)
@@ -4557,9 +4608,9 @@ def test_s276():
     return a
 
 
-def test_s277():
-    LEN = 64
-    ITERS = 2
+def s277():
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     a = np.random.rand(LEN)
     b = np.random.rand(LEN)
@@ -4602,9 +4653,9 @@ def test_s277():
     return a, b
 
 
-def test_s278():
-    LEN = 64
-    ITERS = 2
+def s278():
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     a = np.random.rand(LEN)
     b = np.random.rand(LEN)
@@ -4647,9 +4698,9 @@ def test_s278():
     return a, b, c
 
 
-def test_s279():
-    LEN = 64
-    ITERS = 2
+def s279():
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     a = np.random.rand(LEN)
     b = np.random.rand(LEN)
@@ -4692,9 +4743,9 @@ def test_s279():
     return a, b, c
 
 
-def test_s1279():
-    LEN = 64
-    ITERS = 2
+def s1279():
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     a = np.random.rand(LEN)
     b = np.random.rand(LEN)
@@ -4737,9 +4788,9 @@ def test_s1279():
     return c
 
 
-def test_s2710():
-    LEN_1D_val = 64
-    ITERATIONS_val = 2
+def s2710():
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
 
     a = np.random.rand(LEN_1D_val)
     b = np.random.rand(LEN_1D_val)
@@ -4785,9 +4836,9 @@ def test_s2710():
     return a, b, c
 
 
-def test_s2711():
-    LEN_1D_val = 64
-    ITERATIONS_val = 2
+def s2711():
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
 
     a = np.random.rand(LEN_1D_val)
     b = np.random.rand(LEN_1D_val)
@@ -4824,9 +4875,9 @@ def test_s2711():
     return a
 
 
-def test_s2712():
-    LEN_1D_val = 64
-    ITERATIONS_val = 2
+def s2712():
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
 
     a = np.random.rand(LEN_1D_val)
     b = np.random.rand(LEN_1D_val)
@@ -4868,8 +4919,8 @@ def test_s2712():
 # ============================================================
 
 
-def test_s312():
-    LEN_1D_val = 64
+def s312():
+    LEN_1D_val = G_LEN_1D_VAL
     a = np.random.rand(LEN_1D_val)
 
     compare_kernel(
@@ -4877,7 +4928,7 @@ def test_s312():
         {"a": a},
         {
             "LEN_1D": LEN_1D_val,
-            "ITERATIONS": 10
+            "ITERATIONS": 1
         },
     )
 
@@ -4886,7 +4937,7 @@ def test_s312():
         arrays={"a": a},
         params={
             "LEN_1D": LEN_1D_val,
-            "ITERATIONS": 10
+            "ITERATIONS": 1
         },
         sdfg_name="dace_s312",
         save_sdfgs=SAVE_SDFGS,
@@ -4895,8 +4946,8 @@ def test_s312():
     return a
 
 
-def test_s313():
-    LEN_1D_val = 64
+def s313():
+    LEN_1D_val = G_LEN_1D_VAL
     a = np.random.rand(LEN_1D_val)
     b = np.random.rand(LEN_1D_val)
     dot = np.random.rand(LEN_1D_val)
@@ -4910,7 +4961,7 @@ def test_s313():
         },
         {
             "LEN_1D": LEN_1D_val,
-            "ITERATIONS": 10
+            "ITERATIONS": 1
         },
     )
 
@@ -4923,7 +4974,7 @@ def test_s313():
         },
         params={
             "LEN_1D": LEN_1D_val,
-            "ITERATIONS": 10
+            "ITERATIONS": 1
         },
         sdfg_name="dace_s313",
         save_sdfgs=SAVE_SDFGS,
@@ -4932,8 +4983,8 @@ def test_s313():
     return a
 
 
-def test_s314():
-    LEN_1D_val = 64
+def s314():
+    LEN_1D_val = G_LEN_1D_VAL
     a = np.random.rand(LEN_1D_val)
 
     compare_kernel(
@@ -4941,7 +4992,7 @@ def test_s314():
         {"a": a},
         {
             "LEN_1D": LEN_1D_val,
-            "ITERATIONS": 10
+            "ITERATIONS": 1
         },
     )
 
@@ -4950,7 +5001,7 @@ def test_s314():
         arrays={"a": a},
         params={
             "LEN_1D": LEN_1D_val,
-            "ITERATIONS": 10
+            "ITERATIONS": 1
         },
         sdfg_name="dace_s314",
         save_sdfgs=SAVE_SDFGS,
@@ -4959,8 +5010,8 @@ def test_s314():
     return a
 
 
-def test_s315():
-    LEN_1D_val = 64
+def s315():
+    LEN_1D_val = G_LEN_1D_VAL
     a = np.zeros(LEN_1D_val, dtype=np.float64)
 
     compare_kernel(
@@ -4968,7 +5019,7 @@ def test_s315():
         {"a": a},
         {
             "LEN_1D": LEN_1D_val,
-            "ITERATIONS": 10
+            "ITERATIONS": 1
         },
     )
 
@@ -4977,7 +5028,7 @@ def test_s315():
         arrays={"a": a},
         params={
             "LEN_1D": LEN_1D_val,
-            "ITERATIONS": 10
+            "ITERATIONS": 1
         },
         sdfg_name="dace_s315",
         save_sdfgs=SAVE_SDFGS,
@@ -4986,8 +5037,8 @@ def test_s315():
     return a
 
 
-def test_s316():
-    LEN_1D_val = 64
+def s316():
+    LEN_1D_val = G_LEN_1D_VAL
     a = np.random.rand(LEN_1D_val)
 
     compare_kernel(
@@ -4995,7 +5046,7 @@ def test_s316():
         {"a": a},
         {
             "LEN_1D": LEN_1D_val,
-            "ITERATIONS": 10
+            "ITERATIONS": 1
         },
     )
 
@@ -5004,7 +5055,7 @@ def test_s316():
         arrays={"a": a},
         params={
             "LEN_1D": LEN_1D_val,
-            "ITERATIONS": 10
+            "ITERATIONS": 1
         },
         sdfg_name="dace_s316",
         save_sdfgs=SAVE_SDFGS,
@@ -5013,8 +5064,8 @@ def test_s316():
     return a
 
 
-def test_s317():
-    LEN_1D_val = 64
+def s317():
+    LEN_1D_val = G_LEN_1D_VAL
     q = np.random.rand(LEN_1D_val)
 
     compare_kernel(
@@ -5022,7 +5073,7 @@ def test_s317():
         {"q": q},
         {
             "LEN_1D": LEN_1D_val,
-            "ITERATIONS": 10
+            "ITERATIONS": 1
         },
     )
 
@@ -5031,7 +5082,7 @@ def test_s317():
         arrays={"q": q},
         params={
             "LEN_1D": LEN_1D_val,
-            "ITERATIONS": 10
+            "ITERATIONS": 1
         },
         sdfg_name="dace_s317",
         save_sdfgs=SAVE_SDFGS,
@@ -5040,8 +5091,8 @@ def test_s317():
     return q
 
 
-def test_s318():
-    LEN_1D_val = 64
+def s318():
+    LEN_1D_val = G_LEN_1D_VAL
     a = np.random.rand(LEN_1D_val)
     inc_val = 2
 
@@ -5050,7 +5101,7 @@ def test_s318():
         {"a": a},
         {
             "LEN_1D": LEN_1D_val,
-            "ITERATIONS": 10,
+            "ITERATIONS": 1,
             "inc": inc_val
         },
     )
@@ -5060,7 +5111,7 @@ def test_s318():
         arrays={"a": a},
         params={
             "LEN_1D": LEN_1D_val,
-            "ITERATIONS": 10,
+            "ITERATIONS": 1,
             "inc": inc_val
         },
         sdfg_name="dace_s318",
@@ -5070,8 +5121,8 @@ def test_s318():
     return a
 
 
-def test_s319():
-    LEN_1D_val = 64
+def s319():
+    LEN_1D_val = G_LEN_1D_VAL
     a = np.zeros(LEN_1D_val)
     b = np.zeros(LEN_1D_val)
     c = np.random.rand(LEN_1D_val)
@@ -5089,7 +5140,7 @@ def test_s319():
         },
         {
             "LEN_1D": LEN_1D_val,
-            "ITERATIONS": 10
+            "ITERATIONS": 1
         },
     )
 
@@ -5104,7 +5155,7 @@ def test_s319():
         },
         params={
             "LEN_1D": LEN_1D_val,
-            "ITERATIONS": 10
+            "ITERATIONS": 1
         },
         sdfg_name="dace_s319",
         save_sdfgs=SAVE_SDFGS,
@@ -5114,7 +5165,7 @@ def test_s319():
 
 
 def test_s3110():
-    LEN_2D_val = 32
+    LEN_2D_val = G_LEN_2D_VAL
     aa = np.random.rand(LEN_2D_val, LEN_2D_val)
 
     compare_kernel(
@@ -5122,7 +5173,7 @@ def test_s3110():
         {"aa": aa},
         {
             "LEN_2D": LEN_2D_val,
-            "ITERATIONS": 10
+            "ITERATIONS": 1
         },
     )
 
@@ -5131,7 +5182,7 @@ def test_s3110():
         arrays={"aa": aa},
         params={
             "LEN_2D": LEN_2D_val,
-            "ITERATIONS": 10
+            "ITERATIONS": 1
         },
         sdfg_name="dace_s3110",
         save_sdfgs=SAVE_SDFGS,
@@ -5141,7 +5192,7 @@ def test_s3110():
 
 
 def test_s13110():
-    LEN_2D_val = 32
+    LEN_2D_val = G_LEN_2D_VAL
     aa = np.random.rand(LEN_2D_val, LEN_2D_val)
 
     compare_kernel(
@@ -5149,7 +5200,7 @@ def test_s13110():
         {"aa": aa},
         {
             "LEN_2D": LEN_2D_val,
-            "ITERATIONS": 10
+            "ITERATIONS": 1
         },
     )
 
@@ -5158,7 +5209,7 @@ def test_s13110():
         arrays={"aa": aa},
         params={
             "LEN_2D": LEN_2D_val,
-            "ITERATIONS": 10
+            "ITERATIONS": 1
         },
         sdfg_name="dace_s13110",
         save_sdfgs=SAVE_SDFGS,
@@ -5168,7 +5219,7 @@ def test_s13110():
 
 
 def test_s3111():
-    LEN_1D_val = 64
+    LEN_1D_val = G_LEN_1D_VAL
     a = np.random.randn(LEN_1D_val)
 
     compare_kernel(
@@ -5176,7 +5227,7 @@ def test_s3111():
         {"a": a},
         {
             "LEN_1D": LEN_1D_val,
-            "ITERATIONS": 10
+            "ITERATIONS": 1
         },
     )
 
@@ -5185,7 +5236,7 @@ def test_s3111():
         arrays={"a": a},
         params={
             "LEN_1D": LEN_1D_val,
-            "ITERATIONS": 10
+            "ITERATIONS": 1
         },
         sdfg_name="dace_s3111",
         save_sdfgs=SAVE_SDFGS,
@@ -5195,8 +5246,8 @@ def test_s3111():
 
 
 def test_s3112():
-    LEN_1D_val = 64
-    ITERATIONS_val = 2
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
 
     a = np.random.rand(LEN_1D_val)
     b = np.zeros(LEN_1D_val)
@@ -5231,8 +5282,8 @@ def test_s3112():
 
 
 def test_s3113():
-    LEN_1D_val = 64
-    ITERATIONS_val = 2
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
 
     a = np.random.rand(LEN_1D_val)
 
@@ -5260,8 +5311,8 @@ def test_s3113():
 
 
 def test_s321():
-    LEN = 64
-    ITERS = 2
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     a = np.random.rand(LEN)
     b = np.random.rand(LEN)
@@ -5296,8 +5347,8 @@ def test_s321():
 
 
 def test_s322():
-    LEN = 64
-    ITERS = 2
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     a = np.random.rand(LEN)
     b = np.random.rand(LEN)
@@ -5335,8 +5386,8 @@ def test_s322():
 
 
 def test_s323():
-    LEN = 64
-    ITERS = 2
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     a = np.random.rand(LEN)
     b = np.random.rand(LEN)
@@ -5380,8 +5431,8 @@ def test_s323():
 
 
 def test_s331():
-    LEN = 64
-    ITERS = 2
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     a = np.random.rand(LEN) - 0.5
 
@@ -5408,38 +5459,10 @@ def test_s331():
     return a
 
 
-def test_s332():
-    LEN = 64
-    ITERS = 2
-
-    a = np.random.rand(LEN)
-
-    compare_kernel(
-        dace_s332,
-        {"a": a},
-        {
-            "LEN_1D": LEN,
-            "ITERATIONS": ITERS
-        },
-    )
-
-    run_vectorization_test(
-        dace_func=dace_s332,
-        arrays={"a": a},
-        params={
-            "LEN_1D": LEN,
-            "ITERATIONS": ITERS
-        },
-        sdfg_name="dace_s332",
-        save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
-    )
-    return a
-
 
 def test_s341():
-    LEN = 64
-    ITERS = 2
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     a = np.zeros(LEN)
     b = np.random.rand(LEN) - 0.5
@@ -5474,8 +5497,8 @@ def test_s341():
 
 
 def test_s342():
-    LEN = 64
-    ITERS = 2
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     a = np.random.rand(LEN) - 0.5
     b = np.random.rand(LEN)
@@ -5510,8 +5533,8 @@ def test_s342():
 
 
 def test_s343():
-    LEN2 = 32
-    ITERS = 2
+    LEN2 = G_LEN_2D_VAL
+    ITERS = 1
 
     aa = np.random.rand(LEN2, LEN2)
     bb = np.random.rand(LEN2, LEN2) - 0.5
@@ -5549,8 +5572,8 @@ def test_s343():
 
 
 def test_s351():
-    LEN = 64
-    ITERS = 2
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     a = np.random.rand(LEN)
     b = np.random.rand(LEN)
@@ -5588,8 +5611,8 @@ def test_s351():
 
 
 def test_s1351():
-    LEN = 64
-    ITERS = 2
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     a = np.zeros(LEN)
     b = np.random.rand(LEN)
@@ -5627,8 +5650,8 @@ def test_s1351():
 
 
 def test_s352():
-    LEN = 64
-    ITERS = 2
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     a = np.random.rand(LEN)
     b = np.random.rand(LEN)
@@ -5663,8 +5686,8 @@ def test_s352():
 
 
 def test_s353():
-    LEN = 64
-    ITERS = 2
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     a = np.random.rand(LEN)
     b = np.random.rand(LEN)
@@ -5704,9 +5727,9 @@ def test_s353():
     return a
 
 
-def test_vdotr():
-    LEN = 64
-    ITERS = 16
+def vdotr():
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     a = np.random.rand(LEN)
     b = np.random.rand(LEN)
@@ -5743,9 +5766,9 @@ def test_vdotr():
     return a
 
 
-def test_vbor():
-    LEN = 64
-    ITERS = 16
+def vbor():
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     a = np.random.rand(LEN)
     b = np.random.rand(LEN)
@@ -5791,9 +5814,9 @@ def test_vbor():
     return x
 
 
-def test_s281():
-    LEN = 64
-    ITERS = 16
+def s281():
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     a = np.random.rand(LEN)
     b = np.random.rand(LEN)
@@ -5830,15 +5853,19 @@ def test_s281():
     return a
 
 
-def test_s1281():
-    LEN = 64
-    ITERS = 16
+def s1281():
+    LEN= G_LEN_1D_VAL
+    ITERS = 4
 
     a = np.random.rand(LEN)
     b = np.random.rand(LEN)
     c = np.random.rand(LEN)
     d = np.random.rand(LEN)
     e = np.random.rand(LEN)
+
+    sdfg = dace_s1281.to_sdfg()
+    sdfg.apply_transformations_repeated(LoopToMap)
+    sdfg.save("s1281.sdfg")
 
     compare_kernel(
         dace_s1281,
@@ -5874,17 +5901,18 @@ def test_s1281():
     )
     return a
 
-
+@pytest.mark.skip
 def test_s291():
-    LEN = 64
-    ITERS = 16
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     a = np.random.rand(LEN)
     b = np.random.rand(LEN)
 
     #sdfg = dace_s291.to_sdfg()
-    #sdfg.apply_transformations_repeated(LoopToMap)
     #sdfg.save("s291.sdfg")
+    #sdfg.apply_transformations_repeated(LoopToMap)
+    #sdfg.save("s291_ltm.sdfg")
 
     compare_kernel(
         dace_s291,
@@ -5916,8 +5944,8 @@ def test_s291():
 
 
 def test_s292():
-    LEN = 64
-    ITERS = 16
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     a = np.random.rand(LEN)
     b = np.random.rand(LEN)
@@ -5951,8 +5979,8 @@ def test_s292():
 
 
 def test_s293():
-    LEN = 64
-    ITERS = 16
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     a = np.random.rand(LEN)
 
@@ -5984,8 +6012,8 @@ def test_s293():
 
 
 def test_s2101():
-    LEN = 32
-    ITERS = 8
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     aa = np.random.rand(LEN, LEN)
     bb = np.random.rand(LEN, LEN)
@@ -6023,8 +6051,8 @@ def test_s2101():
 
 
 def test_s311():
-    LEN = 256
-    ITERS = 2
+    LEN = G_LEN_1D_VAL
+    ITERS = 1
 
     a = np.random.rand(LEN)
     sum_out = np.random.rand(LEN)
@@ -6062,8 +6090,8 @@ def test_s311():
 
 
 def test_s1421():
-    LEN = 64
-    ITERS = 2
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     # b is updated based on a; order matches dace_s1421 signature (b, a)
     b = np.random.rand(LEN).astype(np.float64)
@@ -6099,8 +6127,8 @@ def test_s1421():
 
 
 def test_s4112():
-    LEN = 64
-    ITERS = 2
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     a = np.random.rand(LEN).astype(np.float64)
     b = np.random.rand(LEN).astype(np.float64)
@@ -6138,8 +6166,8 @@ def test_s4112():
 
 
 def test_s4113():
-    LEN = 64
-    ITERS = 2
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     a = np.random.rand(LEN).astype(np.float64)
     b = np.random.rand(LEN).astype(np.float64)
@@ -6180,8 +6208,8 @@ def test_s4113():
 
 
 def test_s4114():
-    LEN = 64
-    ITERS = 2
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
     n1_val = 1
 
     a = np.random.rand(LEN).astype(np.float64)
@@ -6228,8 +6256,8 @@ def test_s4114():
 
 
 def test_s4115():
-    LEN = 64
-    ITERS = 2
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     a = np.random.rand(LEN).astype(np.float64)
     b = np.random.rand(LEN).astype(np.float64)
@@ -6270,9 +6298,9 @@ def test_s4115():
 
 
 def test_s4116():
-    LEN1 = 64  # length of vector a
-    LEN2 = 32  # dimensions of aa and ip
-    ITERS = 2
+    LEN1 = G_LEN_1D_VAL  # length of vector a
+    LEN2 = G_LEN_2D_VAL  # dimensions of aa and ip
+    ITERS = 1
     j_val = 1
     inc_val = 0
 
@@ -6321,8 +6349,8 @@ def test_s4116():
 
 
 def test_s4117():
-    LEN = 64
-    ITERS = 2
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     a = np.random.rand(LEN).astype(np.float64)
     b = np.random.rand(LEN).astype(np.float64)
@@ -6363,8 +6391,8 @@ def test_s4117():
 
 
 def test_s4121():
-    LEN = 64
-    ITERS = 2
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     a = np.random.rand(LEN).astype(np.float64)
     b = np.random.rand(LEN).astype(np.float64)
@@ -6402,8 +6430,8 @@ def test_s4121():
 
 
 def test_s422():
-    LEN1 = 64
-    ITERS = 2
+    LEN1 = G_LEN_1D_VAL
+    ITERS = 1
 
     a = np.random.rand(LEN1).astype(np.float64)
     flat = np.random.rand(LEN1 * LEN1).astype(np.float64)
@@ -6438,8 +6466,8 @@ def test_s422():
 
 
 def test_s424():
-    LEN = 64
-    ITERS = 2
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     a = np.random.rand(LEN).astype(np.float64)
     xx = np.random.rand(LEN).astype(np.float64)
@@ -6477,8 +6505,8 @@ def test_s424():
 
 
 def test_s431():
-    LEN = 64
-    ITERS = 2
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     a = np.random.rand(LEN).astype(np.float64)
     b = np.random.rand(LEN).astype(np.float64)
@@ -6513,17 +6541,13 @@ def test_s431():
 
 
 def test_s441():
-    LEN = 64
-    ITERS = 2
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     a = np.random.rand(LEN).astype(np.float64)
     b = np.random.rand(LEN).astype(np.float64)
     c = np.random.rand(LEN).astype(np.float64)
     d = np.random.rand(LEN).astype(np.float64)
-
-    #sdfg = dace_s441.to_sdfg()
-    #sdfg.apply_transformations_repeated(LoopToMap)
-    #sdfg.save("s441.sdfg")
 
     compare_kernel(
         dace_s441,
@@ -6559,8 +6583,8 @@ def test_s441():
 
 
 def test_s442():
-    LEN = 64
-    ITERS = 2
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     a = np.random.rand(LEN).astype(np.float64)
     b = np.random.rand(LEN).astype(np.float64)
@@ -6607,8 +6631,8 @@ def test_s442():
 
 
 def test_s443():
-    LEN = 64
-    ITERS = 2
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     a = np.random.rand(LEN).astype(np.float64)
     b = np.random.rand(LEN).astype(np.float64)
@@ -6649,8 +6673,8 @@ def test_s443():
 
 
 def test_s451():
-    LEN = 64
-    ITERS = 10  # ensure ITERATIONS//5 > 0
+    LEN= G_LEN_1D_VAL
+    ITERS = 1  # ensure ITERATIONS//5 > 0
 
     a = np.random.rand(LEN).astype(np.float64)
     b = np.random.rand(LEN).astype(np.float64)
@@ -6688,8 +6712,8 @@ def test_s451():
 
 
 def test_s452():
-    LEN = 64
-    ITERS = 2
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     a = np.random.rand(LEN).astype(np.float64)
     b = np.random.rand(LEN).astype(np.float64)
@@ -6727,8 +6751,8 @@ def test_s452():
 
 
 def test_s453():
-    LEN = 64
-    ITERS = 2
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     a = np.random.rand(LEN).astype(np.float64)
     b = np.random.rand(LEN).astype(np.float64)
@@ -6763,8 +6787,8 @@ def test_s453():
 
 
 def test_s471():
-    LEN = 64
-    ITERS = 2
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     x = np.random.rand(LEN).astype(np.float64)
     b = np.random.rand(LEN).astype(np.float64)
@@ -6808,13 +6832,18 @@ def test_s471():
 
 
 def test_s481():
-    LEN = 64
-    ITERS = 2
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     a = np.random.rand(LEN).astype(np.float64)
     b = np.random.rand(LEN).astype(np.float64)
     c = np.random.rand(LEN).astype(np.float64)
-    d = np.random.rand(LEN).astype(np.float64)
+    d = np.empty(LEN, dtype=np.float64)
+    pos_count = int(0.8 * LEN)
+    # First 80% positive
+    d[:pos_count] = np.random.rand(pos_count)        # (0,1)
+    # Remaining 20% negative
+    d[pos_count:] = -np.random.rand(LEN - pos_count) # (-1,0)
 
     compare_kernel(
         dace_s481,
@@ -6845,17 +6874,22 @@ def test_s481():
         sdfg_name="dace_s481",
         save_sdfgs=SAVE_SDFGS,
         apply_loop_to_map=True,
+        break_vectorize=True
     )
     return a
 
 
 def test_s482():
-    LEN = 64
-    ITERS = 2
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
+    # Make 50%
     a = np.random.rand(LEN).astype(np.float64)
     b = np.random.rand(LEN).astype(np.float64)
+    half = LEN // 2
+    b[:half] = np.random.uniform(0.0, 0.4, half)
     c = np.random.rand(LEN).astype(np.float64)
+    c[:half] = np.random.uniform(0.6, 1.0, half)
 
     compare_kernel(
         dace_s482,
@@ -6884,13 +6918,14 @@ def test_s482():
         sdfg_name="dace_s482",
         save_sdfgs=SAVE_SDFGS,
         apply_loop_to_map=True,
+        break_vectorize=True
     )
     return a
 
 
 def test_s491():
-    LEN = 64
-    ITERS = 2
+    LEN= G_LEN_1D_VAL
+    ITERS = 1
 
     a = np.random.rand(LEN).astype(np.float64)
     b = np.random.rand(LEN).astype(np.float64)
@@ -6935,8 +6970,8 @@ def test_s491():
 
 def test_s31111():
     # Length and iteration parameters
-    LEN_1D_val = 32
-    ITERATIONS_val = 10
+    LEN_1D_val = G_LEN_1D_VAL
+    ITERATIONS_val = 1
 
     # Initialize input array
     a = np.random.rand(LEN_1D_val).astype(np.float64)

@@ -13,7 +13,7 @@ from dace import List
 from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg.graph import Edge
-from dace.sdfg.state import ConditionalBlock, LoopRegion
+from dace.sdfg.state import BreakBlock, ConditionalBlock, LoopRegion
 import dace.sdfg.tasklet_utils as tutil
 import dace.sdfg.construction_utils as cutil
 import dace.sdfg.utils as sdutil
@@ -303,6 +303,12 @@ def get_single_nsdfg_inside_map(graph: dace.SDFGState, map_entry: dace.nodes.Map
 
 def has_only_states(sdfg: dace.SDFG) -> bool:
     return all({isinstance(n, dace.SDFGState) for n in sdfg.nodes()})
+
+def has_only_states_or_single_block_with_break_only(sdfg: dace.SDFG) -> bool:
+    ifs = {n for n in sdfg.nodes() if isinstance(n, ConditionalBlock)}
+    all_ifs_are_only_break = all({len(ifb.branches) == 1 and len(ifb.branches[0][1].nodes()) == 1 and isinstance(ifb.branches[0][1].nodes()[0], BreakBlock) for ifb in ifs})
+    non_ifs_non_states = {n for n in sdfg.nodes() if not isinstance(n, ConditionalBlock) and not isinstance(n, SDFGState)}
+    return (all({isinstance(n, dace.SDFGState) for n in sdfg.nodes()}) or (all_ifs_are_only_break and len(non_ifs_non_states) == 0))
 
 
 def assert_maps_consist_of_single_nsdfg_or_no_nsdfg(sdfg: dace.SDFG) -> None:
@@ -1769,6 +1775,7 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         else:
             node.code = dace.properties.CodeBlock(code=f"{lhs} = {expr}\n", language=dace.Language.Python)
     else:
+        state.sdfg.save("failing.sdfg")
         raise NotImplementedError(f"Unhandled TaskletType: {ttype}, from: {node.code.as_string} ({node})")
 
 

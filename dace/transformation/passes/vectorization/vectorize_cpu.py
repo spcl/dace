@@ -2,6 +2,7 @@
 import dace
 from typing import Iterator, List, Optional
 from dace.transformation import Pass, pass_pipeline as ppl
+from dace.transformation.passes.vectorization.remove_reduntant_assignments import RemoveRedundantAssignments
 from dace.transformation.passes.clean_data_to_scalar_slice_to_tasklet_pattern import CleanDataToScalarSliceToTaskletPattern
 from dace.transformation.passes.split_tasklets import SplitTasklets
 from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import PowerOperatorExpansion, RemoveFPTypeCasts, RemoveIntTypeCasts, RemoveMathCall
@@ -11,7 +12,6 @@ from dace.transformation.passes.vectorization.remove_empty_states import RemoveE
 from dace.transformation.passes.vectorization.vectorize import Vectorize
 from dace.transformation.passes.eliminate_branches import EliminateBranches
 from dace.transformation.passes.vectorization.fuse_overlapping_loads import FuseOverlappingLoads
-from dace.transformation.passes.vectorization.remove_reduntant_assignments import RemoveRedundantAssignments
 from dace.transformation.passes.vectorization.remove_vector_maps import RemoveVectorMaps
 
 
@@ -101,6 +101,7 @@ class VectorizeCPU(ppl.Pipeline):
             passes.append(FuseOverlappingLoads())
         if eliminate_trivial_vector_map:
             passes.append(RemoveVectorMaps())
+        self._applied_before = False
         super().__init__(passes)
 
     def iterate_over_passes(self, sdfg: dace.SDFG) -> Iterator[Pass]:
@@ -111,6 +112,9 @@ class VectorizeCPU(ppl.Pipeline):
 
             :param sdfg: The SDFG on which the pipeline is currently being applied
         """
+        if self._applied_before is False:
+            CleanDataToScalarSliceToTaskletPattern().apply_pass(sdfg, {})
+            self._applied_before is True
         for p in self.passes:
             p: Pass
             yield p
