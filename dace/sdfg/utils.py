@@ -594,6 +594,167 @@ def merge_maps(
     return merged_entry, merged_exit
 
 
+def canonicalize_memlet_trees_of_scope_node(
+    state: SDFGState,
+    scope_node: Union[nd.EntryNode, nd.ExitNode],
+) -> int:
+    """Canonicalize the Memlet trees of a single scope nodes.
+
+    The function will modify all Memlets that are adjacent to `scope_node` such that
+    the Memlet always refers to the data that is on the outside.
+    This function only operates on a single scope node, i.e. either a `MapEntry` or
+    a `MapExit`, if you want to process a whole Map then you should use
+    `canonicalize_memlet_trees_for_map()`.
+
+    :param state: The SDFG state in which the scope to consolidate resides.
+    :param scope_node: The scope node whose edges will be consolidated.
+    :return: Number of modified Memlets.
+
+    :note: This is the "historical" expected format of Memlet trees at scope nodes,
+        which was present before the introduction of `other_subset`. Running this
+        transformation might fix some issues.
+    """
+    if isinstance(scope_node, nd.EntryNode):
+        may_have_dynamic_map_range = True
+        is_downward_tree = True
+        outer_edges = state.in_edges(scope_node)
+        get_outer_edge_connector = lambda e: e.dst_conn
+        inner_edges_for = lambda conn: state.out_edges_by_connector(scope_node, conn)
+        inner_prefix = 'OUT_'
+        outer_prefix = 'IN_'
+
+        def get_outer_data(e: MultiConnectorEdge[dace.Memlet]):
+            mpath = state.memlet_path(e)
+            assert isinstance(mpath[0].src, nd.AccessNode)
+            return mpath[0].src.data
+
+    else:
+        may_have_dynamic_map_range = False
+        is_downward_tree = False
+        outer_edges = state.out_edges(scope_node)
+        get_outer_edge_connector = lambda e: e.src_conn
+        inner_edges_for = lambda conn: state.in_edges_by_connector(scope_node, conn)
+        inner_prefix = 'IN_'
+        outer_prefix = 'OUT_'
+
+        def get_outer_data(e: MultiConnectorEdge[dace.Memlet]):
+            mpath = state.memlet_path(e)
+            assert isinstance(mpath[-1].dst, nd.AccessNode)
+            return mpath[-1].dst.data
+
+    def swap_prefix(conn: str) -> str:
+        if conn.startswith(inner_prefix):
+            return outer_prefix + conn[len(inner_prefix):]
+        else:
+            assert conn.startswith(
+                outer_prefix), f"Expected connector to start with '{outer_prefix}', but it was '{conn}'."
+            return inner_prefix + conn[len(outer_prefix):]
+
+    modified_memlet = 0
+    for outer_edge in outer_edges:
+        outer_edge_connector = get_outer_edge_connector(outer_edge)
+        if may_have_dynamic_map_range and (not outer_edge_connector.startswith(outer_prefix)):
+            continue
+        assert outer_edge_connector.startswith(outer_prefix)
+        corresponding_inner_connector = swap_prefix(outer_edge_connector)
+
+        # In case `scope_node` is at the global scope it should be enough to run
+        #  `outer_edge.data.data` but this way it is more in line with consolidate.
+        outer_data = get_outer_data(outer_edge)
+
+        for inner_edge in inner_edges_for(corresponding_inner_connector):
+            for mtree in state.memlet_tree(inner_edge).traverse_children(include_self=True):
+                medge: MultiConnectorEdge[dace.Memlet] = mtree.edge
+                if medge.data.data == outer_data:
+                    # This edge is already referring to the outer data, so no change is needed.
+                    continue
+
+                # Now we have to extract subset from the Memlet.
+                if is_downward_tree:
+                    subset = medge.data.get_src_subset(medge, state)
+                    other_subset = medge.data.dst_subset
+                else:
+                    subset = medge.data.get_dst_subset(medge, state)
+                    other_subset = medge.data.src_subset
+
+                # Now update them correctly.
+                medge.data._data = outer_data
+                medge.data._subset = subset
+                medge.data._other_subset = other_subset
+                medge.data.try_initialize(state.sdfg, state, medge)
+                modified_memlet += 1
+
+    return modified_memlet
+
+
+def canonicalize_memlet_trees_for_map(
+    state: SDFGState,
+    map_node: Union[nd.EntryNode, nd.ExitNode],
+) -> int:
+    """Canonicalize the Memlets of an entire Map scope.
+
+    This function is similar to `canonicalize_memlet_trees_of_scope_node()`, but it acts
+    on both scope nodes, i.e. `MapEntry` and `MapExit`, that constitute the Map scope.
+    The function returns the number of canonicalized Memlets.
+
+    :param state: The state that contains the Map.
+    :param map_node: Either the `MapEntry` or `MapExit` node of the map that should be canonicalized.
+    """
+    if isinstance(map_node, nd.MapEntry):
+        me = map_node
+        mx = state.exit_node(me)
+    else:
+        assert isinstance(map_node, nd.MapExit)
+        mx = map_node
+        me = state.entry_node(mx)
+
+    ret = canonicalize_memlet_trees_of_scope_node(state, me)
+    ret += canonicalize_memlet_trees_of_scope_node(state, mx)
+    return ret
+
+
+def canonicalize_memlet_trees(
+    sdfg: 'dace.SDFG',
+    starting_scope: Optional['dace.sdfg.scope.ScopeTree'] = None,
+) -> int:
+    """Canonicalize the Memlet trees of all scopes in the SDFG.
+
+    This function runs `canonicalize_memlet_trees_of_scope_node()` on all scopes
+    in the SDFG. Note that this function does not recursively processes
+    nested SDFGs.
+
+    :param sdfg: The SDFG to consolidate.
+    :param starting_scope: If not None, starts with a certain scope. Note in that
+        mode only the state in which the scope is located will be processes.
+    :return: Number of modified Memlets.
+    """
+
+    total_modified_memlets = 0
+    for state in sdfg.states():
+        # Start bottom-up
+        if starting_scope is not None and starting_scope.entry not in state.nodes():
+            continue
+
+        queue = [starting_scope] if starting_scope else state.scope_leaves()
+        next_queue = []
+        while len(queue) > 0:
+            for scope in queue:
+                if scope.entry is not None:
+                    total_modified_memlets += canonicalize_memlet_trees_of_scope_node(state, scope.entry)
+                if scope.exit is not None:
+                    total_modified_memlets += canonicalize_memlet_trees_of_scope_node(state, scope.exit)
+                if scope.parent is not None:
+                    next_queue.append(scope.parent)
+            queue = next_queue
+            next_queue = []
+
+        if starting_scope is not None:
+            # No need to traverse other states
+            break
+
+    return total_modified_memlets
+
+
 def consolidate_edges_scope(state: SDFGState, scope_node: Union[nd.EntryNode, nd.ExitNode]) -> int:
     """
         Union scope-entering memlets relating to the same data node in a scope.
@@ -616,6 +777,18 @@ def consolidate_edges_scope(state: SDFGState, scope_node: Union[nd.EntryNode, nd
         remove_outer_connector = scope_node.remove_in_connector
         remove_inner_connector = scope_node.remove_out_connector
         prefix, oprefix = 'IN_', 'OUT_'
+
+        def get_outer_data(e: MultiConnectorEdge[dace.Memlet]):
+            mpath = state.memlet_path(e)
+            assert isinstance(mpath[0].src, nd.AccessNode)
+            return mpath[0].src.data
+
+        def get_outer_subset(e: MultiConnectorEdge[dace.Memlet]):
+            return e.data.get_src_subset(e, state)
+
+        def set_outer_subset(e: MultiConnectorEdge[dace.Memlet], new_subset: sbs.Subset):
+            e.data.src_subset = new_subset
+
     else:
         outer_edges = state.out_edges
         inner_edges = state.in_edges
@@ -624,6 +797,17 @@ def consolidate_edges_scope(state: SDFGState, scope_node: Union[nd.EntryNode, nd
         remove_inner_connector = scope_node.remove_in_connector
         prefix, oprefix = 'OUT_', 'IN_'
 
+        def get_outer_data(e: MultiConnectorEdge[dace.Memlet]):
+            mpath = state.memlet_path(e)
+            assert isinstance(mpath[-1].dst, nd.AccessNode)
+            return mpath[-1].dst.data
+
+        def get_outer_subset(e: MultiConnectorEdge[dace.Memlet]):
+            return e.data.get_dst_subset(e, state)
+
+        def set_outer_subset(e: MultiConnectorEdge[dace.Memlet], new_subset: sbs.Subset):
+            e.data.dst_subset = new_subset
+
     edges_by_connector = collections.defaultdict(list)
     connectors_to_remove = set()
     for e in inner_edges(scope_node):
@@ -631,16 +815,18 @@ def consolidate_edges_scope(state: SDFGState, scope_node: Union[nd.EntryNode, nd
             continue
         conn = inner_conn(e)
         edges_by_connector[conn].append(e)
-        if e.data.data not in data_to_conn:
-            data_to_conn[e.data.data] = conn
-        elif data_to_conn[e.data.data] != conn:  # Need to consolidate
+        odata = get_outer_data(e)
+        if odata not in data_to_conn:
+            data_to_conn[odata] = conn
+        elif data_to_conn[odata] != conn:  # Need to consolidate
             connectors_to_remove.add(conn)
 
     for conn in connectors_to_remove:
         e = edges_by_connector[conn][0]
+        odata = get_outer_data(e)
         offset = 3 if conn.startswith('IN_') else (4 if conn.startswith('OUT_') else len(oprefix))
         # Outer side of the scope - remove edge and union subsets
-        target_conn = prefix + data_to_conn[e.data.data][offset:]
+        target_conn = prefix + data_to_conn[odata][offset:]
         conn_to_remove = prefix + conn[offset:]
         remove_outer_connector(conn_to_remove)
         if isinstance(scope_node, nd.EntryNode):
@@ -652,7 +838,7 @@ def consolidate_edges_scope(state: SDFGState, scope_node: Union[nd.EntryNode, nd
         assert len(edges_to_remove) == 1 and len(out_edges) == 1
         edge_to_remove = edges_to_remove[0]
         out_edge = out_edges[0]
-        out_edge.data.subset = sbs.union(out_edge.data.subset, edge_to_remove.data.subset)
+        set_outer_subset(out_edge, sbs.union(get_outer_subset(out_edge), get_outer_subset(edge_to_remove)))
 
         # Check if dangling connectors have been created and remove them,
         # as well as their parent edges
@@ -663,11 +849,11 @@ def consolidate_edges_scope(state: SDFGState, scope_node: Union[nd.EntryNode, nd
         if isinstance(scope_node, nd.EntryNode):
             remove_inner_connector(e.src_conn)
             for e in edges_by_connector[conn]:
-                e._src_conn = data_to_conn[e.data.data]
+                e._src_conn = data_to_conn[odata]
         else:
             remove_inner_connector(e.dst_conn)
             for e in edges_by_connector[conn]:
-                e._dst_conn = data_to_conn[e.data.data]
+                e._dst_conn = data_to_conn[odata]
 
     return consolidated
 
@@ -719,7 +905,11 @@ def remove_edge_and_dangling_path(state: SDFGState, edge: MultiConnectorEdge):
             state.remove_node(root_node)
 
 
-def consolidate_edges(sdfg: SDFG, starting_scope=None) -> int:
+def consolidate_edges(
+    sdfg: SDFG,
+    starting_scope=None,
+    propagate: bool = True,
+) -> int:
     """
     Union scope-entering memlets relating to the same data node in all states.
     This effectively reduces the number of connectors and allows more
@@ -756,7 +946,8 @@ def consolidate_edges(sdfg: SDFG, starting_scope=None) -> int:
                     propagate_exit = True
 
                 # Repropagate memlets
-                propagate_memlets_scope(sdfg, state, scope, propagate_entry, propagate_exit)
+                if propagate:
+                    propagate_memlets_scope(sdfg, state, scope, propagate_entry, propagate_exit)
 
                 if scope.parent is not None:
                     next_queue.append(scope.parent)
@@ -908,6 +1099,8 @@ def get_view_edge(state: SDFGState, view: nd.AccessNode) -> gr.MultiConnectorEdg
     """
 
     in_edges = state.in_edges(view)
+    # We should ignore empty synchronization edges
+    in_edges = [e for e in in_edges if not e.data.is_empty()]
     out_edges = state.out_edges(view)
 
     # Invalid case: No data to view
@@ -2498,3 +2691,87 @@ def specialize_scalar(sdfg: 'dace.SDFG', scalar_name: str, scalar_val: Union[flo
     assert isinstance(scalar_name, str)
     assert isinstance(scalar_val, (float, int, str))
     _specialize_scalar_impl(sdfg, sdfg, scalar_name, scalar_val)
+
+
+def in_edge_with_name(node: nd.Node, state: SDFGState, name: str) -> MultiConnectorEdge:
+    """
+    Find the edge that connects to input connector `name` on `node`.
+
+    :param node: the node.
+    :param state: the state.
+    :param name: the input connector name.
+    :return: the edge that connects to connector `name`.
+    """
+    cands = list(state.in_edges_by_connector(node, name))
+    if len(cands) != 1:
+        raise ValueError("Expected to find exactly one edge with name '{}', found {}".format(name, len(cands)))
+    return cands[0]
+
+
+def out_edge_with_name(node: nd.Node, state: SDFGState, name: str) -> MultiConnectorEdge:
+    """
+    Find the edge that connects to output connector `name` on `node`.
+
+    :param node: the node.
+    :param state: the state.
+    :param name: the output connector name.
+    :return: the edge that connects to connector `name`.
+    """
+    cands = list(state.out_edges_by_connector(node, name))
+    if len(cands) != 1:
+        raise ValueError("Expected to find exactly one edge with name '{}', found {}".format(name, len(cands)))
+    return cands[0]
+
+
+def in_desc_with_name(node: nd.Node, state: SDFGState, sdfg: SDFG, name: str) -> dt.Data:
+    """
+    Find the descriptor of the data that connects to input connector `name`.
+
+    :param node: the node.
+    :param state: the state.
+    :param sdfg: the sdfg.
+    :param name: the input connector name.
+    :return: the descriptor of the data that connects to connector `name`.
+    """
+    return sdfg.arrays[in_edge_with_name(node, state, name).data.data]
+
+
+def out_desc_with_name(node: nd.Node, state: SDFGState, sdfg: SDFG, name: str) -> dt.Data:
+    """
+    Find the descriptor of the data that connects to output connector `name`.
+
+    :param node: the node.
+    :param state: the state.
+    :param sdfg: the sdfg.
+    :param name: the output connector name.
+    :return: the descriptor of the data that connects to connector `name`.
+    """
+    return sdfg.arrays[out_edge_with_name(node, state, name).data.data]
+
+
+def expand_nodes(sdfg: SDFG, predicate: Callable[[nd.Node], bool]):
+    """
+    Recursively expand library nodes in the SDFG using a given predicate.
+
+    :param sdfg: the sdfg to expand nodes on.
+    :param predicate: a predicate that will be called to check if a node should be expanded.
+    """
+    if sdfg is None:
+        return
+    states = list(sdfg.states())
+    while len(states) > 0:
+        state = states.pop()
+        expanded_something = False
+        for node in list(state.nodes()):
+            if isinstance(node, nd.NestedSDFG):
+                expand_nodes(node.sdfg, predicate=predicate)
+            elif isinstance(node, nd.LibraryNode):
+                if predicate(node):
+                    impl_name = node.expand(sdfg, state)
+                    if config.Config.get_bool('debugprint'):
+                        print("Automatically expanded library node \"{}\" with implementation \"{}\".".format(
+                            str(node), impl_name))
+                    expanded_something = True
+
+        if expanded_something:
+            states.append(state)

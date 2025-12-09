@@ -1,12 +1,13 @@
-name: GPU Tests
+name: Pauli GPU Tests
 
 on:
-  push:
-    branches: [ main, ci-fix ]
-  pull_request:
-    branches: [ main, ci-fix ]
-  merge_group:
-    branches: [ main, ci-fix ]
+  workflow_dispatch
+  #push:
+  #  branches: [ main, ci-fix ]
+  #pull_request:
+  #  branches: [ main, ci-fix ]
+  #merge_group:
+  #  branches: [ main, ci-fix ]
 
 env:
   CUDACXX: /usr/local/cuda/bin/nvcc
@@ -36,7 +37,7 @@ jobs:
         pip install mpi4py
         pip install cupy
         pip uninstall -y dace
-        pip install -e ".[testing]"
+        pip install -e ".[testing,ml]"
         curl -Os https://uploader.codecov.io/latest/linux/codecov
         chmod +x codecov
 

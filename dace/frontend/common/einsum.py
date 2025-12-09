@@ -9,7 +9,7 @@ import numpy as np
 
 import dace
 from dace import dtypes, subsets, symbolic
-from dace.data import _prod as prod
+from dace.utils import prod
 from dace.sdfg.nodes import AccessNode
 from dace.sdfg import SDFG, SDFGState, InterstateEdge, dealias
 from dace.memlet import Memlet
