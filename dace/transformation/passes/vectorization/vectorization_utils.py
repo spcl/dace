@@ -1484,7 +1484,6 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
     c1, c2, op = info.get("constant1"), info.get("constant2"), info.get("op")
     vw = vector_width
     is_commutative = op in {"+", "*", "==", "!="}
-    print(ttype)
 
     # Cast boolean constants to C-compatible names
     PYTHON_TO_CPP_OPERATORS = {"and": "&&", "or": "||", "not": "!"}
@@ -1765,11 +1764,9 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         lhs_data = state.sdfg.arrays[out_edges[0].data.data]
         l_op = rhs1 if rhs1 is not None else c1
         if op == "!=":
-            state.sdfg.save("x.sdfg")
             raise Exception(lhs, rhs1, rhs2, c1, c2)
         expr = f"{op}{l_op}"
         if isinstance(lhs_data, dace.data.Array):
-            state.sdfg.save("y.sdfg")
             node.code = dace.properties.CodeBlock(code="\n".join([f"{lhs}[{i}] = {expr}" for i in range(vw)]) + "\n",
                                                   language=dace.Language.Python)
         else:
@@ -2506,10 +2503,6 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
                 # Check for multipliers
                 # If map_param appears multiplied in the expression, it is strided
                 free_syms = {str(s) for s in access_expr.free_symbols}
-                print("Free syms", free_syms)
-                #if map_param in free_syms:
-                #    print(f"Map param {map_param} in free syms {free_syms} of {access_expr}")
-                # If map param appears in a multiplication expression then it is not vectorizable
                 if len({
                         term
                         for term in access_expr.atoms(sympy.Mul)
@@ -2523,7 +2516,6 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
                     free_syms = {str(s) for s in b.free_symbols}
                 else:
                     free_syms = {b}
-                print("Free syms2", free_syms)
                 for free_sym in free_syms:
                     # Accessing map param is ok
                     if str(free_sym) == map_param:
@@ -2532,11 +2524,8 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
                         # Other free symbols should not have indirect accesses
                         # Analysis tries find the first assignment in the CFG
                         assignment = find_symbol_assignment(sdfg, str(free_sym))
-                        print("Assignment to ", str(free_sym), "are", assignment)
-
                         if assignment is None and str(free_sym) not in parent_syms_defined:
                             sdfg.save("failing_vectorization.sdfg")
-                        print(assignment, parent_syms_defined, free_sym, str(free_sym) in parent_syms_defined)
                         assert not (
                             assignment is None and str(free_sym) not in parent_syms_defined
                         ), f"Could not find an iedge assignment for {free_sym}, assignemnt {assignment}, parent symbols defined {parent_syms_defined}"
@@ -2676,10 +2665,6 @@ def collect_non_unit_stride_accesses_in_map(sdfg: dace.SDFG, state: dace.SDFGSta
                 # Check for multipliers
                 # If map_param appears multiplied in the expression, it is strided
                 free_syms = {str(s) for s in access_expr.free_symbols}
-                #print(free_syms)
-                #if map_param in free_syms:
-                #    print(f"Map param {map_param} in free syms {free_syms} of {access_expr}")
-                # If map param appears in a multiplication expression then it is not vectorizable
                 if len({
                         term
                         for term in access_expr.atoms(sympy.Mul)

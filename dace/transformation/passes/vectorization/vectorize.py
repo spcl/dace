@@ -347,8 +347,6 @@ class Vectorize(ppl.Pass):
         # Consider loop (i=0; i<N; i++) and accessing an array [i*2] this means we have stride-2 access and this also
         # needs to be packed
         vectorizable_arrays_dict = collect_vectorizable_arrays(inner_sdfg, nsdfg, state, invariant_scalars)
-        #state.sdfg.save("x.sdfg")
-        #assert vectorizable_arrays_dict["c"] is False, f"{vectorizable_arrays_dict}"
         non_vectorizable_arrays = {k for k, v in vectorizable_arrays_dict.items() if v is False} - invariant_scalars
 
         non_vectorizable_array_descs = [(arr_name, inner_sdfg.arrays[arr_name]) for arr_name in non_vectorizable_arrays]
@@ -1327,9 +1325,7 @@ class Vectorize(ppl.Pass):
 
         applied = 0
         applied_set = set()
-        print(f"Found map entries: {map_entries}")
         for i, (map_entry, state) in enumerate(map_entries):
-            print(is_innermost_map(state, map_entry))
             if is_innermost_map(state, map_entry):
                 num_vectorized += 1
                 all_nodes_between = state.all_nodes_between(map_entry, state.exit_node(map_entry))
