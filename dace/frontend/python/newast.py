@@ -3760,7 +3760,10 @@ class ProgramVisitor(ExtNodeVisitor):
                 independent = False
                 if not _subset_is_local_symbol_dependent(new_rng, self):
                     independent = True
-                    waccess = inverse_dict_lookup(self.accesses, (new_name, new_rng))
+                    if self.nested:
+                        waccess = inverse_dict_lookup(self.accesses, (new_name, new_rng))
+                    else:
+                        waccess = (new_name, new_rng, 'w')
                     if self.map_symbols and waccess:
                         if not Config.get_bool('frontend', 'avoid_wcr'):
                             independent = False
