@@ -422,6 +422,12 @@ def _eval_int_literal(x: Union[f03.Signed_Int_Literal_Constant, f03.Int_Literal_
     num, kind = x.children
     if kind is None:
         kind = 4
+    if str(kind) == "c_int":
+        kind = 4
+    elif str(kind) == "c_double":
+        kind = 8
+    elif str(kind) == "c_float":
+        kind = 4
     elif kind in {'1', '2', '4', '8'}:
         kind = np.int32(kind)
     else:
