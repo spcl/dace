@@ -1762,6 +1762,12 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
 
                 symbolic.safe_replace(symbol_mapping, lambda m: sdfg.replace_dict(m))
 
+                # Integrate any internal SDFGs after performing replacements
+                for state in sdfg.states():
+                    for node in state.nodes():
+                        if isinstance(node, nd.NestedSDFG) and node.sdfg is not None:
+                            dealias.integrate_nested_sdfg(node.sdfg)
+
         # Make dictionary of autodetect connector types from set
         if isinstance(inputs, (set, collections.abc.KeysView)):
             inputs = {k: None for k in inputs}
