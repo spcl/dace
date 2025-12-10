@@ -1,6 +1,6 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 from dace import dtypes, library, properties, subsets, symbolic
-from dace.data import _prod
+from dace.utils import prod as _prod
 from dace.libraries.mpi import utils
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
