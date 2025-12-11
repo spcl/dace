@@ -791,7 +791,7 @@ def process_in_edges(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG, m
 
             # Add access node and rewire edges
             an = state.add_access(vector_dataname)
-            #an.setzero = True
+            an.setzero = True
             state.remove_edge(ie)
             state.add_edge(ie.src, ie.src_conn, an, None, dace.memlet.Memlet(data=ie.data.data, subset=copy_subset))
             state.add_edge(an, None, ie.dst, ie.dst_conn,
@@ -847,6 +847,7 @@ def process_out_edges(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG, 
 
             # Add access node and rewire edges
             an = state.add_access(vector_dataname)
+            an.setzero = True
             state.remove_edge(oe)
             assert oe.src == nsdfg_node
             assert oe.src_conn is not None
@@ -1815,6 +1816,7 @@ def duplicate_access(state: dace.SDFGState, node: dace.nodes.AccessNode, vector_
                                               transient=True,
                                               find_new_name=True)
         scl_an = state.add_access(scl_name)
+        scl_an.setzero = True
         e = state.add_edge(src, ie.src_conn, scl_an, None, dace.memlet.Memlet(scl_name))
         state.remove_edge(ie)
         assign_tasklet = state.add_tasklet("assign_t", {"_in"}, {"_out"}, "_out = _in")
@@ -1838,7 +1840,7 @@ def duplicate_access(state: dace.SDFGState, node: dace.nodes.AccessNode, vector_
     src.code = CodeBlock(code="\n".join([f"{outc}[{_i}] = {inc}[{_i}]" for _i in range(vector_width)]))
     touched_nodes.add(src)
     packed_access = state.add_access(f"{node.data}_packed")
-    #packed_access.setzero = True
+    packed_access.setzero = True
     touched_nodes.add(packed_access)
     state.remove_edge(ie)
     if isinstance(ie, dace.nodes.Node):
@@ -2273,7 +2275,7 @@ def reduce_before_use(state: dace.SDFGState, name: str, vector_width: int, op: s
                                   transient=True,
                                   lifetime=arr.lifetime)
             an = state.add_access(name + "_scl")
-            #an.setzero = True
+            an.setzero = True
             t = state.add_tasklet(name=f"scalarize_{name}",
                                   inputs={"_in"},
                                   outputs={"_out"},
@@ -3042,7 +3044,7 @@ def insert_assignment_tasklet_from_src(state: dace.SDFGState, edge: Edge[Memlet]
 
     # Create access node and edges
     an = state.add_access(vector_dataname)
-    #an.setzero = True
+    an.setzero = True
     e1 = state.add_edge(src, src_conn, t, "_in", copy.deepcopy(edge.data))
     e2 = state.add_edge(t, "_out", an, None, dace.memlet.Memlet.from_array(vector_dataname, vector_data))
     e3 = state.add_edge(an, None, dst, dst_conn, dace.memlet.Memlet.from_array(vector_dataname, vector_data))
@@ -3300,6 +3302,7 @@ def add_copies_before_and_after_nsdfg(
                         if ie_dataname != oe_dataname:
                             # Need to duplicate the access node
                             an_in = inner_state.add_access(ie_dataname)
+                            an_in.setzer = True
                             for ie in ies:
                                 inner_state.remove_edge(ie)
                                 inner_state.add_edge(ie.src, ie.src_conn, an_in, None, copy.deepcopy(ie.data))
@@ -3315,6 +3318,7 @@ def add_copies_before_and_after_nsdfg(
                     inner_state.remove_node(node)
                     for oe in oes:
                         an = inner_state.add_access(oe.data.data)
+                        an.setzero = True
                         inner_state.add_edge(an, oe.src_conn, oe.dst, oe.dst_conn, copy.deepcopy(oe.data))
 
     # Handle unmovable arrays by adding copies at the beginning and at the end of the inner SDFG
@@ -3347,9 +3351,9 @@ def add_copies_before_and_after_nsdfg(
                 # Insert copy-ins
                 # Need to find the copy in state
                 orig_access = copy_in_state.add_access(unmovable_arr_name)
-                #orig_access.setzero = True
+                orig_access.setzero = True
                 v_access = copy_in_state.add_access(vec_arr_name)
-                #v_access.setzero = True
+                v_access.setzero = True
                 vec_arr = copy_in_state.sdfg.arrays[vec_arr_name]
                 assign_tasklet = copy_in_state.add_tasklet(
                     name="_AssignT1",
@@ -3368,9 +3372,9 @@ def add_copies_before_and_after_nsdfg(
                 vec_arr_name = f"{unmovable_arr_name}_vec_{i}"
                 name_to_subset_map[vec_arr_name] = subset
                 orig_access2 = copy_out_state.add_access(unmovable_arr_name)
-                #orig_access2.setzero = True
+                orig_access2.setzero = True
                 v_access2 = copy_out_state.add_access(vec_arr_name)
-                #v_access2.setzero = True
+                v_access2.setzero = True
                 vec_arr = copy_out_state.sdfg.arrays[vec_arr_name]
                 assign_tasklet2 = copy_out_state.add_tasklet(
                     name="_AssignT2",

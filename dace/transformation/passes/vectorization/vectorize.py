@@ -511,7 +511,7 @@ class Vectorize(ppl.Pass):
                         modified_data.add(src_node.data)
 
                         non_packed_access = state.add_access(old_data_name)
-                        #non_packed_access.setzero = True
+                        non_packed_access.setzero = True
                         modified_nodes.add(non_packed_access)
                         modified_nodes.add(src_node)
 
@@ -587,6 +587,7 @@ class Vectorize(ppl.Pass):
 
                         #non_packed_access = state.add_access(old_data_name)
                         packed_access = state.add_access(new_data_name)
+                        packed_access.setzero = True
                         modified_nodes.add(packed_access)
 
                         if new_data_name not in sdfg.arrays:
@@ -684,6 +685,7 @@ class Vectorize(ppl.Pass):
 
                         #non_packed_access = state.add_access(old_data_name)
                         packed_access = state.add_access(new_data_name)
+                        packed_access.setzero = True
                         modified_nodes.add(packed_access)
 
                         if new_data_name not in sdfg.arrays:
@@ -836,7 +838,7 @@ class Vectorize(ppl.Pass):
                         )
 
                 new_an = state.add_access(f"{node.data}_vec")
-                #new_an.setzero = True
+                new_an.setzero = True
 
                 for ie in state.in_edges(node):
                     new_edge_tuple = (ie.src, ie.src_conn, new_an, None, copy.deepcopy(ie.data))
@@ -1221,7 +1223,7 @@ class Vectorize(ppl.Pass):
                                                       may_alias=False)
                 in_datas.add(arr_name_to_use)
                 an = state.add_access(arr_name_to_use)
-                #an.setzero = True
+                an.setzero = True
                 src, src_conn, dst, dst_conn, data = ie
                 state.remove_edge(ie)
                 state.add_edge(src, src_conn, an, None, copy.deepcopy(data))
@@ -1261,7 +1263,7 @@ class Vectorize(ppl.Pass):
                                                       may_alias=False)
                 out_datas.add(arr_name_to_use)
                 an = state.add_access(arr_name_to_use)
-                #an.setzero = True
+                an.setzero = True
                 src, src_conn, dst, dst_conn, data = oe
                 state.remove_edge(oe)
                 state.add_edge(map_exit, src_conn, an, None,
@@ -1416,5 +1418,15 @@ class Vectorize(ppl.Pass):
             current_global_code = current_global_code.as_string
         if self.global_code not in current_global_code:
             sdfg.append_global_code(cpp_code=self.global_code, location=self.global_code_location)
+
+        # Set zero for all transients
+        # Vectorization requires all transient to be 0 to not accidentally read trash data
+        # All access nodes need to be set to setzer of the same array as, the first node that trigger allocation
+        # determines if we set zero or not
+        for n, g in sdfg.all_nodes_recursive():
+            if isinstance(n, dace.nodes.AccessNode):
+                arr = g.sdfg.arrays[n.data]
+                if arr.transient:
+                    n.setzero = True
 
         return applied_set
