@@ -102,8 +102,9 @@ class LoopToMap(xf.MultiStateTransformation):
         # Loops containing break, continue, or returns may not be turned into a map.
         for blk in self.loop.all_control_flow_blocks():
             if isinstance(blk, (BreakBlock, ContinueBlock, ReturnBlock)):
-                print(f"Cannot apply: Loop contains {type(blk).__name__}")
-                return False
+                if not permissive:
+                    print(f"Cannot apply: Loop contains {type(blk).__name__}")
+                    return False
 
         # We cannot handle symbols read from data containers unless they are scalar.
         for expr in (start, end, step):

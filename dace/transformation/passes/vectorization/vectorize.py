@@ -74,6 +74,9 @@ class Vectorize(ppl.Pass):
         assert isinstance(inner_map_entry, dace.nodes.MapEntry)
         assert inner_map_entry in state.nodes()
 
+        # Before anything try to clean other subset going from map entry
+        try_clean_other_subset_going_out_from_map_entry(state, inner_map_entry)
+
         tile_sizes = [1 for _ in inner_map_entry.map.range]
         tile_sizes[-1] = self.vector_width
         assert tile_sizes != []
@@ -154,8 +157,13 @@ class Vectorize(ppl.Pass):
             modified_edges = set()
 
         self._extend_memlets(state, new_inner_map, modified_nodes, modified_edges)
+        # Special case, // 2 (or integer dividing the thing nicely) access -> need to multiplex elements to be able to vectorize
+        new_modified_nodes, new_modified_edges = detect_halve_index(state, new_inner_map, vector_length=self.vector_width)
+        modified_edges = modified_edges.union(new_modified_edges)
+        modified_nodes = modified_nodes.union(new_modified_nodes)
         self._extend_temporary_scalars(state, new_inner_map, modified_nodes, modified_edges)
         state.sdfg.validate()
+
 
         if not has_single_nested_sdfg:
             if self.insert_copies:
@@ -242,7 +250,7 @@ class Vectorize(ppl.Pass):
         # 0
         # Collect all assigned symbols, check what we can demote
         if self.try_to_demote_symbols_in_nsdfgs:
-            try_demoting_vectorizable_symbols(inner_sdfg)
+            demoted_scalars = try_demoting_vectorizable_symbols(inner_sdfg)
 
         # 1.1.1
         fix_nsdfg_connector_array_shapes_mismatch(state, nsdfg)
@@ -254,6 +262,11 @@ class Vectorize(ppl.Pass):
             arr_name
             for arr_name in transient_arrays if inner_sdfg.arrays[arr_name].shape == (self.vector_width, )
         }
+        if self.try_to_demote_symbols_in_nsdfgs:
+            for k in demoted_scalars:
+                assert k in transient_arrays
+        if self.try_to_demote_symbols_in_nsdfgs:
+            replace_arrays_with_new_shape(inner_sdfg, demoted_scalars, (self.vector_width, ), None)
 
         # If a scalar is only used on an interstate edge we have a pattern such as:
         # scalar1 = i + scalar0
@@ -284,6 +297,7 @@ class Vectorize(ppl.Pass):
         replace_arrays_with_new_shape(inner_sdfg, vector_width_transient_arrays, (self.vector_width, ),
                                       self.vector_op_numeric_type)
         replace_arrays_with_new_shape(inner_sdfg, non_vector_width_transient_arrays, (self.vector_width, ), None)
+
         inner_sdfg.reset_cfg_list()
 
         vector_width_arrays = {
@@ -346,6 +360,9 @@ class Vectorize(ppl.Pass):
         non_vectorizable_array_infos = {(arr_name + "_packed", (self.vector_width, ), self.vector_input_storage,
                                          arr.dtype)
                                         for arr_name, arr in non_vectorizable_array_descs}
+        if self.try_to_demote_symbols_in_nsdfgs:
+            for k in demoted_scalars:
+                assert k in vectorizable_arrays_dict
 
         #raise Exception(vectorizable_arrays_dict, non_vectorizable_arrays)
         add_transient_arrays_from_list(inner_sdfg, non_vectorizable_array_infos)
@@ -396,8 +413,14 @@ class Vectorize(ppl.Pass):
         # and should be expanded to A[0:1, 0:1, for_it_0:for_it_0+8] (exclusive range).
         # This should be performed only for arrays.
         for inner_state in inner_sdfg.all_states():
-            # Skip the data data that are still scalar and source nodes
             array_data = {n.data for _, n in array_source_nodes}.union({n.data for _, n in array_sink_nodes})
+            readwrite_data = set()
+            for n in inner_state.nodes():
+                if (isinstance(n, dace.nodes.AccessNode) and inner_state.in_degree(n) > 0
+                        and inner_state.out_degree(n) > 0 and inner_state.sdfg.arrays[n.data].transient is False):
+                    readwrite_data.add(n.data)
+            for rw in readwrite_data:
+                array_data.add(rw)
             edges_to_replace = {
                 edge
                 for edge in inner_state.edges()
@@ -496,7 +519,7 @@ class Vectorize(ppl.Pass):
                         modified_data.add(src_node.data)
 
                         non_packed_access = state.add_access(old_data_name)
-                        #non_packed_access.setzero = True
+                        non_packed_access.setzero = True
                         modified_nodes.add(non_packed_access)
                         modified_nodes.add(src_node)
 
@@ -572,6 +595,7 @@ class Vectorize(ppl.Pass):
 
                         #non_packed_access = state.add_access(old_data_name)
                         packed_access = state.add_access(new_data_name)
+                        packed_access.setzero = True
                         modified_nodes.add(packed_access)
 
                         if new_data_name not in sdfg.arrays:
@@ -669,6 +693,7 @@ class Vectorize(ppl.Pass):
 
                         #non_packed_access = state.add_access(old_data_name)
                         packed_access = state.add_access(new_data_name)
+                        packed_access.setzero = True
                         modified_nodes.add(packed_access)
 
                         if new_data_name not in sdfg.arrays:
@@ -821,7 +846,7 @@ class Vectorize(ppl.Pass):
                         )
 
                 new_an = state.add_access(f"{node.data}_vec")
-                #new_an.setzero = True
+                new_an.setzero = True
 
                 for ie in state.in_edges(node):
                     new_edge_tuple = (ie.src, ie.src_conn, new_an, None, copy.deepcopy(ie.data))
@@ -1206,7 +1231,7 @@ class Vectorize(ppl.Pass):
                                                       may_alias=False)
                 in_datas.add(arr_name_to_use)
                 an = state.add_access(arr_name_to_use)
-                #an.setzero = True
+                an.setzero = True
                 src, src_conn, dst, dst_conn, data = ie
                 state.remove_edge(ie)
                 state.add_edge(src, src_conn, an, None, copy.deepcopy(data))
@@ -1246,7 +1271,7 @@ class Vectorize(ppl.Pass):
                                                       may_alias=False)
                 out_datas.add(arr_name_to_use)
                 an = state.add_access(arr_name_to_use)
-                #an.setzero = True
+                an.setzero = True
                 src, src_conn, dst, dst_conn, data = oe
                 state.remove_edge(oe)
                 state.add_edge(map_exit, src_conn, an, None,
@@ -1314,13 +1339,24 @@ class Vectorize(ppl.Pass):
         sdfgs_to_vectorize = set()
 
         applied = 0
+        applied_set = set()
         for i, (map_entry, state) in enumerate(map_entries):
             if is_innermost_map(state, map_entry):
                 num_vectorized += 1
                 all_nodes_between = state.all_nodes_between(map_entry, state.exit_node(map_entry))
 
                 if self._apply_on_maps is not None and map_entry not in self._apply_on_maps:
+                    print(f"{map_entry} not in {self._apply_on_maps}")
                     continue
+
+                # If no unit stride dimension continue
+                strides = [s for (b,e,s) in map_entry.map.range]
+                if not any({s == 1 for s in strides}):
+                    print(
+                        "Map has no unit-stride dimension"
+                    )
+                    continue
+
 
                 if map_entry.map.label.startswith("vectorloop_"):
                     print(
@@ -1344,12 +1380,24 @@ class Vectorize(ppl.Pass):
                     else:
                         continue
 
+                if map_param_appears_in_multiple_dimensions(state, map_entry):
+                    print(
+                        "Map param (vectorized) is used to access multiple dimensions, can't vectorize"
+                    )
+                    continue
+
                 opt_nsdfg = get_single_nsdfg_inside_map(state, map_entry)
                 if opt_nsdfg is not None:
                     nsdfg: dace.nodes.NestedSDFG = opt_nsdfg
                     if not has_only_states(nsdfg.sdfg):
-                        print(f"Nested SDFG inside map nodes other than states")
-                        continue
+                        # If it has a conditional block with only break inside we can still do it
+                        if has_only_states_or_single_block_with_break_only(nsdfg.sdfg):
+                            pass
+                        else:
+                            print(
+                                f"Nested SDFG inside map nodes other than states, of the if blocks do not consist only of breaks"
+                            )
+                            continue
 
                 if not no_other_subset(state, map_entry):
                     if self.fail_on_unvectorizable:
@@ -1366,6 +1414,7 @@ class Vectorize(ppl.Pass):
                 state.sdfg.validate()
                 self._vectorize_map(state, map_entry, vectorization_number=i)
                 applied += 1
+                applied_set.add(map_entry)
                 vectorized_maps.add(map_entry)
                 if len(all_nodes_between) == 1 and isinstance(next(iter(all_nodes_between)), dace.nodes.NestedSDFG):
                     sdfgs_to_vectorize.add((next(iter(all_nodes_between)), state))
@@ -1393,4 +1442,14 @@ class Vectorize(ppl.Pass):
         if self.global_code not in current_global_code:
             sdfg.append_global_code(cpp_code=self.global_code, location=self.global_code_location)
 
-        return applied
+        # Set zero for all transients
+        # Vectorization requires all transient to be 0 to not accidentally read trash data
+        # All access nodes need to be set to setzer of the same array as, the first node that trigger allocation
+        # determines if we set zero or not
+        for n, g in sdfg.all_nodes_recursive():
+            if isinstance(n, dace.nodes.AccessNode):
+                arr = g.sdfg.arrays[n.data]
+                if arr.transient:
+                    n.setzero = True
+
+        return applied_set

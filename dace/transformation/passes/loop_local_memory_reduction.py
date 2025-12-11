@@ -105,6 +105,18 @@ class LoopLocalMemoryReduction(ppl.Pass):
                                                   default=False,
                                                   desc="Assume symbols are positive when checking for applicability.")
 
+    skip_arrays = properties.SetProperty(
+        element_type=str,
+        default=set(),
+        desc="Set of array names to skip for this optimization.",
+    )
+
+    annotation_postfix = properties.Property(
+        dtype=str,
+        default="_circular",
+        desc="Postfix to add to the annotation of arrays that have been reduced.",
+    )
+
     num_applications = 0  # To track number of applications for testing
 
     def modifies(self) -> ppl.Modifies:
@@ -149,7 +161,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
                     changing_syms.update(edge.data.assignments.keys())
 
                 arrays = set(acc_node.data for acc_node in node.data_nodes())
-                for arr in arrays:
+                for arr in arrays - self.skip_arrays:
                     self._apply_for_array(arr, sdfg, node, changing_syms)
 
         self.out_of_loop_states_cache = {}
@@ -534,6 +546,27 @@ class LoopLocalMemoryReduction(ppl.Pass):
             if k is not None:
                 new_shape[i] = k
         array.set_shape(tuple(new_shape))
+
+        # Rename the array to indicate it has been circularly reduced.
+        if self.annotation_postfix:
+            new_name, _ = sdfg.add_array(
+                f"{array_name}{self.annotation_postfix}",
+                shape=array.shape,
+                dtype=array.dtype,
+                storage=array.storage,
+                location=array.location,
+                transient=array.transient,
+                strides=array.strides,
+                offset=array.offset,
+                lifetime=array.lifetime,
+                debuginfo=array.debuginfo,
+                allow_conflicts=array.allow_conflicts,
+                total_size=array.total_size,
+                find_new_name=True,
+                alignment=array.alignment,
+                may_alias=array.may_alias,
+            )
+            sdfg.replace(array_name, new_name)
 
         # If the new shape is a single element, we can replace the array with a scalar.
         if all(s == 1 for s in new_shape):

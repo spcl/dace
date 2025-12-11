@@ -1,14 +1,19 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 import re
+
+from sympy import Function
 import dace
 from typing import Dict, List, Optional, Set, Tuple
 
 from dace import SDFG
+from dace import dtypes
+from dace.codegen.targets.framecode import infer_expr_type
 from dace.transformation import pass_pipeline as ppl, transformation
 
 import ast
 from dace.sdfg.nodes import CodeBlock
+from dace.codegen.tools.type_inference import infer_types
 
 
 class ASTSplitter:
@@ -179,7 +184,61 @@ class SplitTasklets(ppl.Pass):
 
         return tokens
 
+    def _add_missing_symbols(self, sdfg: SDFG):
+        for state in sdfg.all_states():
+            for node in state.nodes():
+                if isinstance(node, dace.nodes.NestedSDFG):
+                    self._add_missing_symbols(node.sdfg)
+        for e in sdfg.all_interstate_edges():
+            for k, v in e.data.assignments.items():
+                if k not in sdfg.symbols:
+                    symexpr = dace.symbolic.SymExpr(v)
+                    dtypes = set()
+                    funcs = [a.name for a in symexpr.atoms(Function)]
+                    for token in funcs:
+                        if str(token) in sdfg.arrays:
+                            dtypes.add(sdfg.arrays[str(token)].dtype)
+                        if str(token) in sdfg.symbols:
+                            dtypes.add(sdfg.symbols[str(token)])
+                    ktype = None
+                    dtype_priority = [
+                        dace.float64,
+                        dace.float32,
+                        dace.int64,
+                        dace.uint64,
+                        dace.int32,
+                        dace.uint32,
+                        dace.int16,
+                        dace.uint16,
+                        dace.int8,
+                        dace.uint8,
+                        dace.bool_,
+                    ]
+                    ktype = None
+                    if len(dtypes) > 0:
+                        for dt in dtype_priority:
+                            if dt in dtypes:
+                                ktype = dt
+                                break
+                    if ktype is None:
+                        for token in symexpr.free_symbols:
+                            if str(token) in sdfg.arrays:
+                                dtypes.add(sdfg.arrays[str(token)].dtype)
+                            if str(token) in sdfg.symbols:
+                                dtypes.add(sdfg.symbols[str(token)])
+                    if len(dtypes) > 0:
+                        for dt in dtype_priority:
+                            if dt in dtypes:
+                                ktype = dt
+                                break
+                    if ktype is None:
+                        ktype = dace.float64
+                    sdfg.add_symbol(k, ktype)
+                    print(f"Adding missing symbol, THIS SHOULD NOT HAPPEN AND IT IS NOT MY FAULT FIX THIS")
+                    print(f"Adding missing symbol {k}, deduced type {ktype}")
+
     def apply_pass(self, sdfg: SDFG, pipeline_results) -> Optional[Dict[str, Set[str]]]:
+        self._add_missing_symbols(sdfg)
         split_access_counter = 0
 
         tasklets_to_split = list()  # tasklet, parent_graph, ssa_statements
@@ -200,8 +259,13 @@ class SplitTasklets(ppl.Pass):
 
                 # Collect symbolic types
                 try:
-                    code_expr = dace.symbolic.SymExpr(c.as_string)
-                    for free_sym in code_expr.free_symbols:
+                    tokens = c.as_string.split(" = ")
+                    assert len(tokens) == 2
+                    lhs = tokens[0].strip()
+                    rhs = tokens[1].strip()
+                    code_expr_rhs = dace.symbolic.SymExpr(rhs)
+                    code_expr_lhs = dace.symbolic.SymExpr(lhs)
+                    for free_sym in code_expr_rhs.free_symbols.union(code_expr_lhs.free_symbols):
                         if str(free_sym) in g.sdfg.symbols:
                             input_types.add(g.sdfg.symbols[str(free_sym)])
                 except Exception as e:
@@ -256,7 +320,11 @@ class SplitTasklets(ppl.Pass):
 
             tasklet_in_degree = state.in_degree(tasklet)
             tasklet_in_edges = state.in_edges(tasklet)
-            available_symbols = state.symbols_defined_at(tasklet)
+            available_symbols = {str(s)
+                                 for s in state.symbols_defined_at(tasklet)
+                                 }.union({str(s)
+                                          for s in sdfg.symbols.keys()})
+            syms_defined_at = {str(s) for s in state.symbols_defined_at(tasklet)}
             state.remove_node(tasklet)
             added_tasklets = list()
             for i, ssa_statement in enumerate(ssa_statements):  # Since SSA we are going to add in a line
@@ -264,8 +332,13 @@ class SplitTasklets(ppl.Pass):
                 assert "True" not in rhs_vars
                 assert "False" not in rhs_vars
 
+                #print("Available symbols", available_symbols)
+                #print("SDFG syms", sdfg.symbols)
+                #print("Symbols defined at", {str(s) for s in syms_defined_at})
                 symbol_rhs_vars = {rhs_var for rhs_var in rhs_vars if rhs_var in available_symbols}
+                #print("Symbol rhs vars", symbol_rhs_vars)
                 rhs_vars = set(rhs_vars) - symbol_rhs_vars
+                #print("Rhs vars", rhs_vars)
                 assert len(lhs_vars) == 1
                 t = state.add_tasklet(
                     name=f"{tasklet.name}_split_{i}",
@@ -274,6 +347,7 @@ class SplitTasklets(ppl.Pass):
                     code=ssa_statement,
                 )
                 for rhs_var in rhs_vars:
+                    assert rhs_var != "ptare"
                     t.add_in_connector(rhs_var)
                 for lhs_var in lhs_vars:
                     t.add_out_connector(lhs_var)
@@ -317,6 +391,8 @@ class SplitTasklets(ppl.Pass):
                         matching_in_edges = {ie for ie in tasklet_input_edges if ie.dst_conn == in_conn}
                         if len(matching_in_edges) == 0:
                             array_name = f"{in_conn}{self.tmp_access_identifier}{split_access_counter}"
+                            if in_conn == "ptare":
+                                raise Exception(t)
                             if array_name not in state.sdfg.arrays:
                                 state.sdfg.add_scalar(
                                     name=array_name,

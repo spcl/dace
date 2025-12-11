@@ -12,9 +12,9 @@
 #include <stdint.h>
 
 void gather_double(const double *__restrict__ A,
-                          const int64_t *__restrict__ idx,
-                          double *__restrict__ B,
-                        const int64_t length) {
+                   const int64_t *__restrict__ idx,
+                   double *__restrict__ B,
+                   const int64_t length) {
 #if defined(__AVX512F__)
     // ---------------------------
     // AVX-512 version (8 doubles)

@@ -13,6 +13,7 @@ from dace.sdfg import ControlFlowRegion
 from dace.sdfg.graph import Edge
 from dace.sdfg.state import ConditionalBlock
 from dace.transformation.interstate import branch_elimination
+from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import ReplaceSTDExpWithDaCeExp, ReplaceSTDLogWithDaCeLog, ReplaceSTDPowWithDaCePow
 from dace.transformation.passes.vectorization.vectorize_cpu import VectorizeCPU
 from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
 
@@ -466,8 +467,6 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                  fail_on_unvectorizable=True).apply_pass(copy_sdfg, {})
     copy_sdfg.validate()
 
-    if save_sdfgs and sdfg_name:
-        copy_sdfg.save(f"{sdfg_name}_vectorized.sdfg")
     c_copy_sdfg = copy_sdfg.compile()
 
     # Run both
@@ -1309,6 +1308,7 @@ def test_snippet_from_cloudsc_two_fuse_overlapping_loads():
                 {ie.src
                  for ie in state.in_edges(src_acc_node) if isinstance(ie.src, dace.nodes.AccessNode)})
 
+        vectorized_sdfg.save("vec.sdfg")
         assert len(
             src_src_access_nodes
         ) == 1, f"Excepted one access node got {len(src_src_access_nodes)}, ({src_src_access_nodes}) (from: ({src_access_nodes}))"
@@ -3721,7 +3721,127 @@ def test_cloud_fraction_update():
     )
 
 
+from math import log, exp, pow
+
+
+@dace.program
+def log_implementations(A: dace.float64[S], B: dace.float64[S]):
+    for i in dace.map[0:S]:
+        B[i] = log(A[i])
+
+
+@dace.program
+def exp_implementations(A: dace.float64[S], B: dace.float64[S]):
+    for i in dace.map[0:S]:
+        B[i] = exp(A[i])
+
+
+@dace.program
+def pow_implementations(A: dace.float64[S], B: dace.float64[S]):
+    for i in dace.map[0:S]:
+        B[i] = pow(A[i], 3.3)
+
+
+def test_log():
+    # Create test arrays
+    _S = 64
+    A = numpy.random.uniform(0.2, 1.2, size=(_S, ))
+    B = numpy.abs(numpy.random.randn(_S, )) * 1e-4
+
+    # Baseline SDFG
+    log_implementations_std_sdfg = log_implementations.to_sdfg()
+    ReplaceSTDLogWithDaCeLog().apply_pass(log_implementations_std_sdfg, {})
+
+    run_vectorization_test(
+        dace_func=log_implementations_std_sdfg,
+        arrays={
+            "A": A,
+            "B": B
+        },
+        params={"S": _S},
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name=f"test_log",
+        from_sdfg=True,
+    )
+
+
+def test_exp():
+    # Create test arrays
+    _S = 64
+    A = numpy.random.uniform(0.2, 1.2, size=(_S, ))
+    B = numpy.abs(numpy.random.randn(_S, )) * 1e-4
+
+    # Baseline SDFG
+    exp_implementations_std_sdfg = exp_implementations.to_sdfg()
+    ReplaceSTDExpWithDaCeExp().apply_pass(exp_implementations_std_sdfg, {})
+
+    run_vectorization_test(
+        dace_func=exp_implementations_std_sdfg,
+        arrays={
+            "A": A,
+            "B": B
+        },
+        params={"S": _S},
+        vector_width=8,
+        save_sdfgs=True,
+        sdfg_name=f"test_exp",
+        from_sdfg=True,
+    )
+
+
+@pytest.mark.skip
+def test_pow():
+    # Create test arrays
+    _S = 64
+    A = numpy.random.uniform(0.2, 1.2, size=(_S, ))
+    B = numpy.abs(numpy.random.randn(_S, )) * 1e-4
+
+    # Baseline SDFG
+    pow_implementations_std_sdfg = pow_implementations.to_sdfg()
+    ReplaceSTDPowWithDaCePow().apply_pass(pow_implementations_std_sdfg, {})
+
+    run_vectorization_test(dace_func=pow_implementations,
+                           arrays={
+                               "A": A,
+                               "B": B
+                           },
+                           params={"S": _S},
+                           vector_width=8,
+                           save_sdfgs=True,
+                           sdfg_name=f"test_pow",
+                           from_sdfg=True)
+
+
+@dace.program
+def dace_s000(A: dace.float64[S], B: dace.float64[S]):
+    for nl in range(2):
+        for i in dace.map[0:S:1]:
+            A[i] = B[i] + 1.0
+
+
+def test_s000():
+    # Create test arrays
+    _S = 64
+    A = numpy.random.uniform(0.2, 1.2, size=(_S, ))
+    B = numpy.abs(numpy.random.randn(_S, )) * 1e-4
+
+    run_vectorization_test(dace_func=dace_s000,
+                           arrays={
+                               "A": A,
+                               "B": B
+                           },
+                           params={"S": _S},
+                           vector_width=8,
+                           save_sdfgs=True,
+                           sdfg_name=f"s000",
+                           from_sdfg=False)
+
+
 if __name__ == "__main__":
+    test_log()
+    test_exp()
+    #test_pow()
     test_dependency_edge_to_unary_symbol()
     test_vabs()
     test_interstate_boolean_op_one()

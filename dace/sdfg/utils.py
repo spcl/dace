@@ -2794,7 +2794,6 @@ def demote_symbol_to_scalar(sdfg: 'dace.SDFG',
                 sdict = g.scope_dict()
                 if tutil.tasklet_has_symbol(n, symbol_str):
                     # 2. If used in tasklet try to replace symbol name with an in connector and add an access to the scalar
-
                     # Sanity check no tasklet should assign to a symbol
                     lhs, rhs = n.code.as_string.split(" = ", 2)
                     tasklet_lhs = lhs.strip()

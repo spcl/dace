@@ -4,13 +4,23 @@ import sympy
 import dace
 from dace import SDFG, data, properties, SDFGState, symbolic
 from dace.sdfg import ControlFlowRegion, nodes
-from dace.sdfg.state import ConditionalBlock, LoopRegion
+from dace.sdfg.state import BreakBlock, ConditionalBlock, LoopRegion
 from dace.transformation import pass_pipeline as ppl, transformation
 import dace.sdfg.construction_utils as cutil
 import dace.sdfg.utils as sdutil
 from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
 from dace.transformation.passes import FuseStates
 from dace import dtypes
+
+import ast
+
+# ------------------------------------------------------------
+# CONFIGURATION
+# ------------------------------------------------------------
+
+# ------------------------------------------------------------
+# HELPER FUNCTIONS
+# ------------------------------------------------------------
 
 
 @properties.make_properties
@@ -115,7 +125,11 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
                                 if self._apply(sn.sdfg) and self.apply_pass:
                                     return True
             else:
-                raise Exception(f"Unsupported node type for pass node {n} type {type(n)}")
+                # Ok if a break block just connintue
+                if isinstance(n, BreakBlock):
+                    continue
+                else:
+                    raise Exception(f"Unsupported node type for pass node {n} type {type(n)}")
 
         return False
 

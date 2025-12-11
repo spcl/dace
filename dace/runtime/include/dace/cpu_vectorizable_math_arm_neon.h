@@ -32,6 +32,10 @@
 #include <arm_neon.h>
 #endif
 
+#if !defined(__ARM_NEON)
+# error Included the Neon header without support for Neon
+#endif
+
 // vector_mult
 template<typename T, int vector_width>
 inline void vector_mult(T* __restrict__ out,

@@ -17,6 +17,7 @@ import dace.sdfg.tasklet_utils as tutil
 from typing import Tuple, Set, Union
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation.passes import FuseStates
+from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
 from dace.transformation.passes.vectorization.remove_empty_states import RemoveEmptyStates
 
 
@@ -1643,9 +1644,11 @@ class BranchElimination(transformation.MultiStateTransformation):
         if precision == dace.float64:
             eps = numpy.finfo(
                 numpy.float64
-            ).tiny * 8  # Having the min as the limit can still result with NaN due to how string stuff works
+            ).tiny * 2  # Having the min as the limit can still result with NaN due to how string stuff works
+            #eps = numpy.finfo(numpy.float64).eps
         else:
-            eps = numpy.finfo(numpy.float32).tiny * 8
+            eps = numpy.finfo(numpy.float32).tiny * 2
+            #eps = numpy.finfo(numpy.float32).eps
 
         has_division = False
         for tasklet in tasklets:
@@ -2057,8 +2060,11 @@ class BranchElimination(transformation.MultiStateTransformation):
 
         # Right and left side are fused, the new CFG might have still a symbol used for the condition
         # If this is set try to demote that into a scalar, and then try to demote that symbol
+        # IF we have empty state -(symbol assignment)-> state
+        # Then we can demote that symbol if it is used on the condition and force a fuse if we have 2 states
+        # (fue states with happens before or detecting sink/source ndoes will do the trick)
+        # I prefer to us force fuse
         if self.try_demote_and_fuse is True:
-            print(graph, graph.nodes(), new_state)
             if graph.start_block != new_state:
                 src_nodes = {e.src for e in graph.in_edges(new_state)}
                 if len(src_nodes) > 0:
@@ -2068,6 +2074,10 @@ class BranchElimination(transformation.MultiStateTransformation):
                     src_edge = src_edges.pop()
                     for k in {k for k in src_edge.data.assignments.keys()}:
                         sdutil.demote_symbol_to_scalar(graph.sdfg, k)
+                    for k in {k for k in src_edge.data.assignments.keys()}:
+                        del src_edge.data.assignments[k]
+                        assert k not in graph.sdfg.symbols
+                    RemoveUnusedSymbols().apply_pass(graph.sdfg, {})
                     RemoveEmptyStates().apply_pass(graph.sdfg, {})
                     src_nodes = {e.src for e in graph.in_edges(new_state)}
                     src_edges = {e for e in graph.in_edges(new_state)}
@@ -2077,13 +2087,18 @@ class BranchElimination(transformation.MultiStateTransformation):
                         assert len(src_nodes) == 1
                         src_node = src_nodes.pop()
                         src_edge = src_edges.pop()
+                        print(src_edge.data.assignments, src_edge.data.assignments == dict(), src_node, type(src_node))
                         if src_edge.data.assignments == dict():
-                            self._force_fuse(src_node, new_state)
-                            RemoveEmptyStates().apply_pass(graph.sdfg, {})
+                            if not isinstance(src_node, ConditionalBlock):
+                                self._force_fuse(src_node, new_state)
+                                RemoveEmptyStates().apply_pass(graph.sdfg, {})
+
                     graph.sdfg.validate()
-                    graph.sdfg.simplify()
+                    # WE do not the scalar to be promoted again
+                    graph.sdfg.simplify(skip=["ScalarToSymbolPromotion"])
 
         return added_scalar_names
+
 
     def _force_fuse(self, state1: dace.SDFGState, state2: dace.SDFGState):
         state1_sink_nodes = {n for n in state1.data_nodes() if state1.out_degree(n) == 0}

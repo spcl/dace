@@ -3,3 +3,4 @@
 
 #include "dace/arith/log.h"
 #include "dace/arith/exp.h"
+#include "dace/arith/pow.h"

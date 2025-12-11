@@ -10,6 +10,31 @@
 // ============================================================================
 // HELPER FUNCTIONS FOR MANTISSA/EXPONENT EXTRACTION
 // ============================================================================
+const double PX1log = 1.01875663804580931796E-4;
+const double PX2log = 4.97494994976747001425E-1;
+const double PX3log = 4.70579119878881725854E0;
+const double PX4log = 1.44989225341610930846E1;
+const double PX5log = 1.79368678507819816313E1;
+const double PX6log = 7.70838733755885391666E0;
+
+const double QX1log = 1.12873587189167450590E1;
+const double QX2log = 4.52279145837532221105E1;
+const double QX3log = 8.29875266912776603211E1;
+const double QX4log = 7.11544750618563894466E1;
+const double QX5log = 2.31251620126765340583E1;
+
+const float PX1logf = 7.0376836292E-2f;
+const float PX2logf = -1.1514610310E-1f;
+const float PX3logf = 1.1676998740E-1f;
+const float PX4logf = -1.2420140846E-1f;
+const float PX5logf = 1.4249322787E-1f;
+const float PX6logf = -1.6668057665E-1f;
+const float PX7logf = 2.0000714765E-1f;
+const float PX8logf = -2.4999993993E-1f;
+const float PX9logf = 3.3333331174E-1f;
+
+const double SQRTH  = 0.70710678118654752440;
+const float  SQRTHF = 0.707106781186547524f;
 
 /* Extract mantissa and exponent from double */
 static inline double get_mant_exponent_d(double x, double* __restrict__ fe) {
@@ -55,16 +80,10 @@ static inline float get_mant_exponent_f(float x, float* __restrict__ fe) {
 // DOUBLE PRECISION LOG
 // ============================================================================
 
-#define SQRTH 0.70710678118654752440
 
 /* Polynomial P(x) for log */
 static inline double get_log_px(double x) {
-    const double PX1log = 1.01875663804580931796E-4;
-    const double PX2log = 4.97494994976747001425E-1;
-    const double PX3log = 4.70579119878881725854E0;
-    const double PX4log = 1.44989225341610930846E1;
-    const double PX5log = 1.79368678507819816313E1;
-    const double PX6log = 7.70838733755885391666E0;
+
 
     double px = PX1log;
     px *= x;
@@ -83,11 +102,6 @@ static inline double get_log_px(double x) {
 
 /* Polynomial Q(x) for log */
 static inline double get_log_qx(double x) {
-    const double QX1log = 1.12873587189167450590E1;
-    const double QX2log = 4.52279145837532221105E1;
-    const double QX3log = 8.29875266912776603211E1;
-    const double QX4log = 7.11544750618563894466E1;
-    const double QX5log = 2.31251620126765340583E1;
 
     double qx = x;
     qx += QX1log;
@@ -193,15 +207,6 @@ static inline double dace_log_d_safe(double x) {
 
 /* Polynomial for logf */
 static inline float get_log_poly_f(float x) {
-    const float PX1logf = 7.0376836292E-2f;
-    const float PX2logf = -1.1514610310E-1f;
-    const float PX3logf = 1.1676998740E-1f;
-    const float PX4logf = -1.2420140846E-1f;
-    const float PX5logf = 1.4249322787E-1f;
-    const float PX6logf = -1.6668057665E-1f;
-    const float PX7logf = 2.0000714765E-1f;
-    const float PX8logf = -2.4999993993E-1f;
-    const float PX9logf = 3.3333331174E-1f;
 
     float y = x * PX1logf;
     y += PX2logf;

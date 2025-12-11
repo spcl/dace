@@ -189,24 +189,48 @@ def tasklet_has_symbol(tasklet: dace.nodes.Tasklet, symbol_str: str) -> bool:
     bool
         True if the symbol exists in the tasklet's code, False otherwise.
     """
+    code = tasklet.code.as_string
+
+    # ---- Python tasklet case ----
     if tasklet.code.language == dace.dtypes.Language.Python:
         try:
-            lhs, rhs = tasklet.code.as_astring.split(" = ", 2)
+            # Split into LHS and RHS (single assignment inside Python tasklet)
+            lhs, rhs = tasklet.code.as_string.split("=", 1)
             lhs = lhs.strip()
             rhs = rhs.strip()
+
+            # Direct match: symbol is LHS variable
             if symbol_str == lhs:
                 return True
+
+            # Parse symbolic expression
             sym_expr = dace.symbolic.SymExpr(rhs)
-            # free_symbols gives variables like 'b'
-            symbols = {str(s) for s in sym_expr.free_symbols}
-            # collect function names
+
+            # Collect ALL symbols we find
+            found = set()
+
+            # 1. Free symbols (simple variables like a, b, i, N, etc.)
+            found |= {str(s) for s in sym_expr.free_symbols}
+
+            # 2. Function names + symbols inside arguments
             for func in sym_expr.atoms(sympy.Function):
-                symbols.add(str(func.func))  # func.func is the function name
-            return (symbol_str in {str(s) for s in symbols})
-        except Exception as e:
-            return token_match(tasklet.code.as_string, symbol_str)
+                # Add function name
+                found.add(str(func.func))
+
+                # Add all symbols appearing in function arguments
+                for arg in func.args:
+                    # All symbols within this argument expression
+                    found |= {str(s) for s in arg.free_symbols}
+
+            return symbol_str in found
+
+        except Exception:
+            # Fallback to token-based match if symbolic parsing fails
+            return token_match(code, symbol_str)
+
+    # ---- Non-Python tasklet (e.g., C++) ----
     else:
-        return token_match(tasklet.code.as_string, symbol_str)
+        return token_match(code, symbol_str)
 
 
 def replace_code(code_str: str,
@@ -437,8 +461,9 @@ def _extract_non_connector_syms_from_tasklet(node: dace.nodes.Tasklet, state) ->
     code_rhs = code_rhs.replace("math.", "")
     all_syms = {
         str(s)
-        for s in dace.symbolic.symbols_in_code(code_rhs, potential_symbols={str(s)
-                                                                            for s in state.sdfg.symbols})
+        for s in dace.symbolic.symbols_in_code(code_rhs,
+                                               potential_symbols={str(s)
+                                                                  for s in state.symbols_defined_at(node)})
     }
     real_free_syms = all_syms - connectors
     free_non_connector_syms = {str(s) for s in real_free_syms}
@@ -877,7 +902,7 @@ def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
         try:
             constant = _extract_constant_from_ast_str(code_str)
             has_constant = True
-        except Exception:
+        except Exception as e:
             has_constant = False
 
         free_non_connector_syms = _extract_non_connector_syms_from_tasklet(node, state)
@@ -962,7 +987,6 @@ def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
     elif n_in == 0:
         free_syms = _extract_non_connector_syms_from_tasklet(node, state)
         bound_syms = _extract_non_connector_bound_syms_from_tasklet(node.code.as_string)
-        print(free_syms, bound_syms, node, node.code.as_string)
         op = _extract_single_op(code_str, default_to_assignment=True)
         if len(free_syms) == 2:
             assert len(bound_syms) == 0

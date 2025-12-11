@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from copy import deepcopy
+import re
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import ControlFlowRegion, SDFGState, StateSubgraphView
 import functools
@@ -24,6 +25,28 @@ from dace.codegen.targets import fpga
 
 if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
+
+
+def replace_float_literals(expr: str) -> str:
+    """
+    Replace floating-point literals like 1.0, 2.000, 3., .5 with integer literals.
+    Keeps integers untouched.
+    """
+    float_literal = re.compile(
+        r"""
+        (?<![\w.])           # no letter before (avoid matching struct.field)
+        (                    # start capture group
+            \d+\.\d*         # 1.0, 2.   , 3.
+        | \d*\.\d+         # .5, 0.25
+        )
+        (?![\w.])            # no letter after
+        """, re.VERBOSE)
+
+    def convert(m):
+        val = float(m.group(0))
+        return str(int(val))
+
+    return float_literal.sub(convert, expr)
 
 
 @registry.autoregister_params(name='cpu')
@@ -1330,12 +1353,15 @@ class CPUCodeGen(TargetCodeGenerator):
                             result += "const {} {} = {};".format(memlet_type, local_name, expr)
                         else:
                             # Pointer reference
-                            result += "{} __restrict__ {} = {};".format(ctypedef, local_name, expr)
+                            result += "//C2\n"
+                            pruned_expr = replace_float_literals(expr)
+                            result += "{} __restrict__ {} = {};".format(ctypedef, local_name, pruned_expr)
                 else:
                     # Variable number of reads: get a const reference that can
                     # be read if necessary
                     memlet_type = 'const %s' % memlet_type
                     if is_pointer:
+                        result += "//C1\n"
                         result += "{} __restrict__ {} = {};".format(memlet_type, local_name, expr)
                     else:
                         result += "{} &{} = {};".format(memlet_type, local_name, expr)
@@ -1597,6 +1623,9 @@ class CPUCodeGen(TargetCodeGenerator):
                                               dtypes.AllocationLifetime.External)
                 defined_type, _ = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
                 base_ptr = cpp.cpp_ptr_expr(sdfg, edge.data, defined_type, codegen=self._frame)
+
+                base_ptr = replace_float_literals(base_ptr)
+                callsite_stream.write(f"//C3 {base_ptr}\n")
                 callsite_stream.write(f'{cdtype.ctype} __restrict__ {edge.src_conn} = {base_ptr};', cfg, state_id,
                                       src_node)
             else:
