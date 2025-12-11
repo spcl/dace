@@ -1308,6 +1308,7 @@ def test_snippet_from_cloudsc_two_fuse_overlapping_loads():
                 {ie.src
                  for ie in state.in_edges(src_acc_node) if isinstance(ie.src, dace.nodes.AccessNode)})
 
+        vectorized_sdfg.save("vec.sdfg")
         assert len(
             src_src_access_nodes
         ) == 1, f"Excepted one access node got {len(src_src_access_nodes)}, ({src_src_access_nodes}) (from: ({src_access_nodes}))"

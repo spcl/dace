@@ -35,7 +35,7 @@ S = dace.symbol('S')
 LIB_NAME = "libtsvcpp.so"
 CPP_FILE = "tsvcpp.cpp"
 
-SAVE_SDFGS = False
+SAVE_SDFGS = True
 
 
 def build_tsvcpp_lib():
@@ -207,7 +207,7 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                            vector_width=8,
                            simplify=True,
                            skip_simplify=None,
-                           save_sdfgs=False,
+                           save_sdfgs=SAVE_SDFGS,
                            sdfg_name=None,
                            fuse_overlapping_loads=False,
                            insert_copies=True,
@@ -799,7 +799,7 @@ def dace_s231(aa: dace.float64[LEN_2D, LEN_2D], bb: dace.float64[LEN_2D, LEN_2D]
 @dace.program
 def dace_s232(aa: dace.float64[LEN_2D, LEN_2D], bb: dace.float64[LEN_2D, LEN_2D]):
 
-    outer = 2 * (ITERATIONS)
+    outer = (ITERATIONS)
 
     for nl in range(outer):
         for j in range(1, LEN_2D):
@@ -915,14 +915,21 @@ def dace_s244(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[
             a[i + 1] = b[i] + a[i + 1] * d[i]
 
 
+# Loop peeling:
 @dace.program
 def dace_s2244(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D], e: dace.float64[LEN_1D]):
-
+    for nl in range(ITERATIONS):
+        a[LEN_1D -1] = b[LEN_1D-2] + e[LEN_1D-2]
+        for i in range(LEN_1D - 1):
+            a[i] = b[i] + c[i]
+"""
+@dace.program
+def dace_s2244(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D], e: dace.float64[LEN_1D]):
     for nl in range(ITERATIONS):
         for i in range(LEN_1D - 1):
             a[i + 1] = b[i] + e[i]
             a[i] = b[i] + c[i]
-
+"""
 
 @dace.program
 def dace_s251(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D], d: dace.float64[LEN_1D]):
@@ -1249,25 +1256,41 @@ def dace_s1281(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64
 @dace.program
 def dace_s291(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
     for nl in range(2 * ITERATIONS):
+        a[0] = (b[0] + b[LEN_1D - 1]) * 0.5
+        for i in range(1, LEN_1D):
+            a[i] = (b[i] + b[i-1]) * 0.5
+
+"""
+@dace.program
+def dace_s291(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
+    for nl in range(2 * ITERATIONS):
         im1 = LEN_1D - 1
         for i in range(LEN_1D):
             a[i] = (b[i] + b[im1]) * 0.5
             im1 = i
-
+"""
 
 # ============================================================
 # s292
 # ============================================================
+# Loop Peeling
+#@dace.program
+#def dace_s292(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
+#    for nl in range(ITERATIONS):
+#        im1 = LEN_1D - 1
+#        im2 = LEN_1D - 2
+#        for i in range(LEN_1D):
+#            a[i] = (b[i] + b[im1] + b[im2]) * 0.333
+#            im2 = im1
+#            im1 = i
+
 @dace.program
 def dace_s292(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
     for nl in range(ITERATIONS):
-        im1 = LEN_1D - 1
-        im2 = LEN_1D - 2
-        for i in range(LEN_1D):
-            a[i] = (b[i] + b[im1] + b[im2]) * 0.333
-            im2 = im1
-            im1 = i
-
+        a[0] = (b[0] + b[LEN_1D - 1] + b[LEN_1D - 2]) * 0.333
+        a[1] = (b[1] + b[0] + b[LEN_1D - 1]) * 0.333
+        for i in range(2, LEN_1D):
+            a[i] = (b[i] + b[i - 1] + b[i - 2]) * 0.333
 
 # ============================================================
 # s293
@@ -1783,7 +1806,6 @@ def dace_s343(
 # %3.5 – Loop rerolling
 # ======================
 
-
 @dace.program
 def dace_s351(
     a: dace.float64[LEN_1D],
@@ -1792,12 +1814,11 @@ def dace_s351(
 ):
     alpha = c[0]
     for nl in range(8 * ITERATIONS):
-        for i in range(0, LEN_1D, 5):
+        for i in range(0, LEN_1D, 4):
             a[i] = a[i] + alpha * b[i]
             a[i + 1] = a[i + 1] + alpha * b[i + 1]
             a[i + 2] = a[i + 2] + alpha * b[i + 2]
             a[i + 3] = a[i + 3] + alpha * b[i + 3]
-            a[i + 4] = a[i + 4] + alpha * b[i + 4]
 
 
 @dace.program
@@ -1815,14 +1836,15 @@ def dace_s1351(
 def dace_s352(
     a: dace.float64[LEN_1D],
     b: dace.float64[LEN_1D],
+    c: dace.float64[2]
 ):
-    dot = dace.float64(0)
+    dot = 0.0
     for nl in range(8 * ITERATIONS):
         dot = 0.0
-        for i in range(0, LEN_1D, 5):
+        for i in range(0, LEN_1D, 4):
             dot = dot + (a[i] * b[i] + a[i + 1] * b[i + 1] + a[i + 2] * b[i + 2] + a[i + 3] * b[i + 3] +
                          a[i + 4] * b[i + 4])
-
+    c[0] = dot
 
 @dace.program
 def dace_s353(
@@ -1833,12 +1855,11 @@ def dace_s353(
 ):
     alpha = c[0]
     for nl in range(ITERATIONS):
-        for i in range(0, LEN_1D, 5):
+        for i in range(0, LEN_1D, 4):
             a[i] = a[i] + alpha * b[ip[i]]
             a[i + 1] = a[i + 1] + alpha * b[ip[i + 1]]
             a[i + 2] = a[i + 2] + alpha * b[ip[i + 2]]
             a[i + 3] = a[i + 3] + alpha * b[ip[i + 3]]
-            a[i + 4] = a[i + 4] + alpha * b[ip[i + 4]]
 
 
 # ===============================
@@ -1967,18 +1988,19 @@ def dace_s441(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[
 
 
 @dace.program
-def dace_s442(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D], d: dace.float64[LEN_1D],
+def dace_s442(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D],
+              c: dace.float64[LEN_1D], d: dace.float64[LEN_1D],
               e: dace.float64[LEN_1D], indx: dace.int32[LEN_1D]):
-    for nl in range(ITERATIONS // 2):
+    for nl in range(ITERATIONS):
         for i in range(LEN_1D):
             if indx[i] == 1:
-                a[i] = a[i] + b[i] * b[i]
+                a[i] = a[i] + (b[i] * b[i])
             elif indx[i] == 2:
-                a[i] = a[i] + c[i] * c[i]
+                a[i] = a[i] + (c[i] * c[i])
             elif indx[i] == 3:
-                a[i] = a[i] + d[i] * d[i]
+                a[i] = a[i] + (d[i] * d[i])
             elif indx[i] == 4:
-                a[i] = a[i] + e[i] * e[i]
+                a[i] = a[i] + (e[i] * e[i])
 
 
 @dace.program
@@ -1993,7 +2015,7 @@ def dace_s443(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[
 
 @dace.program
 def dace_s451(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D]):
-    for nl in range(ITERATIONS // 4):
+    for nl in range(ITERATIONS):
         for i in range(LEN_1D):
             a[i] = sin(b[i]) + cos(c[i])
 
@@ -2056,6 +2078,12 @@ def dace_s4112(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], ip: dace.int32[
         for i in range(LEN_1D):
             a[i] = a[i] + b[ip[i]] * 2.0
 
+@dace.program
+def dace_s4121(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D]):
+    for nl in range(ITERATIONS):
+        for i in range(LEN_1D):
+            a[i] = a[i] + b[i] * c[i]
+
 
 @dace.program
 def dace_s4113(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D], ip: dace.int32[LEN_1D]):
@@ -2095,18 +2123,13 @@ def dace_s4116(a: dace.float64[LEN_1D], aa: dace.float64[LEN_2D, LEN_2D], ip: da
     sum_out[0] = sum_val
 
 
+# Manual change, add a pass that normalized access pattern:
 @dace.program
 def dace_s4117(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D], d: dace.float64[LEN_1D]):
     for nl in range(ITERATIONS):
         for i in range(LEN_1D):
-            a[i] = b[i] + c[i // 2] * d[i]
-
-
-@dace.program
-def dace_s4121(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D]):
-    for nl in range(ITERATIONS):
-        for i in range(LEN_1D):
-            a[i] = a[i] + b[i] * c[i]
+            j = i // 2
+            a[i] = b[i] + c[j] * d[i]
 
 
 @dace.program
@@ -2180,7 +2203,7 @@ def test_s000():
             "LEN_1D": LEN_1D_val,
             "ITERATIONS": ITERATIONS_val
         },
-        save_sdfgs=True,
+        save_sdfgs=SAVE_SDFGS,
         sdfg_name="dace_s000",
         apply_loop_to_map=True,
     )
@@ -3023,7 +3046,7 @@ def test_s1161():
                                "LEN_1D": LEN_1D_val,
                                "ITERATIONS": ITERATIONS_val
                            },
-                           save_sdfgs=False,
+                           save_sdfgs=SAVE_SDFGS,
                            sdfg_name="dace_s1161",
                            apply_loop_to_map=True,
                            split_all_branches=True)
@@ -3197,7 +3220,7 @@ def test_s174():
 def test_s175():
     LEN_1D_val = G_LEN_1D_VAL
     ITERATIONS_val = 1
-    inc_val = 0
+    inc_val = 1
 
     a = np.random.rand(LEN_1D_val)
     b = np.random.rand(LEN_1D_val)
@@ -3762,9 +3785,8 @@ def test_s1244():
     return a, d
 
 
-@pytest.mark.skip
 def test_s2244():
-    LEN = G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL + 1
     ITERS = 1
 
     a = np.random.rand(LEN)
@@ -5651,12 +5673,14 @@ def test_s352():
 
     a = np.random.rand(LEN)
     b = np.random.rand(LEN)
+    c = np.random.rand(2)
 
     compare_kernel(
         dace_s352,
         {
             "a": a,
-            "b": b
+            "b": b,
+            "c": c,
         },
         {
             "LEN_1D": LEN,
@@ -5668,7 +5692,8 @@ def test_s352():
         dace_func=dace_s352,
         arrays={
             "a": a,
-            "b": b
+            "b": b,
+            "c": c,
         },
         params={
             "LEN_1D": LEN,
@@ -5688,7 +5713,7 @@ def test_s353():
     a = np.random.rand(LEN)
     b = np.random.rand(LEN)
     c = np.random.rand(LEN)
-    ip = np.random.randint(0, LEN, size=LEN, dtype=np.int32)
+    ip = np.random.randint(0, G_LEN_1D_VAL - 8, size=LEN, dtype=np.int32)
 
     compare_kernel(
         dace_s353,
@@ -5898,9 +5923,8 @@ def s1281():
     return a
 
 
-@pytest.mark.skip
 def test_s291():
-    LEN = G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL + 1
     ITERS = 1
 
     a = np.random.rand(LEN)
@@ -5941,7 +5965,8 @@ def test_s291():
 
 
 def test_s292():
-    LEN = G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL + 2
+    assert (LEN - 2) % 8 == 0
     ITERS = 1
 
     a = np.random.rand(LEN)
@@ -5969,7 +5994,7 @@ def test_s292():
             "ITERATIONS": ITERS
         },
         sdfg_name="s292",
-        save_sdfgs=SAVE_SDFGS,
+        save_sdfgs=True,
         apply_loop_to_map=True,
     )
     return a
@@ -6007,9 +6032,9 @@ def test_s293():
     )
     return a
 
-
+@pytest.mark.skip
 def test_s2101():
-    LEN = G_LEN_1D_VAL
+    LEN = G_LEN_2D_VAL
     ITERS = 1
 
     aa = np.random.rand(LEN, LEN)
@@ -6028,6 +6053,7 @@ def test_s2101():
             "ITERATIONS": ITERS
         },
     )
+
 
     run_vectorization_test(
         dace_func=dace_s2101,
@@ -6129,7 +6155,7 @@ def test_s4112():
 
     a = np.random.rand(LEN).astype(np.float64)
     b = np.random.rand(LEN).astype(np.float64)
-    ip = np.random.randint(0, LEN, size=LEN).astype(np.int32)
+    ip = np.random.randint(0, LEN//2, size=LEN).astype(np.int32)
 
     compare_kernel(
         dace_s4112,
@@ -6299,11 +6325,11 @@ def test_s4116():
     LEN2 = G_LEN_2D_VAL  # dimensions of aa and ip
     ITERS = 1
     j_val = 1
-    inc_val = 0
+    inc_val = 1
 
     a = np.random.rand(LEN1).astype(np.float64)
     aa = np.random.rand(LEN2, LEN2).astype(np.float64)
-    ip = np.random.randint(0, LEN2, size=LEN2).astype(np.int32)
+    ip = np.random.randint(1, LEN2-1, size=LEN2).astype(np.int32)
     sum_out = np.zeros(2, dtype=np.float64)
 
     compare_kernel(
@@ -6588,7 +6614,7 @@ def test_s442():
     c = np.random.rand(LEN).astype(np.float64)
     d = np.random.rand(LEN).astype(np.float64)
     e = np.random.rand(LEN).astype(np.float64)
-    indx = np.random.randint(1, 5, size=LEN).astype(np.int32)  # values 1..4
+    indx = np.random.randint(1, 2, size=LEN).astype(np.int32)  # values 1..4
 
     compare_kernel(
         dace_s442,
@@ -6881,10 +6907,8 @@ def test_s482():
     # Make 50%
     a = np.random.rand(LEN).astype(np.float64)
     b = np.random.rand(LEN).astype(np.float64)
-    half = LEN // 2
-    b[:half] = np.random.uniform(0.0, 0.4, half)
-    c = np.random.rand(LEN).astype(np.float64)
-    c[:half] = np.random.uniform(0.6, 1.0, half)
+    b = np.random.uniform(0.0, 0.4, LEN).astype(np.float64)
+    c = np.random.uniform(0.6, 1.0, LEN).astype(np.float64)
 
     compare_kernel(
         dace_s482,

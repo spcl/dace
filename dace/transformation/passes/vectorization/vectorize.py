@@ -74,6 +74,9 @@ class Vectorize(ppl.Pass):
         assert isinstance(inner_map_entry, dace.nodes.MapEntry)
         assert inner_map_entry in state.nodes()
 
+        # Before anything try to clean other subset going from map entry
+        try_clean_other_subset_going_out_from_map_entry(state, inner_map_entry)
+
         tile_sizes = [1 for _ in inner_map_entry.map.range]
         tile_sizes[-1] = self.vector_width
         assert tile_sizes != []
@@ -154,8 +157,13 @@ class Vectorize(ppl.Pass):
             modified_edges = set()
 
         self._extend_memlets(state, new_inner_map, modified_nodes, modified_edges)
+        # Special case, // 2 (or integer dividing the thing nicely) access -> need to multiplex elements to be able to vectorize
+        new_modified_nodes, new_modified_edges = detect_halve_index(state, new_inner_map, vector_length=self.vector_width)
+        modified_edges = modified_edges.union(new_modified_edges)
+        modified_nodes = modified_nodes.union(new_modified_nodes)
         self._extend_temporary_scalars(state, new_inner_map, modified_nodes, modified_edges)
         state.sdfg.validate()
+
 
         if not has_single_nested_sdfg:
             if self.insert_copies:
@@ -1341,6 +1349,15 @@ class Vectorize(ppl.Pass):
                     print(f"{map_entry} not in {self._apply_on_maps}")
                     continue
 
+                # If no unit stride dimension continue
+                strides = [s for (b,e,s) in map_entry.map.range]
+                if not any({s == 1 for s in strides}):
+                    print(
+                        "Map has no unit-stride dimension"
+                    )
+                    continue
+
+
                 if map_entry.map.label.startswith("vectorloop_"):
                     print(
                         "`vectorloop_` is given by the vectorization transformation to skip to not vectorize double, skipping. Otherwise change the name"
@@ -1362,6 +1379,12 @@ class Vectorize(ppl.Pass):
                         raise Exception(f"Map contains more than 1 NSDFG within both, or both {map_entry}, {state}")
                     else:
                         continue
+
+                if map_param_appears_in_multiple_dimensions(state, map_entry):
+                    print(
+                        "Map param (vectorized) is used to access multiple dimensions, can't vectorize"
+                    )
+                    continue
 
                 opt_nsdfg = get_single_nsdfg_inside_map(state, map_entry)
                 if opt_nsdfg is not None:

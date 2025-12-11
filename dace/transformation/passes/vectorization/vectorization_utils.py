@@ -482,6 +482,78 @@ def last_dim_of_map_is_contiguous_accesses(state: dace.SDFGState, map_entry: dac
     return True
 
 
+def count_param_in_expr(expr, param_str: str):
+    """
+    Count occurrences of a parameter inside a SymPy expression, including
+    inside function-call arguments.
+    """
+    if not isinstance(expr, sympy.Basic):
+        return 0
+
+    param = sympy.Symbol(param_str)
+    count = 0
+    # 1) Count standalone symbol occurrences
+    for atom in expr.atoms(sympy.Symbol):
+        if atom == param:
+            count += 1
+
+    # 2) Count function-call argument occurrences (nested)
+    for node in sympy.preorder_traversal(expr):
+        if isinstance(node, sympy.FunctionClass):
+            # node is a function name, skip
+            continue
+        if isinstance(node, sympy.Function):
+            for arg in node.args:
+                count += count_param_in_expr(arg, param_str)
+
+    return count
+
+
+def map_param_appears_in_multiple_dimensions(state: dace.SDFGState,
+                                             map_entry: dace.nodes.MapEntry) -> bool:
+    """
+    Check if the last map parameter appears across multiple dimensions or
+    function-call argument usages in the state.
+
+    Args:
+        map_entry (dace.nodes.MapEntry): The map entry node.
+        state (dace.SDFGState): The containing state.
+
+    Returns:
+        bool: True if the map parameter appears in >1 dimension or in function args.
+    """
+
+    last_param = str(map_entry.map.params[-1])
+    print(f"Checking last map parameter: {last_param}")
+
+    nodes_between = list(state.all_nodes_between(map_entry, state.exit_node(map_entry)))
+    edges = state.all_edges(*nodes_between)
+
+    total_appearances = 0
+
+    for edge in edges:
+        memlet: dace.memlet.Memlet = edge.data
+
+        # -------------------------
+        # 1. APPEARANCES IN SUBSETS
+        # -------------------------
+        if memlet.subset is not None:
+            subset_appearances = 0
+            for (b, e, s) in memlet.subset:
+                # Extract free symbols
+                # Count occurrences in lower bound
+                if hasattr(b, "free_symbols"):
+                    subset_appearances += count_param_in_expr(b, last_param)
+
+            print(f"[Subset] {last_param} appears {subset_appearances} times in memlet {memlet}")
+
+            if subset_appearances >= 2:
+                return True
+
+    print(f"Total appearances of {last_param}: {total_appearances}")
+    return False
+
+
 def assert_last_dim_of_maps_are_contigous_accesses(sdfg: dace.SDFG):
     """
     Assert that the last dimension of all maps in an SDFG performs contiguous accesses.
@@ -1429,7 +1501,7 @@ def offset_symbol_in_expression(expr_str: str, symbol_to_offset: str, offset: in
     return sympy.pycode(offset_expr)
 
 
-def use_laneid_symbol_in_expression(expr_str: str, symbol_to_offset: str, offset: int) -> str:
+def use_laneid_symbol_in_expression(expr_str: str, symbol_to_offset: str, offset: int, vector_map_param: str = None) -> str:
     """
     Returns a new expression string where a specified symbol is replaced with laneid-ed version
     `sym1` -> `sym1_laneid_{offset}`
@@ -1453,7 +1525,10 @@ def use_laneid_symbol_in_expression(expr_str: str, symbol_to_offset: str, offset
             break
     if sym_to_change is None:
         return expr_str
-    offsetted_expr = f"({sym_to_change}_laneid_{offset})"
+    if vector_map_param is not None and str(sym_to_change) == vector_map_param:
+        offsetted_expr = f"({sym_to_change} + {offset})"
+    else:
+        offsetted_expr = f"({sym_to_change}_laneid_{offset})"
     offset_expr = expr.subs(sym_to_change, offsetted_expr)
     return sympy.pycode(offset_expr)
 
@@ -1760,11 +1835,12 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         expr = f"({l_op} {op} {r_op})"
         if isinstance(lhs_data, dace.data.Array):
             node.code = dace.properties.CodeBlock(
-                code="\n".join([f"{lhs}[{i}] = {use_laneid_symbol_in_expression(expr, c, i)}"
+                code="\n".join([f"{lhs}[{i}] = {use_laneid_symbol_in_expression(expr, c, i, vector_map_param=vector_map_param)}"
                                 for i in range(vw)]) + "\n",
                 language=dace.Language.Python)
         else:
             node.code = dace.properties.CodeBlock(code=f"{lhs} = {expr}\n", language=dace.Language.Python)
+        #parent_map = state.scope_dict()[node]
     elif ttype == tutil.TaskletType.UNARY_SCALAR or ttype == tutil.TaskletType.UNARY_SYMBOL:
         out_edges = list(state.out_edges_by_connector(node, lhs))
         assert len(out_edges) == 1
@@ -3776,13 +3852,16 @@ def remove_map(map_entry: dace.nodes.MapEntry, state: dace.SDFGState):
     # Redirect map entry's out edges
     write_only_map = True
     for edge in state.out_edges(map_entry):
-        if edge.data.is_empty():
-            continue
-        # Add an edge directly from the previous source connector to the destination
-        path = state.memlet_path(edge)
-        index = path.index(edge)
-        state.add_edge(path[index - 1].src, path[index - 1].src_conn, edge.dst, edge.dst_conn, edge.data)
-        write_only_map = False
+        if edge.data.is_empty() or edge.data.data is None:
+            parent_map_entry = state.entry_node(map_entry)
+            if parent_map_entry is not None:
+                state.add_edge(parent_map_entry, None, edge.dst, edge.dst_conn, edge.data)
+        else:
+            # Add an edge directly from the previous source connector to the destination
+            path = state.memlet_path(edge)
+            index = path.index(edge)
+            state.add_edge(path[index - 1].src, path[index - 1].src_conn, edge.dst, edge.dst_conn, edge.data)
+            write_only_map = False
 
     # Redirect map exit's in edges.
     for edge in state.in_edges(map_exit):
@@ -3841,3 +3920,111 @@ def remove_map(map_entry: dace.nodes.MapEntry, state: dace.SDFGState):
         if e.data.data is None:
             continue
         e.data.subset.replace(repldict)
+
+def try_clean_other_subset_going_out_from_map_entry(state: SDFGState, map_entry: dace.nodes.MapEntry):
+    id = 0
+    #state.sdfg.save("x.sdfg")
+    for oe in state.out_edges(map_entry):
+        #print(oe.data, oe.data.other_subset, oe.dst, type(oe.dst))
+        if oe.data.other_subset is not None and isinstance(oe.dst, dace.nodes.AccessNode):
+            assert oe.data.data is not None and oe.data.data != oe.dst.data
+            # Add assignment tasklet
+            t = state.add_tasklet(f"other_subset_assign_{id}", {"_in"}, {"_out"}, "_out = _in")
+            state.remove_edge(oe)
+            state.add_edge(oe.src, oe.src_conn, t, "_in",
+                           dace.memlet.Memlet(data=oe.data.data, subset=oe.data.subset))
+            state.add_edge(t, "_out", oe.dst, oe.dst_conn, 
+                           dace.memlet.Memlet(data=oe.dst.data, subset=oe.data.other_subset))
+            id += 1
+
+
+def detect_halve_index(state: SDFGState, new_inner_map: dace.nodes.MapEntry, vector_length):
+    all_nodes = state.all_nodes_between(new_inner_map, state.exit_node(new_inner_map))
+    map_param = new_inner_map.map.params[-1]
+    #all_edges = state.all_edges(*all_nodes)
+    all_edges = state.out_edges(new_inner_map)
+    modified_nodes = set()
+    modified_edges = set()
+    for edge in all_edges:
+        if edge.data.subset is not None:
+            detected = False
+            detected_divisor = None
+            for b,e,s in edge.data.subset:
+                param, divisor = detect_halve_index_impl(b)
+                print(f"Detected for {b} -> {param} / {divisor} (map_param: {map_param})")
+                if param is not None and divisor is not None:
+                    detected = True
+                    assert detected_divisor is None
+                    detected_divisor = divisor
+            if detected:
+                assert detected_divisor is not None
+                # Multiply end expression with
+                desc = state.sdfg.arrays[edge.data.data]
+                arr_name, arr = state.sdfg.add_array(
+                    name = f"multiplexed_{edge.data.data}",
+                    shape=(vector_length,),
+                    dtype=desc.dtype,
+                    transient=True,
+                    storage=dace.dtypes.StorageType.Register,
+                    find_new_name=True
+                )
+                assert vector_length % detected_divisor == 0
+                t = state.add_tasklet("pack_tasklet", {"_in"}, {"_out"},
+                                      f"multiplex_elements(_in, _out, {vector_length // detected_divisor}, {detected_divisor});",
+                                      language=dace.dtypes.Language.CPP,
+                                      code_global=f'#include "dace/vector_intrinsics/multiplex.h"')
+                modified_nodes.add(t)
+                dst = edge.dst
+                dstconn = edge.dst_conn
+                #edata = copy.deepcopy(edge.data)
+                state.remove_edge(edge)
+                new_range_list = list()
+                # Detection means we should have b -> b+8 / d step size 1
+                for (b,e,s) in edge.data.subset:
+                    nb = b
+                    assert hasattr(nb, "subs")
+                    ne = nb.subs(detected, f"({detected}+{vector_length})")
+                    ns = 1
+                    new_range_list.append((nb, ne, ns))
+                e1 = state.add_edge(edge.src, edge.src_conn, t, "_in", 
+                                    dace.memlet.Memlet(
+                                        data=edge.data.data,
+                                        subset=dace.subsets.Range(new_range_list)
+                                    ))
+                access = state.add_access(arr_name)
+                modified_nodes.add(access)
+                modified_edges.add(e1)
+                modified_edges.add(edge)
+                e2 = state.add_edge(t, "_out", access, None,
+                                    dace.memlet.Memlet.from_array(
+                                        dataname=arr_name, datadesc=arr
+                                    ))
+                e3 = state.add_edge(access, None, edge.dst, edge.dst_conn,
+                                    dace.memlet.Memlet.from_array(
+                                        dataname=arr_name, datadesc=arr
+                                    ))
+                modified_edges.add(e2)
+                modified_edges.add(e3)
+    return modified_nodes, modified_edges
+
+
+def detect_halve_index_impl(expr):
+    """
+    Detect patterns like int_floor(i, k) or floor_int(i, k)
+    where k is ANY positive integer.
+
+    Returns:
+        (symbol, divisor) or (None, None)
+    """
+    # Only custom functions
+    if isinstance(expr, sympy.Function) and expr.func.__name__ in ("int_floor", "floor_int"):
+        if len(expr.args) != 2:
+            return None, None
+
+        i, den = expr.args
+
+        # Divisor must be a positive integer
+        if isinstance(i, sympy.Symbol) and isinstance(den, (int, sympy.Integer)) and den > 0:
+            return i, int(den)
+
+    return None, None

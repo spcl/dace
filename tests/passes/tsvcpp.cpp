@@ -1239,7 +1239,7 @@ void s232_run_timed(
     using clock = std::chrono::high_resolution_clock;
     auto t1 = clock::now();
     {
-        int outer = 2 * (iterations);
+        int outer =(iterations);
         for (int nl = 0; nl < outer; ++nl) {
             for (int j = 1; j < len_2d; ++j) {
                 for (int i = 1; i <= j; ++i) {
@@ -3352,12 +3352,11 @@ void s351_run_timed(
 
     double alpha = c[0];
     for (int nl = 0; nl < 8 * iterations; ++nl) {
-        for (int i = 0; i < len_1d; i += 5) {
+        for (int i = 0; i < len_1d; i += 4) {
             a[i]     += alpha * b[i];
             a[i + 1] += alpha * b[i + 1];
             a[i + 2] += alpha * b[i + 2];
             a[i + 3] += alpha * b[i + 3];
-            a[i + 4] += alpha * b[i + 4];
         }
     }
 
@@ -3398,6 +3397,7 @@ void s1351_run_timed(
 void s352_run_timed(
     const double *a,
     const double *b,
+    double *c,
     int iterations,
     int len_1d,
     std::int64_t* time_ns
@@ -3407,7 +3407,7 @@ void s352_run_timed(
     double dot;
     for (int nl = 0; nl < 8 * iterations; ++nl) {
         dot = 0.0;
-        for (int i = 0; i < len_1d; i += 5) {
+        for (int i = 0; i < len_1d; i += 4) {
             dot += a[i]     * b[i]
                  + a[i + 1] * b[i + 1]
                  + a[i + 2] * b[i + 2]
@@ -3415,6 +3415,7 @@ void s352_run_timed(
                  + a[i + 4] * b[i + 4];
         }
     }
+    c[0] = dot;
 
     auto t2 = clock_highres::now();
     time_ns[0] =
@@ -3435,12 +3436,11 @@ void s353_run_timed(
 
     double alpha = c[0];
     for (int nl = 0; nl < iterations; ++nl) {
-        for (int i = 0; i < len_1d; i += 5) {
+        for (int i = 0; i < len_1d; i += 4) {
             a[i]     += alpha * b[ip[i]];
             a[i + 1] += alpha * b[ip[i + 1]];
             a[i + 2] += alpha * b[ip[i + 2]];
             a[i + 3] += alpha * b[ip[i + 3]];
-            a[i + 4] += alpha * b[ip[i + 4]];
         }
     }
 
@@ -3847,7 +3847,7 @@ void s442_run_timed(
     using clock = std::chrono::high_resolution_clock;
     auto t1 = clock::now();
 
-    for (int nl = 0; nl < iterations / 2; ++nl) {
+    for (int nl = 0; nl < iterations; ++nl) {
         for (int i = 0; i < len_1d; ++i) {
             switch (indx[i]) {
                 case 1:
@@ -3917,7 +3917,7 @@ void s451_run_timed(
     using clock = std::chrono::high_resolution_clock;
     auto t1 = clock::now();
 
-    for (int nl = 0; nl < iterations / 4; ++nl) {
+    for (int nl = 0; nl < iterations; ++nl) {
         for (int i = 0; i < len_1d; ++i) {
             a[i] = std::sin(b[i]) + std::cos(c[i]);
         }
