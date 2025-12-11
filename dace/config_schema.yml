@@ -183,7 +183,7 @@ required:
             format_config_file:
                 type: str
                 default: ""
-                title: Path the clang-format file
+                title: Path to the .clang-format file
                 description: >
                     Clang-format file to be used by clang-format, only used if format_code is true
 
@@ -261,7 +261,7 @@ required:
                         type: str
                         title: Arguments
                         description: Compiler argument flags
-                        default: '-std=c++14 -fPIC -Wall -Wextra -O3 -march=native -ffast-math -Wno-unused-parameter -Wno-unused-label'
+                        default: '-fPIC -Wall -Wextra -O3 -march=native -ffast-math -Wno-unused-parameter -Wno-unused-label'
                         default_Windows: '/O2 /fp:fast /arch:AVX2 /D_USRDLL /D_WINDLL /D__restrict__=__restrict'
 
                     libs:
