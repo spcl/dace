@@ -2744,7 +2744,7 @@ def demote_symbol_to_scalar(sdfg: 'dace.SDFG',
     import dace.sdfg.tasklet_utils as tutil
 
     if default_type is None:
-        default_type = dace.float64
+        default_type = dace.int32
 
     # If assignment is to symbol_str, append it to last scalar before
     if symbol_str in sdfg.symbols:

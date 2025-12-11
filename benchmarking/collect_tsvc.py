@@ -19,19 +19,16 @@ LEN_1D = dace.symbol("LEN_1D")
 LEN_2D = dace.symbol("LEN_2D")
 ITERATIONS = dace.symbol("ITERATIONS")
 
-symbol_value_map = {
-    LEN_1D: 32,
-    LEN_2D: 32,
-    ITERATIONS: 1
-}
+symbol_value_map = {LEN_1D: 32, LEN_2D: 32, ITERATIONS: 1}
 
 import csv
 from pathlib import Path
 
+
 def write_runtimes(csv_path, cpp_name, result):
     """
     Append runtimes for a function to a CSV.
-    
+
     Writes columns:
         cpp_name, cpp_runtime_ns, dace_runtime_ns
     """
@@ -49,6 +46,7 @@ def write_runtimes(csv_path, cpp_name, result):
             result["cpp_runtime_ns"],
             result["dace_runtime_ns"],
         ])
+
 
 def load_module_from_path(path: str) -> ModuleType:
     """
@@ -82,7 +80,6 @@ def collect_dace_programs(module) -> List[DaceProgram]:
     return programs
 
 
-
 def load_dace_functions_from_file(path: str) -> List[Callable]:
     """
     Convenience wrapper: load the module, extract dace_* functions.
@@ -94,7 +91,8 @@ def load_dace_functions_from_file(path: str) -> List[Callable]:
 LIB_NAME = "libtsvcpp.so"
 CPP_FILE = "/home/primrose/Work/dace/tests/passes/tsvcpp.cpp"
 
-SAVE_SDFGS=False
+SAVE_SDFGS = False
+
 
 def build_tsvcpp_lib():
     """Compile tsvcpp.cpp into a shared library located next to this Python file."""
@@ -123,6 +121,7 @@ def build_tsvcpp_lib():
 
     return str(lib_path)
 
+
 def load_tsvcpp():
     """Load shared library and set ctypes signatures."""
     libpath = build_tsvcpp_lib()
@@ -135,7 +134,7 @@ def get_cpp_function(lib, dace_func):
     Map `dace_s317` → `s317_run_timed`.
     """
     name = dace_func.name.split("dace_", 1)[1]
-    short = name     # e.g., "s317"
+    short = name  # e.g., "s317"
     cpp_name = f"{short}_run_timed"
 
     try:
@@ -147,7 +146,7 @@ def get_cpp_function(lib, dace_func):
 def generate_arrays_from_sdfg(sdfg, symbol_map):
     """
     From an SDFG, generate NON-TRANSIENT arrays.
-    
+
     Returns:
         arrays_dace  -- Python dict for calling DaCe SDFG
         arrays_cpp   -- Python dict for C++ call (copies)
@@ -169,7 +168,7 @@ def generate_arrays_from_sdfg(sdfg, symbol_map):
         for expr in desc.shape:
             cexpr = copy.deepcopy(expr)
             if hasattr(cexpr, "subs"):
-                for k,v in symbol_value_map.items():
+                for k, v in symbol_value_map.items():
                     cexpr = cexpr.subs(k, v)
             shape_list.append(cexpr)
         resolved_shape = tuple(shape_list)
@@ -292,11 +291,7 @@ def list_nontransient_arrays(dace_programs):
         sdfg = dp.to_sdfg()
 
         # Collect all non-transient arrays
-        nontransient = {
-            name: desc
-            for name, desc in sdfg.arrays.items()
-            if not desc.transient
-        }
+        nontransient = {name: desc for name, desc in sdfg.arrays.items() if not desc.transient}
 
         if not nontransient:
             print("  No non-transient arrays.")
@@ -307,6 +302,7 @@ def list_nontransient_arrays(dace_programs):
             shape = desc.shape if hasattr(desc, "shape") else None
             dtype = getattr(desc, "dtype", None)
             print(f"    - {name}  (shape={shape}, dtype={dtype})")
+
 
 if __name__ == "__main__":
     import argparse

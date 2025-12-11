@@ -207,14 +207,20 @@ def expand_memlet_expression(state: SDFGState, edges: Iterable[Edge[Memlet]], ed
     modified_edges = set()
     for edge in edges:
         if edge.data is not None:
-            assert all(
-                ((e + 1 - b) // s) == 1 for b, e, s in edge.data.subset
-            ), f"Subset: {[(b, e, s) for b, e, s in edge.data.subset]}, is length one: {[((e + 1 - b) // s) == 1 for b, e, s in edge.data.subset]}"
-            if edge in edges_to_skip:
-                raise Exception("Edge found in edges to skip (even though variable name to skip), "
-                                "skipping these edges will result with incorrect programs eventually, "
-                                "therefore we raise  this error. Something went wrong with the auto vectorizer.")
-
+            print({((e + 1 - b) // s) for b, e, s in edge.data.subset})
+            if not all(((e + 1 - b) // s) == 1 for b, e, s in edge.data.subset):
+                print(
+                    "Edge found where not all memlets subsets are length 1, if only one dimension matches to vector length then it is ok"
+                )
+                vlens = {((e + 1 - b) // s) == vector_width for b, e, s in edge.data.subset}
+                if len(vlens) > 1:
+                    raise Exception(
+                        f"Memlet subsets for edge {edge}: {[(b, e, s) for b, e, s in edge.data.subset]},"
+                        f"is not all length one or max 1 vector width subset: {[((e + 1 - b) // s) == 1 for b, e, s in edge.data.subset]}"
+                    )
+                else:
+                    # Do not do anything
+                    continue
             new_subset_list = []
             for (b, e, s), stride in zip(edge.data.subset, state.sdfg.arrays[edge.data.data].strides):
                 if stride == 1:

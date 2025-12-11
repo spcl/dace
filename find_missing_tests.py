@@ -10,7 +10,7 @@ ROOT = Path(sys.argv[1] if len(sys.argv) > 1 else ".")
 
 # Regex patterns
 kernel_re = re.compile(r"def\s+(dace_s\d+)\s*\(")
-test_re   = re.compile(r"def\s+(test_s\d+)\s*\(")
+test_re = re.compile(r"def\s+(test_s\d+)\s*\(")
 
 # Storage
 kernels = set()
