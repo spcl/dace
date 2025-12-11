@@ -173,22 +173,6 @@ def test_symbol_dependent_gpu_view():
     assert (np.allclose(B, B_ref))
 
 
-@pytest.mark.skip('FPGA compiler error')
-def test_symbol_dependent_fpga_global_array():
-    A = np.random.randn(10, 10, 10)
-    B = np.ndarray(10, dtype=np.float64)
-    sdfg = _make_sdfg("symbol_dependent_fpga_global_array", storage=dace.dtypes.StorageType.FPGA_Global)
-    # Compile manually to avoid simplification
-    sdfg_exec = sdfg.compile()
-    sdfg_exec(A=A, B=B, N=10)
-    del sdfg_exec
-    B_ref = np.ndarray(10, dtype=np.float64)
-    for i in range(10):
-        tmp = A[2:-2, 2:-2, i:]
-        B_ref[i] = np.sum(tmp)
-    assert (np.allclose(B, B_ref))
-
-
 def test_symbol_dependent_array_in_map():
 
     @dace.program
