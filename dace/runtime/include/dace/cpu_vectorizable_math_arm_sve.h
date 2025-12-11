@@ -13,7 +13,7 @@
   #define _dace_vectorize(width) _Pragma(STRINGIZE(omp simd))
 #endif
 
-#if defined(__ARM_FEATURE_SVE2)
+#if defined(__ARM_FEATURE_SVE)
 #include <arm_sve.h>
 #endif
 
@@ -21,13 +21,18 @@
 // Arithmetic
 // ============================================================================
 
+#if defined(__ARM_FEATURE_SVE)
+#else
+# error Included the SVE header without support SVE
+#endif
+
 // vector_mult
 template<typename T, int vector_width>
 inline void vector_mult(T* __restrict__ out,
                         const T* __restrict__ a,
                         const T* __restrict__ b)
 {
-#if defined(__ARM_FEATURE_SVE2)
+#if defined(__ARM_FEATURE_SVE)
 
     if constexpr (std::is_same<T,float>::value) {
         int i = 0;
@@ -55,7 +60,7 @@ inline void vector_mult(T* __restrict__ out,
         return;
     }
 
-#else  // __ARM_FEATURE_SVE2
+#else  // __ARM_FEATURE_SVE
 
     for (int i = 0; i < vector_width; ++i)
         out[i] = a[i] * b[i];
@@ -69,7 +74,7 @@ inline void vector_mult_w_scalar(T* __restrict__ out,
                                  const T* __restrict__ a,
                                  const T constant)
 {
-#if defined(__ARM_FEATURE_SVE2)
+#if defined(__ARM_FEATURE_SVE)
 
     if constexpr (std::is_same<T,float>::value) {
         svfloat32_t vconst = svdup_f32(constant);
@@ -111,7 +116,7 @@ inline void vector_add(T* __restrict__ out,
                        const T* __restrict__ a,
                        const T* __restrict__ b)
 {
-#if defined(__ARM_FEATURE_SVE2)
+#if defined(__ARM_FEATURE_SVE)
 
     if constexpr (std::is_same<T,float>::value) {
         int i = 0;
@@ -139,7 +144,7 @@ inline void vector_add(T* __restrict__ out,
         return;
     }
 
-#else  // __ARM_FEATURE_SVE2
+#else  // __ARM_FEATURE_SVE
 
     for (int i = 0; i < vector_width; ++i)
         out[i] = a[i] + b[i];
@@ -153,7 +158,7 @@ inline void vector_add_w_scalar(T* __restrict__ out,
                                 const T* __restrict__ a,
                                 const T constant)
 {
-#if defined(__ARM_FEATURE_SVE2)
+#if defined(__ARM_FEATURE_SVE)
 
     if constexpr (std::is_same<T,float>::value) {
         svfloat32_t vconst = svdup_f32(constant);
@@ -195,7 +200,7 @@ inline void vector_sub(T* __restrict__ out,
                        const T* __restrict__ a,
                        const T* __restrict__ b)
 {
-#if defined(__ARM_FEATURE_SVE2)
+#if defined(__ARM_FEATURE_SVE)
 
     if constexpr (std::is_same<T,float>::value) {
         int i = 0;
@@ -237,7 +242,7 @@ inline void vector_sub_w_scalar(T* __restrict__ out,
                                 const T* __restrict__ a,
                                 const T constant)
 {
-#if defined(__ARM_FEATURE_SVE2)
+#if defined(__ARM_FEATURE_SVE)
 
     if constexpr (std::is_same<T,float>::value) {
         svfloat32_t vconst = svdup_f32(constant);
@@ -279,7 +284,7 @@ inline void vector_sub_w_scalar_c(T* __restrict__ out,
                                   const T constant,
                                   const T* __restrict__ a)
 {
-#if defined(__ARM_FEATURE_SVE2)
+#if defined(__ARM_FEATURE_SVE)
 
     if constexpr (std::is_same<T,float>::value) {
         svfloat32_t vconst = svdup_f32(constant);
@@ -321,7 +326,7 @@ inline void vector_div(T* __restrict__ out,
                        const T* __restrict__ a,
                        const T* __restrict__ b)
 {
-#if defined(__ARM_FEATURE_SVE2)
+#if defined(__ARM_FEATURE_SVE)
 
     if constexpr (std::is_same<T,float>::value) {
         int i = 0;
@@ -363,7 +368,7 @@ inline void vector_div_w_scalar(T* __restrict__ out,
                                 const T* __restrict__ a,
                                 const T constant)
 {
-#if defined(__ARM_FEATURE_SVE2)
+#if defined(__ARM_FEATURE_SVE)
 
     if constexpr (std::is_same<T,float>::value) {
         svfloat32_t vconst = svdup_f32(constant);
@@ -405,7 +410,7 @@ inline void vector_div_w_scalar_c(T* __restrict__ out,
                                   const T constant,
                                   const T* __restrict__ a)
 {
-#if defined(__ARM_FEATURE_SVE2)
+#if defined(__ARM_FEATURE_SVE)
 
     if constexpr (std::is_same<T,float>::value) {
         svfloat32_t vconst = svdup_f32(constant);
@@ -446,7 +451,7 @@ template<typename T, int vector_width>
 inline void vector_copy(T* __restrict__ dst,
                         const T* __restrict__ src)
 {
-#if defined(__ARM_FEATURE_SVE2)
+#if defined(__ARM_FEATURE_SVE)
 
     if constexpr (std::is_same<T,float>::value) {
         int i = 0;
@@ -483,7 +488,7 @@ template<typename T, int vector_width>
 inline void vector_copy_w_scalar(T* __restrict__ dst,
                                  const T a)
 {
-#if defined(__ARM_FEATURE_SVE2)
+#if defined(__ARM_FEATURE_SVE)
 
     if constexpr (std::is_same<T,float>::value) {
         svfloat32_t va = svdup_f32(a);
@@ -545,7 +550,7 @@ inline void vector_min(T* __restrict__ out,
                        const T* __restrict__ a,
                        const T* __restrict__ b)
 {
-#if defined(__ARM_FEATURE_SVE2)
+#if defined(__ARM_FEATURE_SVE)
 
     if constexpr (std::is_same<T,float>::value) {
         int i = 0;
@@ -587,7 +592,7 @@ inline void vector_min_w_scalar(T* __restrict__ out,
                                 const T* __restrict__ a,
                                 const T constant)
 {
-#if defined(__ARM_FEATURE_SVE2)
+#if defined(__ARM_FEATURE_SVE)
 
     if constexpr (std::is_same<T,float>::value) {
         svfloat32_t vconst = svdup_f32(constant);
@@ -629,7 +634,7 @@ inline void vector_max(T* __restrict__ out,
                        const T* __restrict__ a,
                        const T* __restrict__ b)
 {
-#if defined(__ARM_FEATURE_SVE2)
+#if defined(__ARM_FEATURE_SVE)
 
     if constexpr (std::is_same<T,float>::value) {
         int i = 0;
@@ -671,7 +676,7 @@ inline void vector_max_w_scalar(T* __restrict__ out,
                                 const T* __restrict__ a,
                                 const T constant)
 {
-#if defined(__ARM_FEATURE_SVE2)
+#if defined(__ARM_FEATURE_SVE)
 
     if constexpr (std::is_same<T,float>::value) {
         svfloat32_t vconst = svdup_f32(constant);
@@ -717,7 +722,7 @@ inline void vector_gt(T* __restrict__ out,
                       const T* __restrict__ a,
                       const T* __restrict__ b)
 {
-#if defined(__ARM_FEATURE_SVE2)
+#if defined(__ARM_FEATURE_SVE)
 
     if constexpr (std::is_same<T,float>::value) {
         svfloat32_t one  = svdup_f32(1.0f);
@@ -765,7 +770,7 @@ inline void vector_gt_w_scalar(T* __restrict__ out,
                                const T* __restrict__ a,
                                const T constant)
 {
-#if defined(__ARM_FEATURE_SVE2)
+#if defined(__ARM_FEATURE_SVE)
 
     if constexpr (std::is_same<T,float>::value) {
         svfloat32_t vconst = svdup_f32(constant);
@@ -813,7 +818,7 @@ inline void vector_gt_w_scalar_c(T* __restrict__ out,
                                  const T constant,
                                  const T* __restrict__ a)
 {
-#if defined(__ARM_FEATURE_SVE2)
+#if defined(__ARM_FEATURE_SVE)
 
     if constexpr (std::is_same<T,float>::value) {
         svfloat32_t vconst = svdup_f32(constant);
@@ -861,7 +866,7 @@ inline void vector_lt(T* __restrict__ out,
                       const T* __restrict__ a,
                       const T* __restrict__ b)
 {
-#if defined(__ARM_FEATURE_SVE2)
+#if defined(__ARM_FEATURE_SVE)
 
     if constexpr (std::is_same<T,float>::value) {
         svfloat32_t one  = svdup_f32(1.0f);
@@ -909,7 +914,7 @@ inline void vector_lt_w_scalar(T* __restrict__ out,
                                const T* __restrict__ a,
                                const T constant)
 {
-#if defined(__ARM_FEATURE_SVE2)
+#if defined(__ARM_FEATURE_SVE)
 
     if constexpr (std::is_same<T,float>::value) {
         svfloat32_t vconst = svdup_f32(constant);
@@ -957,7 +962,7 @@ inline void vector_lt_w_scalar_c(T* __restrict__ out,
                                  const T constant,
                                  const T* __restrict__ a)
 {
-#if defined(__ARM_FEATURE_SVE2)
+#if defined(__ARM_FEATURE_SVE)
 
     if constexpr (std::is_same<T,float>::value) {
         svfloat32_t vconst = svdup_f32(constant);
@@ -1005,7 +1010,7 @@ inline void vector_ge(T* __restrict__ out,
                       const T* __restrict__ a,
                       const T* __restrict__ b)
 {
-#if defined(__ARM_FEATURE_SVE2)
+#if defined(__ARM_FEATURE_SVE)
 
     if constexpr (std::is_same<T,float>::value) {
         svfloat32_t one  = svdup_f32(1.0f);
@@ -1053,7 +1058,7 @@ inline void vector_ge_w_scalar(T* __restrict__ out,
                                const T* __restrict__ a,
                                const T constant)
 {
-#if defined(__ARM_FEATURE_SVE2)
+#if defined(__ARM_FEATURE_SVE)
 
     if constexpr (std::is_same<T,float>::value) {
         svfloat32_t vconst = svdup_f32(constant);
@@ -1101,7 +1106,7 @@ inline void vector_ge_w_scalar_c(T* __restrict__ out,
                                  const T constant,
                                  const T* __restrict__ a)
 {
-#if defined(__ARM_FEATURE_SVE2)
+#if defined(__ARM_FEATURE_SVE)
 
     if constexpr (std::is_same<T,float>::value) {
         svfloat32_t vconst = svdup_f32(constant);
@@ -1149,7 +1154,7 @@ inline void vector_le(T* __restrict__ out,
                       const T* __restrict__ a,
                       const T* __restrict__ b)
 {
-#if defined(__ARM_FEATURE_SVE2)
+#if defined(__ARM_FEATURE_SVE)
 
     if constexpr (std::is_same<T,float>::value) {
         svfloat32_t one  = svdup_f32(1.0f);
@@ -1197,7 +1202,7 @@ inline void vector_le_w_scalar(T* __restrict__ out,
                                const T* __restrict__ a,
                                const T constant)
 {
-#if defined(__ARM_FEATURE_SVE2)
+#if defined(__ARM_FEATURE_SVE)
 
     if constexpr (std::is_same<T,float>::value) {
         svfloat32_t vconst = svdup_f32(constant);
@@ -1245,7 +1250,7 @@ inline void vector_le_w_scalar_c(T* __restrict__ out,
                                  const T constant,
                                  const T* __restrict__ a)
 {
-#if defined(__ARM_FEATURE_SVE2)
+#if defined(__ARM_FEATURE_SVE)
 
     if constexpr (std::is_same<T,float>::value) {
         svfloat32_t vconst = svdup_f32(constant);
@@ -1293,7 +1298,7 @@ inline void vector_eq(T* __restrict__ out,
                       const T* __restrict__ a,
                       const T* __restrict__ b)
 {
-#if defined(__ARM_FEATURE_SVE2)
+#if defined(__ARM_FEATURE_SVE)
 
     if constexpr (std::is_same<T,float>::value) {
         svfloat32_t one  = svdup_f32(1.0f);
@@ -1341,7 +1346,7 @@ inline void vector_eq_w_scalar(T* __restrict__ out,
                                const T* __restrict__ a,
                                const T constant)
 {
-#if defined(__ARM_FEATURE_SVE2)
+#if defined(__ARM_FEATURE_SVE)
 
     if constexpr (std::is_same<T,float>::value) {
         svfloat32_t vconst = svdup_f32(constant);
@@ -1389,7 +1394,7 @@ inline void vector_ne(T* __restrict__ out,
                       const T* __restrict__ a,
                       const T* __restrict__ b)
 {
-#if defined(__ARM_FEATURE_SVE2)
+#if defined(__ARM_FEATURE_SVE)
 
     if constexpr (std::is_same<T,float>::value) {
         svfloat32_t one  = svdup_f32(1.0f);
@@ -1437,7 +1442,7 @@ inline void vector_ne_w_scalar(T* __restrict__ out,
                                const T* __restrict__ a,
                                const T constant)
 {
-#if defined(__ARM_FEATURE_SVE2)
+#if defined(__ARM_FEATURE_SVE)
 
     if constexpr (std::is_same<T,float>::value) {
         svfloat32_t vconst = svdup_f32(constant);
