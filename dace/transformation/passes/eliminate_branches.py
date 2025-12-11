@@ -15,7 +15,7 @@ class EliminateBranches(ppl.Pass):
     try_clean = properties.Property(dtype=bool, default=False, allow_none=False)
     clean_only = properties.Property(dtype=bool, default=False, allow_none=True)
     permissive = properties.Property(dtype=bool, default=False, allow_none=False)
-    eps_operator_type_for_log_and_div = properties.Property(dtype=str, default="max", allow_none=True)
+    eps_operator_type_for_log_and_div = properties.Property(dtype=str, default="add", allow_none=True)
     apply_to_top_level_ifs = properties.Property(dtype=bool, default=False, allow_none=False)
     try_demote_and_fuse = properties.Property(dtype=bool, default=True, allow_none=False)
 

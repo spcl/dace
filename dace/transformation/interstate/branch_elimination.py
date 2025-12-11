@@ -1641,13 +1641,13 @@ class BranchElimination(transformation.MultiStateTransformation):
             return ast.unparse(tree).strip()
 
         if precision == dace.float64:
-            #eps = numpy.finfo(
-            #    numpy.float64
-            #).tiny * 8  # Having the min as the limit can still result with NaN due to how string stuff works
-            eps = 1 * numpy.finfo(numpy.float64).eps
+            eps = numpy.finfo(
+                numpy.float64
+            ).tiny * 2  # Having the min as the limit can still result with NaN due to how string stuff works
+            #eps = numpy.finfo(numpy.float64).eps
         else:
-            #eps = numpy.finfo(numpy.float32).tiny * 8
-            eps = 1 * numpy.finfo(numpy.float32).eps
+            eps = numpy.finfo(numpy.float32).tiny * 2
+            #eps = numpy.finfo(numpy.float32).eps
 
         has_division = False
         for tasklet in tasklets:
