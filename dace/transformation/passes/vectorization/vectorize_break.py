@@ -12,8 +12,6 @@ import dace
 import dace.sdfg.construction_utils as cutil
 from dace.transformation.passes.vectorization.vectorize_cpu import VectorizeCPU
 
-
-
 safe_mask_template_vv = """
     // Phase 1: compute condition array
     bool had_break_cond = false;
@@ -86,7 +84,7 @@ def move_state_inside_if(condition_str: str, cfg: ControlFlowRegion, state: SDFG
     if_block.add_branch(condition=CodeBlock(condition_str), branch=if_cfg)
     if_body_state = if_cfg.add_state(f"st_{state.label}", is_start_block=True)
 
-    cfg.add_node(if_block, is_start_block=state==cfg.start_block)
+    cfg.add_node(if_block, is_start_block=state == cfg.start_block)
 
     cutil.copy_state_contents(state, if_body_state)
 
@@ -95,12 +93,14 @@ def move_state_inside_if(condition_str: str, cfg: ControlFlowRegion, state: SDFG
     for oe in oes:
         cfg.add_edge(if_block, oe.dst, copy.deepcopy(oe.data))
 
+
 def non_transient_sink_data(state: SDFGState):
-    return {node.data for node in state.data_nodes()
-        if (state.out_degree(node) == 0 and
-           node.data in state.sdfg.arrays and
-           state.sdfg.arrays[node.data].transient is False)
+    return {
+        node.data
+        for node in state.data_nodes() if (state.out_degree(node) == 0 and node.data in state.sdfg.arrays
+                                           and state.sdfg.arrays[node.data].transient is False)
     }
+
 
 def move_map_to_loop(state: SDFGState, map: dace.nodes.MapEntry):
     copystate = copy.deepcopy(state)
@@ -151,7 +151,7 @@ def move_map_to_loop(state: SDFGState, map: dace.nodes.MapEntry):
         loop.add_node(cnode)
         if nsdfg.sdfg.in_degree(node) == 0:
             loop.add_edge(copy_in, cnode, InterstateEdge())
- 
+
     for edge in nsdfg.sdfg.edges():
         src = nmap[edge.src]
         dst = nmap[edge.dst]
@@ -160,7 +160,7 @@ def move_map_to_loop(state: SDFGState, map: dace.nodes.MapEntry):
     sink_nodes = {n for n in loop.nodes() if loop.out_degree(n) == 0}
     assert len(sink_nodes) == 1, f"{sink_nodes}"
     sink_node = sink_nodes.pop()
-    
+
     # Find safe write for copy out
     nns = {n for n in loop.nodes() if n.label == "safe_write"}
     assert len(nns) == 1
@@ -198,14 +198,14 @@ def move_map_to_loop(state: SDFGState, map: dace.nodes.MapEntry):
     return loop
 
 
-
 def extract_identifiers(expr: str):
     """Extract variable names and the single operator from a Python expression."""
 
     class Visitor(ast.NodeVisitor):
+
         def __init__(self):
             self.names = set()
-            self.op = None    # operator string
+            self.op = None  # operator string
 
         def visit_Name(self, node):
             self.names.add(node.id)
@@ -217,11 +217,11 @@ def extract_identifiers(expr: str):
             op = node.ops[0]
 
             op_map = {
-                ast.Gt:  ">",
-                ast.Lt:  "<",
+                ast.Gt: ">",
+                ast.Lt: "<",
                 ast.GtE: ">=",
                 ast.LtE: "<=",
-                ast.Eq:  "==",
+                ast.Eq: "==",
                 ast.NotEq: "!=",
             }
             self.op = op_map[type(op)]
@@ -263,6 +263,7 @@ def expand_identifier(name: str, lane: int, vector_arrays, scalar_symbols):
     else:
         return name
 
+
 def generate_lane_expression(expr: str, lane: int, identifiers, vector_arrays, scalar_symbols):
     """Produce a lane-specific expression by replacing identifiers."""
     lane_expr = expr
@@ -270,7 +271,10 @@ def generate_lane_expression(expr: str, lane: int, identifiers, vector_arrays, s
         lane_expr = lane_expr.replace(name, expand_identifier(name, lane, vector_arrays, scalar_symbols))
     return lane_expr
 
+
 c = 0
+
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class VectorizeBreak(ppl.Pass):
@@ -311,7 +315,6 @@ class VectorizeBreak(ppl.Pass):
                 return False
         return True
 
-
     def _apply(self, sdfg: SDFG):
         vlen = str(self.vector_width)
         GRACE_VAL = True
@@ -326,13 +329,13 @@ class VectorizeBreak(ppl.Pass):
                 if self._has_break(cfg) and self._has_no_nsdfg(cfg) and self._has_no_inner_loops(cfg):
                     print(cfg, " has a break but no nsdfg and innermsot loop")
                     loops.add(cfg)
-        
-        old_existing_maps = {n for (n,g) in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)}
+
+        old_existing_maps = {n for (n, g) in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)}
         for loop in loops:
             LoopToMap().apply_to(sdfg=loop.sdfg, loop=loop, permissive=True)
-        now_existing_maps = {(n,g) for (n,g) in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)}
+        now_existing_maps = {(n, g) for (n, g) in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)}
         sdfg.save(f"b{c}.sdfg")
-        c+=1
+        c += 1
         new_maps = now_existing_maps - old_existing_maps
         condition_strs = dict()
         print("New Maps", new_maps)
@@ -343,17 +346,15 @@ class VectorizeBreak(ppl.Pass):
             for n in state.nodes():
                 if isinstance(n, dace.nodes.NestedSDFG):
                     condition_str = None
-                    
 
                     for inner_node in n.sdfg.nodes():
                         # Find the break block inside if statement
-                        if (isinstance(inner_node, ConditionalBlock) and
-                            len(inner_node.branches) == 1 and
-                            len(inner_node.branches[0][1].nodes()) == 1 and
-                            isinstance(inner_node.branches[0][1].nodes()[0], BreakBlock)):
+                        if (isinstance(inner_node, ConditionalBlock) and len(inner_node.branches) == 1
+                                and len(inner_node.branches[0][1].nodes()) == 1
+                                and isinstance(inner_node.branches[0][1].nodes()[0], BreakBlock)):
                             assert condition_str is None
                             condition_str = inner_node.branches[0][0].as_string
-                    
+
                     assert condition_str is not None
                     condition_strs[m] = condition_str
 
@@ -361,15 +362,18 @@ class VectorizeBreak(ppl.Pass):
                     #    if isinstance(nested_node, SDFGState) and len(nested_node.nodes()) > 0:
                     #        move_state_inside_if(f"1", n.sdfg, nested_node)
         sdfg.save(f"b{c}.sdfg")
-        c+=1
+        c += 1
         EliminateBranches().apply_pass(sdfg, {})
         sdfg.save(f"bbb.sdfg")
         for new_map, state in new_maps:
             print(new_map)
-            VectorizeCPU(vector_width=self.vector_width, try_to_demote_symbols_in_nsdfgs=True, fuse_overlapping_loads=False,
-                         apply_on_maps=[new_map], insert_copies=True, eliminate_trivial_vector_map=True,
+            VectorizeCPU(vector_width=self.vector_width,
+                         try_to_demote_symbols_in_nsdfgs=True,
+                         fuse_overlapping_loads=False,
+                         apply_on_maps=[new_map],
+                         insert_copies=True,
+                         eliminate_trivial_vector_map=True,
                          fail_on_unvectorizable=True).apply_pass(sdfg, {})
-
 
         for new_map, state in new_maps:
             backup = state
@@ -382,10 +386,9 @@ class VectorizeBreak(ppl.Pass):
                     _break_node = None
                     for inner_node in n.sdfg.nodes():
                         # Find the break block inside if statement
-                        if (isinstance(inner_node, ConditionalBlock) and
-                            len(inner_node.branches) == 1 and
-                            len(inner_node.branches[0][1].nodes()) == 1 and
-                            isinstance(inner_node.branches[0][1].nodes()[0], BreakBlock)):
+                        if (isinstance(inner_node, ConditionalBlock) and len(inner_node.branches) == 1
+                                and len(inner_node.branches[0][1].nodes()) == 1
+                                and isinstance(inner_node.branches[0][1].nodes()[0], BreakBlock)):
                             _break_node = inner_node
                     assert _break_node is not None
                     if n.sdfg.out_degree(_break_node) == 0:
@@ -407,7 +410,8 @@ class VectorizeBreak(ppl.Pass):
                         n.sdfg.add_edge(sink, _break_node, InterstateEdge())
 
                     print(condition_str)
-                    ccondition_str = condition_str[1:-1] if condition_str.startswith("(") and condition_str.endswith(")") else condition_str
+                    ccondition_str = condition_str[1:-1] if condition_str.startswith("(") and condition_str.endswith(
+                        ")") else condition_str
                     tokens = ccondition_str.split(" ")
                     assert len(tokens) == 3
                     lhs, op, rhs = tokens
@@ -415,38 +419,44 @@ class VectorizeBreak(ppl.Pass):
                     assert op == op2
                     print(identifiers)
                     for lane in range(self.vector_width):
-                        lane_expr = generate_lane_expression(condition_str, lane, identifiers,
-                                                            {s for s, arr in n.sdfg.arrays.items() if isinstance(arr, dace.data.Array) },
-                                                            {str(s) for s in n.sdfg.symbols})
+                        lane_expr = generate_lane_expression(
+                            condition_str, lane, identifiers,
+                            {s
+                             for s, arr in n.sdfg.arrays.items() if isinstance(arr, dace.data.Array)},
+                            {str(s)
+                             for s in n.sdfg.symbols})
                         print(lane_expr)
                     sink_nodes_dicts = dict()
                     for inner_node in n.sdfg.nodes():
                         if isinstance(inner_node, SDFGState):
-                            sink_nodes_dicts[inner_node] = {s: f"{s}_breaksafe" for s in non_transient_sink_data(inner_node)}
+                            sink_nodes_dicts[inner_node] = {
+                                s: f"{s}_breaksafe"
+                                for s in non_transient_sink_data(inner_node)
+                            }
 
                             for k, v in sink_nodes_dicts[inner_node].items():
                                 for state_node in inner_node.nodes():
-                                    if isinstance(state_node, dace.nodes.AccessNode) and inner_node.out_degree(state_node) == 0 and state_node.data == k:
+                                    if isinstance(state_node, dace.nodes.AccessNode) and inner_node.out_degree(
+                                            state_node) == 0 and state_node.data == k:
                                         if v not in inner_node.sdfg.arrays:
                                             pdesc = inner_node.sdfg.arrays[k]
-                                            inner_node.sdfg.add_array(
-                                                name=v, shape=(self.vector_width,), dtype=pdesc.dtype,
-                                                storage=dace.dtypes.StorageType.Register,
-                                                transient=True
-                                            )
-                                            assert pdesc.shape == (self.vector_width,)
+                                            inner_node.sdfg.add_array(name=v,
+                                                                      shape=(self.vector_width, ),
+                                                                      dtype=pdesc.dtype,
+                                                                      storage=dace.dtypes.StorageType.Register,
+                                                                      transient=True)
+                                            assert pdesc.shape == (self.vector_width, )
                                         state_node.data = v
                                         for ie in inner_node.in_edges(state_node):
                                             if ie.data.data == k:
                                                 ie.data.data = v
-                    
+
                     break_if_block = None
                     for inner_node in n.sdfg.nodes():
                         # Find the break block inside if statement
-                        if (isinstance(inner_node, ConditionalBlock) and
-                            len(inner_node.branches) == 1 and
-                            len(inner_node.branches[0][1].nodes()) == 1 and
-                            isinstance(inner_node.branches[0][1].nodes()[0], BreakBlock)):
+                        if (isinstance(inner_node, ConditionalBlock) and len(inner_node.branches) == 1
+                                and len(inner_node.branches[0][1].nodes()) == 1
+                                and isinstance(inner_node.branches[0][1].nodes()[0], BreakBlock)):
                             assert break_if_block is None
                             break_if_block = inner_node
                     assert break_if_block is not None
@@ -455,7 +465,8 @@ class VectorizeBreak(ppl.Pass):
                     # 1. Generate break safe mask
                     # This should be after writing to the break safe array
 
-                    safe_mask_state = n.sdfg.add_state_before(break_if_block, is_start_block=n.sdfg.start_block==break_if_block)
+                    safe_mask_state = n.sdfg.add_state_before(break_if_block,
+                                                              is_start_block=n.sdfg.start_block == break_if_block)
                     in_accesses = dict()
                     for identifier in identifiers:
                         in_accesses[identifier] = safe_mask_state.add_access(identifier)
@@ -463,17 +474,19 @@ class VectorizeBreak(ppl.Pass):
                     mask_counter += 1
                     first_id = next(iter(identifiers))
                     inner_node.sdfg.add_array(
-                        name=f"safe_mask_c{mask_counter-1}", shape=(self.vector_width,),
+                        name=f"safe_mask_c{mask_counter-1}",
+                        shape=(self.vector_width, ),
                         dtype=n.sdfg.arrays[first_id].dtype if first_id in n.sdfg.arrays else n.sdfg.symbols[first_id],
                         storage=dace.dtypes.StorageType.Register,
-                        transient=True
-                    )
+                        transient=True)
                     joined_inputs = ", ".join([f"_in_{identifier}" for identifier in identifiers])
                     assert len(identifiers) == 2 or len(identifiers) == 1
                     if len(identifiers) == 2:
                         id1, id2 = lhs, rhs
-                        array1 = id1 in safe_mask_state.sdfg.arrays and isinstance(safe_mask_state.sdfg.arrays[id1], dace.data.Array)
-                        array2 = id2 in safe_mask_state.sdfg.arrays and isinstance(safe_mask_state.sdfg.arrays[id2], dace.data.Array)
+                        array1 = id1 in safe_mask_state.sdfg.arrays and isinstance(safe_mask_state.sdfg.arrays[id1],
+                                                                                   dace.data.Array)
+                        array2 = id2 in safe_mask_state.sdfg.arrays and isinstance(safe_mask_state.sdfg.arrays[id2],
+                                                                                   dace.data.Array)
                         ss = ""
                         if array1 and array2:
                             ss = safe_mask_template_vv.format(T=safe_mask_state.sdfg.arrays[id1].dtype.ctype,
@@ -503,7 +516,8 @@ class VectorizeBreak(ppl.Pass):
                             pass
                         assert ss != ""
                     elif len(identifiers) == 1:
-                        ccondition_str = condition_str[1:-1] if condition_str.startswith("(") and condition_str.endswith(")") else condition_str
+                        ccondition_str = condition_str[1:-1] if condition_str.startswith(
+                            "(") and condition_str.endswith(")") else condition_str
                         tokens = ccondition_str.split(" ")
                         assert len(tokens) == 3
                         lhs, op, rhs = tokens
@@ -531,44 +545,51 @@ class VectorizeBreak(ppl.Pass):
                             pass
                         assert ss != ""
 
-                    t = safe_mask_state.add_tasklet("safe_mask", {f"_in_{identifier}" for identifier in identifiers},
+                    t = safe_mask_state.add_tasklet("safe_mask", {f"_in_{identifier}"
+                                                                  for identifier in identifiers},
                                                     {f"_out_{out_access}"},
                                                     code=ss,
                                                     language=dace.dtypes.Language.CPP)
                     for name, in_access in in_accesses.items():
-                        safe_mask_state.add_edge(in_access, None, t, f"_in_{name}",
-                                                    dace.memlet.Memlet.from_array(in_access.data, safe_mask_state.sdfg.arrays[in_access.data]))
-                    safe_mask_state.add_edge(t, f"_out_{out_access}", out_access, None,
-                                                dace.memlet.Memlet.from_array(out_access.data, safe_mask_state.sdfg.arrays[out_access.data]))
-
+                        safe_mask_state.add_edge(
+                            in_access, None, t, f"_in_{name}",
+                            dace.memlet.Memlet.from_array(in_access.data, safe_mask_state.sdfg.arrays[in_access.data]))
+                    safe_mask_state.add_edge(
+                        t, f"_out_{out_access}", out_access, None,
+                        dace.memlet.Memlet.from_array(out_access.data, safe_mask_state.sdfg.arrays[out_access.data]))
 
                     # 2. Add safe write
                     name_map_rev = dict()
                     for inner_node in n.sdfg.nodes():
                         if isinstance(inner_node, SDFGState):
                             name_map = sink_nodes_dicts.get(inner_node, dict())
-                            name_map_rev.update({v: k  for k, v in name_map.items()})
-                    
+                            name_map_rev.update({v: k for k, v in name_map.items()})
+
                     for k, v in name_map_rev.items():
-                        print(k,v)
+                        print(k, v)
                         # Find last write to k
                         last_node_with_write_to_k = None
                         for inner_node in n.sdfg.bfs_nodes():
                             if isinstance(inner_node, SDFGState):
-                                has_write_to_k = {node.data for node in state.data_nodes()
-                                    if (state.out_degree(node) == 0 and
-                                    node.data in state.sdfg.arrays and
-                                    node.data == k)
+                                has_write_to_k = {
+                                    node.data
+                                    for node in state.data_nodes() if
+                                    (state.out_degree(node) == 0 and node.data in state.sdfg.arrays and node.data == k)
                                 }
                                 last_node_with_write_to_k = inner_node
                         assert last_node_with_write_to_k is not None
-                        self.add_safe_write(n.sdfg, last_node_with_write_to_k, f"safe_mask_c{mask_counter-1}", self.vector_width, {k: v})
-
+                        self.add_safe_write(n.sdfg, last_node_with_write_to_k, f"safe_mask_c{mask_counter-1}",
+                                            self.vector_width, {k: v})
 
                     # Update break condition
-                    lane_exprs = [generate_lane_expression(condition_str, lane, identifiers,
-                                                            {s for s, arr in n.sdfg.arrays.items() if isinstance(arr, dace.data.Array) },
-                                                            {str(s) for s in n.sdfg.symbols}) for lane in range(self.vector_width)]
+                    lane_exprs = [
+                        generate_lane_expression(
+                            condition_str, lane, identifiers,
+                            {s
+                             for s, arr in n.sdfg.arrays.items() if isinstance(arr, dace.data.Array)},
+                            {str(s)
+                             for s in n.sdfg.symbols}) for lane in range(self.vector_width)
+                    ]
                     new_cond = " or ".join(lane_exprs)
                     print("NEW COND", new_cond)
 
@@ -581,9 +602,11 @@ class VectorizeBreak(ppl.Pass):
                     # Replace with connector names
                     connector_name_map = dict()
                     for in_connector in n.in_connectors:
-                        connector_name_map[in_connector] = next(iter(state.in_edges_by_connector(n, in_connector))).data.data
+                        connector_name_map[in_connector] = next(iter(state.in_edges_by_connector(
+                            n, in_connector))).data.data
                     for out_connector in n.out_connectors:
-                        connector_name_map[out_connector] = next(iter(state.out_edges_by_connector(n, out_connector))).data.data
+                        connector_name_map[out_connector] = next(iter(state.out_edges_by_connector(
+                            n, out_connector))).data.data
                     state.sdfg.validate()
                     print(connector_name_map)
                     n.sdfg.replace_dict(connector_name_map)
@@ -618,18 +641,16 @@ class VectorizeBreak(ppl.Pass):
     def flip_first_zero_in_conditions_before_break(self, for_cfg: LoopRegion):
         return
         for node in for_cfg.bfs_nodes():
-            if (isinstance(node, ConditionalBlock) and
-                len(node.branches) == 1 and
-                len(node.branches[0][1].nodes()) == 1 and 
-                isinstance(node.branches[0][1].nodes(), BreakBlock)
-            ):
+            if (isinstance(node, ConditionalBlock) and len(node.branches) == 1 and len(node.branches[0][1].nodes()) == 1
+                    and isinstance(node.branches[0][1].nodes(), BreakBlock)):
                 # Found break block return
                 return
             else:
                 if isinstance(node, SDFGState):
                     # Find first tasklet that starts with
                     for snode in node.nodes():
-                        if isinstance(snode, dace.nodes.Tasklet) and snode.label.startswith("condition_symbol_to_scalar"):
+                        if isinstance(snode,
+                                      dace.nodes.Tasklet) and snode.label.startswith("condition_symbol_to_scalar"):
                             ttemplate = """
                                 // Flip the FIRST 0.0 to 1.0 in the input array
                                 {{
@@ -644,16 +665,13 @@ class VectorizeBreak(ppl.Pass):
                                 }}
                             """
                             assert snode.code.language == dace.dtypes.Language.CPP
-                            snode.code = CodeBlock(
-                                snode.code.as_string + "\n" + ttemplate.format(
-                                    VLEN=self.vector_width, arr=next(iter(snode.out_connectors)),
-                                ),
-                                language=dace.dtypes.Language.CPP
-                            )
+                            snode.code = CodeBlock(snode.code.as_string + "\n" + ttemplate.format(
+                                VLEN=self.vector_width,
+                                arr=next(iter(snode.out_connectors)),
+                            ),
+                                                   language=dace.dtypes.Language.CPP)
                             # Only do it once
                             break
-
-
 
     def add_safe_write(self, sdfg: SDFG, state_to_gen_after: SDFGState, mask_name: str, VLEN, names: Dict[str, str]):
         loopreg = LoopRegion(label="safe_write",
@@ -680,7 +698,7 @@ class VectorizeBreak(ppl.Pass):
             t = state.add_tasklet(f"safe_write_{v}", {"_in"}, {"_out"}, "_out = _in")
             state.add_edge(ka, None, t, "_in", dace.memlet.Memlet(f"{k}[swi]"))
             state.add_edge(t, "_out", va, None, dace.memlet.Memlet(f"{v}[swi]"))
-            assert sdfg.arrays[v].shape == (self.vector_width,)
+            assert sdfg.arrays[v].shape == (self.vector_width, )
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> None:
         # If we have the pattern:
@@ -692,7 +710,7 @@ class VectorizeBreak(ppl.Pass):
         # }
         # Then we van vectorize it by:
         # for (int i = 0; i < N; i += VL) {
-        # 
+        #
         #     auto vA  = load8(&A[i]);          // load 8 elements
         #
         #     auto mbr = (vA < 0.0);            // break mask

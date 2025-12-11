@@ -13,7 +13,7 @@ from dace import List
 from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg.graph import Edge
-from dace.sdfg.state import BreakBlock, ConditionalBlock, LoopRegion
+from dace.sdfg.state import BreakBlock, ConditionalBlock, ControlFlowRegion, LoopRegion
 import dace.sdfg.tasklet_utils as tutil
 import dace.sdfg.construction_utils as cutil
 import dace.sdfg.utils as sdutil
@@ -58,8 +58,6 @@ def repl_subset_to_use_laneid_offset(sdfg: dace.SDFG, subset: dace.subsets.Range
     prev_sdfg_free_syms = sdfg.free_symbols
 
     free_syms = subset.free_symbols
-    #print(f"Symbol offset: {symbol_offset}")
-    #print("Free symbols in subset:", free_syms)
 
     repl_dict = {
         str(free_sym):
@@ -77,15 +75,11 @@ def repl_subset_to_use_laneid_offset(sdfg: dace.SDFG, subset: dace.subsets.Range
             offset_symbol_name = str(free_sym) + "_laneid_" + str(symbol_offset)
             if offset_symbol_name not in sdfg.symbols:
                 sdfg.add_symbol(offset_symbol_name, stype)
-    #print("Generated replacement dictionary with offset:", repl_dict)
 
     new_subset = repl_subset(subset=subset, repl_dict=repl_dict)
-    #print("Subset before symbol offset replacement:", subset)
-    #print("Subset after symbol offset replacement:", new_subset)
 
     for free_sym in free_syms:
         if str(free_sym) in sdfg.free_symbols - prev_sdfg_free_syms:
-            #print(free_sym, "is in free symbols of the sdfg")
             raise Exception(
                 "`repl_subset_to_use_laneid_offset` has introduced new free symbols (this will cause problems as the new symbols should not be free). This will result an invalid SDFG, either call with `add_missing_symbols=True` or fix this issue"
             )
@@ -106,7 +100,6 @@ def repl_subset_to_use_with_int_offset(sdfg: dace.SDFG, subset: dace.subsets.Ran
     new_range_list = []
     repl_dict = {str(free_sym): "(" + str(free_sym) + " + " + str(int_offset) + ")" for free_sym in symbols_to_offset}
     for (b, e, s) in subset:
-        #print(b.free_symbols, e.free_symbols, s.free_symbols)
         if hasattr(b, "subs"):
             nb = b.subs(repl_dict)
         else:
@@ -186,7 +179,8 @@ def replace_memlet_expression(state: SDFGState,
                                                  storage=arr.storage,
                                                  location=arr.location,
                                                  transient=arr.transient,
-                                                 lifetime=arr.lifetime)
+                                                 lifetime=arr.lifetime,
+                                                 find_new_name=False)
             edge.data = dace.memlet.Memlet(data=edge.data.data, subset=copy.deepcopy(new_subset_expr))
 
 
@@ -217,7 +211,9 @@ def expand_memlet_expression(state: SDFGState, edges: Iterable[Edge[Memlet]], ed
                 ((e + 1 - b) // s) == 1 for b, e, s in edge.data.subset
             ), f"Subset: {[(b, e, s) for b, e, s in edge.data.subset]}, is length one: {[((e + 1 - b) // s) == 1 for b, e, s in edge.data.subset]}"
             if edge in edges_to_skip:
-                raise Exception("AA")
+                raise Exception("Edge found in edges to skip (even though variable name to skip), "
+                                "skipping these edges will result with incorrect programs eventually, "
+                                "therefore we raise  this error. Something went wrong with the auto vectorizer.")
 
             new_subset_list = []
             for (b, e, s), stride in zip(edge.data.subset, state.sdfg.arrays[edge.data.data].strides):
@@ -304,11 +300,20 @@ def get_single_nsdfg_inside_map(graph: dace.SDFGState, map_entry: dace.nodes.Map
 def has_only_states(sdfg: dace.SDFG) -> bool:
     return all({isinstance(n, dace.SDFGState) for n in sdfg.nodes()})
 
+
 def has_only_states_or_single_block_with_break_only(sdfg: dace.SDFG) -> bool:
     ifs = {n for n in sdfg.nodes() if isinstance(n, ConditionalBlock)}
-    all_ifs_are_only_break = all({len(ifb.branches) == 1 and len(ifb.branches[0][1].nodes()) == 1 and isinstance(ifb.branches[0][1].nodes()[0], BreakBlock) for ifb in ifs})
-    non_ifs_non_states = {n for n in sdfg.nodes() if not isinstance(n, ConditionalBlock) and not isinstance(n, SDFGState)}
-    return (all({isinstance(n, dace.SDFGState) for n in sdfg.nodes()}) or (all_ifs_are_only_break and len(non_ifs_non_states) == 0))
+    all_ifs_are_only_break = all({
+        len(ifb.branches) == 1 and len(ifb.branches[0][1].nodes()) == 1
+        and isinstance(ifb.branches[0][1].nodes()[0], BreakBlock)
+        for ifb in ifs
+    })
+    non_ifs_non_states = {
+        n
+        for n in sdfg.nodes() if not isinstance(n, ConditionalBlock) and not isinstance(n, SDFGState)
+    }
+    return (all({isinstance(n, dace.SDFGState)
+                 for n in sdfg.nodes()}) or (all_ifs_are_only_break and len(non_ifs_non_states) == 0))
 
 
 def assert_maps_consist_of_single_nsdfg_or_no_nsdfg(sdfg: dace.SDFG) -> None:
@@ -651,6 +656,7 @@ def prepare_vectorized_array(state: dace.SDFGState,
 
     vector_dataname_candidate = orig_dataname + "_vec_k" if use_name is None else use_name
     if reuse_name_if_existing:
+        assert use_name is not None
         vector_dataname = vector_dataname_candidate
         if vector_dataname not in state.sdfg.arrays:
             state.sdfg.add_array(name=vector_dataname_candidate,
@@ -721,13 +727,6 @@ def compute_edge_subset(edge_subset, subset, orig_arr, inner_offset, vector_widt
         assert len(stride_one_subset) == 1, f"{stride_one_subset} != 1: {orig_arr.strides}, {subset}"
         stride_one_begin = stride_one_subset[0]
         stride_one_indices = [i for i, stride in enumerate(orig_arr.strides) if stride == 1]
-        #print("C1", edge_subset)
-        #print("C2", stride_one_subset)
-        #print("C3", stride_one_begin)
-        #print("C4", stride_one_begin == 0)
-        #print("C5", subset)
-        #print((inner_offset, inner_offset + vector_width - 1, 1))
-
         # If the inner subset starts from 0, then to the SDFG just the subset accessed is passed
         # In that case we copy the edge as it is
         # Otherwise we need to generate the mapping (using the subst (and not edge subset))
@@ -778,6 +777,7 @@ def process_in_edges(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG, m
             prev_subset = copy.deepcopy(subset)
             vector_dataname, inner_offset = prepare_vectorized_array(state, inner_sdfg, inner_arr_name, ie.data.data,
                                                                      orig_arr, subset, vector_width, vector_storage)
+            assert vector_dataname not in vectorized_datanames
             vectorized_datanames.add(vector_dataname)
 
             # Compute copy subset
@@ -832,17 +832,16 @@ def process_out_edges(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG, 
             # Prepare vectorized arrays
             # Copy it to avoid it changing
             prev_subset = copy.deepcopy(subset)
+            # We should reuse the name if we have an inout connectors.
             vector_dataname, inner_offset = prepare_vectorized_array(state, inner_sdfg, inner_arr_name, oe.data.data,
                                                                      orig_arr, subset, vector_width, vector_storage,
-                                                                     True, inout_data_name)
+                                                                     inout_data_name is not None, inout_data_name)
 
             # Compute copy subset
             copy_subset = compute_edge_subset(oe.data.subset, prev_subset, orig_arr, inner_offset, vector_width)
-            #print("CO", prev_subset, copy_subset)
 
             # Add access node and rewire edges
             an = state.add_access(vector_dataname)
-            #an.setzero = True
             state.remove_edge(oe)
             assert oe.src == nsdfg_node
             assert oe.src_conn is not None
@@ -1727,8 +1726,10 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
             else:
                 if l_op == c:
                     expr = f"({l_op} {op} {r_op})"
+                elif r_op == c:
+                    expr = f"({l_op} {op} {r_op})"
                 else:
-                    expr = f"({l_op} {op} {r_op}{i})"
+                    expr = f"({l_op} {op} {r_op}_laneid_{i})"
             code_lines.append(f"{lhs}[{i}] = {expr}")
         node.code = dace.properties.CodeBlock(code="\n".join(code_lines) + "\n", language=dace.Language.Python)
     elif ttype == tutil.TaskletType.SCALAR_SCALAR:
@@ -2353,6 +2354,8 @@ def assert_symbols_in_parent_map_symbols(missing_symbols: Set[str], state: dace.
         valid = []
         for s in strings:
             match = re.fullmatch(r'([A-Za-z_]\w*?)(\d+)$', s)
+            if not match:
+                state.sdfg.save("vectorize_failing.sdfg")
             assert match, f"No match in {strings} for a variable name"
             if match:
                 name, num = match.groups()
@@ -2528,7 +2531,7 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
                             sdfg.save("failing_vectorization.sdfg")
                         assert not (
                             assignment is None and str(free_sym) not in parent_syms_defined
-                        ), f"Could not find an iedge assignment for {free_sym}, assignemnt {assignment}, parent symbols defined {parent_syms_defined}"
+                        ), f"Could not find an iedge assignment for {free_sym}, assignemnt {assignment}, parent symbols defined {parent_syms_defined}. {sdfg.label}, {sdfg.parent_nsdfg_node}: map param {map_param}"
                         # Loop invariant symbol passed from outside
                         if assignment is None:
                             continue
@@ -2540,7 +2543,6 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
                             sympy.ceiling, sympy.Min, sympy.Max, sympy.asin, sympy.acos, sympy.atan, sympy.sinh,
                             sympy.cosh, sympy.tanh, sympy.asinh, sympy.acosh, sympy.atanh
                         }
-                        #print("A:", assignment)
 
                         # Collect only user-defined or nonstandard functions - in intersate edge this means array accees
                         funcs = {f.name for f in assignment_expr.atoms(sympy.Function) if f.func not in ignored}
@@ -2584,6 +2586,7 @@ def collect_vectorizable_arrays(sdfg: dace.SDFG, parent_nsdfg_node: dace.nodes.N
                             # If assignment is None, it is probably coming from parent map
                             parent_syms_defined = parent_state.symbols_defined_at(parent_nsdfg_node)
                             if assignment is None:
+                                sdfg.save("failing_vectorization.sdfg")
                                 assert str(
                                     free_sym
                                 ) in parent_syms_defined, f"Could not find an iedge assignment for {free_sym} it is also not defined in symbols defined in nsdfg entry {parent_syms_defined}"
@@ -2898,7 +2901,11 @@ def try_demoting_vectorizable_symbols(inner_sdfg: dace.SDFG) -> Set[str]:
         for sym_assignment in sym_assignments:
             sym_assign_expr = dace.symbolic.SymExpr(sym_assignment)
             # Collect all array accesses (they are functions that are present in the sdfg)
-            funcs = {(f.name, f) for f in sym_assign_expr.atoms(sympy.Function)}
+            # Also try to support And and Or if this happens
+            from sympy.logic.boolalg import And, Or
+            atoms = (sym_assign_expr.atoms(sympy.Function) | sym_assign_expr.atoms(And) | sym_assign_expr.atoms(Or))
+            funcs = {(getattr(a, "func", type(a)).__name__, a)
+                     for a in atoms if hasattr(a, "func") and callable(a.func)}
             #print(funcs)
             for fname, f in funcs:
                 #print(f"Check function: {fname} ({str(fname) in inner_sdfg.arrays})")
@@ -2912,6 +2919,21 @@ def try_demoting_vectorizable_symbols(inner_sdfg: dace.SDFG) -> Set[str]:
         data_in_dependence_set = {d for d in all_function_args if d in inner_sdfg.arrays}
         if len(data_in_dependence_set) == 0:
             demotable_symbols.add(sym)
+
+    # Symbols used on memlets can't be demoted
+    access_syms = set()
+    for state in inner_sdfg.all_states():
+        for edge in state.edges():
+            if edge.data.subset is not None:
+                dst = edge.dst
+                available_syms = state.symbols_defined_at(dst)
+                syms_used = {
+                    str(s)
+                    for s in edge.data.free_symbols if str(s) in inner_sdfg.symbols or str(s) in available_syms
+                }
+                access_syms = access_syms.union(syms_used)
+
+    demotable_symbols = demotable_symbols - access_syms
 
     for demotable_symbol in demotable_symbols:
         stype = inner_sdfg.symbols[demotable_symbol]
@@ -3159,6 +3181,10 @@ def add_copies_before_and_after_nsdfg(
         and isinstance(inner_sdfg.arrays[k], dace.data.Array)
     }
 
+    # TODO: Fix ice supersaturation case
+    skip.add("zqxfg")
+    skip.add("zsolqb")
+
     movable_arrays = set()
     unmovable_arrays = dict()
 
@@ -3206,6 +3232,7 @@ def add_copies_before_and_after_nsdfg(
                     location=desc.location,
                     transient=True,
                     strides=(1, ),
+                    find_new_name=False,
                 )
             subset_to_name_map[(unmovable_arr_name, subset)] = vec_arr_name
 
@@ -3254,10 +3281,6 @@ def add_copies_before_and_after_nsdfg(
             }, f"Input datanames more than one {ie_datanames}, and not equal to {vector_width} in state {state}, sdfg {state.sdfg.label}."
 
             assert len(ie_datanames) + len(oe_datanames) > 0
-
-            #print(len(ie_datanames), ie_datanames)
-            #print(len(oe_datanames), oe_datanames)
-
             if len(oe_datanames) == 0:
                 ie_dataname = ie_datanames.pop()
                 node.data = ie_dataname

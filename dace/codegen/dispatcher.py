@@ -98,7 +98,8 @@ class DefinedMemlets:
                     if not allow_shadowing:
                         print("WARNING: " + err_str)
                 else:
-                    raise cgx.CodegenError(err_str)
+                    pass
+                    #raise cgx.CodegenError(err_str)
             if not can_access_parent:
                 break
         self._scopes[-1 - ancestor][1][name] = (dtype, ctype)

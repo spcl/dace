@@ -176,8 +176,10 @@ def compare_kernel(dace_func, arrays, params):
 
     return int(time_ns[0])
 
+
 import os
 import fcntl
+
 
 def log_runtime(time_ns: int, name: str, filename: str = "runtimes.csv"):
     header = "name,time_ns\n"
@@ -287,12 +289,11 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                             print(oe.data.subset)
                             g.remove_edge(oe)
                             for oe2 in g.out_edges(oe.dst):
-                                g.add_edge(oe.src, oe.src_conn,
-                                            oe2.dst, oe2.dst_conn,
-                                            dace.memlet.Memlet(
-                                                data=data,
-                                                subset=subs,
-                                            ))
+                                g.add_edge(oe.src, oe.src_conn, oe2.dst, oe2.dst_conn,
+                                           dace.memlet.Memlet(
+                                               data=data,
+                                               subset=subs,
+                                           ))
                             g.remove_node(oe.dst)
     copy_sdfg.validate()
 
@@ -306,8 +307,8 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
     pass_info = dict()
     if not break_vectorize:
         VectorizeCPU(vector_width=vector_width,
-                    fuse_overlapping_loads=fuse_overlapping_loads,
-                    insert_copies=insert_copies).apply_pass(copy_sdfg, pass_info)
+                     fuse_overlapping_loads=fuse_overlapping_loads,
+                     insert_copies=insert_copies).apply_pass(copy_sdfg, pass_info)
     else:
         from dace.transformation.passes.vectorization.vectorize_break import VectorizeBreak
         VectorizeBreak(vector_width=vector_width).apply_pass(copy_sdfg, pass_info)
@@ -355,20 +356,20 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                     sdfg.save(f"{sdfg_name}.sdfg")
                     copy_sdfg.save(f"{sdfg_name}_vectorized.sdfg")
             assert allclose, f"(Vectorize) {name} Diff: max abs diff = {np.max(np.abs(diff))}"
-    
+
     # If we are here then write timing results
 
     report = copy_sdfg.get_latest_report()
     # Or: sdfg.get_instrumentation_reports()[-1]
     #print(report)
 
-    total_time = report.events[0].duration * 1000 # useconds
+    total_time = report.events[0].duration * 1000  # useconds
     log_runtime(int(total_time), sdfg_name)
 
     for i in range(10):
         c_copy_sdfg(**arrays_vec, **params)
         report = copy_sdfg.get_latest_report()
-        total_time = report.events[0].duration * 1000 # useconds
+        total_time = report.events[0].duration * 1000  # useconds
         log_runtime(int(total_time), sdfg_name)
 
     return int(total_time)
@@ -914,7 +915,6 @@ def dace_s244(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[
             a[i + 1] = b[i] + a[i + 1] * d[i]
 
 
-
 @dace.program
 def dace_s2244(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D], e: dace.float64[LEN_1D]):
 
@@ -1044,7 +1044,6 @@ def dace_s1244(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64
         for i in range(LEN_1D - 1):
             a[i] = b[i] + c[i] * c[i] + b[i] * b[i] + c[i]
             d[i] = a[i] + a[i + 1]
-
 
 
 @dace.program
@@ -1729,8 +1728,6 @@ def dace_s331(a: dace.float64[LEN_1D], ):
             if a[i] < 0.0:
                 j = i
     # return value would be j+1 in C version
-
-
 
 
 # ======================
@@ -3014,24 +3011,22 @@ def test_s1161():
         "ITERATIONS": ITERATIONS_val
     })
 
-    run_vectorization_test(
-        dace_func=dace_s1161,
-        arrays={
-            "a": a,
-            "b": b,
-            "c": c,
-            "d": d,
-            "e": e
-        },
-        params={
-            "LEN_1D": LEN_1D_val,
-            "ITERATIONS": ITERATIONS_val
-        },
-        save_sdfgs=False,
-        sdfg_name="dace_s1161",
-        apply_loop_to_map=True,
-        split_all_branches=True
-    )
+    run_vectorization_test(dace_func=dace_s1161,
+                           arrays={
+                               "a": a,
+                               "b": b,
+                               "c": c,
+                               "d": d,
+                               "e": e
+                           },
+                           params={
+                               "LEN_1D": LEN_1D_val,
+                               "ITERATIONS": ITERATIONS_val
+                           },
+                           save_sdfgs=False,
+                           sdfg_name="dace_s1161",
+                           apply_loop_to_map=True,
+                           split_all_branches=True)
 
     return a
 
@@ -3694,7 +3689,7 @@ def test_s243():
 
 
 def test_s244():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     a = np.random.rand(LEN)
@@ -3724,9 +3719,10 @@ def test_s244():
 
     return a
 
+
 @pytest.mark.skip
 def test_s1244():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     a = np.random.rand(LEN)
@@ -3765,9 +3761,10 @@ def test_s1244():
     )
     return a, d
 
+
 @pytest.mark.skip
 def test_s2244():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     a = np.random.rand(LEN)
@@ -3811,7 +3808,7 @@ def test_s2244():
 
 
 def test_s251():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     a = np.random.rand(LEN)
@@ -3852,7 +3849,7 @@ def test_s251():
 
 
 def test_s3251():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     a = np.random.rand(LEN)
@@ -3896,7 +3893,7 @@ def test_s3251():
 
 
 def test_s253():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     a = np.random.rand(LEN)
@@ -3937,7 +3934,7 @@ def test_s253():
 
 
 def test_s254():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     a = np.random.rand(LEN)
@@ -3972,7 +3969,7 @@ def test_s254():
 
 
 def test_s242():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     a = np.random.rand(LEN)
@@ -4442,7 +4439,7 @@ def test_s274():
 
 
 def test_s275():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
     aa = np.random.rand(LEN, LEN)
     bb = np.random.rand(LEN, LEN)
@@ -4516,7 +4513,7 @@ def s2111():
 
 
 def s2275():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     a = np.random.rand(LEN)
@@ -4567,7 +4564,7 @@ def s2275():
 
 
 def s276():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     a = np.random.rand(LEN)
@@ -4609,7 +4606,7 @@ def s276():
 
 
 def s277():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     a = np.random.rand(LEN)
@@ -4654,7 +4651,7 @@ def s277():
 
 
 def s278():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     a = np.random.rand(LEN)
@@ -4699,7 +4696,7 @@ def s278():
 
 
 def s279():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     a = np.random.rand(LEN)
@@ -4744,7 +4741,7 @@ def s279():
 
 
 def s1279():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     a = np.random.rand(LEN)
@@ -5311,7 +5308,7 @@ def test_s3113():
 
 
 def test_s321():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     a = np.random.rand(LEN)
@@ -5347,7 +5344,7 @@ def test_s321():
 
 
 def test_s322():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     a = np.random.rand(LEN)
@@ -5386,7 +5383,7 @@ def test_s322():
 
 
 def test_s323():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     a = np.random.rand(LEN)
@@ -5431,7 +5428,7 @@ def test_s323():
 
 
 def test_s331():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     a = np.random.rand(LEN) - 0.5
@@ -5459,9 +5456,8 @@ def test_s331():
     return a
 
 
-
 def test_s341():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     a = np.zeros(LEN)
@@ -5497,7 +5493,7 @@ def test_s341():
 
 
 def test_s342():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     a = np.random.rand(LEN) - 0.5
@@ -5572,7 +5568,7 @@ def test_s343():
 
 
 def test_s351():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     a = np.random.rand(LEN)
@@ -5611,7 +5607,7 @@ def test_s351():
 
 
 def test_s1351():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     a = np.zeros(LEN)
@@ -5650,7 +5646,7 @@ def test_s1351():
 
 
 def test_s352():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     a = np.random.rand(LEN)
@@ -5686,7 +5682,7 @@ def test_s352():
 
 
 def test_s353():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     a = np.random.rand(LEN)
@@ -5728,7 +5724,7 @@ def test_s353():
 
 
 def vdotr():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     a = np.random.rand(LEN)
@@ -5767,7 +5763,7 @@ def vdotr():
 
 
 def vbor():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     a = np.random.rand(LEN)
@@ -5815,7 +5811,7 @@ def vbor():
 
 
 def s281():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     a = np.random.rand(LEN)
@@ -5854,7 +5850,7 @@ def s281():
 
 
 def s1281():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 4
 
     a = np.random.rand(LEN)
@@ -5901,9 +5897,10 @@ def s1281():
     )
     return a
 
+
 @pytest.mark.skip
 def test_s291():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     a = np.random.rand(LEN)
@@ -5944,7 +5941,7 @@ def test_s291():
 
 
 def test_s292():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     a = np.random.rand(LEN)
@@ -5979,7 +5976,7 @@ def test_s292():
 
 
 def test_s293():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     a = np.random.rand(LEN)
@@ -6012,7 +6009,7 @@ def test_s293():
 
 
 def test_s2101():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     aa = np.random.rand(LEN, LEN)
@@ -6090,7 +6087,7 @@ def test_s311():
 
 
 def test_s1421():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     # b is updated based on a; order matches dace_s1421 signature (b, a)
@@ -6127,7 +6124,7 @@ def test_s1421():
 
 
 def test_s4112():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     a = np.random.rand(LEN).astype(np.float64)
@@ -6166,7 +6163,7 @@ def test_s4112():
 
 
 def test_s4113():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     a = np.random.rand(LEN).astype(np.float64)
@@ -6208,7 +6205,7 @@ def test_s4113():
 
 
 def test_s4114():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
     n1_val = 1
 
@@ -6256,7 +6253,7 @@ def test_s4114():
 
 
 def test_s4115():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     a = np.random.rand(LEN).astype(np.float64)
@@ -6349,7 +6346,7 @@ def test_s4116():
 
 
 def test_s4117():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     a = np.random.rand(LEN).astype(np.float64)
@@ -6391,7 +6388,7 @@ def test_s4117():
 
 
 def test_s4121():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     a = np.random.rand(LEN).astype(np.float64)
@@ -6466,7 +6463,7 @@ def test_s422():
 
 
 def test_s424():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     a = np.random.rand(LEN).astype(np.float64)
@@ -6505,7 +6502,7 @@ def test_s424():
 
 
 def test_s431():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     a = np.random.rand(LEN).astype(np.float64)
@@ -6541,7 +6538,7 @@ def test_s431():
 
 
 def test_s441():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     a = np.random.rand(LEN).astype(np.float64)
@@ -6583,7 +6580,7 @@ def test_s441():
 
 
 def test_s442():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     a = np.random.rand(LEN).astype(np.float64)
@@ -6631,7 +6628,7 @@ def test_s442():
 
 
 def test_s443():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     a = np.random.rand(LEN).astype(np.float64)
@@ -6673,7 +6670,7 @@ def test_s443():
 
 
 def test_s451():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1  # ensure ITERATIONS//5 > 0
 
     a = np.random.rand(LEN).astype(np.float64)
@@ -6712,7 +6709,7 @@ def test_s451():
 
 
 def test_s452():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     a = np.random.rand(LEN).astype(np.float64)
@@ -6751,7 +6748,7 @@ def test_s452():
 
 
 def test_s453():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     a = np.random.rand(LEN).astype(np.float64)
@@ -6787,7 +6784,7 @@ def test_s453():
 
 
 def test_s471():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     x = np.random.rand(LEN).astype(np.float64)
@@ -6832,7 +6829,7 @@ def test_s471():
 
 
 def test_s481():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     a = np.random.rand(LEN).astype(np.float64)
@@ -6841,9 +6838,9 @@ def test_s481():
     d = np.empty(LEN, dtype=np.float64)
     pos_count = int(0.8 * LEN)
     # First 80% positive
-    d[:pos_count] = np.random.rand(pos_count)        # (0,1)
+    d[:pos_count] = np.random.rand(pos_count)  # (0,1)
     # Remaining 20% negative
-    d[pos_count:] = -np.random.rand(LEN - pos_count) # (-1,0)
+    d[pos_count:] = -np.random.rand(LEN - pos_count)  # (-1,0)
 
     compare_kernel(
         dace_s481,
@@ -6859,28 +6856,26 @@ def test_s481():
         },
     )
 
-    run_vectorization_test(
-        dace_func=dace_s481,
-        arrays={
-            "a": a,
-            "b": b,
-            "c": c,
-            "d": d
-        },
-        params={
-            "LEN_1D": LEN,
-            "ITERATIONS": ITERS
-        },
-        sdfg_name="dace_s481",
-        save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
-        break_vectorize=True
-    )
+    run_vectorization_test(dace_func=dace_s481,
+                           arrays={
+                               "a": a,
+                               "b": b,
+                               "c": c,
+                               "d": d
+                           },
+                           params={
+                               "LEN_1D": LEN,
+                               "ITERATIONS": ITERS
+                           },
+                           sdfg_name="dace_s481",
+                           save_sdfgs=SAVE_SDFGS,
+                           apply_loop_to_map=True,
+                           break_vectorize=True)
     return a
 
 
 def test_s482():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     # Make 50%
@@ -6904,27 +6899,25 @@ def test_s482():
         },
     )
 
-    run_vectorization_test(
-        dace_func=dace_s482,
-        arrays={
-            "a": a,
-            "b": b,
-            "c": c
-        },
-        params={
-            "LEN_1D": LEN,
-            "ITERATIONS": ITERS
-        },
-        sdfg_name="dace_s482",
-        save_sdfgs=SAVE_SDFGS,
-        apply_loop_to_map=True,
-        break_vectorize=True
-    )
+    run_vectorization_test(dace_func=dace_s482,
+                           arrays={
+                               "a": a,
+                               "b": b,
+                               "c": c
+                           },
+                           params={
+                               "LEN_1D": LEN,
+                               "ITERATIONS": ITERS
+                           },
+                           sdfg_name="dace_s482",
+                           save_sdfgs=SAVE_SDFGS,
+                           apply_loop_to_map=True,
+                           break_vectorize=True)
     return a
 
 
 def test_s491():
-    LEN= G_LEN_1D_VAL
+    LEN = G_LEN_1D_VAL
     ITERS = 1
 
     a = np.random.rand(LEN).astype(np.float64)

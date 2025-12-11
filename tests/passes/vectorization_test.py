@@ -430,7 +430,6 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
     copy_sdfg: dace.SDFG = copy.deepcopy(sdfg)
     copy_sdfg.name = copy_sdfg.name + "_vectorized"
 
-
     if cleanup:
         for e, g in copy_sdfg.all_edges_recursive():
             if isinstance(g, dace.SDFGState):
@@ -468,7 +467,7 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                  fail_on_unvectorizable=True).apply_pass(copy_sdfg, {})
     copy_sdfg.validate()
 
-
+    c_copy_sdfg = copy_sdfg.compile()
 
     # Run both
     c_sdfg(**arrays_orig, **params)
@@ -3818,6 +3817,7 @@ def dace_s000(A: dace.float64[S], B: dace.float64[S]):
     for nl in range(2):
         for i in dace.map[0:S:1]:
             A[i] = B[i] + 1.0
+
 
 def test_s000():
     # Create test arrays

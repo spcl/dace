@@ -722,7 +722,6 @@ def dace_s244(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[
             a[i + 1] = b[i] + a[i + 1] * d[i]
 
 
-
 @dace.program
 def dace_s2244(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D], e: dace.float64[LEN_1D]):
 
@@ -1544,7 +1543,6 @@ def dace_s331(a: dace.float64[LEN_1D], ):
             if a[i] < 0.0:
                 j = i
     # return value would be j+1 in C version
-
 
 
 # ======================

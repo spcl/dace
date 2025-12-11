@@ -8,6 +8,7 @@ ITERATIONS = dace.symbol("ITERATIONS")
 LEN_1D_VAL = 32
 ITERATIONS_VAL = 1
 
+
 @dace.program
 def dace_s482(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D]):
     for nl in range(ITERATIONS):
@@ -15,6 +16,7 @@ def dace_s482(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[
             a[i] = a[i] + b[i] * c[i]
             if c[i] > b[i]:
                 break
+
 
 @dace.program
 def dace_s481(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D], d: dace.float64[LEN_1D]):
@@ -36,7 +38,6 @@ def run_sdfg(sdfg, a, b=None, c=None, d=None):
     inputs['ITERATIONS'] = ITERATIONS_VAL
     sdfg(**inputs)
     return a  # mutated array
-
 
 
 def test_s482_vectorized_matches_baseline():
@@ -62,7 +63,6 @@ def test_s482_vectorized_matches_baseline():
     run_sdfg(exe_ref, a_ref, b=b0.copy(), c=c0.copy())
     sdfg_ref.save("s482_v2.sdfg")
 
-
     # --- vectorized SDFG ---
     sdfg_vec = dace_s482.to_sdfg()
     sdfg_vec.apply_transformations_repeated(LoopToMap)
@@ -86,9 +86,11 @@ def test_s482_vectorized_matches_baseline():
         print(e)
         raise
 
+
 # ----------------------------------------------------------------------
 # Test s481
 # ----------------------------------------------------------------------
+
 
 def test_s481_vectorized_matches_baseline():
     # Random input
@@ -131,6 +133,7 @@ def test_s481_vectorized_matches_baseline():
         print("\nFull AssertionError:")
         print(e)
         raise
+
 
 if __name__ == "__main__":
     test_s482_vectorized_matches_baseline()

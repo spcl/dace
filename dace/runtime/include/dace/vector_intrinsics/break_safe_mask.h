@@ -15,5 +15,3 @@ void compute_break_safe_prefix_mask(const T* a, const T* b, T* outmask)
         outmask[i] = active;
     }
 }
-
-

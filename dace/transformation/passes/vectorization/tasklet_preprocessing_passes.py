@@ -265,6 +265,8 @@ class RemoveMathCall(ppl.Pass):
             if isinstance(node, dace.sdfg.nodes.Tasklet):
                 if node.code.language == dace.dtypes.Language.Python:
                     ast_str = node.code.as_string
+                    if len(ast_str.split(" = ")) != 2:
+                        continue
                     ast_left, ast_right = ast_str.split(" = ")
                     ast_left = ast_left.strip()
                     ast_right = ast_right.strip()
@@ -318,7 +320,7 @@ class ReplaceSTDLogWithDaCeLog(ppl.Pass):
                                 if new_ast_str != ast_str:
                                     node.code = CodeBlock(new_ast_str, language=dace.Language.Python)
 
-        sdfg.append_global_code('#include "dace/arith/log.h"')
+        sdfg.append_global_code('#include "dace/arith/log.h"\n')
         sdfg.validate()
 
 
@@ -364,7 +366,7 @@ class ReplaceSTDExpWithDaCeExp(ppl.Pass):
                                 if new_ast_str != ast_str:
                                     node.code = CodeBlock(new_ast_str, language=dace.Language.Python)
 
-        sdfg.append_global_code('#include "dace/arith/exp.h"')
+        sdfg.append_global_code('#include "dace/arith/exp.h"\n')
         sdfg.validate()
 
 
@@ -410,5 +412,5 @@ class ReplaceSTDPowWithDaCePow(ppl.Pass):
                                 if new_ast_str != ast_str:
                                     node.code = CodeBlock(new_ast_str, language=dace.Language.Python)
 
-        sdfg.append_global_code('#include "dace/arith/pow.h"')
+        sdfg.append_global_code('#include "dace/arith/pow.h"\n')
         sdfg.validate()

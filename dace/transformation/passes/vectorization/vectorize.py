@@ -290,7 +290,6 @@ class Vectorize(ppl.Pass):
                                       self.vector_op_numeric_type)
         replace_arrays_with_new_shape(inner_sdfg, non_vector_width_transient_arrays, (self.vector_width, ), None)
 
-
         inner_sdfg.reset_cfg_list()
 
         vector_width_arrays = {
@@ -406,8 +405,14 @@ class Vectorize(ppl.Pass):
         # and should be expanded to A[0:1, 0:1, for_it_0:for_it_0+8] (exclusive range).
         # This should be performed only for arrays.
         for inner_state in inner_sdfg.all_states():
-            # Skip the data data that are still scalar and source nodes
             array_data = {n.data for _, n in array_source_nodes}.union({n.data for _, n in array_sink_nodes})
+            readwrite_data = set()
+            for n in inner_state.nodes():
+                if (isinstance(n, dace.nodes.AccessNode) and inner_state.in_degree(n) > 0
+                        and inner_state.out_degree(n) > 0 and inner_state.sdfg.arrays[n.data].transient is False):
+                    readwrite_data.add(n.data)
+            for rw in readwrite_data:
+                array_data.add(rw)
             edges_to_replace = {
                 edge
                 for edge in inner_state.edges()
@@ -1364,7 +1369,9 @@ class Vectorize(ppl.Pass):
                         if has_only_states_or_single_block_with_break_only(nsdfg.sdfg):
                             pass
                         else:
-                            print(f"Nested SDFG inside map nodes other than states, of the if blocks do not consist only of breaks")
+                            print(
+                                f"Nested SDFG inside map nodes other than states, of the if blocks do not consist only of breaks"
+                            )
                             continue
 
                 if not no_other_subset(state, map_entry):
