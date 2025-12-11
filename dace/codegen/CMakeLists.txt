@@ -562,12 +562,12 @@ endif()
 
 include("targets/mlir/mlir.cmake")
 
-# Set C++ standard to C++17
-set_property(TARGET ${DACE_PROGRAM_NAME} PROPERTY CXX_STANDARD 17)
-
 # Create DaCe library file
 add_library(${DACE_PROGRAM_NAME} SHARED ${DACE_CPP_FILES} ${DACE_OBJECTS})
 target_link_libraries(${DACE_PROGRAM_NAME} PUBLIC ${DACE_LIBS})
+
+# Set C++ standard to C++17
+set_property(TARGET ${DACE_PROGRAM_NAME} PROPERTY CXX_STANDARD 17)
 
 # Add additional required files
 if(DACE_ENABLE_INTELFPGA)
