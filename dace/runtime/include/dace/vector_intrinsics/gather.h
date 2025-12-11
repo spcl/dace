@@ -1,6 +1,14 @@
 #pragma once
 
-#include <immintrin.h>
+
+#if defined(__AVX512F__) || defined(__AVX2__)
+  #include <immintrin.h>
+#elif defined(__ARM_FEATURE_SVE)
+  #include <arm_sve.h>
+#elif defined(__ARM_NEON)
+  #include <arm_neon.h>
+#endif
+
 #include <stdint.h>
 
 void gather_double(const double *__restrict__ A,
@@ -32,8 +40,56 @@ void gather_double(const double *__restrict__ A,
         __m256d vdata = _mm256_i32gather_pd(&A[i], vindex, 4);        // gather 4 doubles
         _mm256_storeu_pd(&B[i], vdata);                                // store result
     }
-#else
+#elif defined(__ARM_FEATURE_SVE)
+    // ---------------------------
+    // ARM SVE version (true gather)
+    // ---------------------------
+    int64_t i = 0;
+    while (i < length) {
+        // Predicate for active lanes (b64 because we use int64/double)
+        svbool_t pg = svwhilelt_b64(i, length);
 
-    for (int i = 0; i < length; ++i) B[i] = A[idx[i]];
+        // Load indices idx[i .. i+vl-1]
+        svint64_t vindex = svld1_s64(pg, &idx[i]);
+
+        // Gather: interprets vindex as element indices into A
+        svfloat64_t vdata = svld1_gather_s64index_f64(pg, A, vindex);
+
+        // Store back to B[i ..]
+        svst1_f64(pg, &B[i], vdata);
+
+        i += svcntd(); // advance by vector-length in doubles
+    }
+
+#elif defined(__ARM_NEON)
+    // ---------------------------
+    // ARM NEON version (emulated gather)
+    // NEON has no general indexed gather; we do scalar loads but
+    // pack them into vectors in chunks of 2 doubles.
+    // ---------------------------
+    int64_t i = 0;
+
+    // Process pairs with NEON
+    for (; i + 1 < length; i += 2) {
+        int64_t i0 = idx[i];
+        int64_t i1 = idx[i + 1];
+
+        // Load the two scattered elements
+        float64x2_t vdata = { A[i0], A[i1] };
+        vst1q_f64(&B[i], vdata);
+    }
+
+    // Handle tail element (if length is odd)
+    for (; i < length; ++i) {
+        B[i] = A[idx[i]];
+    }
+
+#else
+    // ---------------------------
+    // Scalar fallback
+    // ---------------------------
+    for (int64_t i = 0; i < length; ++i) {
+        B[i] = A[idx[i]];
+    }
 #endif
 }
