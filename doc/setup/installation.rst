@@ -14,7 +14,7 @@ Most dependencies will be resolved when the package is installed with ``pip`` or
 however, it requires two more runtime dependencies to be installed and available in the ``PATH`` environment variable
 (if not, see :ref:`config` for how to configure different compiler paths):
 
- * A C++14-capable compiler (e.g., gcc 5.3+)
+ * A C++20-capable compiler (e.g., gcc 10+)
  * CMake 3.15 or newer. *Note: if CMake cannot be found or is too old, pip will try to install a version but it sometimes fails.*
 
 
