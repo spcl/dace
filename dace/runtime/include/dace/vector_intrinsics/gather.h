@@ -22,7 +22,7 @@ void gather_double(const double *__restrict__ A,
 if (length >= 8){
     for (int64_t i = 0; i < length; i+= 8){
         __m512i vindex = _mm512_loadu_si512((__m512i*)&idx[i]);       // load 8 int64 indices
-        __m512d vdata = _mm512_i64gather_pd(vindex, &A[i], 8);        // gather 8 doubles
+        __m512d vdata = _mm512_i64gather_pd(vindex, A, 8);        // gather 8 doubles
         _mm512_storeu_pd(&B[i], vdata);                                // store result
     }
 } else {
@@ -44,7 +44,7 @@ if (length >= 4){
         }
 
         __m128i vindex = _mm_loadu_si128((__m128i*)idx32);        // load 4 int32 indices
-        __m256d vdata = _mm256_i32gather_pd(&A[i], vindex, 4);        // gather 4 doubles
+        __m256d vdata = _mm256_i32gather_pd(A, vindex, 4);        // gather 4 doubles
         _mm256_storeu_pd(&B[i], vdata);                                // store result
     }
 } else {
