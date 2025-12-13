@@ -5,7 +5,7 @@ import csv
 import numpy as np
 
 
-def write_runtime(name, variant, runtime_us, vlen=None, cpy=None, output_dir="."):
+def write_runtime(name, variant, runtime_us, vlen=None, cpy=None, output_dir=".", filename=None):
     """
     Write runtime measurements to a CSV file.
 
@@ -45,7 +45,11 @@ def write_runtime(name, variant, runtime_us, vlen=None, cpy=None, output_dir="."
     full_name = f"{name}_{variant_name}"
 
     # Output file path
-    output_file = os.path.join(output_dir, f"{name}_runtimes.csv")
+    if filename is None:
+        output_file = os.path.join(output_dir, f"{name}_runtimes.csv")
+    else:
+        output_file = os.path.join(output_dir, f"{filename}.csv")
+
 
     # Check if file exists and has content to determine if we need to write header
     file_exists = os.path.isfile(output_file)

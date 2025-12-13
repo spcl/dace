@@ -12,7 +12,7 @@ def sort_tasklets_by_number(tasklets):
     """
     Sort tasklets with labels of the form 'assign_<number>' by the numeric part.
     """
-    pattern = re.compile(r"^assign_(\d+)$")
+    pattern = re.compile(r"^a_(\d+)$")
 
     def get_number(tasklet):
         m = pattern.match(tasklet.label)
@@ -25,7 +25,7 @@ def sort_tasklets_by_number(tasklets):
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
-class DetectGather(ppl.Pass):
+class DetectScatter(ppl.Pass):
     # This pass is testes as part of the vectorization pipeline
     CATEGORY: str = 'Vectorization'
 
@@ -38,10 +38,10 @@ class DetectGather(ppl.Pass):
     def depends_on(self):
         return {}
 
-    gather_template = """
+    scatter_template = """
 {{
 int64_t idx[{vector_length}] = {{ {initializer_values} }};
-gather_double(_in, idx, _out, {vector_length});
+scatter_double(_in, idx, _out, {vector_length});
 }}
 """
 
@@ -50,14 +50,14 @@ gather_double(_in, idx, _out, {vector_length});
         for state in sdfg.all_states():
             for node in state.nodes():
                 if isinstance(node, nodes.AccessNode) and node.data.endswith("_packed"):
-                    # If all inputs are tasklets of "_assign_X then we have a gather load"
-                    ies = {ie for ie in state.in_edges(node)}
-                    srcs = {ie.src for ie in ies}
+                    # If all inputs are tasklets of "_assign_X then we have a scatter store"
+                    oes = {oe for oe in state.out_edges(node)}
+                    dsts = {oe.dst for oe in oes}
 
                     # Only consider edges from Tasklets
-                    all_tasklet_srcs = all({isinstance(s, nodes.Tasklet) for s in srcs})
-                    tasklet_srcs = {s for s in srcs if isinstance(s, nodes.Tasklet)}
-                    if not all_tasklet_srcs:
+                    all_tasklet_dsts = all({isinstance(s, nodes.Tasklet) for s in dsts})
+                    tasklet_dsts = {s for s in dsts if isinstance(s, nodes.Tasklet)}
+                    if not all_tasklet_dsts:
                         continue
 
                     # dtypes should be float64
@@ -66,9 +66,9 @@ gather_double(_in, idx, _out, {vector_length});
 
                     # Extract numbers from labels of the form "assign_X"
                     numbers = []
-                    pattern = re.compile(r"^assign_(\d+)$")
+                    pattern = re.compile(r"^a_(\d+)$")
                     all_match = True
-                    for t in tasklet_srcs:
+                    for t in tasklet_dsts:
                         m = pattern.match(t.label)
                         if m is None:
                             all_match = False
@@ -80,7 +80,7 @@ gather_double(_in, idx, _out, {vector_length});
 
                     # Check numbers form a contiguous sequence 0..N-1
                     if set(numbers) == set(range(len(numbers))):
-                        print(f"Gather load detected for node {node.data}, tasklets: {numbers}")
+                        print(f"Scatter store detected for node {node.data}, tasklets: {numbers}")
                     else:
                         # Numbers are not contiguous 0..N-1
                         continue
@@ -90,15 +90,15 @@ gather_double(_in, idx, _out, {vector_length});
                     # All assign tasklets need to have 1 in edge
                     idx_data = set()
                     idx_data_and_subset = list()
-                    tasklet_srcs_sorted = sort_tasklets_by_number(tasklet_srcs)
-                    print(tasklet_srcs_sorted)
-                    for src in tasklet_srcs_sorted:
-                        src_in_edges = state.in_edges(src)
-                        if len(src_in_edges) != 1:
+                    tasklet_dsts_sorted = sort_tasklets_by_number(tasklet_dsts)
+                    print(tasklet_dsts_sorted)
+                    for dst in tasklet_dsts_sorted:
+                        dst_in_edges = state.out_edges(dst)
+                        if len(dst_in_edges) != 1:
                             continue
-                        src_in_edge = src_in_edges[0]
-                        data = src_in_edge.data.data
-                        subset = src_in_edge.data.subset
+                        dst_in_edge = dst_in_edges[0]
+                        data = dst_in_edge.data.data
+                        subset = dst_in_edge.data.subset
                         idx_data_and_subset.append((data, subset))
                         idx_data.add(data)
 
@@ -109,28 +109,25 @@ gather_double(_in, idx, _out, {vector_length});
                         continue
 
                     initializer_values = ", ".join([str(s) for d, s in idx_data_and_subset])
-                    gather_code = DetectGather.gather_template.format(initializer_values=initializer_values,
+                    scatter_code = DetectScatter.scatter_template.format(initializer_values=initializer_values,
                                                                       vector_length=vector_length)
 
                     # Get the array we are gathering from
-                    tasklet_srcs = set()
-                    for src in tasklet_srcs_sorted:
-                        tasklet_srcs = tasklet_srcs.union({ie.src for ie in state.in_edges(src)})
-                    assert len(tasklet_srcs) == 1
-                    indirect_src = tasklet_srcs.pop()
+                    tasklet_dsts = set()
+                    for dst in tasklet_dsts_sorted:
+                        tasklet_dsts = tasklet_dsts.union({oe.dst for oe in state.out_edges(dst)})
+                    assert len(tasklet_dsts) == 1
+                    indirect_dst = tasklet_dsts.pop()
 
-                    if not isinstance(indirect_src, dace.nodes.AccessNode):
-                        continue
-                    
                     # Remove scalar assignment tasklets
-                    for src in tasklet_srcs_sorted:
-                        state.remove_node(src)
+                    for dst in tasklet_dsts_sorted:
+                        state.remove_node(dst)
 
-                    t1 = state.add_tasklet("gather_load", {"_in"}, {"_out"}, gather_code, dace.dtypes.Language.CPP)
+                    t1 = state.add_tasklet("scatter_store", {"_in"}, {"_out"}, scatter_code, dace.dtypes.Language.CPP)
                     state.add_edge(
-                        indirect_src, None, t1, "_in",
-                        dace.memlet.Memlet.from_array(indirect_src.data, state.sdfg.arrays[indirect_src.data]))
-                    state.add_edge(t1, "_out", node, None,
+                        t1, "_out", indirect_dst, None,
+                        dace.memlet.Memlet.from_array(indirect_dst.data, state.sdfg.arrays[indirect_dst.data]))
+                    state.add_edge(node, None, t1, "_in", 
                                    dace.memlet.Memlet.from_array(node.data, state.sdfg.arrays[node.data]))
 
                     found_gathers += 1
@@ -145,5 +142,5 @@ gather_double(_in, idx, _out, {vector_length});
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> None:
         found_gathers = self._apply(sdfg)
         if found_gathers > 0:
-            sdfg.append_global_code('#include <stdint.h>\n#include "dace/vector_intrinsics/gather.h"')
+            sdfg.append_global_code('#include <stdint.h>\n#include "dace/vector_intrinsics/scatter.h"')
         sdfg.validate()
