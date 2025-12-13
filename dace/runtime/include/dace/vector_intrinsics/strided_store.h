@@ -37,7 +37,7 @@ if (length >= 8) {
 } else {
     // Scalar fallback
     for (int64_t i = 0; i < length; ++i) {
-        B[(i + lane) * stride] = A[i + lane];
+        B[i * stride] = A[i];
     }
 }
 #elif defined(__AVX2__)
@@ -51,7 +51,7 @@ if (length >= 4){
 } else {
     // Scalar fallback
     for (int64_t i = 0; i < length; ++i) {
-        B[(i + lane) * stride] = A[i + lane];
+        B[i * stride] = A[i];
     }
 }
 
