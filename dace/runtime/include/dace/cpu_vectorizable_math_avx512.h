@@ -13,9 +13,13 @@
   #define _dace_vectorize(width) _Pragma(STRINGIZE(omp simd))
 #endif
 
-
+#if defined(__AVX512F__)
 #include <immintrin.h>
+#endif
 
+#if !defined(__AVX512F__)
+# error Included the AVX512 header without support AVX512
+#endif 
 // --------------------------- vector_mult ---------------------------
 
 template<typename T, int vector_width>

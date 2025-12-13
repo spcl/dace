@@ -14,7 +14,6 @@
 #endif
 
 
-
 template<typename T, int vector_width>
 inline void vector_mult(T* __restrict__ c, const T* __restrict__ a, const T* __restrict__ b) {
     _dace_vectorize(vector_width)
