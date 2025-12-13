@@ -18,6 +18,7 @@ void strided_load_double(const double* __restrict__ A,
                          const int64_t length,
                          const int64_t stride) {
 #if defined(__AVX512F__)
+if (length >= 8){
     for (int64_t i = 0; i < length; i += 8) {
         int64_t idx_buf[8];
         int lane_count = 0;
@@ -35,8 +36,15 @@ void strided_load_double(const double* __restrict__ A,
             B[i + lane] = tmp[lane];
         }
     }
+} else {
+    // Scalar fallback
+    for (int64_t i = 0; i < length; ++i) {
+        B[i] = A[i * stride];
+    }
+}
 
 #elif defined(__AVX2__)
+if (length >= 4){
     for (int64_t i = 0; i < length; i += 4) {
         int64_t idx_buf[4];
         int lane_count = 0;
@@ -63,7 +71,12 @@ void strided_load_double(const double* __restrict__ A,
         for (int lane = 0; lane < lane_count; ++lane) {
             B[i + lane] = tmp[lane];
         }
+} else {
+    // Scalar fallback
+    for (int64_t i = 0; i < length; ++i) {
+        B[i] = A[i * stride];
     }
+}
 
 #elif defined(__ARM_FEATURE_SVE)
     int64_t i = 0;

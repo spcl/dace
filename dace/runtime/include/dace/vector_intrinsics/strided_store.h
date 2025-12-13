@@ -19,6 +19,7 @@ void strided_store_double(const double* __restrict__ A,
                           const int64_t length,
                           const int64_t stride) {
 #if defined(__AVX512F__)
+if (length >= 8) {
     for (int64_t i = 0; i < length; i += 8) {
         int64_t idx_buf[8];
         double  val_buf[8];
@@ -33,14 +34,26 @@ void strided_store_double(const double* __restrict__ A,
         __m512d vdata  = _mm512_loadu_pd(val_buf);
         _mm512_i64scatter_pd(B, vindex, vdata, 8);
     }
-
+} else {
+    // Scalar fallback
+    for (int64_t i = 0; i < length; ++i) {
+        B[(i + lane) * stride] = A[i + lane];
+    }
+}
 #elif defined(__AVX2__)
     // No scatter; scalar stores
+if (length >= 4){
     for (int64_t i = 0; i < length; i += 4) {
         for (int lane = 0; lane < 4 && (i + lane) < length; ++lane) {
             B[(i + lane) * stride] = A[i + lane];
         }
     }
+} else {
+    // Scalar fallback
+    for (int64_t i = 0; i < length; ++i) {
+        B[(i + lane) * stride] = A[i + lane];
+    }
+}
 
 #elif defined(__ARM_FEATURE_SVE)
     int64_t i = 0;

@@ -21,35 +21,48 @@ void scatter_double(const double* __restrict__ A,
                     const int64_t length) {
 #if defined(__AVX512F__)
     // True scatter for AVX-512
-    for (int64_t i = 0; i < length; i += 8) {
-        int64_t idx_buf[8];
-        double  val_buf[8];
-        int lane_count = 0;
+if (length >= 8){
+        for (int64_t i = 0; i < length; i += 8) {
+            int64_t idx_buf[8];
+            double  val_buf[8];
+            int lane_count = 0;
 
-        for (int lane = 0; lane < 8 && (i + lane) < length; ++lane) {
-            idx_buf[lane] = idx[i + lane];
-            val_buf[lane] = A[i + lane];
-            ++lane_count;
+            for (int lane = 0; lane < 8 && (i + lane) < length; ++lane) {
+                idx_buf[lane] = idx[i + lane];
+                val_buf[lane] = A[i + lane];
+                ++lane_count;
+            }
+
+            __m512i vindex = _mm512_loadu_si512((const __m512i*)idx_buf);
+            __m512d vdata  = _mm512_loadu_pd(val_buf);
+
+            // Scale = 8 bytes (sizeof(double))
+            _mm512_i64scatter_pd(B, vindex, vdata, 8);
+
+            // No need for special tail handling, already done in scalar filling.
         }
-
-        __m512i vindex = _mm512_loadu_si512((const __m512i*)idx_buf);
-        __m512d vdata  = _mm512_loadu_pd(val_buf);
-
-        // Scale = 8 bytes (sizeof(double))
-        _mm512_i64scatter_pd(B, vindex, vdata, 8);
-
-        // No need for special tail handling, already done in scalar filling.
+} else {
+    // Scalar fallback
+    for (int64_t i = 0; i < length; ++i) {
+        B[idx[i]] = A[i];
     }
-
+}
 #elif defined(__AVX2__)
     // AVX2 has no scatter; we just scalar-store per lane.
     // (We still group scalar ops in chunks of 4 for structure.)
+if (length >= 4){
     for (int64_t i = 0; i < length; i += 4) {
         for (int lane = 0; lane < 4 && (i + lane) < length; ++lane) {
             int64_t j = idx[i + lane];
             B[j] = A[i + lane];
         }
+    } 
+} else {
+    // Scalar fallback
+    for (int64_t i = 0; i < length; ++i) {
+        B[idx[i]] = A[i];
     }
+}
 
 #elif defined(__ARM_FEATURE_SVE)
     // True scatter using SVE

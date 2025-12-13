@@ -19,17 +19,24 @@ void gather_double(const double *__restrict__ A,
     // ---------------------------
     // AVX-512 version (8 doubles)
     // ---------------------------
+if (length >= 8){
     for (int64_t i = 0; i < length; i+= 8){
         __m512i vindex = _mm512_loadu_si512((__m512i*)&idx[i]);       // load 8 int64 indices
         __m512d vdata = _mm512_i64gather_pd(vindex, &A[i], 8);        // gather 8 doubles
         _mm512_storeu_pd(&B[i], vdata);                                // store result
     }
+} else {
+    for (int64_t i = 0; i < length; ++i) {
+        B[i] = A[idx[i]];
+    }
+}
 
 #elif defined(__AVX2__)
     // ---------------------------
     // AVX2 version (4 doubles, 32-bit indices)
     // ---------------------------
     // Convert int64_t indices to int32_t if safe
+if (length >= 4){
     for (int64_t i = 0; i < length; i+= 4){
         int32_t idx32[4];
         for (int i = 0; i < 4; ++i) {
@@ -40,6 +47,11 @@ void gather_double(const double *__restrict__ A,
         __m256d vdata = _mm256_i32gather_pd(&A[i], vindex, 4);        // gather 4 doubles
         _mm256_storeu_pd(&B[i], vdata);                                // store result
     }
+} else {
+    for (int64_t i = 0; i < length; ++i) {
+        B[i] = A[idx[i]];
+    }
+}
 #elif defined(__ARM_FEATURE_SVE)
     // ---------------------------
     // ARM SVE version (true gather)
