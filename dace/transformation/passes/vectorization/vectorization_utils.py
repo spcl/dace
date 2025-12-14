@@ -3267,6 +3267,7 @@ def add_copies_before_and_after_nsdfg(
     # TODO: Fix ice supersaturation case
     skip.add("zqxfg")
     skip.add("zsolqb")
+    skip.add("zsolqa")
 
     movable_arrays = set()
     unmovable_arrays = dict()
