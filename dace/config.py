@@ -178,6 +178,25 @@ class _ConfigData(threading.local):
         with open(filename, 'r') as f:
             self._config_metadata = yaml.load(f.read(), Loader=yaml.SafeLoader)
 
+    def extend(self, schema_filename: str):
+        """
+        Extends the current configuration schema with another schema from file.
+
+        :param schema_filename: The schema file to load.
+        """
+        with open(schema_filename, 'r') as f:
+            new_metadata = yaml.load(f.read(), Loader=yaml.SafeLoader)
+
+        def merge_dicts(d1: Dict[str, Any], d2: Dict[str, Any]):
+            for k, v in d2.items():
+                if k in d1 and isinstance(d1[k], dict) and isinstance(v, dict):
+                    merge_dicts(d1[k], v)
+                else:
+                    d1[k] = v
+
+        merge_dicts(self._config_metadata['required'], new_metadata['required'])
+        _add_defaults(self._config, new_metadata['required'])
+
     def save(self, path: Optional[str] = None, all: bool = False, file: Optional[io.FileIO] = None):
         if path is None and file is None:
             path = self._cfg_filename
@@ -322,6 +341,15 @@ class Config(object):
         Returns the current configuration file path.
         """
         return Config._data.cfg_filename()
+
+    @staticmethod
+    def extend(schema_filename: str):
+        """
+        Extends the current configuration schema with another schema from file.
+
+        :param schema_filename: The schema file to load.
+        """
+        return Config._data.extend(schema_filename=schema_filename)
 
     @staticmethod
     def load(filename: Optional[str] = None, file: Optional[io.FileIO] = None):
