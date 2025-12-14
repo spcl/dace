@@ -922,6 +922,7 @@ def dace_s2244(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64
         a[LEN_1D -1] = b[LEN_1D-2] + e[LEN_1D-2]
         for i in range(LEN_1D - 1):
             a[i] = b[i] + c[i]
+        
 """
 @dace.program
 def dace_s2244(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D], e: dace.float64[LEN_1D]):
@@ -1016,14 +1017,6 @@ def dace_s235(a: dace.float64[LEN_2D], b: dace.float64[LEN_2D], c: dace.float64[
             for j in range(1, LEN_2D):
                 aa[j, i] = aa[j - 1, i] + bb[j, i] * a[i]
 
-
-@dace.program
-def dace_s241(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D], d: dace.float64[LEN_1D]):
-    outer = 2 * ITERATIONS
-    for nl in range(outer):
-        for i in range(LEN_1D - 1):
-            a[i] = b[i] * c[i] * d[i]
-            b[i] = a[i] * a[i + 1] * d[i]
 
 
 @dace.program
