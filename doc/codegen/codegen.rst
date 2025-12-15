@@ -132,8 +132,7 @@ The code generator uses a thin C++ runtime for support. The folder, which contai
 be found in the ``dace/runtime`` folder. The ``dace.h`` header file is the point of entry for the runtime, and it includes all the other
 necessary headers. The runtime is used for:
 
-  * **Target-specific runtime functions**: Header files inside the ``cuda``, ``intel_fpga``, and ``xilinx`` folders contain
-    GPU (CUDA/HIP), Intel FPGA, and Xilinx-specific functions, respectively.
+  * **Target-specific runtime functions**: Header files inside the ``cuda`` folder contains GPU (CUDA/HIP) specific functions.
   * Memory management
   * **Profiling**: ``perf/reporting.h`` contains functions that create :ref:`instrumentation reports <instrumentation>`,
     ``perf/papi.h`` contains functions that use the `PAPI <http://icl.cs.utk.edu/papi/>`_ library to measure performance counters.
@@ -177,20 +176,6 @@ For example, if we want to debug the code generation of a specific node, we can 
 and add a condition to it, such as ``node.label == "my_node"``. This will stop the code generation process when the
 code generator reaches the node with the label ``my_node``. This can be used to debug the code generation of a specific
 node, or to debug the code generation of a specific node type (e.g., ``isinstance(node, dace.nodes.MapEntry)``).
-
-
-FPGA Code Generation
---------------------
-The FPGA Code Generation emits High-Level Synthesis device code and all the host code required to target either Xilinx or Intel FPGAs.
-
-The FPGA code generation is implemented by different modules, organized hierarchically:
-
-    * a generic FPGA backend (``dace/codegen/target/fpga.py``) is in charge of traversing the SDFG as shown in :ref:`codegen_how_it_works`;
-    * two lower level components that are in charge of generating device-specific code for Vivado HLS (``dace/codegen/target/xilinx.py``) or Intel FPGA OpenCL (``dace/codegen/target/intel_fpga.py``).
-
-Vendor-specific semantics and syntax are handled by the two lower-level components triggered by the generic FPGA backend.
-
-The FPGA code generation relies on the `HLSLIB <https://github.com/definelicht/hlslib>`_ external library to facilitate host/device interaction and HLS code generation.
 
 
 Maps: pipelined and unrolled parallelism

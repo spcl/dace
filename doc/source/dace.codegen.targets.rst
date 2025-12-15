@@ -44,30 +44,6 @@ dace.codegen.targets.target module
    :undoc-members:
    :show-inheritance:
 
-dace.codegen.targets.fpga module
---------------------------------
-
-.. automodule:: dace.codegen.targets.fpga
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-dace.codegen.targets.xilinx module
-----------------------------------
-
-.. automodule:: dace.codegen.targets.xilinx
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-dace.codegen.targets.intel_fpga module
---------------------------------------
-
-.. automodule:: dace.codegen.targets.intel_fpga
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
 
 Module contents
 ---------------
