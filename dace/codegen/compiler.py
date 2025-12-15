@@ -189,9 +189,11 @@ def configure_and_compile(program_folder, program_name=None, output_stream=None)
 
     # Generate CMake options for each compiler
     libraries = set()
+    cmake_files = []
     for target_name, target in sorted(targets.items()):
         try:
             cmake_command += target.cmake_options()
+            cmake_files += target.cmake_files()
             libraries |= unique_flags(Config.get("compiler", target_name, "libs"))
         except KeyError:
             pass
@@ -199,7 +201,7 @@ def configure_and_compile(program_folder, program_name=None, output_stream=None)
             raise cgx.CompilerConfigurationError(str(ex))
 
     cmake_command.append("-DDACE_LIBS=\"{}\"".format(" ".join(sorted(libraries))))
-
+    cmake_command.append(f"-DDACE_CMAKE_FILES=\"{';'.join(cmake_files)}\"")
     cmake_command.append(f"-DCMAKE_BUILD_TYPE={Config.get('compiler', 'build_type')}")
 
     # Set linker and linker arguments, iff they have been specified

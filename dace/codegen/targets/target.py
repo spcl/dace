@@ -39,6 +39,14 @@ class TargetCodeGenerator(object):
         """
         return []
 
+    @staticmethod
+    def cmake_files() -> List[str]:
+        """
+        Returns a list of CMake file paths that should be included
+        during the CMake configuration step.
+        """
+        return []
+
     def preprocess(self, sdfg: SDFG) -> None:
         """
         Called before code generation on any target that will be dispatched.

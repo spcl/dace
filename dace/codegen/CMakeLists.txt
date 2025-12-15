@@ -8,6 +8,7 @@ set(DACE_SRC_DIR "" CACHE STRING "Root directory of generated code files")
 set(DACE_FILES "" CACHE STRING "List of host code files relative to the root of the source directory")
 set(DACE_LIBS "" CACHE STRING "Extra libraries")
 set(DACE_CPP_STANDARD "20" CACHE STRING "C++ standard to use for compilation (e.g., 14, 17, 20, 23, 26)")
+set(DACE_CMAKE_FILES "" CACHE STRING "List of additional CMake files to include")
 
 # CUDA
 set(DACE_CUDA_ARCHITECTURES_DEFAULT "" CACHE STRING "Default CUDA architectures in case native not found")
@@ -240,7 +241,10 @@ if(DACE_ENABLE_HIP)
   set(DACE_OBJECTS ${DACE_OBJECTS} ${DACE_HIP_FILES})
 endif() # DACE_ENABLE_HIP
 
-include("targets/mlir/mlir.cmake")
+# Additional target-specific CMake files
+foreach(CMAKE_FILE ${DACE_CMAKE_FILES})
+  include(${CMAKE_FILE})
+endforeach()
 
 # Create DaCe library file
 add_library(${DACE_PROGRAM_NAME} SHARED ${DACE_CPP_FILES} ${DACE_OBJECTS})
