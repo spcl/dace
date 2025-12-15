@@ -265,68 +265,6 @@ _CTYPES = {
     numpy.complex128: "dace::complex128",
 }
 
-# Translation of types to OpenCL types
-_OCL_TYPES = {
-    None: "void",
-    int: "int",
-    float: "float",
-    bool: "bool",
-    numpy.bool_: "bool",
-    numpy.int8: "char",
-    numpy.int16: "short",
-    numpy.int32: "int",
-    numpy.intc: "int",
-    numpy.int64: "long",
-    numpy.uint8: "uchar",
-    numpy.uint16: "ushort",
-    numpy.uint32: "uint",
-    numpy.uint64: "ulong",
-    numpy.uintc: "uint",
-    numpy.float32: "float",
-    numpy.float64: "double",
-    numpy.complex64: "complex float",
-    numpy.complex128: "complex double",
-}
-
-_CTYPES_TO_OCLTYPES = {
-    "void": "void",
-    "int": "int",
-    "float": "float",
-    "double": "double",
-    "dace::complex64": "complex float",
-    "dace::complex128": "complex double",
-    "bool": "bool",
-    "char": "char",
-    "short": "short",
-    "int": "int",
-    "int64_t": "long",
-    "uint8_t": "uchar",
-    "uint16_t": "ushort",
-    "uint32_t": "uint",
-    "dace::uint": "uint",
-    "uint64_t": "ulong",
-    "dace::float16": "half",
-}
-
-# Translation of types to OpenCL vector types
-_OCL_VECTOR_TYPES = {
-    numpy.int8: "char",
-    numpy.uint8: "uchar",
-    numpy.int16: "short",
-    numpy.uint16: "ushort",
-    numpy.int32: "int",
-    numpy.intc: "int",
-    numpy.uint32: "uint",
-    numpy.uintc: "uint",
-    numpy.int64: "long",
-    numpy.uint64: "ulong",
-    numpy.float16: "half",
-    numpy.float32: "float",
-    numpy.float64: "double",
-    numpy.complex64: "complex float",
-    numpy.complex128: "complex double",
-}
-
 # Translation of types to ctypes types
 _FFI_CTYPES = {
     None: ctypes.c_void_p,
@@ -501,10 +439,6 @@ class typeclass(object):
     @property
     def veclen(self):
         return 1
-
-    @property
-    def ocltype(self):
-        return _OCL_TYPES[self.type]
 
     def as_arg(self, name):
         return self.ctype + ' ' + name
@@ -703,10 +637,6 @@ class pointer(typeclass):
     def base_type(self):
         return self._typeclass
 
-    @property
-    def ocltype(self):
-        return f"{self.base_type.ocltype}*"
-
 
 class vector(typeclass):
     """
@@ -733,14 +663,6 @@ class vector(typeclass):
     @property
     def ctype(self):
         return "dace::vec<%s, %s>" % (self.vtype.ctype, self.veclen)
-
-    @property
-    def ocltype(self):
-        if self.veclen > 1:
-            vectype = _OCL_VECTOR_TYPES[self.type]
-            return f"{vectype}{self.veclen}"
-        else:
-            return self.base_type.ocltype
 
     @property
     def ctype_unaligned(self):
@@ -1361,9 +1283,6 @@ _ALLOWED_MODULES = {
     "math": "dace::math::",
     "cmath": "dace::cmath::",
 }
-
-# Lists allowed modules and maps them to OpenCL
-_OPENCL_ALLOWED_MODULES = {"builtins": "", "dace": "", "math": ""}
 
 
 def ismodule(var):
