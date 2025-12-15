@@ -29,7 +29,6 @@ from dace.frontend.python.astutils import ExtNodeTransformer, rname, unparse
 from dace.sdfg import nodes, graph as gr, utils, propagation
 from dace.properties import LambdaProperty
 from dace.sdfg import SDFG, is_devicelevel_gpu, SDFGState
-from dace.codegen.targets import fpga
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
 
 if TYPE_CHECKING:
@@ -104,25 +103,21 @@ def copy_expr(
     if not defined_types:
         defined_types = dispatcher.defined_vars.get(ptrname, is_global=is_global)
     def_type, _ = defined_types
-    if fpga.is_fpga_array(data_desc):
-        # get conf flag
-        decouple_array_interfaces = Config.get_bool("compiler", "xilinx", "decouple_array_interfaces")
-
-        # TODO: Study structures on FPGAs. Should probably use 'name' instead of 'data_name' here.
-        expr = fpga.fpga_ptr(
-            data_name,
-            data_desc,
-            sdfg,
-            s,
-            is_write,
-            dispatcher,
-            0,
-            def_type == DefinedType.ArrayInterface
-            # If this is a view, it has already been renamed
-            and not isinstance(data_desc, data.View),
-            decouple_array_interfaces=decouple_array_interfaces)
-    else:
-        expr = ptr(name, data_desc, sdfg, dispatcher.frame)
+    # if fpga.is_fpga_array(data_desc):
+    #     # TODO: Study structures on FPGAs. Should probably use 'name' instead of 'data_name' here.
+    #     expr = fpga.fpga_ptr(
+    #         data_name,
+    #         data_desc,
+    #         sdfg,
+    #         s,
+    #         is_write,
+    #         dispatcher,
+    #         0,
+    #         def_type == DefinedType.ArrayInterface
+    #         # If this is a view, it has already been renamed
+    #         and not isinstance(data_desc, data.View))
+    # else:
+    expr = ptr(name, data_desc, sdfg, dispatcher.frame)
 
     add_offset = offset_cppstr != "0"
 
@@ -307,7 +302,7 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
     typedef = conntype.ctype
     offset = cpp_offset_expr(desc, memlet.subset)
     offset_expr = '[' + offset + ']'
-    is_scalar = not isinstance(conntype, dtypes.pointer) and not fpga.is_fpga_array(desc)
+    is_scalar = not isinstance(conntype, dtypes.pointer)  # and not fpga.is_fpga_array(desc)
     ptrname = ptr(memlet.data, desc, sdfg, dispatcher.frame)
     ref = ''
 
@@ -325,20 +320,20 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
         defined_types = dispatcher.defined_vars.get(ptrname, ancestor)
     defined_type, defined_ctype = defined_types
 
-    if fpga.is_fpga_array(desc):
+    # if fpga.is_fpga_array(desc):
 
-        datadef = fpga.fpga_ptr(memlet.data,
-                                desc,
-                                sdfg,
-                                memlet.subset,
-                                is_write,
-                                dispatcher,
-                                ancestor,
-                                defined_type == DefinedType.ArrayInterface,
-                                decouple_array_interfaces=decouple_array_interfaces)
+    #     datadef = fpga.fpga_ptr(memlet.data,
+    #                             desc,
+    #                             sdfg,
+    #                             memlet.subset,
+    #                             is_write,
+    #                             dispatcher,
+    #                             ancestor,
+    #                             defined_type == DefinedType.ArrayInterface,
+    #                             decouple_array_interfaces=decouple_array_interfaces)
 
-    else:
-        datadef = ptr(memlet.data, desc, sdfg, dispatcher.frame)
+    # else:
+    datadef = ptr(memlet.data, desc, sdfg, dispatcher.frame)
 
     def make_const(expr: str) -> str:
         # check whether const has already been added before
@@ -569,8 +564,8 @@ def cpp_offset_expr(d: data.Data, subset_in: subsets.Subset, offset=None, packed
         :param indices: A tuple of indices to use for expression.
         :return: A string in C++ syntax with the correct offset
     """
-    if fpga.is_multibank_array_with_distributed_index(d):
-        subset_in = fpga.modify_distributed_subset(subset_in, 0)
+    # if fpga.is_multibank_array_with_distributed_index(d):
+    #     subset_in = fpga.modify_distributed_subset(subset_in, 0)
 
     # Offset according to parameters, then offset according to array
     if offset is not None:
@@ -615,17 +610,15 @@ def cpp_array_expr(sdfg,
         name = memlet.data
 
     if with_brackets:
-        if fpga.is_fpga_array(desc):
-            # get conf flag
-            decouple_array_interfaces = Config.get_bool("compiler", "xilinx", "decouple_array_interfaces")
-            # TODO: Study structures on FPGAs. Should probably use 'name' instead of 'memlet.data' here.
-            ptrname = fpga.fpga_ptr(memlet.data,
-                                    desc,
-                                    sdfg,
-                                    subset,
-                                    decouple_array_interfaces=decouple_array_interfaces)
-        else:
-            ptrname = ptr(name, desc, sdfg, codegen)
+        # if fpga.is_fpga_array(desc):
+        #     # get conf flag
+        #     # TODO: Study structures on FPGAs. Should probably use 'name' instead of 'memlet.data' here.
+        #     ptrname = fpga.fpga_ptr(memlet.data,
+        #                             desc,
+        #                             sdfg,
+        #                             subset)
+        # else:
+        ptrname = ptr(name, desc, sdfg, codegen)
         return "%s[%s]" % (ptrname, offset_cppstr)
     else:
         return offset_cppstr
@@ -666,18 +659,18 @@ def cpp_ptr_expr(sdfg,
         offset_cppstr = indices
     else:
         offset_cppstr = cpp_offset_expr(desc, s, o, indices=indices)
-    if fpga.is_fpga_array(desc):
-        dname = fpga.fpga_ptr(memlet.data,
-                              desc,
-                              sdfg,
-                              s,
-                              is_write,
-                              None,
-                              None,
-                              defined_type == DefinedType.ArrayInterface,
-                              decouple_array_interfaces=decouple_array_interface)
-    else:
-        dname = ptr(memlet.data, desc, sdfg, codegen)
+    # if fpga.is_fpga_array(desc):
+    #     dname = fpga.fpga_ptr(memlet.data,
+    #                           desc,
+    #                           sdfg,
+    #                           s,
+    #                           is_write,
+    #                           None,
+    #                           None,
+    #                           defined_type == DefinedType.ArrayInterface,
+    #                           decouple_array_interfaces=decouple_array_interface)
+    # else:
+    dname = ptr(memlet.data, desc, sdfg, codegen)
 
     if defined_type == DefinedType.Scalar:
         dname = '&' + dname
@@ -1105,7 +1098,8 @@ class InterstateEdgeUnparser(cppunparse.CPPUnparser):
 
         if target not in self.sdfg.arrays:
             # This could be an FPGA array whose name has been mangled
-            unqualified = fpga.unqualify_fpga_array_name(self.sdfg, target)
+            # unqualified = fpga.unqualify_fpga_array_name(self.sdfg, target)
+            unqualified = target
             desc = self.sdfg.arrays[unqualified]
             self.write(cpp_array_expr(self.sdfg, memlet, referenced_array=desc, codegen=self.codegen))
         else:
@@ -1129,7 +1123,6 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         self.constants = constants
         self.codegen = codegen
         self.allow_casts = True
-        self._decouple_array_interfaces = Config.get_bool("compiler", "xilinx", "decouple_array_interfaces")
 
     def visit_TopLevelExpr(self, node):
         # This is a DaCe shift, omit it
@@ -1256,21 +1249,20 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                                 cpp_array_expr(self.sdfg, memlet, codegen=self.codegen._frame),
                                 cppunparse.cppunparse(value, expr_semicolon=False),
                             ))
-                        else:
-                            array_interface_name = fpga.fpga_ptr(
-                                ptrname,
-                                desc,
-                                self.sdfg,
-                                memlet.dst_subset,
-                                True,
-                                None,
-                                None,
-                                True,
-                                decouple_array_interfaces=self._decouple_array_interfaces)
-                            newnode = ast.Name(
-                                id=f"{array_interface_name}"
-                                f"[{cpp_array_expr(self.sdfg, memlet, with_brackets=False, codegen=self.codegen._frame)}]"
-                                f" = {cppunparse.cppunparse(value, expr_semicolon=False)};")
+                        # else:
+                        #     array_interface_name = fpga.fpga_ptr(
+                        #         ptrname,
+                        #         desc,
+                        #         self.sdfg,
+                        #         memlet.dst_subset,
+                        #         True,
+                        #         None,
+                        #         None,
+                        #         True)
+                        #     newnode = ast.Name(
+                        #         id=f"{array_interface_name}"
+                        #         f"[{cpp_array_expr(self.sdfg, memlet, with_brackets=False, codegen=self.codegen._frame)}]"
+                        #         f" = {cppunparse.cppunparse(value, expr_semicolon=False)};")
 
                     return self._replace_assignment(newnode, node)
             except TypeError:  # cannot determine truth value of Relational

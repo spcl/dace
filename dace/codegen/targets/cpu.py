@@ -20,7 +20,6 @@ from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope, is_array_s
 from dace.sdfg.scope import is_devicelevel_gpu, is_in_scope
 from dace.sdfg.validation import validate_memlet_data
 from typing import TYPE_CHECKING, Optional, Tuple, Union
-from dace.codegen.targets import fpga
 
 if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
@@ -1103,18 +1102,8 @@ class CPUCodeGen(TargetCodeGenerator):
                             if deftype == DefinedType.ArrayInterface:
                                 continue
                             array_expr = cpp.cpp_array_expr(sdfg, memlet, with_brackets=False, codegen=self._frame)
-                            decouple_array_interfaces = Config.get_bool("compiler", "xilinx",
-                                                                        "decouple_array_interfaces")
                             ptr_str = fpga.fpga_ptr(  # we are on fpga, since this is array interface
-                                memlet.data,
-                                desc,
-                                sdfg,
-                                memlet.subset,
-                                True,
-                                None,
-                                None,
-                                True,
-                                decouple_array_interfaces=decouple_array_interfaces)
+                                memlet.data, desc, sdfg, memlet.subset, True, None, None, True)
                             write_expr = f"*({ptr_str} + {array_expr}) = {in_local_name};"
                         else:
                             desc_dtype = desc.dtype
@@ -1287,17 +1276,15 @@ class CPUCodeGen(TargetCodeGenerator):
             types = self._dispatcher.defined_vars.get(ptr, is_global=True)
         var_type, ctypedef = types
 
-        if fpga.is_fpga_array(desc):
-            decouple_array_interfaces = Config.get_bool("compiler", "xilinx", "decouple_array_interfaces")
-            ptr = fpga.fpga_ptr(memlet.data,
-                                desc,
-                                sdfg,
-                                memlet.subset,
-                                output,
-                                self._dispatcher,
-                                0,
-                                var_type == DefinedType.ArrayInterface and not isinstance(desc, data.View),
-                                decouple_array_interfaces=decouple_array_interfaces)
+        # if fpga.is_fpga_array(desc):
+        #     ptr = fpga.fpga_ptr(memlet.data,
+        #                         desc,
+        #                         sdfg,
+        #                         memlet.subset,
+        #                         output,
+        #                         self._dispatcher,
+        #                         0,
+        #                         var_type == DefinedType.ArrayInterface and not isinstance(desc, data.View))
 
         result = ''
         expr = (cpp.cpp_array_expr(sdfg, memlet, with_brackets=False, codegen=self._frame)
@@ -1653,11 +1640,11 @@ class CPUCodeGen(TargetCodeGenerator):
         # Connectors that are both input and output share the same name
         inout = set(node.in_connectors.keys() & node.out_connectors.keys())
 
-        for _, _, _, vconn, memlet in state.all_edges(node):
-            if (memlet.data in sdfg.arrays and fpga.is_multibank_array(sdfg.arrays[memlet.data])
-                    and fpga.parse_location_bank(sdfg.arrays[memlet.data])[0] == "HBM"):
+        # for _, _, _, vconn, memlet in state.all_edges(node):
+        #     if (memlet.data in sdfg.arrays and fpga.is_multibank_array(sdfg.arrays[memlet.data])
+        #             and fpga.parse_location_bank(sdfg.arrays[memlet.data])[0] == "HBM"):
 
-                raise NotImplementedError("HBM in nested SDFGs not supported in non-FPGA code.")
+        #         raise NotImplementedError("HBM in nested SDFGs not supported in non-FPGA code.")
 
         memlet_references = []
         for _, _, _, vconn, in_memlet in sorted(state.in_edges(node), key=lambda e: e.dst_conn or ''):

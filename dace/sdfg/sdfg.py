@@ -864,7 +864,7 @@ class SDFG(ControlFlowRegion):
         :param cpp_code: The code to set.
         :param location: The file/backend in which to generate the code.
                          Options are None (all files), "frame", "openmp",
-                         "cuda", "xilinx", "intel_fpga", or any code generator
+                         "cuda", or any code generator
                          name.
         """
         self.global_code[location] = CodeBlock(cpp_code, dace.dtypes.Language.CPP)
@@ -877,7 +877,7 @@ class SDFG(ControlFlowRegion):
         :param cpp_code: The code to set.
         :param location: The file/backend in which to generate the code.
                          Options are None (all files), "frame", "openmp",
-                         "cuda", "xilinx", "intel_fpga", or any code generator
+                         "cuda", or any code generator
                          name.
         """
         self.init_code[location] = CodeBlock(cpp_code, dtypes.Language.CPP)
@@ -890,7 +890,7 @@ class SDFG(ControlFlowRegion):
         :param cpp_code: The code to set.
         :param location: The file/backend in which to generate the code.
                          Options are None (all files), "frame", "openmp",
-                         "cuda", "xilinx", "intel_fpga", or any code generator
+                         "cuda", or any code generator
                          name.
         """
         self.exit_code[location] = CodeBlock(cpp_code, dtypes.Language.CPP)
@@ -903,7 +903,7 @@ class SDFG(ControlFlowRegion):
         :param cpp_code: The code to set.
         :param location: The file/backend in which to generate the code.
                          Options are None (all files), "frame", "openmp",
-                         "cuda", "xilinx", "intel_fpga", or any code generator
+                         "cuda", or any code generator
                          name.
         """
         if location not in self.global_code:
@@ -918,7 +918,7 @@ class SDFG(ControlFlowRegion):
         :param cpp_code: The code to append.
         :param location: The file/backend in which to generate the code.
                          Options are None (all files), "frame", "openmp",
-                         "cuda", "xilinx", "intel_fpga", or any code generator
+                         "cuda", or any code generator
                          name.
         """
         if location not in self.init_code:
@@ -933,7 +933,7 @@ class SDFG(ControlFlowRegion):
         :param cpp_code: The code to append.
         :param location: The file/backend in which to generate the code.
                          Options are None (all files), "frame", "openmp",
-                         "cuda", "xilinx", "intel_fpga", or any code generator
+                         "cuda", or any code generator
                          name.
         """
         if location not in self.exit_code:
@@ -948,7 +948,7 @@ class SDFG(ControlFlowRegion):
         :param cpp_code: The code to prepend.
         :param location: The file/backend in which to generate the code.
                          Options are None (all files), "frame", "openmp",
-                         "cuda", "xilinx", "intel_fpga", or any code generator
+                         "cuda", or any code generator
                          name.
         """
         if location not in self.exit_code:

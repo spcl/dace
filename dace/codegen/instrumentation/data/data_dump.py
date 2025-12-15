@@ -1,9 +1,8 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 from dace import data as dt, dtypes, registry, SDFG
-from dace.sdfg import nodes, is_devicelevel_gpu
+from dace.sdfg import nodes
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.instrumentation.provider import InstrumentationProvider
-from dace.sdfg.scope import is_devicelevel_fpga
 from dace.sdfg.state import ControlFlowRegion, SDFGState
 from dace.codegen import common
 from dace.codegen import cppunparse
@@ -132,10 +131,6 @@ class SaveProvider(InstrumentationProvider, DataInstrumentationProviderMixin):
                     outer_stream: CodeIOStream, inner_stream: CodeIOStream, global_stream: CodeIOStream):
         from dace.codegen.dispatcher import DefinedType  # Avoid import loop
 
-        if is_devicelevel_gpu(sdfg, state, node) or is_devicelevel_fpga(sdfg, state, node):
-            # Only run on host code
-            return
-
         condition_preamble, condition_postamble = '', ''
         condition: Optional[CodeBlock] = node.instrument_condition
         if condition is not None and not condition.as_string == '1':
@@ -247,10 +242,6 @@ class RestoreProvider(InstrumentationProvider, DataInstrumentationProviderMixin)
     def on_node_begin(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, node: nodes.AccessNode,
                       outer_stream: CodeIOStream, inner_stream: CodeIOStream, global_stream: CodeIOStream):
         from dace.codegen.dispatcher import DefinedType  # Avoid import loop
-
-        if is_devicelevel_gpu(sdfg, state, node) or is_devicelevel_fpga(sdfg, state, node):
-            # Only run on host code
-            return
 
         condition_preamble, condition_postamble = '', ''
         condition: Optional[CodeBlock] = node.instrument_condition

@@ -226,7 +226,6 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
     """
     # Avoid import loop
     from dace import data as dt
-    from dace.codegen.targets import fpga
     from dace.sdfg.scope import is_devicelevel_fpga, is_devicelevel_gpu
     from dace.sdfg.state import ConditionalBlock
 
@@ -330,32 +329,6 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
                     "Array %s cannot be both persistent/external and use Register as "
                     "storage type. Please use a different storage location." % name, sdfg, None)
 
-            # Check for valid bank assignments
-            try:
-                bank_assignment = fpga.parse_location_bank(desc)
-            except ValueError as e:
-                raise InvalidSDFGError(str(e), sdfg, None)
-            if bank_assignment is not None:
-                if bank_assignment[0] == "DDR" or bank_assignment[0] == "HBM":
-                    try:
-                        tmp = subsets.Range.from_string(bank_assignment[1])
-                    except SyntaxError:
-                        raise InvalidSDFGError(
-                            "Memory bank specifier must be convertible to subsets.Range"
-                            f" for array {name}", sdfg, None)
-                    try:
-                        low, high = fpga.get_multibank_ranges_from_subset(bank_assignment[1], sdfg)
-                    except ValueError as e:
-                        raise InvalidSDFGError(str(e), sdfg, None)
-                    if (high - low < 1):
-                        raise InvalidSDFGError(
-                            "Memory bank specifier must at least define one bank to be used"
-                            f" for array {name}", sdfg, None)
-                    if (high - low > 1 and (high - low != desc.shape[0] or len(desc.shape) < 2)):
-                        raise InvalidSDFGError(
-                            "Arrays that use a multibank access pattern must have the size of the first dimension equal"
-                            f" the number of banks and have at least 2 dimensions for array {name}", sdfg, None)
-
         # Check if SDFG is located within a GPU kernel
         context['in_gpu'] = is_devicelevel_gpu(sdfg, None, None)
         context['in_fpga'] = is_devicelevel_fpga(sdfg, None, None)
@@ -438,7 +411,6 @@ def validate_state(state: 'dace.sdfg.SDFGState',
     # Avoid import loops
     from dace import data as dt
     from dace import subsets as sbs
-    from dace.codegen.targets import fpga
     from dace.config import Config
     from dace.sdfg import SDFG
     from dace.sdfg import nodes as nd
@@ -609,17 +581,6 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 state_id,
                 nid,
             )
-
-        # Tasklets may only access 1 HBM bank at a time
-        if isinstance(node, nd.Tasklet):
-            for attached in state.all_edges(node):
-                if attached.data.data in sdfg.arrays:
-                    if fpga.is_multibank_array_with_distributed_index(sdfg.arrays[attached.data.data]):
-                        low, high, _ = attached.data.subset[0]
-                        if (low != high):
-                            raise InvalidSDFGNodeError(
-                                "Tasklets may only be directly connected"
-                                " to HBM-memlets accessing only one bank", sdfg, state_id, nid)
 
         # Connector tests
         ########################################
