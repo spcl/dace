@@ -1249,20 +1249,6 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                                 cpp_array_expr(self.sdfg, memlet, codegen=self.codegen._frame),
                                 cppunparse.cppunparse(value, expr_semicolon=False),
                             ))
-                        # else:
-                        #     array_interface_name = fpga.fpga_ptr(
-                        #         ptrname,
-                        #         desc,
-                        #         self.sdfg,
-                        #         memlet.dst_subset,
-                        #         True,
-                        #         None,
-                        #         None,
-                        #         True)
-                        #     newnode = ast.Name(
-                        #         id=f"{array_interface_name}"
-                        #         f"[{cpp_array_expr(self.sdfg, memlet, with_brackets=False, codegen=self.codegen._frame)}]"
-                        #         f" = {cppunparse.cppunparse(value, expr_semicolon=False)};")
 
                     return self._replace_assignment(newnode, node)
             except TypeError:  # cannot determine truth value of Relational

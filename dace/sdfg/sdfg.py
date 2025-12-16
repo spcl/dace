@@ -2846,21 +2846,6 @@ class SDFG(ControlFlowRegion):
                                    permissive=permissive,
                                    states=states)
 
-    def apply_fpga_transformations(self, states=None, validate=True, validate_all=False, permissive=False):
-        """ Applies a series of transformations on the SDFG for it to
-            generate FPGA code.
-
-            :note: This is an in-place operation on the SDFG.
-        """
-        # Avoiding import loops
-        from dace.transformation.interstate import FPGATransformSDFG
-
-        self.apply_transformations(FPGATransformSDFG,
-                                   validate=validate,
-                                   validate_all=validate_all,
-                                   permissive=permissive,
-                                   states=states)
-
     def expand_library_nodes(self, recursive=True):
         """
         Recursively expand all unexpanded library nodes in the SDFG,

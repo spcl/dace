@@ -27,9 +27,6 @@ from dace.libraries.blas.environments import intel_mkl as mkl, openblas
 # Enumerator
 from dace.transformation.estimator.enumeration import GreedyEnumerator
 
-# FPGA AutoOpt
-from dace.transformation.auto import fpga as fpga_auto_opt
-
 GraphViewType = Union[SDFG, SDFGState, gr.SubgraphView, ControlFlowRegion]
 
 
@@ -621,16 +618,6 @@ def auto_optimize(sdfg: SDFG,
     # Move Loops inside Maps when possible
     from dace.transformation.interstate import MoveLoopIntoMap
     sdfg.apply_transformations_repeated([MoveLoopIntoMap])
-
-    if device == dtypes.DeviceType.FPGA:
-        # apply FPGA Transformations
-        sdfg.apply_fpga_transformations()
-        fpga_auto_opt.fpga_global_to_local(sdfg)
-        fpga_auto_opt.fpga_rr_interleave_containers_to_banks(sdfg)
-
-        # Set all library nodes to expand to fast library calls
-        set_fast_implementations(sdfg, device)
-        return sdfg
 
     # Tiled WCR and streams
     for nsdfg in list(sdfg.all_sdfgs_recursive()):

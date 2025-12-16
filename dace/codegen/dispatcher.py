@@ -29,6 +29,7 @@ class DefinedType(aenum.AutoNumberEnum):
     Stream = ()  # A stream object moved by reference and accessed via a push/pop API
     StreamArray = ()  # An array of Streams
     FPGA_ShiftRegister = ()  # A shift-register object used in FPGA code generation
+    # TODO REMOVE ArrayInterface
     ArrayInterface = ()  # An object representing an interface to an array, used mostly in FPGA
 
 

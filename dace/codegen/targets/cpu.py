@@ -1092,19 +1092,6 @@ class CPUCodeGen(TargetCodeGenerator):
                         elif defined_type == DefinedType.Pointer and is_refset:
                             mname = cpp.ptr(memlet.data, desc, sdfg, self._frame)
                             write_expr = f"{mname} = {in_local_name};"
-                        elif (defined_type == DefinedType.ArrayInterface and not isinstance(desc, data.View)):
-                            # Special case: No need to write anything between
-                            # array interfaces going out
-                            try:
-                                deftype, _ = self._dispatcher.defined_vars.get(in_local_name)
-                            except KeyError:
-                                deftype = None
-                            if deftype == DefinedType.ArrayInterface:
-                                continue
-                            array_expr = cpp.cpp_array_expr(sdfg, memlet, with_brackets=False, codegen=self._frame)
-                            ptr_str = fpga.fpga_ptr(  # we are on fpga, since this is array interface
-                                memlet.data, desc, sdfg, memlet.subset, True, None, None, True)
-                            write_expr = f"*({ptr_str} + {array_expr}) = {in_local_name};"
                         else:
                             desc_dtype = desc.dtype
                             expr = cpp.cpp_array_expr(sdfg, memlet, codegen=self._frame)
