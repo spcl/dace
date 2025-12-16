@@ -334,7 +334,6 @@ class VectorizeBreak(ppl.Pass):
         for loop in loops:
             LoopToMap().apply_to(sdfg=loop.sdfg, loop=loop, permissive=True)
         now_existing_maps = {(n, g) for (n, g) in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)}
-        sdfg.save(f"b{c}.sdfg")
         c += 1
         new_maps = now_existing_maps - old_existing_maps
         condition_strs = dict()
@@ -361,10 +360,8 @@ class VectorizeBreak(ppl.Pass):
                     #for nested_node in n.sdfg.nodes():
                     #    if isinstance(nested_node, SDFGState) and len(nested_node.nodes()) > 0:
                     #        move_state_inside_if(f"1", n.sdfg, nested_node)
-        sdfg.save(f"b{c}.sdfg")
         c += 1
         EliminateBranches().apply_pass(sdfg, {})
-        sdfg.save(f"bbb.sdfg")
         for new_map, state in new_maps:
             print(new_map)
             VectorizeCPU(vector_width=self.vector_width,
@@ -608,9 +605,7 @@ class VectorizeBreak(ppl.Pass):
                         connector_name_map[out_connector] = next(iter(state.out_edges_by_connector(
                             n, out_connector))).data.data
                     state.sdfg.validate()
-                    print(connector_name_map)
                     n.sdfg.replace_dict(connector_name_map)
-                    state.sdfg.save("b.sdfg")
                     for k, v in connector_name_map.items():
                         if k in n.in_connectors:
                             connval = n.in_connectors[k]
@@ -627,15 +622,12 @@ class VectorizeBreak(ppl.Pass):
                     for oe in state.out_edges(n):
                         if oe.src_conn in connector_name_map:
                             oe.src_conn = connector_name_map[oe.src_conn]
-                    state.sdfg.save("c.sdfg")
 
             # new map doesnt exit anymore because after map tiling map gets changed
             # and after that only option is to get the map through parent of nsdfg
             parent_map = state.scope_dict()[n]
             assert isinstance(parent_map, dace.nodes.MapEntry)
-            state.sdfg.save("d.sdfg")
             for_cfg = move_map_to_loop(state, parent_map)
-            state.sdfg.save("e.sdfg")
             self.flip_first_zero_in_conditions_before_break(for_cfg)
 
     def flip_first_zero_in_conditions_before_break(self, for_cfg: LoopRegion):

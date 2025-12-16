@@ -33,6 +33,8 @@ def write_runtime(name, variant, runtime_us, vlen=None, cpy=None, output_dir="."
         variant_name = "dace"
     elif variant == "fortran":
         variant_name = "fortran"
+    elif variant == "fortran_llmr":
+        variant_name = "fortran_llmr"
     elif variant == "dace_vec":
         if vlen is None or cpy is None:
             raise ValueError("vlen and cpy must be provided for dace_vec variant")
