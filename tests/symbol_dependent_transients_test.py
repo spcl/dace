@@ -48,8 +48,6 @@ def _make_sdfg(name, storage=dace.dtypes.StorageType.CPU_Heap, isview=False):
     rednode = standard.Reduce('sum', wcr='lambda a, b : a + b', identity=0)
     if storage == dace.dtypes.StorageType.GPU_Global:
         rednode.implementation = 'CUDA (device)'
-    elif storage == dace.dtypes.StorageType.FPGA_Global:
-        rednode.implementation = 'FPGAPartialReduction'
     body2_state.add_node(rednode)
     write_tmp2 = body2_state.add_write('tmp2')
     body2_state.add_nedge(read_tmp1, rednode, dace.Memlet.from_array('tmp1', tmp1))
@@ -205,5 +203,4 @@ if __name__ == '__main__':
     test_symbol_dependent_gpu_global_array()
     test_symbol_dependent_pinned_array()
     # test_symbol_dependent_gpu_view()
-    # test_symbol_dependent_fpga_global_array()
     test_symbol_dependent_array_in_map()

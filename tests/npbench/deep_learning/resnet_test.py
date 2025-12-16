@@ -5,11 +5,7 @@ import numpy as np
 import dace as dc
 import pytest
 import argparse
-from dace.fpga_testing import fpga_test, xilinx_test
-from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
-from dace.transformation.dataflow import StreamingMemory, StreamingComposition
-from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
-from dace.config import set_temporary
+from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.autodiff import add_backward_pass
 
 N, H, W, C1, C2, S0, S1, S2, S3, S4, S5 = (dc.symbol(s, dtype=dc.int64)
@@ -243,19 +239,6 @@ def run_resnet(device_type: dace.dtypes.DeviceType):
         sdfg = resnet_basicblock.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
         out = sdfg(input=input, conv1=conv1, conv2=conv2, conv3=conv3, N=N, W=W, H=H, C1=C1, C2=C2)
-    elif device_type == dace.dtypes.DeviceType.FPGA:
-        # Parse SDFG and apply FPGA friendly optimization
-        sdfg = resnet_basicblock.to_sdfg(simplify=True)
-        applied = sdfg.apply_transformations([FPGATransformSDFG])
-        assert applied == 1
-
-        # Use FPGA Expansion for lib nodes, and expand them to enable further optimizations
-        from dace.libraries.standard import Reduce
-        Reduce.default_implementation = "FPGAPartialReduction"
-        sdfg.expand_library_nodes()
-        sdfg.apply_transformations_repeated([InlineSDFG], print_report=True)
-        sdfg.specialize(dict(N=N, W=W, H=H, C1=C1, C2=C2))
-        out = sdfg(input=input, conv1=conv1, conv2=conv2, conv3=conv3)
 
     # Compute ground truth and validate
     out_ref = resnet_basicblock_np(input, conv1, conv2, conv3)
@@ -326,16 +309,10 @@ def test_autodiff():
     run_resnet_autodiff()
 
 
-@pytest.mark.skip(reason="Dynamic memory allocation")
-@fpga_test(assert_ii_1=False)
-def test_fpga():
-    return run_resnet(dace.dtypes.DeviceType.FPGA)
-
-
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]
@@ -345,5 +322,3 @@ if __name__ == "__main__":
         run_resnet_autodiff()
     elif target == "gpu":
         run_resnet(dace.dtypes.DeviceType.GPU)
-    elif target == "fpga":
-        run_resnet(dace.dtypes.DeviceType.FPGA)
