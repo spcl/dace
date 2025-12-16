@@ -8,12 +8,9 @@ import scipy
 
 import dace
 import dace.libraries.blas as blas
-from dace.fpga_testing import fpga_test
 from dace.libraries.standard.memory import aligned_ndarray
 from dace.memlet import Memlet
-from dace.transformation.dataflow.streaming_memory import StreamingMemory
 from dace.transformation.interstate.sdfg_nesting import InlineSDFG
-from dace.transformation.interstate.fpga_transform_sdfg import FPGATransformSDFG
 
 
 def pure_graph(implementation, dtype, veclen):
@@ -49,39 +46,6 @@ def pure_graph(implementation, dtype, veclen):
     return ger_node, state, sdfg
 
 
-def fpga_graph(dtype, veclen, tile_size_x, tile_size_y):
-    ger_node, state, sdfg = pure_graph("FPGA", dtype, veclen)
-    ger_node.expand(sdfg, state, tile_size_x=tile_size_x, tile_size_y=tile_size_y)
-    sdfg.apply_transformations_repeated([FPGATransformSDFG, InlineSDFG])
-    sdfg.expand_library_nodes()
-    sdfg.apply_transformations_repeated([InlineSDFG, StreamingMemory], [{}, {"storage": dace.StorageType.FPGA_Local}])
-    return sdfg
-
-
-def run_test(ger, target):
-
-    x = np.ndarray(m, dtype=np.float32)
-    y = np.ndarray(n, dtype=np.float32)
-    A = np.ndarray((m, n), dtype=np.float32)
-    res = A.copy()
-    ref = res.copy()
-
-    x[:] = np.random.rand(m).astype(np.float32)
-    y[:] = np.random.rand(n).astype(np.float32)
-    A[:] = np.random.rand(m, n).astype(np.float32)
-
-    ger(alpha=alpha, x=x, y=y, A=A, res=res, m=m, n=n)
-
-    ref = scipy.linalg.blas.sger(alpha=alpha, x=x, y=y, a=A)
-
-    diff = np.linalg.norm(np.subtract(res, ref))
-    if diff >= args.eps * n * m:
-        raise RuntimeError("Unexpected result returned from ger rank 1 operation: "
-                           "got:\n{}\nexpected:\n{} on {}".format(A, ref, target))
-    else:
-        print("Ok")
-
-
 def run_ger(target: str,
             n: int,
             m: int,
@@ -95,8 +59,6 @@ def run_ger(target: str,
         ger_node, state, sdfg = pure_graph("pure", dace.float32, veclen)
         ger_node.expand(sdfg, state)
         sdfg.apply_transformations_repeated([InlineSDFG])
-    elif target == "fpga":
-        sdfg = fpga_graph(dace.float32, veclen, tile_size_x, tile_size_y)
     else:
         raise ValueError("Unsupported target")
 
@@ -124,11 +86,6 @@ def run_ger(target: str,
 
 def test_ger_pure():
     run_ger("pure", 256, 512, 16, 32)
-
-
-@fpga_test()
-def test_ger_fpga():
-    return run_ger("fpga", 256, 512, 16, 32)
 
 
 if __name__ == "__main__":
