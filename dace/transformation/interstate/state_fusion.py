@@ -155,7 +155,9 @@ class StateFusion(transformation.MultiStateTransformation):
                     continue
                 path_found |= True
                 node2 = next(n for n in second_input if n.data == match.data)
-                if not all(nx.has_path(second_state._nx, node2, n) for n in nodes_second):
+                if not all(
+                        second_state.in_degree(n) == 1 and nx.has_path(second_state._nx, node2, n)
+                        for n in nodes_second):
                     fail = True
                     break
             # We keep looking for a potential match with a path that fail to find

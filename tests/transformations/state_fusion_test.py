@@ -185,6 +185,51 @@ def test_write_write_path():
     assert len(sdfg.nodes()) == 1
 
 
+def test_write_write_path_multiple_producers():
+    """
+    The check for Write-Write hazard, in state fusion, should only apply to single
+    path between first and second state. The second state, in this SDFG, contains
+    two edges writing to the node, where one edge partially overrides the data which
+    was written in the first state. This constitutes a real Write-Write hazard, thus
+    state fusion should not be applied.
+    """
+    sdfg = dace.SDFG('state_fusion_test')
+    A, A_desc = sdfg.add_array('A', [10, 10], dace.int32)
+    t, _ = sdfg.add_temp_transient_like(A_desc)
+    s1 = sdfg.add_state()
+    s2 = sdfg.add_state_after(s1)
+
+    a1_node = s1.add_access(A)
+    s1.add_mapped_tasklet("write1",
+                          map_ranges={
+                              "i": "0:10",
+                              "j": "9"
+                          },
+                          code='out = -1',
+                          inputs={},
+                          outputs={'out': dace.Memlet("A[i, j]")},
+                          output_nodes={a1_node},
+                          external_edges=True)
+    s1.add_nedge(a1_node, s1.add_access(t), sdfg.make_array_memlet(A))
+
+    a2_node = s2.add_access(A)
+    s2.add_nedge(s2.add_access(t), a2_node, dace.Memlet('A[0:10, 0:5]'))
+    s2.add_mapped_tasklet("write2",
+                          map_ranges={
+                              "i": "0:10",
+                              "j": "5:10"
+                          },
+                          code='out = -2',
+                          inputs={},
+                          outputs={'out': dace.Memlet("A[i, j]")},
+                          output_nodes={a2_node},
+                          external_edges=True)
+
+    sdfg.validate()
+    sdfg.apply_transformations_repeated(StateFusion)
+    assert len(sdfg.nodes()) == 2
+
+
 def test_write_write_no_overlap():
     """
     Two states where both write to different ranges of an array.
@@ -502,6 +547,7 @@ if __name__ == "__main__":
     test_two_cc_fusion_separate()
     test_two_cc_fusion_together()
     test_write_write_path()
+    test_write_write_path_multiple_producers()
     test_write_write_no_overlap()
     test_read_write_no_overlap()
     test_array_in_middle_no_overlap()
