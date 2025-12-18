@@ -18,29 +18,40 @@ def check_transformation_option(orig_sdfg: dace.SDFG, N: int, options: Dict[str,
     llmr = LoopLocalMemoryReduction()
     llmr.bitmask_indexing = options["bitmask_indexing"]
     llmr.next_power_of_two = options["next_power_of_two"]
+    llmr.assume_positive_symbols = options["assume_positive_symbols"]
     llmr.apply_pass(llmr_sdfg, {})
     apps = llmr.num_applications
-    assert apps >= N, f"Expected at least {N} applications, got {apps} with options {options}"
-    llmr_sdfg.validate()
 
     # We can stop here if we don't expect any transformations
     if N == 0:
+        assert apps == 0, f"Expected 0 applications, got {apps} with options {options}"
         return
+
+    assert apps >= N, f"Expected at least {N} applications, got {apps} with options {options}"
+    llmr_sdfg.validate()
 
     # Execute both SDFGs
     input_data_orig = {}
-    input_data_llmr = {}
-    for argName, argType in llmr_sdfg.arglist().items():
+    sym_data = {}
+    for sym in orig_sdfg.symbols:
+        if sym not in orig_sdfg.constants:
+            sym_data[sym] = 32
+            input_data_orig[sym] = 32
+
+    for argName, argType in orig_sdfg.arglist().items():
         if isinstance(argType, dace.data.Scalar):
-            input_data_orig[argName] = np.random.rand()
-            input_data_llmr[argName] = copy.deepcopy(input_data_orig[argName])
+            input_data_orig[argName] = 32
             continue
 
-        arr = dace.ndarray(shape=argType.shape, dtype=argType.dtype)
-        arr[:] = np.random.rand(*argType.shape).astype(argType.dtype.type)
+        shape = []
+        for entry in argType.shape:
+            shape.append(dace.symbolic.evaluate(entry, {**orig_sdfg.constants, **sym_data}))
+        shape = tuple(shape)
+        arr = dace.ndarray(shape=shape, dtype=argType.dtype)
+        arr[:] = np.random.rand(*arr.shape).astype(arr.dtype)
         input_data_orig[argName] = arr
-        input_data_llmr[argName] = copy.deepcopy(arr)
 
+    input_data_llmr = copy.deepcopy(input_data_orig)
     orig_sdfg(**input_data_orig)
     llmr_sdfg(**input_data_llmr)
 
@@ -52,14 +63,22 @@ def check_transformation_option(orig_sdfg: dace.SDFG, N: int, options: Dict[str,
     # Memory footprint should be reduced
     orig_mem = sum(np.prod(arrType.shape) for arrName, arrType in orig_sdfg.arrays.items())
     llmr_mem = sum(np.prod(arrType.shape) for arrName, arrType in llmr_sdfg.arrays.items())
+    orig_mem = dace.symbolic.evaluate(orig_mem, {**orig_sdfg.constants, **sym_data})
+    llmr_mem = dace.symbolic.evaluate(llmr_mem, {**llmr_sdfg.constants, **sym_data})
     assert llmr_mem < orig_mem, f"Memory not reduced: {orig_mem} >= {llmr_mem}"
 
 
 # Checks if LoopLocalMemoryReduction applied at least N times and if memory footprint was reduced for all options
-def check_transformation(sdfg: dace.SDFG, N: int):
+def check_transformation(sdfg: dace.SDFG, N: int, aps: bool = False):
     for bitmask in [False, True]:
         for np2 in [False, True]:
-            check_transformation_option(sdfg, N, options={"bitmask_indexing": bitmask, "next_power_of_two": np2})
+            check_transformation_option(sdfg,
+                                        N,
+                                        options={
+                                            "bitmask_indexing": bitmask,
+                                            "next_power_of_two": np2,
+                                            "assume_positive_symbols": aps
+                                        })
 
 
 def test_simple():
@@ -275,16 +294,67 @@ def test_indirect_access():
     @dace.program
     def tester(b: dace.float64[32], c: dace.float64[32]):
         a = dace.define_local([32], dace.float64)
-        for j in range(32):
+        for j in range(2):
             a[j] = j
 
         for i in range(2, 32):
             b[i] = a[i - 1] + a[i - 2]
-            idx = int(b[i]) % 32
+            idx = int(b[i]) % 3
             a[idx] = c[i] * 2
 
     sdfg = tester.to_sdfg(simplify=True)
     check_transformation(sdfg, 0)
+
+
+def test_indirect_access2():
+
+    @dace.program
+    def tester(b: dace.float64[32], c: dace.float64[32]):
+        a = dace.define_local([32], dace.float64)
+        for j in range(2):
+            a[j] = j
+
+        for i in range(2, 32):
+            idx = int(b[i]) % 3
+            b[i] = a[idx - 1] + a[idx - 2]
+            a[idx] = c[i] * 2
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_transformation(sdfg, 0)
+
+
+def test_indirect_access3():
+
+    @dace.program
+    def tester(b: dace.float64[32], c: dace.float64[32]):
+        a = dace.define_local([32], dace.float64)
+        for j in range(2):
+            a[j] = j
+
+        idx = int(b[0]) % 3
+        for i in range(2, 32):
+            b[i] = a[idx + 1] + a[idx]
+            a[idx + 2] = c[i] * 2
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_transformation(sdfg, 1)
+
+
+def test_indirect_access4():
+
+    @dace.program
+    def tester(b: dace.float64[32], c: dace.float64[32]):
+        a = dace.define_local([32], dace.float64)
+        for j in range(2):
+            a[j] = j
+
+        idx = int(b[0]) % 3
+        for i in range(2, 32):
+            b[i] = a[i - idx - 1] + a[i - idx - 2]
+            a[i - idx] = c[i] * 2
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_transformation(sdfg, 1)
 
 
 def test_constant_index():
@@ -314,6 +384,23 @@ def test_constant_index2():
         for i in range(2, 32):
             b[i] = a[5] + a[3]
             a[7] = c[i] * 2
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_transformation(sdfg, 1)
+
+
+def test_constant_index3():
+
+    @dace.program
+    def tester(b: dace.float64[32], c: dace.float64[32]):
+        a = dace.define_local([32], dace.float64)
+        a[0] = 0
+        a[1] = 1
+
+        for i in range(2, 32):
+            b[i] = a[1] + a[0]
+            a[0] = c[i] * 2
+            a[1] = c[i] * 3
 
     sdfg = tester.to_sdfg(simplify=True)
     check_transformation(sdfg, 1)
@@ -507,12 +594,13 @@ def test_multidimensional2():
             for jj in range(4):
                 a[ii, jj] = ii + jj
 
+        # TODO (later): In theory, in this case, LLMR could be applied
         for i in range(2, 14):
             b[i, i] = a[i - 1, i] + a[i - 2, i - 1]
             a[i, i + 1] = c[i] * 2
 
     sdfg = tester.to_sdfg(simplify=True)
-    check_transformation(sdfg, 1)
+    check_transformation(sdfg, 0)
 
 
 def test_multidimensional3():
@@ -563,6 +651,24 @@ def test_multidimensional_constant():
 
     sdfg = tester.to_sdfg(simplify=True)
     check_transformation(sdfg, 1)
+
+
+def test_multidimensional_constant2():
+
+    @dace.program
+    def tester(b: dace.float64[16, 16], c: dace.float64[16]):
+        a = dace.define_local([16, 16], dace.float64)
+        for jj in range(2):
+            a[3, jj] = jj
+            a[4, jj] = jj
+            a[5, jj] = jj
+
+        for i in range(2, 16):
+            b[i, i] = a[4, i - 2] + a[3, i - 1]
+            a[5, i] = c[i] * 2
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_transformation(sdfg, 0)
 
 
 def test_multidimensional_no_overwrite():
@@ -627,13 +733,14 @@ def test_nested3():
             for jj in range(3):
                 a[ii, jj] = ii + jj
 
+        # TODO (later): In theory, in this case, LLMR could be applied
         for i in range(0, 16):
             for j in range(2, 14):
                 b[i, j] = a[i, j - 1] + a[i, j - 2]
                 a[i, j] = c[i] * 2
 
     sdfg = tester.to_sdfg(simplify=True)
-    check_transformation(sdfg, 1)
+    check_transformation(sdfg, 0)
 
 
 def test_nested4():
@@ -701,6 +808,80 @@ def test_conditional2():
     check_transformation(sdfg, 1)
 
 
+def test_conditional3():
+
+    @dace.program
+    def tester(b: dace.float64[32], c: dace.float64[32]):
+        a = dace.define_local([32], dace.float64)
+        a[0] = 0
+        a[1] = 1
+        for i in range(2, 32):
+            if i % 2 == 0:
+                b[i] = a[i - 1] + a[i - 2]
+            else:
+                a[i] = c[i] * 2
+            a[i] = c[i] * 2
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_transformation(sdfg, 1)
+
+
+def test_conditional4():
+
+    @dace.program
+    def tester(b: dace.float64[32], c: dace.float64[32]):
+        a = dace.define_local([32], dace.float64)
+        a[0] = 0
+        a[1] = 1
+        for i in range(2, 32):
+            if i % 2 == 0:
+                b[i] = a[i - 1] + a[i - 2]
+            else:
+                a[i * 2] = c[i] * 2
+            a[i] = c[i] * 2
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_transformation(sdfg, 0)
+
+
+def test_conditional5():
+
+    @dace.program
+    def tester(b: dace.float64[32], c: dace.float64[32]):
+        a = dace.define_local([32], dace.float64)
+        a[0] = 0
+        a[1] = 1
+        for i in range(2, 32):
+            b[i] = a[i - 1] + a[i - 2]
+            if i % 2 == 0:
+                a[i] = c[i] + 2
+            else:
+                a[i] = c[i] * 2
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_transformation(sdfg, 1)
+
+
+def test_conditional6():
+
+    @dace.program
+    def tester(b: dace.float64[32], c: dace.float64[32]):
+        a = dace.define_local([32], dace.float64)
+        a[0] = 0
+        a[1] = 1
+        for i in range(2, 32):
+            b[i] = a[i - 1] + a[i - 2]
+            if i % 2 == 0:
+                a[i] = c[i] + 2
+            elif i % 3 == 0:
+                a[i] = c[i] - 2
+            else:
+                a[i] = c[i] * 2
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_transformation(sdfg, 1)
+
+
 def test_symbolic_offset():
 
     N = dace.symbol('N')
@@ -717,6 +898,41 @@ def test_symbolic_offset():
 
     sdfg = tester.to_sdfg(simplify=True)
     check_transformation(sdfg, 1)
+
+
+def test_symbolic_sizes():
+
+    N = dace.symbol('N')
+
+    @dace.program
+    def tester(b: dace.float64[N], c: dace.float64[N]):
+        a = dace.define_local([N], dace.float64)
+        a[0] = 0
+        a[1] = 1
+        for i in range(2, N):
+            b[i] = a[i - 1] + a[i - 2]
+            a[i] = c[i] * 2
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_transformation(sdfg, 1)
+
+
+def test_symbolic_k():
+
+    N = dace.symbol('N')
+
+    @dace.program
+    def tester(b: dace.float64[64], c: dace.float64[64]):
+        a = dace.define_local([64], dace.float64)
+        for j in range(32):
+            a[j] = j
+        for i in range(32, 64):
+            b[i] = a[i - N] + a[i - N]
+            a[i] = c[i] * 2
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_transformation(sdfg, 0, aps=False)
+    check_transformation(sdfg, 1, aps=True)
 
 
 def test_cloudsc():
@@ -763,8 +979,12 @@ if __name__ == "__main__":
     test_nonlinear_step()
     test_nonconstant_step()
     test_indirect_access()
+    test_indirect_access2()
+    test_indirect_access3()
+    test_indirect_access4()
     test_constant_index()
     test_constant_index2()
+    test_constant_index3()
     test_larger_step()
     test_larger_step2()
     test_larger_index()
@@ -780,6 +1000,7 @@ if __name__ == "__main__":
     test_multidimensional3()
     test_multidimensional_mixed()
     test_multidimensional_constant()
+    test_multidimensional_constant2()
     test_multidimensional_no_overwrite()
     test_nested()
     test_nested2()
@@ -788,5 +1009,11 @@ if __name__ == "__main__":
     test_nested_mixed()
     test_conditional()
     test_conditional2()
+    test_conditional3()
+    test_conditional4()
+    test_conditional5()
+    test_conditional6()
     test_symbolic_offset()
+    test_symbolic_sizes()
+    test_symbolic_k()
     test_cloudsc()
