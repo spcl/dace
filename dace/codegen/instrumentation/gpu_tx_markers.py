@@ -52,6 +52,8 @@ class GPUTXMarkersProvider(InstrumentationProvider):
         """ Prints the include statement for the NVTX/rocTX library in stream. """
         if stream is None:
             return
+        if self.include_generated:
+            return
         if self.backend == 'cuda':
             stream.write(self.NVTX_HEADER_INCLUDE)
         elif self.backend == 'hip':
@@ -59,6 +61,7 @@ class GPUTXMarkersProvider(InstrumentationProvider):
                 stream.write(self.ROCTX_HEADER_INCLUDE)
         else:
             raise NameError('GPU backend "%s" not recognized' % self.backend)
+        self.include_generated = True
 
     def print_range_push(self, name: str, sdfg: SDFG, stream: CodeIOStream) -> None:
         if stream is None:
@@ -98,6 +101,7 @@ class GPUTXMarkersProvider(InstrumentationProvider):
     def on_sdfg_begin(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream, codegen) -> None:
         if sdfg.instrument != dtypes.InstrumentationType.GPU_TX_MARKERS:
             return
+        self.print_include(global_stream)
         if self._is_sdfg_in_device_code(sdfg):
             # Don't instrument device code
             return

@@ -225,6 +225,7 @@ class InstrumentationProvider(object):
         """ Event called at the beginning of an allocation code generation.
 
             :param sdfg: The generated SDFG object.
+            :param scope: The scope in which allocation is performed.
             :param stream: Code generator.
         """
         pass
@@ -234,6 +235,7 @@ class InstrumentationProvider(object):
         """ Event called at the end of an allocation code generation.
 
             :param sdfg: The generated SDFG object.
+            :param scope: The scope in which allocation is performed.
             :param local_stream: Code generator.
         """
         pass
@@ -243,6 +245,7 @@ class InstrumentationProvider(object):
         """ Event called at the beginning of a deallocation code generation.
 
             :param sdfg: The generated SDFG object.
+            :param scope: The scope in which deallocation is performed.
             :param local_stream: Code generator.
         """
         pass
@@ -252,6 +255,7 @@ class InstrumentationProvider(object):
         """ Event called at the end of a deallocation code generation.
 
             :param sdfg: The generated SDFG object.
+            :param scope: The scope in which deallocation is performed.
             :param local_stream: Code generator.
         """
         pass
