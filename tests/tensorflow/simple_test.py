@@ -6,7 +6,7 @@ import numpy as np
 @pytest.mark.tensorflow
 def test_simple():
     import tensorflow as tf
-    from dace.frontend.tensorflow import TFSession
+    from dace.frontend.ml.tensorflow import TFSession
     print('DaCe Tensorflow frontend test')
 
     A = np.random.rand(16, 16).astype(np.float32)
