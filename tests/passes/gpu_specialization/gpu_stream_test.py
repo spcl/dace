@@ -24,6 +24,7 @@ gpu_stream_pipeline = Pipeline([
 
 backend = common.get_gpu_backend()
 
+
 @pytest.mark.gpu
 def test_basic():
     """
@@ -31,15 +32,14 @@ def test_basic():
 
     Since the SDFG has a single connected component, exactly one GPU stream is used
     and must be synchronized at the end of the state. For each synchronized stream,
-    the pipeline introduces a memlet from the synchronization tasklet to a GPU stream 
-    AccessNode. Therefore, it is sufficient to verify there is only one sink node with one ingoing 
+    the pipeline introduces a memlet from the synchronization tasklet to a GPU stream
+    AccessNode. Therefore, it is sufficient to verify there is only one sink node with one ingoing
     edge, verify its dtype, and check for the presence of a preceeding synchronization tasklet.
     """
+
     @dace.program
-    def simple_copy(
-        A: dace.uint32[128] @ dace.dtypes.StorageType.GPU_Global, 
-        B: dace.uint32[128] @ dace.dtypes.StorageType.GPU_Global
-        ):
+    def simple_copy(A: dace.uint32[128] @ dace.dtypes.StorageType.GPU_Global,
+                    B: dace.uint32[128] @ dace.dtypes.StorageType.GPU_Global):
         for i in dace.map[0:128:1] @ dace.dtypes.ScheduleType.GPU_Device:
             B[i] = A[i]
 
@@ -50,21 +50,13 @@ def test_basic():
     sink_nodes = state.sink_nodes()
     node = sink_nodes[0]
     assert (
-        len(sink_nodes) == 1
-        and len(state.in_edges(node)) == 1
-        and isinstance(node, dace.nodes.AccessNode) 
+        len(sink_nodes) == 1 and len(state.in_edges(node)) == 1 and isinstance(node, dace.nodes.AccessNode)
         and node.desc(state).dtype == dace.dtypes.gpuStream_t
-        ),(
-        "Only one sink node with should exist, which is a GPU stream AccessNode and it should have one ingoing edge."
-        )
-    
-    assert (
-        isinstance(pre, dace.nodes.Tasklet)
-        and f"{backend}StreamSynchronize(" in pre.code.as_string
-        for pre in state.predecessors(node)
-    ), (
-        "At then end of each state any used stream must be synchronized."
-    )
+    ), ("Only one sink node with should exist, which is a GPU stream AccessNode and it should have one ingoing edge.")
+
+    assert (isinstance(pre, dace.nodes.Tasklet) and f"{backend}StreamSynchronize(" in pre.code.as_string
+            for pre in state.predecessors(node)), ("At then end of each state any used stream must be synchronized.")
+
 
 @pytest.mark.gpu
 def test_extended():
@@ -81,8 +73,9 @@ def test_extended():
     synchronized at the end of the state, and that the corresponding asynchronous
     memory copy tasklets are correctly associated with their assigned streams.
     """
+
     @dace.program
-    def independent_copies(A : dace.uint32[128], B: dace.uint32[128], C : dace.uint32[128], D: dace.uint32[128]):
+    def independent_copies(A: dace.uint32[128], B: dace.uint32[128], C: dace.uint32[128], D: dace.uint32[128]):
         for i in dace.map[0:128:1]:
             B[i] = A[i]
         for i in dace.map[0:128:1]:
@@ -98,37 +91,26 @@ def test_extended():
     state = sdfg.states()[0]
     sink_nodes = state.sink_nodes()
     node = sink_nodes[0]
-    assert (
-        len(sink_nodes) == 1
-        and len(state.in_edges(node)) == 2
-        and isinstance(node, dace.nodes.AccessNode) 
-        and node.desc(state).dtype == dace.dtypes.gpuStream_t
-        ),(
-        "Only one sink node with should exist, which is a GPU stream AccessNode and it "
-        "should have two ingoing edges as original graph consisted of two connected components."
-        )
+    assert (len(sink_nodes) == 1 and len(state.in_edges(node)) == 2 and isinstance(node, dace.nodes.AccessNode)
+            and node.desc(state).dtype == dace.dtypes.gpuStream_t), (
+                "Only one sink node with should exist, which is a GPU stream AccessNode and it "
+                "should have two ingoing edges as original graph consisted of two connected components.")
 
     # Test 2: We synchronize at the end of the state
-    assert (
-        isinstance(pre, dace.nodes.Tasklet)
-        and f"{backend}StreamSynchronize(" in pre.code.as_string
-        for pre in state.predecessors(node)
-    ), (
-        "At then end of each state any used stream must be synchronized."
-    )
+    assert (isinstance(pre, dace.nodes.Tasklet) and f"{backend}StreamSynchronize(" in pre.code.as_string
+            for pre in state.predecessors(node)), ("At then end of each state any used stream must be synchronized.")
 
-    # Test 3: Check that we have memory copy tasklets (as we perform two "Main Memory -> GPU GLobal" 
+    # Test 3: Check that we have memory copy tasklets (as we perform two "Main Memory -> GPU GLobal"
     # memory copies and two "GPU Global -> Main Memory" memory copies by applying the gpu tranformation)
     # and that they use the name of the in connector of the GPU stream in the copy call
-    memcopy_tasklets = [n for n in state.nodes() if isinstance(n, dace.nodes.Tasklet) and f"{backend}MemcpyAsync(" in n.code.as_string]
+    memcopy_tasklets = [
+        n for n in state.nodes() if isinstance(n, dace.nodes.Tasklet) and f"{backend}MemcpyAsync(" in n.code.as_string
+    ]
     for tasklet in memcopy_tasklets:
-        assert len(tasklet.in_connectors) == 1, (
-            "Memcpy tasklets must have exactly one input connector "
-            "corresponding to the GPU stream."
-        )
+        assert len(tasklet.in_connectors) == 1, ("Memcpy tasklets must have exactly one input connector "
+                                                 "corresponding to the GPU stream.")
 
         in_connector = next(iter(tasklet.in_connectors))
 
         assert in_connector in tasklet.code.as_string, (
-            "Memcpy tasklets must reference their GPU stream input connector in the memcpy call."
-        )
+            "Memcpy tasklets must reference their GPU stream input connector in the memcpy call.")
