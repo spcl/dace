@@ -1550,6 +1550,7 @@ def get_parent_map(state: SDFGState, node: Optional[nodes.Node] = None) -> Optio
         cursdfg = cursdfg.parent_sdfg
     return None
 
+
 def is_within_schedule_types(state: SDFGState, node: nodes.Node, schedules: Set[dtypes.ScheduleType]) -> bool:
     """
     Checks if the given node is enclosed within a Map whose schedule type

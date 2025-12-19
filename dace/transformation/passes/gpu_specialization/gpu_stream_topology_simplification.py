@@ -14,6 +14,7 @@ from dace.transformation.passes.gpu_specialization.connect_gpu_streams_to_taskle
 from dace.transformation.passes.gpu_specialization.insert_gpu_stream_sync_tasklets import InsertGPUStreamSyncTasklets
 from dace.transformation.passes.gpu_specialization.insert_gpu_copy_tasklet import InsertGPUCopyTasklets
 
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class GPUStreamTopologySimplification(ppl.Pass):

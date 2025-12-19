@@ -14,7 +14,6 @@ from dace.transformation.passes.gpu_specialization.insert_gpu_streams_to_sdfgs i
 from dace.transformation.passes.gpu_specialization.connect_gpu_streams_to_kernels import ConnectGPUStreamsToKernels
 from dace.transformation.passes.gpu_specialization.connect_gpu_streams_to_tasklets import ConnectGPUStreamsToTasklets
 
-
 STREAM_PLACEHOLDER = "__dace_current_stream"
 
 
@@ -30,7 +29,9 @@ class InsertGPUStreamSyncTasklets(ppl.Pass):
     """
 
     def depends_on(self) -> Set[Union[Type[ppl.Pass], ppl.Pass]]:
-        return {NaiveGPUStreamScheduler, InsertGPUStreamsToSDFGs, ConnectGPUStreamsToKernels, ConnectGPUStreamsToTasklets}
+        return {
+            NaiveGPUStreamScheduler, InsertGPUStreamsToSDFGs, ConnectGPUStreamsToKernels, ConnectGPUStreamsToTasklets
+        }
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Tasklets | ppl.Modifies.Memlets
@@ -119,8 +120,8 @@ class InsertGPUStreamSyncTasklets(ppl.Pass):
                     and not edge_within_kernel(state, src, dst)):
                 sync_state[state].add(stream_assignments[dst])
 
-            elif (is_gpu_global_accessnode(src, state) and is_nongpu_accessnode(dst, state) and not is_sink_node(dst, state)
-                  and not edge_within_kernel(state, src, dst)):
+            elif (is_gpu_global_accessnode(src, state) and is_nongpu_accessnode(dst, state)
+                  and not is_sink_node(dst, state) and not edge_within_kernel(state, src, dst)):
                 sync_node[dst] = state
                 sync_state[state].add(stream_assignments[dst])
 
@@ -236,7 +237,7 @@ class InsertGPUStreamSyncTasklets(ppl.Pass):
                 state.add_edge(combined_stream_node, None, tasklet, conn, dace.Memlet(accessed_gpu_stream))
                 state.add_edge(tasklet, conn, output_stream_node, None, dace.Memlet(accessed_gpu_stream))
 
-    def _insert_gpu_stream_sync_after_node(self, sdfg: SDFG, sync_node: Dict[nodes.Node, SDFGState], 
+    def _insert_gpu_stream_sync_after_node(self, sdfg: SDFG, sync_node: Dict[nodes.Node, SDFGState],
                                            stream_assignments: Dict[nodes.Node, int]) -> None:
         """
         Insert a GPU stream synchronization tasklet immediately after specified nodes.
@@ -258,7 +259,7 @@ class InsertGPUStreamSyncTasklets(ppl.Pass):
 
             #----------------- Generate GPU stream synchronization Tasklet -----------------
 
-            # Get assigned GPU stream 
+            # Get assigned GPU stream
             stream = stream_assignments.get(node, "nullptr")
             if stream == "nullptr":
                 raise NotImplementedError("Using the default 'nullptr' gpu stream is not supported yet.")
@@ -266,10 +267,11 @@ class InsertGPUStreamSyncTasklets(ppl.Pass):
             # Create the tasklet
             stream_var_name = f"{stream_var_name_prefix}{stream}"
             sync_call = f"DACE_GPU_CHECK({backend}StreamSynchronize({stream_var_name}));\n"
-            tasklet = state.add_tasklet( name=f"gpu_stream_{stream}_synchronization", 
-                                         inputs=set(), outputs=set(),
-                                         code=sync_call, language=dtypes.Language.CPP)
-
+            tasklet = state.add_tasklet(name=f"gpu_stream_{stream}_synchronization",
+                                        inputs=set(),
+                                        outputs=set(),
+                                        code=sync_call,
+                                        language=dtypes.Language.CPP)
 
             #----------------- Place tasklet between node and successors, link GPU streams ----------------
 
@@ -277,7 +279,7 @@ class InsertGPUStreamSyncTasklets(ppl.Pass):
             for succ in state.successors(node):
                 state.add_edge(tasklet, None, succ, None, dace.Memlet())
             state.add_edge(node, None, tasklet, None, dace.Memlet())
-            
+
             # 2. Connect tasklet to GPU stream AccessNodes
             in_stream = state.add_access(stream_array_name)
             out_stream = state.add_access(stream_array_name)

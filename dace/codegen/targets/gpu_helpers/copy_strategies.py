@@ -551,4 +551,3 @@ class OutOfKernelCopyStrategy(CopyStrategy):
 
         # Return the code
         return call
-
