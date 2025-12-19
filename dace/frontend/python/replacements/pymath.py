@@ -15,7 +15,7 @@ from typing import Union
 @oprepo.replaces('numpy.exp')
 @oprepo.replaces('math.exp')
 def _exp(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
-    return simple_call(sdfg, state, input, 'exp')
+    return simple_call(pv, sdfg, state, input, 'exp')
 
 
 @oprepo.replaces('sin')
@@ -23,7 +23,7 @@ def _exp(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('numpy.sin')
 @oprepo.replaces('math.sin')
 def _sin(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
-    return simple_call(sdfg, state, input, 'sin')
+    return simple_call(pv, sdfg, state, input, 'sin')
 
 
 @oprepo.replaces('cos')
@@ -31,7 +31,7 @@ def _sin(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('numpy.cos')
 @oprepo.replaces('math.cos')
 def _cos(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
-    return simple_call(sdfg, state, input, 'cos')
+    return simple_call(pv, sdfg, state, input, 'cos')
 
 
 @oprepo.replaces('sqrt')
@@ -39,7 +39,7 @@ def _cos(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('numpy.sqrt')
 @oprepo.replaces('math.sqrt')
 def _sqrt(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
-    return simple_call(sdfg, state, input, 'sqrt')
+    return simple_call(pv, sdfg, state, input, 'sqrt')
 
 
 @oprepo.replaces('log')
@@ -47,31 +47,31 @@ def _sqrt(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('numpy.log')
 @oprepo.replaces('math.log')
 def _log(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
-    return simple_call(sdfg, state, input, 'log')
+    return simple_call(pv, sdfg, state, input, 'log')
 
 
 @oprepo.replaces('log10')
 @oprepo.replaces('dace.log10')
 @oprepo.replaces('math.log10')
 def _log10(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
-    return simple_call(sdfg, state, input, 'log10')
+    return simple_call(pv, sdfg, state, input, 'log10')
 
 
 @oprepo.replaces('math.floor')
 def _floor(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
-    return simple_call(sdfg, state, input, 'floor', restype=dtypes.typeclass(int))
+    return simple_call(pv, sdfg, state, input, 'floor', restype=dtypes.typeclass(int))
 
 
 @oprepo.replaces('math.ceil')
 def _ceil(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
-    return simple_call(sdfg, state, input, 'ceil', restype=dtypes.typeclass(int))
+    return simple_call(pv, sdfg, state, input, 'ceil', restype=dtypes.typeclass(int))
 
 
 @oprepo.replaces('conj')
 @oprepo.replaces('dace.conj')
 @oprepo.replaces('numpy.conj')
 def _conj(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
-    return simple_call(sdfg, state, input, 'conj')
+    return simple_call(pv, sdfg, state, input, 'conj')
 
 
 @oprepo.replaces('real')
@@ -79,7 +79,7 @@ def _conj(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('numpy.real')
 def _real(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
     inptype = sdfg.arrays[input].dtype
-    return simple_call(sdfg, state, input, 'real', complex_to_scalar(inptype))
+    return simple_call(pv, sdfg, state, input, 'real', complex_to_scalar(inptype))
 
 
 @oprepo.replaces('imag')
@@ -87,7 +87,7 @@ def _real(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('numpy.imag')
 def _imag(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
     inptype = sdfg.arrays[input].dtype
-    return simple_call(sdfg, state, input, 'imag', complex_to_scalar(inptype))
+    return simple_call(pv, sdfg, state, input, 'imag', complex_to_scalar(inptype))
 
 
 @oprepo.replaces_attribute('Array', 'real')
@@ -114,9 +114,9 @@ def _ndarray_conj(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str) ->
 
 @oprepo.replaces('abs')
 def _abs(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: Union[str, Number, symbolic.symbol]):
-    return simple_call(sdfg, state, input, 'abs')
+    return simple_call(pv, sdfg, state, input, 'abs')
 
 
 @oprepo.replaces('round')
 def _round(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: Union[str, Number, symbolic.symbol]):
-    return simple_call(sdfg, state, input, 'round', dtypes.typeclass(int))
+    return simple_call(pv, sdfg, state, input, 'round', dtypes.typeclass(int))

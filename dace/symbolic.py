@@ -1,5 +1,6 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
+from collections import Counter
 from functools import lru_cache
 import sys
 import sympy
@@ -17,6 +18,7 @@ from dace import dtypes
 
 DEFAULT_SYMBOL_TYPE = dtypes.int32
 _NAME_TOKENS = re.compile(r'[a-zA-Z_][a-zA-Z_0-9]*')
+_FUNCTION_CALL = re.compile(r'(\w+)\[([^\[\]]+)\]')
 
 # NOTE: Up to (including) version 1.8, sympy.abc._clash is a dictionary of the
 # form {'N': sympy.abc.N, 'I': sympy.abc.I, 'pi': sympy.abc.pi}
@@ -383,6 +385,8 @@ def symlist(values):
     except TypeError:
         values = [values]
 
+    skip = set()
+
     for expr in values:
         if isinstance(expr, SymExpr):
             true_expr = expr.expr
@@ -391,6 +395,12 @@ def symlist(values):
         else:
             continue
         for atom in sympy.preorder_traversal(true_expr):
+            if atom in skip:
+                continue
+            if isinstance(atom, Attr):
+                # Skip attributes
+                skip.add(atom.args[1])
+                continue
             if isinstance(atom, symbol):
                 result[atom.name] = atom
     return result
@@ -1331,9 +1341,17 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
         return sympy_to_dace(sympy.sympify(expr, locals, evaluate=simplify), symbol_map)
     except (TypeError, sympy.SympifyError):  # Symbol object is not subscriptable
         # Replace subscript expressions with function calls
+        orig_expr = expr
         expr = expr.replace('[', '(')
         expr = expr.replace(']', ')')
-        return sympy_to_dace(sympy.sympify(expr, locals, evaluate=simplify), symbol_map)
+        try:
+            return sympy_to_dace(sympy.sympify(expr, locals, evaluate=simplify), symbol_map)
+        except TypeError:  # Symbol object is not subscriptable
+            # Replace instances of "xxx[yyy]" with subscript(xxx, yyy)
+            expr = orig_expr
+            while _FUNCTION_CALL.search(expr):
+                expr = _FUNCTION_CALL.sub(r'subscript(\1, \2)', expr)
+            return sympy_to_dace(sympy.sympify(expr, locals, evaluate=simplify), symbol_map)
 
 
 @lru_cache(maxsize=2048)
@@ -1358,7 +1376,8 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
 
     def _print_Function(self, expr):
         if str(expr.func) in self.arrays:
-            return f'{expr.func}[{expr.args[0]}]'
+            indices = ", ".join(self._print(arg) for arg in expr.args)
+            return f'{expr.func}[{indices}]'
         if self.cpp_mode and str(expr.func) == 'int_floor':
             return '((%s) / (%s))' % (self._print(expr.args[0]), self._print(expr.args[1]))
         if str(expr.func) == 'AND':
@@ -1508,7 +1527,11 @@ def safe_replace(mapping: Dict[Union[SymbolicType, str], Union[SymbolicType, str
 
         # Constant
         try:
-            float(v)
+            # NOTE: we could also write `float(v)` to test for constants, however, this is
+            #   relatively slow. It is faster to transform the symbol `v` into a string and
+            #   then check if that is a constant by converting it to a `float` (under the
+            #   assumption that we have nothing higher than a `float`).
+            float(str(v))
             repl[k] = v
             continue
         except (TypeError, ValueError, AttributeError):
@@ -1669,9 +1692,38 @@ def symbols_in_code(code: str, potential_symbols: Set[str] = None, symbols_to_ig
         # Don't bother tokenizing for an empty set of potential symbols
         return set()
 
-    tokens = set(re.findall(_NAME_TOKENS, code))
+    tokens_list = re.findall(_NAME_TOKENS, code)
+    token_counts = Counter(tokens_list)
+    tokens = set(tokens_list)
     if potential_symbols is not None:
         tokens &= potential_symbols
+
+    # Remove 'e' from tokens if it appears as part of scientific notation
+    for match in _NAME_TOKENS.finditer(code):
+        s, e = match.span()
+        token = match.group(0)
+
+        # Check prev. literal is a digit and the next digit involves a number or +/-
+        # Check if token starts with e e.g. `e`, `e5`
+        if token.startswith('e') and s > 0:
+            # If token directly has a digit to the left `1e5`, `1e-3`
+            if code[s - 1].isdigit():
+                if len(token) > 1:
+                    rest = token[1:]  # everything after 'e'
+                    # If the rest is `+/- then digits` or just digits then rm
+                    if rest and (rest[0] in '+-' and rest[1:].isdigit() or rest.isdigit()):
+                        # Discard only if the count of this token is now zero, as `e = 1e-5` will mean token e was found twice
+                        token_counts[token] -= 1
+                        if token_counts[token] == 0:
+                            tokens.discard(token)
+                else:
+                    if e < len(code) and s > 0:
+                        if code[s - 1].isdigit() and code[e] in '-+0123456789':
+                            # Discard only if the count of this token is now zero, as `e = 1e-5` will mean token e was found twice
+                            token_counts[token] -= 1
+                            if token_counts[token] == 0:
+                                tokens.discard(token)
+
     if symbols_to_ignore is None:
         return tokens
     return tokens - symbols_to_ignore

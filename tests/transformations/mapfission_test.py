@@ -121,7 +121,7 @@ def test_nested_transient():
     rnode = state.add_read('A')
     wnode = state.add_write('A')
     me, mx = state.add_map('outer', dict(i='0:2'))
-    nsdfg_node = state.add_nested_sdfg(nsdfg, None, {'a'}, {'b'})
+    nsdfg_node = state.add_nested_sdfg(nsdfg, {'a'}, {'b'})
     state.add_memlet_path(rnode, me, nsdfg_node, dst_conn='a', memlet=dace.Memlet.simple('A', 'i'))
     state.add_memlet_path(nsdfg_node, mx, wnode, src_conn='b', memlet=dace.Memlet.simple('A', 'i'))
 
@@ -183,7 +183,7 @@ def test_multidim():
     t = nstate.add_tasklet('reset', {}, {'out'}, 'out = 0')
     a = nstate.add_write('a')
     nstate.add_edge(t, 'out', a, None, dace.Memlet.simple('a', '0'))
-    nsdfg_node = state.add_nested_sdfg(nsdfg, None, {}, {'a'})
+    nsdfg_node = state.add_nested_sdfg(nsdfg, {}, {'a'})
 
     state.add_edge(me, None, nsdfg_node, None, dace.Memlet())
     anode = state.add_write('A')
@@ -288,7 +288,7 @@ def test_mapfission_with_symbols():
 
     a = state.add_access('A')
     b = state.add_access('B')
-    t = state.add_nested_sdfg(nsdfg, None, {}, {'inner_A', 'inner_B'})
+    t = state.add_nested_sdfg(nsdfg, {}, {'inner_A', 'inner_B'})
     state.add_nedge(me, t, dace.Memlet())
     state.add_memlet_path(t, mx, a, memlet=dace.Memlet('A[0, i]'), src_conn='inner_A')
     state.add_memlet_path(t, mx, b, memlet=dace.Memlet('B[0, i]'), src_conn='inner_B')
@@ -336,7 +336,7 @@ def test_two_edges_through_map():
 
     a = state.add_access('A')
     b = state.add_access('B')
-    t = state.add_nested_sdfg(nsdfg, None, {'inner_A'}, {'inner_B'}, {'N': 'N', 'i': 'i'})
+    t = state.add_nested_sdfg(nsdfg, {'inner_A'}, {'inner_B'}, {'N': 'N', 'i': 'i'})
     state.add_memlet_path(a, me, t, memlet=dace.Memlet.from_array('A', sdfg.arrays['A']), dst_conn='inner_A')
     state.add_memlet_path(t, mx, b, memlet=dace.Memlet('B[i]'), src_conn='inner_B')
 
@@ -434,7 +434,7 @@ def test_array_copy_outside_scope():
     inode = state.add_access(iname)
     onode = state.add_access(oname)
     me, mx = state.add_map('map', {'i': '0:10'})
-    snode = state.add_nested_sdfg(nsdfg, None, {'ninp'}, {'nout'})
+    snode = state.add_nested_sdfg(nsdfg, {'ninp'}, {'nout'})
     state.add_memlet_path(inode, me, snode, memlet=dace.Memlet(data=iname, subset='i'), dst_conn='ninp')
     state.add_memlet_path(snode, mx, onode, memlet=dace.Memlet(data=oname, subset='i'), src_conn='nout')
 
@@ -487,7 +487,7 @@ def test_single_data_multiple_connectors():
     b = outer_state.add_access('B')
 
     me, mx = outer_state.add_map('map', {'i': '0:2'})
-    inner_sdfg_node = outer_state.add_nested_sdfg(inner_sdfg, None, {'A0', 'A1'}, {'B0', 'B1'})
+    inner_sdfg_node = outer_state.add_nested_sdfg(inner_sdfg, {'A0', 'A1'}, {'B0', 'B1'})
 
     outer_state.add_memlet_path(a, me, inner_sdfg_node, memlet=dace.Memlet(data='A', subset='0, 0:10'), dst_conn='A0')
     outer_state.add_memlet_path(a, me, inner_sdfg_node, memlet=dace.Memlet(data='A', subset='1, 0:10'), dst_conn='A1')
@@ -562,7 +562,7 @@ def test_dependent_symbol():
                                     code='__b1 = __a0 - __a1',
                                     external_edges=True)
 
-    nsdfg = inner_state.add_nested_sdfg(inner_sdfg2, None, {'A0', 'A1'}, {'B1'})
+    nsdfg = inner_state.add_nested_sdfg(inner_sdfg2, {'A0', 'A1'}, {'B1'})
     a0 = inner_state.add_access('A0')
     a1 = inner_state.add_access('A1')
     b1 = inner_state.add_access('B1')
@@ -577,8 +577,7 @@ def test_dependent_symbol():
     b = outer_state.add_access('B')
 
     me, mx = outer_state.add_map('map', {'i': '0:2'})
-    inner_sdfg_node = outer_state.add_nested_sdfg(inner_sdfg,
-                                                  None, {'A0', 'A1'}, {'B0', 'B1'},
+    inner_sdfg_node = outer_state.add_nested_sdfg(inner_sdfg, {'A0', 'A1'}, {'B0', 'B1'},
                                                   symbol_mapping={
                                                       'first': 'max(0, i - fidx)',
                                                       'last': 'min(10, i + lidx)'

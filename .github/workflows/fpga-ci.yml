@@ -32,7 +32,7 @@ jobs:
         python -m pip install --upgrade pip
         pip install pytest-xdist flake8 coverage click
         pip uninstall -y dace
-        pip install -e ".[testing]"
+        pip install -e ".[testing,ml]"
         curl -Os https://uploader.codecov.io/latest/linux/codecov
         chmod +x codecov
 
@@ -61,7 +61,7 @@ jobs:
         # and overflowed in the year 2022, run the FPGA tests pretending like it's January 1st 2021.
         # faketime -f "@2021-01-01 00:00:00" pytest -n auto --cov-report=xml --cov=dace --tb=short -m "fpga"
         # Try running without faketime
-        pytest -n auto --cov-report=xml --cov=dace --tb=short -m "fpga"
+        pytest -n auto --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "fpga"
 
         coverage report
         coverage xml

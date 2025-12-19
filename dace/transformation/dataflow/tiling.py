@@ -120,4 +120,5 @@ class MapTiling(transformation.SingleStateTransformation):
                 mapcollapse.setup_match(sdfg, cfg_id, self.state_id, mapcollapse_subgraph, 0)
                 mapcollapse.apply(graph, sdfg)
             last_map_entry = graph.in_edges(map_entry)[0].src
+
         return last_map_entry

@@ -488,10 +488,10 @@ class CPUCodeGen(TargetCodeGenerator):
 
                 if symbolic.issymbolic(arrsize, sdfg.constants):
                     warnings.warn('Variable-length array %s with size %s '
-                                  'detected and was allocated on heap instead of '
+                                  'detected and was allocated on the heap instead of '
                                   '%s' % (name, cpp.sym2cpp(arrsize), nodedesc.storage))
                 elif (arrsize_bytes > Config.get("compiler", "max_stack_array_size")) == True:
-                    warnings.warn("Array {} with size {} detected and was allocated on heap instead of "
+                    warnings.warn("Array {} with size {} detected and was allocated on the heap instead of "
                                   "{} since its size is greater than max_stack_array_size ({})".format(
                                       name, cpp.sym2cpp(arrsize_bytes), nodedesc.storage,
                                       Config.get("compiler", "max_stack_array_size")))
@@ -573,6 +573,10 @@ class CPUCodeGen(TargetCodeGenerator):
                          node: nodes.AccessNode, nodedesc: data.Data, function_stream: CodeIOStream,
                          callsite_stream: CodeIOStream) -> None:
         arrsize = nodedesc.total_size
+        arrsize_bytes = None
+        if not isinstance(nodedesc.dtype, dtypes.opaque):
+            arrsize_bytes = arrsize * nodedesc.dtype.bytes
+
         alloc_name = cpp.ptr(node.data, nodedesc, sdfg, self._frame)
         if isinstance(nodedesc, data.Array) and nodedesc.start_offset != 0:
             alloc_name = f'({alloc_name} - {cpp.sym2cpp(nodedesc.start_offset)})'
@@ -585,7 +589,9 @@ class CPUCodeGen(TargetCodeGenerator):
         if isinstance(nodedesc, (data.Scalar, data.View, data.Stream, data.Reference)):
             return
         elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
-              or (nodedesc.storage == dtypes.StorageType.Register and symbolic.issymbolic(arrsize, sdfg.constants))):
+              or (nodedesc.storage == dtypes.StorageType.Register and
+                  (symbolic.issymbolic(arrsize, sdfg.constants) or
+                   (arrsize_bytes and ((arrsize_bytes > Config.get("compiler", "max_stack_array_size")) == True))))):
             if isinstance(nodedesc, data.Array):
                 callsite_stream.write(f"delete[] {alloc_name};\n", cfg, state_id, node)
             else:
@@ -966,7 +972,6 @@ class CPUCodeGen(TargetCodeGenerator):
                 vec_prefix = 'v'
                 vec_suffix = f'<{dtype.veclen}>'
                 dtype = dtype.base_type
-
         func = f'{vec_prefix}reduce{atomic}{vec_suffix}'
 
         # Special call for detected reduction types
@@ -976,7 +981,9 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # General reduction
         custom_reduction = cpp.unparse_cr(sdfg, memlet.wcr, dtype)
-        return (f'dace::wcr_custom<{dtype.ctype}>:: template {func}({custom_reduction}, {ptr}, {inname})')
+        return (
+            f'const auto __dace__reduction_lambda = {custom_reduction};\ndace::wcr_custom<{dtype.ctype}>::{func}<decltype(__dace__reduction_lambda)>(__dace__reduction_lambda, {ptr}, {inname})'
+        )
 
     def process_out_memlets(self,
                             sdfg: SDFG,
@@ -1686,6 +1693,7 @@ class CPUCodeGen(TargetCodeGenerator):
     ):
         inline = Config.get_bool('compiler', 'inline_sdfgs')
         self._dispatcher.defined_vars.enter_scope(sdfg, can_access_parent=inline)
+        self._dispatcher.declared_arrays.enter_scope(sdfg, can_access_parent=inline)
         state_dfg = cfg.nodes()[state_id]
 
         fsyms = self._frame.free_symbols(node.sdfg)
@@ -1839,6 +1847,7 @@ class CPUCodeGen(TargetCodeGenerator):
             function_stream.write(nested_global_stream.getvalue())
             function_stream.write(nested_stream.getvalue())
 
+        self._dispatcher.declared_arrays.exit_scope(sdfg)
         self._dispatcher.defined_vars.exit_scope(sdfg)
 
     def _generate_MapEntry(

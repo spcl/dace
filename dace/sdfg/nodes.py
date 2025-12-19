@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes implementing the different types of nodes of the stateful
     dataflow multigraph representation. """
 
@@ -19,6 +19,7 @@ from dace.properties import (EnumProperty, Property, CodeProperty, LambdaPropert
 from dace.frontend.operations import detect_reduction_type
 from dace.symbolic import issymbolic, pystr_to_symbolic
 from dace import data, subsets as sbs, dtypes
+from dace.sdfg import tasklet_validation as tval
 import pydoc
 import warnings
 
@@ -455,7 +456,7 @@ class Tasklet(CodeNode):
     def name(self):
         return self._label
 
-    def validate(self, sdfg, state):
+    def validate(self, sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState'):
         if not dtypes.validate_name(self.label):
             raise NameError('Invalid tasklet name "%s"' % self.label)
         for in_conn in self.in_connectors:
@@ -464,6 +465,13 @@ class Tasklet(CodeNode):
         for out_conn in self.out_connectors:
             if not dtypes.validate_name(out_conn):
                 raise NameError('Invalid output connector "%s"' % out_conn)
+        if self.language == dtypes.Language.Python and self.code.code:
+            validator = tval.ConnectorDimensionalityValidator({e.dst_conn: e.data
+                                                               for e in state.in_edges(self)},
+                                                              {e.src_conn: e.data
+                                                               for e in state.out_edges(self)}, sdfg)
+            for stmt in self.code.code:
+                validator.visit(stmt)
 
     @property
     def free_symbols(self) -> Set[str]:
@@ -877,6 +885,58 @@ class MapEntry(EntryNode):
 
         return result
 
+    def used_symbols_within_scope(self, parent_state: 'dace.SDFGState', all_symbols: bool = False) -> Set[str]:
+        """
+        Returns a set of symbol names that are used within the Map scope created by this MapEntry
+
+        :param all_symbols: If False, only returns symbols that are needed as arguments (only used in generated code).
+        """
+        parent_sdfg: dace.SDFG = parent_state.sdfg
+
+        new_symbols = set()
+        free_symbols = set()
+
+        # Free symbols from nodes
+        for n in parent_state.all_nodes_between(self, parent_state.exit_node(self)):
+            if isinstance(n, EntryNode):
+                new_symbols |= set(n.new_symbols(parent_sdfg, parent_state, {}).keys())
+            elif isinstance(n, AccessNode):
+                # Add data descriptor symbols
+                free_symbols |= set(map(str, n.desc(parent_sdfg).used_symbols(all_symbols)))
+            elif isinstance(n, Tasklet):
+                if n.language == dtypes.Language.Python:
+                    # Consider callbacks defined as symbols as free
+                    for stmt in n.code.code:
+                        for astnode in ast.walk(stmt):
+                            if (isinstance(astnode, ast.Call) and isinstance(astnode.func, ast.Name)
+                                    and astnode.func.id in parent_sdfg.symbols):
+                                free_symbols.add(astnode.func.id)
+                else:
+                    # Find all string tokens and filter them to sdfg.symbols, while ignoring connectors
+                    code_symbols = dace.symbolic.symbols_in_code(
+                        n.code.as_string,
+                        potential_symbols=parent_sdfg.symbols.keys(),
+                        symbols_to_ignore=(n.in_connectors.keys() | n.out_connectors.keys() | n.ignored_symbols),
+                    )
+                    free_symbols |= code_symbols
+                    continue
+            elif isinstance(n, NestedSDFG):
+                free_symbols |= n.used_symbols(all_symbols)
+
+            free_symbols |= n.free_symbols
+
+        # Free symbols from memlets
+        for e in parent_state.all_edges(*parent_state.all_nodes_between(self, parent_state.exit_node(self))):
+            # If used for code generation, only consider memlet tree leaves
+            if not all_symbols and not parent_state.is_leaf_memlet(e):
+                continue
+
+            free_symbols |= e.data.used_symbols(all_symbols, e)
+
+        # Do not consider SDFG constants as symbols
+        new_symbols.update(set(parent_sdfg.constants.keys()))
+        return free_symbols - new_symbols
+
 
 @dace.serialize.serializable
 class MapExit(ExitNode):
@@ -990,6 +1050,11 @@ class Map(object):
                                  "enables the statement if block size is not symbolic, and any other value "
                                  "(including tuples) sets it explicitly.",
                                  serialize_if=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
+
+    gpu_maxnreg = Property(dtype=int,
+                           default=0,
+                           desc="Maximum number of registers per thread for GPU kernel",
+                           serialize_if=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
 
     gpu_force_syncthreads = Property(dtype=bool, desc="Force a call to the __syncthreads for the map", default=False)
 
@@ -1433,15 +1498,56 @@ class LibraryNode(CodeNode):
             dace.serialize.set_properties_from_json(ret, json_obj, context=context)
             return ret
 
-    def expand(self, sdfg, state, *args, **kwargs) -> str:
+    def expand(self, state_or_sdfg, state_or_impl=None, **kwargs) -> str:
         """ Create and perform the expansion transformation for this library
             node.
 
+            This method supports two interfaces:
+            1. New interface: expand(state, implementation=None, **kwargs)
+            2. Old interface: expand(sdfg, state, **kwargs) [for backward compatibility]
+
+            :param state_or_sdfg: Either a ControlFlowBlock (new interface) or SDFG (old interface)
+            :param state_or_impl: Either implementation name (new interface) or SDFGState (old interface)
+            :param kwargs: Additional expansion arguments
             :return: the name of the expanded implementation
+
+            Examples:
+                # New interface (recommended):
+                result = node.expand(state, 'pure')
+
+                # Old interface (still supported):
+                result = node.expand(sdfg, state)
         """
         from dace.transformation.transformation import ExpandTransformation  # Avoid import loop
+        import warnings
 
-        implementation = self.implementation
+        # Handle both old and new signatures for backward compatibility
+        from dace.sdfg.state import SDFGState
+
+        if isinstance(state_or_sdfg, SDFGState):
+            # New interface: expand(state, implementation=None, **kwargs)
+            actual_state = state_or_sdfg
+            sdfg = actual_state.parent_graph
+            implementation = state_or_impl
+            expansion_kwargs = kwargs
+        else:
+            # Old interface: expand(sdfg, state, **kwargs)
+            warnings.warn("The expand(sdfg, state) interface is deprecated. Use expand(state, implementation) instead.",
+                          DeprecationWarning,
+                          stacklevel=2)
+            sdfg = state_or_sdfg
+            actual_state = state_or_impl
+            expansion_kwargs = kwargs
+            implementation = None
+            # In old interface, implementation might be passed as keyword arg
+            if 'implementation' in kwargs:
+                implementation = kwargs.pop('implementation')
+
+        # Use provided implementation or fall back to current node implementation
+        if implementation is not None:
+            target_implementation = implementation
+        else:
+            target_implementation = self.implementation
         library_name = getattr(type(self), '_dace_library_name', '')
         try:
             if library_name:
@@ -1455,41 +1561,41 @@ class LibraryNode(CodeNode):
         if config_implementation is not None:
             try:
                 config_override = Config.get("library", library_name, "override")
-                if config_override and implementation in self.implementations:
-                    if implementation is not None:
+                if config_override and target_implementation in self.implementations:
+                    if target_implementation is not None:
                         warnings.warn("Overriding explicitly specified "
-                                      "implementation {} for {} with {}.".format(implementation, self.label,
+                                      "implementation {} for {} with {}.".format(target_implementation, self.label,
                                                                                  config_implementation))
-                    implementation = config_implementation
+                    target_implementation = config_implementation
             except KeyError:
                 config_override = False
         # If not explicitly set, try the node default
-        if implementation is None:
-            implementation = type(self).default_implementation
+        if target_implementation is None:
+            target_implementation = type(self).default_implementation
             # If no node default, try library default
-            if implementation is None:
+            if target_implementation is None:
                 import dace.library  # Avoid cyclic dependency
                 lib = dace.library._DACE_REGISTERED_LIBRARIES[type(self)._dace_library_name]
-                implementation = lib.default_implementation
+                target_implementation = lib.default_implementation
                 # Try the default specified in the config
-                if implementation is None:
-                    implementation = config_implementation
+                if target_implementation is None:
+                    target_implementation = config_implementation
                     # Otherwise we don't know how to expand
-                    if implementation is None:
+                    if target_implementation is None:
                         raise ValueError("No implementation or default implementation specified.")
-        if implementation not in self.implementations.keys():
-            raise KeyError("Unknown implementation for node {}: {}".format(type(self).__name__, implementation))
-        transformation_type = type(self).implementations[implementation]
-        cfg_id = state.parent_graph.cfg_id
-        state_id = state.block_id
-        subgraph = {transformation_type._match_node: state.node_id(self)}
+        if target_implementation not in self.implementations.keys():
+            raise KeyError("Unknown implementation for node {}: {}".format(type(self).__name__, target_implementation))
+        transformation_type = type(self).implementations[target_implementation]
+        cfg_id = actual_state.parent_graph.cfg_id
+        state_id = actual_state.block_id
+        subgraph = {transformation_type._match_node: actual_state.node_id(self)}
         transformation: ExpandTransformation = transformation_type()
         transformation.setup_match(sdfg, cfg_id, state_id, subgraph, 0)
-        if not transformation.can_be_applied(state, 0, sdfg):
+        if not transformation.can_be_applied(actual_state, 0, sdfg):
             raise RuntimeError("Library node expansion applicability check failed.")
         sdfg.append_transformation(transformation)
-        transformation.apply(state, sdfg, *args, **kwargs)
-        return implementation
+        transformation.apply(actual_state, sdfg, **expansion_kwargs)
+        return target_implementation
 
     @classmethod
     def register_implementation(cls, name, transformation_type):

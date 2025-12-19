@@ -76,7 +76,7 @@ def change_strides(sdfg: dace.SDFG, stride_one_values: List[str], schedule: Sche
     # Only keep inputs and outputs which are persistent
     inputs.intersection_update(persistent_arrays.keys())
     outputs.intersection_update(persistent_arrays.keys())
-    nsdfg = changed_stride_state.add_nested_sdfg(sdfg, new_sdfg, inputs=inputs, outputs=outputs)
+    nsdfg = changed_stride_state.add_nested_sdfg(sdfg, inputs=inputs, outputs=outputs)
     transform_state = new_sdfg.add_state_before(changed_stride_state, label="transform_data", is_start_state=True)
     transform_state_back = new_sdfg.add_state_after(changed_stride_state, "transform_data_back", is_start_state=False)
 

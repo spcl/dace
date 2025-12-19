@@ -216,7 +216,11 @@ def _pgrid_bcast(pv: ProgramVisitor,
 def _mpi4py_to_MPI(MPI, op):
     if op is MPI.SUM:
         return 'MPI_SUM'
-    raise NotImplementedError
+    elif op is MPI.MAX:
+        return 'MPI_MAX'
+    elif op is MPI.MIN:
+        return 'MPI_MIN'
+    raise NotImplementedError(f"[DaCe MPI4Py replacement] Operator {op} is not implemented")
 
 
 @oprepo.replaces('mpi4py.MPI.COMM_WORLD.Reduce')
@@ -289,10 +293,21 @@ def _pgrid_alltoall(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, pgrid: str
 
 @oprepo.replaces('mpi4py.MPI.COMM_WORLD.Allreduce')
 @oprepo.replaces('dace.comm.Allreduce')
-def _allreduce(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, buffer: str, op: str, grid: str = None):
+def _allreduce(pv: ProgramVisitor,
+               sdfg: SDFG,
+               state: SDFGState,
+               inp_buffer: 'InPlace',
+               buffer: str,
+               op: str,
+               grid: str = None):
 
     from dace.libraries.mpi.nodes.allreduce import Allreduce
 
+    from mpi4py import MPI
+    if isinstance(op, MPI.Op):
+        op = _mpi4py_to_MPI(MPI, op)
+    if inp_buffer != MPI.IN_PLACE:
+        raise ValueError('DaCe currently supports in-place Allreduce only.')
     libnode = Allreduce('_Allreduce_', op, grid)
     desc = sdfg.arrays[buffer]
     in_buffer = state.add_read(buffer)
@@ -309,27 +324,17 @@ def _intracomm_allreduce(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, icomm
     """ Equivalent to `dace.comm.Allreduce(out_buffer, op)`. """
 
     from mpi4py import MPI
-    icomm_name, icomm_obj = icomm, pv.globals[icomm]
+    icomm_obj = pv.globals[icomm]
     if icomm_obj != MPI.COMM_WORLD:
         raise ValueError('Only the mpi4py.MPI.COMM_WORLD Intracomm is supported in DaCe Python programs.')
-    if inp_buffer != MPI.IN_PLACE:
-        raise ValueError('DaCe currently supports in-place Allreduce only.')
-    if isinstance(op, MPI.Op):
-        op = _mpi4py_to_MPI(MPI, op)
-    return _allreduce(pv, sdfg, state, out_buffer, op)
+    return _allreduce(pv, sdfg, state, inp_buffer, out_buffer, op)
 
 
 @oprepo.replaces_method('ProcessGrid', 'Allreduce')
 def _pgrid_allreduce(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, pgrid: str, inp_buffer: 'InPlace',
                      out_buffer: str, op: str):
     """ Equivalent to `dace.comm.Allreduce(out_buffer, op, grid=pgrid)`. """
-
-    from mpi4py import MPI
-    if inp_buffer != MPI.IN_PLACE:
-        raise ValueError('DaCe currently supports in-place Allreduce only.')
-    if isinstance(op, MPI.Op):
-        op = _mpi4py_to_MPI(MPI, op)
-    return _allreduce(pv, sdfg, state, out_buffer, op, grid=pgrid)
+    return _allreduce(pv, sdfg, state, inp_buffer, out_buffer, op, grid=pgrid)
 
 
 @oprepo.replaces('mpi4py.MPI.COMM_WORLD.Scatter')
@@ -854,9 +859,9 @@ def _wait(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, request: str):
     desc = sdfg.arrays[req_name]
     req_node = state.add_access(req_name)
 
-    src = sdfg.add_temp_transient([1], dtypes.int32)
+    src = sdfg.add_transient('comm_wait_src', [1], dtypes.int32, find_new_name=True)
     src_node = state.add_write(src[0])
-    tag = sdfg.add_temp_transient([1], dtypes.int32)
+    tag = sdfg.add_transient('comm_wait_tag', [1], dtypes.int32, find_new_name=True)
     tag_node = state.add_write(tag[0])
 
     if req_range:
@@ -1142,7 +1147,9 @@ def _bcscatter(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, in_buffer: str,
             bsizes_desc = sdfg.arrays[bsizes_name]
             bsizes_node = state.add_read(bsizes_name)
         else:
-            bsizes_name, bsizes_desc = sdfg.add_temp_transient((len(block_sizes), ), dtype=dace.int32)
+            bsizes_name, bsizes_desc = sdfg.add_transient('bsizes', (len(block_sizes), ),
+                                                          dtype=dace.int32,
+                                                          find_new_name=True)
             bsizes_node = state.add_access(bsizes_name)
             bsizes_tasklet = state.add_tasklet(
                 '_set_bsizes_', {}, {'__out'},
@@ -1161,10 +1168,10 @@ def _bcscatter(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, in_buffer: str,
     out_desc = sdfg.arrays[outbuf_name]
     outbuf_node = state.add_write(outbuf_name)
 
-    gdesc = sdfg.add_temp_transient((9, ), dtype=dace.int32)
+    gdesc = pv.add_temp_transient((9, ), dtype=dace.int32, output_index=0)
     gdesc_node = state.add_write(gdesc[0])
 
-    ldesc = sdfg.add_temp_transient((9, ), dtype=dace.int32)
+    ldesc = pv.add_temp_transient((9, ), dtype=dace.int32, output_index=1)
     ldesc_node = state.add_write(ldesc[0])
 
     if inbuf_range:
@@ -1214,7 +1221,9 @@ def _bcgather(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, in_buffer: str, 
             bsizes_desc = sdfg.arrays[bsizes_name]
             bsizes_node = state.add_read(bsizes_name)
         else:
-            bsizes_name, bsizes_desc = sdfg.add_temp_transient((len(block_sizes), ), dtype=dace.int32)
+            bsizes_name, bsizes_desc = sdfg.add_transient('bsizes', (len(block_sizes), ),
+                                                          dtype=dace.int32,
+                                                          find_new_name=True)
             bsizes_node = state.add_access(bsizes_name)
             bsizes_tasklet = state.add_tasklet(
                 '_set_bsizes_', {}, {'__out'},
@@ -1290,7 +1299,9 @@ def _distr_matmult(pv: ProgramVisitor,
             a_bsizes_desc = sdfg.arrays[a_bsizes_name]
             a_bsizes_node = state.add_read(a_bsizes_name)
         else:
-            a_bsizes_name, a_bsizes_desc = sdfg.add_temp_transient((len(a_block_sizes), ), dtype=dace.int32)
+            a_bsizes_name, a_bsizes_desc = sdfg.add_transient('a_bsizes', (len(a_block_sizes), ),
+                                                              dtype=dace.int32,
+                                                              find_new_name=True)
             a_bsizes_node = state.add_access(a_bsizes_name)
             a_bsizes_tasklet = state.add_tasklet(
                 '_set_a_bsizes_', {}, {'__out'},
@@ -1309,7 +1320,9 @@ def _distr_matmult(pv: ProgramVisitor,
             b_bsizes_desc = sdfg.arrays[b_bsizes_name]
             b_bsizes_node = state.add_read(b_bsizes_name)
         else:
-            b_bsizes_name, b_bsizes_desc = sdfg.add_temp_transient((len(b_block_sizes), ), dtype=dace.int32)
+            b_bsizes_name, b_bsizes_desc = sdfg.add_transient('b_bsizes', (len(b_block_sizes), ),
+                                                              dtype=dace.int32,
+                                                              find_new_name=True)
             b_bsizes_node = state.add_access(b_bsizes_name)
             b_bsizes_tasklet = state.add_tasklet(
                 '_set_b_sizes_', {}, {'__out'},
@@ -1327,7 +1340,7 @@ def _distr_matmult(pv: ProgramVisitor,
         tasklet = Pgemm("__DistrMatMult__", gm, gn, gk)
         m = arra.shape[0]
         n = arrb.shape[-1]
-        out = sdfg.add_temp_transient((m, n), dtype=arra.dtype)
+        out = pv.add_temp_transient((m, n), dtype=arra.dtype)
     elif len(arra.shape) == 2 and len(arrb.shape) == 1:
         # Gemv
         from dace.libraries.pblas.nodes.pgemv import Pgemv
@@ -1336,7 +1349,7 @@ def _distr_matmult(pv: ProgramVisitor,
             m = c_block_sizes[0]
         else:
             m = arra.shape[0]
-        out = sdfg.add_temp_transient((m, ), dtype=arra.dtype)
+        out = pv.add_temp_transient((m, ), dtype=arra.dtype)
     elif len(arra.shape) == 1 and len(arrb.shape) == 2:
         # Gemv transposed
         # Swap a and b
@@ -1348,7 +1361,7 @@ def _distr_matmult(pv: ProgramVisitor,
             n = c_block_sizes[0]
         else:
             n = arra.shape[1]
-        out = sdfg.add_temp_transient((n, ), dtype=arra.dtype)
+        out = pv.add_temp_transient((n, ), dtype=arra.dtype)
 
     anode = state.add_read(opa)
     bnode = state.add_read(opb)

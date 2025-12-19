@@ -623,11 +623,19 @@ def validate_state(state: 'dace.sdfg.SDFGState',
 
         # Connector tests
         ########################################
-        # Check for duplicate connector names (unless it's a nested SDFG)
-        if (len(node.in_connectors.keys() & node.out_connectors.keys()) > 0
-                and not isinstance(node, (nd.NestedSDFG, nd.LibraryNode))):
-            dups = node.in_connectors.keys() & node.out_connectors.keys()
-            raise InvalidSDFGNodeError("Duplicate connectors: " + str(dups), sdfg, state_id, nid)
+        # Tasklet connector tests
+        if not isinstance(node, (nd.NestedSDFG, nd.LibraryNode)):
+            # Check for duplicate connector names (unless it's a nested SDFG)
+            if len(node.in_connectors.keys() & node.out_connectors.keys()) > 0:
+                dups = node.in_connectors.keys() & node.out_connectors.keys()
+                raise InvalidSDFGNodeError("Duplicate connectors: " + str(dups), sdfg, state_id, nid)
+
+            for conn in node.in_connectors.keys() | node.out_connectors.keys():
+                if conn in (sdfg.constants_prop.keys() | sdfg.symbols.keys() | sdfg.arrays.keys()):
+                    if not isinstance(node, nd.EntryNode):  # Special case for dynamic map inputs
+                        raise InvalidSDFGNodeError(
+                            "Connector name '%s' is already used as a symbol, constant, or array name" % conn, sdfg,
+                            state_id, nid)
 
         # Check for dangling connectors (incoming)
         for conn in node.in_connectors:
@@ -776,7 +784,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 and (not isinstance(dst_node, nd.AccessNode) or (name != dst_node.data and name != e.dst_conn))):
             raise InvalidSDFGEdgeError(
                 "Memlet data does not match source or destination "
-                "data nodes)",
+                "data nodes",
                 sdfg,
                 state_id,
                 eid,
@@ -793,6 +801,20 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                     raise InvalidSDFGEdgeError(
                         f'Data container "{e.data.data}" is stored as {sdfg.arrays[e.data.data].storage} '
                         'but accessed on host', sdfg, state_id, eid)
+
+        # Ensure empty memlets are properly connected to tasklets:
+        # Empty memlets may only connect two adjacent tasklets
+        if e.data.is_empty():
+            if len(path) == 1 and isinstance(src_node, nd.Tasklet) and isinstance(dst_node, nd.Tasklet):
+                pass
+            elif isinstance(dst_node, nd.Tasklet) and path[-1].dst_conn:
+                raise InvalidSDFGEdgeError(
+                    f'Empty memlet connected to tasklet input connector "{path[-1].dst_conn}". This '
+                    'is only allowed when connecting two adjacent tasklets.', sdfg, state_id, eid)
+            elif isinstance(src_node, nd.Tasklet) and path[0].src_conn:
+                raise InvalidSDFGEdgeError(
+                    f'Empty memlet connected to tasklet output connector "{path[0].src_conn}". This '
+                    'is only allowed when connecting two adjacent tasklets.', sdfg, state_id, eid)
 
         # Check memlet subset validity with respect to source/destination nodes
         if e.data.data is not None and e.data.allow_oob == False:

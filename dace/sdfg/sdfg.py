@@ -13,6 +13,9 @@ import shutil
 import sys
 from typing import Any, AnyStr, Dict, List, Optional, Sequence, Set, Tuple, Type, TYPE_CHECKING, Union
 import warnings
+import subprocess
+import tempfile
+import pickle
 
 import dace
 from dace.sdfg.graph import generate_element_id
@@ -2048,7 +2051,7 @@ class SDFG(ControlFlowRegion):
                               total_size=total_size,
                               may_alias=may_alias)
 
-    def add_temp_transient_like(self, desc: Union[dt.Array, dt.Scalar], dtype=None, debuginfo=None):
+    def add_temp_transient_like(self, desc: Union[dt.Array, dt.Scalar], dtype=None, debuginfo=None, name=None):
         """ Convenience function to add a transient array with a temporary name to the data
             descriptor store. """
         debuginfo = debuginfo or desc.debuginfo
@@ -2057,6 +2060,8 @@ class SDFG(ControlFlowRegion):
         newdesc.dtype = dtype
         newdesc.transient = True
         newdesc.debuginfo = debuginfo
+        if name is not None:
+            return self.add_datadesc(name, newdesc, find_new_name=True), newdesc
         return self.add_datadesc(self.temp_data_name(), newdesc), newdesc
 
     def add_datadesc(self, name: str, datadesc: dt.Data, find_new_name=False) -> str:
@@ -2105,7 +2110,7 @@ class SDFG(ControlFlowRegion):
                     if isinstance(v, dt.Data):
                         _add_symbols(sdfg, v)
             for sym in desc.free_symbols:
-                if sym.name not in sdfg.symbols:
+                if sym.name not in sdfg.symbols and sym.name not in sdfg.arg_names:
                     sdfg.add_symbol(sym.name, sym.dtype)
 
         # Add the data descriptor to the SDFG and all symbols that are not yet known.
@@ -2512,6 +2517,20 @@ class SDFG(ControlFlowRegion):
 
             return binaryobj(*args, **kwargs)
 
+    def safe_call(self, *args, **kwargs):
+        """
+        Invokes an SDFG in a separate process to avoid crashes in the main process,generating and compiling code if necessary.
+        Raises an exception if the SDFG execution fails.
+        """
+        with hooks.invoke_sdfg_call_hooks(self) as sdfg:
+            binaryobj = sdfg.compile()
+
+            # Verify passed arguments (if enabled)
+            if Config.get_bool('frontend', 'check_args'):
+                sdfg.argument_typecheck(args, kwargs)
+
+            return binaryobj.safe_call(*args, **kwargs)
+
     def fill_scope_connectors(self):
         """ Fills missing scope connectors (i.e., "IN_#"/"OUT_#" on entry/exit
             nodes) according to data on the memlets. """
@@ -2668,11 +2687,11 @@ class SDFG(ControlFlowRegion):
 
             Examples::
 
-                      # Applies MapTiling, then MapFusion, followed by
+                      # Applies MapTiling, then MapFusionVertical, followed by
                       # GPUTransformSDFG, specifying parameters only for the
                       # first transformation.
                       sdfg.apply_transformations(
-                        [MapTiling, MapFusion, GPUTransformSDFG],
+                        [MapTiling, MapFusionVertical, GPUTransformSDFG],
                         options=[{'tile_size': 16}, {}, {}])
         """
         from dace.transformation.passes.pattern_matching import PatternMatchAndApply  # Avoid import loops

@@ -8,8 +8,9 @@ import pytest
 import argparse
 from dace.fpga_testing import fpga_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
-from dace.transformation.dataflow import StreamingMemory, MapFusion, StreamingComposition, PruneConnectors
+from dace.transformation.dataflow import StreamingMemory, MapFusionVertical, StreamingComposition, PruneConnectors
 from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
+from dace.autodiff import add_backward_pass
 
 N = dc.symbol('N', dtype=dc.int32)
 
@@ -50,6 +51,43 @@ def init_data(N):
     A[:] = B
 
     return A
+
+
+def lu_jax_kernel(jnp, lax, A):
+    n = A.shape[0]
+
+    def outer_loop_body(A, i):
+
+        def inner_loop_1_body(A, j):
+
+            def update_fn(_):
+                mask = jnp.arange(n) < j
+                A_slice_1 = jnp.where(mask, A[i, :], 0.0)
+                A_slice_2 = jnp.where(mask, A[:, j], 0.0)
+                new_val = (A[i, j] - A_slice_1 @ A_slice_2) / A[j, j]
+                return A.at[i, j].set(new_val)
+
+            A = lax.cond(j < i, lambda _: update_fn(None), lambda _: A, operand=None)
+            return A, None
+
+        def inner_loop_2_body(A, j):
+
+            def update_fn(_):
+                mask = jnp.arange(n) < i
+                A_slice_1 = jnp.where(mask, A[i, :], 0.0)
+                A_slice_2 = jnp.where(mask, A[:, j], 0.0)
+                new_val = A[i, j] - A_slice_1 @ A_slice_2
+                return A.at[i, j].set(new_val)
+
+            A = lax.cond(j >= i, lambda _: update_fn(None), lambda _: A, operand=None)
+            return A, None
+
+        A, _ = lax.scan(inner_loop_1_body, A, jnp.arange(n))
+        A, _ = lax.scan(inner_loop_2_body, A, jnp.arange(n))
+        return A, None
+
+    A, _ = lax.scan(outer_loop_body, A, jnp.arange(n))
+    return jnp.sum(A)
 
 
 def run_lu(device_type: dace.dtypes.DeviceType):
@@ -101,6 +139,38 @@ def run_lu(device_type: dace.dtypes.DeviceType):
     return sdfg
 
 
+def run_lu_autodiff():
+    import jax
+    import jax.numpy as jnp
+    import jax.lax as lax
+
+    # Initialize data (polybench mini size)
+    N = 5
+    A = init_data(N)
+    A_jax = jnp.copy(A)
+
+    # Initialize gradient computation data
+    gradient_A = np.zeros_like(A)
+    gradient___return = np.ones((1, ), dtype=np.float32)
+
+    # Define sum reduction for the output
+    @dc.program
+    def autodiff_kernel(A: dc.float32[N, N]):
+        lu_kernel(A)
+        return np.sum(A)
+
+    # Add the backward pass to the SDFG
+    sdfg = autodiff_kernel.to_sdfg()
+    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"])
+    sdfg(A, N=N, gradient_A=gradient_A, gradient___return=gradient___return)
+
+    # Numerically validate vs JAX
+    jax_kernel = lambda A: lu_jax_kernel(jnp, lax, A)
+    jax_grad = jax.jit(jax.grad(jax_kernel))
+    jax_grad_A = jax_grad(A_jax)
+    np.testing.assert_allclose(gradient_A, jax_grad_A, rtol=1e-5, atol=1e-5)
+
+
 def test_cpu():
     run_lu(dace.dtypes.DeviceType.CPU)
 
@@ -108,6 +178,12 @@ def test_cpu():
 @pytest.mark.gpu
 def test_gpu():
     run_lu(dace.dtypes.DeviceType.GPU)
+
+
+@pytest.mark.autodiff
+def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
+    run_lu_autodiff()
 
 
 @fpga_test(assert_ii_1=False, xilinx=False)
@@ -125,6 +201,7 @@ if __name__ == "__main__":
 
     if target == "cpu":
         run_lu(dace.dtypes.DeviceType.CPU)
+        run_lu_autodiff()
     elif target == "gpu":
         run_lu(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":

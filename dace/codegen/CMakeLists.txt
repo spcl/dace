@@ -7,6 +7,7 @@ set(DACE_PROGRAM_NAME "dace_program" CACHE STRING "Name of DaCe program")
 set(DACE_SRC_DIR "" CACHE STRING "Root directory of generated code files")
 set(DACE_FILES "" CACHE STRING "List of host code files relative to the root of the source directory")
 set(DACE_LIBS "" CACHE STRING "Extra libraries")
+set(DACE_CPP_STANDARD "20" CACHE STRING "C++ standard to use for compilation (e.g., 14, 17, 20, 23, 26)")
 set(HLSLIB_PART_NAME "${DACE_XILINX_PART_NAME}")
 
 # CUDA
@@ -121,7 +122,7 @@ if(DACE_ENABLE_CUDA)
   set(CUDAToolkit_ROOT ${CUDA_TOOLKIT_ROOT_DIR})
 
   find_package(CUDAToolkit REQUIRED)
-  set(CMAKE_CUDA_STANDARD 14)
+  set(CMAKE_CUDA_STANDARD 17)
   set(CMAKE_CUDA_SEPARABLE_COMPILATION ON)
 
   # CMake 3.24: set_property(TARGET tgt PROPERTY CUDA_ARCHITECTURES native)
@@ -565,6 +566,9 @@ include("targets/mlir/mlir.cmake")
 # Create DaCe library file
 add_library(${DACE_PROGRAM_NAME} SHARED ${DACE_CPP_FILES} ${DACE_OBJECTS})
 target_link_libraries(${DACE_PROGRAM_NAME} PUBLIC ${DACE_LIBS})
+
+# Set C++ standard to C++20 (or the configured standard)
+set_property(TARGET ${DACE_PROGRAM_NAME} PROPERTY CXX_STANDARD ${DACE_CPP_STANDARD})
 
 # Add additional required files
 if(DACE_ENABLE_INTELFPGA)
