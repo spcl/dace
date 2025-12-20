@@ -43,8 +43,6 @@ class SnitchCodeGen(TargetCodeGenerator):
         self.frame = frame_codegen
         # Can be used to dispatch other code generators for allocation/nodes
         self.dispatcher = frame_codegen.dispatcher
-        # ???
-        self.packed_types = False
         # Mapping of ssr to ssr_config
         self.ssrs = MAX_SSR_STREAMERS * [None]
 
@@ -613,8 +611,7 @@ class SnitchCodeGen(TargetCodeGenerator):
 
             copy_shape, src_strides, dst_strides, src_expr, dst_expr = \
                 cpp.memlet_copy_to_absolute_strides(
-                    self.dispatcher, sdfg, state_dfg, edge, src_node, dst_node,
-                    self.packed_types)
+                    self.dispatcher, sdfg, state_dfg, edge, src_node, dst_node)
             dbg(f'  copy_shape = "{copy_shape}", src_strides = "{src_strides}", dst_strides = "{dst_strides}", src_expr = "{src_expr}", dst_expr = "{dst_expr}"'
                 )
 

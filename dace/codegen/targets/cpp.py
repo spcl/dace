@@ -59,7 +59,6 @@ def copy_expr(
     is_write=None,  # Otherwise it's a read
     offset=None,
     relative_offset=True,
-    packed_types=False,
 ):
     data_desc = sdfg.arrays[data_name]
     # NOTE: Are there any cases where a mix of '.' and '->' is needed when traversing nested structs?
@@ -103,35 +102,15 @@ def copy_expr(
     if not defined_types:
         defined_types = dispatcher.defined_vars.get(ptrname, is_global=is_global)
     def_type, _ = defined_types
-    # if fpga.is_fpga_array(data_desc):
-    #     # TODO: Study structures on FPGAs. Should probably use 'name' instead of 'data_name' here.
-    #     expr = fpga.fpga_ptr(
-    #         data_name,
-    #         data_desc,
-    #         sdfg,
-    #         s,
-    #         is_write,
-    #         dispatcher,
-    #         0,
-    #         def_type == DefinedType.ArrayInterface
-    #         # If this is a view, it has already been renamed
-    #         and not isinstance(data_desc, data.View))
-    # else:
     expr = ptr(name, data_desc, sdfg, dispatcher.frame)
 
     add_offset = offset_cppstr != "0"
 
     if def_type in [DefinedType.Pointer, DefinedType.ArrayInterface]:
         return "{}{}{}".format(dt, expr, " + {}".format(offset_cppstr) if add_offset else "")
-
     elif def_type == DefinedType.StreamArray:
         return "{}[{}]".format(expr, offset_cppstr)
-
-    elif def_type == DefinedType.FPGA_ShiftRegister:
-        return expr
-
     elif def_type in [DefinedType.Scalar, DefinedType.Stream, DefinedType.Object]:
-
         if add_offset:
             raise TypeError("Tried to offset address of scalar {}: {}".format(data_name, offset_cppstr))
 
@@ -140,17 +119,12 @@ def copy_expr(
         else:
             return data_name
     else:
-        raise NotImplementedError("copy_expr not implemented "
-                                  "for connector type: {}".format(def_type))
+        return expr
 
 
-def memlet_copy_to_absolute_strides(dispatcher: 'TargetDispatcher',
-                                    sdfg: SDFG,
-                                    state: SDFGState,
-                                    edge: gr.MultiConnectorEdge[mmlt.Memlet],
-                                    src_node: nodes.AccessNode,
-                                    dst_node: nodes.AccessNode,
-                                    packed_types: bool = False):
+def memlet_copy_to_absolute_strides(dispatcher: 'TargetDispatcher', sdfg: SDFG, state: SDFGState,
+                                    edge: gr.MultiConnectorEdge[mmlt.Memlet], src_node: nodes.AccessNode,
+                                    dst_node: nodes.AccessNode):
     memlet = edge.data
     copy_shape = memlet.subset.size_exact()
     src_nodedesc = src_node.desc(sdfg)
@@ -169,16 +143,14 @@ def memlet_copy_to_absolute_strides(dispatcher: 'TargetDispatcher',
                              memlet,
                              is_write=is_src_write,
                              offset=src_subset,
-                             relative_offset=False,
-                             packed_types=packed_types)
+                             relative_offset=False)
         dst_expr = copy_expr(dispatcher,
                              sdfg,
                              dst_node.data,
                              memlet,
                              is_write=(not is_src_write),
                              offset=dst_subset,
-                             relative_offset=False,
-                             packed_types=packed_types)
+                             relative_offset=False)
     if src_subset is None:
         src_subset = subsets.Range.from_array(src_nodedesc)
     if dst_subset is None:
@@ -610,14 +582,6 @@ def cpp_array_expr(sdfg,
         name = memlet.data
 
     if with_brackets:
-        # if fpga.is_fpga_array(desc):
-        #     # get conf flag
-        #     # TODO: Study structures on FPGAs. Should probably use 'name' instead of 'memlet.data' here.
-        #     ptrname = fpga.fpga_ptr(memlet.data,
-        #                             desc,
-        #                             sdfg,
-        #                             subset)
-        # else:
         ptrname = ptr(name, desc, sdfg, codegen)
         return "%s[%s]" % (ptrname, offset_cppstr)
     else:
@@ -1095,15 +1059,7 @@ class InterstateEdgeUnparser(cppunparse.CPPUnparser):
             raise SyntaxError('Range subscripts disallowed in interstate edges')
 
         memlet = mmlt.Memlet(data=target, subset=rng)
-
-        if target not in self.sdfg.arrays:
-            # This could be an FPGA array whose name has been mangled
-            # unqualified = fpga.unqualify_fpga_array_name(self.sdfg, target)
-            unqualified = target
-            desc = self.sdfg.arrays[unqualified]
-            self.write(cpp_array_expr(self.sdfg, memlet, referenced_array=desc, codegen=self.codegen))
-        else:
-            self.write(cpp_array_expr(self.sdfg, memlet, codegen=self.codegen))
+        self.write(cpp_array_expr(self.sdfg, memlet, codegen=self.codegen))
 
 
 class DaCeKeywordRemover(ExtNodeTransformer):
