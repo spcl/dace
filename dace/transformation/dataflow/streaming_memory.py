@@ -417,7 +417,7 @@ class StreamingMemory(xf.SingleStateTransformation):
                     newdesc = input_gearbox_newdesc
 
             else:
-                # Qualify name to avoid name clashes if memory interfaces are not decoupled for Xilinx
+                # Qualify name to avoid name clashes
                 stream_name = "stream_" + dnode.data
                 name, newdesc = sdfg.add_stream(stream_name,
                                                 desc.dtype,
@@ -696,7 +696,7 @@ class StreamingComposition(xf.SingleStateTransformation):
 
         # Create new stream of shape 1
         desc = sdfg.arrays[access.data]
-        # Qualify name to avoid name clashes if memory interfaces are not decoupled for Xilinx
+        # Qualify name to avoid name clashes
         stream_name = "stream_" + access.data
         name, newdesc = sdfg.add_stream(stream_name,
                                         desc.dtype,

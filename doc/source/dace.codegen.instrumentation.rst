@@ -4,14 +4,6 @@ dace.codegen.instrumentation package
 Submodules
 ----------
 
-dace.codegen.instrumentation.fpga module
-----------------------------------------
-
-.. automodule:: dace.codegen.instrumentation.fpga
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
 dace.codegen.instrumentation.gpu\_events module
 -----------------------------------------------
 
