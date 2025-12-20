@@ -68,7 +68,7 @@ setup(name='dace',
       package_data={
           '': [
               '*.yml', 'codegen/CMakeLists.txt', 'codegen/tools/*.cpp', 'external/moodycamel/*.h',
-              'external/moodycamel/LICENSE.md', 'codegen/Xilinx_HLS.tcl.in'
+              'external/moodycamel/LICENSE.md'
           ] + runtime_files + cub_files + viewer_files + hlslib_files + library_files + rtllib_files + cmake_files
       },
       include_package_data=True,
