@@ -1129,7 +1129,7 @@ class SDFG(ControlFlowRegion):
         Creates a schedule tree from this SDFG and all nested SDFGs. The schedule tree is a tree of nodes that represent
         the execution order of the SDFG.
         Each node in the tree can either represent a single statement (symbol assignment, tasklet, copy, library node,
-        etc.) or a ``ScheduleTreeScope`` block (map, for-loop, pipeline, etc.) that contains other nodes.
+        etc.) or a ``ScheduleTreeScope`` block (map, for-loop, etc.) that contains other nodes.
 
         It can be used to generate code from an SDFG, or to perform schedule transformations on the SDFG. For example,
         erasing an empty if branch, or merging two consecutive for-loops.

@@ -2059,56 +2059,6 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         self.add_node(result)
         return result
 
-    def add_pipeline(self,
-                     name,
-                     ndrange,
-                     init_size=0,
-                     init_overlap=False,
-                     drain_size=0,
-                     drain_overlap=False,
-                     additional_iterators={},
-                     schedule=dtypes.ScheduleType.FPGA_Device,
-                     debuginfo=None,
-                     **kwargs) -> Tuple[nd.PipelineEntry, nd.PipelineExit]:
-        """ Adds a pipeline entry and pipeline exit. These are used for FPGA
-            kernels to induce distinct behavior between an "initialization"
-            phase, a main streaming phase, and a "draining" phase, which require
-            a additive number of extra loop iterations (i.e., N*M + I + D),
-            where I and D are the number of initialization/drain iterations.
-            The code can detect which phase it is in by querying the
-            init_condition() and drain_condition() boolean variable.
-
-            :param name:          Pipeline label
-            :param ndrange:       Mapping between range variable names and
-                                  their subsets (parsed from strings)
-            :param init_size:     Number of iterations of initialization phase.
-            :param init_overlap:  Whether the initialization phase overlaps
-                                  with the "main" streaming phase of the loop.
-            :param drain_size:    Number of iterations of draining phase.
-            :param drain_overlap: Whether the draining phase overlaps with
-                                  the "main" streaming phase of the loop.
-            :param additional_iterators: a dictionary containing additional
-                                  iterators that will be created for this scope and that are not
-                                  automatically managed by the scope code.
-                                  The dictionary takes the form 'variable_name' -> init_value
-            :return: (map_entry, map_exit) node 2-tuple
-        """
-        debuginfo = _getdebuginfo(debuginfo or self._default_lineinfo)
-        pipeline = nd.PipelineScope(name,
-                                    *_make_iterators(ndrange),
-                                    init_size=init_size,
-                                    init_overlap=init_overlap,
-                                    drain_size=drain_size,
-                                    drain_overlap=drain_overlap,
-                                    additional_iterators=additional_iterators,
-                                    schedule=schedule,
-                                    debuginfo=debuginfo,
-                                    **kwargs)
-        pipeline_entry = nd.PipelineEntry(pipeline)
-        pipeline_exit = nd.PipelineExit(pipeline)
-        self.add_nodes_from([pipeline_entry, pipeline_exit])
-        return pipeline_entry, pipeline_exit
-
     def add_edge_pair(
         self,
         scope_node,
