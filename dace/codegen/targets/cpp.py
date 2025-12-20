@@ -257,10 +257,10 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
                           memlet: mmlt.Memlet,
                           pointer_name: str,
                           conntype: dtypes.typeclass,
+                          codegen: 'TargetCodeGenerator',
                           ancestor: int = 1,
                           is_write: bool = None,
-                          device_code: bool = False,
-                          decouple_array_interfaces: bool = False) -> Tuple[str, str, str]:
+                          device_code: bool = False) -> Tuple[str, str, str]:
     """
     Returns a tuple of three strings with a definition of a reference to an
     existing memlet. Used in nested SDFG arguments.
@@ -274,8 +274,8 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
     typedef = conntype.ctype
     offset = cpp_offset_expr(desc, memlet.subset)
     offset_expr = '[' + offset + ']'
-    is_scalar = not isinstance(conntype, dtypes.pointer)  # and not fpga.is_fpga_array(desc)
-    ptrname = ptr(memlet.data, desc, sdfg, dispatcher.frame)
+    is_scalar = not isinstance(conntype, dtypes.pointer)
+    ptrname = codegen.ptr(memlet.data, desc, sdfg, dispatcher.frame)
     ref = ''
 
     # Get defined type (pointer, stream etc.) and change the type definition
@@ -292,20 +292,7 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
         defined_types = dispatcher.defined_vars.get(ptrname, ancestor)
     defined_type, defined_ctype = defined_types
 
-    # if fpga.is_fpga_array(desc):
-
-    #     datadef = fpga.fpga_ptr(memlet.data,
-    #                             desc,
-    #                             sdfg,
-    #                             memlet.subset,
-    #                             is_write,
-    #                             dispatcher,
-    #                             ancestor,
-    #                             defined_type == DefinedType.ArrayInterface,
-    #                             decouple_array_interfaces=decouple_array_interfaces)
-
-    # else:
-    datadef = ptr(memlet.data, desc, sdfg, dispatcher.frame)
+    datadef = codegen.ptr(memlet.data, desc, sdfg, dispatcher.frame)
 
     def make_const(expr: str) -> str:
         # check whether const has already been added before
@@ -374,13 +361,13 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
         # Can not be accessed with offset different than zero. Check this if we can:
         if (isinstance(offset, int) and int(offset) != 0) or (isinstance(offset, str) and offset.isnumeric()
                                                               and int(offset) != 0):
-            raise TypeError("Can not offset device buffers from host code ({}, offset {})".format(datadef, offset))
+            raise TypeError("Cannot offset device buffers from host code ({}, offset {})".format(datadef, offset))
         # Device buffers are passed by reference
         expr = datadef
         ref = '&'
     else:
         # Cast as necessary
-        expr = make_ptr_vector_cast(datadef + offset_expr, desc.dtype, conntype, is_scalar, defined_type)
+        expr = codegen.make_ptr_vector_cast(datadef + offset_expr, desc.dtype, conntype, is_scalar, defined_type)
 
     # Register defined variable
     dispatcher.defined_vars.add(pointer_name, defined_type, typedef, allow_shadowing=True)
@@ -623,18 +610,7 @@ def cpp_ptr_expr(sdfg,
         offset_cppstr = indices
     else:
         offset_cppstr = cpp_offset_expr(desc, s, o, indices=indices)
-    # if fpga.is_fpga_array(desc):
-    #     dname = fpga.fpga_ptr(memlet.data,
-    #                           desc,
-    #                           sdfg,
-    #                           s,
-    #                           is_write,
-    #                           None,
-    #                           None,
-    #                           defined_type == DefinedType.ArrayInterface,
-    #                           decouple_array_interfaces=decouple_array_interface)
-    # else:
-    dname = ptr(memlet.data, desc, sdfg, codegen)
+    dname = codegen.ptr(memlet.data, desc, sdfg, codegen)
 
     if defined_type == DefinedType.Scalar:
         dname = '&' + dname

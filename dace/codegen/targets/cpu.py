@@ -220,10 +220,10 @@ class CPUCodeGen(TargetCodeGenerator):
                                                         sdfg,
                                                         memlet,
                                                         name,
+                                                        codegen=self,
                                                         dtypes.pointer(nodedesc.dtype),
                                                         ancestor=0,
-                                                        is_write=is_write,
-                                                        decouple_array_interfaces=decouple_array_interfaces)
+                                                        is_write=is_write)
 
         # Test for views of container arrays and structs
         if isinstance(sdfg.arrays[viewed_dnode.data], (data.Structure, data.ContainerArray, data.ContainerView)):
@@ -1603,6 +1603,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                           sdfg,
                                           in_memlet,
                                           vconn,
+                                          codegen=self,
                                           is_write=vconn in node.out_connectors,
                                           conntype=node.in_connectors[vconn]))
 
@@ -1613,6 +1614,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                               sdfg,
                                               out_memlet,
                                               uconn,
+                                              codegen=self,
                                               conntype=node.out_connectors[uconn]))
         return memlet_references
 
