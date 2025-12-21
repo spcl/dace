@@ -10,7 +10,7 @@ from dace.sdfg.propagation import propagate_states
 from dace.sdfg.scope import is_devicelevel_gpu_kernel
 from dace import config, data as dt, dtypes, Memlet, symbolic
 from dace.sdfg import SDFG, nodes, graph as gr
-from typing import Set, Tuple, Union, List, Iterable, Dict
+from typing import Set, Tuple, Union, List, Iterable, Dict, Callable
 import warnings
 
 # Transformations
@@ -339,7 +339,7 @@ def find_fast_library(device: dtypes.DeviceType) -> List[str]:
 
     # Returns the optimized library node implementations for the given target
     # device
-    if device is dtypes.DeviceType.GPU:
+    if device == dtypes.DeviceType.GPU:
         try:
             backend = get_gpu_backend()
         except RuntimeError:
@@ -351,10 +351,7 @@ def find_fast_library(device: dtypes.DeviceType) -> List[str]:
             return ['rocBLAS', 'GPUAuto', 'pure']
         else:
             return ['GPUAuto', 'pure']
-
-    elif device is dtypes.DeviceType.FPGA:
-        return ['FPGA_PartialSums', 'FPGAPartialReduction', 'FPGA_Accumulate', 'FPGA1DSystolic', 'pure']
-    elif device is dtypes.DeviceType.CPU:
+    elif device == dtypes.DeviceType.CPU:
         result = []
 
         # BLAS calls
@@ -393,19 +390,28 @@ def move_small_arrays_to_stack(sdfg: SDFG) -> None:
         print(f'Statically allocating {converted} transient arrays')
 
 
-def set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType, blocklist: List[str] = None):
+def set_fast_implementations(sdfg: SDFG,
+                             device: dtypes.DeviceType,
+                             blocklist: List[str] = None,
+                             find_fast_library_fn: Callable[[dtypes.DeviceType], List[str]] = None) -> None:
     """
     Set fast library node implementations for the given device
 
     :param sdfg: The SDFG to optimize.
     :param device: the device to optimize for.
     :param blocklist: list of disallowed implementations.
+    :param find_fast_library_fn: function that returns the prioritized list of
+                                  implementations for the given device, which will take priority over
+                                  the built-in ``find_fast_library`` function.
     :note: Operates in-place on the given SDFG.
     """
-    if blocklist is None:
-        implementation_prio = find_fast_library(device)
-    else:
-        implementation_prio = [i for i in find_fast_library(device) if i not in blocklist]
+    implementation_prio = []
+    if find_fast_library_fn is not None:
+        implementation_prio.extend(find_fast_library_fn(device))
+    implementation_prio.extend(find_fast_library(device))
+
+    if blocklist is not None:
+        implementation_prio = [i for i in implementation_prio if i not in blocklist]
 
     # specialized nodes: pre-expand
     for current_sdfg in sdfg.all_sdfgs_recursive():
@@ -556,7 +562,8 @@ def auto_optimize(sdfg: SDFG,
                   validate: bool = True,
                   validate_all: bool = False,
                   symbols: Dict[str, int] = None,
-                  use_gpu_storage: bool = False) -> SDFG:
+                  use_gpu_storage: bool = False,
+                  find_fast_library_fn: Callable[[dtypes.DeviceType], List[str]] = None) -> SDFG:
     """
     Runs a basic sequence of transformations to optimize a given SDFG to decent
     performance. In particular, performs the following:
@@ -577,6 +584,9 @@ def auto_optimize(sdfg: SDFG,
     :param validate_all: If True, validates the SDFG after every step.
     :param symbols: Optional dict that maps symbols (str/symbolic) to int/float
     :param use_gpu_storage: If True, changes the storage of non-transient data to GPU global memory.
+    :param find_fast_library_fn: Optional function that returns the prioritized list of
+                                 implementations for the given device, which will take priority over
+                                 the existing set of fast libraries found using auto-optimize.
     :return: The optimized SDFG.
     :note: Operates in-place on the given SDFG.
     :note: This function is still experimental and may harm correctness in
@@ -633,7 +643,7 @@ def auto_optimize(sdfg: SDFG,
             pass
 
     # Set all library nodes to expand to fast library calls
-    set_fast_implementations(sdfg, device)
+    set_fast_implementations(sdfg, device, find_fast_library_fn=find_fast_library_fn)
 
     # NOTE: We need to `infer_types` in case a LibraryNode expands to other LibraryNodes (e.g., np.linalg.solve)
     infer_types.infer_connector_types(sdfg)
