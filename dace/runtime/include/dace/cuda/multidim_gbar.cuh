@@ -87,7 +87,11 @@ public:
         // Threadfence and syncthreads to make sure global writes are visible before
         // thread-0 reports in with its sync counter
         __threadfence();
+        #if __CUDACC_VER_MAJOR__ >= 13
+        __syncthreads();
+        #else
         CTA_SYNC();
+        #endif
 
         int linear_tid = threadIdx.x + threadIdx.y * blockDim.x + threadIdx.z * blockDim.y * blockDim.x;
         int linear_blockid = blockIdx.x + blockIdx.y * gridDim.x + blockIdx.z * gridDim.y * gridDim.x;
@@ -102,7 +106,11 @@ public:
                 d_vol_sync[linear_blockid] = 1;
             }
 
+            #if __CUDACC_VER_MAJOR__ >= 13
+            __syncthreads();
+            #else
             CTA_SYNC();
+            #endif
 
             // Wait for everyone else to report in
             for (int peer_block = linear_tid; peer_block < grid; peer_block += block)
@@ -113,7 +121,11 @@ public:
                 }
             }
 
+            #if __CUDACC_VER_MAJOR__ >= 13
+            __syncthreads();
+            #else
             CTA_SYNC();
+            #endif
 
             // Let everyone know it's safe to proceed
             for (int peer_block = linear_tid; peer_block < grid; peer_block += block)
@@ -135,7 +147,11 @@ public:
                 }
             }
 
+            #if __CUDACC_VER_MAJOR__ >= 13
+            __syncthreads();
+            #else
             CTA_SYNC();
+            #endif
         }
     }
 };
