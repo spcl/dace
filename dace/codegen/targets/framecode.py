@@ -911,6 +911,11 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 interstate_symbols.update(symbols)
                 global_symbols.update(symbols)
 
+        try:
+            edge_codegen = self.dispatcher.get_scope_dispatcher(schedule)
+        except KeyError:
+            edge_codegen = self.dispatcher.get_generic_node_dispatcher()
+
         for isvarName, isvarType in interstate_symbols.items():
             if isvarType is None:
                 raise TypeError(f'Type inference failed for symbol {isvarName}')
@@ -922,8 +927,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             if not is_top_level and isvarName in sdfg.parent_nsdfg_node.symbol_mapping:
                 continue
             if isvarName not in outside_symbols:
-                self.dispatcher.get_scope_dispatcher(schedule).emit_interstate_variable_declaration(
-                    isvarName, isvarType, callsite_stream, sdfg)
+                edge_codegen.emit_interstate_variable_declaration(isvarName, isvarType, callsite_stream, sdfg)
             # If the variable is passed as an input argument to the SDFG, do not need to declare it
 
         callsite_stream.write('\n', sdfg)

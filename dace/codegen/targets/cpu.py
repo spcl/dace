@@ -1082,7 +1082,7 @@ class CPUCodeGen(TargetCodeGenerator):
                             write_expr = f"{mname} = {in_local_name};"
                         else:
                             desc_dtype = desc.dtype
-                            expr = cpp.cpp_array_expr(sdfg, memlet, codegen=self)
+                            expr = cpp.cpp_array_expr(sdfg, memlet, codegen=self._frame)
                             write_expr = codegen.make_ptr_assignment(in_local_name, conntype, expr, desc_dtype)
 
                     # Write out

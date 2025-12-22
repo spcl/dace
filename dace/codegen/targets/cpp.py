@@ -277,7 +277,7 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
     offset = cpp_offset_expr(desc, memlet.subset)
     offset_expr = '[' + offset + ']'
     is_scalar = not isinstance(conntype, dtypes.pointer)
-    ptrname = codegen.ptr(memlet.data, desc, sdfg, dispatcher.frame)
+    ptrname = codegen.ptr(memlet.data, desc, sdfg)
     ref = ''
 
     # Get defined type (pointer, stream etc.) and change the type definition
@@ -294,7 +294,7 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
         defined_types = dispatcher.defined_vars.get(ptrname, ancestor)
     defined_type, defined_ctype = defined_types
 
-    datadef = codegen.ptr(memlet.data, desc, sdfg, dispatcher.frame)
+    datadef = codegen.ptr(memlet.data, desc, sdfg)
 
     def make_const(expr: str) -> str:
         # check whether const has already been added before
@@ -571,7 +571,7 @@ def cpp_array_expr(sdfg,
         name = memlet.data
 
     if with_brackets:
-        ptrname = codegen.ptr(name, desc, sdfg)
+        ptrname = ptr(name, desc, sdfg, framecode=codegen)
         return "%s[%s]" % (ptrname, offset_cppstr)
     else:
         return offset_cppstr
