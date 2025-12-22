@@ -17,7 +17,16 @@ import sympy
 import sys
 import dace.frontend.python.astutils
 import inspect
-from typing import Union
+from typing import Callable, Union
+
+# Additional function names that can be used to infer types
+KNOWN_FUNCTIONS: dict[str, Callable[[list[dtypes.typeclass]], dtypes.typeclass]] = {
+    'abs': lambda arg_types: arg_types[0],
+    'log': lambda arg_types: arg_types[0],
+    'min': lambda arg_types: dtypes.result_type_of(arg_types[0], *arg_types),
+    'max': lambda arg_types: dtypes.result_type_of(arg_types[0], *arg_types),
+    'round': lambda arg_types: dtypes.typeclass(int),
+}
 
 
 def infer_types(code, symbols=None):
@@ -455,16 +464,9 @@ def _Call(t, symbols, inferred_symbols):
     if module == 'math':
         return dtypes.result_type_of(arg_types[0], *arg_types)
 
-    # Reading from an Intel channel returns the channel type
-    if name == 'read_channel_intel':
-        return arg_types[0]
-
-    if name in ('abs', 'log'):
-        return arg_types[0]
-    if name in ('min', 'max'):  # binary math operations that do not exist in the math module
-        return dtypes.result_type_of(arg_types[0], *arg_types)
-    if name in ('round', ):
-        return dtypes.typeclass(int)
+    # Check in known functions
+    if name in KNOWN_FUNCTIONS:
+        return KNOWN_FUNCTIONS[name](arg_types)
 
     # dtypes (dace.int32, np.float64) can be used as functions
     inf_type = _infer_dtype(t)
