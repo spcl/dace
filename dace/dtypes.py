@@ -38,7 +38,6 @@ class StorageType(aenum.AutoNumberEnum):
     FPGA_Global = ()  #: Off-chip global memory (DRAM)
     FPGA_Local = ()  #: On-chip memory (bulk storage)
     FPGA_Registers = ()  #: On-chip memory (fully partitioned registers)
-    FPGA_ShiftRegister = ()  #: Only accessible at constant indices
     SVE_Register = ()  #: SVE register
     Snitch_TCDM = ()  #: Cluster-private memory
     Snitch_L2 = ()  #: External memory
@@ -64,7 +63,6 @@ class ScheduleType(aenum.AutoNumberEnum):
     MPI = ()  #: MPI processes
     CPU_Multicore = ()  #: OpenMP parallel for loop
     CPU_Persistent = ()  #: OpenMP parallel region
-    Unrolled = ()  #: Unrolled code
     SVE_Map = ()  #: Arm SVE
 
     #: Default scope schedule for GPU code. Specializes to schedule GPU_Device and GPU_Global during inference.
@@ -76,7 +74,6 @@ class ScheduleType(aenum.AutoNumberEnum):
     FPGA_Device = ()
     Snitch = ()
     Snitch_Multicore = ()
-    FPGA_Multi_Pumped = ()  #: Used for double pumping
 
 
 # A subset of GPU schedule types
@@ -102,7 +99,6 @@ GPU_STORAGES = [
 FPGA_STORAGES = [
     StorageType.FPGA_Local,
     StorageType.FPGA_Registers,
-    StorageType.FPGA_ShiftRegister,
 ]
 
 
@@ -215,14 +211,12 @@ SCOPEDEFAULT_SCHEDULE = {
     ScheduleType.MPI: ScheduleType.CPU_Multicore,
     ScheduleType.CPU_Multicore: ScheduleType.Sequential,
     ScheduleType.CPU_Persistent: ScheduleType.CPU_Multicore,
-    ScheduleType.Unrolled: ScheduleType.CPU_Multicore,
     ScheduleType.GPU_Default: ScheduleType.GPU_Device,
     ScheduleType.GPU_Persistent: ScheduleType.GPU_Device,
     ScheduleType.GPU_Device: ScheduleType.GPU_ThreadBlock,
     ScheduleType.GPU_ThreadBlock: ScheduleType.Sequential,
     ScheduleType.GPU_ThreadBlock_Dynamic: ScheduleType.Sequential,
     ScheduleType.FPGA_Device: ScheduleType.FPGA_Device,
-    ScheduleType.FPGA_Multi_Pumped: ScheduleType.FPGA_Device,
     ScheduleType.SVE_Map: ScheduleType.Sequential,
     ScheduleType.Snitch: ScheduleType.Snitch,
     ScheduleType.Snitch_Multicore: ScheduleType.Snitch_Multicore
