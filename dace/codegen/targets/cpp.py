@@ -261,15 +261,11 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
                           conntype: dtypes.typeclass,
                           codegen: 'TargetCodeGenerator',
                           ancestor: int = 1,
-                          is_write: bool = None,
-                          device_code: bool = False) -> Tuple[str, str, str]:
+                          is_write: bool = None) -> Tuple[str, str, str]:
     """
     Returns a tuple of three strings with a definition of a reference to an
     existing memlet. Used in nested SDFG arguments.
 
-    :param device_code: boolean flag indicating whether we are in the process of generating FPGA device code
-    :param decouple_array_interfaces: boolean flag, used for Xilinx FPGA code generation. It indicates whether or not
-        we are generating code by decoupling reads/write from memory.
     :return: A tuple of the form (type, name, value).
     """
     desc = sdfg.arrays[memlet.data]
@@ -357,19 +353,8 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
     else:
         raise TypeError('Unsupported memlet type "%s"' % defined_type.name)
 
-    if (not device_code and defined_type != DefinedType.ArrayInterface and desc.storage == dace.StorageType.FPGA_Global
-            and not isinstance(desc, dace.data.Scalar)):
-        # This is a device buffer accessed on the host.
-        # Can not be accessed with offset different than zero. Check this if we can:
-        if (isinstance(offset, int) and int(offset) != 0) or (isinstance(offset, str) and offset.isnumeric()
-                                                              and int(offset) != 0):
-            raise TypeError("Cannot offset device buffers from host code ({}, offset {})".format(datadef, offset))
-        # Device buffers are passed by reference
-        expr = datadef
-        ref = '&'
-    else:
-        # Cast as necessary
-        expr = codegen.make_ptr_vector_cast(datadef + offset_expr, desc.dtype, conntype, is_scalar, defined_type)
+    # Cast as necessary
+    expr = codegen.make_ptr_vector_cast(datadef + offset_expr, desc.dtype, conntype, is_scalar, defined_type)
 
     # Register defined variable
     dispatcher.defined_vars.add(pointer_name, defined_type, typedef, allow_shadowing=True)
