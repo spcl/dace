@@ -465,6 +465,17 @@ required:
                             will raise an exception if such a Memlet is encountered. This allows the user
                             to have full control over all Maps in the SDFG.
 
+                    # New configs, needed for new CUDACodeGen
+                    gpu_stream_name:
+                        type: str
+                        title: Name for the GPU stream object
+                        description: >
+                            GPU streams allow GPU operations, such as kernel execution or memory transfers, to run asynchronously
+                            and in parallel. This field specifies the naming convention for the hpu stream array and its connectors
+                            in the SDFG. For example: 'gpu_streams,gpu_stream' means 'gpu_streams' is the array containing the
+                            stream objects, and 'gpu_stream0' (prefix derived from the second name + stream id) is used as a
+                            connector for gpu_streams[0].
+                        default: gpu_streams,gpu_stream
 
             #############################################
             # General FPGA flags

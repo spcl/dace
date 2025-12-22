@@ -405,6 +405,13 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         if (edge.src_conn is None and edge.dst_conn is None and edge.data.is_empty()):
             return result
 
+        # For the gpu stream (i.e. cudastream, hipstream) management we can have dynamic out connectors, e.g.
+        # (GPU_Device-scheduled) MapExit: stream ->  None: AccessNode, where AccessNode accesses a Stream array
+        # Memlets are used but its not about seing how data flows
+        if (isinstance(edge.src, nd.MapExit) and edge.src.map.schedule == dtypes.ScheduleType.GPU_Device
+                and isinstance(edge.dst, nd.AccessNode) and edge.dst.desc(state).dtype == dtypes.gpuStream_t):
+            return result
+
         # Prepend incoming edges until reaching the source node
         curedge = edge
         visited = set()

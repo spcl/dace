@@ -87,6 +87,18 @@ GPU_SCHEDULES = [
     ScheduleType.GPU_Persistent,
 ]
 
+# A subset of GPU schedule types for the new GPU backend
+GPU_SCHEDULES_EXPERIMENTAL_CUDACODEGEN = [
+    ScheduleType.GPU_Device,
+    ScheduleType.GPU_ThreadBlock,
+]
+
+# A subset of on-GPU storage types for the new GPU backend
+GPU_MEMORY_STORAGES_EXPERIMENTAL_CUDACODEGEN = [
+    StorageType.GPU_Global,
+    StorageType.GPU_Shared,
+]
+
 # A subset of CPU schedule types
 CPU_SCHEDULES = [
     ScheduleType.CPU_Multicore,
@@ -1266,6 +1278,7 @@ complex64 = typeclass(numpy.complex64)
 complex128 = typeclass(numpy.complex128)
 string = stringtype()
 MPI_Request = opaque('MPI_Request')
+gpuStream_t = opaque('gpuStream_t')
 
 
 @undefined_safe_enum
@@ -1286,6 +1299,7 @@ class Typeclasses(aenum.AutoNumberEnum):
     float64 = float64
     complex64 = complex64
     complex128 = complex128
+    gpuStream_t = gpuStream_t
 
 
 _bool = bool
