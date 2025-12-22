@@ -3,8 +3,8 @@
 #define __DACE_VECTOR_H
 
 #ifdef DACE_XILINX
-#include "xilinx/vec.h"
-#else // Don't include this file if building for Xilinx
+// Don't include this file if building for Xilinx
+#else
 
 #include "types.h"
 
@@ -329,5 +329,5 @@ namespace dace
 
 }
 
-#endif // XILINX_DEVICE_CODE
+#endif // DACE_XILINX
 #endif  // __DACE_VECTOR_H
