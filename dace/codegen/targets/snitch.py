@@ -74,6 +74,14 @@ class SnitchCodeGen(TargetCodeGenerator):
         self.dispatcher.register_array_dispatcher(dace.StorageType.Snitch_TCDM, self)
         self.dispatcher.register_array_dispatcher(dace.StorageType.Snitch_SSR, self)
 
+    def get_framecode_generator(self) -> 'DaCeCodeGenerator':
+        """
+        Returns the frame-code generator associated with this target.
+
+        :return: The frame-code generator.
+        """
+        return self.frame
+
     def state_dispatch_predicate(self, sdfg, state):
         for node in state.nodes():
             if isinstance(node, nodes.AccessNode):
@@ -105,7 +113,7 @@ class SnitchCodeGen(TargetCodeGenerator):
                 continue
             dbg(f'emitting ssr config for ssr {ssr}')
             node = ssr["data"]
-            alloc_name = cpp.ptr(node.data, node.desc(sdfg))
+            alloc_name = self.ptr(node.data, node.desc(sdfg), sdfg)
             # emit bound/stride setup
             stride_off = '0'
             for dim_num, dim in enumerate(ssr["dims"]):
@@ -317,19 +325,14 @@ class SnitchCodeGen(TargetCodeGenerator):
         memlet_type = conntype.dtype.ctype
 
         desc = sdfg.arrays[memlet.data]
-        ptr = cpp.ptr(memlet.data, desc)
+        ptr = self.ptr(memlet.data, desc, sdfg)
 
         var_type, ctypedef = self.dispatcher.defined_vars.get(memlet.data)
         result = ''
         expr = (cpp.cpp_array_expr(sdfg, memlet, with_brackets=False)
-                if var_type in [DefinedType.Pointer, DefinedType.StreamArray, DefinedType.ArrayInterface] else ptr)
+                if var_type in [DefinedType.Pointer, DefinedType.StreamArray] else ptr)
 
-        # Special case: ArrayInterface, append _in or _out
         _ptr = ptr
-        if var_type == DefinedType.ArrayInterface:
-            # Views have already been renamed
-            if not isinstance(desc, data.View):
-                ptr = cpp.array_interface_variable(ptr, output, self.dispatcher)
         if expr != _ptr:
             expr = '%s[%s]' % (ptr, expr)
         # If there is a type mismatch, cast pointer
@@ -337,11 +340,9 @@ class SnitchCodeGen(TargetCodeGenerator):
 
         defined = None
 
-        if var_type in [DefinedType.Scalar, DefinedType.Pointer, DefinedType.ArrayInterface]:
+        if var_type in [DefinedType.Scalar, DefinedType.Pointer]:
             if output:
-                if is_pointer and var_type == DefinedType.ArrayInterface:
-                    result += "{} {} = {};".format(memlet_type, local_name, expr)
-                elif not memlet.dynamic or (memlet.dynamic and memlet.wcr is not None):
+                if not memlet.dynamic or (memlet.dynamic and memlet.wcr is not None):
                     # Dynamic WCR memlets start uninitialized
                     result += "{} {};".format(memlet_type, local_name)
                     defined = DefinedType.Scalar
@@ -395,7 +396,7 @@ class SnitchCodeGen(TargetCodeGenerator):
         # Compute array size
         arrsize = nodedesc.total_size
         arrsize_bytes = arrsize * nodedesc.dtype.bytes
-        alloc_name = cpp.ptr(name, nodedesc)
+        alloc_name = self.ptr(name, nodedesc, sdfg)
         dbg('  arrsize "{}" arrsize_bytes "{}" alloc_name "{}" nodedesc "{}"'.format(
             arrsize, arrsize_bytes, alloc_name, nodedesc))
 
@@ -464,7 +465,7 @@ class SnitchCodeGen(TargetCodeGenerator):
                          node: nodes.AccessNode, nodedesc: data.Data, function_stream: CodeIOStream,
                          callsite_stream: CodeIOStream) -> None:
         arrsize = nodedesc.total_size
-        alloc_name = cpp.ptr(node.data, nodedesc)
+        alloc_name = self.ptr(node.data, nodedesc, sdfg)
         dbg(f'-- deallocate_array storate="{nodedesc.storage}" arrsize="{arrsize}" alloc_name="{alloc_name}"')
 
         if isinstance(nodedesc, data.Scalar):
@@ -1145,3 +1146,14 @@ class SnitchCodeGen(TargetCodeGenerator):
             ccode = ccode.replace(i, o)
 
         return (ccode, hdrs)
+
+    def ptr(self, name: str, desc: data.Data, sdfg: SDFG = None) -> str:
+        """
+        Returns a string that points to the data based on its name and descriptor.
+
+        :param name: Data name.
+        :param desc: Data descriptor.
+        :param sdfg: SDFG the data belongs to.
+        :return: C-compatible name that can be used to access the data.
+        """
+        return cpp.ptr(name, desc, sdfg, self.frame)

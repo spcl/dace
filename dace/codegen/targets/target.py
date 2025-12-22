@@ -58,6 +58,14 @@ class TargetCodeGenerator(object):
         """
         pass
 
+    def get_framecode_generator(self) -> 'DaCeCodeGenerator':
+        """
+        Returns the frame-code generator associated with this target.
+
+        :return: The frame-code generator.
+        """
+        return self._frame
+
     @property
     def has_initializer(self) -> bool:
         """ Returns True if the target generates a `__dace_init_<TARGET>`

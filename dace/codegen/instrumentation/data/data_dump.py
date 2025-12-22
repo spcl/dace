@@ -83,14 +83,13 @@ class SaveProvider(InstrumentationProvider, DataInstrumentationProviderMixin):
     def __init__(self):
         super().__init__()
         self.gpu_runtime_init = False
-        from dace.codegen.targets.framecode import DaCeCodeGenerator  # Avoid import loop
-        self.codegen: DaCeCodeGenerator = None
+        self.framecode: 'DaCeCodeGenerator' = None
 
     def on_sdfg_begin(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream,
                       codegen: 'DaCeCodeGenerator'):
         # Initialize serializer versioning object
         if sdfg.parent is None:
-            self.codegen = codegen
+            self.framecode = codegen
             path = os.path.abspath(os.path.join(sdfg.build_folder, 'data')).replace('\\', '/')
             codegen.statestruct.append('dace::DataSerializer *serializer;')
             sdfg.append_init_code(f'__state->serializer = new dace::DataSerializer("{path}");\n')
@@ -148,8 +147,8 @@ class SaveProvider(InstrumentationProvider, DataInstrumentationProviderMixin):
         desc = node.desc(sdfg)
 
         # Obtain a pointer for arrays and scalars
-        ptrname = cpp.ptr(node.data, desc, sdfg, self.codegen)
-        defined_type, _ = self.codegen.dispatcher.defined_vars.get(ptrname)
+        ptrname = cpp.ptr(node.data, desc, sdfg, self.framecode)
+        defined_type, _ = self.framecode.dispatcher.defined_vars.get(ptrname)
         if defined_type == DefinedType.Scalar:
             ptrname = '&' + ptrname
 
@@ -185,8 +184,7 @@ class RestoreProvider(InstrumentationProvider, DataInstrumentationProviderMixin)
     def __init__(self):
         super().__init__()
         self.gpu_runtime_init = False
-        from dace.codegen.targets.framecode import DaCeCodeGenerator  # Avoid import loop
-        self.codegen: DaCeCodeGenerator = None
+        self.framecode: 'DaCeCodeGenerator' = None
 
     def _generate_report_setter(self, sdfg: SDFG) -> str:
         return f'''
@@ -199,7 +197,7 @@ class RestoreProvider(InstrumentationProvider, DataInstrumentationProviderMixin)
                       codegen: 'DaCeCodeGenerator'):
         # Initialize serializer versioning object
         if sdfg.parent is None:
-            self.codegen = codegen
+            self.framecode = codegen
             codegen.statestruct.append('dace::DataSerializer *serializer;')
             sdfg.append_init_code(f'__state->serializer = new dace::DataSerializer("");\n')
 
@@ -260,8 +258,8 @@ class RestoreProvider(InstrumentationProvider, DataInstrumentationProviderMixin)
         desc = node.desc(sdfg)
 
         # Obtain a pointer for arrays and scalars
-        ptrname = cpp.ptr(node.data, desc, sdfg, self.codegen)
-        defined_type, _ = self.codegen.dispatcher.defined_vars.get(ptrname)
+        ptrname = cpp.ptr(node.data, desc, sdfg, self.framecode)
+        defined_type, _ = self.framecode.dispatcher.defined_vars.get(ptrname)
         if defined_type == DefinedType.Scalar:
             ptrname = '&' + ptrname
 

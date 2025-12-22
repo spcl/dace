@@ -33,6 +33,8 @@ from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
 
 if TYPE_CHECKING:
     from dace.codegen.dispatcher import TargetDispatcher
+    from dace.codegen.targets.target import TargetCodeGenerator
+    from dace.codegen.targets.framecode import DaCeCodeGenerator
 
 
 def mangle_dace_state_struct_name(sdfg: Union[SDFG, str]) -> str:
@@ -218,16 +220,16 @@ def is_cuda_codegen_in_device(framecode) -> bool:
     return cuda_codegen_in_device
 
 
-def ptr(name: str, desc: data.Data, sdfg: SDFG = None, framecode=None) -> str:
+def ptr(name: str, desc: data.Data, sdfg: SDFG = None, framecode: 'DaCeCodeGenerator' = None) -> str:
     """
     Returns a string that points to the data based on its name and descriptor.
 
     :param name: Data name.
     :param desc: Data descriptor.
+    :param sdfg: SDFG in which the data resides.
+    :param framecode: Frame-code generator object.
     :return: C-compatible name that can be used to access the data.
     """
-    from dace.codegen.targets.framecode import DaCeCodeGenerator  # Avoid import loop
-    framecode: DaCeCodeGenerator = framecode
 
     if '.' in name:
         root = name.split('.')[0]
@@ -569,7 +571,7 @@ def cpp_array_expr(sdfg,
         name = memlet.data
 
     if with_brackets:
-        ptrname = ptr(name, desc, sdfg, codegen)
+        ptrname = codegen.ptr(name, desc, sdfg)
         return "%s[%s]" % (ptrname, offset_cppstr)
     else:
         return offset_cppstr
@@ -599,7 +601,7 @@ def cpp_ptr_expr(sdfg,
                  use_other_subset=False,
                  indices=None,
                  is_write=None,
-                 codegen=None,
+                 codegen: 'TargetCodeGenerator' = None,
                  decouple_array_interface=False):
     """ Converts a memlet to a C++ pointer expression. """
     subset = memlet.subset if not use_other_subset else memlet.other_subset
@@ -610,7 +612,7 @@ def cpp_ptr_expr(sdfg,
         offset_cppstr = indices
     else:
         offset_cppstr = cpp_offset_expr(desc, s, o, indices=indices)
-    dname = codegen.ptr(memlet.data, desc, sdfg, codegen)
+    dname = codegen.ptr(memlet.data, desc, sdfg)
 
     if defined_type == DefinedType.Scalar:
         dname = '&' + dname

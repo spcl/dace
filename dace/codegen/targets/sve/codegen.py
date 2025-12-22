@@ -72,6 +72,9 @@ class SVECodeGen(TargetCodeGenerator):
 
         self.cpu_codegen: dace.codegen.targets.CPUCodeGen = self.dispatcher.get_generic_node_dispatcher()
 
+    def get_framecode_generator(self) -> DaCeCodeGenerator:
+        return self.frame
+
     def get_generated_codeobjects(self):
         res = super().get_generated_codeobjects()
         return res
@@ -381,7 +384,7 @@ class SVECodeGen(TargetCodeGenerator):
                 nodedesc.dtype, dtypes.vector):
             # Special allocation if vector Code->Code register in SVE scope
             # We prevent dace::vec<>'s and allocate SVE registers instead
-            ptrname = cpp.ptr(node.data, nodedesc, sdfg, self.frame)
+            ptrname = self.ptr(node.data, nodedesc, sdfg)
             if self.dispatcher.defined_vars.has(ptrname):
                 sve_type = util.TYPE_TO_SVE[nodedesc.dtype.vtype]
                 self.dispatcher.defined_vars.add(ptrname, DefinedType.Scalar, sve_type)
@@ -515,3 +518,14 @@ class SVECodeGen(TargetCodeGenerator):
             callsite_stream.write(result.getvalue(), cfg, state_id, node)
 
         callsite_stream.write('///////////////////\n\n')
+
+    def ptr(self, name: str, desc: data.Data, sdfg: SDFG = None) -> str:
+        """
+        Returns a string that points to the data based on its name and descriptor.
+
+        :param name: Data name.
+        :param desc: Data descriptor.
+        :param sdfg: SDFG in which the data resides.
+        :return: C-compatible name that can be used to access the data.
+        """
+        return cpp.ptr(name, desc, sdfg, self.frame)
