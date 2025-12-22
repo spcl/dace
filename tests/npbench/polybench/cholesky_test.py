@@ -10,6 +10,7 @@ from dace.fpga_testing import fpga_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory, StreamingComposition
 from dace.transformation.auto.auto_optimize import auto_optimize
+from dace.autodiff import add_backward_pass
 
 # Data set sizes
 # N
@@ -41,6 +42,36 @@ def init_data(N):
 
     A[:] = A @ np.transpose(A)
     return A
+
+
+def cholesky_jax_kernel(jnp, lax, A):
+    A = A.at[0, 0].set(jnp.sqrt(A[0, 0]))
+
+    def row_update_body(A, i):
+
+        def col_update_body(A, j):
+
+            def do_update(_):
+                mask = jnp.arange(A.shape[1]) < j
+                A_i_slice = jnp.where(mask, A[i, :], 0)
+                A_j_slice = jnp.where(mask, A[j, :], 0)
+                dot_product = jnp.dot(A_i_slice, A_j_slice)
+                new_val = (A[i, j] - dot_product) / A[j, j]
+                return A.at[i, j].set(new_val)
+
+            A = lax.cond(j < i, do_update, lambda _: A, operand=None)
+            return A, None
+
+        A, _ = lax.scan(col_update_body, A, jnp.arange(A.shape[0]))
+
+        mask = jnp.arange(A.shape[1]) < i
+        A_i_slice = jnp.where(mask, A[i, :], 0)
+        dot_product = jnp.dot(A_i_slice, A_i_slice)
+        A = A.at[i, i].set(jnp.sqrt(A[i, i] - dot_product))
+        return A, None
+
+    A, _ = lax.scan(row_update_body, A, jnp.arange(1, A.shape[0]))
+    return jnp.sum(A)
 
 
 def ground_truth(N, A):
@@ -94,6 +125,38 @@ def run_cholesky(device_type: dace.dtypes.DeviceType):
     return sdfg
 
 
+def run_cholesky_autodiff():
+    import jax
+    import jax.numpy as jnp
+    import jax.lax as lax
+
+    # Initialize data (polybench mini size)
+    N = 20
+    A = init_data(N)
+    A_jax = jnp.copy(A)
+
+    # Initialize gradient computation data
+    gradient_A = np.zeros_like(A)
+    gradient___return = np.ones((1, ), dtype=np.float32)
+
+    # Define sum reduction for the output
+    @dc.program
+    def autodiff_kernel(A: dc.float32[N, N]):
+        kernel(A)
+        return np.sum(A)
+
+    # Add the backward pass to the SDFG
+    sdfg = autodiff_kernel.to_sdfg(simplify=True)
+    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"])
+    sdfg(A, N=N, gradient_A=gradient_A, gradient___return=gradient___return)
+
+    # Numerically validate vs JAX
+    jax_kernel = lambda A: cholesky_jax_kernel(jnp, lax, A)
+    jax_grad = jax.jit(jax.grad(jax_kernel))
+    jax_grad_A = jax_grad(A_jax)
+    np.testing.assert_allclose(gradient_A, jax_grad_A, rtol=1e-4, atol=1e-4)
+
+
 def test_cpu():
     run_cholesky(dace.dtypes.DeviceType.CPU)
 
@@ -101,6 +164,12 @@ def test_cpu():
 @pytest.mark.gpu
 def test_gpu():
     run_cholesky(dace.dtypes.DeviceType.GPU)
+
+
+@pytest.mark.autodiff
+def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
+    run_cholesky_autodiff()
 
 
 @fpga_test(assert_ii_1=False)
@@ -118,6 +187,7 @@ if __name__ == "__main__":
 
     if target == "cpu":
         run_cholesky(dace.dtypes.DeviceType.CPU)
+        run_cholesky_autodiff()
     elif target == "gpu":
         run_cholesky(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":

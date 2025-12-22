@@ -48,6 +48,11 @@ class MapFusionHorizontal(transformation.SingleStateTransformation):
         goes to the same AccessNode.
 
     :note: This transformation modifies more nodes than it matches.
+    :note: This function guarantees that `first_parallel_map_entry` and the corresponding
+        MapExit node will remain inside the SDFG, i.e. the scope nodes constituting the
+        second Map, will get removed. However, it does not guarantees that the Map label
+        is remains stable. Instead it guarantees that the Map label is deterministically
+        selected.
     :note: Since the Maps that should be fused can be everywhere all possible combinations,
         i.e. all pair of Maps, must be checked. It is thus advised to first run `VerticalMapFusion`
         or other transformations that reduces the numbers of Maps.
@@ -195,6 +200,12 @@ class MapFusionHorizontal(transformation.SingleStateTransformation):
             second_map_entry=second_map_entry,
             state=graph,
         )
+
+        # Select the label of the fused Maps in a deterministic way.
+        first_map_label = first_map_entry.map.label
+        second_map_label = second_map_entry.map.label
+        if second_map_label < first_map_label:
+            first_map_entry.map.label = second_map_label
 
         # Now we relocate all connectors from the second to the first Map and remove
         #  the respective node of the second Map.
