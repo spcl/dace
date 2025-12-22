@@ -347,9 +347,6 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
             ref = ''
             typedef = defined_ctype
             defined_type = DefinedType.StreamArray
-    elif defined_type == DefinedType.FPGA_ShiftRegister:
-        ref = '&' if is_scalar else ''
-        defined_type = DefinedType.Pointer
     else:
         raise TypeError('Unsupported memlet type "%s"' % defined_type.name)
 
@@ -466,6 +463,7 @@ def ndcopy_to_strided_copy(
         if copy_shape == src_copy_shape:
             srcdim = copydim
         else:
+            # TODO: Remove try-except in subsequent FPGA PR
             try:
                 srcdim = next(i for i, c in enumerate(src_copy_shape) if c != 1)
             except StopIteration:
@@ -481,6 +479,7 @@ def ndcopy_to_strided_copy(
         if copy_shape == dst_copy_shape:
             dstdim = copydim
         else:
+            # TODO: Remove try-except in subsequent FPGA PR
             try:
                 dstdim = next(i for i, c in enumerate(dst_copy_shape) if c != 1)
             except StopIteration:
