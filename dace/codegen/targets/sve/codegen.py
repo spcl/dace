@@ -183,7 +183,7 @@ class SVECodeGen(TargetCodeGenerator):
                     ##################
                     # Pointer reference
                     code.write(
-                        f'{dst_type} {dst_name} = {cpp.cpp_ptr_expr(sdfg, edge.data, None, codegen=self.frame)};')
+                        f'{dst_type} {dst_name} = {cpp.cpp_ptr_expr(sdfg, edge.data, None, codegen=self.cpu_codegen)};')
                 elif util.is_vector(dst_type):
                     ##################
                     # Vector load
@@ -203,7 +203,7 @@ class SVECodeGen(TargetCodeGenerator):
                     # Regular load and gather share the first arguments
                     load_args = '{}, {}'.format(
                         util.get_loop_predicate(sdfg, state, edge.dst),
-                        ptr_cast + cpp.cpp_ptr_expr(sdfg, edge.data, DefinedType.Pointer, codegen=self.frame))
+                        ptr_cast + cpp.cpp_ptr_expr(sdfg, edge.data, DefinedType.Pointer, codegen=self.cpu_codegen))
 
                     if stride == 1:
                         code.write('{} = svld1({});'.format(load_lhs, load_args))
@@ -330,7 +330,7 @@ class SVECodeGen(TargetCodeGenerator):
 
                     store_args = '{}, {}'.format(
                         util.get_loop_predicate(sdfg, state, edge.src),
-                        ptr_cast + cpp.cpp_ptr_expr(sdfg, edge.data, DefinedType.Pointer, codegen=self.frame),
+                        ptr_cast + cpp.cpp_ptr_expr(sdfg, edge.data, DefinedType.Pointer, codegen=self.cpu_codegen),
                     )
 
                     if stride == 1:

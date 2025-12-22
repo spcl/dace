@@ -300,7 +300,7 @@ class SnitchCodeGen(TargetCodeGenerator):
         elif isinstance(cdtype, dtypes.pointer):
             # If pointer, also point to output
             defined_type, _ = self.dispatcher.defined_vars.get(edge.data.data)
-            base_ptr = cpp.cpp_ptr_expr(sdfg, edge.data, defined_type)
+            base_ptr = cpp.cpp_ptr_expr(sdfg, edge.data, defined_type, codegen=self)
             callsite_stream.write(f'{cdtype.ctype} {edge.src_conn} = {base_ptr};', cfg, state_id, src_node)
         else:
             callsite_stream.write(f'{cdtype.ctype} {edge.src_conn};', cfg, state_id, src_node)
@@ -1050,9 +1050,9 @@ class SnitchCodeGen(TargetCodeGenerator):
         defined_type, _ = self.dispatcher.defined_vars.get(memlet.data)
 
         if isinstance(indices, str):
-            ptr = '%s + %s' % (cpp.cpp_ptr_expr(sdfg, memlet, defined_type), indices)
+            ptr = '%s + %s' % (cpp.cpp_ptr_expr(sdfg, memlet, defined_type, codegen=self), indices)
         else:
-            ptr = cpp.cpp_ptr_expr(sdfg, memlet, defined_type, indices=indices)
+            ptr = cpp.cpp_ptr_expr(sdfg, memlet, defined_type, indices=indices, codegen=self)
         if isinstance(dtype, dtypes.pointer):
             dtype = dtype.base_type
         # If there is a type mismatch, cast pointer

@@ -719,7 +719,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 srcptr = self.ptr(src_node.data, src_nodedesc, sdfg)
                 defined_type, _ = self._dispatcher.defined_vars.get(srcptr)
                 stream.write(
-                    "%s = %s;" % (vconn, cpp.cpp_ptr_expr(sdfg, memlet, defined_type)),
+                    "%s = %s;" % (vconn, cpp.cpp_ptr_expr(sdfg, memlet, defined_type, codegen=self)),
                     cfg,
                     state_id,
                     [src_node, dst_node],

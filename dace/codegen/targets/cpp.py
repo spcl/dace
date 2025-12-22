@@ -525,9 +525,6 @@ def cpp_offset_expr(d: data.Data, subset_in: subsets.Subset, offset=None, packed
         :param indices: A tuple of indices to use for expression.
         :return: A string in C++ syntax with the correct offset
     """
-    # if fpga.is_multibank_array_with_distributed_index(d):
-    #     subset_in = fpga.modify_distributed_subset(subset_in, 0)
-
     # Offset according to parameters, then offset according to array
     if offset is not None:
         subset = subset_in.offset_new(offset, False)
