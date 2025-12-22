@@ -2952,6 +2952,12 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         """
         return cpp.ptr(name, desc, sdfg, self._frame)
 
+    def emit_interstate_variable_declaration(self, name: str, dtype: dtypes.typeclass, callsite_stream: CodeIOStream,
+                                             sdfg: SDFG):
+        isvar = dt.Scalar(dtype)
+        callsite_stream.write('%s;\n' % (isvar.as_arg(with_types=True, name=name)), sdfg)
+        self._frame.dispatcher.defined_vars.add(name, DefinedType.Scalar, dtype.ctype)
+
 
 ########################################################################
 ########################################################################

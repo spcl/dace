@@ -4,7 +4,7 @@ import shutil  # which
 from typing import List
 import warnings
 
-from dace import memlet as mm, data as dt
+from dace import memlet as mm, data as dt, dtypes
 from dace.sdfg import nodes, SDFG, SDFGState, ScopeSubgraphView, graph as gr
 from dace.registry import make_registry
 from dace.codegen.prettycode import CodeIOStream
@@ -209,6 +209,20 @@ class TargetCodeGenerator(object):
             :param callsite_stream: A `CodeIOStream` object that points
                                     to the current location (call-site)
                                     in the code.
+        """
+        raise NotImplementedError('Abstract class')
+
+    def emit_interstate_variable_declaration(self, name: str, dtype: dtypes.typeclass, callsite_stream: CodeIOStream,
+                                             sdfg: SDFG):
+        """ Emits the declaration of an interstate variable at the given
+            call-site.
+
+            :param name: The name of the variable.
+            :param dtype: The data type of the variable.
+            :param callsite_stream: A ``CodeIOStream`` object that points
+                                    to the current location (call-site)
+                                    in the code.
+            :param sdfg: The SDFG in which the variable is declared.
         """
         raise NotImplementedError('Abstract class')
 
