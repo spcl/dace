@@ -3,7 +3,7 @@ import os
 from typing import TYPE_CHECKING
 from dace import registry, dtypes
 from dace.codegen.codeobject import CodeObject
-from dace.codegen.targets.target import TargetCodeGenerator
+from dace.codegen.target import TargetCodeGenerator
 from dace.codegen.targets.cpu import CPUCodeGen
 from dace.sdfg import nodes
 from dace.sdfg.sdfg import SDFG

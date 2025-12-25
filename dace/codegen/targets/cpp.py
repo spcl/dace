@@ -33,7 +33,7 @@ from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
 
 if TYPE_CHECKING:
     from dace.codegen.dispatcher import TargetDispatcher
-    from dace.codegen.targets.target import TargetCodeGenerator
+    from dace.codegen.target import TargetCodeGenerator
     from dace.codegen.targets.framecode import DaCeCodeGenerator
 
 

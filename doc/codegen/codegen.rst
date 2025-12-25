@@ -79,7 +79,7 @@ among others.
 
 Within the control flow tree, each state is visited by the frame-code generator, which will then dispatch the other targets
 using the :class:`~dace.codegen.dispatcher.TargetDispatcher` class. Code generator targets register themselves
-with the dispatcher by extending the :class:`~dace.codegen.targets.target.TargetCodeGenerator` class, and then
+with the dispatcher by extending the :class:`~dace.codegen.target.TargetCodeGenerator` class, and then
 the dispatcher via the ``register_*_dispatcher`` methods (e.g., :func:`~dace.codegen.dispatcher.TargetDispatcher.register_node_dispatcher`)
 in their constructor. The dispatcher will then call the given predicate function to determine whether the target
 should be invoked for the given node. For example, an excerpt from the GPU code generator is shown below:
@@ -104,7 +104,7 @@ should be invoked for the given node. For example, an excerpt from the GPU code 
 
 
 The dispatcher will then invoke its ``dispatch_*`` methods (e.g., :func:`~dace.codegen.dispatcher.TargetDispatcher.dispatch_node`)
-to invoke the target. Those will then call the ``generate_*`` methods (e.g., :func:`~dace.codegen.targets.target.TargetCodeGenerator.generate_node`).
+to invoke the target. Those will then call the ``generate_*`` methods (e.g., :func:`~dace.codegen.target.TargetCodeGenerator.generate_node`).
 On most targets, each node type has a matching ``_generate_<class>`` method, similarly to AST visitors, which are
 responsible for that node type. For example, see :func:`~dace.codegen.targets.cpu.CPUCodeGen._generate_MapEntry` in
 :class:`~dace.codegen.targets.cpu.CPUCodeGen`.
@@ -116,7 +116,7 @@ for global declarations). At this point, instrumentation providers are also invo
 exact methods that are invoked can be found in :class:`~dace.codegen.instrumentation.provider.InstrumentationProvider`.
 
 After the graph is traversed, each target is invoked with two methods:
-:func:`~dace.codegen.targets.target.TargetCodeGenerator.get_generated_codeobjects` and :func:`~dace.codegen.targets.target.TargetCodeGenerator.cmake_options`
+:func:`~dace.codegen.target.TargetCodeGenerator.get_generated_codeobjects` and :func:`~dace.codegen.target.TargetCodeGenerator.cmake_options`
 to retrieve any extra :class:`~dace.codegen.codeobject.CodeObject` files and CMake options, respectively.
 The frame-code generator will then merge all code objects and return them, along with any environments/libraries that
 were requested by the code generators (e.g., link with CUBLAS). The compiler interface then generates the ``.dacecache``

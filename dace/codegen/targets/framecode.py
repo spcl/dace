@@ -14,7 +14,7 @@ from dace.codegen import control_flow as cflow
 from dace.codegen import dispatcher as disp
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.common import codeblock_to_cpp, sym2cpp
-from dace.codegen.targets.target import TargetCodeGenerator
+from dace.codegen.target import TargetCodeGenerator
 from dace.codegen.tools.type_inference import infer_expr_type
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import scope as sdscope

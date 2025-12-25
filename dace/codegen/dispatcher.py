@@ -9,7 +9,7 @@ import aenum
 from dace import config, data as dt, dtypes, nodes, registry
 from dace.memlet import Memlet
 from dace.codegen import exceptions as cgx, prettycode
-from dace.codegen.targets import target
+from dace.codegen import target
 from dace.sdfg import utils as sdutil, SDFG, SDFGState, ScopeSubgraphView
 from dace.sdfg.graph import MultiConnectorEdge
 from typing import Callable, Dict, List, Optional, Set, Tuple, Union

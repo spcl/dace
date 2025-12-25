@@ -18,10 +18,10 @@ import warnings
 import dace
 from dace.config import Config
 from dace.codegen import exceptions as cgx
-from dace.codegen.targets.target import TargetCodeGenerator
+from dace.codegen.target import TargetCodeGenerator
 from dace.codegen.codeobject import CodeObject
 from dace.codegen import compiled_sdfg as csd
-from dace.codegen.targets.target import make_absolute
+from dace.codegen.target import make_absolute
 
 T = TypeVar('T')
 

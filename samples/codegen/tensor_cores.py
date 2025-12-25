@@ -13,7 +13,7 @@ from dace.sdfg import nodes
 
 # Code generator imports and helpers
 from dace.codegen.targets.framecode import DaCeCodeGenerator
-from dace.codegen.targets.target import TargetCodeGenerator
+from dace.codegen.target import TargetCodeGenerator
 from dace.codegen.targets.cpp import cpp_array_expr, cpp_offset_expr
 
 # Frontend imports and helpers

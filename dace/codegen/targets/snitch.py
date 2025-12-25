@@ -18,7 +18,7 @@ from dace.sdfg.scope import ScopeSubgraphView
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets import cpp
 from dace.codegen.common import update_persistent_desc
-from dace.codegen.targets.target import TargetCodeGenerator
+from dace.codegen.target import TargetCodeGenerator
 from dace.codegen.targets.framecode import DaCeCodeGenerator
 from dace.codegen.targets.cpp import sym2cpp
 from dace.codegen.dispatcher import DefinedType

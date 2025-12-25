@@ -20,7 +20,7 @@ from dace.codegen.targets import cpp
 from dace.codegen.common import update_persistent_desc
 from dace.codegen.targets.cpp import (codeblock_to_cpp, cpp_array_expr, memlet_copy_to_absolute_strides, sym2cpp,
                                       synchronize_streams, unparse_cr, mangle_dace_state_struct_name)
-from dace.codegen.targets.target import IllegalCopy, TargetCodeGenerator, make_absolute
+from dace.codegen.target import IllegalCopy, TargetCodeGenerator, make_absolute
 from dace.config import Config
 from dace.frontend import operations
 from dace.sdfg import (SDFG, ScopeSubgraphView, SDFGState, has_dynamic_map_inputs, is_array_stream_view,
