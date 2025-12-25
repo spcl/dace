@@ -66,6 +66,15 @@ class TargetCodeGenerator(object):
         """
         return self._frame
 
+    def get_includes(self) -> dict[str, list[str]]:
+        """
+        Returns a dictionary mapping backends to lists of include files
+        required by this target.
+
+        :return: A dictionary of backend names to lists of include files.
+        """
+        return {}
+
     @property
     def has_initializer(self) -> bool:
         """ Returns True if the target generates a `__dace_init_<TARGET>`

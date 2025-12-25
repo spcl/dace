@@ -139,6 +139,12 @@ class DaCeCodeGenerator(object):
             global_stream.write('#include "../../include/hash.h"\n', sdfg)
 
         #########################################################
+        # Target-based includes
+        for target in self._dispatcher.used_targets:
+            headers = target.get_includes()
+            if backend in headers:
+                global_stream.write("\n".join("#include \"" + h + "\"" for h in headers[backend]), sdfg)
+
         # Environment-based includes
         for env in self.environments:
             if len(env.headers) > 0:
