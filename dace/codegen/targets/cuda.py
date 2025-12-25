@@ -2139,8 +2139,8 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
         # Check block size against configured maximum values, if those can be determined
         total_bsize = prod(block_size)
-        total_limit = Config.get('compiler', 'cuda', 'block_size_limit')
-        lastdim_limit = Config.get('compiler', 'cuda', 'block_size_lastdim_limit')
+        total_limit = int(Config.get('compiler', 'cuda', 'block_size_limit'))
+        lastdim_limit = int(Config.get('compiler', 'cuda', 'block_size_lastdim_limit'))
         if (total_bsize > total_limit) == True:
             raise ValueError(f'Block size for kernel "{kernelmap_entry.map.label}" ({block_size}) '
                              f'is larger than the possible number of threads per block ({total_limit}). '
