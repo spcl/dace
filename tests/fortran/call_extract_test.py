@@ -1,4 +1,4 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import numpy as np
 import pytest
@@ -25,9 +25,8 @@ def test_fortran_frontend_call_extract():
                     END SUBROUTINE intrinsic_call_extract_test_function
                     """
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_call_extract", False)
-    sdfg.simplify(verbose=True)
-    sdfg.compile()
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_call_extract_test", normalize_offsets=True)
+    sdfg.simplify()
 
     input = np.full([2], 42, order="F", dtype=np.float32)
     res = np.full([2], 42, order="F", dtype=np.float32)
