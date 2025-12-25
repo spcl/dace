@@ -3,6 +3,7 @@
 #define __DACE_VECTOR_H
 
 #ifdef DACE_XILINX
+#include <dace_fpga/xilinx/vec.h>
 // Don't include this file if building for Xilinx
 #else
 
