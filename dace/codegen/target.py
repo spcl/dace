@@ -4,7 +4,7 @@ import shutil  # which
 from typing import List
 import warnings
 
-from dace import memlet as mm, data as dt
+from dace import memlet as mm, data as dt, dtypes
 from dace.sdfg import nodes, SDFG, SDFGState, ScopeSubgraphView, graph as gr
 from dace.registry import make_registry
 from dace.codegen.prettycode import CodeIOStream
@@ -39,6 +39,14 @@ class TargetCodeGenerator(object):
         """
         return []
 
+    @staticmethod
+    def cmake_files() -> List[str]:
+        """
+        Returns a list of CMake file paths that should be included
+        during the CMake configuration step.
+        """
+        return []
+
     def preprocess(self, sdfg: SDFG) -> None:
         """
         Called before code generation on any target that will be dispatched.
@@ -49,6 +57,23 @@ class TargetCodeGenerator(object):
         :param sdfg: The SDFG to modify in-place.
         """
         pass
+
+    def get_framecode_generator(self) -> 'DaCeCodeGenerator':
+        """
+        Returns the frame-code generator associated with this target.
+
+        :return: The frame-code generator.
+        """
+        return self._frame
+
+    def get_includes(self) -> dict[str, list[str]]:
+        """
+        Returns a dictionary mapping backends to lists of include files
+        required by this target.
+
+        :return: A dictionary of backend names to lists of include files.
+        """
+        return {}
 
     @property
     def has_initializer(self) -> bool:
@@ -193,6 +218,20 @@ class TargetCodeGenerator(object):
             :param callsite_stream: A `CodeIOStream` object that points
                                     to the current location (call-site)
                                     in the code.
+        """
+        raise NotImplementedError('Abstract class')
+
+    def emit_interstate_variable_declaration(self, name: str, dtype: dtypes.typeclass, callsite_stream: CodeIOStream,
+                                             sdfg: SDFG):
+        """ Emits the declaration of an interstate variable at the given
+            call-site.
+
+            :param name: The name of the variable.
+            :param dtype: The data type of the variable.
+            :param callsite_stream: A ``CodeIOStream`` object that points
+                                    to the current location (call-site)
+                                    in the code.
+            :param sdfg: The SDFG in which the variable is declared.
         """
         raise NotImplementedError('Abstract class')
 

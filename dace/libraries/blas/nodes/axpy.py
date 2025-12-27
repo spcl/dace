@@ -4,7 +4,7 @@ import dace.properties
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas import environments
-from dace import (config, data as dt, dtypes, memlet as mm, SDFG, SDFGState, symbolic)
+from dace import config, data as dt, dtypes, memlet as mm, SDFG, SDFGState, symbolic
 from dace.frontend.common import op_repository as oprepo
 
 
@@ -22,8 +22,7 @@ class ExpandAxpyVectorized(ExpandTransformation):
         :param node: Node to expand.
         :param parent_state: State that the node is in.
         :param parent_sdfg: SDFG that the node is in.
-        :param schedule: The schedule to set on maps in the expansion. For FPGA
-                         expansion, this should be set to FPGA_Device.
+        :param schedule: The schedule to set on maps in the expansion.
         """
         node.validate(parent_sdfg, parent_state)
 
@@ -82,29 +81,6 @@ class ExpandAxpyVectorized(ExpandTransformation):
         return axpy_sdfg
 
 
-@dace.library.expansion
-class ExpandAxpyFpga(ExpandTransformation):
-    """
-    FPGA expansion which uses the generic implementation, but sets the map
-    schedule to be executed on FPGA.
-    """
-
-    environments = []
-
-    @staticmethod
-    def expansion(node, parent_state: SDFGState, parent_sdfg: SDFG, **kwargs):
-        """
-        :param node: Node to expand.
-        :param parent_state: State that the node is in.
-        :param parent_sdfg: SDFG that the node is in.
-        """
-        return ExpandAxpyVectorized.expansion(node,
-                                              parent_state,
-                                              parent_sdfg,
-                                              schedule=dace.ScheduleType.FPGA_Device,
-                                              **kwargs)
-
-
 @dace.library.node
 class Axpy(dace.sdfg.nodes.LibraryNode):
     """
@@ -116,7 +92,6 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
     # Global properties
     implementations = {
         "pure": ExpandAxpyVectorized,
-        "fpga": ExpandAxpyFpga,
     }
     default_implementation = None
 

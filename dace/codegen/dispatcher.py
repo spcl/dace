@@ -9,7 +9,7 @@ import aenum
 from dace import config, data as dt, dtypes, nodes, registry
 from dace.memlet import Memlet
 from dace.codegen import exceptions as cgx, prettycode
-from dace.codegen.targets import target
+from dace.codegen import target
 from dace.sdfg import utils as sdutil, SDFG, SDFGState, ScopeSubgraphView
 from dace.sdfg.graph import MultiConnectorEdge
 from typing import Callable, Dict, List, Optional, Set, Tuple, Union
@@ -28,7 +28,7 @@ class DefinedType(aenum.AutoNumberEnum):
     Object = ()  # An object moved by reference
     Stream = ()  # A stream object moved by reference and accessed via a push/pop API
     StreamArray = ()  # An array of Streams
-    FPGA_ShiftRegister = ()  # A shift-register object used in FPGA code generation
+    # TODO Remove ArrayInterface in subsequent PR
     ArrayInterface = ()  # An object representing an interface to an array, used mostly in FPGA
 
 

@@ -51,7 +51,6 @@ transformations, applied in this order:
   * Multi-dimensional :class:`~dace.transformation.dataflow.map_collapse.MapCollapse` to parallelize across multiple dimensions.
   * Greedy subgraph fusion (fusing contents of maps with common dimensions to reduce data movement). See :class:`~dace.transformation.subgraph.subgraph_fusion.SubgraphFusion` for more information.
   * Move loops into maps (when memory access pattern permits) in order to increase the granularity of work threads perform (:class:`~dace.transformation.interstate.move_loop_into_map.MoveLoopIntoMap`).
-  * (for FPGAs) Interleave data containers (e.g. arrays) in off-chip memory banks, and use local memory (e.g. BRAM) when possible.
   * Tiling of maps with write-conflict resolution to reduce atomic operations (tile sizes are configurable via
     :envvar:`optimizer.autotile_size`). Partial parallelism (non-conflicting dimensions) can also be extracted to convert
     atomics to simple updates (configurable in :envvar:`optimizer.autotile_partial_parallelism`, True by default).
@@ -63,4 +62,4 @@ transformations, applied in this order:
   * Make transient data containers' allocation lifetime :class:`dace.dtypes.AllocationLifetime.Persistent`, if possible. This moves
     allocation and deallocation out of the critical code path and into the SDFG init/exit functions.
 
-Apart from those, the pass transforms the SDFG to run on the specified platform (e.g., GPU, FPGA).
+Apart from those, the pass transforms the SDFG to run on the specified platform (e.g. GPU).

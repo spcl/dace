@@ -8,7 +8,7 @@ for each ONNX operation, enabling:
 
 - Pure Python implementations for correctness
 - Optimized implementations for performance
-- Hardware-specific implementations (CPU, GPU, FPGA)
+- Hardware-specific implementations
 - Custom user-provided implementations
 
 The ONNXForward ABC provides:

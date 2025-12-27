@@ -11,7 +11,6 @@ from typing import List, Tuple
 # For optimizations
 from dace.transformation.dataflow import (DoubleBuffering, MapCollapse, MapExpansion, MapReduceFusion, StripMining,
                                           InLocalStorage, AccumulateTransient, Vectorization)
-from dace.transformation.interstate import FPGATransformSDFG
 from dace.transformation import helpers as xfutil
 
 # For library node implementations
@@ -197,8 +196,7 @@ def optimize_for_gpu(sdfg: dace.SDFG, m: int, n: int, k: int):
 @click.option('-K', type=int, default=64)
 @click.option('-N', type=int, default=64)
 @click.option('--version',
-              type=click.Choice(('unoptimized', 'optimize_cpu', 'optimize_gpu', 'mkl', 'cublas', 'rocblas',
-                                 'fpga_naive', 'fpga_library')),
+              type=click.Choice(('unoptimized', 'optimize_cpu', 'optimize_gpu', 'mkl', 'cublas', 'rocblas')),
               default='unoptimized')
 @click.option('--verify/--no-verify', default=True)
 def cli(m, k, n, version, verify):
@@ -247,13 +245,6 @@ def cli(m, k, n, version, verify):
         # Set default implementation to rocBLAS
         dace.libraries.blas.default_implementation = 'rocBLAS'
         # Call program
-        C = matmul_lib(A, B)
-    elif version == 'fpga_naive':
-        matmul_sdfg = matmul.to_sdfg()
-        matmul_sdfg.apply_transformations(FPGATransformSDFG)
-        matmul_sdfg(A=A, B=B, C=C, N=n, K=k, M=m)
-    elif version == 'fpga_systolic':
-        dace.libraries.blas.default_implementation = 'FPGA1DSystolic'
         C = matmul_lib(A, B)
     else:
         raise ValueError('Invalid version %s' % version)

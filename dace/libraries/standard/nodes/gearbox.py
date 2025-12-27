@@ -236,7 +236,7 @@ class Gearbox(dace.sdfg.nodes.LibraryNode):
                      memory into n/4 elements (vector size 4), this parameter
                      should be set to n/16.
         """
-        super().__init__(name=name or "gearbox", schedule=schedule or dace.ScheduleType.FPGA_Device, **kwargs)
+        super().__init__(name=name or "gearbox", schedule=schedule, **kwargs)
         self.size = size
         if schedule is not None:
             self.schedule = schedule

@@ -5,10 +5,8 @@ import numpy as np
 import dace as dc
 import pytest
 import argparse
-from dace.fpga_testing import fpga_test, xilinx_test
-from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
-from dace.transformation.dataflow import StreamingMemory, StreamingComposition
-from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
+from dace.transformation.interstate import InlineSDFG
+from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.config import set_temporary
 from dace.autodiff import add_backward_pass
 
@@ -121,21 +119,6 @@ def run_durbin(device_type: dace.dtypes.DeviceType):
         sdfg = auto_optimize(sdfg, device_type)
         y = sdfg(r, N=N)
         assert np.allclose(y, y_ref)
-    elif device_type == dace.dtypes.DeviceType.FPGA:
-        # Parse SDFG and apply FPGA friendly optimization
-        sdfg = durbin_kernel.to_sdfg(simplify=True)
-        applied = sdfg.apply_transformations([FPGATransformSDFG])
-        assert applied == 1
-
-        # Use FPGA Expansion for lib nodes, and expand them to enable further optimizations
-        from dace.libraries.blas import Dot
-        Dot.default_implementation = "FPGA_PartialSums"
-        sdfg.expand_library_nodes()
-        sdfg.apply_transformations_repeated([InlineSDFG], print_report=True)
-        sdfg.specialize(dict(N=N))
-        y = sdfg(r)
-        assert np.allclose(y, y_ref, atol=1e-6)
-
     return sdfg
 
 
@@ -189,15 +172,10 @@ def test_autodiff():
     run_durbin_autodiff()
 
 
-@fpga_test(assert_ii_1=False)
-def test_fpga():
-    return run_durbin(dace.dtypes.DeviceType.FPGA)
-
-
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]
@@ -207,5 +185,3 @@ if __name__ == "__main__":
         run_durbin_autodiff()
     elif target == "gpu":
         run_durbin(dace.dtypes.DeviceType.GPU)
-    elif target == "fpga":
-        run_durbin(dace.dtypes.DeviceType.FPGA)

@@ -5,12 +5,6 @@
 [submodule "dace/external/moodycamel"]
 	path = dace/external/moodycamel
 	url = https://github.com/cameron314/concurrentqueue.git
-[submodule "dace/external/hlslib"]
-	path = dace/external/hlslib
-	url = https://github.com/definelicht/hlslib.git
 [submodule "dace/viewer/webclient"]
 	path = dace/viewer/webclient
 	url = https://github.com/spcl/dace-webclient.git
-[submodule "dace/external/rtllib"]
-	path = dace/external/rtllib
-	url = https://github.com/carljohnsen/rtllib.git

@@ -49,7 +49,6 @@ The following subsections provide more information on the different types of opt
     blas
     vscode
     gpu
-    fpga
 
 
 .. interactive

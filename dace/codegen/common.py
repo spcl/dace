@@ -96,6 +96,7 @@ def unparse_interstate_edge(code_ast: Union[ast.AST, str], sdfg: SDFG, symbols=N
         code_ast = ast.parse(code_ast).body[0]
 
     strio = StringIO()
+    # TODO: Ensure FPGAInterstateEdgeUnparser is used when needed
     InterstateEdgeUnparser(sdfg, code_ast, strio, symbols, codegen)
     return strio.getvalue().strip()
 

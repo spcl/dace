@@ -166,8 +166,6 @@ def make_array_from_descriptor(descriptor: Array,
         def copy_array(dst, src):
             dst[:] = cp.asarray(src)
 
-    elif descriptor.storage == dtypes.StorageType.FPGA_Global:
-        raise TypeError('Cannot allocate FPGA array in Python')
     else:
 
         def create_array(shape: Tuple[int], dtype: np.dtype, total_size: int, strides: Tuple[int]) -> ArrayLike:
@@ -226,8 +224,6 @@ def make_reference_from_descriptor(descriptor: Array,
                               strides=[s * dtype.itemsize for s in strides])
             return view
 
-    elif descriptor.storage == dtypes.StorageType.FPGA_Global:
-        raise TypeError('Cannot reference FPGA array in Python')
     else:
 
         def create_array(shape: Tuple[int], dtype: np.dtype, total_size: int, strides: Tuple[int]) -> ArrayLike:

@@ -5,10 +5,8 @@ import numpy as np
 import dace as dc
 import pytest
 import argparse
-from dace.fpga_testing import fpga_test
-from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
-from dace.transformation.dataflow import StreamingMemory
-from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
+from dace.transformation.interstate import InlineSDFG
+from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.autodiff import add_backward_pass
 
 # Data set sizes
@@ -57,34 +55,6 @@ def run_bicg(device_type: dace.dtypes.DeviceType):
         sdfg = bicg_kernel.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
         s, q = sdfg(A, p, r, M=M, N=N)
-
-    elif device_type == dace.dtypes.DeviceType.FPGA:
-        # Parse SDFG and apply FPGA friendly optimization
-        # Note: currently the kernel uses double-precision floating point numbers
-        sdfg = bicg_kernel.to_sdfg(simplify=True)
-        applied = sdfg.apply_transformations([FPGATransformSDFG])
-        assert applied == 1
-
-        # Use FPGA Expansion for lib nodes, and expand them to enable further optimizations
-        from dace.libraries.blas import Gemv
-        Gemv.default_implementation = "FPGA_Accumulate"
-        sdfg.expand_library_nodes()
-
-        sm_applied = sdfg.apply_transformations_repeated([InlineSDFG, StreamingMemory],
-                                                         [{}, {
-                                                             'storage': dace.StorageType.FPGA_Local
-                                                         }],
-                                                         print_report=True)
-        assert sm_applied == 8  # 3 inlines and 3 Streaming memories
-
-        ###########################
-        # FPGA Auto Opt
-        fpga_auto_opt.fpga_global_to_local(sdfg)
-        fpga_auto_opt.fpga_rr_interleave_containers_to_banks(sdfg)
-
-        # specialize the SDFG (needed by the GEMV expansion)
-        sdfg.specialize(dict(M=M, N=N))
-        s, q = sdfg(A, p, r)
 
     # Compute ground truth and Validate result
     s_ref, q_ref = bicg_kernel.f(A, p, r)
@@ -143,15 +113,10 @@ def test_autodiff():
     run_bicg_autodiff()
 
 
-@fpga_test(assert_ii_1=False)
-def test_fpga():
-    return run_bicg(dace.dtypes.DeviceType.FPGA)
-
-
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]
@@ -161,5 +126,3 @@ if __name__ == "__main__":
         run_bicg_autodiff()
     elif target == "gpu":
         run_bicg(dace.dtypes.DeviceType.GPU)
-    elif target == "fpga":
-        run_bicg(dace.dtypes.DeviceType.FPGA)
