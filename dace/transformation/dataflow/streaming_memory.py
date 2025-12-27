@@ -394,7 +394,7 @@ class StreamingMemory(xf.SingleStateTransformation):
                 read_to_gearbox = state.add_read(input_gearbox_name)
                 write_from_gearbox = state.add_write(output_gearbox_name)
 
-                gearbox = Gearbox(total_size / vector_size)
+                gearbox = Gearbox(total_size / vector_size, schedule=dtypes.ScheduleType.FPGA_Device)
 
                 state.add_node(gearbox)
 
