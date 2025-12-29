@@ -1,4 +1,4 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import numpy as np
 
@@ -30,7 +30,7 @@ def test_fortran_frontend_loop_region_basic_loop():
         ENDDO
     end SUBROUTINE loop_test_function
     """
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name, use_explicit_cf=True)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name)
 
     a_test = np.full([10, 10], 2, order="F", dtype=np.float64)
     b_test = np.full([10, 10], 3, order="F", dtype=np.float64)
