@@ -307,7 +307,6 @@ dace/codegen/
 │   ├── __init__.py
 │   ├── analysis/           # Analysis passes
 │   │   ├── __init__.py
-│   │   ├── type_inference.py
 │   │   ├── metadata_collection.py
 │   │   └── allocation_analysis.py
 │   ├── transformation/     # Transformation passes

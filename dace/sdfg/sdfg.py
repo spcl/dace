@@ -27,6 +27,7 @@ from dace.config import Config
 from dace.frontend.python import astutils
 from dace.sdfg import nodes as nd
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, SDFGState, ControlFlowRegion
+from dace.sdfg.type_inference import infer_expr_type
 from dace.distr_types import ProcessGrid, SubArray, RedistrArray
 from dace.dtypes import validate_name
 from dace.properties import (DebugInfoProperty, EnumProperty, ListProperty, make_properties, Property, CodeProperty,
@@ -360,7 +361,6 @@ class InterstateEdge(object):
         Returns a mapping between symbols defined by this edge (i.e.,
         assignments) to their type.
         """
-        from dace.codegen.tools.type_inference import infer_expr_type
 
         if sdfg is not None:
             alltypes = copy.copy(symbols)

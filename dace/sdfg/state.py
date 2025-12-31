@@ -28,6 +28,7 @@ from dace.sdfg import nodes as nd
 from dace.sdfg.graph import (MultiConnectorEdge, NodeNotFoundError, OrderedMultiDiConnectorGraph, SubgraphView,
                              OrderedDiGraph, Edge, generate_element_id)
 from dace.sdfg.propagation import propagate_memlet
+from dace.sdfg.type_inference import infer_expr_type
 from dace.sdfg.validation import validate_state
 from dace.subsets import Range, Subset
 
@@ -1797,7 +1798,6 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                 raise ValueError('Missing symbols on nested SDFG "%s": %s' % (name, missing_symbols))
 
             # Add new global symbols to nested SDFG
-            from dace.codegen.tools.type_inference import infer_expr_type
             for sym, symval in s.symbol_mapping.items():
                 if sym not in sdfg.symbols:
                     # TODO: Think of a better way to avoid calling
@@ -3560,7 +3560,6 @@ class LoopRegion(ControlFlowRegion):
 
     def new_symbols(self, symbols) -> Dict[str, dtypes.typeclass]:
         # Avoid cyclic import
-        from dace.codegen.tools.type_inference import infer_expr_type
         from dace.transformation.passes.analysis import loop_analysis
 
         if self.init_statement and self.loop_variable:

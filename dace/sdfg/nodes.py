@@ -20,6 +20,7 @@ from dace.frontend.operations import detect_reduction_type
 from dace.symbolic import issymbolic, pystr_to_symbolic
 from dace import data, subsets as sbs, dtypes
 from dace.sdfg import tasklet_validation as tval
+from dace.sdfg.type_inference import infer_types, infer_expr_type
 import pydoc
 import warnings
 
@@ -538,9 +539,6 @@ class Tasklet(CodeNode):
             raise TypeError('Cannot infer output connectors of tasklet "%s", '
                             'not all input connectors have types' % str(self))
 
-        # Avoid import loop
-        from dace.codegen.tools.type_inference import infer_types
-
         # Get symbols defined at beginning of node, and infer all types in
         # tasklet
         syms = state.symbols_defined_at(self)
@@ -870,8 +868,6 @@ class MapEntry(EntryNode):
         return set(k for k in self._map.range.free_symbols if k not in dyn_inputs)
 
     def new_symbols(self, sdfg, state, symbols) -> Dict[str, dtypes.typeclass]:
-        from dace.codegen.tools.type_inference import infer_expr_type
-
         result = {}
         # Add map params
         for p, rng in zip(self._map.params, self._map.range):
@@ -1184,8 +1180,6 @@ class ConsumeEntry(EntryNode):
         return result - dyn_inputs
 
     def new_symbols(self, sdfg, state, symbols) -> Dict[str, dtypes.typeclass]:
-        from dace.codegen.tools.type_inference import infer_expr_type
-
         result = {}
         # Add PE index
         result[self._consume.pe_index] = infer_expr_type(self._consume.num_pes, symbols)

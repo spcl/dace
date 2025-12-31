@@ -85,7 +85,7 @@ import dace
 from numbers import Number
 from six import StringIO
 from dace import dtypes
-from dace.codegen.tools import type_inference
+from dace.sdfg import type_inference
 
 if sys.version_info < (3, 8):
     BytesConstant = ast.Bytes
@@ -107,14 +107,6 @@ INFSTR = "1e" + repr(sys.float_info.max_10_exp + 1)
 _py2c_nameconst = {True: "true", False: "false", None: "nullptr"}
 
 _py2c_reserved = {"True": "true", "False": "false", "None": "nullptr", "inf": "INFINITY", "nan": "NAN"}
-
-_py2c_typeconversion = {
-    "uint": dace.dtypes.typeclass(np.uint32),
-    "int": dace.dtypes.typeclass(int),
-    "float": dace.dtypes.typeclass(float),
-    "float64": dace.dtypes.typeclass(np.float64),
-    "str": dace.dtypes.pointer(dace.dtypes.int8)
-}
 
 
 def interleave(inter, f, seq, **kwargs):
