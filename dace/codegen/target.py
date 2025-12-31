@@ -4,7 +4,7 @@ import shutil  # which
 from typing import List, TYPE_CHECKING
 import warnings
 
-from dace import memlet as mm, data as dt, dtypes
+from dace import memlet as mm, data as dt, dtypes, subsets
 from dace.sdfg import nodes, SDFG, SDFGState, ScopeSubgraphView, graph as gr
 from dace.registry import make_registry
 from dace.codegen.prettycode import CodeIOStream
@@ -237,6 +237,15 @@ class TargetCodeGenerator(object):
             :param sdfg: The SDFG in which the variable is declared.
         """
         raise NotImplementedError('Abstract class')
+
+    def adjust_subset_for_codegen(self, nodedesc: dt.Data, subset: subsets.Subset) -> subsets.Subset:
+        """ Adjusts a memlet subset for code generation, if necessary.
+
+            :param subset: The original subset.
+            :param nodedesc: The data descriptor the subset applies to.
+            :return: The adjusted subset.
+        """
+        return subset
 
 
 class IllegalCopy(TargetCodeGenerator):

@@ -1,6 +1,6 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
-from typing import Union
+from typing import Optional, Union
 import dace
 import itertools
 import numpy as np
@@ -329,7 +329,7 @@ class SnitchCodeGen(TargetCodeGenerator):
 
         var_type, ctypedef = self.dispatcher.defined_vars.get(memlet.data)
         result = ''
-        expr = (cpp.cpp_array_expr(sdfg, memlet, with_brackets=False)
+        expr = (cpp.cpp_array_expr(sdfg, memlet, with_brackets=False, codegen=self)
                 if var_type in [DefinedType.Pointer, DefinedType.StreamArray] else ptr)
 
         _ptr = ptr
@@ -1147,13 +1147,14 @@ class SnitchCodeGen(TargetCodeGenerator):
 
         return (ccode, hdrs)
 
-    def ptr(self, name: str, desc: data.Data, sdfg: SDFG = None) -> str:
+    def ptr(self, name: str, desc: data.Data, sdfg: SDFG = None, memlet: Optional[Memlet] = None) -> str:
         """
         Returns a string that points to the data based on its name and descriptor.
 
         :param name: Data name.
         :param desc: Data descriptor.
-        :param sdfg: SDFG the data belongs to.
+        :param sdfg: SDFG in which the data resides.
+        :param memlet: Optional memlet associated with the data.
         :return: C-compatible name that can be used to access the data.
         """
         return cpp.ptr(name, desc, sdfg, self.frame)

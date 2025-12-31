@@ -15,7 +15,7 @@ from dace.sdfg import graph, state, find_input_arraynode, find_output_arraynode
 from dace.sdfg.scope import is_in_scope
 import itertools
 from dace.codegen.targets.sve import util as util
-from typing import List
+from typing import List, Optional
 import copy
 from six import StringIO
 import dace.codegen.targets.sve.unparse
@@ -214,7 +214,7 @@ class SVECodeGen(TargetCodeGenerator):
                 else:
                     ##################
                     # Scalar read from array
-                    code.write(f'{dst_type} {dst_name} = {cpp.cpp_array_expr(sdfg, edge.data, codegen=self.frame)};')
+                    code.write(f'{dst_type} {dst_name} = {cpp.cpp_array_expr(sdfg, edge.data, codegen=self)};')
             elif isinstance(desc, data.Scalar):
                 # Refer to shared variable
                 src_type = desc.dtype
@@ -342,7 +342,7 @@ class SVECodeGen(TargetCodeGenerator):
                 else:
                     ##################
                     # Scalar write into array
-                    code.write(f'{cpp.cpp_array_expr(sdfg, edge.data, codegen=self.frame)} = {src_name};')
+                    code.write(f'{cpp.cpp_array_expr(sdfg, edge.data, codegen=self)} = {src_name};')
             elif isinstance(desc, data.Scalar):
                 ##################
                 # Write into Scalar
@@ -519,13 +519,14 @@ class SVECodeGen(TargetCodeGenerator):
 
         callsite_stream.write('///////////////////\n\n')
 
-    def ptr(self, name: str, desc: data.Data, sdfg: SDFG = None) -> str:
+    def ptr(self, name: str, desc: data.Data, sdfg: SDFG = None, memlet: Optional[mm.Memlet] = None) -> str:
         """
         Returns a string that points to the data based on its name and descriptor.
 
         :param name: Data name.
         :param desc: Data descriptor.
         :param sdfg: SDFG in which the data resides.
+        :param memlet: Optional memlet associated with the data.
         :return: C-compatible name that can be used to access the data.
         """
         return cpp.ptr(name, desc, sdfg, self.frame)

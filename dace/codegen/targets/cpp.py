@@ -270,7 +270,7 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
     """
     desc = sdfg.arrays[memlet.data]
     typedef = conntype.ctype
-    offset = cpp_offset_expr(desc, memlet.subset)
+    offset = cpp_offset_expr(desc, memlet.subset, codegen=codegen)
     offset_expr = '[' + offset + ']'
     is_scalar = not isinstance(conntype, dtypes.pointer)
     ptrname = codegen.ptr(memlet.data, desc, sdfg)
@@ -496,7 +496,12 @@ def ndcopy_to_strided_copy(
         return None
 
 
-def cpp_offset_expr(d: data.Data, subset_in: subsets.Subset, offset=None, packed_veclen=1, indices=None):
+def cpp_offset_expr(d: data.Data,
+                    subset_in: subsets.Subset,
+                    offset=None,
+                    packed_veclen=1,
+                    indices=None,
+                    codegen: Optional['TargetCodeGenerator'] = None) -> str:
     """ Creates a C++ expression that can be added to a pointer in order
         to offset it to the beginning of the given subset and offset.
 
@@ -507,8 +512,13 @@ def cpp_offset_expr(d: data.Data, subset_in: subsets.Subset, offset=None, packed
                               vector length that the final offset should be
                               divided by.
         :param indices: A tuple of indices to use for expression.
+        :param codegen: Optional code generator to adjust subset.
         :return: A string in C++ syntax with the correct offset
     """
+    # Offset according to code generator
+    if codegen is not None:
+        subset_in = codegen.adjust_subset_for_codegen(d, subset_in)
+
     # Offset according to parameters, then offset according to array
     if offset is not None:
         subset = subset_in.offset_new(offset, False)
@@ -535,13 +545,14 @@ def cpp_array_expr(sdfg,
                    use_other_subset=False,
                    indices=None,
                    referenced_array=None,
-                   codegen=None):
+                   codegen: Optional['TargetCodeGenerator'] = None,
+                   framecode: Optional['DaCeCodeGenerator'] = None):
     """ Converts an Indices/Range object to a C++ array access string. """
     subset = memlet.subset if not use_other_subset else memlet.other_subset
     s = subset if relative_offset else subsets.Indices(offset)
     o = offset if relative_offset else None
     desc = (sdfg.arrays[memlet.data] if referenced_array is None else referenced_array)
-    offset_cppstr = cpp_offset_expr(desc, s, o, packed_veclen, indices=indices)
+    offset_cppstr = cpp_offset_expr(desc, s, o, packed_veclen, indices=indices, codegen=codegen)
 
     # NOTE: Are there any cases where a mix of '.' and '->' is needed when traversing nested structs?
     # TODO: Study this when changing Structures to be (optionally?) non-pointers.
@@ -552,7 +563,10 @@ def cpp_array_expr(sdfg,
         name = memlet.data
 
     if with_brackets:
-        ptrname = ptr(name, desc, sdfg, framecode=codegen)
+        if codegen is not None:
+            ptrname = codegen.ptr(name, desc, sdfg, memlet)
+        else:
+            ptrname = ptr(name, desc, sdfg, framecode=framecode)
         return "%s[%s]" % (ptrname, offset_cppstr)
     else:
         return offset_cppstr
@@ -592,7 +606,7 @@ def cpp_ptr_expr(sdfg,
     if isinstance(indices, str):
         offset_cppstr = indices
     else:
-        offset_cppstr = cpp_offset_expr(desc, s, o, indices=indices)
+        offset_cppstr = cpp_offset_expr(desc, s, o, indices=indices, codegen=codegen)
     dname = codegen.ptr(memlet.data, desc, sdfg)
 
     if defined_type == DefinedType.Scalar:
@@ -986,9 +1000,9 @@ class InterstateEdgeUnparser(cppunparse.CPPUnparser):
     inter-state edge code generation.
     """
 
-    def __init__(self, sdfg: SDFG, tree: ast.AST, file: IO[str], defined_symbols=None, codegen=None):
+    def __init__(self, sdfg: SDFG, tree: ast.AST, file: IO[str], defined_symbols=None, framecode=None):
         self.sdfg = sdfg
-        self.codegen = codegen
+        self.framecode = framecode
         super().__init__(tree, 0, cppunparse.CPPLocals(), file, expr_semicolon=False, defined_symbols=defined_symbols)
 
     def _Name(self, t: ast.Name):
@@ -998,7 +1012,7 @@ class InterstateEdgeUnparser(cppunparse.CPPUnparser):
         # Replace values with their code-generated names (for example, persistent arrays)
         desc = self.sdfg.arrays[t.id]
         ref = '' if not isinstance(desc, data.View) else '*'
-        self.write(ref + ptr(t.id, desc, self.sdfg, self.codegen))
+        self.write(ref + ptr(t.id, desc, self.sdfg, self.framecode))
 
     def _Attribute(self, t: ast.Attribute):
         from dace.frontend.python.astutils import rname
@@ -1008,7 +1022,7 @@ class InterstateEdgeUnparser(cppunparse.CPPUnparser):
 
         # Replace values with their code-generated names (for example, persistent arrays)
         desc = self.sdfg.arrays[name]
-        self.write(ptr(name, desc, self.sdfg, self.codegen))
+        self.write(ptr(name, desc, self.sdfg, self.framecode))
 
     def _Subscript(self, t: ast.Subscript):
         from dace.frontend.python.astutils import subscript_to_slice
@@ -1018,7 +1032,7 @@ class InterstateEdgeUnparser(cppunparse.CPPUnparser):
             raise SyntaxError('Range subscripts disallowed in interstate edges')
 
         memlet = mmlt.Memlet(data=target, subset=rng)
-        self.write(cpp_array_expr(self.sdfg, memlet, codegen=self.codegen))
+        self.write(cpp_array_expr(self.sdfg, memlet, framecode=self.framecode))
 
 
 class DaCeKeywordRemover(ExtNodeTransformer):
@@ -1144,7 +1158,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                         return node
                     elif isinstance(desc, data.Stream):
                         if desc.is_stream_array():
-                            index = cpp_offset_expr(desc, memlet.subset)
+                            index = cpp_offset_expr(desc, memlet.subset, codegen=self.codegen)
                             target = f"{ptrname}[{index}]"
                         else:
                             target = ptrname
@@ -1161,7 +1175,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                             ))
                         elif (var_type != DefinedType.ArrayInterface or isinstance(desc, data.View)):
                             newnode = ast.Name(id="%s = %s;" % (
-                                cpp_array_expr(self.sdfg, memlet, codegen=self.codegen._frame),
+                                cpp_array_expr(self.sdfg, memlet, codegen=self.codegen),
                                 cppunparse.cppunparse(value, expr_semicolon=False),
                             ))
                         else:

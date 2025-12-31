@@ -135,9 +135,9 @@ class TensorCoreCodegen(TargetCodeGenerator):
 
         # Set non-tensor-core C++ expression based on memlet
         if edge.data.data == nontc_node.data:
-            other_expr = cpp_array_expr(sdfg, edge.data)
+            other_expr = cpp_array_expr(sdfg, edge.data, framecode=self._frame)
         elif edge.data.other_subset is not None:
-            offset_cppstr = cpp_offset_expr(nontc_desc, edge.data.other_subset)
+            offset_cppstr = cpp_offset_expr(nontc_desc, edge.data.other_subset, codegen=self)
             other_expr = '%s[%s]' % (nontc_node.data, offset_cppstr)
         else:
             other_expr = '%s[0]' % nontc_node.data

@@ -719,7 +719,7 @@ void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
                     raise NotImplementedError("Cannot handle streams writing to multiple arrays.")
 
                 fmtargs['ptr'] = nodedesc.sink + ' + ' + cpp_array_expr(
-                    sdfg, edges[0].data, with_brackets=False, codegen=self._frame)
+                    sdfg, edges[0].data, with_brackets=False, codegen=self)
 
                 # Assuming 1D subset of sink/src
                 # sym2cpp(edges[0].data.subset[-1])
@@ -2941,13 +2941,14 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
     def make_ptr_vector_cast(self, *args, **kwargs):
         return cpp.make_ptr_vector_cast(*args, **kwargs)
 
-    def ptr(self, name: str, desc: dt.Data, sdfg: SDFG = None) -> str:
+    def ptr(self, name: str, desc: dt.Data, sdfg: SDFG = None, memlet: Optional[Memlet] = None) -> str:
         """
         Returns a string that points to the data based on its name and descriptor.
 
         :param name: Data name.
         :param desc: Data descriptor.
-        :param sdfg: SDFG the data belongs to.
+        :param sdfg: SDFG in which the data resides.
+        :param memlet: Optional memlet associated with the data.
         :return: C-compatible name that can be used to access the data.
         """
         return cpp.ptr(name, desc, sdfg, self._frame)
