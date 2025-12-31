@@ -22,7 +22,6 @@ except (ModuleNotFoundError, ImportError):
     ArrayLike = Any
 
 from dace import dtypes, serialize, symbolic
-from dace.codegen import cppunparse
 from dace.properties import (DebugInfoProperty, DictProperty, EnumProperty, ListProperty, NestedDataClassProperty,
                              OrderedDictProperty, Property, ShapeProperty, SymbolicProperty, TypeClassProperty,
                              make_properties)
@@ -873,9 +872,6 @@ class Stream(Data):
 
     def sizes(self):
         return [d.name if isinstance(d, symbolic.symbol) else str(d) for d in self.shape]
-
-    def size_string(self):
-        return (" * ".join([cppunparse.pyexpr2cpp(symbolic.symstr(s, cpp_mode=True)) for s in self.shape]))
 
     def is_stream_array(self):
         return _prod(self.shape) != 1
