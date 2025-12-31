@@ -1,7 +1,7 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import os
 import shutil  # which
-from typing import List
+from typing import List, TYPE_CHECKING
 import warnings
 
 from dace import memlet as mm, data as dt, dtypes
@@ -10,6 +10,9 @@ from dace.registry import make_registry
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.codeobject import CodeObject
 from dace.sdfg.state import ControlFlowRegion
+
+if TYPE_CHECKING:
+    from dace.codegen.targets.framecode import DaCeCodeGenerator
 
 
 @make_registry
