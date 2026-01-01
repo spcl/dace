@@ -798,7 +798,7 @@ class CPUCodeGen(TargetCodeGenerator):
             state_dfg: SDFGState = cfg.nodes()[state_id]
 
             copy_shape, src_strides, dst_strides, src_expr, dst_expr = cpp.memlet_copy_to_absolute_strides(
-                self._dispatcher, sdfg, state_dfg, edge, src_node, dst_node)
+                self._dispatcher, sdfg, state_dfg, edge, src_node, dst_node, codegen=self)
 
             # Which numbers to include in the variable argument part
             dynshape, dynsrc, dyndst = 1, 1, 1
@@ -2247,14 +2247,14 @@ class CPUCodeGen(TargetCodeGenerator):
     def make_ptr_vector_cast(self, *args, **kwargs):
         return cpp.make_ptr_vector_cast(*args, **kwargs)
 
-    def ptr(self, name: str, desc: data.Data, sdfg: SDFG = None, memlet: Optional[mmlt.Memlet] = None) -> str:
+    def ptr(self, name: str, desc: data.Data, sdfg: SDFG = None, subset: Optional[subsets.Subset] = None) -> str:
         """
         Returns a string that points to the data based on its name and descriptor.
 
         :param name: Data name.
         :param desc: Data descriptor.
         :param sdfg: SDFG in which the data resides.
-        :param memlet: Optional memlet associated with the data.
+        :param subset: Optional subset associated with the data.
         :return: C-compatible name that can be used to access the data.
         """
         return cpp.ptr(name, desc, sdfg, self._frame)

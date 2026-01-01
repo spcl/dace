@@ -61,6 +61,7 @@ def copy_expr(
     is_write=None,  # Otherwise it's a read
     offset=None,
     relative_offset=True,
+    name_override=None,
 ):
     data_desc = sdfg.arrays[data_name]
     # NOTE: Are there any cases where a mix of '.' and '->' is needed when traversing nested structs?
@@ -71,6 +72,8 @@ def copy_expr(
     else:
         name = data_name
     ptrname = ptr(data_name, data_desc, sdfg, dispatcher.frame)
+    if name_override is not None:
+        ptrname = name_override
     if relative_offset:
         s = memlet.subset
         o = offset
@@ -104,7 +107,10 @@ def copy_expr(
     if not defined_types:
         defined_types = dispatcher.defined_vars.get(ptrname, is_global=is_global)
     def_type, _ = defined_types
-    expr = ptr(name, data_desc, sdfg, dispatcher.frame)
+    if name_override is not None:
+        expr = name_override
+    else:
+        expr = ptr(name, data_desc, sdfg, dispatcher.frame)
 
     add_offset = offset_cppstr != "0"
 
@@ -124,9 +130,15 @@ def copy_expr(
         return expr
 
 
-def memlet_copy_to_absolute_strides(dispatcher: 'TargetDispatcher', sdfg: SDFG, state: SDFGState,
-                                    edge: gr.MultiConnectorEdge[mmlt.Memlet], src_node: nodes.AccessNode,
-                                    dst_node: nodes.AccessNode):
+def memlet_copy_to_absolute_strides(dispatcher: 'TargetDispatcher',
+                                    sdfg: SDFG,
+                                    state: SDFGState,
+                                    edge: gr.MultiConnectorEdge[mmlt.Memlet],
+                                    src_node: nodes.AccessNode,
+                                    dst_node: nodes.AccessNode,
+                                    src_name_override: Optional[str] = None,
+                                    dst_name_override: Optional[str] = None,
+                                    codegen: 'TargetCodeGenerator' = None):
     memlet = edge.data
     copy_shape = memlet.subset.size_exact()
     src_nodedesc = src_node.desc(sdfg)
@@ -138,6 +150,10 @@ def memlet_copy_to_absolute_strides(dispatcher: 'TargetDispatcher', sdfg: SDFG, 
     dst_subset = memlet.get_dst_subset(edge, state)
     is_src_write = not memlet._is_data_src
 
+    if codegen is not None:
+        src_subset = codegen.adjust_subset_for_codegen(src_nodedesc, src_subset)
+        dst_subset = codegen.adjust_subset_for_codegen(dst_nodedesc, dst_subset)
+
     if dispatcher is not None:
         src_expr = copy_expr(dispatcher,
                              sdfg,
@@ -145,14 +161,16 @@ def memlet_copy_to_absolute_strides(dispatcher: 'TargetDispatcher', sdfg: SDFG, 
                              memlet,
                              is_write=is_src_write,
                              offset=src_subset,
-                             relative_offset=False)
+                             relative_offset=False,
+                             name_override=src_name_override)
         dst_expr = copy_expr(dispatcher,
                              sdfg,
                              dst_node.data,
                              memlet,
                              is_write=(not is_src_write),
                              offset=dst_subset,
-                             relative_offset=False)
+                             relative_offset=False,
+                             name_override=dst_name_override)
     if src_subset is None:
         src_subset = subsets.Range.from_array(src_nodedesc)
     if dst_subset is None:

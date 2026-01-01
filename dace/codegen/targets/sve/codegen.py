@@ -29,7 +29,7 @@ from dace.codegen.dispatcher import DefinedType
 import copy
 import numpy as np
 from dace.codegen.targets.cpp import is_write_conflicted
-from dace import data as data
+from dace import data, subsets
 from dace.frontend.operations import detect_reduction_type
 import dace.codegen.targets
 
@@ -519,14 +519,14 @@ class SVECodeGen(TargetCodeGenerator):
 
         callsite_stream.write('///////////////////\n\n')
 
-    def ptr(self, name: str, desc: data.Data, sdfg: SDFG = None, memlet: Optional[mm.Memlet] = None) -> str:
+    def ptr(self, name: str, desc: data.Data, sdfg: SDFG = None, subset: Optional[subsets.Subset] = None) -> str:
         """
         Returns a string that points to the data based on its name and descriptor.
 
         :param name: Data name.
         :param desc: Data descriptor.
         :param sdfg: SDFG in which the data resides.
-        :param memlet: Optional memlet associated with the data.
+        :param subset: Optional subset associated with the data.
         :return: C-compatible name that can be used to access the data.
         """
         return cpp.ptr(name, desc, sdfg, self.frame)
