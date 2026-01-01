@@ -896,7 +896,7 @@ class LambdaProperty(Property):
         return LambdaProperty.to_string(obj)
 
     def from_json(self, s, sdfg=None):
-        if s == None: return None
+        if s is None: return None
         return LambdaProperty.from_string(s)
 
     def __set__(self, obj, val):
