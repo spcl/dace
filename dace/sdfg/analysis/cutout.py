@@ -703,7 +703,7 @@ def _reduce_in_configuration(state: SDFGState,
 
     # If there is no unique outer entry node, we use a proxy node as the source.
     scope_nodes: Set[nd.Node] = set()
-    if source == None:
+    if source is None:
         source = nd.Node()
         scope_nodes = set(scope_children[None])
     else:

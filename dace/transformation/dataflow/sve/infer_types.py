@@ -17,6 +17,7 @@ import dace.data as data
 import dace.dtypes as dtypes
 from collections import defaultdict
 from dace.sdfg.utils import dfs_topological_sort
+from dace.sdfg.type_inference import infer_types
 
 
 class TypeInferenceDict(DefaultDict[Tuple[Tasklet, str, bool], dtypes.typeclass]):
@@ -34,9 +35,6 @@ def infer_tasklet_connectors(sdfg: SDFG, state: SDFGState, node: Tasklet, inferr
     if any(inferred[(node, conn, True)].type is None for conn in node.in_connectors):
         raise TypeError('Cannot infer output connectors of tasklet "%s", '
                         'not all input connectors have types' % str(node))
-
-    # Avoid import loop
-    from dace.codegen.tools.type_inference import infer_types
 
     # Get symbols defined at beginning of node
     syms = state.symbols_defined_at(node)

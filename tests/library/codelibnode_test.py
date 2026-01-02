@@ -3,7 +3,6 @@ import dace
 from dace.data import Array
 from dace.properties import Property, make_properties
 from dace.libraries.standard.nodes import CodeLibraryNode
-from dace.codegen.targets.cpp import cpp_offset_expr
 import numpy as np
 from typing import Dict
 

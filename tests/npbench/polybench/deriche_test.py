@@ -5,10 +5,8 @@ import numpy as np
 import dace as dc
 import pytest
 import argparse
-from dace.fpga_testing import fpga_test
-from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
-from dace.transformation.dataflow import StreamingMemory
-from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
+from dace.transformation.interstate import InlineSDFG
+from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.autodiff import add_backward_pass
 
 # Data set sizes
@@ -191,23 +189,6 @@ def run_deriche(device_type: dace.dtypes.DeviceType):
         sdfg = auto_optimize(sdfg, device_type)
         imgOut = sdfg(alpha, imgIn, W=W, H=H)
 
-    elif device_type == dace.dtypes.DeviceType.FPGA:
-        # Parse SDFG and apply FPGA friendly optimization
-        # Note: currently the kernel uses double-precision floating point numbers and
-        # works for Xilinx
-        sdfg = deriche_kernel.to_sdfg(simplify=True)
-        applied = sdfg.apply_transformations([FPGATransformSDFG])
-        assert applied == 1
-
-        ###########################
-        # FPGA Auto Opt
-        fpga_auto_opt.fpga_global_to_local(sdfg)
-        fpga_auto_opt.fpga_rr_interleave_containers_to_banks(sdfg)
-
-        # specialize the SDFG (needed by the GEMV expansion)
-        sdfg.specialize(dict(W=W, H=H))
-        imgOut = sdfg(alpha, imgIn)
-
     # Compute ground truth and validate result
 
     imgOut_ref = ground_truth(alpha, imgIn)
@@ -265,15 +246,10 @@ def test_autodiff():
     run_deriche_autodiff()
 
 
-@fpga_test(assert_ii_1=False, intel=False)
-def test_fpga():
-    return run_deriche(dace.dtypes.DeviceType.FPGA)
-
-
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]
@@ -283,5 +259,3 @@ if __name__ == "__main__":
         run_deriche_autodiff()
     elif target == "gpu":
         run_deriche(dace.dtypes.DeviceType.GPU)
-    elif target == "fpga":
-        run_deriche(dace.dtypes.DeviceType.FPGA)

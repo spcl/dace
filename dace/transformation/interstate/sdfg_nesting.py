@@ -141,8 +141,6 @@ class InlineSDFG(transformation.SingleStateTransformation):
 
         # Ensure that every connector has at least one corresponding access
         # node in the (nested) SDFG. Otherwise, inlining is not possible.
-        # NOTE: FPGA-compatible SDFGs can have input connectors for data that
-        # are only written.
         inp_data = {conn: set() for conn in in_connectors}
         for e in graph.in_edges(nested_sdfg):
             src = graph.memlet_path(e)[0].src
@@ -1222,7 +1220,7 @@ class NestSDFG(transformation.MultiStateTransformation):
                         # If this transient has a symbolic shape, and if any symbol is in in the "ranges"
                         # of the state then substitute it with its max value (if it can be inferred).
                         # This is useful for the cases where the transient comes from a slice operation
-                        # (e.g. array[:i] or array[i:]), and we are on devices such as FPGAs that do not
+                        # (e.g. array[:i] or array[i:]), and we are on devices that do not
                         # support dynamic memory allocation.
 
                         propagation.propagate_states(nested_sdfg)

@@ -154,13 +154,13 @@ def broadcast_together(arr1_shape, arr2_shape, unidirectional=False):
             all_idx_dict[get_idx(i)] = dim1
 
         # if unidirectional, this is not allowed
-        elif dim1 == None and not unidirectional:
+        elif dim1 is None and not unidirectional:
             # dim2 != None must hold here
             a2_idx.append(get_idx(i))
 
             all_idx_dict[get_idx(i)] = dim2
 
-        elif dim2 == None:
+        elif dim2 is None:
             # dim1 != None must hold here
             a1_idx.append(get_idx(i))
 

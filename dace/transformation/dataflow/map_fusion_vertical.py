@@ -7,6 +7,7 @@ import dace
 from dace import data, properties, subsets, symbolic, transformation
 from dace.sdfg import SDFG, SDFGState, graph, nodes, propagation
 from dace.transformation.dataflow import map_fusion_helper as mfhelper
+from dace.sdfg.type_inference import infer_expr_type
 
 
 @properties.make_properties
@@ -1842,7 +1843,6 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     else:
                         # NOTE: This code is copied from `SDFGState.add_nested_sdfg()`, according
                         #   to the description this is not a very good implementation.
-                        from dace.codegen.tools.type_inference import infer_expr_type
                         new_inner_value_type = infer_expr_type(outer_value, outer_sdfg.symbols) or dtypes.typeclass(int)
                     inner_sdfg.add_symbol(new_inner_value_sym, new_inner_value_type)
             return new_inner_values
