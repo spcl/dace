@@ -582,7 +582,7 @@ def cpp_array_expr(sdfg,
 
     if with_brackets:
         if codegen is not None:
-            ptrname = codegen.ptr(name, desc, sdfg, memlet)
+            ptrname = codegen.ptr(name, desc, sdfg, memlet.subset)
         else:
             ptrname = ptr(name, desc, sdfg, framecode=framecode)
         return "%s[%s]" % (ptrname, offset_cppstr)
@@ -625,7 +625,7 @@ def cpp_ptr_expr(sdfg,
         offset_cppstr = indices
     else:
         offset_cppstr = cpp_offset_expr(desc, s, o, indices=indices, codegen=codegen)
-    dname = codegen.ptr(memlet.data, desc, sdfg)
+    dname = codegen.ptr(memlet.data, desc, sdfg, memlet.subset)
 
     if defined_type == DefinedType.Scalar:
         dname = '&' + dname
