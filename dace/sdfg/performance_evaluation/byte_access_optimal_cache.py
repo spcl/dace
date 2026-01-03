@@ -14,7 +14,7 @@ from dace.transformation.passes.analysis import loop_analysis
 from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.dtypes import StorageType
 from dace.data import Array
-from dace.subsets import Range, SubsetUnion
+from dace.subsets import Range, SubsetUnion, bounding_box_union
 
 from dace.sdfg.state import AbstractControlFlowRegion, LoopRegion, ConditionalBlock
 
@@ -115,17 +115,19 @@ def remap_symbols(buffer_access_map:dict[str, SubsetUnion], symbol_map, buffer_n
     return remapped_buffer_access_map
 
 
-def scope_accesses(state: SDFGState, entry:nd.EntryNode|None, buffer_access_map:dict[str, SubsetUnion], range_variable_stack):
-    scope_buffer_access_map:dict[str, SubsetUnion] = {}
+def scope_accesses(state: SDFGState, entry:nd.EntryNode|None, read_set:dict[str, SubsetUnion], write_set:dict[str, SubsetUnion], range_variable_stack):
+    scope_read_set:dict[str, SubsetUnion] = {}
+    scope_write_set:dict[str, SubsetUnion] = {}
+    
     scope_nodes = state.scope_children()[entry]
     for node in scope_nodes:
         if isinstance(node, nd.AccessNode):
             # if the node is a tasklet, we look at its incoming and outgoing edges and add their accesses to our maps
-            access_edges = state.in_edges(node)
-            access_edges.extend(state.out_edges(node))
-            for edge in access_edges:
-                accessed_buffer = edge.data.data
-                accessed_subset = edge.data.subset
+            write_edges = state.in_edges(node)
+            read_edges = state.out_edges(node)
+            for edge in read_edges:
+                accessed_buffer = edge.src.data
+                accessed_subset = edge.data.src_subset
 
                 if not (state.sdfg.arrays[accessed_buffer].storage is StorageType.CPU_Heap or state.sdfg.arrays[node.data].storage is StorageType.GPU_Global):
                     continue
@@ -133,23 +135,46 @@ def scope_accesses(state: SDFGState, entry:nd.EntryNode|None, buffer_access_map:
                 widened_ranges = widen_ranges(accessed_subset.ranges, range_variable_stack)                
 
                 full_accessed_subset = Range(widened_ranges)
-                buffer_access_map[accessed_buffer].union(full_accessed_subset)
-
-                if not accessed_buffer in scope_buffer_access_map.keys():
-                    scope_buffer_access_map[accessed_buffer] = SubsetUnion([full_accessed_subset])
+                if not accessed_buffer in write_set.keys():
+                    read_set[accessed_buffer] = SubsetUnion([full_accessed_subset])
                 else:
-                    scope_buffer_access_map[accessed_buffer].union(full_accessed_subset)
-                #print("Buffer:", accessed_buffer, "Info:", scope_buffer_access_map[accessed_buffer], "SubsetUnion: ", scope_buffer_access_map[accessed_buffer], scope_buffer_access_map[accessed_buffer].subset_list[0].ranges)
+                    read_set[accessed_buffer].union(full_accessed_subset)
+
+                if not accessed_buffer in scope_write_set.keys():
+                    scope_read_set[accessed_buffer] = SubsetUnion([full_accessed_subset])
+                else:
+                    scope_read_set[accessed_buffer].union(full_accessed_subset)
+            
+            for edge in write_edges:
+                accessed_buffer = edge.dst.data
+                accessed_subset = edge.data.dst_subset
+
+                if not (state.sdfg.arrays[accessed_buffer].storage is StorageType.CPU_Heap or state.sdfg.arrays[node.data].storage is StorageType.GPU_Global):
+                    continue
+                # we widen the accessed ranges according to the range variables in the scope
+                widened_ranges = widen_ranges(accessed_subset.ranges, range_variable_stack)                
+
+                full_accessed_subset = Range(widened_ranges)
+                if not accessed_buffer in write_set.keys():
+                    write_set[accessed_buffer] = SubsetUnion([full_accessed_subset])
+                else:
+                    write_set[accessed_buffer].union(full_accessed_subset)
+
+                if not accessed_buffer in scope_write_set.keys():
+                    scope_write_set[accessed_buffer] = SubsetUnion([full_accessed_subset])
+                else:
+                    scope_write_set[accessed_buffer].union(full_accessed_subset)                
+            
         elif isinstance(node, nd.MapEntry):
             #if the node is a Map Entry, we recursively analyze the scope of the map
             map_variables = list(zip(node.map.params, node.map.range))
             range_variable_stack.extend(map_variables)
-            scope_buffer_access_map = scope_accesses(state, node,buffer_access_map, range_variable_stack)
+            scope_read_set, scope_write_set = scope_accesses(state, node, read_set, write_set, range_variable_stack)
             del range_variable_stack[-len(map_variables):]
 
         elif isinstance(node, nd.NestedSDFG):
             # if the node is a nested sdfg, we analyze it recursively and then map the nested SDFG's symbols to the caller's symbols
-            nested_accesses_map:dict[str, SubsetUnion] = analyze_sdfg(node.sdfg, nested=True)
+            nested_read_set, nested_write_set = analyze_sdfg(node.sdfg, nested=True)
             symbol_map = node.symbol_mapping
 
             buffer_name_map:dict[str, str] = dict()
@@ -158,36 +183,51 @@ def scope_accesses(state: SDFGState, entry:nd.EntryNode|None, buffer_access_map:
             for e in state.out_edges(node):
                 buffer_name_map[e.src_conn] = e.data.data
             
-            remapped_buffer_access_map = remap_symbols(nested_accesses_map, symbol_map, buffer_name_map)
+            remapped_read_set = remap_symbols(nested_read_set, symbol_map, buffer_name_map)
+            remapped_write_set = remap_symbols(nested_write_set, symbol_map, buffer_name_map)
 
             
-            for (accessed_buffer, subset_union) in remapped_buffer_access_map.items():
+            for (accessed_buffer, subset_union) in remapped_read_set.items():
                 new_subset_union = SubsetUnion([])
                 for subset in subset_union.subset_list:
                     widened_ranges = widen_ranges(subset.ranges, range_variable_stack)
                     new_subset = Range(widened_ranges)
                     new_subset_union.union(new_subset)
 
-                if not accessed_buffer in scope_buffer_access_map.keys():
-                    scope_buffer_access_map[accessed_buffer] = new_subset_union
+                if not accessed_buffer in scope_read_set.keys():
+                    scope_read_set[accessed_buffer] = new_subset_union
                 else:
-                    scope_buffer_access_map[accessed_buffer].union(new_subset_union)
-                #print("Buffer:", accessed_buffer, "Info:", scope_buffer_access_map[accessed_buffer], "SubsetUnion: ", scope_buffer_access_map[accessed_buffer])
+                    scope_read_set[accessed_buffer].union(new_subset_union)
+            for (accessed_buffer, subset_union) in remapped_write_set.items():
+                new_subset_union = SubsetUnion([])
+                for subset in subset_union.subset_list:
+                    widened_ranges = widen_ranges(subset.ranges, range_variable_stack)
+                    new_subset = Range(widened_ranges)
+                    new_subset_union.union(new_subset)
 
+                if not accessed_buffer in scope_write_set.keys():
+                    scope_write_set[accessed_buffer] = new_subset_union
+                else:
+                    scope_write_set[accessed_buffer].union(new_subset_union)
         else:
             #if the node is not a tasklet, map entry or nested SDFG, we do nothing
             continue
-    return scope_buffer_access_map
+    return scope_read_set, scope_write_set
 
-def cfr_accesses(cfr:AbstractControlFlowRegion, buffer_access_map:dict[str, SubsetUnion], range_variable_stack):
+def cfr_accesses(cfr:AbstractControlFlowRegion, read_set:dict[str, SubsetUnion], write_set:dict[str, SubsetUnion], range_variable_stack):
     if isinstance(cfr, SDFGState):
         # if the control flow region is a state, we analyze its buffer accesses
-        state_accesses = scope_accesses(cfr, None, buffer_access_map, range_variable_stack)
-        for (buffer, accesses) in state_accesses.items():
-            if buffer in buffer_access_map.keys():
-                buffer_access_map[buffer].union(accesses)
+        state_read_set, state_write_set = scope_accesses(cfr, None, read_set, write_set, range_variable_stack)
+        for (buffer, accesses) in state_read_set.items():
+            if buffer in read_set.keys():
+                read_set[buffer].union(accesses)
             else:
-                buffer_access_map[buffer] = accesses
+                read_set[buffer] = accesses
+        for (buffer, accesses) in state_write_set.items():
+            if buffer in write_set.keys():
+                write_set[buffer].union(accesses)
+            else:
+                write_set[buffer] = accesses
 
     elif isinstance(cfr, LoopRegion):
         # if the control flow region is a loop region, we push the loop variable onto the range variable stack and analyze each sub-regions accesses recursively
@@ -198,48 +238,110 @@ def cfr_accesses(cfr:AbstractControlFlowRegion, buffer_access_map:dict[str, Subs
         range_variable_stack.append((loop_var, (lower_bound, upper_bound, step)))
 
         for sub_region in cfr.nodes():
-            sub_region_accesses = cfr_accesses(sub_region, buffer_access_map, range_variable_stack)
-            for (buffer, accesses) in sub_region_accesses.items():
-                if buffer in buffer_access_map.keys():
-                    buffer_access_map[buffer].union(accesses)
+            sub_region_read_set, sub_region_write_set = cfr_accesses(sub_region, read_set, write_set, range_variable_stack)
+            for (buffer, accesses) in sub_region_read_set.items():
+                if buffer in read_set.keys():
+                    read_set[buffer].union(accesses)
                 else:
-                    buffer_access_map[buffer] = accesses
+                    read_set[buffer] = accesses
+            for (buffer, accesses) in sub_region_write_set.items():
+                if buffer in read_set.keys():
+                    read_set[buffer].union(accesses)
+                else:
+                    read_set[buffer] = accesses
         del range_variable_stack[-1:]
 
     elif isinstance(cfr, ConditionalBlock):
+        # we calculate the read and write sets for every branch and combine them, because in most cases it is not possible to determine statically, which path is going to be taken
         for (condition, branch) in cfr.branches:
-            cfr_accesses(branch, buffer_access_map, range_variable_stack)
-        return buffer_access_map
+            branch_read_set, branch_write_set = cfr_accesses(branch, {}, {}, range_variable_stack)
+            for (buffer, accesses) in branch_read_set.items():
+                if buffer in read_set.keys():
+                    read_set[buffer].union(accesses)
+                else:
+                    read_set[buffer] = accesses
+            for (buffer, accesses) in branch_write_set.items():
+                if buffer in write_set.keys():
+                    write_set[buffer].union(accesses)
+                else:
+                    write_set[buffer] = accesses
+
     else:
         # for any other region, we simply analyze its sub-regions recursively
         for sub_region in cfr.nodes():
-            sub_region_accesses = cfr_accesses(sub_region, buffer_access_map, range_variable_stack)
-            for (buffer, accesses) in sub_region_accesses.items():
-                if buffer in buffer_access_map.keys():
-                    buffer_access_map[buffer].union(accesses)
+            sub_region_read_set, sub_region_write_set = cfr_accesses(sub_region, read_set, write_set, range_variable_stack)
+            for (buffer, accesses) in sub_region_read_set.items():
+                if buffer in read_set.keys():
+                    read_set[buffer].union(accesses)
                 else:
-                    buffer_access_map[buffer] = accesses                 
-    return buffer_access_map
+                    read_set[buffer] = accesses
+            for (buffer, accesses) in sub_region_write_set.items():
+                if buffer in read_set.keys():
+                    write_set[buffer].union(accesses)
+                else:
+                    write_set[buffer] = accesses                 
+    return read_set, write_set
 
 
 def analyze_sdfg(sdfg: SDFG, nested:bool=False):
     if not nested:
         sdfg = deepcopy(sdfg)
-        pipeline = FixedPointPipeline([StrictSymbolSSA()])
-        pipeline.apply_pass(sdfg, {})
         infer_types.set_default_schedule_and_storage_types(sdfg)
     
     for sd in sdfg.all_sdfgs_recursive():
         propagate_memlets_sdfg(sd)
+
+    read_set, write_set = cfr_accesses(sdfg, {}, {}, [])
     
-    buffer_access_map:dict[str, tuple[Array, list[Range]]] = dict()
-    
-    for descriptor, info in sdfg.arrays.items():
-        buffer_access_map[descriptor] = SubsetUnion([])
-    res = cfr_accesses(sdfg, buffer_access_map, [])
-    for (arr, su) in res.items():
+    for _, su in read_set.items():
         cleanup_subsetunion(su)
-    return res
+    for _, su in write_set.items():
+        cleanup_subsetunion(su)
+    
+    return read_set, write_set
+
+def find_range(subset_union:SubsetUnion):
+    for s in subset_union.subset_list:
+        if isinstance(s, Range):
+            return s
+        else:
+            return find_range(s)
+    return None
+
+def calculate_subset_union_bounding_box_volume(subset_union:SubsetUnion, symbol_mapping):
+    if subset_union.subset_list == []:
+        return 0
+    subset_union.replace(symbol_mapping)
+
+    bounding_range: Range|None = find_range(subset_union)
+    for subset in subset_union.subset_list:
+        bounding_range = bounding_box_union(bounding_range, subset)
+    return sp.Mul(*bounding_range.bounding_box_size())
+
+def calculate_subset_size(subset_union:SubsetUnion, symbol_mapping):
+    if subset_union.subset_list == []:
+        return 0
+    subset_union.replace(symbol_mapping)
+
+    bounding_range: Range|None = find_range(subset_union)
+    for subset in subset_union.subset_list:
+        bounding_range = bounding_box_union(bounding_range, subset)
+    return sp.Mul(*bounding_range.bounding_box_size())
+
+def get_total_volume(sdfg:SDFG, symbol_mapping):
+    read_set, write_set = analyze_sdfg(sdfg, False)
+    sum = 0
+
+    for desc, su in read_set.items():
+        dt_size = sdfg.data(desc).dtype.bytes
+        read_elems = calculate_subset_size(su, symbol_mapping)
+        sum += dt_size*read_elems
+    for desc, su in write_set.items():
+        dt_size = sdfg.data(desc).dtype.bytes
+        write_elems = calculate_subset_size(su, symbol_mapping)
+        sum += dt_size*write_elems
+    return sum
+        
 ################################################################################
 # Utility functions for running the analysis from the command line #############
 ################################################################################
@@ -251,7 +353,6 @@ def main() -> None:
                                      description='Analyze the operational_intensity of an SDFG.')
 
     parser.add_argument('filename', type=str, help='The SDFG file to analyze.')
-    parser.add_argument('--assume', nargs='*', help='Collect assumptions about symbols, e.g. x>0 x>y y==5')
     args = parser.parse_args()
 
     args = parser.parse_args()
@@ -261,23 +362,11 @@ def main() -> None:
 
     sdfg = SDFG.from_file(args.filename)
     
-    if args.assume is None:
-        args.assume = []
-
-    assumptions = {}
-    for x in args.assume:
-        a, b = x.split('==')
-        if b.isdigit():
-            assumptions[a] = int(b)
-        else:
-            assumptions[a] = b
-    
-    res = analyze_sdfg(sdfg)
-    for key, val in res.items():
-        print(val)
+    read_set, write_set = analyze_sdfg(sdfg)
 
     print(80 * '-')
-    print(res)
+    print("Read Set:", read_set)
+    print("\nWrite Set:", write_set)
     print(80 * '-')
 
 
