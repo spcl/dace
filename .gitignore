@@ -197,5 +197,6 @@ _build/
 _all_tests/
 
 
-# Ignore my python environment
-dace_env/
+# Ignore downloaded ONNX models
+/*.onnx
+/*.bin

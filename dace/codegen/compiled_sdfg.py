@@ -7,6 +7,10 @@ import shutil
 import subprocess
 from typing import Any, Callable, Dict, List, Tuple, Optional, Type, Union
 import warnings
+import tempfile
+import pickle
+import pathlib
+import sys
 
 import numpy as np
 import sympy as sp
@@ -74,7 +78,8 @@ class ReloadableDLL(object):
             lib_cfilename = ctypes.c_wchar_p(self._library_filename)
         else:
             # As UTF-8
-            lib_cfilename = ctypes.c_char_p(self._library_filename.encode('utf-8'))
+            tt = self._library_filename.encode('utf-8')
+            lib_cfilename = ctypes.c_char_p(tt)
 
         return self._stub.is_library_loaded(lib_cfilename) == 1
 
@@ -93,21 +98,39 @@ class ReloadableDLL(object):
         # Check if library is already loaded
         is_loaded = True
         lib_cfilename = None
+        lib_filename = self._library_filename
+        counter = 0
         while is_loaded:
             # Convert library filename to string according to OS
             if os.name == 'nt':
                 # As UTF-16
-                lib_cfilename = ctypes.c_wchar_p(self._library_filename)
+                lib_cfilename = ctypes.c_wchar_p(lib_filename)
             else:
                 # As UTF-8
-                lib_cfilename = ctypes.c_char_p(self._library_filename.encode('utf-8'))
+                lib_cfilename = ctypes.c_char_p(lib_filename.encode('utf-8'))
 
+            # Test if the library is loaded.
             is_loaded = self._stub.is_library_loaded(lib_cfilename)
+
             if is_loaded == 1:
                 warnings.warn(f'Library {self._library_filename} already loaded, renaming file')
+
+                # The library is loaded, copy the _original_ library file to a new file
+                #  and then try to load that. We only do the copy if the new new name is
+                #  free. It seems that at least on LINUX there is some issue if we
+                #  overwrite a file that already exists.
+                lib_filename = self._library_filename + f'_{counter}'
+                counter += 1
+                if pathlib.Path(lib_filename).exists():
+                    assert pathlib.Path(lib_filename).is_file()
+                    continue
+
+                # The file name is not taken, so make a copy. There might be a race condition
+                #  here in the presence of multiple processes.
+                # TODO: Investigate if we should switch to hardlinks if they are supported.
                 try:
-                    shutil.copyfile(self._library_filename, self._library_filename + '_')
-                    self._library_filename += '_'
+                    assert self._library_filename != lib_filename
+                    shutil.copyfile(self._library_filename, lib_filename)
                 except shutil.Error:
                     raise cgx.DuplicateDLLError(f'Library {os.path.basename(self._library_filename)}'
                                                 'is already loaded somewhere else and cannot be unloaded. '
@@ -115,6 +138,7 @@ class ReloadableDLL(object):
 
         # Actually load the library
         self._lib = ctypes.c_void_p(self._stub.load_library(lib_cfilename))
+        self._library_filename = lib_filename
 
         if self._lib.value is None:
             # Try to understand why the library is not loading, if dynamic
@@ -144,33 +168,11 @@ class ReloadableDLL(object):
     def __exit__(self, *args, **kwargs):
         self.unload()
 
+    def __copy__(self):
+        raise RuntimeError(f'Can not copy ReloadableDLL({self._library_filename})')
 
-def _array_interface_ptr(array: Any, storage: dtypes.StorageType) -> int:
-    """
-    If the given array implements ``__array_interface__`` (see
-    ``dtypes.is_array``), returns the base host or device pointer to the
-    array's allocated memory.
-
-    :param array: Array object that implements NumPy's array interface.
-    :param array_type: Storage location of the array, used to determine whether
-                       it is a host or device pointer (e.g. GPU).
-    :return: A pointer to the base location of the allocated buffer.
-    """
-    if hasattr(array, 'data_ptr'):
-        return array.data_ptr()
-    if isinstance(array, ctypes.Array):
-        return ctypes.addressof(array)
-
-    if storage == dtypes.StorageType.GPU_Global:
-        try:
-            return array.__cuda_array_interface__['data'][0]
-        except AttributeError:
-            # Special case for CuPy with HIP
-            if hasattr(array, 'data') and hasattr(array.data, 'ptr'):
-                return array.data.ptr
-            raise
-
-    return array.__array_interface__['data'][0]
+    def __deepcopy__(self, memodict={}):
+        raise RuntimeError(f'Can not copy ReloadableDLL({self._library_filename})')
 
 
 class CompiledSDFG(object):
@@ -315,7 +317,7 @@ class CompiledSDFG(object):
 
         :param storage: The storage type to fill.
         :param workspace: An array-convertible object (through ``__[cuda_]array_interface__``,
-                          see ``_array_interface_ptr``) to use for the workspace.
+                          see ``array_interface_ptr``) to use for the workspace.
         """
         if not self._initialized:
             raise ValueError('Compiled SDFG is uninitialized, please call ``initialize`` prior to '
@@ -324,7 +326,7 @@ class CompiledSDFG(object):
             raise ValueError(f'Compiled SDFG does not specify external memory of {storage}')
 
         func = self._lib.get_symbol(f'__dace_set_external_memory_{storage.name}', None)
-        ptr = _array_interface_ptr(workspace, storage)
+        ptr = dtypes.array_interface_ptr(workspace, storage)
         func(self._libhandle, ctypes.c_void_p(ptr), *self._lastargs[1])
 
     @property
@@ -414,6 +416,59 @@ class CompiledSDFG(object):
         # Return values are cached in `self._lastargs`.
         return self.fast_call(argtuple, initargtuple, do_gpu_check=True)
 
+    def safe_call(self, *args, **kwargs):
+        """
+        Forwards the Python call to the compiled ``SDFG`` in a separate process to avoid crashes in the main process. Raises an exception if the SDFG execution fails.
+        """
+
+        # Pickle the SDFG and arguments
+        with tempfile.NamedTemporaryFile(mode='wb', delete=False) as f:
+            pickle.dump({
+                'library_path': self._lib._library_filename,
+                "sdfg": self.sdfg,
+                'args': args,
+                'kwargs': kwargs
+            }, f)
+            temp_path = f.name
+
+        # Call the SDFG in a separate process
+        result = subprocess.run([
+            sys.executable, '-c', f'''
+import pickle
+from dace.codegen import compiled_sdfg as csd
+
+with open(r"{temp_path}", "rb") as f:
+    data = pickle.load(f)
+library_path = data['library_path']
+sdfg = data['sdfg']
+
+lib = csd.ReloadableDLL(library_path, sdfg.name)
+obj = csd.CompiledSDFG(sdfg, lib, sdfg.arg_names)
+obj(*data['args'], **data['kwargs'])
+
+with open(r"{temp_path}", "wb") as f:
+    pickle.dump({{
+        'args': data['args'],
+        'kwargs': data['kwargs']
+    }}, f)
+             '''
+        ])
+
+        # Receive the result
+        with open(temp_path, 'rb') as f:
+            data = pickle.load(f)
+            for i in range(len(args)):
+                if hasattr(args[i], '__setitem__'):
+                    args[i].__setitem__(slice(None), data['args'][i])
+            for k in kwargs:
+                if hasattr(kwargs[k], '__setitem__'):
+                    kwargs[k].__setitem__(slice(None), data['kwargs'][k])
+
+        # Clean up
+        os.remove(temp_path)
+        if result.returncode != 0:
+            raise RuntimeError(f'SDFG execution failed with return code {result.returncode}.')
+
     def fast_call(
         self,
         callargs: Tuple[Any, ...],
@@ -435,7 +490,6 @@ class CompiledSDFG(object):
 
         :note: You may use `_construct_args()` to generate the processed arguments.
         """
-        from dace.codegen import common  # Circular import
         try:
             # Call initializer function if necessary, then SDFG
             if self._initialized is False:
@@ -448,6 +502,7 @@ class CompiledSDFG(object):
 
             # Optionally get errors from call
             if do_gpu_check and self.has_gpu_code:
+                from dace.codegen import common  # Circular import; Must be here to avoid import in hot path.
                 try:
                     lasterror = common.get_gpu_runtime().get_last_error_string()
                 except RuntimeError as ex:
@@ -512,105 +567,24 @@ class CompiledSDFG(object):
             sig = []
 
         # Type checking
+        cargs = []
         no_view_arguments = not Config.get_bool('compiler', 'allow_view_arguments')
         for i, (a, arg, atype) in enumerate(zip(argnames, arglist, argtypes)):
-            is_array = dtypes.is_array(arg)
-            is_ndarray = isinstance(arg, np.ndarray)
-            is_dtArray = isinstance(atype, dt.Array)
-            if not is_array and is_dtArray:
-                if isinstance(arg, list):
-                    print(f'WARNING: Casting list argument "{a}" to ndarray')
-                elif arg is None:
-                    if atype.optional is False:  # If array cannot be None
-                        raise TypeError(f'Passing a None value to a non-optional array in argument "{a}"')
-                    # Otherwise, None values are passed as null pointers below
-                elif isinstance(arg, ctypes._Pointer):
-                    pass
-                elif isinstance(arg, str):
-                    # Cast to bytes
-                    arglist[i] = ctypes.c_char_p(arg.encode('utf-8'))
-                else:
-                    raise TypeError(f'Passing an object (type {type(arg).__name__}) to an array in argument "{a}"')
-            elif is_array and not is_dtArray:
-                # GPU scalars and return values are pointers, so this is fine
-                if atype.storage != dtypes.StorageType.GPU_Global and not a.startswith('__return'):
-                    raise TypeError(f'Passing an array to a scalar (type {atype.dtype.ctype}) in argument "{a}"')
-            elif (is_dtArray and is_ndarray and not isinstance(atype, dt.ContainerArray)
-                  and atype.dtype.as_numpy_dtype() != arg.dtype):
-                # Make exception for vector types
-                if (isinstance(atype.dtype, dtypes.vector) and atype.dtype.vtype.as_numpy_dtype() == arg.dtype):
-                    pass
-                else:
-                    print(f'WARNING: Passing {arg.dtype} array argument "{a}" to a {atype.dtype.type.__name__} array')
-            elif is_dtArray and is_ndarray and arg.base is not None and not '__return' in a and no_view_arguments:
-                raise TypeError(f'Passing a numpy view (e.g., sub-array or "A.T") "{a}" to DaCe '
-                                'programs is not allowed in order to retain analyzability. '
-                                'Please make a copy with "numpy.copy(...)". If you know what '
-                                'you are doing, you can override this error in the '
-                                'configuration by setting compiler.allow_view_arguments '
-                                'to True.')
-            elif (not isinstance(atype, (dt.Array, dt.Structure)) and not isinstance(atype.dtype, dtypes.callback)
-                  and not isinstance(arg, (atype.dtype.type, sp.Basic))
-                  and not (isinstance(arg, symbolic.symbol) and arg.dtype == atype.dtype)):
-                is_int = isinstance(arg, int)
-                if is_int and atype.dtype.type == np.int64:
-                    pass
-                elif (is_int and atype.dtype.type == np.int32 and abs(arg) <= (1 << 31) - 1):
-                    pass
-                elif (is_int and atype.dtype.type == np.uint32 and arg >= 0 and arg <= (1 << 32) - 1):
-                    pass
-                elif isinstance(arg, float) and atype.dtype.type == np.float64:
-                    pass
-                elif isinstance(arg, bool) and atype.dtype.type == np.bool_:
-                    pass
-                elif (isinstance(arg, str) or arg is None) and atype.dtype == dtypes.string:
-                    if arg is None:
-                        arglist[i] = ctypes.c_char_p(None)
-                    else:
-                        # Cast to bytes
-                        arglist[i] = ctypes.c_char_p(arg.encode('utf-8'))
-                else:
-                    warnings.warn(f'Casting scalar argument "{a}" from {type(arg).__name__} to {atype.dtype.type}')
-                    arglist[i] = atype.dtype.type(arg)
-
-        for index, (arg, argtype) in enumerate(zip(arglist, argtypes)):
-            # Call a wrapper function to make NumPy arrays from pointers.
-            if isinstance(argtype.dtype, dtypes.callback):
-                arglist[index] = argtype.dtype.get_trampoline(arg, kwargs, self._callback_retval_references)
-            # List to array
-            elif isinstance(arg, list) and isinstance(argtype, dt.Array):
-                arglist[index] = np.array(arg, dtype=argtype.dtype.type)
-            # Null pointer
-            elif arg is None and isinstance(argtype, dt.Array):
-                arglist[index] = ctypes.c_void_p(0)
-
-        # Retain only the element datatype for upcoming checks and casts
-        arg_ctypes = tuple(at.dtype.as_ctypes() for at in argtypes)
+            carg = dt.make_ctypes_argument(arg,
+                                           atype,
+                                           a,
+                                           allow_views=not no_view_arguments,
+                                           symbols=kwargs,
+                                           callback_retval_references=self._callback_retval_references)
+            cargs.append(carg)
 
         constants = self.sdfg.constants
-        callparams = tuple((arg, actype, atype, aname)
-                           for arg, actype, atype, aname in zip(arglist, arg_ctypes, argtypes, argnames)
+        symbols = self._free_symbols
+        callparams = tuple((carg, aname) for arg, carg, aname in zip(arglist, cargs, argnames)
                            if not (symbolic.issymbolic(arg) and (hasattr(arg, 'name') and arg.name in constants)))
 
-        symbols = self._free_symbols
-        initargs = tuple(
-            actype(arg) if not isinstance(arg, (ctypes._SimpleCData, ctypes._Pointer)) else arg
-            for arg, actype, atype, aname in callparams if aname in symbols)
-
-        try:
-            # Replace arrays with their base host/device pointers
-            newargs = [None] * len(callparams)
-            for i, (arg, actype, atype, _) in enumerate(callparams):
-                if dtypes.is_array(arg):
-                    newargs[i] = ctypes.c_void_p(_array_interface_ptr(
-                        arg, atype.storage))  # `c_void_p` is subclass of `ctypes._SimpleCData`.
-                elif not isinstance(arg, (ctypes._SimpleCData, ctypes._Pointer)):
-                    newargs[i] = actype(arg)
-                else:
-                    newargs[i] = arg
-
-        except TypeError as ex:
-            raise TypeError(f'Invalid type for scalar argument "{callparams[i][3]}": {ex}')
+        newargs = tuple(carg for carg, aname in callparams)
+        initargs = tuple(carg for carg, aname in callparams if aname in symbols)
 
         self._lastargs = newargs, initargs
         return self._lastargs
@@ -695,7 +669,7 @@ class CompiledSDFG(object):
     def _convert_return_values(self):
         # Return the values as they would be from a Python function
         # NOTE: Currently it is not possible to return a scalar value, see `tests/sdfg/scalar_return.py`
-        if self._return_arrays is None or len(self._return_arrays) == 0:
+        if not self._return_arrays:
             return None
         elif len(self._return_arrays) == 1:
             return self._return_arrays[0].item() if self._retarray_is_scalar[0] else self._return_arrays[0]

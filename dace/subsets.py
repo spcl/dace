@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import dace.serialize
 from dace import data, symbolic, dtypes
 import re
@@ -931,6 +931,51 @@ class Range(Subset):
 
         return True
 
+    def is_contiguous_subset(self, array: 'dace.data.Array') -> bool:
+        """
+        Check if this subset represents a contiguous subset of the array descriptor provided.
+
+        For a subset to be contiguous:
+        - In Fortran layout: once a dimension is partial, all subsequent dimensions must have length 1
+        - In C layout: same rule applies after reversing dimensions
+
+        Args:
+            array: array descriptor to check against
+
+        Returns:
+            True if the subset is contiguous, False otherwise
+            Returns False on all arrays that are not have a packed layout,
+            meaning that the complete array is contiguously stored in 1D memory.
+        """
+        # Any step size != 1 -> not contiguous
+        if any(s != 1 for (_, _, s) in self):
+            return False
+
+        # Determine array layout and calculate expression lengths accordingly
+        if array.is_packed_fortran_strides():
+            # Fortran layout: first dimension varies fastest
+            expr_lens = [((e + 1) - b) for (b, e, s) in self]
+            shape_dims = array.shape
+        elif array.is_packed_c_strides():
+            # C layout: last dimension varies fastest, so reverse the order
+            expr_lens = list(reversed([((e + 1) - b) for (b, e, s) in self]))
+            shape_dims = list(reversed(array.shape))
+        else:
+            return False
+
+        # Check contiguity: once we find a partial dimension, all remaining must be length 1
+        for i, (expr_len, dim) in enumerate(zip(expr_lens, shape_dims)):
+            # Check if this dimension is partial (less than full shape)
+            if expr_len != dim:
+                # This dimension is partial - all remaining dimensions must be length 1
+                if any(expr_len != 1 for expr_len in expr_lens[i + 1:]):
+                    return False
+                # All remaining dimensions are 1, so this is contiguous
+                return True
+
+        # All dimensions are full size - this is contiguous
+        return True
+
 
 @dace.serialize.serializable
 class Indices(Subset):
@@ -938,15 +983,20 @@ class Indices(Subset):
         N-dimensional data descriptor. """
 
     def __init__(self, indices):
-        if indices is None or len(indices) == 0:
-            raise TypeError('Expected an array of index expressions: got empty'
-                            ' array or None')
-        if isinstance(indices, str):
+        if indices is None:
+            raise TypeError('Expected an array of index expressions: got None')
+        elif isinstance(indices, str):
             raise TypeError("Expected collection of index expression: got str")
         elif isinstance(indices, symbolic.SymExpr):
+            # Possible Error: This case makes the calls `Indices(1)` and `Indices(a)`,
+            #   where `a` is a SymExpr different. In the first case `self.indices` is
+            #   a `list` with one element, i.e. `[1]`, but in the second case it is
+            #   `a`, i.e. `isinstance(self.indices, symbolic.SymExpr)` is `True`.
             self.indices = indices
         else:
             self.indices = [symbolic.pystr_to_symbolic(i) for i in indices]
+            if len(self.indices) == 0:
+                raise ValueError('Expected an array of index expressions: got an empty iterable.')
         self.tile_sizes = [1]
 
     def to_json(self):
@@ -969,6 +1019,8 @@ class Indices(Subset):
         return Indices([*map(symbolic.pystr_to_symbolic, obj['indices'])])
 
     def __hash__(self):
+        # Possible Error: `self` is mutable thus the hash value of it might change,
+        #   which is a problem if it is inside a hash based container, such as a `set`.
         return hash(tuple(i for i in self.indices))
 
     def __deepcopy__(self, memo) -> 'Indices':
@@ -998,10 +1050,10 @@ class Indices(Subset):
         return self.size()
 
     def min_element(self):
-        return self.indices
+        return list(self.indices)
 
     def max_element(self):
-        return self.indices
+        return list(self.indices)
 
     def max_element_approx(self):
         return [_approx(ind) for ind in self.indices]
@@ -1079,6 +1131,8 @@ class Indices(Subset):
     @property
     def free_symbols(self) -> Set[str]:
         result = set()
+        # Possible error: If `self` was constructed through a `symbolic.SymExpr` then
+        #   `self.indices` is not a `list` but a `symbolic.SymExpr`.
         for dim in self.indices:
             result |= symbolic.symlist(dim).keys()
         return result
@@ -1112,8 +1166,7 @@ class Indices(Subset):
             :param order: List or tuple of integers from 0 to self.dims() - 1,
                           indicating the desired order of the dimensions.
         """
-        new_indices = [self.indices[o] for o in order]
-        self.indices = new_indices
+        self.indices = [self.indices[o] for o in order]
 
     def __ne__(self, other):
         return not self.__eq__(other)

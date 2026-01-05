@@ -173,6 +173,13 @@ required:
                     The typename of this struct is derived by appending this value to the SDFG's name.
                     Note that the suffix may only contains letters, digits and underscores.
 
+            cpp_standard:
+                type: str
+                default: "20"
+                title: C++ standard version
+                description: >
+                    C++ standard to use for compilation (e.g., 14, 17, 20, 23, 26).
+
             format_code:
                 type: bool
                 default: false
@@ -183,7 +190,7 @@ required:
             format_config_file:
                 type: str
                 default: ""
-                title: Path the clang-format file
+                title: Path to the .clang-format file
                 description: >
                     Clang-format file to be used by clang-format, only used if format_code is true
 
@@ -261,7 +268,7 @@ required:
                         type: str
                         title: Arguments
                         description: Compiler argument flags
-                        default: '-std=c++14 -fPIC -Wall -Wextra -O3 -march=native -ffast-math -Wno-unused-parameter -Wno-unused-label'
+                        default: '-fPIC -Wall -Wextra -O3 -march=native -ffast-math -Wno-unused-parameter -Wno-unused-label'
                         default_Windows: '/O2 /fp:fast /arch:AVX2 /D_USRDLL /D_WINDLL /D__restrict__=__restrict'
 
                     libs:
@@ -310,7 +317,7 @@ required:
                         type: str
                         title: hipcc Arguments
                         description: Compiler argument flags for HIP
-                        default: '-std=c++17 -fPIC -O3 -ffast-math -Wno-unused-parameter'
+                        default: '-fPIC -O3 -ffast-math -Wno-unused-parameter'
 
                     cuda_arch:
                         type: str

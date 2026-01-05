@@ -13,6 +13,9 @@ import shutil
 import sys
 from typing import Any, AnyStr, Dict, List, Optional, Sequence, Set, Tuple, Type, TYPE_CHECKING, Union
 import warnings
+import subprocess
+import tempfile
+import pickle
 
 import dace
 from dace.sdfg.graph import generate_element_id
@@ -2112,7 +2115,7 @@ class SDFG(ControlFlowRegion):
                     if isinstance(v, dt.Data):
                         _add_symbols(sdfg, v)
             for sym in desc.free_symbols:
-                if sym.name not in sdfg.symbols:
+                if sym.name not in sdfg.symbols and sym.name not in sdfg.arg_names:
                     sdfg.add_symbol(sym.name, sym.dtype)
 
         # Add the data descriptor to the SDFG and all symbols that are not yet known.
@@ -2518,6 +2521,20 @@ class SDFG(ControlFlowRegion):
                 sdfg.argument_typecheck(args, kwargs)
 
             return binaryobj(*args, **kwargs)
+
+    def safe_call(self, *args, **kwargs):
+        """
+        Invokes an SDFG in a separate process to avoid crashes in the main process,generating and compiling code if necessary.
+        Raises an exception if the SDFG execution fails.
+        """
+        with hooks.invoke_sdfg_call_hooks(self) as sdfg:
+            binaryobj = sdfg.compile()
+
+            # Verify passed arguments (if enabled)
+            if Config.get_bool('frontend', 'check_args'):
+                sdfg.argument_typecheck(args, kwargs)
+
+            return binaryobj.safe_call(*args, **kwargs)
 
     def fill_scope_connectors(self):
         """ Fills missing scope connectors (i.e., "IN_#"/"OUT_#" on entry/exit

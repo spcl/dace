@@ -485,7 +485,8 @@ def ndcopy_to_strided_copy(
     """
 
     # Cannot degenerate tiled copies
-    if any(ts != 1 for ts in subset.tile_sizes):
+    # In the case where subset is of type Indices, there are no tile_sizes
+    if hasattr(subset, 'tile_sizes') and any(ts != 1 for ts in subset.tile_sizes):
         return None
 
     # If the copy is contiguous, the difference between the first and last
@@ -1193,8 +1194,11 @@ class DaCeKeywordRemover(ExtNodeTransformer):
             # - Soft-squeeze the slice (remove unit-modes) to match the treatment of the strides above.
             if target not in self.constants:
                 desc = self.sdfg.arrays[dname]
-                if isinstance(desc, data.Array) and data._prod(desc.shape) != 1:
-                    elts = [e for i, e in enumerate(visited_slice.elts) if desc.shape[i] != 1]
+                if sum(1 for s in desc.shape if s != 1) != len(visited_slice.elts):
+                    if isinstance(desc, data.Array) and data._prod(desc.shape) != 1:
+                        elts = [e for i, e in enumerate(visited_slice.elts) if desc.shape[i] != 1]
+                else:
+                    elts = visited_slice.elts
             else:
                 elts = visited_slice.elts
             if len(strides) != len(elts):

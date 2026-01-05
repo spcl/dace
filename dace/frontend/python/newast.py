@@ -26,7 +26,7 @@ from dace.frontend.python.astutils import rname
 from dace.frontend.python import nested_call, replacements, preprocessing
 from dace.frontend.python.memlet_parser import DaceSyntaxError, parse_memlet, ParseMemlet, inner_eval_ast, MemletExpr
 from dace.sdfg import nodes
-from dace.sdfg.propagation import propagate_memlet, propagate_subset, propagate_states
+from dace.sdfg.propagation import propagate_memlet, propagate_subset, propagate_states, align_memlet
 from dace.memlet import Memlet
 from dace.properties import LambdaProperty, CodeBlock
 from dace.sdfg import SDFG, SDFGState
@@ -535,6 +535,9 @@ def add_indirection_subgraph(sdfg: SDFG,
     if ind_entry:  # Amend newsubset when a range is indirected
         for i, idx in enumerate(nonsqz_dims):
             newsubset[idx] = '__i%d' % i
+
+    # Squeeze size-1 dimensions out of expression
+    newsubset = [s for shp, s in zip(array.shape, newsubset) if shp != 1]
 
     tasklet.code = CodeBlock(
         code.format(arr='__ind_' + local_name, index=', '.join([symbolic.symstr(s) for s in newsubset])))
@@ -2008,7 +2011,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     if symbolic.issymbolic(atom, self.sdfg.constants):
                         # Check for undefined variables
                         atomstr = str(atom)
-                        if atomstr not in self.defined:
+                        if atomstr not in self.defined and atomstr not in self.sdfg.arrays:
                             raise DaceSyntaxError(self, node, 'Undefined variable "%s"' % atom)
                         # Add to global SDFG symbols
 
@@ -2937,7 +2940,12 @@ class ProgramVisitor(ExtNodeVisitor):
                     memlet.other_subset = op_subset
                     if op:
                         memlet.wcr = LambdaProperty.from_string('lambda x, y: x {} y'.format(op))
-                    state.add_nedge(op1, op2, memlet)
+                    if isinstance(self.sdfg.arrays[target_name], data.Reference):
+                        e = state.add_edge(op1, None, op2, 'set', memlet)
+                        # Align memlet to referenced array
+                        e.data = align_memlet(state, e, dst=False)
+                    else:
+                        state.add_nedge(op1, op2, memlet)
             else:
                 memlet = Memlet("{a}[{s}]".format(a=target_name,
                                                   s=','.join(['__i%d' % i for i in range(len(target_subset))])))
@@ -3237,8 +3245,14 @@ class ProgramVisitor(ExtNodeVisitor):
         else:
             var_name = self.get_target_name()
 
-        parent_name = self.scope_vars[name]
-        parent_array = self.scope_arrays[parent_name]
+        parent_name = self.scope_vars[until(name, '.')]
+        if '.' in name:
+            struct_field = name[name.index('.'):]
+            parent_name += struct_field
+            scope_ndict = dace.sdfg.NestedDict(self.scope_arrays)
+            parent_array = scope_ndict[parent_name]
+        else:
+            parent_array = self.scope_arrays[parent_name]
 
         has_indirection = (_subset_has_indirection(rng, self) or _subset_is_local_symbol_dependent(rng, self))
         strides = list(parent_array.strides)
@@ -3411,7 +3425,7 @@ class ProgramVisitor(ExtNodeVisitor):
             return self.accesses[(name, rng, 'w')]
         elif name in self.variables:
             return (self.variables[name], rng)
-        elif (name, rng, 'r') in self.accesses or name in self.scope_vars:
+        elif (name, rng, 'r') in self.accesses or until(name, '.') in self.scope_vars:
             return self._add_access(name, rng, 'w', target, new_name, arr_type)
         else:
             raise NotImplementedError
@@ -3444,9 +3458,10 @@ class ProgramVisitor(ExtNodeVisitor):
             storage = dtypes.StorageType.Default
             type_name = rname(node.annotation)
             warnings.warn('typeclass {} is not supported'.format(type_name))
-        if node.value is None and dtype is not None:  # Annotating type without assignment
+        if dtype is not None:
             self.annotated_types[rname(node.target)] = dtype
-            return
+            if node.value is None:  # Annotating type without assignment
+                return
         results = self._visit_assign(node, node.target, None, dtype=dtype)
         if storage != dtypes.StorageType.Default:
             self.sdfg.arrays[results[0][0]].storage = storage
@@ -3518,8 +3533,10 @@ class ProgramVisitor(ExtNodeVisitor):
                     while isinstance(last_subscript.value, ast.Subscript):
                         last_subscript = last_subscript.value
                 if isinstance(target, ast.Subscript) and not isinstance(last_subscript.value, ast.Name):
-                    store_target = copy.copy(last_subscript.value)
-                    store_target.ctx = ast.Store()
+                    store_target = astutils.copy_tree(last_subscript.value)
+                    for n in ast.walk(store_target):  # Recursively make attributes into stores
+                        if hasattr(n, 'ctx'):
+                            n.ctx = ast.Store()
                     true_name = self.visit(store_target)
                     # Refresh defined variables and arrays
                     defined_vars = {**self.variables, **self.scope_vars}
@@ -3631,6 +3648,12 @@ class ProgramVisitor(ExtNodeVisitor):
                         true_name, new_data = self.add_temp_transient([1], result_data.dtype)
                         self.variables[name] = true_name
                         defined_vars[name] = true_name
+                    elif name in self.annotated_types and isinstance(self.annotated_types[name], data.Reference):
+                        desc = copy.deepcopy(self.annotated_types[name])
+                        desc.transient = True
+                        true_name = self.sdfg.add_datadesc(name, desc, find_new_name=True)
+                        self.variables[name] = true_name
+                        defined_vars[name] = true_name
                     elif (not name.startswith('__return')
                           and (isinstance(result_data, data.View) or
                                (not result_data.transient and isinstance(result_data, data.Array)))):
@@ -3721,7 +3744,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     raise IndexError('Boolean array indexing cannot be combined with indirect access')
 
             if self.nested and not new_data and not visited_target:
-                new_name, new_rng = self._add_write_access(name, rng, target)
+                new_name, new_rng = self._add_write_access(true_name, rng, target)
                 # Local symbol or local data dependent
                 if _subset_is_local_symbol_dependent(rng, self):
                     new_rng = rng

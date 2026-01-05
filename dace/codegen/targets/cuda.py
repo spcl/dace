@@ -30,6 +30,7 @@ from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
 from dace.transformation import helpers as xfh
 from dace.transformation.passes import analysis as ap
+from dace.transformation.dataflow.add_threadblock_map import AddThreadBlockMap
 
 if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
@@ -84,6 +85,10 @@ class CUDACodeGen(TargetCodeGenerator):
         self._global_sdfg: SDFG = sdfg
         self._toplevel_schedule = None
         self._arglists: Dict[nodes.MapEntry, Dict[str, dt.Data]] = {}
+        """
+        # Keep track of which kernels got a threadBlock map inserted
+        self._kernels_with_inserted_tb_maps: Set[nodes.MapEntry] = set()
+        """
 
         # Keep track of current "scope entry/exit" code streams for extra
         # code generation
@@ -152,6 +157,21 @@ class CUDACodeGen(TargetCodeGenerator):
                                       CUDACodeGen,
                                       'CUDA',
                                       target_type=target_type)
+
+        # TODO: Below implementation is a bit wasteful to iterate over all nodes.
+        # Better: Do this in a dedicated pass and do not e.g. recurse further into
+        # a GPU_Device-scheduled map.
+        # Identify kernels with inserted GPU_ThreadBlock-scheduled maps
+        old_nodes = set(node for node, _ in sdfg.all_nodes_recursive())
+
+        sdfg.apply_transformations_once_everywhere(AddThreadBlockMap, )
+
+        new_nodes = set(node for node, _ in sdfg.all_nodes_recursive()) - old_nodes
+
+        self._kernels_with_inserted_tb_maps = {
+            n
+            for n in new_nodes if isinstance(n, nodes.MapEntry) and n.schedule == dtypes.ScheduleType.GPU_Device
+        }
 
         # Find GPU<->GPU strided copies that cannot be represented by a single copy command
         for e, state in list(sdfg.all_edges_recursive()):
@@ -1571,7 +1591,11 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
         # Handle dynamic map inputs
         for e in dace.sdfg.dynamic_map_inputs(state, scope_entry):
-            kernel_args[str(e.src)] = e.src.desc(sdfg)
+            if e.data is None:
+                raise Exception("Dynamic map input's memlet can't be None")
+            data_name = e.data.data
+            data_desc = state.sdfg.arrays[data_name]
+            kernel_args[data_name] = data_desc
 
         # Add data from nested SDFGs to kernel arguments
         extra_call_args = []
@@ -1698,21 +1722,29 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
         node = dfg_scope.source_nodes()[0]
 
-        # Set kernel launch bounds
-        if node.gpu_launch_bounds == "-1":
-            launch_bounds = ''
-        elif node.gpu_launch_bounds == "0":
-            if any(symbolic.issymbolic(b) for b in block_dims):
+        # Set maxnreg and launch bounds
+        assert node.gpu_maxnreg is not None and node.gpu_maxnreg >= 0
+        if node.gpu_maxnreg == 0:
+            maxnreg_str = ''
+            # Set kernel launch bounds
+            if node.gpu_launch_bounds == "-1":
                 launch_bounds = ''
+            elif node.gpu_launch_bounds == "0":
+                if any(symbolic.issymbolic(b) for b in block_dims):
+                    launch_bounds = ''
+                else:
+                    launch_bounds = f'__launch_bounds__({_topy(prod(block_dims))})'
             else:
-                launch_bounds = f'__launch_bounds__({_topy(prod(block_dims))})'
+                launch_bounds = f'__launch_bounds__({node.gpu_launch_bounds})'
         else:
-            launch_bounds = f'__launch_bounds__({node.gpu_launch_bounds})'
+            maxnreg_str = f'__maxnreg__({node.gpu_maxnreg})'
+            launch_bounds = ''
 
         # Write kernel prototype
         self._localcode.write(
-            '__global__ void %s %s(%s) {\n' %
-            (launch_bounds, kernel_name, ', '.join(kernel_args_typed + extra_kernel_args_typed)), cfg, state_id, node)
+            '__global__ void %s %s %s(%s) {\n' %
+            (maxnreg_str, launch_bounds, kernel_name, ', '.join(kernel_args_typed + extra_kernel_args_typed)), cfg,
+            state_id, node)
 
         # Write constant expressions in GPU code
         self._frame.generate_constants(sdfg, self._localcode)
@@ -1784,7 +1816,15 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 
         # make sure dynamic map inputs are properly handled
         for e in dace.sdfg.dynamic_map_inputs(state, scope_entry):
+            if e.data is not None and e.data.data == e.dst_conn:
+                warnings.warn(
+                    f"Dynamic map input name {e.data.data} is same as the dst connector. Will result in a name clash, omitting of code for this assignment is skipped."
+                )
+                comment_out_str = "// Omitted name clash on dynamic map input\n//"
+            else:
+                comment_out_str = ""
             self._localcode.write(
+                comment_out_str +
                 self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn]),
                 cfg, state_id, scope_entry)
 
@@ -1855,7 +1895,15 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                 callsite_stream.write(
                     'DACE_GPU_CHECK({backend}EventSynchronize(__state->gpu_context->events[{ev}]));'.format(
                         ev=ev, backend=self.backend), cfg, state_id, [e.src, e.dst])
+            if e.data is not None and e.data.data == e.dst_conn:
+                warnings.warn(
+                    f"Dynamic map input name {e.data.data} is same as the dst connector. Will result in a name clash, omitting of code for this assignment is skipped."
+                )
+                comment_out_str = "// Omitted name clash on dynamic map input\n//"
+            else:
+                comment_out_str = ""
             callsite_stream.write(
+                comment_out_str +
                 self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn]),
                 cfg, state_id, node)
 
@@ -2054,8 +2102,18 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
             if len(detected_block_sizes) > 1:
 
-                # Error when both gpu_block_size and thread-block maps were defined and conflict
-                if kernelmap_entry.map.gpu_block_size is not None:
+                # Raise an error if user has manually explicitly  defined both, the gpu_block_size and explicitly
+                # threadBlock maps with conflicting block sizes.
+                # NOTE: Conflicting block sizes from the 'AddThreadBlockMap' transformation are allowed.
+                # For example, if the user sets `gpu_block_size = [13, 5, 12]` on a 2D GPU_Device map
+                # without an inner thread-block map, the transformation inserts one with inferred
+                # size [13, 5, 1] (missing dimension padded with 1). Since the maximum matches the
+                # user-defined size, this is valid.
+                preset_block_size = kernelmap_entry.map.gpu_block_size
+                conflicting_block_sizes = (preset_block_size is not None
+                                           and not kernelmap_entry in self._kernels_with_inserted_tb_maps)
+
+                if conflicting_block_sizes:
                     raise ValueError('Both the `gpu_block_size` property and internal thread-block '
                                      'maps were defined with conflicting sizes for kernel '
                                      f'"{kernelmap_entry.map.label}" (sizes detected: {detected_block_sizes}). '
@@ -2081,8 +2139,8 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
         # Check block size against configured maximum values, if those can be determined
         total_bsize = prod(block_size)
-        total_limit = Config.get('compiler', 'cuda', 'block_size_limit')
-        lastdim_limit = Config.get('compiler', 'cuda', 'block_size_lastdim_limit')
+        total_limit = int(Config.get('compiler', 'cuda', 'block_size_limit'))
+        lastdim_limit = int(Config.get('compiler', 'cuda', 'block_size_lastdim_limit'))
         if (total_bsize > total_limit) == True:
             raise ValueError(f'Block size for kernel "{kernelmap_entry.map.label}" ({block_size}) '
                              f'is larger than the possible number of threads per block ({total_limit}). '
@@ -2137,7 +2195,15 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
         # handle dynamic map inputs
         for e in dace.sdfg.dynamic_map_inputs(cfg.node(state_id), dfg_scope.source_nodes()[0]):
+            if e.data is not None and e.data.data == e.dst_conn:
+                warnings.warn(
+                    f"Dynamic map input name {e.data.data} is same as the dst connector. Will result in a name clash, omitting of code for this assignment is skipped."
+                )
+                comment_out_str = "// Omitted name clash on dynamic map input\n//"
+            else:
+                comment_out_str = ""
             kernel_stream.write(
+                comment_out_str +
                 self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn]),
                 cfg, state_id,
                 dfg_scope.source_nodes()[0])
@@ -2315,9 +2381,16 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             # They define outside the schedule the bounds of the dynamic Map's for-loop invocation.
             # NOTE: The value of the dynamic Map's variable may differ inside and outside the schedule.
             for e in dace.sdfg.dynamic_map_inputs(dfg, scope_entry):
+                if e.data is not None and e.data.data == e.dst_conn:
+                    warnings.warn(
+                        f"Dynamic map input name {e.data.data} is same as the dst connector. Will result in a name clash, omitting of code for this assignment is skipped."
+                    )
+                    comment_out_str = "// Omitted name clash on dynamic map input\n//"
+                else:
+                    comment_out_str = ""
                 callsite_stream.write(
-                    self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn,
-                                                        e.dst.in_connectors[e.dst_conn]), cfg, state_id, scope_entry)
+                    comment_out_str + self._cpu_codegen.memlet_definition(
+                        sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn]), cfg, state_id, scope_entry)
 
             dynmap_var = scope_map.params[0]
             dynmap_begin = scope_map.range[0][0]
@@ -2346,9 +2419,16 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                                           param=dynmap_var), cfg, state_id, scope_entry)
 
             for e in dace.sdfg.dynamic_map_inputs(dfg, scope_entry):
+                if e.data is not None and e.data.data == e.dst_conn:
+                    warnings.warn(
+                        f"Dynamic map input name {e.data.data} is same as the dst connector. Will result in a name clash, omitting of code for this assignment is skipped."
+                    )
+                    comment_out_str = "// Omitted name clash on dynamic map input\n//"
+                else:
+                    comment_out_str = ""
                 callsite_stream.write(
-                    self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn,
-                                                        e.dst.in_connectors[e.dst_conn]), cfg, state_id, scope_entry)
+                    comment_out_str + self._cpu_codegen.memlet_definition(
+                        sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn]), cfg, state_id, scope_entry)
 
             if dynmap_step != 1:
                 callsite_stream.write(
@@ -2381,9 +2461,16 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
                 # handle dynamic map inputs
                 for e in dace.sdfg.dynamic_map_inputs(dfg, scope_entry):
+                    if e.data is not None and e.data.data == e.dst_conn:
+                        warnings.warn(
+                            f"Dynamic map input name {e.data.data} is same as the dst connector. Will result in a name clash, omitting of code for this assignment is skipped."
+                        )
+                        comment_out_str = "// Omitted name clash on dynamic map input\n//"
+                    else:
+                        comment_out_str = ""
                     callsite_stream.write(
-                        self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn,
-                                                            e.dst.in_connectors[e.dst_conn]), cfg, state_id,
+                        comment_out_str + self._cpu_codegen.memlet_definition(
+                            sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn]), cfg, state_id,
                         scope_entry)
 
                 # variables that need to be declared + the value they need to be initialized with
