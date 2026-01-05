@@ -76,8 +76,8 @@ def validate_block_size_limits(kernel_map_entry: nodes.MapEntry, block_size: Lis
     kernel_map_label = kernel_map_entry.map.label
 
     total_block_size = product(block_size)
-    limit = Config.get('compiler', 'cuda', 'block_size_limit')
-    lastdim_limit = Config.get('compiler', 'cuda', 'block_size_lastdim_limit')
+    limit = int(Config.get('compiler', 'cuda', 'block_size_limit'))
+    lastdim_limit = int(Config.get('compiler', 'cuda', 'block_size_lastdim_limit'))
 
     if (total_block_size > limit) == True:
         raise ValueError(f'Block size for kernel "{kernel_map_label}" ({block_size}) '
