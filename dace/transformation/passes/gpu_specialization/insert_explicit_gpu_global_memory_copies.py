@@ -4,18 +4,15 @@ import copy
 
 import dace
 from dace import SDFG, SDFGState, dtypes, properties
-from dace import memlet as mm
 from dace.codegen.gpu_specialization_utilities.copy_strategies import CopyContext, OutOfKernelCopyStrategy
 from dace.config import Config
 from dace.sdfg import nodes, scope_contains_scope
-from dace.sdfg.graph import MultiConnectorEdge
+from dace.sdfg.graph import Edge, MultiConnectorEdge
 from dace.transformation import pass_pipeline as ppl, transformation
 
 
-def create_sdfg_with_copy_only(parent_state, parent_src_node, parent_dst_node, edge) -> dace.SDFG:
-    sdfg = dace.SDFG("copy_subsdfg")
-    state = sdfg.add_state("copy_state", is_start_block=True)
-
+def create_viewed_copy_kernel(parent_state: dace.SDFGState, src_node: dace.nodes.AccessNode,
+                              dst_node: dace.nodes.AccessNode, edge: Edge[dace.Memlet]) -> dace.SDFG:
     # Currently only 1D and 2D copies are supported
     map_ranges = dict()
     for i, dim in enumerate(edge.data.subset):
@@ -23,17 +20,13 @@ def create_sdfg_with_copy_only(parent_state, parent_src_node, parent_dst_node, e
 
     access_expr = ",".join(f"i{i}" for i in range(len(edge.data.subset)))
 
-    src_desc = parent_state.sdfg.arrays[parent_src_node.data]
-    dst_desc = parent_state.sdfg.arrays[parent_dst_node.data]
-
-    # In nested SDFG we add "view_" prefix
-    src_node = state.add_access("view_" + parent_src_node.data)
-    dst_node = state.add_access("view_" + parent_dst_node.data)
+    src_desc = parent_state.sdfg.arrays[src_node.data]
+    dst_desc = parent_state.sdfg.arrays[dst_node.data]
 
     # Add new arrays for the copy SDFG
     # Determine src and dst subsets
-    src_subset = edge.data.subset if edge.data.data == parent_src_node.data else edge.data.other_subset
-    dst_subset = edge.data.other_subset if edge.data.data == parent_src_node.data else edge.data.subset
+    src_subset = edge.data.subset if edge.data.data == src_node.data else edge.data.other_subset
+    dst_subset = edge.data.other_subset if edge.data.data == src_node.data else edge.data.subset
 
     # Collect the new shapes
     src_shape = [e + 1 - b for b, e, s in src_subset]
@@ -43,31 +36,37 @@ def create_sdfg_with_copy_only(parent_state, parent_src_node, parent_dst_node, e
     src_strides = src_desc.strides
     dst_strides = dst_desc.strides
 
+    _, src_view = parent_state.sdfg.add_view("view_" + src_node.data, src_shape, src_desc.dtype, src_desc.storage,
+                                             src_strides)
+    _, dst_view = parent_state.sdfg.add_view("view_" + dst_node.data, dst_shape, dst_desc.dtype, dst_desc.storage,
+                                             dst_strides)
+
+    # In nested SDFG we add "view_" prefix
+    view_src_node = parent_state.add_access("view_" + src_node.data)
+    view_dst_node = parent_state.add_access("view_" + dst_node.data)
+
     # Create string subset expressions to return
     src_subset_expr = ", ".join([f"{b}:{e+1}:1" for b, e, s in src_subset])
     dst_subset_expr = ", ".join([f"{b}:{e+1}:1" for b, e, s in dst_subset])
 
-    # Add arrays as views
-    sdfg.add_array("view_" + parent_src_node.data, src_shape, src_desc.dtype, src_desc.storage, None, False, src_strides)
-    sdfg.add_array("view_" + parent_dst_node.data, dst_shape, dst_desc.dtype, dst_desc.storage, None, False, dst_strides)
-
     # Add copy kernel
-    tasklet, map_entry, map_exit = state.add_mapped_tasklet(
+    tasklet, map_entry, map_exit = parent_state.add_mapped_tasklet(
         name="gpu_copy_kernel_fallback",
         map_ranges=map_ranges,
-        inputs={"_in": dace.memlet.Memlet(f"{src_node.data}[{access_expr}]")},
-        outputs={"_out": dace.memlet.Memlet(f"{dst_node.data}[{access_expr}]")},
+        inputs={"_in": dace.memlet.Memlet(f"{view_src_node.data}[{access_expr}]")},
+        outputs={"_out": dace.memlet.Memlet(f"{view_dst_node.data}[{access_expr}]")},
         code="_out = _in",
         schedule=dtypes.ScheduleType.GPU_Device,
         unroll_map=False,
         language=dtypes.Language.Python,
         external_edges=True,
         propagate=True,
-        input_nodes={src_node.data: src_node},
-        output_nodes={dst_node.data: dst_node},
+        input_nodes={view_src_node.data: view_src_node},
+        output_nodes={view_dst_node.data: view_dst_node},
     )
 
-    return sdfg, src_subset_expr, dst_subset_expr
+    return view_src_node, src_subset_expr, view_dst_node, dst_subset_expr
+
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
@@ -139,9 +138,10 @@ class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
             # kernel (i.e. a GPU_device scheduled map)
             if not out_of_kernel_copy.applicable(copy_context):
                 continue
-            
+
             # If the subset has more than 2 dimensions and is not contiguous (represented as a 1D memcpy) then fallback to a copy kernel
-            if len(edge.data.subset) > 2 and not edge.data.subset.is_contiguous_subset(state.sdfg.arrays[edge.data.data]):
+            if len(edge.data.subset) > 2 and not edge.data.subset.is_contiguous_subset(
+                    state.sdfg.arrays[edge.data.data]):
 
                 # If other subset is not None, we do not need a nested SDFG
                 if edge.data.other_subset is None:
@@ -168,15 +168,13 @@ class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
                     # Add connectors to the out edge of map_entry and in edge of map_exit
                     state.remove_edge(edge)
                 else:
-                    copy_sdfg, src_subset_expr, dst_subset_expr = create_sdfg_with_copy_only(state, src_node, dst_node, edge)
-                    nsdfg = state.add_nested_sdfg(
-                        sdfg=copy_sdfg,
-                        inputs={"view_" + src_node.data},
-                        outputs={"view_" + dst_node.data},
-                    )
+                    view_src_node, src_subset_expr, view_dst_node, dst_subset_expr = create_viewed_copy_kernel(
+                        state, src_node, dst_node, edge)
                     state.remove_edge(edge)
-                    state.add_edge(src_node, None, nsdfg, "view_" + src_node.data, dace.Memlet(f"{src_node.data}[{src_subset_expr}]"))
-                    state.add_edge(nsdfg, "view_" + dst_node.data, dst_node, None, dace.Memlet(f"{dst_node.data}[{dst_subset_expr}]"))
+                    state.add_edge(src_node, None, view_src_node, "views",
+                                   dace.Memlet(f"{src_node.data}[{src_subset_expr}]"))
+                    state.add_edge(view_dst_node, "views", dst_node, None,
+                                   dace.Memlet(f"{dst_node.data}[{dst_subset_expr}]"))
             else:
                 # Generatae the copy call
                 code = out_of_kernel_copy.generate_copy(copy_context)
@@ -184,7 +182,9 @@ class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
                 # Prepare GPU ustream connectors and the stream to be accessed from the
                 # GPU stream array
                 # Create the tasklet and add GPU stream related connectors
-                tasklet = state.add_tasklet("gpu_copy", { "_in_" + src_node.data }, { "_out_" + dst_node.data }, code, language=dtypes.Language.CPP)
+                tasklet = state.add_tasklet("gpu_copy", {"_in_" + src_node.data}, {"_out_" + dst_node.data},
+                                            code,
+                                            language=dtypes.Language.CPP)
 
                 # Put the tasklet in between the edge
                 dst_node_pred, dst_node_conn, _, dst_conn, memlet = edge
@@ -198,14 +198,16 @@ class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
                 else:
                     src_subset = memlet.subset if edge.data.data == src_node.data else memlet.other_subset
                     dst_subset = memlet.other_subset if edge.data.data == src_node.data else memlet.subset
-                    state.add_edge(dst_node_pred, dst_node_conn, tasklet, "_in_" + src_node.data, dace.Memlet(data=src_node.data, subset=src_subset))
-                    state.add_edge(tasklet, "_out_" + dst_node.data, dst_node, dst_conn, dace.Memlet(data=dst_node.data, subset=dst_subset))
+                    state.add_edge(dst_node_pred, dst_node_conn, tasklet, "_in_" + src_node.data,
+                                   dace.Memlet(data=src_node.data, subset=src_subset))
+                    state.add_edge(tasklet, "_out_" + dst_node.data, dst_node, dst_conn,
+                                   dace.Memlet(data=dst_node.data, subset=dst_subset))
                     state.remove_edge(edge)
 
         return {}
 
     def find_all_data_copies(
-            self, sdfg: SDFG) -> List[Tuple[SDFG, SDFGState, nodes.Node, nodes.Node, MultiConnectorEdge[mm.Memlet]]]:
+            self, sdfg: SDFG) -> List[Tuple[SDFG, SDFGState, nodes.Node, nodes.Node, MultiConnectorEdge[dace.Memlet]]]:
         """
         Finds and returns all data copies in the SDFG as tuples containing the SDFG, state, source node,
         destination node, and the first memlet edge of in the memlet path between source and destination node.
@@ -217,7 +219,7 @@ class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
 
         Returns
         -------
-        List[Tuple[SDFG, SDFGState, nodes.Node, nodes.Node, MultiConnectorEdge[mm.Memlet]]]
+        List[Tuple[SDFG, SDFGState, nodes.Node, nodes.Node, MultiConnectorEdge[dace.Memlet]]]
             A list of tuples representing the data copy, each containing:
             - The SDFG containing the copy
             - The state in which the copy occurs
@@ -225,8 +227,8 @@ class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
             - The destination node of the copy
             - The first memlet edge representing the data movement
         """
-        copy_worklist: List[Tuple[SDFG, SDFGState, nodes.Node, nodes.Node, MultiConnectorEdge[mm.Memlet]]] = []
-        visited_edges: Set[MultiConnectorEdge[mm.Memlet]] = set()
+        copy_worklist: List[Tuple[SDFG, SDFGState, nodes.Node, nodes.Node, MultiConnectorEdge[dace.Memlet]]] = []
+        visited_edges: Set[MultiConnectorEdge[dace.Memlet]] = set()
 
         for sub_sdfg in sdfg.all_sdfgs_recursive():
             for state in sub_sdfg.states():

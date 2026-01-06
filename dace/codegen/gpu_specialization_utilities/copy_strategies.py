@@ -96,7 +96,7 @@ class CopyContext:
         # 2. Generate GPU stream expression
         gpustream = src_stream
         # gpustream_var_name_prefix = Config.get('compiler', 'cuda', 'gpu_stream_name').split(',')[1]
-        gpustream_expr = f"{gpustream}" # {gpustream_var_name_prefix}
+        gpustream_expr = f"{gpustream}"  # {gpustream_var_name_prefix}
 
         return gpustream_expr
 
