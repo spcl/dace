@@ -135,8 +135,6 @@ def test_2d_copy():
 
     assert num_tasklets == 1
 
-    print(f"2D copy: {num_tasklets} tasklets")
-
 
 @pytest.mark.gpu
 def test_2d_copy_with_other_subset():
@@ -162,8 +160,6 @@ def test_2d_copy_with_other_subset():
     expected = A[4:8:copy_strides[0], 4:8:copy_strides[1]]
     cp.testing.assert_array_equal(B[0:4, 0:4], expected)
     assert num_tasklets == 1
-
-    print(f"2D copy: {num_tasklets} tasklets")
 
 
 @pytest.mark.gpu
@@ -191,8 +187,6 @@ def test_3d_copy():
     cp.testing.assert_array_equal(B, expected)
 
     assert num_tasklets == 1
-
-    print(f"3D copy: {num_tasklets} tasklets")
 
 
 @pytest.mark.gpu
@@ -222,8 +216,6 @@ def test_1d_strided_copy(stride):
     expected[::stride] = A[::stride]
     cp.testing.assert_array_equal(B[::stride], expected[::stride])
 
-    print(f"1D strided copy (stride={stride}): {num_tasklets} tasklets")
-
 
 @pytest.mark.gpu
 @pytest.mark.parametrize("stride_1,stride_2", [(2, 1), (4, 1), (1, 2), (1, 4)])
@@ -251,8 +243,6 @@ def test_2d_strided_copy(stride_1, stride_2):
     expected = cp.zeros_like(A)
     expected[::stride_1, ::stride_2] = A[::stride_1, ::stride_2]
     cp.testing.assert_array_equal(B[::stride_1, ::stride_2], expected[::stride_1, ::stride_2])
-
-    print(f"2D strided copy (strides={stride_1},{stride_2}): {num_tasklets} tasklets")
 
 
 @pytest.mark.gpu
@@ -285,8 +275,6 @@ def test_3d_strided_copy(stride_1, stride_2, stride_3):
     expected[::stride_1, ::stride_2, ::stride_3] = A[::stride_1, ::stride_2, ::stride_3]
     cp.testing.assert_array_equal(B, expected)
 
-    print(f"3D strided copy (strides={stride_1},{stride_2},{stride_3}): {num_tasklets} tasklets")
-
 
 @pytest.mark.gpu
 @pytest.mark.parametrize("stride_1,stride_2,stride_3", [
@@ -317,8 +305,5 @@ def test_3d_strided_copy_w_other_subset(stride_1, stride_2, stride_3):
     sdfg(A=A, B=B)
 
     # Verify correctness
-    print(B[0:4:copy_strides[0], 0:4:copy_strides[1], 0:4:copy_strides[2]])
-    print(A[4:8:copy_strides[0], 4:8:copy_strides[1], 4:8:copy_strides[2]])
     cp.testing.assert_array_equal(B[0:4:copy_strides[0], 0:4:copy_strides[1], 0:4:copy_strides[2]],
                                   A[4:8:copy_strides[0], 4:8:copy_strides[1], 4:8:copy_strides[2]])
-    print(f"3D strided copy (strides={stride_1},{stride_2},{stride_3}): {num_tasklets} tasklets")
