@@ -66,13 +66,13 @@ class ScheduleType(aenum.AutoNumberEnum):
     CPU_Persistent = ()  #: OpenMP parallel region
     Unrolled = ()  #: Unrolled code
     SVE_Map = ()  #: Arm SVE
-
     #: Default scope schedule for GPU code. Specializes to schedule GPU_Device and GPU_Global during inference.
     GPU_Default = ()
     GPU_Device = ()  #: Kernel
     GPU_ThreadBlock = ()  #: Thread-block code
     GPU_ThreadBlock_Dynamic = ()  #: Allows rescheduling work within a block
     GPU_Persistent = ()
+    GPU_Warp = ()  #: Warp-level schedule (experimental)
     FPGA_Device = ()
     Snitch = ()
     Snitch_Multicore = ()
@@ -85,6 +85,10 @@ GPU_SCHEDULES = [
     ScheduleType.GPU_ThreadBlock,
     ScheduleType.GPU_ThreadBlock_Dynamic,
     ScheduleType.GPU_Persistent,
+]
+
+EXPERIMENTAL_GPU_SCHEDULES = [
+    ScheduleType.GPU_Warp
 ]
 
 # A subset of CPU schedule types
