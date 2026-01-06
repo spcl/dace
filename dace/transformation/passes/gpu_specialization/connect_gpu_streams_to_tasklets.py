@@ -7,7 +7,7 @@ from dace.config import Config
 from dace.sdfg import nodes
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import NaiveGPUStreamScheduler
-from dace.transformation.passes.gpu_specialization.insert_gpu_streams import InsertGPUStreams
+from dace.transformation.passes.gpu_specialization.insert_gpu_streams import InsertGPUStreams, get_gpu_stream_array_name
 from dace.transformation.passes.gpu_specialization.connect_gpu_streams_to_kernels import ConnectGPUStreamsToKernels
 
 # Placeholder for the GPU stream variable used in tasklet code
@@ -42,7 +42,7 @@ class ConnectGPUStreamsToTasklets(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]):
         # Retrieve the GPU stream's array name
-        stream_array_name = Config.get('compiler', 'cuda', 'gpu_stream_name').split(',')[0]
+        stream_array_name = get_gpu_stream_array_name()
 
         # Retrieve GPU stream assignments for nodes
         stream_assignments: Dict[nodes.Node, Union[int, str]] = pipeline_results['NaiveGPUStreamScheduler']

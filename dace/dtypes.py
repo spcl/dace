@@ -225,6 +225,7 @@ SCOPEDEFAULT_SCHEDULE = {
     ScheduleType.GPU_Device: ScheduleType.GPU_ThreadBlock,
     ScheduleType.GPU_ThreadBlock: ScheduleType.Sequential,
     ScheduleType.GPU_ThreadBlock_Dynamic: ScheduleType.Sequential,
+    ScheduleType.GPU_Warp: ScheduleType.Sequential,
     ScheduleType.FPGA_Device: ScheduleType.FPGA_Device,
     ScheduleType.FPGA_Multi_Pumped: ScheduleType.FPGA_Device,
     ScheduleType.SVE_Map: ScheduleType.Sequential,
@@ -1270,7 +1271,7 @@ complex64 = typeclass(numpy.complex64)
 complex128 = typeclass(numpy.complex128)
 string = stringtype()
 MPI_Request = opaque('MPI_Request')
-
+gpuStream_t = opaque('gpuStream_t')
 
 @undefined_safe_enum
 @extensible_enum
@@ -1290,7 +1291,7 @@ class Typeclasses(aenum.AutoNumberEnum):
     float64 = float64
     complex64 = complex64
     complex128 = complex128
-
+    gpuStream_t = gpuStream_t
 
 _bool = bool
 
@@ -1521,6 +1522,7 @@ def can_access(schedule: ScheduleType, storage: StorageType):
             ScheduleType.GPU_ThreadBlock,
             ScheduleType.GPU_ThreadBlock_Dynamic,
             ScheduleType.GPU_Default,
+            ScheduleType.GPU_Warp,
     ]:
         return storage in [StorageType.GPU_Global, StorageType.GPU_Shared, StorageType.CPU_Pinned]
     elif schedule in [ScheduleType.Default, ScheduleType.CPU_Multicore, ScheduleType.CPU_Persistent]:

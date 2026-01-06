@@ -10,6 +10,7 @@ from dace.sdfg import nodes
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.helpers import is_within_schedule_types
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import NaiveGPUStreamScheduler
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import get_gpu_stream_array_name
 from dace.transformation.passes.gpu_specialization.insert_gpu_streams import InsertGPUStreams
 from dace.transformation.passes.gpu_specialization.connect_gpu_streams_to_kernels import ConnectGPUStreamsToKernels
 from dace.transformation.passes.gpu_specialization.connect_gpu_streams_to_tasklets import ConnectGPUStreamsToTasklets
@@ -176,7 +177,8 @@ class InsertGPUStreamSyncTasklets(ppl.Pass):
             Mapping of nodes to their assigned GPU stream IDs.
         """
         # Prepare GPU stream info and backend
-        stream_array_name, stream_var_name_prefix = Config.get('compiler', 'cuda', 'gpu_stream_name').split(',')
+        stream_array_name = get_gpu_stream_array_name()
+        stream_var_name_prefix = ""
         backend: str = common.get_gpu_backend()
 
         for state, streams in sync_state.items():
@@ -252,7 +254,8 @@ class InsertGPUStreamSyncTasklets(ppl.Pass):
             Mapping of nodes to their assigned GPU stream IDs.
         """
         # Prepare GPU stream info and backend
-        stream_array_name, stream_var_name_prefix = Config.get('compiler', 'cuda', 'gpu_stream_name').split(',')
+        stream_array_name = get_gpu_stream_array_name()
+        stream_var_name_prefix = ""
         backend: str = common.get_gpu_backend()
 
         for node, state in sync_node.items():

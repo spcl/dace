@@ -8,7 +8,7 @@ from dace.config import Config
 from dace.sdfg import nodes
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import NaiveGPUStreamScheduler
-from dace.transformation.passes.gpu_specialization.insert_gpu_streams import InsertGPUStreams
+from dace.transformation.passes.gpu_specialization.insert_gpu_streams import InsertGPUStreams, get_gpu_stream_array_name
 
 
 @properties.make_properties
@@ -33,10 +33,12 @@ class ConnectGPUStreamsToKernels(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]):
         # Retrieve the GPU stream array name and the prefix for individual stream variables
-        stream_array_name, stream_var_name_prefix = Config.get('compiler', 'cuda', 'gpu_stream_name').split(',')
+        stream_array_name = get_gpu_stream_array_name()
+        stream_var_name_prefix = ""
 
         # Retrieve GPU stream assignments for nodes
         stream_assignments: Dict[nodes.Node, Union[int, str]] = pipeline_results['NaiveGPUStreamScheduler']
+
 
         # Link kernels to their assigned GPU streams
         for sub_sdfg in sdfg.all_sdfgs_recursive():
