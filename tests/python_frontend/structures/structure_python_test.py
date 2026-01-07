@@ -257,6 +257,92 @@ def test_read_structure_gpu():
     assert np.allclose(B, ref)
 
 
+def test_write_structure_in_map():
+    M = dace.symbol('M')
+    N = dace.symbol('N')
+    Bundle = dace.data.Structure(members={
+        "data": dace.data.Array(dace.float32, (M, N)),
+        "size": dace.data.Scalar(dace.int64)
+    },
+                                 name="BundleType")
+
+    @dace.program
+    def init_prog(bundle: Bundle, fill_value: int) -> None:
+        for index in dace.map[0:bundle.size]:
+            bundle.data[index, :] = fill_value
+
+    data = np.zeros((10, 5), dtype=np.float32)
+    fill_value = 42
+    inp_struct = Bundle.dtype.base_type.as_ctypes()(
+        data=data.__array_interface__['data'][0],
+        size=9,
+    )
+    ref = np.zeros((10, 5), dtype=np.float32)
+    ref[:9, :] = fill_value
+
+    init_prog.compile()(inp_struct, fill_value, M=10, N=5)
+
+    assert np.allclose(data, ref)
+
+
+def test_readwrite_structure_in_map():
+    M = dace.symbol('M')
+    N = dace.symbol('N')
+    Bundle = dace.data.Structure(members={
+        "data": dace.data.Array(dace.float32, (M, N)),
+        "data2": dace.data.Array(dace.float32, (M, N)),
+        "size": dace.data.Scalar(dace.int64)
+    },
+                                 name="BundleType")
+
+    @dace.program
+    def copy_prog(bundle: Bundle) -> None:
+        for index in dace.map[0:bundle.size]:
+            bundle.data[index, :] = bundle.data2[index, :] + 5
+
+    data = np.zeros((10, 5), dtype=np.float32)
+    data2 = np.ones((10, 5), dtype=np.float32)
+    inp_struct = Bundle.dtype.base_type.as_ctypes()(
+        data=data.__array_interface__['data'][0],
+        data2=data2.__array_interface__['data'][0],
+        size=6,
+    )
+    ref = np.zeros((10, 5), dtype=np.float32)
+    ref[:6, :] = 6.0
+
+    copy_prog.compile()(inp_struct, M=10, N=5)
+
+    assert np.allclose(data, ref)
+
+
+def test_write_structure_in_loop():
+    M = dace.symbol('M')
+    N = dace.symbol('N')
+    Bundle = dace.data.Structure(members={
+        "data": dace.data.Array(dace.float32, (M, N)),
+        "size": dace.data.Scalar(dace.int64)
+    },
+                                 name="BundleType")
+
+    @dace.program
+    def init_prog(bundle: Bundle, fill_value: int) -> None:
+        for index in range(bundle.size):
+            bundle.data[index, :] = fill_value
+
+    data = np.zeros((10, 5), dtype=np.float32)
+    fill_value = 42
+    inp_struct = Bundle.dtype.base_type.as_ctypes()(
+        data=data.__array_interface__['data'][0],
+        size=6,
+    )
+    ref = np.zeros((10, 5), dtype=np.float32)
+    ref[:6, :] = fill_value
+
+    init_prog.compile()(inp_struct, fill_value, M=10, N=5)
+
+    assert np.allclose(data, ref)
+
+
 def test_struct_interface():
     M, N, nnz = (dace.symbol(s) for s in ('M', 'N', 'nnz'))
     CSR = dace.data.Structure(dict(indptr=dace.int32[M + 1], indices=dace.int32[nnz], data=dace.float32[nnz]),
@@ -370,6 +456,9 @@ if __name__ == '__main__':
     test_local_structure()
     test_rgf()
     # test_read_structure_gpu()
+    test_write_structure_in_map()
+    test_readwrite_structure_in_map()
+    test_write_structure_in_loop()
     test_struct_interface()
     test_struct_recursive()
     test_struct_recursive_from_dataclass()

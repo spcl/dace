@@ -1,15 +1,16 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 # Original application code: NPBench - https://github.com/spcl/npbench
+import os
 import dace.dtypes
 import numpy as np
 import dace as dc
 import pytest
 import argparse
-from dace.fpga_testing import fpga_test, xilinx_test
+from dace.fpga_testing import fpga_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory, StreamingComposition
 from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
-from dace.config import set_temporary
+from dace.autodiff import add_backward_pass
 
 # Data set sizes
 # M, N
@@ -35,6 +36,27 @@ def initialize(M, N, datatype=np.float64):
     B = np.fromfunction(lambda i, j: ((N + i - j) % N) / N, (M, N), dtype=datatype)
 
     return alpha, A, B
+
+
+def trmm_jax_kernel(jnp, lax, alpha, A, B):
+
+    def outer_body(carry, i):
+        B = carry
+
+        def inner_body(B, j):
+
+            mask = (jnp.arange(A.shape[0]) > i).astype(A.dtype)
+            dot_val = jnp.sum(A[:, i] * B[:, j] * mask)
+            new_val = B[i, j] + dot_val
+            B = B.at[i, j].set(new_val)
+            return B, jnp.array(0)
+
+        B, _ = lax.scan(inner_body, B, jnp.arange(B.shape[1]))
+        return B, jnp.array(0)
+
+    B, _ = lax.scan(outer_body, B, jnp.arange(B.shape[0]))
+    B = B * alpha
+    return jnp.sum(B)
 
 
 def ground_truth(alpha, A, B):
@@ -80,6 +102,41 @@ def run_trmm(device_type: dace.dtypes.DeviceType):
     return sdfg
 
 
+def run_trmm_autodiff():
+    import jax
+    import jax.numpy as jnp
+    import jax.lax as lax
+
+    # Initialize data (polybench mini size)
+    M, N = sizes["mini"]
+    alpha, A, B = initialize(M, N)
+
+    # Initialize gradient computation data
+    gradient_A = np.zeros_like(A)
+    gradient___return = np.ones((1, ), dtype=np.float64)
+
+    # Define sum reduction for the output
+    @dc.program
+    def autodiff_kernel(alpha: dc.float64, A: dc.float64[M, M], B: dc.float64[M, N]):
+        trmm_kernel(alpha, A, B)
+        return np.sum(B)
+
+    # Add the backward pass to the SDFG
+    sdfg = autodiff_kernel.to_sdfg()
+    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"])
+    sdfg(alpha, A, B, M=M, N=N, gradient_A=gradient_A, gradient___return=gradient___return)
+
+    # Enable float64 support
+    jax.config.update("jax_enable_x64", True)
+
+    # Numerically validate vs JAX
+    jax_kernel = lambda alpha, A, B: trmm_jax_kernel(jnp, lax, alpha, A, B)
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=1), static_argnums=(0, ))
+    alpha, A_jax, B_jax = initialize(M, N)
+    jax_grad_A = jax_grad(alpha, A_jax, B_jax)
+    np.testing.assert_allclose(gradient_A, jax_grad_A)
+
+
 def test_cpu():
     run_trmm(dace.dtypes.DeviceType.CPU)
 
@@ -87,6 +144,17 @@ def test_cpu():
 @pytest.mark.gpu
 def test_gpu():
     run_trmm(dace.dtypes.DeviceType.GPU)
+
+
+@pytest.mark.autodiff
+def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
+    # Serialization causes issues, we temporarily disable it
+    # TODO: open an issue to fix the serialization stability problem
+    last_value = os.environ.get('DACE_testing_serialization', '0')
+    os.environ['DACE_testing_serialization'] = '0'
+    run_trmm_autodiff()
+    os.environ['DACE_testing_serialization'] = last_value
 
 
 @fpga_test(assert_ii_1=False)
@@ -104,6 +172,7 @@ if __name__ == "__main__":
 
     if target == "cpu":
         run_trmm(dace.dtypes.DeviceType.CPU)
+        run_trmm_autodiff()
     elif target == "gpu":
         run_trmm(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":

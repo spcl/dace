@@ -1376,7 +1376,8 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
 
     def _print_Function(self, expr):
         if str(expr.func) in self.arrays:
-            return f'{expr.func}[{expr.args[0]}]'
+            indices = ", ".join(self._print(arg) for arg in expr.args)
+            return f'{expr.func}[{indices}]'
         if self.cpp_mode and str(expr.func) == 'int_floor':
             return '((%s) / (%s))' % (self._print(expr.args[0]), self._print(expr.args[1]))
         if str(expr.func) == 'AND':

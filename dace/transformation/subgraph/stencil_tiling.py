@@ -256,6 +256,11 @@ class StencilTiling(transformation.SubgraphTransformation):
                     if data_name in coverages[child_entry][0]:
                         children_coverage = subsets.union(children_coverage, coverages[child_entry][0][data_name])
 
+                    # TODO: Is there a better fix for this?
+                    if children_coverage is None:
+                        # no coverage for this data_name in children
+                        # this is not supported
+                        return False
                     # extend mapping map_parameter -> coverage
                     # by the previous mapping
 

@@ -8,7 +8,8 @@ from networkx.algorithms.flow import edmondskarp
 import sympy as sp
 from collections import deque
 import copy
-from typing import Deque, Dict, List, Set, Tuple, Union, Optional, Any
+from typing import Any, Deque, Dict, List, Set, Tuple, Union, Optional
+from numbers import Number
 from dace import data, DataInstrumentationType
 from dace.sdfg import nodes as nd, SDFG, SDFGState, utils as sdutil, InterstateEdge
 from dace.memlet import Memlet
@@ -18,6 +19,11 @@ from dace.transformation.transformation import (MultiStateTransformation, Patter
                                                 SingleStateTransformation)
 from dace.transformation.interstate.loop_detection import DetectLoop
 from dace.transformation.passes.analysis import StateReachability
+
+try:
+    from numpy.typing import ArrayLike
+except ImportError:
+    ArrayLike = Any  # type: ignore
 
 
 class SDFGCutout(SDFG):
@@ -52,12 +58,12 @@ class SDFGCutout(SDFG):
         self._instrument_base_sdfg()
         self._base_sdfg(*args, **kwargs)
 
-    def find_inputs(self, *args, **kwargs) -> Dict[str, Union[data.ArrayLike, data.Number]]:
+    def find_inputs(self, *args, **kwargs) -> Dict[str, Union[ArrayLike, Number]]:
         self._dry_run_base_sdfg(*args, **kwargs)
 
         drep = self._base_sdfg.get_instrumented_data()
         if drep:
-            vals: Dict[str, Union[data.ArrayLike, data.Number]] = dict()
+            vals: Dict[str, Union[ArrayLike, Number]] = dict()
             for ip in self.input_config.union(set(self.symbols)):
                 val = drep.get_first_version(ip)
                 vals[ip] = val

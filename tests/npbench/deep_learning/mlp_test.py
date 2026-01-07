@@ -10,6 +10,7 @@ from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory, StreamingComposition
 from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
 from dace.config import set_temporary
+from dace.autodiff import add_backward_pass
 
 C_in, N, S0, S1, S2, N1, N2 = (dc.symbol(s, dtype=dc.int64) for s in ('C_in', 'N', 'S0', 'S1', 'S2', 'N1', 'N2'))
 
@@ -78,6 +79,25 @@ def mlp_np(input, w1, b1, w2, b2, w3, b3):
     return x
 
 
+def jax_relu(jnp, x):
+    return jnp.maximum(x, 0)
+
+
+# Numerically-stable version of softmax
+def jax_softmax(jnp, x):
+    tmp_max = jnp.max(x, axis=-1, keepdims=True)
+    tmp_out = jnp.exp(x - tmp_max)
+    tmp_sum = jnp.sum(tmp_out, axis=-1, keepdims=True)
+    return tmp_out / tmp_sum
+
+
+def mlp_jax_kernel(jnp, input, w1, b1, w2, b2, w3, b3):
+    x = jax_relu(jnp, input @ w1 + b1)
+    x = jax_relu(jnp, x @ w2 + b2)
+    x = jax_softmax(jnp, x @ w3 + b3)  # Softmax call can be omitted if necessary
+    return jnp.sum(x)
+
+
 def run_mlp(device_type: dace.dtypes.DeviceType):
     '''
     Runs conv2d_bias for the given device
@@ -115,6 +135,53 @@ def run_mlp(device_type: dace.dtypes.DeviceType):
     return sdfg
 
 
+def run_mlp_autodiff():
+    import jax
+    import jax.numpy as jnp
+
+    # Initialize data (npbench test size)
+    C_in, N, S0, S1, S2 = 3, 8, 30, 20, 20
+    input, w1, b1, w2, b2, w3, b3 = initialize(C_in, N, S0, S1, S2)
+
+    # Initialize gradient computation data
+    gradient_input = np.zeros_like(input, dtype=np.float32)
+    gradient___return = np.ones((1, ), dtype=np.float32)
+
+    # Define sum reduction for the output
+    @dc.program
+    def autodiff_kernel(input: dc.float32[N, C_in], w1: dc.float32[C_in, S0], b1: dc.float32[S0],
+                        w2: dc.float32[S0, S1], b2: dc.float32[S1], w3: dc.float32[S1, S2], b3: dc.float32[S2]):
+        x1 = relu(input @ w1 + b1)
+        x2 = relu(x1 @ w2 + b2)
+        x3 = softmax(x2 @ w3 + b3)
+        return np.sum(x3)
+
+    # Add the backward pass to the SDFG
+    sdfg = autodiff_kernel.to_sdfg()
+    add_backward_pass(sdfg=sdfg, inputs=["input"], outputs=["__return"])
+
+    sdfg(input,
+         w1,
+         b1,
+         w2,
+         b2,
+         w3,
+         b3,
+         N=N,
+         S0=S0,
+         S1=S1,
+         S2=S2,
+         C_in=C_in,
+         gradient_input=gradient_input,
+         gradient___return=gradient___return)
+
+    # Numerically validate vs JAX
+    jax_kernel = lambda input, w1, b1, w2, b2, w3, b3: mlp_jax_kernel(jnp, input, w1, b1, w2, b2, w3, b3)
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=0))
+    jax_grad_input = jax_grad(input, w1, b1, w2, b2, w3, b3)
+    np.testing.assert_allclose(gradient_input, jax_grad_input, rtol=1e-4, atol=1e-10)
+
+
 def test_cpu():
     run_mlp(dace.dtypes.DeviceType.CPU)
 
@@ -122,6 +189,12 @@ def test_cpu():
 @pytest.mark.gpu
 def test_gpu():
     run_mlp(dace.dtypes.DeviceType.GPU)
+
+
+@pytest.mark.autodiff
+def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
+    run_mlp_autodiff()
 
 
 @pytest.mark.skip(reason="Intel, compilation error")
@@ -140,6 +213,7 @@ if __name__ == "__main__":
 
     if target == "cpu":
         run_mlp(dace.dtypes.DeviceType.CPU)
+        run_mlp_autodiff()
     elif target == "gpu":
         run_mlp(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":

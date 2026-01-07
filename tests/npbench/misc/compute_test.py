@@ -8,6 +8,7 @@ import argparse
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.fpga_testing import fpga_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
+from dace.autodiff import add_backward_pass
 
 
 def relerror(val, ref):
