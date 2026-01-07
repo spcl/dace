@@ -594,15 +594,17 @@ def merge_maps(
     return merged_entry, merged_exit
 
 
-def canonicalize_memlet_trees_for_scope(
+def canonicalize_memlet_trees_of_scope_node(
     state: SDFGState,
     scope_node: Union[nd.EntryNode, nd.ExitNode],
 ) -> int:
-    """Canonicalize the Memlet trees of scope nodes.
+    """Canonicalize the Memlet trees of a single scope nodes.
 
-    The function will modify all Memlets that are adjacent to `scope_node`
-    such that the Memlet always refers to the data that is on the outside.
-    This function only operates on a single scope.
+    The function will modify all Memlets that are adjacent to `scope_node` such that
+    the Memlet always refers to the data that is on the outside.
+    This function only operates on a single scope node, i.e. either a `MapEntry` or
+    a `MapExit`, if you want to process a whole Map then you should use
+    `canonicalize_memlet_trees_for_map()`.
 
     :param state: The SDFG state in which the scope to consolidate resides.
     :param scope_node: The scope node whose edges will be consolidated.
@@ -675,7 +677,7 @@ def canonicalize_memlet_trees_for_scope(
                     subset = medge.data.get_dst_subset(medge, state)
                     other_subset = medge.data.src_subset
 
-                # Now for an update.
+                # Now update them correctly.
                 medge.data._data = outer_data
                 medge.data._subset = subset
                 medge.data._other_subset = other_subset
@@ -685,13 +687,39 @@ def canonicalize_memlet_trees_for_scope(
     return modified_memlet
 
 
+def canonicalize_memlet_trees_for_map(
+    state: SDFGState,
+    map_node: Union[nd.EntryNode, nd.ExitNode],
+) -> int:
+    """Canonicalize the Memlets of an entire Map scope.
+
+    This function is similar to `canonicalize_memlet_trees_of_scope_node()`, but it acts
+    on both scope nodes, i.e. `MapEntry` and `MapExit`, that constitute the Map scope.
+    The function returns the number of canonicalized Memlets.
+
+    :param state: The state that contains the Map.
+    :param map_node: Either the `MapEntry` or `MapExit` node of the map that should be canonicalized.
+    """
+    if isinstance(map_node, nd.MapEntry):
+        me = map_node
+        mx = state.exit_node(me)
+    else:
+        assert isinstance(map_node, nd.MapExit)
+        mx = map_node
+        me = state.entry_node(mx)
+
+    ret = canonicalize_memlet_trees_of_scope_node(state, me)
+    ret += canonicalize_memlet_trees_of_scope_node(state, mx)
+    return ret
+
+
 def canonicalize_memlet_trees(
     sdfg: 'dace.SDFG',
     starting_scope: Optional['dace.sdfg.scope.ScopeTree'] = None,
 ) -> int:
     """Canonicalize the Memlet trees of all scopes in the SDFG.
 
-    This function runs `canonicalize_memlet_trees_for_scope()` on all scopes
+    This function runs `canonicalize_memlet_trees_of_scope_node()` on all scopes
     in the SDFG. Note that this function does not recursively processes
     nested SDFGs.
 
@@ -712,9 +740,9 @@ def canonicalize_memlet_trees(
         while len(queue) > 0:
             for scope in queue:
                 if scope.entry is not None:
-                    total_modified_memlets += canonicalize_memlet_trees_for_scope(state, scope.entry)
+                    total_modified_memlets += canonicalize_memlet_trees_of_scope_node(state, scope.entry)
                 if scope.exit is not None:
-                    total_modified_memlets += canonicalize_memlet_trees_for_scope(state, scope.exit)
+                    total_modified_memlets += canonicalize_memlet_trees_of_scope_node(state, scope.exit)
                 if scope.parent is not None:
                     next_queue.append(scope.parent)
             queue = next_queue
@@ -1071,6 +1099,8 @@ def get_view_edge(state: SDFGState, view: nd.AccessNode) -> gr.MultiConnectorEdg
     """
 
     in_edges = state.in_edges(view)
+    # We should ignore empty synchronization edges
+    in_edges = [e for e in in_edges if not e.data.is_empty()]
     out_edges = state.out_edges(view)
 
     # Invalid case: No data to view
@@ -2661,3 +2691,87 @@ def specialize_scalar(sdfg: 'dace.SDFG', scalar_name: str, scalar_val: Union[flo
     assert isinstance(scalar_name, str)
     assert isinstance(scalar_val, (float, int, str))
     _specialize_scalar_impl(sdfg, sdfg, scalar_name, scalar_val)
+
+
+def in_edge_with_name(node: nd.Node, state: SDFGState, name: str) -> MultiConnectorEdge:
+    """
+    Find the edge that connects to input connector `name` on `node`.
+
+    :param node: the node.
+    :param state: the state.
+    :param name: the input connector name.
+    :return: the edge that connects to connector `name`.
+    """
+    cands = list(state.in_edges_by_connector(node, name))
+    if len(cands) != 1:
+        raise ValueError("Expected to find exactly one edge with name '{}', found {}".format(name, len(cands)))
+    return cands[0]
+
+
+def out_edge_with_name(node: nd.Node, state: SDFGState, name: str) -> MultiConnectorEdge:
+    """
+    Find the edge that connects to output connector `name` on `node`.
+
+    :param node: the node.
+    :param state: the state.
+    :param name: the output connector name.
+    :return: the edge that connects to connector `name`.
+    """
+    cands = list(state.out_edges_by_connector(node, name))
+    if len(cands) != 1:
+        raise ValueError("Expected to find exactly one edge with name '{}', found {}".format(name, len(cands)))
+    return cands[0]
+
+
+def in_desc_with_name(node: nd.Node, state: SDFGState, sdfg: SDFG, name: str) -> dt.Data:
+    """
+    Find the descriptor of the data that connects to input connector `name`.
+
+    :param node: the node.
+    :param state: the state.
+    :param sdfg: the sdfg.
+    :param name: the input connector name.
+    :return: the descriptor of the data that connects to connector `name`.
+    """
+    return sdfg.arrays[in_edge_with_name(node, state, name).data.data]
+
+
+def out_desc_with_name(node: nd.Node, state: SDFGState, sdfg: SDFG, name: str) -> dt.Data:
+    """
+    Find the descriptor of the data that connects to output connector `name`.
+
+    :param node: the node.
+    :param state: the state.
+    :param sdfg: the sdfg.
+    :param name: the output connector name.
+    :return: the descriptor of the data that connects to connector `name`.
+    """
+    return sdfg.arrays[out_edge_with_name(node, state, name).data.data]
+
+
+def expand_nodes(sdfg: SDFG, predicate: Callable[[nd.Node], bool]):
+    """
+    Recursively expand library nodes in the SDFG using a given predicate.
+
+    :param sdfg: the sdfg to expand nodes on.
+    :param predicate: a predicate that will be called to check if a node should be expanded.
+    """
+    if sdfg is None:
+        return
+    states = list(sdfg.states())
+    while len(states) > 0:
+        state = states.pop()
+        expanded_something = False
+        for node in list(state.nodes()):
+            if isinstance(node, nd.NestedSDFG):
+                expand_nodes(node.sdfg, predicate=predicate)
+            elif isinstance(node, nd.LibraryNode):
+                if predicate(node):
+                    impl_name = node.expand(sdfg, state)
+                    if config.Config.get_bool('debugprint'):
+                        print("Automatically expanded library node \"{}\" with implementation \"{}\".".format(
+                            str(node), impl_name))
+                    expanded_something = True
+
+        if expanded_something:
+            states.append(state)
