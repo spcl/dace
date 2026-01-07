@@ -7,7 +7,7 @@ from dace.config import Config
 from dace.sdfg import nodes
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import NaiveGPUStreamScheduler
-from dace.transformation.passes.gpu_specialization.insert_gpu_streams import InsertGPUStreams, get_gpu_stream_array_name
+from dace.transformation.passes.gpu_specialization.insert_gpu_streams import InsertGPUStreams, get_gpu_stream_array_name, get_gpu_stream_connector_name
 from dace.transformation.passes.gpu_specialization.connect_gpu_streams_to_kernels import ConnectGPUStreamsToKernels
 
 # Placeholder for the GPU stream variable used in tasklet code
@@ -72,9 +72,8 @@ class ConnectGPUStreamsToTasklets(ppl.Pass):
                     stream_array_out = state.add_access(stream_array_name)
 
                     node.add_in_connector(gpu_stream_conn, dtypes.gpuStream_t)
-                    node.add_out_connector(gpu_stream_conn, dtypes.gpuStream_t, force=True)
 
                     state.add_edge(stream_array_in, None, node, gpu_stream_conn, dace.Memlet(accessed_gpu_stream))
-                    state.add_edge(node, gpu_stream_conn, stream_array_out, None, dace.Memlet(accessed_gpu_stream))
+                    state.add_edge(node, None, stream_array_out, None, dace.Memlet(None))
 
         return {}

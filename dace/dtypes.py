@@ -87,9 +87,7 @@ GPU_SCHEDULES = [
     ScheduleType.GPU_Persistent,
 ]
 
-EXPERIMENTAL_GPU_SCHEDULES = [
-    ScheduleType.GPU_Warp
-]
+EXPERIMENTAL_GPU_SCHEDULES = [ScheduleType.GPU_Warp]
 
 # A subset of CPU schedule types
 CPU_SCHEDULES = [
@@ -101,6 +99,8 @@ CPU_SCHEDULES = [
 GPU_STORAGES = [
     StorageType.GPU_Shared,
 ]
+
+GPU_KERNEL_ACCESSIBLE_STORAGES = [StorageType.GPU_Global, StorageType.GPU_Shared, StorageType.Register]
 
 # A subset of on-FPGA storage types
 FPGA_STORAGES = [
@@ -1273,6 +1273,7 @@ string = stringtype()
 MPI_Request = opaque('MPI_Request')
 gpuStream_t = opaque('gpuStream_t')
 
+
 @undefined_safe_enum
 @extensible_enum
 class Typeclasses(aenum.AutoNumberEnum):
@@ -1292,6 +1293,7 @@ class Typeclasses(aenum.AutoNumberEnum):
     complex64 = complex64
     complex128 = complex128
     gpuStream_t = gpuStream_t
+
 
 _bool = bool
 

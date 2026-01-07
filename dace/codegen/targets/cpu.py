@@ -1334,7 +1334,6 @@ class CPUCodeGen(TargetCodeGenerator):
                     # Dynamic WCR memlets start uninitialized
                     result += "{} {};".format(memlet_type, local_name)
                     defined = DefinedType.Scalar
-
             else:
                 if not memlet.dynamic:
                     if is_scalar:
@@ -1369,8 +1368,12 @@ class CPUCodeGen(TargetCodeGenerator):
                 memlet_type = ctypedef
                 result += "{} &{} = {};".format(memlet_type, local_name, expr)
                 defined = DefinedType.Stream
-        else:
-            raise TypeError("Unknown variable type: {}".format(var_type))
+
+        # Set Defined Type for GPU Stream connectors
+        # Shadowing for stream variable needs to be allowed
+        if memlet_type == 'gpuStream_t':
+            var_type = DefinedType.GPUStream
+            defined = DefinedType.GPUStream
 
         if defined is not None:
             self._dispatcher.defined_vars.add(local_name, defined, memlet_type, allow_shadowing=allow_shadowing)

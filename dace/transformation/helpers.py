@@ -1993,6 +1993,7 @@ def _is_structure_view(obj) -> bool:
     """Check if object is a StructureView."""
     return isinstance(obj, data.StructureView)
 
+
 def is_within_schedule_types(state: SDFGState, node: nodes.Node, schedules: Set[dtypes.ScheduleType]) -> bool:
     """
     Checks if the given node is enclosed within a Map whose schedule type

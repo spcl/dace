@@ -8,7 +8,7 @@ from dace.sdfg import is_devicelevel_gpu
 from dace.sdfg.nodes import AccessNode, MapEntry, MapExit, Node, Tasklet
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import NaiveGPUStreamScheduler
-from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import get_gpu_stream_array_name
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import get_gpu_stream_array_name, get_gpu_stream_connector_name
 
 STREAM_PLACEHOLDER = "__dace_current_stream"
 

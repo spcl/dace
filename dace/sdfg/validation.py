@@ -906,9 +906,14 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                          for oe in state.out_edges(dst_node)}):
                         pass
                 else:
-                    raise InvalidSDFGEdgeError(
-                        f"Memlet creates an invalid path (sink node {dst_node}"
-                        " should be a data node)", sdfg, state_id, eid)
+                    if isinstance(dst_node, nd.Tasklet) and len(dst_node.in_connectors) == 0 and len(
+                            dst_node.out_connectors) == 0:
+                        # Tasklets with no input or output connector -> sync tasklet -> OK
+                        pass
+                    else:
+                        raise InvalidSDFGEdgeError(
+                            f"Memlet creates an invalid path (sink node {dst_node}"
+                            " should be a data node)", sdfg, state_id, eid)
         # If scope(dst) is disjoint from scope(src), it's an illegal memlet
         else:
             raise InvalidSDFGEdgeError("Illegal memlet between disjoint scopes", sdfg, state_id, eid)
