@@ -120,6 +120,7 @@ std::vector<std::string> _papi_events = {{{events}}};
 int _papi_nevents = _papi_events.size();
 #pragma omp parallel num_threads(max_threads)
 {{
+    PAPI_register_thread();
     int _papi_EventSet = PAPI_NULL;
     int tretval = PAPI_create_eventset(&_papi_EventSet);
     if (tretval != PAPI_OK){{
@@ -187,9 +188,9 @@ dace::perf::PAPIValueStore<%s> __perf_store (__state->report);''' % (', '.join(s
     if (tretval != PAPI_OK) {{
         std::cerr << "Warning: PAPI_destroy_eventset: " << PAPI_strerror(tretval) << "\\n";
     }}
+    PAPI_unregister_thread();
     #pragma omp critical
     {{  
-        
         for(int i = 0; i<_papi_nevents; i++){{
             __state->report.add_counter("{region_name}", "PAPI", _papi_events[i].c_str(), (unsigned long) _papi_counts[i], thread_num, {cfg_id}, {state_id}, {node_id});
         }}
