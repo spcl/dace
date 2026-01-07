@@ -50,7 +50,7 @@ class ControlFlowRaising(ppl.Pass):
         region, and not the entire SDFG.
 
         :param sdfg: The SDFG in which to lift returns
-        :returns: The number of return blocks lifted
+        :return: The number of return blocks lifted
         """
         returns_lifted = 0
         for nd in sdfg.nodes():
@@ -220,7 +220,7 @@ class ControlFlowRaising(ppl.Pass):
         cycles represent unstructured control flow.
 
         :param sdfg: The SDFG in which to lift unstructured control flow
-        :returns: The number of unstructured control flow blocks lifted
+        :return: The number of unstructured control flow blocks lifted
         """
         lifted = 0
         for cfg in sdfg.all_control_flow_regions():

@@ -170,6 +170,7 @@ def configure_and_compile(program_folder, program_name=None, output_stream=None)
         "-DDACE_SRC_DIR=\"{}\"".format(src_folder),
         "-DDACE_FILES=\"{}\"".format(";".join(files)),
         "-DDACE_PROGRAM_NAME={}".format(program_name),
+        "-DDACE_CPP_STANDARD={}".format(Config.get('compiler', 'cpp_standard')),
     ]
 
     # Get required environments are retrieve the CMake information

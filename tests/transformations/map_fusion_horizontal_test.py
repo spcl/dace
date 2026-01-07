@@ -2,6 +2,7 @@
 from typing import Any, Union, Tuple, Type, Optional, List
 
 import numpy as np
+import pytest
 
 import dace
 from dace import SDFG, SDFGState
@@ -11,11 +12,11 @@ from dace.transformation import dataflow as dftrans
 from .map_fusion_vertical_test import count_nodes, unique_name
 
 # NOTE: MapFusionHorizontal is essentially implemented in terms of `relocate_node()` which is
-#   also used by `MapFusionVertical` thus the majority of tests if included there and not here.
+#   also used by `MapFusionVertical` thus the majority of tests is performed there and not here.
 
 
 def _make_horizontal_map_sdfg(common_ancestor: bool):
-    sdfg = dace.SDFG(unique_name("parallel_maps_sdfg"))
+    sdfg = dace.SDFG(unique_name("horizontal_maps_sdfg"))
     state = sdfg.add_state(is_start_block=True)
 
     names = ["A", "B", "C", "D", "out"]
@@ -66,7 +67,7 @@ def _make_horizontal_map_sdfg(common_ancestor: bool):
 
 
 def _make_vertical_map_sdfg() -> dace.SDFG:
-    sdfg = dace.SDFG(unique_name("serial_maps_sdfg"))
+    sdfg = dace.SDFG(unique_name("vertical_maps_sdfg"))
     state = sdfg.add_state(is_start_block=True)
 
     names = ["a", "t", "b"]
@@ -99,6 +100,48 @@ def _make_vertical_map_sdfg() -> dace.SDFG:
     )
     sdfg.validate()
     return sdfg
+
+
+def _make_simple_horizontal_map_sdfg() -> Tuple[dace.SDFG, dace.nodes.MapEntry, dace.nodes.MapEntry]:
+    sdfg = dace.SDFG(unique_name("horizontal_simple"))
+    state = sdfg.add_state(is_start_block=True)
+
+    for aname in "abc":
+        sdfg.add_array(
+            aname,
+            shape=(10, 20),
+            dtype=dace.float64,
+            transient=False,
+        )
+    a = state.add_access("a")
+
+    _, me_a, _ = state.add_mapped_tasklet(
+        "comp_a",
+        map_ranges={
+            "__i": "0:10",
+            "__j": "0:20",
+        },
+        inputs={"__in": dace.Memlet("a[__i, __j]")},
+        code="__out = __in + 1.2",
+        outputs={"__out": dace.Memlet("b[__i, __j]")},
+        input_nodes={a},
+        external_edges=True,
+    )
+    _, me_b, _ = state.add_mapped_tasklet(
+        "comp_b",
+        map_ranges={
+            "__i": "0:10",
+            "__j": "0:20",
+        },
+        inputs={"__in": dace.Memlet("a[__i, __j]")},
+        code="__out = __in + 1.3",
+        outputs={"__out": dace.Memlet("c[__i, __j]")},
+        input_nodes={a},
+        external_edges=True,
+    )
+    sdfg.validate()
+
+    return sdfg, me_a, me_b
 
 
 def test_vertical_map_fusion_common_ancestor_is_required():
@@ -202,9 +245,43 @@ def test_vertical_maps_are_not_fused_horizontally():
     assert count == 0
 
 
+@pytest.mark.parametrize("first_order", [True, False])
+def test_deterministic_label_in_horizontal_map_fusion(first_order: bool):
+    sdfg, me_a, me_b = _make_simple_horizontal_map_sdfg()
+    assert {me_a, me_b} == set(count_nodes(sdfg, dace.nodes.MapEntry, True))
+
+    expected_final_label = me_a.map.label
+    assert expected_final_label < me_b.map.label
+
+    if first_order:
+        dftrans.MapFusionHorizontal.apply_to(
+            sdfg=sdfg,
+            first_parallel_map_entry=me_a,
+            second_parallel_map_entry=me_b,
+        )
+        # Always preserve the scope nodes of the first Map,
+        assert {me_a} == set(count_nodes(sdfg, dace.nodes.MapEntry, True))
+        final_me = me_a
+
+    else:
+        dftrans.MapFusionHorizontal.apply_to(
+            sdfg=sdfg,
+            first_parallel_map_entry=me_b,
+            second_parallel_map_entry=me_a,
+        )
+        # Always preserve the scope nodes of the first Map,
+        assert {me_b} == set(count_nodes(sdfg, dace.nodes.MapEntry, True))
+        final_me = me_b
+
+    # Regardless in which order they are fused, the label is deterministic.
+    assert expected_final_label == final_me.map.label
+
+
 if __name__ == '__main__':
     test_vertical_map_fusion_common_ancestor_is_required()
     test_vertical_map_fusion_no_common_ancestor_not_required()
     test_vertical_map_fusion_with_common_ancestor_is_required()
     test_vertical_map_fusion_with_common_ancestor_is_required_no_consolidation()
     test_vertical_maps_are_not_fused_horizontally()
+    test_deterministic_label_in_horizontal_map_fusion(first_order=True)
+    test_deterministic_label_in_horizontal_map_fusion(first_order=False)

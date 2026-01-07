@@ -10,6 +10,7 @@ from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory, StreamingComposition
 from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
 from dace.config import set_temporary
+from dace.autodiff import add_backward_pass
 
 N, H, W, C1, C2, S0, S1, S2, S3, S4, S5 = (dc.symbol(s, dtype=dc.int64)
                                            for s in ('N', 'H', 'W', 'C1', 'C2', 'S0', 'S1', 'S2', 'S3', 'S4', 'S5'))
@@ -168,6 +169,65 @@ def resnet_basicblock_np(input, conv1, conv2, conv3):
     return relu_np(x + input)
 
 
+def conv2d_lax(jnp, lax, input, weights):
+    # Kernel size, number of input images, and output dimensions.
+    K = weights.shape[0]  # Assuming square kernel of size K x K.
+    N = input.shape[0]  # Batch size.
+    H_out = input.shape[1] - K + 1  # Output height.
+    W_out = input.shape[2] - K + 1  # Output width.
+    C_out = weights.shape[3]  # Number of output channels.
+
+    # Allocate output array.
+    output = jnp.empty((N, H_out, W_out, C_out), dtype=input.dtype)
+
+    # Row update: iterate over output rows.
+    def row_update(out, i):
+        # Column update: iterate over output columns.
+        def col_update(out, j):
+            # Extract a patch from 'input' at the given (i, j) position.
+            patch = lax.dynamic_slice(input, (0, i, j, 0), (N, K, K, input.shape[-1]))
+            # Expand dims on the patch to broadcast with weights.
+            # weights: shape (K, K, in_channels, C_out)
+            # patch[..., None] becomes shape (N, K, K, in_channels, 1)
+            # We add a new leading dimension to weights to broadcast:
+            conv = jnp.sum(patch[..., None] * weights[None, :, :, :], axis=(1, 2, 3))
+            # conv now has shape (N, C_out). Update output at (0, i, j, 0).
+            out = lax.dynamic_update_slice(out, conv[:, None, None, :], (0, i, j, 0))
+            return out, None
+
+        out, _ = lax.scan(col_update, out, jnp.arange(W_out))
+        return out, None
+
+    output, _ = lax.scan(row_update, output, jnp.arange(H_out))
+    return output
+
+
+def jax_relu(jnp, x):
+    return jnp.maximum(x, 0)
+
+
+# Batch normalization operator, as used in ResNet
+def jax_batchnorm2d(jnp, x, eps=1e-5):
+    mean = jnp.mean(x, axis=0, keepdims=True)
+    std = jnp.std(x, axis=0, keepdims=True)
+    return (x - mean) / jnp.sqrt(std + eps)
+
+
+def resnet_jax_kernel(jnp, lax, input, conv1, conv2, conv3):
+    # Pad output of first convolution for second convolution
+    padded = jnp.zeros((input.shape[0], input.shape[1] + 2, input.shape[2] + 2, conv1.shape[3]), dtype=input.dtype)
+    padded = lax.dynamic_update_slice(padded, conv2d_lax(jnp, lax, input, conv1), (0, 1, 1, 0))
+    x = jax_batchnorm2d(jnp, padded)
+    x = jax_relu(jnp, x)
+
+    x = conv2d_lax(jnp, lax, x, conv2)
+    x = jax_batchnorm2d(jnp, x)
+    x = jax_relu(jnp, x)
+    x = conv2d_lax(jnp, lax, x, conv3)
+    x = jax_batchnorm2d(jnp, x)
+    return jnp.sum(jax_relu(jnp, x + input))
+
+
 def run_resnet(device_type: dace.dtypes.DeviceType):
     '''
     Runs resnet for the given device
@@ -203,6 +263,53 @@ def run_resnet(device_type: dace.dtypes.DeviceType):
     return sdfg
 
 
+def run_resnet_autodiff():
+    import jax
+    import jax.numpy as jnp
+    import jax.lax as lax
+
+    # Initialize data (npbench test size)
+    N, W, H, C1, C2 = 2, 8, 8, 8, 4
+    input, conv1, conv2, conv3 = initialize(N, W, H, C1, C2)
+
+    # Initialize gradient computation data
+    gradient_input = np.zeros_like(input, dtype=np.float32)
+    gradient___return = np.ones((1, ), dtype=np.float32)
+
+    # Define sum reduction for the output
+    @dc.program
+    def autodiff_kernel(input: dc.float32[N, H, W, C1], conv1: dc.float32[1, 1, C1, C2],
+                        conv2: dc.float32[3, 3, C2, C2], conv3: dc.float32[1, 1, C2, C1]):
+        # Pad output of first convolution for second convolution
+        x = resnet_basicblock(input, conv1, conv2, conv3)
+        return np.sum(x)
+
+    # Add the backward pass to the SDFG
+    sdfg = autodiff_kernel.to_sdfg(simplify=True)
+    add_backward_pass(sdfg=sdfg, inputs=["input"], outputs=["__return"])
+
+    sdfg(input,
+         conv1,
+         conv2,
+         conv3,
+         N=N,
+         W=W,
+         H=H,
+         C1=C1,
+         C2=C2,
+         gradient_input=gradient_input,
+         gradient___return=gradient___return)
+
+    # Numerically validate vs JAX
+    jax_kernel = lambda input, conv1, conv2, conv3: resnet_jax_kernel(jnp, lax, input, conv1, conv2, conv3)
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=0))
+    jax_grad_input = jax_grad(input, conv1, conv2, conv3)
+
+    # The tolerance if fairly high with float32 inputs
+    # The same code using float64 works with a 1e-12 tolerance
+    np.testing.assert_allclose(gradient_input, jax_grad_input, atol=1e-2, rtol=1e-2)
+
+
 def test_cpu():
     run_resnet(dace.dtypes.DeviceType.CPU)
 
@@ -211,6 +318,12 @@ def test_cpu():
 @pytest.mark.gpu
 def test_gpu():
     run_resnet(dace.dtypes.DeviceType.GPU)
+
+
+@pytest.mark.autodiff
+def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
+    run_resnet_autodiff()
 
 
 @pytest.mark.skip(reason="Dynamic memory allocation")
@@ -229,6 +342,7 @@ if __name__ == "__main__":
 
     if target == "cpu":
         run_resnet(dace.dtypes.DeviceType.CPU)
+        run_resnet_autodiff()
     elif target == "gpu":
         run_resnet(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":

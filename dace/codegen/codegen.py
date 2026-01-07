@@ -176,7 +176,7 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
             sdfg.save(f'{tmp_dir}/test.sdfg', hash=False)
             sdfg2 = SDFG.from_file(f'{tmp_dir}/test.sdfg')
             sdfg2.save(f'{tmp_dir}/test2.sdfg', hash=False)
-            print('Testing SDFG serialization...')
+
             if not filecmp.cmp(f'{tmp_dir}/test.sdfg', f'{tmp_dir}/test2.sdfg'):
                 with open(f'{tmp_dir}/test.sdfg', 'r') as f1:
                     with open(f'{tmp_dir}/test2.sdfg', 'r') as f2:

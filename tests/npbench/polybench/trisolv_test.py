@@ -9,7 +9,7 @@ from dace.fpga_testing import fpga_test, xilinx_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory, StreamingComposition
 from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
-from dace.config import set_temporary
+from dace.autodiff import add_backward_pass
 
 # Data set sizes
 # N
@@ -28,6 +28,20 @@ def initialize(N, datatype=np.float64):
     x = np.full((N, ), -999, dtype=datatype)
     b = np.fromfunction(lambda i: i, (N, ), dtype=datatype)
     return L, x, b
+
+
+def trisolv_jax_kernel(jnp, lax, L, x, b):
+
+    def scan_body(carry, i):
+        L, x, b = carry
+        mask = jnp.arange(x.shape[0]) < i
+        products = jnp.where(mask, L[i, :] * x, 0.0)
+        dot_product = jnp.sum(products)
+        x = x.at[i].set((b[i] - dot_product) / L[i, i])
+        return (L, x, b), None
+
+    (L, x, b), _ = lax.scan(scan_body, (L, x, b), jnp.arange(x.shape[0]))
+    return jnp.sum(x)
 
 
 def ground_truth(L, x, b):
@@ -71,6 +85,41 @@ def run_trisolv(device_type: dace.dtypes.DeviceType):
     return sdfg
 
 
+def run_trisolv_autodiff():
+    import jax
+    import jax.numpy as jnp
+    import jax.lax as lax
+
+    # Initialize data (polybench mini size)
+    N = sizes["mini"]
+    L, x, b = initialize(N)
+
+    # Initialize gradient computation data
+    gradient_L = np.zeros_like(L)
+    gradient___return = np.ones((1, ), dtype=np.float64)
+
+    # Define sum reduction for the output
+    @dc.program
+    def autodiff_kernel(L: dc.float64[N, N], x: dc.float64[N], b: dc.float64[N]):
+        trisolv_kernel(L, x, b)
+        return np.sum(x)
+
+    # Add the backward pass to the SDFG
+    sdfg = autodiff_kernel.to_sdfg()
+    add_backward_pass(sdfg=sdfg, inputs=["L"], outputs=["__return"])
+    sdfg(L, x, np.copy(b), N=N, gradient_L=gradient_L, gradient___return=gradient___return)
+
+    # Enable float64 support
+    jax.config.update("jax_enable_x64", True)
+
+    # Numerically validate vs JAX
+    jax_kernel = lambda L, x, b: trisolv_jax_kernel(jnp, lax, L, x, b)
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=0))
+    L_jax, x_jax, b_jax = initialize(N)
+    jax_grad_L = jax_grad(L_jax, x_jax, b_jax)
+    np.testing.assert_allclose(gradient_L, jax_grad_L)
+
+
 def test_cpu():
     run_trisolv(dace.dtypes.DeviceType.CPU)
 
@@ -78,6 +127,12 @@ def test_cpu():
 @pytest.mark.gpu
 def test_gpu():
     run_trisolv(dace.dtypes.DeviceType.GPU)
+
+
+@pytest.mark.autodiff
+def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
+    run_trisolv_autodiff()
 
 
 @fpga_test(assert_ii_1=False, xilinx=False)
@@ -95,6 +150,7 @@ if __name__ == "__main__":
 
     if target == "cpu":
         run_trisolv(dace.dtypes.DeviceType.CPU)
+        run_trisolv_autodiff()
     elif target == "gpu":
         run_trisolv(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":
