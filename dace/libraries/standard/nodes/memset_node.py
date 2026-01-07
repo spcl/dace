@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace import library, nodes
 from dace.transformation.transformation import ExpandTransformation
@@ -8,6 +8,8 @@ import operator
 from dace.codegen.common import sym2cpp
 import copy
 
+from dace.libraries.standard.helper import collapse_shape_and_strides, add_dynamic_inputs
+
 
 @library.expansion
 class ExpandPure(ExpandTransformation):
@@ -15,7 +17,7 @@ class ExpandPure(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
-        out_name, out, out_subset = node.validate(parent_sdfg, parent_state)
+        out_name, out, out_subset, dynamic_inputs = node.validate(parent_sdfg, parent_state)
         map_lengths = [(e + 1 - b) // s for (b, e, s) in out_subset if (e + 1 - b) // s != 1]
         cp_size = reduce(operator.mul, map_lengths, 1)
 
@@ -26,8 +28,11 @@ class ExpandPure(ExpandTransformation):
 
         sdfg = dace.SDFG(f"{node.label}_sdfg")
         sdfg.add_array(out_name, out_shape_collapsed, out.dtype, out.storage, strides=out_strides_collapsed)
-
+        sdfg.schedule = dace.dtypes.ScheduleType.Sequential
         state = sdfg.add_state(f"{node.label}_state")
+
+        map_lengths = add_dynamic_inputs(dynamic_inputs, sdfg, out_subset, state)
+
         map_params = [f"__i{i}" for i in range(len(map_lengths))]
         map_rng = {i: f"0:{s}" for i, s in zip(map_params, map_lengths)}
         access_expr = ','.join(map_params)
@@ -54,7 +59,7 @@ class ExpandCUDA(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG):
-        out_name, out, out_subset = node.validate(parent_sdfg, parent_state)
+        out_name, out, out_subset, dynamic_inputs = node.validate(parent_sdfg, parent_state)
         map_lengths = [(e + 1 - b) // s for (b, e, s) in out_subset]
         cp_size = reduce(operator.mul, map_lengths, 1)
 
@@ -65,8 +70,9 @@ class ExpandCUDA(ExpandTransformation):
 
         sdfg = dace.SDFG(f"{node.label}_sdfg")
         sdfg.add_array(out_name, out_shape_collapsed, out.dtype, out.storage, strides=out_strides_collapsed)
-
+        sdfg.schedule = dace.dtypes.ScheduleType.Sequential
         state = sdfg.add_state(f"{node.label}_state")
+        map_lengths = add_dynamic_inputs(dynamic_inputs, sdfg, out_subset, state)
 
         out_access = state.add_access(out_name)
         tasklet = state.add_tasklet(
@@ -91,7 +97,7 @@ class ExpandCPU(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG):
-        out_name, out, out_subset = node.validate(parent_sdfg, parent_state)
+        out_name, out, out_subset, dynamic_inputs = node.validate(parent_sdfg, parent_state)
         map_lengths = [(e + 1 - b) // s for (b, e, s) in out_subset if (e + 1 - b) // s != 1]
         cp_size = reduce(operator.mul, map_lengths, 1)
 
@@ -102,8 +108,9 @@ class ExpandCPU(ExpandTransformation):
 
         sdfg = dace.SDFG(f"{node.label}_sdfg")
         sdfg.add_array(out_name, out_shape_collapsed, out.dtype, out.storage, strides=out_strides_collapsed)
-
+        sdfg.schedule = dace.dtypes.ScheduleType.Sequential
         state = sdfg.add_state(f"{node.label}_state")
+        map_lengths = add_dynamic_inputs(dynamic_inputs, sdfg, out_subset, state)
 
         # Access the original output
         out_access = state.add_access(out_name)
@@ -147,14 +154,19 @@ class MemsetLibraryNode(nodes.LibraryNode):
         out_subset = oe.data.subset
         out_name = oe.src_conn
 
+        # Add dynamic connectors
+        dynamic_ies = {ie for ie in state.in_edges(self) if ie.dst_conn != "_in"}
+        dynamic_inputs = dict()
+        assert len(dynamic_ies) == len(state.in_edges(self)), "Memset nodes cannot have data inputs"
+
+        for ie in dynamic_ies:
+            dataname = ie.data.data
+            datadesc = state.sdfg.arrays[dataname]
+            if not isinstance(datadesc, dace.data.Scalar):
+                raise ValueError("Dynamic inputs (not connected to `_in`) need to be all scalars")
+            dynamic_inputs[ie.dst_conn] = datadesc
+
         if not out:
             raise ValueError("Missing the output tensor.")
 
-        for ie in state.in_edges(self):
-            state.remove_edge(ie)
-            if state.degree(ie.src) == 0:
-                state.remove_node(ie.src)
-            state.add_edge(ie.src, None, self, None, dace.memlet.Memlet(None))
-            self.remove_in_connector(ie.dst_conn)
-
-        return out_name, out, out_subset
+        return out_name, out, out_subset, dynamic_inputs

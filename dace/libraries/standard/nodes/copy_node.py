@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace import library, nodes
 from dace.transformation.transformation import ExpandTransformation
@@ -8,53 +8,7 @@ import operator
 from dace.codegen.common import sym2cpp
 import copy
 
-
-# Compute collapsed shapes and strides, removing singleton dimensions (length == 1)
-def collapse_shape_and_strides(subset, strides):
-    collapsed_shape = []
-    collapsed_strides = []
-    for (b, e, s), stride in zip(subset, strides):
-        length = (e + 1 - b) // s
-        if length != 1:
-            collapsed_shape.append(length)
-            collapsed_strides.append(stride)
-    return collapsed_shape, collapsed_strides
-
-
-def add_dynamic_inputs(dynamic_inputs, sdfg: dace.SDFG, in_subset: dace.subsets.Range, state: dace.SDFGState):
-    # Add dynamic inputs
-    pre_assignments = dict()
-    map_lengths = [dace.symbolic.SymExpr((e + 1 - b) // s) for (b, e, s) in in_subset]
-
-    for dynamic_input_name, datadesc in dynamic_inputs.items():
-        if dynamic_input_name in sdfg.arrays:
-            continue
-
-        if dynamic_input_name in sdfg.symbols:
-            sdfg.replace(str(dynamic_input_name), "sym_" + str(dynamic_input_name))
-            ndesc = copy.deepcopy(datadesc)
-            ndesc.transient = False
-            sdfg.add_datadesc(dynamic_input_name, ndesc)
-            # Should be scalar
-            if isinstance(ndesc, dace.data.Scalar):
-                pre_assignments["sym_" + dynamic_input_name] = f"{dynamic_input_name}"
-            else:
-                assert ndesc.shape == (1, ) or ndesc.shape == [
-                    1,
-                ]
-                pre_assignments["sym_" + dynamic_input_name] = f"{dynamic_input_name}[0]"
-
-            new_map_lengths = []
-            for ml in map_lengths:
-                nml = ml.subs({str(dynamic_input_name): "sym_" + str(dynamic_input_name)})
-                new_map_lengths.append(nml)
-            map_lengths = new_map_lengths
-
-    if pre_assignments != dict():
-        # Add a state for assignments in the beginning
-        sdfg.add_state_before(state=state, label="pre_assign", is_start_block=True, assignments=pre_assignments)
-
-    return map_lengths
+from dace.libraries.standard.helper import collapse_shape_and_strides, add_dynamic_inputs
 
 
 @library.expansion
@@ -76,8 +30,7 @@ class ExpandPure(ExpandTransformation):
         state = sdfg.add_state(f"{node.label}_state", is_start_block=True)
 
         map_lengths = add_dynamic_inputs(dynamic_inputs, sdfg, in_subset, state)
-
-        sdfg.schedule = dace.dtypes.ScheduleType.Default
+        sdfg.schedule = dace.dtypes.ScheduleType.Sequential
 
         map_params = [f"__i{i}" for i in range(len(map_lengths))]
         map_rng = {i: f"0:{s}" for i, s in zip(map_params, map_lengths)}
@@ -86,16 +39,13 @@ class ExpandPure(ExpandTransformation):
         inputs = {"_memcpy_inp": dace.memlet.Memlet(f"{inp_name}[{in_access_expr}]")}
         outputs = {"_memcpy_out": dace.memlet.Memlet(f"{out_name}[{out_access_expr}]")}
         code = "_memcpy_out = _memcpy_inp"
-        if inp.storage == dace.dtypes.StorageType.GPU_Global:
-            schedule = dace.dtypes.ScheduleType.GPU_Device
-        else:
-            schedule = dace.dtypes.ScheduleType.Default
         state.add_mapped_tasklet(f"{node.label}_tasklet",
                                  map_rng,
                                  inputs,
                                  code,
                                  outputs,
-                                 schedule=schedule,
+                                 schedule=dace.dtypes.ScheduleType.GPU_Device if out.storage
+                                 == dace.dtypes.StorageType.GPU_Global else dace.dtypes.ScheduleType.Default,
                                  external_edges=True)
 
         return sdfg
@@ -118,11 +68,11 @@ class ExpandCUDA(ExpandTransformation):
         sdfg = dace.SDFG(f"{node.label}_sdfg")
         sdfg.add_array(inp_name, in_shape_collapsed, inp.dtype, inp.storage, strides=in_strides_collapsed)
         sdfg.add_array(out_name, out_shape_collapsed, out.dtype, out.storage, strides=out_strides_collapsed)
+        sdfg.schedule = dace.dtypes.ScheduleType.Sequential
 
         # Add dynamic inputs
-        map_lengths = add_dynamic_inputs(dynamic_inputs, sdfg, in_subset, state)
-
         state = sdfg.add_state(f"{node.label}_state")
+        map_lengths = add_dynamic_inputs(dynamic_inputs, sdfg, in_subset, state)
 
         in_access = state.add_access(inp_name)
         out_access = state.add_access(out_name)
@@ -163,7 +113,7 @@ class ExpandCPU(ExpandTransformation):
         sdfg = dace.SDFG(f"{node.label}_sdfg")
         sdfg.add_array(inp_name, in_shape_collapsed, inp.dtype, inp.storage, strides=in_strides_collapsed)
         sdfg.add_array(out_name, out_shape_collapsed, out.dtype, out.storage, strides=out_strides_collapsed)
-
+        sdfg.schedule = dace.dtypes.ScheduleType.Sequential
         state = sdfg.add_state(f"{node.label}_state")
 
         # Add dynamic inputs
@@ -239,9 +189,13 @@ class CopyLibraryNode(nodes.LibraryNode):
             raise ValueError("Missing the output tensor.")
 
         if inp.dtype != out.dtype:
-            raise ValueError("The datatype of the input and output tensors must match.")
+            raise ValueError(
+                "The datatype of the input and output tensors must match. For copies that also perform type conversion, please extend the library node expansion."
+            )
 
         if inp.storage != out.storage:
-            raise ValueError("The storage of the input and output tensors must match.")
+            raise ValueError(
+                "The storage of the input and output tensors must match. For CPU<->GPU copy nodes, please extend the library node expansion."
+            )
 
         return inp_name, inp, in_subset, out_name, out, out_subset, dynamic_inputs

@@ -44,9 +44,11 @@ def _get_sdfg(implementation: str, gpu: bool) -> dace.SDFG:
 
 def test_copy_pure_cpu():
     sdfg = _get_sdfg("pure", gpu=False)
+    sdfg.name += "_pure_cpu"
     sdfg.validate()
     sdfg.expand_library_nodes()
     sdfg.validate()
+
     exe = sdfg.compile()
 
     A = np.ones((200, ), dtype=np.float64)
@@ -65,6 +67,7 @@ def test_copy_pure_gpu():
     import cupy as cp
 
     sdfg = _get_sdfg("pure", gpu=True)
+    sdfg.name += "_pure_gpu"
     sdfg.validate()
     sdfg.expand_library_nodes()
     sdfg.validate()
@@ -87,6 +90,7 @@ def test_copy_cuda_gpu():
     import cupy as cp
 
     sdfg = _get_sdfg("CUDA", gpu=True)
+    sdfg.name += "_cuda_gpu"
     sdfg.validate()
     sdfg.expand_library_nodes()
     sdfg.validate()
@@ -106,6 +110,7 @@ def test_copy_cuda_cpu():
 
     # Even if using CUDA implementation, we can test on CPU arrays
     sdfg = _get_sdfg("CUDA", gpu=False)
+    sdfg.name += "_cuda_cpu"
     sdfg.validate()
     sdfg.expand_library_nodes()
     with pytest.raises(Exception):
@@ -118,6 +123,7 @@ def test_copy_memcpy_cpu():
     import numpy as np
 
     sdfg = _get_sdfg("CPU", gpu=False)
+    sdfg.name += "_memcpy_cpu"
     sdfg.validate()
     sdfg.expand_library_nodes()
     sdfg.validate()

@@ -57,6 +57,7 @@ def _get_multi_dim_sdfg(implementation, gpu=True) -> dace.SDFG:
 
 def test_memset_pure_cpu():
     sdfg = _get_sdfg("pure", gpu=False)
+    sdfg.name += "_pure_cpu"
     sdfg.validate()
     sdfg.expand_library_nodes()
     sdfg.validate()
@@ -72,6 +73,7 @@ def test_memset_pure_cpu():
 
 def test_memset_pure_cpu_multi_dim():
     sdfg = _get_multi_dim_sdfg("pure", gpu=False)
+    sdfg.name += "_pure_cpu_multi_dim"
     sdfg.validate()
     sdfg.expand_library_nodes()
     sdfg.validate()
@@ -89,6 +91,7 @@ def test_memset_pure_gpu():
     import cupy as cp
 
     sdfg = _get_sdfg("pure", gpu=True)
+    sdfg.name += "_pure_gpu"
     sdfg.validate()
     sdfg.expand_library_nodes()
     sdfg.validate()
@@ -107,6 +110,7 @@ def test_memset_pure_gpu_multi_dim():
     import cupy as cp
 
     sdfg = _get_multi_dim_sdfg("pure", gpu=True)
+    sdfg.name += "_pure_gpu_multi_dim"
     sdfg.validate()
     sdfg.expand_library_nodes()
     sdfg.validate()
@@ -124,6 +128,7 @@ def test_memset_cuda_gpu():
     import cupy as cp
 
     sdfg = _get_sdfg("CUDA", gpu=True)
+    sdfg.name += "_cuda_gpu"
     sdfg.validate()
     sdfg.expand_library_nodes()
     sdfg.validate()
@@ -142,6 +147,7 @@ def test_memset_cuda_gpu_multi_dim():
     import cupy as cp
 
     sdfg = _get_multi_dim_sdfg("CUDA", gpu=True)
+    sdfg.name += "_cuda_gpu_multi_dim"
     sdfg.validate()
     sdfg.expand_library_nodes()
     sdfg.validate()
@@ -159,6 +165,7 @@ def test_memset_cuda_cpu():
     # Test CUDA implementation on CPU arrays
     # should fail at validation or compilation
     sdfg = _get_sdfg("CUDA", gpu=False)
+    sdfg.name += "_cuda_cpu"
     sdfg.validate()
     sdfg.expand_library_nodes()
     with pytest.raises(Exception):

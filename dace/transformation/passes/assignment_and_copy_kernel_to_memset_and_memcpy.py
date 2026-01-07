@@ -9,6 +9,7 @@ from dace.sdfg.graph import Edge, MultiConnectorEdge
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
 from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
+from dace.transformation.passes.fusion_inline import InlineSDFGs
 from typing import Dict, Iterable, List, Set
 
 
@@ -526,5 +527,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
 
         num_rmed_memcpies = sum(rmed_memcpies.values())
         num_rmed_memsets = sum(rmed_memsets.values())
+
+        InlineSDFGs().apply_pass(sdfg, {})
 
         return num_rmed_memcpies + num_rmed_memsets

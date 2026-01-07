@@ -29,6 +29,7 @@ from dace.frontend.python.astutils import ExtNodeTransformer, rname, unparse
 from dace.sdfg import nodes, graph as gr, utils, propagation
 from dace.properties import LambdaProperty
 from dace.sdfg import SDFG, is_devicelevel_gpu, SDFGState
+from dace.sdfg.scope import is_devicelevel_gpu_kernel
 from dace.codegen.targets import fpga
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
 
@@ -899,8 +900,10 @@ def unparse_cr(sdfg, wcr_ast, dtype):
 def connected_to_gpu_memory(node: nodes.Node, state: SDFGState, sdfg: SDFG):
     for e in state.all_edges(node):
         path = state.memlet_path(e)
-        if ((isinstance(path[0].src, nodes.AccessNode)
-             and path[0].src.desc(sdfg).storage is dtypes.StorageType.GPU_Global)):
+        if (((isinstance(path[0].src, nodes.AccessNode)
+              and path[0].src.desc(sdfg).storage is dtypes.StorageType.GPU_Global))
+                or ((isinstance(path[-1].dst, nodes.AccessNode)
+                     and path[-1].dst.desc(sdfg).storage is dtypes.StorageType.GPU_Global))):
             return True
     return False
 
@@ -935,8 +938,8 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
         # If this code runs on the host and is associated with a GPU stream,
         # set the stream to a local variable.
         max_streams = int(Config.get("compiler", "cuda", "max_concurrent_streams"))
-        if not is_devicelevel_gpu(sdfg, state_dfg, node) and (hasattr(node, "_cuda_stream")
-                                                              or connected_to_gpu_memory(node, state_dfg, sdfg)):
+        if not is_devicelevel_gpu_kernel(sdfg, state_dfg, node) and (hasattr(node, "_cuda_stream")
+                                                                     or connected_to_gpu_memory(node, state_dfg, sdfg)):
             if max_streams >= 0:
                 callsite_stream.write(
                     'int __dace_current_stream_id = %d;\n%sStream_t __dace_current_stream = __state->gpu_context->streams[__dace_current_stream_id];'
