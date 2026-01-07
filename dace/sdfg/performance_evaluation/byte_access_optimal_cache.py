@@ -18,6 +18,20 @@ from dace.subsets import Range, SubsetUnion, bounding_box_union
 
 from dace.sdfg.state import AbstractControlFlowRegion, LoopRegion, ConditionalBlock
 
+def normalize_range(r: Range) -> Range:
+    """Ensure all steps in a Range are positive while preserving coverage."""
+    new_ranges = []
+
+    for (start, end, step) in r.ranges:
+        if step > 0:
+            new_ranges.append((start, end, step))
+        else:
+            # Compute last covered element
+            last = start + ((end - start) // step) * step
+            new_ranges.append((last, start, -step))
+
+    return Range(new_ranges)
+
 def deduplicate_subsetunion(su: SubsetUnion) -> SubsetUnion:
     """
     Deduplicate subsets inside a SubsetUnion (in place).
@@ -59,7 +73,9 @@ def cleanup_subsetunion(su: SubsetUnion) -> SubsetUnion:
                 covered = True
                 break
         if not covered:
-            result.append(s)
+            if isinstance(s, Range):
+                new_s = normalize_range(s)
+                result.append(new_s)
 
     su.subset_list = result
     return su
@@ -116,8 +132,6 @@ def remap_symbols(buffer_access_map:dict[str, SubsetUnion], symbol_map, buffer_n
 
 
 def scope_accesses(state: SDFGState, entry:nd.EntryNode|None, read_set:dict[str, SubsetUnion], write_set:dict[str, SubsetUnion], range_variable_stack):
-    scope_read_set:dict[str, SubsetUnion] = {}
-    scope_write_set:dict[str, SubsetUnion] = {}
     
     scope_nodes = state.scope_children()[entry]
     for node in scope_nodes:
@@ -135,15 +149,10 @@ def scope_accesses(state: SDFGState, entry:nd.EntryNode|None, read_set:dict[str,
                 widened_ranges = widen_ranges(accessed_subset.ranges, range_variable_stack)                
 
                 full_accessed_subset = Range(widened_ranges)
-                if not accessed_buffer in write_set.keys():
+                if not accessed_buffer in read_set.keys():
                     read_set[accessed_buffer] = SubsetUnion([full_accessed_subset])
                 else:
                     read_set[accessed_buffer].union(full_accessed_subset)
-
-                if not accessed_buffer in scope_write_set.keys():
-                    scope_read_set[accessed_buffer] = SubsetUnion([full_accessed_subset])
-                else:
-                    scope_read_set[accessed_buffer].union(full_accessed_subset)
             
             for edge in write_edges:
                 accessed_buffer = edge.dst.data
@@ -158,18 +167,13 @@ def scope_accesses(state: SDFGState, entry:nd.EntryNode|None, read_set:dict[str,
                 if not accessed_buffer in write_set.keys():
                     write_set[accessed_buffer] = SubsetUnion([full_accessed_subset])
                 else:
-                    write_set[accessed_buffer].union(full_accessed_subset)
-
-                if not accessed_buffer in scope_write_set.keys():
-                    scope_write_set[accessed_buffer] = SubsetUnion([full_accessed_subset])
-                else:
-                    scope_write_set[accessed_buffer].union(full_accessed_subset)                
+                    write_set[accessed_buffer].union(full_accessed_subset)             
             
         elif isinstance(node, nd.MapEntry):
             #if the node is a Map Entry, we recursively analyze the scope of the map
             map_variables = list(zip(node.map.params, node.map.range))
             range_variable_stack.extend(map_variables)
-            scope_read_set, scope_write_set = scope_accesses(state, node, read_set, write_set, range_variable_stack)
+            scope_accesses(state, node, read_set, write_set, range_variable_stack)
             del range_variable_stack[-len(map_variables):]
 
         elif isinstance(node, nd.NestedSDFG):
@@ -194,10 +198,10 @@ def scope_accesses(state: SDFGState, entry:nd.EntryNode|None, read_set:dict[str,
                     new_subset = Range(widened_ranges)
                     new_subset_union.union(new_subset)
 
-                if not accessed_buffer in scope_read_set.keys():
-                    scope_read_set[accessed_buffer] = new_subset_union
+                if not accessed_buffer in read_set.keys():
+                    read_set[accessed_buffer] = new_subset_union
                 else:
-                    scope_read_set[accessed_buffer].union(new_subset_union)
+                    read_set[accessed_buffer].union(new_subset_union)
             for (accessed_buffer, subset_union) in remapped_write_set.items():
                 new_subset_union = SubsetUnion([])
                 for subset in subset_union.subset_list:
@@ -205,29 +209,19 @@ def scope_accesses(state: SDFGState, entry:nd.EntryNode|None, read_set:dict[str,
                     new_subset = Range(widened_ranges)
                     new_subset_union.union(new_subset)
 
-                if not accessed_buffer in scope_write_set.keys():
-                    scope_write_set[accessed_buffer] = new_subset_union
+                if not accessed_buffer in write_set.keys():
+                    write_set[accessed_buffer] = new_subset_union
                 else:
-                    scope_write_set[accessed_buffer].union(new_subset_union)
+                    write_set[accessed_buffer].union(new_subset_union)
         else:
             #if the node is not a tasklet, map entry or nested SDFG, we do nothing
             continue
-    return scope_read_set, scope_write_set
+        return read_set, write_set
 
 def cfr_accesses(cfr:AbstractControlFlowRegion, read_set:dict[str, SubsetUnion], write_set:dict[str, SubsetUnion], range_variable_stack):
     if isinstance(cfr, SDFGState):
         # if the control flow region is a state, we analyze its buffer accesses
-        state_read_set, state_write_set = scope_accesses(cfr, None, read_set, write_set, range_variable_stack)
-        for (buffer, accesses) in state_read_set.items():
-            if buffer in read_set.keys():
-                read_set[buffer].union(accesses)
-            else:
-                read_set[buffer] = accesses
-        for (buffer, accesses) in state_write_set.items():
-            if buffer in write_set.keys():
-                write_set[buffer].union(accesses)
-            else:
-                write_set[buffer] = accesses
+        scope_accesses(cfr, None, read_set, write_set, range_variable_stack)
 
     elif isinstance(cfr, LoopRegion):
         # if the control flow region is a loop region, we push the loop variable onto the range variable stack and analyze each sub-regions accesses recursively
@@ -238,7 +232,7 @@ def cfr_accesses(cfr:AbstractControlFlowRegion, read_set:dict[str, SubsetUnion],
         range_variable_stack.append((loop_var, (lower_bound, upper_bound, step)))
 
         for sub_region in cfr.nodes():
-            sub_region_read_set, sub_region_write_set = cfr_accesses(sub_region, read_set, write_set, range_variable_stack)
+            sub_region_read_set, sub_region_write_set = cfr_accesses(sub_region, {}, {}, range_variable_stack)
             for (buffer, accesses) in sub_region_read_set.items():
                 if buffer in read_set.keys():
                     read_set[buffer].union(accesses)
