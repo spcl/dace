@@ -25,7 +25,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
 
     rmid = 0
 
-    def __init__(self, overapproximate_first_dimensions=False, apply_only_on_labels=list()):
+    def __init__(self, overapproximate_first_dimensions: bool = False, apply_only_on_labels: List[str] = list()):
         self.overapproximate_first_dimension = overapproximate_first_dimensions
         self.apply_only_on_labels = apply_only_on_labels
 
