@@ -900,9 +900,9 @@ def connected_to_gpu_memory(node: nodes.Node, state: SDFGState, sdfg: SDFG):
     for e in state.all_edges(node):
         path = state.memlet_path(e)
         if (((isinstance(path[0].src, nodes.AccessNode)
-             and path[0].src.desc(sdfg).storage is dtypes.StorageType.GPU_Global)) or 
-            ((isinstance(path[-1].dst, nodes.AccessNode)
-              and path[-1].dst.desc(sdfg).storage is dtypes.StorageType.GPU_Global))):
+              and path[0].src.desc(sdfg).storage is dtypes.StorageType.GPU_Global))
+                or ((isinstance(path[-1].dst, nodes.AccessNode)
+                     and path[-1].dst.desc(sdfg).storage is dtypes.StorageType.GPU_Global))):
             return True
 
     return False
