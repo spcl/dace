@@ -8,7 +8,7 @@ def get_gpu_stream_array_name() -> str:
 
 
 def get_gpu_stream_connector_name() -> str:
-    return "_stream_"
+    return "__stream_"
 
 
 def generate_sync_debug_call() -> str:

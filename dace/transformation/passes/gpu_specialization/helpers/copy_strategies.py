@@ -21,7 +21,7 @@ class CopyContext:
     """
 
     def __init__(self, sdfg: SDFG, state: SDFGState, src_node: nodes.Node, dst_node: nodes.Node,
-                 edge: MultiConnectorEdge[mm.Memlet], gpustream_assignments: Dict[nodes.Node, Union[int, str]]):
+                 edge: MultiConnectorEdge[mm.Memlet]):
 
         # Store the basic context as attributes
         self.sdfg = sdfg
@@ -29,7 +29,6 @@ class CopyContext:
         self.src_node = src_node
         self.dst_node = dst_node
         self.edge = edge
-        self.gpustream_assignments = gpustream_assignments
 
         memlet = edge.data
 
@@ -69,30 +68,12 @@ class CopyContext:
     def get_assigned_gpustream(self) -> str:
         """
         Return the GPU stream expression assigned to both source and destination nodes.
-
-        Ensures that both nodes have a matching stream ID, then constructs the
-        variable name from the configured prefix and stream ID. Raises ValueError
-        if assignments are missing or inconsistent.
-
-        Example:
-            If the configured prefix is 'gpu_stream' and the assigned stream ID is 0,
-            this method returns 'gpu_stream0'.
+        Defaults to `__dace_current_stream` placeholder, which can be changed by the scheduling pass
         """
-        src_stream = self.gpustream_assignments.get(self.src_node)
-        dst_stream = self.gpustream_assignments.get(self.dst_node)
-
-        # 1. Catch unsupported cases
-        if src_stream is None or dst_stream is None:
-            raise ValueError("GPU stream assignment missing for source or destination node.")
-
-        if src_stream != dst_stream:
-            raise ValueError(f"Mismatch in assigned GPU streams: src_node has '{src_stream}', "
-                             f"dst_node has '{dst_stream}'. They must be the same.")
-
         # 2. Generate GPU stream expression
-        gpustream = src_stream
+        gpustream = "__state->gpu_context->streams[0]"
         # gpustream_var_name_prefix = Config.get('compiler', 'cuda', 'gpu_stream_name').split(',')[1]
-        gpustream_expr = f"{gpustream}"  # {gpustream_var_name_prefix}
+        gpustream_expr = gpustream
 
         return gpustream_expr
 

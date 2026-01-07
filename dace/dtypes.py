@@ -77,7 +77,6 @@ class ScheduleType(aenum.AutoNumberEnum):
     Snitch = ()
     Snitch_Multicore = ()
     FPGA_Multi_Pumped = ()  #: Used for double pumping
-    GPU_Warp = ()
 
 
 # A subset of GPU schedule types
