@@ -188,7 +188,7 @@ class CopyContext:
 
             if isinstance(desc, data.Scalar):
                 # GPU scalar special-case
-                if desc.storage in dtypes.GPU_MEMORY_STORAGES_EXPERIMENTAL_CUDACODEGEN:
+                if desc.storage in dtypes.GPU_STORAGES:
                     parent = state.sdfg.parent_nsdfg_node
                     if parent is not None and name in parent.in_connectors:
                         return f"&{ptr}"

@@ -77,6 +77,7 @@ class ScheduleType(aenum.AutoNumberEnum):
     Snitch = ()
     Snitch_Multicore = ()
     FPGA_Multi_Pumped = ()  #: Used for double pumping
+    GPU_Warp = ()
 
 
 # A subset of GPU schedule types
@@ -87,7 +88,10 @@ GPU_SCHEDULES = [
     ScheduleType.GPU_Persistent,
 ]
 
-EXPERIMENTAL_GPU_SCHEDULES = [ScheduleType.GPU_Warp]
+# A subset of GPU schedule types for ExperimentalCUDACodeGen
+EXPERIMENTAL_GPU_SCHEDULES = [
+    ScheduleType.GPU_Warp,
+]
 
 # A subset of CPU schedule types
 CPU_SCHEDULES = [
@@ -208,7 +212,8 @@ SCOPEDEFAULT_STORAGE = {
     ScheduleType.GPU_ThreadBlock_Dynamic: StorageType.Register,
     ScheduleType.FPGA_Device: StorageType.FPGA_Global,
     ScheduleType.SVE_Map: StorageType.CPU_Heap,
-    ScheduleType.Snitch: StorageType.Snitch_TCDM
+    ScheduleType.Snitch: StorageType.Snitch_TCDM,
+    ScheduleType.GPU_Warp: StorageType.Register,
 }
 
 # Maps from ScheduleType to default ScheduleType for sub-scopes
@@ -230,7 +235,8 @@ SCOPEDEFAULT_SCHEDULE = {
     ScheduleType.FPGA_Multi_Pumped: ScheduleType.FPGA_Device,
     ScheduleType.SVE_Map: ScheduleType.Sequential,
     ScheduleType.Snitch: ScheduleType.Snitch,
-    ScheduleType.Snitch_Multicore: ScheduleType.Snitch_Multicore
+    ScheduleType.Snitch_Multicore: ScheduleType.Snitch_Multicore,
+    ScheduleType.GPU_Warp: ScheduleType.Sequential,
 }
 
 # Maps from StorageType to a preferred ScheduleType for helping determine schedules.
