@@ -291,7 +291,7 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
     offset = cpp_offset_expr(desc, memlet.subset, codegen=codegen)
     offset_expr = '[' + offset + ']'
     is_scalar = not isinstance(conntype, dtypes.pointer)
-    ptrname = codegen.ptr(memlet.data, desc, sdfg)
+    ptrname = codegen.ptr(memlet.data, desc, sdfg, subset=memlet.subset)
     ref = ''
 
     # Get defined type (pointer, stream etc.) and change the type definition
@@ -308,7 +308,7 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
         defined_types = dispatcher.defined_vars.get(ptrname, ancestor)
     defined_type, defined_ctype = defined_types
 
-    datadef = codegen.ptr(memlet.data, desc, sdfg)
+    datadef = ptrname
 
     def make_const(expr: str) -> str:
         # check whether const has already been added before
