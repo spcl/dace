@@ -56,6 +56,8 @@ def test_basic():
     assert (isinstance(pre, dace.nodes.Tasklet) and f"{backend}StreamSynchronize(" in pre.code.as_string
             for pre in state.predecessors(node)), ("At then end of each state any used stream must be synchronized.")
 
+    sdfg.compile()
+
 
 @pytest.mark.gpu
 def test_extended():
@@ -84,6 +86,7 @@ def test_extended():
     sdfg.apply_gpu_transformations()
     gpu_stream_pipeline.apply_pass(sdfg, {})
 
+
     # Test 1: Two GPU streams were used since we use the Naive Stream scheduler
     state = sdfg.states()[0]
     sink_nodes = state.sink_nodes()
@@ -104,10 +107,112 @@ def test_extended():
         n for n in state.nodes() if isinstance(n, dace.nodes.Tasklet) and f"{backend}MemcpyAsync(" in n.code.as_string
     ]
     for tasklet in memcopy_tasklets:
-        assert len(tasklet.in_connectors) == 1, ("Memcpy tasklets must have exactly one input connector "
+        assert len(tasklet.in_connectors) == 2, ("Memcpy tasklets must have two connectors "
                                                  "corresponding to the GPU stream.")
+        assert "__dace_current_stream" in tasklet.in_connectors
 
-        in_connector = next(iter(tasklet.in_connectors))
+    sdfg.compile()
 
-        assert in_connector in tasklet.code.as_string, (
-            "Memcpy tasklets must reference their GPU stream input connector in the memcpy call.")
+@pytest.mark.gpu
+def test_numerical_correctness():
+    """
+    Test that verifies numerical correctness by comparing CPU and GPU program outputs.
+    The test creates a simple computation (element-wise multiplication and addition),
+    runs it on both CPU and GPU, and verifies that the results match within tolerance.
+    """
+    import numpy as np
+
+    @dace.program
+    def compute(A: dace.float32[128], B: dace.float32[128], C: dace.float32[128]):
+        for i in dace.map[0:128:1]:
+            C[i] = A[i] * 2.0 + B[i]
+
+    # Create test data
+    rng = np.random.default_rng(42)
+    A = rng.random(128, dtype=np.float32)
+    B = rng.random(128, dtype=np.float32)
+    C_cpu = np.zeros(128, dtype=np.float32)
+    C_gpu = np.zeros(128, dtype=np.float32)
+
+    # Run on CPU
+    sdfg_cpu = compute.to_sdfg()
+    sdfg_cpu(A=A.copy(), B=B.copy(), C=C_cpu)
+
+    # Run on GPU
+    sdfg_gpu = compute.to_sdfg()
+    sdfg_gpu.apply_gpu_transformations()
+    gpu_stream_pipeline.apply_pass(sdfg_gpu, {})
+    sdfg_gpu(A=A.copy(), B=B.copy(), C=C_gpu)
+
+    # Verify numerical correctness
+    assert np.allclose(C_cpu, C_gpu, rtol=1e-5, atol=1e-7), (
+        f"CPU and GPU results do not match. Max difference: {np.max(np.abs(C_cpu - C_gpu))}"
+    )
+
+    # Verify expected result
+    expected = A * 2.0 + B
+    assert np.allclose(C_cpu, expected, rtol=1e-5, atol=1e-7), (
+        "CPU result does not match expected computation"
+    )
+    assert np.allclose(C_gpu, expected, rtol=1e-5, atol=1e-7), (
+        "GPU result does not match expected computation"
+    )
+
+
+@pytest.mark.gpu
+def test_numerical_correctness_complex():
+    """
+    Test numerical correctness for a more complex computation involving
+    multiple operations and dependencies between array elements.
+    """
+    import numpy as np
+
+    @dace.program
+    def complex_compute(A: dace.float64[128], B: dace.float64[128], 
+                       C: dace.float64[128], D: dace.float64[128]):
+        # First map: C = A * B
+        for i in dace.map[0:128:1]:
+            C[i] = A[i] * B[i]
+        
+        # Second map: D = C + A (depends on result of first map)
+        for i in dace.map[0:128:1]:
+            D[i] = C[i] + A[i]
+
+    # Create test data
+    rng = np.random.default_rng(123)
+    A = rng.random(128, dtype=np.float64)
+    B = rng.random(128, dtype=np.float64)
+    C_cpu = np.zeros(128, dtype=np.float64)
+    D_cpu = np.zeros(128, dtype=np.float64)
+    C_gpu = np.zeros(128, dtype=np.float64)
+    D_gpu = np.zeros(128, dtype=np.float64)
+
+    # Run on CPU
+    sdfg_cpu = complex_compute.to_sdfg()
+    sdfg_cpu(A=A.copy(), B=B.copy(), C=C_cpu, D=D_cpu)
+
+    # Run on GPU
+    sdfg_gpu = complex_compute.to_sdfg()
+    sdfg_gpu.apply_gpu_transformations()
+    gpu_stream_pipeline.apply_pass(sdfg_gpu, {})
+    sdfg_gpu(A=A.copy(), B=B.copy(), C=C_gpu, D=D_gpu)
+
+    # Verify numerical correctness for intermediate result C
+    assert np.allclose(C_cpu, C_gpu, rtol=1e-12, atol=1e-14), (
+        f"CPU and GPU results for C do not match. Max difference: {np.max(np.abs(C_cpu - C_gpu))}"
+    )
+
+    # Verify numerical correctness for final result D
+    assert np.allclose(D_cpu, D_gpu, rtol=1e-12, atol=1e-14), (
+        f"CPU and GPU results for D do not match. Max difference: {np.max(np.abs(D_cpu - D_gpu))}"
+    )
+
+    # Verify expected results
+    expected_C = A * B
+    expected_D = expected_C + A
+    assert np.allclose(D_cpu, expected_D, rtol=1e-12, atol=1e-14), (
+        "CPU result does not match expected computation"
+    )
+    assert np.allclose(D_gpu, expected_D, rtol=1e-12, atol=1e-14), (
+        "GPU result does not match expected computation"
+    )
