@@ -9,7 +9,7 @@ from dace.fpga_testing import fpga_test, xilinx_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory, StreamingComposition
 from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
-from dace.config import set_temporary
+from dace.autodiff import add_backward_pass
 
 # Data set sizes
 # N
@@ -32,6 +32,10 @@ def initialize(N, datatype=np.float64):
     x = np.fromfunction(lambda i: (i % N) / N, (N, ), dtype=datatype)
 
     return alpha, beta, A, B, x
+
+
+def gesummv_jax_kernel(jnp, alpha, beta, A, B, x):
+    return jnp.sum(alpha * (A @ x) + beta * (B @ x))
 
 
 def run_gesummv(device_type: dace.dtypes.DeviceType):
@@ -69,6 +73,40 @@ def run_gesummv(device_type: dace.dtypes.DeviceType):
     return sdfg
 
 
+def run_gesummv_autodiff():
+    import jax
+    import jax.numpy as jnp
+
+    # Initialize data (polybench mini size)
+    N = sizes["mini"]
+    alpha, beta, A, B, x = initialize(N)
+
+    # Initialize gradient computation data
+    gradient_A = np.zeros_like(A)
+    gradient___return = np.ones((1, ), dtype=np.float64)
+
+    # Define sum reduction for the output
+    @dc.program
+    def autodiff_kernel(alpha: dc.float64, beta: dc.float64, A: dc.float64[N, N], B: dc.float64[N, N],
+                        x: dc.float64[N]):
+        C = gesummv_kernel(alpha, beta, A, B, x)
+        return np.sum(C)
+
+    # Add the backward pass to the SDFG
+    sdfg = autodiff_kernel.to_sdfg()
+    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"])
+    sdfg(alpha, beta, A, B, x, N=N, gradient_A=gradient_A, gradient___return=gradient___return)
+
+    # Enable float64 support
+    jax.config.update("jax_enable_x64", True)
+
+    # Numerically validate vs JAX
+    jax_kernel = lambda alpha, beta, A, B, x: gesummv_jax_kernel(jnp, alpha, beta, A, B, x)
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=2), static_argnums=(0, 1))
+    jax_grad_A = jax_grad(alpha, beta, A, B, x)
+    np.testing.assert_allclose(gradient_A, jax_grad_A)
+
+
 def test_cpu():
     run_gesummv(dace.dtypes.DeviceType.CPU)
 
@@ -76,6 +114,12 @@ def test_cpu():
 @pytest.mark.gpu
 def test_gpu():
     run_gesummv(dace.dtypes.DeviceType.GPU)
+
+
+@pytest.mark.autodiff
+def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
+    run_gesummv_autodiff()
 
 
 @pytest.mark.skip(reason="Xilinx synthesis fails")
@@ -94,6 +138,7 @@ if __name__ == "__main__":
 
     if target == "cpu":
         run_gesummv(dace.dtypes.DeviceType.CPU)
+        run_gesummv_autodiff()
     elif target == "gpu":
         run_gesummv(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":
