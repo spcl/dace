@@ -188,7 +188,7 @@ class CopyContext:
 
             if isinstance(desc, data.Scalar):
                 # GPU scalar special-case
-                if desc.storage in dtypes.GPU_MEMORY_STORAGES_EXPERIMENTAL_CUDACODEGEN:
+                if desc.storage in dtypes.GPU_STORAGES:
                     parent = state.sdfg.parent_nsdfg_node
                     if parent is not None and name in parent.in_connectors:
                         return f"&{ptr}"
@@ -313,7 +313,7 @@ class OutOfKernelCopyStrategy(CopyStrategy):
         parent_map_tuple = helpers.get_parent_map(state, deeper_node)
         while parent_map_tuple is not None:
             parent_map, parent_state = parent_map_tuple
-            if parent_map.map.schedule in dtypes.GPU_SCHEDULES_EXPERIMENTAL_CUDACODEGEN:
+            if parent_map.map.schedule in dtypes.GPU_SCHEDULES + dtypes.EXPERIMENTAL_GPU_SCHEDULES:
                 return False
             else:
                 parent_map_tuple = helpers.get_parent_map(parent_state, parent_map)
