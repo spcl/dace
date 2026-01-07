@@ -513,7 +513,8 @@ class CPUCodeGen(TargetCodeGenerator):
 
             return
         elif (nodedesc.storage == dtypes.StorageType.Register):
-
+            # The assignment necessary to unify the explicit streams and streams declared through
+            # the state of the SDFG.
             if nodedesc.dtype == dtypes.gpuStream_t:
                 ctype = dtypes.gpuStream_t.ctype
                 allocation_stream.write(f"{ctype}* {name} = __state->gpu_context->streams;")
@@ -1065,8 +1066,6 @@ class CPUCodeGen(TargetCodeGenerator):
             if isinstance(node, nodes.CodeNode) and not edge.data.is_empty():
                 if not uconn:
                     return
-                    raise SyntaxError("Cannot copy memlet without a local connector: {} to {}".format(
-                        str(edge.src), str(edge.dst)))
 
                 conntype = node.out_connectors[uconn]
                 is_scalar = not isinstance(conntype, dtypes.pointer)
