@@ -3,6 +3,14 @@ from dace import Config
 from dace.codegen import common
 
 
+def get_gpu_stream_array_name() -> str:
+    return "gpu_streams"
+
+
+def get_gpu_stream_connector_name() -> str:
+    return "__stream_"
+
+
 def generate_sync_debug_call() -> str:
     """
     Generate backend sync and error-check calls as a string if

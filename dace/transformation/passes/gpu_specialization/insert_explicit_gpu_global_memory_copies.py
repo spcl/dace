@@ -7,6 +7,7 @@ from dace import SDFG, SDFGState, dtypes, properties
 from dace.transformation.passes.gpu_specialization.helpers.copy_strategies import CopyContext, OutOfKernelCopyStrategy
 from dace.sdfg.graph import Edge, MultiConnectorEdge
 from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import get_gpu_stream_connector_name
 
 
 def create_viewed_copy_kernel(parent_state: dace.SDFGState, src_node: dace.nodes.AccessNode,
@@ -115,9 +116,6 @@ class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
         """
         # Prepare GPU stream
 
-        # gpustream_assignments: Dict[dace.nodes.Node, Union[int, str]] = pipeline_results['NaiveGPUStreamScheduler']
-        gpustream_assignments: Dict[dace.nodes.Node, Union[int, str]] = dict()
-
         # Initialize the strategy for copies that occur outside of kernel execution
         out_of_kernel_copy = OutOfKernelCopyStrategy()
 
@@ -125,12 +123,8 @@ class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
         copy_worklist = self.find_all_data_copies(sdfg)
 
         for copy_sdfg, state, src_node, dst_node, edge in copy_worklist:
-            gpustream_assignments[src_node] = "__dace_current_stream"
-            gpustream_assignments[dst_node] = "__dace_current_stream"
 
-        for copy_sdfg, state, src_node, dst_node, edge in copy_worklist:
-
-            copy_context = CopyContext(copy_sdfg, state, src_node, dst_node, edge, gpustream_assignments)
+            copy_context = CopyContext(copy_sdfg, state, src_node, dst_node, edge)
 
             # Only insert copy tasklets for GPU related copies occuring out of the
             # kernel (i.e. a GPU_device scheduled map)
