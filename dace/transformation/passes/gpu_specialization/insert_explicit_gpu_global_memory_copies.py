@@ -188,7 +188,9 @@ class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
                 dst_node_pred, dst_node_conn, _, dst_conn, memlet = edge
 
                 if memlet.other_subset is None:
-                    state.add_edge(dst_node_pred, dst_node_conn, tasklet, "_in_" + src_node.data, copy.deepcopy(memlet))
+                    src_memlet = copy.deepcopy(memlet)
+                    src_memlet.data = src_node.data
+                    state.add_edge(dst_node_pred, dst_node_conn, tasklet, "_in_" + src_node.data, src_memlet)
                     dst_memlet = copy.deepcopy(memlet)
                     dst_memlet.data = dst_node.data
                     state.add_edge(tasklet, "_out_" + dst_node.data, dst_node, dst_conn, dst_memlet)

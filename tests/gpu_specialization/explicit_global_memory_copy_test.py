@@ -307,3 +307,25 @@ def test_3d_strided_copy_w_other_subset(stride_1, stride_2, stride_3):
     # Verify correctness
     cp.testing.assert_array_equal(B[0:4:copy_strides[0], 0:4:copy_strides[1], 0:4:copy_strides[2]],
                                   A[4:8:copy_strides[0], 4:8:copy_strides[1], 4:8:copy_strides[2]])
+
+
+@pytest.mark.gpu
+def test_independent_copies():
+
+    @dace.program
+    def independent_copies(A: dace.uint32[128], B: dace.uint32[128], C: dace.uint32[128], D: dace.uint32[128]):
+        for i in dace.map[0:128:1]:
+            B[i] = A[i]
+        for i in dace.map[0:128:1]:
+            D[i] = C[i]
+
+    sdfg = independent_copies.to_sdfg()
+    sdfg.apply_gpu_transformations()
+    sdfg.validate()
+    sdfg.save("s1.sdfg")
+
+    InsertExplicitGPUGlobalMemoryCopies().apply_pass(sdfg, {})
+    sdfg.save("s2.sdfg")
+
+    sdfg.validate()
+    sdfg.compile()
