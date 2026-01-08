@@ -8,7 +8,6 @@ from typing import AnyStr, Iterable, Optional, Tuple, List, Set
 from dace import sdfg as sd, symbolic
 from dace.sdfg import graph as gr, utils as sdutil, InterstateEdge
 from dace.sdfg.state import ControlFlowRegion, ControlFlowBlock
-from dace.subsets import Range
 from dace.transformation import transformation
 
 
@@ -858,47 +857,3 @@ def find_rotated_for_loop(
         return None
 
     return itervar, (start, end, stride), (start_states, last_loop_state)
-
-
-class LoopRangeAnnotator(DetectLoop, transformation.MultiStateTransformation):
-
-    def can_be_applied(self, graph, expr_index, sdfg, permissive = False):
-        if super().can_be_applied(graph, expr_index, sdfg, permissive):
-            loop_info = self.loop_information()
-            if loop_info is None:
-                return False
-            return True
-        return False
-
-    def loop_guard_state(self):
-        """
-        Returns the loop guard state of this loop (i.e., latch state or begin state for inverted or self loops).
-        """
-        if self.expr_index in (0, 1):
-            return self.loop_guard
-        elif self.expr_index in (2, 3, 5, 6, 7):
-            return self.loop_latch
-        else:
-            return self.loop_begin
-
-    def apply(self, graph, sdfg):
-        itvar, rng, _ = self.loop_information()
-
-        body = self.loop_body()
-        meta = self.loop_meta_states()
-        full_body = set(body)
-        full_body.update(meta)
-
-        # Make sure the range is flipped such that the stride is positive (in order to match subsets.Range).
-        start, stop, stride = rng
-        # =====
-        # NOTE: This inequality needs to be checked exactly like this due to sympy limitations, do not simplify!
-        if (stride < 0) == True:
-            rng = (stop, start, -stride)
-        # =====
-
-        for v in full_body:
-            v.ranges[itvar] = Range([rng])
-        guard_state = self.loop_guard_state()
-        guard_state.is_loop_guard = True
-        guard_state.itvar = itvar

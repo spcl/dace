@@ -2,7 +2,6 @@
 
 from functools import reduce
 from operator import mul
-from typing import Dict, Collection
 import warnings
 
 from dace import SDFG, Memlet, dtypes
@@ -151,7 +150,7 @@ def test_reshape_strides_from_strided_and_offset_range():
 def test_arrays_bigger_than_max_stack_size_get_deallocated():
     # Setup SDFG with array A that is too big to be allocated on the stack.
     sdfg = SDFG("test")
-    sdfg.add_array(name="A", shape=(10000,), dtype=dtypes.float64, storage=dtypes.StorageType.Register, transient=True)
+    sdfg.add_array(name="A", shape=(10000, ), dtype=dtypes.float64, storage=dtypes.StorageType.Register, transient=True)
     state = sdfg.add_state("state", is_start_block=True)
     read = state.add_access("A")
     tasklet = state.add_tasklet("dummy", {"a"}, {}, "a = 1")

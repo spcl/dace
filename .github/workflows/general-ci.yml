@@ -2,11 +2,11 @@ name: General Tests
 
 on:
   push:
-    branches: [ main, v1/maintenance, ci-fix ]
+    branches: [ main, ci-fix ]
   pull_request:
-    branches: [ main, v1/maintenance, ci-fix ]
+    branches: [ main, ci-fix ]
   merge_group:
-    branches: [ main, v1/maintenance, ci-fix ]
+    branches: [ main, ci-fix ]
 
 concurrency:
   group: ${{github.workflow}}-${{github.ref}}
@@ -15,7 +15,7 @@ concurrency:
 jobs:
   test:
     if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     strategy:
       matrix:
         python-version: ['3.9','3.13']

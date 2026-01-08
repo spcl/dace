@@ -206,7 +206,6 @@ def test_alloc_persistent():
     del csdfg
 
 
-@pytest.mark.skip(reason="In v1, produces two tasklets side-by-side, leading to nondeterministic code order")
 def test_alloc_persistent_threadlocal():
 
     @dace.program
@@ -600,7 +599,7 @@ if __name__ == '__main__':
     test_persistent_gpu_transpose_regression()
     test_alloc_persistent_register()
     test_alloc_persistent()
-    # test_alloc_persistent_threadlocal()
+    test_alloc_persistent_threadlocal()
     test_alloc_persistent_threadlocal_naming()
     test_alloc_multistate()
     test_nested_view_samename()

@@ -1,5 +1,4 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-import ctypes
 import dace
 from dataclasses import dataclass
 import numpy as np
@@ -460,7 +459,6 @@ if __name__ == '__main__':
     test_write_structure_in_map()
     test_readwrite_structure_in_map()
     test_write_structure_in_loop()
-
     test_struct_interface()
     test_struct_recursive()
     test_struct_recursive_from_dataclass()

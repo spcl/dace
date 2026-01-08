@@ -369,35 +369,6 @@ def remove_name_collisions(sdfg: SDFG):
             nsdfg.replace_dict(replacements)
 
 
-def create_unified_descriptor_repository(sdfg: SDFG, stree: tn.ScheduleTreeRoot):
-    """
-    Creates a single descriptor repository from an SDFG and all nested SDFGs. This includes
-    data containers, symbols, constants, etc.
-
-    :param sdfg: The top-level SDFG to create the repository from.
-    :param stree: The tree root in which to make the unified descriptor repository.
-    """
-    stree.containers = sdfg.arrays
-    stree.symbols = sdfg.symbols
-    stree.constants = sdfg.constants_prop
-
-    # Since the SDFG is assumed to be de-aliased and contain unique names, we union the contents of
-    # the nested SDFGs' descriptor repositories
-    for nsdfg in sdfg.all_sdfgs_recursive():
-        transients = {k: v for k, v in nsdfg.arrays.items() if v.transient}
-
-        # Get all symbols that are not participating in nested SDFG symbol mappings (they will be removed)
-        syms_to_ignore = set()
-        if nsdfg.parent_nsdfg_node is not None:
-            syms_to_ignore = nsdfg.parent_nsdfg_node.symbol_mapping.keys()
-        symbols = {k: v for k, v in nsdfg.symbols.items() if k not in stree.symbols and k not in syms_to_ignore}
-
-        constants = {k: v for k, v in nsdfg.constants_prop.items() if k not in stree.constants}
-        stree.containers.update(transients)
-        stree.symbols.update(symbols)
-        stree.constants.update(constants)
-
-
 def _make_view_node(state: SDFGState, edge: gr.MultiConnectorEdge[Memlet], view_name: str,
                     viewed_name: str) -> tn.ViewNode:
     """

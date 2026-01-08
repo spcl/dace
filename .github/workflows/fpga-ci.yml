@@ -2,11 +2,11 @@ name: FPGA Tests
 
 on:
   push:
-    branches: [ main, v1/maintenance, ci-fix ]
+    branches: [ main, ci-fix ]
   pull_request:
-    branches: [ main, v1/maintenance, ci-fix ]
+    branches: [ main, ci-fix ]
   merge_group:
-    branches: [ main, v1/maintenance, ci-fix ]
+    branches: [ main, ci-fix ]
 
 env:
   CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
