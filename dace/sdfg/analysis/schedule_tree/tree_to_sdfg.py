@@ -800,7 +800,7 @@ def insert_state_boundaries_to_tree(stree: tn.ScheduleTreeRoot) -> tn.ScheduleTr
     """
     Inserts StateBoundaryNode objects into a schedule tree where more than one SDFG state would be necessary.
     Operates in-place on the given schedule tree.
-    
+
     This happens when there is a:
       * write-after-write dependency;
       * write-after-read dependency that cannot be fulfilled via memlets;

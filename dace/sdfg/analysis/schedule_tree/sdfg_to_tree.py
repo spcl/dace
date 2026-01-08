@@ -762,6 +762,7 @@ def _generate_views_in_scope(
 
     return result
 
+
 def _prepare_sdfg_for_conversion(sdfg: SDFG, toplevel: bool) -> None:
     from dace.transformation import helpers as xfh  # Avoid import loop
 
@@ -777,6 +778,7 @@ def _prepare_sdfg_for_conversion(sdfg: SDFG, toplevel: bool) -> None:
 
         # Ensure no arrays alias in SDFG tree
         dealias_sdfg(sdfg)
+
 
 def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) -> tn.ScheduleTreeRoot:
     """
