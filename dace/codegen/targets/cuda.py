@@ -1653,6 +1653,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         # TODO: This (const behavior and code below) is all a hack.
         #       Refactor and fix when nested SDFGs are separate functions.
         self._dispatcher.defined_vars.enter_scope(scope_entry)
+        self._dispatcher.declared_arrays.enter_scope(scope_entry)
         prototype_kernel_args = {}
         for aname, arg in kernel_args.items():  # `list` wrapper is used to modify kernel_args within the loop
             if aname in const_params:
@@ -1715,6 +1716,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                                    tbmap, dtbmap, kernel_args_typed, self._globalcode, kernel_stream)
 
         self._dispatcher.defined_vars.exit_scope(scope_entry)
+        self._dispatcher.declared_arrays.exit_scope(scope_entry)
 
         # Add extra kernel arguments for a grid barrier object
         if create_grid_barrier:
@@ -2803,7 +2805,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
     def generate_nsdfg_header(self, sdfg, cfg, state, state_id, node, memlet_references, sdfg_label):
         return 'DACE_DFI ' + self._cpu_codegen.generate_nsdfg_header(
-            sdfg, cfg, state, state_id, node, memlet_references, sdfg_label, state_struct=False)
+            sdfg, cfg, state, state_id, node, memlet_references, sdfg_label, state_struct=False, gpu=True)
 
     def generate_nsdfg_call(self, sdfg, cfg, state, node, memlet_references, sdfg_label):
         return self._cpu_codegen.generate_nsdfg_call(sdfg,
@@ -2812,7 +2814,8 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                                                      node,
                                                      memlet_references,
                                                      sdfg_label,
-                                                     state_struct=False)
+                                                     state_struct=False,
+                                                     gpu=True)
 
     def generate_nsdfg_arguments(self, sdfg, cfg, dfg, state, node):
         result = self._cpu_codegen.generate_nsdfg_arguments(sdfg, cfg, dfg, state, node)

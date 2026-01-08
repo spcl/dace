@@ -2366,6 +2366,24 @@ def get_control_flow_block_dominators(sdfg: SDFG,
             all_postdom.update(cfg_analysis.all_dominators(sdfg, ipostdom))
 
 
+# NOTE: Pickled from f2dace/dev
+def add_cfg_dominator_states(sdfg: SDFG):
+    """
+    Adds extraneous empty SDFGStates to the SDFG to facilitate finding proper (post)dominators for (de)allocating
+    shared transients. Specifically, it adds an empty SDFGState before every un-nested CFG and an empty SDFGState after
+    every un-nested sink CFG.
+
+    :param sdfg: The SDFG to add extraneous states to.
+    :note: Operates in-place on the graph.
+    """
+
+    for node in sdfg.nodes():
+        if isinstance(node, ControlFlowBlock):
+            sdfg.add_state_before(node, 'idom_' + node.label)
+            if sdfg.out_degree(node) == 0:
+                sdfg.add_state_after(node, 'ipostdom_' + node.label)
+
+
 def set_nested_sdfg_parent_references(sdfg: SDFG):
     """
     Sets the parent_sdfg attribute for all NestedSDFGs recursively.
