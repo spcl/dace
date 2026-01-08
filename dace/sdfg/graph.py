@@ -25,6 +25,7 @@ EdgeT = TypeVar('EdgeT')
 
 @dace.serialize.serializable
 class Edge(Generic[T]):
+
     def __init__(self, src, dst, data: T):
         self._src = src
         self._dst = dst
@@ -83,6 +84,7 @@ class Edge(Generic[T]):
 
 @dace.serialize.serializable
 class MultiEdge(Edge, Generic[T]):
+
     def __init__(self, src, dst, data: T, key):
         super(MultiEdge, self).__init__(src, dst, data)
         self._key = key
@@ -94,6 +96,7 @@ class MultiEdge(Edge, Generic[T]):
 
 @dace.serialize.serializable
 class MultiConnectorEdge(MultiEdge, Generic[T]):
+
     def __init__(self, src, src_conn: str, dst, dst_conn: str, data: T, key):
         super(MultiConnectorEdge, self).__init__(src, dst, data, key)
         self._src_conn = src_conn
@@ -172,6 +175,7 @@ class MultiConnectorEdge(MultiEdge, Generic[T]):
 
 @dace.serialize.serializable
 class Graph(Generic[NodeT, EdgeT]):
+
     def _not_implemented_error(self):
         return NotImplementedError("Not implemented for " + str(type(self)))
 
@@ -378,7 +382,7 @@ class Graph(Generic[NodeT, EdgeT]):
             if len(sources) != 1:
                 source = next(iter(self.nodes()), None)
                 if source is None:
-                    return [] # graph has no nodes
+                    return []  # graph has no nodes
                 sources = [source]
 
         seen = OrderedDict()  # No OrderedSet in Python
@@ -397,7 +401,7 @@ class Graph(Generic[NodeT, EdgeT]):
                          source_node: NodeT,
                          dest_node: NodeT,
                          as_edges: bool = False) -> Iterable[Sequence[Union[Edge[EdgeT], NodeT]]]:
-        """ 
+        """
         Finds all simple paths (with no repeating nodes) from ``source_node``
         to ``dest_node``.
 
@@ -438,15 +442,29 @@ class Graph(Generic[NodeT, EdgeT]):
 
 @dace.serialize.serializable
 class SubgraphView(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
+    """
+    :note: Modification of the full graph are not reflected in the output of `nodes()`
+        or any other node related function. However, changes that affects the edges
+        will be reflected in the output of `edges()` and in other edge related functions.
+    """
+
     def __init__(self, graph: Graph[NodeT, EdgeT], subgraph_nodes: Sequence[NodeT]):
         super().__init__()
         self._graph = graph
-        self._subgraph_nodes = list(sorted(subgraph_nodes, key=lambda n: graph.node_id(n)))
+        # Is there an inherent reason why the nodes are in the same relative order than
+        #  in their source graph. If there is no reason we can even drop the `sorted()`
+        #  and store them in a `set`. Note as of Pathon 3.6, `dict` is ordered.
+        self._subgraph_nodes = {n: None for n in sorted(subgraph_nodes, key=lambda n: graph.node_id(n))}
 
-    def nodes(self) -> Sequence[NodeT]:
-        return self._subgraph_nodes
+    def nodes(self) -> List[NodeT]:
+        # TODO: The `Graph` interface defines that `nodes()` returns an `Iterable`, but here
+        #   it was "promoted" to a `Sequence`. Figuring out if we can go back to an `Interable`
+        #   and get rid of the `list` creation. The same applies to `edges()`.
+        return list(self._subgraph_nodes.keys())
 
     def edges(self) -> List[Edge[EdgeT]]:
+        # NOTE: If the edge or node structure in the containing graph changes then the output of
+        #   this function changes as well, while the output of `self.nodes()` is not affected.
         return [e for e in self._graph.edges() if e.src in self._subgraph_nodes and e.dst in self._subgraph_nodes]
 
     def in_edges(self, node: NodeT) -> List[Edge[EdgeT]]:
@@ -484,37 +502,37 @@ class SubgraphView(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
     def remove_edge(self, edge):
         raise PermissionError
 
-    def edges_between(self, source, destination):
-        if source not in self._subgraph_nodes or \
-           destination not in self._subgraph_nodes:
+    def edges_between(self, source, destination) -> Iterable[Edge[EdgeT]]:
+        if not (source in self._subgraph_nodes and destination in self._subgraph_nodes):
             raise NodeNotFoundError
         return self._graph.edges_between(source, destination)
 
-    def in_degree(self, node):
+    def in_degree(self, node) -> int:
         return len(self.in_edges(node))
 
-    def out_degree(self, node):
+    def out_degree(self, node) -> int:
         return len(self.out_edges(node))
 
-    def number_of_nodes(self):
+    def number_of_nodes(self) -> int:
         return len(self._subgraph_nodes)
 
-    def number_of_edges(self):
+    def number_of_edges(self) -> int:
         return len(self.edges())
 
-    def is_directed(self):
+    def is_directed(self) -> bool:
         return self._graph.is_directed()
 
-    def is_multigraph(self):
+    def is_multigraph(self) -> bool:
         return self._graph.is_multigraph()
 
     @property
-    def graph(self):
+    def graph(self) -> Graph[NodeT, EdgeT]:
         return self._graph
 
 
 @dace.serialize.serializable
 class DiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
+
     def __init__(self):
         super().__init__()
         self._nx = nx.DiGraph()
@@ -570,7 +588,7 @@ class DiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
 
     def find_cycles(self):
         return nx.simple_cycles(self._nx)
-    
+
     def has_cycles(self) -> bool:
         try:
             nx.find_cycle(self._nx, self.source_nodes())
@@ -580,6 +598,7 @@ class DiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
 
 
 class MultiDiGraph(DiGraph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
+
     def __init__(self):
         super().__init__()
         self._nx = nx.MultiDiGraph()
@@ -600,6 +619,7 @@ class MultiDiGraph(DiGraph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
 
 
 class MultiDiConnectorGraph(MultiDiGraph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
+
     def __init__(self):
         super().__init__()
 
@@ -622,6 +642,7 @@ class MultiDiConnectorGraph(MultiDiGraph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
 class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
     """ Directed graph where nodes and edges are returned in the order they
         were added. """
+
     def __init__(self):
         self._nx = nx.DiGraph()
         # {node: ({in edge: None}, {out edges: None})}
@@ -680,7 +701,7 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
 
     def remove_node(self, node: NodeT):
         try:
-            for edge in itertools.chain(self.in_edges(node), self.out_edges(node)):
+            for edge in self.all_edges(node):
                 self.remove_edge(edge)
             del self._nodes[node]
             self._nx.remove_node(node)
@@ -716,10 +737,14 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
 
     def find_cycles(self):
         return nx.simple_cycles(self._nx)
-    
+
     def has_cycles(self) -> bool:
         try:
-            nx.find_cycle(self._nx, self.source_nodes())
+            sources = self.source_nodes()
+            if len(sources) == 0:
+                nx.find_cycle(self._nx)
+            else:
+                nx.find_cycle(self._nx, sources)
             return True
         except nx.NetworkXNoCycle:
             return False
@@ -738,6 +763,7 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
 class OrderedMultiDiGraph(OrderedDiGraph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
     """ Directed multigraph where nodes and edges are returned in the order
         they were added. """
+
     def __init__(self):
         self._nx = nx.MultiDiGraph()
         # {node: ({in edge: edge}, {out edge: edge})}
@@ -786,6 +812,7 @@ class OrderedMultiDiGraph(OrderedDiGraph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
 class OrderedMultiDiConnectorGraph(OrderedMultiDiGraph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
     """ Directed multigraph with node connectors (SDFG states), where nodes
         and edges are returned in the order they were added. """
+
     def __init__(self):
         super().__init__()
 

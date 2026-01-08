@@ -5,7 +5,6 @@ from dace.sdfg import utils
 
 
 def test_traverse_sdfg_with_defined_symbols():
-    pass
     sdfg = dace.SDFG("tester")
     sdfg.add_symbol("my_symbol", dace.int32)
 

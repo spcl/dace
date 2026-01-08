@@ -1,16 +1,25 @@
 name: NASA/NOAA pyFV3 repository build test
 
+# Temporarily disabled for main, and instead applied to a specific DaCe v1 maintenance branch (v1/maintenance). Once
+# the FV3 bridge has been adapted to DaCe v1, this will need to be reverted back to apply to main.
 on:
   push:
+    #branches: [ main, ci-fix ]
     branches: [ v1/maintenance, ci-fix ]
   pull_request:
+    #branches: [ main, ci-fix ]
     branches: [ v1/maintenance, ci-fix ]
   merge_group:
+    #branches: [ main, ci-fix ]
     branches: [ v1/maintenance, ci-fix ]
 
 defaults:
     run:
       shell: bash
+
+concurrency:
+  group: ${{github.workflow}}-${{github.ref}}
+  cancel-in-progress: true
 
 jobs:
     build_and_validate_pyFV3:
@@ -28,7 +37,7 @@ jobs:
               submodules: 'recursive'
               path: 'pyFV3'
       - uses: actions/checkout@v4
-        with: 
+        with:
             path: 'dace'
             submodules: 'recursive'
       - name: Set up Python ${{ matrix.python-version }}
@@ -41,9 +50,9 @@ jobs:
           sudo apt-get install -y libopenmpi-dev libboost-all-dev
           gcc --version
       # Because Github doesn't allow us to do a git checkout in code
-      # we use a trick to checkout DaCe first (not using the external submodule)    
+      # we use a trick to checkout DaCe first (not using the external submodule)
       # install the full suite via requirements_dev, then re-install the correct DaCe
-      - name: Install Python packages 
+      - name: Install Python packages
         run: |
           python -m pip install --upgrade pip wheel setuptools
           pip install -e ./pyFV3[develop]

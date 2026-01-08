@@ -86,14 +86,17 @@ def test_argmax_1_int64(A: dace.int64[10, 5, 3]):
 
 
 def test_return_both():
-    from dace.frontend.python.replacements import _argminmax
+    from dace.frontend.python.replacements.reduction import _argminmax
+    from dace.frontend.python.newast import ProgramVisitor
 
     sdfg = dace.SDFG("test_return_both")
     state = sdfg.add_state()
 
     sdfg.add_array("IN", [10, 5, 3], dace.float64)
 
-    _, (outval, outidx) = _argminmax(None, sdfg, state, "IN", 1, "min", return_both=True)
+    pv = ProgramVisitor('test_return_both', '<unknown>', 0, 0, {}, {}, {}, {}, {}, {}, {}, {})
+    pv.sdfg = sdfg
+    _, (outval, outidx) = _argminmax(pv, sdfg, state, "IN", 1, "min", return_both=True)
 
     IN = np.random.rand(10, 5, 3)
     OUT_IDX = np.zeros((10, 3), dtype=np.int32)
@@ -227,6 +230,16 @@ def test_degenerate_reduction_implicit(A: dace.float64[1, 20]):
     return np.sum(A, axis=0)
 
 
+@compare_numpy_output()
+def test_any(A: dace.float64[20]):
+    return np.any(A > 0.8, axis=0)
+
+
+@compare_numpy_output()
+def test_all(A: dace.float64[20]):
+    return np.all(A > 0.8, axis=0)
+
+
 if __name__ == '__main__':
 
     # generated with cat tests/numpy/reductions_test.py | grep -oP '(?<=^def ).*(?=\()' | awk '{print $0 "()"}'
@@ -271,3 +284,6 @@ if __name__ == '__main__':
     test_scalar_reduction()
     test_degenerate_reduction_explicit()
     test_degenerate_reduction_implicit()
+
+    test_any()
+    test_all()

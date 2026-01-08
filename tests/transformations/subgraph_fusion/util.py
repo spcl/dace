@@ -26,7 +26,8 @@ def expand_reduce(sdfg: dace.SDFG,
                 rexp.setup_match(sdfg, sdfg.cfg_id, sdfg.node_id(graph), {ReduceExpansion.reduce: graph.node_id(node)},
                                  0)
                 if not rexp.can_be_applied(graph, 0, sdfg):
-                    print(f"WARNING: Cannot expand reduce node {node}:" "can_be_applied() failed.")
+                    print(f"WARNING: Cannot expand reduce node {node}:"
+                          "can_be_applied() failed.")
                     continue
                 reduce_nodes.append(node)
 
@@ -38,9 +39,9 @@ def expand_reduce(sdfg: dace.SDFG,
         for reduce_node in reduce_nodes:
             trafo_reduce.expand(sdfg, graph, reduce_node)
             if isinstance(sg, SubgraphView):
-                sg.nodes().remove(reduce_node)
-                sg.nodes().append(trafo_reduce._reduce)
-                sg.nodes().append(trafo_reduce._outer_entry)
+                # We have to do it that way because `add_node()` generates an error.
+                sg._subgraph_nodes.pop(reduce_node)
+                sg._subgraph_nodes.update({trafo_reduce._reduce: None, trafo_reduce._outer_entry: None})
 
 
 def expand_maps(sdfg: dace.SDFG,
@@ -84,4 +85,5 @@ def fusion(sdfg: dace.SDFG, graph: dace.SDFGState, subgraph: Union[SubgraphView,
                     sg.nodes().remove(graph.exit_node(map_entry))
         map_fusion.fuse(sdfg, graph, map_entries)
         if isinstance(sg, SubgraphView):
-            sg.nodes().append(map_fusion._global_map_entry)
+            # We have to do it that way because `add_node()` generates an error.
+            sg._subgraph_nodes.update({map_fusion._global_map_entry: None})

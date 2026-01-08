@@ -26,7 +26,7 @@ def test_eliminate_end_state_noassign():
     sdfg.add_edge(state1, state2, dace.InterstateEdge())
     sdfg.add_edge(state2, state3, dace.InterstateEdge(assignments=dict(k='k + 1')))
 
-    nsdfg = outer_state.add_nested_sdfg(sdfg, outer_sdfg, {}, {}, symbol_mapping={'k': 3})
+    nsdfg = outer_state.add_nested_sdfg(sdfg, {}, {}, symbol_mapping={'k': 3})
 
     nsdfg.sdfg.simplify()
     nsdfg.sdfg.simplify()

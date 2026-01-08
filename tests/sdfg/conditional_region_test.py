@@ -10,10 +10,10 @@ import dace.serialize
 
 def test_cond_region_if():
     sdfg = dace.SDFG('regular_if')
-    sdfg.add_array('A', (1,), dace.float32)
+    sdfg.add_array('A', (1, ), dace.float32)
     sdfg.add_symbol('i', dace.int32)
     state0 = sdfg.add_state('state0', is_start_block=True)
-    
+
     if1 = ConditionalBlock('if1')
     sdfg.add_node(if1)
     sdfg.add_edge(state0, if1, InterstateEdge())
@@ -25,15 +25,16 @@ def test_cond_region_if():
     acc_a = state1.add_access('A')
     t1 = state1.add_tasklet('t1', None, {'a'}, 'a = 100')
     state1.add_edge(t1, 'a', acc_a, None, dace.Memlet('A[0]'))
-    
+
     assert sdfg.is_valid()
-    A = np.ones((1,), dtype=np.float32)
+    A = np.ones((1, ), dtype=np.float32)
     sdfg(i=1, A=A)
     assert A[0] == 100
 
-    A = np.ones((1,), dtype=np.float32)
+    A = np.ones((1, ), dtype=np.float32)
     sdfg(i=0, A=A)
     assert A[0] == 1
+
 
 def test_serialization():
     sdfg = SDFG('test_serialization')
@@ -43,8 +44,9 @@ def test_serialization():
 
     for j in range(10):
         cfg = ControlFlowRegion(f'cfg_{j}', sdfg)
+        cfg.add_state('noop')
         cond_region.add_branch(CodeBlock(f'i == {j}'), cfg)
-    
+
     assert sdfg.is_valid()
 
     new_sdfg = SDFG.from_json(sdfg.to_json())
@@ -55,12 +57,13 @@ def test_serialization():
         assert condition == CodeBlock(f'i == {j}')
         assert cfg.label == f'cfg_{j}'
 
+
 def test_if_else():
     sdfg = dace.SDFG('regular_if_else')
-    sdfg.add_array('A', (1,), dace.float32)
+    sdfg.add_array('A', (1, ), dace.float32)
     sdfg.add_symbol('i', dace.int32)
     state0 = sdfg.add_state('state0', is_start_block=True)
-    
+
     if1 = ConditionalBlock('if1')
     sdfg.add_node(if1)
     sdfg.add_edge(state0, if1, InterstateEdge())
@@ -78,15 +81,16 @@ def test_if_else():
     t2 = state2.add_tasklet('t2', None, {'a'}, 'a = 200')
     state2.add_edge(t2, 'a', acc_a2, None, dace.Memlet('A[0]'))
     if1.add_branch(CodeBlock('i == 0'), else_body)
-    
+
     assert sdfg.is_valid()
-    A = np.ones((1,), dtype=np.float32)
+    A = np.ones((1, ), dtype=np.float32)
     sdfg(i=1, A=A)
     assert A[0] == 100
 
-    A = np.ones((1,), dtype=np.float32)
+    A = np.ones((1, ), dtype=np.float32)
     sdfg(i=0, A=A)
-    assert A[0] == 200    
+    assert A[0] == 200
+
 
 if __name__ == '__main__':
     test_cond_region_if()

@@ -8,10 +8,14 @@ from dace.sdfg.analysis.schedule_tree import sdfg_to_tree as s2t, treenodes as t
 
 def _make_regular_for_loop() -> SDFG:
     sdfg = dace.SDFG('regular_for')
-    sdfg.using_experimental_blocks = True
+    sdfg.using_explicit_control_flow = True
     state0 = sdfg.add_state('state0', is_start_block=True)
-    loop1 = LoopRegion(label='loop1', condition_expr='i < 10', loop_var='i', initialize_expr='i = 0',
-                       update_expr='i = i + 1', inverted=False)
+    loop1 = LoopRegion(label='loop1',
+                       condition_expr='i < 10',
+                       loop_var='i',
+                       initialize_expr='i = 0',
+                       update_expr='i = i + 1',
+                       inverted=False)
     sdfg.add_node(loop1)
     sdfg.add_symbol('i', dace.int32)
     sdfg.add_array('A', [10], dace.float32)
@@ -27,7 +31,7 @@ def _make_regular_for_loop() -> SDFG:
 
 def _make_regular_while_loop() -> SDFG:
     sdfg = dace.SDFG('regular_while')
-    sdfg.using_experimental_blocks = True
+    sdfg.using_explicit_control_flow = True
     state0 = sdfg.add_state('state0', is_start_block=True)
     loop1 = LoopRegion(label='loop1', condition_expr='i < 10')
     sdfg.add_array('A', [10], dace.float32)
@@ -47,7 +51,7 @@ def _make_regular_while_loop() -> SDFG:
 
 def _make_do_while_loop() -> SDFG:
     sdfg = dace.SDFG('do_while')
-    sdfg.using_experimental_blocks = True
+    sdfg.using_explicit_control_flow = True
     sdfg.add_symbol('i', dace.int32)
     state0 = sdfg.add_state('state0', is_start_block=True)
     loop1 = LoopRegion(label='loop1', condition_expr='i < 10', inverted=True)
@@ -67,12 +71,16 @@ def _make_do_while_loop() -> SDFG:
 
 def _make_do_for_loop() -> SDFG:
     sdfg = dace.SDFG('do_for')
-    sdfg.using_experimental_blocks = True
+    sdfg.using_explicit_control_flow = True
     sdfg.add_symbol('i', dace.int32)
     sdfg.add_array('A', [10], dace.float32)
     state0 = sdfg.add_state('state0', is_start_block=True)
-    loop1 = LoopRegion(label='loop1', condition_expr='i < 10', loop_var='i', initialize_expr='i = 0',
-                       update_expr='i = i + 1', inverted=True)
+    loop1 = LoopRegion(label='loop1',
+                       condition_expr='i < 10',
+                       loop_var='i',
+                       initialize_expr='i = 0',
+                       update_expr='i = i + 1',
+                       inverted=True)
     sdfg.add_node(loop1)
     state1 = loop1.add_state('state1', is_start_block=True)
     acc_a = state1.add_access('A')
@@ -88,12 +96,17 @@ def _make_do_for_loop() -> SDFG:
 
 def _make_do_for_inverted_cond_loop() -> SDFG:
     sdfg = dace.SDFG('do_for_inverted_cond')
-    sdfg.using_experimental_blocks = True
+    sdfg.using_explicit_control_flow = True
     sdfg.add_symbol('i', dace.int32)
     sdfg.add_array('A', [10], dace.float32)
     state0 = sdfg.add_state('state0', is_start_block=True)
-    loop1 = LoopRegion(label='loop1', condition_expr='i < 8', loop_var='i', initialize_expr='i = 0',
-                       update_expr='i = i + 1', inverted=True, update_before_condition=False)
+    loop1 = LoopRegion(label='loop1',
+                       condition_expr='i < 8',
+                       loop_var='i',
+                       initialize_expr='i = 0',
+                       update_expr='i = i + 1',
+                       inverted=True,
+                       update_before_condition=False)
     sdfg.add_node(loop1)
     state1 = loop1.add_state('state1', is_start_block=True)
     acc_a = state1.add_access('A')
@@ -109,7 +122,7 @@ def _make_do_for_inverted_cond_loop() -> SDFG:
 
 def _make_triple_nested_for_loop() -> SDFG:
     sdfg = dace.SDFG('gemm')
-    sdfg.using_experimental_blocks = True
+    sdfg.using_explicit_control_flow = True
     sdfg.add_symbol('i', dace.int32)
     sdfg.add_symbol('j', dace.int32)
     sdfg.add_symbol('k', dace.int32)
@@ -140,7 +153,7 @@ def _make_triple_nested_for_loop() -> SDFG:
 
     tmpnode2 = reduce_state.add_access('tmp')
     cnode = reduce_state.add_access('C')
-    red = reduce_state.add_reduce('lambda a, b: a + b', (2,), 0)
+    red = reduce_state.add_reduce('lambda a, b: a + b', (2, ), 0)
     reduce_state.add_edge(tmpnode2, None, red, None, dace.Memlet.simple('tmp', '0:N, 0:M, 0:K'))
     reduce_state.add_edge(red, None, cnode, None, dace.Memlet.simple('C', '0:N, 0:M'))
     return sdfg
@@ -249,10 +262,8 @@ def test_loop_to_stree_regular_while():
 
     stree = s2t.as_schedule_tree(sdfg)
 
-    assert stree.as_string() == (f'{tn.INDENTATION}assign i = 0\n' +
-                                 f'{tn.INDENTATION}while (i < 10):\n' + 
-                                 f'{2 * tn.INDENTATION}A[i] = tasklet()\n' +
-                                 f'{2 * tn.INDENTATION}assign i = (i + 1)')
+    assert stree.as_string() == (f'{tn.INDENTATION}assign i = 0\n' + f'{tn.INDENTATION}while (i < 10):\n' +
+                                 f'{2 * tn.INDENTATION}A[i] = tasklet()\n' + f'{2 * tn.INDENTATION}assign i = (i + 1)')
 
 
 def test_loop_to_stree_do_while():
@@ -262,11 +273,9 @@ def test_loop_to_stree_do_while():
 
     stree = s2t.as_schedule_tree(sdfg)
 
-    assert stree.as_string() == (f'{tn.INDENTATION}assign i = 10\n' +
-                                 f'{tn.INDENTATION}do:\n' +
+    assert stree.as_string() == (f'{tn.INDENTATION}assign i = 10\n' + f'{tn.INDENTATION}do:\n' +
                                  f'{2 * tn.INDENTATION}A[i] = tasklet()\n' +
-                                 f'{2 * tn.INDENTATION}assign i = (i + 1)\n' +
-                                 f'{tn.INDENTATION}while (i < 10)')
+                                 f'{2 * tn.INDENTATION}assign i = (i + 1)\n' + f'{tn.INDENTATION}while (i < 10)')
 
 
 def test_loop_to_stree_do_for():
@@ -276,10 +285,8 @@ def test_loop_to_stree_do_for():
 
     stree = s2t.as_schedule_tree(sdfg)
 
-    assert stree.as_string() == (f'{tn.INDENTATION}i = 0\n' +
-                                 f'{tn.INDENTATION}do:\n' +
-                                 f'{2 * tn.INDENTATION}A[i] = tasklet()\n' +
-                                 f'{2 * tn.INDENTATION}i = (i + 1)\n' +
+    assert stree.as_string() == (f'{tn.INDENTATION}i = 0\n' + f'{tn.INDENTATION}do:\n' +
+                                 f'{2 * tn.INDENTATION}A[i] = tasklet()\n' + f'{2 * tn.INDENTATION}i = (i + 1)\n' +
                                  f'{tn.INDENTATION}while (i < 10)')
 
 
@@ -290,11 +297,9 @@ def test_loop_to_stree_do_for_inverted_cond():
 
     stree = s2t.as_schedule_tree(sdfg)
 
-    assert stree.as_string() == (f'{tn.INDENTATION}i = 0\n' +
-                                 f'{tn.INDENTATION}while True:\n' +
+    assert stree.as_string() == (f'{tn.INDENTATION}i = 0\n' + f'{tn.INDENTATION}while True:\n' +
                                  f'{2 * tn.INDENTATION}A[i] = tasklet()\n' +
-                                 f'{2 * tn.INDENTATION}if (not (i < 8)):\n' +
-                                 f'{3 * tn.INDENTATION}break\n' +
+                                 f'{2 * tn.INDENTATION}if (not (i < 8)):\n' + f'{3 * tn.INDENTATION}break\n' +
                                  f'{2 * tn.INDENTATION}i = (i + 1)\n')
 
 
@@ -306,9 +311,7 @@ def test_loop_to_stree_triple_nested_for():
     stree = s2t.as_schedule_tree(sdfg)
 
     po_nodes = list(stree.preorder_traversal())[1:]
-    assert [type(n) for n in po_nodes] == [tn.GeneralLoopScope, tn.GeneralLoopScope, tn.GeneralLoopScope,
-                                           tn.TaskletNode, tn.LibraryCall]
-    
+    assert [type(n) for n in po_nodes] == [tn.LoopScope, tn.LoopScope, tn.LoopScope, tn.TaskletNode, tn.LibraryCall]
 
 
 if __name__ == '__main__':

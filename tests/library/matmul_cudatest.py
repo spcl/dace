@@ -91,7 +91,8 @@ def _test_matmul(implementation, dtype, impl_name, storage, data_layout='CCC', e
     ref = np.dot(x, y)
 
     if dtype == dace.float16 and np.linalg.norm(z) == 0:
-        print('No computation performed, half-precision probably not ' 'supported, skipping test.')
+        print('No computation performed, half-precision probably not '
+              'supported, skipping test.')
         return
 
     diff = np.linalg.norm(ref - z)

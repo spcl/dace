@@ -212,12 +212,8 @@ def map_with_break_continue():
 
 
 def test_map_with_break_continue():
-    try:
+    with pytest.raises(DaceSyntaxError):
         map_with_break_continue()
-    except Exception as e:
-        if isinstance(e, DaceSyntaxError):
-            return 0
-    assert (False)
 
 
 @dace.program
@@ -509,10 +505,10 @@ def test_for_with_field():
             S.data[i] = S.data[i] + 1.0
 
     A = np.random.rand(20)
-    inp_struct = struct.dtype.base_type.as_ctypes()(data=A.__array_interface__['data'][0], length=10)
+    inp_struct = struct.make_argument(data=A, length=10)
     expected = np.copy(A)
     expected[:10] += 1.0
-    for_with_field.compile()(S=inp_struct)
+    for_with_field(inp_struct)
     assert np.allclose(A, expected)
 
 

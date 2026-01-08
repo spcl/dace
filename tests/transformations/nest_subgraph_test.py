@@ -1,8 +1,7 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-from dace.codegen import control_flow as cf
+from dace.sdfg.analysis.schedule_tree import sdfg_to_tree, treenodes as tn
 from dace.transformation.helpers import nest_state_subgraph, nest_sdfg_subgraph, nest_sdfg_control_flow
-from dace.sdfg import utils
 from dace.sdfg.graph import SubgraphView
 from dace.sdfg.state import StateSubgraphView
 import numpy as np
@@ -68,23 +67,21 @@ def test_symbolic_return():
 
     sdfg = symbolic_return.to_sdfg()
 
-    cft = cf.structured_control_flow_tree(sdfg, None)
+    stree = sdfg_to_tree.as_schedule_tree(sdfg)
     for_scope = None
-    for i, child in enumerate(cft.children):
-        if isinstance(child, (cf.ForScope, cf.WhileScope)):
+    for i, child in enumerate(stree.children):
+        if isinstance(child, tn.LoopScope):
             for_scope = child
             break
     assert for_scope
 
-    assert i < len(cft.children) - 1
-    exit_scope = cft.children[i+1]
-    assert isinstance(exit_scope, cf.BasicCFBlock)
+    assert i < len(stree.children) - 1
+    exit_scope = stree.children[i + 1]
+    assert isinstance(exit_scope, (tn.AssignNode, tn.TaskletNode))
 
-    guard = for_scope.guard
-    fexit = exit_scope.first_block
-    states = list(utils.dfs_conditional(sdfg, [guard], lambda p, _: p is not fexit))
-    
-    nest_sdfg_subgraph(sdfg, SubgraphView(sdfg, states), start=guard)
+    states = for_scope.loop.nodes()
+
+    nest_sdfg_subgraph(sdfg, SubgraphView(for_scope.loop, states))
 
     result = sdfg()
     val = result[1][0]
@@ -96,11 +93,11 @@ def test_nest_cf_simple_for_loop():
 
     @dace.program
     def simple_for_loop():
-        A = np.ndarray((10,), dtype=np.int32)
+        A = np.ndarray((10, ), dtype=np.int32)
         for i in range(10):
             A[i] = i
         return A
-    
+
     sdfg = simple_for_loop.to_sdfg()
     nest_sdfg_control_flow(sdfg)
 
@@ -119,12 +116,12 @@ def test_nest_cf_simple_while_loop():
     @dace.program
     def simple_while_loop():
         i = 0
-        A = np.ndarray((10,), dtype=np.int32)
+        A = np.ndarray((10, ), dtype=np.int32)
         while i < 10:
             A[i] = i
             i = update(A[i])
         return A
-    
+
     sdfg = simple_while_loop.to_sdfg()
     nest_sdfg_control_flow(sdfg)
 
@@ -139,7 +136,7 @@ def test_nest_cf_simple_if():
             return 0
         else:
             return 1
-        
+
     sdfg = simple_if.to_sdfg()
     nest_sdfg_control_flow(sdfg)
 
@@ -161,7 +158,7 @@ def test_nest_cf_simple_if_elif():
             return 3
         else:
             return 4
-        
+
     sdfg = simple_if_elif.to_sdfg()
     nest_sdfg_control_flow(sdfg)
 
@@ -185,7 +182,7 @@ def test_nest_cf_simple_if_chain():
         if i < 8:
             return 3
         return 4
-        
+
     sdfg = simple_if_chain.to_sdfg()
     nest_sdfg_control_flow(sdfg)
 

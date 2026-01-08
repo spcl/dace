@@ -173,6 +173,13 @@ required:
                     The typename of this struct is derived by appending this value to the SDFG's name.
                     Note that the suffix may only contains letters, digits and underscores.
 
+            cpp_standard:
+                type: str
+                default: "20"
+                title: C++ standard version
+                description: >
+                    C++ standard to use for compilation (e.g., 14, 17, 20, 23, 26).
+
             format_code:
                 type: bool
                 default: false
@@ -183,7 +190,7 @@ required:
             format_config_file:
                 type: str
                 default: ""
-                title: Path the clang-format file
+                title: Path to the .clang-format file
                 description: >
                     Clang-format file to be used by clang-format, only used if format_code is true
 
@@ -261,7 +268,7 @@ required:
                         type: str
                         title: Arguments
                         description: Compiler argument flags
-                        default: '-std=c++14 -fPIC -Wall -Wextra -O3 -march=native -ffast-math -Wno-unused-parameter -Wno-unused-label'
+                        default: '-fPIC -Wall -Wextra -O3 -march=native -ffast-math -Wno-unused-parameter -Wno-unused-label'
                         default_Windows: '/O2 /fp:fast /arch:AVX2 /D_USRDLL /D_WINDLL /D__restrict__=__restrict'
 
                     libs:
@@ -310,7 +317,7 @@ required:
                         type: str
                         title: hipcc Arguments
                         description: Compiler argument flags for HIP
-                        default: '-std=c++17 -fPIC -O3 -ffast-math -Wno-unused-parameter'
+                        default: '-fPIC -O3 -ffast-math -Wno-unused-parameter'
 
                     cuda_arch:
                         type: str
@@ -446,6 +453,17 @@ required:
                             ``uint64`` is equivalent to ``dace.uint64``. Change this setting when large
                             index types are needed to address memory offsets that are beyond the 32-bit
                             range, or to reduce memory usage.
+
+                    allow_implicit_memlet_to_map:
+                        type: bool
+                        title: Allow the implicit conversion of Memlets to Maps during code generation.
+                        default: true
+                        description: >
+                            If ``true`` the code generator will implicitly convert Memlets that cannot be
+                            represented by a native library call, such as ``cudaMemcpy()`` into Maps that
+                            explicitly copy the data around. If this value is ``false`` the code generator
+                            will raise an exception if such a Memlet is encountered. This allows the user
+                            to have full control over all Maps in the SDFG.
 
 
             #############################################
@@ -917,6 +935,16 @@ required:
             A comma-separated list of functions (or Context Manager classes) that will
             be called before every compiled SDFG's generated code is invoked. Used
             for functionality such as low-level profiling.
+
+    external_transformations_path:
+        type: str
+        default: '$HOME/dace_transformations/external_transformations'
+        default_Windows: '%USERPROFILE%\\dace_transformations\\external_transformations'
+        title: External transformations path
+        description: >
+            Path to a directory containing external transformations that are not
+            included in the main DaCe package. This path is added to the Python path
+            and can be used to import custom transformation modules.
 
     #############################################
     # Experimental features

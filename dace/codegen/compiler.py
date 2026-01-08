@@ -170,6 +170,7 @@ def configure_and_compile(program_folder, program_name=None, output_stream=None)
         "-DDACE_SRC_DIR=\"{}\"".format(src_folder),
         "-DDACE_FILES=\"{}\"".format(";".join(files)),
         "-DDACE_PROGRAM_NAME={}".format(program_name),
+        "-DDACE_CPP_STANDARD={}".format(Config.get('compiler', 'cpp_standard')),
     ]
 
     # Get required environments are retrieve the CMake information
@@ -394,7 +395,7 @@ def load_from_file(sdfg, binary_filename):
     lib = csd.ReloadableDLL(binary_filename, sdfg.name)
 
     # Load and return the compiled function
-    return csd.CompiledSDFG(sdfg, lib)
+    return csd.CompiledSDFG(sdfg, lib, sdfg.arg_names)
 
 
 def get_binary_name(object_folder, object_name, lib_extension=Config.get('compiler', 'library_extension')):

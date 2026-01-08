@@ -24,6 +24,7 @@ K_s = dace.symbol('K_s')
 @dace.program
 def two_maps_kernel_legal(A: dace.float32[N], B: dace.float32[N], C: dace.float32[N], D: dace.float32[N],
                           E: dace.float32[N]):
+
     @dace.map
     def sum(i: _[0:N]):
         in_a << A[i]
@@ -42,6 +43,7 @@ def two_maps_kernel_legal(A: dace.float32[N], B: dace.float32[N], C: dace.float3
 @dace.program
 def two_maps_kernel_illegal(A: dace.float32[N], B: dace.float32[N], C: dace.float32[N], D: dace.float32[N],
                             E: dace.float32[N]):
+
     @dace.map
     def sum(i: _[0:N]):
         in_a << A[i]
@@ -101,6 +103,7 @@ def vecadd_streaming(A: dace.float32[N], B: dace.float32[N], C: dace.float32[N])
 
 
 def vecadd_streaming_type(type0, type1, type2):
+
     @dace.program
     def vecadd_streaming_type_kernel(A: type0[N], B: type1[N], C: type2[N]):
         C[:] = A + B
@@ -205,8 +208,7 @@ def test_streaming_mem():
     sdfg: dace.SDFG = matadd_streaming.to_sdfg()
     # Transform
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
-    assert sdfg.apply_transformations_repeated(
-        sm.StreamingMemory, dict(storage=dace.StorageType.FPGA_Local)) == 3
+    assert sdfg.apply_transformations_repeated(sm.StreamingMemory, dict(storage=dace.StorageType.FPGA_Local)) == 3
 
     # Run verification
     A = np.random.rand(M, N).astype(np.float32)
@@ -227,8 +229,7 @@ def test_multistream():
     sdfg: dace.SDFG = matadd_multistream.to_sdfg()
     # Transform
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
-    assert sdfg.apply_transformations_repeated(
-        sm.StreamingMemory, dict(storage=dace.StorageType.FPGA_Local)) == 4
+    assert sdfg.apply_transformations_repeated(sm.StreamingMemory, dict(storage=dace.StorageType.FPGA_Local)) == 4
 
     # Ensure only 4 connected components exist
     mainstate = next(s for s in sdfg.nodes() if 'copy' not in s.label)
@@ -255,8 +256,7 @@ def test_multistream_with_deps():
     sdfg: dace.SDFG = streamingcomp.to_sdfg()
     # Transform
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
-    assert sdfg.apply_transformations_repeated(
-        sm.StreamingMemory, dict(storage=dace.StorageType.FPGA_Local)) == 3
+    assert sdfg.apply_transformations_repeated(sm.StreamingMemory, dict(storage=dace.StorageType.FPGA_Local)) == 3
 
     # Ensure only 4 connected components exist
     mainstate = next(s for s in sdfg.nodes() if 'copy' not in s.label)
@@ -280,8 +280,7 @@ def test_streaming_mem_mapnests():
     sdfg: dace.SDFG = matadd_streaming.to_sdfg()
     # Transform
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG, MapExpansion])
-    assert sdfg.apply_transformations_repeated(
-        sm.StreamingMemory, dict(storage=dace.StorageType.FPGA_Local)) == 3
+    assert sdfg.apply_transformations_repeated(sm.StreamingMemory, dict(storage=dace.StorageType.FPGA_Local)) == 3
 
     # Run verification
     A = np.random.rand(M, N).astype(np.float32)
@@ -309,8 +308,7 @@ def test_streaming_composition():
     sdfg: dace.SDFG = streamingcomp.to_sdfg()
     # Transform
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
-    assert sdfg.apply_transformations_repeated(
-        sm.StreamingComposition, dict(storage=dace.StorageType.FPGA_Local)) == 1
+    assert sdfg.apply_transformations_repeated(sm.StreamingComposition, dict(storage=dace.StorageType.FPGA_Local)) == 1
 
     # Run verification
     A = np.random.rand(M, N).astype(np.float32)
@@ -334,13 +332,11 @@ def test_streaming_composition_mapnests():
     # Test 1 - both maps expanded
     test1 = copy.deepcopy(sdfg)
     assert test1.apply_transformations_repeated(MapExpansion) == 2
-    assert test1.apply_transformations_repeated(
-        sm.StreamingComposition, dict(storage=dace.StorageType.FPGA_Local)) == 1
+    assert test1.apply_transformations_repeated(sm.StreamingComposition, dict(storage=dace.StorageType.FPGA_Local)) == 1
 
     # Test 2 - one only one map expanded
     sdfg.apply_transformations(MapExpansion)
-    assert sdfg.apply_transformations_repeated(
-        sm.StreamingComposition, dict(storage=dace.StorageType.FPGA_Local)) == 1
+    assert sdfg.apply_transformations_repeated(sm.StreamingComposition, dict(storage=dace.StorageType.FPGA_Local)) == 1
 
     # Run verification
     A = np.random.rand(M, N).astype(np.float32)
@@ -362,10 +358,8 @@ def test_streaming_and_composition():
     # Transform
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
 
-    assert sdfg.apply_transformations_repeated(
-        sm.StreamingMemory, dict(storage=dace.StorageType.FPGA_Local)) == 3
-    assert sdfg.apply_transformations_repeated(
-        sm.StreamingComposition, dict(storage=dace.StorageType.FPGA_Local)) == 1
+    assert sdfg.apply_transformations_repeated(sm.StreamingMemory, dict(storage=dace.StorageType.FPGA_Local)) == 3
+    assert sdfg.apply_transformations_repeated(sm.StreamingComposition, dict(storage=dace.StorageType.FPGA_Local)) == 1
 
     # Run verification
     A = np.random.rand(M, N).astype(np.float32)
@@ -468,8 +462,7 @@ def test_mem_buffer_vec_add():
 
 def mem_buffer_vec_add_types(dace_type0, dace_type1, dace_type2, np_type0, np_type1, np_type2):
 
-    sdfg: dace.SDFG = vecadd_streaming_type(
-        dace_type0, dace_type1, dace_type2).to_sdfg()
+    sdfg: dace.SDFG = vecadd_streaming_type(dace_type0, dace_type1, dace_type2).to_sdfg()
 
     sdfg.apply_transformations([
         FPGATransformSDFG,
@@ -828,14 +821,14 @@ def test_mem_buffer_atax():
         'storage': dace.StorageType.FPGA_Local,
         'use_memory_buffering': True
     }],
-        print_report=False)
+                                                     print_report=False)
     assert sm_applied == 5  # 3 inlines and 2 Streaming memories
 
     sm_applied = sdfg.apply_transformations_repeated([InlineSDFG, sm.StreamingMemory], [{}, {
         'storage': dace.StorageType.FPGA_Local,
         'use_memory_buffering': False
     }],
-        print_report=False)
+                                                     print_report=False)
 
     assert sm_applied == 1  # 1 Streaming memories
 
@@ -873,14 +866,14 @@ def test_mem_buffer_bicg():
         'storage': dace.StorageType.FPGA_Local,
         'use_memory_buffering': True
     }],
-        print_report=True)
+                                                     print_report=True)
     assert sm_applied == 7  # 3 inlines and 4 Streaming memories
 
     sm_applied = sdfg.apply_transformations_repeated([InlineSDFG, sm.StreamingMemory], [{}, {
         'storage': dace.StorageType.FPGA_Local,
         'use_memory_buffering': False
     }],
-        print_report=True)
+                                                     print_report=True)
 
     assert sm_applied == 1  # 1 Streaming memories
 

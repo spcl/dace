@@ -1,4 +1,4 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import pytest
 import warnings
 import itertools
@@ -58,21 +58,57 @@ def create_gemm_sdfg(dtype, A_shape, B_shape, C_shape, Y_shape, transA, transB, 
     state.add_edge(libnode, '_c', wC, None, dace.Memlet.from_array(C, C_arr))
     if beta != 0.0:
         rC = state.add_read('C')
-        state.add_edge(rC, None, libnode, '_cin', dace.Memlet.from_array(C, C_arr))
+        state.add_edge(rC, None, libnode, '_c', dace.Memlet.from_array(C, C_arr))
 
     return sdfg
 
 
-def run_test(implementation,
-             M=25,
-             N=24,
-             K=23,
-             complex=False,
-             transA=False,
-             transB=False,
-             alpha=1.0,
-             beta=1.0,
-             C_shape=["M", "N"]):
+_impls = ['pure', pytest.param('MKL', marks=pytest.mark.mkl), pytest.param('cuBLAS', marks=pytest.mark.gpu)]
+_param_grid_trans = dict(
+    transA=[True, False],
+    transB=[True, False],
+)
+_param_grid_scalars = dict(
+    alpha=[1.0, 0.0, random.random()],
+    beta=[1.0, 0.0, random.random()],
+)
+_param_grid_complex = dict(
+    complex=[True],
+    alpha=[random.random(), complex(random.random(), random.random())],
+    beta=[random.random(), complex(random.random(), random.random())],
+)
+
+_param_grid_broadcast_C = dict(
+    alpha=[random.random()],
+    beta=[random.random()],
+    C_shape=[None, ["M", "N"], ["M", 1], ["N"], [1, "N"]],
+)
+
+
+def params_generator(grid):
+    keys, values = zip(*grid.items())
+    for v in itertools.product(*values):
+        params = dict(zip(keys, v))
+        yield params
+
+
+_test_params = []
+for param_grid in [_param_grid_trans, _param_grid_scalars, _param_grid_complex, _param_grid_broadcast_C]:
+    for params in params_generator(param_grid):
+        print("Testing params:", params)
+        _test_params.append(params)
+
+
+def _do_test_gemm(implementation, params):
+    M = params.get('M', 25)
+    N = params.get('N', 24)
+    K = params.get('K', 23)
+    complex = params.get('complex', False)
+    transA = params.get('transA', False)
+    transB = params.get('transB', False)
+    alpha = params.get('alpha', 1.0)
+    beta = params.get('beta', 1.0)
+    C_shape = params.get('C_shape', ["M", "N"])
 
     if C_shape is not None:
         replace_map = dict(M=M, N=N)
@@ -132,48 +168,24 @@ def run_test(implementation,
     assert diff <= 1e-5
 
 
-@pytest.mark.parametrize(
-    ('implementation', ),
-    [('pure', ), pytest.param('MKL', marks=pytest.mark.mkl),
-     pytest.param('cuBLAS', marks=pytest.mark.gpu)])
-def test_library_gemm(implementation):
-    param_grid_trans = dict(
-        transA=[True, False],
-        transB=[True, False],
-    )
-    param_grid_scalars = dict(
-        alpha=[1.0, 0.0, random.random()],
-        beta=[1.0, 0.0, random.random()],
-    )
-    param_grid_complex = dict(
-        complex=[True],
-        alpha=[random.random(), complex(random.random(), random.random())],
-        beta=[random.random(), complex(random.random(), random.random())],
-    )
+@pytest.mark.parametrize('params', _test_params)
+def do_test_pure(params):
+    impl = 'pure'
+    _do_test_gemm(impl, params)
 
-    param_grid_broadcast_C = dict(
-        alpha=[random.random()],
-        beta=[random.random()],
-        C_shape=[None, ["M", "N"], ["M", 1], ["N"], [1, "N"]],
-    )
 
-    param_grids = [param_grid_trans, param_grid_scalars, param_grid_complex, param_grid_broadcast_C]
+@pytest.mark.gpu
+@pytest.mark.parametrize('params', _test_params)
+def do_test_cuBLAS(params):
+    impl = 'cuBLAS'
+    _do_test_gemm(impl, params)
 
-    def params_generator(grid):
-        keys, values = zip(*grid.items())
-        for v in itertools.product(*values):
-            params = dict(zip(keys, v))
-            yield params
 
-    print("Testing implementation {}...".format(implementation))
-    try:
-        for param_grid in param_grids:
-            for params in params_generator(param_grid):
-                print("Testing params:", params)
-                run_test(implementation, **params)
-    except (CompilerConfigurationError, CompilationError):
-        warnings.warn("Configuration/compilation failed, library missing or "
-                      "misconfigured, skipping test for {}.".format(implementation))
+@pytest.mark.mkl
+@pytest.mark.parametrize('params', _test_params)
+def do_test_mkl(params):
+    impl = 'MKL'
+    _do_test_gemm(impl, params)
 
 
 def test_gemm_symbolic():
@@ -223,7 +235,8 @@ def test_gemm_symbolic_1():
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == 'gpu':
-        test_library_gemm('cuBLAS')
+        for params in _test_params:
+            _do_test_gemm('cuBLAS', params)
     # test_library_gemm('pure')
     # test_library_gemm('MKL')
     test_gemm_symbolic()

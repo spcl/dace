@@ -1,44 +1,34 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ Loop to map transformation """
 
 from collections import defaultdict
 import copy
-import itertools
 import sympy as sp
-import networkx as nx
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Set
+import warnings
 
-from dace import data as dt, dtypes, memlet, nodes, registry, sdfg as sd, symbolic, subsets
-from dace.properties import Property, make_properties, CodeBlock
+from dace import data as dt, dtypes, memlet, nodes, sdfg as sd, symbolic, subsets, properties
+from dace.codegen.tools.type_inference import infer_expr_type
 from dace.sdfg import graph as gr, nodes
-from dace.sdfg import SDFG, SDFGState, InterstateEdge
+from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import utils as sdutil
-from dace.sdfg.analysis import cfg
-from dace.frontend.python.astutils import ASTFindReplace
-from dace.transformation.interstate.loop_detection import (DetectLoop, find_for_loop)
+from dace.sdfg.analysis import cfg as cfg_analysis
+from dace.sdfg.state import BreakBlock, ContinueBlock, ControlFlowRegion, LoopRegion, ReturnBlock, ConditionalBlock
 import dace.transformation.helpers as helpers
 from dace.transformation import transformation as xf
+from dace.transformation.passes.analysis import loop_analysis
 
 
 def _check_range(subset, a, itersym, b, step):
     found = False
     for rb, re, _ in subset.ndrange():
-        m = rb.match(a * itersym + b)
-        if m is None:
-            continue
-        if (abs(m[a]) >= 1) != True:
-            continue
-        if re != rb:
-            if isinstance(rb, symbolic.SymExpr):
-                rb = rb.approx
-            if isinstance(re, symbolic.SymExpr):
-                re = re.approx
-
-            # If False or indeterminate, the range may
-            # overlap across iterations
-            if ((re - rb) > m[a] * step) != False:
+        if rb != 0:
+            m = rb.match(a * itersym + b)
+            if m is None:
                 continue
-
+            if (abs(m[a]) >= 1) != True:
+                continue
+        else:
             m = re.match(a * itersym + b)
             if m is None:
                 continue
@@ -74,70 +64,64 @@ def _sanitize_by_index(indices: Set[int], subset: subsets.Subset) -> subsets.Ran
     return type(subset)([t for i, t in enumerate(subset) if i in indices])
 
 
-@make_properties
-@xf.single_level_sdfg_only
-class LoopToMap(DetectLoop, xf.MultiStateTransformation):
-    """Convert a control flow loop into a dataflow map. Currently only supports
-       the simple case where there is no overlap between inputs and outputs in
-       the body of the loop, and where the loop body only consists of a single
-       state.
+@properties.make_properties
+@xf.explicit_cf_compatible
+class LoopToMap(xf.MultiStateTransformation):
+    """
+    Convert a control flow loop into a dataflow map. Currently only supports the simple case where there is no overlap
+    between inputs and outputs in the body of the loop, and where the loop body only consists of a single state.
     """
 
-    itervar = Property(
-        dtype=str,
-        allow_none=True,
-        default=None,
-        desc='The name of the iteration variable (optional).',
-    )
+    loop = xf.PatternNode(LoopRegion)
 
-    def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False):
-        # Is this even a loop
-        if not super().can_be_applied(graph, expr_index, sdfg, permissive):
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.loop)]
+
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        # If loop information cannot be determined, fail.
+        start = loop_analysis.get_init_assignment(self.loop)
+        end = loop_analysis.get_loop_end(self.loop)
+        step = loop_analysis.get_loop_stride(self.loop)
+        itervar = self.loop.loop_variable
+        if start is None or end is None or step is None or itervar is None:
             return False
 
-        begin = self.loop_begin
+        sset = {}
+        sset.update(sdfg.symbols)
+        sset.update(sdfg.arrays)
+        t = dtypes.result_type_of(infer_expr_type(start, sset), infer_expr_type(step, sset), infer_expr_type(end, sset))
+        # We may only convert something to map if the bounds are all integer-derived types. Otherwise most map schedules
+        # except for sequential would be invalid.
+        if not t in dtypes.INTEGER_TYPES:
+            return False
 
-        # Guard state should not contain any dataflow
-        if expr_index <= 1:
-            guard = self.loop_guard
-            if len(guard.nodes()) != 0:
+        # Loops containing break, continue, or returns may not be turned into a map.
+        for blk in self.loop.all_control_flow_blocks():
+            if isinstance(blk, (BreakBlock, ContinueBlock, ReturnBlock)):
                 return False
 
-        # If loop cannot be detected, fail
-        found = self.loop_information(itervar=self.itervar)
-        if not found:
-            return False
-
-        itervar, (start, end, step), (_, body_end) = found
-
-        # We cannot handle symbols read from data containers unless they are
-        # scalar
+        # We cannot handle symbols read from data containers unless they are scalar.
         for expr in (start, end, step):
             if symbolic.contains_sympy_functions(expr):
                 return False
 
-        in_order_states = list(cfg.blockorder_topological_sort(sdfg))
-        loop_begin_idx = in_order_states.index(begin)
-        loop_end_idx = in_order_states.index(body_end)
+        _, write_set = self.loop.read_and_write_sets()
+        loop_states = set(self.loop.all_states())
+        all_loop_blocks = set(self.loop.all_control_flow_blocks())
 
-        if loop_end_idx < loop_begin_idx:  # Malformed loop
-            return False
-
-        # Find all loop-body states
-        states: List[SDFGState] = self.loop_body()
-
-        assert (body_end in states)
-
-        write_set: Set[str] = set()
-        for state in states:
-            _, wset = state.read_and_write_sets()
-            write_set |= wset
+        # Cannot have StructView in loop body
+        for loop_state in loop_states:
+            if [n for n in loop_state.data_nodes() if isinstance(n.desc(sdfg), dt.StructureView)]:
+                return False
 
         # Collect symbol reads and writes from inter-state assignments
+        in_order_loop_blocks = list(
+            cfg_analysis.blockorder_topological_sort(self.loop, recursive=True, ignore_nonstate_blocks=False))
         symbols_that_may_be_used: Set[str] = {itervar}
         used_before_assignment: Set[str] = set()
-        for state in states:
-            for e in sdfg.out_edges(state):
+        for block in in_order_loop_blocks:
+            for e in block.parent_graph.out_edges(block):
                 # Collect read-before-assigned symbols (this works because the states are always in order,
                 # see above call to `blockorder_topological_sort`)
                 read_symbols = e.data.read_symbols()
@@ -159,12 +143,12 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
 
         # Get access nodes from other states to isolate local loop variables
         other_access_nodes: Set[str] = set()
-        for state in sdfg.nodes():
-            if state in states:
+        for state in sdfg.states():
+            if state in loop_states:
                 continue
             other_access_nodes |= set(n.data for n in state.data_nodes() if sdfg.arrays[n.data].transient)
         # Add non-transient nodes from loop state
-        for state in states:
+        for state in loop_states:
             other_access_nodes |= set(n.data for n in state.data_nodes() if not sdfg.arrays[n.data].transient)
 
         write_memlets: Dict[str, List[memlet.Memlet]] = defaultdict(list)
@@ -173,7 +157,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
         a = sp.Wild('a', exclude=[itersym])
         b = sp.Wild('b', exclude=[itersym])
 
-        for state in states:
+        for state in loop_states:
             for dn in state.data_nodes():
                 if dn.data not in other_access_nodes:
                     continue
@@ -183,26 +167,32 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                         if e.data.dynamic and e.data.wcr is None:
                             # If pointers are involved, give up
                             return False
+                        if e.data is None:
+                            continue
+
                         # To be sure that the value is only written at unique
                         # indices per loop iteration, we want to match symbols
                         # of the form "a*i+b" where |a| >= 1, and i is the iteration
                         # variable. The iteration variable must be used.
                         if e.data.wcr is None:
                             dst_subset = e.data.get_dst_subset(e, state)
-                            if not (dst_subset and _check_range(dst_subset, a, itersym, b, step)):
+                            if not (dst_subset and _check_range(dst_subset, a, itersym, b, step)) and not permissive:
                                 return False
                         # End of check
 
                         write_memlets[dn.data].append(e.data)
 
         # After looping over relevant writes, consider reads that may overlap
-        for state in states:
+        for state in loop_states:
             for dn in state.data_nodes():
                 if dn.data not in other_access_nodes:
                     continue
                 data = dn.data
                 if data in write_memlets:
                     for e in state.out_edges(dn):
+                        if e.data is None:
+                            continue
+
                         # If the same container is both read and written, only match if
                         # it read and written at locations that will not create data races
                         src_subset = e.data.get_src_subset(e, state)
@@ -212,31 +202,47 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
 
         # Consider reads in inter-state edges (could be in assignments or in condition)
         isread_set: Set[memlet.Memlet] = set()
-        for s in states:
-            for e in sdfg.all_edges(s):
-                isread_set |= set(e.data.get_read_memlets(sdfg.arrays))
+        for e in self.loop.all_interstate_edges():
+            isread_set |= set(e.data.get_read_memlets(sdfg.arrays))
         for mmlt in isread_set:
             if mmlt.data in write_memlets:
                 if not self.test_read_memlet(sdfg, None, None, itersym, itervar, start, end, step, write_memlets, mmlt,
                                              mmlt.subset):
                     return False
 
-        # Check that the iteration variable and other symbols are not used on other edges or states
-        # before they are reassigned
-        for state in in_order_states[loop_begin_idx + 1:]:
-            if state in states:
+        # Check that the iteration variable and other symbols are not used on other edges or blocks before they are
+        # reassigned.
+        in_order_blocks = list(
+            cfg_analysis.blockorder_topological_sort(sdfg, recursive=True, ignore_nonstate_blocks=False))
+        # First check the outgoing edges of the loop itself.
+        reassigned_symbols: Set[str] = None
+        for oe in graph.out_edges(self.loop):
+            if symbols_that_may_be_used & oe.data.read_symbols():
+                return False
+            # Check for symbols that are set by all outgoing edges
+            # TODO: Handle case of subset of out_edges
+            if reassigned_symbols is None:
+                reassigned_symbols = set(oe.data.assignments.keys())
+            else:
+                reassigned_symbols &= oe.data.assignments.keys()
+        # Remove reassigned symbols
+        if reassigned_symbols is not None:
+            symbols_that_may_be_used -= reassigned_symbols
+        loop_idx = in_order_blocks.index(self.loop)
+        for block in in_order_blocks[loop_idx + 1:]:
+            if block in all_loop_blocks:
                 continue
             # Don't continue in this direction, as all loop symbols have been reassigned
             if not symbols_that_may_be_used:
                 break
 
             # Check state contents
-            if symbols_that_may_be_used & state.free_symbols:
+            if symbols_that_may_be_used & block.free_symbols:
                 return False
 
             # Check inter-state edges
-            reassigned_symbols: Set[str] = None
-            for e in sdfg.out_edges(state):
+            reassigned_symbols = None
+            for e in block.parent_graph.out_edges(block):
                 if symbols_that_may_be_used & e.data.read_symbols():
                     return False
 
@@ -346,217 +352,180 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                         return False
         return True
 
-    def apply(self, _, sdfg: sd.SDFG):
+    def apply(self, graph: ControlFlowRegion, sdfg: sd.SDFG):
         from dace.sdfg.propagation import align_memlet
 
         # Obtain loop information
-        itervar, (start, end, step), (_, body_end) = self.loop_information(itervar=self.itervar)
-        states = self.loop_body()
-        body: sd.SDFGState = self.loop_begin
-        exit_state = self.exit_state
-        entry_edge = self.loop_condition_edge()
-        init_edge = self.loop_init_edge()
-        after_edge = self.loop_exit_edge()
-        condition_edge = self.loop_condition_edge()
-        increment_edge = self.loop_increment_edge()
+        itervar = self.loop.loop_variable
+        start = loop_analysis.get_init_assignment(self.loop)
+        end = loop_analysis.get_loop_end(self.loop)
+        step = loop_analysis.get_loop_stride(self.loop)
 
         nsdfg = None
 
         # Nest loop-body states
-        if len(states) > 1:
-
-            # Find read/write sets
-            read_set, write_set = set(), set()
-            for state in states:
-                rset, wset = state.read_and_write_sets()
-                read_set |= rset
-                write_set |= wset
-                # Add to write set also scalars between tasklets
-                for src_node in state.nodes():
-                    if not isinstance(src_node, nodes.Tasklet):
+        states = set(self.loop.all_states())
+        # Find read/write sets
+        read_set, write_set = set(), set()
+        for state in self.loop.all_states():
+            rset, wset = state.read_and_write_sets()
+            read_set |= rset
+            write_set |= wset
+            # Add to write set also scalars between tasklets
+            for src_node in state.nodes():
+                if not isinstance(src_node, nodes.Tasklet):
+                    continue
+                for dst_node in state.nodes():
+                    if src_node is dst_node:
                         continue
-                    for dst_node in state.nodes():
-                        if src_node is dst_node:
-                            continue
-                        if not isinstance(dst_node, nodes.Tasklet):
-                            continue
-                        for e in state.edges_between(src_node, dst_node):
-                            if e.data.data and e.data.data in sdfg.arrays:
-                                write_set.add(e.data.data)
-                # Add data from edges
-                for src in states:
-                    for dst in states:
-                        for edge in sdfg.edges_between(src, dst):
-                            for s in edge.data.free_symbols:
-                                if s in sdfg.arrays:
-                                    read_set.add(s)
-
-            # Find NestedSDFG's unique data
-            rw_set = read_set | write_set
-            unique_set = set()
-            for name in rw_set:
-                if not sdfg.arrays[name].transient:
-                    continue
-                found = False
-                for state in sdfg.states():
-                    if state in states:
+                    if not isinstance(dst_node, nodes.Tasklet):
                         continue
-                    for node in state.nodes():
-                        if (isinstance(node, nodes.AccessNode) and node.data == name):
-                            found = True
-                            break
-                if not found and self._is_array_thread_local(name, itervar, sdfg, states):
-                    unique_set.add(name)
+                    for e in state.edges_between(src_node, dst_node):
+                        if e.data.data and e.data.data in sdfg.arrays:
+                            write_set.add(e.data.data)
 
-            # Find NestedSDFG's connectors
-            read_set = {n for n in read_set if n not in unique_set or not sdfg.arrays[n].transient}
-            write_set = {n for n in write_set if n not in unique_set or not sdfg.arrays[n].transient}
+        # Add headers of any nested loops and conditional blocks
+        nodelist = list(self.loop.nodes())
+        while nodelist:
+            node = nodelist.pop()
+            if isinstance(node, (LoopRegion, ConditionalBlock)):
+                code_blocks = node.get_meta_codeblocks()
+                free_syms = {s for c in code_blocks for s in c.get_free_symbols()}
+                free_syms = {s for s in free_syms if s in sdfg.arrays.keys()}
+                read_set |= set(free_syms)
+                nodelist.extend(node.nodes())
 
-            # Create NestedSDFG and add all loop-body states and edges
-            # Also, find defined symbols in NestedSDFG
-            fsymbols = set(sdfg.free_symbols)
-            new_body = sdfg.add_state('single_state_body')
-            nsdfg = SDFG("loop_body", constants=sdfg.constants_prop, parent=new_body)
-            nsdfg.add_node(body, is_start_state=True)
-            body.parent = nsdfg
-            nexit_state = nsdfg.add_state('exit')
-            nsymbols = dict()
-            for state in states:
-                if state is body:
+        # Add data from edges
+        for edge in self.loop.all_interstate_edges():
+            for s in edge.data.free_symbols:
+                if s in sdfg.arrays:
+                    read_set.add(s)
+
+        # Build mapping of view data to their root data
+        view_to_data = {}
+        for state in states:
+            for node in state.data_nodes():
+                if isinstance(sdfg.arrays[node.data], dt.View):
+                    root_node = sdutil.get_last_view_node(state, node)
+                    assert root_node is not None
+                    if node.data in view_to_data:
+                        assert view_to_data[node.data] == root_node.data
+
+                    view_to_data[node.data] = root_node.data
+
+        # Find NestedSDFG's / Loop's unique data
+        rw_set = read_set | write_set
+        unique_set = set()
+        for name in rw_set:
+            if not sdfg.arrays[name].transient:
+                continue
+            found = False
+            for state in sdfg.states():
+                if state in states:
                     continue
-                nsdfg.add_node(state)
-                state.parent = nsdfg
-            for state in states:
-                if state is body:
+                for node in state.nodes():
+                    if (isinstance(node, nodes.AccessNode) and node.data == name):
+                        found = True
+                        break
+
+            iatl_name = name
+            if name in view_to_data:
+                iatl_name = view_to_data[name]
+
+            if not found and self._is_array_thread_local(iatl_name, itervar, sdfg, states):
+                unique_set.add(name)
+
+        # Find NestedSDFG's connectors
+        read_set = {n for n in read_set if n not in unique_set or not sdfg.arrays[n].transient}
+        write_set = {n for n in write_set if n not in unique_set or not sdfg.arrays[n].transient}
+
+        # Do not route views through the NestedSDFG
+        view_set = set(view_to_data.keys())
+        read_set -= view_set
+        write_set -= view_set
+
+        # Create NestedSDFG and add the loop contents to it. Gaher symbols defined in the NestedSDFG.
+        fsymbols = set(sdfg.free_symbols)
+        body = graph.add_state_before(self.loop, 'single_state_body')
+        nsdfg = SDFG('loop_body', constants=sdfg.constants_prop, parent=body)
+        nsdfg.add_node(self.loop.start_block, is_start_block=True)
+        nsymbols = dict()
+        for block in self.loop.nodes():
+            if block is self.loop.start_block:
+                continue
+            nsdfg.add_node(block)
+        for e in self.loop.edges():
+            nsymbols.update({s: sdfg.symbols[s] for s in e.data.assignments.keys() if s in sdfg.symbols})
+            nsdfg.add_edge(e.src, e.dst, e.data)
+
+        # Add NestedSDFG arrays
+        for name in read_set | write_set:
+            if '.' in name:
+                root_data_name = name.split('.')[0]
+                name = root_data_name
+            nsdfg.arrays[name] = copy.deepcopy(sdfg.arrays[name])
+            nsdfg.arrays[name].transient = False
+        for name in unique_set | view_set:
+            if '.' in name:
+                root_data_name = name.split('.')[0]
+                name = root_data_name
+            nsdfg.arrays[name] = copy.deepcopy(sdfg.arrays[name])
+
+        # Add NestedSDFG node
+        cnode = body.add_nested_sdfg(nsdfg, read_set, write_set)
+        if sdfg.parent:
+            for s, m in sdfg.parent_nsdfg_node.symbol_mapping.items():
+                if s not in cnode.symbol_mapping:
+                    cnode.symbol_mapping[s] = symbolic.pystr_to_symbolic(s)
+                    nsdfg.add_symbol(s, sdfg.symbols[s])
+        for name in read_set:
+            r = body.add_read(name)
+            body.add_edge(r, None, cnode, name, memlet.Memlet.from_array(name, sdfg.arrays[name]))
+        for name in write_set:
+            w = body.add_write(name)
+            body.add_edge(cnode, name, w, None, memlet.Memlet.from_array(name, sdfg.arrays[name]))
+
+        # Fix SDFG symbols
+        for sym in sdfg.free_symbols - fsymbols:
+            if sym in sdfg.symbols:
+                sdfg.remove_symbol(sym)
+        for sym, dtype in nsymbols.items():
+            nsdfg.symbols[sym] = dtype
+
+        # Propagate symbols, where types cannot be inferred
+        alltypes = copy.deepcopy(nsdfg.symbols)
+        alltypes.update({k: v.dtype for k, v in nsdfg.arrays.items()})
+        for e in self.loop.all_interstate_edges():
+            for k, v in e.data.assignments.items():
+                # Skip if the symbol is already in the SDFG
+                if k in nsdfg.symbols:
                     continue
-                for src, dst, data in sdfg.in_edges(state):
-                    nsymbols.update({s: sdfg.symbols[s] for s in data.assignments.keys() if s in sdfg.symbols})
-                    nsdfg.add_edge(src, dst, data)
-            nsdfg.add_edge(body_end, nexit_state, InterstateEdge())
 
-            increment_edge = None
+                # Should not happen: Cannot infer type and parent SDFG also does not have an explicit type
+                vtype = infer_expr_type(v, alltypes)
+                if k not in sdfg.symbols:
+                    if vtype is None:
+                        warnings.warn(f"Symbol {k} not found in parent SDFG symbols.")
+                    continue
 
-            # Specific instructions for loop type
-            if self.expr_index <= 1:  # Natural loop with guard
-                guard = self.loop_guard
+                # If the inferred type and the symbol type are the same, skip
+                ktype: dtypes.typeclass = sdfg.symbols[k]
+                if ktype == vtype:
+                    continue
 
-                # Move guard -> body edge to guard -> new_body
-                for e in sdfg.edges_between(guard, body):
-                    sdfg.remove_edge(e)
-                    condition_edge = sdfg.add_edge(e.src, new_body, e.data)
-                # Move body_end -> guard edge to new_body -> guard
-                for e in sdfg.edges_between(body_end, guard):
-                    sdfg.remove_edge(e)
-                    increment_edge = sdfg.add_edge(new_body, e.dst, e.data)
-
-
-            elif 1 < self.expr_index <= 3 or 5 <= self.expr_index <= 7:  # Rotated loop
-                entrystate = self.entry_state
-                latch = self.loop_latch
-
-                # Move entry edge to entry -> new_body
-                for src, dst, data, in sdfg.edges_between(entrystate, body):
-                    init_edge = sdfg.add_edge(src, new_body, data)
-
-                # Move body_end -> latch to new_body -> latch
-                for src, dst, data in sdfg.edges_between(latch, exit_state):
-                    after_edge = sdfg.add_edge(new_body, dst, data)
-
-            elif self.expr_index == 4:  # Self-loop
-                entrystate = self.entry_state
-
-                # Move entry edge to entry -> new_body
-                for src, dst, data in sdfg.edges_between(entrystate, body):
-                    init_edge = sdfg.add_edge(src, new_body, data)
-                for src, dst, data in sdfg.edges_between(body, exit_state):
-                    after_edge = sdfg.add_edge(new_body, dst, data)
-
-
-            # Delete loop-body states and edges from parent SDFG
-            sdfg.remove_nodes_from(states)
-
-            # Add NestedSDFG arrays
-            for name in read_set | write_set:
-                nsdfg.arrays[name] = copy.deepcopy(sdfg.arrays[name])
-                nsdfg.arrays[name].transient = False
-            for name in unique_set:
-                nsdfg.arrays[name] = sdfg.arrays[name]
-                del sdfg.arrays[name]
-
-            # Add NestedSDFG node
-            cnode = new_body.add_nested_sdfg(nsdfg, None, read_set, write_set)
-            if sdfg.parent:
-                for s, m in sdfg.parent_nsdfg_node.symbol_mapping.items():
-                    if s not in cnode.symbol_mapping:
-                        cnode.symbol_mapping[s] = m
-                        nsdfg.add_symbol(s, sdfg.symbols[s])
-            for name in read_set:
-                r = new_body.add_read(name)
-                new_body.add_edge(r, None, cnode, name, memlet.Memlet.from_array(name, sdfg.arrays[name]))
-            for name in write_set:
-                w = new_body.add_write(name)
-                new_body.add_edge(cnode, name, w, None, memlet.Memlet.from_array(name, sdfg.arrays[name]))
-
-            # Fix SDFG symbols
-            for sym in sdfg.free_symbols - fsymbols:
-                if sym in sdfg.symbols:
-                    del sdfg.symbols[sym]
-            for sym, dtype in nsymbols.items():
-                nsdfg.symbols[sym] = dtype
-
-            # Change body state reference
-            body = new_body
+                # Only add explicit type, if it cannot be inferred
+                if vtype is None:
+                    nsdfg.symbols[k] = ktype
 
         if (step < 0) == True:
-            # If step is negative, we have to flip start and end to produce a
-            # correct map with a positive increment
+            # If step is negative, we have to flip start and end to produce a correct map with a positive increment.
             start, end, step = end, start, -step
-
-        reentry_assignments = {k: v for k, v in condition_edge.data.assignments.items() if k != itervar}
-
-        # If necessary, make a nested SDFG with assignments
-        symbols_to_remove = set()
-        if len(reentry_assignments) > 0:
-            nsdfg = helpers.nest_state_subgraph(sdfg, body, gr.SubgraphView(body, body.nodes()))
-            for sym in entry_edge.data.free_symbols:
-                if sym in nsdfg.symbol_mapping or sym in nsdfg.in_connectors:
-                    continue
-                if sym in sdfg.symbols:
-                    nsdfg.symbol_mapping[sym] = symbolic.pystr_to_symbolic(sym)
-                    nsdfg.sdfg.add_symbol(sym, sdfg.symbols[sym])
-                elif sym in sdfg.arrays:
-                    if sym in nsdfg.sdfg.arrays:
-                        raise NotImplementedError
-                    rnode = body.add_read(sym)
-                    nsdfg.add_in_connector(sym)
-                    desc = copy.deepcopy(sdfg.arrays[sym])
-                    desc.transient = False
-                    nsdfg.sdfg.add_datadesc(sym, desc)
-                    body.add_edge(rnode, None, nsdfg, sym, memlet.Memlet(sym))
-            for name, desc in nsdfg.sdfg.arrays.items():
-                if desc.transient and not self._is_array_thread_local(name, itervar, nsdfg.sdfg, nsdfg.sdfg.states()):
-                    odesc = copy.deepcopy(desc)
-                    sdfg.arrays[name] = odesc
-                    desc.transient = False
-                    wnode = body.add_access(name)
-                    nsdfg.add_out_connector(name)
-                    body.add_edge(nsdfg, name, wnode, None, memlet.Memlet.from_array(name, odesc))
-
-            nstate = nsdfg.sdfg.node(0)
-            init_state = nsdfg.sdfg.add_state_before(nstate)
-            nisedge = nsdfg.sdfg.edges_between(init_state, nstate)[0]
-            nisedge.data.assignments = reentry_assignments
-            symbols_to_remove = set(nisedge.data.assignments.keys())
-            for k in nisedge.data.assignments.keys():
-                if k in nsdfg.symbol_mapping:
-                    del nsdfg.symbol_mapping[k]
-            condition_edge.data.assignments = {}
 
         source_nodes = body.source_nodes()
         sink_nodes = body.sink_nodes()
 
         # Check intermediate notes
-        intermediate_nodes = []
+        intermediate_nodes: List[nodes.AccessNode] = []
         for node in body.nodes():
             if isinstance(node, nodes.AccessNode) and body.in_degree(node) > 0 and node not in sink_nodes:
                 # Scalars written without WCR must be thread-local
@@ -573,14 +542,16 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                     continue
                 intermediate_nodes.append(node)
 
-        map = nodes.Map(body.label + "_map", [itervar], [(start, end, step)])
-        entry = nodes.MapEntry(map)
-        exit = nodes.MapExit(map)
+        map_node = nodes.Map(body.label + "_map", [itervar], [(start, end, step)])
+        entry = nodes.MapEntry(map_node)
+        exit = nodes.MapExit(map_node)
         body.add_node(entry)
         body.add_node(exit)
 
         # If the map uses symbols from data containers, instantiate reads
         containers_to_read = entry.free_symbols & sdfg.arrays.keys()
+        # Filter out views
+        containers_to_read = {c for c in containers_to_read if not isinstance(sdfg.arrays[c], dt.View)}
         for rd in containers_to_read:
             # We are guaranteed that this is always a scalar, because
             # can_be_applied makes sure there are no sympy functions in each of
@@ -588,9 +559,29 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
             access_node = body.add_read(rd)
             body.add_memlet_path(access_node, entry, dst_conn=rd, memlet=memlet.Memlet(rd))
 
+        # Add views as symbols
+        views_to_read = (entry.free_symbols & sdfg.arrays.keys()) - containers_to_read
+        view_assignments = {}
+        for rd in views_to_read:
+            rd_name = f"{rd}_map"
+            view_assignments[rd_name] = rd
+
+            rd_sym = symbolic.pystr_to_symbolic(rd)
+            rd_name_sym = symbolic.pystr_to_symbolic(rd_name)
+
+            for i in range(len(map_node.range)):
+                lb, up, st = map_node.range[i]
+                lb = lb.replace(rd_sym, rd_name_sym)
+                up = up.replace(rd_sym, rd_name_sym)
+                st = st.replace(rd_sym, rd_name_sym)
+                map_node.range[i] = (lb, up, st)
+
+        if view_assignments:
+            graph.add_state_before(body, "map_views", assignments=view_assignments)
+
         # Direct edges among source and sink access nodes must pass through a tasklet.
         # We first gather them and handle them later.
-        direct_edges = set()
+        direct_edges: Set[gr.MultiConnectorEdge[memlet.Memlet]] = set()
         for n1 in source_nodes:
             if not isinstance(n1, nodes.AccessNode):
                 continue
@@ -623,7 +614,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                     body.add_edge_pair(exit, e.src, n, new_memlet, internal_connector=e.src_conn)
             else:
                 body.add_nedge(n, exit, memlet.Memlet())
-        intermediate_sinks = {}
+        intermediate_sinks: Dict[str, nodes.AccessNode] = {}
         for n in intermediate_nodes:
             if isinstance(sdfg.arrays[n.data], dt.View):
                 continue
@@ -636,8 +627,8 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
 
         # Here we handle the direct edges among source and sink access nodes.
         for e in direct_edges:
-            src = e.src.data
-            dst = e.dst.data
+            src: str = e.src.data
+            dst: str = e.dst.data
             if e.data.subset.num_elements() == 1:
                 t = body.add_tasklet(f"{n1}_{n2}", {'__inp'}, {'__out'}, "__out =  __inp")
                 src_conn, dst_conn = '__out', '__inp'
@@ -667,44 +658,28 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
         if not source_nodes and not sink_nodes:
             body.add_nedge(entry, exit, memlet.Memlet())
 
-        # Get rid of the loop exit condition edge (it will be readded below)
-        if self.expr_index not in (5, 6, 7):
-            sdfg.remove_edge(after_edge)
+        # Redirect outgoing edges connected to the loop to connect to the body state instead.
+        for e in graph.out_edges(self.loop):
+            graph.add_edge(body, e.dst, e.data)
+        # Delete the loop and connected edges.
+        graph.remove_node(self.loop)
 
-        # Remove the assignment on the edge to the guard
-        for e in [init_edge, increment_edge]:
-            if e is None:
-                continue
-            if itervar in e.data.assignments:
-                del e.data.assignments[itervar]
+        # If this had made a variable a free symbol, we can remove it from the SDFG symbols
+        for var in sdfg.free_symbols - fsymbols:
+            if sdfg.parent_nsdfg_node:
+                if var not in sdfg.parent_nsdfg_node.symbol_mapping:
+                    sdfg.remove_symbol(var)
+            else:
+                sdfg.remove_symbol(var)
 
-        # Remove the condition on the entry edge
-        condition_edge.data.condition = CodeBlock("1")
+        # Also remove arrays that are unique to the loop body
+        for name in unique_set:
+            if name in sdfg.arrays:
+                sdfg.remove_data(name)
 
-        # Get rid of backedge to guard
-        if increment_edge is not None:
-            sdfg.remove_edge(increment_edge)
-
-        # Route body directly to after state, maintaining any other assignments
-        # it might have had
-        sdfg.add_edge(body, exit_state, sd.InterstateEdge(assignments=after_edge.data.assignments))
-
-        # If this had made the iteration variable a free symbol, we can remove
-        # it from the SDFG symbols
-        if itervar in sdfg.free_symbols:
-            sdfg.remove_symbol(itervar)
-        for sym in symbols_to_remove:
-            if sym in sdfg.symbols and helpers.is_symbol_unused(sdfg, sym):
-                sdfg.remove_symbol(sym)
-
-        # Reset all nested SDFG parent pointers
-        if nsdfg is not None:
-            if isinstance(nsdfg, nodes.NestedSDFG):
-                nsdfg = nsdfg.sdfg
-
-            for nstate in nsdfg.nodes():
-                for nnode in nstate.nodes():
-                    if isinstance(nnode, nodes.NestedSDFG):
-                        nnode.sdfg.parent_nsdfg_node = nnode
-                        nnode.sdfg.parent = nstate
-                        nnode.sdfg.parent_sdfg = nsdfg
+        sdfg.reset_cfg_list()
+        for n, p in sdfg.all_nodes_recursive():
+            if isinstance(n, nodes.NestedSDFG):
+                n.sdfg.parent = p
+                n.sdfg.parent_nsdfg_node = n
+                n.sdfg.parent_sdfg = p.sdfg

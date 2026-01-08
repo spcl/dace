@@ -14,6 +14,7 @@ def nested_loop_test(A: dace.int32[1]):
 
 
 def test_loop_loop_indirect():
+
     @dace.program
     def loop_with_value(A: dace.float64[20, 20], ind: dace.int64[20]):
         for i in range(20):
@@ -31,6 +32,7 @@ def test_loop_loop_indirect():
 
 
 def test_map_loop_indirect():
+
     @dace.program
     def loop_with_value(A: dace.float64[20, 20], ind: dace.int64[20]):
         for i in dace.map[0:20]:
@@ -48,6 +50,7 @@ def test_map_loop_indirect():
 
 
 def test_map_loop_indirect_2():
+
     @dace.program
     def loop_with_value(A: dace.float64[20, 20], ind: dace.int64[20]):
         for i in dace.map[0:20]:
@@ -65,6 +68,7 @@ def test_map_loop_indirect_2():
 
 
 def test_map_map_indirect():
+
     @dace.program
     def loop_with_value(A: dace.float64[20, 20], ind: dace.int64[20]):
         for i in dace.map[0:20]:
@@ -82,6 +86,7 @@ def test_map_map_indirect():
 
 
 def test_map_map_indirect_2():
+
     @dace.program
     def loop_with_value(A: dace.float64[20, 20], ind: dace.int64[20]):
         for i in dace.map[0:20]:

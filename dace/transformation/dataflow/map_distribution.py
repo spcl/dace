@@ -319,7 +319,7 @@ class ElementWiseArrayOperation2D(pm.SingleStateTransformation):
         Px = dace.symbol('Px', dtype=dace.int32, integer=True, positive=True)
         Py = dace.symbol('Py', dtype=dace.int32, integer=True, positive=True)
 
-        from dace.data import _prod
+        from dace.utils import prod as _prod
 
         # NOTE: Maps with step in their ranges are currently not supported
         if len(map_entry.map.params) == 2:

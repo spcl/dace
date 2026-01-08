@@ -1,13 +1,15 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """ A module that contains various DaCe type definitions. """
 import ctypes
+import json
 import aenum
 import inspect
 import numpy
 import re
+from sympy import Float, Integer
 from collections import OrderedDict
 from functools import wraps
-from typing import Any
+from typing import Any, Dict
 from dace.config import Config
 from dace.registry import extensible_enum, undefined_safe_enum
 
@@ -389,7 +391,6 @@ class typeclass(object):
         # Convert python basic types
         if isinstance(wrapped_type, str):
             try:
-
                 if wrapped_type == "bool":
                     wrapped_type = numpy.bool_
                 else:
@@ -426,6 +427,10 @@ class typeclass(object):
             typename = 'bool'
         elif wrapped_type is type(None):
             wrapped_type = None
+        elif wrapped_type is Float:
+            wrapped_type = float
+        elif wrapped_type is Integer:
+            wrapped_type = int
 
         self.type = wrapped_type  # Type in Python
         self.ctype = _CTYPES[wrapped_type]  # Type in C
@@ -763,7 +768,7 @@ class vector(typeclass):
 
 class stringtype(pointer):
     """
-    A specialization of the string data type to improve 
+    A specialization of the string data type to improve
     Python/generated code marshalling.
     Used internally when `str` types are given
     """
@@ -787,6 +792,7 @@ class struct(typeclass):
 
         Example use: `dace.struct(a=dace.int32, b=dace.float64)`.
     """
+    STRUCT_CTYPES: Dict[str, ctypes.Structure] = {}
 
     def __init__(self, name, **fields_and_types):
         # self._data = fields_and_types
@@ -853,8 +859,9 @@ class struct(typeclass):
 
     def as_ctypes(self):
         """ Returns the ctypes version of the typeclass. """
-        if self in _FFI_CTYPES:
-            return _FFI_CTYPES[self]
+        self_as_json = json.dumps(self.to_json(), sort_keys=True)
+        if self_as_json in struct.STRUCT_CTYPES:
+            return struct.STRUCT_CTYPES[self_as_json]
         # Populate the ctype fields for the struct class.
         fields = []
         for k, v in self._data.items():
@@ -868,9 +875,13 @@ class struct(typeclass):
             else:
                 fields.append((k, _FFI_CTYPES[v.type]))
         # Create new struct class.
-        struct_class = type("NewStructClass", (ctypes.Structure, ), {"_fields_": fields})
+        struct_class = type(self.name or "NewStructClass", (ctypes.Structure, ), {"_fields_": fields})
         # NOTE: Each call to `type` returns a different class, so we need to cache it to ensure uniqueness.
-        _FFI_CTYPES[self] = struct_class
+        struct.STRUCT_CTYPES[self_as_json] = struct_class
+
+        if hasattr(self, "__descriptor__"):
+            struct_class.__descriptor__ = self.__descriptor__
+
         return struct_class
 
     def as_numpy_dtype(self):
@@ -934,8 +945,7 @@ class compiletime:
 ####### Utility function ##############
 def ptrtonumpy(ptr, inner_ctype, shape):
     import ctypes
-    import numpy as np
-    return np.ctypeslib.as_array(ctypes.cast(ctypes.c_void_p(ptr), ctypes.POINTER(inner_ctype)), shape)
+    return numpy.ctypeslib.as_array(ctypes.cast(ctypes.c_void_p(ptr), ctypes.POINTER(inner_ctype)), shape)
 
 
 def ptrtocupy(ptr, inner_ctype, shape):
@@ -1000,7 +1010,7 @@ class callback(typeclass):
     def is_scalar_function(self) -> bool:
         """
         Returns True if the callback is a function that returns a scalar
-        value (or nothing). Scalar functions are the only ones that can be 
+        value (or nothing). Scalar functions are the only ones that can be
         used within a `dace.tasklet` explicitly.
         """
         from dace import data
@@ -1148,7 +1158,8 @@ class callback(typeclass):
             if ret_indices:
                 ret = orig_function(*list_of_other_inputs)
                 if len(list_of_outputs) == 0:
-                    refs.append(ret)  # Keep reference so that garbage collection does not free object
+                    if refs is not None:
+                        refs.append(ret)  # Keep reference so that garbage collection does not free object
                     return ret_converters[0](ret, other_arguments)
                 elif len(list_of_outputs) == 1:
                     ret = [ret]
@@ -1156,7 +1167,8 @@ class callback(typeclass):
                     if v is not None:  # Was converted to an assignable pointer
                         v[:] = r
 
-                    refs.append(r)  # Keep reference so that garbage collection does not free object
+                    if refs is not None:
+                        refs.append(r)  # Keep reference so that garbage collection does not free object
                 return
             return orig_function(*list_of_other_inputs)
 
@@ -1422,6 +1434,15 @@ class DebugInfo:
         return DebugInfo(json_obj['start_line'], json_obj['start_column'], json_obj['end_line'], json_obj['end_column'],
                          json_obj['filename'])
 
+    def __deepcopy__(self, memo) -> 'DebugInfo':
+        """Performs a `deepcopy` of `self`.
+
+        Because all members of `self` are immutable this function is essentially a shallow copy.
+        """
+        new = object.__new__(DebugInfo)
+        new.__dict__.update(self.__dict__)
+        return new
+
 
 ######################################################
 # Static (utility) functions
@@ -1565,7 +1586,7 @@ def is_array(obj: Any) -> bool:
     ``__array_interface__`` or ``__cuda_array_interface__`` standards
     (supported by NumPy, Numba, CuPy, PyTorch, etc.). If the interface is
     supported, pointers can be directly obtained using the
-    ``_array_interface_ptr`` function.
+    ``array_interface_ptr`` function.
 
     :param obj: The given object.
     :return: True iff the object implements the array interface.
@@ -1595,10 +1616,10 @@ def is_array(obj: Any) -> bool:
 
 def is_gpu_array(obj: Any) -> bool:
     """
-    Returns True if an object is a GPU array, i.e., implements the 
+    Returns True if an object is a GPU array, i.e., implements the
     ``__cuda_array_interface__`` standard (supported by Numba, CuPy, PyTorch,
     etc.). If the interface is supported, pointers can be directly obtained using the
-    ``_array_interface_ptr`` function.
+    ``array_interface_ptr`` function.
 
     :param obj: The given object.
     :return: True iff the object implements the CUDA array interface.
@@ -1616,3 +1637,31 @@ def is_gpu_array(obj: Any) -> bool:
             return True
 
     return False
+
+
+def array_interface_ptr(array: Any, storage: StorageType) -> int:
+    """
+    If the given array implements ``__array_interface__`` (see
+    ``dtypes.is_array``), returns the base host or device pointer to the
+    array's allocated memory.
+
+    :param array: Array object that implements NumPy's array interface.
+    :param array_type: Storage location of the array, used to determine whether
+                       it is a host or device pointer (e.g. GPU).
+    :return: A pointer to the base location of the allocated buffer.
+    """
+    if hasattr(array, 'data_ptr'):
+        return array.data_ptr()
+    if isinstance(array, ctypes.Array):
+        return ctypes.addressof(array)
+
+    if storage == StorageType.GPU_Global:
+        try:
+            return array.__cuda_array_interface__['data'][0]
+        except AttributeError:
+            # Special case for CuPy with HIP
+            if hasattr(array, 'data') and hasattr(array.data, 'ptr'):
+                return array.data.ptr
+            raise
+
+    return array.__array_interface__['data'][0]

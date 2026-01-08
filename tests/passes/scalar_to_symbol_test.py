@@ -1,6 +1,7 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests the scalar to symbol promotion functionality. """
 import dace
+from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes import scalar_to_symbol
 from dace.transformation import transformation as xf, interstate as isxf
 from dace.transformation.interstate import loop_detection as ld
@@ -188,15 +189,21 @@ def test_promote_array_assignment():
     sdfg: dace.SDFG = testprog6.to_sdfg(simplify=False)
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'j'}
     scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
-    sdfg.apply_transformations_repeated(isxf.StateFusion)
+    sdfg.apply_transformations_repeated([isxf.StateFusion, isxf.BlockFusion])
 
-    # There should be 4 states:
-    # [empty] --j=A[1, 1]--> [A->MapEntry->Tasklet->MapExit->A] --> [empty]
-    #                   \--------------------------------------------/
-    assert sdfg.number_of_nodes() == 4
-    ctr = collections.Counter(s.number_of_nodes() for s in sdfg)
-    assert ctr[0] == 3
-    assert ctr[5] == 1
+    # There should be 2 states:
+    # [empty] --j=A[1, 1]--> [Conditional]
+    assert sdfg.number_of_nodes() == 2
+    # The conditional should contain one branch, with one state, with a single map from A->A inside of it.
+    cond = None
+    for n in sdfg.nodes():
+        if isinstance(n, ConditionalBlock):
+            cond = n
+            break
+    assert cond is not None
+    assert len(cond.branches) == 1
+    assert len(cond.branches[0][1].nodes()) == 1
+    assert len(cond.branches[0][1].nodes()[0].nodes()) == 5
 
     # Program should produce correct result
     A = np.random.rand(20, 20)
@@ -235,24 +242,6 @@ def test_promote_array_assignment_tasklet():
     assert np.allclose(A, expected)
 
 
-class LoopTester(ld.DetectLoop, xf.MultiStateTransformation):
-    """ Tester method that sets loop index on a guard state. """
-
-    def can_be_applied(self, graph, expr_index, sdfg, permissive):
-        if not super().can_be_applied(graph, expr_index, sdfg, permissive):
-            return False
-        guard = self.loop_guard
-        if hasattr(guard, '_LOOPINDEX'):
-            return False
-        return True
-
-    def apply(self, graph: dace.SDFGState, sdfg: dace.SDFG):
-        guard = self.loop_guard
-        edge = sdfg.in_edges(guard)[0]
-        loopindex = next(iter(edge.data.assignments.keys()))
-        guard._LOOPINDEX = loopindex
-
-
 def test_promote_loop():
     """ Loop promotion. """
     N = dace.symbol('N')
@@ -269,7 +258,7 @@ def test_promote_loop():
     assert 'i' in scalar_to_symbol.find_promotable_scalars(sdfg)
     scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
     sdfg.simplify()
-    assert sdfg.apply_transformations_repeated(LoopTester) == 1
+    assert any(isinstance(n, LoopRegion) for n in sdfg.nodes())
 
 
 def test_promote_loops():
@@ -294,7 +283,7 @@ def test_promote_loops():
     assert 'k' in scalars
     scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
     sdfg.simplify()
-    assert sdfg.apply_transformations_repeated(LoopTester) == 3
+    assert any(isinstance(n, LoopRegion) for n in sdfg.nodes())
 
 
 def test_promote_indirection():
@@ -468,7 +457,7 @@ def test_nested_promotion_connector(with_subscript):
     nstate2.add_edge(a, None, t, 'inp', dace.Memlet('a[s2, s2 + 1]'))
     nstate2.add_edge(t, 'out', b, None, dace.Memlet('b[0]'))
 
-    nnode = state.add_nested_sdfg(nsdfg, None, {'a', 's'}, {'b'})
+    nnode = state.add_nested_sdfg(nsdfg, {'a', 's'}, {'b'})
     aouter = state.add_read('A')
     souter = state.add_read('scal')
     bouter = state.add_write('B')

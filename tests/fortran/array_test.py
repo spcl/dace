@@ -1,22 +1,13 @@
-# Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
-from fparser.common.readfortran import FortranStringReader
-from fparser.common.readfortran import FortranFileReader
-from fparser.two.parser import ParserFactory
-import sys, os
 import numpy as np
-import pytest
 
-from dace import SDFG, SDFGState, nodes, dtypes, data, subsets, symbolic
+from dace import dtypes, symbolic
 from dace.frontend.fortran import fortran_parser
-from fparser.two.symbol_table import SymbolTable
 from dace.sdfg import utils as sdutil
 from dace.sdfg.nodes import AccessNode
 
-import dace.frontend.fortran.ast_components as ast_components
-import dace.frontend.fortran.ast_transforms as ast_transforms
-import dace.frontend.fortran.ast_utils as ast_utils
-import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
+from dace.sdfg.state import LoopRegion
 
 
 def test_fortran_frontend_array_access():
@@ -34,7 +25,7 @@ def test_fortran_frontend_array_access():
                     double precision d(4)
 
                     d(2)=5.5
-                    
+
                     END SUBROUTINE array_access_test_function
                     """
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "array_access_test")
@@ -67,7 +58,7 @@ def test_fortran_frontend_array_ranges():
                     d(:,:,:)=e(:,:,:)+f(:,:,:)
                     d(1,2:4,1)=e(1,2:4,1)*10.0
                     d(1,1,1)=SUM(e(:,1,:))
-                    
+
                     END SUBROUTINE array_ranges_test_function
                     """
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "array_access_test")
@@ -96,7 +87,7 @@ def test_fortran_frontend_array_3dmap():
                     double precision d(4,4,4)
 
                     d(:,:,:)=7
-                    
+
                     END SUBROUTINE array_3dmap_test_function
                     """
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "array_3dmap_test")
@@ -125,7 +116,7 @@ def test_fortran_frontend_twoconnector():
                     double precision d(4)
 
                     d(2)=d(1)+d(3)
-                    
+
                     END SUBROUTINE twoconnector_test_function
                     """
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "twoconnector_test")
@@ -156,7 +147,7 @@ def test_fortran_frontend_input_output_connector():
                     b=2
                     d(:,:)=0.0
                     d(a,b)=d(1,1)+5
-                    
+
                     END SUBROUTINE ioc_test_function
                     """
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "ioc_test")
@@ -199,9 +190,10 @@ def test_fortran_frontend_memlet_in_map_test():
     """
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "memlet_range_test")
     sdfg.simplify()
-    # Expect that start is begin of for loop -> only one out edge to guard defining iterator variable
-    assert len(sdfg.out_edges(sdfg.start_state)) == 1
-    iter_var = symbolic.symbol(list(sdfg.out_edges(sdfg.start_state)[0].data.assignments.keys())[0])
+    # Expect that the start block is a loop
+    loop = sdfg.nodes()[0]
+    assert isinstance(loop, LoopRegion)
+    iter_var = symbolic.pystr_to_symbolic(loop.loop_variable)
 
     for state in sdfg.states():
         if len(state.nodes()) > 1:

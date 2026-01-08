@@ -1,7 +1,8 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import pytest
 import dace
+from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.constant_propagation import ConstantPropagation, _UnknownValue
 from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
 import numpy as np
@@ -69,7 +70,9 @@ def test_simple_loop():
     ScalarToSymbolPromotion().apply_pass(sdfg, {})
     ConstantPropagation().apply_pass(sdfg, {})
 
-    assert set(sdfg.symbols.keys()) == {'i'}
+    for node in sdfg.all_control_flow_regions():
+        if isinstance(node, LoopRegion):
+            assert node.loop_variable == 'i'
     # Test tasklets
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, dace.nodes.Tasklet):
@@ -91,7 +94,9 @@ def test_cprop_inside_loop():
     ScalarToSymbolPromotion().apply_pass(sdfg, {})
     ConstantPropagation().apply_pass(sdfg, {})
 
-    assert set(sdfg.symbols.keys()) == {'i'}
+    for node in sdfg.all_control_flow_regions():
+        if isinstance(node, LoopRegion):
+            assert node.loop_variable == 'i'
 
     # Test tasklets
     i_found = 0
@@ -118,7 +123,10 @@ def test_cprop_outside_loop():
     ScalarToSymbolPromotion().apply_pass(sdfg, {})
     ConstantPropagation().apply_pass(sdfg, {})
 
-    assert set(sdfg.symbols.keys()) == {'i', 'j'}
+    assert 'j' in sdfg.symbols
+    for node in sdfg.all_control_flow_regions():
+        if isinstance(node, LoopRegion):
+            assert node.loop_variable == 'i'
 
     # Test memlet
     last_state = sdfg.sink_nodes()[0]
@@ -187,7 +195,9 @@ def test_complex_case():
     sdfg.add_edge(usei, merge, dace.InterstateEdge(assignments={'j': 'j+1'}))
     sdfg.add_edge(merge, last, dace.InterstateEdge('j >= 2'))
 
-    propagated = ConstantPropagation().collect_constants(sdfg)  #, reachability
+    propagated = {}
+    arrays = set(sdfg.arrays.keys() | sdfg.constants_prop.keys())
+    ConstantPropagation()._collect_constants_for_region(sdfg, arrays, propagated, {}, {}, {})
     assert len(propagated[init]) == 0
     assert propagated[branch2]['i'] == '7'
     assert propagated[guard]['i'] is _UnknownValue
@@ -230,7 +240,7 @@ def test_recursive_cprop():
     sdfg.add_edge(a, b, dace.InterstateEdge(assignments=dict(i=1)))
 
     nsdfg = dace.SDFG('nested')
-    b.add_nested_sdfg(nsdfg, None, {}, {}, symbol_mapping={'i': 'i + 1'})
+    b.add_nested_sdfg(nsdfg, {}, {}, symbol_mapping={'i': 'i + 1'})
 
     nstate = nsdfg.add_state()
     t = nstate.add_tasklet('doprint', {}, {}, 'printf("%d\\n", i)')
@@ -412,7 +422,7 @@ def test_for_with_external_init_nested():
     nbody.add_edge(nt, '__out', na, None, dace.Memlet('inner_A[i]'))
 
     a = main.add_access('A')
-    t = main.add_nested_sdfg(nsdfg, None, {}, {'inner_A'}, {'N': 'N', 'i': 'i'})
+    t = main.add_nested_sdfg(nsdfg, {}, {'inner_A'}, {'N': 'N', 'i': 'i'})
     main.add_edge(t, 'inner_A', a, None, dace.Memlet.from_array('A', sdfg.arrays['A']))
 
     sdfg.validate()
@@ -455,7 +465,7 @@ def test_for_with_external_init_nested_start_with_guard():
     nbody.add_edge(nt, '__out', na, None, dace.Memlet('inner_A[i-1]'))
 
     a = main.add_access('A')
-    t = main.add_nested_sdfg(nsdfg, None, {}, {'inner_A'}, {'N': 'N', 'i': 'i'})
+    t = main.add_nested_sdfg(nsdfg, {}, {'inner_A'}, {'N': 'N', 'i': 'i'})
     main.add_edge(t, 'inner_A', a, None, dace.Memlet.from_array('A', sdfg.arrays['A']))
 
     sdfg.validate()
@@ -513,7 +523,7 @@ def test_dependency_change():
     sdfg = dace.SDFG('tester')
     sdfg.add_symbol('N', dace.int64)
     sdfg.add_array('a', [1], dace.int64)
-    init = sdfg.add_state()
+    init = sdfg.add_state(is_start_block=True)
     entry = sdfg.add_state('entry')
     body = sdfg.add_state('body')
     body2 = sdfg.add_state('body2')
@@ -525,12 +535,8 @@ def test_dependency_change():
     sdfg.add_edge(entry, body, dace.InterstateEdge())
     sdfg.add_edge(
         body, body2,
-        dace.InterstateEdge(assignments=dict(t_next='(t + irev)',
-                                                irev_next='(irev + (- 1))',
-                                                i_next='i + 1'), ))
-    sdfg.add_edge(
-        body2, exiting,
-        dace.InterstateEdge(assignments=dict(cont='i_next == 2500'), ))
+        dace.InterstateEdge(assignments=dict(t_next='(t + irev)', irev_next='(irev + (- 1))', i_next='i + 1'), ))
+    sdfg.add_edge(body2, exiting, dace.InterstateEdge(assignments=dict(cont='i_next == 2500'), ))
     sdfg.add_edge(exiting, final, dace.InterstateEdge('cont'))
     sdfg.add_edge(exiting, latch, dace.InterstateEdge('not cont', dict(
         irev='irev_next',

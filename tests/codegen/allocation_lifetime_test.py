@@ -33,7 +33,7 @@ def _test_determine_alloc(lifetime: dace.AllocationLifetime, unused: bool = Fals
     nstate.add_memlet_path(nstate.add_read('A'), ime, t1, memlet=dace.Memlet('A[i]'))
     nstate.add_memlet_path(t2, imx, nstate.add_write('B'), memlet=dace.Memlet('B[0]', wcr='lambda a,b: a+b'))
     #########################################################################
-    nsdfg_node = state.add_nested_sdfg(nsdfg, None, {'A'}, {'B'})
+    nsdfg_node = state.add_nested_sdfg(nsdfg, {'A'}, {'B'})
     state.add_memlet_path(state.add_read('A'), me, nsdfg_node, dst_conn='A', memlet=dace.Memlet('A[0:N]'))
     state.add_memlet_path(nsdfg_node, mx, state.add_write('B'), src_conn='B', memlet=dace.Memlet('B[0:N]'))
 
@@ -130,7 +130,7 @@ def test_persistent_gpu_copy_regression():
     nstate.add_edge(a_trans, None, nstate.add_write("noutput"), None, nsdfg.make_array_memlet("transient_heap"))
 
     a_gpu = state.add_read("input_gpu")
-    nsdfg_node = state.add_nested_sdfg(nsdfg, None, {"ninput"}, {"noutput"})
+    nsdfg_node = state.add_nested_sdfg(nsdfg, {"ninput"}, {"noutput"})
     wR = state.add_write("__return")
 
     state.add_edge(state.add_read("input"), None, a_gpu, None, sdfg.make_array_memlet("input"))
@@ -435,13 +435,13 @@ def test_double_nested_persistent_write():
     osdfg.add_transient('pers', [20], dace.float64, lifetime=dace.AllocationLifetime.Persistent)
     state = osdfg.add_state()
     me, mx = state.add_map('mapit', dict(i='0:20'))
-    nsdfg = state.add_nested_sdfg(sdfg, None, {}, {'pers'})
+    nsdfg = state.add_nested_sdfg(sdfg, {}, {'pers'})
     state.add_nedge(me, nsdfg, dace.Memlet())
     state.add_memlet_path(nsdfg, mx, state.add_write('pers'), src_conn='pers', memlet=dace.Memlet('pers[0:20]'))
 
     oosdfg = dace.SDFG('npw_outer')
     state = oosdfg.add_state()
-    nsdfg = state.add_nested_sdfg(osdfg, None, {}, {})
+    nsdfg = state.add_nested_sdfg(osdfg, {}, {})
 
     oosdfg.compile()
 

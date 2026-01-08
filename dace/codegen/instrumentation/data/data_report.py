@@ -2,10 +2,14 @@
 from dataclasses import dataclass
 import struct
 from typing import Any, Dict, List, Set, Tuple, Union
+from numbers import Number
 import os
 
 from dace import dtypes, SDFG
-from dace.data import ArrayLike, Number  # Type hint
+try:
+    from numpy.typing import ArrayLike
+except ImportError:
+    ArrayLike = Any  # type: ignore
 
 import numpy as np
 
@@ -23,7 +27,7 @@ class InstrumentedDataReport:
     where <array or symbol name> is the array or symbol in the SDFG, <uuid> is a unique identifier to the access node
     (or state for symbols) from which this array or symbol was saved, and <version> is a running number for the
     currently-saved array or symbol (e.g., when an access node is written to multiple times in a loop).
-    
+
     The files themselves are direct binary representations of the whole data (with padding and strides), for complete
     reproducibility. When accessed from the report, a numpy wrapper shows the user-accessible view of that array.
     Example of reading a file::
@@ -78,7 +82,7 @@ class InstrumentedDataReport:
 
     def _read_array_file(self, filename: str, npdtype: np.dtype) -> Tuple[ArrayLike, ArrayLike]:
         """
-        Reads a formatted instrumented data file. 
+        Reads a formatted instrumented data file.
 
         :return: A 2-tuple of (original buffer, array view)
         """
@@ -104,7 +108,7 @@ class InstrumentedDataReport:
 
     def __getitem__(self, item: str) -> Union[ArrayLike, Number, List[ArrayLike], List[Number]]:
         """
-        Returns the instrumented (saved) data from the report according to the data descriptor (array) or symbol name. 
+        Returns the instrumented (saved) data from the report according to the data descriptor (array) or symbol name.
 
         :param item: Name of the array or symbol to read.
         :return: An array (if a single entry in the report is given) or symbol, or a list of versions of the array
@@ -164,7 +168,7 @@ class InstrumentedDataReport:
         """
         Stores the retrieved arrays from the report back to the files. Can be used to modify data that will be loaded
         when restoring a data instrumentation report.
-        
+
         :see: dace.dtypes.DataInstrumentationType.Restore
         """
         for (k, i), loaded in self.loaded_values.items():

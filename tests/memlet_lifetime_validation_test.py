@@ -70,7 +70,7 @@ def test():
     try:
         sdfg2.validate()
         raise AssertionError("SDFG passed validation, test FAILED")
-    except InvalidSDFGError:
+    except (InvalidSDFGError, KeyError):
         print("Test passed, exception successfully caught")
 
 

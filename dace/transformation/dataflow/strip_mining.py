@@ -125,6 +125,7 @@ def calc_set_union(set_a, set_b):
 class StripMining(transformation.SingleStateTransformation):
     """ Implements the strip-mining transformation.
 
+        TODO: Update doc
         Strip-mining takes as input a map dimension and splits it into
         two dimensions. The new dimension iterates over the range of
         the original one with a parameterizable step, called the tile
@@ -206,17 +207,18 @@ class StripMining(transformation.SingleStateTransformation):
         target_dim = map_entry.map.params[dim_idx]
         td_from, td_to, td_step = map_entry.map.range[dim_idx]
         new_dim = self._find_new_dim(sdfg, state, map_entry, new_dim_prefix, target_dim)
-        new_dim_range = (td_from, td_to, tile_size)
+        new_dim_range = (td_from, td_to, tile_size * td_step)
         new_map = nodes.Map(map_entry.map.label, [new_dim], subsets.Range([new_dim_range]))
 
         dimsym = dace.symbolic.pystr_to_symbolic(new_dim)
         td_from_new = dimsym
         if divides_evenly:
-            td_to_new = dimsym + tile_size - 1
+            td_to_new = dimsym + tile_size * td_step - 1
         else:
             if isinstance(td_to, dace.symbolic.SymExpr):
                 td_to = td_to.expr
-            td_to_new = dace.symbolic.SymExpr(sympy.Min(dimsym + tile_size - 1, td_to), dimsym + tile_size - 1)
+            td_to_new = dace.symbolic.SymExpr(sympy.Min(dimsym + tile_size * td_step - 1, td_to),
+                                              dimsym + tile_size - 1)
         td_step_new = td_step
 
         return new_dim, new_map, (td_from_new, td_to_new, td_step_new)
@@ -360,13 +362,18 @@ class StripMining(transformation.SingleStateTransformation):
             map_entry.map.range = subsets.Range([r for i, r in enumerate(map_entry.map.range) if i != dim_idx])
             map_entry.map.params = [p for i, p in enumerate(map_entry.map.params) if i != dim_idx]
             if len(map_entry.map.params) == 0:
-                raise ValueError('Strip-mining all dimensions of the map with ' 'empty tiles is disallowed')
+                raise ValueError('Strip-mining all dimensions of the map with '
+                                 'empty tiles is disallowed')
         else:
             map_entry.map.range[dim_idx] = td_rng
 
         # Make internal map's schedule to "not parallel"
         new_map.schedule = map_entry.map.schedule
         map_entry.map.schedule = dtypes.ScheduleType.Sequential
+
+        # Get memlet paths of out edges, necessary to track other subsets
+        # Adding new edges
+        edge_to_src_memlet_paths = {out_edge: graph.memlet_path(out_edge) for out_edge in graph.out_edges(map_entry)}
 
         # Redirect edges
         new_map_entry.in_connectors = dcpy(map_entry.in_connectors)
@@ -378,16 +385,29 @@ class StripMining(transformation.SingleStateTransformation):
         new_in_edges = dict()
         entry_in_conn = {}
         entry_out_conn = {}
-        for _src, src_conn, _dst, _, memlet in graph.out_edges(map_entry):
+        for out_edge in graph.out_edges(map_entry):
+            _src, src_conn, _dst, _, memlet = out_edge
+            # If we have <arr_subset> -> <scalar_data><sclar_subset> pattern (or any kind of other subset)
+            # We need to expand on <arr_subset> and therefore need to get src path (through memlet paths)
+            src_data_name = None
+            if memlet.other_subset is None:
+                src_data_name = memlet.data
+                subset = memlet.subset
+            else:
+                src_edge = edge_to_src_memlet_paths[out_edge][0]
+                src_data_name = src_edge.src.data if isinstance(src_edge.src,
+                                                                dace.nodes.AccessNode) else src_edge.data.data
+                subset = memlet.src_subset
+
             if (src_conn is not None and src_conn[:4] == 'OUT_'
-                    and not isinstance(sdfg.arrays[memlet.data], dace.data.Scalar)):
+                    and not isinstance(sdfg.arrays[src_data_name], dace.data.Scalar)):
                 new_subset = calc_set_image(
                     map_entry.map.params,
                     map_entry.map.range,
-                    memlet.subset,
+                    subset,
                 )
                 conn = src_conn[4:]
-                key = (memlet.data, 'IN_' + conn, 'OUT_' + conn)
+                key = (src_data_name, 'IN_' + conn, 'OUT_' + conn)
                 if key in new_in_edges.keys():
                     old_subset = new_in_edges[key].subset
                     new_in_edges[key].subset = calc_set_union(old_subset, new_subset)
@@ -396,6 +416,7 @@ class StripMining(transformation.SingleStateTransformation):
                     entry_out_conn['OUT_' + conn] = None
                     new_memlet = dcpy(memlet)
                     new_memlet.subset = new_subset
+                    new_memlet.other_subset = None
                     if memlet.dynamic:
                         new_memlet.num_accesses = memlet.num_accesses
                     else:
@@ -416,6 +437,7 @@ class StripMining(transformation.SingleStateTransformation):
                 new_in_edges[(memlet.data, in_conn, out_conn)] = dcpy(memlet)
         new_map_entry.out_connectors = entry_out_conn
         map_entry.in_connectors = entry_in_conn
+
         for (_, in_conn, out_conn), memlet in new_in_edges.items():
             graph.add_edge(new_map_entry, out_conn, map_entry, in_conn, memlet)
 
@@ -441,6 +463,7 @@ class StripMining(transformation.SingleStateTransformation):
                     exit_out_conn['OUT_' + conn] = None
                     new_memlet = dcpy(memlet)
                     new_memlet.subset = new_subset
+                    new_memlet.other_subset = None
                     if memlet.dynamic:
                         new_memlet.num_accesses = memlet.num_accesses
                     else:

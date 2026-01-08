@@ -1,4 +1,4 @@
-# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """
 This file contains classes that describe data-centric transformations.
 
@@ -20,10 +20,10 @@ All transformations extend the ``TransformationBase`` class. There are three bui
 
 import abc
 import copy
-from dace import dtypes, serialize
+from dace import serialize
 from dace.dtypes import ScheduleType
 from dace.sdfg import SDFG, SDFGState
-from dace.sdfg.state import ControlFlowRegion
+from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion
 from dace.sdfg import nodes as nd, graph as gr, utils as sdutil, propagation, infer_types, state as st
 from dace.properties import make_properties, Property, DictProperty, SetProperty
 from dace.transformation import pass_pipeline as ppl
@@ -34,8 +34,9 @@ from typing import TypeVar
 
 PassT = TypeVar('PassT', bound=ppl.Pass)
 
-def experimental_cfg_block_compatible(cls: PassT) -> PassT:
-    cls.__experimental_cfg_block_compatible__ = True
+
+def explicit_cf_compatible(cls: PassT) -> PassT:
+    cls.__explicit_cf_compatible__ = True
     return cls
 
 
@@ -62,10 +63,10 @@ class TransformationBase(ppl.Pass):
 
 @make_properties
 class PatternTransformation(TransformationBase):
-    """ 
+    """
     Abstract class for pattern-matching transformations.
     Please extend either ``SingleStateTransformation`` or ``MultiStateTransformation``.
-    
+
     :see: SingleStateTransformation
     :see: MultiStateTransformation
     :seealso: PatternNode
@@ -290,17 +291,16 @@ class PatternTransformation(TransformationBase):
         }
 
     @classmethod
-    def _can_be_applied_and_apply(
-            cls,
-            verify: bool,
-            apply: bool,
-            sdfg: SDFG,
-            options: Optional[Dict[str, Any]] = None,
-            expr_index: int = 0,
-            annotate: bool = True,
-            permissive: bool = False,
-            save: bool = True,
-            **where: Union[nd.Node, SDFGState]):
+    def _can_be_applied_and_apply(cls,
+                                  verify: bool,
+                                  apply: bool,
+                                  sdfg: SDFG,
+                                  options: Optional[Dict[str, Any]] = None,
+                                  expr_index: int = 0,
+                                  annotate: bool = True,
+                                  permissive: bool = False,
+                                  save: bool = True,
+                                  **where: Union[nd.Node, SDFGState]):
         """
         Applies `can_be_applied()` and/or `apply()` to a given subgraph, defined by
         a set of nodes.
@@ -339,7 +339,7 @@ class PatternTransformation(TransformationBase):
         # Check that all keyword arguments are nodes and if interstate or not
         sample_node = next(iter(where.values()))
 
-        if isinstance(sample_node, SDFGState):
+        if isinstance(sample_node, ControlFlowBlock):
             graph = sample_node.parent_graph
             state_id = -1
             cfg_id = graph.cfg_id
@@ -419,15 +419,15 @@ class PatternTransformation(TransformationBase):
                       nodes in the SDFG or a single state.
         """
         return cls._can_be_applied_and_apply(
-                verify=verify,
-                apply=True,
-                sdfg=sdfg,
-                options=options,
-                expr_index=expr_index,
-                annotate=annotate,
-                permissive=permissive,
-                save=save,
-                **where,
+            verify=verify,
+            apply=True,
+            sdfg=sdfg,
+            options=options,
+            expr_index=expr_index,
+            annotate=annotate,
+            permissive=permissive,
+            save=save,
+            **where,
         )
 
     @classmethod
@@ -454,15 +454,15 @@ class PatternTransformation(TransformationBase):
                       nodes in the SDFG or a single state.
         """
         return cls._can_be_applied_and_apply(
-                verify=True,
-                apply=False,
-                sdfg=sdfg,
-                options=options,
-                expr_index=expr_index,
-                annotate=False,
-                permissive=permissive,
-                save=False,
-                **where,
+            verify=True,
+            apply=False,
+            sdfg=sdfg,
+            options=options,
+            expr_index=expr_index,
+            annotate=False,
+            permissive=permissive,
+            save=False,
+            **where,
         )
 
     def __str__(self) -> str:
@@ -506,7 +506,7 @@ class PatternTransformation(TransformationBase):
 
 
 @make_properties
-@experimental_cfg_block_compatible
+@explicit_cf_compatible
 class SingleStateTransformation(PatternTransformation, abc.ABC):
     """
     Base class for pattern-matching transformations that find matches within a single SDFG state.
@@ -518,7 +518,7 @@ class SingleStateTransformation(PatternTransformation, abc.ABC):
         * ``apply``: A method that applies the transformation on the given SDFG.
 
     For example:
-    
+
     .. code-block:: python
 
         class MyTransformation(SingleStateTransformation):
@@ -630,7 +630,7 @@ class PatternNode(Generic[T]):
     Example use:
 
     .. code-block:: python
-    
+
         class MyTransformation(SingleStateTransformation):
             some_map_node = PatternNode(nodes.MapEntry)
             array = PatternNode(nodes.AccessNode)
@@ -707,7 +707,6 @@ class ExpandTransformation(PatternTransformation):
         expansion = type(self).expansion(node, state, sdfg, *args, **kwargs)
         if isinstance(expansion, SDFG):
             expansion = state.add_nested_sdfg(expansion,
-                                              sdfg,
                                               node.in_connectors,
                                               node.out_connectors,
                                               name=node.name,
@@ -811,8 +810,7 @@ class SubgraphTransformation(TransformationBase):
             self.subgraph = set(subgraph.graph.node_id(n) for n in subgraph.nodes())
 
             if isinstance(subgraph.graph, SDFGState):
-                sdfg = subgraph.graph.parent
-                self.cfg_id = sdfg.cfg_id
+                self.cfg_id = subgraph.graph.parent_graph.cfg_id
                 self.state_id = subgraph.graph.block_id
             elif isinstance(subgraph.graph, SDFG):
                 self.cfg_id = subgraph.graph.cfg_id
@@ -824,17 +822,10 @@ class SubgraphTransformation(TransformationBase):
             self.cfg_id = cfg_id
             self.state_id = state_id
 
-    def get_subgraph(self, sdfg: SDFG) -> gr.SubgraphView:
-        sdfg = sdfg.cfg_list[self.cfg_id]
-        if self.state_id == -1:
-            return gr.SubgraphView(sdfg, list(map(sdfg.node, self.subgraph)))
-        state = sdfg.node(self.state_id)
-        return st.StateSubgraphView(state, list(map(state.node, self.subgraph)))
-
     @classmethod
     def subclasses_recursive(cls) -> Set[Type['PatternTransformation']]:
         """
-        Returns all subclasses of this class, including subclasses of subclasses. 
+        Returns all subclasses of this class, including subclasses of subclasses.
 
         :param all_subclasses: Include all subclasses (e.g., including ``ExpandTransformation``).
         """
@@ -880,12 +871,8 @@ class SubgraphTransformation(TransformationBase):
         return self.apply(sdfg)
 
     @classmethod
-    def _can_be_applied_and_apply(cls,
-                                  *where: Union[nd.Node, SDFGState, gr.SubgraphView],
-                                  verify: bool,
-                                  apply: bool,
-                                  sdfg: SDFG,
-                                  **options: Any):
+    def _can_be_applied_and_apply(cls, *where: Union[nd.Node, SDFGState, gr.SubgraphView], verify: bool, apply: bool,
+                                  sdfg: SDFG, **options: Any):
         """
 
         Applies `can_be_applied()` and/or `apply()` to a given subgraph, defined by
@@ -994,18 +981,15 @@ class SubgraphTransformation(TransformationBase):
         :param options: A set of parameters to use for applying the transformation.
         """
         return cls._can_be_applied_and_apply(
-                verify=verify,
-                apply=True,
-                sdfg=sdfg,
-                *where,
-                **options,
+            verify=verify,
+            apply=True,
+            sdfg=sdfg,
+            *where,
+            **options,
         )
 
     @classmethod
-    def can_be_applied_to(cls,
-                          sdfg: SDFG,
-                          *where: Union[nd.Node, SDFGState, gr.SubgraphView],
-                          **options: Any) -> bool:
+    def can_be_applied_to(cls, sdfg: SDFG, *where: Union[nd.Node, SDFGState, gr.SubgraphView], **options: Any) -> bool:
         """
         Checks if the transformation can be applied to a given subgraph, defined
         by a set of nodes.
@@ -1032,11 +1016,11 @@ class SubgraphTransformation(TransformationBase):
         :param options: A set of parameters to use for applying the transformation.
         """
         return cls._can_be_applied_and_apply(
-                verify=True,
-                apply=False,
-                sdfg=sdfg,
-                *where,
-                **options,
+            verify=True,
+            apply=False,
+            sdfg=sdfg,
+            *where,
+            **options,
         )
 
     def to_json(self, parent=None):
@@ -1060,6 +1044,7 @@ class SubgraphTransformation(TransformationBase):
 def _make_function_blocksafe(cls: ppl.Pass, function_name: str, get_sdfg_arg: Callable[[Any], Optional[SDFG]]):
     if hasattr(cls, function_name):
         vanilla_method = getattr(cls, function_name)
+
         def blocksafe_wrapper(tgt, *args, **kwargs):
             if isinstance(tgt, SDFG):
                 sdfg = tgt
@@ -1069,11 +1054,12 @@ def _make_function_blocksafe(cls: ppl.Pass, function_name: str, get_sdfg_arg: Ca
                 sdfg = get_sdfg_arg(tgt, *args)
             if sdfg and isinstance(sdfg, SDFG):
                 root_sdfg: SDFG = sdfg.cfg_list[0]
-                if not root_sdfg.using_experimental_blocks:
+                if not root_sdfg.using_explicit_control_flow:
                     return vanilla_method(tgt, *args, **kwargs)
                 else:
                     warnings.warn('Skipping ' + function_name + ' from ' + cls.__name__ +
                                   ' due to incompatibility with experimental control flow blocks')
+
         setattr(cls, function_name, blocksafe_wrapper)
 
 

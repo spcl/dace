@@ -1,135 +1,184 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """ Loop unroll transformation """
 
+import ast
 import copy
-from typing import List
+from typing import List, Optional, Union
 
-from dace import sdfg as sd, symbolic
+from dace import sdfg as sd, symbolic, serialize
 from dace.properties import Property, make_properties
-from dace.sdfg import graph as gr
-from dace.sdfg import utils as sdutil
-from dace.sdfg.state import ControlFlowRegion
+from dace.sdfg import InterstateEdge, utils as sdutil
+from dace.sdfg.nodes import NestedSDFG
+from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
 from dace.frontend.python.astutils import ASTFindReplace
-from dace.transformation.interstate.loop_detection import (DetectLoop, find_for_loop)
 from dace.transformation import transformation as xf
+from dace.transformation.passes.analysis import loop_analysis
+
 
 @make_properties
-@xf.experimental_cfg_block_compatible
-class LoopUnroll(DetectLoop, xf.MultiStateTransformation):
-    """ Unrolls a state machine for-loop into multiple states """
+@xf.explicit_cf_compatible
+class LoopUnroll(xf.MultiStateTransformation):
+    """ Unrolls a for-loop into multiple individual control flow regions """
+
+    loop = xf.PatternNode(LoopRegion)
 
     count = Property(
         dtype=int,
         default=0,
-        desc='Number of iterations to unroll, or zero for all '
-        'iterations (loop must be constant-sized for 0)',
+        desc='Number of iterations to unroll, or zero for all iterations (loop must be constant-sized for 0)',
     )
 
+    inline_iterations = Property(dtype=bool,
+                                 default=True,
+                                 desc="Whether or not to inline individual iterations' CFGs after unrolling")
+
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.loop)]
+
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
-        # Is this even a loop
-        if not super().can_be_applied(graph, expr_index, sdfg, permissive):
+        # If loop information cannot be determined, fail.
+        start = loop_analysis.get_init_assignment(self.loop)
+        end = loop_analysis.get_loop_end(self.loop)
+        step = loop_analysis.get_loop_stride(self.loop)
+        itervar = self.loop.loop_variable
+        if start is None or end is None or step is None or itervar is None:
             return False
-
-        found = self.loop_information()
-
-        # If loop cannot be detected, fail
-        if not found:
-            return False
-        _, rng, _ = found
 
         # If loop stride is not specialized or constant-sized, fail
-        if symbolic.issymbolic(rng[2], sdfg.constants):
+        if symbolic.issymbolic(step, sdfg.constants):
             return False
         # If loop range diff is not constant-sized, fail
-        if symbolic.issymbolic(rng[1] - rng[0], sdfg.constants):
+        if symbolic.issymbolic(end - start, sdfg.constants):
             return False
         return True
 
     def apply(self, graph: ControlFlowRegion, sdfg):
-        # Obtain loop information
-        begin: sd.SDFGState = self.loop_begin
-        after_state: sd.SDFGState = self.exit_state
-
-        # Obtain iteration variable, range, and stride, together with the last
-        # state(s) before the loop and the last loop state.
-        itervar, rng, loop_struct = self.loop_information()
-
         # Loop must be fully unrollable for now.
         if self.count != 0:
             raise NotImplementedError  # TODO(later)
 
-        # Get loop states
-        loop_states = self.loop_body()
-        first_id = loop_states.index(begin)
-        last_state = loop_struct[1]
-        last_id = loop_states.index(last_state)
-        loop_subgraph = gr.SubgraphView(graph, loop_states)
+        # Obtain loop information
+        start = loop_analysis.get_init_assignment(self.loop)
+        end = loop_analysis.get_loop_end(self.loop)
+        stride = loop_analysis.get_loop_stride(self.loop)
 
         try:
-            start, end, stride = (r for r in rng)
             stride = symbolic.evaluate(stride, sdfg.constants)
             loop_diff = int(symbolic.evaluate(end - start + 1, sdfg.constants))
-            is_symbolic = any([symbolic.issymbolic(r) for r in rng[:2]])
+            is_symbolic = any([symbolic.issymbolic(r) for r in (start, end)])
         except TypeError:
             raise TypeError('Loop difference and strides cannot be symbolic.')
-        # Create states for loop subgraph
-        unrolled_states = []
 
+        # Create states for loop subgraph
+        # A state is returned as a replacement when the loop body is empty
+        unrolled_iterations: List[Union[ControlFlowRegion, SDFGState]] = []
         for i in range(0, loop_diff, stride):
+            # Instantiate loop contents as a new control flow region with iterate value.
             current_index = start + i
-            # Instantiate loop states with iterate value
-            new_states = self.instantiate_loop(sdfg, loop_states, loop_subgraph, itervar, current_index,
-                                               str(i) if is_symbolic else None)
+            is_symbolic |= symbolic.issymbolic(current_index)
+            iteration_region = self.instantiate_loop_iteration(graph, self.loop, current_index,
+                                                               str(i) if is_symbolic else None)
 
             # Connect iterations with unconditional edges
-            if len(unrolled_states) > 0:
-                graph.add_edge(unrolled_states[-1][1], new_states[first_id], sd.InterstateEdge())
+            if len(unrolled_iterations) > 0:
+                assert unrolled_iterations[-1] in graph.nodes()
+                assert iteration_region in graph.nodes()
+                graph.add_edge(unrolled_iterations[-1], iteration_region, sd.InterstateEdge())
+            unrolled_iterations.append(iteration_region)
 
-            unrolled_states.append((new_states[first_id], new_states[last_id]))
+        if len(unrolled_iterations) == 0:
+            s = graph.add_state(label="empty_unroll", is_start_block=True)
+            unrolled_iterations.append(s)
 
-        # Get any assignments that might be on the edge to the after state
-        after_assignments = self.loop_exit_edge().data.assignments
+        if unrolled_iterations:
+            for ie in graph.in_edges(self.loop):
+                assert ie.src in graph.nodes()
+                assert unrolled_iterations[0] in graph.nodes()
+                graph.add_edge(ie.src, unrolled_iterations[0], ie.data)
+            for oe in graph.out_edges(self.loop):
+                assert unrolled_iterations[-1] in graph.nodes()
+                assert oe.dst in graph.nodes()
+                graph.add_edge(unrolled_iterations[-1], oe.dst, oe.data)
 
-        # Connect new states to before and after states without conditions
-        if unrolled_states:
-            before_states = loop_struct[0]
-            for before_state in before_states:
-                graph.add_edge(before_state, unrolled_states[0][0], sd.InterstateEdge())
-            graph.add_edge(unrolled_states[-1][1], after_state, sd.InterstateEdge(assignments=after_assignments))
+        # If we remove start block we need to update the new start-block
+        was_start_block = graph.start_block == self.loop
+        graph.remove_node(self.loop)
+        if was_start_block:
+            oes = graph.out_edges(self.loop)
+            if len(oes) > 0:
+                oe = oes[0]
+                oes2 = graph.out_edges(oe.dst)
+                graph.remove_node(oe.dst)
+                assert len(oes2) <= 1
+                if len(oes2) == 1:
+                    graph.add_node(oe.dst, is_start_block=True)
+                    for oe2 in oes2:
+                        graph.add_edge(oe.dst, oe2.dst, copy.deepcopy(oe2.data))
+                else:
+                    graph.add_node(oe.dst, is_start_block=True)
 
-        # Remove old states from SDFG
-        guard_or_latch = self.loop_meta_states()
-        graph.remove_nodes_from(guard_or_latch + loop_states)
+        if self.inline_iterations:
+            for it in unrolled_iterations:
+                # SDFGState does not have an inline attribute
+                if isinstance(it, SDFGState):
+                    continue
+                it.inline()
 
-    def instantiate_loop(
-        self,
-        sdfg: sd.SDFG,
-        loop_states: List[sd.SDFGState],
-        loop_subgraph: gr.SubgraphView,
-        itervar: str,
-        value: symbolic.SymbolicType,
-        state_suffix=None,
-    ):
-        # Using to/from JSON copies faster than deepcopy (which will also
-        # copy the parent SDFG)
-        new_states = [sd.SDFGState.from_json(s.to_json(), context={'sdfg': sdfg}) for s in loop_states]
+    def instantiate_loop_iteration(self,
+                                   graph: ControlFlowRegion,
+                                   loop: LoopRegion,
+                                   value: symbolic.SymbolicType,
+                                   label_suffix: Optional[str] = None) -> ControlFlowRegion:
+        it_label = loop.label + '_' + loop.loop_variable + (label_suffix if label_suffix is not None else str(value))
+        iteration_region = ControlFlowRegion(it_label, graph.sdfg, graph)
 
-        # Replace iterate with value in each state
-        for state in new_states:
-            state.label = state.label + '_' + itervar + '_' + (state_suffix if state_suffix is not None else str(value))
-            state.replace(itervar, value)
+        graph.add_node(iteration_region)
 
-        graph = loop_states[0].parent_graph
-        # Add subgraph to original SDFG
-        for edge in loop_subgraph.edges():
-            src = new_states[loop_states.index(edge.src)]
-            dst = new_states[loop_states.index(edge.dst)]
+        block_map = {}
 
+        for block in loop.nodes():
+            # Using to/from JSON copies faster than deepcopy.
+            new_block = serialize.from_json(serialize.to_json(block), context={'sdfg': graph.sdfg})
+            assert block not in block_map
+            block_map[block] = new_block
+            new_block.replace(loop.loop_variable, value)
+            iteration_region.add_node(new_block, is_start_block=(block is loop.start_block))
+
+        for edge in loop.edges():
+            src = block_map[edge.src]
+            dst = block_map[edge.dst]
             # Replace conditions in subgraph edges
-            data: sd.InterstateEdge = copy.deepcopy(edge.data)
-            if not data.is_unconditional():
-                ASTFindReplace({itervar: str(value)}).visit(data.condition)
+            data = copy.deepcopy(edge.data)
+            iteration_region.add_edge(src, dst, data)
 
-            graph.add_edge(src, dst, data)
+        # Replace occurences of the loop variables on all interstate edges
+        for edge, parent_graph in iteration_region.all_edges_recursive():  # Recursion needed for nested SDFGs
+            if isinstance(edge.data, InterstateEdge):
+                src = edge.src
+                dst = edge.dst
+                assert src in parent_graph.nodes()
+                assert dst in parent_graph.nodes()
+                if not edge.data.is_unconditional():
+                    ASTFindReplace({loop.loop_variable: str(value)}).visit(edge.data.condition)
 
-        return new_states
+                new_assignments = dict()
+                for k, v in edge.data.assignments.items():
+                    k_ast = ast.parse(k)
+                    v_ast = ast.parse(v)
+                    ASTFindReplace({loop.loop_variable: str(value)}).visit(k_ast)
+                    ASTFindReplace({loop.loop_variable: str(value)}).visit(v_ast)
+                    new_assignments[ast.unparse(k_ast)] = ast.unparse(v_ast)
+                edge.data.assignments = new_assignments
+
+        for node in iteration_region.all_nodes_recursive():
+            if isinstance(node, NestedSDFG):
+                if loop.loop_variable in node.symbol_mapping:
+                    node.symbol_mapping[loop.loop_variable] = ASTFindReplace({
+                        loop.loop_variable: str(value)
+                    }).visit(node.symbol_mapping[loop.loop_variable])
+                if loop.loop_variable in node.symbol_mapping:
+                    del node.symbol_mapping[loop.loop_variable]
+
+        graph.reset_cfg_list()
+        return iteration_region

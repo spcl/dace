@@ -22,8 +22,8 @@ def slicetoxrange(s):
 
 
 def NDLoop(ndslice, internal_function, *args, **kwargs):
-    """ Wrapped generator that calls an internal function in an N-dimensional 
-        for-loop in Python. 
+    """ Wrapped generator that calls an internal function in an N-dimensional
+        for-loop in Python.
 
         :param ndslice: Slice or list of slices (``slice`` objects) to loop over.
         :param internal_function: Function to call in loop.
@@ -41,7 +41,7 @@ def NDLoop(ndslice, internal_function, *args, **kwargs):
 
 def ndrange(slice_list: Union[Tuple[slice], slice]):
     """ Generator that creates an N-dimensional for loop in Python.
-     
+
         :param slice_list: Slice or list of slices (as tuples or ``slice`` objects) to loop over.
         :return: N-dimensional loop index generator.
     """

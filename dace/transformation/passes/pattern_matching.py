@@ -32,9 +32,10 @@ class PatternMatchAndApply(ppl.Pass):
                                               default=[],
                                               desc='The list of transformations to apply')
 
-    permissive = properties.Property(dtype=bool,
-                                     default=False,
-                                     desc='Whether to apply in permissive mode, i.e., apply in more cases where it may be unsafe.')
+    permissive = properties.Property(
+        dtype=bool,
+        default=False,
+        desc='Whether to apply in permissive mode, i.e., apply in more cases where it may be unsafe.')
     validate = properties.Property(dtype=bool,
                                    default=True,
                                    desc='If True, validates the SDFG after all transformations have been applied.')
@@ -98,16 +99,15 @@ class PatternMatchAndApply(ppl.Pass):
 
         # For every transformation in the list, find first match and apply
         for xform in self.transformations:
-            if sdfg.root_sdfg.using_experimental_blocks:
-                if (not hasattr(xform, '__experimental_cfg_block_compatible__') or
-                    xform.__experimental_cfg_block_compatible__ == False):
+            if sdfg.root_sdfg.using_explicit_control_flow:
+                if (not hasattr(xform, '__explicit_cf_compatible__') or xform.__explicit_cf_compatible__ == False):
                     warnings.warn('Pattern matching is skipping transformation ' + xform.__class__.__name__ +
                                   ' due to incompatibility with experimental control flow blocks. If the ' +
                                   'SDFG does not contain experimental blocks, ensure the top level SDFG does ' +
-                                  'not have `SDFG.using_experimental_blocks` set to True. If ' +
+                                  'not have `SDFG.using_explicit_control_flow` set to True. If ' +
                                   xform.__class__.__name__ + ' is compatible with experimental blocks, ' +
                                   'please annotate it with the class decorator ' +
-                                  '`@dace.transformation.experimental_cfg_block_compatible`. see ' +
+                                  '`@dace.transformation.explicit_cf_compatible`. see ' +
                                   '`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` ' +
                                   'for more information.')
                     continue
@@ -218,16 +218,16 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
             while applied_anything:
                 applied_anything = False
                 for xform in xforms:
-                    if sdfg.root_sdfg.using_experimental_blocks:
-                        if (not hasattr(xform, '__experimental_cfg_block_compatible__') or
-                            xform.__experimental_cfg_block_compatible__ == False):
+                    if sdfg.root_sdfg.using_explicit_control_flow:
+                        if (not hasattr(xform, '__explicit_cf_compatible__')
+                                or xform.__explicit_cf_compatible__ == False):
                             warnings.warn('Pattern matching is skipping transformation ' + xform.__class__.__name__ +
                                           ' due to incompatibility with experimental control flow blocks. If the ' +
                                           'SDFG does not contain experimental blocks, ensure the top level SDFG does ' +
-                                          'not have `SDFG.using_experimental_blocks` set to True. If ' +
+                                          'not have `SDFG.using_explicit_control_flow` set to True. If ' +
                                           xform.__class__.__name__ + ' is compatible with experimental blocks, ' +
                                           'please annotate it with the class decorator ' +
-                                          '`@dace.transformation.experimental_cfg_block_compatible`. see ' +
+                                          '`@dace.transformation.explicit_cf_compatible`. see ' +
                                           '`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` ' +
                                           'for more information.')
                             continue
@@ -244,13 +244,13 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
                             applied = True
                             applied_anything = True
                             break
+
                 if apply_once:
                     break
         else:
             applied = True
             while applied:
                 applied = False
-                # Find and apply one of the chosen transformations
                 for match in match_patterns(sdfg,
                                             permissive=self.permissive,
                                             patterns=xforms,
@@ -259,26 +259,20 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
                     self._apply_and_validate(match, sdfg, start, pipeline_results, applied_transformations)
                     applied = True
                     break
-                if apply_once:
-                    break
 
         if self.validate:
             try:
                 sdfg.validate()
             except InvalidSDFGError as err:
                 if applied and match is not None:
-                    raise InvalidSDFGError("Validation failed after applying {}.".format(match.print_match(self)), self,
+                    raise InvalidSDFGError(f"Validation failed after applying {match.print_match(self)}.", self,
                                            match.state_id) from err
                 else:
                     raise err
 
-        if (len(applied_transformations) > 0
-                and (self.progress or self.print_report or
-                     ((self.progress is None or self.print_report is None) and Config.get_bool('debugprint')))):
-            print('Applied {}.'.format(', '.join(['%d %s' % (len(v), k) for k, v in applied_transformations.items()])))
-
-        if len(applied_transformations) == 0:  # Signal that no transformation was applied
+        if len(applied_transformations) == 0:
             return None
+
         return applied_transformations
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Dict[str, List[Any]]:
@@ -340,7 +334,7 @@ def collapse_multigraph_to_nx(graph: Union[gr.MultiDiGraph, gr.OrderedMultiDiGra
 
 def type_match(graph_node, pattern_node):
     """ Checks whether the node types of the inputs match.
-    
+
         :param graph_node: First node (in matched graph).
         :param pattern_node: Second node (in pattern subgraph).
         :return: True if the object types of the nodes match, False otherwise.
@@ -383,13 +377,13 @@ def type_or_class_match(node_a, node_b):
 
 
 def _try_to_match_transformation(graph: Union[ControlFlowRegion, SDFGState], collapsed_graph: nx.DiGraph,
-                                 subgraph: Dict[int, int], sdfg: SDFG,
-                                 xform: Union[xf.PatternTransformation, Type[xf.PatternTransformation]],
+                                 subgraph: Dict[int, int], sdfg: SDFG, xform: Union[xf.PatternTransformation,
+                                                                                    Type[xf.PatternTransformation]],
                                  expr_idx: int, nxpattern: nx.DiGraph, state_id: int, permissive: bool,
                                  options: Dict[str, Any]) -> Optional[xf.PatternTransformation]:
-    """ 
-    Helper function that tries to instantiate a pattern match into a 
-    transformation object. 
+    """
+    Helper function that tries to instantiate a pattern match into a
+    transformation object.
     """
     subgraph = {
         nxpattern.nodes[j]['node']: graph.node_id(collapsed_graph.nodes[i]['node'])
@@ -410,16 +404,15 @@ def _try_to_match_transformation(graph: Union[ControlFlowRegion, SDFGState], col
                 for oname, oval in opts.items():
                     setattr(match, oname, oval)
 
-        if sdfg.root_sdfg.using_experimental_blocks:
-            if (not hasattr(match, '__experimental_cfg_block_compatible__') or
-                match.__experimental_cfg_block_compatible__ == False):
+        if sdfg.root_sdfg.using_explicit_control_flow:
+            if (not hasattr(match, '__explicit_cf_compatible__') or match.__explicit_cf_compatible__ == False):
                 warnings.warn('Pattern matching is skipping transformation ' + match.__class__.__name__ +
                               ' due to incompatibility with experimental control flow blocks. If the ' +
                               'SDFG does not contain experimental blocks, ensure the top level SDFG does ' +
-                              'not have `SDFG.using_experimental_blocks` set to True. If ' +
+                              'not have `SDFG.using_explicit_control_flow` set to True. If ' +
                               match.__class__.__name__ + ' is compatible with experimental blocks, ' +
                               'please annotate it with the class decorator ' +
-                              '`@dace.transformation.experimental_cfg_block_compatible`. see ' +
+                              '`@dace.transformation.explicit_cf_compatible`. see ' +
                               '`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` ' +
                               'for more information.')
                 return None
@@ -531,7 +524,7 @@ def match_patterns(sdfg: SDFG,
                    metadata: Optional[PatternMetadataType] = None,
                    states: Optional[List[SDFGState]] = None,
                    options: Optional[List[Dict[str, Any]]] = None):
-    """ Returns a generator of Transformations that match the input SDFG. 
+    """ Returns a generator of Transformations that match the input SDFG.
         Ordered by SDFG ID.
 
         :param sdfg: The SDFG to match in.
@@ -540,7 +533,7 @@ def match_patterns(sdfg: SDFG,
         :param edge_match: Function for checking whether two edges match.
         :param permissive: Match transformations in permissive mode.
         :param metadata: Transformation metadata that can be reused.
-        :param states: If given, only tries to match single-state 
+        :param states: If given, only tries to match single-state
                        transformations on this list.
         :param options: An optional iterable of transformation parameter
                         dictionaries.

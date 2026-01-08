@@ -19,14 +19,16 @@ exclude_lines =
     if False:
     if __name__ == .__main__.:
     pass
-    
+    if TYPE_CHECKING:
+    if typing.TYPE_CHECKING:
+
 omit =
     # Omit files that cannot be tested
     dace/jupyter.py
-    
+
     # Omit deprecated files
-    dace/frontend/tensorflow/__init__.py
-    dace/frontend/tensorflow/tensorflow.py
-    dace/frontend/tensorflow/winograd.py
-    dace/frontend/tensorflow/transformations/__init__.py
-    dace/frontend/tensorflow/transformations/redundant_array.py
+    dace/frontend/ml/tensorflow/__init__.py
+    dace/frontend/ml/tensorflow/tensorflow.py
+    dace/frontend/ml/tensorflow/winograd.py
+    dace/frontend/ml/tensorflow/transformations/__init__.py
+    dace/frontend/ml/tensorflow/transformations/redundant_array.py

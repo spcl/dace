@@ -1,6 +1,6 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 from dace import dtypes, library, properties, subsets, symbolic
-from dace.data import _prod
+from dace.utils import prod as _prod
 from dace.libraries.mpi import utils
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
@@ -77,7 +77,7 @@ class ExpandRedistribute(ExpandTransformation):
             }}
             // printf("I am rank %d and I finished the redistribution {redistr.array_a} -> {redistr.array_b}\\n", myrank);
             // fflush(stdout);
-            
+
         """
 
         tasklet = nodes.Tasklet(node.name, node.in_connectors, node.out_connectors, code, language=dtypes.Language.CPP)

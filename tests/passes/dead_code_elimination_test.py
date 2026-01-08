@@ -4,6 +4,8 @@
 import numpy as np
 import pytest
 import dace
+from dace.properties import CodeBlock
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.dead_state_elimination import DeadStateElimination
 from dace.transformation.passes.dead_dataflow_elimination import DeadDataflowElimination
@@ -63,6 +65,60 @@ def test_dse_edge_condition_with_integer_as_boolean_regression():
 
     res = DeadStateElimination().apply_pass(sdfg, {})
     assert res is None
+
+
+def test_dse_inside_loop():
+    sdfg = dace.SDFG('dse_inside_loop')
+    sdfg.add_symbol('a', dace.int32)
+    loop = LoopRegion('loop', 'i < 10', 'i', 'i = 0', 'i = i + 1')
+    start = sdfg.add_state(is_start_block=True)
+    sdfg.add_node(loop)
+    end = sdfg.add_state()
+    sdfg.add_edge(start, loop, dace.InterstateEdge())
+    sdfg.add_edge(loop, end, dace.InterstateEdge())
+    s = loop.add_state(is_start_block=True)
+    s1 = loop.add_state()
+    s2 = loop.add_state()
+    s3 = loop.add_state()
+    e = loop.add_state()
+    loop.add_edge(s, s1, dace.InterstateEdge('a > 0'))
+    loop.add_edge(s, s2, dace.InterstateEdge('a >= a'))  # Always True
+    loop.add_edge(s, s3, dace.InterstateEdge('a < 0'))
+    loop.add_edge(s1, e, dace.InterstateEdge())
+    loop.add_edge(s2, e, dace.InterstateEdge())
+    loop.add_edge(s3, e, dace.InterstateEdge())
+
+    DeadStateElimination().apply_pass(sdfg, {})
+    assert set(sdfg.states()) == {start, s, s2, e, end}
+
+
+def test_dse_inside_loop_conditional():
+    sdfg = dace.SDFG('dse_inside_loop')
+    sdfg.add_symbol('a', dace.int32)
+    loop = LoopRegion('loop', 'i < 10', 'i', 'i = 0', 'i = i + 1')
+    start = sdfg.add_state(is_start_block=True)
+    sdfg.add_node(loop)
+    end = sdfg.add_state()
+    sdfg.add_edge(start, loop, dace.InterstateEdge())
+    sdfg.add_edge(loop, end, dace.InterstateEdge())
+    s = loop.add_state(is_start_block=True)
+    cond_block = ConditionalBlock('cond', sdfg, loop)
+    loop.add_node(cond_block)
+    b1 = ControlFlowRegion('b1', sdfg)
+    b1.add_state()
+    cond_block.add_branch(CodeBlock('a > 0'), b1)
+    b2 = ControlFlowRegion('b2', sdfg)
+    s2 = b2.add_state()
+    cond_block.add_branch(CodeBlock('a >= a'), b2)
+    b3 = ControlFlowRegion('b3', sdfg)
+    b3.add_state()
+    cond_block.add_branch(CodeBlock('a < 0'), b3)
+    e = loop.add_state()
+    loop.add_edge(s, cond_block, dace.InterstateEdge())
+    loop.add_edge(cond_block, e, dace.InterstateEdge())
+
+    DeadStateElimination().apply_pass(sdfg, {})
+    assert set(sdfg.states()) == {start, s, s2, e, end}
 
 
 def test_dde_simple():
@@ -190,7 +246,7 @@ def test_dde_inout(libnode):
                 a[i] = b[i + 1] + 1
 
         nsdfg = nested.to_sdfg(simplify=False)
-        node = state.add_nested_sdfg(nsdfg, None, {'b'}, {'a', 'b'})
+        node = state.add_nested_sdfg(nsdfg, {'b'}, {'a', 'b'})
         outconn = 'b'
     else:
         node = dace.nodes.LibraryNode('tester')  # Library node without side effects
@@ -252,7 +308,7 @@ def test_dde_inout_two_states():
     results = {}
     Pipeline([DeadDataflowElimination()]).apply_pass(sdfg, results)
 
-    dde_results = results["DeadDataflowElimination"]
+    dde_results = results["DeadDataflowElimination"][0]
     assert dde_results.get(start_state) is None, "No changes to `start_state` expected."
     expected_cleanup = dde_results.get(next_state)
     assert expected_cleanup == {s2_write_computed}, "Expected to clean up write to `computed` from `next_state`."
@@ -277,12 +333,12 @@ def test_dce():
     sdfg = dce_tester.to_sdfg(simplify=False)
     result = Pipeline([DeadDataflowElimination(), DeadStateElimination()]).apply_pass(sdfg, {})
     sdfg.simplify()
-    assert sdfg.number_of_nodes() <= 5
+    assert sdfg.number_of_nodes() <= 4
 
     # Check that arrays were removed
     assert all('c' not in [n.data for n in state.data_nodes()] for state in sdfg.nodes())
     assert any('f' in [n.data for n in rstate if isinstance(n, dace.nodes.AccessNode)]
-               for rstate in result['DeadDataflowElimination'].values())
+               for rstate in result[DeadDataflowElimination.__name__][0].values())
 
 
 def test_dce_callback():
@@ -372,10 +428,56 @@ _out = _tmp
     assert np.all(out == np.where(cond, true_value, false_value))
 
 
+def test_prune_single_branch_conditional_block():
+    sdfg = dace.SDFG("conditional_sdfg")
+
+    for name in "abc":
+        sdfg.add_array(
+            name,
+            shape=(10, ),
+            dtype=dace.float64,
+            transient=False,
+        )
+    sdfg.arrays["b"].transient = True
+
+    first_state = sdfg.add_state("first_state")
+    first_state.add_mapped_tasklet(
+        "first_comp",
+        map_ranges={"__i0": "0:10"},
+        inputs={"__in1": dace.Memlet("a[__i0]")},
+        code="__out = __in1 + 10.0",
+        outputs={"__out": dace.Memlet("b[__i0]")},
+        external_edges=True,
+    )
+
+    # create states inside the nested SDFG for the if-branches
+    if_region = dace.sdfg.state.ConditionalBlock("if")
+    sdfg.add_node(if_region)
+    sdfg.add_edge(first_state, if_region, dace.InterstateEdge())
+
+    then_body = dace.sdfg.state.ControlFlowRegion("then_body", sdfg=sdfg)
+    then_state = then_body.add_state("true_branch", is_start_block=True)
+    if_region.add_branch(dace.sdfg.state.CodeBlock("True"), then_body)
+    then_state.add_mapped_tasklet(
+        "second_comp",
+        map_ranges={"__i0": "0:10"},
+        inputs={"__in1": dace.Memlet("b[__i0]")},
+        code="__out = __in1 + 1.0",
+        outputs={"__out": dace.Memlet("c[__i0]")},
+        external_edges=True,
+    )
+    sdfg.validate()
+    res = DeadStateElimination().apply_pass(sdfg, {})
+    assert res and len(res) == 1
+    assert sdfg.out_edges(first_state)[0].dst == then_body
+
+
 if __name__ == '__main__':
     test_dse_simple()
     test_dse_unconditional()
     test_dse_edge_condition_with_integer_as_boolean_regression()
+    test_dse_inside_loop()
+    test_dse_inside_loop_conditional()
     test_dde_simple()
     test_dde_libnode()
     test_dde_access_node_in_scope(False)
@@ -391,3 +493,4 @@ if __name__ == '__main__':
     test_dce_add_type_hint_of_variable(dace.float64)
     test_dce_add_type_hint_of_variable(dace.bool)
     test_dce_add_type_hint_of_variable(np.float64)
+    test_prune_single_branch_conditional_block()

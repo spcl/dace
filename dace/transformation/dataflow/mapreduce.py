@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Contains classes and functions that implement the map-reduce-fusion 
+""" Contains classes and functions that implement the map-reduce-fusion
     transformation. """
 
 from dace.sdfg import SDFG, SDFGState
@@ -12,7 +12,7 @@ from dace.symbolic import symstr
 from dace.transformation import transformation as pm
 
 from dace.transformation.dataflow.map_collapse import MapCollapse
-from dace.transformation.dataflow.map_fusion import MapFusion
+from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
 
 
 @make_properties
@@ -56,9 +56,9 @@ class MapReduceFusion(pm.SingleStateTransformation):
 
         # Make sure that the transient is not accessed anywhere else
         # in this state or other states
-        if not permissive and (
-                len([n for n in graph.nodes() if isinstance(n, nodes.AccessNode) and n.data == in_array.data]) > 1
-                or in_array.data in sdfg.shared_transients()):
+        if not permissive and (len(
+            [n for n in graph.nodes() if isinstance(n, nodes.AccessNode) and n.data == in_array.data]) > 1
+                               or in_array.data in sdfg.shared_transients()):
             return False
 
         # If memlet already has WCR and it is different from reduce node,
@@ -189,9 +189,9 @@ class MapWCRFusion(pm.SingleStateTransformation):
 
         # Make sure that the transient is not accessed anywhere else
         # in this state or other states
-        if not permissive and (
-                len([n for n in graph.nodes() if isinstance(n, nodes.AccessNode) and n.data == in_array.data]) > 1
-                or in_array.data in sdfg.shared_transients()):
+        if not permissive and (len(
+            [n for n in graph.nodes() if isinstance(n, nodes.AccessNode) and n.data == in_array.data]) > 1
+                               or in_array.data in sdfg.shared_transients()):
             return False
 
         # Verify that reduction ranges match tasklet map
@@ -215,9 +215,11 @@ class MapWCRFusion(pm.SingleStateTransformation):
             }, 0)
         map_entry, _ = map_collapse.apply(graph, sdfg)
 
-        map_fusion = MapFusion()
-        map_fusion.setup_match(sdfg, self.cfg_id, self.state_id, {
-            MapFusion.first_map_exit: graph.node_id(self.tmap_exit),
-            MapFusion.second_map_entry: graph.node_id(map_entry),
-        }, 0)
+        map_fusion = MapFusionVertical()
+        map_fusion.setup_match(
+            sdfg, self.cfg_id, self.state_id, {
+                MapFusionVertical.first_map_exit: graph.node_id(self.tmap_exit),
+                MapFusionVertical.array: graph.node_id(self.in_array),
+                MapFusionVertical.second_map_entry: graph.node_id(map_entry),
+            }, 0)
         map_fusion.apply(graph, sdfg)

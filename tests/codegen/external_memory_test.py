@@ -36,7 +36,7 @@ def test_external_mem(symbolic):
 
     # Test workspace size
     csdfg = sdfg.compile()
-    csdfg.initialize(**extra_args)
+    csdfg.initialize(a, **extra_args)
     sizes = csdfg.get_workspace_sizes()
     assert sizes == {dace.StorageType.CPU_Heap: 20 * 8}
 

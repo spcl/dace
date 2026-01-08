@@ -42,7 +42,7 @@ def test_fuse_assignments_2():
 
 
 def test_fuse_assignment_in_use():
-    """ 
+    """
     Two states with an interstate assignment in between, where the assigned
     value is used in the first state. Should fail.
     """
@@ -173,6 +173,7 @@ def test_write_write_path():
     Two states where both write to the same range of an array, but there is
     a path between the write and the second write.
     """
+
     @dace.program
     def state_fusion_test(A: dace.int32[20, 20]):
         A += 1
@@ -218,7 +219,7 @@ def test_read_write_no_overlap():
 
 
 def test_array_in_middle_no_overlap():
-    """ 
+    """
     Two states that write and read from an array without overlap. Should be
     fused to two separate components.
     """
@@ -249,7 +250,7 @@ def test_array_in_middle_no_overlap():
 
 
 def test_array_in_middle_overlap():
-    """ 
+    """
     Two states that write and read from an array with overlap. Should not be
     fused.
     """
@@ -279,8 +280,8 @@ def test_array_in_middle_overlap():
 
 
 def test_two_outputs_same_name():
-    """ 
-    First state writes to the same array twice, second state updates one value. 
+    """
+    First state writes to the same array twice, second state updates one value.
     Should be fused to the right node in the second state or a data race will
     occur.
     """
@@ -313,7 +314,7 @@ def test_two_outputs_same_name():
 
 
 def test_inout_read_after_write():
-    """ 
+    """
     First state ends with a computation that reads an array, while the second
     state both reads and writes to that same array. Fusion will then cause
     a RAW conflict.
@@ -351,9 +352,9 @@ def test_inout_read_after_write():
 
 
 def test_inout_second_state():
-    """ 
-    Second state has a computation that reads and writes to the same array, 
-    while the first state also reads from that same array. Fusion will then 
+    """
+    Second state has a computation that reads and writes to the same array,
+    while the first state also reads from that same array. Fusion will then
     cause a potential data race.
     """
     sdfg = dace.SDFG('state_fusion_test')
@@ -383,6 +384,7 @@ def test_inout_second_state():
 
 
 def test_inout_second_state_2():
+
     @dace.program
     def func(A: dace.float64[128, 128], B: dace.float64[128, 128]):
         B << A
@@ -478,7 +480,10 @@ def test_check_paths():
     do_fuse = StateFusion()._check_paths(
         first_state=block_0,
         second_state=block_5,
-        match_nodes={qm_b0_w: qm_b5, m1_b0_w: m1_b5},
+        match_nodes={
+            qm_b0_w: qm_b5,
+            m1_b0_w: m1_b5
+        },
         nodes_first=[q_b0_w],
         nodes_second=[q_b5_w],
         second_input={precip_fall_b5, m1_b5, qm_b5},

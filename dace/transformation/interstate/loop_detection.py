@@ -13,7 +13,7 @@ from dace.transformation import transformation
 
 
 # NOTE: This class extends PatternTransformation directly in order to not show up in the matches
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class DetectLoop(transformation.PatternTransformation):
     """ Detects a for-loop construct from an SDFG. """
 
@@ -200,6 +200,9 @@ class DetectLoop(transformation.PatternTransformation):
             return None
         elif any(self.exit_state not in postdominators[1][n] for n in loop_nodes):
             # The loop exit must post-dominate all loop nodes
+            return None
+        elif nx.has_path(graph.nx, self.exit_state, guard):
+            # If there is a path from the exit state to the guard, this is not a valid loop
             return None
         backedge = None
         for node in loop_nodes:

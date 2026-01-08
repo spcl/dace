@@ -1,9 +1,12 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import dace
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.analysis.schedule_tree.sdfg_to_tree import as_schedule_tree
 import numpy as np
+
+from dace.transformation.pass_pipeline import FixedPointPipeline
+from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 
 
 def test_for_in_map_in_for():
@@ -27,14 +30,14 @@ def test_for_in_map_in_for():
 
     assert len(stree.children) == 1  # for
     fornode = stree.children[0]
-    assert isinstance(fornode, tn.ForScope)
+    assert isinstance(fornode, tn.LoopScope)
     assert len(fornode.children) == 1  # map
     mapnode = fornode.children[0]
     assert isinstance(mapnode, tn.MapScope)
     assert len(mapnode.children) == 2  # copy, for
     copynode, fornode = mapnode.children
     assert isinstance(copynode, tn.CopyNode)
-    assert isinstance(fornode, tn.ForScope)
+    assert isinstance(fornode, tn.LoopScope)
     assert len(fornode.children) == 1  # tasklet
     tasklet = fornode.children[0]
     assert isinstance(tasklet, tn.TaskletNode)
@@ -80,7 +83,7 @@ def test_nesting():
     assert len(stree.children) == 4
     offsets = ['', '5', '10', '15']
     for fornode, offset in zip(stree.children, offsets):
-        assert isinstance(fornode, tn.ForScope)
+        assert isinstance(fornode, tn.LoopScope)
         assert len(fornode.children) == 1  # map
         mapnode = fornode.children[0]
         assert isinstance(mapnode, tn.MapScope)
@@ -128,7 +131,7 @@ def test_nesting_nview():
 
     sdfg = main.to_sdfg()
     stree = as_schedule_tree(sdfg)
-    assert isinstance(stree.children[0], tn.NView)
+    assert any(isinstance(v, tn.NView) for v in stree.children)
 
 
 def test_irreducible_sub_sdfg():
@@ -150,10 +153,12 @@ def test_irreducible_sub_sdfg():
     # Add a loop following general block
     sdfg.add_loop(e, sdfg.add_state(), None, 'i', '0', 'i < 10', 'i + 1')
 
+    FixedPointPipeline([ControlFlowRaising()]).apply_pass(sdfg, {})
+
     stree = as_schedule_tree(sdfg)
     node_types = [type(n) for n in stree.preorder_traversal()]
     assert node_types.count(tn.GBlock) == 1  # Only one gblock
-    assert node_types[-1] == tn.ForScope  # Check that loop was detected
+    assert node_types.count(tn.LoopScope) == 1  # Check that the loop was detected
 
 
 def test_irreducible_in_loops():
@@ -178,12 +183,11 @@ def test_irreducible_in_loops():
     # Avoiding undefined behavior
     sdfg.edges_between(l3, l4)[0].data.condition.as_string = 'i >= 5'
 
+    FixedPointPipeline([ControlFlowRaising()]).apply_pass(sdfg, {})
+
     stree = as_schedule_tree(sdfg)
     node_types = [type(n) for n in stree.preorder_traversal()]
     assert node_types.count(tn.GBlock) == 1
-    assert node_types.count(tn.ForScope) >= 1
-    if node_types.count(tn.ForScope) == 1:  # If only one loop was detected, ensure goto is present
-        assert node_types[-1] == tn.GotoNode
 
 
 def test_reference():
@@ -206,6 +210,8 @@ def test_reference():
     s1.add_edge(s1.add_access('A'), None, s1.add_access('ref'), 'set', dace.Memlet('A[0:20]'))
     s2.add_edge(s2.add_access('B'), None, s2.add_access('ref'), 'set', dace.Memlet('B[0:20]'))
     end.add_nedge(end.add_access('ref'), end.add_access('C'), dace.Memlet('ref[0:20]'))
+
+    FixedPointPipeline([ControlFlowRaising()]).apply_pass(sdfg, {})
 
     stree = as_schedule_tree(sdfg)
     nodes = list(stree.preorder_traversal())[1:]

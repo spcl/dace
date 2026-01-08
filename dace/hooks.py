@@ -4,6 +4,7 @@ Module that provides hooks that can be used to extend DaCe functionality.
 """
 
 from typing import Any, Callable, Generator, List, Optional, Tuple, Union, ContextManager, TYPE_CHECKING
+import contextlib
 from contextlib import contextmanager, ExitStack
 import pydoc
 from dace import config
@@ -63,7 +64,7 @@ def register_sdfg_call_hook(*,
                             context_manager: Optional[GeneratorType] = None) -> int:
     """
     Registers a hook that is called when an SDFG is called.
-    
+
     :param before_hook: An optional hook to call before the SDFG is compiled and run.
     :param after_hook: An optional hook to call after the SDFG is compiled and run.
     :param context_manager: A context manager to use around the SDFG's compilation and running. This field
@@ -79,7 +80,7 @@ def register_compiled_sdfg_call_hook(*,
                                      context_manager: Optional[GeneratorType] = None) -> int:
     """
     Registers a hook that is called when a compiled SDFG is called.
-    
+
     :param before_hook: An optional hook to call before the compiled SDFG is called.
     :param after_hook: An optional hook to call after the compiled SDFG is called.
     :param context_manager: A context manager to use around the compiled SDFG's C function. This field
@@ -103,7 +104,7 @@ def unregister_sdfg_call_hook(hook_id: int):
 def unregister_compiled_sdfg_call_hook(hook_id: int):
     """
     Unregisters a compiled SDFG call hook.
-    
+
     :param hook_id: The unique identifier of the hook.
     """
     if hook_id >= len(_COMPILED_SDFG_CALL_HOOKS):
@@ -134,10 +135,10 @@ def on_call(*,
             print(f'{sdfg.name} is going to be compiled and run')
             yield
             print(f'{sdfg.name} has finished running')
-        
+
         with dace.hooks.on_call(context_manager=print_sdfg_name):
             some_program(...)
-        
+
 
     :param before: An optional function that is called before the SDFG is compiled and run. This function
                    should take an SDFG as its only argument.
@@ -172,11 +173,11 @@ def on_compiled_sdfg_call(*,
             yield
             end = time.time()
             print(f'Compiled SDFG {csdfg.sdfg.name} took {end - start} seconds')
-        
+
         with dace.hooks.on_compiled_sdfg_call(context_manager=time_compiled_sdfg):
             some_program(...)
             other_program(...)
-        
+
     :param before: An optional function that is called before the compiled SDFG is called. This function
                    should take a compiled SDFG object, its arguments and keyword arguments.
     :param after: An optional function that is called after the compiled SDFG is called. This function
@@ -250,23 +251,41 @@ def invoke_sdfg_call_hooks(sdfg: 'SDFG'):
         yield sdfg
 
 
-@contextmanager
-def invoke_compiled_sdfg_call_hooks(compiled_sdfg: 'CompiledSDFG', args: Tuple[Any, ...]):
-    """
-    Internal context manager that calls all compiled SDFG call hooks in their registered order.
-    """
-    if not _COMPILED_SDFG_CALL_HOOKS:
-        yield compiled_sdfg
-        return
-    with ExitStack() as stack:
-        for hook in _COMPILED_SDFG_CALL_HOOKS:
-            if hook is None:
-                continue
-            new_compiled_sdfg = stack.enter_context(hook(compiled_sdfg, args))
-            if new_compiled_sdfg is not None:
-                compiled_sdfg = new_compiled_sdfg
+class invoke_compiled_sdfg_call_hooks(contextlib.AbstractContextManager):
+    """Internal context manager that calls all compiled SDFG call hooks in their registered order.
 
-        yield compiled_sdfg
+    Note:
+        This context manager is called in the hot path of `CompiledSDFG.fast_call()`,
+        using `@contextmanager` adds a non negligible runtime overhead compared to a
+        direct implementation.
+    """
+
+    __slots__ = ('compiled_sdfg', 'args', 'exit_stack')
+
+    def __init__(self, compiled_sdfg: 'CompiledSDFG', args: Tuple[Any, ...]) -> None:
+        self.compiled_sdfg: 'CompiledSDFG' = compiled_sdfg
+        self.args: Tuple[Any, ...] = args
+
+    def __enter__(self) -> 'CompiledSDFG':
+        if _COMPILED_SDFG_CALL_HOOKS:
+            compiled_sdfg = self.compiled_sdfg
+            self.exit_stack = stack = ExitStack().__enter__()
+            for hook in _COMPILED_SDFG_CALL_HOOKS:
+                if hook is None:
+                    continue
+                new_compiled_sdfg = stack.enter_context(hook(compiled_sdfg, self.args))
+                if new_compiled_sdfg is not None:
+                    compiled_sdfg = new_compiled_sdfg
+            return compiled_sdfg
+
+        else:
+            self.exit_stack = None
+            return self.compiled_sdfg
+
+    def __exit__(self, *exc_details):
+        if self.exit_stack is not None:
+            return self.exit_stack.__exit__(*exc_details)
+
 
 ##########################################################################
 # Install hooks from configuration upon import
@@ -293,5 +312,3 @@ def _install_hooks_from_config():
     if config.Config.get_bool('profiling'):
         from dace.frontend.operations import CompiledSDFGProfiler
         register_compiled_sdfg_call_hook(context_manager=CompiledSDFGProfiler())
-
-

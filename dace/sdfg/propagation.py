@@ -9,7 +9,7 @@ import functools
 import itertools
 import warnings
 from collections import deque
-from typing import List, Set
+from typing import TYPE_CHECKING, List, Set
 
 import sympy
 from sympy import Symbol, ceiling
@@ -20,6 +20,10 @@ from dace.memlet import Memlet
 from dace.sdfg import graph as gr
 from dace.sdfg import nodes
 from dace.symbolic import issymbolic, pystr_to_symbolic, simplify
+
+if TYPE_CHECKING:
+    from dace.sdfg import SDFG
+    from dace.sdfg.state import SDFGState
 
 
 @registry.make_registry
@@ -37,7 +41,7 @@ class MemletPattern(object):
 
 @registry.make_registry
 class SeparableMemletPattern(object):
-    """ Memlet pattern that can be applied to each of the dimensions 
+    """ Memlet pattern that can be applied to each of the dimensions
         separately. """
 
     def can_be_applied(self, dim_exprs, variable_context, node_range, orig_edges, dim_index, total_dims):
@@ -355,7 +359,7 @@ class ModuloSMemlet(SeparableMemletPattern):
 
 @registry.autoregister
 class ConstantSMemlet(SeparableMemletPattern):
-    """ Separable memlet pattern that matches constant (i.e., unrelated to 
+    """ Separable memlet pattern that matches constant (i.e., unrelated to
         current scope) expressions.
     """
 
@@ -400,7 +404,7 @@ class ConstantSMemlet(SeparableMemletPattern):
 
 @registry.autoregister
 class GenericSMemlet(SeparableMemletPattern):
-    """ Separable memlet pattern that detects any expression, and propagates 
+    """ Separable memlet pattern that detects any expression, and propagates
         interval bounds. Used as a last resort. """
 
     def can_be_applied(self, dim_exprs, variable_context, node_range, orig_edges, dim_index, total_dims):
@@ -565,7 +569,7 @@ class ConstantRangeMemlet(MemletPattern):
         return subsets.Range(rng)
 
 
-def _annotate_loop_ranges(sdfg, unannotated_cycle_states):
+def _annotate_loop_ranges(sdfg: 'SDFG', unannotated_cycle_states):
     """
     Annotate each valid for loop construct with its loop variable ranges.
 
@@ -575,43 +579,124 @@ def _annotate_loop_ranges(sdfg, unannotated_cycle_states):
     """
 
     # We import here to avoid cyclic imports.
-    from dace.transformation.passes.pattern_matching import match_patterns
-    from dace.transformation.interstate.loop_detection import LoopRangeAnnotator
-    from dace.sdfg.utils import dfs_conditional
-    from dace.sdfg.analysis import cfg as cfg_analysis
+    from dace.sdfg import utils as sdutils
+    from dace.transformation.interstate.loop_detection import find_for_loop
 
     condition_edges = {}
-    loop_back_edges = set()
 
-    for match in match_patterns(sdfg, LoopRangeAnnotator):
-        annotator: LoopRangeAnnotator = match
-        cond_edge = annotator.loop_condition_edge()
-        guard_state = annotator.loop_guard_state()
-        loop_back_edge = annotator.loop_increment_edge()
-        if cond_edge is not None and guard_state is not None:
-            condition_edges[guard_state] = cond_edge
-        if loop_back_edge is not None:
-            loop_back_edges.add(loop_back_edge)
-        annotator.apply(sdfg, sdfg)
+    for cycle in sdfg.find_cycles():
+        # In each cycle, try to identify a valid loop guard state.
+        guard = None
+        begin = None
+        itvar = None
+        for v in cycle:
+            # Try to identify a valid for-loop guard.
+            in_edges = sdfg.in_edges(v)
+            out_edges = sdfg.out_edges(v)
 
-    for be in cfg_analysis.back_edges(sdfg):
-        if be not in loop_back_edges:
-            # This backedge closes a loop that was not annotated, and thus is not a proper for-loop. The states in this
-            # cycle are thus unannotated.
-            cycle_states = set()
-            for cycle_state in dfs_conditional(sdfg, [be.src], lambda p, _: p is not be.dst, reverse=True):
-                cycle_states.add(cycle_state)
-            unannotated_cycle_states.append(cycle_states)
+            # A for-loop guard has two or more incoming edges (1 increment and
+            # n init, all identical), and exactly two outgoing edges (loop and
+            # exit loop).
+            if len(in_edges) < 2 or len(out_edges) != 2:
+                continue
+
+            # All incoming guard edges must set exactly one variable and it must
+            # be the same for all of them.
+            itvars = set()
+            for iedge in in_edges:
+                if len(iedge.data.assignments) > 0:
+                    if not itvars:
+                        itvars = set(iedge.data.assignments.keys())
+                    else:
+                        itvars &= set(iedge.data.assignments.keys())
+                else:
+                    itvars = None
+                    break
+            if not itvars or len(itvars) > 1:
+                continue
+            itvar = next(iter(itvars))
+            itvarsym = pystr_to_symbolic(itvar)
+
+            # The outgoing edges must be negations of one another.
+            if out_edges[0].data.condition_sympy() != (sympy.Not(out_edges[1].data.condition_sympy())):
+                continue
+
+            # Make sure the last state of the loop (i.e. the state leading back
+            # to the guard via 'increment' edge) is part of this cycle. If not,
+            # we're looking at the guard for a nested cycle, which we ignore for
+            # this cycle.
+            increment_edge = None
+            for iedge in in_edges:
+                if itvarsym in pystr_to_symbolic(iedge.data.assignments[itvar]).free_symbols:
+                    increment_edge = iedge
+                    break
+            if increment_edge is None:
+                continue
+            if increment_edge.src not in cycle:
+                continue
+
+            # One of the child states must be in the loop (loop begin), and the
+            # other one must be outside the cycle (loop exit).
+            loop_state = None
+            exit_state = None
+            if out_edges[0].dst in cycle and out_edges[1].dst not in cycle:
+                loop_state = out_edges[0].dst
+                exit_state = out_edges[1].dst
+            elif out_edges[1].dst in cycle and out_edges[0].dst not in cycle:
+                loop_state = out_edges[1].dst
+                exit_state = out_edges[0].dst
+            if loop_state is None or exit_state is None:
+                continue
+
+            # This is a valid guard state candidate.
+            guard = v
+            begin = loop_state
+            break
+
+        if guard is not None and begin is not None and itvar is not None:
+            # A guard state was identified, see if it has valid for-loop ranges
+            # and annotate the loop as such.
+
+            # Ensure that this guard's loop wasn't annotated yet.
+            if itvar in begin.ranges:
+                continue
+
+            res = find_for_loop(sdfg, guard, begin, itervar=itvar)
+            if res is None:
+                # No range detected, mark as unbounded.
+                unannotated_cycle_states.append(cycle)
+            else:
+                itervar, rng, _ = res
+
+                # Make sure the range is flipped in a direction such that the
+                # stride is positive (in order to match subsets.Range).
+                start, stop, stride = rng
+                # This inequality needs to be checked exactly like this due to
+                # constraints in sympy/symbolic expressions, do not simplify!!!
+                if (stride < 0) == True:
+                    rng = (stop, start, -stride)
+
+                loop_states = sdutils.dfs_conditional(sdfg, sources=[begin], condition=lambda _, child: child != guard)
+                for v in loop_states:
+                    v.ranges[str(itervar)] = subsets.Range([rng])
+                guard.ranges[str(itervar)] = subsets.Range([rng])
+                condition_edges[guard] = sdfg.edges_between(guard, begin)[0]
+                guard.is_loop_guard = True
+                guard.itvar = itervar
+        else:
+            # There's no guard state, so this cycle marks all states in it as
+            # dynamically unbounded.
+            unannotated_cycle_states.append(cycle)
 
     return condition_edges
 
 
-def propagate_states(sdfg, concretize_dynamic_unbounded=False) -> None:
+def propagate_states(sdfg: 'SDFG', concretize_dynamic_unbounded: bool = False) -> None:
     """
     Annotate the states of an SDFG with the number of executions.
 
     Algorithm:
-    
+
         1. Clean up the state machine by splitting condition and assignment edges
            into separate edes with a dummy state in between.
         2. Detect and annotate any for-loop constructs with their corresponding loop
@@ -662,6 +747,15 @@ def propagate_states(sdfg, concretize_dynamic_unbounded=False) -> None:
                                          unbounded loop its states will have the same number of symbolic executions.
     :note: This operates on the SDFG in-place.
     """
+
+    if sdfg.using_explicit_control_flow:
+        # Avoid cyclic imports
+        from dace.transformation.pass_pipeline import Pipeline
+        from dace.transformation.passes.analysis import StatePropagation
+
+        state_prop_pipeline = Pipeline([StatePropagation()])
+        state_prop_pipeline.apply_pass(sdfg, {})
+        return
 
     # We import here to avoid cyclic imports.
     from dace.sdfg import InterstateEdge
@@ -872,7 +966,7 @@ def propagate_states(sdfg, concretize_dynamic_unbounded=False) -> None:
         sdfg.remove_node(temp_exit_state)
 
 
-def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
+def propagate_memlets_nested_sdfg(parent_sdfg: 'SDFG', parent_state: 'SDFGState', nsdfg_node: nodes.NestedSDFG):
     """
     Propagate memlets out of a nested sdfg.
 
@@ -904,7 +998,7 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
     # the corresponding memlets and use them to calculate the memlet volume and
     # subset corresponding to the outside memlet attached to that connector.
     # This is passed out via `border_memlets` and propagated along from there.
-    for state in sdfg.nodes():
+    for state in sdfg.states():
         for node in state.data_nodes():
             for direction in border_memlets:
                 if (node.label not in border_memlets[direction]):
@@ -999,6 +1093,8 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
                 # range that only exists inside the nested SDFG. If that's the
                 # case, use the entire range.
                 if border_memlet.src_subset is not None:
+                    if border_memlet.data is None:
+                        border_memlet.data = connector
                     fallback_subset = subsets.Range.from_array(sdfg.arrays[border_memlet.data])
                     for i, rng in enumerate(border_memlet.src_subset):
                         fall_back = False
@@ -1009,6 +1105,8 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
                         if fall_back:
                             border_memlet.src_subset[i] = fallback_subset[i]
                 if border_memlet.dst_subset is not None:
+                    if border_memlet.data is None:
+                        border_memlet.data = connector
                     fallback_subset = subsets.Range.from_array(sdfg.arrays[border_memlet.data])
                     for i, rng in enumerate(border_memlet.dst_subset):
                         fall_back = False
@@ -1063,34 +1161,32 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
                 oedge.data.dynamic = True
 
 
-def reset_state_annotations(sdfg):
+def reset_state_annotations(sdfg: 'SDFG'):
     """ Resets the state (loop-related) annotations of an SDFG.
 
         :note: This operation is shallow (does not go into nested SDFGs).
     """
-    for state in sdfg.nodes():
+    for state in sdfg.states():
         state.executions = 0
         state.dynamic_executions = True
         state.ranges = {}
-        state.is_loop_guard = False
-        state.itervar = None
 
 
-def propagate_memlets_sdfg(sdfg):
-    """ Propagates memlets throughout an entire given SDFG. 
-    
+def propagate_memlets_sdfg(sdfg: 'SDFG'):
+    """ Propagates memlets throughout an entire given SDFG.
+
         :note: This is an in-place operation on the SDFG.
     """
     # Reset previous annotations first
     reset_state_annotations(sdfg)
 
-    for state in sdfg.nodes():
+    for state in sdfg.states():
         propagate_memlets_state(sdfg, state)
 
     propagate_states(sdfg)
 
 
-def propagate_memlets_state(sdfg, state):
+def propagate_memlets_state(sdfg: 'SDFG', state: 'SDFGState'):
     """ Propagates memlets throughout one SDFG state.
 
         :param sdfg: The SDFG in which the state is situated.
@@ -1135,8 +1231,8 @@ def propagate_memlets_state(sdfg, state):
 
 
 def propagate_memlets_scope(sdfg, state, scopes, propagate_entry=True, propagate_exit=True):
-    """ 
-    Propagate memlets from the given scopes outwards. 
+    """
+    Propagate memlets from the given scopes outwards.
 
     :param sdfg: The SDFG in which the scopes reside.
     :param state: The SDFG state in which the scopes reside.
@@ -1173,6 +1269,43 @@ def propagate_memlets_scope(sdfg, state, scopes, propagate_entry=True, propagate
             next_scopes.add(scope.parent)
         scopes_to_process = next_scopes
         next_scopes = set()
+
+
+def propagate_memlets_map_scope(sdfg: 'SDFG', state: 'SDFGState', map_entry: nodes.MapEntry) -> None:
+    """Propagate Memlets from the given Map outside.
+
+    The main difference to `propagate_memlets_scope()` is that this function operates on Maps
+    instead of `ScopeTree` it is thus much more accessible.
+    The function will first propagate the Memlets of the nested SDFGs that are enclosed by the
+    Map. Then the propagation will start bit only for those Melets that starts with `map_entry`.
+
+    :param sdfg: The SDFG in which the scopes reside.
+    :param state: The SDFG state in which the scopes reside.
+    :param map_entry: Defining the Map scope to which propagation should be restricted.
+    """
+    if not isinstance(map_entry, nodes.MapEntry):
+        raise TypeError(
+            f'A MapEntry node must be passed to the `propagate_memlets_map_scope()` function not a `{type(map_entry).__name__}`.'
+        )
+
+    # This code is an adapted version of `propagate_memlet_state()` and as there we
+    #  propagate the Memlets of nested SDFGs, but we restrict ourselves to the
+    #  ones that are inside the scope we are in.
+    nodes_in_scope = list(state.scope_subgraph(map_entry).nodes())
+    for node in nodes_in_scope:
+        if isinstance(node, nodes.NestedSDFG):
+            propagate_memlets_sdfg(node.sdfg)
+            propagate_memlets_nested_sdfg(sdfg, state, node)
+
+    # In `propagate_memlet_state()` we would start the propagation from all lowest scopes. Here,
+    #  however, we restrict ourselves to the scopes that are enclosed by `map_entry`.
+    contained_leaf_scopes = [scope_leaf for scope_leaf in state.scope_leaves() if scope_leaf.entry in nodes_in_scope]
+    assert len(contained_leaf_scopes) > 0
+    propagate_memlets_scope(
+        sdfg,
+        state,
+        contained_leaf_scopes,
+    )
 
 
 def _propagate_node(dfg_state, node):
@@ -1234,8 +1367,8 @@ def propagate_memlet(dfg_state,
                      union_inner_edges: bool,
                      arr=None,
                      connector=None):
-    """ Tries to propagate a memlet through a scope (computes the image of 
-        the memlet function applied on an integer set of, e.g., a map range) 
+    """ Tries to propagate a memlet through a scope (computes the image of
+        the memlet function applied on an integer set of, e.g., a map range)
         and returns a new memlet object.
 
         :param dfg_state: An SDFGState object representing the graph.
@@ -1319,8 +1452,8 @@ def propagate_subset(memlets: List[Memlet],
                      defined_variables: Set[symbolic.SymbolicType] = None,
                      undefined_variables: Set[symbolic.SymbolicType] = None,
                      use_dst: bool = False) -> Memlet:
-    """ Tries to propagate a list of memlets through a range (computes the 
-        image of the memlet function applied on an integer set of, e.g., a 
+    """ Tries to propagate a list of memlets through a range (computes the
+        image of the memlet function applied on an integer set of, e.g., a
         map range) and returns a new memlet object.
 
         :param memlets: The memlets to propagate.

@@ -1,11 +1,11 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 import dace
-from dace import dtypes, nodes, registry, Memlet
+from dace import nodes, Memlet
 from dace.sdfg import SDFG, SDFGState, InterstateEdge
 from dace.dtypes import StorageType, ScheduleType
 from dace.properties import Property, make_properties
-from dace.sdfg.utils import concurrent_subgraphs
+from dace.sdfg.state import AbstractControlFlowRegion, LoopRegion
 from dace.sdfg.graph import SubgraphView
 from dace.transformation.transformation import SubgraphTransformation
 
@@ -13,25 +13,25 @@ from dace.transformation.transformation import SubgraphTransformation
 @make_properties
 class GPUPersistentKernel(SubgraphTransformation):
     """
-    This transformation takes a given subgraph of an SDFG and fuses the 
+    This transformation takes a given subgraph of an SDFG and fuses the
     given states into a single persistent GPU kernel. Before this transformation can
     be applied the SDFG needs to be transformed to run on the GPU (e.g. with
     the GPUTransformSDFG transformation).
-    
+
     If applicable the transform removes the selected states from the original
     SDFG and places a `launch` state in its place. The removed states will be
     added to a nested SDFG in the launch state. If necessary guard states will
     be added in the nested SDFG, in order to make sure global assignments on
     Interstate edges will be performed in the kernel (this can be disabled with
     the `include_in_assignment` property).
-    
+
     The given subgraph needs to fulfill the following properties to be fused:
-    
+
      - All states in the selected subgraph need to fulfill the following:
         - access only GPU accessible memory
         - all concurrent DFGs inside the state are either sequential or inside
           a GPU_Device map.
-     - the selected subgraph has a single point of entry in the form of a 
+     - the selected subgraph has a single point of entry in the form of a
        single InterstateEdge entering the subgraph (i.e. there is at most one
        state (not part of the subgraph) from which the kernel is entered and
        exactly one state inside the subgraph from which the kernel starts
@@ -68,12 +68,18 @@ class GPUPersistentKernel(SubgraphTransformation):
 
     @staticmethod
     def can_be_applied(sdfg: SDFG, subgraph: SubgraphView):
-
         if not set(subgraph.nodes()).issubset(set(sdfg.nodes())):
             return False
 
+        subgraph_blocks = set()
+        for nd in subgraph.nodes():
+            subgraph_blocks.add(nd)
+            if isinstance(nd, AbstractControlFlowRegion):
+                subgraph_blocks.update(nd.all_control_flow_blocks())
+        subgraph_states = set([blk for blk in subgraph_blocks if isinstance(blk, SDFGState)])
+
         # All states need to be GPU states
-        for state in subgraph:
+        for state in subgraph_states:
             if not GPUPersistentKernel.is_gpu_state(sdfg, state):
                 return False
 
@@ -113,6 +119,12 @@ class GPUPersistentKernel(SubgraphTransformation):
 
     def apply(self, sdfg: SDFG):
         subgraph = self.subgraph_view(sdfg)
+
+        subgraph_blocks = set()
+        for nd in subgraph.nodes():
+            subgraph_blocks.add(nd)
+            if isinstance(nd, AbstractControlFlowRegion):
+                subgraph_blocks.update(nd.all_control_flow_blocks())
 
         entry_states_in, entry_states_out = self.get_entry_states(sdfg, subgraph)
         _, exit_states_out = self.get_exit_states(sdfg, subgraph)
@@ -181,13 +193,22 @@ class GPUPersistentKernel(SubgraphTransformation):
                 new_symbols.add(k)
                 if k in sdfg.symbols and k not in kernel_sdfg.symbols:
                     kernel_sdfg.add_symbol(k, sdfg.symbols[k])
+        for blk in subgraph_blocks:
+            if isinstance(blk, AbstractControlFlowRegion):
+                for k, v in blk.new_symbols(sdfg.symbols).items():
+                    new_symbols.add(k)
+                    if k not in kernel_sdfg.symbols:
+                        kernel_sdfg.add_symbol(k, v)
 
         # Setting entry node in nested SDFG if no entry guard was created
         if entry_guard_state is None:
             kernel_sdfg.start_state = kernel_sdfg.node_id(entry_state_in)
 
-        for state in subgraph:
-            state.parent = kernel_sdfg
+        for nd in subgraph:
+            nd.sdfg = kernel_sdfg
+            if isinstance(nd, AbstractControlFlowRegion):
+                for n in nd.all_control_flow_blocks():
+                    n.sdfg = kernel_sdfg
 
         # remove the now nested nodes from the outer sdfg and make sure the
         # launch state is properly connected to remaining states
@@ -203,7 +224,7 @@ class GPUPersistentKernel(SubgraphTransformation):
             sdfg.add_edge(launch_state, exit_state_out, InterstateEdge())
 
         # Handle data for kernel
-        kernel_data = set(node.data for state in kernel_sdfg for node in state.nodes()
+        kernel_data = set(node.data for state in kernel_sdfg.states() for node in state.nodes()
                           if isinstance(node, nodes.AccessNode))
         other_data = set(node.data for state in other_states for node in state.nodes()
                          if isinstance(node, nodes.AccessNode))
@@ -230,7 +251,7 @@ class GPUPersistentKernel(SubgraphTransformation):
         kernel_args_write = set()
         for data in kernel_args:
             data_accesses_read_only = [
-                state.in_degree(node) == 0 for state in kernel_sdfg for node in state
+                state.in_degree(node) == 0 for state in kernel_sdfg.states() for node in state
                 if isinstance(node, nodes.AccessNode) and node.data == data
             ]
             if all(data_accesses_read_only):
@@ -251,7 +272,6 @@ class GPUPersistentKernel(SubgraphTransformation):
 
         nested_sdfg = launch_state.add_nested_sdfg(
             kernel_sdfg,
-            sdfg,
             kernel_args_read,
             kernel_args_write,
         )

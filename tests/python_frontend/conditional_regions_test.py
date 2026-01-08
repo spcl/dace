@@ -15,12 +15,12 @@ def test_dataflow_if_check():
             return 10
         return 100
 
-    dataflow_if_check.use_experimental_cfg_blocks = True
+    dataflow_if_check.use_explicit_cf = True
     sdfg = dataflow_if_check.to_sdfg()
 
     assert any(isinstance(x, ConditionalBlock) for x in sdfg.nodes())
 
-    A = np.zeros((10,), np.int32)
+    A = np.zeros((10, ), np.int32)
     A[4] = 10
     A[5] = 100
     assert sdfg(A, 0)[0] == 0
@@ -47,7 +47,7 @@ def test_nested_if_chain():
                     else:
                         return 4
 
-    nested_if_chain.use_experimental_cfg_blocks = True
+    nested_if_chain.use_explicit_cf = True
     sdfg = nested_if_chain.to_sdfg()
 
     assert any(isinstance(x, ConditionalBlock) for x in sdfg.nodes())
@@ -74,7 +74,7 @@ def test_elif_chain():
         else:
             return 4
 
-    elif_chain.use_experimental_cfg_blocks = True
+    elif_chain.use_explicit_cf = True
     sdfg = elif_chain.to_sdfg()
 
     assert any(isinstance(x, ConditionalBlock) for x in sdfg.nodes())

@@ -26,10 +26,11 @@ from fparser.two.symbol_table import SymbolTable
 
 
 class AST_translator:
-    """  
+    """
     This class is responsible for translating the internal AST into a SDFG.
     """
-    def __init__(self, ast: ast_components.InternalFortranAst, source: str, use_experimental_cfg_blocks: bool = False):
+
+    def __init__(self, ast: ast_components.InternalFortranAst, source: str, use_explicit_cf: bool = False):
         """
         :ast: The internal fortran AST to be used for translation
         :source: The source file name from which the AST was generated
@@ -69,10 +70,10 @@ class AST_translator:
             ast_internal_classes.Allocate_Stmt_Node: self.allocate2sdfg,
             ast_internal_classes.Break_Node: self.break2sdfg,
         }
-        self.use_experimental_cfg_blocks = use_experimental_cfg_blocks
+        self.use_explicit_cf = use_explicit_cf
 
     def get_dace_type(self, type):
-        """  
+        """
         This function matches the fortran type to the corresponding dace type
         by referencing the ast_utils.fortrantypes2dacetypes dictionary.
         """
@@ -91,7 +92,7 @@ class AST_translator:
 
     def get_arrays_in_context(self, sdfg: SDFG):
         """
-        This function returns a copy of the union of arrays 
+        This function returns a copy of the union of arrays
         for the given sdfg and the top-level sdfg.
         """
         a = self.globalsdfg.arrays.copy()
@@ -218,7 +219,6 @@ class AST_translator:
                                    strides=strides,
                                    transient=transient)
 
-
     def write2sdfg(self, node: ast_internal_classes.Write_Stmt_Node, sdfg: SDFG, cfg: ControlFlowRegion):
         #TODO implement
         raise NotImplementedError("Fortran write statements are not implemented yet")
@@ -271,7 +271,7 @@ class AST_translator:
         :param sdfg: The SDFG to which the node should be translated
         """
 
-        if not self.use_experimental_cfg_blocks:
+        if not self.use_explicit_cf:
             declloop = False
             name = "FOR_l_" + str(node.line_number[0]) + "_c_" + str(node.line_number[1])
             begin_state = ast_utils.add_simple_state_to_sdfg(self, cfg, "Begin" + name)
@@ -701,11 +701,7 @@ class AST_translator:
                                            strides=array_in_global.strides,
                                            offset=array_in_global.offset)
 
-        internal_sdfg = substate.add_nested_sdfg(new_sdfg,
-                                                 sdfg,
-                                                 ins_in_new_sdfg,
-                                                 outs_in_new_sdfg,
-                                                 symbol_mapping=sym_dict)
+        internal_sdfg = substate.add_nested_sdfg(new_sdfg, ins_in_new_sdfg, outs_in_new_sdfg, symbol_mapping=sym_dict)
 
         # Now adding memlets
         for i in self.libstates:
@@ -819,7 +815,9 @@ class AST_translator:
         if len(calls.nodes) == 1:
             augmented_call = calls.nodes[0]
             from dace.frontend.fortran.intrinsics import FortranIntrinsics
-            if augmented_call.name.name not in ["pow", "atan2", "tanh", "__dace_epsilon", *FortranIntrinsics.retained_function_names()]:
+            if augmented_call.name.name not in [
+                    "pow", "atan2", "tanh", "__dace_epsilon", *FortranIntrinsics.retained_function_names()
+            ]:
                 augmented_call.args.append(node.lval)
                 augmented_call.hasret = True
                 self.call2sdfg(augmented_call, sdfg, cfg)
@@ -880,7 +878,7 @@ class AST_translator:
 
     def call2sdfg(self, node: ast_internal_classes.Call_Expr_Node, sdfg: SDFG, cfg: ControlFlowRegion):
         """
-        This parses function calls to a nested SDFG 
+        This parses function calls to a nested SDFG
         or creates a tasklet with an external library call.
         :param node: The node to be translated
         :param sdfg: The SDFG to which the node should be translated
@@ -1059,12 +1057,11 @@ class AST_translator:
         self.last_loop_breaks[cfg] = self.last_sdfg_states[cfg]
         cfg.add_edge(self.last_sdfg_states[cfg], self.last_loop_continues.get(cfg), InterstateEdge())
 
-def create_ast_from_string(
-    source_string: str,
-    sdfg_name: str,
-    transform: bool = False,
-    normalize_offsets: bool = False
-):
+
+def create_ast_from_string(source_string: str,
+                           sdfg_name: str,
+                           transform: bool = False,
+                           normalize_offsets: bool = False):
     """
     Creates an AST from a Fortran file in a string
     :param source_string: The fortran file as a string
@@ -1099,18 +1096,17 @@ def create_ast_from_string(
 
     return (program, own_ast)
 
-def create_sdfg_from_string(
-    source_string: str,
-    sdfg_name: str,
-    normalize_offsets: bool = False,
-    use_experimental_cfg_blocks: bool = False
-):
+
+def create_sdfg_from_string(source_string: str,
+                            sdfg_name: str,
+                            normalize_offsets: bool = False,
+                            use_explicit_cf: bool = False):
     """
     Creates an SDFG from a fortran file in a string
     :param source_string: The fortran file as a string
     :param sdfg_name: The name to be given to the resulting SDFG
     :return: The resulting SDFG
-    
+
     """
     parser = pf().create(std="f2008")
     reader = fsr(source_string)
@@ -1133,7 +1129,7 @@ def create_sdfg_from_string(
 
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
-    ast2sdfg = AST_translator(own_ast, __file__, use_experimental_cfg_blocks)
+    ast2sdfg = AST_translator(own_ast, __file__, use_explicit_cf)
     sdfg = SDFG(sdfg_name)
     ast2sdfg.top_level = program
     ast2sdfg.globalsdfg = sdfg
@@ -1148,11 +1144,11 @@ def create_sdfg_from_string(
     sdfg.parent_sdfg = None
     sdfg.parent_nsdfg_node = None
     sdfg.reset_cfg_list()
-    sdfg.using_experimental_blocks = use_experimental_cfg_blocks
+    sdfg.using_explicit_control_flow = use_explicit_cf
     return sdfg
 
 
-def create_sdfg_from_fortran_file(source_string: str, use_experimental_cfg_blocks: bool = False):
+def create_sdfg_from_fortran_file(source_string: str, use_explicit_cf: bool = False):
     """
     Creates an SDFG from a fortran file
     :param source_string: The fortran file name
@@ -1180,11 +1176,11 @@ def create_sdfg_from_fortran_file(source_string: str, use_experimental_cfg_block
 
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.IndexExtractor(program).visit(program)
-    ast2sdfg = AST_translator(own_ast, __file__, use_experimental_cfg_blocks)
+    ast2sdfg = AST_translator(own_ast, __file__, use_explicit_cf)
     sdfg = SDFG(source_string)
     ast2sdfg.top_level = program
     ast2sdfg.globalsdfg = sdfg
     ast2sdfg.translate(program, sdfg)
 
-    sdfg.using_experimental_blocks = use_experimental_cfg_blocks
+    sdfg.using_explicit_control_flow = use_explicit_cf
     return sdfg

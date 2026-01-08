@@ -32,7 +32,7 @@ def top_level_nodes(state: SDFGState):
     return state.scope_children()[None]
 
 
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class StateFusion(transformation.MultiStateTransformation):
     """ Implements the state-fusion transformation.
 
@@ -88,7 +88,7 @@ class StateFusion(transformation.MultiStateTransformation):
         Performs an all-pairs check for subset intersection on two
         groups of nodes. If group intersects or result is indeterminate,
         returns True as a precaution.
-        
+
         :param graph_a: The graph in which the first set of nodes reside.
         :param group_a: The first set of nodes to check.
         :param inputs_a: If True, checks inputs of the first group.
@@ -331,8 +331,8 @@ class StateFusion(transformation.MultiStateTransformation):
                 ]
                 # Those nodes will be the connection points upon fusion
                 match_nodes: Dict[nodes.AccessNode, nodes.AccessNode] = {
-                    next(n for n in order
-                         if n.data == match): next(n for n in fused_cc.second_input_nodes if n.data == match)
+                    next(n for n in order if n.data == match):
+                    next(n for n in fused_cc.second_input_nodes if n.data == match)
                     for match in (fused_cc.first_outputs
                                   & fused_cc.second_inputs)
                 }
@@ -537,13 +537,17 @@ class StateFusion(transformation.MultiStateTransformation):
 
         # Merge common (data) nodes
         merged_nodes = set()
+        removed_nodes = set()
         for node in second_mid:
 
             # merge only top level nodes, skip everything else
             if node not in top2:
                 continue
 
-            candidates = [x for x in order if x.data == node.data and x in top and x not in merged_nodes]
+            candidates = [
+                x for x in order
+                if x.data == node.data and x in top and x not in merged_nodes and x not in removed_nodes
+            ]
             source_node = first_state.in_degree(node) == 0
 
             # If not source node, try to connect every memlet-intersecting candidate
@@ -555,6 +559,7 @@ class StateFusion(transformation.MultiStateTransformation):
                         sdutil.change_edge_src(first_state, cand, node)
                         sdutil.change_edge_dest(first_state, cand, node)
                         first_state.remove_node(cand)
+                        removed_nodes.add(cand)
                 continue
 
             if len(candidates) == 0:
@@ -574,6 +579,7 @@ class StateFusion(transformation.MultiStateTransformation):
             sdutil.change_edge_src(first_state, node, n)
             sdutil.change_edge_dest(first_state, node, n)
             first_state.remove_node(node)
+            removed_nodes.add(node)
             merged_nodes.add(n)
 
         # Redirect edges and remove second state

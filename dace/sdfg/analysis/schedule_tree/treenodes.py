@@ -1,16 +1,22 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 from dataclasses import dataclass, field
+
 from dace import nodes, data, subsets, dtypes
 from dace.codegen import control_flow as cf
 from dace.properties import CodeBlock
+from dace.sdfg import InterstateEdge
 from dace.sdfg.memlet_utils import MemletSet
 from dace.sdfg.propagation import propagate_subset
 from dace.sdfg.sdfg import InterstateEdge, SDFG, memlets_in_ast
-from dace.sdfg.state import SDFGState
+from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
+from dace.symbolic import symbol
 from dace.memlet import Memlet
 from types import TracebackType
-from typing import Any, Dict, Iterator, List, Optional, Set, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Literal, Optional, Set, Tuple, Union
+
+if TYPE_CHECKING:
+    from dace import SDFG
 
 INDENTATION = '  '
 
@@ -67,7 +73,7 @@ class ContextPushPop:
 
 @dataclass
 class ScheduleTreeNode:
-    parent: Optional['ScheduleTreeScope'] = field(default=None, init=False)
+    parent: Optional['ScheduleTreeScope'] = field(default=None, init=False, repr=False)
 
     def as_string(self, indent: int = 0):
         return indent * INDENTATION + 'UNSUPPORTED'
@@ -284,6 +290,7 @@ class ControlFlowScope(ScheduleTreeScope):
 @dataclass
 class DataflowScope(ScheduleTreeScope):
     node: nodes.EntryNode
+    state: Optional[SDFGState] = None
 
     def scope(self, state: SDFGState, ctx: Context) -> ContextPushPop:
         return ContextPushPop(ctx, state, self)
@@ -352,121 +359,57 @@ class AssignNode(ScheduleTreeNode):
 
 
 @dataclass
-class ForScope(ControlFlowScope):
-    """
-    For loop scope.
-    """
-    header: cf.ForScope
-
-    def as_string(self, indent: int = 0):
-        node = self.header
-
-        result = (indent * INDENTATION + f'for {node.itervar} = {node.init}; {node.condition.as_string}; '
-                  f'{node.itervar} = {node.update}:\n')
-        return result + super().as_string(indent)
-
-    def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None, **kwargs) -> MemletSet:
-        root = root if root is not None else self.get_root()
-        result = MemletSet()
-        result.update(memlets_in_ast(ast.parse(self.header.init), root.containers))
-        result.update(memlets_in_ast(self.header.condition.code[0], root.containers))
-        result.update(memlets_in_ast(ast.parse(self.header.update), root.containers))
-
-        # If loop range is well-formed, use it in propagation
-        rng = self.header.loop_range()
-        if rng is not None:
-            propagate = {self.header.itervar: rng}
-        else:
-            propagate = None
-
-        result.update(super().input_memlets(root, propagate=propagate, **kwargs))
-        return result
-
-    def output_memlets(self, root: Optional['ScheduleTreeRoot'] = None, **kwargs) -> MemletSet:
-        # If loop range is well-formed, use it in propagation
-        rng = self.header.loop_range()
-        if rng is not None:
-            propagate = {self.header.itervar: rng}
-        else:
-            propagate = None
-
-        return super().output_memlets(root, propagate=propagate, **kwargs)
-
-
-@dataclass
-class WhileScope(ControlFlowScope):
-    """
-    While loop scope.
-    """
-    header: cf.WhileScope
-
-    def as_string(self, indent: int = 0):
-        result = indent * INDENTATION + f'while {self.header.test.as_string}:\n'
-        return result + super().as_string(indent)
-
-    def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None, **kwargs) -> MemletSet:
-        root = root if root is not None else self.get_root()
-        result = MemletSet()
-        result.update(memlets_in_ast(self.header.test.code[0], root.containers))
-        result.update(super().input_memlets(root, **kwargs))
-        return result
-
-
-@dataclass
-class DoWhileScope(ControlFlowScope):
-    """
-    Do/While loop scope.
-    """
-    header: cf.DoWhileScope
-
-    def as_string(self, indent: int = 0):
-        header = indent * INDENTATION + 'do:\n'
-        footer = indent * INDENTATION + f'while {self.header.test.as_string}\n'
-        return header + super().as_string(indent) + footer
-
-    def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None, **kwargs) -> MemletSet:
-        root = root if root is not None else self.get_root()
-        result = MemletSet()
-        result.update(memlets_in_ast(self.header.test.code[0], root.containers))
-        result.update(super().input_memlets(root, **kwargs))
-        return result
-
-
-@dataclass
-class GeneralLoopScope(ControlFlowScope):
+class LoopScope(ControlFlowScope):
     """
     General loop scope (representing a loop region).
     """
-    header: cf.GeneralLoopScope
+    loop: LoopRegion
+
+    def _check_loop_variant(
+        self
+    ) -> Union[Literal['for'], Literal['while'], Literal['do-while'], Literal['do-for-uncond-increment'],
+               Literal['do-for']]:
+        if self.loop.update_statement and self.loop.init_statement and self.loop.loop_variable:
+            if self.loop.inverted:
+                if self.loop.update_before_condition:
+                    return 'do-for-uncond-increment'
+                else:
+                    return 'do-for'
+            else:
+                return 'for'
+        else:
+            if self.loop.inverted:
+                return 'do-while'
+            else:
+                return 'while'
 
     def as_string(self, indent: int = 0):
-        loop = self.header.loop
-        if loop.update_statement and loop.init_statement and loop.loop_variable:
-            if loop.inverted:
-                if loop.update_before_condition:
-                    pre_header = indent * INDENTATION + f'{loop.init_statement.as_string}\n'
-                    header = indent * INDENTATION + 'do:\n'
-                    pre_footer = (indent + 1) * INDENTATION + f'{loop.update_statement.as_string}\n'
-                    footer = indent * INDENTATION + f'while {loop.loop_condition.as_string}'
-                else:
-                    pre_header = indent * INDENTATION + f'{loop.init_statement.as_string}\n'
-                    header = indent * INDENTATION + 'while True:\n'
-                    pre_footer = (indent + 1) * INDENTATION + f'if (not {loop.loop_condition.as_string}):\n'
-                    pre_footer += (indent + 2) * INDENTATION + 'break\n'
-                    footer = (indent + 1) * INDENTATION + f'{loop.update_statement.as_string}\n'
-                return pre_header + header + super().as_string(indent) + '\n' + pre_footer + footer
-            else:
-                result = (indent * INDENTATION + f'for {loop.init_statement.as_string}; ' +
-                          f'{loop.loop_condition.as_string}; ' + f'{loop.update_statement.as_string}:\n')
-                return result + super().as_string(indent)
-        else:
-            if loop.inverted:
-                header = indent * INDENTATION + 'do:\n'
-                footer = indent * INDENTATION + f'while {loop.loop_condition.as_string}'
-                return header + super().as_string(indent) + '\n' + footer
-            else:
-                result = indent * INDENTATION + f'while {loop.loop_condition.as_string}:\n'
-                return result + super().as_string(indent)
+        loop = self.loop
+        loop_variant = self._check_loop_variant()
+        if loop_variant == 'do-for-uncond-increment':
+            pre_header = indent * INDENTATION + f'{loop.init_statement.as_string}\n'
+            header = indent * INDENTATION + 'do:\n'
+            pre_footer = (indent + 1) * INDENTATION + f'{loop.update_statement.as_string}\n'
+            footer = indent * INDENTATION + f'while {loop.loop_condition.as_string}'
+            return pre_header + header + super().as_string(indent) + '\n' + pre_footer + footer
+        elif loop_variant == 'do-for':
+            pre_header = indent * INDENTATION + f'{loop.init_statement.as_string}\n'
+            header = indent * INDENTATION + 'while True:\n'
+            pre_footer = (indent + 1) * INDENTATION + f'if (not {loop.loop_condition.as_string}):\n'
+            pre_footer += (indent + 2) * INDENTATION + 'break\n'
+            footer = (indent + 1) * INDENTATION + f'{loop.update_statement.as_string}\n'
+            return pre_header + header + super().as_string(indent) + '\n' + pre_footer + footer
+        elif loop_variant == 'for':
+            result = (indent * INDENTATION + f'for {loop.init_statement.as_string}; ' +
+                      f'{loop.loop_condition.as_string}; ' + f'{loop.update_statement.as_string}:\n')
+            return result + super().as_string(indent)
+        elif loop_variant == 'while':
+            result = indent * INDENTATION + f'while {loop.loop_condition.as_string}:\n'
+            return result + super().as_string(indent)
+        else:  # 'do-while'
+            header = indent * INDENTATION + 'do:\n'
+            footer = indent * INDENTATION + f'while {loop.loop_condition.as_string}'
+            return header + super().as_string(indent) + '\n' + footer
 
 
 @dataclass
@@ -850,3 +793,15 @@ class ScheduleNodeTransformer(ScheduleNodeVisitor):
                 val.parent = node
             node.children[:] = new_values
         return node
+
+
+def validate_has_no_other_node_types(stree: ScheduleTreeScope) -> None:
+    """
+    Validates that the schedule tree contains only nodes of type ScheduleTreeNode or its subclasses.
+    Raises an exception if any other node type is found.
+    """
+    for child in stree.children:
+        if not isinstance(child, ScheduleTreeNode):
+            raise RuntimeError(f'Unsupported node type: {type(child).__name__}')
+        if isinstance(child, ScheduleTreeScope):
+            validate_has_no_other_node_types(child)

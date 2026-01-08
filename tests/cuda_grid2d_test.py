@@ -12,6 +12,7 @@ W = dace.symbol('W')
 
 @dace.program(dace.float64[H, W], dace.float64[H, W])
 def cudahello(V, Vout):
+
     @dace.map(_[0:H, 0:W])
     def multiplication(i, j):
         in_V << V[i, j]
