@@ -2946,7 +2946,13 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
     def make_ptr_vector_cast(self, *args, **kwargs):
         return cpp.make_ptr_vector_cast(*args, **kwargs)
 
-    def ptr(self, name: str, desc: dt.Data, sdfg: SDFG = None, subset: Optional[subsets.Subset] = None) -> str:
+    def ptr(self,
+            name: str,
+            desc: dt.Data,
+            sdfg: SDFG = None,
+            subset: Optional[subsets.Subset] = None,
+            is_write: Optional[bool] = None,
+            ancestor: int = 0) -> str:
         """
         Returns a string that points to the data based on its name and descriptor.
 
@@ -2954,6 +2960,8 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         :param desc: Data descriptor.
         :param sdfg: SDFG in which the data resides.
         :param subset: Optional subset associated with the data.
+        :param is_write: Whether the access is a write access.
+        :param ancestor: Scope ancestor level.
         :return: C-compatible name that can be used to access the data.
         """
         return cpp.ptr(name, desc, sdfg, self._frame)

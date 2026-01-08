@@ -519,7 +519,13 @@ class SVECodeGen(TargetCodeGenerator):
 
         callsite_stream.write('///////////////////\n\n')
 
-    def ptr(self, name: str, desc: data.Data, sdfg: SDFG = None, subset: Optional[subsets.Subset] = None) -> str:
+    def ptr(self,
+            name: str,
+            desc: data.Data,
+            sdfg: SDFG = None,
+            subset: Optional[subsets.Subset] = None,
+            is_write: Optional[bool] = None,
+            ancestor: int = 0) -> str:
         """
         Returns a string that points to the data based on its name and descriptor.
 
@@ -527,6 +533,8 @@ class SVECodeGen(TargetCodeGenerator):
         :param desc: Data descriptor.
         :param sdfg: SDFG in which the data resides.
         :param subset: Optional subset associated with the data.
+        :param is_write: Whether the access is a write access.
+        :param ancestor: Scope ancestor level.
         :return: C-compatible name that can be used to access the data.
         """
         return cpp.ptr(name, desc, sdfg, self.frame)

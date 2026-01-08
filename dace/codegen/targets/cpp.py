@@ -291,7 +291,7 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
     offset = cpp_offset_expr(desc, memlet.subset, codegen=codegen)
     offset_expr = '[' + offset + ']'
     is_scalar = not isinstance(conntype, dtypes.pointer)
-    ptrname = codegen.ptr(memlet.data, desc, sdfg, subset=memlet.subset)
+    ptrname = codegen.ptr(memlet.data, desc, sdfg, subset=memlet.subset, ancestor=ancestor, is_write=is_write)
     ref = ''
 
     # Get defined type (pointer, stream etc.) and change the type definition
