@@ -800,7 +800,7 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
     if not in_place:
         sdfg = copy.deepcopy(sdfg)
 
-    _prepare_sdfg_for_conversion(sdfg)
+    _prepare_sdfg_for_conversion(sdfg, toplevel)
 
     result = tn.ScheduleTreeScope(children=_block_schedule_tree(sdfg))
     tn.validate_has_no_other_node_types(result)
