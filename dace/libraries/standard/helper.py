@@ -2,6 +2,7 @@
 import dace
 import copy
 
+
 # Compute collapsed shapes and strides, removing singleton dimensions (length == 1)
 def collapse_shape_and_strides(subset, strides):
     collapsed_shape = []
