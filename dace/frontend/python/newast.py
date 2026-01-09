@@ -3654,12 +3654,6 @@ class ProgramVisitor(ExtNodeVisitor):
                         true_name = self.sdfg.add_datadesc(name, desc, find_new_name=True)
                         self.variables[name] = true_name
                         defined_vars[name] = true_name
-                    elif name in self.annotated_types and isinstance(self.annotated_types[name], data.Reference):
-                        desc = copy.deepcopy(self.annotated_types[name])
-                        desc.transient = True
-                        true_name = self.sdfg.add_datadesc(name, desc, find_new_name=True)
-                        self.variables[name] = true_name
-                        defined_vars[name] = true_name
                     elif (not name.startswith('__return')
                           and (isinstance(result_data, data.View) or
                                (not result_data.transient and isinstance(result_data, data.Array)))):
