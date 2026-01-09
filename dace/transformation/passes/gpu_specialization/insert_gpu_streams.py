@@ -8,9 +8,7 @@ from dace.sdfg import is_devicelevel_gpu
 from dace.sdfg.nodes import AccessNode, MapEntry, MapExit, Node, Tasklet
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import NaiveGPUStreamScheduler
-from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import get_gpu_stream_array_name, get_gpu_stream_connector_name
-
-STREAM_PLACEHOLDER = "__dace_current_stream"
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import get_dace_runtime_gpu_stream_name, get_gpu_stream_array_name, get_gpu_stream_connector_name
 
 
 @properties.make_properties
@@ -138,7 +136,7 @@ class InsertGPUStreams(ppl.Pass):
                         break
 
                     # Case 2: Tasklets that use GPU stream in their code
-                    if isinstance(node, Tasklet) and STREAM_PLACEHOLDER in node.code.as_string:
+                    if isinstance(node, Tasklet) and get_dace_runtime_gpu_stream_name() in node.code.as_string:
                         requiring_gpu_stream.add(child_sdfg)
                         break
 

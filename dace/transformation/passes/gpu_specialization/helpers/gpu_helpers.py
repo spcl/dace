@@ -11,6 +11,14 @@ def get_gpu_stream_connector_name() -> str:
     return "__stream_"
 
 
+def get_dace_runtime_gpu_stream_name() -> str:
+    return "__dace_current_stream"
+
+
+def get_default_gpu_stream_name() -> str:
+    return "__default_stream"
+
+
 def generate_sync_debug_call() -> str:
     """
     Generate backend sync and error-check calls as a string if

@@ -7,11 +7,11 @@ from dace.config import Config
 from dace.sdfg import nodes
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import NaiveGPUStreamScheduler
-from dace.transformation.passes.gpu_specialization.insert_gpu_streams import InsertGPUStreams, get_gpu_stream_array_name, get_gpu_stream_connector_name
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import get_default_gpu_stream_name
+from dace.transformation.passes.gpu_specialization.insert_gpu_streams import InsertGPUStreams, get_gpu_stream_array_name, get_dace_runtime_gpu_stream_name, get_gpu_stream_connector_name
 from dace.transformation.passes.gpu_specialization.connect_gpu_streams_to_kernels import ConnectGPUStreamsToKernels
 
 # Placeholder for the GPU stream variable used in tasklet code
-STREAM_PLACEHOLDER = "__dace_current_stream"
 
 
 @properties.make_properties
@@ -47,7 +47,7 @@ class ConnectGPUStreamsToTasklets(ppl.Pass):
         # Retrieve GPU stream assignments for nodes
         stream_assignments: Dict[nodes.Node, Union[int, str]] = pipeline_results['NaiveGPUStreamScheduler']
 
-        # Find all tasklets which use the GPU stream variable (STREAM_PLACEHOLDER) in the code
+        # Find all tasklets which use the GPU stream variable (get_dace_runtime_gpu_stream_name()) in the code
         # and provide them the needed GPU stream explicitly
         for sub_sdfg in sdfg.all_sdfgs_recursive():
 
@@ -59,12 +59,12 @@ class ConnectGPUStreamsToTasklets(ppl.Pass):
                         continue
 
                     # Tasklet does not need use its assigned GPU stream - continue
-                    if not STREAM_PLACEHOLDER in node.code.as_string:
+                    if not get_dace_runtime_gpu_stream_name() in node.code.as_string:
                         continue
 
                     # Stream connector name and the used GPU Stream for the kernel
                     assigned_gpustream = stream_assignments[node]
-                    gpu_stream_conn = STREAM_PLACEHOLDER
+                    gpu_stream_conn = get_default_gpu_stream_name()
                     accessed_gpu_stream = f"{stream_array_name}[{assigned_gpustream}]"
 
                     # Provide the GPU stream explicitly to the tasklet

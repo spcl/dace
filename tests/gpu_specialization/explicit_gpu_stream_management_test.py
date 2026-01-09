@@ -99,7 +99,6 @@ def test_extended():
     assert (isinstance(pre, dace.nodes.Tasklet) and f"{backend}StreamSynchronize(" in pre.code.as_string
             for pre in state.predecessors(node)), ("At then end of each state any used stream must be synchronized.")
 
-    sdfg.save("x.sdfg")
     # Test 3: Check that we have memory copy tasklets (as we perform two "Main Memory -> GPU GLobal"
     # memory copies and two "GPU Global -> Main Memory" memory copies by applying the gpu tranformation)
     # and that they use the name of the in connector of the GPU stream in the copy call
@@ -107,8 +106,8 @@ def test_extended():
         n for n in state.nodes() if isinstance(n, dace.nodes.Tasklet) and f"{backend}MemcpyAsync(" in n.code.as_string
     ]
     for tasklet in memcopy_tasklets:
-        assert len(tasklet.in_connectors) == 1, ("Memcpy tasklets must have one connector "
-                                                 "corresponding to the GPU stream.")
+        assert len(tasklet.in_connectors) == 2, ("Memcpy tasklets must have one connector "
+                                                 "corresponding to the GPU stream and copy-in node.")
 
     sdfg.compile()
 

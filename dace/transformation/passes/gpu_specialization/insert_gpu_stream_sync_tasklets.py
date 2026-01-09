@@ -11,11 +11,9 @@ from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.helpers import is_within_schedule_types
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import NaiveGPUStreamScheduler
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import get_gpu_stream_array_name, get_gpu_stream_connector_name
-from dace.transformation.passes.gpu_specialization.insert_gpu_streams import InsertGPUStreams
+from dace.transformation.passes.gpu_specialization.insert_gpu_streams import InsertGPUStreams, get_dace_runtime_gpu_stream_name
 from dace.transformation.passes.gpu_specialization.connect_gpu_streams_to_kernels import ConnectGPUStreamsToKernels
 from dace.transformation.passes.gpu_specialization.connect_gpu_streams_to_tasklets import ConnectGPUStreamsToTasklets
-
-STREAM_PLACEHOLDER = "__dace_current_stream"
 
 
 @properties.make_properties
@@ -100,7 +98,7 @@ class InsertGPUStreamSyncTasklets(ppl.Pass):
             return src_in_kernel and dst_in_kernel
 
         def is_tasklet_with_stream_use(src):
-            return isinstance(src, nodes.Tasklet) and STREAM_PLACEHOLDER in src.code.as_string
+            return isinstance(src, nodes.Tasklet) and get_dace_runtime_gpu_stream_name() in src.code.as_string
 
         # ------------------ Sync detection logic -----------------------------
 
