@@ -29,7 +29,6 @@ from dace.frontend.python.astutils import ExtNodeTransformer, rname, unparse
 from dace.sdfg import nodes, graph as gr, utils, propagation
 from dace.properties import LambdaProperty
 from dace.sdfg import SDFG, is_devicelevel_gpu, SDFGState
-from dace.sdfg.scope import is_devicelevel_gpu_kernel
 from dace.codegen.targets import fpga
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
 
@@ -938,7 +937,7 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
         # If this code runs on the host and is associated with a GPU stream,
         # set the stream to a local variable.
         max_streams = int(Config.get("compiler", "cuda", "max_concurrent_streams"))
-        if not is_devicelevel_gpu_kernel(sdfg, state_dfg, node) and (hasattr(node, "_cuda_stream")
+        if not is_devicelevel_gpu(sdfg, state_dfg, node) and (hasattr(node, "_cuda_stream")
                                                                      or connected_to_gpu_memory(node, state_dfg, sdfg)):
             if max_streams >= 0:
                 callsite_stream.write(
