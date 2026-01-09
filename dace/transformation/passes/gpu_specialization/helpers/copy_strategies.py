@@ -71,8 +71,7 @@ class CopyContext:
         Defaults to `__dace_current_stream` placeholder, which can be changed by the scheduling pass
         """
         # 2. Generate GPU stream expression
-        gpustream = "__state->gpu_context->streams[0]"
-        # gpustream_var_name_prefix = Config.get('compiler', 'cuda', 'gpu_stream_name').split(',')[1]
+        gpustream = "__dace_current_stream"
         gpustream_expr = gpustream
 
         return gpustream_expr
