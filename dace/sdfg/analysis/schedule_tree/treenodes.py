@@ -1,16 +1,13 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-import ast
 from dataclasses import dataclass, field
 
 from dace import nodes, data, subsets, dtypes
-from dace.codegen import control_flow as cf
 from dace.properties import CodeBlock
 from dace.sdfg import InterstateEdge
 from dace.sdfg.memlet_utils import MemletSet
 from dace.sdfg.propagation import propagate_subset
 from dace.sdfg.sdfg import InterstateEdge, SDFG, memlets_in_ast
-from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
-from dace.symbolic import symbol
+from dace.sdfg.state import LoopRegion, SDFGState
 from dace.memlet import Memlet
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Literal, Optional, Set, Tuple, Union
