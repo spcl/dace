@@ -769,14 +769,15 @@ namespace dace
 
             #pragma unroll
             for (int i = 0; i < WRITES; ++i) {
-                wcr_custom<T>::template reduce(
-                    wcr, ptr + (ltid + i * BLOCK_SIZE) * dst_xstride,
+                const auto __dace__reduction_lambda = {wcr};
+                wcr_custom<T>::reduce<decltype(__dace__reduction_lambda)>(
+                    __dace__reduction_lambda, ptr + (ltid + i * BLOCK_SIZE) * dst_xstride,
                     *(smem + (ltid + i * BLOCK_SIZE) * src_xstride));
             }
 
             if (REM_WRITES != 0) {
                 if (ltid < REM_WRITES)
-                    wcr_custom<T>::template reduce(
+                    wcr_custom<T>::reduce(
                         ptr + (ltid + WRITES * BLOCK_SIZE)* dst_xstride,
                         *(smem + (ltid + WRITES * BLOCK_SIZE) * src_xstride));
             }
@@ -793,14 +794,14 @@ namespace dace
 
             #pragma unroll
             for (int i = 0; i < WRITES; ++i) {
-                wcr_fixed<REDTYPE, T>::template reduce_atomic(
+                wcr_fixed<REDTYPE, T>::reduce_atomic(
                     ptr + (ltid + i * BLOCK_SIZE) * dst_xstride,
                     *(smem + (ltid + i * BLOCK_SIZE) * src_xstride));
             }
 
             if (REM_WRITES != 0) {
                 if (ltid < REM_WRITES)
-                    wcr_fixed<REDTYPE, T>::template reduce_atomic(
+                    wcr_fixed<REDTYPE, T>::reduce_atomic(
                         ptr + (ltid + WRITES*BLOCK_SIZE)* dst_xstride,
                         *(smem + (ltid + WRITES * BLOCK_SIZE) * src_xstride));
             }
