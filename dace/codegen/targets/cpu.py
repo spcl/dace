@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 from copy import deepcopy
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import ControlFlowRegion, SDFGState, StateSubgraphView
@@ -1602,10 +1602,6 @@ class CPUCodeGen(TargetCodeGenerator):
                           function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         cdtype = src_node.out_connectors[edge.src_conn]
         if isinstance(sdfg.arrays[edge.data.data], data.Stream):
-            pass
-        elif isinstance(dst_node, nodes.AccessNode) and dst_node.desc(state_dfg).dtype == dtypes.gpuStream_t:
-            # Special case: GPU Streams do not represent data flow - they assing GPU Streams to kernels/tasks
-            # Thus, nothing needs to be written.
             pass
         elif isinstance(cdtype, dtypes.pointer):  # If pointer, also point to output
             desc = sdfg.arrays[edge.data.data]
