@@ -114,11 +114,11 @@ def copy_expr(
 
     add_offset = offset_cppstr != "0"
 
-    if def_type in [DefinedType.Pointer, DefinedType.ArrayInterface]:
+    if def_type in [DefinedType.Pointer, DefinedType.ArrayInterface, DefinedType.Object]:
         return "{}{}{}".format(dt, expr, " + {}".format(offset_cppstr) if add_offset else "")
     elif def_type == DefinedType.StreamArray:
         return "{}[{}]".format(expr, offset_cppstr)
-    elif def_type in [DefinedType.Scalar, DefinedType.Stream, DefinedType.Object]:
+    elif def_type in [DefinedType.Scalar, DefinedType.Stream]:
         if add_offset:
             raise TypeError("Tried to offset address of scalar {}: {}".format(data_name, offset_cppstr))
 
