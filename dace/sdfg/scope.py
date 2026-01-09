@@ -206,7 +206,6 @@ def is_in_scope(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState', node: nd.N
             scope = sdict[node]
             while scope is not None:
                 if scope.schedule in schedules:
-                    print(node, "IN True 1 ")
                     return True
                 scope = sdict[scope]
         # Traverse up nested SDFGs
@@ -215,12 +214,10 @@ def is_in_scope(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState', node: nd.N
             state = sdfg.parent
             node = sdfg.parent_nsdfg_node
             if node.schedule in schedules:
-                print(node, "IN True 2 ")
                 return True
         else:
             parent = sdfg.parent
         sdfg = parent
-    print(node, "IN False")
     return False
 
 

@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
 import functools
 import dace
@@ -289,9 +289,14 @@ def test_nested_memcpy_maps_with_dimension_change(expansion_type: str):
     xp = cupy if expansion_type == "CUDA" else numpy
 
     sdfg = nested_memcpy_maps_with_dimension_change.to_sdfg()
-    sdfg.name = sdfg.name + f"_expansion_type_{expansion_type}"
-    set_dtype_to_gpu_if_expansion_type_is_cuda(sdfg, expansion_type)
+    # Always simplify due to simplifications
+    # Regarding the nestedSDFGs  changing applicability
+    # Of the pass
+    sdfg.simplify()
 
+    sdfg.name = sdfg.name + f"_expansion_type_{expansion_type}"
+
+    set_dtype_to_gpu_if_expansion_type_is_cuda(sdfg, expansion_type)
     AssignmentAndCopyKernelToMemsetAndMemcpy(overapproximate_first_dimensions=True).apply_pass(sdfg, {})
     assert _get_num_memcpy_library_nodes(
         sdfg) == 1, f"Expected 1 memcpy library nodes, got {_get_num_memcpy_library_nodes(sdfg)}"
@@ -317,6 +322,11 @@ def test_nested_memset_maps_with_dimension_change(expansion_type: str):
     xp = cupy if expansion_type == "CUDA" else numpy
 
     sdfg = nested_memset_maps_with_dimension_change.to_sdfg()
+    # Always simplify due to simplifications
+    # Regarding the nestedSDFGs  changing applicability
+    # Of the pass
+    sdfg.simplify()
+
     sdfg.name = sdfg.name + f"_expansion_type_{expansion_type}"
     set_dtype_to_gpu_if_expansion_type_is_cuda(sdfg, expansion_type)
 
@@ -344,9 +354,14 @@ def test_nested_memset_maps_with_dynamic_connectors(expansion_type: str):
         # because due to the nested nature we will have memcpy/memset inside a kernel
         # the "choose best expansion" logic needs to be implemented and tested separately
         return
-    xp = cupy if expansion_type == "CUDA" else numpy
+    xp = numpy
 
     sdfg = nested_memset_maps_with_dynamic_connectors.to_sdfg()
+    # Always simplify due to simplifications
+    # Regarding the nestedSDFGs  changing applicability
+    # Of the pass
+    sdfg.simplify()
+
     sdfg.name = sdfg.name + f"_expansion_type_{expansion_type}"
     set_dtype_to_gpu_if_expansion_type_is_cuda(sdfg, expansion_type)
 
@@ -383,9 +398,14 @@ def test_nested_memcpy_maps_with_dynamic_connectors(expansion_type: str):
         # because due to the nested nature we will have memcpy/memset inside a kernel
         # the "choose best expansion" logic needs to be implemented and tested separately
         return
-    xp = cupy if expansion_type == "CUDA" else numpy
+    xp = numpy
 
     sdfg = nested_memcpy_maps_with_dynamic_connectors.to_sdfg()
+    # Always simplify due to simplifications
+    # Regarding the nestedSDFGs  changing applicability
+    # Of the pass
+    sdfg.simplify()
+
     sdfg.name = sdfg.name + f"_expansion_type_{expansion_type}"
     set_dtype_to_gpu_if_expansion_type_is_cuda(sdfg, expansion_type)
 
@@ -420,6 +440,11 @@ def test_double_memset_with_dynamic_connectors(expansion_type: str):
     xp = cupy if expansion_type == "CUDA" else numpy
 
     sdfg = double_memset_with_dynamic_connectors.to_sdfg()
+    # Always simplify due to simplifications
+    # Regarding the nestedSDFGs  changing applicability
+    # Of the pass
+    sdfg.simplify()
+
     sdfg.name = sdfg.name + f"_expansion_type_{expansion_type}"
     set_dtype_to_gpu_if_expansion_type_is_cuda(sdfg, expansion_type)
 
@@ -432,7 +457,7 @@ def test_double_memset_with_dynamic_connectors(expansion_type: str):
     p.apply_pass(sdfg, {})
     for n, g in sdfg.all_nodes_recursive():
         if isinstance(n, dace.nodes.NestedSDFG):
-            p.apply_pass(n.sdfg)
+            p.apply_pass(n.sdfg, {})
     sdfg.validate()
 
     assert _get_num_memcpy_library_nodes(
@@ -459,6 +484,11 @@ def test_double_memcpy_with_dynamic_connectors(expansion_type: str):
     xp = cupy if expansion_type == "CUDA" else numpy
 
     sdfg = double_memcpy_with_dynamic_connectors.to_sdfg()
+    # Always simplify due to simplifications
+    # Regarding the nestedSDFGs  changing applicability
+    # Of the pass
+    sdfg.simplify()
+
     sdfg.name = sdfg.name + f"_expansion_type_{expansion_type}"
     set_dtype_to_gpu_if_expansion_type_is_cuda(sdfg, expansion_type)
 

@@ -6,9 +6,8 @@ from .. import environments
 from functools import reduce
 import operator
 from dace.codegen.common import sym2cpp
-import copy
 
-from dace.libraries.standard.helper import collapse_shape_and_strides, add_dynamic_inputs
+from dace.libraries.standard.helper import add_dynamic_inputs
 
 
 @library.expansion
@@ -81,8 +80,7 @@ class ExpandCUDA(ExpandTransformation):
             outputs={"_memset_out"},
             code=
             f"cudaMemsetAsync(_memset_out, 0, {sym2cpp(cp_size)} * sizeof({out.dtype.ctype}), __dace_current_stream);",
-            language=dace.Language.CPP,
-            code_global=f"#include <cuda_runtime.h>\n")
+            language=dace.Language.CPP)
 
         state.add_edge(
             tasklet, "_memset_out", out_access, None,
@@ -120,8 +118,7 @@ class ExpandCPU(ExpandTransformation):
                                     inputs={},
                                     outputs={"_memset_out"},
                                     code=f"memset(_memset_out, 0, {sym2cpp(cp_size)} * sizeof({out.dtype.ctype}));",
-                                    language=dace.Language.CPP,
-                                    code_global="#include <cstring>")  # include C++ memset header
+                                    language=dace.Language.CPP)
 
         # Connect tasklet to the output
         state.add_edge(

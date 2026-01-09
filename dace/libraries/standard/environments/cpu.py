@@ -14,7 +14,7 @@ class CPU:
     cmake_link_flags = []
     cmake_files = []
 
-    headers = []
+    headers = {'frame': ["cstring"]}
     state_fields = []
     init_code = ""
     finalize_code = ""

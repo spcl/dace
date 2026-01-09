@@ -6,7 +6,6 @@ from .. import environments
 from functools import reduce
 import operator
 from dace.codegen.common import sym2cpp
-import copy
 
 from dace.libraries.standard.helper import collapse_shape_and_strides, add_dynamic_inputs
 
@@ -82,8 +81,7 @@ class ExpandCUDA(ExpandTransformation):
             outputs={"_memcpy_out"},
             code=
             f"cudaMemcpyAsync(_memcpy_out, _memcpy_in, {sym2cpp(cp_size)} * sizeof({inp.dtype.ctype}), cudaMemcpyDeviceToDevice, __dace_current_stream);",
-            language=dace.Language.CPP,
-            code_global=f"#include <cuda_runtime.h>\n")
+            language=dace.Language.CPP)
 
         tasklet.schedule = dace.dtypes.ScheduleType.GPU_Device
 
@@ -129,8 +127,7 @@ class ExpandCPU(ExpandTransformation):
             inputs={"_memcpy_in"},
             outputs={"_memcpy_out"},
             code=f"memcpy(_memcpy_out, _memcpy_in, {sym2cpp(cp_size)} * sizeof({inp.dtype.ctype}));",
-            language=dace.Language.CPP,
-            code_global="#include <cstring>")
+            language=dace.Language.CPP)
 
         # Connect input and output to the tasklet
         state.add_edge(
