@@ -1,4 +1,4 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 from dace import data as dt, dtypes, registry, SDFG
 from dace.sdfg import nodes
 from dace.codegen.prettycode import CodeIOStream

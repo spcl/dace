@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
     Type inference: traverses code and returns types for all undefined symbols according to C semantics
     infer() has a lenient implementation: if something it not inferred (for example an unsupported construct) it will not

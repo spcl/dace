@@ -1,4 +1,4 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 from copy import deepcopy as dc
 from dace import dtypes, memlet as mm, properties, data as dt
 from dace.symbolic import symstr, equal, equal_valued

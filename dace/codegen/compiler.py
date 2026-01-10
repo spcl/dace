@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Handles compilation of code objects. Creates the proper folder structure,
     compiles each target separately, links all targets to one binary, and
     returns the corresponding CompiledSDFG object. """

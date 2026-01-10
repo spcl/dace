@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 from dace.properties import SymbolicProperty
 from dace.transformation.transformation import ExpandTransformation
 from dace.frontend.common import op_repository as oprepo
