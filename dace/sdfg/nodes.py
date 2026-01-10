@@ -285,6 +285,16 @@ class AccessNode(Node):
     instrument_condition = CodeProperty(desc="Condition under which to trigger the instrumentation",
                                         default=CodeBlock("1", language=dtypes.Language.CPP))
 
+    # Experimental-CUDA-specific properties
+    async_copy = Property(dtype=bool,
+                          desc="Marks the data copy to this node (if any) as asynchronous (CUDA-specific).",
+                          default=False)
+
+    async_pipeline = Property(dtype=str,
+                              desc="Name of the CUDA pipeline responsible for synchronization. "
+                              "Only relevant if async_copy is True. May be None.",
+                              allow_none=True)
+
     def __init__(self, data, debuginfo=None):
         super(AccessNode, self).__init__()
 
@@ -311,6 +321,9 @@ class AccessNode(Node):
         node._debuginfo = dcpy(self._debuginfo, memo=memo)
 
         node._guid = graph.generate_element_id(node)
+
+        node._async_copy = self._async_copy
+        node._async_pipeline = self._async_pipeline
 
         return node
 
@@ -932,6 +945,9 @@ class MapEntry(EntryNode):
                 continue
 
             free_symbols |= e.data.used_symbols(all_symbols, e)
+
+        # Update with the symbols needed by the map
+        free_symbols |= self.free_symbols
 
         # Do not consider SDFG constants as symbols
         new_symbols.update(set(parent_sdfg.constants.keys()))

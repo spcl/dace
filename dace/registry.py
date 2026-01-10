@@ -37,6 +37,23 @@ def autoregister(cls: Type, **kwargs):
     that automatically registers the subclass with the superclass registry upon
     creation.
     """
+    # Ensures that the correct CUDA implementation is selected and the other is not registered.
+    # Registering both leads to errors.
+    from dace.config import Config
+
+    name = kwargs.get('name')
+    impl = Config.get('compiler', 'cuda', 'implementation')
+
+    valid_impls = {'legacy', 'experimental'}
+    if impl not in valid_impls:
+        raise ValueError(f"Invalid CUDA implementation: {impl}. "
+                         f"Please select one of {valid_impls} under compiler.cuda.implementation in the configs.")
+
+    # Only the CUDA implementation selected in Config is registered
+    if name in {'cuda', 'experimental_cuda'}:
+        if (impl == 'experimental' and name == 'cuda') or (impl == 'legacy' and name == 'experimental_cuda'):
+            return
+
     registered = False
     for base in cls.__bases__:
         if hasattr(base, '_registry_') and hasattr(base, 'register'):

@@ -326,7 +326,7 @@ required:
                             Additional CUDA architectures (separated by commas)
                             to compile GPU code for, excluding the current
                             architecture on the compiling machine.
-                        default: '60'
+                        default: '86'
 
                     hip_arch:
                         type: str
@@ -403,9 +403,9 @@ required:
                         type: bool
                         title: Synchronous Debugging
                         description: >
-                            Enables Synchronous Debugging mode, where each library call
-                            is followed by full-device synchronization and error checking.
-                        default: false
+                            Enables debugging mode where each asynchronous GPU call is followed by
+                            device-wide synchronization and error checking.
+                        default: False
 
                     libs:
                         type: str
@@ -454,17 +454,81 @@ required:
                             index types are needed to address memory offsets that are beyond the 32-bit
                             range, or to reduce memory usage.
 
-                    allow_implicit_memlet_to_map:
-                        type: bool
-                        title: Allow the implicit conversion of Memlets to Maps during code generation.
-                        default: true
+                    # New configs, needed for ExperimentalCUDACodeGen
+                    implementation:
+                        type: str
+                        title: CUDA codegen implementation
                         description: >
-                            If ``true`` the code generator will implicitly convert Memlets that cannot be
-                            represented by a native library call, such as ``cudaMemcpy()`` into Maps that
-                            explicitly copy the data around. If this value is ``false`` the code generator
-                            will raise an exception if such a Memlet is encountered. This allows the user
-                            to have full control over all Maps in the SDFG.
+                            Choose between available CUDA code generation implementations.
+                            "legacy" is stable, "experimental" is used by Berkay Aydogdu and
+                            Yakup Koray Budanaz for Berkays master-thesis.
+                        enum: [legacy, experimental]
+                        default: experimental
 
+                    gpu_index_type:
+                        type: str
+                        title: Thread/block/warp index data type
+                        default: int32
+                        description: >
+                            Defines the data type for a thread, block and warp index in the generated code.
+                            The type is based on the type-classes in ``dace.dtypes``. For example,
+                            ``uint64`` is equivalent to ``dace.uint64``. Change this setting when large
+                            index types are needed to address memory offsets that are beyond the 32-bit
+                            range, or to reduce memory usage. This replaces ``thread_id_type`` in
+                            ``ExperimentalCUDACodeGen`` , as the new name more accurately reflects its broader
+                            usage.
+
+                    cuda_warp_size:
+                        type: int
+                        title: CUDA warp size
+                        description: >
+                            Defines the warp size used during CUDA code generation. The default and current
+                            standard value for CUDA is 32. This should only be changed if future CUDA
+                            architectures explicitly alter the warp size. Modifying this value arbitrarily may
+                            result in incorrect or unknown behavior, and is therefore strongly discouraged.
+                        default: 32
+
+                    hip_warp_size:
+                        type: int
+                        title: HIP warp size
+                        description: >
+                            Specifies the warp size (also known as wavefront size) for HIP code generation.
+                            The default value for AMD GPUs is typically 64. This setting should only be modified
+                            if you have a clear understanding of what you are doing.
+                        default: 64
+
+                    auto_syncthreads_insertion:
+                        type: bool
+                        title: Insert Default __syncthreads() Tasklets
+                        description: >
+                            If enabled, inserts default __syncthreads() tasklets during preprocessing
+                            in ExperimentalCUDACodeGen to ensure shared memory is ready before access.
+                            This is a simple safeguard for correctness—it may not be complete, but it
+                            does the job for basic SDFGs. Disable if you handle synchronization manually
+                            or use other mechanisms like async copies or pipelines.
+                        default: True
+
+                    current_thread_block_name:
+                        type: str
+                        title: Variable name for the current thread block
+                        description: >
+                            Specifies the name of the variable that holds the current thread block group,
+                            initialized using `cooperative_groups::this_thread_block()`. This is useful in
+                            contexts like custom tasklets, where the variable is explicitly referenced
+                            (e.g., `cooperative_groups::wait(block)`). Setting this allows users to customize the
+                            variable name without modifying the source code or relying on a fixed name.
+                        default: block
+
+                    gpu_stream_name:
+                        type: str
+                        title: Name for the GPU stream object
+                        description: >
+                            GPU streams allow GPU operations, such as kernel execution or memory transfers, to run asynchronously
+                            and in parallel. This field specifies the naming convention for the hpu stream array and its connectors
+                            in the SDFG. For example: 'gpu_streams,gpu_stream' means 'gpu_streams' is the array containing the
+                            stream objects, and 'gpu_stream0' (prefix derived from the second name + stream id) is used as a
+                            connector for gpu_streams[0].
+                        default: gpu_streams,gpu_stream
 
             #############################################
             # General FPGA flags
