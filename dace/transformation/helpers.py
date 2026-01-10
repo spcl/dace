@@ -971,6 +971,7 @@ def unsqueeze_memlet(internal_memlet: Memlet,
                      external_offset: Tuple[int] = None) -> Memlet:
     """ Unsqueezes and offsets a memlet, as per the semantics of nested
         SDFGs.
+
         :param internal_memlet: The internal memlet (inside nested SDFG) before modification.
         :param external_memlet: The external memlet before modification.
         :param preserve_minima: Do not change the subset's minimum elements.

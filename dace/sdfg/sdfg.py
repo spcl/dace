@@ -263,7 +263,7 @@ class InterstateEdge(object):
         #       - condition = 'i < 10', assignments = {'i': '3'}
         #       - assignments = {'j': 'i + 1', 'i': '3'}
         #       The new algorithm below addresses the issue by iterating over the edge's condition and assignments and
-        #       exlcuding keys from being considered "defined" if they have been already read.
+        #       excluding keys from being considered "defined" if they have been already read.
 
         # Symbols in conditions are always free, because the condition is executed before the assignments
         cond_symbols = set(map(str, dace.symbolic.symbols_in_ast(self.condition.code[0])))
@@ -1097,7 +1097,7 @@ class SDFG(ControlFlowRegion):
     def call_with_instrumented_data(self, dreport: 'InstrumentedDataReport', *args, **kwargs):
         """
         Invokes an SDFG with an instrumented data report, generating and compiling code if necessary.
-        Arguments given as ``args`` and ``kwargs`` will be overriden by the data containers defined in the report.
+        Arguments given as ``args`` and ``kwargs`` will be overridden by the data containers defined in the report.
 
         :param dreport: The instrumented data report to use upon calling.
         :param args: Arguments to call SDFG with.
