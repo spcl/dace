@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Handles compilation of code objects. Creates the proper folder structure,
     compiles each target separately, links all targets to one binary, and
     returns the corresponding CompiledSDFG object. """
@@ -18,10 +18,10 @@ import warnings
 import dace
 from dace.config import Config
 from dace.codegen import exceptions as cgx
-from dace.codegen.targets.target import TargetCodeGenerator
+from dace.codegen.target import TargetCodeGenerator
 from dace.codegen.codeobject import CodeObject
 from dace.codegen import compiled_sdfg as csd
-from dace.codegen.targets.target import make_absolute
+from dace.codegen.target import make_absolute
 
 T = TypeVar('T')
 
@@ -189,9 +189,11 @@ def configure_and_compile(program_folder, program_name=None, output_stream=None)
 
     # Generate CMake options for each compiler
     libraries = set()
+    cmake_files = []
     for target_name, target in sorted(targets.items()):
         try:
             cmake_command += target.cmake_options()
+            cmake_files += target.cmake_files()
             libraries |= unique_flags(Config.get("compiler", target_name, "libs"))
         except KeyError:
             pass
@@ -199,7 +201,7 @@ def configure_and_compile(program_folder, program_name=None, output_stream=None)
             raise cgx.CompilerConfigurationError(str(ex))
 
     cmake_command.append("-DDACE_LIBS=\"{}\"".format(" ".join(sorted(libraries))))
-
+    cmake_command.append(f"-DDACE_CMAKE_FILES=\"{';'.join(cmake_files)}\"")
     cmake_command.append(f"-DCMAKE_BUILD_TYPE={Config.get('compiler', 'build_type')}")
 
     # Set linker and linker arguments, iff they have been specified
