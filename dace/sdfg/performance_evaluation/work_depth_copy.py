@@ -85,6 +85,7 @@ def get_static_symbols(sdfg: SDFG):
 
     static_symbol_mapping:Dict[sp.Symbol, sp.Expr] = {}
     non_static_symbols = set() 
+    has_div = False
     for node, containing_state in sdfg.all_nodes_recursive():
         if isinstance(node, nd.AccessNode):
             
@@ -111,6 +112,8 @@ def get_static_symbols(sdfg: SDFG):
                             sym = sp.Symbol(e.dst.data)
                             out_map[e.src_conn] = sym
                         code = tasklet.code.as_string.strip()
+                        if "/" in code:
+                            has_div = True
                         # Expect a single assignment
                         lines = [l.strip() for l in code.splitlines() if l.strip()]
                         lhs, rhs = lines[0].split('=',1)
@@ -132,11 +135,13 @@ def get_static_symbols(sdfg: SDFG):
                     elif isinstance(source, nd.AccessNode):
                         data_sym = sp.Symbol(source.data)
                         nd_sym = sp.Symbol(node.data)
-                        if not lhs in static_symbol_mapping.keys():
+                        if not data_sym in static_symbol_mapping.keys():
                             static_symbol_mapping[data_sym] = nd_sym
                         else:
                             non_static_symbols.add(data_sym)
 
+    if has_div:
+        print("Has Divisions")
     static_symbol_mapping = {k: subs_till_fixed_point(v, static_symbol_mapping) for k,v in static_symbol_mapping.items()}
     return static_symbol_mapping
         
@@ -181,6 +186,7 @@ def count_work_matmul(node, symbols, state):
     result *= symeval(C_memlet.data.subset.size()[-1], symbols)
     # K
     result *= symeval(A_memlet.data.subset.size()[-1], symbols)
+    print(A_memlet.data.subset, B_memlet.data.subset, result)
     return sp.sympify(result)
 
 
@@ -203,6 +209,7 @@ def count_work_reduce(node, symbols, state):
         result *= in_memlet.data.volume
     else:
         result = 0
+    print("Reduce result is ", result)
     return sp.sympify(result)
 
 
@@ -243,6 +250,8 @@ PYFUNC_TO_ARITHMETICS = {
     'float': 0,
     'dace.float64': 0,
     'dace.int64': 0,
+    'dace.float32': 0,
+    'dace.int32': 0,
     'dace.complex128': 0,
     'math.exp': 1,
     'exp': 1,
@@ -284,6 +293,7 @@ class ArithmeticCounter(ast.NodeVisitor):
                 'WARNING: Unrecognized python function "%s". If this is a type conversion, like "dace.float64", then this is fine.'
                 % fname)
             return self.generic_visit(node)
+        print("Calls python function:", fname)
         self.count += PYFUNC_TO_ARITHMETICS[fname]
         return self.generic_visit(node)
 
@@ -470,7 +480,6 @@ def control_flow_region_work_depth(cfr: ControlFlowRegion,
                 raise NotImplementedError("Only loops with constant step sizes and static bounds are supported")
             loop_work, loop_depth = control_flow_region_work_depth(loop, w_d_map, analyze_tasklet, symbols,
                                                                    equality_subs, subs1, detailed_analysis)
-
             # to ensure that the summation works properly, we need to make sure that the symbol that is used as loop varaible 
             # is the same as the ones used in the inner expression
             for var in loop_work.free_symbols:
@@ -499,10 +508,10 @@ def control_flow_region_work_depth(cfr: ControlFlowRegion,
             # Do equality subs
             loop_work = sp.simplify(loop_work.subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1))
             loop_depth = sp.simplify(loop_depth.subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1))
-
             region_works[loop], region_depths[loop] = loop_work, loop_depth
             w_d_map[get_uuid(loop)] = (region_works[loop], region_depths[loop])
         elif isinstance(region, ConditionalBlock):
+            print("has conditional")
             branch_conditions: Dict[AbstractControlFlowRegion, sp.Expr] = {}
             branch_works: Dict[AbstractControlFlowRegion, sp.Expr] = {}
             branch_depths: Dict[AbstractControlFlowRegion, sp.Expr] = {}
@@ -555,7 +564,7 @@ def control_flow_region_work_depth(cfr: ControlFlowRegion,
     while traversal_q:
         c += 1
         region, depth, work, ie, condition_stack, common_subexpr_stack, value_map = traversal_q.popleft()
-
+        
         if ie is not None:
             visited.add(ie)
 
@@ -567,8 +576,8 @@ def control_flow_region_work_depth(cfr: ControlFlowRegion,
 
         value_map = {pystr_to_symbolic(k): pystr_to_symbolic(v) for k, v in region_value_map[region].items()}
         n_depth = sp.simplify((depth + region_depths[region]).subs(value_map))
-        n_work = sp.simplify((work + region_works[region]).subs(value_map))
 
+        n_work = sp.simplify((work + region_works[region]).subs(value_map))
         # If we are analysing average parallelism, we don't search "heaviest" and "deepest" paths separately, but we want one
         # single path with the least average parallelsim (of all paths with more than 0 work).
         if analyze_tasklet == get_tasklet_avg_par:
@@ -735,10 +744,13 @@ def scope_work_depth(
             nested_syms.update(symbols)
             nested_syms.update(evaluate_symbols(symbols, node.symbol_mapping))
             # Nested SDFGs are recursively analyzed first.
-            nsdfg_work, nsdfg_depth = control_flow_region_work_depth(node.sdfg, w_d_map, analyze_tasklet, nested_syms,
-                                                                     equality_subs, subs1, detailed_analysis)
+            nsdfg_work, nsdfg_depth = control_flow_region_work_depth(node.sdfg, w_d_map, analyze_tasklet, {},
+                                                                     equality_subs, {}, detailed_analysis) 
+            
 
+            nsdfg_work, nsdfg_depth = nsdfg_work.subs(nested_syms), nsdfg_depth.subs(nested_syms) # We cannot use assumptions for nested sdfg analysis. It interfers with the global assumptions. We thus substitute afterwards
             nsdfg_work, nsdfg_depth = do_initial_subs(nsdfg_work, nsdfg_depth, equality_subs, subs1)
+
             # add up work for whole state, but also save work for this nested SDFG in w_d_map
             work += nsdfg_work
             w_d_map[get_uuid(node, state)] = (nsdfg_work, nsdfg_depth)

@@ -17,6 +17,7 @@ from dace.symbolic import pystr_to_symbolic
 import ast
 import astunparse
 import warnings
+import re
 
 from dace.sdfg.performance_evaluation.helpers import get_uuid
 from dace.sdfg.performance_evaluation.assumptions import parse_assumptions
@@ -24,7 +25,7 @@ from dace.transformation.passes.symbol_ssa import StrictSymbolSSA
 from dace.transformation.pass_pipeline import FixedPointPipeline
 from dace.transformation.passes.analysis import loop_analysis
 
-from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowRegion, LoopRegion, ConditionalBlock
+from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowRegion, LoopRegion, ConditionalBlock, ReturnBlock
 
 math_funcs = set()
 def get_array_size_symbols(sdfg):
@@ -44,6 +45,101 @@ def get_array_size_symbols(sdfg):
                 symbols.add(s)
     return symbols
 
+def subs_till_fixed_point(expr:sp.Expr, symbol_map:Dict[sp.Expr, sp.Expr]):
+    """
+    Takes a sympy expression and a symbol mapping and applies the mapping to the expression until a fixed point is reached
+    Needs the guarantee that the symbol mapping does not have cyclic dependencies.
+
+    :param expr: Description
+    :param symbol_map: Description
+    :return: Description
+    """
+    prev = None
+    curr = expr
+
+    while prev != curr:
+        prev = curr
+        curr = curr.subs(symbol_map)
+
+    return curr
+
+def get_static_symbols(sdfg: SDFG):
+    """
+    Returns a mapping of symbols that are assigned exactly at one point in the sdfg.
+    
+    :param sdfg: The sdfg for which we want to find the static symbols and their corresponding assignment
+    :return: The mapping of the symbols to higher levels (iterated to a fixed point)
+    """
+
+    
+    patterns = [
+        "dace.float64",
+        "dace.float32",
+        "dace.int64",
+        "dace.int32",
+        "float",
+        "int"
+    ]
+
+    type_regex = re.compile("|".join(map(re.escape, patterns)))
+
+    static_symbol_mapping:Dict[sp.Symbol, sp.Expr] = {}
+    non_static_symbols = set() 
+    for node, containing_state in sdfg.all_nodes_recursive():
+        if isinstance(node, nd.AccessNode):
+            
+            if containing_state.in_degree(node) == 1:
+                edge = containing_state.in_edges(node)[0]
+                source = edge.src
+                
+                if edge.data.volume == 1:
+                    if isinstance(source, nd.Tasklet):
+                        tasklet = source
+                        in_map = {}
+                        out_map = {}
+                        # Incoming edges: symbols feeding the tasklet
+                        for e in containing_state.in_edges(tasklet):
+                            if not isinstance(e.src, nd.AccessNode):
+                                continue
+                            sym = sp.Symbol(e.src.data)
+                            in_map[e.dst_conn] = sym
+                        # Outgoing edges: symbols written by the tasklet
+                        # Out edges should only be one, but for safety we iterate
+                        for e in containing_state.out_edges(tasklet):
+                            if not isinstance(e.dst, nd.AccessNode):
+                                continue
+                            sym = sp.Symbol(e.dst.data)
+                            out_map[e.src_conn] = sym
+                        code = tasklet.code.as_string.strip()
+                        # Expect a single assignment
+                        lines = [l.strip() for l in code.splitlines() if l.strip()]
+                        lhs, rhs = lines[0].split('=',1)
+                        lhs = lhs.strip()
+                        rhs = rhs.strip()
+                        rhs = type_regex.sub("", rhs)
+                        # Parse RHS using SymPy, with tasklet inputs substituted
+                        lhs_sympy = pystr_to_symbolic(lhs)
+                        lhs_sympy = lhs_sympy.subs(out_map)
+
+                        rhs_sympy = pystr_to_symbolic(rhs)
+                        rhs_sympy = rhs_sympy.subs(in_map)
+
+                        if not lhs_sympy in static_symbol_mapping.keys():
+                            static_symbol_mapping[lhs_sympy] = rhs_sympy
+                        else:
+                            non_static_symbols.add(lhs_sympy)
+
+                    elif isinstance(source, nd.AccessNode):
+                        data_sym = sp.Symbol(source.data)
+                        nd_sym = sp.Symbol(node.data)
+                        if not lhs in static_symbol_mapping.keys():
+                            static_symbol_mapping[data_sym] = nd_sym
+                        else:
+                            non_static_symbols.add(data_sym)
+
+    static_symbol_mapping = {k: subs_till_fixed_point(v, static_symbol_mapping) for k,v in static_symbol_mapping.items()}
+    return static_symbol_mapping
+        
 
 def symeval(val, symbols):
     """
@@ -92,7 +188,7 @@ def count_depth_matmul(node, symbols, state):
     # optimal depth of a matrix multiplication is O(log(size of shared dimension)):
     A_memlet = next(e for e in state.in_edges(node) if e.dst_conn == '_a')
     size_shared_dimension = symeval(A_memlet.data.subset.size()[-1], symbols)
-    return sp.log(sp.Max(1, size_shared_dimension), 2)
+    return sp.Max(1, sp.log(sp.Max(1, size_shared_dimension), 2))
 
 
 def count_work_reduce(node, symbols, state):
@@ -115,11 +211,9 @@ def count_depth_reduce(node, symbols, state):
     return sp.log(sp.Max(1, count_work_reduce(node, symbols, state)), 2)
 
 def count_work_dot(node, symbols, state):
-    print("Dot product detected")
     X_memlet = next(e for e in state.in_edges(node) if e.dst_conn == '_x')
     Y_memlet = next(e for e in state.in_edges(node) if e.dst_conn == '_y')
     RES_memlet = next(e for e in state.out_edges(node) if e.src_conn == '_result')
-    print(X_memlet.data.subset.size())
     result = 2*symeval(X_memlet.data.subset.size()[-1], symbols)-1
     return sp.sympify(result)
 
@@ -376,6 +470,7 @@ def control_flow_region_work_depth(cfr: ControlFlowRegion,
                 raise NotImplementedError("Only loops with constant step sizes and static bounds are supported")
             loop_work, loop_depth = control_flow_region_work_depth(loop, w_d_map, analyze_tasklet, symbols,
                                                                    equality_subs, subs1, detailed_analysis)
+            print(loop_work, loop_depth)
 
             # to ensure that the summation works properly, we need to make sure that the symbol that is used as loop varaible 
             # is the same as the ones used in the inner expression
@@ -387,7 +482,6 @@ def control_flow_region_work_depth(cfr: ControlFlowRegion,
             #TEMPORARY FIX: Because with library nodes it can happen that we get two symbols (with the same name) that correspond to the 
             for var in loop_work.free_symbols:
                 if var.name == loop_var.name and not var == loop_var:
-                    print("scuffed variable bug detected")
                     loop_work = loop_work.subs({var: loop_var})
                     loop_depth = loop_depth.subs({var: loop_var})
 
@@ -410,6 +504,7 @@ def control_flow_region_work_depth(cfr: ControlFlowRegion,
             region_works[loop], region_depths[loop] = loop_work, loop_depth
             w_d_map[get_uuid(loop)] = (region_works[loop], region_depths[loop])
         elif isinstance(region, ConditionalBlock):
+            print("Conditional present")
             branch_conditions: Dict[AbstractControlFlowRegion, sp.Expr] = {}
             branch_works: Dict[AbstractControlFlowRegion, sp.Expr] = {}
             branch_depths: Dict[AbstractControlFlowRegion, sp.Expr] = {}
@@ -426,8 +521,16 @@ def control_flow_region_work_depth(cfr: ControlFlowRegion,
                 depth_condition = list(zip(branch_depths.values(), branch_conditions.values()))
                 region_works[region] = sp.Piecewise(*work_condition)
                 region_depths[region] = sp.Piecewise(*depth_condition)
+        elif isinstance(region, ReturnBlock):
+            print("Work Depth Analysis for unstructured Control Flow is not supported (yet)")
         else:
-            raise NotImplementedError("Work/Depth Analysis for Unstructured Control Flow is not supported (yet).")
+            function_work, function_depth = control_flow_region_work_depth(region, w_d_map, analyze_tasklet, symbols,
+                                                                   equality_subs, subs1, detailed_analysis)
+            function_work = sp.simplify(function_work.subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1))
+            function_depth = sp.simplify(function_depth.subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1))
+
+            region_works[region], region_depths[region] = function_work, function_depth
+            w_d_map[get_uuid(region)] = (region_works[region], region_depths[region])
 
     # add a dummy exit to the SDFG, such that each path ends there.
     dummy_exit = cfr.add_state('dummy_exit')
@@ -528,7 +631,7 @@ def control_flow_region_work_depth(cfr: ControlFlowRegion,
                     new_cse_stack = list(common_subexpr_stack)
                     new_cse_stack.append((work_map[region], depth_map[region]))
                     # same for value_map
-                    new_value_map = dict(region_value_map[state])
+                    new_value_map = dict(region_value_map[region])
                     new_value_map.update({
                         pystr_to_symbolic(k):
                         pystr_to_symbolic(v).subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1)
@@ -633,6 +736,7 @@ def scope_work_depth(
             nested_syms = {}
             nested_syms.update(symbols)
             nested_syms.update(evaluate_symbols(symbols, node.symbol_mapping))
+            print(nested_syms)
             # Nested SDFGs are recursively analyzed first.
             nsdfg_work, nsdfg_depth = control_flow_region_work_depth(node.sdfg, w_d_map, analyze_tasklet, nested_syms,
                                                                      equality_subs, subs1, detailed_analysis)
@@ -642,6 +746,7 @@ def scope_work_depth(
             work += nsdfg_work
             w_d_map[get_uuid(node, state)] = (nsdfg_work, nsdfg_depth)
         elif isinstance(node, nd.LibraryNode):
+            print("Library Node present")
             try:
                 lib_node_work = LIBNODES_TO_WORK[type(node)](node, symbols, state)
             except KeyError:
@@ -819,6 +924,7 @@ def analyze_sdfg(sdfg: SDFG,
     pipeline = FixedPointPipeline([StrictSymbolSSA()])
     pipeline.apply_pass(sdfg, {})
 
+    static_symbol_mapping = get_static_symbols(sdfg)
     array_symbols = get_array_size_symbols(sdfg)
     # parse assumptions
     equality_subs, all_subs = parse_assumptions(assumptions if assumptions is not None else [], array_symbols)
@@ -839,6 +945,9 @@ def analyze_sdfg(sdfg: SDFG,
         v_w = symeval(v_w, symbols)
         v_d = symeval(v_d, symbols)
         w_d_map[k] = (v_w, v_d)
+
+    for k, v, in w_d_map.items():
+         w_d_map[k] = ((v[0].subs(static_symbol_mapping)),(v[1].subs(static_symbol_mapping)))
 
     if analyze_tasklet == get_tasklet_work_depth:
         for k, v, in w_d_map.items():
