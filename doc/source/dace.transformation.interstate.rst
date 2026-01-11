@@ -4,22 +4,6 @@ dace.transformation.interstate package
 Submodules
 ----------
 
-dace.transformation.interstate.fpga\_transform\_sdfg module
------------------------------------------------------------
-
-.. automodule:: dace.transformation.interstate.fpga_transform_sdfg
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-dace.transformation.interstate.fpga\_transform\_state module
-------------------------------------------------------------
-
-.. automodule:: dace.transformation.interstate.fpga_transform_state
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
 dace.transformation.interstate.gpu\_transform\_sdfg module
 ----------------------------------------------------------
 
