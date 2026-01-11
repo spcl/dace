@@ -30,6 +30,7 @@ class DefinedType(aenum.AutoNumberEnum):
     StreamArray = ()  # An array of Streams
     # TODO Remove ArrayInterface in subsequent PR
     ArrayInterface = ()  # An object representing an interface to an array, used mostly in FPGA
+    GPUStream = ()  # A GPU stream object used in GPU code generation
 
 
 class DefinedMemlets:
@@ -94,7 +95,8 @@ class DefinedMemlets:
         for _, scope, can_access_parent in reversed(self._scopes):
             if name in scope:
                 err_str = "Shadowing variable {} from type {} to {}".format(name, scope[name], dtype)
-                if (allow_shadowing or config.Config.get_bool("compiler", "allow_shadowing")):
+                if (allow_shadowing or config.Config.get_bool("compiler", "allow_shadowing")
+                        or dtype == DefinedType.GPUStream):
                     if not allow_shadowing:
                         print("WARNING: " + err_str)
                 else:

@@ -65,13 +65,14 @@ class ScheduleType(aenum.AutoNumberEnum):
     CPU_Multicore = ()  #: OpenMP parallel for loop
     CPU_Persistent = ()  #: OpenMP parallel region
     SVE_Map = ()  #: Arm SVE
-
     #: Default scope schedule for GPU code. Specializes to schedule GPU_Device and GPU_Global during inference.
     GPU_Default = ()
     GPU_Device = ()  #: Kernel
     GPU_ThreadBlock = ()  #: Thread-block code
     GPU_ThreadBlock_Dynamic = ()  #: Allows rescheduling work within a block
     GPU_Persistent = ()
+    GPU_Warp = ()
+
     FPGA_Device = ()
     Snitch = ()
     Snitch_Multicore = ()
@@ -85,6 +86,11 @@ GPU_SCHEDULES = [
     ScheduleType.GPU_Persistent,
 ]
 
+# A subset of GPU schedule types for ExperimentalCUDACodeGen
+EXPERIMENTAL_GPU_SCHEDULES = [
+    ScheduleType.GPU_Warp,
+]
+
 # A subset of CPU schedule types
 CPU_SCHEDULES = [
     ScheduleType.CPU_Multicore,
@@ -95,6 +101,8 @@ CPU_SCHEDULES = [
 GPU_STORAGES = [
     StorageType.GPU_Shared,
 ]
+
+GPU_KERNEL_ACCESSIBLE_STORAGES = [StorageType.GPU_Global, StorageType.GPU_Shared, StorageType.Register]
 
 # A subset of on-FPGA storage types
 FPGA_STORAGES = [
@@ -200,7 +208,8 @@ SCOPEDEFAULT_STORAGE = {
     ScheduleType.GPU_ThreadBlock_Dynamic: StorageType.Register,
     ScheduleType.FPGA_Device: StorageType.FPGA_Global,
     ScheduleType.SVE_Map: StorageType.CPU_Heap,
-    ScheduleType.Snitch: StorageType.Snitch_TCDM
+    ScheduleType.Snitch: StorageType.Snitch_TCDM,
+    ScheduleType.GPU_Warp: StorageType.Register,
 }
 
 # Maps from ScheduleType to default ScheduleType for sub-scopes
@@ -216,10 +225,11 @@ SCOPEDEFAULT_SCHEDULE = {
     ScheduleType.GPU_Device: ScheduleType.GPU_ThreadBlock,
     ScheduleType.GPU_ThreadBlock: ScheduleType.Sequential,
     ScheduleType.GPU_ThreadBlock_Dynamic: ScheduleType.Sequential,
+    ScheduleType.GPU_Warp: ScheduleType.Sequential,
     ScheduleType.FPGA_Device: ScheduleType.FPGA_Device,
     ScheduleType.SVE_Map: ScheduleType.Sequential,
     ScheduleType.Snitch: ScheduleType.Snitch,
-    ScheduleType.Snitch_Multicore: ScheduleType.Snitch_Multicore
+    ScheduleType.Snitch_Multicore: ScheduleType.Snitch_Multicore,
 }
 
 # Maps from StorageType to a preferred ScheduleType for helping determine schedules.
@@ -1182,6 +1192,7 @@ complex64 = typeclass(numpy.complex64)
 complex128 = typeclass(numpy.complex128)
 string = stringtype()
 MPI_Request = opaque('MPI_Request')
+gpuStream_t = opaque('gpuStream_t')
 
 
 @undefined_safe_enum
@@ -1202,6 +1213,7 @@ class Typeclasses(aenum.AutoNumberEnum):
     float64 = float64
     complex64 = complex64
     complex128 = complex128
+    gpuStream_t = gpuStream_t
 
 
 _bool = bool
@@ -1430,6 +1442,7 @@ def can_access(schedule: ScheduleType, storage: StorageType):
             ScheduleType.GPU_ThreadBlock,
             ScheduleType.GPU_ThreadBlock_Dynamic,
             ScheduleType.GPU_Default,
+            ScheduleType.GPU_Warp,
     ]:
         return storage in [StorageType.GPU_Global, StorageType.GPU_Shared, StorageType.CPU_Pinned]
     elif schedule in [ScheduleType.Default, ScheduleType.CPU_Multicore, ScheduleType.CPU_Persistent]:
