@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 cmake_minimum_required(VERSION 3.17)
 project(dace_program)
 
@@ -8,38 +8,15 @@ set(DACE_SRC_DIR "" CACHE STRING "Root directory of generated code files")
 set(DACE_FILES "" CACHE STRING "List of host code files relative to the root of the source directory")
 set(DACE_LIBS "" CACHE STRING "Extra libraries")
 set(DACE_CPP_STANDARD "20" CACHE STRING "C++ standard to use for compilation (e.g., 14, 17, 20, 23, 26)")
-set(HLSLIB_PART_NAME "${DACE_XILINX_PART_NAME}")
+set(DACE_CMAKE_FILES "" CACHE STRING "List of additional CMake files to include")
 
 # CUDA
 set(DACE_CUDA_ARCHITECTURES_DEFAULT "" CACHE STRING "Default CUDA architectures in case native not found")
-
-# FPGA specific
-set(DACE_FPGA_AUTOBUILD_BITSTREAM OFF CACHE STRING "Automatically build bitstreams if they are not present.")
-
-# Allow passing flags to various stages of Xilinx compilation process
-set(DACE_XILINX_MODE "simulation" CACHE STRING "Type of compilation/execution [simulation/software_emulation/hardware_emulation/hardware].")
-set(DACE_XILINX_HOST_FLAGS "" CACHE STRING "Extra flags to host code")
-set(DACE_XILINX_SYNTHESIS_FLAGS "" CACHE STRING "Extra flags for performing high-level synthesis")
-set(DACE_XILINX_BUILD_FLAGS "" CACHE STRING "Extra flags to xocc build phase")
-set(DACE_XILINX_TARGET_CLOCK "" CACHE STRING "Target clock frequency of FPGA kernel")
-set(DACE_XILINX_PART_NAME "xcu280-fsvh2892-2L-e" CACHE STRING "Xilinx chip to target from HLS")
-set(DACE_XILINX_TARGET_PLATFORM "xilinx_u280_xdma_201920_1" CACHE STRING "Vitis platform to target")
-set(DACE_XILINX_ENABLE_DEBUGGING OFF CACHE STRING "Inject debugging cores to kernel build (always on for simulation/emulation)")
-
-# Intel FPGA options
-set(DACE_INTELFPGA_MODE "simulation" CACHE STRING "Type of compilation/execution [emulator/simulator/hardare].")
-set(DACE_INTELFPGA_HOST_FLAGS "" CACHE STRING "Extra flags to host compiler.")
-set(DACE_INTELFPGA_KERNEL_FLAGS "" CACHE STRING "Extra flags to kernel compiler.")
-set(DACE_INTELFPGA_TARGET_BOARD "a10gx" CACHE STRING "Target FPGA board.")
-set(DACE_INTELFPGA_ENABLE_DEBUGGING OFF CACHE STRING "Enable debugging.")
 
 # Target detection
 set(DACE_ENABLE_MPI OFF)
 set(DACE_ENABLE_CUDA OFF)
 set(DACE_ENABLE_HIP OFF)
-set(DACE_ENABLE_XILINX OFF)
-set(DACE_ENABLE_INTELFPGA OFF)
-set(DACE_ENABLE_RTL OFF)
 
 # Split list by target
 foreach(DACE_FILE ${DACE_FILES})
@@ -66,35 +43,9 @@ foreach(DACE_FILE ${DACE_FILES})
       set(DACE_ENABLE_CUDA ON)
       set(DACE_CPP_FILES ${DACE_CPP_FILES} ${DACE_FILE})
     endif()
-  elseif(${DACE_FILE_TARGET} STREQUAL "xilinx")
-    set(DACE_ENABLE_XILINX ON)
-    if(DACE_FILE_TARGET_TYPE MATCHES "host")
-      set(DACE_XILINX_HOST_FILES ${DACE_XILINX_HOST_FILES} ${DACE_FILE})
-    elseif (DACE_FILE_EXT MATCHES "ip.cpp")
-      set(DACE_ENABLE_RTL ON)
-      set(DACE_XILINX_IP_FILES ${DACE_XILINX_IP_FILES} ${DACE_FILE})
-    elseif(DACE_FILE_EXT MATCHES ".cpp")
-      set(DACE_XILINX_KERNEL_FILES ${DACE_XILINX_KERNEL_FILES} ${DACE_FILE})
-    elseif(DACE_FILE_EXT MATCHES ".cfg")
-      set(DACE_XILINX_CONFIG_FILE ${DACE_FILE})
-    endif()
-  elseif(${DACE_FILE_TARGET} STREQUAL "intel_fpga")
-    set(DACE_ENABLE_INTELFPGA ON)
-    if(DACE_FILE_TARGET_TYPE MATCHES "host")
-      set(DACE_INTELFPGA_HOST_FILES ${DACE_INTELFPGA_HOST_FILES} ${DACE_FILE})
-    else()
-      set(DACE_INTELFPGA_KERNEL_FILES ${DACE_INTELFPGA_KERNEL_FILES} ${DACE_FILE})
-    endif()
   elseif(${DACE_FILE_TARGET} STREQUAL "mpi")
     set(DACE_ENABLE_MPI ON)
     set(DACE_CPP_FILES ${DACE_CPP_FILES} ${DACE_FILE})
-  elseif(${DACE_FILE_TARGET} STREQUAL "rtl")
-    set(DACE_ENABLE_RTL ON)
-    if(DACE_FILE_EXT MATCHES ".v" OR DACE_FILE_EXT MATCHES ".sv")
-      set(DACE_RTL_FILES ${DACE_RTL_FILES} ${DACE_FILE})
-    elseif(DACE_FILE_EXT MATCHES ".cpp")
-      set(DACE_HOST_FILES ${DACE_HOST_FILES} ${DACE_FILE})
-    endif()
   else()
     set(DACE_CPP_FILES ${DACE_CPP_FILES} ${DACE_FILE})
   endif()
@@ -242,27 +193,6 @@ set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${DACE_ENV_LINK_FLAGS}")
 set(CMAKE_STATIC_LINKER_FLAGS "${CMAKE_STATIC_LINKER_FLAGS} ${DACE_ENV_LINK_FLAGS}")
 set(CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS} ${DACE_ENV_LINK_FLAGS}")
 
-if(DACE_ENABLE_XILINX OR DACE_ENABLE_INTELFPGA)
-  set(DACE_HLSLIB_DIR ${CMAKE_SOURCE_DIR}/../external/hlslib)
-  set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${DACE_HLSLIB_DIR}/cmake)
-  include_directories(SYSTEM ${DACE_HLSLIB_DIR}/include)
-endif()
-if(DACE_ENABLE_XILINX)
-  find_package(Vitis REQUIRED)
-  include_directories(SYSTEM ${Vitis_INCLUDE_DIRS})
-  add_definitions(-DDACE_XILINX -DDACE_VITIS_DIR=\"${VITIS_ROOT_DIR}\")
-  set(DACE_LIBS ${DACE_LIBS} ${Vitis_LIBRARIES})
-endif()
-if(DACE_ENABLE_INTELFPGA)
-  find_package(IntelFPGAOpenCL REQUIRED)
-  include_directories(SYSTEM ${IntelFPGAOpenCL_INCLUDE_DIRS})
-  add_definitions(-DDACE_INTELFPGA)
-  set(DACE_LIBS ${DACE_LIBS} ${IntelFPGAOpenCL_LIBRARIES})
-endif()
-if (DACE_ENABLE_RTL AND DACE_ENABLE_XILINX)
-  set(DACE_RTLLIB_DIR ${CMAKE_SOURCE_DIR}/../external/rtllib)
-  include ("${DACE_RTLLIB_DIR}/cmake/rtl_target.cmake")
-endif()
 
 # Create HIP object files
 if(DACE_ENABLE_HIP)
@@ -311,257 +241,10 @@ if(DACE_ENABLE_HIP)
   set(DACE_OBJECTS ${DACE_OBJECTS} ${DACE_HIP_FILES})
 endif() # DACE_ENABLE_HIP
 
-# create verilator RTL simulation objects
-if(DACE_ENABLE_RTL)
-  if (DACE_ENABLE_XILINX AND (NOT (DACE_XILINX_MODE STREQUAL "simulation")))
-    # Get all of the kernel names
-    list(APPEND RTL_KERNELS "")
-    foreach(RTL_FILE ${DACE_RTL_FILES})
-        get_filename_component(RTL_KERNEL ${RTL_FILE} DIRECTORY)
-        list(APPEND RTL_KERNELS ${RTL_KERNEL})
-    endforeach()
-    list(REMOVE_DUPLICATES RTL_KERNELS)
-
-    # Prepare build folders
-    set (RTL_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/rtl/generated")
-    set (RTL_LOG_DIR       "${CMAKE_CURRENT_BINARY_DIR}/rtl/log")
-    set (RTL_TEMP_DIR      "${CMAKE_CURRENT_BINARY_DIR}/rtl/tmp")
-    file (MAKE_DIRECTORY
-        ${RTL_GENERATED_DIR}
-        ${RTL_LOG_DIR}
-        ${RTL_TEMP_DIR})
-    execute_process(COMMAND ${Vitis_PLATFORMINFO} -p ${DACE_XILINX_TARGET_PLATFORM} -jhardwarePlatform.board.part
-      OUTPUT_VARIABLE RTL_PART
-      RESULT_VARIABLE _platforminfo_res)
-
-    if (NOT ${_platforminfo_res} EQUAL 0)
-      message(FATAL_ERROR "No part was found for platform ${DACE_XILINX_TARGET_PLATFORM} after querying 'platforminfo -p ${DACE_XILINX_TARGET_PLATFORM} -j\"hardwarePlatform.board.part\"'")
-    endif()
-
-    # Generate all of the .xo targets
-    foreach(RTL_SRC_DIR ${RTL_KERNELS})
-        get_filename_component(RTL_KERNEL ${RTL_SRC_DIR} NAME)
-        get_filename_component(RTL_SCRIPTS "${RTL_SRC_DIR}/../scripts" ABSOLUTE)
-        set(RTL_XO "${RTL_KERNEL}.xo")
-        rtllib_rtl_target(${RTL_KERNEL} ${RTL_SRC_DIR} ${RTL_SCRIPTS} ${RTL_GENERATED_DIR} ${RTL_LOG_DIR} ${RTL_TEMP_DIR} "${RTLLIB_DIR}/rtl" ${RTL_XO} ${RTL_PART} "" "\"\"")
-        add_custom_target(${RTL_KERNEL} DEPENDS ${RTL_XO})
-        set(DACE_RTL_KERNELS ${DACE_RTL_KERNELS} ${RTL_XO})
-        set(DACE_RTL_DEPENDS ${DACE_RTL_DEPENDS} ${RTL_KERNEL})
-    endforeach()
-  else()
-    # find verilator installation
-    find_package(verilator HINTS $ENV{VERILATOR_ROOT} ${VERILATOR_ROOT})
-    if (NOT verilator_FOUND)
-      message(FATAL_ERROR "Verilator was not found. Either install it, or set the VERILATOR_ROOT environment variable")
-    endif()
-
-    # check minimal version requirements
-    set(VERILATOR_MIN_VERSION "4.028")
-    if("${verilator_VERSION}" VERSION_LESS VERILATOR_MIN_VERSION)
-      message(ERROR "Please upgrade verilator to version >=${VERILATOR_MIN_VERSION}")
-    endif()
-
-    # get verilator flags from dace.conf
-    set(VERILATOR_FLAGS "${DACE_RTL_VERILATOR_FLAGS}")
-
-    # add lint verilator flags
-    if("${DACE_RTL_VERILATOR_LINT_WARNINGS}")
-      # -Wall: Enable all style warnings
-      # -Wno-fatal: Disable fatal exit on warnings
-      set(VERILATOR_FLAGS "${VERILATOR_FLAGS}" "-Wall" "-Wno-fatal")
-    endif()
-
-    # add verilated.cpp source
-    set(DACE_CPP_FILES "${DACE_CPP_FILES}" "${VERILATOR_ROOT}/include/verilated.cpp" "${VERILATOR_ROOT}/include/verilated_threads.cpp" )
-
-    foreach(RTL_FILE ${DACE_RTL_FILES})
-
-      # extract design name
-      get_filename_component(RTL_FILE_NAME "${RTL_FILE}" NAME_WE)
-
-      # add verilated design
-      add_library("${RTL_FILE_NAME}" OBJECT)
-
-      # include verilator
-      set(VERILATOR_INCLUDE "${VERILATOR_ROOT}/include" "${dace_program_BINARY_DIR}/CMakeFiles/${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}.dir")
-      include_directories(${VERILATOR_INCLUDE})
-
-      # verilate design
-      verilate("${RTL_FILE_NAME}" SOURCES ${RTL_FILE} VERILATOR_ARGS "${VERILATOR_FLAGS}")
-      file(GLOB VSRC_FILES "${dace_program_BINARY_DIR}/CMakeFiles/${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}.dir/*.cpp")
-      set(DACE_CPP_FILES "${DACE_CPP_FILES}" ${VSRC_FILES} "${dace_program_BINARY_DIR}/CMakeFiles/${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}.cpp")
-
-      # add object library for linking
-      set(DACE_LIBS ${DACE_LIBS} ${${RTL_FILE_NAME}})
-
-    endforeach()
-  endif()
-endif() # DACE_ENABLE_RTL
-
-
-# Create Xilinx object files
-if(DACE_ENABLE_XILINX)
-
-  if (DACE_XILINX_TARGET_CLOCK MATCHES "[|]")
-    string(REGEX MATCH "0:([0-9]+)" DACE_XILINX_EXTERNAL_TARGET_CLOCK ${DACE_XILINX_TARGET_CLOCK})
-    string(REGEX MATCH "1:([0-9]+)" DACE_XILINX_INTERNAL_TARGET_CLOCK ${DACE_XILINX_TARGET_CLOCK})
-    string(SUBSTRING ${DACE_XILINX_EXTERNAL_TARGET_CLOCK} 2 -1 DACE_XILINX_EXTERNAL_TARGET_CLOCK)
-    string(SUBSTRING ${DACE_XILINX_INTERNAL_TARGET_CLOCK} 2 -1 DACE_XILINX_INTERNAL_TARGET_CLOCK)
-  else()
-    set(DACE_XILINX_EXTERNAL_TARGET_CLOCK ${DACE_XILINX_TARGET_CLOCK})
-    set(DACE_XILINX_INTERNAL_TARGET_CLOCK ${DACE_XILINX_TARGET_CLOCK})
-  endif()
-
-  if((NOT (DACE_XILINX_MODE STREQUAL "hardware")) OR DACE_XILINX_ENABLE_DEBUGGING)
-    set(DACE_XILINX_HOST_FLAGS "${DACE_XILINX_HOST_FLAGS} -g")
-  endif()
-
-  set_source_files_properties(${DACE_XILINX_KERNEL_FILES} ${DACE_XILINX_HOST_FILES} PROPERTIES COMPILE_FLAGS "${DACE_XILINX_HOST_FLAGS}")
-  set_source_files_properties(${DACE_XILINX_KERNEL_FILES} PROPERTIES COMPILE_FLAGS "-DDACE_XILINX_DEVICE_CODE ${DACE_XILINX_HOST_FLAGS}")
-  set(DACE_OBJECTS ${DACE_OBJECTS} ${DACE_XILINX_KERNEL_FILES} ${DACE_XILINX_HOST_FILES})
-
-  if(DACE_XILINX_MODE STREQUAL "simulation")
-    # This will cause the OpenCL calls to instead call a simulation code
-    # running on the host
-    add_definitions(-DHLSLIB_SIMULATE_OPENCL)
-  endif()
-
-  if(DACE_MINIMUM_FIFO_DEPTH)
-    set(DACE_XILINX_MINIMUM_FIFO_DEPTH "\nconfig_dataflow -fifo_depth ${DACE_MINIMUM_FIFO_DEPTH}")
-  endif()
-
-
-  # If the project uses generated IP cores (e.g. through multi-pumping)
-  if(DACE_XILINX_IP_FILES)
-    set(DACE_XILINX_BUILD_FLAGS ${DACE_XILINX_BUILD_FLAGS} --user_ip_repo_paths ip_cores)
-  endif()
-
-  unset(DACE_KERNEL_TARGETS)
-
-  # Generate the target kernel for each IP (multi-pumped kernel)
-  foreach(DACE_IP ${DACE_XILINX_IP_FILES})
-    get_filename_component(DACE_KERNEL_NAME ${DACE_IP} NAME_WE)
-    get_filename_component(DACE_KERNEL_SRC ${DACE_IP} DIRECTORY)
-
-    # Configure the tcl script for packaging the C++ kernel as an IP core for Vivado.
-    configure_file(${CMAKE_SOURCE_DIR}/Xilinx_IP.tcl.in Package_${DACE_KERNEL_NAME}.tcl)
-    add_custom_command(
-      OUTPUT ip_cores/${DACE_KERNEL_NAME}/impl/export.zip
-      COMMAND XILINX_PATH=${CMAKE_BINARY_DIR} ${Vitis_HLS}
-      -f Package_${DACE_KERNEL_NAME}.tcl
-      DEPENDS ${DACE_IP}
-    )
-
-    # Get the hardware part of the board, which is needed to package the .xo file.
-    execute_process(COMMAND ${Vitis_PLATFORMINFO} -p ${DACE_XILINX_TARGET_PLATFORM} -jhardwarePlatform.board.part
-    OUTPUT_VARIABLE RTL_PART
-    RESULT_VARIABLE _platforminfo_res
-    OUTPUT_STRIP_TRAILING_WHITESPACE)
-
-    # Add target for packaging the kernel into an .xo file.
-    set (RTL_XO "${DACE_KERNEL_NAME}.xo")
-    rtllib_rtl_target(${DACE_KERNEL_NAME} ${DACE_KERNEL_SRC} ${DACE_KERNEL_SRC} ${DACE_KERNEL_SRC} log tmp ${DACE_KERNEL_SRC} ${RTL_XO} ${RTL_PART} ip_cores/${DACE_KERNEL_NAME}/impl/export.zip ip_cores)
-    add_custom_target(${DACE_KERNEL_NAME} DEPENDS ${RTL_XO})
-    set(DACE_RTL_KERNELS ${DACE_RTL_KERNELS} ${RTL_XO})
-    set(DACE_RTL_DEPENDS ${DACE_RTL_DEPENDS} ${DACE_KERNEL_NAME})
-  endforeach()
-
-  foreach(DACE_KERNEL_FILE ${DACE_XILINX_KERNEL_FILES})
-    # Extract kernel name
-    get_filename_component(DACE_KERNEL_NAME ${DACE_KERNEL_FILE} NAME)
-    string(REGEX REPLACE "(.+).cpp" "\\1" DACE_KERNEL_NAME "${DACE_KERNEL_NAME}")
-
-    add_vitis_kernel(${DACE_KERNEL_NAME}
-                     FILES ${DACE_VITIS_KERNEL_FILES} ${DACE_KERNEL_FILE}
-                     HLS_FLAGS "${DACE_XILINX_SYNTHESIS_FLAGS} -DDACE_SYNTHESIS -DDACE_XILINX -DDACE_XILINX_DEVICE_CODE"
-                     HLS_CONFIG "config_compile -pipeline_style frp${DACE_XILINX_MINIMUM_FIFO_DEPTH}"
-                     INCLUDE_DIRS ${CMAKE_SOURCE_DIR}/../external/hlslib/include
-                                  ${CMAKE_SOURCE_DIR}/../runtime/include)
-    set(DACE_KERNEL_TARGETS ${DACE_KERNEL_TARGETS} ${DACE_KERNEL_NAME})
-  endforeach()
-
-  add_vitis_program(${DACE_PROGRAM_NAME}
-                    ${DACE_XILINX_TARGET_PLATFORM}
-                    KERNELS ${DACE_KERNEL_TARGETS}
-                    DEBUGGING ${DACE_XILINX_ENABLE_DEBUGGING}
-                    CLOCK ${DACE_XILINX_EXTERNAL_TARGET_CLOCK}
-                    BUILD_FLAGS ${DACE_XILINX_BUILD_FLAGS}
-                    LINK_FLAGS ${DACE_RTL_KERNELS}
-                    DEPENDS ${DACE_RTL_DEPENDS}
-                    CONFIG ${DACE_XILINX_CONFIG_FILE})
-
-endif() # DACE_ENABLE_XILINX
-
-# Create Intel FPGA object files
-if(DACE_ENABLE_INTELFPGA)
-
-  if((NOT (DACE_INTELFPGA_MODE STREQUAL "hardware")) OR DACE_INTELFPGA_ENABLE_DEBUGGING)
-    set(DACE_INTELFPGA_HOST_FLAGS "${DACE_INTELFPGA_HOST_FLAGS} -g")
-    set(DACE_INTELFPGA_SYNTHESIS_FLAGS "${DACE_INTELFPGA_KERNEL_FLAGS} -fast-compile -profile=all -g -fast-emulator")
-  endif()
-
-  set_source_files_properties(${DACE_INTELFPGA_KERNEL_FILES} ${DACE_INTELFPGA_HOST_FILES} PROPERTIES COMPILE_FLAGS "${DACE_INTELFPGA_HOST_FLAGS}")
-  set_source_files_properties(${DACE_INTELFPGA_KERNEL_FILES} PROPERTIES COMPILE_FLAGS "-DDACE_INTELFPGA_DEVICE_CODE ${DACE_INTELFPGA_HOST_FLAGS}")
-  set(DACE_OBJECTS ${DACE_OBJECTS} ${DACE_INTELFPGA_KERNEL_FILES} ${DACE_INTELFPGA_HOST_FILES})
-
-  # Add synthesis and build commands
-  set(DACE_AOC_KERNEL_FILES)
-  set(DACE_AOC_DEFINITIONS "-DDACE_INTELFPGA")
-  foreach(DACE_KERNEL_FILE ${DACE_INTELFPGA_KERNEL_FILES})
-
-    get_filename_component(DACE_KERNEL_NAME ${DACE_KERNEL_FILE} NAME)
-    string(REGEX REPLACE "kernel_(.+).cl" "\\1" DACE_KERNEL_NAME "${DACE_KERNEL_NAME}")
-    set(DACE_AOC_KERNEL_FILES ${DACE_AOC_KERNEL_FILES} ${DACE_KERNEL_FILE})
-
-    # Intel compiler does not allow to specify the output file if more than input file is used.
-    # In this case, the output AOCX file will be named as the last OpenCL file given in input to the compiler.
-    # We need to save the name of the last input file, so that later we can assign a proper name to the produced bitstream.
-    get_filename_component(DACE_AOC_OUTPUT_FILE ${DACE_KERNEL_FILE} NAME_WE)
-  endforeach()
-
-  string(REPLACE " " ";" DACE_INTELFPGA_KERNEL_FLAGS_INTERNAL
-         "${DACE_INTELFPGA_KERNEL_FLAGS}")
-
-  set(DACE_AOC_BUILD_FLAGS
-    -I${CMAKE_SOURCE_DIR}/include
-    -I${CMAKE_SOURCE_DIR}/../external/hlslib/include
-    -I${CMAKE_SOURCE_DIR}/../runtime/include
-    -I${CMAKE_BINARY_DIR}
-    -board=${DACE_INTELFPGA_TARGET_BOARD}
-    ${DACE_INTELFPGA_KERNEL_FLAGS_INTERNAL}
-    ${DACE_AOC_DEFINITIONS})
-
-  add_custom_target(
-    intelfpga_report_${DACE_PROGRAM_NAME}
-    COMMAND
-    ${IntelFPGAOpenCL_AOC}
-    ${DACE_AOC_BUILD_FLAGS}
-    ${DACE_AOC_KERNEL_FILES}
-    -rtl
-    -report
-    COMMAND mv ${DACE_AOC_OUTPUT_FILE} ${DACE_PROGRAM_NAME})
-
-  add_custom_command(
-    OUTPUT ${DACE_PROGRAM_NAME}_emulator.aocx
-    COMMAND ${IntelFPGAOpenCL_AOC}
-    ${DACE_AOC_BUILD_FLAGS}
-    -march=emulator
-    ${DACE_AOC_KERNEL_FILES}
-    COMMAND mv ${DACE_AOC_OUTPUT_FILE}.aocx  ${DACE_PROGRAM_NAME}_emulator.aocx
-    DEPENDS ${DACE_AOC_KERNEL_FILES})
-
-  add_custom_command(
-    OUTPUT ${DACE_PROGRAM_NAME}_hardware.aocx
-    COMMAND ${IntelFPGAOpenCL_AOC}
-    ${DACE_AOC_BUILD_FLAGS}
-    ${DACE_AOC_KERNEL_FILES}
-    COMMAND mv ${DACE_AOC_OUTPUT_FILE}.aocx  ${DACE_PROGRAM_NAME}_hardware.aocx
-    COMMAND mv ${DACE_AOC_OUTPUT_FILE} ${DACE_PROGRAM_NAME}
-    DEPENDS ${DACE_AOC_KERNEL_FILES})
-
-endif()
-
-include("targets/mlir/mlir.cmake")
+# Additional target-specific CMake files
+foreach(CMAKE_FILE ${DACE_CMAKE_FILES})
+  include(${CMAKE_FILE})
+endforeach()
 
 # Create DaCe library file
 add_library(${DACE_PROGRAM_NAME} SHARED ${DACE_CPP_FILES} ${DACE_OBJECTS})
@@ -569,42 +252,6 @@ target_link_libraries(${DACE_PROGRAM_NAME} PUBLIC ${DACE_LIBS})
 
 # Set C++ standard to C++20 (or the configured standard)
 set_property(TARGET ${DACE_PROGRAM_NAME} PROPERTY CXX_STANDARD ${DACE_CPP_STANDARD})
-
-# Add additional required files
-if(DACE_ENABLE_INTELFPGA)
-  if(DACE_INTELFPGA_MODE STREQUAL "emulator")
-      add_custom_target(intelfpga_compile_${DACE_PROGRAM_NAME}_emulator
-                        ALL DEPENDS ${DACE_PROGRAM_NAME}_emulator.aocx)
-  else()
-      add_custom_target(intelfpga_compile_${DACE_PROGRAM_NAME}_emulator
-                        DEPENDS ${DACE_PROGRAM_NAME}_emulator.aocx)
-  endif()
-  if(DACE_INTELFPGA_MODE STREQUAL "hardware" AND DACE_FPGA_AUTOBUILD_BITSTREAM)
-      add_custom_target(intelfpga_compile_${DACE_PROGRAM_NAME}_hardware
-                        ALL DEPENDS ${DACE_PROGRAM_NAME}_hardware.aocx)
-  else()
-      add_custom_target(intelfpga_compile_${DACE_PROGRAM_NAME}_hardware
-                        DEPENDS ${DACE_PROGRAM_NAME}_hardware.aocx)
-  endif()
-endif()
-
-if(DACE_ENABLE_XILINX)
-  if(DACE_XILINX_MODE STREQUAL "software_emulation" AND DACE_FPGA_AUTOBUILD_BITSTREAM)
-    add_custom_target(autobuild_bitstream ALL
-                      COMMENT "Automatically built bitstream for software emulation."
-                      DEPENDS sw_emu)
-  endif()
-  if(DACE_XILINX_MODE STREQUAL "hardware_emulation" AND DACE_FPGA_AUTOBUILD_BITSTREAM)
-    add_custom_target(autobuild_bitstream ALL
-                      COMMENT "Automatically built bitstream for hardware emulation."
-                      DEPENDS hw_emu)
-  endif()
-  if(DACE_XILINX_MODE STREQUAL "hardware" AND DACE_FPGA_AUTOBUILD_BITSTREAM)
-    add_custom_target(autobuild_bitstream ALL
-                      COMMENT "Automatically built bitstream for hardware."
-                      DEPENDS hw)
-  endif()
-endif()
 
 # Create DaCe loader stub
 add_library(dacestub_${DACE_PROGRAM_NAME} SHARED "${CMAKE_SOURCE_DIR}/tools/dacestub.cpp")
