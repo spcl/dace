@@ -11,7 +11,6 @@ import networkx as nx
 
 from dace import dtypes, subsets, symbolic, data
 from dace.dtypes import DebugInfo
-from dace.sdfg.scope import is_devicelevel_gpu
 
 if TYPE_CHECKING:
     import dace
@@ -227,6 +226,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
     """
     # Avoid import loop
     from dace import data as dt
+    from dace.sdfg.scope import is_devicelevel_gpu
     from dace.sdfg.state import ConditionalBlock
 
     references = references or set()
