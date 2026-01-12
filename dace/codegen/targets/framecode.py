@@ -527,9 +527,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         cstate = scope if isinstance(scope, SDFGState) else state
         csdfg = scope if isinstance(scope, SDFG) else sdfg
 
-        if desc.storage in dtypes.FPGA_STORAGES:
-            return sdscope.is_devicelevel_fpga(csdfg, cstate, node)
-        elif desc.storage in dtypes.GPU_STORAGES:
+        if desc.storage in dtypes.GPU_STORAGES:
             return sdscope.is_devicelevel_gpu(csdfg, cstate, node)
 
         return False

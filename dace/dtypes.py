@@ -19,7 +19,6 @@ from dace.registry import extensible_enum, undefined_safe_enum
 class DeviceType(aenum.AutoNumberEnum):
     CPU = ()  #: Multi-core CPU
     GPU = ()  #: GPU (AMD or NVIDIA)
-    FPGA = ()  #: FPGA (Intel or Xilinx)
     Snitch = ()  #: Compute Cluster (RISC-V)
 
 
@@ -35,10 +34,6 @@ class StorageType(aenum.AutoNumberEnum):
     CPU_ThreadLocal = ()  #: Thread-local host memory
     GPU_Global = ()  #: GPU global memory
     GPU_Shared = ()  #: On-GPU shared memory
-    FPGA_Global = ()  #: Off-chip global memory (DRAM)
-    FPGA_Local = ()  #: On-chip memory (bulk storage)
-    FPGA_Registers = ()  #: On-chip memory (fully partitioned registers)
-    FPGA_ShiftRegister = ()  #: Only accessible at constant indices
     SVE_Register = ()  #: SVE register
     Snitch_TCDM = ()  #: Cluster-private memory
     Snitch_L2 = ()  #: External memory
@@ -72,7 +67,6 @@ class ScheduleType(aenum.AutoNumberEnum):
     GPU_ThreadBlock = ()  #: Thread-block code
     GPU_ThreadBlock_Dynamic = ()  #: Allows rescheduling work within a block
     GPU_Persistent = ()
-    FPGA_Device = ()
     Snitch = ()
     Snitch_Multicore = ()
 
@@ -94,12 +88,6 @@ CPU_SCHEDULES = [
 # A subset of on-GPU storage types
 GPU_STORAGES = [
     StorageType.GPU_Shared,
-]
-
-# A subset of on-FPGA storage types
-FPGA_STORAGES = [
-    StorageType.FPGA_Local,
-    StorageType.FPGA_Registers,
 ]
 
 
@@ -198,7 +186,6 @@ SCOPEDEFAULT_STORAGE = {
     ScheduleType.GPU_Device: StorageType.GPU_Shared,
     ScheduleType.GPU_ThreadBlock: StorageType.Register,
     ScheduleType.GPU_ThreadBlock_Dynamic: StorageType.Register,
-    ScheduleType.FPGA_Device: StorageType.FPGA_Global,
     ScheduleType.SVE_Map: StorageType.CPU_Heap,
     ScheduleType.Snitch: StorageType.Snitch_TCDM
 }
@@ -216,7 +203,6 @@ SCOPEDEFAULT_SCHEDULE = {
     ScheduleType.GPU_Device: ScheduleType.GPU_ThreadBlock,
     ScheduleType.GPU_ThreadBlock: ScheduleType.Sequential,
     ScheduleType.GPU_ThreadBlock_Dynamic: ScheduleType.Sequential,
-    ScheduleType.FPGA_Device: ScheduleType.FPGA_Device,
     ScheduleType.SVE_Map: ScheduleType.Sequential,
     ScheduleType.Snitch: ScheduleType.Snitch,
     ScheduleType.Snitch_Multicore: ScheduleType.Snitch_Multicore
@@ -230,7 +216,6 @@ STORAGEDEFAULT_SCHEDULE = {
     StorageType.CPU_ThreadLocal: ScheduleType.CPU_Multicore,
     StorageType.GPU_Global: ScheduleType.GPU_Device,
     StorageType.GPU_Shared: ScheduleType.GPU_ThreadBlock,
-    StorageType.FPGA_Global: ScheduleType.FPGA_Device,
     StorageType.SVE_Register: ScheduleType.SVE_Map,
 }
 
@@ -1436,11 +1421,6 @@ def can_access(schedule: ScheduleType, storage: StorageType):
         return storage in [
             StorageType.Default, StorageType.CPU_Heap, StorageType.CPU_Pinned, StorageType.CPU_ThreadLocal
         ]
-    elif schedule in [ScheduleType.FPGA_Device]:
-        return storage in [
-            StorageType.FPGA_Local, StorageType.FPGA_Global, StorageType.FPGA_Registers, StorageType.FPGA_ShiftRegister,
-            StorageType.CPU_Pinned
-        ]
     elif schedule == ScheduleType.Sequential:
         raise ValueError("Not well defined")
 
@@ -1450,7 +1430,6 @@ def can_allocate(storage: StorageType, schedule: ScheduleType):
     Identifies whether a container of a storage type can be allocated in a
     specific schedule. Used to determine arguments to subgraphs by the
     innermost scope that a container can be allocated in. For example,
-    FPGA_Global memory cannot be allocated from within the FPGA scope, or
     GPU shared memory cannot be allocated outside of device-level code.
 
     :param storage: The storage type of the data container to allocate.
@@ -1470,17 +1449,6 @@ def can_allocate(storage: StorageType, schedule: ScheduleType):
             ScheduleType.CPU_Multicore, ScheduleType.CPU_Persistent, ScheduleType.Sequential, ScheduleType.MPI,
             ScheduleType.GPU_Default
         ]
-
-    # FPGA-global memory
-    if storage is StorageType.FPGA_Global:
-        return schedule in [
-            ScheduleType.CPU_Multicore, ScheduleType.CPU_Persistent, ScheduleType.Sequential, ScheduleType.MPI,
-            ScheduleType.FPGA_Device, ScheduleType.GPU_Default
-        ]
-
-    # FPGA-local memory
-    if storage in [StorageType.FPGA_Local, StorageType.FPGA_Registers]:
-        return schedule == ScheduleType.FPGA_Device
 
     # GPU-local memory
     if storage == StorageType.GPU_Shared:
