@@ -114,7 +114,7 @@ def copy_expr(
 
     add_offset = offset_cppstr != "0"
 
-    if def_type in [DefinedType.Pointer, DefinedType.ArrayInterface, DefinedType.Object]:
+    if def_type in [DefinedType.Pointer, DefinedType.Object]:
         return "{}{}{}".format(dt, expr, " + {}".format(offset_cppstr) if add_offset else "")
     elif def_type == DefinedType.StreamArray:
         return "{}[{}]".format(expr, offset_cppstr)
@@ -317,8 +317,7 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
         else:
             return expr
 
-    if (defined_type == DefinedType.Pointer
-            or (defined_type == DefinedType.ArrayInterface and isinstance(desc, data.View))):
+    if defined_type == DefinedType.Pointer:
         if not is_scalar and desc.dtype == conntype.base_type:
             # Cast potential consts
             typedef = defined_ctype
@@ -333,11 +332,6 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
             if memlet.data in dispatcher.frame.symbols_and_constants(sdfg):
                 ref = '*'
                 typedef = make_const(typedef)
-
-    elif defined_type == DefinedType.ArrayInterface:
-        base_ctype = conntype.base_type.ctype
-        typedef = f"{base_ctype}*" if is_write else f"const {base_ctype}*"
-        is_scalar = False
     elif defined_type == DefinedType.Scalar:
         typedef = defined_ctype if is_scalar else (defined_ctype + '*')
         if is_write is False and not isinstance(desc, data.Structure):
@@ -581,7 +575,7 @@ def make_ptr_vector_cast(dst_expr, dst_dtype, src_dtype, is_scalar, defined_type
             dst_expr = '*(%s *)(&%s)' % (src_dtype.ctype, dst_expr)
         elif src_dtype.base_type != dst_dtype:
             dst_expr = '(%s)(&%s)' % (src_dtype.ctype, dst_expr)
-        elif defined_type in [DefinedType.Pointer, DefinedType.ArrayInterface]:
+        elif defined_type == DefinedType.Pointer:
             dst_expr = '&' + dst_expr
     elif not is_scalar:
         dst_expr = '&' + dst_expr
@@ -1173,7 +1167,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                                 ptrname,
                                 cppunparse.cppunparse(value, expr_semicolon=False),
                             ))
-                        elif (var_type != DefinedType.ArrayInterface or isinstance(desc, data.View)):
+                        elif isinstance(desc, data.View):
                             newnode = ast.Name(id="%s = %s;" % (
                                 cpp_array_expr(self.sdfg, memlet, codegen=self.codegen),
                                 cppunparse.cppunparse(value, expr_semicolon=False),

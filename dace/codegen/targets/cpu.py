@@ -196,8 +196,7 @@ class CPUCodeGen(TargetCodeGenerator):
         # Check directionality of view (referencing dst or src)
         edge = sdutils.get_view_edge(dfg, node)
 
-        # When emitting ArrayInterface, we need to know if this is a read or
-        # write variation
+        # We need to know if this is a read or a write variation
         is_write = edge.src is node
 
         # Allocate the viewed data before the view, if necessary
@@ -1240,7 +1239,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         result = ''
         expr = (cpp.cpp_array_expr(sdfg, memlet, with_brackets=False, codegen=self)
-                if var_type in [DefinedType.Pointer, DefinedType.StreamArray, DefinedType.ArrayInterface] else ptr)
+                if var_type in (DefinedType.Pointer, DefinedType.StreamArray) else ptr)
 
         if expr != ptr:
             expr = '%s[%s]' % (ptr, expr)
@@ -1249,11 +1248,9 @@ class CPUCodeGen(TargetCodeGenerator):
 
         defined = None
 
-        if var_type in [DefinedType.Scalar, DefinedType.Pointer, DefinedType.ArrayInterface]:
+        if var_type in (DefinedType.Scalar, DefinedType.Pointer):
             if output:
-                if is_pointer and var_type == DefinedType.ArrayInterface:
-                    result += "{} {} = {};".format(memlet_type, local_name, expr)
-                elif not memlet.dynamic or (memlet.dynamic and memlet.wcr is not None):
+                if not memlet.dynamic or (memlet.dynamic and memlet.wcr is not None):
                     # Dynamic WCR memlets start uninitialized
                     result += "{} {};".format(memlet_type, local_name)
                     defined = DefinedType.Scalar
