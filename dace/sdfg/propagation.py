@@ -1430,7 +1430,7 @@ def propagate_memlet(dfg_state,
     # Propagate subset
     if isinstance(entry_node, nodes.MapEntry):
         mapnode = entry_node.map
-        return propagate_subset(aggdata, arr, mapnode.params, mapnode.range, defined_vars, use_dst=use_dst)
+        return propagate_subset(aggdata, arr, mapnode.params, mapnode.range, defined_variables=defined_vars, use_dst=use_dst)
 
     elif isinstance(entry_node, nodes.ConsumeEntry):
         # Nothing to analyze/propagate in consume
@@ -1449,6 +1449,7 @@ def propagate_subset(memlets: List[Memlet],
                      arr: data.Data,
                      params: List[str],
                      rng: subsets.Subset,
+                     *,
                      defined_variables: Set[symbolic.SymbolicType] = None,
                      undefined_variables: Set[symbolic.SymbolicType] = None,
                      use_dst: bool = False) -> Memlet:
@@ -1487,6 +1488,8 @@ def propagate_subset(memlets: List[Memlet],
 
     if undefined_variables:
         defined_variables = defined_variables - set(symbolic.pystr_to_symbolic(p) for p in undefined_variables)
+    else:
+        undefined_variables = set()
 
     # Propagate subset
     variable_context = [defined_variables, [symbolic.pystr_to_symbolic(p) for p in params]]
@@ -1530,7 +1533,7 @@ def propagate_subset(memlets: List[Memlet],
                     fsyms = _freesyms(sdim)
                     fsyms_str = set(map(str, fsyms))
                     contains_params |= len(fsyms_str & paramset) != 0
-                    contains_undefs |= len(fsyms - defined_variables) != 0
+                    contains_undefs |= len(fsyms & undefined_variables) != 0
                 if contains_params or contains_undefs:
                     tmp_subset_rng.append(ea)
                 else:
