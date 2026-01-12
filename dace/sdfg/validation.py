@@ -11,6 +11,7 @@ import networkx as nx
 
 from dace import dtypes, subsets, symbolic, data
 from dace.dtypes import DebugInfo
+from dace.sdfg.scope import is_devicelevel_gpu
 
 if TYPE_CHECKING:
     import dace
