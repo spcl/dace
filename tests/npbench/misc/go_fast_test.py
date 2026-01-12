@@ -5,11 +5,7 @@ import numpy as np
 import dace as dc
 import pytest
 import argparse
-from dace.fpga_testing import fpga_test, xilinx_test
-from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
-from dace.transformation.dataflow import StreamingMemory, StreamingComposition
-from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
-from dace.config import set_temporary
+from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.autodiff import add_backward_pass
 
 N = dc.symbol('N', dtype=dc.int64)
@@ -51,15 +47,8 @@ def run_go_fast(device_type: dace.dtypes.DeviceType):
         sdfg = go_fast_kernel.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
         out = sdfg(a, N=N)
-    elif device_type == dace.dtypes.DeviceType.FPGA:
-        # Parse SDFG and apply FPGA friendly optimization
-        sdfg = go_fast_kernel.to_sdfg(simplify=True)
-        applied = sdfg.apply_transformations([FPGATransformSDFG])
-        assert applied == 1
-
-        sdfg.apply_transformations_repeated([InlineSDFG], print_report=True)
-        sdfg.specialize(dict(N=N))
-        out = sdfg(a)
+    else:
+        raise ValueError(f'Unsupported device type: {device_type}')
 
     # Compute ground truth and validate
     out_ref = ground_truth(a)
@@ -127,16 +116,10 @@ def test_autodiff():
     run_go_fast_autodiff()
 
 
-@pytest.mark.skip(reason="Operand type in binary expressions")
-@fpga_test(assert_ii_1=False)
-def test_fpga():
-    return run_go_fast(dace.dtypes.DeviceType.FPGA)
-
-
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]
@@ -146,5 +129,3 @@ if __name__ == "__main__":
         run_go_fast_autodiff()
     elif target == "gpu":
         run_go_fast(dace.dtypes.DeviceType.GPU)
-    elif target == "fpga":
-        run_go_fast(dace.dtypes.DeviceType.FPGA)

@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import collections
 import copy
 import pathlib
@@ -14,8 +14,8 @@ from dace.codegen import control_flow as cflow
 from dace.codegen import dispatcher as disp
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.common import codeblock_to_cpp, sym2cpp
-from dace.codegen.targets.target import TargetCodeGenerator
-from dace.codegen.tools.type_inference import infer_expr_type
+from dace.codegen.target import TargetCodeGenerator
+from dace.sdfg.type_inference import infer_expr_type
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import scope as sdscope
 from dace.sdfg import utils
@@ -139,6 +139,12 @@ class DaCeCodeGenerator(object):
             global_stream.write('#include "../../include/hash.h"\n', sdfg)
 
         #########################################################
+        # Target-based includes
+        for target in self._dispatcher.used_targets:
+            headers = target.get_includes()
+            if backend in headers:
+                global_stream.write("\n".join("#include \"" + h + "\"" for h in headers[backend]), sdfg)
+
         # Environment-based includes
         for env in self.environments:
             if len(env.headers) > 0:
@@ -911,6 +917,11 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 interstate_symbols.update(symbols)
                 global_symbols.update(symbols)
 
+        try:
+            edge_codegen = self.dispatcher.get_scope_dispatcher(schedule)
+        except KeyError:
+            edge_codegen = self.dispatcher.get_generic_node_dispatcher()
+
         for isvarName, isvarType in interstate_symbols.items():
             if isvarType is None:
                 raise TypeError(f'Type inference failed for symbol {isvarName}')
@@ -921,17 +932,10 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             # as part of the function's arguments
             if not is_top_level and isvarName in sdfg.parent_nsdfg_node.symbol_mapping:
                 continue
-            isvar = data.Scalar(isvarType)
-            if (schedule in (dtypes.ScheduleType.FPGA_Device, dtypes.ScheduleType.FPGA_Multi_Pumped)
-                    and config.Config.get('compiler', 'fpga', 'vendor').lower() == 'intel_fpga'):
-                # Emit OpenCL type
-                callsite_stream.write(f'{isvarType.ocltype} {isvarName};\n', sdfg)
-                self.dispatcher.defined_vars.add(isvarName, disp.DefinedType.Scalar, isvarType.ctype)
-            else:
-                # If the variable is passed as an input argument to the SDFG, do not need to declare it
-                if isvarName not in outside_symbols:
-                    callsite_stream.write('%s;\n' % (isvar.as_arg(with_types=True, name=isvarName)), sdfg)
-                    self.dispatcher.defined_vars.add(isvarName, disp.DefinedType.Scalar, isvarType.ctype)
+            if isvarName not in outside_symbols:
+                edge_codegen.emit_interstate_variable_declaration(isvarName, isvarType, callsite_stream, sdfg)
+            # If the variable is passed as an input argument to the SDFG, do not need to declare it
+
         callsite_stream.write('\n', sdfg)
 
         #######################################################################
