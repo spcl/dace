@@ -23,7 +23,6 @@ import sys
 NODE_TO_SCOPE_TYPE = {
     dace.nodes.MapEntry: tn.MapScope,
     dace.nodes.ConsumeEntry: tn.ConsumeScope,
-    dace.nodes.PipelineEntry: tn.PipelineScope,
 }
 
 
@@ -785,7 +784,7 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
     Converts an SDFG into a schedule tree. The schedule tree is a tree of nodes that represent the execution order of
     the SDFG.
     Each node in the tree can either represent a single statement (symbol assignment, tasklet, copy, library node, etc.)
-    or a ``ScheduleTreeScope`` block (map, for-loop, pipeline, etc.) that contains other nodes.
+    or a ``ScheduleTreeScope`` block (map, for-loop, etc.) that contains other nodes.
 
     It can be used to generate code from an SDFG, or to perform schedule transformations on the SDFG. For example,
     erasing an empty if branch, or merging two consecutive for-loops. The SDFG can then be reconstructed via the

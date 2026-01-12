@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
     Type inference: traverses code and returns types for all undefined symbols according to C semantics
     infer() has a lenient implementation: if something it not inferred (for example an unsupported construct) it will not
@@ -11,13 +11,54 @@ import numpy as np
 import ast
 from dace import data, dtypes
 from dace import symbolic
-from dace.codegen import cppunparse
 from dace.symbolic import symbol, SymExpr, symstr
 import sympy
 import sys
 import dace.frontend.python.astutils
 import inspect
-from typing import Union
+from typing import Callable, Union
+
+# Additional function names that can be used to infer types
+KNOWN_FUNCTIONS: dict[str, Callable[[list[dtypes.typeclass]], dtypes.typeclass]] = {
+    'abs': lambda arg_types: arg_types[0],
+    'log': lambda arg_types: arg_types[0],
+    'min': lambda arg_types: dtypes.result_type_of(arg_types[0], *arg_types),
+    'max': lambda arg_types: dtypes.result_type_of(arg_types[0], *arg_types),
+    'round': lambda arg_types: dtypes.typeclass(int),
+}
+
+_cmpops = {
+    "Eq": "==",
+    "NotEq": "!=",
+    "Lt": "<",
+    "LtE": "<=",
+    "Gt": ">",
+    "GtE": ">=",
+    "Is": "==",
+    "IsNot": "!=",
+    # "In":"in", "NotIn":"not in"
+}
+
+_funcops = {
+    "FloorDiv": (" /", "dace::math::ifloor"),
+    "MatMult": (",", "dace::gemm"),
+}
+
+_py2c_reserved = {
+    "True": "true",
+    "False": "false",
+    "None": "nullptr",
+    "inf": "INFINITY",
+    "nan": "NAN",
+}
+
+_py2c_typeconversion = {
+    "uint": dace.dtypes.typeclass(np.uint32),
+    "int": dace.dtypes.typeclass(int),
+    "float": dace.dtypes.typeclass(float),
+    "float64": dace.dtypes.typeclass(np.float64),
+    "str": dace.dtypes.pointer(dace.dtypes.int8),
+}
 
 
 def infer_types(code, symbols=None):
@@ -142,8 +183,8 @@ def _Assign(t, symbols, inferred_symbols):
 def _AugAssign(t, symbols, inferred_symbols):
     _dispatch(t.target, symbols, inferred_symbols)
     # Operations that require a function call
-    if t.op.__class__.__name__ in cppunparse.CPPUnparser.funcops:
-        separator, func = cppunparse.CPPUnparser.funcops[t.op.__class__.__name__]
+    if t.op.__class__.__name__ in _funcops:
+        separator, func = _funcops[t.op.__class__.__name__]
         if not t.target.id in symbols and not t.target.id in inferred_symbols:
             _dispatch(t.target, symbols, inferred_symbols)
             inferred_type = _dispatch(t.value, symbols, inferred_symbols)
@@ -277,7 +318,7 @@ def _JoinedStr(t, symbols, inferred_symbols):
 
 
 def _Name(t, symbols, inferred_symbols):
-    if t.id in cppunparse._py2c_reserved:
+    if t.id in _py2c_reserved:
         return dtypes.typeclass(np.result_type(t.id))
     else:
         # check if this name is a python type, it is in defined_symbols or in local symbols.
@@ -286,8 +327,8 @@ def _Name(t, symbols, inferred_symbols):
 
         # if this is a statement generated from a tasklet with a dynamic memlet, it could have a leading * (pointer)
         t_id = t.id[1:] if t.id.startswith('*') else t.id
-        if t_id.strip("()") in cppunparse._py2c_typeconversion:
-            inferred_type = cppunparse._py2c_typeconversion[t_id.strip("()")]
+        if t_id.strip("()") in _py2c_typeconversion:
+            inferred_type = _py2c_typeconversion[t_id.strip("()")]
         elif t_id in symbols:
             # defined symbols could have dtypes, in case convert it to typeclass
             inferred_type = symbols[t_id]
@@ -339,8 +380,8 @@ def _UnaryOp(t, symbols, inferred_symbols):
 
 def _BinOp(t, symbols, inferred_symbols):
     # Operations that require a function call
-    if t.op.__class__.__name__ in cppunparse.CPPUnparser.funcops:
-        separator, func = cppunparse.CPPUnparser.funcops[t.op.__class__.__name__]
+    if t.op.__class__.__name__ in _funcops:
+        separator, func = _funcops[t.op.__class__.__name__]
 
         # get the type of left and right operands for type inference
         type_left = _dispatch(t.left, symbols, inferred_symbols)
@@ -382,7 +423,7 @@ def _Compare(t, symbols, inferred_symbols):
     if isinstance(inf_type, dtypes.vector):
         vec_len = inf_type.veclen
     for o, e in zip(t.ops, t.comparators):
-        if o.__class__.__name__ not in cppunparse.CPPUnparser.cmpops:
+        if o.__class__.__name__ not in _cmpops:
             continue
         if isinstance(e, ast.Constant) and e.value is None:
             continue
@@ -455,16 +496,9 @@ def _Call(t, symbols, inferred_symbols):
     if module == 'math':
         return dtypes.result_type_of(arg_types[0], *arg_types)
 
-    # Reading from an Intel channel returns the channel type
-    if name == 'read_channel_intel':
-        return arg_types[0]
-
-    if name in ('abs', 'log'):
-        return arg_types[0]
-    if name in ('min', 'max'):  # binary math operations that do not exist in the math module
-        return dtypes.result_type_of(arg_types[0], *arg_types)
-    if name in ('round', ):
-        return dtypes.typeclass(int)
+    # Check in known functions
+    if name in KNOWN_FUNCTIONS:
+        return KNOWN_FUNCTIONS[name](arg_types)
 
     # dtypes (dace.int32, np.float64) can be used as functions
     inf_type = _infer_dtype(t)

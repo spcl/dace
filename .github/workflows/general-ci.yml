@@ -59,7 +59,7 @@ jobs:
         else
             export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         fi
-        pytest -n auto --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "not gpu and not autodiff and not torch and not onnx and not verilator and not tensorflow and not mkl and not sve and not papi and not mlir and not lapack and not fpga and not mpi and not rtl_hardware and not scalapack and not datainstrument and not long and not sequential"
+        pytest -n auto --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "not gpu and not autodiff and not torch and not onnx and not tensorflow and not mkl and not sve and not papi and not mlir and not lapack and not mpi and not scalapack and not datainstrument and not long and not sequential"
         ./codecov
 
     - name: Test OpenBLAS LAPACK

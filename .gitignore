@@ -150,12 +150,6 @@ perf.json
 perf*.csv
 /dace/frontend/octave/parsetab.py
 
-# Xilinx
-xilinx_vcu1525_*
-sdaccel_profile_*
-sdaccel_timeline_*
-.run/
-
 # NVIDIA
 *.nvprof
 out.sdfg

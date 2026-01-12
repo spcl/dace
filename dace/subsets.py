@@ -32,7 +32,7 @@ def bounding_box_cover_exact(subset_a, subset_b, approximation=False) -> bool:
     and `False` otherwise.
 
     :param subset_a: The first subset, the one that should cover.
-    :param subset_b: The second subset, the one that should be convered.
+    :param subset_b: The second subset, the one that should be covered.
     :param approximation: If `True` then use the approximated bounds.
     """
     min_elements_a = subset_a.min_element_approx() if approximation else subset_a.min_element()
@@ -73,7 +73,7 @@ def bounding_box_symbolic_positive(subset_a, subset_b, approximation=False) -> b
     and `False` otherwise.
 
     :param subset_a: The first subset, the one that should cover.
-    :param subset_b: The second subset, the one that should be convered.
+    :param subset_b: The second subset, the one that should be covered.
     :param approximation: If `True` then use the approximated bounds.
 
     :note: In previous versions this function raised `TypeError` in some cases

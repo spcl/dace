@@ -201,7 +201,7 @@ class ConstantPropagation(ppl.Pass):
         if loop in post_constants and post_constants[loop] is not None:
             if loop.update_statement is not None and (loop.inverted and loop.update_before_condition
                                                       or not loop.inverted):
-                # Replace the RHS of the update experssion
+                # Replace the RHS of the update expression
                 post_mapping = {
                     k: v
                     for k, v in post_constants[loop].items()

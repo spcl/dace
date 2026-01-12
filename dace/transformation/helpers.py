@@ -1614,40 +1614,6 @@ def replace_code_to_code_edges(sdfg: SDFG):
             state.remove_edge(edge)
 
 
-def can_run_state_on_fpga(state: SDFGState):
-    """
-    Checks if state can be executed on FPGA. Used by FPGATransformState
-    and HbmTransform.
-    """
-    for node, graph in state.all_nodes_recursive():
-        # Consume scopes are currently unsupported
-        if isinstance(node, (nodes.ConsumeEntry, nodes.ConsumeExit)):
-            return False
-
-        # Streams have strict conditions due to code generator limitations
-        if (isinstance(node, nodes.AccessNode) and isinstance(graph.sdfg.arrays[node.data], data.Stream)):
-            nodedesc = graph.sdfg.arrays[node.data]
-            sdict = graph.scope_dict()
-            if nodedesc.storage in [
-                    dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_Pinned, dtypes.StorageType.CPU_ThreadLocal
-            ]:
-                return False
-
-            # Cannot allocate FIFO from CPU code
-            if sdict[node] is None:
-                return False
-
-            # Arrays of streams cannot have symbolic size on FPGA
-            if symbolic.issymbolic(nodedesc.total_size, graph.sdfg.constants):
-                return False
-
-            # Streams cannot be unbounded on FPGA
-            if nodedesc.buffer_size < 1:
-                return False
-
-    return True
-
-
 def make_map_internal_write_external(sdfg: SDFG, state: SDFGState, map_exit: nodes.MapExit, access: nodes.AccessNode,
                                      sink: nodes.AccessNode):
     """
