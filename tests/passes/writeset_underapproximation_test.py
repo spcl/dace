@@ -384,7 +384,7 @@ def test_map_in_loop():
 def test_map_in_loop_multiplied_indices_first_dimension():
     """
     Map nested in a loop that writes to array. Subscript expression
-      of array access multiplies two indicies in first dimension
+      of array access multiplies two indices in first dimension
     --> Approximated write-set of loop to array is empty
     """
 
@@ -417,7 +417,7 @@ def test_map_in_loop_multiplied_indices_first_dimension():
 def test_map_in_loop_multiplied_indices_second_dimension():
     """
     Map nested in a loop that writes to array. Subscript expression
-      of array access multiplies two indicies in second dimension
+      of array access multiplies two indices in second dimension
     --> Approximated write-set of loop to array is empty
     """
     sdfg = dace.SDFG("nested")
