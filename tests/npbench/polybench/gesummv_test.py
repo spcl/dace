@@ -5,11 +5,9 @@ import numpy as np
 import dace as dc
 import pytest
 import argparse
-from dace.fpga_testing import fpga_test, xilinx_test
-from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
-from dace.transformation.dataflow import StreamingMemory, StreamingComposition
-from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
-from dace.config import set_temporary
+from dace.transformation.interstate import InlineSDFG
+from dace.transformation.auto.auto_optimize import auto_optimize
+from dace.autodiff import add_backward_pass
 
 # Data set sizes
 # N
@@ -34,6 +32,10 @@ def initialize(N, datatype=np.float64):
     return alpha, beta, A, B, x
 
 
+def gesummv_jax_kernel(jnp, alpha, beta, A, B, x):
+    return jnp.sum(alpha * (A @ x) + beta * (B @ x))
+
+
 def run_gesummv(device_type: dace.dtypes.DeviceType):
     '''
     Runs Gesummv for the given device
@@ -49,24 +51,44 @@ def run_gesummv(device_type: dace.dtypes.DeviceType):
         sdfg = gesummv_kernel.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
         C = sdfg(alpha, beta, A, B, x, N=N)
-    elif device_type == dace.dtypes.DeviceType.FPGA:
-        # Parse SDFG and apply FPGA friendly optimization
-        sdfg = gesummv_kernel.to_sdfg(simplify=True)
-        applied = sdfg.apply_transformations([FPGATransformSDFG])
-        assert applied == 1
-
-        # Use FPGA Expansion for lib nodes, and expand them to enable further optimizations
-        from dace.libraries.blas import Gemv
-        Gemv.default_implementation = "FPGA_Accumulate"
-        sdfg.expand_library_nodes()
-        sdfg.apply_transformations_repeated([InlineSDFG], print_report=True)
-        sdfg.specialize(dict(N=N))
-        C = sdfg(alpha, beta, A, B, x)
-
     # Compute ground truth and validate
     C_ref = gesummv_kernel.f(alpha, beta, A, B, x)
     assert np.allclose(C, C_ref)
     return sdfg
+
+
+def run_gesummv_autodiff():
+    import jax
+    import jax.numpy as jnp
+
+    # Initialize data (polybench mini size)
+    N = sizes["mini"]
+    alpha, beta, A, B, x = initialize(N)
+
+    # Initialize gradient computation data
+    gradient_A = np.zeros_like(A)
+    gradient___return = np.ones((1, ), dtype=np.float64)
+
+    # Define sum reduction for the output
+    @dc.program
+    def autodiff_kernel(alpha: dc.float64, beta: dc.float64, A: dc.float64[N, N], B: dc.float64[N, N],
+                        x: dc.float64[N]):
+        C = gesummv_kernel(alpha, beta, A, B, x)
+        return np.sum(C)
+
+    # Add the backward pass to the SDFG
+    sdfg = autodiff_kernel.to_sdfg()
+    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"])
+    sdfg(alpha, beta, A, B, x, N=N, gradient_A=gradient_A, gradient___return=gradient___return)
+
+    # Enable float64 support
+    jax.config.update("jax_enable_x64", True)
+
+    # Numerically validate vs JAX
+    jax_kernel = lambda alpha, beta, A, B, x: gesummv_jax_kernel(jnp, alpha, beta, A, B, x)
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=2), static_argnums=(0, 1))
+    jax_grad_A = jax_grad(alpha, beta, A, B, x)
+    np.testing.assert_allclose(gradient_A, jax_grad_A)
 
 
 def test_cpu():
@@ -78,23 +100,22 @@ def test_gpu():
     run_gesummv(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.skip(reason="Xilinx synthesis fails")
-@fpga_test(assert_ii_1=False)
-def test_fpga():
-    return run_gesummv(dace.dtypes.DeviceType.FPGA)
+@pytest.mark.autodiff
+def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
+    run_gesummv_autodiff()
 
 
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]
 
     if target == "cpu":
         run_gesummv(dace.dtypes.DeviceType.CPU)
+        run_gesummv_autodiff()
     elif target == "gpu":
         run_gesummv(dace.dtypes.DeviceType.GPU)
-    elif target == "fpga":
-        run_gesummv(dace.dtypes.DeviceType.FPGA)

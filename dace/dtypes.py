@@ -1,4 +1,4 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ A module that contains various DaCe type definitions. """
 import ctypes
 import json
@@ -64,7 +64,6 @@ class ScheduleType(aenum.AutoNumberEnum):
     MPI = ()  #: MPI processes
     CPU_Multicore = ()  #: OpenMP parallel for loop
     CPU_Persistent = ()  #: OpenMP parallel region
-    Unrolled = ()  #: Unrolled code
     SVE_Map = ()  #: Arm SVE
 
     #: Default scope schedule for GPU code. Specializes to schedule GPU_Device and GPU_Global during inference.
@@ -76,7 +75,6 @@ class ScheduleType(aenum.AutoNumberEnum):
     FPGA_Device = ()
     Snitch = ()
     Snitch_Multicore = ()
-    FPGA_Multi_Pumped = ()  #: Used for double pumping
 
 
 # A subset of GPU schedule types
@@ -102,7 +100,6 @@ GPU_STORAGES = [
 FPGA_STORAGES = [
     StorageType.FPGA_Local,
     StorageType.FPGA_Registers,
-    StorageType.FPGA_ShiftRegister,
 ]
 
 
@@ -166,7 +163,7 @@ class InstrumentationType(aenum.AutoNumberEnum):
     LIKWID_CPU = ()
     LIKWID_GPU = ()
     GPU_Events = ()
-    FPGA = ()
+    GPU_TX_MARKERS = ()
 
 
 @undefined_safe_enum
@@ -215,14 +212,12 @@ SCOPEDEFAULT_SCHEDULE = {
     ScheduleType.MPI: ScheduleType.CPU_Multicore,
     ScheduleType.CPU_Multicore: ScheduleType.Sequential,
     ScheduleType.CPU_Persistent: ScheduleType.CPU_Multicore,
-    ScheduleType.Unrolled: ScheduleType.CPU_Multicore,
     ScheduleType.GPU_Default: ScheduleType.GPU_Device,
     ScheduleType.GPU_Persistent: ScheduleType.GPU_Device,
     ScheduleType.GPU_Device: ScheduleType.GPU_ThreadBlock,
     ScheduleType.GPU_ThreadBlock: ScheduleType.Sequential,
     ScheduleType.GPU_ThreadBlock_Dynamic: ScheduleType.Sequential,
     ScheduleType.FPGA_Device: ScheduleType.FPGA_Device,
-    ScheduleType.FPGA_Multi_Pumped: ScheduleType.FPGA_Device,
     ScheduleType.SVE_Map: ScheduleType.Sequential,
     ScheduleType.Snitch: ScheduleType.Snitch,
     ScheduleType.Snitch_Multicore: ScheduleType.Snitch_Multicore
@@ -263,68 +258,6 @@ _CTYPES = {
     numpy.float64: "double",
     numpy.complex64: "dace::complex64",
     numpy.complex128: "dace::complex128",
-}
-
-# Translation of types to OpenCL types
-_OCL_TYPES = {
-    None: "void",
-    int: "int",
-    float: "float",
-    bool: "bool",
-    numpy.bool_: "bool",
-    numpy.int8: "char",
-    numpy.int16: "short",
-    numpy.int32: "int",
-    numpy.intc: "int",
-    numpy.int64: "long",
-    numpy.uint8: "uchar",
-    numpy.uint16: "ushort",
-    numpy.uint32: "uint",
-    numpy.uint64: "ulong",
-    numpy.uintc: "uint",
-    numpy.float32: "float",
-    numpy.float64: "double",
-    numpy.complex64: "complex float",
-    numpy.complex128: "complex double",
-}
-
-_CTYPES_TO_OCLTYPES = {
-    "void": "void",
-    "int": "int",
-    "float": "float",
-    "double": "double",
-    "dace::complex64": "complex float",
-    "dace::complex128": "complex double",
-    "bool": "bool",
-    "char": "char",
-    "short": "short",
-    "int": "int",
-    "int64_t": "long",
-    "uint8_t": "uchar",
-    "uint16_t": "ushort",
-    "uint32_t": "uint",
-    "dace::uint": "uint",
-    "uint64_t": "ulong",
-    "dace::float16": "half",
-}
-
-# Translation of types to OpenCL vector types
-_OCL_VECTOR_TYPES = {
-    numpy.int8: "char",
-    numpy.uint8: "uchar",
-    numpy.int16: "short",
-    numpy.uint16: "ushort",
-    numpy.int32: "int",
-    numpy.intc: "int",
-    numpy.uint32: "uint",
-    numpy.uintc: "uint",
-    numpy.int64: "long",
-    numpy.uint64: "ulong",
-    numpy.float16: "half",
-    numpy.float32: "float",
-    numpy.float64: "double",
-    numpy.complex64: "complex float",
-    numpy.complex128: "complex double",
 }
 
 # Translation of types to ctypes types
@@ -501,10 +434,6 @@ class typeclass(object):
     @property
     def veclen(self):
         return 1
-
-    @property
-    def ocltype(self):
-        return _OCL_TYPES[self.type]
 
     def as_arg(self, name):
         return self.ctype + ' ' + name
@@ -703,10 +632,6 @@ class pointer(typeclass):
     def base_type(self):
         return self._typeclass
 
-    @property
-    def ocltype(self):
-        return f"{self.base_type.ocltype}*"
-
 
 class vector(typeclass):
     """
@@ -733,14 +658,6 @@ class vector(typeclass):
     @property
     def ctype(self):
         return "dace::vec<%s, %s>" % (self.vtype.ctype, self.veclen)
-
-    @property
-    def ocltype(self):
-        if self.veclen > 1:
-            vectype = _OCL_VECTOR_TYPES[self.type]
-            return f"{vectype}{self.veclen}"
-        else:
-            return self.base_type.ocltype
 
     @property
     def ctype_unaligned(self):
@@ -1399,9 +1316,6 @@ _ALLOWED_MODULES = {
     "math": "dace::math::",
     "cmath": "dace::cmath::",
 }
-
-# Lists allowed modules and maps them to OpenCL
-_OPENCL_ALLOWED_MODULES = {"builtins": "", "dace": "", "math": ""}
 
 
 def ismodule(var):

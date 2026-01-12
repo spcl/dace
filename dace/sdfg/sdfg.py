@@ -1,4 +1,4 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 import collections
 import copy
@@ -27,6 +27,7 @@ from dace.config import Config
 from dace.frontend.python import astutils
 from dace.sdfg import nodes as nd
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, SDFGState, ControlFlowRegion
+from dace.sdfg.type_inference import infer_expr_type
 from dace.distr_types import ProcessGrid, SubArray, RedistrArray
 from dace.dtypes import validate_name
 from dace.properties import (DebugInfoProperty, EnumProperty, ListProperty, make_properties, Property, CodeProperty,
@@ -262,7 +263,7 @@ class InterstateEdge(object):
         #       - condition = 'i < 10', assignments = {'i': '3'}
         #       - assignments = {'j': 'i + 1', 'i': '3'}
         #       The new algorithm below addresses the issue by iterating over the edge's condition and assignments and
-        #       exlcuding keys from being considered "defined" if they have been already read.
+        #       excluding keys from being considered "defined" if they have been already read.
 
         # Symbols in conditions are always free, because the condition is executed before the assignments
         cond_symbols = set(map(str, dace.symbolic.symbols_in_ast(self.condition.code[0])))
@@ -360,7 +361,6 @@ class InterstateEdge(object):
         Returns a mapping between symbols defined by this edge (i.e.,
         assignments) to their type.
         """
-        from dace.codegen.tools.type_inference import infer_expr_type
 
         if sdfg is not None:
             alltypes = copy.copy(symbols)
@@ -864,7 +864,7 @@ class SDFG(ControlFlowRegion):
         :param cpp_code: The code to set.
         :param location: The file/backend in which to generate the code.
                          Options are None (all files), "frame", "openmp",
-                         "cuda", "xilinx", "intel_fpga", or any code generator
+                         "cuda", or any code generator
                          name.
         """
         self.global_code[location] = CodeBlock(cpp_code, dace.dtypes.Language.CPP)
@@ -877,7 +877,7 @@ class SDFG(ControlFlowRegion):
         :param cpp_code: The code to set.
         :param location: The file/backend in which to generate the code.
                          Options are None (all files), "frame", "openmp",
-                         "cuda", "xilinx", "intel_fpga", or any code generator
+                         "cuda", or any code generator
                          name.
         """
         self.init_code[location] = CodeBlock(cpp_code, dtypes.Language.CPP)
@@ -890,7 +890,7 @@ class SDFG(ControlFlowRegion):
         :param cpp_code: The code to set.
         :param location: The file/backend in which to generate the code.
                          Options are None (all files), "frame", "openmp",
-                         "cuda", "xilinx", "intel_fpga", or any code generator
+                         "cuda", or any code generator
                          name.
         """
         self.exit_code[location] = CodeBlock(cpp_code, dtypes.Language.CPP)
@@ -903,7 +903,7 @@ class SDFG(ControlFlowRegion):
         :param cpp_code: The code to set.
         :param location: The file/backend in which to generate the code.
                          Options are None (all files), "frame", "openmp",
-                         "cuda", "xilinx", "intel_fpga", or any code generator
+                         "cuda", or any code generator
                          name.
         """
         if location not in self.global_code:
@@ -918,7 +918,7 @@ class SDFG(ControlFlowRegion):
         :param cpp_code: The code to append.
         :param location: The file/backend in which to generate the code.
                          Options are None (all files), "frame", "openmp",
-                         "cuda", "xilinx", "intel_fpga", or any code generator
+                         "cuda", or any code generator
                          name.
         """
         if location not in self.init_code:
@@ -933,7 +933,7 @@ class SDFG(ControlFlowRegion):
         :param cpp_code: The code to append.
         :param location: The file/backend in which to generate the code.
                          Options are None (all files), "frame", "openmp",
-                         "cuda", "xilinx", "intel_fpga", or any code generator
+                         "cuda", or any code generator
                          name.
         """
         if location not in self.exit_code:
@@ -948,7 +948,7 @@ class SDFG(ControlFlowRegion):
         :param cpp_code: The code to prepend.
         :param location: The file/backend in which to generate the code.
                          Options are None (all files), "frame", "openmp",
-                         "cuda", "xilinx", "intel_fpga", or any code generator
+                         "cuda", or any code generator
                          name.
         """
         if location not in self.exit_code:
@@ -1030,8 +1030,12 @@ class SDFG(ControlFlowRegion):
         :return: A path to the latest instrumentation report, or None if one does not exist.
         """
         path = os.path.join(self.build_folder, 'perf')
-        files = [f for f in os.listdir(path) if f.startswith('report-')]
-        if len(files) == 0:
+        try:
+            files = [f for f in os.listdir(path) if f.startswith('report-')]
+        except FileNotFoundError:
+            return None
+
+        if not files:
             return None
 
         return os.path.join(path, sorted(files, reverse=True)[0])
@@ -1097,7 +1101,7 @@ class SDFG(ControlFlowRegion):
     def call_with_instrumented_data(self, dreport: 'InstrumentedDataReport', *args, **kwargs):
         """
         Invokes an SDFG with an instrumented data report, generating and compiling code if necessary.
-        Arguments given as ``args`` and ``kwargs`` will be overriden by the data containers defined in the report.
+        Arguments given as ``args`` and ``kwargs`` will be overridden by the data containers defined in the report.
 
         :param dreport: The instrumented data report to use upon calling.
         :param args: Arguments to call SDFG with.
@@ -1129,7 +1133,7 @@ class SDFG(ControlFlowRegion):
         Creates a schedule tree from this SDFG and all nested SDFGs. The schedule tree is a tree of nodes that represent
         the execution order of the SDFG.
         Each node in the tree can either represent a single statement (symbol assignment, tasklet, copy, library node,
-        etc.) or a ``ScheduleTreeScope`` block (map, for-loop, pipeline, etc.) that contains other nodes.
+        etc.) or a ``ScheduleTreeScope`` block (map, for-loop, etc.) that contains other nodes.
 
         It can be used to generate code from an SDFG, or to perform schedule transformations on the SDFG. For example,
         erasing an empty if branch, or merging two consecutive for-loops.
@@ -2110,7 +2114,7 @@ class SDFG(ControlFlowRegion):
                     if isinstance(v, dt.Data):
                         _add_symbols(sdfg, v)
             for sym in desc.free_symbols:
-                if sym.name not in sdfg.symbols:
+                if sym.name not in sdfg.symbols and sym.name not in sdfg.arg_names:
                     sdfg.add_symbol(sym.name, sym.dtype)
 
         # Add the data descriptor to the SDFG and all symbols that are not yet known.
@@ -2841,21 +2845,6 @@ class SDFG(ControlFlowRegion):
                                                 simplify=simplify,
                                                 host_maps=host_maps,
                                                 host_data=host_data),
-                                   validate=validate,
-                                   validate_all=validate_all,
-                                   permissive=permissive,
-                                   states=states)
-
-    def apply_fpga_transformations(self, states=None, validate=True, validate_all=False, permissive=False):
-        """ Applies a series of transformations on the SDFG for it to
-            generate FPGA code.
-
-            :note: This is an in-place operation on the SDFG.
-        """
-        # Avoiding import loops
-        from dace.transformation.interstate import FPGATransformSDFG
-
-        self.apply_transformations(FPGATransformSDFG,
                                    validate=validate,
                                    validate_all=validate_all,
                                    permissive=permissive,

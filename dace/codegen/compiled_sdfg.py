@@ -9,6 +9,7 @@ from typing import Any, Callable, Dict, List, Tuple, Optional, Type, Union
 import warnings
 import tempfile
 import pickle
+import pathlib
 import sys
 
 import numpy as np
@@ -77,7 +78,8 @@ class ReloadableDLL(object):
             lib_cfilename = ctypes.c_wchar_p(self._library_filename)
         else:
             # As UTF-8
-            lib_cfilename = ctypes.c_char_p(self._library_filename.encode('utf-8'))
+            tt = self._library_filename.encode('utf-8')
+            lib_cfilename = ctypes.c_char_p(tt)
 
         return self._stub.is_library_loaded(lib_cfilename) == 1
 
@@ -96,21 +98,39 @@ class ReloadableDLL(object):
         # Check if library is already loaded
         is_loaded = True
         lib_cfilename = None
+        lib_filename = self._library_filename
+        counter = 0
         while is_loaded:
             # Convert library filename to string according to OS
             if os.name == 'nt':
                 # As UTF-16
-                lib_cfilename = ctypes.c_wchar_p(self._library_filename)
+                lib_cfilename = ctypes.c_wchar_p(lib_filename)
             else:
                 # As UTF-8
-                lib_cfilename = ctypes.c_char_p(self._library_filename.encode('utf-8'))
+                lib_cfilename = ctypes.c_char_p(lib_filename.encode('utf-8'))
 
+            # Test if the library is loaded.
             is_loaded = self._stub.is_library_loaded(lib_cfilename)
+
             if is_loaded == 1:
                 warnings.warn(f'Library {self._library_filename} already loaded, renaming file')
+
+                # The library is loaded, copy the _original_ library file to a new file
+                #  and then try to load that. We only do the copy if the new new name is
+                #  free. It seems that at least on LINUX there is some issue if we
+                #  overwrite a file that already exists.
+                lib_filename = self._library_filename + f'_{counter}'
+                counter += 1
+                if pathlib.Path(lib_filename).exists():
+                    assert pathlib.Path(lib_filename).is_file()
+                    continue
+
+                # The file name is not taken, so make a copy. There might be a race condition
+                #  here in the presence of multiple processes.
+                # TODO: Investigate if we should switch to hardlinks if they are supported.
                 try:
-                    shutil.copyfile(self._library_filename, self._library_filename + '_')
-                    self._library_filename += '_'
+                    assert self._library_filename != lib_filename
+                    shutil.copyfile(self._library_filename, lib_filename)
                 except shutil.Error:
                     raise cgx.DuplicateDLLError(f'Library {os.path.basename(self._library_filename)}'
                                                 'is already loaded somewhere else and cannot be unloaded. '
@@ -118,6 +138,7 @@ class ReloadableDLL(object):
 
         # Actually load the library
         self._lib = ctypes.c_void_p(self._stub.load_library(lib_cfilename))
+        self._library_filename = lib_filename
 
         if self._lib.value is None:
             # Try to understand why the library is not loading, if dynamic
@@ -146,6 +167,12 @@ class ReloadableDLL(object):
 
     def __exit__(self, *args, **kwargs):
         self.unload()
+
+    def __copy__(self):
+        raise RuntimeError(f'Can not copy ReloadableDLL({self._library_filename})')
+
+    def __deepcopy__(self, memodict={}):
+        raise RuntimeError(f'Can not copy ReloadableDLL({self._library_filename})')
 
 
 class CompiledSDFG(object):
@@ -583,8 +610,6 @@ with open(r"{temp_path}", "wb") as f:
                 zeros = cupy.empty
             except (ImportError, ModuleNotFoundError):
                 raise NotImplementedError('GPU return values are unsupported if cupy is not installed')
-        if storage is dtypes.StorageType.FPGA_Global:
-            raise NotImplementedError('FPGA return values are unsupported')
 
         # Create an array with the properties of the SDFG array
         return ndarray(shape, dtype, buffer=zeros(total_size, dtype), strides=strides)

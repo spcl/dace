@@ -35,6 +35,17 @@ if raw_path is not None:
     sys.path.insert(0, __external_transformations_path__)
 
 
+# Lazy loading for ml module to avoid eager TensorFlow/PyTorch imports
+def __getattr__(name):
+    if name == 'ml':
+        import importlib
+        ml_module = importlib.import_module('.ml', package='dace')
+        # Cache the module to avoid re-importing
+        globals()['ml'] = ml_module
+        return ml_module
+    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
+
+
 # Hack that enables using @dace as a decorator
 # See https://stackoverflow.com/a/48100440/6489142
 class DaceModule(sys.modules[__name__].__class__):

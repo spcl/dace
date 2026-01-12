@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import ctypes
 import functools
 import warnings
@@ -20,7 +20,7 @@ from dace.codegen.targets import cpp
 from dace.codegen.common import update_persistent_desc
 from dace.codegen.targets.cpp import (codeblock_to_cpp, cpp_array_expr, memlet_copy_to_absolute_strides, sym2cpp,
                                       synchronize_streams, unparse_cr, mangle_dace_state_struct_name)
-from dace.codegen.targets.target import IllegalCopy, TargetCodeGenerator, make_absolute
+from dace.codegen.target import IllegalCopy, TargetCodeGenerator, make_absolute
 from dace.config import Config
 from dace.frontend import operations
 from dace.sdfg import (SDFG, ScopeSubgraphView, SDFGState, has_dynamic_map_inputs, is_array_stream_view,
@@ -183,8 +183,13 @@ class CUDACodeGen(TargetCodeGenerator):
                     # NOTE: If possible `memlet_copy_to_absolute_strides()` will collapse a
                     #   ND copy into a 1D copy if the memory is contiguous. In that case
                     #   `copy_shape` will only have one element.
-                    copy_shape, src_strides, dst_strides, _, _ = memlet_copy_to_absolute_strides(
-                        None, nsdfg, state, e, e.src, e.dst)
+                    copy_shape, src_strides, dst_strides, _, _ = memlet_copy_to_absolute_strides(None,
+                                                                                                 nsdfg,
+                                                                                                 state,
+                                                                                                 e,
+                                                                                                 e.src,
+                                                                                                 e.dst,
+                                                                                                 codegen=self)
                     dims = len(copy_shape)
 
                     # Skip supported copy types
@@ -573,7 +578,7 @@ void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
             raise NotImplementedError("The declare_array method should only be used for variables "
                                       "that must have their declaration and allocation separate.")
 
-        ptrname = cpp.ptr(node.data, nodedesc, sdfg, self._frame)
+        ptrname = self.ptr(node.data, nodedesc, sdfg)
 
         # Check if array is already declared
         if self._dispatcher.declared_arrays.has(ptrname):
@@ -599,7 +604,7 @@ void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
     def allocate_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                        node: nodes.AccessNode, nodedesc: dt.Data, function_stream: CodeIOStream,
                        declaration_stream: CodeIOStream, allocation_stream: CodeIOStream) -> None:
-        dataname = cpp.ptr(node.data, nodedesc, sdfg, self._frame)
+        dataname = self.ptr(node.data, nodedesc, sdfg)
 
         try:
             self._dispatcher.defined_vars.get(dataname)
@@ -700,7 +705,7 @@ void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
                         node: nodes.AccessNode, nodedesc: dt.Data, function_stream: CodeIOStream,
                         declaration_stream: CodeIOStream, allocation_stream: CodeIOStream) -> None:
         dataname = node.data
-        allocname = cpp.ptr(dataname, nodedesc, sdfg, self._frame)
+        allocname = self.ptr(dataname, nodedesc, sdfg)
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
             fmtargs = {
                 'name': allocname,  # TODO: Handle persistent streams
@@ -719,7 +724,7 @@ void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
                     raise NotImplementedError("Cannot handle streams writing to multiple arrays.")
 
                 fmtargs['ptr'] = nodedesc.sink + ' + ' + cpp_array_expr(
-                    sdfg, edges[0].data, with_brackets=False, codegen=self._frame)
+                    sdfg, edges[0].data, with_brackets=False, codegen=self)
 
                 # Assuming 1D subset of sink/src
                 # sym2cpp(edges[0].data.subset[-1])
@@ -764,7 +769,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
     def deallocate_stream(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                           node: nodes.AccessNode, nodedesc: dt.Data, function_stream: CodeIOStream,
                           callsite_stream: CodeIOStream) -> None:
-        dataname = cpp.ptr(node.data, nodedesc, sdfg, self._frame)
+        dataname = self.ptr(node.data, nodedesc, sdfg)
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
             if is_array_stream_view(sdfg, dfg, node):
                 callsite_stream.write('dace::FreeGPUArrayStreamView(%s);' % dataname, cfg, state_id, node)
@@ -774,7 +779,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
     def deallocate_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                          node: nodes.AccessNode, nodedesc: dt.Data, function_stream: CodeIOStream,
                          callsite_stream: CodeIOStream) -> None:
-        dataname = cpp.ptr(node.data, nodedesc, sdfg, self._frame)
+        dataname = self.ptr(node.data, nodedesc, sdfg)
         if isinstance(nodedesc, dt.Array) and nodedesc.start_offset != 0:
             dataname = f'({dataname} - {cpp.sym2cpp(nodedesc.start_offset)})'
 
@@ -1027,7 +1032,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
             # Obtain copy information
             copy_shape, src_strides, dst_strides, src_expr, dst_expr = (memlet_copy_to_absolute_strides(
-                self._dispatcher, sdfg, state_dfg, edge, src_node, dst_node, self._cpu_codegen._packed_types))
+                self._dispatcher, sdfg, state_dfg, edge, src_node, dst_node, codegen=self))
             dims = len(copy_shape)
             dtype = dst_node.desc(sdfg).dtype
 
@@ -1087,6 +1092,11 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     is_fortran_order = src_strides[0] == 1 and dst_strides[0] == 1
                     is_c_order = is_fortran_order
                     dims = 1
+
+            for instr in self._dispatcher.instrumentation.values():
+                if instr is not None:
+                    instr.on_copy_begin(sdfg, cfg, state_dfg, src_node, dst_node, edge, callsite_stream, None,
+                                        copy_shape, src_strides, dst_strides)
 
             if dims > 2:
                 # Currently we only support ND copies when they can be represented
@@ -1243,6 +1253,10 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
             self._emit_sync(callsite_stream)
 
+            for instr in self._dispatcher.instrumentation.values():
+                if instr is not None:
+                    instr.on_copy_end(sdfg, cfg, state_dfg, src_node, dst_node, edge, callsite_stream, None)
+
         # Copy within the GPU
         elif (src_storage in gpu_storage_types and dst_storage in gpu_storage_types):
 
@@ -1270,7 +1284,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             if inner_schedule == dtypes.ScheduleType.GPU_Device:
                 # Obtain copy information
                 copy_shape, src_strides, dst_strides, src_expr, dst_expr = (memlet_copy_to_absolute_strides(
-                    self._dispatcher, sdfg, state, edge, src_node, dst_node, self._cpu_codegen._packed_types))
+                    self._dispatcher, sdfg, state, edge, src_node, dst_node, codegen=self))
                 dims = len(copy_shape)
 
                 funcname = 'dace::%sTo%s%dD' % (_get_storagename(src_storage), _get_storagename(dst_storage), dims)
@@ -1404,7 +1418,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     continue
 
                 desc = sd.arrays[name]
-                ptrname = cpp.ptr(name, desc, sd, self._frame)
+                ptrname = self.ptr(name, desc, sd)
                 if isinstance(desc, dt.Array) and desc.start_offset != 0:
                     ptrname = f'({ptrname} - {cpp.sym2cpp(desc.start_offset)})'
 
@@ -1479,7 +1493,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 and node.desc(sdfg).lifetime == dtypes.AllocationLifetime.Scope
             ]
             for stream in streams_to_reset:
-                ptrname = cpp.ptr(stream.data, stream.desc(sdfg), sdfg, self._frame)
+                ptrname = self.ptr(stream.data, stream.desc(sdfg), sdfg)
                 callsite_stream.write("{}.reset();".format(ptrname), cfg, state.block_id)
 
             components = dace.sdfg.concurrent_subgraphs(state)
@@ -1591,7 +1605,11 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
         # Handle dynamic map inputs
         for e in dace.sdfg.dynamic_map_inputs(state, scope_entry):
-            kernel_args[str(e.src)] = e.src.desc(sdfg)
+            if e.data is None:
+                raise Exception("Dynamic map input's memlet can't be None")
+            data_name = e.data.data
+            data_desc = state.sdfg.arrays[data_name]
+            kernel_args[data_name] = data_desc
 
         # Add data from nested SDFGs to kernel arguments
         extra_call_args = []
@@ -1608,12 +1626,12 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     continue
                 visited.add((nsdfg, node.data))
                 if desc.transient and self._frame.where_allocated[(nsdfg, node.data)] is not nsdfg:
-                    outer_name = cpp.ptr(node.data, desc, nsdfg, self._frame)
+                    outer_name = self.ptr(node.data, desc, nsdfg)
 
                     # Create name from within kernel
                     oldval = self._in_device_code
                     self._in_device_code = True
-                    inner_name = cpp.ptr(node.data, desc, nsdfg, self._frame)
+                    inner_name = self.ptr(node.data, desc, nsdfg)
                     self._in_device_code = oldval
 
                     self.extra_nsdfg_args.append((desc.as_arg(name=''), inner_name, outer_name))
@@ -1670,12 +1688,12 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                             defined_type, ctype = (self._dispatcher.declared_arrays.get(aname, is_global=is_global))
                     except KeyError:
                         pass
-                    ptrname = cpp.ptr(aname, data_desc, sdfg, self._frame)
+                    ptrname = self.ptr(aname, data_desc, sdfg)
                     if not defined_type:
                         defined_type, ctype = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
 
                     self._in_device_code = True
-                    inner_ptrname = cpp.ptr(aname, data_desc, sdfg, self._frame)
+                    inner_ptrname = self.ptr(aname, data_desc, sdfg)
                     self._in_device_code = False
 
                     self._dispatcher.defined_vars.add(inner_ptrname,
@@ -1688,13 +1706,13 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             else:
                 if aname in sdfg.arrays:
                     data_desc = sdfg.arrays[aname]
-                    ptrname = cpp.ptr(aname, data_desc, sdfg, self._frame)
+                    ptrname = self.ptr(aname, data_desc, sdfg)
                     is_global = data_desc.lifetime in (dtypes.AllocationLifetime.Global,
                                                        dtypes.AllocationLifetime.Persistent,
                                                        dtypes.AllocationLifetime.External)
                     defined_type, ctype = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
                     self._in_device_code = True
-                    inner_ptrname = cpp.ptr(aname, data_desc, sdfg, self._frame)
+                    inner_ptrname = self.ptr(aname, data_desc, sdfg)
                     self._in_device_code = False
                     self._dispatcher.defined_vars.add(inner_ptrname, defined_type, ctype, allow_shadowing=True)
 
@@ -1718,21 +1736,29 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
         node = dfg_scope.source_nodes()[0]
 
-        # Set kernel launch bounds
-        if node.gpu_launch_bounds == "-1":
-            launch_bounds = ''
-        elif node.gpu_launch_bounds == "0":
-            if any(symbolic.issymbolic(b) for b in block_dims):
+        # Set maxnreg and launch bounds
+        assert node.gpu_maxnreg is not None and node.gpu_maxnreg >= 0
+        if node.gpu_maxnreg == 0:
+            maxnreg_str = ''
+            # Set kernel launch bounds
+            if node.gpu_launch_bounds == "-1":
                 launch_bounds = ''
+            elif node.gpu_launch_bounds == "0":
+                if any(symbolic.issymbolic(b) for b in block_dims):
+                    launch_bounds = ''
+                else:
+                    launch_bounds = f'__launch_bounds__({_topy(prod(block_dims))})'
             else:
-                launch_bounds = f'__launch_bounds__({_topy(prod(block_dims))})'
+                launch_bounds = f'__launch_bounds__({node.gpu_launch_bounds})'
         else:
-            launch_bounds = f'__launch_bounds__({node.gpu_launch_bounds})'
+            maxnreg_str = f'__maxnreg__({node.gpu_maxnreg})'
+            launch_bounds = ''
 
         # Write kernel prototype
         self._localcode.write(
-            '__global__ void %s %s(%s) {\n' %
-            (launch_bounds, kernel_name, ', '.join(kernel_args_typed + extra_kernel_args_typed)), cfg, state_id, node)
+            '__global__ void %s %s %s(%s) {\n' %
+            (maxnreg_str, launch_bounds, kernel_name, ', '.join(kernel_args_typed + extra_kernel_args_typed)), cfg,
+            state_id, node)
 
         # Write constant expressions in GPU code
         self._frame.generate_constants(sdfg, self._localcode)
@@ -1804,7 +1830,15 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 
         # make sure dynamic map inputs are properly handled
         for e in dace.sdfg.dynamic_map_inputs(state, scope_entry):
+            if e.data is not None and e.data.data == e.dst_conn:
+                warnings.warn(
+                    f"Dynamic map input name {e.data.data} is same as the dst connector. Will result in a name clash, omitting of code for this assignment is skipped."
+                )
+                comment_out_str = "// Omitted name clash on dynamic map input\n//"
+            else:
+                comment_out_str = ""
             self._localcode.write(
+                comment_out_str +
                 self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn]),
                 cfg, state_id, scope_entry)
 
@@ -1875,17 +1909,24 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                 callsite_stream.write(
                     'DACE_GPU_CHECK({backend}EventSynchronize(__state->gpu_context->events[{ev}]));'.format(
                         ev=ev, backend=self.backend), cfg, state_id, [e.src, e.dst])
+            if e.data is not None and e.data.data == e.dst_conn:
+                warnings.warn(
+                    f"Dynamic map input name {e.data.data} is same as the dst connector. Will result in a name clash, omitting of code for this assignment is skipped."
+                )
+                comment_out_str = "// Omitted name clash on dynamic map input\n//"
+            else:
+                comment_out_str = ""
             callsite_stream.write(
+                comment_out_str +
                 self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn]),
                 cfg, state_id, node)
 
         # Invoke kernel call
         callsite_stream.write(
             '__dace_runkernel_%s(%s);\n' %
-            (kernel_name,
-             ', '.join(['__state'] + [cpp.ptr(aname, arg, sdfg, self._frame)
-                                      for aname, arg in kernel_args.items()] + extra_call_args)), cfg, state_id,
-            scope_entry)
+            (kernel_name, ', '.join(['__state'] + [self.ptr(aname, arg, sdfg)
+                                                   for aname, arg in kernel_args.items()] + extra_call_args)), cfg,
+            state_id, scope_entry)
 
         # If there are dynamic Map inputs, put the kernel invocation in its own scope to avoid redefinitions.
         if dace.sdfg.has_dynamic_map_inputs(state, scope_entry):
@@ -2111,8 +2152,8 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
         # Check block size against configured maximum values, if those can be determined
         total_bsize = prod(block_size)
-        total_limit = Config.get('compiler', 'cuda', 'block_size_limit')
-        lastdim_limit = Config.get('compiler', 'cuda', 'block_size_lastdim_limit')
+        total_limit = int(Config.get('compiler', 'cuda', 'block_size_limit'))
+        lastdim_limit = int(Config.get('compiler', 'cuda', 'block_size_lastdim_limit'))
         if (total_bsize > total_limit) == True:
             raise ValueError(f'Block size for kernel "{kernelmap_entry.map.label}" ({block_size}) '
                              f'is larger than the possible number of threads per block ({total_limit}). '
@@ -2167,7 +2208,15 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
         # handle dynamic map inputs
         for e in dace.sdfg.dynamic_map_inputs(cfg.node(state_id), dfg_scope.source_nodes()[0]):
+            if e.data is not None and e.data.data == e.dst_conn:
+                warnings.warn(
+                    f"Dynamic map input name {e.data.data} is same as the dst connector. Will result in a name clash, omitting of code for this assignment is skipped."
+                )
+                comment_out_str = "// Omitted name clash on dynamic map input\n//"
+            else:
+                comment_out_str = ""
             kernel_stream.write(
+                comment_out_str +
                 self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn]),
                 cfg, state_id,
                 dfg_scope.source_nodes()[0])
@@ -2345,9 +2394,16 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             # They define outside the schedule the bounds of the dynamic Map's for-loop invocation.
             # NOTE: The value of the dynamic Map's variable may differ inside and outside the schedule.
             for e in dace.sdfg.dynamic_map_inputs(dfg, scope_entry):
+                if e.data is not None and e.data.data == e.dst_conn:
+                    warnings.warn(
+                        f"Dynamic map input name {e.data.data} is same as the dst connector. Will result in a name clash, omitting of code for this assignment is skipped."
+                    )
+                    comment_out_str = "// Omitted name clash on dynamic map input\n//"
+                else:
+                    comment_out_str = ""
                 callsite_stream.write(
-                    self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn,
-                                                        e.dst.in_connectors[e.dst_conn]), cfg, state_id, scope_entry)
+                    comment_out_str + self._cpu_codegen.memlet_definition(
+                        sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn]), cfg, state_id, scope_entry)
 
             dynmap_var = scope_map.params[0]
             dynmap_begin = scope_map.range[0][0]
@@ -2376,9 +2432,16 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                                           param=dynmap_var), cfg, state_id, scope_entry)
 
             for e in dace.sdfg.dynamic_map_inputs(dfg, scope_entry):
+                if e.data is not None and e.data.data == e.dst_conn:
+                    warnings.warn(
+                        f"Dynamic map input name {e.data.data} is same as the dst connector. Will result in a name clash, omitting of code for this assignment is skipped."
+                    )
+                    comment_out_str = "// Omitted name clash on dynamic map input\n//"
+                else:
+                    comment_out_str = ""
                 callsite_stream.write(
-                    self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn,
-                                                        e.dst.in_connectors[e.dst_conn]), cfg, state_id, scope_entry)
+                    comment_out_str + self._cpu_codegen.memlet_definition(
+                        sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn]), cfg, state_id, scope_entry)
 
             if dynmap_step != 1:
                 callsite_stream.write(
@@ -2411,9 +2474,16 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
                 # handle dynamic map inputs
                 for e in dace.sdfg.dynamic_map_inputs(dfg, scope_entry):
+                    if e.data is not None and e.data.data == e.dst_conn:
+                        warnings.warn(
+                            f"Dynamic map input name {e.data.data} is same as the dst connector. Will result in a name clash, omitting of code for this assignment is skipped."
+                        )
+                        comment_out_str = "// Omitted name clash on dynamic map input\n//"
+                    else:
+                        comment_out_str = ""
                     callsite_stream.write(
-                        self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn,
-                                                            e.dst.in_connectors[e.dst_conn]), cfg, state_id,
+                        comment_out_str + self._cpu_codegen.memlet_definition(
+                            sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn]), cfg, state_id,
                         scope_entry)
 
                 # variables that need to be declared + the value they need to be initialized with
@@ -2884,6 +2954,32 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
     def make_ptr_vector_cast(self, *args, **kwargs):
         return cpp.make_ptr_vector_cast(*args, **kwargs)
+
+    def ptr(self,
+            name: str,
+            desc: dt.Data,
+            sdfg: SDFG = None,
+            subset: Optional[subsets.Subset] = None,
+            is_write: Optional[bool] = None,
+            ancestor: int = 0) -> str:
+        """
+        Returns a string that points to the data based on its name and descriptor.
+
+        :param name: Data name.
+        :param desc: Data descriptor.
+        :param sdfg: SDFG in which the data resides.
+        :param subset: Optional subset associated with the data.
+        :param is_write: Whether the access is a write access.
+        :param ancestor: Scope ancestor level.
+        :return: C-compatible name that can be used to access the data.
+        """
+        return cpp.ptr(name, desc, sdfg, self._frame)
+
+    def emit_interstate_variable_declaration(self, name: str, dtype: dtypes.typeclass, callsite_stream: CodeIOStream,
+                                             sdfg: SDFG):
+        isvar = dt.Scalar(dtype)
+        callsite_stream.write('%s;\n' % (isvar.as_arg(with_types=True, name=name)), sdfg)
+        self._frame.dispatcher.defined_vars.add(name, DefinedType.Scalar, dtype.ctype)
 
 
 ########################################################################
