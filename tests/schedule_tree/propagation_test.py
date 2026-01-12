@@ -22,8 +22,7 @@ def test_stree_propagation_forloop():
     stree = t2s.insert_state_boundaries_to_tree(stree)
 
     node_types = [n for n in stree.preorder_traversal()]
-    assert isinstance(node_types[2], tn.LoopScope)
-    assert node_types[2]._check_loop_variant() == "for"
+    assert isinstance(node_types[2], tn.ForScope)
     memlet = dace.Memlet('a[1:N]')
     memlet._is_data_src = False
     assert list(node_types[2].output_memlets()) == [memlet]

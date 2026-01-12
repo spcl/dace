@@ -362,51 +362,78 @@ class LoopScope(ControlFlowScope):
     """
     loop: LoopRegion
 
-    def _check_loop_variant(
-        self
-    ) -> Union[Literal['for'], Literal['while'], Literal['do-while'], Literal['do-for-uncond-increment'],
-               Literal['do-for']]:
-        if self.loop.update_statement and self.loop.init_statement and self.loop.loop_variable:
-            if self.loop.inverted:
-                if self.loop.update_before_condition:
-                    return 'do-for-uncond-increment'
-                else:
-                    return 'do-for'
-            else:
-                return 'for'
-        else:
-            if self.loop.inverted:
-                return 'do-while'
-            else:
-                return 'while'
-
     def as_string(self, indent: int = 0):
         loop = self.loop
-        loop_variant = self._check_loop_variant()
-        if loop_variant == 'do-for-uncond-increment':
+        variant = loop_variant(loop)
+        if variant == 'do-for-uncond-increment':
             pre_header = indent * INDENTATION + f'{loop.init_statement.as_string}\n'
             header = indent * INDENTATION + 'do:\n'
             pre_footer = (indent + 1) * INDENTATION + f'{loop.update_statement.as_string}\n'
             footer = indent * INDENTATION + f'while {loop.loop_condition.as_string}'
             return pre_header + header + super().as_string(indent) + '\n' + pre_footer + footer
-        elif loop_variant == 'do-for':
+
+        if variant == 'do-for':
             pre_header = indent * INDENTATION + f'{loop.init_statement.as_string}\n'
             header = indent * INDENTATION + 'while True:\n'
             pre_footer = (indent + 1) * INDENTATION + f'if (not {loop.loop_condition.as_string}):\n'
             pre_footer += (indent + 2) * INDENTATION + 'break\n'
             footer = (indent + 1) * INDENTATION + f'{loop.update_statement.as_string}\n'
             return pre_header + header + super().as_string(indent) + '\n' + pre_footer + footer
-        elif loop_variant == 'for':
-            result = (indent * INDENTATION + f'for {loop.init_statement.as_string}; ' +
-                      f'{loop.loop_condition.as_string}; ' + f'{loop.update_statement.as_string}:\n')
-            return result + super().as_string(indent)
-        elif loop_variant == 'while':
-            result = indent * INDENTATION + f'while {loop.loop_condition.as_string}:\n'
-            return result + super().as_string(indent)
-        else:  # 'do-while'
-            header = indent * INDENTATION + 'do:\n'
-            footer = indent * INDENTATION + f'while {loop.loop_condition.as_string}'
-            return header + super().as_string(indent) + '\n' + footer
+
+        if variant in ["for", "while", "do-while"]:
+            return super().as_string(indent)
+
+        return NotImplementedError  # TODO: nice error message
+
+
+@dataclass
+class ForScope(LoopScope):
+    """Specialized LoopScope for for-loops."""
+
+    def as_string(self, indent: int = 0) -> str:
+        init_statement = self.loop.init_statement.as_string
+        condition = self.loop.loop_condition.as_string
+        update_statement = self.loop.update_statement.as_string
+        result = indent * INDENTATION + f"for {init_statement}; {condition}; {update_statement}:\n"
+        return result + super().as_string(indent)
+
+    def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None, **kwargs) -> MemletSet:
+        raise NotImplementedError
+
+    def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None, **kwargs) -> MemletSet:
+        raise NotImplementedError
+
+
+@dataclass
+class WhileScope(LoopScope):
+    """Specialized LoopScope for while-loops."""
+
+    def as_string(self, indent: int = 0) -> str:
+        condition = self.loop.loop_condition.as_string
+        result = indent * INDENTATION + f'while {condition}:\n'
+        return result + super().as_string(indent)
+
+    def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None, **kwargs) -> MemletSet:
+        raise NotImplementedError
+
+    def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None, **kwargs) -> MemletSet:
+        raise NotImplementedError
+
+
+@dataclass
+class DoWhileScope(LoopScope):
+    """Specialized LoopScope for do-while-loops"""
+
+    def as_string(self, indent: int = 0) -> str:
+        header = indent * INDENTATION + 'do:\n'
+        footer = indent * INDENTATION + f'while {self.loop.loop_condition.as_string}'
+        return header + super().as_string(indent) + '\n' + footer
+
+    def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None, **kwargs) -> MemletSet:
+        raise NotImplementedError
+
+    def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None, **kwargs) -> MemletSet:
+        raise NotImplementedError
 
 
 @dataclass
@@ -545,17 +572,16 @@ class ConsumeScope(DataflowScope):
 
 
 @dataclass
-class PipelineScope(MapScope):
-    """
-    Pipeline scope.
-    """
-    node: nodes.PipelineEntry
-
-    def as_string(self, indent: int = 0):
-        rangestr = ', '.join(subsets.Range.dim_to_string(d) for d in self.node.map.range)
-        result = indent * INDENTATION + f'pipeline {", ".join(self.node.map.params)} in [{rangestr}]:\n'
-        return result + super().as_string(indent)
-
+# class PipelineScope(MapScope):
+#     """
+#     Pipeline scope.
+#     """
+#     node: nodes.PipelineEntry
+#
+#     def as_string(self, indent: int = 0):
+#         rangestr = ', '.join(subsets.Range.dim_to_string(d) for d in self.node.map.range)
+#         result = indent * INDENTATION + f'pipeline {", ".join(self.node.map.params)} in [{rangestr}]:\n'
+#         return result + super().as_string(indent)
 
 @dataclass
 class TaskletNode(ScheduleTreeNode):
@@ -802,3 +828,19 @@ def validate_has_no_other_node_types(stree: ScheduleTreeScope) -> None:
             raise RuntimeError(f'Unsupported node type: {type(child).__name__}')
         if isinstance(child, ScheduleTreeScope):
             validate_has_no_other_node_types(child)
+
+
+def loop_variant(
+    loop: LoopRegion
+) -> Union[Literal['for'], Literal['while'], Literal['do-while'], Literal['do-for-uncond-increment'],
+           Literal['do-for']]:
+    if loop.update_statement and loop.init_statement and loop.loop_variable:
+        if loop.inverted:
+            if loop.update_before_condition:
+                return 'do-for-uncond-increment'
+            return 'do-for'
+        return 'for'
+
+    if loop.inverted:
+        return 'do-while'
+    return 'while'

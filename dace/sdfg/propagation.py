@@ -423,9 +423,9 @@ class GenericSMemlet(SeparableMemletPattern):
             if symbolic.issymbolic(dim):
                 used_symbols.update(dim.free_symbols)
 
-        if any(s not in defined_vars for s in (used_symbols - set(self.params))):
-            # Cannot propagate symbols that are undefined outside scope (e.g., internal symbols)
-            return False
+        # if any(s not in defined_vars for s in (used_symbols - set(self.params))):
+        #     # Cannot propagate symbols that are undefined outside scope (e.g., internal symbols)
+        #     return False
 
         if (used_symbols & set(self.params)
                 and any(symbolic.pystr_to_symbolic(s) not in defined_vars for s in node_range.free_symbols)):
@@ -1430,7 +1430,12 @@ def propagate_memlet(dfg_state,
     # Propagate subset
     if isinstance(entry_node, nodes.MapEntry):
         mapnode = entry_node.map
-        return propagate_subset(aggdata, arr, mapnode.params, mapnode.range, defined_vars, use_dst=use_dst)
+        return propagate_subset(aggdata,
+                                arr,
+                                mapnode.params,
+                                mapnode.range,
+                                defined_variables=defined_vars,
+                                use_dst=use_dst)
 
     elif isinstance(entry_node, nodes.ConsumeEntry):
         # Nothing to analyze/propagate in consume
@@ -1449,6 +1454,7 @@ def propagate_subset(memlets: List[Memlet],
                      arr: data.Data,
                      params: List[str],
                      rng: subsets.Subset,
+                     *,
                      defined_variables: Set[symbolic.SymbolicType] = None,
                      undefined_variables: Set[symbolic.SymbolicType] = None,
                      use_dst: bool = False) -> Memlet:
@@ -1485,8 +1491,10 @@ def propagate_subset(memlets: List[Memlet],
     else:
         defined_variables = set(defined_variables)
 
-    if undefined_variables:
+    if undefined_variables is not None:
         defined_variables = defined_variables - set(symbolic.pystr_to_symbolic(p) for p in undefined_variables)
+    else:
+        undefined_variables = set()
 
     # Propagate subset
     variable_context = [defined_variables, [symbolic.pystr_to_symbolic(p) for p in params]]
@@ -1536,7 +1544,7 @@ def propagate_subset(memlets: List[Memlet],
                         fsyms = _freesyms(sdim)
                         fsyms_str = set(map(str, fsyms))
                         contains_params |= len(fsyms_str & paramset) != 0
-                        contains_undefs |= len(fsyms - defined_variables) != 0
+                        contains_undefs |= len(fsyms & undefined_variables) != 0
                 if contains_params or contains_undefs:
                     tmp_subset_rng.append(ea)
                 else:

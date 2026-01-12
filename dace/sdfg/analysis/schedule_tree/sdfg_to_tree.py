@@ -701,11 +701,24 @@ def _block_schedule_tree(block: ControlFlowBlock) -> List[tn.ScheduleTreeNode]:
                     pivot = None
 
         if isinstance(block, LoopRegion):
-            # If this is a loop region, wrap everything in a LoopScope node.
-            loop_node = tn.LoopScope(loop=block, children=children)
-            return [loop_node]
+            # If this is a loop region, wrap everything in a loop scope node.
+            variant = tn.loop_variant(block)
+            if variant == "for":
+                return [tn.ForScope(loop=block, children=children)]
+
+            if variant == "while":
+                return [tn.WhileScope(loop=block, children=children)]
+
+            if variant == "do-while":
+                return [tn.DoWhileScope(loop=block, children=children)]
+
+            # If we end up here, we don't need more granularity and just use
+            # a general loop scope
+            return [tn.LoopScope(loop=block, children=children)]
+
         return children
-    elif isinstance(block, ConditionalBlock):
+
+    if isinstance(block, ConditionalBlock):
         result: List[tn.ScheduleTreeNode] = []
         if_node = tn.IfScope(condition=block.branches[0][0], children=_block_schedule_tree(block.branches[0][1]))
         result.append(if_node)
@@ -717,9 +730,11 @@ def _block_schedule_tree(block: ControlFlowBlock) -> List[tn.ScheduleTreeNode]:
                 else_node = tn.ElseScope(children=_block_schedule_tree(branch_body))
                 result.append(else_node)
         return result
-    elif isinstance(block, SDFGState):
+
+    if isinstance(block, SDFGState):
         return _state_schedule_tree(block)
-    elif isinstance(block, ReturnBlock):
+
+    if isinstance(block, ReturnBlock):
         # For return blocks, add a goto node to the end of the schedule tree.
         # NOTE: Return blocks currently always exit the entire SDFG context they are contained in, meaning that the exit
         # goto has target=None. However, in the future we want to adapt Return blocks to be able to return only a
@@ -727,8 +742,8 @@ def _block_schedule_tree(block: ControlFlowBlock) -> List[tn.ScheduleTreeNode]:
         # entire SDFG.
         goto_node = tn.GotoNode(target=None)
         return [goto_node]
-    else:
-        raise tn.UnsupportedScopeException(type(block).__name__)
+
+    raise tn.UnsupportedScopeException(type(block).__name__)
 
 
 def _generate_views_in_scope(
@@ -807,7 +822,7 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
     # Clean up tree
     stpasses.remove_unused_and_duplicate_labels(result)
 
-    return result
+    return tn.ScheduleTreeRoot(children=result.children, name="my_stree")
 
 
 if __name__ == '__main__':

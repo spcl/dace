@@ -579,9 +579,9 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
         # AFAIK we don't support consume scopes in the gt4py/dace bridge.
         raise NotImplementedError(f"{type(node)} not implemented")
 
-    def visit_PipelineScope(self, node: tn.PipelineScope, sdfg: SDFG) -> None:
-        # AFAIK we don't support pipeline scopes in the gt4py/dace bridge.
-        raise NotImplementedError(f"{type(node)} not implemented")
+    # def visit_PipelineScope(self, node: tn.PipelineScope, sdfg: SDFG) -> None:
+    #     # AFAIK we don't support pipeline scopes in the gt4py/dace bridge.
+    #     raise NotImplementedError(f"{type(node)} not implemented")
 
     def visit_TaskletNode(self, node: tn.TaskletNode, sdfg: SDFG) -> None:
         # Add Tasklet to current state
