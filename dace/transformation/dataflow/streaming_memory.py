@@ -150,8 +150,7 @@ class StreamingMemory(xf.SingleStateTransformation):
             return False
         # If does not exist on off-chip memory, skip
         if sdfg.arrays[access.data].storage not in [
-                dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_Pinned, dtypes.StorageType.GPU_Global,
-                dtypes.StorageType.FPGA_Global
+                dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_Pinned, dtypes.StorageType.GPU_Global
         ]:
             return False
 
@@ -204,10 +203,6 @@ class StreamingMemory(xf.SingleStateTransformation):
 
             access = self.access
             desc = sdfg.arrays[access.data]
-
-            # Array has to be global array
-            if desc.storage != dtypes.StorageType.FPGA_Global:
-                return False
 
             # Type has to divide target bytes
             if self.memory_buffering_target_bytes % desc.dtype.bytes != 0:
@@ -394,7 +389,7 @@ class StreamingMemory(xf.SingleStateTransformation):
                 read_to_gearbox = state.add_read(input_gearbox_name)
                 write_from_gearbox = state.add_write(output_gearbox_name)
 
-                gearbox = Gearbox(total_size / vector_size, schedule=dtypes.ScheduleType.FPGA_Device)
+                gearbox = Gearbox(total_size / vector_size)
 
                 state.add_node(gearbox)
 

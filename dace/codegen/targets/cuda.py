@@ -183,13 +183,8 @@ class CUDACodeGen(TargetCodeGenerator):
                     # NOTE: If possible `memlet_copy_to_absolute_strides()` will collapse a
                     #   ND copy into a 1D copy if the memory is contiguous. In that case
                     #   `copy_shape` will only have one element.
-                    copy_shape, src_strides, dst_strides, _, _ = memlet_copy_to_absolute_strides(None,
-                                                                                                 nsdfg,
-                                                                                                 state,
-                                                                                                 e,
-                                                                                                 e.src,
-                                                                                                 e.dst,
-                                                                                                 codegen=self)
+                    copy_shape, src_strides, dst_strides, _, _ = memlet_copy_to_absolute_strides(
+                        None, nsdfg, state, e, e.src, e.dst)
                     dims = len(copy_shape)
 
                     # Skip supported copy types
@@ -1030,7 +1025,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
             # Obtain copy information
             copy_shape, src_strides, dst_strides, src_expr, dst_expr = (memlet_copy_to_absolute_strides(
-                self._dispatcher, sdfg, state_dfg, edge, src_node, dst_node, codegen=self))
+                self._dispatcher, sdfg, state_dfg, edge, src_node, dst_node))
             dims = len(copy_shape)
             dtype = dst_node.desc(sdfg).dtype
 
@@ -1282,7 +1277,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             if inner_schedule == dtypes.ScheduleType.GPU_Device:
                 # Obtain copy information
                 copy_shape, src_strides, dst_strides, src_expr, dst_expr = (memlet_copy_to_absolute_strides(
-                    self._dispatcher, sdfg, state, edge, src_node, dst_node, codegen=self))
+                    self._dispatcher, sdfg, state, edge, src_node, dst_node))
                 dims = len(copy_shape)
 
                 funcname = 'dace::%sTo%s%dD' % (_get_storagename(src_storage), _get_storagename(dst_storage), dims)

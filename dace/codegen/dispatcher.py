@@ -28,8 +28,6 @@ class DefinedType(aenum.AutoNumberEnum):
     Object = ()  # An object moved by reference
     Stream = ()  # A stream object moved by reference and accessed via a push/pop API
     StreamArray = ()  # An array of Streams
-    # TODO Remove ArrayInterface in subsequent PR
-    ArrayInterface = ()  # An object representing an interface to an array, used mostly in FPGA
 
 
 class DefinedMemlets:
