@@ -142,11 +142,6 @@ class Property(Generic[T]):
             # Called on the class rather than an instance, so return the
             # property object itself
             return self
-        # If a custom getter is specified, use it
-        if self.getter:
-            return self.getter(obj)
-        if not hasattr(self, "attr_name"):
-            raise RuntimeError("Attribute name not set")
         # Otherwise look for attribute prefixed by "_"
         return getattr(obj, "_" + self.attr_name)
 
