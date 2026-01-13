@@ -3184,7 +3184,7 @@ class LoopRegion(ControlFlowRegion):
                       default=False,
                       desc='If True, indicates that this loop should be unrolled during code generation.')
     unroll_factor = Property(dtype=int,
-                             default=1,
+                             default=0,
                              desc='If unrolling is enabled, the factor by which to unroll the loop.')
 
     def __init__(self,
@@ -3197,7 +3197,7 @@ class LoopRegion(ControlFlowRegion):
                  sdfg: Optional['SDFG'] = None,
                  update_before_condition=True,
                  unroll: bool = False,
-                 unroll_factor: int = 1):
+                 unroll_factor: int = 0):
         super(LoopRegion, self).__init__(label, sdfg)
 
         if initialize_expr is not None:
