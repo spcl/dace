@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 from dataclasses import dataclass, field
 
-from dace import nodes, data, subsets, dtypes
+from dace import nodes, data, subsets, dtypes, symbolic
 from dace.properties import CodeBlock
 from dace.sdfg import InterstateEdge
 from dace.sdfg.memlet_utils import MemletSet
@@ -398,10 +398,29 @@ class ForScope(LoopScope):
         return result + super().as_string(indent)
 
     def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None, **kwargs) -> MemletSet:
-        raise NotImplementedError
+        root = root if root is not None else self.get_root()
+        result = MemletSet()
+        result.update(self.loop.get_meta_read_memlets())
 
-    def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None, **kwargs) -> MemletSet:
-        raise NotImplementedError
+        # If loop range is well-formed, use it in propagation
+        range = loop_range(self.loop)
+        if range is not None:
+            propagate = {self.loop.loop_variable: range}
+        else:
+            propagate = None
+
+        result.update(super().input_memlets(root, propagate=propagate, **kwargs))
+        return result
+
+    def output_memlets(self, root: Optional['ScheduleTreeRoot'] = None, **kwargs) -> MemletSet:
+        # If loop range is well-formed, use it in propagation
+        range = loop_range(self.loop)
+        if range is not None:
+            propagate = {self.loop.loop_variable: range}
+        else:
+            propagate = None
+
+        return super().output_memlets(root, propagate=propagate, **kwargs)
 
 
 @dataclass
@@ -414,10 +433,11 @@ class WhileScope(LoopScope):
         return result + super().as_string(indent)
 
     def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None, **kwargs) -> MemletSet:
-        raise NotImplementedError
-
-    def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None, **kwargs) -> MemletSet:
-        raise NotImplementedError
+        root = root if root is not None else self.get_root()
+        result = MemletSet()
+        result.update(self.loop.get_meta_read_memlets())
+        result.update(super().input_memlets(root, **kwargs))
+        return result
 
 
 @dataclass
@@ -430,10 +450,11 @@ class DoWhileScope(LoopScope):
         return header + super().as_string(indent) + '\n' + footer
 
     def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None, **kwargs) -> MemletSet:
-        raise NotImplementedError
-
-    def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None, **kwargs) -> MemletSet:
-        raise NotImplementedError
+        root = root if root is not None else self.get_root()
+        result = MemletSet()
+        result.update(self.loop.get_meta_read_memlets())
+        result.update(super().input_memlets(root, **kwargs))
+        return result
 
 
 @dataclass
@@ -844,3 +865,39 @@ def loop_variant(
     if loop.inverted:
         return 'do-while'
     return 'while'
+
+
+def loop_range(
+        loop: LoopRegion) -> Optional[Tuple[symbolic.SymbolicType, symbolic.SymbolicType, symbolic.SymbolicType]]:
+    """
+    For well-formed for-loops, returns a tuple of (start, end, stride). Otherwise, returns None.
+    """
+    if loop_variant(loop) != "for":
+        # Loop range is only defined in for-loops
+        return None
+
+    # TODO:
+    # The following is the old (dace v1) way of doing things.
+    # This is not how it's done anymore.
+
+    # Get inspired by `LoopRegion.can_normalize()` and
+    # `LoopRegion.normalize()` to see how to figure out
+    # the range of for-loops (which is essential for
+    # correct memlet propagation).
+
+    condition_edge = None
+    for edge in loop.all_interstate_edges():
+        if edge.data.condition == loop.loop_condition:
+            condition_edge = edge
+
+    if condition_edge is None:
+        return None  # Condition edge not found
+
+    from dace.transformation.interstate.loop_detection import find_for_loop
+    result = find_for_loop(loop.root_sdfg, condition_edge.src, condition_edge.dst, loop.loop_variable)
+
+    if result is None:
+        # proper for-loop was not detected
+        return None
+
+    return result[1]  # (start, end, stride) where `end` is inclusive

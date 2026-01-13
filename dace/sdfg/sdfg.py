@@ -417,7 +417,7 @@ class InterstateEdge(object):
     def label(self):
         assignments = ','.join(['%s=%s' % (k, v) for k, v in self.assignments.items()])
 
-        # Edge with assigment only (no condition)
+        # Edge with assignment only (no condition)
         if self.condition.as_string == '1':
             # Edge without conditions or assignments
             if len(self.assignments) == 0:
@@ -428,7 +428,7 @@ class InterstateEdge(object):
         if len(self.assignments) == 0:
             return self.condition.as_string
 
-        # Edges with assigments and conditions
+        # Edges with assignments and conditions
         return self.condition.as_string + '; ' + assignments
 
 
