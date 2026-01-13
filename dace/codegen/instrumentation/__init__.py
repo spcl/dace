@@ -6,5 +6,6 @@ from .papi import PAPIInstrumentation
 from .likwid import LIKWIDInstrumentationCPU, LIKWIDInstrumentationGPU
 from .timer import TimerProvider
 from .gpu_events import GPUEventProvider
+from .gpu_tx_markers import GPUTXMarkersProvider
 
 from .data.data_dump import SaveProvider, RestoreProvider

@@ -285,11 +285,17 @@ DACE_EXPORTED void __program_{fname}({mangle_dace_state_struct_name(fname)} *__s
         callsite_stream.write(
             f"""
 DACE_EXPORTED {mangle_dace_state_struct_name(sdfg)} *__dace_init_{sdfg.name}({initparams})
-{{
-    int __result = 0;
-    {mangle_dace_state_struct_name(sdfg)} *__state = new {mangle_dace_state_struct_name(sdfg)};
+{{""", sdfg)
 
-            """, sdfg)
+        # Invoke all instrumentation providers
+        for instr in self._dispatcher.instrumentation.values():
+            if instr is not None:
+                instr.on_sdfg_init_begin(sdfg, callsite_stream, global_stream)
+
+        callsite_stream.write(
+            f"""
+    int __result = 0;
+    {mangle_dace_state_struct_name(sdfg)} *__state = new {mangle_dace_state_struct_name(sdfg)};""", sdfg)
 
         for target in self._dispatcher.used_targets:
             if target.has_initializer:
@@ -310,17 +316,29 @@ DACE_EXPORTED {mangle_dace_state_struct_name(sdfg)} *__dace_init_{sdfg.name}({in
 
         callsite_stream.write(self._initcode.getvalue(), sdfg)
 
-        callsite_stream.write(
-            f"""
+        callsite_stream.write(f"""
     if (__result) {{
         delete __state;
         return nullptr;
     }}
+""", sdfg)
+        # Invoke all instrumentation providers
+        for instr in self._dispatcher.instrumentation.values():
+            if instr is not None:
+                instr.on_sdfg_init_end(sdfg, callsite_stream, global_stream)
+        callsite_stream.write(
+            f"""
     return __state;
 }}
 
 DACE_EXPORTED int __dace_exit_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} *__state)
 {{
+""", sdfg)
+        # Invoke all instrumentation providers
+        for instr in self._dispatcher.instrumentation.values():
+            if instr is not None:
+                instr.on_sdfg_exit_begin(sdfg, callsite_stream, global_stream)
+        callsite_stream.write(f"""
     int __err = 0;
 """, sdfg)
 
@@ -355,6 +373,10 @@ DACE_EXPORTED int __dace_exit_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} 
                 callsite_stream.write("}")
 
         callsite_stream.write('delete __state;\n', sdfg)
+        # Invoke all instrumentation providers
+        for instr in self._dispatcher.instrumentation.values():
+            if instr is not None:
+                instr.on_sdfg_exit_end(sdfg, callsite_stream, global_stream)
         callsite_stream.write('return __err;\n}\n', sdfg)
 
     def generate_external_memory_management(self, sdfg: SDFG, callsite_stream: CodeIOStream):
@@ -804,6 +826,11 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
     def allocate_arrays_in_scope(self, sdfg: SDFG, cfg: ControlFlowRegion, scope: Union[nodes.EntryNode, SDFGState,
                                                                                         SDFG],
                                  function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
+        if len(self.to_allocate[scope]) == 0:
+            return
+        for instr in self._dispatcher.instrumentation.values():
+            if instr is not None:
+                instr.on_allocation_begin(sdfg, scope, callsite_stream)
         """ Dispatches allocation of all arrays in the given scope. """
         for tsdfg, state, node, declare, allocate, _ in self.to_allocate[scope]:
             if state is not None:
@@ -815,10 +842,18 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
             self._dispatcher.dispatch_allocate(tsdfg, cfg if state is None else state.parent_graph, state, state_id,
                                                node, desc, function_stream, callsite_stream, declare, allocate)
+        for instr in self._dispatcher.instrumentation.values():
+            if instr is not None:
+                instr.on_allocation_end(sdfg, scope, callsite_stream)
 
     def deallocate_arrays_in_scope(self, sdfg: SDFG, cfg: ControlFlowRegion, scope: Union[nodes.EntryNode, SDFGState,
                                                                                           SDFG],
                                    function_stream: CodeIOStream, callsite_stream: CodeIOStream):
+        if len(self.to_allocate[scope]) == 0:
+            return
+        for instr in self._dispatcher.instrumentation.values():
+            if instr is not None:
+                instr.on_deallocation_begin(sdfg, scope, callsite_stream)
         """ Dispatches deallocation of all arrays in the given scope. """
         for tsdfg, state, node, _, _, deallocate in self.to_allocate[scope]:
             if not deallocate:
@@ -832,6 +867,9 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
             self._dispatcher.dispatch_deallocate(tsdfg, state.parent_graph, state, state_id, node, desc,
                                                  function_stream, callsite_stream)
+        for instr in self._dispatcher.instrumentation.values():
+            if instr is not None:
+                instr.on_deallocation_end(sdfg, scope, callsite_stream)
 
     def generate_code(self,
                       sdfg: SDFG,
