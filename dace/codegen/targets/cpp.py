@@ -137,8 +137,7 @@ def memlet_copy_to_absolute_strides(dispatcher: 'TargetDispatcher',
                                     src_node: nodes.AccessNode,
                                     dst_node: nodes.AccessNode,
                                     src_name_override: Optional[str] = None,
-                                    dst_name_override: Optional[str] = None,
-                                    codegen: 'TargetCodeGenerator' = None):
+                                    dst_name_override: Optional[str] = None):
     memlet = edge.data
     copy_shape = memlet.subset.size_exact()
     src_nodedesc = src_node.desc(sdfg)
@@ -149,10 +148,6 @@ def memlet_copy_to_absolute_strides(dispatcher: 'TargetDispatcher',
     src_subset = memlet.get_src_subset(edge, state)
     dst_subset = memlet.get_dst_subset(edge, state)
     is_src_write = not memlet._is_data_src
-
-    if codegen is not None:
-        src_subset = codegen.adjust_subset_for_codegen(src_nodedesc, src_subset)
-        dst_subset = codegen.adjust_subset_for_codegen(dst_nodedesc, dst_subset)
 
     if dispatcher is not None:
         src_expr = copy_expr(dispatcher,
@@ -288,7 +283,7 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
     """
     desc = sdfg.arrays[memlet.data]
     typedef = conntype.ctype
-    offset = cpp_offset_expr(desc, memlet.subset, codegen=codegen)
+    offset = cpp_offset_expr(desc, memlet.subset)
     offset_expr = '[' + offset + ']'
     is_scalar = not isinstance(conntype, dtypes.pointer)
     ptrname = codegen.ptr(memlet.data, desc, sdfg, subset=memlet.subset, ancestor=ancestor, is_write=is_write)
@@ -490,12 +485,7 @@ def ndcopy_to_strided_copy(
         return None
 
 
-def cpp_offset_expr(d: data.Data,
-                    subset_in: subsets.Subset,
-                    offset=None,
-                    packed_veclen=1,
-                    indices=None,
-                    codegen: Optional['TargetCodeGenerator'] = None) -> str:
+def cpp_offset_expr(d: data.Data, subset_in: subsets.Subset, offset=None, packed_veclen=1, indices=None) -> str:
     """ Creates a C++ expression that can be added to a pointer in order
         to offset it to the beginning of the given subset and offset.
 
@@ -509,10 +499,6 @@ def cpp_offset_expr(d: data.Data,
         :param codegen: Optional code generator to adjust subset.
         :return: A string in C++ syntax with the correct offset
     """
-    # Offset according to code generator
-    if codegen is not None:
-        subset_in = codegen.adjust_subset_for_codegen(d, subset_in)
-
     # Offset according to parameters, then offset according to array
     if offset is not None:
         subset = subset_in.offset_new(offset, False)
@@ -546,7 +532,7 @@ def cpp_array_expr(sdfg,
     s = subset if relative_offset else subsets.Indices(offset)
     o = offset if relative_offset else None
     desc = (sdfg.arrays[memlet.data] if referenced_array is None else referenced_array)
-    offset_cppstr = cpp_offset_expr(desc, s, o, packed_veclen, indices=indices, codegen=codegen)
+    offset_cppstr = cpp_offset_expr(desc, s, o, packed_veclen, indices=indices)
 
     # NOTE: Are there any cases where a mix of '.' and '->' is needed when traversing nested structs?
     # TODO: Study this when changing Structures to be (optionally?) non-pointers.
@@ -589,9 +575,7 @@ def cpp_ptr_expr(sdfg,
                  relative_offset=True,
                  use_other_subset=False,
                  indices=None,
-                 is_write=None,
-                 codegen: 'TargetCodeGenerator' = None,
-                 decouple_array_interface=False):
+                 codegen: 'TargetCodeGenerator' = None):
     """ Converts a memlet to a C++ pointer expression. """
     subset = memlet.subset if not use_other_subset else memlet.other_subset
     s = subset if relative_offset else subsets.Indices(offset)
@@ -600,7 +584,7 @@ def cpp_ptr_expr(sdfg,
     if isinstance(indices, str):
         offset_cppstr = indices
     else:
-        offset_cppstr = cpp_offset_expr(desc, s, o, indices=indices, codegen=codegen)
+        offset_cppstr = cpp_offset_expr(desc, s, o, indices=indices)
     dname = codegen.ptr(memlet.data, desc, sdfg, memlet.subset)
 
     if defined_type == DefinedType.Scalar:
@@ -1152,7 +1136,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                         return node
                     elif isinstance(desc, data.Stream):
                         if desc.is_stream_array():
-                            index = cpp_offset_expr(desc, memlet.subset, codegen=self.codegen)
+                            index = cpp_offset_expr(desc, memlet.subset)
                             target = f"{ptrname}[{index}]"
                         else:
                             target = ptrname
