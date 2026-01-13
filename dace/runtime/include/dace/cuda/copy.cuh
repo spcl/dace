@@ -769,7 +769,7 @@ namespace dace
 
             #pragma unroll
             for (int i = 0; i < WRITES; ++i) {
-                const auto __dace__reduction_lambda = {wcr};
+                const auto __dace__reduction_lambda = wcr;
                 wcr_custom<T>::template reduce<decltype(__dace__reduction_lambda)>(
                     __dace__reduction_lambda, ptr + (ltid + i * BLOCK_SIZE) * dst_xstride,
                     *(smem + (ltid + i * BLOCK_SIZE) * src_xstride));
