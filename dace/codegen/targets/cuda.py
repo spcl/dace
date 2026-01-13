@@ -273,8 +273,6 @@ class CUDACodeGen(TargetCodeGenerator):
             if not pooled:
                 continue
             self.has_pool = True
-            if self.backend != 'cuda':
-                raise ValueError(f'Backend "{self.backend}" does not support the memory pool allocation hint')
 
             # Keep only global arrays
             pooled = filter(
@@ -385,13 +383,13 @@ class CUDACodeGen(TargetCodeGenerator):
 
         pool_header = ''
         if self.has_pool:
-            poolcfg = Config.get('compiler', 'cuda', 'mempool_release_threshold')
-            pool_header = f'''
-    cudaMemPool_t mempool;
-    cudaDeviceGetDefaultMemPool(&mempool, 0);
-    uint64_t threshold = {poolcfg if poolcfg != -1 else 'UINT64_MAX'};
-    cudaMemPoolSetAttribute(mempool, cudaMemPoolAttrReleaseThreshold, &threshold);
-'''
+            poolcfg = int(Config.get('compiler', 'cuda', 'mempool_release_threshold'))
+            pool_header = """
+    {backend}MemPool_t mempool;
+    {backend}DeviceGetDefaultMemPool(&mempool, 0);
+    uint64_t threshold = {poolcfg_threshold};
+    {backend}MemPoolSetAttribute(mempool, {backend}MemPoolAttrReleaseThreshold, &threshold);
+""".format(backend=self.backend, poolcfg_threshold=('UINT64_MAX' if poolcfg == -1 else poolcfg))
 
         self._codeobject.code = """
 #include <{backend_header}>
