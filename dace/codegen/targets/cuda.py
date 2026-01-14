@@ -183,13 +183,8 @@ class CUDACodeGen(TargetCodeGenerator):
                     # NOTE: If possible `memlet_copy_to_absolute_strides()` will collapse a
                     #   ND copy into a 1D copy if the memory is contiguous. In that case
                     #   `copy_shape` will only have one element.
-                    copy_shape, src_strides, dst_strides, _, _ = memlet_copy_to_absolute_strides(None,
-                                                                                                 nsdfg,
-                                                                                                 state,
-                                                                                                 e,
-                                                                                                 e.src,
-                                                                                                 e.dst,
-                                                                                                 codegen=self)
+                    copy_shape, src_strides, dst_strides, _, _ = memlet_copy_to_absolute_strides(
+                        None, nsdfg, state, e, e.src, e.dst)
                     dims = len(copy_shape)
 
                     # Skip supported copy types
@@ -273,8 +268,6 @@ class CUDACodeGen(TargetCodeGenerator):
             if not pooled:
                 continue
             self.has_pool = True
-            if self.backend != 'cuda':
-                raise ValueError(f'Backend "{self.backend}" does not support the memory pool allocation hint')
 
             # Keep only global arrays
             pooled = filter(
@@ -385,13 +378,13 @@ class CUDACodeGen(TargetCodeGenerator):
 
         pool_header = ''
         if self.has_pool:
-            poolcfg = Config.get('compiler', 'cuda', 'mempool_release_threshold')
-            pool_header = f'''
-    cudaMemPool_t mempool;
-    cudaDeviceGetDefaultMemPool(&mempool, 0);
-    uint64_t threshold = {poolcfg if poolcfg != -1 else 'UINT64_MAX'};
-    cudaMemPoolSetAttribute(mempool, cudaMemPoolAttrReleaseThreshold, &threshold);
-'''
+            poolcfg = int(Config.get('compiler', 'cuda', 'mempool_release_threshold'))
+            pool_header = """
+    {backend}MemPool_t mempool;
+    {backend}DeviceGetDefaultMemPool(&mempool, 0);
+    uint64_t threshold = {poolcfg_threshold};
+    {backend}MemPoolSetAttribute(mempool, {backend}MemPoolAttrReleaseThreshold, &threshold);
+""".format(backend=self.backend, poolcfg_threshold=('UINT64_MAX' if poolcfg == -1 else poolcfg))
 
         self._codeobject.code = """
 #include <{backend_header}>
@@ -1032,7 +1025,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
             # Obtain copy information
             copy_shape, src_strides, dst_strides, src_expr, dst_expr = (memlet_copy_to_absolute_strides(
-                self._dispatcher, sdfg, state_dfg, edge, src_node, dst_node, codegen=self))
+                self._dispatcher, sdfg, state_dfg, edge, src_node, dst_node))
             dims = len(copy_shape)
             dtype = dst_node.desc(sdfg).dtype
 
@@ -1092,6 +1085,11 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     is_fortran_order = src_strides[0] == 1 and dst_strides[0] == 1
                     is_c_order = is_fortran_order
                     dims = 1
+
+            for instr in self._dispatcher.instrumentation.values():
+                if instr is not None:
+                    instr.on_copy_begin(sdfg, cfg, state_dfg, src_node, dst_node, edge, callsite_stream, None,
+                                        copy_shape, src_strides, dst_strides)
 
             if dims > 2:
                 # Currently we only support ND copies when they can be represented
@@ -1248,6 +1246,10 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
             self._emit_sync(callsite_stream)
 
+            for instr in self._dispatcher.instrumentation.values():
+                if instr is not None:
+                    instr.on_copy_end(sdfg, cfg, state_dfg, src_node, dst_node, edge, callsite_stream, None)
+
         # Copy within the GPU
         elif (src_storage in gpu_storage_types and dst_storage in gpu_storage_types):
 
@@ -1275,7 +1277,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             if inner_schedule == dtypes.ScheduleType.GPU_Device:
                 # Obtain copy information
                 copy_shape, src_strides, dst_strides, src_expr, dst_expr = (memlet_copy_to_absolute_strides(
-                    self._dispatcher, sdfg, state, edge, src_node, dst_node, codegen=self))
+                    self._dispatcher, sdfg, state, edge, src_node, dst_node))
                 dims = len(copy_shape)
 
                 funcname = 'dace::%sTo%s%dD' % (_get_storagename(src_storage), _get_storagename(dst_storage), dims)

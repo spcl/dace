@@ -26,7 +26,7 @@ of performance optimization, regardless of the application or the target process
 DaCe generates high-performance programs for:
  * Multi-core CPUs (tested on Intel, IBM POWER9, and ARM with SVE)
  * NVIDIA GPUs and AMD GPUs (with HIP)
- * Xilinx and Intel FPGAs
+ * [Xilinx and Intel FPGAs](https://github.com/spcl/dace-fpga)
 
 DaCe can be written inline in Python and transformed in the command-line/Jupyter
 Notebooks or SDFGs can be interactively modified using our [Visual Studio Code extension](https://marketplace.visualstudio.com/items?itemName=phschaad.sdfv).
