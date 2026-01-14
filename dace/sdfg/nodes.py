@@ -656,8 +656,8 @@ class NestedSDFG(CodeNode):
             if k in ('guid', ):
                 continue
             setattr(result, k, dcpy(v, memo))
-        if result._sdfg is not None:
-            result._sdfg.parent_nsdfg_node = result
+        if result.sdfg is not None:
+            result.sdfg.parent_nsdfg_node = result
         # Generate new guid for the copy
         result.guid = graph.generate_element_id(result)
         return result
