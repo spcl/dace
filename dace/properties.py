@@ -37,9 +37,51 @@ class PropertyError(Exception):
     pass
 
 
+def _validate_property_value(prop, val, obj_type_name):
+    """
+    Validate and potentially convert a value for a property.
+    Returns the validated/converted value.
+    """
+    # Fail on None unless explicitly allowed
+    if val is None and not prop.allow_none:
+        raise ValueError("None not allowed for property {} in class {}".format(prop.attr_name, obj_type_name))
+
+    # Accept all DaCe/numpy typeclasses as Python native types
+    if isinstance(val, np.number):
+        val = val.item()
+
+    # Edge cases for integer and float types
+    if isinstance(val, int) and prop.dtype == float:
+        val = float(val)
+    if isinstance(val, float) and prop.dtype == int and val == int(val):
+        val = int(val)
+
+    # Check if type matches before setting
+    if (prop.dtype is not None and not isinstance(val, prop.dtype) and not (val is None and prop.allow_none)):
+        if isinstance(val, str):
+            raise TypeError("Received str for property {} of type {}. Use "
+                            "from_string method of the property.".format(prop.attr_name, prop.dtype))
+        raise TypeError("Invalid type \"{}\" for property {}: expected {}".format(
+            type(val).__name__, prop.attr_name, prop.dtype.__name__))
+
+    # Check choices
+    if prop.choices is not None \
+            and isinstance(prop.choices, (list, tuple, set)) \
+            and (val is not None or not prop.allow_none):
+        if val not in prop.choices:
+            raise ValueError("Value {} not present in choices: {}".format(val, prop.choices))
+
+    return val
+
+
 class Property(Generic[T]):
     """ Class implementing properties of DaCe objects that conform to strong
-    typing, and allow conversion to and from strings to be edited. """
+    typing, and allow conversion to and from strings to be edited.
+
+    Performance note: This class is NOT a descriptor. Property access is handled
+    by __getattr__/__setattr__ on the owner class, added by @make_properties.
+    For properties without custom getters, reads go directly to the instance dict.
+    """
 
     def __init__(
             self,
@@ -137,49 +179,22 @@ class Property(Generic[T]):
                 # Handle circular import case - defer docstring generation
                 self.__doc__ = "Object property of type %s" % type(self).__name__
 
-    def __get__(self, obj, objtype=None) -> T:
-        if obj is None:
-            # Called on the class rather than an instance, so return the
-            # property object itself
-            return self
-        # Otherwise look for attribute prefixed by "_"
-        return getattr(obj, "_" + self.attr_name)
+    def set_value(self, obj, val):
+        """
+        Validate and store a value for this property on the given object.
+        Subclasses can override this to add custom validation/conversion.
 
-    def __set__(self, obj, val):
-        # If custom setter is specified, use it
-        if self.setter:
-            return self.setter(obj, val)
-        if not hasattr(self, "attr_name"):
-            raise RuntimeError("Attribute name not set")
-        # Fail on None unless explicitly allowed
-        if val is None and not self.allow_none:
-            raise ValueError("None not allowed for property {} in class {}".format(self.attr_name, type(obj).__name__))
-
-        # Accept all DaCe/numpy typeclasses as Python native types
-        if isinstance(val, np.number):
-            val = val.item()
-
-        # Edge cases for integer and float types
-        if isinstance(val, int) and self.dtype == float:
-            val = float(val)
-        if isinstance(val, float) and self.dtype == int and val == int(val):
-            val = int(val)
-
-        # Check if type matches before setting
-        if (self.dtype is not None and not isinstance(val, self.dtype) and not (val is None and self.allow_none)):
-            if isinstance(val, str):
-                raise TypeError("Received str for property {} of type {}. Use "
-                                "from_string method of the property.".format(self.attr_name, self.dtype))
-            raise TypeError("Invalid type \"{}\" for property {}: expected {}".format(
-                type(val).__name__, self.attr_name, self.dtype.__name__))
-        # If the value has not yet been set, we cannot pass it to the enum
-        # function. Fail silently if this happens
-        if self.choices is not None \
-                and isinstance(self.choices,(list, tuple, set)) \
-                and (val is not None or not self.allow_none):
-            if val not in self.choices:
-                raise ValueError("Value {} not present in choices: {}".format(val, self.choices))
-        setattr(obj, "_" + self.attr_name, val)
+        For properties with getters or setters, this stores with underscore prefix so
+        __getattr__ is still triggered on read.
+        """
+        val = _validate_property_value(self, val, type(obj).__name__)
+        if self.getter is not None or self.setter is not None:
+            # Properties with getters/setters: store with underscore prefix
+            # so __getattr__ is triggered on read
+            obj.__dict__['_' + self.attr_name] = val
+        else:
+            # Properties without getters/setters: store directly for fast access
+            obj.__dict__[self.attr_name] = val
 
     # Python Properties of this Property class
 
@@ -291,15 +306,27 @@ class Property(Generic[T]):
 
 def _property_generator(instance):
     for name, prop in type(instance).__properties__.items():
-        if hasattr(instance, "_" + name):
-            yield prop, getattr(instance, "_" + name)
+        # Properties with getters or setters store with underscore prefix
+        if prop.getter is not None or prop.setter is not None:
+            if '_' + name in instance.__dict__:
+                yield prop, instance.__dict__['_' + name]
+            else:
+                yield prop, getattr(instance, name)
         else:
-            yield prop, getattr(instance, name)
+            # Properties without getters/setters store directly
+            if name in instance.__dict__:
+                yield prop, instance.__dict__[name]
+            else:
+                yield prop, getattr(instance, name)
 
 
 def make_properties(cls):
     """ A decorator for objects that adds support and checks for strongly-typed
         properties (which use the Property class).
+
+    This decorator adds __getattr__ and __setattr__ methods to handle property
+    access. For properties without custom getters, values are stored directly
+    in the instance dict, making reads fast (no method call overhead).
     """
 
     # Extract all Property members of the class
@@ -308,6 +335,10 @@ def make_properties(cls):
     for name, prop in properties.items():
         prop.attr_name = name
         prop.owner = cls
+        # Remove Property object from class dict for properties with getters or setters
+        # This allows __getattr__ to be called for these attributes
+        if prop.getter is not None or prop.setter is not None:
+            delattr(cls, name)
     # Grab properties from baseclass(es)
     own_properties = copy.copy(properties)
     for base in cls.__bases__:
@@ -322,6 +353,59 @@ def make_properties(cls):
     # Add an iterator to pairs of property names and their values
     cls.properties = _property_generator
 
+    # Create a lookup dict for properties with getters (for fast access in __getattr__)
+    properties_with_getters = {name: prop for name, prop in properties.items() if prop.getter is not None}
+
+    # Properties with setters but no getters need __getattr__ to read from _<name>
+    properties_with_setters_only = {
+        name: prop
+        for name, prop in properties.items() if prop.setter is not None and prop.getter is None
+    }
+
+    # Create a lookup dict for properties with setters or validation (for __setattr__)
+    # All properties need validation, but we can skip __setattr__ overhead for simple cases
+    all_property_names = frozenset(properties.keys())
+
+    # Add __getattr__ to handle properties with custom getters or setters-only
+    # __getattr__ is only called when the attribute is NOT found in instance dict
+    properties_needing_getattr = {**properties_with_getters, **properties_with_setters_only}
+    if properties_needing_getattr:
+        old_getattr = getattr(cls, '__getattr__', None)
+
+        def property_getattr(self, name):
+            if name in properties_with_getters:
+                prop = properties_with_getters[name]
+                return prop.getter(self)
+            if name in properties_with_setters_only:
+                # Properties with setter but no getter: read from _<name>
+                return self.__dict__.get('_' + name)
+            if old_getattr is not None:
+                return old_getattr(self, name)
+            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+
+        cls.__getattr__ = property_getattr
+
+    # Add __setattr__ to handle property validation and custom setters
+    old_setattr = getattr(cls, '__setattr__', None)
+
+    def property_setattr(self, name, val):
+        if name in all_property_names:
+            prop = properties[name]
+            # If custom setter is specified, use it
+            if prop.setter is not None:
+                prop.setter(self, val)
+                return
+            # Use the property's set_value method (allows subclass overrides)
+            prop.set_value(self, val)
+        else:
+            # Not a property, use default behavior
+            if old_setattr is not None:
+                old_setattr(self, name, val)
+            else:
+                self.__dict__[name] = val
+
+    cls.__setattr__ = property_setattr
+
     # Grab old init. This will be brought into the closure in the below
     init = cls.__init__
 
@@ -332,7 +416,9 @@ def make_properties(cls):
         for name, prop in own_properties.items():
             # Only assign our own properties, so we don't overwrite what's been
             # set by the base class
-            if hasattr(obj, '_' + name):
+            # Properties with getters/setters store with underscore prefix
+            attr_name = '_' + name if (prop.getter is not None or prop.setter is not None) else name
+            if attr_name in obj.__dict__:
                 raise PropertyError("Property {} already assigned in {}".format(name, type(obj).__name__))
             if not prop.indirected:
                 if prop.allow_none or prop.default is not None:
@@ -449,12 +535,12 @@ class ListProperty(Property[List[T]]):
         super().__init__(*args, **kwargs)
         self.element_type = element_type
 
-    def __set__(self, obj, val):
+    def set_value(self, obj, val):
         if isinstance(val, str):
             val = list(map(self.element_type, list(val)))
         elif isinstance(val, tuple):
             val = list(map(self.element_type, val))
-        super(ListProperty, self).__set__(obj, val)
+        super(ListProperty, self).set_value(obj, val)
 
     @staticmethod
     def to_string(l):
@@ -505,8 +591,8 @@ class TransformationHistProperty(Property):
         kwargs['dtype'] = list
         super().__init__(*args, **kwargs)
 
-    def __set__(self, obj, val):
-        super(TransformationHistProperty, self).__set__(obj, val)
+    def set_value(self, obj, val):
+        super(TransformationHistProperty, self).set_value(obj, val)
 
     def to_json(self, hist):
         if hist is None:
@@ -557,7 +643,7 @@ class DictProperty(Property):
         else:
             self.is_value = lambda v: False
 
-    def __set__(self, obj, val):
+    def set_value(self, obj, val):
         if isinstance(val, str):
             val = ast.literal_eval(val)
         elif isinstance(val, (tuple, list)):
@@ -567,7 +653,7 @@ class DictProperty(Property):
                 (k if self.is_key(k) else self.key_type(k)): (v if self.is_value(v) else self.value_type(v))
                 for k, v in val.items()
             }
-        super(DictProperty, self).__set__(obj, val)
+        super(DictProperty, self).set_value(obj, val)
 
     @staticmethod
     def to_string(d):
@@ -691,10 +777,10 @@ class OptionalSDFGReferenceProperty(SDFGReferenceProperty):
 class RangeProperty(Property):
     """ Custom Property type for `dace.subsets.Range` members. """
 
-    def __set__(self, obj, value):
+    def set_value(self, obj, value):
         if isinstance(value, list):
             value = dace.subsets.Range(value)
-        super(RangeProperty, self).__set__(obj, value)
+        super(RangeProperty, self).set_value(obj, value)
 
     @property
     def dtype(self):
@@ -838,17 +924,9 @@ class SetProperty(Property):
             return None
         return frozenset(l)
 
-    def __get__(self, obj, objtype=None):
-        val = super(SetProperty, self).__get__(obj, objtype)
+    def set_value(self, obj, val):
         if val is None:
-            return val
-
-        # `val` is a `frozenset` (see `__set__()`) thus it is safe to return it unprotected.
-        return val
-
-    def __set__(self, obj, val):
-        if val is None:
-            return super(SetProperty, self).__set__(obj, val)
+            return super(SetProperty, self).set_value(obj, val)
 
         # Check for uniqueness
         if isinstance(val, (frozenset, set)):
@@ -863,7 +941,7 @@ class SetProperty(Property):
         except (TypeError, ValueError):
             raise ValueError('Some elements could not be converted to %s' % (str(self._element_type)))
 
-        super(SetProperty, self).__set__(obj, new_set)
+        super(SetProperty, self).set_value(obj, new_set)
 
 
 class LambdaProperty(Property):
@@ -894,7 +972,7 @@ class LambdaProperty(Property):
         if s is None: return None
         return LambdaProperty.from_string(s)
 
-    def __set__(self, obj, val):
+    def set_value(self, obj, val):
         if val is not None:
             if isinstance(val, str):
                 self.from_string(val)  # Check that from_string doesn't fail
@@ -902,7 +980,7 @@ class LambdaProperty(Property):
                 val = self.to_string(val)  # Store as string internally
             else:
                 raise TypeError("Lambda property must be either string or ast.Lambda")
-        super(LambdaProperty, self).__set__(obj, val)
+        super(LambdaProperty, self).set_value(obj, val)
 
 
 class CodeBlock(object):
@@ -1098,13 +1176,13 @@ class SubsetProperty(Property):
     def allow_none(self):
         return True
 
-    def __set__(self, obj, val):
+    def set_value(self, obj, val):
         if isinstance(val, str):
             val = self.from_string(val)
         if (val is not None and not isinstance(val, sbs.Range) and not isinstance(val, sbs.Indices)
                 and not isinstance(val, sbs.SubsetUnion)):
             raise TypeError("Subset property must be either Range or Indices: got {}".format(type(val).__name__))
-        super(SubsetProperty, self).__set__(obj, val)
+        super(SubsetProperty, self).set_value(obj, val)
 
     @staticmethod
     def from_string(s):
@@ -1145,14 +1223,14 @@ class SymbolicProperty(Property):
     def dtype(self):
         return None
 
-    def __set__(self, obj, val):
+    def set_value(self, obj, val):
         if (val is not None and not isinstance(val, (sp.Expr, Number, np.bool_, str))):
             raise TypeError(f"Property {self.attr_name} must be a literal "
                             f"or symbolic expression, got: {type(val)}")
         if isinstance(val, (Number, str)):
             val = SymbolicProperty.from_string(str(val))
 
-        super(SymbolicProperty, self).__set__(obj, val)
+        super(SymbolicProperty, self).set_value(obj, val)
 
     @staticmethod
     def from_string(s):
@@ -1267,12 +1345,12 @@ class ShapeProperty(Property):
             return None
         return tuple([dace.symbolic.pystr_to_symbolic(m) for m in d])
 
-    def __set__(self, obj, val):
+    def set_value(self, obj, val):
         if isinstance(val, list):
             val = tuple(val)
         if isinstance(val, tuple):
             val = tuple(dace.symbolic.UndefinedSymbol() if v == '?' else v for v in val)
-        super(ShapeProperty, self).__set__(obj, val)
+        super(ShapeProperty, self).set_value(obj, val)
 
 
 class TypeProperty(Property):
@@ -1305,9 +1383,6 @@ class TypeProperty(Property):
 class TypeClassProperty(Property):
     """ Custom property type for memory as defined in dace.types,
         e.g. `dace.float32`. """
-
-    def __get__(self, obj, objtype=None) -> typeclass:
-        return super().__get__(obj, objtype)
 
     @property
     def dtype(self):
@@ -1346,9 +1421,6 @@ class TypeClassProperty(Property):
 
 class NestedDataClassProperty(Property):
     """ Custom property type for nested data. """
-
-    def __get__(self, obj, objtype=None) -> 'dData':
-        return super().__get__(obj, objtype)
 
     @property
     def dtype(self):

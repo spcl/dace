@@ -220,6 +220,8 @@ class InterstateEdge(object):
             if k == 'guid':  # Skip ID
                 continue
             setattr(result, k, copy.deepcopy(v, memo))
+        # Generate new guid for the copy
+        result.guid = generate_element_id(result)
         return result
 
     @staticmethod
@@ -571,7 +573,7 @@ class SDFG(ControlFlowRegion):
         for k, v in self.__dict__.items():
             # Skip derivative attributes and GUID
             if k in ('_cached_start_block', '_edges', '_nodes', '_parent', '_parent_sdfg', '_parent_nsdfg_node',
-                     '_cfg_list', '_transformation_hist', 'guid'):
+                     '_cfg_list', 'transformation_hist', 'guid'):
                 continue
             setattr(result, k, copy.deepcopy(v, memo))
         # Copy edges and nodes
@@ -585,8 +587,8 @@ class SDFG(ControlFlowRegion):
             else:
                 setattr(result, k, None)
         # Copy SDFG list and transformation history
-        if hasattr(self, '_transformation_hist'):
-            setattr(result, '_transformation_hist', copy.deepcopy(self._transformation_hist, memo))
+        if hasattr(self, 'transformation_hist'):
+            setattr(result, 'transformation_hist', copy.deepcopy(self.transformation_hist, memo))
         result._cfg_list = []
         if self._parent_sdfg is None:
             # Avoid import loops
@@ -596,6 +598,9 @@ class SDFG(ControlFlowRegion):
             fixed = FixNestedSDFGReferences().apply_pass(result, {})
             if fixed:
                 warnings.warn(f'Fixed {fixed} nested SDFG parent references during deep copy.')
+
+        # Generate new guid for the copy
+        result.guid = generate_element_id(result)
 
         return result
 

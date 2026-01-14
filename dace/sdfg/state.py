@@ -1313,6 +1313,10 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
             else:
                 setattr(result, k, None)
 
+        # Generate new guid for the copy
+        from dace.sdfg import graph
+        result.guid = graph.generate_element_id(result)
+
         return result
 
     @property
