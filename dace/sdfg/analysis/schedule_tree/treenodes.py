@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 from dataclasses import dataclass, field
+import sympy
 
 from dace import nodes, data, subsets, dtypes, symbolic
 from dace.properties import CodeBlock
@@ -403,7 +404,7 @@ class ForScope(LoopScope):
         result.update(self.loop.get_meta_read_memlets())
 
         # If loop range is well-formed, use it in propagation
-        range = loop_range(self.loop)
+        range = _loop_range(self.loop)
         if range is not None:
             propagate = {self.loop.loop_variable: range}
         else:
@@ -414,7 +415,7 @@ class ForScope(LoopScope):
 
     def output_memlets(self, root: Optional['ScheduleTreeRoot'] = None, **kwargs) -> MemletSet:
         # If loop range is well-formed, use it in propagation
-        range = loop_range(self.loop)
+        range = _loop_range(self.loop)
         if range is not None:
             propagate = {self.loop.loop_variable: range}
         else:
@@ -867,37 +868,59 @@ def loop_variant(
     return 'while'
 
 
-def loop_range(
+def _loop_range(
         loop: LoopRegion) -> Optional[Tuple[symbolic.SymbolicType, symbolic.SymbolicType, symbolic.SymbolicType]]:
     """
-    For well-formed for-loops, returns a tuple of (start, end, stride). Otherwise, returns None.
+    Derive loop range for well-formed `for`-loops.
+
+    :param: loop The loop to be analyzed.
+    :return: If well formed, `(start, end, step)` where `end` is inclusive, otherwise `None`.
     """
-    if loop_variant(loop) != "for":
+
+    if loop_variant(loop) != "for" or loop.loop_variable is None:
         # Loop range is only defined in for-loops
+        # and we need to know the loop variable.
         return None
 
-    # TODO:
-    # The following is the old (dace v1) way of doing things.
-    # This is not how it's done anymore.
+    # Avoid cyclic import
+    from dace.transformation.passes.analysis import loop_analysis
 
-    # Get inspired by `LoopRegion.can_normalize()` and
-    # `LoopRegion.normalize()` to see how to figure out
-    # the range of for-loops (which is essential for
-    # correct memlet propagation).
-
-    condition_edge = None
-    for edge in loop.all_interstate_edges():
-        if edge.data.condition == loop.loop_condition:
-            condition_edge = edge
-
-    if condition_edge is None:
-        return None  # Condition edge not found
-
-    from dace.transformation.interstate.loop_detection import find_for_loop
-    result = find_for_loop(loop.root_sdfg, condition_edge.src, condition_edge.dst, loop.loop_variable)
-
-    if result is None:
-        # proper for-loop was not detected
+    # If loop information cannot be determined, we cannot derive loop range
+    start = loop_analysis.get_init_assignment(loop)
+    step = loop_analysis.get_loop_stride(loop)
+    end = _match_loop_condition(loop)
+    if start is None or step is None or end is None:
         return None
 
-    return result[1]  # (start, end, stride) where `end` is inclusive
+    return (start, end, step)  # `end` is inclusive
+
+
+def _match_loop_condition(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
+    """
+    Try to find the end of a for-loop by symbolically matching the loop condition.
+
+    :return: loop end (inclusive) or `None` if matching failed.
+    """
+
+    condition = symbolic.pystr_to_symbolic(loop.loop_condition.as_string)
+    loop_symbol = symbolic.pystr_to_symbolic(loop.loop_variable)
+    a = sympy.Wild('a')
+
+    match = condition.match(loop_symbol < a)
+    if match is not None:
+        return match[a] - 1
+
+    match = condition.match(loop_symbol <= a)
+    if match is not None:
+        return match[a]
+
+    match = condition.match(loop_symbol >= a)
+    if match is not None:
+        return match[a]
+
+    match = condition.match(loop_symbol > a)
+    if match is not None:
+        return match[a] + 1
+
+    # Matching failed - we can't derive end of loop
+    return None

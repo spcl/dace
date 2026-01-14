@@ -777,7 +777,7 @@ def _generate_views_in_scope(
     return result
 
 
-def _prepare_sdfg_for_conversion(sdfg: SDFG, toplevel: bool) -> None:
+def _prepare_sdfg_for_conversion(sdfg: SDFG, *, toplevel: bool) -> None:
     from dace.transformation import helpers as xfh  # Avoid import loop
 
     # Split edges with assignments and conditions
@@ -794,7 +794,29 @@ def _prepare_sdfg_for_conversion(sdfg: SDFG, toplevel: bool) -> None:
         dealias_sdfg(sdfg)
 
 
-def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) -> tn.ScheduleTreeRoot:
+def _create_unified_descriptor_repository(sdfg: SDFG, stree: tn.ScheduleTreeRoot):
+    """
+    Creates a single descriptor repository from an SDFG and all nested SDFGs. This includes
+    data containers, symbols, constants, etc.
+    :param sdfg: The top-level SDFG to create the repository from.
+    :param stree: The tree root in which to make the unified descriptor repository.
+    """
+    stree.containers = sdfg.arrays
+    stree.symbols = sdfg.symbols
+    stree.constants = sdfg.constants_prop
+
+    # Since the SDFG is assumed to be de-aliased and contain unique names, we union the contents of
+    # the nested SDFGs' descriptor repositories
+    for nsdfg in sdfg.all_sdfgs_recursive():
+        transients = {k: v for k, v in nsdfg.arrays.items() if v.transient}
+        symbols = {k: v for k, v in nsdfg.symbols.items() if k not in stree.symbols}
+        constants = {k: v for k, v in nsdfg.constants_prop.items() if k not in stree.constants}
+        stree.containers.update(transients)
+        stree.symbols.update(symbols)
+        stree.constants.update(constants)
+
+
+def as_schedule_tree(sdfg: SDFG, *, in_place: bool = False, toplevel: bool = False) -> tn.ScheduleTreeRoot:
     """
     Converts an SDFG into a schedule tree. The schedule tree is a tree of nodes that represent the execution order of
     the SDFG.
@@ -814,15 +836,21 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
     if not in_place:
         sdfg = copy.deepcopy(sdfg)
 
-    _prepare_sdfg_for_conversion(sdfg, toplevel)
+    _prepare_sdfg_for_conversion(sdfg, toplevel=toplevel)
 
-    result = tn.ScheduleTreeScope(children=_block_schedule_tree(sdfg))
+    if toplevel:
+        result = tn.ScheduleTreeRoot(children=[], name="my-stree-name")
+        _create_unified_descriptor_repository(sdfg, result)
+        result.children = _block_schedule_tree(sdfg)
+    else:
+        result = tn.ScheduleTreeScope(children=_block_schedule_tree(sdfg))
+
     tn.validate_has_no_other_node_types(result)
 
     # Clean up tree
     stpasses.remove_unused_and_duplicate_labels(result)
 
-    return tn.ScheduleTreeRoot(children=result.children, name="my_stree")
+    return result
 
 
 if __name__ == '__main__':
