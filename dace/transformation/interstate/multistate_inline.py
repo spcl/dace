@@ -161,7 +161,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             sdfg.append_exit_code(code.code, loc)
 
         # Callbacks and other types
-        sdfg._callback_mapping.update(nsdfg.callback_mapping)
+        sdfg.callback_mapping.update(nsdfg.callback_mapping)
 
         # Environments
         for nstate in nsdfg.states():
