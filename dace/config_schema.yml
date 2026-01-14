@@ -173,6 +173,13 @@ required:
                     The typename of this struct is derived by appending this value to the SDFG's name.
                     Note that the suffix may only contains letters, digits and underscores.
 
+            cpp_standard:
+                type: str
+                default: "20"
+                title: C++ standard version
+                description: >
+                    C++ standard to use for compilation (e.g., 14, 17, 20, 23, 26).
+
             format_code:
                 type: bool
                 default: false
@@ -183,7 +190,7 @@ required:
             format_config_file:
                 type: str
                 default: ""
-                title: Path the clang-format file
+                title: Path to the .clang-format file
                 description: >
                     Clang-format file to be used by clang-format, only used if format_code is true
 
@@ -261,7 +268,7 @@ required:
                         type: str
                         title: Arguments
                         description: Compiler argument flags
-                        default: '-std=c++14 -fPIC -Wall -Wextra -O3 -march=native -ffast-math -Wno-unused-parameter -Wno-unused-label'
+                        default: '-fPIC -Wall -Wextra -O3 -march=native -ffast-math -Wno-unused-parameter -Wno-unused-label'
                         default_Windows: '/O2 /fp:fast /arch:AVX2 /D_USRDLL /D_WINDLL /D__restrict__=__restrict'
 
                     libs:
@@ -310,7 +317,7 @@ required:
                         type: str
                         title: hipcc Arguments
                         description: Compiler argument flags for HIP
-                        default: '-std=c++17 -fPIC -O3 -ffast-math -Wno-unused-parameter'
+                        default: '-fPIC -O3 -ffast-math -Wno-unused-parameter'
 
                     cuda_arch:
                         type: str
@@ -458,210 +465,6 @@ required:
                             will raise an exception if such a Memlet is encountered. This allows the user
                             to have full control over all Maps in the SDFG.
 
-
-            #############################################
-            # General FPGA flags
-            fpga:
-                type: dict
-                title: FPGA
-                description: "Common preferences for FPGA compilation."
-                required:
-
-                    autobuild_bitstreams:
-                        type: bool
-                        default: true
-                        title: Automatically build bitstreams
-                        description: >
-                            If set to true, CMake will automatically build missing
-                            bitstreams when running an FPGA program. This can take a
-                            very long time, and users might want to do this manually.
-                            If set to false, the program will optimistically assume
-                            that the bitstream is present in the build directory, and
-                            will crash if this is not the case.
-
-                    minimum_fifo_depth:
-                        type: int
-                        default: ''
-                        title: Minimum depth of FIFOs
-                        description: Sets the minimum depth of any generated FIFO.
-
-                    vendor:
-                        type: str
-                        default: xilinx
-                        title: FPGA vendor
-                        description: >
-                            Target Xilinx ("xilinx") or Intel ("intel_fpga") FPGAs when
-                            generating code.
-
-                    concurrent_kernel_detection:
-                        type: bool
-                        default: false
-                        title: Detect parts of an SDFG that can run in parallel
-                        description: >
-                            If set to false, DaCe will place each weakly connected
-                            component found in an SDFG state in a different Kernel/Processing Element.
-                            If true, a heuristic will further inspect each independent component
-                            for other parallelism opportunities (e.g., branches of the SDFG
-                            that can be executed in parallel), creating the corresponding kernels.
-
-            #############################################
-            # FPGA (Xilinx) compiler flags
-            xilinx:
-                type: dict
-                title: Xilinx
-                description: FPGA (Xilinx) compiler preferences
-                required:
-
-                    mode:
-                        type: str
-                        default: simulation
-                        title: Compilation mode
-                        description: Target of FPGA kernel build (simulation/software_emulation/hardware_emulation/hardware)
-
-                    path:
-                        type: str
-                        default: ''
-                        title: Vitis installation override
-                        description: >
-                            Path to specific Vitis/SDx/SDAccel installation to
-                            use instead of just searching PATH and environment
-                            variables.
-
-                    platform:
-                        type: str
-                        default: xilinx_u250_xdma_201830_2
-                        title: Target platform for Xilinx
-                        description: Platform name of Vitis/SDx/SDAccel target.
-
-                    frequency:
-                        type: str
-                        default: ''
-                        title: Target frequency for Xilinx kernels
-                        description: >
-                            Target frequency, in MHz, when compiling kernels
-                            for Xilinx. Will not necessarily be achieved in
-                            practice. To enable multiple clocks, enter values
-                            in the format "clock_id:frequency", with frequency
-                            being specified in MHz separated by an escaped bar,
-                            all enclosed in quotes. E.g. "0:250\|1:500".
-
-                    enable_debugging:
-                        type: bool
-                        default: false
-                        title: Enable debugging for hardware kernels
-                        description: >
-                            Injects debugging cores on the interfaces of the
-                            kernel, allowing fine-grained debugging of hardware
-                            runs at the cost of additional resources. This is
-                            always enabled for emulation runs.
-
-                    host_flags:
-                        type: str
-                        title: Host arguments
-                        description: Extra host compiler argument flags
-                        default: "-Wno-unknown-pragmas -Wno-unused-label"
-
-                    synthesis_flags:
-                        type: str
-                        title: Synthesis arguments
-                        description: High-level synthesis C++ flags
-                        default: "-std=c++14"
-
-                    build_flags:
-                        type: str
-                        title: Arguments
-                        description: Kernel build C++ flags
-                        default: ""
-
-                    decouple_array_interfaces:
-                        type: bool
-                        default: false
-                        title: Decouple array memory interfaces
-                        description: >
-                            If an array is both read and written, this option decouples
-                            its accesses, by creatin a memory interface for reading and one
-                            for writing.
-                            Note that this may hide potential Read-After-Write or
-                            Write-After-Read dependencies.
-
-
-            #############################################
-            # Intel FPGA compiler flags
-            intel_fpga:
-                type: dict
-                title: Intel FPGA
-                description: Intel FPGA compiler preferences.
-                required:
-
-                    mode:
-                        type: str
-                        default: emulator
-                        title: Compilation mode
-                        description: >
-                          Target of FPGA kernel build
-                          (emulator/simulator/hardware).
-
-                    path:
-                        type: str
-                        default: ''
-                        title: Intel FPGA OpenCL SDK installation override
-                        description: >
-                            Path to specific Intel FPGA OpenCL SDK installation
-                            to use instead of just searching PATH and
-                            environment variables.
-
-                    board:
-                        type: str
-                        default: a10gx
-                        title: Target FPGA board
-                        description: FPGA board to compile for, obtain list by running ``aoc --list-boards``.
-
-                    enable_debugging:
-                        type: bool
-                        default: false
-                        title: Enable debugging for hardware kernels
-                        description: Injects debugging cores where available.
-
-                    host_flags:
-                        type: str
-                        title: Host arguments
-                        description: Extra host compiler argument flags
-                        default: "-Wno-unknown-pragmas"
-
-                    kernel_flags:
-                        type: str
-                        title: Kernel flags
-                        description: High-level synthesis C++ flags
-                        default: "-fp-relaxed -cl-no-signed-zeros -cl-fast-relaxed-math -cl-single-precision-constant -no-interleaving=default"
-
-            #############################################
-            # RTL (SystemVerilog) compiler
-            rtl:
-                type: dict
-                title: RTL
-                description: RTL (SystemVerilog) compiler preferences
-                required:
-                    verbose:
-                        type: bool
-                        default: false
-                        title: Verbose Build & Execution Output
-                        description: Output full build and execution (incl internal state) log.
-                    verilator_flags:
-                        type: str
-                        default: ''
-                        title: Additional Verilator Arguments
-                        description: Additional arguments feed to verilator.
-                    verilator_lint_warnings:
-                        type: bool
-                        default: true
-                        title: Verilator Lint Warnings
-                        description: Enable/Disable detailed SV lint checker output.
-                    verilator_enable_debug:
-                        type: bool
-                        default: false
-                        title: Verilator Enable Debug
-                        description: Enable/disable verbose internal state debug output.
-
             #############################################
             # MPI compiler
             mpi:
@@ -692,10 +495,7 @@ required:
                         type: str
                         title: Arguments
                         description: Linker argument flags
-                        # Tell linker to use rpath instead of runpath. Intel
-                        # FPGA programs fail to find certain libraries at
-                        # runtime with runpath.
-                        default: '-Wl,--disable-new-dtags'
+                        default: ''
                         default_Darwin: ''
                         default_Windows: ''
 
@@ -737,12 +537,6 @@ required:
                         default: false
                         description: >
                             Enables analysis of gcc vectorization information. Only gcc/g++ is supported.
-
-            print_fpga_runtime:
-                type: bool
-                default: false
-                title: Print FPGA runtime
-                description: Prints the runtime of instrumented FPGA kernel states to standard output.
 
     #############################################
     # Python frontend settings
@@ -1020,19 +814,6 @@ required:
                             Force the default implementation, even if an
                             implementation has been explicitly set on a node.
 
-                    fpga:
-                        type: dict
-                        title: FPGA
-                        description: FPGA-specific BLAS options.
-                        required:
-                            default_stream_depth:
-                                type: int
-                                default: 32
-                                title: Default FPGA stream depth
-                                description: >
-                                    Default FPGA stream depth used in the BLAS
-                                    library nodes and the corresponding
-                                    streaming transformations
             lapack:
                 type: dict
                 title: LAPACK

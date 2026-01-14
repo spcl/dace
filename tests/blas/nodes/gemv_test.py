@@ -5,9 +5,7 @@ import dace
 from dace.memlet import Memlet
 
 import dace.libraries.blas as blas
-from dace.fpga_testing import fpga_test
-from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
-from dace.transformation.dataflow import StreamingMemory
+from dace.transformation.interstate import InlineSDFG
 
 
 def pure_graph(dtype, transposed, expansion, veclen, alpha, beta, expansion_args=None):
@@ -47,18 +45,6 @@ def pure_graph(dtype, transposed, expansion, veclen, alpha, beta, expansion_args
     return sdfg
 
 
-def fpga_graph(dtype, transposed, expansion, veclen, alpha, beta, tile_size_x, tile_size_y):
-    sdfg = pure_graph(dtype, transposed, expansion, veclen, alpha, beta, {
-        "tile_size_x": tile_size_x,
-        "tile_size_y": tile_size_y
-    })
-    sdfg.apply_transformations_repeated([FPGATransformSDFG, InlineSDFG])
-
-    sdfg.expand_library_nodes()
-    sdfg.apply_transformations_repeated([InlineSDFG, StreamingMemory], [{}, {"storage": dace.StorageType.FPGA_Local}])
-    return sdfg
-
-
 def run_gemv(target: str,
              n: int,
              m: int,
@@ -71,26 +57,6 @@ def run_gemv(target: str,
     beta = 0  # TODO: GEMV is not currently implemented for beta != 0
     if target == "pure":
         sdfg = pure_graph(dace.float32, transposed, "pure", vectorize, alpha, beta)
-    elif target == "tiles_by_column":
-        if not transposed and vectorize > 1:
-            raise NotImplementedError("Non-transposed vectorized tile-by-column NYI.")
-        sdfg = fpga_graph(dace.float32,
-                          transposed,
-                          "FPGA_TilesByColumn",
-                          vectorize,
-                          alpha,
-                          beta,
-                          tile_size_x=tile_size_x,
-                          tile_size_y=tile_size_y)
-    elif target == "accumulate":
-        sdfg = fpga_graph(dace.float32,
-                          transposed,
-                          "FPGA_Accumulate",
-                          vectorize,
-                          alpha,
-                          beta,
-                          tile_size_x=tile_size_x,
-                          tile_size_y=tile_size_y)
     else:
         raise ValueError("Unsupported target")
 
@@ -113,16 +79,6 @@ def run_gemv(target: str,
 
 def test_pure():
     run_gemv("pure", 256, 512, transposed=True)
-
-
-@fpga_test()
-def test_gemv_fpga_tiles_by_column():
-    return run_gemv("tiles_by_column", 256, 512, transposed=True, vectorize=4)
-
-
-@fpga_test()
-def test_gemv_fpga_accumulate():
-    return run_gemv("accumulate", 256, 512, vectorize=4)
 
 
 if __name__ == "__main__":

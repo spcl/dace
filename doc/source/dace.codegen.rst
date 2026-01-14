@@ -84,6 +84,13 @@ dace.codegen.prettycode module
    :undoc-members:
    :show-inheritance:
 
+dace.codegen.target module
+----------------------------------
+
+.. automodule:: dace.codegen.target
+   :members:
+   :undoc-members:
+   :show-inheritance:
 
 Module contents
 ---------------

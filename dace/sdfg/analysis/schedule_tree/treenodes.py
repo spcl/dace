@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 from dataclasses import dataclass, field
 
 from dace import nodes, data, subsets
@@ -259,18 +259,6 @@ class ConsumeScope(DataflowScope):
         node: nodes.ConsumeEntry = self.node
         cond = 'stream not empty' if node.consume.condition is None else node.consume.condition.as_string
         result = indent * INDENTATION + f'consume (PE {node.consume.pe_index} out of {node.consume.num_pes}) while {cond}:\n'
-        return result + super().as_string(indent)
-
-
-@dataclass
-class PipelineScope(DataflowScope):
-    """
-    Pipeline scope.
-    """
-
-    def as_string(self, indent: int = 0):
-        rangestr = ', '.join(subsets.Range.dim_to_string(d) for d in self.node.map.range)
-        result = indent * INDENTATION + f'pipeline {", ".join(self.node.map.params)} in [{rangestr}]:\n'
         return result + super().as_string(indent)
 
 

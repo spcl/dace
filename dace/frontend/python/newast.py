@@ -33,6 +33,7 @@ from dace.sdfg import SDFG, SDFGState
 from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, FunctionCallRegion,
                              LoopRegion, ControlFlowRegion, NamedRegion)
 from dace.sdfg.replace import replace_datadesc_names
+from dace.sdfg.type_inference import infer_expr_type
 from dace.symbolic import pystr_to_symbolic, inequal_symbols
 
 import numpy
@@ -1651,7 +1652,6 @@ class ProgramVisitor(ExtNodeVisitor):
         object to maintain compatibility with global symbols. Used to maintain
         typed symbols in SDFG scopes (e.g., map, consume).
         """
-        from dace.codegen.tools.type_inference import infer_expr_type
         result = {}
 
         # Add map inputs first
@@ -2480,8 +2480,6 @@ class ProgramVisitor(ExtNodeVisitor):
             self._add_dependencies(state, nsdfg_node, me, mx, inputs, outputs, map_inputs, symbols)
         elif iterator == 'range':
             # Create an extra typed symbol for the loop iterate
-            from dace.codegen.tools.type_inference import infer_expr_type
-
             sym_name = indices[0]
             integer = True
             nonnegative = None

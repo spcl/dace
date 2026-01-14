@@ -151,7 +151,7 @@ def get_outermost_scope_maps(sdfg, graph, subgraph=None, scope_dict=None):
     If the underlying subgraph is not connected, there
     might be multiple locally outermost scopes. In this
     ambiguous case, the method returns an empty list.
-    If subgraph == None, the whole graph is taken
+    If subgraph is None, the whole graph is taken
     for analysis.
     """
     subgraph = graph if subgraph is None else subgraph
