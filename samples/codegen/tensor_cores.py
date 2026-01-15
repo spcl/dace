@@ -13,7 +13,7 @@ from dace.sdfg import nodes
 
 # Code generator imports and helpers
 from dace.codegen.targets.framecode import DaCeCodeGenerator
-from dace.codegen.targets.target import TargetCodeGenerator
+from dace.codegen.target import TargetCodeGenerator
 from dace.codegen.targets.cpp import cpp_array_expr, cpp_offset_expr
 
 # Frontend imports and helpers
@@ -135,7 +135,7 @@ class TensorCoreCodegen(TargetCodeGenerator):
 
         # Set non-tensor-core C++ expression based on memlet
         if edge.data.data == nontc_node.data:
-            other_expr = cpp_array_expr(sdfg, edge.data)
+            other_expr = cpp_array_expr(sdfg, edge.data, framecode=self._frame)
         elif edge.data.other_subset is not None:
             offset_cppstr = cpp_offset_expr(nontc_desc, edge.data.other_subset)
             other_expr = '%s[%s]' % (nontc_node.data, offset_cppstr)

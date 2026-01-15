@@ -702,8 +702,6 @@ with open(r"{temp_path}", "wb") as f:
                 zeros = cupy.empty
             except (ImportError, ModuleNotFoundError):
                 raise NotImplementedError('GPU return values are unsupported if cupy is not installed')
-        if storage is dtypes.StorageType.FPGA_Global:
-            raise NotImplementedError('FPGA return values are unsupported')
 
         # Create an array with the properties of the SDFG array
         return ndarray(shape, dtype, buffer=zeros(total_size, dtype), strides=strides)

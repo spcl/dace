@@ -368,7 +368,7 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
                 elif x.map.schedule == dtypes.ScheduleType.Sequential:
                     x.map._can_be_supersection_start = False
                 else:
-                    # Any other type (FPGA, GPU) - not supported by PAPI.
+                    # Any other type (e.g., GPU) - not supported by PAPI.
                     x.map._can_be_supersection_start = False
 
             if (node.map._can_be_supersection_start and not dace.sdfg.is_parallel(dfg)):

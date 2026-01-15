@@ -260,20 +260,6 @@ def is_devicelevel_gpu_kernel(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGStat
         return is_devicelevel_gpu(state.parent, state, node, with_gpu_default=True)
 
 
-def is_devicelevel_fpga(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState', node: nd.Node) -> bool:
-    """ Tests whether a node in an SDFG is contained within FPGA device-level
-        code.
-
-        :param sdfg: The SDFG in which the node resides.
-        :param state: The SDFG state in which the node resides.
-        :param node: The node in question
-        :return: True if node is in device-level code, False otherwise.
-    """
-    from dace.sdfg.utils import is_fpga_kernel
-    return (is_in_scope(sdfg, state, node, [dtypes.ScheduleType.FPGA_Device])
-            or (state is not None and is_fpga_kernel(sdfg, state)))
-
-
 def devicelevel_block_size(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
                            node: nd.Node) -> Tuple[symbolic.SymExpr]:
     """ Returns the current thread-block size if the given node is enclosed in
