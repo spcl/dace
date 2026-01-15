@@ -14,15 +14,12 @@ Most dependencies will be resolved when the package is installed with ``pip`` or
 however, it requires two more runtime dependencies to be installed and available in the ``PATH`` environment variable
 (if not, see :ref:`config` for how to configure different compiler paths):
 
- * A C++14-capable compiler (e.g., gcc 5.3+)
+ * A C++20-capable compiler (e.g., gcc 10+)
  * CMake 3.15 or newer. *Note: if CMake cannot be found or is too old, pip will try to install a version but it sometimes fails.*
 
 
 **GPU**: For NVIDIA GPUs, the CUDA toolkit is also required, and AMD GPUs require HIP. :ref:`See more information on how to configure DaCe to use AMD GPUs <amd>`.
 You may (optionally) want to install `CuPy <https://cupy.dev/>`_ for easy integration of GPU arrays in Python.
-
-**FPGA**: Xilinx FPGAs require the Vitis suite and Intel FPGAs require the Intel FPGA SDK to be installed.
-DaCe has been tested with Intel FPGA SDK for OpenCL Pro edition v18.1 and v19.1, targeting Arria 10 and Stratix 10 devices, and Xilinx Vitis HLS v2020.x, v2021.x targeting u250 and u280 devices.
 
 
 **Distributed Computing**: If using multiple nodes, MPI has to be installed and available.
@@ -137,12 +134,6 @@ Common issues with the DaCe Python module
 
   * **Bug in DaCe**: If you suspect an issue happens within DaCe, see :ref:`debugging` for ways to pinpoint the source
     of the issue.
-
-  * **Intel FPGA libraries not found**: when targeting Intel FPGAs, the compilation process may fail due to missing OpenCL headers (CMake returns
-    a ``Could NOT find IntelFPGAOpenCL`` error). This is usually the case when Intel OpenCL compiler does not return the right path to OpenCL host headers.
-    DaCe relies on ``hlslib`` for compiling FPGA programs, which in turns relies on Intel's compiler to derive the right include path. Please verify that
-    the include path returned by the Intel compiler (using the ``aocl compile-config`` command) points to a directory that actually contains the OpenCL headers (namely ``cl.hpp`` and
-    ``cl2.hpp`` files). If this is not the case, please locate them under the Intel Quartus installation folder, and symlink (or copy) them in the ``aocl`` returned path.
 
 .. _qa_vscode:
 

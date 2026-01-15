@@ -50,8 +50,10 @@ test_cscs_gh200:
     # running the tests. The output folder is inside the docker image
     # (${WORKDIR}/dace), so it won't take up space on $SCRATCH but in a
     # ephemeral tmpfs mount in the running node.
+    - echo $CSCS_CI_ORIG_CLONE_URL
     - mkdir -p "${WORKDIR}/dace" && git clone --recursive "${CSCS_CI_ORIG_CLONE_URL}" "${WORKDIR}/dace"
     - cd "${WORKDIR}/dace"
+    - git fetch --depth 1 origin "${CI_COMMIT_SHA}"
     - git checkout "${CI_COMMIT_SHA}"
     - uv pip install -e ".[testing]"
     - export DACE_cache=unique

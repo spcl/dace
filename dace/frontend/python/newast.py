@@ -33,6 +33,7 @@ from dace.sdfg import SDFG, SDFGState
 from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, FunctionCallRegion,
                              LoopRegion, ControlFlowRegion, NamedRegion)
 from dace.sdfg.replace import replace_datadesc_names
+from dace.sdfg.type_inference import infer_expr_type
 from dace.symbolic import pystr_to_symbolic, inequal_symbols
 
 import numpy
@@ -1630,7 +1631,6 @@ class ProgramVisitor(ExtNodeVisitor):
         object to maintain compatibility with global symbols. Used to maintain
         typed symbols in SDFG scopes (e.g., map, consume).
         """
-        from dace.codegen.tools.type_inference import infer_expr_type
         result = {}
 
         # Add map inputs first
@@ -2011,7 +2011,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     if symbolic.issymbolic(atom, self.sdfg.constants):
                         # Check for undefined variables
                         atomstr = str(atom)
-                        if atomstr not in self.defined:
+                        if atomstr not in self.defined and atomstr not in self.sdfg.arrays:
                             raise DaceSyntaxError(self, node, 'Undefined variable "%s"' % atom)
                         # Add to global SDFG symbols
 
@@ -2457,8 +2457,6 @@ class ProgramVisitor(ExtNodeVisitor):
             self._add_dependencies(state, tasklet, me, mx, inputs, outputs, map_inputs, symbols)
         elif iterator == 'range':
             # Create an extra typed symbol for the loop iterate
-            from dace.codegen.tools.type_inference import infer_expr_type
-
             sym_name = indices[0]
             integer = True
             nonnegative = None
@@ -3245,8 +3243,14 @@ class ProgramVisitor(ExtNodeVisitor):
         else:
             var_name = self.get_target_name()
 
-        parent_name = self.scope_vars[name]
-        parent_array = self.scope_arrays[parent_name]
+        parent_name = self.scope_vars[until(name, '.')]
+        if '.' in name:
+            struct_field = name[name.index('.'):]
+            parent_name += struct_field
+            scope_ndict = dace.sdfg.NestedDict(self.scope_arrays)
+            parent_array = scope_ndict[parent_name]
+        else:
+            parent_array = self.scope_arrays[parent_name]
 
         has_indirection = (_subset_has_indirection(rng, self) or _subset_is_local_symbol_dependent(rng, self))
         strides = list(parent_array.strides)
@@ -3419,7 +3423,7 @@ class ProgramVisitor(ExtNodeVisitor):
             return self.accesses[(name, rng, 'w')]
         elif name in self.variables:
             return (self.variables[name], rng)
-        elif (name, rng, 'r') in self.accesses or name in self.scope_vars:
+        elif (name, rng, 'r') in self.accesses or until(name, '.') in self.scope_vars:
             return self._add_access(name, rng, 'w', target, new_name, arr_type)
         else:
             raise NotImplementedError
@@ -3527,8 +3531,10 @@ class ProgramVisitor(ExtNodeVisitor):
                     while isinstance(last_subscript.value, ast.Subscript):
                         last_subscript = last_subscript.value
                 if isinstance(target, ast.Subscript) and not isinstance(last_subscript.value, ast.Name):
-                    store_target = copy.copy(last_subscript.value)
-                    store_target.ctx = ast.Store()
+                    store_target = astutils.copy_tree(last_subscript.value)
+                    for n in ast.walk(store_target):  # Recursively make attributes into stores
+                        if hasattr(n, 'ctx'):
+                            n.ctx = ast.Store()
                     true_name = self.visit(store_target)
                     # Refresh defined variables and arrays
                     defined_vars = {**self.variables, **self.scope_vars}
@@ -3736,7 +3742,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     raise IndexError('Boolean array indexing cannot be combined with indirect access')
 
             if self.nested and not new_data and not visited_target:
-                new_name, new_rng = self._add_write_access(name, rng, target)
+                new_name, new_rng = self._add_write_access(true_name, rng, target)
                 # Local symbol or local data dependent
                 if _subset_is_local_symbol_dependent(rng, self):
                     new_rng = rng

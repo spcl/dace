@@ -121,7 +121,3 @@ GPU programming and debugging:
    ``hip`` for AMD GPUs).
  * :envvar:`compiler.cuda.syncdebug` (default: False): If True, calls device-synchronization after every GPU kernel and checks
    for errors. Good for checking crashes or invalid memory accesses.
-
-FPGA programming:
-
- * :envvar:`compiler.fpga.vendor`: Can be ``xilinx`` for Xilinx FPGAs, or ``intel_fpga`` for Intel FPGAs.

@@ -7,6 +7,7 @@ import dace
 from dace import data, properties, subsets, symbolic, transformation
 from dace.sdfg import SDFG, SDFGState, graph, nodes, propagation
 from dace.transformation.dataflow import map_fusion_helper as mfhelper
+from dace.sdfg.type_inference import infer_expr_type
 
 
 @properties.make_properties
@@ -377,6 +378,13 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         for node_to_remove in [first_map_exit, second_map_entry]:
             assert graph.degree(node_to_remove) == 0
             graph.remove_node(node_to_remove)
+
+        # This will ensure that regardless in which order a set of fusable Maps are
+        #  processed the label of the final Map will always be the same.
+        first_map_label = first_map_exit.map.label
+        second_map_label = second_map_entry.map.label
+        if second_map_label < first_map_label:
+            first_map_exit.map.label = second_map_label
 
         # Now turn the second output node into the output node of the first Map.
         second_map_exit.map = first_map_entry.map
@@ -1839,7 +1847,6 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     else:
                         # NOTE: This code is copied from `SDFGState.add_nested_sdfg()`, according
                         #   to the description this is not a very good implementation.
-                        from dace.codegen.tools.type_inference import infer_expr_type
                         new_inner_value_type = infer_expr_type(outer_value, outer_sdfg.symbols) or dtypes.typeclass(int)
                     inner_sdfg.add_symbol(new_inner_value_sym, new_inner_value_type)
             return new_inner_values

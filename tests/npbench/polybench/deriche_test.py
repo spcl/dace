@@ -5,10 +5,9 @@ import numpy as np
 import dace as dc
 import pytest
 import argparse
-from dace.fpga_testing import fpga_test
-from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
-from dace.transformation.dataflow import StreamingMemory
-from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
+from dace.transformation.interstate import InlineSDFG
+from dace.transformation.auto.auto_optimize import auto_optimize
+from dace.autodiff import add_backward_pass
 
 # Data set sizes
 # W, H
@@ -76,6 +75,64 @@ def initialize(W, H, datatype=np.float64):
     return alpha, imgIn
 
 
+def deriche_jax_kernel(jnp, lax, alpha, imgIn):
+
+    k = (1.0 - jnp.exp(-alpha))**2 / (1.0 + alpha * jnp.exp(-alpha) - jnp.exp(2.0 * alpha))
+    a1 = a5 = k
+    a2 = a6 = k * jnp.exp(-alpha) * (alpha - 1.0)
+    a3 = a7 = k * jnp.exp(-alpha) * (alpha + 1.0)
+    a4 = a8 = -k * jnp.exp(-2.0 * alpha)
+    b1 = 2.0**(-alpha)
+    b2 = -jnp.exp(-2.0 * alpha)
+    c1 = c2 = 1
+
+    y1 = jnp.empty_like(imgIn)
+    y1 = y1.at[:, 0].set(a1 * imgIn[:, 0])
+    y1 = y1.at[:, 1].set(a1 * imgIn[:, 1] + a2 * imgIn[:, 0] + b1 * y1[:, 0])
+
+    def horizontal_forward_body(y1, j):
+        new_y1 = y1.at[:, j].set(a1 * imgIn[:, j] + a2 * imgIn[:, j - 1] + b1 * y1[:, j - 1] + b2 * y1[:, j - 2])
+        return new_y1, None
+
+    y1, _ = lax.scan(horizontal_forward_body, y1, jnp.arange(2, imgIn.shape[1]))
+
+    y2 = jnp.empty_like(imgIn)
+    y2 = y2.at[:, -1].set(0.0)
+    y2 = y2.at[:, -2].set(a3 * imgIn[:, -1])
+
+    def horizontal_backward_body(y2, j):
+        idx = imgIn.shape[1] - 3 - j
+        new_y2 = y2.at[:, idx].set(a3 * imgIn[:, idx + 1] + a4 * imgIn[:, idx + 2] + b1 * y2[:, idx + 1] +
+                                   b2 * y2[:, idx + 2])
+        return new_y2, None
+
+    y2, _ = lax.scan(horizontal_backward_body, y2, jnp.arange(0, imgIn.shape[1] - 2))
+
+    imgOut = c1 * (y1 + y2)
+
+    y1 = y1.at[0, :].set(a5 * imgOut[0, :])
+    y1 = y1.at[1, :].set(a5 * imgOut[1, :] + a6 * imgOut[0, :] + b1 * y1[0, :])
+
+    def vertical_forward_body(y1, i):
+        new_y1 = y1.at[i, :].set(a5 * imgOut[i, :] + a6 * imgOut[i - 1, :] + b1 * y1[i - 1, :] + b2 * y1[i - 2, :])
+        return new_y1, None
+
+    y1, _ = lax.scan(vertical_forward_body, y1, jnp.arange(2, imgIn.shape[0]))
+
+    y2 = y2.at[-1, :].set(0.0)
+    y2 = y2.at[-2, :].set(a7 * imgOut[-1, :])
+
+    def vertical_backward_body(y2, i):
+        idx = imgIn.shape[0] - 3 - i
+        new_y2 = y2.at[idx, :].set(a7 * imgOut[idx + 1, :] + a8 * imgOut[idx + 2, :] + b1 * y2[idx + 1, :] +
+                                   b2 * y2[idx + 2, :])
+        return new_y2, None
+
+    y2, _ = lax.scan(vertical_backward_body, y2, jnp.arange(0, imgIn.shape[0] - 2))
+
+    return jnp.sum(c2 * (y1 + y2))
+
+
 def ground_truth(alpha, imgIn):
 
     k = (1.0 - np.exp(-alpha)) * (1.0 - np.exp(-alpha)) / (1.0 + alpha * np.exp(-alpha) - np.exp(2.0 * alpha))
@@ -132,28 +189,46 @@ def run_deriche(device_type: dace.dtypes.DeviceType):
         sdfg = auto_optimize(sdfg, device_type)
         imgOut = sdfg(alpha, imgIn, W=W, H=H)
 
-    elif device_type == dace.dtypes.DeviceType.FPGA:
-        # Parse SDFG and apply FPGA friendly optimization
-        # Note: currently the kernel uses double-precision floating point numbers and
-        # works for Xilinx
-        sdfg = deriche_kernel.to_sdfg(simplify=True)
-        applied = sdfg.apply_transformations([FPGATransformSDFG])
-        assert applied == 1
-
-        ###########################
-        # FPGA Auto Opt
-        fpga_auto_opt.fpga_global_to_local(sdfg)
-        fpga_auto_opt.fpga_rr_interleave_containers_to_banks(sdfg)
-
-        # specialize the SDFG (needed by the GEMV expansion)
-        sdfg.specialize(dict(W=W, H=H))
-        imgOut = sdfg(alpha, imgIn)
-
     # Compute ground truth and validate result
 
     imgOut_ref = ground_truth(alpha, imgIn)
     assert np.allclose(imgOut, imgOut_ref)
     return sdfg
+
+
+def run_deriche_autodiff():
+    import jax
+    import jax.numpy as jnp
+    import jax.lax as lax
+
+    # Initialize data (test size for efficiency)
+    W, H = sizes["mini"]
+    alpha, imgIn = initialize(W, H)
+
+    # Initialize gradient computation data
+    gradient_imgIn = np.zeros_like(imgIn)
+    gradient___return = np.ones((1, ), dtype=np.float64)
+
+    # Define sum reduction for the output using __return pattern
+    @dc.program
+    def autodiff_kernel(alpha: dc.float64, imgIn: dc.float64[W, H]):
+        imgOut = deriche_kernel(alpha, imgIn)
+        return np.sum(imgOut)
+
+    # Add the backward pass to the SDFG
+    sdfg = autodiff_kernel.to_sdfg()
+    add_backward_pass(sdfg=sdfg, inputs=["imgIn"], outputs=["__return"])
+    sdfg(alpha, imgIn, W=W, H=H, gradient_imgIn=gradient_imgIn, gradient___return=gradient___return)
+
+    # Enable float64 support
+    jax.config.update("jax_enable_x64", True)
+
+    # Numerically validate vs JAX
+    jax_kernel = lambda alpha, imgIn: deriche_jax_kernel(jnp, lax, alpha, imgIn)
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=1))
+    alpha_jax, imgIn_jax = initialize(W, H)
+    jax_grad_imgIn = jax_grad(alpha_jax, imgIn_jax)
+    np.testing.assert_allclose(gradient_imgIn, jax_grad_imgIn)
 
 
 def test_cpu():
@@ -165,22 +240,22 @@ def test_gpu():
     run_deriche(dace.dtypes.DeviceType.GPU)
 
 
-@fpga_test(assert_ii_1=False, intel=False)
-def test_fpga():
-    return run_deriche(dace.dtypes.DeviceType.FPGA)
+@pytest.mark.autodiff
+def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
+    run_deriche_autodiff()
 
 
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]
 
     if target == "cpu":
         run_deriche(dace.dtypes.DeviceType.CPU)
+        run_deriche_autodiff()
     elif target == "gpu":
         run_deriche(dace.dtypes.DeviceType.GPU)
-    elif target == "fpga":
-        run_deriche(dace.dtypes.DeviceType.FPGA)
