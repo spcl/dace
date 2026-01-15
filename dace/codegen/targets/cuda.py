@@ -25,6 +25,7 @@ from dace.config import Config
 from dace.frontend import operations
 from dace.sdfg import (SDFG, ScopeSubgraphView, SDFGState, has_dynamic_map_inputs, is_array_stream_view,
                        is_devicelevel_gpu, nodes, scope_contains_scope, memlet_utils)
+from dace.sdfg.scope import get_node_schedule
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
@@ -2838,6 +2839,9 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                              node: nodes.NestedSDFG, function_stream: CodeIOStream,
                              callsite_stream: CodeIOStream) -> None:
         old_schedule = self._toplevel_schedule
+        nested_schedule = get_node_schedule(sdfg, dfg, node)
+        if nested_schedule != dtypes.ScheduleType.Default:
+            self._toplevel_schedule = nested_schedule
         old_codegen = self._cpu_codegen.calling_codegen
         self._cpu_codegen.calling_codegen = self
 

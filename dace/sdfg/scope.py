@@ -190,6 +190,34 @@ def common_parent_scope(sdict: ScopeDictType, scope_a: nd.Node, scope_b: nd.Node
     return common
 
 
+def get_node_schedule(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState', node: nd.Node) -> dtypes.ScheduleType:
+    """
+    Returns the current schedule of the scope in which the given node resides, including scopes in parent SDFGs.
+
+    :param sdfg: The SDFG in which the node resides.
+    :param state: The SDFG state in which the node resides.
+    :param node: The node in question.
+    :return: The schedule of the scope in which the node resides.
+    """
+    while sdfg is not None:
+        if state is not None and node is not None:
+            sdict = state.scope_dict()
+            scope = sdict[node]
+            while scope is not None:
+                if scope.schedule != dtypes.ScheduleType.Default:
+                    return scope.schedule
+                scope = sdict[scope]
+        # Traverse up nested SDFGs
+        if sdfg.parent is not None:
+            parent = sdfg.parent_sdfg
+            state = sdfg.parent
+            node = sdfg.parent_nsdfg_node
+        else:
+            parent = sdfg.parent
+        sdfg = parent
+    return dtypes.ScheduleType.Default
+
+
 def is_in_scope(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState', node: nd.Node,
                 schedules: List[dtypes.ScheduleType]) -> bool:
     """ Tests whether a node in an SDFG is contained within a certain set of
