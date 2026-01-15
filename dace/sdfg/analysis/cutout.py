@@ -841,8 +841,8 @@ def _create_alibi_access_node_for_edge(target_sdfg: SDFG, target_state: SDFGStat
     original_edge.data
     access_size = original_edge.data.subset.size_exact()
     container_name = '__cutout_' + str(original_edge.data.data)
-    container_name = data.find_new_name(container_name, target_sdfg._arrays.keys())
-    original_array = original_sdfg._arrays[original_edge.data.data]
+    container_name = data.find_new_name(container_name, target_sdfg.arrays.keys())
+    original_array = original_sdfg.arrays[original_edge.data.data]
     memlet_str = ''
     if original_edge.data.subset.num_elements_exact() > 1:
         access_size = original_edge.data.subset.size_exact()

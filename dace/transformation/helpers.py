@@ -1887,12 +1887,12 @@ def _change_sdfg_type(sdfg: SDFG, from_type: typeclass, to_type: typeclass, swap
             swaps_count += 1
 
     # Swap structures and structure views
-    for array_desc in sdfg._arrays.values():
+    for array_desc in sdfg.arrays.values():
         if _is_structure(array_desc) or _is_structure_view(array_desc):
             swaps_count = _change_structure_type(array_desc, from_type, to_type, swaps_count)
 
     # Change dace.data.struct field types
-    for array_desc in sdfg._arrays.values():
+    for array_desc in sdfg.arrays.values():
         if _is_structure(array_desc):
             if _is_pointer(array_desc.dtype):
                 if isinstance(array_desc.dtype.base_type, dtypes.struct):

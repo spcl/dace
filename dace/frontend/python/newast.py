@@ -3604,11 +3604,10 @@ class ProgramVisitor(ExtNodeVisitor):
 
             new_data, rng = None, None
             dtype_keys = tuple(dtypes.dtype_to_typeclass().keys())
-            if not (
-                    result in self.sdfg.symbols or symbolic.issymbolic(result) or isinstance(result, dtype_keys) or
-                (isinstance(result, str) and any(
-                    result in x
-                    for x in [self.sdfg.arrays, self.sdfg._pgrids, self.sdfg._subarrays, self.sdfg._rdistrarrays]))):
+            if not (result in self.sdfg.symbols or symbolic.issymbolic(result) or isinstance(result, dtype_keys) or
+                    (isinstance(result, str) and any(
+                        result in x
+                        for x in [self.sdfg.arrays, self.sdfg.pgrids, self.sdfg.subarrays, self.sdfg.rdistrarrays]))):
                 raise DaceSyntaxError(
                     self, node, "In assignments, the rhs may only be "
                     "data, numerical/boolean constants "
@@ -3632,7 +3631,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         true_name, new_data = self.sdfg.add_scalar(true_name, ttype, transient=True, find_new_name=True)
                     self.variables[name] = true_name
                     defined_vars[name] = true_name
-                if any(result in x for x in [self.sdfg._pgrids, self.sdfg._rdistrarrays, self.sdfg._subarrays]):
+                if any(result in x for x in [self.sdfg.pgrids, self.sdfg.rdistrarrays, self.sdfg.subarrays]):
                     # NOTE: In previous versions some `pgrid` and subgrid related replacement function,
                     #   see `dace/frontend/common/distr.py`, created dummy variables with the same name
                     #   as the entities, such as process grids, they created. Thus the frontend was
