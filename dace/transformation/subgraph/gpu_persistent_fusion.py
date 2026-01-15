@@ -275,7 +275,6 @@ class GPUPersistentKernel(SubgraphTransformation):
             kernel_args_read,
             kernel_args_write,
         )
-        nested_sdfg.schedule = ScheduleType.GPU_Persistent
 
         # If no inputs or outputs were given, connect with an empty memlet
         if not kernel_args_read:

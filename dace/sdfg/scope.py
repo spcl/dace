@@ -213,8 +213,6 @@ def is_in_scope(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState', node: nd.N
             parent = sdfg.parent_sdfg
             state = sdfg.parent
             node = sdfg.parent_nsdfg_node
-            if node.schedule in schedules:
-                return True
         else:
             parent = sdfg.parent
         sdfg = parent

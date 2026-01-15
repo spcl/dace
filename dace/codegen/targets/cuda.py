@@ -841,10 +841,9 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 if isinstance(node, nodes.AccessNode):
                     continue
                 if isinstance(node, nodes.NestedSDFG):
-                    if node.schedule == dtypes.ScheduleType.GPU_Device:
+                    if is_devicelevel_gpu(sdfg, state, node):
                         continue
-                    if node.schedule not in dtypes.GPU_SCHEDULES:
-                        max_streams, max_events = self._compute_cudastreams(node.sdfg, max_streams, max_events + 1)
+                    max_streams, max_events = self._compute_cudastreams(node.sdfg, max_streams, max_events + 1)
                 node._cuda_stream = max_streams
                 node._cs_childpath = False
                 max_streams = increment(max_streams)
@@ -886,7 +885,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 if not hasattr(e.dst, '_cs_childpath'):
                     e.dst._cs_childpath = False
                 if isinstance(e.dst, nodes.NestedSDFG):
-                    if e.dst.schedule not in dtypes.GPU_SCHEDULES:
+                    if not is_devicelevel_gpu(sdfg, state, e.dst):
                         max_streams, max_events = self._compute_cudastreams(e.dst.sdfg, e.dst._cuda_stream,
                                                                             max_events + 1)
 
@@ -2839,7 +2838,6 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                              node: nodes.NestedSDFG, function_stream: CodeIOStream,
                              callsite_stream: CodeIOStream) -> None:
         old_schedule = self._toplevel_schedule
-        self._toplevel_schedule = node.schedule
         old_codegen = self._cpu_codegen.calling_codegen
         self._cpu_codegen.calling_codegen = self
 
