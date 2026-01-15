@@ -270,7 +270,6 @@ def run_cavity_flow_autodiff():
          nu,
          ny=ny,
          nx=nx,
-         nit=nit,
          gradient_u=gradient_u,
          gradient___return=gradient___return)
 
