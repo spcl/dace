@@ -816,7 +816,7 @@ def _create_unified_descriptor_repository(sdfg: SDFG, stree: tn.ScheduleTreeRoot
         stree.constants.update(constants)
 
 
-def as_schedule_tree(sdfg: SDFG, *, in_place: bool = False, toplevel: bool = False) -> tn.ScheduleTreeRoot:
+def as_schedule_tree(sdfg: SDFG, *, in_place: bool = False, toplevel: bool = True) -> tn.ScheduleTreeRoot:
     """
     Converts an SDFG into a schedule tree. The schedule tree is a tree of nodes that represent the execution order of
     the SDFG.
@@ -839,13 +839,14 @@ def as_schedule_tree(sdfg: SDFG, *, in_place: bool = False, toplevel: bool = Fal
     _prepare_sdfg_for_conversion(sdfg, toplevel=toplevel)
 
     if toplevel:
-        result = tn.ScheduleTreeRoot(children=[], name="my-stree-name")
+        result = tn.ScheduleTreeRoot(name="my-stree-name", children=[])
         _create_unified_descriptor_repository(sdfg, result)
-        result.children = _block_schedule_tree(sdfg)
+        result.add_children(_block_schedule_tree(sdfg))
     else:
         result = tn.ScheduleTreeScope(children=_block_schedule_tree(sdfg))
 
     tn.validate_has_no_other_node_types(result)
+    tn.validate_children_and_parents_align(result, root=toplevel)
 
     # Clean up tree
     stpasses.remove_unused_and_duplicate_labels(result)

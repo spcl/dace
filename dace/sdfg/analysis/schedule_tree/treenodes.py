@@ -11,7 +11,7 @@ from dace.sdfg.sdfg import InterstateEdge, SDFG, memlets_in_ast
 from dace.sdfg.state import LoopRegion, SDFGState
 from dace.memlet import Memlet
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Literal, Optional, Set, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, Iterable, Iterator, List, Literal, Optional, Set, Tuple, Union
 
 if TYPE_CHECKING:
     from dace import SDFG
@@ -112,13 +112,19 @@ class ScheduleTreeNode:
 class ScheduleTreeScope(ScheduleTreeNode):
     children: List['ScheduleTreeNode']
 
-    def __init__(self, children: Optional[List['ScheduleTreeNode']] = None):
-        self.children = children or []
-        if self.children:
-            for child in children:
-                child.parent = self
-        self.containers = {}
-        self.symbols = {}
+    def __init__(self, children: List['ScheduleTreeNode']) -> None:
+        for child in children:
+            child.parent = self
+    
+        self.children = children
+
+    def add_children(self, children: Iterable['ScheduleTreeNode']) -> None:
+        for child in children:
+            child.parent = self
+            self.children.append(child)
+
+    def add_child(self, child: ScheduleTreeNode) -> None:
+        self.add_children([child])
 
     def as_string(self, indent: int = 0):
         if not self.children:
@@ -242,6 +248,25 @@ class ScheduleTreeRoot(ScheduleTreeScope):
     callback_mapping: Dict[str, str] = field(default_factory=dict)
     arg_names: List[str] = field(default_factory=list)
 
+    def __init__(
+        self,
+        *,
+        name: str,
+        children: List[ScheduleTreeNode],
+        containers: Optional[Dict[str, data.Data]] = None,
+        symbols: Optional[Dict[str, dtypes.typeclass]] = None,
+        constants: Optional[Dict[str, Tuple[data.Data, Any]]] = None,
+    ) -> None:
+        super().__init__(children)
+
+        self.name = name
+        if containers is not None:
+            self.containers = containers
+        if symbols is not None:
+            self.symbols = symbols
+        if constants is not None:
+            self.constants = constants
+
     def as_sdfg(self,
                 validate: bool = True,
                 simplify: bool = True,
@@ -282,13 +307,24 @@ class ScheduleTreeRoot(ScheduleTreeScope):
 
 @dataclass
 class ControlFlowScope(ScheduleTreeScope):
-    pass
+
+    def __init__(self, children: List[ScheduleTreeNode]) -> None:
+        super().__init__(children)
 
 
 @dataclass
 class DataflowScope(ScheduleTreeScope):
     node: nodes.EntryNode
     state: Optional[SDFGState] = None
+
+    def __init__(self,
+                 node: nodes.EntryNode,
+                 children: List[ScheduleTreeNode],
+                 state: Optional[SDFGState] = None) -> None:
+        super().__init__(children)
+
+        self.node = node
+        self.state = state
 
     def scope(self, state: SDFGState, ctx: Context) -> ContextPushPop:
         return ContextPushPop(ctx, state, self)
@@ -301,6 +337,9 @@ class GBlock(ControlFlowScope):
     that can run in arbitrary order based on edges (gotos).
     Normally contains irreducible control flow.
     """
+
+    def __init__(self, children: List[ScheduleTreeNode]) -> None:
+        super().__init__(children)
 
     def as_string(self, indent: int = 0):
         result = indent * INDENTATION + 'gblock:\n'
@@ -363,6 +402,11 @@ class LoopScope(ControlFlowScope):
     """
     loop: LoopRegion
 
+    def __init__(self, loop: LoopRegion, children: List[ScheduleTreeNode]) -> None:
+        super().__init__(children)
+
+        self.loop = loop
+
     def as_string(self, indent: int = 0):
         loop = self.loop
         variant = loop_variant(loop)
@@ -391,6 +435,9 @@ class LoopScope(ControlFlowScope):
 class ForScope(LoopScope):
     """Specialized LoopScope for for-loops."""
 
+    def __init__(self, loop: LoopRegion, children: List[ScheduleTreeNode]) -> None:
+        super().__init__(loop, children)
+
     def as_string(self, indent: int = 0) -> str:
         init_statement = self.loop.init_statement.as_string
         condition = self.loop.loop_condition.as_string
@@ -399,7 +446,6 @@ class ForScope(LoopScope):
         return result + super().as_string(indent)
 
     def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None, **kwargs) -> MemletSet:
-        root = root if root is not None else self.get_root()
         result = MemletSet()
         result.update(self.loop.get_meta_read_memlets())
 
@@ -428,6 +474,9 @@ class ForScope(LoopScope):
 class WhileScope(LoopScope):
     """Specialized LoopScope for while-loops."""
 
+    def __init__(self, loop: LoopRegion, children: List[ScheduleTreeNode]) -> None:
+        super().__init__(loop, children)
+
     def as_string(self, indent: int = 0) -> str:
         condition = self.loop.loop_condition.as_string
         result = indent * INDENTATION + f'while {condition}:\n'
@@ -444,6 +493,9 @@ class WhileScope(LoopScope):
 @dataclass
 class DoWhileScope(LoopScope):
     """Specialized LoopScope for do-while-loops"""
+
+    def __init__(self, loop: LoopRegion, children: List[ScheduleTreeNode]) -> None:
+        super().__init__(loop, children)
 
     def as_string(self, indent: int = 0) -> str:
         header = indent * INDENTATION + 'do:\n'
@@ -465,6 +517,11 @@ class IfScope(ControlFlowScope):
     """
     condition: CodeBlock
 
+    def __init__(self, condition: CodeBlock, children: List[ScheduleTreeNode]) -> None:
+        super().__init__(children)
+
+        self.condition = condition
+
     def as_string(self, indent: int = 0):
         result = indent * INDENTATION + f'if {self.condition.as_string}:\n'
         return result + super().as_string(indent)
@@ -482,6 +539,9 @@ class StateIfScope(IfScope):
     """
     A special class of an if scope in general blocks for if statements that are part of a state transition.
     """
+
+    def __init__(self, condition: CodeBlock, children: List[ScheduleTreeNode]) -> None:
+        super().__init__(condition, children)
 
     def as_string(self, indent: int = 0):
         result = indent * INDENTATION + f'stateif {self.condition.as_string}:\n'
@@ -527,6 +587,11 @@ class ElifScope(ControlFlowScope):
     """
     condition: CodeBlock
 
+    def __init__(self, condition: CodeBlock, children: List[ScheduleTreeNode]) -> None:
+        super().__init__(children)
+
+        self.condition = condition
+
     def as_string(self, indent: int = 0):
         result = indent * INDENTATION + f'elif {self.condition.as_string}:\n'
         return result + super().as_string(indent)
@@ -545,6 +610,9 @@ class ElseScope(ControlFlowScope):
     Else branch scope.
     """
 
+    def __init__(self, children: List[ScheduleTreeNode]) -> None:
+        super().__init__(children)
+
     def as_string(self, indent: int = 0):
         result = indent * INDENTATION + 'else:\n'
         return result + super().as_string(indent)
@@ -556,6 +624,12 @@ class MapScope(DataflowScope):
     Map scope.
     """
     node: nodes.MapEntry
+
+    def __init__(self,
+                 node: nodes.MapEntry,
+                 children: List[ScheduleTreeNode],
+                 state: Optional[SDFGState] = None) -> None:
+        super().__init__(node, children, state)
 
     def as_string(self, indent: int = 0):
         rangestr = ', '.join(subsets.Range.dim_to_string(d) for d in self.node.map.range)
@@ -585,6 +659,12 @@ class ConsumeScope(DataflowScope):
     Consume scope.
     """
     node: nodes.ConsumeEntry
+
+    def __init__(self,
+                 node: nodes.ConsumeEntry,
+                 children: List[ScheduleTreeNode],
+                 state: Optional[SDFGState] = None) -> None:
+        super().__init__(node, children, state)
 
     def as_string(self, indent: int = 0):
         node: nodes.ConsumeEntry = self.node
@@ -850,6 +930,27 @@ def validate_has_no_other_node_types(stree: ScheduleTreeScope) -> None:
             raise RuntimeError(f'Unsupported node type: {type(child).__name__}')
         if isinstance(child, ScheduleTreeScope):
             validate_has_no_other_node_types(child)
+
+
+def validate_children_and_parents_align(stree: ScheduleTreeScope, *, root: bool = False) -> None:
+    """
+    Validates the child/parent information of schedule tree scopes are consistent.
+
+    Walks through all children of a scope and raises if the children's parent isn't
+    the scope. If `root` is true, we additionally check that the top-most scope is
+    of type `ScheduleTreeRoot`.
+
+    :param stree: Schedule tree scope to be analyzed
+    :param root: If true, we raise if the top-most scope isn't of type `ScheduleTreeRoot`.
+    """
+    if root and not isinstance(stree, ScheduleTreeRoot):
+        raise RuntimeError("Expected schedule tree root.")
+
+    for child in stree.children:
+        if id(child.parent) != id(stree):
+            raise RuntimeError(f"Inconsistent parent/child relationship. child: {child}, parent: {stree}")
+        if isinstance(child, ScheduleTreeScope):
+            validate_children_and_parents_align(child)
 
 
 def loop_variant(
