@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Functionality relating to Memlet propagation (deducing external memlets
 from internal memory accesses and scope ranges).
@@ -9,7 +9,7 @@ import functools
 import itertools
 import warnings
 from collections import deque
-from typing import TYPE_CHECKING, List, Set
+from typing import TYPE_CHECKING, Dict, List, Optional, Set
 
 import sympy
 from sympy import Symbol, ceiling
@@ -971,13 +971,10 @@ def propagate_memlets_nested_sdfg(parent_sdfg: 'SDFG', parent_state: 'SDFGState'
     :param nsdfg_node: The NSDFG node containing this nested SDFG.
     :note: This operates in-place on the parent SDFG.
     """
-    # We import late to avoid cyclic imports here.
-    from dace.transformation.helpers import unsqueeze_memlet
-
     # Build a map of connectors to associated 'border' memlets inside
     # the nested SDFG. This map will be populated with memlets once they
     # get propagated in the SDFG.
-    border_memlets = {
+    border_memlets: Dict[str, Dict[str, Optional[Memlet]]] = {
         'in': {},
         'out': {},
     }
@@ -1120,41 +1117,17 @@ def propagate_memlets_nested_sdfg(parent_sdfg: 'SDFG', parent_state: 'SDFGState'
             internal_memlet = border_memlets['in'][iedge.dst_conn]
             if internal_memlet is None:
                 continue
-            try:
-                iedge.data = unsqueeze_memlet(internal_memlet, iedge.data, True)
-                # If no appropriate memlet found, use array dimension
-                for i, (rng, s) in enumerate(zip(internal_memlet.subset, parent_sdfg.arrays[iedge.data.data].shape)):
-                    if rng[1] + 1 == s:
-                        iedge.data.subset[i] = (iedge.data.subset[i][0], s - 1, 1)
-                    if symbolic.issymbolic(iedge.data.volume):
-                        if any(str(s) not in outer_symbols for s in iedge.data.volume.free_symbols):
-                            iedge.data.volume = 0
-                            iedge.data.dynamic = True
-            except (ValueError, NotImplementedError):
-                # In any case of memlets that cannot be unsqueezed (i.e.,
-                # reshapes), use dynamic unbounded memlets.
-                iedge.data.volume = 0
-                iedge.data.dynamic = True
+            extname = iedge.data.data
+            iedge.data = copy.deepcopy(internal_memlet)
+            iedge.data.data = extname
     for oedge in parent_state.out_edges(nsdfg_node):
         if oedge.src_conn in border_memlets['out']:
             internal_memlet = border_memlets['out'][oedge.src_conn]
             if internal_memlet is None:
                 continue
-            try:
-                oedge.data = unsqueeze_memlet(internal_memlet, oedge.data, True)
-                # If no appropriate memlet found, use array dimension
-                for i, (rng, s) in enumerate(zip(internal_memlet.subset, parent_sdfg.arrays[oedge.data.data].shape)):
-                    if rng[1] + 1 == s:
-                        oedge.data.subset[i] = (oedge.data.subset[i][0], s - 1, 1)
-                    if symbolic.issymbolic(oedge.data.volume):
-                        if any(str(s) not in outer_symbols for s in oedge.data.volume.free_symbols):
-                            oedge.data.volume = 0
-                            oedge.data.dynamic = True
-            except (ValueError, NotImplementedError):
-                # In any case of memlets that cannot be unsqueezed (i.e.,
-                # reshapes), use dynamic unbounded memlets.
-                oedge.data.volume = 0
-                oedge.data.dynamic = True
+            extname = oedge.data.data
+            oedge.data = copy.deepcopy(internal_memlet)
+            oedge.data.data = extname
 
 
 def reset_state_annotations(sdfg: 'SDFG'):

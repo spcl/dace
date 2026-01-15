@@ -274,7 +274,8 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
                           conntype: dtypes.typeclass,
                           codegen: 'TargetCodeGenerator',
                           ancestor: int = 1,
-                          is_write: bool = None) -> Tuple[str, str, str]:
+                          is_write: bool = None,
+                          use_offset: bool = False) -> Tuple[str, str, str]:
     """
     Returns a tuple of three strings with a definition of a reference to an
     existing memlet. Used in nested SDFG arguments.
@@ -283,7 +284,7 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
     """
     desc = sdfg.arrays[memlet.data]
     typedef = conntype.ctype
-    offset = cpp_offset_expr(desc, memlet.subset)
+    offset = cpp_offset_expr(desc, memlet.subset) if use_offset else '0'
     offset_expr = '[' + offset + ']'
     is_scalar = not isinstance(conntype, dtypes.pointer)
     ptrname = codegen.ptr(memlet.data, desc, sdfg, subset=memlet.subset, ancestor=ancestor, is_write=is_write)
@@ -343,7 +344,7 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
             is_scalar = True
     elif defined_type == DefinedType.StreamArray:
         # Stream array to stream (reference)
-        if memlet.subset.num_elements() == 1:
+        if use_offset and memlet.subset.num_elements() == 1:
             ref = '&'
             typedef = defined_ctype
             is_scalar = True  # Avoid "&" in expression below
