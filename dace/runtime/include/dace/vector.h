@@ -2,11 +2,6 @@
 #ifndef __DACE_VECTOR_H
 #define __DACE_VECTOR_H
 
-#ifdef DACE_XILINX
-#include <dace_fpga/xilinx/vec.h>
-// Don't include the code below if building for Xilinx
-#else
-
 #include "types.h"
 
 #if defined(__CUDACC__) || defined(__HIPCC__)
@@ -330,5 +325,4 @@ namespace dace
 
 }
 
-#endif // DACE_XILINX
 #endif  // __DACE_VECTOR_H

@@ -3180,6 +3180,12 @@ class LoopRegion(ControlFlowRegion):
                                        'do-while style into a while(true) with a break before the update (at the end ' +
                                        'of an iteration) if the condition no longer holds.')
     loop_variable = Property(dtype=str, default='', desc='The loop variable, if given')
+    unroll = Property(dtype=bool,
+                      default=False,
+                      desc='If True, indicates that this loop should be unrolled during code generation.')
+    unroll_factor = Property(dtype=int,
+                             default=0,
+                             desc='If unrolling is enabled, the factor by which to unroll the loop.')
 
     def __init__(self,
                  label: str,
@@ -3189,7 +3195,9 @@ class LoopRegion(ControlFlowRegion):
                  update_expr: Optional[Union[str, CodeBlock]] = None,
                  inverted: bool = False,
                  sdfg: Optional['SDFG'] = None,
-                 update_before_condition=True):
+                 update_before_condition=True,
+                 unroll: bool = False,
+                 unroll_factor: int = 0):
         super(LoopRegion, self).__init__(label, sdfg)
 
         if initialize_expr is not None:
@@ -3219,6 +3227,8 @@ class LoopRegion(ControlFlowRegion):
         self.loop_variable = loop_var or ''
         self.inverted = inverted
         self.update_before_condition = update_before_condition
+        self.unroll = unroll
+        self.unroll_factor = unroll_factor
 
     def inline(self, lower_returns: bool = False) -> Tuple[bool, Any]:
         """
