@@ -4654,7 +4654,7 @@ class ProgramVisitor(ExtNodeVisitor):
         # Avoid cast of output pointers to scalars in code generation
         for cname in outargs:
             if (cname in self.sdfg.arrays and tuple(self.sdfg.arrays[cname].shape) == (1, )):
-                tasklet._out_connectors[f'__out_{cname}'] = dtypes.pointer(self.sdfg.arrays[cname].dtype)
+                tasklet.out_connectors[f'__out_{cname}'] = dtypes.pointer(self.sdfg.arrays[cname].dtype)
 
         # Setup arguments in graph
         for arg in dtypes.deduplicate(args):

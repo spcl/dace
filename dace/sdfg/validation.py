@@ -436,7 +436,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             'rather than using multiple references to the same one', sdfg, state_id)
     references.add(id(state))
 
-    if not dtypes.validate_name(state._label):
+    if not dtypes.validate_name(state.label):
         raise InvalidSDFGError("Invalid state name", sdfg, state_id)
 
     if state.sdfg != sdfg:

@@ -755,8 +755,8 @@ def state_fission(
     for second_state_boundary_node in boundary_nodes:
         first_state_boundary_node = first_nodes_map[second_state_boundary_node]
         assert second_state.in_degree(second_state_boundary_node) == 0
-        first_state_boundary_node._out_connectors.clear()
-        second_state_boundary_node._in_connectors.clear()
+        first_state_boundary_node.out_connectors.clear()
+        second_state_boundary_node.in_connectors.clear()
 
     # Remove isolated nodes.
     # TODO(phimuell): Is this the best approach, it might be a bit too far reaching.

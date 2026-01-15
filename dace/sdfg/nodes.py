@@ -457,7 +457,7 @@ class Tasklet(CodeNode):
 
     @property
     def name(self):
-        return self._label
+        return self.label
 
     def validate(self, sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState'):
         if not dtypes.validate_name(self.label):
@@ -1295,9 +1295,9 @@ class Consume(object):
     def __str__(self):
         if self.condition is not None:
             return ("%s [%s=0:%s], Condition: %s" %
-                    (self._label, self.pe_index, self.num_pes, CodeProperty.to_string(self.condition)))
+                    (self.label, self.pe_index, self.num_pes, CodeProperty.to_string(self.condition)))
         else:
-            return ("%s [%s=0:%s]" % (self._label, self.pe_index, self.num_pes))
+            return ("%s [%s=0:%s]" % (self.label, self.pe_index, self.num_pes))
 
     def validate(self, sdfg, state, node):
         if not dtypes.validate_name(self.label):
