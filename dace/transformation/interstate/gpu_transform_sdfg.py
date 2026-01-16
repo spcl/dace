@@ -428,7 +428,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                             # If the tasklet is not adjacent only to scalars or it is in a GPU scope.
                             # The latter includes NestedSDFGs that have a GPU-Device schedule but are not in a GPU kernel.
                             if not scalar_output or (csdfg.parent is not None and not scope.is_devicelevel_gpu_kernel(
-                                    csdfg.parent, state, csdfg.parent_nsdfg_node)):
+                                    csdfg.parent_sdfg, csdfg.parent, csdfg.parent_nsdfg_node)):
                                 global_code_nodes[state].append(node)
                                 gpu_scalars.update({k: None for k in scalars})
                                 changed = True
