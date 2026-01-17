@@ -364,7 +364,8 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                 if sdict[node] is None:
                     if isinstance(node, (nodes.LibraryNode, nodes.NestedSDFG)):
                         if node.guid:
-                            node.schedule = dtypes.ScheduleType.GPU_Default
+                            if isinstance(node, nodes.LibraryNode):
+                                node.schedule = dtypes.ScheduleType.GPU_Default
                             gpu_nodes.add((state, node))
                     elif isinstance(node, nodes.EntryNode):
                         if node.guid not in self.host_maps and not self._output_or_input_is_marked_host(state, node):
@@ -426,9 +427,8 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                             csdfg = state.parent
                             # If the tasklet is not adjacent only to scalars or it is in a GPU scope.
                             # The latter includes NestedSDFGs that have a GPU-Device schedule but are not in a GPU kernel.
-                            if (not scalar_output
-                                    or (csdfg.parent is not None
-                                        and csdfg.parent_nsdfg_node.schedule == dtypes.ScheduleType.GPU_Default)):
+                            if not scalar_output or (csdfg.parent is not None and not scope.is_devicelevel_gpu_kernel(
+                                    csdfg.parent_sdfg, csdfg.parent, csdfg.parent_nsdfg_node)):
                                 global_code_nodes[state].append(node)
                                 gpu_scalars.update({k: None for k in scalars})
                                 changed = True

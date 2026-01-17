@@ -2048,7 +2048,7 @@ class BackwardPassGenerator:
                                                            ),
                                                            given_gradients=given_gradients,
                                                            required_gradients=required_gradients)
-            if isinstance(backward_node, nodes.CodeNode):
+            if isinstance(backward_node, nodes.LibraryNode) and hasattr(node, 'schedule'):
                 backward_node.schedule = node.schedule
             return backward_node, backward_result
 
