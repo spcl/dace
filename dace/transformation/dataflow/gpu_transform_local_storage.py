@@ -144,7 +144,7 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
         else:
             cnode: nodes.LibraryNode = self.reduce
             # Change schedule
-            cnode.schedule = dtypes.ScheduleType.GPU_Default
+            cnode.schedule = dtypes.ScheduleType.GPU_Device
             exit_node = cnode
 
         # First, merge access nodes around map
