@@ -451,9 +451,9 @@ class RedistrArray(object):
         tmp += f"""
             if (__state->{array_b.pgrid}_valid) {{
         """
-        grid_a = sdfg.process_grids[array_a.pgrid]
+        grid_a = sdfg.pgrids[array_a.pgrid]
         if grid_a.is_subgrid:
-            pgrid_a = sdfg.process_grids[grid_a.parent_grid]
+            pgrid_a = sdfg.pgrids[grid_a.parent_grid]
             tmp += f"""
                 int pgrid_exact_coords[{len(pgrid_a.shape)}];
                 dace::comm::cart_coords({grid_a.exact_grid}, {len(pgrid_a.shape)}, __state->{pgrid_a.name}_dims, pgrid_exact_coords);
@@ -520,9 +520,9 @@ class RedistrArray(object):
         tmp += f"""
             if (__state->{array_a.pgrid}_valid) {{
         """
-        grid_b = sdfg.process_grids[array_b.pgrid]
+        grid_b = sdfg.pgrids[array_b.pgrid]
         if grid_b.is_subgrid:
-            pgrid_b = sdfg.process_grids[grid_b.parent_grid]
+            pgrid_b = sdfg.pgrids[grid_b.parent_grid]
             tmp += f"""
                 int pgrid_exact_coords[{len(pgrid_b.shape)}];
                 dace::comm::cart_coords({grid_b.exact_grid}, {len(pgrid_b.shape)}, __state->{pgrid_b.name}_dims, pgrid_exact_coords);
