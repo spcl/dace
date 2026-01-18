@@ -97,8 +97,7 @@ class ExpandCholeskyMKL(ExpandTransformation):
 
     environments = [blas_environments.intel_mkl.IntelMKL]
 
-    staticmethod
-
+    @staticmethod
     def expansion(node, parent_state, parent_sdfg, **kwargs):
         return _make_sdfg(node, parent_state, parent_sdfg, "MKL")
 
@@ -109,9 +108,6 @@ class ExpandCholeskyCuSolverDn(ExpandTransformation):
     environments = [environments.cusolverdn.cuSolverDn]
 
     @staticmethod
-    def expansion(node, parent_state, parent_sdfg, **kwargs):
-        staticmethod
-
     def expansion(node, parent_state, parent_sdfg, **kwargs):
         return _make_sdfg(node, parent_state, parent_sdfg, "cuSolverDn")
 
