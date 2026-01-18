@@ -143,7 +143,7 @@ class DataLayoutTuner(cutout_tuner.CutoutTuner):
         modified_arrays, new_arrays = config
 
         # Modify data layout prior to calling
-        cutout._arrays = new_arrays
+        cutout.arrays = new_arrays
         for marray in modified_arrays:
             arguments[marray] = dt.make_array_from_descriptor(cutout.arrays[marray], arguments[marray])
 

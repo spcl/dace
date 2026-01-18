@@ -207,17 +207,17 @@ class Memlet(object):
         node = object.__new__(Memlet)
 
         # Immutable objects are: Python strings, integer, boolean but also SymPy expressions, i.e. symbols.
-        node._volume = self._volume
-        node._dynamic = self._dynamic
-        node._subset = dcpy(self._subset, memo=memo)
-        node._other_subset = dcpy(self._other_subset, memo=memo)
-        node._data = self._data
-        node._wcr = dcpy(self._wcr, memo=memo)
-        node._wcr_nonatomic = self._wcr_nonatomic
-        node._debuginfo = dcpy(self._debuginfo, memo=memo)
-        node._wcr_nonatomic = self._wcr_nonatomic
-        node._allow_oob = self._allow_oob
-        node._guid = generate_element_id(node)
+        node.volume = self.volume
+        node.dynamic = self.dynamic
+        node.subset = dcpy(self.subset, memo=memo)
+        node.other_subset = dcpy(self.other_subset, memo=memo)
+        node.data = self.data
+        node.wcr = dcpy(self.wcr, memo=memo)
+        node.wcr_nonatomic = self.wcr_nonatomic
+        node.debuginfo = dcpy(self.debuginfo, memo=memo)
+        node.wcr_nonatomic = self.wcr_nonatomic
+        node.allow_oob = self.allow_oob
+        node.guid = generate_element_id(node)
 
         # TODO: Since we set the `.sdfg` and friends to `None` we should probably also set this to `None`.
         node._is_data_src = self._is_data_src
@@ -305,7 +305,7 @@ class Memlet(object):
             else:
                 result.volume = num_accesses
         else:
-            result.volume = result._subset.num_elements()
+            result.volume = result.subset.num_elements()
 
         if wcr_str is not None:
             if isinstance(wcr_str, ast.AST):
@@ -413,10 +413,10 @@ class Memlet(object):
         is_data_src = False
         is_data_dst = False
         if isinstance(path[0].src, AccessNode):
-            if path[0].src.data == self._data:
+            if path[0].src.data == self.data:
                 is_data_src = True
         if isinstance(path[-1].dst, AccessNode):
-            if path[-1].dst.data == self._data:
+            if path[-1].dst.data == self.data:
                 is_data_dst = True
         if is_data_src and is_data_dst:
             # In case both point to the same array,
