@@ -9,7 +9,7 @@ import re
 from sympy import Float, Integer
 from collections import OrderedDict
 from functools import wraps
-from typing import Any, Dict
+from typing import Any, Dict, Type, TYPE_CHECKING, TypeAlias
 from dace.config import Config
 from dace.registry import extensible_enum, undefined_safe_enum
 
@@ -704,6 +704,15 @@ class struct(typeclass):
         self.dtype = self
         self._parse_field_and_types(**fields_and_types)
 
+    @classmethod
+    def __class_getitem__(cls, args):
+        if not isinstance(args, tuple) or len(args) != 2:
+            raise ValueError("struct type must be subscripted with (name, {field: type, ...})")
+        name, fields_and_types = args
+        if not isinstance(fields_and_types, dict):
+            raise ValueError("struct type must be subscripted with (name, {field: type, ...})")
+        return struct(name, **fields_and_types)
+
     @property
     def fields(self):
         return self._data
@@ -1148,23 +1157,55 @@ def isconstant(var):
     return type(var) in _CONSTANT_TYPES
 
 
-bool_ = typeclass(numpy.bool_, 'bool')
-int8 = typeclass(numpy.int8)
-int16 = typeclass(numpy.int16)
-int32 = typeclass(numpy.int32)
-int64 = typeclass(numpy.int64)
-uintp = typeclass(numpy.uintp)
-uint8 = typeclass(numpy.uint8)
-uint16 = typeclass(numpy.uint16)
-uint32 = typeclass(numpy.uint32)
-uint64 = typeclass(numpy.uint64)
-float16 = typeclass(numpy.float16)
-float32 = typeclass(numpy.float32)
-float64 = typeclass(numpy.float64)
-complex64 = typeclass(numpy.complex64)
-complex128 = typeclass(numpy.complex128)
-string = stringtype()
-MPI_Request = opaque('MPI_Request')
+if TYPE_CHECKING:
+    # Type stubs for type checkers
+    import numpy.typing as npt
+    from typing_extensions import Self
+
+    # yapf: disable
+    # Type stub base: NDArray that accepts symbolic shape subscripts like [M, N].
+    class _DaCeArray(npt.NDArray):
+        def __class_getitem__(cls, item: object) -> type[Self]: ...
+
+    # DaCe scalar types: when subscripted, behave as typed NDArrays
+    class bool_(_DaCeArray, npt.NDArray[numpy.bool_]): ...
+    class int8(_DaCeArray, npt.NDArray[numpy.int8]): ...
+    class int16(_DaCeArray, npt.NDArray[numpy.int16]): ...
+    class int32(_DaCeArray, npt.NDArray[numpy.int32]): ...
+    class int64(_DaCeArray, npt.NDArray[numpy.int64]): ...
+    class uintp(_DaCeArray, npt.NDArray[numpy.uintp]): ...
+    class uint8(_DaCeArray, npt.NDArray[numpy.uint8]): ...
+    class uint16(_DaCeArray, npt.NDArray[numpy.uint16]): ...
+    class uint32(_DaCeArray, npt.NDArray[numpy.uint32]): ...
+    class uint64(_DaCeArray, npt.NDArray[numpy.uint64]): ...
+    class float16(_DaCeArray, npt.NDArray[numpy.float16]): ...
+    class float32(_DaCeArray, npt.NDArray[numpy.float32]): ...
+    class float64(_DaCeArray, npt.NDArray[numpy.float64]): ...
+    class complex64(_DaCeArray, npt.NDArray[numpy.complex64]): ...
+    class complex128(_DaCeArray, npt.NDArray[numpy.complex128]): ...
+    class string(_DaCeArray, npt.NDArray[numpy.str_]): ...
+    class vector(_DaCeArray, npt.NDArray[numpy.void]): ...
+    class MPI_Request(_DaCeArray, npt.NDArray[numpy.void]): ...
+    # yapf: enable
+else:
+    # Runtime definitions
+    bool_ = typeclass(numpy.bool_, 'bool')
+    int8 = typeclass(numpy.int8)
+    int16 = typeclass(numpy.int16)
+    int32 = typeclass(numpy.int32)
+    int64 = typeclass(numpy.int64)
+    uintp = typeclass(numpy.uintp)
+    uint8 = typeclass(numpy.uint8)
+    uint16 = typeclass(numpy.uint16)
+    uint32 = typeclass(numpy.uint32)
+    uint64 = typeclass(numpy.uint64)
+    float16 = typeclass(numpy.float16)
+    float32 = typeclass(numpy.float32)
+    float64 = typeclass(numpy.float64)
+    complex64 = typeclass(numpy.complex64)
+    complex128 = typeclass(numpy.complex128)
+    string = stringtype()
+    MPI_Request = opaque('MPI_Request')
 
 
 @undefined_safe_enum
