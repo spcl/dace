@@ -61,12 +61,11 @@ class ScheduleType(aenum.AutoNumberEnum):
     CPU_Persistent = ()  #: OpenMP parallel region
     SVE_Map = ()  #: Arm SVE
 
-    #: Default scope schedule for GPU code. Specializes to schedule GPU_Device and GPU_Global during inference.
-    GPU_Default = ()
     GPU_Device = ()  #: Kernel
     GPU_ThreadBlock = ()  #: Thread-block code
     GPU_ThreadBlock_Dynamic = ()  #: Allows rescheduling work within a block
     GPU_Persistent = ()
+
     Snitch = ()
     Snitch_Multicore = ()
 
@@ -182,7 +181,6 @@ SCOPEDEFAULT_STORAGE = {
     ScheduleType.MPI: StorageType.CPU_Heap,
     ScheduleType.CPU_Multicore: StorageType.Register,
     ScheduleType.CPU_Persistent: StorageType.CPU_Heap,
-    ScheduleType.GPU_Default: StorageType.GPU_Global,
     ScheduleType.GPU_Persistent: StorageType.GPU_Global,
     ScheduleType.GPU_Device: StorageType.GPU_Shared,
     ScheduleType.GPU_ThreadBlock: StorageType.Register,
@@ -199,7 +197,6 @@ SCOPEDEFAULT_SCHEDULE = {
     ScheduleType.MPI: ScheduleType.CPU_Multicore,
     ScheduleType.CPU_Multicore: ScheduleType.Sequential,
     ScheduleType.CPU_Persistent: ScheduleType.CPU_Multicore,
-    ScheduleType.GPU_Default: ScheduleType.GPU_Device,
     ScheduleType.GPU_Persistent: ScheduleType.GPU_Device,
     ScheduleType.GPU_Device: ScheduleType.GPU_ThreadBlock,
     ScheduleType.GPU_ThreadBlock: ScheduleType.Sequential,
@@ -1415,7 +1412,6 @@ def can_access(schedule: ScheduleType, storage: StorageType):
             ScheduleType.GPU_Persistent,
             ScheduleType.GPU_ThreadBlock,
             ScheduleType.GPU_ThreadBlock_Dynamic,
-            ScheduleType.GPU_Default,
     ]:
         return storage in [StorageType.GPU_Global, StorageType.GPU_Shared, StorageType.CPU_Pinned]
     elif schedule in [ScheduleType.Default, ScheduleType.CPU_Multicore, ScheduleType.CPU_Persistent]:
@@ -1440,22 +1436,26 @@ def can_allocate(storage: StorageType, schedule: ScheduleType):
     # Host-only allocation
     if storage in [StorageType.CPU_Heap, StorageType.CPU_Pinned, StorageType.CPU_ThreadLocal]:
         return schedule in [
-            ScheduleType.CPU_Multicore, ScheduleType.CPU_Persistent, ScheduleType.Sequential, ScheduleType.MPI,
-            ScheduleType.GPU_Default
+            ScheduleType.CPU_Multicore,
+            ScheduleType.CPU_Persistent,
+            ScheduleType.Sequential,
+            ScheduleType.MPI,
         ]
 
     # GPU-global memory
     if storage is StorageType.GPU_Global:
         return schedule in [
-            ScheduleType.CPU_Multicore, ScheduleType.CPU_Persistent, ScheduleType.Sequential, ScheduleType.MPI,
-            ScheduleType.GPU_Default
+            ScheduleType.CPU_Multicore,
+            ScheduleType.CPU_Persistent,
+            ScheduleType.Sequential,
+            ScheduleType.MPI,
         ]
 
     # GPU-local memory
     if storage == StorageType.GPU_Shared:
         return schedule in [
             ScheduleType.GPU_Device, ScheduleType.GPU_ThreadBlock, ScheduleType.GPU_ThreadBlock_Dynamic,
-            ScheduleType.GPU_Persistent, ScheduleType.GPU_Default
+            ScheduleType.GPU_Persistent
         ]
 
     # The rest (Registers) can be allocated everywhere

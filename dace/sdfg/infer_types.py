@@ -158,10 +158,6 @@ def set_default_schedule_and_storage_types(scope: Union[SDFG, SDFGState, nodes.E
     """
     parent_schedules = parent_schedules or [None]
 
-    # TODO(later): Remove GPU_Default
-    if parent_schedules[-1] == dtypes.ScheduleType.GPU_Default and use_parent_schedule:
-        use_parent_schedule = False
-
     if isinstance(scope, SDFG):
         # Set device for default top-level schedules and storages
         for state in scope.states():

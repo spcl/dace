@@ -365,7 +365,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                     if isinstance(node, (nodes.LibraryNode, nodes.NestedSDFG)):
                         if node.guid:
                             if isinstance(node, nodes.LibraryNode):
-                                node.schedule = dtypes.ScheduleType.GPU_Default
+                                node.schedule = dtypes.ScheduleType.GPU_Device
                             gpu_nodes.add((state, node))
                     elif isinstance(node, nodes.EntryNode):
                         if node.guid not in self.host_maps and not self._output_or_input_is_marked_host(state, node):
