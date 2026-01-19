@@ -11,7 +11,7 @@ The FortranIntrinsics class is the main entry point used by the Fortran parser
 to handle intrinsic function replacements and transformations.
 """
 
-from typing import Any, List, Union
+from typing import Any, Dict, List, Union
 
 from dace.frontend.fortran import ast_internal_classes
 from dace.frontend.fortran.ast_transforms import (
@@ -145,7 +145,7 @@ class FortranIntrinsics:
         name: ast_internal_classes.Name_Node,
         args: ast_internal_classes.Arg_List_Node,
         line,
-        symbols: dict,
+        symbols: Dict[str, ast_internal_classes.FNode],
     ):
 
         func_types = {

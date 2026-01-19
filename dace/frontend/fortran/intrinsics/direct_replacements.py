@@ -19,6 +19,7 @@ Implemented intrinsics:
 import math
 import sys
 from collections import namedtuple
+from typing import Dict
 
 from dace.frontend.fortran import ast_internal_classes
 from dace.frontend.fortran.ast_utils import fortrantypes2dacetypes
@@ -246,7 +247,11 @@ class DirectReplacement(IntrinsicTransformation):
 
         return (ast_internal_classes.Int_Literal_Node(value=str(type_size)), "INTEGER")
 
-    def replace_int_kind(args: ast_internal_classes.Arg_List_Node, line, symbols: list):
+    def replace_int_kind(
+        args: ast_internal_classes.Arg_List_Node,
+        line,
+        symbols: Dict[str, ast_internal_classes.FNode],
+    ):
         if isinstance(args.args[0], ast_internal_classes.Int_Literal_Node):
             arg0 = args.args[0].value
         elif isinstance(args.args[0], ast_internal_classes.Name_Node):
@@ -262,7 +267,9 @@ class DirectReplacement(IntrinsicTransformation):
         )
 
     def replace_real_kind(
-        args: ast_internal_classes.Arg_List_Node, line, symbols: list
+        args: ast_internal_classes.Arg_List_Node,
+        line,
+        symbols: Dict[str, ast_internal_classes.FNode],
     ):
         if isinstance(args.args[0], ast_internal_classes.Int_Literal_Node):
             arg0 = args.args[0].value
@@ -327,7 +334,9 @@ class DirectReplacement(IntrinsicTransformation):
         return (ast_internal_classes.Name_Node(name=test_var_name), "LOGICAL")
 
     def replacement_epsilon(
-        args: ast_internal_classes.Arg_List_Node, line, symbols: list
+        args: ast_internal_classes.Arg_List_Node,
+        line,
+        symbols: Dict[str, ast_internal_classes.FNode],
     ):
 
         ret_val = sys.float_info.epsilon
@@ -373,7 +382,10 @@ class DirectReplacement(IntrinsicTransformation):
 
     @staticmethod
     def replace(
-        func_name: str, args: ast_internal_classes.Arg_List_Node, line, symbols: list
+        func_name: str,
+        args: ast_internal_classes.Arg_List_Node,
+        line,
+        symbols: Dict[str, ast_internal_classes.FNode],
     ) -> ast_internal_classes.FNode:
         # Here we already have __dace_func
         fname = func_name.split("__dace_")[1]
