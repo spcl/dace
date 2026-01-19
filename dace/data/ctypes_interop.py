@@ -20,7 +20,8 @@ def make_ctypes_argument(arg: Any,
                          name: Optional[str] = None,
                          allow_views: Optional[bool] = None,
                          symbols: Optional[Dict[str, Any]] = None,
-                         callback_retval_references: Optional[List[Any]] = None) -> Any:
+                         callback_retval_references: Optional[List[Any]] = None,
+                         argument_to_pyobject: Optional[Dict[Any, Any]] = None) -> Any:
     """
     Converts a given argument to the expected ``ctypes`` type for passing to compiled SDFG functions.
 
@@ -35,6 +36,8 @@ def make_ctypes_argument(arg: Any,
     :param callback_retval_references: A list to store references to callback return values (to avoid garbage
                                        collection of said return values). This object must be kept alive until the
                                        SDFG call is complete.
+    :param argument_to_pyobject: A dictionary to map ctypes arguments back to their original Python objects.
+                                 If given, this function will update the dictionary with the mapping for the current argument.
     :return: The argument converted to the appropriate ctypes type.
     """
     # Import here to avoid circular imports
@@ -109,7 +112,7 @@ def make_ctypes_argument(arg: Any,
 
     # Call a wrapper function to make NumPy arrays from pointers.
     if isinstance(argtype.dtype, dtypes.callback):
-        result = argtype.dtype.get_trampoline(result, symbols or {}, callback_retval_references)
+        result = argtype.dtype.get_trampoline(result, symbols or {}, callback_retval_references, argument_to_pyobject)
     # List to array
     elif isinstance(result, list) and isinstance(argtype, Array):
         result = np.array(result, dtype=argtype.dtype.type)
@@ -129,5 +132,13 @@ def make_ctypes_argument(arg: Any,
             pass
     except TypeError as ex:
         raise TypeError(f'Invalid type for scalar argument "{a}": {ex}')
+
+    # Map the ctypes argument back to the original Python object
+    if argument_to_pyobject is not None:
+        try:
+            addr = result.value
+        except AttributeError:
+            addr = ctypes.addressof(result)
+        argument_to_pyobject[addr] = arg
 
     return result
