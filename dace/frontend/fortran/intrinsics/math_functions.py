@@ -1,16 +1,7 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """
-
 This module contains mathematical intrinsic functions that are mapped to DaCe
 math operations or library calls.
-
-Implemented intrinsics:
-- Trigonometric: SIN, COS, SINH, COSH, TANH, ASIN, ACOS, ATAN, ATAN2
-- Math: MIN, MAX, SQRT, ABS, POW, EXP, LOG, MOD, MODULO, FLOOR, SCALE, EXPONENT, EPSILON
-- Type conversion: INT, AINT, NINT, ANINT, REAL, DBLE
-- BLAS: DOT_PRODUCT, MATMUL, TRANSPOSE
-- Bitwise: IBSET, IBCLR, IAND, IEOR, ISHFT, BTEST, IBITS
-
 """
 
 import sys
@@ -27,6 +18,15 @@ from dace.frontend.fortran.intrinsics.sdfg_transformations import (
 
 
 class MathFunctions(IntrinsicTransformation):
+    """
+    Implemented intrinsics:
+    - Trigonometric: SIN, COS, SINH, COSH, TANH, ASIN, ACOS, ATAN, ATAN2
+    - Math: MIN, MAX, SQRT, ABS, POW, EXP, LOG, MOD, MODULO, FLOOR, SCALE, EXPONENT, EPSILON
+    - Type conversion: INT, AINT, NINT, ANINT, REAL, DBLE
+    - BLAS: DOT_PRODUCT, MATMUL, TRANSPOSE
+    - Bitwise: IBSET, IBCLR, IAND, IEOR, ISHFT, BTEST, IBITS
+    """
+
     MathTransformation = namedtuple(
         "MathTransformation",
         "function return_type size_function",
