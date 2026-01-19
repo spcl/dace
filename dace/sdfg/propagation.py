@@ -1536,7 +1536,7 @@ def propagate_subset(memlets: List[Memlet],
                     fsyms = _freesyms(s)
                     fsyms_str = set(map(str, fsyms))
                     contains_params = len(fsyms_str & paramset) != 0
-                    contains_undefs = len(fsyms - defined_variables) != 0
+                    contains_undefs = len(fsyms & undefined_variables) != 0
                 else:
                     contains_params = False
                     contains_undefs = False

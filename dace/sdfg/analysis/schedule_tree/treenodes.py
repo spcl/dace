@@ -673,7 +673,8 @@ class ConsumeScope(DataflowScope):
         return result + super().as_string(indent)
 
 
-@dataclass
+# TODO: to be removed. looks like `Pipeline` nodes aren't a thing anymore
+# @dataclass
 # class PipelineScope(MapScope):
 #     """
 #     Pipeline scope.
