@@ -5,6 +5,7 @@ math operations or library calls.
 """
 
 import sys
+import warnings
 from collections import namedtuple
 
 from dace.frontend.fortran import ast_internal_classes
@@ -71,7 +72,9 @@ class MathFunctions(IntrinsicTransformation):
         # We ignore it a the moment.
         # However, to map into C's trunc, we need to drop it.
         if len(arg.args) > 1:
-            print("AINT with KIND parameter is not supported! Ignoring that parameter.")
+            warnings.warn(
+                "AINT with KIND parameter is not supported! Ignoring that parameter."
+            )
             del arg.args[1]
 
         fname = arg.name.name.split("__dace_")[1]
