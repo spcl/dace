@@ -1147,10 +1147,6 @@ class Merge(LoopBasedReplacement):
                 else:
                     self.mask_cond = arg
 
-                # else:
-
-                #    self.mask_first_array, self.mask_second_array, self.mask_cond = self._parse_binary_op(node, arg)
-
         def _summarize_args(
             self,
             exec_node: ast_internal_classes.Execution_Part_Node,
