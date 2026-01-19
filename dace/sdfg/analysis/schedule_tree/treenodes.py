@@ -115,7 +115,7 @@ class ScheduleTreeScope(ScheduleTreeNode):
     def __init__(self, children: List['ScheduleTreeNode']) -> None:
         for child in children:
             child.parent = self
-    
+
         self.children = children
 
     def add_children(self, children: Iterable['ScheduleTreeNode']) -> None:
@@ -685,6 +685,7 @@ class ConsumeScope(DataflowScope):
 #         rangestr = ', '.join(subsets.Range.dim_to_string(d) for d in self.node.map.range)
 #         result = indent * INDENTATION + f'pipeline {", ".join(self.node.map.params)} in [{rangestr}]:\n'
 #         return result + super().as_string(indent)
+
 
 @dataclass
 class TaskletNode(ScheduleTreeNode):
