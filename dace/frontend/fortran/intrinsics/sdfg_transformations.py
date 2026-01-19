@@ -141,7 +141,6 @@ class IntrinsicSDFGTransformation(xf.SingleStateTransformation):
         for node in ast.walk(self.tasklet.code.code[0]):
             if isinstance(node, ast.Call):
                 if node.func.id in self.LIBRARY_NODE_TRANSFORMATIONS:
-                    self.func = self.LIBRARY_NODE_TRANSFORMATIONS[node.func.id]
                     return True
 
         return False
@@ -151,9 +150,27 @@ class IntrinsicSDFGTransformation(xf.SingleStateTransformation):
         Apply the transformation: replace tasklet with library node.
 
         Removes the tasklet and its memlet paths after the library node is inserted.
+
+        Our Fortran frontend should never produce tasklets with more than complex
+        call to a function.
         """
 
-        self.func(self, state, sdfg)
+        import ast
+
+        found = False
+
+        for node in ast.walk(self.tasklet.code.code[0]):
+            if isinstance(node, ast.Call):
+                if node.func.id in self.LIBRARY_NODE_TRANSFORMATIONS:
+
+                    if found:
+                        """
+                        Sanity check.
+                        """
+                        raise RuntimeError("Incorrect tasklet with > 1 BLAS call!")
+
+                    self.LIBRARY_NODE_TRANSFORMATIONS[node.func.id](self, state, sdfg)
+                    found = True
 
         for in_edge in state.in_edges(self.tasklet):
             state.remove_memlet_path(in_edge)
