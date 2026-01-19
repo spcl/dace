@@ -231,6 +231,7 @@ class CompiledSDFG(object):
         self._retarray_is_pyobject: List[bool] = []
         self._return_arrays: List[np.ndarray] = []
         self._callback_retval_references: List[Any] = []  # Avoids garbage-collecting callback return values
+        self._argument_to_pyobject: Dict[Any, Any] = {}  # Maps ctypes arguments back to original Python objects
 
         # If there are return values then this is `True` it is is a single value. Note that
         #  `False` either means that a tuple is returned or there are no return values.
@@ -638,6 +639,8 @@ with open(r"{temp_path}", "wb") as f:
             argnames = []
             sig = []
 
+        # Conversion to ctypes arguments and some more type checking
+        self._argument_to_pyobject.clear()
         no_view_arguments = not Config.get_bool('compiler', 'allow_view_arguments')
         cargs = tuple(
             dt.make_ctypes_argument(aval,
@@ -645,7 +648,8 @@ with open(r"{temp_path}", "wb") as f:
                                     aname,
                                     allow_views=not no_view_arguments,
                                     symbols=kwargs,
-                                    callback_retval_references=self._callback_retval_references)
+                                    callback_retval_references=self._callback_retval_references,
+                                    argument_to_pyobject=self._argument_to_pyobject)
             for aval, atype, aname in zip(arglist, argtypes, argnames))
 
         symbols = self._free_symbols
