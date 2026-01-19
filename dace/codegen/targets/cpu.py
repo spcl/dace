@@ -196,8 +196,7 @@ class CPUCodeGen(TargetCodeGenerator):
         # Check directionality of view (referencing dst or src)
         edge = sdutils.get_view_edge(dfg, node)
 
-        # When emitting ArrayInterface, we need to know if this is a read or
-        # write variation
+        # We need to know if this is a read or a write variation
         is_write = edge.src is node
 
         # Allocate the viewed data before the view, if necessary
@@ -237,12 +236,12 @@ class CPUCodeGen(TargetCodeGenerator):
 
             # Plain view into a container array
             if isinstance(vdesc, data.ContainerArray) and not isinstance(vdesc.stype, data.Structure):
-                offset = cpp.cpp_offset_expr(vdesc, memlet.subset, codegen=self)
+                offset = cpp.cpp_offset_expr(vdesc, memlet.subset)
                 value = f'{ptrname}[{offset}]'
             else:
                 if field_name is not None:
                     if isinstance(vdesc, data.ContainerArray):
-                        offset = cpp.cpp_offset_expr(vdesc, memlet.subset, codegen=self)
+                        offset = cpp.cpp_offset_expr(vdesc, memlet.subset)
                         arrexpr = f'{ptrname}[{offset}]'
                         stype = vdesc.stype
                     else:
@@ -746,8 +745,8 @@ class CPUCodeGen(TargetCodeGenerator):
                     if memlet.data != src_node.data and memlet.other_subset:
                         stream_subset = memlet.other_subset
 
-                    stream_expr = cpp.cpp_offset_expr(src_nodedesc, stream_subset, codegen=self)
-                    array_expr = cpp.cpp_offset_expr(dst_nodedesc, array_subset, codegen=self)
+                    stream_expr = cpp.cpp_offset_expr(src_nodedesc, stream_subset)
+                    array_expr = cpp.cpp_offset_expr(dst_nodedesc, array_subset)
                     assert functools.reduce(lambda a, b: a * b, src_nodedesc.shape, 1) == 1
                     stream.write(
                         "{s}.pop(&{arr}[{aexpr}], {maxsize});".format(s=self.ptr(src_node.data, src_nodedesc, sdfg),
@@ -798,7 +797,7 @@ class CPUCodeGen(TargetCodeGenerator):
             state_dfg: SDFGState = cfg.nodes()[state_id]
 
             copy_shape, src_strides, dst_strides, src_expr, dst_expr = cpp.memlet_copy_to_absolute_strides(
-                self._dispatcher, sdfg, state_dfg, edge, src_node, dst_node, codegen=self)
+                self._dispatcher, sdfg, state_dfg, edge, src_node, dst_node)
 
             # Which numbers to include in the variable argument part
             dynshape, dynsrc, dyndst = 1, 1, 1
@@ -1140,7 +1139,7 @@ class CPUCodeGen(TargetCodeGenerator):
             if isinstance(memlet.subset, subsets.Range):
 
                 dims = len(memlet.subset.ranges)
-                offset = cpp.cpp_offset_expr(sdfg.arrays[memlet.data], memlet.subset, codegen=self)
+                offset = cpp.cpp_offset_expr(sdfg.arrays[memlet.data], memlet.subset)
                 if offset == "0":
                     memlet_params.append(memlet_expr)
                 else:
@@ -1240,7 +1239,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         result = ''
         expr = (cpp.cpp_array_expr(sdfg, memlet, with_brackets=False, codegen=self)
-                if var_type in [DefinedType.Pointer, DefinedType.StreamArray, DefinedType.ArrayInterface] else ptr)
+                if var_type in (DefinedType.Pointer, DefinedType.StreamArray) else ptr)
 
         if expr != ptr:
             expr = '%s[%s]' % (ptr, expr)
@@ -1249,11 +1248,9 @@ class CPUCodeGen(TargetCodeGenerator):
 
         defined = None
 
-        if var_type in [DefinedType.Scalar, DefinedType.Pointer, DefinedType.ArrayInterface]:
+        if var_type in (DefinedType.Scalar, DefinedType.Pointer):
             if output:
-                if is_pointer and var_type == DefinedType.ArrayInterface:
-                    result += "{} {} = {};".format(memlet_type, local_name, expr)
-                elif not memlet.dynamic or (memlet.dynamic and memlet.wcr is not None):
+                if not memlet.dynamic or (memlet.dynamic and memlet.wcr is not None):
                     # Dynamic WCR memlets start uninitialized
                     result += "{} {};".format(memlet_type, local_name)
                     defined = DefinedType.Scalar
@@ -1283,7 +1280,7 @@ class CPUCodeGen(TargetCodeGenerator):
             if not memlet.dynamic and memlet.num_accesses == 1:
                 if not output:
                     if isinstance(desc, data.Stream) and desc.is_stream_array():
-                        index = cpp.cpp_offset_expr(desc, memlet.subset, codegen=codegen)
+                        index = cpp.cpp_offset_expr(desc, memlet.subset)
                         expr = f"{memlet.data}[{index}]"
                     result += f'{memlet_type} {local_name} = ({expr}).pop();'
                     defined = DefinedType.Scalar
@@ -1302,7 +1299,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
     def memlet_stream_ctor(self, sdfg: SDFG, memlet: mmlt.Memlet) -> str:
         stream = sdfg.arrays[memlet.data]
-        return memlet.data + ("[{}]".format(cpp.cpp_offset_expr(stream, memlet.subset, codegen=self))
+        return memlet.data + ("[{}]".format(cpp.cpp_offset_expr(stream, memlet.subset))
                               if isinstance(stream, data.Stream) and stream.is_stream_array() else "")
 
     def memlet_ctor(self, sdfg: SDFG, memlet: mmlt.Memlet, dtype, is_output: bool) -> str:
@@ -1741,11 +1738,10 @@ class CPUCodeGen(TargetCodeGenerator):
                 self._frame.generate_constants(node.sdfg, nested_stream)
 
             old_schedule = self._toplevel_schedule
-            self._toplevel_schedule = node.schedule
 
             # Generate code for internal SDFG
             global_code, local_code, used_targets, used_environments = self._frame.generate_code(
-                node.sdfg, node.schedule, sdfg_label)
+                node.sdfg, old_schedule, sdfg_label)
             self._dispatcher._used_environments |= used_environments
 
             self._toplevel_schedule = old_schedule
