@@ -969,8 +969,13 @@ class callback(typeclass):
             return tmp
 
         def _pyobject_converter(arg: data.Data, a: int, *args):
-            if argument_to_pyobject is not None and a in argument_to_pyobject:
-                return argument_to_pyobject[a]
+            try:
+                if argument_to_pyobject is not None and a in argument_to_pyobject:
+                    # Avoid views of the same object from using the original one
+                    if arg.is_equivalent(argument_to_pyobject[a][1]):
+                        return argument_to_pyobject[a][0]
+            except TypeError:  # Unhashable type
+                pass
             return data.make_reference_from_descriptor(arg, a, *args)
 
         inp_arraypos = []
