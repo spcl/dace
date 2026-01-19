@@ -67,10 +67,6 @@ class FortranIntrinsics:
         # list of all DaCe functions that we use after full parsing
         return MathFunctions.dace_functions()
 
-    @staticmethod
-    def call_extraction_exemptions() -> List[str]:
-        return FortranIntrinsics.EXEMPTED_FROM_CALL_EXTRACTION
-
     def replace_function_name(
         self, node: Union[FASTNode, ast_internal_classes.Name_Node]
     ) -> ast_internal_classes.Name_Node:

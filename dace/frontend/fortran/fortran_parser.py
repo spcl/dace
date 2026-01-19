@@ -28,8 +28,9 @@ from dace.frontend.fortran import ast_utils
 from dace.frontend.fortran.ast_desugaring import analysis, cleanup, desugaring, optimizations, pruning, types, utils
 from dace.frontend.fortran.ast_internal_classes import FNode, Main_Program_Node, Name_Node, Var_Decl_Node
 from dace.frontend.fortran.ast_internal_classes import Program_Node
+from dace.frontend.fortran.ast_transforms import NeedsTypeInferenceException
 from dace.frontend.fortran.ast_utils import children_of_type, mywalk, atmost_one
-from dace.frontend.fortran.intrinsics import IntrinsicSDFGTransformation, NeedsTypeInferenceException
+from dace.frontend.fortran.intrinsics.sdfg_transformations import IntrinsicSDFGTransformation
 from dace.properties import CodeBlock
 from dace.sdfg import nodes as nd
 from dace.sdfg.state import BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowRegion, LoopRegion
