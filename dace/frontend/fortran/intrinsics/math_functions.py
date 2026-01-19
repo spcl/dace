@@ -4,11 +4,12 @@ This module contains mathematical intrinsic functions that are mapped to DaCe
 math operations or library calls.
 """
 
-import sys
+import numpy as np
 import warnings
 from collections import namedtuple
 
 from dace.frontend.fortran import ast_internal_classes
+from dace.frontend.fortran.ast_transforms import NeedsTypeInferenceException
 from dace.frontend.fortran.intrinsics.base import (
     IntrinsicTransformation,
     IntrinsicNodeTransformer,
@@ -62,9 +63,29 @@ class MathFunctions(IntrinsicTransformation):
         # pack it into parentheses, just to be sure
         return ast_internal_classes.Parenthesis_Expr_Node(expr=mult)
 
-    def generate_epsilon(arg: ast_internal_classes.Call_Expr_Node):
-        ret_val = sys.float_info.epsilon
-        return ast_internal_classes.Real_Literal_Node(value=str(ret_val))
+    def generate_epsilon(args: ast_internal_classes.Call_Expr_Node):
+        if len(args.args) != 1:
+            raise ValueError("EPSILON intrinsic expects exactly one argument")
+
+        arg_type = args.args[0].type
+        if arg_type == "VOID":
+            raise NeedsTypeInferenceException("epsilon", args.line_number)
+
+        """
+        Determine the appropriate epsilon value based on type
+        REAL (32-bit) -> numpy.float32 epsilon
+        DOUBLE (64-bit) -> numpy.float64 epsilon
+        """
+        if arg_type == "REAL":
+            return ast_internal_classes.Real_Literal_Node(
+                value=str(np.finfo(np.float32).eps)
+            )
+        elif arg_type == "DOUBLE":
+            return ast_internal_classes.Double_Literal_Node(
+                value=str(np.finfo(np.float64).eps)
+            )
+        else:
+            raise NotImplementedError()
 
     def generate_aint(arg: ast_internal_classes.Call_Expr_Node):
 

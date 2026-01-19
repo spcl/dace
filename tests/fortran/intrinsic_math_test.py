@@ -933,6 +933,39 @@ def test_fortran_frontend_exp2():
     for f_res, p_res in zip(res, py_res):
         assert abs(f_res - p_res) < 10**-9
 
+def test_fortran_frontend_epsilon():
+    test_string = """
+                    PROGRAM intrinsic_math_test_epsilon
+                    implicit none
+                    double precision, dimension(2) :: d
+                    double precision, dimension(2) :: res
+                    CALL intrinsic_math_test_epsilon_function(d, res)
+                    end
+
+                    SUBROUTINE intrinsic_math_test_epsilon_function(d, res)
+                    double precision, dimension(2) :: d
+                    double precision, dimension(2) :: res
+                    real :: val
+                    integer :: n
+
+                    val = 3.14
+
+                    res(1) = EPSILON(d(1))
+                    res(2) = EPSILON(val)
+
+                    END SUBROUTINE intrinsic_math_test_epsilon_function
+                    """
+
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_epsilon", True)
+    sdfg.simplify()
+
+    size = 2
+    d = np.full([size], 42, order="F", dtype=np.float64)
+    res = np.full([2], 42, order="F", dtype=np.float64)
+    sdfg(d=d, res=res)
+
+    assert abs(res[0] - np.finfo(np.float64).eps) < 10**-9
+    assert abs(res[1] - np.finfo(np.float32).eps) < 10**-9
 
 if __name__ == "__main__":
 
@@ -956,3 +989,4 @@ if __name__ == "__main__":
     test_fortran_frontend_hyperbolic()
     test_fortran_frontend_trig_inverse()
     test_fortran_frontend_exp2()
+    test_fortran_frontend_epsilon()

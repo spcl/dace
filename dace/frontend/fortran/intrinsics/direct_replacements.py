@@ -12,12 +12,10 @@ Implemented intrinsics:
 - PRESENT: Optional argument presence check
 - ALLOCATED: Allocation status check
 - SELECTED_INT_KIND/SELECTED_REAL_KIND: Kind selectors
-- EPSILON: Machine epsilon
 
 """
 
 import math
-import sys
 from collections import namedtuple
 from typing import Dict
 
@@ -333,19 +331,9 @@ class DirectReplacement(IntrinsicTransformation):
 
         return (ast_internal_classes.Name_Node(name=test_var_name), "LOGICAL")
 
-    def replacement_epsilon(
-        args: ast_internal_classes.Arg_List_Node,
-        line,
-        symbols: Dict[str, ast_internal_classes.FNode],
-    ):
-
-        ret_val = sys.float_info.epsilon
-        return ast_internal_classes.Real_Literal_Node(value=str(ret_val))
-
     FUNCTIONS = {
         "SELECTED_INT_KIND": Replacement(replace_int_kind),
         "SELECTED_REAL_KIND": Replacement(replace_real_kind),
-        "EPSILON": Replacement(replacement_epsilon),
         "BIT_SIZE": Transformation(replace_bit_size),
         "SIZE": Transformation(replace_size),
         "LBOUND": Transformation(replace_lbound),
