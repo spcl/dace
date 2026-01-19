@@ -554,6 +554,10 @@ def _state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
             result = subnodes
         elif isinstance(node, dace.nodes.ExitNode):
             result = scopes.pop()
+            parent = result[-1]
+            assert isinstance(parent, tn.ScheduleTreeScope)
+            for child in parent.children:
+                child.parent = parent
         elif isinstance(node, dace.nodes.NestedSDFG):
             nested_array_mapping_input = {}
             nested_array_mapping_output = {}
