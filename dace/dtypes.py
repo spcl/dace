@@ -971,7 +971,7 @@ class callback(typeclass):
         def _pyobject_converter(arg: data.Data, a: int, *args):
             if argument_to_pyobject is not None and a in argument_to_pyobject:
                 return argument_to_pyobject[a]
-            return data.make_reference_from_descriptor(arg, a)
+            return data.make_reference_from_descriptor(arg, a, *args)
 
         inp_arraypos = []
         ret_arraypos = []
