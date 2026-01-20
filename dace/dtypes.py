@@ -61,12 +61,11 @@ class ScheduleType(aenum.AutoNumberEnum):
     CPU_Persistent = ()  #: OpenMP parallel region
     SVE_Map = ()  #: Arm SVE
 
-    #: Default scope schedule for GPU code. Specializes to schedule GPU_Device and GPU_Global during inference.
-    GPU_Default = ()
     GPU_Device = ()  #: Kernel
     GPU_ThreadBlock = ()  #: Thread-block code
     GPU_ThreadBlock_Dynamic = ()  #: Allows rescheduling work within a block
     GPU_Persistent = ()
+
     Snitch = ()
     Snitch_Multicore = ()
 
@@ -182,7 +181,6 @@ SCOPEDEFAULT_STORAGE = {
     ScheduleType.MPI: StorageType.CPU_Heap,
     ScheduleType.CPU_Multicore: StorageType.Register,
     ScheduleType.CPU_Persistent: StorageType.CPU_Heap,
-    ScheduleType.GPU_Default: StorageType.GPU_Global,
     ScheduleType.GPU_Persistent: StorageType.GPU_Global,
     ScheduleType.GPU_Device: StorageType.GPU_Shared,
     ScheduleType.GPU_ThreadBlock: StorageType.Register,
@@ -199,7 +197,6 @@ SCOPEDEFAULT_SCHEDULE = {
     ScheduleType.MPI: ScheduleType.CPU_Multicore,
     ScheduleType.CPU_Multicore: ScheduleType.Sequential,
     ScheduleType.CPU_Persistent: ScheduleType.CPU_Multicore,
-    ScheduleType.GPU_Default: ScheduleType.GPU_Device,
     ScheduleType.GPU_Persistent: ScheduleType.GPU_Device,
     ScheduleType.GPU_Device: ScheduleType.GPU_ThreadBlock,
     ScheduleType.GPU_ThreadBlock: ScheduleType.Sequential,
@@ -961,7 +958,7 @@ class callback(typeclass):
         retval = self.cfunc_return_type()
         return f'{retval} (*{name})({", ".join(input_type_cstring)})'
 
-    def get_trampoline(self, pyfunc, other_arguments, refs):
+    def get_trampoline(self, pyfunc, other_arguments, refs, argument_to_pyobject):
         from functools import partial
         from dace import data, symbolic
 
@@ -970,6 +967,16 @@ class callback(typeclass):
             if tmp.startswith(chr(0xFFFF)):
                 return bytes(tmp[1:], 'utf-8')
             return tmp
+
+        def _pyobject_converter(arg: data.Data, a: int, *args):
+            try:
+                if argument_to_pyobject is not None and a in argument_to_pyobject:
+                    # Avoid views of the same object from using the original one
+                    if arg.is_equivalent(argument_to_pyobject[a][1]):
+                        return argument_to_pyobject[a][0]
+            except TypeError:  # Unhashable type
+                pass
+            return data.make_reference_from_descriptor(arg, a, *args)
 
         inp_arraypos = []
         ret_arraypos = []
@@ -981,7 +988,7 @@ class callback(typeclass):
             if isinstance(arg, data.Array):
                 inp_arraypos.append(index)
                 inp_types_and_sizes.append((arg.dtype.as_ctypes(), arg.shape))
-                inp_converters.append(partial(data.make_reference_from_descriptor, arg))
+                inp_converters.append(partial(_pyobject_converter, arg))
             elif isinstance(arg, data.Scalar) and arg.dtype == string:
                 inp_arraypos.append(index)
                 inp_types_and_sizes.append((ctypes.c_char_p, []))
@@ -1001,7 +1008,7 @@ class callback(typeclass):
             if isinstance(arg, data.Array):
                 ret_arraypos.append(index + offset)
                 ret_types_and_sizes.append((arg.dtype.as_ctypes(), arg.shape))
-                ret_converters.append(partial(data.make_reference_from_descriptor, arg))
+                ret_converters.append(partial(_pyobject_converter, arg))
             elif isinstance(arg, data.Scalar) and arg.dtype == string:
                 ret_arraypos.append(index + offset)
                 ret_types_and_sizes.append((ctypes.c_char_p, []))
@@ -1018,7 +1025,7 @@ class callback(typeclass):
                 if not self.is_scalar_function():
                     ret_arraypos.append(index + offset)
                     ret_types_and_sizes.append((arg.dtype.as_ctypes(), arg.shape))
-                    ret_converters.append(partial(data.make_reference_from_descriptor, arg))
+                    ret_converters.append(partial(_pyobject_converter, arg))
                 else:
                     ret_converters.append(lambda a, *args: a)
         if len(inp_arraypos) == 0 and len(ret_arraypos) == 0:
@@ -1415,7 +1422,6 @@ def can_access(schedule: ScheduleType, storage: StorageType):
             ScheduleType.GPU_Persistent,
             ScheduleType.GPU_ThreadBlock,
             ScheduleType.GPU_ThreadBlock_Dynamic,
-            ScheduleType.GPU_Default,
     ]:
         return storage in [StorageType.GPU_Global, StorageType.GPU_Shared, StorageType.CPU_Pinned]
     elif schedule in [ScheduleType.Default, ScheduleType.CPU_Multicore, ScheduleType.CPU_Persistent]:
@@ -1440,22 +1446,26 @@ def can_allocate(storage: StorageType, schedule: ScheduleType):
     # Host-only allocation
     if storage in [StorageType.CPU_Heap, StorageType.CPU_Pinned, StorageType.CPU_ThreadLocal]:
         return schedule in [
-            ScheduleType.CPU_Multicore, ScheduleType.CPU_Persistent, ScheduleType.Sequential, ScheduleType.MPI,
-            ScheduleType.GPU_Default
+            ScheduleType.CPU_Multicore,
+            ScheduleType.CPU_Persistent,
+            ScheduleType.Sequential,
+            ScheduleType.MPI,
         ]
 
     # GPU-global memory
     if storage is StorageType.GPU_Global:
         return schedule in [
-            ScheduleType.CPU_Multicore, ScheduleType.CPU_Persistent, ScheduleType.Sequential, ScheduleType.MPI,
-            ScheduleType.GPU_Default
+            ScheduleType.CPU_Multicore,
+            ScheduleType.CPU_Persistent,
+            ScheduleType.Sequential,
+            ScheduleType.MPI,
         ]
 
     # GPU-local memory
     if storage == StorageType.GPU_Shared:
         return schedule in [
             ScheduleType.GPU_Device, ScheduleType.GPU_ThreadBlock, ScheduleType.GPU_ThreadBlock_Dynamic,
-            ScheduleType.GPU_Persistent, ScheduleType.GPU_Default
+            ScheduleType.GPU_Persistent
         ]
 
     # The rest (Registers) can be allocated everywhere

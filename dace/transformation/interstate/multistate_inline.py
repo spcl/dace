@@ -144,9 +144,6 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         if has_return:
             sdutil.inline_control_flow_regions(nsdfg, lower_returns=True)
 
-        if nsdfg_node.schedule != dtypes.ScheduleType.Default:
-            infer_types.set_default_schedule_and_storage_types(nsdfg, [nsdfg_node.schedule])
-
         #######################################################
         # Collect and update top-level SDFG metadata
 
