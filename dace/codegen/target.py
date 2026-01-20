@@ -238,15 +238,6 @@ class TargetCodeGenerator(object):
         """
         raise NotImplementedError('Abstract class')
 
-    def adjust_subset_for_codegen(self, nodedesc: dt.Data, subset: subsets.Subset) -> subsets.Subset:
-        """ Adjusts a memlet subset for code generation, if necessary.
-
-            :param subset: The original subset.
-            :param nodedesc: The data descriptor the subset applies to.
-            :return: The adjusted subset.
-        """
-        return subset
-
 
 class IllegalCopy(TargetCodeGenerator):
     """ A code generator that is triggered when invalid copies are specified

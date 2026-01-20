@@ -17,14 +17,15 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
     inp_desc, inp_shape, out_desc, out_shape = node.validate(parent_sdfg, parent_state)
     dtype = inp_desc.dtype
     cast = "(float *)" if dtype == dace.float32sr else ""
+    storage = inp_desc.storage
 
     sdfg = dace.SDFG("{l}_sdfg".format(l=node.label))
 
     ain_arr = sdfg.add_array('_a', inp_shape, dtype=dtype, strides=inp_desc.strides)
     bout_arr = sdfg.add_array('_b', out_shape, dtype=dtype, strides=out_desc.strides)
-    info_arr = sdfg.add_array('_info', [1], dtype=dace.int32, transient=True)
+    info_arr = sdfg.add_array('_info', [1], dtype=dace.int32, transient=True, storage=storage)
     if implementation == 'cuSolverDn':
-        binout_arr = sdfg.add_array('_bt', inp_shape, dtype=dtype, transient=True)
+        binout_arr = sdfg.add_array('_bt', inp_shape, dtype=dtype, transient=True, storage=storage)
     else:
         binout_arr = bout_arr
 
@@ -98,8 +99,7 @@ class ExpandCholeskyMKL(ExpandTransformation):
 
     environments = [blas_environments.intel_mkl.IntelMKL]
 
-    staticmethod
-
+    @staticmethod
     def expansion(node, parent_state, parent_sdfg, **kwargs):
         return _make_sdfg(node, parent_state, parent_sdfg, "MKL")
 
@@ -110,9 +110,6 @@ class ExpandCholeskyCuSolverDn(ExpandTransformation):
     environments = [environments.cusolverdn.cuSolverDn]
 
     @staticmethod
-    def expansion(node, parent_state, parent_sdfg, **kwargs):
-        staticmethod
-
     def expansion(node, parent_state, parent_sdfg, **kwargs):
         return _make_sdfg(node, parent_state, parent_sdfg, "cuSolverDn")
 
