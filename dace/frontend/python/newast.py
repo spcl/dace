@@ -3329,9 +3329,10 @@ class ProgramVisitor(ExtNodeVisitor):
                     iMin, iMax, step = iMax, iMin, -step
                 ts = to_squeeze_rng.tile_sizes[i]
                 sqz_idx = squeezed_rng.ranges.index(to_squeeze_rng.ranges[i])
-                shape[sqz_idx] = ts * sympy.ceiling(((iMax.approx if isinstance(iMax, symbolic.SymExpr) else iMax) + 1 -
-                                                     (iMin.approx if isinstance(iMin, symbolic.SymExpr) else iMin)) /
-                                                    (step.approx if isinstance(step, symbolic.SymExpr) else step))
+                shape[sqz_idx] += ts * sympy.ceiling(
+                    ((iMax.approx if isinstance(iMax, symbolic.SymExpr) else iMax) + 1 -
+                     (iMin.approx if isinstance(iMin, symbolic.SymExpr) else iMin)) /
+                    (step.approx if isinstance(step, symbolic.SymExpr) else step)) - 1
                 nested_rng.ranges[sqz_idx] = squeezed_rng[sqz_idx]
         dtype = parent_array.dtype
 
