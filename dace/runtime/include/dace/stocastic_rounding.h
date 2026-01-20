@@ -1,3 +1,4 @@
+// Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 #ifndef __DACE_SROUND_H
 #define __DACE_SROUND_H
 
@@ -26,6 +27,7 @@ private:
 
     static constexpr double FLOATMIN_F32 = 1.1754943508222875e-38;
 
+    // Random Number Generation Functions for CPU
     #if !defined(__CUDA_ARCH__)
     DACE_HOST_DEVICE static inline uint64_t& get_rng_state_64() {
         static thread_local uint64_t rng_state_64 = 1;
@@ -48,11 +50,24 @@ private:
     #endif
 
     DACE_HOST_DEVICE static float stochastic_round(double x) {
-        // uint64_t rbits = lcg64();
+        // Stochastic Rounding to a float32 from a double
+        // Input:   [ Sign |  Exponent (11) | Mantissa (52) ]   <- double (64 bits)
+        // Output:  [ Sign |  Exponent (8)  | Mantissa (23) ]   <- float  (32 bits)
+        //
+        // double:  S | EEEEEEEEEEE | MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM[29 excess bits]
+        //                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^
+        //                                                       These 29 bits are lost when converting to float32.
+        //
+        // float:   S | EEEEEEEE    | MMMMMMMMMMMMMMMMMMMMMMMMMMM
+        //                 ^                   ^
+        //              8 exp bits    23 mantissa bits (kept)
+        //
+        // We add random noise to the excess bits then truncate them to ensure the result is a representable float32.
+        // If the perturbation is enough, the least significant bit of the rounded value is incremented.
+        // This is equivalent to rounding up to the nearest representable number with probability 1 - distance to the
+        // next representable number. The modified double is finally cast to float32.
+
         uint64_t rbits = get_random_u64(); // it's quicker to use u64 over u32, perhaps due casting?
-        // uint64_t rbits = get_preloaded_random_u64(); // "circular buffer"
-        // uint64_t rbits = 0; // "constant" rounding
-        // uint64_t rbits = xorshift64();
 
         // if x is subnormal, round randomly; N.B fast-math forces subnormal values to 0
         if (abs(x) < FLOATMIN_F32) {
@@ -85,7 +100,6 @@ private:
         return result;
     }
 
-
     DACE_HOST_DEVICE static uint64_t double_to_bits(double x) {
     #if defined(__CUDA_ARCH__)
         return __double_as_longlong(x);
@@ -96,7 +110,6 @@ private:
     #endif
     }
 
-
     DACE_HOST_DEVICE static double bits_to_double(uint64_t bits) {
     #if defined(__CUDA_ARCH__)
         return __longlong_as_double(bits);
@@ -106,7 +119,6 @@ private:
         return x;
     #endif
     }
-
 
     DACE_HOST_DEVICE static uint64_t get_random_u64() {
     #if defined(__CUDA_ARCH__)
@@ -119,6 +131,8 @@ private:
         uint64_t low = curand(&state); // first 32 bits all 0, last 32 bits are populated by curand
         return low;
     #else
+        // Default stochastic rounding mode: Linear congruential generator (lcg64)
+        // Alternative SR modes: Circular buffer (get_preloaded_random_u64), Xorshift64 generator (xorshift64)
         return lcg64();
     #endif
     }
@@ -137,7 +151,6 @@ private:
 }
 #endif
 
-
 public:
     DACE_HOST_DEVICE float32sr() : value(0.0f) {}
     DACE_HOST_DEVICE float32sr(int v) : value(static_cast<double>(v)) {}
@@ -151,7 +164,9 @@ public:
     friend std::istream& operator>>(std::istream& is, float32sr& obj);
     friend std::ostream& operator<<(std::ostream& os, const float32sr& obj);
 
-
+    // Circular buffer for random number generation
+    // The idea is a large buffer of rands is created once on init then
+    // reused by all threads for rounding.
     DACE_HOST_DEVICE static uint64_t get_preloaded_random_u64() {
     #if defined(__CUDA_ARCH__)
         __shared__ uint64_t shared_randoms[1000];
@@ -180,7 +195,6 @@ public:
           }
 
           void initialize() {
-              std::cout << "Initializing shared random queue" << std::endl;
               for (auto& x : data) {
                   x = float32sr::get_random_u64();
               }
@@ -201,7 +215,6 @@ public:
       return shared_queue.get(current_index);
     #endif
     }
-
 
     #define DEFINE_COMPARISON(op) \
         DACE_HOST_DEVICE bool operator op (const float32sr& other) const { \
@@ -230,7 +243,6 @@ public:
 
     #undef DEFINE_COMPARISON
 
-
     //==================
     // Assignments
     //==================
@@ -253,7 +265,6 @@ public:
         value = stochastic_round(static_cast<double>(v));
         return *this;
     }
-
 
     //==================
     // Primary operators
@@ -310,14 +321,9 @@ public:
         return value / other;
     }
 
-
-
-
-
     //==================
     // Compound assignment operators
     //==================
-
 
     DACE_HOST_DEVICE float32sr& operator+=(const float32sr& other) {
         value = stochastic_round(static_cast<double>(value) + static_cast<double>(other.value));
@@ -357,7 +363,7 @@ inline std::ostream& operator<<(std::ostream& os, const float32sr& obj) {
 #include <cub/util_type.cuh>
 #include <limits>
 
-// This functionality is required by the ICON Velocity Tendecies procedure
+// This functionality is required by the ICON Velocity Tendencies procedure
 namespace cub {
 
 template <>
@@ -385,6 +391,5 @@ struct Traits<dace::float32sr> {
 
 }
 #endif
-
 
 #endif  // __DACE_SROUND_H

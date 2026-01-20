@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests the properties of the stochastically rounded float type"""
 
 import ctypes
@@ -367,5 +367,14 @@ def calc_bounds(higher_prec_val, np_type):
 
 
 if __name__ == "__main__":
-    import pytest
-    pytest.main([__file__])
+    test_add()
+    test_sub()
+    test_sub_exact_rep()
+    test_mult()
+    test_div()
+    test_dot_runs()
+    test_matrix_mult_runs()
+    test_init_properties()
+    test_assignment_properties()
+    test_mixed_addition_properties()
+    test_single_mixed_addition_properties()

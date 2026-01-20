@@ -206,9 +206,14 @@ class Dot(dace.sdfg.nodes.LibraryNode):
         if desc_x.dtype != desc_y.dtype:
             raise TypeError(f"Data types of input operands must be equal: {desc_x.dtype}, {desc_y.dtype}")
         if desc_x.dtype.base_type != desc_res.dtype.base_type:
-            input_types = (desc_x.dtype.base_type, desc_res.dtype.base_type)
-            if dace.float32sr in input_types and dace.float32sr in input_types:
-                pass  # ignore mismatch if it is stochastically rounded
+            arg_types = (desc_x.dtype.base_type, desc_res.dtype.base_type)
+            if dace.float32 in arg_types and dace.float32sr in arg_types:
+                """
+                When using stocastic rounding, a legitimate (i.e not a bug) mismatch between the input and output
+                arguments may arise where one argument is a float32sr and the other is a float32 (round-to-nearest).
+                The underlying data type is the same so this should not cause the validation to fail.
+                """
+                pass
             else:
                 raise TypeError(f"Data types of input and output must be equal: {desc_x.dtype}, {desc_res.dtype}")
 
