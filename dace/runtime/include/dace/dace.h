@@ -34,14 +34,4 @@
 #include "cudainterop.h"
 #endif
 
-#ifdef DACE_XILINX
-#include "xilinx/host.h"
-#endif
-
-#ifdef DACE_INTELFPGA
-#include "intel_fpga/host.h"
-#endif
-
-#include "fpga_common.h"
-
 #endif  // __DACE_RUNTIME_H

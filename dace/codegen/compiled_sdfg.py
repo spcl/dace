@@ -205,6 +205,7 @@ class CompiledSDFG(object):
         self._retarray_is_scalar: List[bool] = []
         self._return_arrays: List[np.ndarray] = []
         self._callback_retval_references: List[Any] = []  # Avoids garbage-collecting callback return values
+        self._argument_to_pyobject: Dict[Any, Any] = {}  # Maps ctypes arguments back to original Python objects
 
         # Cache SDFG argument properties
         self._typedict = self._sdfg.arglist()
@@ -566,7 +567,8 @@ with open(r"{temp_path}", "wb") as f:
             argnames = []
             sig = []
 
-        # Type checking
+        # Conversion to ctypes arguments and some more type checking
+        self._argument_to_pyobject.clear()
         cargs = []
         no_view_arguments = not Config.get_bool('compiler', 'allow_view_arguments')
         for i, (a, arg, atype) in enumerate(zip(argnames, arglist, argtypes)):
@@ -575,7 +577,8 @@ with open(r"{temp_path}", "wb") as f:
                                            a,
                                            allow_views=not no_view_arguments,
                                            symbols=kwargs,
-                                           callback_retval_references=self._callback_retval_references)
+                                           callback_retval_references=self._callback_retval_references,
+                                           argument_to_pyobject=self._argument_to_pyobject)
             cargs.append(carg)
 
         constants = self.sdfg.constants
@@ -610,8 +613,6 @@ with open(r"{temp_path}", "wb") as f:
                 zeros = cupy.empty
             except (ImportError, ModuleNotFoundError):
                 raise NotImplementedError('GPU return values are unsupported if cupy is not installed')
-        if storage is dtypes.StorageType.FPGA_Global:
-            raise NotImplementedError('FPGA return values are unsupported')
 
         # Create an array with the properties of the SDFG array
         return ndarray(shape, dtype, buffer=zeros(total_size, dtype), strides=strides)
