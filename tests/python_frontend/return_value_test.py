@@ -12,9 +12,9 @@ def test_return_scalar():
     res = return_scalar()
     assert res == 5
 
-    # Don't be fooled by the test above the return value is an array. If you would
-    #  add the return value annotation to the program, i.e. `-> dace.int32` you would
-    #  get a validation error.
+    # The return value above is actually an array. If you would
+    # add the return value annotation to the program, i.e. `-> dace.int32`, you would
+    # get a validation error.
     assert isinstance(res, np.ndarray)
     assert res.shape == (1, )
     assert res.dtype == np.int64
@@ -33,9 +33,9 @@ def test_return_scalar_in_nested_function():
     res = return_scalar()
     assert res == 5
 
-    # Don't be fooled by the test above the return value is an array. If you would
-    #  add the return value annotation to the program, i.e. `-> dace.int32` you would
-    #  get a validation error.
+    # The return value above is actually an array. If you would
+    # add the return value annotation to the program, i.e. `-> dace.int32`, you would
+    # get a validation error.
     assert isinstance(res, np.ndarray)
     assert res.shape == (1, )
     assert res.dtype == np.int32
