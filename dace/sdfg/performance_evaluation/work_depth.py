@@ -25,7 +25,7 @@ from dace.transformation.passes.symbol_ssa import StrictSymbolSSA
 from dace.transformation.pass_pipeline import FixedPointPipeline
 from dace.transformation.passes.analysis import loop_analysis
 
-from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowRegion, LoopRegion, ConditionalBlock, ReturnBlock
+from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowRegion, LoopRegion, ConditionalBlock, ReturnBlock, ContinueBlock, BreakBlock
 
 math_funcs = set()
 def get_array_size_symbols(sdfg):
@@ -56,11 +56,9 @@ def subs_till_fixed_point(expr:sp.Expr, symbol_map:Dict[sp.Expr, sp.Expr]):
     """
     prev = None
     curr = expr
-
     while prev != curr:
         prev = curr
         curr = curr.subs(symbol_map)
-
     return curr
 
 def get_static_symbols(sdfg: SDFG):
@@ -73,17 +71,21 @@ def get_static_symbols(sdfg: SDFG):
 
     
     patterns = [
+        "dace.complex128",
         "dace.float64",
         "dace.float32",
         "dace.int64",
         "dace.int32",
+        "dace.int16",
+        "dace.uint32",
+        "dace.uint16",
+        "dace.uint8",
         "float",
         "int"
     ]
 
     type_regex = re.compile("|".join(map(re.escape, patterns)))
-
-    static_symbol_mapping:Dict[sp.Symbol, sp.Expr] = {}
+    static_symbol_mapping:Dict[sp.Symbol, sp.Expr] = {sp.Symbol(a): sp.Symbol(a) for a in sdfg.arg_names}
     non_static_symbols = set() 
     for node, containing_state in sdfg.all_nodes_recursive():
         if isinstance(node, nd.AccessNode):
@@ -101,7 +103,7 @@ def get_static_symbols(sdfg: SDFG):
                         for e in containing_state.in_edges(tasklet):
                             if not isinstance(e.src, nd.AccessNode):
                                 continue
-                            sym = sp.Symbol(e.src.data)
+                            sym = str(e.src.data)
                             in_map[e.dst_conn] = sym
                         # Outgoing edges: symbols written by the tasklet
                         # Out edges should only be one, but for safety we iterate
@@ -121,22 +123,25 @@ def get_static_symbols(sdfg: SDFG):
                         lhs_sympy = pystr_to_symbolic(lhs)
                         lhs_sympy = lhs_sympy.subs(out_map)
 
-                        rhs_sympy = pystr_to_symbolic(rhs)
-                        rhs_sympy = rhs_sympy.subs(in_map)
-
                         if not lhs_sympy in static_symbol_mapping.keys():
-                            static_symbol_mapping[lhs_sympy] = rhs_sympy
+                            try:
+                                rhs_sympy = pystr_to_symbolic(rhs)
+                                rhs_sympy = rhs_sympy.subs(in_map)
+                                static_symbol_mapping[lhs_sympy] = rhs_sympy
+                            except:
+                                non_static_symbols.add(lhs_sympy)
                         else:
                             non_static_symbols.add(lhs_sympy)
 
                     elif isinstance(source, nd.AccessNode):
                         data_sym = sp.Symbol(source.data)
                         nd_sym = sp.Symbol(node.data)
-                        if not lhs in static_symbol_mapping.keys():
+                        if not data_sym in static_symbol_mapping.keys():
                             static_symbol_mapping[data_sym] = nd_sym
                         else:
                             non_static_symbols.add(data_sym)
 
+    static_symbol_mapping = {k: v for (k, v) in static_symbol_mapping.items() if k not in non_static_symbols}
     static_symbol_mapping = {k: subs_till_fixed_point(v, static_symbol_mapping) for k,v in static_symbol_mapping.items()}
     return static_symbol_mapping
         
@@ -274,7 +279,11 @@ class ArithmeticCounter(ast.NodeVisitor):
         return self.generic_visit(node)
 
     def visit_UnaryOp(self, node):
-        self.count += 1
+        if isinstance(node.op, (ast.USub, ast.UAdd)):
+        # Unary + / - are sign or no-op → don't add work
+            pass
+        else:
+            self.count += 1
         return self.generic_visit(node)
 
     def visit_Call(self, node):
@@ -461,50 +470,56 @@ def control_flow_region_work_depth(cfr: ControlFlowRegion,
         elif isinstance(region, LoopRegion):
             #rename variable to make code more readable
             loop = region
-            try:
-                loop_var = sp.sympify(loop.loop_variable)
-                lower_bound = loop_analysis.get_init_assignment(loop)
-                upper_bound = loop_analysis.get_loop_end(loop)
-                step = sp.sympify(loop_analysis.get_loop_stride(loop))
-            except:
-                raise NotImplementedError("Only loops with constant step sizes and static bounds are supported")
+            fallback = False
+            loop_var = sp.Symbol(loop.loop_variable)
+            lower_bound = loop_analysis.get_init_assignment(loop)
+            upper_bound = loop_analysis.get_loop_end(loop)
+            step = sp.sympify(loop_analysis.get_loop_stride(loop))
+            if any(v is None for v in (loop_var, lower_bound, upper_bound)):
+                print("Because the loop does not provide a loop variable and static bounds, we fell back to just using its number of iterations. Mind that this can affect the correctness of the expression ")
+                fallback = True
+                executions = loop.start_block.executions
+                executions = executions.subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1)
+            
             loop_work, loop_depth = control_flow_region_work_depth(loop, w_d_map, analyze_tasklet, symbols,
                                                                    equality_subs, subs1, detailed_analysis)
-            print(loop_work, loop_depth)
-
-            # to ensure that the summation works properly, we need to make sure that the symbol that is used as loop varaible 
-            # is the same as the ones used in the inner expression
-            for var in loop_work.free_symbols:
-                if var.name == loop_var.name:
-                    loop_var = var
-
             
-            #TEMPORARY FIX: Because with library nodes it can happen that we get two symbols (with the same name) that correspond to the 
-            for var in loop_work.free_symbols:
-                if var.name == loop_var.name and not var == loop_var:
-                    loop_work = loop_work.subs({var: loop_var})
-                    loop_depth = loop_depth.subs({var: loop_var})
+            if not fallback:
+                # to ensure that the summation works properly, we need to make sure that the symbol that is used as loop varaible 
+                # is the same as the ones used in the inner expression
+                for var in loop_work.free_symbols:
+                    if var.name == loop_var.name:
+                        loop_var = var
 
-            # prepare loop bounds to such that we can write the work as a nice summation from 0 to an upper bound
-            loop_var = loop_var.subs(subs1)
-            shifted_hi = (upper_bound-lower_bound)//step
-            shifted_hi = shifted_hi.subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1)
-            lower_bound = lower_bound.subs(subs1) if step.evalf()>0 else upper_bound.subs(subs1)
-            shifted_lo = sp.sympify(0)
-            step:sp.Expr = sp.Abs(step)
+                
+                #TEMPORARY FIX: with library nodes it can happen that we get two symbols (with the same name)
+                for var in loop_work.free_symbols:
+                    if var.name == loop_var.name and not var == loop_var:
+                        loop_work = loop_work.subs({var: loop_var})
+                        loop_depth = loop_depth.subs({var: loop_var})
 
-            # write the work and depth of the loop as a sum of the work of one iteration over the number of loop iterations
-            # (we have cannot use a simple multiplication as work and depth of one loop iteration might be dependent on the loop variable)
-            loop_work = sp.Sum(loop_work, (loop_var, shifted_lo, shifted_hi))
-            loop_depth = sp.Sum(loop_depth, (loop_var, shifted_lo, shifted_hi))
-            # Do equality subs
-            loop_work = sp.simplify(loop_work.subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1))
-            loop_depth = sp.simplify(loop_depth.subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1))
+                # prepare loop bounds to such that we can write the work as a nice summation from 0 to an upper bound
+                loop_var = loop_var.subs(subs1)
+                shifted_hi = (upper_bound-lower_bound)//step
+                shifted_hi = shifted_hi.subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1)
+                lower_bound = lower_bound.subs(subs1) if step.evalf()>0 else upper_bound.subs(subs1)
+                shifted_lo = sp.sympify(0)
+                step:sp.Expr = sp.Abs(step)
 
+                # write the work and depth of the loop as a sum of the work of one iteration over the number of loop iterations
+                # (we have cannot use a simple multiplication as work and depth of one loop iteration might be dependent on the loop variable)
+                loop_work = sp.Sum(loop_work, (loop_var, shifted_lo, shifted_hi))
+                loop_depth = sp.Sum(loop_depth, (loop_var, shifted_lo, shifted_hi))
+                # Do equality subs
+                loop_work = sp.simplify(loop_work.subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1))
+                loop_depth = sp.simplify(loop_depth.subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1))
+            else:
+                loop_work = sp.simplify(loop_work.subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1))*executions
+                loop_depth = sp.simplify(loop_depth.subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1))*executions
             region_works[loop], region_depths[loop] = loop_work, loop_depth
             w_d_map[get_uuid(loop)] = (region_works[loop], region_depths[loop])
+
         elif isinstance(region, ConditionalBlock):
-            print("Conditional present")
             branch_conditions: Dict[AbstractControlFlowRegion, sp.Expr] = {}
             branch_works: Dict[AbstractControlFlowRegion, sp.Expr] = {}
             branch_depths: Dict[AbstractControlFlowRegion, sp.Expr] = {}
@@ -521,8 +536,11 @@ def control_flow_region_work_depth(cfr: ControlFlowRegion,
                 depth_condition = list(zip(branch_depths.values(), branch_conditions.values()))
                 region_works[region] = sp.Piecewise(*work_condition)
                 region_depths[region] = sp.Piecewise(*depth_condition)
-        elif isinstance(region, ReturnBlock):
-            print("Work Depth Analysis for unstructured Control Flow is not supported (yet)")
+            w_d_map[get_uuid(region)] = (region_works[region], region_depths[region])
+
+        elif isinstance(region, (ReturnBlock, ContinueBlock, BreakBlock)):
+            region_works[region], region_depths[region] = (sp.sympify(0), sp.sympify(0))
+            w_d_map[get_uuid(region)] = (sp.sympify(0), sp.sympify(0))
         else:
             function_work, function_depth = control_flow_region_work_depth(region, w_d_map, analyze_tasklet, symbols,
                                                                    equality_subs, subs1, detailed_analysis)
@@ -736,17 +754,18 @@ def scope_work_depth(
             nested_syms = {}
             nested_syms.update(symbols)
             nested_syms.update(evaluate_symbols(symbols, node.symbol_mapping))
-            print(nested_syms)
             # Nested SDFGs are recursively analyzed first.
-            nsdfg_work, nsdfg_depth = control_flow_region_work_depth(node.sdfg, w_d_map, analyze_tasklet, nested_syms,
-                                                                     equality_subs, subs1, detailed_analysis)
+            nsdfg_work, nsdfg_depth = control_flow_region_work_depth(node.sdfg, w_d_map, analyze_tasklet, {},
+                                                                     equality_subs, {}, detailed_analysis) 
+            
 
+            nsdfg_work, nsdfg_depth = nsdfg_work.subs(nested_syms), nsdfg_depth.subs(nested_syms) # We cannot use assumptions for nested sdfg analysis. It interfers with the global assumptions. We thus substitute afterwards
             nsdfg_work, nsdfg_depth = do_initial_subs(nsdfg_work, nsdfg_depth, equality_subs, subs1)
+
             # add up work for whole state, but also save work for this nested SDFG in w_d_map
             work += nsdfg_work
             w_d_map[get_uuid(node, state)] = (nsdfg_work, nsdfg_depth)
         elif isinstance(node, nd.LibraryNode):
-            print("Library Node present")
             try:
                 lib_node_work = LIBNODES_TO_WORK[type(node)](node, symbols, state)
             except KeyError:
@@ -916,14 +935,12 @@ def analyze_sdfg(sdfg: SDFG,
     and work depth values for both branches. If False, the worst-case branch is taken. Discouraged to use on bigger SDFGs,
     as computation time sky-rockets, since expression can became HUGE (depending on number of branches etc.).
     """
-
     # deepcopy such that original sdfg not changed
     sdfg = deepcopy(sdfg)
 
     # apply SSA pass
     pipeline = FixedPointPipeline([StrictSymbolSSA()])
     pipeline.apply_pass(sdfg, {})
-
     static_symbol_mapping = get_static_symbols(sdfg)
     array_symbols = get_array_size_symbols(sdfg)
     # parse assumptions
@@ -947,7 +964,7 @@ def analyze_sdfg(sdfg: SDFG,
         w_d_map[k] = (v_w, v_d)
 
     for k, v, in w_d_map.items():
-         w_d_map[k] = ((v[0].subs(static_symbol_mapping)),(v[1].subs(static_symbol_mapping)))
+         w_d_map[k] = ((v[0].subs(static_symbol_mapping).subs(equality_subs[1])),(v[1].subs(static_symbol_mapping).subs(equality_subs[1])))
 
     if analyze_tasklet == get_tasklet_work_depth:
         for k, v, in w_d_map.items():

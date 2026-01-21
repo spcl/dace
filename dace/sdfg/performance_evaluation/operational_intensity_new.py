@@ -5,12 +5,14 @@ or from the VS Code extension. """
 import argparse
 from collections import deque
 from dace.sdfg import nodes as nd
-from dace import SDFG, SDFGState, dtypes
+from dace import dtypes, SDFG
+from dace.sdfg.state import SDFGState, ControlFlowRegion, LoopRegion, FunctionCallRegion, ConditionalBlock, ReturnBlock, ContinueBlock, BreakBlock
 from typing import Tuple, Dict
 import os
 import sympy as sp
 from copy import deepcopy
 from dace.symbolic import pystr_to_symbolic, SymExpr
+import re
 
 from dace.sdfg.performance_evaluation.helpers import get_uuid
 from dace.transformation.passes.symbol_ssa import StrictSymbolSSA
@@ -19,6 +21,110 @@ from dace.transformation.pass_pipeline import FixedPointPipeline
 from dace.data import Array
 from dace.sdfg.performance_evaluation.op_in_helpers import CacheLineTracker, AccessStack, fit_curve, plot, compute_mape
 from dace.sdfg.performance_evaluation.work_depth import analyze_sdfg, get_tasklet_work
+
+from dace.transformation.passes.analysis import loop_analysis
+
+def subs_till_fixed_point(expr:sp.Expr, symbol_map:Dict[sp.Expr, sp.Expr]):
+    """
+    Takes a sympy expression and a symbol mapping and applies the mapping to the expression until a fixed point is reached
+    Needs the guarantee that the symbol mapping does not have cyclic dependencies.
+
+    :param expr: Description
+    :param symbol_map: Description
+    :return: Description
+    """
+    if not isinstance(expr, sp.Expr):
+        return expr
+    prev = None
+    curr = expr
+    while prev != curr:
+        prev = curr
+        curr = curr.subs(symbol_map)
+    return curr
+
+def get_static_symbols(sdfg: SDFG):
+    """
+    Returns a mapping of symbols that are assigned exactly at one point in the sdfg.
+    
+    :param sdfg: The sdfg for which we want to find the static symbols and their corresponding assignment
+    :return: The mapping of the symbols to higher levels (iterated to a fixed point)
+    """
+
+    
+    patterns = [
+        "dace.complex128",
+        "dace.float64",
+        "dace.float32",
+        "dace.int64",
+        "dace.int32",
+        "dace.int16",
+        "dace.uint32",
+        "dace.uint16",
+        "dace.uint8",
+        "float",
+        "int"
+    ]
+
+    type_regex = re.compile("|".join(map(re.escape, patterns)))
+    static_symbol_mapping:Dict[sp.Symbol, sp.Expr] = {sp.Symbol(a): sp.Symbol(a) for a in sdfg.arg_names}
+    non_static_symbols = set() 
+    for node, containing_state in sdfg.all_nodes_recursive():
+        if isinstance(node, nd.AccessNode):
+            
+            if containing_state.in_degree(node) == 1:
+                edge = containing_state.in_edges(node)[0]
+                source = edge.src
+                
+                if edge.data.volume == 1:
+                    if isinstance(source, nd.Tasklet):
+                        tasklet = source
+                        in_map = {}
+                        out_map = {}
+                        # Incoming edges: symbols feeding the tasklet
+                        for e in containing_state.in_edges(tasklet):
+                            if not isinstance(e.src, nd.AccessNode):
+                                continue
+                            sym = str(e.src.data)
+                            in_map[e.dst_conn] = sym
+                        # Outgoing edges: symbols written by the tasklet
+                        # Out edges should only be one, but for safety we iterate
+                        for e in containing_state.out_edges(tasklet):
+                            if not isinstance(e.dst, nd.AccessNode):
+                                continue
+                            sym = sp.Symbol(e.dst.data)
+                            out_map[e.src_conn] = sym
+                        code = tasklet.code.as_string.strip()
+                        # Expect a single assignment
+                        lines = [l.strip() for l in code.splitlines() if l.strip()]
+                        lhs, rhs = lines[0].split('=',1)
+                        lhs = lhs.strip()
+                        rhs = rhs.strip()
+                        rhs = type_regex.sub("", rhs)
+                        # Parse RHS using SymPy, with tasklet inputs substituted
+                        lhs_sympy = pystr_to_symbolic(lhs)
+                        lhs_sympy = lhs_sympy.subs(out_map)
+
+                        if not lhs_sympy in static_symbol_mapping.keys():
+                            try:
+                                rhs_sympy = pystr_to_symbolic(rhs)
+                                rhs_sympy = rhs_sympy.subs(in_map)
+                                static_symbol_mapping[lhs_sympy] = rhs_sympy
+                            except:
+                                non_static_symbols.add(lhs_sympy)
+                        else:
+                            non_static_symbols.add(lhs_sympy)
+
+                    elif isinstance(source, nd.AccessNode):
+                        data_sym = sp.Symbol(source.data)
+                        nd_sym = sp.Symbol(node.data)
+                        if not data_sym in static_symbol_mapping.keys():
+                            static_symbol_mapping[data_sym] = nd_sym
+                        else:
+                            non_static_symbols.add(data_sym)
+
+    static_symbol_mapping = {k: v for (k, v) in static_symbol_mapping.items() if k not in non_static_symbols}
+    static_symbol_mapping = {str(k): subs_till_fixed_point(v, static_symbol_mapping) for k,v in static_symbol_mapping.items()}
+    return static_symbol_mapping
 
 
 class SymbolRange():
@@ -124,8 +230,10 @@ def symeval(val, symbols):
 
 def evaluate_symbols(base, new):
     result = {}
+    print("Evaluate symbols called with base:", base, "new:", new)
     for k, v in new.items():
         result[k] = symeval(v, base)
+    print("Result:", result)
     return result
 
 
@@ -137,7 +245,7 @@ def update_mapping(mapping, e):
     mapping.update(update)
 
 
-def update_map_iterators(map, mapping):
+def update_map_iterators(map, mapping, symbols):
     # update the map params and return False
     # if all iterations exhausted, return True
     # always increase the last one. If it is exhausted, increase the next one and so forth
@@ -145,23 +253,24 @@ def update_map_iterators(map, mapping):
     for p, range in zip(map.params[::-1], map.range[::-1]):  # reversed order
         curr_value = mapping[p]
         if not isinstance(range[1], SymExpr):
-            if curr_value.subs(mapping) + range[2].subs(mapping) <= range[1].subs(mapping):
+            print(curr_value.subs(symbols).subs(mapping) + range[2].subs(symbols).subs(mapping), "<=", range[1].subs(symbols).subs(mapping))
+            if curr_value.subs(symbols).subs(mapping) + range[2].subs(symbols).subs(mapping) <= range[1].subs(symbols).subs(mapping):
                 # update this value and then we are done
-                mapping[p] = curr_value.subs(mapping) + range[2].subs(mapping)
+                mapping[p] = curr_value.subs(symbols).subs(mapping) + range[2].subs(symbols).subs(mapping)
                 map_exhausted = False
                 break
             else:
                 # set current param to start again and continue
-                mapping[p] = range[0].subs(mapping)
+                mapping[p] = range[0].subs(symbols).subs(mapping)
         else:
-            if curr_value.subs(mapping) + range[2].subs(mapping) <= range[1].expr.subs(mapping):
+            if curr_value.subs(symbols).subs(mapping) + range[2].subs(symbols).subs(mapping) <= range[1].expr.subs(symbols).subs(mapping):
                 # update this value and we done
-                mapping[p] = curr_value.subs(mapping) + range[2].subs(mapping)
+                mapping[p] = curr_value.subs(symbols).subs(mapping) + range[2].subs(symbols).subs(mapping)
                 map_exhausted = False
                 break
             else:
                 # set current param to start again and continue
-                mapping[p] = range[0].subs(mapping)
+                mapping[p] = range[0].subs(symbols).subs(mapping)
     return map_exhausted
 
 
@@ -174,15 +283,15 @@ def map_op_in(state: SDFGState, op_in_map: Dict[str, sp.Expr], entry, mapping, s
     map_misses = 0
     while True:
         # do analysis of map contents
-        map_misses += scope_op_in(state, op_in_map, mapping, stack, clt, C, symbols, array_names, decided_branches,
+        map_misses += scope_misses(state, op_in_map, mapping, stack, clt, C, symbols, array_names, decided_branches,
                                   ask_user, entry)
 
-        if update_map_iterators(entry.map, mapping):
+        if update_map_iterators(entry.map, mapping,symbols):
             break
     return map_misses
 
 
-def scope_op_in(state: SDFGState,
+def scope_misses(state: SDFGState,
                 op_in_map: Dict[str, sp.Expr],
                 mapping,
                 stack: AccessStack,
@@ -231,8 +340,7 @@ def scope_op_in(state: SDFGState,
                     line_id = clt.cache_line_id(
                         e.data.data if e.data.data not in array_names else array_names[e.data.data],
                         [x[0].subs(mapping) for x in e.data.subset.ranges], mapping)
-
-                    line_id = int(line_id.subs(mapping))
+                    line_id = int(line_id.subs(symbols).subs(mapping))
                     dist = stack.touch(line_id)
                     tasklet_misses += 1 if dist >= C or dist == -1 else 0
 
@@ -259,7 +367,7 @@ def scope_op_in(state: SDFGState,
             for e in state.out_edges(node):
                 nested_array_names[e.src_conn] = e.data.data
             # Nested SDFGs are recursively analyzed first.
-            nsdfg_misses = sdfg_op_in(node.sdfg, op_in_map, mapping, stack, clt, C, nested_syms, nested_array_names,
+            nsdfg_misses = cfg_misses(node.sdfg, op_in_map, mapping, stack, clt, C, nested_syms, nested_array_names,
                                       decided_branches, ask_user)
 
             scope_misses += nsdfg_misses
@@ -280,8 +388,112 @@ def scope_op_in(state: SDFGState,
         update_map(op_in_map, get_uuid(state), scope_misses, average=False)
     return scope_misses
 
+def cfr_misses(cfr:ControlFlowRegion,
+               op_in_map: Dict[str, Tuple[sp.Expr, sp.Expr]],
+               mapping,
+               stack: AccessStack,
+               clt: CacheLineTracker,
+               C,
+               symbols,
+               array_names,
+               decided_branches,
+               ask_user,
+               start=None,
+               end=None):
+    region_misses = 0
+    if isinstance(cfr, SDFGState):
+        region_misses = scope_misses(cfr, op_in_map, mapping, stack, clt, C, symbols, array_names, decided_branches,
+                                  ask_user, None)
+        
+    elif isinstance(cfr, LoopRegion):
+        loop_var = cfr.loop_variable
+        loop_condition = pystr_to_symbolic(cfr.loop_condition.as_string)
+        start = loop_analysis.get_init_assignment(cfr).subs(mapping)
+        step = sp.sympify(loop_analysis.get_loop_stride(cfr))
+        mapping[loop_var] = start.subs(mapping)
+        region_misses = 0
+        
+        while (loop_condition.subs(mapping) == True):
+            iter_misses = cfg_misses(cfr, op_in_map, mapping, stack, clt, C, symbols, array_names, decided_branches, ask_user, start=cfr.start_block,end=None)
+            mapping[loop_var] = mapping[loop_var] + step
+            region_misses += iter_misses
+        
+    elif isinstance(cfr, ConditionalBlock):
+        true_branches = []
+        possible_branches = []
+        else_branch = None
 
-def sdfg_op_in(sdfg: SDFG,
+        for cond, branch in cfr.branches:
+            if cond is None:
+                else_branch = branch
+                continue
+
+            sym_cond = pystr_to_symbolic(cond.as_string)
+            res = sym_cond.subs(mapping)
+
+            if res == True:
+                true_branches.append(branch)
+            elif res == False:
+                continue
+            else:
+                possible_branches.append(branch)
+
+        ### if the branch is not decided by a true condition we 
+        # 1- ask the userif he hasn't decided yet
+        # 2- take the one we took last time if he has decided
+        # 3- take the worst case if he opted not to decide
+        possibilities = true_branches + possible_branches + [else_branch]
+        if not true_branches and len(possible_branches)>0 and ask_user and (cfr not in decided_branches or decided_branches[cfr] not in possibilities):
+            possibilities = true_branches + possible_branches + ['else_branch']
+            if len(possibilities)>1:        
+                print(f'\n\nWhich branch to take at {cfr.name}')
+                for i in range(len(possibilities)):
+                    print(f'({i}) for branch {possibilities[i] if possibilities[i] else "else_branch"}')
+                chosen = int(input('Choose an option from above: '))
+                # if the user chooses one, we check only that branch
+                branches = [possibilities[chosen]]
+                if possibilities[chosen]:
+                    # only store the decided branch if it is not the implicit else branch
+                    decided_branches[cfr] = possibilities[chosen]
+            else:
+                branches = possibilities
+        elif true_branches:
+            # if we have true branches we take the first one
+            branches = [true_branches[0]]
+        else:
+            # else we check all possibilities and take the max
+            branches = possibilities
+            
+
+        max_branch_misses = 0
+        mapping_after_cond, stack_after_cond, decided_branches_after_cond = mapping, stack, decided_branches
+        for branch in branches:
+            if not branch:
+                # the implicit else branch has no misses
+                continue
+            # copy all data that must not be shared between branches
+            mapping_copy = deepcopy(mapping)
+            stack_copy = deepcopy(stack)
+            symbols_copy = deepcopy(symbols)
+            decided_branches_copy = deepcopy(decided_branches)
+            branch_misses = cfg_misses(branch, op_in_map, mapping_copy, stack_copy, clt, C, symbols_copy, array_names, decided_branches_copy, ask_user, branch.start_block, None)
+            
+            if branch_misses > max_branch_misses:
+                max_branch_misses = branch_misses
+                mapping_after_cond, stack_after_cond, decided_branches_after_cond = mapping_copy, stack_copy, decided_branches_copy
+
+        mapping.update(mapping_after_cond)
+        stack.replace_self(stack_after_cond)
+        decided_branches.update(decided_branches_after_cond)  
+        region_misses = max_branch_misses
+    elif isinstance(cfr, FunctionCallRegion):
+        region_misses = cfg_misses(cfr, op_in_map,mapping,stack,clt,C,symbols,array_names,decided_branches,ask_user,start=cfr.start_block,end=None)
+    elif isinstance(cfr, (ReturnBlock, ContinueBlock, BreakBlock)):
+        region_misses = 0
+    
+    return region_misses
+
+def cfg_misses(cfg: ControlFlowRegion,
                op_in_map: Dict[str, Tuple[sp.Expr, sp.Expr]],
                mapping,
                stack: AccessStack,
@@ -311,31 +523,33 @@ def sdfg_op_in(sdfg: SDFG,
     :param end: The end state of the SDFG traversal. If None, the whole SDFG is traversed.
     """
 
-    if start is None:
+    if isinstance(cfg, SDFG) and start is None:
         # add this SDFG's arrays to the cache line tracker
-        for name, arr in sdfg.arrays.items():
+        for name, arr in cfg.arrays.items():
             if isinstance(arr, Array):
                 if name in array_names:
                     name = array_names[name]
                 clt.add_array(name, arr, mapping)
         # start traversal at SDFG's start state
-        curr_state = sdfg.start_state
+        curr_state = cfg.start_block
     else:
         curr_state = start
 
     total_misses = 0
-    # traverse this SDFG's states
+    # traverse this SDFG's ControlFlowRegions
     while True:
-        total_misses += scope_op_in(curr_state, op_in_map, mapping, stack, clt, C, symbols, array_names,
-                                    decided_branches, ask_user)
-
-        if len(sdfg.out_edges(curr_state)) == 0:
+        
+        region_misses = cfr_misses(curr_state, op_in_map, mapping, stack, clt, C, symbols, array_names,
+                                        decided_branches, ask_user)
+                
+        total_misses += region_misses
+        if len(cfg.out_edges(curr_state)) == 0:
             # we reached an end state --> stop
             break
         else:
             # take first edge with True condition
             found = False
-            for e in sdfg.out_edges(curr_state):
+            for e in cfg.out_edges(curr_state):
                 if e.data.is_unconditional() or e.data.condition_sympy().subs(mapping) == True:
                     # save e's assignments in mapping and update curr_state
                     # replace values first with mapping, then update mapping
@@ -351,7 +565,7 @@ def sdfg_op_in(sdfg: SDFG,
             if not found:
                 # We need to check if we are in an implicit end state (i.e. all outgoing edge conditions evaluate to False)
                 all_false = True
-                for e in sdfg.out_edges(curr_state):
+                for e in cfg.out_edges(curr_state):
                     if e.data.condition_sympy().subs(mapping) != False:
                         all_false = False
                 if all_false:
@@ -365,10 +579,10 @@ def sdfg_op_in(sdfg: SDFG,
                     curr_state = e.dst
                 else:
                     # we cannot determine which branch to take --> check if both contain work
-                    merge_state = find_merge_state(sdfg, curr_state)
+                    merge_state = find_merge_state(cfg, curr_state)
                     next_edge_candidates = []
-                    for e in sdfg.out_edges(curr_state):
-                        states = find_states_between(sdfg, e.dst, merge_state)
+                    for e in cfg.out_edges(curr_state):
+                        states = find_states_between(cfg, e.dst, merge_state)
                         curr_work = mem_accesses_on_path(states)
                         if sp.sympify(curr_work).subs(mapping) > 0:
                             next_edge_candidates.append(e)
@@ -380,7 +594,7 @@ def sdfg_op_in(sdfg: SDFG,
                         curr_state = e.dst
                     else:
                         if ask_user:
-                            edges = sdfg.out_edges(curr_state)
+                            edges = cfg.out_edges(curr_state)
                             print(f'\n\nWhich branch to take at {curr_state.name}')
                             for i in range(len(edges)):
                                 print(f'({i}) for edge to state {edges[i].dst.name}')
@@ -406,17 +620,18 @@ def sdfg_op_in(sdfg: SDFG,
 
                                 curr_state = e.dst
                                 # walk down this branch until merge_state
-                                sdfg_op_in(sdfg, op_in_map, curr_mapping, curr_stack, curr_clt, C, curr_symbols,
+                                cfg_misses(cfg, op_in_map, curr_mapping, curr_stack, curr_clt, C, curr_symbols,
                                            curr_array_names, decided_branches, ask_user, curr_state, merge_state)
 
                             update_mapping(mapping, final_e)
                             curr_state = final_e.dst
         if curr_state == end:
             break
-
+    
     if end is None:
         # only update if we were actually analyzing a whole sdfg (not just start to end state)
-        update_map(op_in_map, get_uuid(sdfg), total_misses, average=False)
+        update_map(op_in_map, get_uuid(cfg), total_misses, average=False)
+        
     return total_misses
 
 
@@ -427,7 +642,7 @@ def analyze_sdfg_op_in(sdfg: SDFG,
                        assumptions,
                        generate_plots=False,
                        stringify=False,
-                       test_set_size=3,
+                       test_set_size=1,
                        ask_user=False):
     """
     Computes the operational intensity of the input SDFG.
@@ -448,11 +663,12 @@ def analyze_sdfg_op_in(sdfg: SDFG,
 
     # from now on we take C as the number of lines that fit into cache
     C = C // L
-
+    
     sdfg = deepcopy(sdfg)
     # apply SSA pass
     pipeline = FixedPointPipeline([StrictSymbolSSA()])
     pipeline.apply_pass(sdfg, {})
+
     # check if all symbols are concretized (at most one can be associated with a range)
     undefined_symbols = set()
     range_symbol = {}
@@ -462,9 +678,10 @@ def analyze_sdfg_op_in(sdfg: SDFG,
         elif isinstance(assumptions[sym], str):
             range_symbol[sym] = SymbolRange(int(x) for x in assumptions[sym].split(','))
             del assumptions[sym]
-
     work_map = {}
+    
     assumptions_list = [f'{x}=={y}' for x, y in assumptions.items()]
+    
     analyze_sdfg(sdfg, work_map, get_tasklet_work, assumptions_list)
 
     if len(undefined_symbols) > 0:
@@ -479,12 +696,17 @@ def analyze_sdfg_op_in(sdfg: SDFG,
             # all symbols are concretized --> run normal op_in analysis with concretized symbols
             sdfg.specialize(assumptions)
             mapping = {}
+            # add the static symbols to the map to allow for better analysis
+            static_symbols = get_static_symbols(sdfg)
+            mapping.update(static_symbols)
+
             mapping.update(assumptions)
 
+            mapping = {k: subs_till_fixed_point(v, mapping) for k,v in mapping.items()}
             stack = AccessStack(C)
             clt = CacheLineTracker(L)
 
-            sdfg_op_in(sdfg, op_in_map, mapping, stack, clt, C, {}, {}, {}, ask_user)
+            total_misses = cfg_misses(sdfg, op_in_map, mapping, stack, clt, C, {}, {}, {}, ask_user)
             # compute bytes
             for k, v in op_in_map.items():
                 op_in_map[k] = v[0] / v[1] * L
@@ -499,11 +721,12 @@ def analyze_sdfg_op_in(sdfg: SDFG,
             while True:
                 new_val = False
                 for sym, r in range_symbol.items():
+                    
                     val = r.next()
                     if val > -1:
                         new_val = True
                         assumptions[sym] = val
-                    elif t < 3:
+                    elif t < test_set_size:
                         # now we sample test set
                         t += 1
                         assumptions[sym] = r.max_value() + t * 3
@@ -511,12 +734,19 @@ def analyze_sdfg_op_in(sdfg: SDFG,
                 if not new_val:
                     break
 
+                r_sdfg = deepcopy(sdfg)
+
                 curr_op_in_map = {}
                 mapping = {}
+                # add the static symbols to the map to allow for better analysis
+                static_symbols = get_static_symbols(r_sdfg)
+                mapping.update(static_symbols)
                 mapping.update(assumptions)
+                mapping = {k: subs_till_fixed_point(v, mapping) for k,v in mapping.items()}
+
                 stack = AccessStack(C)
                 clt = CacheLineTracker(L)
-                sdfg_op_in(sdfg, curr_op_in_map, mapping, stack, clt, C, {}, {}, {}, ask_user)
+                cfg_misses(r_sdfg, curr_op_in_map, mapping, stack, clt, C, {}, {}, {}, ask_user)
 
                 # compute average cache misses
                 for k, v in curr_op_in_map.items():
@@ -539,6 +769,7 @@ def analyze_sdfg_op_in(sdfg: SDFG,
 
             sympy_fs = {}
             for k, v in cache_miss_measurements.items():
+
                 final_f, sympy_f, r_s = fit_curve(x_values[:-test_set_size], v[:-test_set_size], symbol_name)
                 op_in_map[k] = sp.simplify(sympy_f * L)
                 sympy_fs[k] = sympy_f
@@ -561,6 +792,7 @@ def analyze_sdfg_op_in(sdfg: SDFG,
             if stringify:
                 for k, v in op_in_map.items():
                     op_in_map[k] = str(v)
+    return op_in_map[get_uuid(sdfg)]
 
 
 ################################################################################
@@ -598,7 +830,6 @@ def main() -> None:
             assumptions[a] = int(b)
         else:
             assumptions[a] = b
-    print(assumptions)
     analyze_sdfg_op_in(sdfg, op_in_map, int(args.C), int(args.L), assumptions)
 
     result_whole_sdfg = op_in_map[get_uuid(sdfg)]
