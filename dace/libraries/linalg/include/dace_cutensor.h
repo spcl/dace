@@ -26,7 +26,7 @@ static cutensorHandle_t CreateCuTensorHandle(int device) {
     }
   }
   cutensorHandle_t handle;
-  CheckCuTensorError(cutensorInit(&handle));
+  CheckCuTensorError(cutensorCreate(&handle));
   return handle;
 }
 
@@ -52,10 +52,9 @@ class CuTensorHandle {
   }
 
   ~CuTensorHandle() {
-    // NOTE: It seems that the cuTENSOR API is missing a method of destroying a cuTENSOR handle
-    // for (auto& h : handles_) {
-    //   CheckCuTensorError(cutensorDestroy(h.second));
-    // }
+    for (auto& h : handles_) {
+      CheckCuTensorError(cutensorDestroy(h.second));
+    }
   }
 
   CuTensorHandle& operator=(CuTensorHandle const&) = delete;
