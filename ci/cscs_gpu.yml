@@ -2,7 +2,7 @@ include:
   - remote: 'https://gitlab.com/cscs-ci/recipes/-/raw/master/templates/v2/.ci-ext.yml'
 
 variables:
-  PY_VERSION: '3.13'
+  PY_VERSION: '3.14'
   CUDA_VERSION: '12.9.1'
   UBUNTU_VERSION: '24.04'
 
