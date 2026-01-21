@@ -9,7 +9,7 @@ import re
 from sympy import Float, Integer
 from collections import OrderedDict
 from functools import wraps
-from typing import Any, Dict, Type, TYPE_CHECKING, TypeAlias
+from typing import Any, Dict, TYPE_CHECKING
 from dace.config import Config
 from dace.registry import extensible_enum, undefined_safe_enum
 
