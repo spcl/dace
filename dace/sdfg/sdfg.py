@@ -18,7 +18,7 @@ import tempfile
 import pickle
 
 import dace
-from dace.sdfg.graph import generate_element_id
+from dace.sdfg.graph import generate_element_id, Edge
 import dace.serialize
 from dace import (data as dt, hooks, memlet as mm, subsets as sbs, dtypes, symbolic)
 from dace.sdfg.replace import replace_properties_dict
@@ -839,6 +839,25 @@ class SDFG(ControlFlowRegion):
         nsdfg = self.parent_nsdfg_node
         if nsdfg is not None and name in nsdfg.symbol_mapping:
             del nsdfg.symbol_mapping[name]
+
+    def remove_branch(self, initial_edge: Edge):
+        """ Removes an edge and all states can only be reached through it
+
+            :param initial_edge: starting edge of the branch to remove
+        """
+        self.remove_edge(initial_edge)
+        if self.in_degree(initial_edge.dst) > 0:
+            return
+        state_list = [initial_edge.dst]
+        while len(state_list) > 0:
+            new_state_list = []
+            for s in state_list:
+                for e in self.out_edges(s):
+                    if len(self.in_edges(e.dst)) == 1:
+                        new_state_list.append(e.dst)
+                        self.remove_edge(e)
+                self.remove_node(s)
+            state_list = new_state_list
 
     @property
     def start_state(self):

@@ -15,6 +15,7 @@ from .map_fission import MapFission
 from .map_unroll import MapUnroll
 from .trivial_map_elimination import TrivialMapElimination
 from .otf_map_fusion import OTFMapFusion
+from .map_split import MapSplit
 
 # Data movement
 from .strip_mining import StripMining
