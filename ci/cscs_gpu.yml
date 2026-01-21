@@ -36,6 +36,9 @@ test_cscs_gh200:
     - .container-runner-daint-gh200
   image: ${CSCS_REGISTRY_PATH}/public/dace-gpu:${DOCKER_TAG}
   variables:
+    GIT_STRATEGY: clone
+    GIT_SUBMODULE_STRATEGY: recursive
+    GIT_CLONE_PATH: $WORKDIR/project-name
     TEST_VARIANTS: 'gpu'
     CSCS_CUDA_MPS: 1
     SLURM_GPUS_PER_NODE: 4
@@ -50,11 +53,12 @@ test_cscs_gh200:
     # running the tests. The output folder is inside the docker image
     # (${WORKDIR}/dace), so it won't take up space on $SCRATCH but in a
     # ephemeral tmpfs mount in the running node.
-    - echo $CSCS_CI_ORIG_CLONE_URL
-    - mkdir -p "${WORKDIR}/dace" && git clone --recursive "${CSCS_CI_ORIG_CLONE_URL}" "${WORKDIR}/dace"
+    #- echo $CSCS_CI_ORIG_CLONE_URL
+    #- mkdir -p "${WORKDIR}/dace" && git clone --recursive "${CSCS_CI_ORIG_CLONE_URL}" "${WORKDIR}/dace"
     - cd "${WORKDIR}/dace"
-    - git fetch --depth 1 origin "${CI_COMMIT_SHA}"
-    - git checkout "${CI_COMMIT_SHA}"
+    #- git fetch --depth 1 origin "${CI_COMMIT_SHA}"
+    #- git checkout "${CI_COMMIT_SHA}"
+    - echo $(git rev-parse --abbrev-ref HEAD)
     - uv pip install -e ".[testing]"
     - export DACE_cache=unique
     - pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -n 32 -m "${TEST_VARIANTS}"
