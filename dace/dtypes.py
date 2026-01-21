@@ -817,6 +817,43 @@ class pyobject(opaque):
         return ctypes.cast(obj_id, ctypes.py_object).value
 
 
+class Float32sr(typeclass):
+
+    def __init__(self):
+        self.type = numpy.float32
+        self.bytes = 4
+        self.dtype = self
+        self.typename = "float"
+        self.stochastically_rounded = True
+
+    def to_json(self):
+        return 'float32sr'
+
+    @staticmethod
+    def from_json(json_obj, context=None):
+        from dace.symbolic import pystr_to_symbolic  # must be included!
+        return float32sr()
+
+    @property
+    def ctype(self):
+        return "dace::float32sr"
+
+    @property
+    def ctype_unaligned(self):
+        return self.ctype
+
+    def as_ctypes(self):
+        """ Returns the ctypes version of the typeclass. """
+        return _FFI_CTYPES[self.type]
+
+    def as_numpy_dtype(self):
+        return numpy.dtype(self.type)
+
+    @property
+    def base_type(self):
+        return self
+
+
 class compiletime:
     """
     Data descriptor type hint signalling that argument evaluation is
@@ -1175,6 +1212,7 @@ complex64 = typeclass(numpy.complex64)
 complex128 = typeclass(numpy.complex128)
 string = stringtype()
 MPI_Request = opaque('MPI_Request')
+float32sr = Float32sr()
 
 
 @undefined_safe_enum
