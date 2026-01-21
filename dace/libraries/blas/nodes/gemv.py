@@ -285,8 +285,31 @@ class ExpandGemvOpenBLAS(ExpandTransformation):
         code += f"""cblas_{func}({layout}, {trans}, {m}, {n}, {alpha}, {cast} _A, {lda},
                                 _x, {strides_x[0]}, {beta}, _y, {strides_y[0]});"""
 
+        # Handle the case when beta != 0 (node has _y as both input and output)
+        # NOTE: This happens when the Gemv node is created with beta != 0 (see __init__ line 915).
+        # The pure implementation needs y as input to explicitly scale it, but BLAS implementations
+        # handle this internally.
+        #
+        # Since BLAS GEMV does in-place read-modify-write on y, and tasklets cannot have
+        # duplicate connectors, we remove the input _y connector. The BLAS call will read
+        # from and write to the same memory location (_y output).
+        #
+        # We also remove the incoming edge and orphaned access node to maintain graph validity.
+        in_connectors = {}
+        for k, v in node.in_connectors.items():
+            if k == '_y':
+                # Remove the incoming edge to _y and the source access node if it becomes isolated
+                for edge in list(state.in_edges_by_connector(node, '_y')):
+                    src_node = edge.src
+                    state.remove_edge(edge)
+                    # Remove the access node if it has no other edges
+                    if state.degree(src_node) == 0:
+                        state.remove_node(src_node)
+            else:
+                in_connectors[k] = v
+
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
+                                          in_connectors,
                                           node.out_connectors,
                                           code,
                                           language=dace.dtypes.Language.CPP)
