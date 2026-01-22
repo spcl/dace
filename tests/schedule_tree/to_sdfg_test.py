@@ -145,9 +145,15 @@ def test_state_boundaries_cfg():
         },
         children=[
             tn.TaskletNode(nodes.Tasklet('bla1', {}, {'out'}, 'out = 2'), {}, {'out': dace.Memlet('A[1]')}),
-            tn.ForScope([
-                tn.TaskletNode(nodes.Tasklet('bla2', {}, {'out'}, 'out = i'), {}, {'out': dace.Memlet('A[1]')}),
-            ], cf.ForScope(None, None, True, 'i', None, '0', CodeBlock('i < 20'), 'i + 1', None, [])),
+            tn.ForScope(loop=cf.LoopRegion(label="for-loop",
+                                           condition_expr=CodeBlock("i < 20"),
+                                           loop_var="i",
+                                           initialize_expr=CodeBlock("i=0"),
+                                           update_expr=CodeBlock("i = i+1")),
+                        children=[
+                            tn.TaskletNode(nodes.Tasklet('bla2', {}, {'out'}, 'out = i'), {},
+                                           {'out': dace.Memlet('A[1]')}),
+                        ]),
         ],
     )
 
@@ -361,19 +367,18 @@ def test_create_while_loop():
 
 def test_create_if_else():
     # Manually create a schedule tree
-    stree = tn.ScheduleTreeRoot(name="tester",
-                                containers={'A': data.Array(dace.float64, [20])},
-                                children=[
-                                    tn.IfScope(condition=CodeBlock("A[0] > 0"),
-                                               children=[
-                                                   tn.TaskletNode(nodes.Tasklet("bla", {}, {"out"}, "out=1"), {},
-                                                                  {"out": dace.Memlet("A[1]")}),
-                                               ]),
-                                    tn.ElseScope([
-                                        tn.TaskletNode(nodes.Tasklet("blub", {}, {"out"}, "out=2"), {},
-                                                       {"out": dace.Memlet("A[1]")})
-                                    ])
-                                ])
+    stree = tn.ScheduleTreeRoot(
+        name="tester",
+        containers={'A': data.Array(dace.float64, [20])},
+        children=[
+            tn.IfScope(condition=CodeBlock("A[0] > 0"),
+                       children=[
+                           tn.TaskletNode(nodes.Tasklet("bla", {}, {"out"}, "out=1"), {}, {"out": dace.Memlet("A[1]")}),
+                       ]),
+            tn.ElseScope(children=[
+                tn.TaskletNode(nodes.Tasklet("blub", {}, {"out"}, "out=2"), {}, {"out": dace.Memlet("A[1]")})
+            ])
+        ])
 
     sdfg = stree.as_sdfg()
     sdfg.validate()
