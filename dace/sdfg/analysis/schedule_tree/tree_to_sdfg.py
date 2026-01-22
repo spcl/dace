@@ -1,7 +1,7 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 from collections import defaultdict
-from dace import symbolic, data
+from dace import symbolic
 from dace.memlet import Memlet
 from dace.sdfg import nodes, memlet_utils as mmu
 from dace.sdfg.sdfg import SDFG, ControlFlowRegion, InterstateEdge
@@ -176,59 +176,55 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
             if memlet.data not in sdfg.arrays:
                 raise ValueError(f"Parsing AssignNode {node} failed. Can't find {memlet.data} in {sdfg}.")
 
-    #def visit_ForScope(self, node: tn.ForScope, sdfg: SDFG) -> None:
-    #    before_state = self._current_state
-    #    pending = self._pending_interstate_assignments()
-    #    pending[node.header.itervar] = node.header.init
-    #
-    #    guard_state = _insert_and_split_assignments(sdfg, before_state, label="loop_guard", assignments=pending)
-    #    self._current_state = guard_state
-    #
-    #    body_state = sdfg.add_state(label="loop_body")
-    #    self._current_state = body_state
-    #    sdfg.add_edge(guard_state, body_state, InterstateEdge(condition=node.header.condition))
-    #
-    #    # visit children inside the loop
-    #    self.visit(node.children, sdfg=sdfg)
-    #
-    #    pending = self._pending_interstate_assignments()
-    #    pending[node.header.itervar] = node.header.update
-    #    _insert_and_split_assignments(sdfg, self._current_state, after_state=guard_state, assignments=pending)
-    #
-    #    after_state = sdfg.add_state(label="loop_after")
-    #    self._current_state = after_state
-    #    sdfg.add_edge(guard_state, after_state, InterstateEdge(condition=f"not {node.header.condition.as_string}"))
+    def visit_ForScope(self, node: tn.ForScope, sdfg: SDFG) -> None:
+        before_state = self._current_state
+        pending = self._pending_interstate_assignments()
+        pending[node.header.itervar] = node.header.init
 
-    #def visit_WhileScope(self, node: tn.WhileScope, sdfg: SDFG) -> None:
-    #    before_state = self._current_state
-    #    guard_state = _insert_and_split_assignments(sdfg,
-    #                                                before_state,
-    #                                                label="guard_state",
-    #                                                assignments=self._pending_interstate_assignments())
-    #    self._current_state = guard_state
-    #
-    #    body_state = sdfg.add_state(label="loop_body")
-    #    self._current_state = body_state
-    #    sdfg.add_edge(guard_state, body_state, InterstateEdge(condition=node.header.test))
-    #
-    #    # visit children inside the loop
-    #    self.visit(node.children, sdfg=sdfg)
-    #    _insert_and_split_assignments(sdfg,
-    #                                  before_state=self._current_state,
-    #                                  after_state=guard_state,
-    #                                  assignments=self._pending_interstate_assignments())
-    #
-    #    after_state = sdfg.add_state(label="loop_after")
-    #    self._current_state = after_state
-    #    sdfg.add_edge(guard_state, after_state, InterstateEdge(f"not {node.header.test.as_string}"))
+        guard_state = _insert_and_split_assignments(sdfg, before_state, label="loop_guard", assignments=pending)
+        self._current_state = guard_state
 
-    #def visit_DoWhileScope(self, node: tn.DoWhileScope, sdfg: SDFG) -> None:
-    #    # AFAIK we don't support for do-while loops in the gt4py -> dace bridge.
-    #    raise NotImplementedError(f"{type(node)} not implemented")
+        body_state = sdfg.add_state(label="loop_body")
+        self._current_state = body_state
+        sdfg.add_edge(guard_state, body_state, InterstateEdge(condition=node.header.condition))
 
-    #def visit_GeneralLoopScope(self, node: tn.GeneralLoopScope, sdfg: SDFG) -> None:
-    #    # Let's see if we need this for the first prototype ...
-    #    raise NotImplementedError(f"{type(node)} not implemented")
+        # visit children inside the loop
+        self.visit(node.children, sdfg=sdfg)
+
+        pending = self._pending_interstate_assignments()
+        pending[node.header.itervar] = node.header.update
+        _insert_and_split_assignments(sdfg, self._current_state, after_state=guard_state, assignments=pending)
+
+        after_state = sdfg.add_state(label="loop_after")
+        self._current_state = after_state
+        sdfg.add_edge(guard_state, after_state, InterstateEdge(condition=f"not {node.header.condition.as_string}"))
+
+    def visit_WhileScope(self, node: tn.WhileScope, sdfg: SDFG) -> None:
+        before_state = self._current_state
+        guard_state = _insert_and_split_assignments(sdfg,
+                                                    before_state,
+                                                    label="guard_state",
+                                                    assignments=self._pending_interstate_assignments())
+        self._current_state = guard_state
+
+        body_state = sdfg.add_state(label="loop_body")
+        self._current_state = body_state
+        sdfg.add_edge(guard_state, body_state, InterstateEdge(condition=node.header.test))
+
+        # visit children inside the loop
+        self.visit(node.children, sdfg=sdfg)
+        _insert_and_split_assignments(sdfg,
+                                      before_state=self._current_state,
+                                      after_state=guard_state,
+                                      assignments=self._pending_interstate_assignments())
+
+        after_state = sdfg.add_state(label="loop_after")
+        self._current_state = after_state
+        sdfg.add_edge(guard_state, after_state, InterstateEdge(f"not {node.header.test.as_string}"))
+
+    def visit_DoWhileScope(self, node: tn.DoWhileScope, sdfg: SDFG) -> None:
+        # AFAIK we don't support for do-while loops in the gt4py -> dace bridge.
+        raise NotImplementedError(f"{type(node)} not implemented")
 
     def visit_LoopScope(self, node: tn.LoopScope, sdfg: SDFG) -> None:
         raise NotImplementedError("TODO: LoopScopes are not yet implemented")
@@ -578,10 +574,6 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
     def visit_ConsumeScope(self, node: tn.ConsumeScope, sdfg: SDFG) -> None:
         # AFAIK we don't support consume scopes in the gt4py/dace bridge.
         raise NotImplementedError(f"{type(node)} not implemented")
-
-    # def visit_PipelineScope(self, node: tn.PipelineScope, sdfg: SDFG) -> None:
-    #     # AFAIK we don't support pipeline scopes in the gt4py/dace bridge.
-    #     raise NotImplementedError(f"{type(node)} not implemented")
 
     def visit_TaskletNode(self, node: tn.TaskletNode, sdfg: SDFG) -> None:
         # Add Tasklet to current state
