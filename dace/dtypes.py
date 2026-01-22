@@ -13,10 +13,16 @@ from typing import Any, Dict, TYPE_CHECKING
 from dace.config import Config
 from dace.registry import extensible_enum, undefined_safe_enum
 
+if TYPE_CHECKING:
+    import enum
+    AutoNumberEnum = enum.Enum
+else:
+    AutoNumberEnum = aenum.AutoNumberEnum
+
 
 @undefined_safe_enum
 @extensible_enum
-class DeviceType(aenum.AutoNumberEnum):
+class DeviceType(AutoNumberEnum):
     CPU = ()  #: Multi-core CPU
     GPU = ()  #: GPU (AMD or NVIDIA)
     Snitch = ()  #: Compute Cluster (RISC-V)
@@ -24,7 +30,7 @@ class DeviceType(aenum.AutoNumberEnum):
 
 @undefined_safe_enum
 @extensible_enum
-class StorageType(aenum.AutoNumberEnum):
+class StorageType(AutoNumberEnum):
     """ Available data storage types in the SDFG. """
 
     Default = ()  #: Scope-default storage location
@@ -42,7 +48,7 @@ class StorageType(aenum.AutoNumberEnum):
 
 @undefined_safe_enum
 @extensible_enum
-class OMPScheduleType(aenum.AutoNumberEnum):
+class OMPScheduleType(AutoNumberEnum):
     """ Available OpenMP shedule types for Maps with CPU-Multicore schedule. """
     Default = ()  #: OpenMP library default
     Static = ()  #: Static schedule
@@ -52,7 +58,7 @@ class OMPScheduleType(aenum.AutoNumberEnum):
 
 @undefined_safe_enum
 @extensible_enum
-class ScheduleType(aenum.AutoNumberEnum):
+class ScheduleType(AutoNumberEnum):
     """ Available map schedule types in the SDFG. """
     Default = ()  #: Scope-default parallel schedule
     Sequential = ()  #: Sequential code (single-thread)
@@ -91,7 +97,7 @@ GPU_STORAGES = [
 
 
 @undefined_safe_enum
-class ReductionType(aenum.AutoNumberEnum):
+class ReductionType(AutoNumberEnum):
     """ Reduction types natively supported by the SDFG compiler. """
 
     Custom = ()  #: Defined by an arbitrary lambda function
@@ -116,7 +122,7 @@ class ReductionType(aenum.AutoNumberEnum):
 
 @undefined_safe_enum
 @extensible_enum
-class AllocationLifetime(aenum.AutoNumberEnum):
+class AllocationLifetime(AutoNumberEnum):
     """ Options for allocation span (when to allocate/deallocate) of data. """
 
     Scope = ()  #: Allocated/Deallocated on innermost scope start/end
@@ -129,7 +135,7 @@ class AllocationLifetime(aenum.AutoNumberEnum):
 
 @undefined_safe_enum
 @extensible_enum
-class Language(aenum.AutoNumberEnum):
+class Language(AutoNumberEnum):
     """ Available programming languages for SDFG tasklets. """
 
     Python = ()
@@ -141,7 +147,7 @@ class Language(aenum.AutoNumberEnum):
 
 @undefined_safe_enum
 @extensible_enum
-class InstrumentationType(aenum.AutoNumberEnum):
+class InstrumentationType(AutoNumberEnum):
     """ Types of instrumentation providers. """
 
     No_Instrumentation = ()
@@ -155,7 +161,7 @@ class InstrumentationType(aenum.AutoNumberEnum):
 
 @undefined_safe_enum
 @extensible_enum
-class DataInstrumentationType(aenum.AutoNumberEnum):
+class DataInstrumentationType(AutoNumberEnum):
     """ Types of data container instrumentation providers. """
 
     No_Instrumentation = ()
@@ -165,7 +171,7 @@ class DataInstrumentationType(aenum.AutoNumberEnum):
 
 @undefined_safe_enum
 @extensible_enum
-class TilingType(aenum.AutoNumberEnum):
+class TilingType(AutoNumberEnum):
     """ Available tiling types in a `StripMining` transformation. """
 
     Normal = ()
@@ -1210,7 +1216,7 @@ else:
 
 @undefined_safe_enum
 @extensible_enum
-class Typeclasses(aenum.AutoNumberEnum):
+class Typeclasses(AutoNumberEnum):
     bool = bool
     bool_ = bool_
     int8 = int8

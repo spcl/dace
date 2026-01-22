@@ -3,10 +3,15 @@
     subclasses and values can be registered externally. """
 
 import aenum
-from typing import Dict, Type, TypeVar
+from enum import Enum
+from typing import Dict, Type, TypeVar, TYPE_CHECKING
 
 T = TypeVar('T')
-E = TypeVar('E', bound=aenum.Enum)
+
+if TYPE_CHECKING:
+    E = TypeVar('E', bound=Enum)
+else:
+    E = TypeVar('E', bound=aenum.Enum)
 
 
 def make_registry(cls: Type[T]) -> Type[T]:
