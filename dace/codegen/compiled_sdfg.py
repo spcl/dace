@@ -437,6 +437,9 @@ class CompiledSDFG(object):
             sys.executable, '-c', f'''
 import pickle
 from dace.codegen import compiled_sdfg as csd
+from dace.config import Config
+
+Config.set('compiler', 'allow_view_arguments', value=True)  # Python 3.14+
 
 with open(r"{temp_path}", "rb") as f:
     data = pickle.load(f)
