@@ -832,6 +832,43 @@ class pyobject(opaque):
         return ctypes.cast(obj_id, ctypes.py_object).value
 
 
+class Float32sr(typeclass):
+
+    def __init__(self):
+        self.type = numpy.float32
+        self.bytes = 4
+        self.dtype = self
+        self.typename = "float"
+        self.stochastically_rounded = True
+
+    def to_json(self):
+        return 'float32sr'
+
+    @staticmethod
+    def from_json(json_obj, context=None):
+        from dace.symbolic import pystr_to_symbolic  # must be included!
+        return float32sr()
+
+    @property
+    def ctype(self):
+        return "dace::float32sr"
+
+    @property
+    def ctype_unaligned(self):
+        return self.ctype
+
+    def as_ctypes(self):
+        """ Returns the ctypes version of the typeclass. """
+        return _FFI_CTYPES[self.type]
+
+    def as_numpy_dtype(self):
+        return numpy.dtype(self.type)
+
+    @property
+    def base_type(self):
+        return self
+
+
 class compiletime:
     """
     Data descriptor type hint signalling that argument evaluation is
@@ -973,7 +1010,7 @@ class callback(typeclass):
         retval = self.cfunc_return_type()
         return f'{retval} (*{name})({", ".join(input_type_cstring)})'
 
-    def get_trampoline(self, pyfunc, other_arguments, refs):
+    def get_trampoline(self, pyfunc, other_arguments, refs, argument_to_pyobject):
         from functools import partial
         from dace import data, symbolic
 
@@ -982,6 +1019,16 @@ class callback(typeclass):
             if tmp.startswith(chr(0xFFFF)):
                 return bytes(tmp[1:], 'utf-8')
             return tmp
+
+        def _pyobject_converter(arg: data.Data, a: int, *args):
+            try:
+                if argument_to_pyobject is not None and a in argument_to_pyobject:
+                    # Avoid views of the same object from using the original one
+                    if arg.is_equivalent(argument_to_pyobject[a][1]):
+                        return argument_to_pyobject[a][0]
+            except TypeError:  # Unhashable type
+                pass
+            return data.make_reference_from_descriptor(arg, a, *args)
 
         inp_arraypos = []
         ret_arraypos = []
@@ -993,7 +1040,7 @@ class callback(typeclass):
             if isinstance(arg, data.Array):
                 inp_arraypos.append(index)
                 inp_types_and_sizes.append((arg.dtype.as_ctypes(), arg.shape))
-                inp_converters.append(partial(data.make_reference_from_descriptor, arg))
+                inp_converters.append(partial(_pyobject_converter, arg))
             elif isinstance(arg, data.Scalar) and arg.dtype == string:
                 inp_arraypos.append(index)
                 inp_types_and_sizes.append((ctypes.c_char_p, []))
@@ -1013,7 +1060,7 @@ class callback(typeclass):
             if isinstance(arg, data.Array):
                 ret_arraypos.append(index + offset)
                 ret_types_and_sizes.append((arg.dtype.as_ctypes(), arg.shape))
-                ret_converters.append(partial(data.make_reference_from_descriptor, arg))
+                ret_converters.append(partial(_pyobject_converter, arg))
             elif isinstance(arg, data.Scalar) and arg.dtype == string:
                 ret_arraypos.append(index + offset)
                 ret_types_and_sizes.append((ctypes.c_char_p, []))
@@ -1030,7 +1077,7 @@ class callback(typeclass):
                 if not self.is_scalar_function():
                     ret_arraypos.append(index + offset)
                     ret_types_and_sizes.append((arg.dtype.as_ctypes(), arg.shape))
-                    ret_converters.append(partial(data.make_reference_from_descriptor, arg))
+                    ret_converters.append(partial(_pyobject_converter, arg))
                 else:
                     ret_converters.append(lambda a, *args: a)
         if len(inp_arraypos) == 0 and len(ret_arraypos) == 0:
@@ -1192,6 +1239,7 @@ if TYPE_CHECKING:
     class string(_DaCeArray, npt.NDArray[numpy.str_]): ...
     class vector(_DaCeArray, npt.NDArray[numpy.void]): ...
     class MPI_Request(_DaCeArray, npt.NDArray[numpy.void]): ...
+    class float32sr(_DaCeArray, npt.NDArray[numpy.float32]): ...
     # yapf: enable
 else:
     # Runtime definitions
@@ -1212,6 +1260,7 @@ else:
     complex128 = typeclass(numpy.complex128)
     string = stringtype()
     MPI_Request = opaque('MPI_Request')
+    float32sr = Float32sr()
 
 
 @undefined_safe_enum
