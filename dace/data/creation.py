@@ -203,6 +203,8 @@ def make_reference_from_descriptor(descriptor: Array,
              with the pointer specified in ``original_array``.
     """
     symbols = symbols or {}
+    # Filter symbols to sympy symbols and constants
+    symbols = {k: v for k, v in symbols.items() if isinstance(v, (Number, symbolic.sympy.Basic))}
 
     original_array: int = ctypes.cast(original_array, ctypes.c_void_p).value
 

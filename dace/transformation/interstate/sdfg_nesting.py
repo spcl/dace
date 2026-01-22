@@ -245,9 +245,6 @@ class InlineSDFG(transformation.SingleStateTransformation):
         nsdfg: SDFG = nsdfg_node.sdfg
         nstate: SDFGState = nsdfg.nodes()[0]
 
-        if nsdfg_node.schedule != dtypes.ScheduleType.Default:
-            infer_types.set_default_schedule_and_storage_types(nsdfg, [nsdfg_node.schedule])
-
         nsdfg_scope_entry = state.entry_node(nsdfg_node)
         nsdfg_scope_exit = (state.exit_node(nsdfg_scope_entry) if nsdfg_scope_entry is not None else None)
 
@@ -844,13 +841,6 @@ class InlineTransients(transformation.SingleStateTransformation):
 
     def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False):
         nsdfg = self.nsdfg
-
-        # Not every schedule is supported
-        if not permissive:
-            if nsdfg.schedule not in (None, dtypes.ScheduleType.Default, dtypes.ScheduleType.Sequential,
-                                      dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent,
-                                      dtypes.ScheduleType.GPU_Device):
-                return False
 
         candidates = InlineTransients._candidates(sdfg, graph, nsdfg)
         return len(candidates) > 0

@@ -373,11 +373,7 @@ class ReduceExpansion(transformation.SingleStateTransformation):
         node.add_in_connector('_in')
         node.add_out_connector('_out')
 
-        nsdfg = state.add_nested_sdfg(nsdfg,
-                                      node.in_connectors,
-                                      node.out_connectors,
-                                      schedule=node.schedule,
-                                      name=node.name)
+        nsdfg = state.add_nested_sdfg(nsdfg, node.in_connectors, node.out_connectors, name=node.name)
 
         utils.change_edge_dest(state, node, nsdfg)
         utils.change_edge_src(state, node, nsdfg)
