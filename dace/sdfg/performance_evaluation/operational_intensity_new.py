@@ -253,7 +253,6 @@ def update_map_iterators(map, mapping, symbols):
     for p, range in zip(map.params[::-1], map.range[::-1]):  # reversed order
         curr_value = mapping[p]
         if not isinstance(range[1], SymExpr):
-            print(curr_value.subs(symbols).subs(mapping) + range[2].subs(symbols).subs(mapping), "<=", range[1].subs(symbols).subs(mapping))
             if curr_value.subs(symbols).subs(mapping) + range[2].subs(symbols).subs(mapping) <= range[1].subs(symbols).subs(mapping):
                 # update this value and then we are done
                 mapping[p] = curr_value.subs(symbols).subs(mapping) + range[2].subs(symbols).subs(mapping)
