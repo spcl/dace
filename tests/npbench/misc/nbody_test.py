@@ -5,11 +5,7 @@ import numpy as np
 import dace as dc
 import pytest
 import argparse
-from dace.fpga_testing import fpga_test, xilinx_test
-from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
-from dace.transformation.dataflow import StreamingMemory, StreamingComposition
-from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
-from dace.config import set_temporary
+from dace.transformation.auto.auto_optimize import auto_optimize
 
 N, Nt = (dc.symbol(s, dtype=dc.int64) for s in ('N', 'Nt'))
 
@@ -277,21 +273,8 @@ def run_nbody(device_type: dace.dtypes.DeviceType):
         sdfg = nbody.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
         KE, PE = sdfg(mass, pos, vel, dt, G, softening, N=N, Nt=Nt)
-    elif device_type == dace.dtypes.DeviceType.FPGA:
-        # Parse SDFG and apply FPGA friendly optimization
-        sdfg = nbody.to_sdfg(simplify=True)
-        applied = sdfg.apply_transformations([FPGATransformSDFG])
-        assert applied == 1
-
-        from dace.libraries.standard import Reduce
-        Reduce.default_implementation = "FPGAPartialReduction"
-        from dace.libraries.blas import Gemv
-        Gemv.default_implementation = "FPGA_Accumulate"
-        sdfg.expand_library_nodes()
-
-        sdfg.apply_transformations_repeated([InlineSDFG], print_report=True)
-        sdfg.specialize(dict(N=N, Nt=Nt))
-        KE, PE = sdfg(mass, pos, vel, dt, G, softening)
+    else:
+        raise ValueError(f"Unsupported device type: {device_type}")
 
     # Compute ground truth and validate
     KE_ref, PE_ref = nbody_np(mass_ref, pos_ref, vel_ref, N, Nt, dt, G, softening)
@@ -310,16 +293,10 @@ def test_gpu():
     run_nbody(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.skip(reason="Xilinx validation error, Intel argument overflow")
-@fpga_test(assert_ii_1=False)
-def test_fpga():
-    return run_nbody(dace.dtypes.DeviceType.FPGA)
-
-
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]
@@ -328,5 +305,3 @@ if __name__ == "__main__":
         run_nbody(dace.dtypes.DeviceType.CPU)
     elif target == "gpu":
         run_nbody(dace.dtypes.DeviceType.GPU)
-    elif target == "fpga":
-        run_nbody(dace.dtypes.DeviceType.FPGA)

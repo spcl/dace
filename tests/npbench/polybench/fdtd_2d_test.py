@@ -5,8 +5,7 @@ import dace.dtypes
 import numpy as np
 import dace as dc
 import pytest
-from dace.fpga_testing import fpga_test
-from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
+from dace.transformation.interstate import InlineSDFG
 from dace.transformation.dataflow import StreamingMemory, StreamingComposition, MapFusionVertical
 from dace.transformation.auto.auto_optimize import auto_optimize
 import argparse
@@ -98,28 +97,6 @@ def run_fdtd_2d(device_type: dace.dtypes.DeviceType):
         sdfg = kernel.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
         sdfg(ex=ex, ey=ey, hz=hz, _fict_=_fict_, TMAX=TMAX, NX=NX, NY=NY)
-    elif device_type == dace.dtypes.DeviceType.FPGA:
-        # Parse SDFG and apply FPGA friendly optimization
-        sdfg = kernel.to_sdfg(simplify=True)
-        sdfg.apply_transformations_repeated([MapFusionVertical])
-        applied = sdfg.apply_transformations([FPGATransformSDFG])
-        assert applied == 1
-
-        sm_applied = sdfg.apply_transformations_repeated([InlineSDFG, StreamingMemory],
-                                                         [{}, {
-                                                             'storage': dace.StorageType.FPGA_Local
-                                                         }],
-                                                         print_report=True)
-
-        assert sm_applied > 0
-
-        sdfg.apply_transformations_repeated([InlineSDFG])
-        # In this case, we want to generate the top-level state as an host-based state,
-        # not an FPGA kernel. We need to explicitly indicate that
-        sdfg.states()[0].location["is_FPGA_kernel"] = False
-
-        sdfg(ex=ex, ey=ey, hz=hz, _fict_=_fict_, TMAX=TMAX, NX=NX, NY=NY)
-
     # Compute ground truth and validate result
     ground_truth(TMAX, NX, NY, gt_ex, gt_ey, gt_hz, _fict_=_fict_)
     diff_ex = np.linalg.norm(gt_ex - ex) / np.linalg.norm(gt_ex)
@@ -182,15 +159,10 @@ def test_autodiff():
     run_fdtd_2d_autodiff()
 
 
-@fpga_test(assert_ii_1=False)
-def test_fpga():
-    return run_fdtd_2d(dace.dtypes.DeviceType.FPGA)
-
-
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]
@@ -200,5 +172,3 @@ if __name__ == "__main__":
         run_fdtd_2d_autodiff()
     elif target == "gpu":
         run_fdtd_2d(dace.dtypes.DeviceType.GPU)
-    elif target == "fpga":
-        run_fdtd_2d(dace.dtypes.DeviceType.FPGA)

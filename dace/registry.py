@@ -3,10 +3,12 @@
     subclasses and values can be registered externally. """
 
 import aenum
-from typing import Dict, Type
+from typing import Dict, Type, TypeVar
+
+T = TypeVar('T')
 
 
-def make_registry(cls: Type):
+def make_registry(cls: Type[T]) -> Type[T]:
     """
     Decorator that turns a class into a user-extensible class with three
     class methods: ``register``, ``unregister``, and ``extensions``.

@@ -3,7 +3,7 @@ import unittest
 import numpy as np
 import sympy as sp
 from dace.config import Config
-from dace.codegen.tools import type_inference
+from dace.sdfg import type_inference
 from dace import dtypes
 import ast
 

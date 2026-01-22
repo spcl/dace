@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 # This module is derived from astunparse: https://github.com/simonpercivall/astunparse
 ##########################################################################
 ### astunparse LICENSES
@@ -85,7 +85,7 @@ import dace
 from numbers import Number
 from six import StringIO
 from dace import dtypes
-from dace.codegen.tools import type_inference
+from dace.sdfg import type_inference
 
 if sys.version_info < (3, 8):
     BytesConstant = ast.Bytes
@@ -107,14 +107,6 @@ INFSTR = "1e" + repr(sys.float_info.max_10_exp + 1)
 _py2c_nameconst = {True: "true", False: "false", None: "nullptr"}
 
 _py2c_reserved = {"True": "true", "False": "false", "None": "nullptr", "inf": "INFINITY", "nan": "NAN"}
-
-_py2c_typeconversion = {
-    "uint": dace.dtypes.typeclass(np.uint32),
-    "int": dace.dtypes.typeclass(int),
-    "float": dace.dtypes.typeclass(float),
-    "float64": dace.dtypes.typeclass(np.float64),
-    "str": dace.dtypes.pointer(dace.dtypes.int8)
-}
 
 
 def interleave(inter, f, seq, **kwargs):
@@ -342,15 +334,7 @@ class CPPUnparser:
                             raise RuntimeError(f"Failed to infer type of \"{target.id}\".")
 
                         self.locals.define(target.id, t.lineno, self._indent, inferred_type)
-                        if self.language == dace.dtypes.Language.OpenCL and (inferred_type is not None
-                                                                             and inferred_type.veclen > 1):
-                            # if the veclen is greater than one, this should be defined with a vector data type
-                            self.write("{}{} ".format(dace.dtypes._OCL_VECTOR_TYPES[inferred_type.type],
-                                                      inferred_type.veclen))
-                        elif self.language == dace.dtypes.Language.OpenCL:
-                            self.write(dace.dtypes._OCL_TYPES[inferred_type.type] + " ")
-                        else:
-                            self.write(dace.dtypes._CTYPES[inferred_type.type] + " ")
+                        self.write(dace.dtypes._CTYPES[inferred_type.type] + " ")
                     else:
                         self.locals.define(target.id, t.lineno, self._indent)
                         self.write("auto ")

@@ -679,7 +679,7 @@ class BackwardPassGenerator:
 
         if dtypes.can_access(dtypes.ScheduleType.CPU_Multicore, array_desc.storage):
             cuda = False
-        elif dtypes.can_access(dtypes.ScheduleType.GPU_Default, array_desc.storage):
+        elif dtypes.can_access(dtypes.ScheduleType.GPU_Device, array_desc.storage):
             cuda = True
         else:
             raise ValueError(f"Unsupported storage {array_desc.storage}")
@@ -2048,7 +2048,7 @@ class BackwardPassGenerator:
                                                            ),
                                                            given_gradients=given_gradients,
                                                            required_gradients=required_gradients)
-            if isinstance(backward_node, nodes.CodeNode):
+            if isinstance(backward_node, nodes.LibraryNode) and hasattr(node, 'schedule'):
                 backward_node.schedule = node.schedule
             return backward_node, backward_result
 

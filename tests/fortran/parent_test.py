@@ -29,7 +29,7 @@ def test_fortran_frontend_parent():
     ast_transforms.ParentScopeAssigner().visit(ast)
 
     assert ast.parent is None
-    assert ast.main_program.parent == None
+    assert ast.main_program.parent is None
 
     main_program = ast.main_program
     # Both executed lines
@@ -43,7 +43,7 @@ def test_fortran_frontend_parent():
 
     for subroutine in ast.subroutine_definitions:
 
-        assert subroutine.parent == None
+        assert subroutine.parent is None
         assert subroutine.execution_part.parent == subroutine
         for execution in subroutine.execution_part.execution:
             assert execution.parent == subroutine
@@ -78,10 +78,10 @@ def test_fortran_frontend_module():
     ast_transforms.ParentScopeAssigner().visit(ast)
 
     assert ast.parent is None
-    assert ast.main_program.parent == None
+    assert ast.main_program.parent is None
 
     module = ast.modules[0]
-    assert module.parent == None
+    assert module.parent is None
     specification = module.specification_part.specifications[0]
     assert specification.parent == module
 

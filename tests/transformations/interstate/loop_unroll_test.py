@@ -1,5 +1,7 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
+import re
+
 import dace
 from dace.memlet import Memlet
 from dace.properties import CodeBlock
@@ -80,7 +82,23 @@ def test_empty_loop():
     assert len(loops) == 0
 
 
+def test_compiler_unroll_pragma():
+    sdfg = _get_sdfg(add_state_before=False, l=5)
+    code = sdfg.generate_code()[0].clean_code
+    unroll_pragma = re.search(r'#pragma unroll', code) is None
+    assert unroll_pragma, "Unroll pragma found in generated code."
+    loops = {n for n in sdfg.all_control_flow_regions() if isinstance(n, LoopRegion)}
+    assert len(loops) == 1
+    loop = next(iter(loops))
+    loop.unroll = True
+    loop.unroll_factor = 5
+    unrolled_loop_code = sdfg.generate_code()[0].clean_code
+    unroll_pragma = re.search(r'#pragma unroll 5', unrolled_loop_code) is not None
+    assert unroll_pragma, "Unroll pragma not found in generated code after setting unroll_pragma to True."
+
+
 if __name__ == "__main__":
     test_if_block_inside_for()
     test_empty_loop()
     test_top_level_for()
+    test_compiler_unroll_pragma()

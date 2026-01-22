@@ -9,11 +9,10 @@ import scipy
 import random
 
 import dace
-from dace.fpga_testing import fpga_test
 from dace.memlet import Memlet
 
 import dace.libraries.blas as blas
-from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
+from dace.transformation.interstate import InlineSDFG
 from dace.transformation.dataflow import StreamingMemory
 
 from dace.libraries.standard.memory import aligned_ndarray
@@ -35,22 +34,13 @@ def run_test(configs, target):
 
         ref_result = reference_result(x, y_ref, a)
 
-        if target == "fpga_stream":
-            sdfg = stream_fpga_graph(veclen, dtype, "fpga", i)
-        elif target == "fpga_array":
-            sdfg = fpga_graph(veclen, dtype, "fpga", i)
-        else:
-            sdfg = pure_graph(veclen, dtype, "pure", i)
+        sdfg = pure_graph(veclen, dtype, "pure", i)
         program = sdfg.compile()
 
         with dace.config.set_temporary('compiler', 'allow_view_arguments', value=True):
 
-            if target in ["fpga_stream", "fpga_array"]:
-                program(x=x, y=y, a=a, n=np.int32(n))
-                ref_norm = np.linalg.norm(y - ref_result) / n
-            else:
-                program(x=x, y=y, a=a, n=np.int32(n))
-                ref_norm = np.linalg.norm(y - ref_result) / n
+            program(x=x, y=y, a=a, n=np.int32(n))
+            ref_norm = np.linalg.norm(y - ref_result) / n
 
         if ref_norm >= 1e-5:
             raise ValueError(f"Failed validation for target {target}.")
@@ -100,47 +90,5 @@ def test_pure():
     run_test(configs, "pure")
 
 
-def fpga_graph(veclen, dtype, test_case, expansion):
-    sdfg = pure_graph(veclen, dtype, test_case, expansion)
-    sdfg.apply_transformations_repeated([FPGATransformSDFG, InlineSDFG])
-    return sdfg
-
-
-def stream_fpga_graph(veclen, precision, test_case, expansion):
-    sdfg = fpga_graph(veclen, precision, test_case, expansion)
-    sdfg.expand_library_nodes()
-    sdfg.apply_transformations_repeated([InlineSDFG, StreamingMemory], [{}, {"storage": dace.StorageType.FPGA_Local}])
-    return sdfg
-
-
-# TODO: Investigate and re-enable if possible.
-@pytest.mark.skip(reason="Unexplained CI Regression")
-@fpga_test()
-def test_axpy_fpga_array():
-    configs = [(0.5, 1, dace.float32), (1.0, 4, dace.float64)]
-    return run_test(configs, "fpga_array")
-
-
-# TODO: Investigate and re-enable if possible.
-@pytest.mark.skip(reason="Unexplained CI Regression")
-@fpga_test()
-def test_axpy_fpga_stream():
-    configs = [(0.5, 1, dace.float32), (1.0, 4, dace.float64)]
-    return run_test(configs, "fpga_stream")
-
-
 if __name__ == "__main__":
-
-    cmdParser = argparse.ArgumentParser(allow_abbrev=False)
-
-    cmdParser.add_argument("--target", dest="target", default="pure")
-
-    args = cmdParser.parse_args()
-
-    if args.target == "fpga":
-        test_axpy_fpga_array(None)
-        test_axpy_fpga_stream(None)
-    elif args.target == "pure":
-        test_pure()
-    else:
-        raise RuntimeError(f"Unknown target \"{args.target}\".")
+    test_pure()

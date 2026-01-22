@@ -113,6 +113,36 @@ def _is_op_boolean(op: str):
     return False
 
 
+def _handle_casting_for_stochastically_rounded_types(input_datatypes, restype, cast_types):
+    float_to_sr = {
+        dace.float32: dace.float32sr,
+    }
+
+    for i, dtype in enumerate(input_datatypes):
+        if hasattr(dtype, "stochastically_rounded"):
+            if cast_types[i] and dtype.type == eval(cast_types[i]).type:
+                cast_types[i] = None
+
+    # check if stoc rounded inputs
+    stochastically_rounded = True
+    for i, dtype in enumerate(input_datatypes):
+        if not hasattr(dtype, "stochastically_rounded"):
+            stochastically_rounded = False
+            break
+
+    if stochastically_rounded:
+        # make the result SR
+        if restype in float_to_sr:
+            restype = float_to_sr[restype]
+
+        # cast the intermediate types
+        for i, dtype in enumerate(cast_types):
+            if dtype in float_to_sr:
+                cast_types[i] = float_to_sr[dtype]
+
+    return restype
+
+
 def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic]],
                 operator: str = None) -> Tuple[Union[List[dtypes.typeclass], dtypes.typeclass, str], ...]:
 
@@ -144,12 +174,16 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
             raise TypeError("Type {t} of argument {a} is not supported".format(t=type(arg), a=arg))
 
     complex_types = {dtypes.complex64, dtypes.complex128, np.complex64, np.complex128}
-    float_types = {dtypes.float16, dtypes.float32, dtypes.float64, np.float16, np.float32, np.float64}
+    float_types = {dace.float16, dace.float32, dace.float32sr, dace.float64, np.float16, np.float32, np.float64}
     signed_types = {dtypes.int8, dtypes.int16, dtypes.int32, dtypes.int64, np.int8, np.int16, np.int32, np.int64}
     # unsigned_types = {np.uint8, np.uint16, np.uint32, np.uint64}
 
     coarse_types = []
-    for dtype in datatypes:
+    for dt in datatypes:
+        dtype = dt
+        if hasattr(dt, "srtype"):  # unwrap stochastically rounded vars
+            dtype = dt.srtype
+
         if dtype in complex_types:
             coarse_types.append(3)  # complex
         elif dtype in float_types:
@@ -336,17 +370,19 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
     else:  # Operators with 3 or more arguments
         restype = np_result_type(dtypes_for_result)
         coarse_result_type = None
-        if result_type in complex_types:
+        if restype in complex_types:
             coarse_result_type = 3  # complex
-        elif result_type in float_types:
+        elif restype in float_types:
             coarse_result_type = 2  # float
-        elif result_type in signed_types:
+        elif restype in signed_types:
             coarse_result_type = 1  # signed integer, bool
         else:
             coarse_result_type = 0  # unsigned integer
         for i, t in enumerate(coarse_types):
             if t != coarse_result_type:
                 casting[i] = cast_str(restype)
+
+    restype = _handle_casting_for_stochastically_rounded_types(datatypes, restype, casting)
 
     return restype, casting
 

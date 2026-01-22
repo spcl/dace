@@ -5,11 +5,7 @@ import numpy as np
 import dace as dc
 import pytest
 import argparse
-from dace.fpga_testing import fpga_test, xilinx_test
-from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
-from dace.transformation.dataflow import StreamingMemory, StreamingComposition
-from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
-from dace.config import set_temporary
+from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.autodiff import add_backward_pass
 
 C_in, N, S0, S1, S2, N1, N2 = (dc.symbol(s, dtype=dc.int64) for s in ('C_in', 'N', 'S0', 'S1', 'S2', 'N1', 'N2'))
@@ -113,21 +109,6 @@ def run_mlp(device_type: dace.dtypes.DeviceType):
         sdfg = mlp_kernel.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
         out = sdfg(input, w1, b1, w2, b2, w3, b3, N=N, S0=S0, S1=S1, S2=S2, C_in=C_in)
-    elif device_type == dace.dtypes.DeviceType.FPGA:
-        # Parse SDFG and apply FPGA friendly optimization
-        sdfg = mlp_kernel.to_sdfg(simplify=True)
-        applied = sdfg.apply_transformations([FPGATransformSDFG])
-        assert applied == 1
-
-        # Use FPGA Expansion for lib nodes, and expand them to enable further optimizations
-        from dace.libraries.standard import Reduce
-        Reduce.default_implementation = "FPGAPartialReduction"
-        from dace.libraries.blas import Gemm
-        Gemm.default_implementation = "FPGA1DSystolic"
-        sdfg.expand_library_nodes()
-        sdfg.apply_transformations_repeated([InlineSDFG], print_report=True)
-        sdfg.specialize(dict(N=N, S0=S0, S1=S1, S2=S2, C_in=C_in))
-        out = sdfg(input, w1, b1, w2, b2, w3, b3)
 
     # Compute ground truth and validate
     out_ref = mlp_np(input, w1, b1, w2, b2, w3, b3)
@@ -197,16 +178,10 @@ def test_autodiff():
     run_mlp_autodiff()
 
 
-@pytest.mark.skip(reason="Intel, compilation error")
-@fpga_test(assert_ii_1=False)
-def test_fpga():
-    return run_mlp(dace.dtypes.DeviceType.FPGA)
-
-
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]
@@ -216,5 +191,3 @@ if __name__ == "__main__":
         run_mlp_autodiff()
     elif target == "gpu":
         run_mlp(dace.dtypes.DeviceType.GPU)
-    elif target == "fpga":
-        run_mlp(dace.dtypes.DeviceType.FPGA)

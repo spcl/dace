@@ -22,12 +22,6 @@ viewer_files = [
 ]
 cub_files = [f[len(dace_path):] for f in glob.glob(dace_path + 'external/cub/cub/**/*', recursive=True)
              ] + [dace_path + 'external/cub/LICENSE.TXT']
-hlslib_files = [f[len(dace_path):] for f in glob.glob(dace_path + 'external/hlslib/cmake/**/*', recursive=True)] + [
-    f[len(dace_path):] for f in glob.glob(dace_path + 'external/hlslib/include/**/*', recursive=True)
-] + [dace_path + 'external/hlslib/LICENSE.md']
-rtllib_files = [f[len(dace_path):] for f in glob.glob(dace_path + 'external/rtllib/cmake/**/*', recursive=True)] + [
-    f[len(dace_path):] for f in glob.glob(dace_path + 'external/rtllib/templates/**/*', recursive=True)
-]
 
 # See if CMake is available and if not, install as a dependency
 cmake_requires = ['scikit-build', 'cmake']
@@ -68,8 +62,8 @@ setup(name='dace',
       package_data={
           '': [
               '*.yml', 'codegen/CMakeLists.txt', 'codegen/tools/*.cpp', 'external/moodycamel/*.h',
-              'external/moodycamel/LICENSE.md', 'codegen/Xilinx_HLS.tcl.in'
-          ] + runtime_files + cub_files + viewer_files + hlslib_files + library_files + rtllib_files + cmake_files
+              'external/moodycamel/LICENSE.md'
+          ] + runtime_files + cub_files + viewer_files + library_files + cmake_files
       },
       include_package_data=True,
       install_requires=[

@@ -1883,31 +1883,6 @@ def traverse_sdfg_with_defined_symbols(
     yield from _tswds_cf_region(sdfg, sdfg, symbols, recursive)
 
 
-def is_fpga_kernel(sdfg, state):
-    """
-    Returns whether the given state is an FPGA kernel and should be dispatched
-    to the FPGA code generator.
-
-    :return: True if this is an FPGA kernel, False otherwise.
-    """
-    if ("is_FPGA_kernel" in state.location and state.location["is_FPGA_kernel"] == False):
-        return False
-    data_nodes = state.data_nodes()
-    at_least_one_fpga_array = False
-    for n in data_nodes:
-        desc = n.desc(sdfg)
-        if desc.storage in (dtypes.StorageType.FPGA_Global, dtypes.StorageType.FPGA_Local,
-                            dtypes.StorageType.FPGA_Registers, dtypes.StorageType.FPGA_ShiftRegister):
-            at_least_one_fpga_array = True
-        if isinstance(desc, dt.Scalar):
-            continue
-        if desc.storage not in (dtypes.StorageType.FPGA_Global, dtypes.StorageType.FPGA_Local,
-                                dtypes.StorageType.FPGA_Registers, dtypes.StorageType.FPGA_ShiftRegister):
-            return False
-
-    return at_least_one_fpga_array
-
-
 CFBlockDictT = Dict[ControlFlowBlock, ControlFlowBlock]
 
 

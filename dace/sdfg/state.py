@@ -1,4 +1,4 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes of a single SDFG state and dataflow subgraphs. """
 
 import ast
@@ -28,6 +28,7 @@ from dace.sdfg import nodes as nd
 from dace.sdfg.graph import (MultiConnectorEdge, NodeNotFoundError, OrderedMultiDiConnectorGraph, SubgraphView,
                              OrderedDiGraph, Edge, generate_element_id)
 from dace.sdfg.propagation import propagate_memlet
+from dace.sdfg.type_inference import infer_expr_type
 from dace.sdfg.validation import validate_state
 from dace.subsets import Range, Subset
 
@@ -1713,7 +1714,6 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         outputs: Union[Set[str], Dict[str, dtypes.typeclass]],
         symbol_mapping: Dict[str, Any] = None,
         name=None,
-        schedule=dtypes.ScheduleType.Default,
         location: Optional[Dict[str, symbolic.SymbolicType]] = None,
         debuginfo: Optional[dtypes.DebugInfo] = None,
         external_path: Optional[str] = None,
@@ -1729,8 +1729,6 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         :param symbol_mapping: A dictionary mapping nested SDFG symbol names to expressions in the
                                parent SDFG's scope. If None, symbols are mapped to themselves.
         :param name: Name of the nested SDFG node. If None, uses the nested SDFG's label.
-        :param schedule: Schedule type for the nested SDFG node. Defaults to ``ScheduleType.Default``. This argument
-                         is deprecated and will be removed in the future.
         :param location: Execution location descriptor for the nested SDFG.
         :param debuginfo: Debug information for the nested SDFG node.
         :param external_path: Path to an external SDFG file. Used when ``sdfg`` parameter is None.
@@ -1744,12 +1742,6 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
 
         if sdfg is None and external_path is None:
             raise ValueError('Neither an SDFG nor an external SDFG path has been provided')
-
-        if schedule != dtypes.ScheduleType.Default:
-            warnings.warn(
-                "The 'schedule' argument is deprecated and will be removed in the future.",
-                DeprecationWarning,
-            )
 
         if sdfg is not None:
             sdfg.parent = self
@@ -1769,7 +1761,6 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             inputs,
             outputs,
             symbol_mapping=symbol_mapping,
-            schedule=schedule,
             location=location,
             debuginfo=debuginfo,
             path=external_path,
@@ -1797,7 +1788,6 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                 raise ValueError('Missing symbols on nested SDFG "%s": %s' % (name, missing_symbols))
 
             # Add new global symbols to nested SDFG
-            from dace.codegen.tools.type_inference import infer_expr_type
             for sym, symval in s.symbol_mapping.items():
                 if sym not in sdfg.symbols:
                     # TODO: Think of a better way to avoid calling
@@ -2058,56 +2048,6 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         result = stdlib.Reduce('Reduce', wcr, axes, identity, schedule=schedule, debuginfo=debuginfo)
         self.add_node(result)
         return result
-
-    def add_pipeline(self,
-                     name,
-                     ndrange,
-                     init_size=0,
-                     init_overlap=False,
-                     drain_size=0,
-                     drain_overlap=False,
-                     additional_iterators={},
-                     schedule=dtypes.ScheduleType.FPGA_Device,
-                     debuginfo=None,
-                     **kwargs) -> Tuple[nd.PipelineEntry, nd.PipelineExit]:
-        """ Adds a pipeline entry and pipeline exit. These are used for FPGA
-            kernels to induce distinct behavior between an "initialization"
-            phase, a main streaming phase, and a "draining" phase, which require
-            a additive number of extra loop iterations (i.e., N*M + I + D),
-            where I and D are the number of initialization/drain iterations.
-            The code can detect which phase it is in by querying the
-            init_condition() and drain_condition() boolean variable.
-
-            :param name:          Pipeline label
-            :param ndrange:       Mapping between range variable names and
-                                  their subsets (parsed from strings)
-            :param init_size:     Number of iterations of initialization phase.
-            :param init_overlap:  Whether the initialization phase overlaps
-                                  with the "main" streaming phase of the loop.
-            :param drain_size:    Number of iterations of draining phase.
-            :param drain_overlap: Whether the draining phase overlaps with
-                                  the "main" streaming phase of the loop.
-            :param additional_iterators: a dictionary containing additional
-                                  iterators that will be created for this scope and that are not
-                                  automatically managed by the scope code.
-                                  The dictionary takes the form 'variable_name' -> init_value
-            :return: (map_entry, map_exit) node 2-tuple
-        """
-        debuginfo = _getdebuginfo(debuginfo or self._default_lineinfo)
-        pipeline = nd.PipelineScope(name,
-                                    *_make_iterators(ndrange),
-                                    init_size=init_size,
-                                    init_overlap=init_overlap,
-                                    drain_size=drain_size,
-                                    drain_overlap=drain_overlap,
-                                    additional_iterators=additional_iterators,
-                                    schedule=schedule,
-                                    debuginfo=debuginfo,
-                                    **kwargs)
-        pipeline_entry = nd.PipelineEntry(pipeline)
-        pipeline_exit = nd.PipelineExit(pipeline)
-        self.add_nodes_from([pipeline_entry, pipeline_exit])
-        return pipeline_entry, pipeline_exit
 
     def add_edge_pair(
         self,
@@ -3230,6 +3170,12 @@ class LoopRegion(ControlFlowRegion):
                                        'do-while style into a while(true) with a break before the update (at the end ' +
                                        'of an iteration) if the condition no longer holds.')
     loop_variable = Property(dtype=str, default='', desc='The loop variable, if given')
+    unroll = Property(dtype=bool,
+                      default=False,
+                      desc='If True, indicates that this loop should be unrolled during code generation.')
+    unroll_factor = Property(dtype=int,
+                             default=0,
+                             desc='If unrolling is enabled, the factor by which to unroll the loop.')
 
     def __init__(self,
                  label: str,
@@ -3239,7 +3185,9 @@ class LoopRegion(ControlFlowRegion):
                  update_expr: Optional[Union[str, CodeBlock]] = None,
                  inverted: bool = False,
                  sdfg: Optional['SDFG'] = None,
-                 update_before_condition=True):
+                 update_before_condition=True,
+                 unroll: bool = False,
+                 unroll_factor: int = 0):
         super(LoopRegion, self).__init__(label, sdfg)
 
         if initialize_expr is not None:
@@ -3269,6 +3217,8 @@ class LoopRegion(ControlFlowRegion):
         self.loop_variable = loop_var or ''
         self.inverted = inverted
         self.update_before_condition = update_before_condition
+        self.unroll = unroll
+        self.unroll_factor = unroll_factor
 
     def inline(self, lower_returns: bool = False) -> Tuple[bool, Any]:
         """
@@ -3610,7 +3560,6 @@ class LoopRegion(ControlFlowRegion):
 
     def new_symbols(self, symbols) -> Dict[str, dtypes.typeclass]:
         # Avoid cyclic import
-        from dace.codegen.tools.type_inference import infer_expr_type
         from dace.transformation.passes.analysis import loop_analysis
 
         if self.init_statement and self.loop_variable:

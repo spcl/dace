@@ -5,8 +5,7 @@ import numpy as np
 import dace as dc
 import pytest
 import argparse
-from dace.fpga_testing import fpga_test
-from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
+from dace.transformation.interstate import InlineSDFG
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.autodiff import add_backward_pass
 
@@ -105,17 +104,6 @@ def run_syr2k(device_type: dace.dtypes.DeviceType):
         sdfg = syr2k_kernel.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
         sdfg(alpha, beta, C, A, B, M=M, N=N)
-    elif device_type == dace.dtypes.DeviceType.FPGA:
-        # Parse SDFG and apply FPGA friendly optimization
-        sdfg = syr2k_kernel.to_sdfg(simplify=True)
-        applied = sdfg.apply_transformations([FPGATransformSDFG])
-        assert applied == 1
-
-        # No libnodes expansion for this kernel
-        sdfg.apply_transformations_repeated([InlineSDFG], print_report=True)
-        sdfg.specialize(dict(M=M, N=N))
-        sdfg(alpha, beta, C, A, B)
-
     # Compute ground truth and validate
     ground_truth(alpha, beta, C_ref, A, B)
     assert np.allclose(C, C_ref)
@@ -173,15 +161,10 @@ def test_autodiff():
     run_syr2k_autodiff()
 
 
-@fpga_test(assert_ii_1=False)
-def test_fpga():
-    return run_syr2k(dace.dtypes.DeviceType.FPGA)
-
-
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]
@@ -191,5 +174,3 @@ if __name__ == "__main__":
         run_syr2k_autodiff()
     elif target == "gpu":
         run_syr2k(dace.dtypes.DeviceType.GPU)
-    elif target == "fpga":
-        run_syr2k(dace.dtypes.DeviceType.FPGA)

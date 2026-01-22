@@ -971,6 +971,100 @@ def test_matplotlib_with_compute():
     tester()
 
 
+class _MyArrayLike:
+
+    def __init__(self) -> None:
+        self.array = np.random.rand(10)
+
+    @property
+    def __array_interface__(self):
+        return self.array.__array_interface__
+
+    def __descriptor__(self):
+        return dace.float64[10]
+
+
+def test_callback_with_arraylike_closure_object():
+    test = False
+
+    obj = _MyArrayLike()
+
+    @dace_inhibitor
+    def callback(obj):
+        nonlocal test
+        test = isinstance(obj, _MyArrayLike)
+
+    @dace.program
+    def tester():
+        callback(obj)
+
+    tester()
+    assert test
+
+
+def test_callback_with_arraylike_object():
+    test = False
+
+    @dace_inhibitor
+    def callback(obj):
+        nonlocal test
+        test = isinstance(obj, _MyArrayLike)
+
+    @dace.program
+    def tester(o):
+        callback(o)
+
+    tester(_MyArrayLike())
+    assert test
+
+
+def test_callback_with_arraylike_object_typehints():
+    test = False
+
+    @dace_inhibitor
+    def callback(obj):
+        nonlocal test
+        test = isinstance(obj, _MyArrayLike)
+
+    @dace.program
+    def tester(o: dace.float64[10]):
+        callback(o)
+
+    tester(_MyArrayLike())
+    assert test
+
+
+def test_nested_callback_with_nested_arraylike_object():
+    test = False
+
+    class State:
+
+        def __init__(self) -> None:
+            self.myarraylike = _MyArrayLike()
+
+    @dace_inhibitor
+    def callback(obj):
+        nonlocal test
+        test = isinstance(obj, _MyArrayLike)
+
+    state = State()
+
+    @dace.program
+    def nested2(arrlike):
+        callback(arrlike)
+
+    @dace.program
+    def nested():
+        nested2(state.myarraylike)
+
+    @dace.program
+    def tester():
+        nested()
+
+    tester()
+    assert test
+
+
 if __name__ == '__main__':
     test_automatic_callback()
     test_automatic_callback_2()
@@ -1014,3 +1108,7 @@ if __name__ == '__main__':
     test_disallowed_callback_in_condition()
     test_disallowed_callback_slice()
     # test_matplotlib_with_compute()
+    test_callback_with_arraylike_closure_object()
+    test_callback_with_arraylike_object()
+    test_callback_with_arraylike_object_typehints()
+    test_nested_callback_with_nested_arraylike_object()

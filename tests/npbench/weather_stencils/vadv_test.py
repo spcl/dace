@@ -5,9 +5,6 @@ import numpy as np
 import dace as dc
 import pytest
 import argparse
-from dace.fpga_testing import fpga_test
-from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
-from dace.transformation.dataflow import StreamingMemory, StreamingComposition
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.autodiff import add_backward_pass
 
@@ -280,15 +277,6 @@ def run_vadv(device_type: dace.dtypes.DeviceType):
         sdfg = vadv_kernel.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
         sdfg(utens_stage, u_stage, wcon, u_pos, utens, dtr_stage, I=I, J=J, K=K)
-    elif device_type == dace.dtypes.DeviceType.FPGA:
-        # Parse SDFG and apply FPGA friendly optimization
-        sdfg = vadv_kernel.to_sdfg(simplify=True)
-        applied = sdfg.apply_transformations([FPGATransformSDFG])
-        assert applied == 1
-
-        sdfg.apply_transformations_repeated([InlineSDFG], print_report=True)
-        sdfg.specialize(dict(I=I, J=J, K=K))
-        sdfg(utens_stage, u_stage, wcon, u_pos, utens, dtr_stage)
 
     # Compute ground truth and validate
     ground_truth(utens_stage_ref, u_stage, wcon, u_pos, utens, dtr_stage)
@@ -362,16 +350,10 @@ def test_autodiff():
     run_vadv_autodiff()
 
 
-@pytest.mark.skip(reason="Xilinx internal compiler error")
-@fpga_test(assert_ii_1=False)
-def test_fpga():
-    return run_vadv(dace.dtypes.DeviceType.FPGA)
-
-
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]
@@ -381,5 +363,3 @@ if __name__ == "__main__":
         run_vadv_autodiff()
     elif target == "gpu":
         run_vadv(dace.dtypes.DeviceType.GPU)
-    elif target == "fpga":
-        run_vadv(dace.dtypes.DeviceType.FPGA)

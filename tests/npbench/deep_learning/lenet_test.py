@@ -5,8 +5,6 @@ import numpy as np
 import dace as dc
 import pytest
 import argparse
-from dace.fpga_testing import fpga_test
-from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.autodiff import add_backward_pass
 
@@ -241,19 +239,6 @@ def run_lenet(device_type: dace.dtypes.DeviceType):
                    H=H,
                    W=W,
                    C_before_fc1=C_before_fc1)
-    elif device_type == dace.dtypes.DeviceType.FPGA:
-        # Parse SDFG and apply FPGA friendly optimization
-        sdfg = lenet5_kernel.to_sdfg(simplify=True)
-        applied = sdfg.apply_transformations([FPGATransformSDFG])
-        assert applied == 1
-
-        # Use FPGA Expansion for lib nodes, and expand them to enable further optimizations
-        from dace.libraries.standard import Reduce
-        Reduce.default_implementation = "FPGAPartialReduction"
-        sdfg.expand_library_nodes()
-        sdfg.apply_transformations_repeated([InlineSDFG], print_report=True)
-        sdfg.specialize(dict(N=N, H=W, W=W, C_before_fc1=C_before_fc1))
-        out = sdfg(input, conv1, conv1bias, conv2, conv2bias, fc1w, fc1b, fc2w, fc2b, fc3w, fc3b)
 
     # Compute ground truth and validate
     out_ref = lenet5_np(input, conv1, conv1bias, conv2, conv2bias, fc1w, fc1b, fc2w, fc2b, fc3w, fc3b, N, C_before_fc1)
@@ -331,16 +316,10 @@ def test_autodiff():
     run_lenet_autodiff()
 
 
-@pytest.mark.skip(reason="Dynamic memory allocation")
-@fpga_test(assert_ii_1=False)
-def test_fpga():
-    return run_lenet(dace.dtypes.DeviceType.FPGA)
-
-
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]
@@ -350,5 +329,3 @@ if __name__ == "__main__":
         run_lenet_autodiff()
     elif target == "gpu":
         run_lenet(dace.dtypes.DeviceType.GPU)
-    elif target == "fpga":
-        run_lenet(dace.dtypes.DeviceType.FPGA)

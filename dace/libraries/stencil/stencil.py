@@ -6,8 +6,6 @@ import dace
 import dace.library
 
 from .cpu import ExpandStencilCPU
-from .intel_fpga import ExpandStencilIntelFPGA
-# from .xilinx import ExpandStencilXilinx
 
 
 @dace.library.node
@@ -48,8 +46,6 @@ class Stencil(dace.library.LibraryNode):
 
     implementations = {
         "pure": ExpandStencilCPU,
-        "intel_fpga": ExpandStencilIntelFPGA,
-        # "xilinx": ExpandStencilXilinx
     }
     default_implementation = "pure"
 

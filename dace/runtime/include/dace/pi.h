@@ -38,10 +38,8 @@ namespace dace
             DACE_CONSTEXPR DACE_HDFI typeless_pi_mult(typeless_pi_mult&&) noexcept = default;
             DACE_HDFI ~typeless_pi_mult() noexcept = default;
 
-#ifndef DACE_XILINX
             DACE_CONSTEXPR DACE_HDFI typeless_pi_mult& operator=(const typeless_pi_mult&) noexcept = default;
             DACE_CONSTEXPR DACE_HDFI typeless_pi_mult& operator=(typeless_pi_mult&&) noexcept = default;
-#endif
 
             template<
                 typename T,
@@ -74,10 +72,8 @@ namespace dace
             DACE_CONSTEXPR DACE_HDFI typeless_pi(const typeless_pi&) noexcept = default;
             DACE_CONSTEXPR DACE_HDFI typeless_pi(typeless_pi&&) noexcept = default;
             DACE_HDFI ~typeless_pi() noexcept = default;
-#ifndef DACE_XILINX
             DACE_CONSTEXPR DACE_HDFI typeless_pi& operator=(const typeless_pi&) noexcept = default;
             DACE_CONSTEXPR DACE_HDFI typeless_pi& operator=(typeless_pi&&) noexcept = default;
-#endif
 
             template<
                 typename T,
@@ -115,10 +111,8 @@ namespace dace
             DACE_CONSTEXPR DACE_HDFI typeless_pi_exp(typeless_pi_exp&&) noexcept = default;
             DACE_HDFI ~typeless_pi_exp() noexcept = default;
 
-#ifndef DACE_XILINX
             DACE_CONSTEXPR DACE_HDFI typeless_pi_exp& operator=(const typeless_pi_exp&) noexcept = default;
             DACE_CONSTEXPR DACE_HDFI typeless_pi_exp& operator=(typeless_pi_exp&&) noexcept = default;
-#endif
 
             template<
                 typename T,

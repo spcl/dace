@@ -1,10 +1,6 @@
-// Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+// Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 #ifndef __DACE_VECTOR_H
 #define __DACE_VECTOR_H
-
-#ifdef DACE_XILINX
-#include "xilinx/vec.h"
-#else // Don't include this file if building for Xilinx
 
 #include "types.h"
 
@@ -329,5 +325,4 @@ namespace dace
 
 }
 
-#endif // XILINX_DEVICE_CODE
 #endif  // __DACE_VECTOR_H

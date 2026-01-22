@@ -20,7 +20,7 @@ DaCe generates high-performance programs for:
 
  * Multi-core CPUs (tested on Intel, IBM POWER9, and ARM with SVE)
  * NVIDIA GPUs and AMD GPUs (see :ref:`how to use HIP in DaCe <amd>`)
- * Xilinx and Intel FPGAs
+ * `Xilinx and Intel FPGAs <https://github.com/spcl/dace-fpga>`_
 
 
 

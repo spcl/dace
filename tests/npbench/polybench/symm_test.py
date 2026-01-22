@@ -5,10 +5,8 @@ import numpy as np
 import dace as dc
 import pytest
 import argparse
-from dace.fpga_testing import fpga_test, xilinx_test
-from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
-from dace.transformation.dataflow import StreamingMemory, StreamingComposition
-from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
+from dace.transformation.interstate import InlineSDFG
+from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.autodiff import add_backward_pass
 
 # Data set sizes
@@ -96,20 +94,6 @@ def run_symm(device_type: dace.dtypes.DeviceType):
         sdfg = symm_kernel.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
         sdfg(alpha, beta, C, A, B, M=M, N=N)
-    elif device_type == dace.dtypes.DeviceType.FPGA:
-        # Parse SDFG and apply FPGA friendly optimization
-        sdfg = symm_kernel.to_sdfg(simplify=True)
-        applied = sdfg.apply_transformations([FPGATransformSDFG])
-        assert applied == 1
-
-        # Use FPGA Expansion for lib nodes, and expand them to enable further optimizations
-        from dace.libraries.blas import Dot
-        Dot.default_implementation = "FPGA_PartialSums"
-        sdfg.expand_library_nodes()
-        sdfg.apply_transformations_repeated([InlineSDFG], print_report=True)
-        sdfg.specialize(dict(M=M, N=N))
-        sdfg(alpha, beta, C, A, B)
-
     # Compute ground truth and validate
     ground_truth(alpha, beta, C_ref, A, B)
     assert np.allclose(C, C_ref)
@@ -167,15 +151,10 @@ def test_autodiff():
     run_symm_autodiff()
 
 
-@fpga_test(assert_ii_1=False)
-def test_fpga():
-    return run_symm(dace.dtypes.DeviceType.FPGA)
-
-
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]
@@ -185,5 +164,3 @@ if __name__ == "__main__":
         run_symm_autodiff()
     elif target == "gpu":
         run_symm(dace.dtypes.DeviceType.GPU)
-    elif target == "fpga":
-        run_symm(dace.dtypes.DeviceType.FPGA)

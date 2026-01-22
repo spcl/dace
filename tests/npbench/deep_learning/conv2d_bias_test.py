@@ -5,10 +5,8 @@ import numpy as np
 import dace as dc
 import pytest
 import argparse
-from dace.fpga_testing import fpga_test, xilinx_test
-from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
-from dace.transformation.dataflow import StreamingMemory, StreamingComposition
-from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
+from dace.transformation.interstate import InlineSDFG
+from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.config import set_temporary
 from dace.autodiff import add_backward_pass
 
@@ -125,19 +123,6 @@ def run_conv2d_bias(device_type: dace.dtypes.DeviceType):
         sdfg = conv2d_bias_kernel.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
         out = sdfg(input, weight, bias, C_in=C_in, C_out=C_out, H=H, K=K, N=N, W=W)
-    elif device_type == dace.dtypes.DeviceType.FPGA:
-        # Parse SDFG and apply FPGA friendly optimization
-        sdfg = conv2d_bias_kernel.to_sdfg(simplify=True)
-        applied = sdfg.apply_transformations([FPGATransformSDFG])
-        assert applied == 1
-
-        # Use FPGA Expansion for lib nodes, and expand them to enable further optimizations
-        from dace.libraries.standard import Reduce
-        Reduce.default_implementation = "FPGAPartialReduction"
-        sdfg.expand_library_nodes()
-        sdfg.apply_transformations_repeated([InlineSDFG], print_report=True)
-        sdfg.specialize(dict(C_in=C_in, C_out=C_out, H=H, K=K, N=N, W=W))
-        out = sdfg(input, weight, bias)
 
     # Compute ground truth and validate
     out_ref = conv2d_bias_np(input, weight, bias)
@@ -207,15 +192,10 @@ def test_autodiff():
     run_conv2d_bias_autodiff()
 
 
-@fpga_test(assert_ii_1=False)
-def test_fpga():
-    return run_conv2d_bias(dace.dtypes.DeviceType.FPGA)
-
-
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]
@@ -225,5 +205,3 @@ if __name__ == "__main__":
         run_conv2d_bias_autodiff()
     elif target == "gpu":
         run_conv2d_bias(dace.dtypes.DeviceType.GPU)
-    elif target == "fpga":
-        run_conv2d_bias(dace.dtypes.DeviceType.FPGA)
