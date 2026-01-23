@@ -7,16 +7,18 @@ from dace.data import View
 from typing import Dict
 import os
 import sympy as sp
+import dace.dtypes as dtypes
 from copy import deepcopy
 from dace.symbolic import pystr_to_symbolic
 from dace.dtypes import StorageType
 import re
 from collections import deque
-from dace.transformation.passes.symbol_ssa import StrictSymbolSSA
-from dace.transformation.pass_pipeline import FixedPointPipeline
 from dace.transformation.passes.analysis import loop_analysis
 
 from dace.sdfg.state import AbstractControlFlowRegion, LoopRegion, ConditionalBlock, ReturnBlock, ContinueBlock, BreakBlock
+
+import dace.transformation.auto.auto_optimize as opt
+
 
 def subs_till_fixed_point(expr:sp.Expr, symbol_map:Dict[sp.Expr, sp.Expr]):
     """
@@ -128,15 +130,10 @@ def get_static_symbols(sdfg: SDFG):
 
 def calculate_edge_volume(state: SDFGState, edge:MultiConnectorEdge):
     vol = sp.sympify(1)
-    if not edge.data.volume == 0:
-        # if propagate memlets was able to assign a volume to the edge, we use 
-        vol = edge.data.volume*state.sdfg.arrays[edge.data.data].dtype.bytes
-    else:
-        # else we approximate the volume by the accessed range
-        vol = sp.sympify(1)
-        for (l, u, s) in edge.data.subset.ranges:
-            vol *= (u-l)/s    
-    return vol
+    vol = sp.sympify(1)
+    for (l, u, s) in edge.data.subset.ranges:
+        vol *= (u-l)/s    
+    return vol*state.sdfg.arrays[edge.data.data].dtype.bytes
 
 def scope_volume(state: SDFGState, entry=None, region_volume_map:dict[AbstractControlFlowRegion,tuple:[sp.Expr, sp.Expr, sp.Expr, sp.Expr]]={}, range_var_stack:list[tuple[str, tuple]]=[]):
     scope_nodes = state.scope_children()[entry]
@@ -160,6 +157,7 @@ def scope_volume(state: SDFGState, entry=None, region_volume_map:dict[AbstractCo
                 if isinstance(edge.src, nd.NestedSDFG):
                     continue
                 if state.sdfg.arrays[node.data].storage is StorageType.CPU_Heap or state.sdfg.arrays[node.data].storage is StorageType.GPU_Global:
+                    print(node, state.sdfg.arrays[node.data].storage)
                     edge_vol = calculate_edge_volume(state, edge)
                     write_edge_volumes.append(edge_vol)                
             
@@ -316,9 +314,11 @@ def analyze_sdfg(sdfg:SDFG):
     # deepcopy such that original sdfg not changed
     sdfg = deepcopy(sdfg)
 
-    # apply SSA pass
-    pipeline = FixedPointPipeline([StrictSymbolSSA()])
-    pipeline.apply_pass(sdfg, {})
+    # Try to use an optimized version of the SDFG to account for compiler optimizations
+    try:
+        opt.auto_optimize(sdfg, dtypes.DeviceType.CPU)
+    except:
+        pass
 
     infer_types.set_default_schedule_and_storage_types(sdfg)
     tvm = {}
