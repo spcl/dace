@@ -1714,7 +1714,6 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         outputs: Union[Set[str], Dict[str, dtypes.typeclass]],
         symbol_mapping: Dict[str, Any] = None,
         name=None,
-        schedule=dtypes.ScheduleType.Default,
         location: Optional[Dict[str, symbolic.SymbolicType]] = None,
         debuginfo: Optional[dtypes.DebugInfo] = None,
         external_path: Optional[str] = None,
@@ -1730,8 +1729,6 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         :param symbol_mapping: A dictionary mapping nested SDFG symbol names to expressions in the
                                parent SDFG's scope. If None, symbols are mapped to themselves.
         :param name: Name of the nested SDFG node. If None, uses the nested SDFG's label.
-        :param schedule: Schedule type for the nested SDFG node. Defaults to ``ScheduleType.Default``. This argument
-                         is deprecated and will be removed in the future.
         :param location: Execution location descriptor for the nested SDFG.
         :param debuginfo: Debug information for the nested SDFG node.
         :param external_path: Path to an external SDFG file. Used when ``sdfg`` parameter is None.
@@ -1745,12 +1742,6 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
 
         if sdfg is None and external_path is None:
             raise ValueError('Neither an SDFG nor an external SDFG path has been provided')
-
-        if schedule != dtypes.ScheduleType.Default:
-            warnings.warn(
-                "The 'schedule' argument is deprecated and will be removed in the future.",
-                DeprecationWarning,
-            )
 
         if sdfg is not None:
             sdfg.parent = self
@@ -1770,7 +1761,6 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             inputs,
             outputs,
             symbol_mapping=symbol_mapping,
-            schedule=schedule,
             location=location,
             debuginfo=debuginfo,
             path=external_path,
@@ -3180,6 +3170,12 @@ class LoopRegion(ControlFlowRegion):
                                        'do-while style into a while(true) with a break before the update (at the end ' +
                                        'of an iteration) if the condition no longer holds.')
     loop_variable = Property(dtype=str, default='', desc='The loop variable, if given')
+    unroll = Property(dtype=bool,
+                      default=False,
+                      desc='If True, indicates that this loop should be unrolled during code generation.')
+    unroll_factor = Property(dtype=int,
+                             default=0,
+                             desc='If unrolling is enabled, the factor by which to unroll the loop.')
 
     def __init__(self,
                  label: str,
@@ -3189,7 +3185,9 @@ class LoopRegion(ControlFlowRegion):
                  update_expr: Optional[Union[str, CodeBlock]] = None,
                  inverted: bool = False,
                  sdfg: Optional['SDFG'] = None,
-                 update_before_condition=True):
+                 update_before_condition=True,
+                 unroll: bool = False,
+                 unroll_factor: int = 0):
         super(LoopRegion, self).__init__(label, sdfg)
 
         if initialize_expr is not None:
@@ -3219,6 +3217,8 @@ class LoopRegion(ControlFlowRegion):
         self.loop_variable = loop_var or ''
         self.inverted = inverted
         self.update_before_condition = update_before_condition
+        self.unroll = unroll
+        self.unroll_factor = unroll_factor
 
     def inline(self, lower_returns: bool = False) -> Tuple[bool, Any]:
         """

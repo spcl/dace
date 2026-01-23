@@ -96,7 +96,8 @@ def _make_filter_function(filter: Optional[Union[str, Callable[[Any], bool]]],
     if isinstance(filter, str):
         # If a string was given, construct predicate based on wildcard name matching
         if with_attr:
-            filter_func = lambda elem: fnmatch.fnmatch(elem.name, filter)
+            filter_func = lambda elem: fnmatch.fnmatch(elem.name, filter) if hasattr(elem, 'name') else fnmatch.fnmatch(
+                elem.label, filter)
         else:
             filter_func = lambda elem: fnmatch.fnmatch(elem, filter)
     elif callable(filter):

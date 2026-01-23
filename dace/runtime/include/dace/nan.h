@@ -18,10 +18,8 @@ namespace dace
             DACE_CONSTEXPR DACE_HDFI typeless_nan(typeless_nan&&) noexcept = default;
             DACE_HDFI ~typeless_nan() noexcept = default;
 
-#ifndef DACE_XILINX
             DACE_CONSTEXPR DACE_HDFI typeless_nan& operator=(const typeless_nan&) noexcept = default;
             DACE_CONSTEXPR DACE_HDFI typeless_nan& operator=(typeless_nan&&) noexcept = default;
-#endif
 
             operator int() const = delete;
             DACE_CONSTEXPR DACE_HDFI operator float() const
