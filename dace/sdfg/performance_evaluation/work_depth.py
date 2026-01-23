@@ -506,6 +506,8 @@ def control_flow_region_work_depth(cfr: ControlFlowRegion,
                 shifted_lo = sp.sympify(0)
                 step:sp.Expr = sp.Abs(step)
 
+                loop_work = loop_work.subs({loop_var: (step*loop_var+lower_bound)})
+                loop_depth = loop_depth.subs({loop_var: (step*loop_var+lower_bound)})
                 # write the work and depth of the loop as a sum of the work of one iteration over the number of loop iterations
                 # (we have cannot use a simple multiplication as work and depth of one loop iteration might be dependent on the loop variable)
                 loop_work = sp.Sum(loop_work, (loop_var, shifted_lo, shifted_hi))
