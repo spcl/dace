@@ -135,12 +135,10 @@ def get_static_symbols(sdfg: SDFG):
 
 def calculate_edge_volume(state: SDFGState, edge:MultiConnectorEdge):
     vol = sp.sympify(1)
-
     for (l, u, s) in edge.data.subset.ranges:
-        vol *= (u-l)/s    
-    if vol == 0:
-        # Fallback if range is undefined or results in 0
-        vol = edge.data.volume
+        # plus one because DaCe uses inclusive ranges
+        vol *= (u-l+1)/s    
+    
     return vol*state.sdfg.arrays[edge.data.data].dtype.bytes
 
 def scope_volume(state: SDFGState, entry=None, region_volume_map:dict[AbstractControlFlowRegion,tuple:[sp.Expr, sp.Expr, sp.Expr, sp.Expr]]={}, range_var_stack:list[tuple[str, tuple]]=[]):
