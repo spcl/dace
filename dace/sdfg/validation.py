@@ -226,7 +226,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
     """
     # Avoid import loop
     from dace import data as dt
-    from dace.sdfg.scope import is_devicelevel_fpga, is_devicelevel_gpu
+    from dace.sdfg.scope import is_devicelevel_gpu
     from dace.sdfg.state import ConditionalBlock
 
     references = references or set()
@@ -331,7 +331,6 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
 
         # Check if SDFG is located within a GPU kernel
         context['in_gpu'] = is_devicelevel_gpu(sdfg, None, None)
-        context['in_fpga'] = is_devicelevel_fpga(sdfg, None, None)
 
         initialized_transients = {'__pystate'}
         initialized_transients.update(sdfg.constants_prop.keys())
@@ -359,8 +358,6 @@ def _accessible(sdfg: 'dace.sdfg.SDFG', container: str, context: Dict[str, bool]
     storage = sdfg.arrays[container].storage
     if storage == dtypes.StorageType.GPU_Global or storage in dtypes.GPU_STORAGES:
         return context.get('in_gpu', False)
-    if storage == dtypes.StorageType.FPGA_Global or storage in dtypes.FPGA_STORAGES:
-        return context.get('in_fpga', False)
 
     return True
 
@@ -415,7 +412,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
     from dace.sdfg import SDFG
     from dace.sdfg import nodes as nd
     from dace.sdfg import utils as sdutil
-    from dace.sdfg.scope import (is_devicelevel_fpga, is_devicelevel_gpu, scope_contains_scope)
+    from dace.sdfg.scope import is_devicelevel_gpu, scope_contains_scope
 
     sdfg = sdfg or state.parent
     state_id = state_id if state_id is not None else state.parent_graph.node_id(state)
@@ -426,8 +423,6 @@ def validate_state(state: 'dace.sdfg.SDFGState',
     # Obtain whether we are already in an accelerator context
     if not hasattr(context, 'in_gpu'):
         context['in_gpu'] = is_devicelevel_gpu(sdfg, state, None)
-    if not hasattr(context, 'in_fpga'):
-        context['in_fpga'] = is_devicelevel_fpga(sdfg, state, None)
 
     # Reference check
     if id(state) in references:
@@ -725,9 +720,6 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                     if pn.schedule in dtypes.GPU_SCHEDULES:
                         memlet_context['in_gpu'] = True
                         break
-                    if pn.schedule == dtypes.ScheduleType.FPGA_Device:
-                        memlet_context['in_fpga'] = True
-                        break
                     if pn.schedule == dtypes.ScheduleType.Default:
                         # Default schedule memlet accessibility validation is deferred
                         # to after schedule/storage inference
@@ -757,7 +749,6 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             if not memlet_context.get('in_default', False) and not _accessible(sdfg, e.data.data, memlet_context):
                 # Rerun slightly more expensive but foolproof test
                 memlet_context['in_gpu'] = is_devicelevel_gpu(sdfg, state, e.dst)
-                memlet_context['in_fpga'] = is_devicelevel_fpga(sdfg, state, e.dst)
                 if not _accessible(sdfg, e.data.data, memlet_context):
                     raise InvalidSDFGEdgeError(
                         f'Data container "{e.data.data}" is stored as {sdfg.arrays[e.data.data].storage} '

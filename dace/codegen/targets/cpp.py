@@ -114,7 +114,7 @@ def copy_expr(
 
     add_offset = offset_cppstr != "0"
 
-    if def_type in [DefinedType.Pointer, DefinedType.ArrayInterface, DefinedType.Object]:
+    if def_type in [DefinedType.Pointer, DefinedType.Object]:
         return "{}{}{}".format(dt, expr, " + {}".format(offset_cppstr) if add_offset else "")
     elif def_type == DefinedType.StreamArray:
         return "{}[{}]".format(expr, offset_cppstr)
@@ -137,8 +137,7 @@ def memlet_copy_to_absolute_strides(dispatcher: 'TargetDispatcher',
                                     src_node: nodes.AccessNode,
                                     dst_node: nodes.AccessNode,
                                     src_name_override: Optional[str] = None,
-                                    dst_name_override: Optional[str] = None,
-                                    codegen: 'TargetCodeGenerator' = None):
+                                    dst_name_override: Optional[str] = None):
     memlet = edge.data
     copy_shape = memlet.subset.size_exact()
     src_nodedesc = src_node.desc(sdfg)
@@ -149,10 +148,6 @@ def memlet_copy_to_absolute_strides(dispatcher: 'TargetDispatcher',
     src_subset = memlet.get_src_subset(edge, state)
     dst_subset = memlet.get_dst_subset(edge, state)
     is_src_write = not memlet._is_data_src
-
-    if codegen is not None:
-        src_subset = codegen.adjust_subset_for_codegen(src_nodedesc, src_subset)
-        dst_subset = codegen.adjust_subset_for_codegen(dst_nodedesc, dst_subset)
 
     if dispatcher is not None:
         src_expr = copy_expr(dispatcher,
@@ -289,7 +284,7 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
     """
     desc = sdfg.arrays[memlet.data]
     typedef = conntype.ctype
-    offset = cpp_offset_expr(desc, memlet.subset, codegen=codegen)
+    offset = cpp_offset_expr(desc, memlet.subset)
     offset_expr = '[' + offset + ']'
     is_scalar = not isinstance(conntype, dtypes.pointer)
     ptrname = codegen.ptr(memlet.data, desc, sdfg, subset=memlet.subset, ancestor=ancestor, is_write=is_write)
@@ -318,8 +313,7 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
         else:
             return expr
 
-    if (defined_type == DefinedType.Pointer
-            or (defined_type == DefinedType.ArrayInterface and isinstance(desc, data.View))):
+    if defined_type == DefinedType.Pointer:
         if not is_scalar and desc.dtype == conntype.base_type:
             # Cast potential consts
             typedef = defined_ctype
@@ -334,11 +328,6 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
             if memlet.data in dispatcher.frame.symbols_and_constants(sdfg):
                 ref = '*'
                 typedef = make_const(typedef)
-
-    elif defined_type == DefinedType.ArrayInterface:
-        base_ctype = conntype.base_type.ctype
-        typedef = f"{base_ctype}*" if is_write else f"const {base_ctype}*"
-        is_scalar = False
     elif defined_type == DefinedType.Scalar:
         typedef = defined_ctype if is_scalar else (defined_ctype + '*')
         if is_write is False and not isinstance(desc, data.Structure):
@@ -482,32 +471,14 @@ def ndcopy_to_strided_copy(
         if copy_shape == src_copy_shape:
             srcdim = copydim
         else:
-            # TODO: Remove try-except in subsequent FPGA PR
-            try:
-                srcdim = next(i for i, c in enumerate(src_copy_shape) if c != 1)
-            except StopIteration:
-                # NOTE: This is the old stride computation code for FPGA
-                # compatibility
-                if len(copy_shape) == len(src_shape):
-                    srcdim = copydim
-                else:
-                    srcdim = next(i for i, c in enumerate(src_shape) if c != 1)
+            srcdim = next(i for i, c in enumerate(src_copy_shape) if c != 1)
 
         # In destination strides
         dst_copy_shape = dst_subset.size_exact()
         if copy_shape == dst_copy_shape:
             dstdim = copydim
         else:
-            # TODO: Remove try-except in subsequent FPGA PR
-            try:
-                dstdim = next(i for i, c in enumerate(dst_copy_shape) if c != 1)
-            except StopIteration:
-                # NOTE: This is the old stride computation code for FPGA
-                # compatibility
-                if len(copy_shape) == len(dst_shape):
-                    dstdim = copydim
-                else:
-                    dstdim = next(i for i, c in enumerate(dst_shape) if c != 1)
+            dstdim = next(i for i, c in enumerate(dst_copy_shape) if c != 1)
 
         # Return new copy
         return [copy_shape[copydim]], [src_strides[srcdim]], [dst_strides[dstdim]]
@@ -515,12 +486,7 @@ def ndcopy_to_strided_copy(
         return None
 
 
-def cpp_offset_expr(d: data.Data,
-                    subset_in: subsets.Subset,
-                    offset=None,
-                    packed_veclen=1,
-                    indices=None,
-                    codegen: Optional['TargetCodeGenerator'] = None) -> str:
+def cpp_offset_expr(d: data.Data, subset_in: subsets.Subset, offset=None, packed_veclen=1, indices=None) -> str:
     """ Creates a C++ expression that can be added to a pointer in order
         to offset it to the beginning of the given subset and offset.
 
@@ -534,10 +500,6 @@ def cpp_offset_expr(d: data.Data,
         :param codegen: Optional code generator to adjust subset.
         :return: A string in C++ syntax with the correct offset
     """
-    # Offset according to code generator
-    if codegen is not None:
-        subset_in = codegen.adjust_subset_for_codegen(d, subset_in)
-
     # Offset according to parameters, then offset according to array
     if offset is not None:
         subset = subset_in.offset_new(offset, False)
@@ -571,7 +533,7 @@ def cpp_array_expr(sdfg,
     s = subset if relative_offset else subsets.Indices(offset)
     o = offset if relative_offset else None
     desc = (sdfg.arrays[memlet.data] if referenced_array is None else referenced_array)
-    offset_cppstr = cpp_offset_expr(desc, s, o, packed_veclen, indices=indices, codegen=codegen)
+    offset_cppstr = cpp_offset_expr(desc, s, o, packed_veclen, indices=indices)
 
     # NOTE: Are there any cases where a mix of '.' and '->' is needed when traversing nested structs?
     # TODO: Study this when changing Structures to be (optionally?) non-pointers.
@@ -600,7 +562,7 @@ def make_ptr_vector_cast(dst_expr, dst_dtype, src_dtype, is_scalar, defined_type
             dst_expr = '*(%s *)(&%s)' % (src_dtype.ctype, dst_expr)
         elif src_dtype.base_type != dst_dtype:
             dst_expr = '(%s)(&%s)' % (src_dtype.ctype, dst_expr)
-        elif defined_type in [DefinedType.Pointer, DefinedType.ArrayInterface]:
+        elif defined_type == DefinedType.Pointer:
             dst_expr = '&' + dst_expr
     elif not is_scalar:
         dst_expr = '&' + dst_expr
@@ -614,9 +576,7 @@ def cpp_ptr_expr(sdfg,
                  relative_offset=True,
                  use_other_subset=False,
                  indices=None,
-                 is_write=None,
-                 codegen: 'TargetCodeGenerator' = None,
-                 decouple_array_interface=False):
+                 codegen: 'TargetCodeGenerator' = None):
     """ Converts a memlet to a C++ pointer expression. """
     subset = memlet.subset if not use_other_subset else memlet.other_subset
     s = subset if relative_offset else subsets.Indices(offset)
@@ -625,7 +585,7 @@ def cpp_ptr_expr(sdfg,
     if isinstance(indices, str):
         offset_cppstr = indices
     else:
-        offset_cppstr = cpp_offset_expr(desc, s, o, indices=indices, codegen=codegen)
+        offset_cppstr = cpp_offset_expr(desc, s, o, indices=indices)
     dname = codegen.ptr(memlet.data, desc, sdfg, memlet.subset)
 
     if defined_type == DefinedType.Scalar:
@@ -1180,7 +1140,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                         return node
                     elif isinstance(desc, data.Stream):
                         if desc.is_stream_array():
-                            index = cpp_offset_expr(desc, memlet.subset, codegen=self.codegen)
+                            index = cpp_offset_expr(desc, memlet.subset)
                             target = f"{ptrname}[{index}]"
                         else:
                             target = ptrname
@@ -1195,7 +1155,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                                 ptrname,
                                 cppunparse.cppunparse(value, expr_semicolon=False),
                             ))
-                        elif (var_type != DefinedType.ArrayInterface or isinstance(desc, data.View)):
+                        elif isinstance(desc, data.View):
                             newnode = ast.Name(id="%s = %s;" % (
                                 cpp_array_expr(self.sdfg, memlet, codegen=self.codegen),
                                 cppunparse.cppunparse(value, expr_semicolon=False),
