@@ -2,6 +2,7 @@
 import inspect
 from copy import deepcopy as dc
 from collections import OrderedDict
+from typing import Callable
 
 import dace
 import numpy as np
@@ -17,7 +18,7 @@ def compare_numpy_output(device=dace.dtypes.DeviceType.CPU,
                          check_dtype=False,
                          validation_func=None,
                          casting=None,
-                         max_value=10):
+                         max_value=10) -> Callable[[Callable], Callable[[], None]]:
     """ Check that the `dace.program` func works identically to python
         (including errors).
 

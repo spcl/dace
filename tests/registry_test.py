@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import unittest
-from aenum import Enum, auto
+from aenum import AutoNumberEnum
 from dace import registry
 
 
@@ -14,9 +14,9 @@ class Extension(ExtensibleClass):
 
 
 @registry.extensible_enum
-class ExtensibleEnumeration(Enum):
-    a = auto()
-    b = auto()
+class ExtensibleEnumeration(AutoNumberEnum):
+    a = ()
+    b = ()
 
 
 class RegistryTests(unittest.TestCase):

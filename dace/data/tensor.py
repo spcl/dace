@@ -5,7 +5,7 @@ Tensor data descriptors for sparse tensor formats.
 This module contains classes for representing various sparse tensor storage formats
 based on the abstraction described in [https://doi.org/10.1145/3276493].
 """
-import aenum
+import enum
 
 from abc import ABC, abstractmethod
 from typing import Dict, List, Tuple, Union
@@ -15,7 +15,7 @@ from dace.data.core import Data, Scalar, Structure
 from dace.properties import ListProperty, Property, ShapeProperty, SymbolicProperty, TypeClassProperty, make_properties
 
 
-class TensorIterationTypes(aenum.AutoNumberEnum):
+class TensorIterationTypes(enum.Enum):
     """
     Types of tensor iteration capabilities.
 
@@ -27,11 +27,11 @@ class TensorIterationTypes(aenum.AutoNumberEnum):
     with a compressed index, in which the pos array enables one to iterate over
     the positions in the crd array that hold the actual coordinates.
     """
-    Value = ()
-    Position = ()
+    Value = enum.auto()
+    Position = enum.auto()
 
 
-class TensorAssemblyType(aenum.AutoNumberEnum):
+class TensorAssemblyType(enum.Enum):
     """
     Types of possible assembly strategies for the individual indices.
 
@@ -43,9 +43,9 @@ class TensorAssemblyType(aenum.AutoNumberEnum):
     on append order, this affects whether the index is ordered or not. This
     could be changed by sorting the index after assembly
     """
-    NoAssembly = ()
-    Insert = ()
-    Append = ()
+    NoAssembly = enum.auto()
+    Insert = enum.auto()
+    Append = enum.auto()
 
 
 class TensorIndex(ABC):
