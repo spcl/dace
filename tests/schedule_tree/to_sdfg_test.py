@@ -386,6 +386,10 @@ def test_create_if_else():
     assert tasklets[0].label == "blub", "Else branch contains Tasklet('blub')"
 
 
+# TODO
+# support for if_elif_else
+
+
 def test_create_if_without_else():
     stree = tn.ScheduleTreeRoot(name="tester",
                                 containers={'A': data.Array(dace.float64, [20])},

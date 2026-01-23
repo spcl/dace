@@ -169,7 +169,12 @@ class DeadStateElimination(ppl.Pass):
         for i, (cond, branch) in enumerate(block.branches):
             if cond is None:
                 if not i == len(block.branches) - 1:
-                    raise InvalidSDFGNodeError('Conditional block detected, where else branch is not the last branch')
+                    raise InvalidSDFGNodeError(
+                        'Conditional block detected, where else branch is not the last branch',
+                        sdfg=block.root_sdfg(),
+                        state_id=block.block_id,
+                        node_id=block.block_id,
+                    )
                 break
             # If an unconditional branch is found, ignore all other branches that follow this one.
             if self._is_definitely_true(symbolic.pystr_to_symbolic(cond.as_string), block.sdfg):
