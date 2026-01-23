@@ -157,7 +157,6 @@ def scope_volume(state: SDFGState, entry=None, region_volume_map:dict[AbstractCo
                 if isinstance(edge.src, nd.NestedSDFG):
                     continue
                 if state.sdfg.arrays[node.data].storage is StorageType.CPU_Heap or state.sdfg.arrays[node.data].storage is StorageType.GPU_Global:
-                    print(node, state.sdfg.arrays[node.data].storage)
                     edge_vol = calculate_edge_volume(state, edge)
                     write_edge_volumes.append(edge_vol)                
             
