@@ -97,7 +97,14 @@ def get_static_symbols(sdfg: SDFG):
                         code = tasklet.code.as_string.strip()
                         # Expect a single assignment
                         lines = [l.strip() for l in code.splitlines() if l.strip()]
+                        print(lines)
+
+                        if len(lines)>1:
+                            print("Node data:", node.data)
+                            non_static_symbols.add(node.data)
+                            continue
                         lhs, rhs = lines[0].split('=',1)
+
                         lhs = lhs.strip()
                         rhs = rhs.strip()
                         rhs = type_regex.sub("", rhs)
@@ -312,12 +319,13 @@ def cfr_volume(control_flow_region:AbstractControlFlowRegion, region_volume_map:
 def analyze_sdfg(sdfg:SDFG):
     # deepcopy such that original sdfg not changed
     sdfg = deepcopy(sdfg)
-
     # Try to use an optimized version of the SDFG to account for compiler optimizations
     try:
         opt.auto_optimize(sdfg, dtypes.DeviceType.CPU)
     except:
         pass
+
+    sdfg.save("sdfg.sdfg")
 
     infer_types.set_default_schedule_and_storage_types(sdfg)
     tvm = {}
