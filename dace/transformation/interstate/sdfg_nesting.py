@@ -141,8 +141,6 @@ class InlineSDFG(transformation.SingleStateTransformation):
 
         # Ensure that every connector has at least one corresponding access
         # node in the (nested) SDFG. Otherwise, inlining is not possible.
-        # NOTE: FPGA-compatible SDFGs can have input connectors for data that
-        # are only written.
         inp_data = {conn: set() for conn in in_connectors}
         for e in graph.in_edges(nested_sdfg):
             src = graph.memlet_path(e)[0].src
@@ -246,9 +244,6 @@ class InlineSDFG(transformation.SingleStateTransformation):
         nsdfg_node = self.nested_sdfg
         nsdfg: SDFG = nsdfg_node.sdfg
         nstate: SDFGState = nsdfg.nodes()[0]
-
-        if nsdfg_node.schedule != dtypes.ScheduleType.Default:
-            infer_types.set_default_schedule_and_storage_types(nsdfg, [nsdfg_node.schedule])
 
         nsdfg_scope_entry = state.entry_node(nsdfg_node)
         nsdfg_scope_exit = (state.exit_node(nsdfg_scope_entry) if nsdfg_scope_entry is not None else None)
@@ -862,13 +857,6 @@ class InlineTransients(transformation.SingleStateTransformation):
     def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False):
         nsdfg = self.nsdfg
 
-        # Not every schedule is supported
-        if not permissive:
-            if nsdfg.schedule not in (None, dtypes.ScheduleType.Default, dtypes.ScheduleType.Sequential,
-                                      dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent,
-                                      dtypes.ScheduleType.GPU_Device):
-                return False
-
         candidates = InlineTransients._candidates(sdfg, graph, nsdfg)
         return len(candidates) > 0
 
@@ -1223,7 +1211,7 @@ class NestSDFG(transformation.MultiStateTransformation):
                         # If this transient has a symbolic shape, and if any symbol is in in the "ranges"
                         # of the state then substitute it with its max value (if it can be inferred).
                         # This is useful for the cases where the transient comes from a slice operation
-                        # (e.g. array[:i] or array[i:]), and we are on devices such as FPGAs that do not
+                        # (e.g. array[:i] or array[i:]), and we are on devices that do not
                         # support dynamic memory allocation.
 
                         propagation.propagate_states(nested_sdfg)

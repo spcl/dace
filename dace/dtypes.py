@@ -1,4 +1,4 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ A module that contains various DaCe type definitions. """
 import ctypes
 import json
@@ -19,7 +19,6 @@ from dace.registry import extensible_enum, undefined_safe_enum
 class DeviceType(aenum.AutoNumberEnum):
     CPU = ()  #: Multi-core CPU
     GPU = ()  #: GPU (AMD or NVIDIA)
-    FPGA = ()  #: FPGA (Intel or Xilinx)
     Snitch = ()  #: Compute Cluster (RISC-V)
 
 
@@ -35,10 +34,6 @@ class StorageType(aenum.AutoNumberEnum):
     CPU_ThreadLocal = ()  #: Thread-local host memory
     GPU_Global = ()  #: GPU global memory
     GPU_Shared = ()  #: On-GPU shared memory
-    FPGA_Global = ()  #: Off-chip global memory (DRAM)
-    FPGA_Local = ()  #: On-chip memory (bulk storage)
-    FPGA_Registers = ()  #: On-chip memory (fully partitioned registers)
-    FPGA_ShiftRegister = ()  #: Only accessible at constant indices
     SVE_Register = ()  #: SVE register
     Snitch_TCDM = ()  #: Cluster-private memory
     Snitch_L2 = ()  #: External memory
@@ -64,19 +59,15 @@ class ScheduleType(aenum.AutoNumberEnum):
     MPI = ()  #: MPI processes
     CPU_Multicore = ()  #: OpenMP parallel for loop
     CPU_Persistent = ()  #: OpenMP parallel region
-    Unrolled = ()  #: Unrolled code
     SVE_Map = ()  #: Arm SVE
 
-    #: Default scope schedule for GPU code. Specializes to schedule GPU_Device and GPU_Global during inference.
-    GPU_Default = ()
     GPU_Device = ()  #: Kernel
     GPU_ThreadBlock = ()  #: Thread-block code
     GPU_ThreadBlock_Dynamic = ()  #: Allows rescheduling work within a block
     GPU_Persistent = ()
-    FPGA_Device = ()
+
     Snitch = ()
     Snitch_Multicore = ()
-    FPGA_Multi_Pumped = ()  #: Used for double pumping
 
 
 # A subset of GPU schedule types
@@ -96,13 +87,6 @@ CPU_SCHEDULES = [
 # A subset of on-GPU storage types
 GPU_STORAGES = [
     StorageType.GPU_Shared,
-]
-
-# A subset of on-FPGA storage types
-FPGA_STORAGES = [
-    StorageType.FPGA_Local,
-    StorageType.FPGA_Registers,
-    StorageType.FPGA_ShiftRegister,
 ]
 
 
@@ -166,7 +150,7 @@ class InstrumentationType(aenum.AutoNumberEnum):
     LIKWID_CPU = ()
     LIKWID_GPU = ()
     GPU_Events = ()
-    FPGA = ()
+    GPU_TX_MARKERS = ()
 
 
 @undefined_safe_enum
@@ -197,12 +181,10 @@ SCOPEDEFAULT_STORAGE = {
     ScheduleType.MPI: StorageType.CPU_Heap,
     ScheduleType.CPU_Multicore: StorageType.Register,
     ScheduleType.CPU_Persistent: StorageType.CPU_Heap,
-    ScheduleType.GPU_Default: StorageType.GPU_Global,
     ScheduleType.GPU_Persistent: StorageType.GPU_Global,
     ScheduleType.GPU_Device: StorageType.GPU_Shared,
     ScheduleType.GPU_ThreadBlock: StorageType.Register,
     ScheduleType.GPU_ThreadBlock_Dynamic: StorageType.Register,
-    ScheduleType.FPGA_Device: StorageType.FPGA_Global,
     ScheduleType.SVE_Map: StorageType.CPU_Heap,
     ScheduleType.Snitch: StorageType.Snitch_TCDM
 }
@@ -215,14 +197,10 @@ SCOPEDEFAULT_SCHEDULE = {
     ScheduleType.MPI: ScheduleType.CPU_Multicore,
     ScheduleType.CPU_Multicore: ScheduleType.Sequential,
     ScheduleType.CPU_Persistent: ScheduleType.CPU_Multicore,
-    ScheduleType.Unrolled: ScheduleType.CPU_Multicore,
-    ScheduleType.GPU_Default: ScheduleType.GPU_Device,
     ScheduleType.GPU_Persistent: ScheduleType.GPU_Device,
     ScheduleType.GPU_Device: ScheduleType.GPU_ThreadBlock,
     ScheduleType.GPU_ThreadBlock: ScheduleType.Sequential,
     ScheduleType.GPU_ThreadBlock_Dynamic: ScheduleType.Sequential,
-    ScheduleType.FPGA_Device: ScheduleType.FPGA_Device,
-    ScheduleType.FPGA_Multi_Pumped: ScheduleType.FPGA_Device,
     ScheduleType.SVE_Map: ScheduleType.Sequential,
     ScheduleType.Snitch: ScheduleType.Snitch,
     ScheduleType.Snitch_Multicore: ScheduleType.Snitch_Multicore
@@ -236,7 +214,6 @@ STORAGEDEFAULT_SCHEDULE = {
     StorageType.CPU_ThreadLocal: ScheduleType.CPU_Multicore,
     StorageType.GPU_Global: ScheduleType.GPU_Device,
     StorageType.GPU_Shared: ScheduleType.GPU_ThreadBlock,
-    StorageType.FPGA_Global: ScheduleType.FPGA_Device,
     StorageType.SVE_Register: ScheduleType.SVE_Map,
 }
 
@@ -263,68 +240,6 @@ _CTYPES = {
     numpy.float64: "double",
     numpy.complex64: "dace::complex64",
     numpy.complex128: "dace::complex128",
-}
-
-# Translation of types to OpenCL types
-_OCL_TYPES = {
-    None: "void",
-    int: "int",
-    float: "float",
-    bool: "bool",
-    numpy.bool_: "bool",
-    numpy.int8: "char",
-    numpy.int16: "short",
-    numpy.int32: "int",
-    numpy.intc: "int",
-    numpy.int64: "long",
-    numpy.uint8: "uchar",
-    numpy.uint16: "ushort",
-    numpy.uint32: "uint",
-    numpy.uint64: "ulong",
-    numpy.uintc: "uint",
-    numpy.float32: "float",
-    numpy.float64: "double",
-    numpy.complex64: "complex float",
-    numpy.complex128: "complex double",
-}
-
-_CTYPES_TO_OCLTYPES = {
-    "void": "void",
-    "int": "int",
-    "float": "float",
-    "double": "double",
-    "dace::complex64": "complex float",
-    "dace::complex128": "complex double",
-    "bool": "bool",
-    "char": "char",
-    "short": "short",
-    "int": "int",
-    "int64_t": "long",
-    "uint8_t": "uchar",
-    "uint16_t": "ushort",
-    "uint32_t": "uint",
-    "dace::uint": "uint",
-    "uint64_t": "ulong",
-    "dace::float16": "half",
-}
-
-# Translation of types to OpenCL vector types
-_OCL_VECTOR_TYPES = {
-    numpy.int8: "char",
-    numpy.uint8: "uchar",
-    numpy.int16: "short",
-    numpy.uint16: "ushort",
-    numpy.int32: "int",
-    numpy.intc: "int",
-    numpy.uint32: "uint",
-    numpy.uintc: "uint",
-    numpy.int64: "long",
-    numpy.uint64: "ulong",
-    numpy.float16: "half",
-    numpy.float32: "float",
-    numpy.float64: "double",
-    numpy.complex64: "complex float",
-    numpy.complex128: "complex double",
 }
 
 # Translation of types to ctypes types
@@ -501,10 +416,6 @@ class typeclass(object):
     @property
     def veclen(self):
         return 1
-
-    @property
-    def ocltype(self):
-        return _OCL_TYPES[self.type]
 
     def as_arg(self, name):
         return self.ctype + ' ' + name
@@ -703,10 +614,6 @@ class pointer(typeclass):
     def base_type(self):
         return self._typeclass
 
-    @property
-    def ocltype(self):
-        return f"{self.base_type.ocltype}*"
-
 
 class vector(typeclass):
     """
@@ -733,14 +640,6 @@ class vector(typeclass):
     @property
     def ctype(self):
         return "dace::vec<%s, %s>" % (self.vtype.ctype, self.veclen)
-
-    @property
-    def ocltype(self):
-        if self.veclen > 1:
-            vectype = _OCL_VECTOR_TYPES[self.type]
-            return f"{vectype}{self.veclen}"
-        else:
-            return self.base_type.ocltype
 
     @property
     def ctype_unaligned(self):
@@ -1059,7 +958,7 @@ class callback(typeclass):
         retval = self.cfunc_return_type()
         return f'{retval} (*{name})({", ".join(input_type_cstring)})'
 
-    def get_trampoline(self, pyfunc, other_arguments, refs):
+    def get_trampoline(self, pyfunc, other_arguments, refs, argument_to_pyobject):
         from functools import partial
         from dace import data, symbolic
 
@@ -1068,6 +967,16 @@ class callback(typeclass):
             if tmp.startswith(chr(0xFFFF)):
                 return bytes(tmp[1:], 'utf-8')
             return tmp
+
+        def _pyobject_converter(arg: data.Data, a: int, *args):
+            try:
+                if argument_to_pyobject is not None and a in argument_to_pyobject:
+                    # Avoid views of the same object from using the original one
+                    if arg.is_equivalent(argument_to_pyobject[a][1]):
+                        return argument_to_pyobject[a][0]
+            except TypeError:  # Unhashable type
+                pass
+            return data.make_reference_from_descriptor(arg, a, *args)
 
         inp_arraypos = []
         ret_arraypos = []
@@ -1079,7 +988,7 @@ class callback(typeclass):
             if isinstance(arg, data.Array):
                 inp_arraypos.append(index)
                 inp_types_and_sizes.append((arg.dtype.as_ctypes(), arg.shape))
-                inp_converters.append(partial(data.make_reference_from_descriptor, arg))
+                inp_converters.append(partial(_pyobject_converter, arg))
             elif isinstance(arg, data.Scalar) and arg.dtype == string:
                 inp_arraypos.append(index)
                 inp_types_and_sizes.append((ctypes.c_char_p, []))
@@ -1099,7 +1008,7 @@ class callback(typeclass):
             if isinstance(arg, data.Array):
                 ret_arraypos.append(index + offset)
                 ret_types_and_sizes.append((arg.dtype.as_ctypes(), arg.shape))
-                ret_converters.append(partial(data.make_reference_from_descriptor, arg))
+                ret_converters.append(partial(_pyobject_converter, arg))
             elif isinstance(arg, data.Scalar) and arg.dtype == string:
                 ret_arraypos.append(index + offset)
                 ret_types_and_sizes.append((ctypes.c_char_p, []))
@@ -1116,7 +1025,7 @@ class callback(typeclass):
                 if not self.is_scalar_function():
                     ret_arraypos.append(index + offset)
                     ret_types_and_sizes.append((arg.dtype.as_ctypes(), arg.shape))
-                    ret_converters.append(partial(data.make_reference_from_descriptor, arg))
+                    ret_converters.append(partial(_pyobject_converter, arg))
                 else:
                     ret_converters.append(lambda a, *args: a)
         if len(inp_arraypos) == 0 and len(ret_arraypos) == 0:
@@ -1365,9 +1274,6 @@ _ALLOWED_MODULES = {
     "cmath": "dace::cmath::",
 }
 
-# Lists allowed modules and maps them to OpenCL
-_OPENCL_ALLOWED_MODULES = {"builtins": "", "dace": "", "math": ""}
-
 
 def ismodule(var):
     """ Returns True if a given object is a module. """
@@ -1519,17 +1425,11 @@ def can_access(schedule: ScheduleType, storage: StorageType):
             ScheduleType.GPU_Persistent,
             ScheduleType.GPU_ThreadBlock,
             ScheduleType.GPU_ThreadBlock_Dynamic,
-            ScheduleType.GPU_Default,
     ]:
         return storage in [StorageType.GPU_Global, StorageType.GPU_Shared, StorageType.CPU_Pinned]
     elif schedule in [ScheduleType.Default, ScheduleType.CPU_Multicore, ScheduleType.CPU_Persistent]:
         return storage in [
             StorageType.Default, StorageType.CPU_Heap, StorageType.CPU_Pinned, StorageType.CPU_ThreadLocal
-        ]
-    elif schedule in [ScheduleType.FPGA_Device]:
-        return storage in [
-            StorageType.FPGA_Local, StorageType.FPGA_Global, StorageType.FPGA_Registers, StorageType.FPGA_ShiftRegister,
-            StorageType.CPU_Pinned
         ]
     elif schedule == ScheduleType.Sequential:
         raise ValueError("Not well defined")
@@ -1540,7 +1440,6 @@ def can_allocate(storage: StorageType, schedule: ScheduleType):
     Identifies whether a container of a storage type can be allocated in a
     specific schedule. Used to determine arguments to subgraphs by the
     innermost scope that a container can be allocated in. For example,
-    FPGA_Global memory cannot be allocated from within the FPGA scope, or
     GPU shared memory cannot be allocated outside of device-level code.
 
     :param storage: The storage type of the data container to allocate.
@@ -1550,33 +1449,26 @@ def can_allocate(storage: StorageType, schedule: ScheduleType):
     # Host-only allocation
     if storage in [StorageType.CPU_Heap, StorageType.CPU_Pinned, StorageType.CPU_ThreadLocal]:
         return schedule in [
-            ScheduleType.CPU_Multicore, ScheduleType.CPU_Persistent, ScheduleType.Sequential, ScheduleType.MPI,
-            ScheduleType.GPU_Default
+            ScheduleType.CPU_Multicore,
+            ScheduleType.CPU_Persistent,
+            ScheduleType.Sequential,
+            ScheduleType.MPI,
         ]
 
     # GPU-global memory
     if storage is StorageType.GPU_Global:
         return schedule in [
-            ScheduleType.CPU_Multicore, ScheduleType.CPU_Persistent, ScheduleType.Sequential, ScheduleType.MPI,
-            ScheduleType.GPU_Default
+            ScheduleType.CPU_Multicore,
+            ScheduleType.CPU_Persistent,
+            ScheduleType.Sequential,
+            ScheduleType.MPI,
         ]
-
-    # FPGA-global memory
-    if storage is StorageType.FPGA_Global:
-        return schedule in [
-            ScheduleType.CPU_Multicore, ScheduleType.CPU_Persistent, ScheduleType.Sequential, ScheduleType.MPI,
-            ScheduleType.FPGA_Device, ScheduleType.GPU_Default
-        ]
-
-    # FPGA-local memory
-    if storage in [StorageType.FPGA_Local, StorageType.FPGA_Registers]:
-        return schedule == ScheduleType.FPGA_Device
 
     # GPU-local memory
     if storage == StorageType.GPU_Shared:
         return schedule in [
             ScheduleType.GPU_Device, ScheduleType.GPU_ThreadBlock, ScheduleType.GPU_ThreadBlock_Dynamic,
-            ScheduleType.GPU_Persistent, ScheduleType.GPU_Default
+            ScheduleType.GPU_Persistent
         ]
 
     # The rest (Registers) can be allocated everywhere

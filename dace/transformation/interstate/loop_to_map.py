@@ -8,7 +8,7 @@ from typing import Dict, List, Set
 import warnings
 
 from dace import data as dt, dtypes, memlet, nodes, sdfg as sd, symbolic, subsets, properties
-from dace.codegen.tools.type_inference import infer_expr_type
+from dace.sdfg.type_inference import infer_expr_type
 from dace.sdfg import graph as gr, nodes
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import utils as sdutil

@@ -32,7 +32,7 @@ def bounding_box_cover_exact(subset_a, subset_b, approximation=False) -> bool:
     and `False` otherwise.
 
     :param subset_a: The first subset, the one that should cover.
-    :param subset_b: The second subset, the one that should be convered.
+    :param subset_b: The second subset, the one that should be covered.
     :param approximation: If `True` then use the approximated bounds.
     """
     min_elements_a = subset_a.min_element_approx() if approximation else subset_a.min_element()
@@ -73,7 +73,7 @@ def bounding_box_symbolic_positive(subset_a, subset_b, approximation=False) -> b
     and `False` otherwise.
 
     :param subset_a: The first subset, the one that should cover.
-    :param subset_b: The second subset, the one that should be convered.
+    :param subset_b: The second subset, the one that should be covered.
     :param approximation: If `True` then use the approximated bounds.
 
     :note: In previous versions this function raised `TypeError` in some cases
@@ -646,7 +646,7 @@ class Range(Subset):
                 # Open parenthesis found, increase count by 1
                 if token[i] == '(':
                     count += 1
-                # Closing parenthesis found, decrease cound by 1
+                # Closing parenthesis found, decrease count by 1
                 elif token[i] == ')':
                     count -= 1
                 # Move to the next character
@@ -1277,7 +1277,7 @@ class SubsetUnion(Subset):
 
         if isinstance(other, SubsetUnion):
             for subset in self.subset_list:
-                # check if ther is a subset in self that covers every subset in other
+                # check if there is a subset in self that covers every subset in other
                 if all(subset.covers(s) for s in other.subset_list):
                     return True
             # return False if that's not the case for any of the subsets in self
@@ -1295,7 +1295,7 @@ class SubsetUnion(Subset):
 
         if isinstance(other, SubsetUnion):
             for subset in self.subset_list:
-                # check if ther is a subset in self that covers every subset in other
+                # check if there is a subset in self that covers every subset in other
                 if all(subset.covers_precise(s) for s in other.subset_list):
                     return True
             # return False if that's not the case for any of the subsets in self

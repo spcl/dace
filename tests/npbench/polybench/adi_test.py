@@ -5,9 +5,7 @@ import numpy as np
 import dace
 import pytest
 import argparse
-from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
-from dace.fpga_testing import fpga_test
-from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
+from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.autodiff import add_backward_pass
 
 # Dataset sizes
@@ -209,21 +207,8 @@ def run_adi(device_type: dace.dtypes.DeviceType):
         sdfg = adi_kernel.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
         sdfg(TSTEPS=TSTEPS, u=dace_u, N=N)
-    elif device_type == dace.dtypes.DeviceType.FPGA:
-        # Parse SDFG and apply FPGA friendly optimization
-        sdfg = adi_kernel.to_sdfg(simplify=True)
-        applied = sdfg.apply_transformations([FPGATransformSDFG])
-        assert applied == 1
-
-        # Use FPGA Expansion for lib nodes, and expand them to enable further optimizations
-        from dace.libraries.blas import Gemm
-        Gemm.default_implementation = "FPGA1DSystolic"
-        sdfg.expand_library_nodes()
-        # In this case, we want to generate the top-level state as an host-based state,
-        # not an FPGA kernel. We need to explicitly indicate that
-        sdfg.apply_transformations_repeated([InlineSDFG], print_report=True)
-        sdfg.specialize(dict(N=N))
-        sdfg(TSTEPS=TSTEPS, u=dace_u)
+    else:
+        raise ValueError(f"Unsupported device type: {device_type}")
 
     # Compute ground truth and Validate result
     numpy_kernel(TSTEPS, N, u)
@@ -286,16 +271,10 @@ def test_autodiff():
     run_adi_autodiff()
 
 
-@pytest.mark.skip(reason="Intel FPGA argument overflow")
-@fpga_test(assert_ii_1=False)
-def test_fpga():
-    return run_adi(dace.dtypes.DeviceType.FPGA)
-
-
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]
@@ -305,5 +284,3 @@ if __name__ == "__main__":
         run_adi_autodiff()
     elif target == "gpu":
         run_adi(dace.dtypes.DeviceType.GPU)
-    elif target == "fpga":
-        run_adi(dace.dtypes.DeviceType.FPGA)
