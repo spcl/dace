@@ -97,10 +97,8 @@ def get_static_symbols(sdfg: SDFG):
                         code = tasklet.code.as_string.strip()
                         # Expect a single assignment
                         lines = [l.strip() for l in code.splitlines() if l.strip()]
-                        print(lines)
 
                         if len(lines)>1:
-                            print("Node data:", node.data)
                             non_static_symbols.add(node.data)
                             continue
                         lhs, rhs = lines[0].split('=',1)
