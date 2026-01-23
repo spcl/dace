@@ -16,6 +16,7 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
 
     inp_desc, inp_shape, out_desc, out_shape = node.validate(parent_sdfg, parent_state)
     dtype = inp_desc.dtype
+    cast = "(float *)" if dtype == dace.float32sr else ""
     storage = inp_desc.storage
 
     sdfg = dace.SDFG("{l}_sdfg".format(l=node.label))
@@ -36,7 +37,7 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
     _, me, mx = state.add_mapped_tasklet('_uzero_',
                                          dict(__i="0:%s" % out_shape[0], __j="0:%s" % out_shape[1]),
                                          dict(_inp=Memlet.simple('_b', '__i, __j')),
-                                         '_out = (__i < __j) ? 0 : _inp;',
+                                         f'_out = (__i < __j) ? {cast}(0) : _inp;',
                                          dict(_out=Memlet.simple('_b', '__i, __j')),
                                          language=dace.dtypes.Language.CPP,
                                          external_edges=True)
