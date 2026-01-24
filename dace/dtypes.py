@@ -1250,6 +1250,7 @@ if TYPE_CHECKING:
     class vector(_DaCeArray, npt.NDArray[numpy.void]): ...
     class MPI_Request(_DaCeArray, npt.NDArray[numpy.void]): ...
     class float32sr(_DaCeArray, npt.NDArray[numpy.float32]): ...
+    class gpuStream_t(_DaCeArray, npt.NDArray[numpy.void]): ...
     # yapf: enable
 else:
     # Runtime definitions
@@ -1270,6 +1271,7 @@ else:
     complex128 = typeclass(numpy.complex128)
     string = stringtype()
     MPI_Request = opaque('MPI_Request')
+    gpuStream_t = opaque('gpuStream_t')
     float32sr = Float32sr()
 
 
