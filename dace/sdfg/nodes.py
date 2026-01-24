@@ -865,7 +865,7 @@ class MapEntry(EntryNode):
         return self._map
 
     @map.setter
-    def map(self, val):
+    def map(self, val: 'Map'):
         self._map = val
 
     def __str__(self):

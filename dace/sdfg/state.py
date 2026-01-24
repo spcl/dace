@@ -2580,7 +2580,7 @@ class ReturnBlock(ControlFlowBlock):
         return tmp
 
 
-class StateSubgraphView(SubgraphView, DataflowGraphView):
+class StateSubgraphView(SubgraphView[nd.Node, mm.Memlet], DataflowGraphView):
     """ A read-only subgraph view of an SDFG state. """
 
     def __init__(self, graph, subgraph_nodes):
