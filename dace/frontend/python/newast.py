@@ -1637,6 +1637,12 @@ class ProgramVisitor(ExtNodeVisitor):
                                                       Memlet.from_array(memlet.data,
                                                                         nested_sdfg.arrays[memlet.data]), [])
 
+            # Remove unused non-transients from nested SDFG
+            used = set(nested_inputs.keys()).union(set(nested_outputs.keys()))
+            to_remove = [aname for aname, arr in nested_sdfg.arrays.items() if not arr.transient and aname not in used]
+            for aname in to_remove:
+                nested_sdfg.remove_data(aname, validate=False)
+
             return nested_sdfg, nested_inputs, nested_outputs, nested_symbols
         except SkipCall:
             raise
