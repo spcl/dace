@@ -214,7 +214,10 @@ def replace_properties_dict(node: Any,
             newval = []
             for item in propval:
                 try:
-                    newval.append(symbolic.pystr_to_symbolic(str(item)).subs(symrepl))
+                    newitem = symbolic.pystr_to_symbolic(str(item)).subs(symrepl)
+                    if propclass.element_type in (str, int, float):  # Not symbolic types
+                        newitem = propclass.element_type(newitem)
+                    newval.append(newitem)
                 except AttributeError:  # If the symbolified value has no subs
                     newval.append(item)
 
