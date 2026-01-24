@@ -516,8 +516,17 @@ def control_flow_region_work_depth(cfr: ControlFlowRegion,
                 loop_work = sp.simplify(loop_work.subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1))
                 loop_depth = sp.simplify(loop_depth.subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1))
             else:
-                loop_work = sp.simplify(loop_work.subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1))*executions
-                loop_depth = sp.simplify(loop_depth.subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1))*executions
+                loop_work = sp.simplify(loop_work.subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1))
+                loop_depth = sp.simplify(loop_depth.subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1))
+
+                if executions != 0:
+                    loop_work = loop_work*executions
+                    loop_depth = loop_depth*executions
+                else:
+                    exec_symbol = sp.Symbol(f'num_executions_{loop.name}')
+                    loop_work = loop_work*exec_symbol
+                    loop_depth = loop_depth*exec_symbol
+
             region_works[loop], region_depths[loop] = loop_work, loop_depth
             w_d_map[get_uuid(loop)] = (region_works[loop], region_depths[loop])
 

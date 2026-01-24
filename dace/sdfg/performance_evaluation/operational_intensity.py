@@ -397,8 +397,7 @@ def cfr_misses(cfr:ControlFlowRegion,
                array_names,
                decided_branches,
                ask_user,
-               start=None,
-               end=None):
+               start=None):
     region_misses = 0
     if isinstance(cfr, SDFGState):
         region_misses = scope_misses(cfr, op_in_map, mapping, stack, clt, C, symbols, array_names, decided_branches,
