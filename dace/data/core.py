@@ -1291,6 +1291,7 @@ class Reference:
 
         # References are always transient
         result.transient = True
+        result.lifetime = dtypes.AllocationLifetime.Scope
         return result
 
 
