@@ -34,7 +34,7 @@ Example:
 from itertools import chain
 from typing import List
 
-import aenum
+import enum
 import numpy as np
 import onnx
 
@@ -155,10 +155,10 @@ def onnx_representation(represents, **mapping):
     return decorator
 
 
-class ONNXParameterType(aenum.AutoNumberEnum):
-    Single = ()  #: single/required parameters
-    Optional = ()  #: optional parameters
-    Variadic = ()  #: variadic parameters
+class ONNXParameterType(enum.Enum):
+    Single = enum.auto()  #: single/required parameters
+    Optional = enum.auto()  #: optional parameters
+    Variadic = enum.auto()  #: variadic parameters
 
 
 @onnx_representation(onnx.defs.OpSchema.FormalParameter,
@@ -180,15 +180,15 @@ class ONNXParameter:
         return "{} ({})".format(self.name, str(self.param_type))
 
 
-class ONNXAttributeType(aenum.AutoNumberEnum):
-    Int = ()  #: Integer (python representation is ``int``)
-    Float = ()  #: Float (python representation is ``float``)
-    String = ()  #: String (python representation is ``str``)
-    Ints = ()  #: Ints (python representation is ``List`` [``int``])
-    Floats = ()  #: Floats (python representation is ``List`` [``float``])
-    Strings = ()  #: Strings (python representation is ``List`` [``str``])
-    Tensor = ()  #: Tensor (python representation is ``numpy.ndarray``)
-    Unsupported = ()  #: Any unsupported attribute type
+class ONNXAttributeType(enum.Enum):
+    Int = enum.auto()  #: Integer (python representation is ``int``)
+    Float = enum.auto()  #: Float (python representation is ``float``)
+    String = enum.auto()  #: String (python representation is ``str``)
+    Ints = enum.auto()  #: Ints (python representation is ``List`` [``int``])
+    Floats = enum.auto()  #: Floats (python representation is ``List`` [``float``])
+    Strings = enum.auto()  #: Strings (python representation is ``List`` [``str``])
+    Tensor = enum.auto()  #: Tensor (python representation is ``numpy.ndarray``)
+    Unsupported = enum.auto()  #: Any unsupported attribute type
 
 
 _ATTR_TYPE_TO_PYTHON_TYPE = {
