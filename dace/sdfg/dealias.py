@@ -279,7 +279,9 @@ def integrate_nested_sdfg(sdfg: SDFG):
             symbols_to_add.add(str(sym))
 
     if symbols_to_add:
-        remove_symbol_aliases(sdfg, {sym: sym for sym in symbols_to_add})
+        symbol_aliases = remove_symbol_aliases(sdfg, {sym: sym for sym in symbols_to_add})
+    else:
+        symbol_aliases = {}
 
     # Process each data container that needs to be integrated
     visited: Set[str] = set()
@@ -404,6 +406,20 @@ def integrate_nested_sdfg(sdfg: SDFG):
             # Add the symbol to the SDFG and the parent node's symbol mapping
             sdfg.add_symbol(sym_name, sym_type)
         parent_node.symbol_mapping[sym_name] = sym_name
+
+    # If any symbols were renamed by remove_symbol_aliases (e.g., H -> H_0),
+    # we need to reverse the renaming to restore the original symbol names,
+    # but ONLY for symbols that were identity-mapped (meaning they should be
+    # shared with the parent). Symbols that were mapped to different values
+    # (like internal symbols mapped to constants) should stay renamed.
+    if symbol_aliases:
+        # Only reverse aliases for symbols that were in the original symbols_to_add set
+        # (i.e., symbols from parent data descriptors that should be shared)
+        reverse_aliases = {v: k for k, v in symbol_aliases.items() if k in symbols_to_add}
+        if reverse_aliases:
+            sdfg.replace_dict(reverse_aliases)
+            # Update the symbol mapping on the parent node
+            symbolic.safe_replace(reverse_aliases, lambda d: _replace_dict_keys(parent_node.symbol_mapping, d))
 
 
 def remove_symbol_aliases(sdfg: SDFG, symbol_mapping: Dict[str, str]) -> Dict[str, str]:
