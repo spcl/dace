@@ -315,12 +315,9 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
         assert len(self._dataflow_stack) == dataflow_stack_size
 
         # insert nested SDFG
-        nsdfg = self._current_state.add_nested_sdfg(inner_sdfg,
-                                                    sdfg,
+        nsdfg = self._current_state.add_nested_sdfg(sdfg=inner_sdfg,
                                                     inputs=connectors["inputs"],
-                                                    outputs=connectors["outputs"],
-                                                    schedule=node.node.map.schedule)
-
+                                                    outputs=connectors["outputs"])
         # connect nested SDFG to surrounding map scope
         assert self._dataflow_stack
         map_entry, to_connect = self._dataflow_stack[-1]
