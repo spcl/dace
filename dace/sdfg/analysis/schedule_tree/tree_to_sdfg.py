@@ -190,27 +190,17 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
         self._current_state = after_state
 
     def visit_WhileScope(self, node: tn.WhileScope, sdfg: SDFG) -> None:
-        before_state = self._current_state
-        guard_state = _insert_and_split_assignments(sdfg,
-                                                    before_state,
-                                                    label="guard_state",
-                                                    assignments=self._pending_interstate_assignments())
-        self._current_state = guard_state
+        loop_region = node.loop
+        loop_state = loop_region.add_state(f"while_loop_state_{id(node)}", is_start_block=True)
+        current_state = self._current_state
 
-        body_state = sdfg.add_state(label="loop_body")
-        self._current_state = body_state
-        sdfg.add_edge(guard_state, body_state, InterstateEdge(condition=node.header.test))
+        _insert_and_split_assignments(sdfg, current_state, loop_region)
 
-        # visit children inside the loop
-        self.visit(node.children, sdfg=sdfg)
-        _insert_and_split_assignments(sdfg,
-                                      before_state=self._current_state,
-                                      after_state=guard_state,
-                                      assignments=self._pending_interstate_assignments())
+        self._current_state = loop_state
+        self.visit(node.children, sdfg=loop_region)
 
-        after_state = sdfg.add_state(label="loop_after")
+        after_state = _insert_and_split_assignments(sdfg, loop_region, label="loop_after")
         self._current_state = after_state
-        sdfg.add_edge(guard_state, after_state, InterstateEdge(f"not {node.header.test.as_string}"))
 
     def visit_DoWhileScope(self, node: tn.DoWhileScope, sdfg: SDFG) -> None:
         # AFAIK we don't support for do-while loops in the gt4py -> dace bridge.
@@ -952,8 +942,7 @@ def create_state_boundary(boundary_node: tn.StateBoundaryNode,
     :return: The newly created state.
     """
     if behavior != StateBoundaryBehavior.STATE_TRANSITION:
-        # Only STATE_TRANSITION is supported as StateBoundaryBehavior in this prototype.
-        raise NotImplementedError
+        raise NotImplementedError("Only STATE_TRANSITION is supported as StateBoundaryBehavior in this prototype.")
 
     # TODO: Some boundaries (control flow, state labels with goto) could not be fulfilled with every
     #       behavior. Fall back to state transition in that case.

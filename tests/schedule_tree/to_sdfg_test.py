@@ -318,7 +318,7 @@ def test_create_tasklet_war():
             if isinstance(node, nodes.AccessNode)] == ["A", "A"], "Expect two AccessNodes for A."
 
 
-def test_create_for_loop():
+def test_create_loop_for():
     for_scope = tn.ForScope(loop=LoopRegion(label="my_for_loop",
                                             loop_var="i",
                                             initialize_expr=CodeBlock("i = 0 "),
@@ -332,7 +332,6 @@ def test_create_for_loop():
                             ])
 
     stree = tn.ScheduleTreeRoot(name='tester', containers={'A': data.Array(dace.float64, [20])}, children=[for_scope])
-
     sdfg = stree.as_sdfg()
 
     loops = list(filter(lambda x: isinstance(x, LoopRegion), sdfg.cfg_list))
@@ -353,20 +352,36 @@ def test_create_for_loop():
     assert tasklet_2.label == "assign_2"
 
 
-def test_create_while_loop():
-    loop = tn.WhileScope(children=[
-        tn.TaskletNode(nodes.Tasklet('bla', {}, {'out'}, 'out = 1'), {}, {'out': dace.Memlet('A[1]')}),
-        tn.TaskletNode(nodes.Tasklet('bla', {}, {'out'}, 'out = 2'), {}, {'out': dace.Memlet('A[1]')}),
+def test_create_loop_while():
+    while_scope = tn.WhileScope(children=[
+        tn.TaskletNode(nodes.Tasklet('assign_1', {}, {'out'}, 'out = 1'), {}, {'out': dace.Memlet('A[1]')}),
+        tn.TaskletNode(nodes.Tasklet('assign_2', {}, {'out'}, 'out = 2'), {}, {'out': dace.Memlet('A[1]')}),
     ],
-                         loop=LoopRegion(
-                             label="my_while_loop",
-                             condition_expr=CodeBlock("A[1] > 5"),
-                         ))
+                                loop=LoopRegion(
+                                    label="my_while_loop",
+                                    condition_expr=CodeBlock("A[1] > 5"),
+                                ))
 
-    stree = tn.ScheduleTreeRoot(name='tester', containers={'A': data.Array(dace.float64, [20])}, children=[loop])
+    stree = tn.ScheduleTreeRoot(name='tester', containers={'A': data.Array(dace.float64, [20])}, children=[while_scope])
 
     sdfg = stree.as_sdfg()
-    sdfg.validate()
+
+    loops = list(filter(lambda x: isinstance(x, LoopRegion), sdfg.cfg_list))
+    assert len(loops) == 1, "SDFG contains one LoopRegion"
+
+    loop: LoopRegion = loops[0]
+    assert loop.loop_variable == ""
+    assert loop.init_statement == None
+    assert loop.loop_condition == CodeBlock("A[1] > 5")
+    assert loop.update_statement == None
+
+    loop_states = list(filter(lambda x: isinstance(x, SDFGState), loop.nodes()))
+    assert len(loop_states) == 2, "Loop contains two states"
+
+    tasklet_1: nodes.Tasklet = list(filter(lambda x: isinstance(x, nodes.Tasklet), loop_states[0].nodes()))[0]
+    assert tasklet_1.label == "assign_1"
+    tasklet_2: nodes.Tasklet = list(filter(lambda x: isinstance(x, nodes.Tasklet), loop_states[1].nodes()))[0]
+    assert tasklet_2.label == "assign_2"
 
 
 def test_create_if_else():
@@ -730,8 +745,8 @@ if __name__ == '__main__':
     # test_create_state_boundary_empty_memlet(control_flow=False)
     test_create_tasklet_raw()
     test_create_tasklet_waw()
-    test_create_for_loop()
-    test_create_while_loop()
+    test_create_loop_for()
+    test_create_loop_while()
     test_create_if_else()
     test_create_if_without_else()
     test_create_map_scope_write()
