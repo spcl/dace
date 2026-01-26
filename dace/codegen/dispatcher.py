@@ -12,13 +12,19 @@ from dace.codegen import exceptions as cgx, prettycode
 from dace.codegen import target
 from dace.sdfg import utils as sdutil, SDFG, SDFGState, ScopeSubgraphView
 from dace.sdfg.graph import MultiConnectorEdge
-from typing import Callable, Dict, List, Optional, Set, Tuple, Union
+from typing import Callable, Dict, List, Optional, Set, Tuple, Union, TYPE_CHECKING
 
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
 
+if TYPE_CHECKING:
+    import enum
+    AutoNumberEnum = enum.Enum
+else:
+    AutoNumberEnum = aenum.AutoNumberEnum
+
 
 @registry.extensible_enum
-class DefinedType(aenum.AutoNumberEnum):
+class DefinedType(AutoNumberEnum):
     """ Data types for `DefinedMemlets`.
 
         :see: DefinedMemlets

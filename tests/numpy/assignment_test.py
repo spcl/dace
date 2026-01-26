@@ -2,6 +2,7 @@
 import dace
 import numpy as np
 from common import compare_numpy_output
+from typing_extensions import TypeAlias
 
 
 def test_multiassign():
@@ -142,7 +143,7 @@ def test_annotated_assign_type():
 
 
 def test_annotated_assign_with_value():
-    dtype = dace.float32
+    dtype: TypeAlias = dace.float32
 
     @dace.program
     def reduce_by_key(x: dtype[20, 20], y: dtype[20]):

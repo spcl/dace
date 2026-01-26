@@ -8,6 +8,7 @@ import copy
 import os
 import sympy
 from typing import Any, Callable, Dict, List, Optional, Set, Sequence, Tuple, Union
+from typing import get_origin, get_args
 import warnings
 
 from dace import data, dtypes, hooks, symbolic
@@ -16,11 +17,6 @@ from dace.frontend.python import (newast, common as pycommon, cached_program, pr
 from dace.sdfg import SDFG, utils as sdutils
 from dace.data import create_datadescriptor, Data
 from dace.sdfg.dealias import dealias
-
-try:
-    from typing import get_origin, get_args
-except ImportError:
-    from typing_compat import get_origin, get_args
 
 try:
     import mpi4py
