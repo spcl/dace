@@ -38,7 +38,7 @@ def test_implicit_inline_and_constants():
 
     # Test SDFG
     a = np.random.rand(20, 20)
-    new_sdfg(a)  # Tests arg_names
+    new_sdfg(A=a)  # Tests arg_names
     assert np.allclose(a, 1)
 
 

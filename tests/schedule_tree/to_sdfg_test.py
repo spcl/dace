@@ -647,8 +647,8 @@ def test_map_calculate_temporary_in_two_loops():
                         ]),
             tn.MapScope(node=nodes.MapEntry(nodes.Map("read_tmp", "i", sbs.Range.from_string("0:20"))),
                         children=[
-                            tn.TaskletNode(nodes.Tasklet("read_temp", {"tmp"}, {"out"}, "out = tmp + 1"),
-                                           {"tmp": dace.Memlet("tmp[i]")}, {"out": dace.Memlet("A[i]")})
+                            tn.TaskletNode(nodes.Tasklet("read_temp", {"read"}, {"out"}, "out = read + 1"),
+                                           {"read": dace.Memlet("tmp[i]")}, {"out": dace.Memlet("A[i]")})
                         ])
         ])
 
