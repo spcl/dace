@@ -390,18 +390,10 @@ def _BinOp(t, symbols, inferred_symbols):
         return dtypes.result_type_of(type_left, type_right)
     # Special case for integer power
     elif t.op.__class__.__name__ == 'Pow':
-        if (sys.version_info >= (3, 8) and isinstance(t.right, ast.Constant) and int(t.right.value) == t.right.value
-                and t.right.value >= 0):
+        if (isinstance(t.right, ast.Constant) and int(t.right.value) == t.right.value and t.right.value >= 0):
             if t.right.value != 0:
                 type_left = _dispatch(t.left, symbols, inferred_symbols)
-                for i in range(int(t.right.n) - 1):
-                    _dispatch(t.left, symbols, inferred_symbols)
-            return dtypes.result_type_of(type_left, dtypes.typeclass(np.uint32))
-        elif (sys.version_info < (3, 8) and isinstance(t.right, ast.Num) and int(t.right.n) == t.right.n
-              and t.right.n >= 0):
-            if t.right.n != 0:
-                type_left = _dispatch(t.left, symbols, inferred_symbols)
-                for i in range(int(t.right.n) - 1):
+                for i in range(int(t.right.value) - 1):
                     _dispatch(t.left, symbols, inferred_symbols)
             return dtypes.result_type_of(type_left, dtypes.typeclass(np.uint32))
         else:
