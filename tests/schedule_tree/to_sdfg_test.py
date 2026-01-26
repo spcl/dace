@@ -10,7 +10,7 @@ from dace.sdfg import nodes
 from dace.sdfg.analysis.schedule_tree import tree_to_sdfg as t2s, treenodes as tn
 import pytest
 
-from dace.sdfg.state import ConditionalBlock, LoopRegion
+from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
 
 
 def test_state_boundaries_none():
@@ -319,22 +319,38 @@ def test_create_tasklet_war():
 
 
 def test_create_for_loop():
-    loop = tn.ForScope(loop=LoopRegion(label="my_for_loop",
-                                       loop_var="i",
-                                       initialize_expr=CodeBlock("i = 0 "),
-                                       condition_expr=CodeBlock("i < 3"),
-                                       update_expr=CodeBlock("i = i+1")),
-                       children=[
-                           tn.TaskletNode(nodes.Tasklet('bla', {}, {'out'}, 'out = 1'), {},
-                                          {'out': dace.Memlet('A[1]')}),
-                           tn.TaskletNode(nodes.Tasklet('bla', {}, {'out'}, 'out = 2'), {},
-                                          {'out': dace.Memlet('A[1]')}),
-                       ])
+    for_scope = tn.ForScope(loop=LoopRegion(label="my_for_loop",
+                                            loop_var="i",
+                                            initialize_expr=CodeBlock("i = 0 "),
+                                            condition_expr=CodeBlock("i < 3"),
+                                            update_expr=CodeBlock("i = i+1")),
+                            children=[
+                                tn.TaskletNode(nodes.Tasklet('assign_1', {}, {'out'}, 'out = 1'), {},
+                                               {'out': dace.Memlet('A[1]')}),
+                                tn.TaskletNode(nodes.Tasklet('assign_2', {}, {'out'}, 'out = 2'), {},
+                                               {'out': dace.Memlet('A[1]')}),
+                            ])
 
-    stree = tn.ScheduleTreeRoot(name='tester', containers={'A': data.Array(dace.float64, [20])}, children=[loop])
+    stree = tn.ScheduleTreeRoot(name='tester', containers={'A': data.Array(dace.float64, [20])}, children=[for_scope])
 
     sdfg = stree.as_sdfg()
-    sdfg.validate()
+
+    loops = list(filter(lambda x: isinstance(x, LoopRegion), sdfg.cfg_list))
+    assert len(loops) == 1, "SDFG contains one LoopRegion"
+
+    loop: LoopRegion = loops[0]
+    assert loop.loop_variable == "i"
+    assert loop.init_statement == CodeBlock("i = 0")
+    assert loop.loop_condition == CodeBlock("i < 3")
+    assert loop.update_statement == CodeBlock("i = i+1")
+
+    loop_states = list(filter(lambda x: isinstance(x, SDFGState), loop.nodes()))
+    assert len(loop_states) == 2, "Loop contains two states"
+
+    tasklet_1: nodes.Tasklet = list(filter(lambda x: isinstance(x, nodes.Tasklet), loop_states[0].nodes()))[0]
+    assert tasklet_1.label == "assign_1"
+    tasklet_2: nodes.Tasklet = list(filter(lambda x: isinstance(x, nodes.Tasklet), loop_states[1].nodes()))[0]
+    assert tasklet_2.label == "assign_2"
 
 
 def test_create_while_loop():
@@ -386,8 +402,33 @@ def test_create_if_else():
     assert tasklets[0].label == "blub", "Else branch contains Tasklet('blub')"
 
 
-# TODO
-# support for if_elif_else
+@pytest.mark.xfail(reason="Not yet implemented")
+def test_create_if_elif_else() -> None:
+    stree = tn.ScheduleTreeRoot(
+        name="tester",
+        containers={'A': data.Array(dace.float64, [20])},
+        children=[
+            tn.IfScope(condition=CodeBlock("A[0] > 0"),
+                       children=[
+                           tn.TaskletNode(nodes.Tasklet("bla", {}, {"out"}, "out=1"), {}, {"out": dace.Memlet("A[1]")}),
+                       ]),
+            tn.ElifScope(condition=CodeBlock("A[0] == 0"),
+                         children=[
+                             tn.TaskletNode(nodes.Tasklet("blub", {}, {"out"}, "out=2"), {},
+                                            {"out": dace.Memlet("A[1]")}),
+                         ]),
+            tn.ElseScope(children=[
+                tn.TaskletNode(nodes.Tasklet("test", {}, {"out"}, "out=3"), {}, {"out": dace.Memlet("A[1]")})
+            ])
+        ])
+
+    sdfg = stree.as_sdfg()
+
+    blocks = list(filter(lambda x: isinstance(x, ConditionalBlock), sdfg.cfg_list))
+    assert len(blocks) == 1, "SDFG contains one ConditionalBlock"
+
+    block: ConditionalBlock = blocks[0]
+    assert len(block.branches) == 3, "Block contains three branches"
 
 
 def test_create_if_without_else():

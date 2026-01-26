@@ -5,7 +5,7 @@ from dace import symbolic
 from dace.memlet import Memlet
 from dace.sdfg import nodes, memlet_utils as mmu
 from dace.sdfg.sdfg import SDFG, ControlFlowRegion, InterstateEdge
-from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, SDFGState
+from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, LoopRegion, SDFGState
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg import propagation
 from enum import Enum, auto
@@ -177,27 +177,17 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
                 raise ValueError(f"Parsing AssignNode {node} failed. Can't find {memlet.data} in {sdfg}.")
 
     def visit_ForScope(self, node: tn.ForScope, sdfg: SDFG) -> None:
-        before_state = self._current_state
-        pending = self._pending_interstate_assignments()
-        pending[node.header.itervar] = node.header.init
+        loop_region = node.loop
+        loop_state = loop_region.add_state(f"for_loop_state_{id(node)}", is_start_block=True)
+        current_state = self._current_state
 
-        guard_state = _insert_and_split_assignments(sdfg, before_state, label="loop_guard", assignments=pending)
-        self._current_state = guard_state
+        _insert_and_split_assignments(sdfg, current_state, loop_region)
 
-        body_state = sdfg.add_state(label="loop_body")
-        self._current_state = body_state
-        sdfg.add_edge(guard_state, body_state, InterstateEdge(condition=node.header.condition))
+        self._current_state = loop_state
+        self.visit(node.children, sdfg=loop_region)
 
-        # visit children inside the loop
-        self.visit(node.children, sdfg=sdfg)
-
-        pending = self._pending_interstate_assignments()
-        pending[node.header.itervar] = node.header.update
-        _insert_and_split_assignments(sdfg, self._current_state, after_state=guard_state, assignments=pending)
-
-        after_state = sdfg.add_state(label="loop_after")
+        after_state = _insert_and_split_assignments(sdfg, loop_region, label="loop_after")
         self._current_state = after_state
-        sdfg.add_edge(guard_state, after_state, InterstateEdge(condition=f"not {node.header.condition.as_string}"))
 
     def visit_WhileScope(self, node: tn.WhileScope, sdfg: SDFG) -> None:
         before_state = self._current_state
@@ -246,7 +236,7 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
         self._current_state = if_state
 
         # visit children of that branch
-        self.visit(node.children, sdfg=sdfg)
+        self.visit(node.children, sdfg=if_body)
 
         self._current_state = conditional_block
 
@@ -297,7 +287,7 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
         self._current_state = else_state
 
         # visit children inside the else branch
-        self.visit(node.children, sdfg=sdfg)
+        self.visit(node.children, sdfg=else_body)
 
         # merge false-branch into merge_state
         merge_state = self._pop_state("merge_state")
@@ -992,6 +982,8 @@ def _insert_and_split_assignments(sdfg_region: ControlFlowRegion,
                  weaken (best case remove) the corresponding check from the sdfg
                  validator.
     """
+    assignments = assignments if assignments is not None else {}
+
     has_potential_race = False
     for key, value in assignments.items():
         syms = symbolic.free_symbols_and_functions(value)
