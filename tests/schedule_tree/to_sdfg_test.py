@@ -608,6 +608,91 @@ def test_create_nested_map_scope():
     sdfg.validate()
 
 
+def test_triple_map_flat_if():
+    stree = tn.ScheduleTreeRoot(
+        name="tester",
+        containers={'A': data.Array(dace.float64, [60])},
+        children=[
+            tn.MapScope(
+                node=nodes.MapEntry(nodes.Map("map_i", "i", sbs.Range.from_string("0:4"))),
+                children=[
+                    tn.MapScope(
+                        node=nodes.MapEntry(nodes.Map("map_j", "j", sbs.Range.from_string("0:5"))),
+                        children=[
+                            tn.MapScope(
+                                node=nodes.MapEntry(nodes.Map("map_k", "k", sbs.Range.from_string("0:3"))),
+                                children=[
+                                    tn.IfScope(
+                                        condition=CodeBlock("A[0] > 0"),
+                                        children=[
+                                            tn.TaskletNode(nodes.Tasklet("assign", {}, {"out"}, "out = 1"), {},
+                                                           {"out": dace.Memlet("A[i*15+j*3+k]")})
+                                        ],
+                                    ),
+                                    tn.ElseScope(children=[
+                                        tn.TaskletNode(nodes.Tasklet("assign", {}, {"out"}, "out = 2"), {},
+                                                       {"out": dace.Memlet("A[i*15+j*3+k]")})
+                                    ], ),
+                                ],
+                            )
+                        ],
+                    )
+                ],
+            )
+        ],
+    )
+
+    sdfg = stree.as_sdfg()
+    sdfg.validate()
+
+
+def test_triple_map_nested_if():
+    stree = tn.ScheduleTreeRoot(
+        name="tester",
+        containers={'A': data.Array(dace.float64, [60])},
+        children=[
+            tn.MapScope(
+                node=nodes.MapEntry(nodes.Map("map_i", "i", sbs.Range.from_string("0:4"))),
+                children=[
+                    tn.MapScope(
+                        node=nodes.MapEntry(nodes.Map("map_j", "j", sbs.Range.from_string("0:5"))),
+                        children=[
+                            tn.MapScope(
+                                node=nodes.MapEntry(nodes.Map("map_k", "k", sbs.Range.from_string("0:3"))),
+                                children=[
+                                    tn.IfScope(
+                                        condition=CodeBlock("A[0] > 0"),
+                                        children=[
+                                            tn.TaskletNode(nodes.Tasklet("assign", {}, {"out"}, "out = 1"), {},
+                                                           {"out": dace.Memlet("A[i*15+j*3+k]")})
+                                        ],
+                                    ),
+                                    tn.ElseScope(children=[
+                                        tn.IfScope(
+                                            condition=CodeBlock("A[1] > 0"),
+                                            children=[
+                                                tn.TaskletNode(nodes.Tasklet("assign", {}, {"out"}, "out = 2"), {},
+                                                               {"out": dace.Memlet("A[i*15+j*3+k]")})
+                                            ],
+                                        ),
+                                        tn.ElseScope(children=[
+                                            tn.TaskletNode(nodes.Tasklet("assign", {}, {"out"}, "out = 3"), {},
+                                                           {"out": dace.Memlet("A[i*15+j*3+k]")})
+                                        ], )
+                                    ], ),
+                                ],
+                            )
+                        ],
+                    )
+                ],
+            )
+        ],
+    )
+
+    sdfg = stree.as_sdfg()
+    sdfg.validate()
+
+
 def test_create_nested_map_scope_multi_read():
     stree = tn.ScheduleTreeRoot(
         name="tester",

@@ -177,10 +177,12 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
                 raise ValueError(f"Parsing AssignNode {node} failed. Can't find {memlet.data} in {sdfg}.")
 
     def visit_ForScope(self, node: tn.ForScope, sdfg: SDFG) -> None:
-        loop_region = node.loop
-        sdfg.add_node(loop_region)
-        loop_state = loop_region.add_state(f"for_loop_state_{id(node)}", is_start_block=True)
         current_state = self._current_state
+        cf_region = current_state.parent_graph
+
+        loop_region = node.loop
+        cf_region.add_node(loop_region)
+        loop_state = loop_region.add_state(f"for_loop_state_{id(node)}", is_start_block=True)
 
         _insert_and_split_assignments(current_state, loop_region)
 
@@ -191,10 +193,12 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
         self._current_state = after_state
 
     def visit_WhileScope(self, node: tn.WhileScope, sdfg: SDFG) -> None:
-        loop_region = node.loop
-        sdfg.add_node(loop_region)
-        loop_state = loop_region.add_state(f"while_loop_state_{id(node)}", is_start_block=True)
         current_state = self._current_state
+        cf_region = current_state.parent_graph
+
+        loop_region = node.loop
+        cf_region.add_node(loop_region)
+        loop_state = loop_region.add_state(f"while_loop_state_{id(node)}", is_start_block=True)
 
         _insert_and_split_assignments(current_state, loop_region)
 
@@ -213,9 +217,10 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
 
     def visit_IfScope(self, node: tn.IfScope, sdfg: SDFG) -> None:
         before_state = self._current_state
+        cf_region = before_state.parent_graph
 
         conditional_block = ConditionalBlock(f"if_scope_{id(node)}")
-        sdfg.add_node(conditional_block)
+        cf_region.add_node(conditional_block)
         _insert_and_split_assignments(
             before_state,
             conditional_block,
