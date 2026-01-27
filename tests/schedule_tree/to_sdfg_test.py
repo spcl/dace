@@ -225,7 +225,7 @@ def test_create_state_boundary_state_transition(control_flow):
     state = sdfg.add_state("start", is_start_block=True)
     bnode = tn.StateBoundaryNode(control_flow)
 
-    t2s.create_state_boundary(bnode, sdfg, state, t2s.StateBoundaryBehavior.STATE_TRANSITION)
+    t2s.create_state_boundary(bnode, state, t2s.StateBoundaryBehavior.STATE_TRANSITION)
     new_label = "cf_state_boundary" if control_flow else "state_boundary"
     assert ["start", new_label] == [state.label for state in sdfg.states()]
 
@@ -237,7 +237,7 @@ def test_create_state_boundary_empty_memlet(control_flow):
     state = sdfg.add_state("start", is_start_block=True)
     bnode = tn.StateBoundaryNode(control_flow)
 
-    t2s.create_state_boundary(bnode, sdfg, state, t2s.StateBoundaryBehavior.EMPTY_MEMLET)
+    t2s.create_state_boundary(bnode, state, t2s.StateBoundaryBehavior.EMPTY_MEMLET)
 
 
 def test_create_tasklet_raw():
@@ -319,17 +319,17 @@ def test_create_tasklet_war():
 
 
 def test_create_loop_for():
-    for_scope = tn.ForScope(loop=LoopRegion(label="my_for_loop",
-                                            loop_var="i",
-                                            initialize_expr=CodeBlock("i = 0 "),
-                                            condition_expr=CodeBlock("i < 3"),
-                                            update_expr=CodeBlock("i = i+1")),
-                            children=[
-                                tn.TaskletNode(nodes.Tasklet('assign_1', {}, {'out'}, 'out = 1'), {},
-                                               {'out': dace.Memlet('A[1]')}),
-                                tn.TaskletNode(nodes.Tasklet('assign_2', {}, {'out'}, 'out = 2'), {},
-                                               {'out': dace.Memlet('A[1]')}),
-                            ])
+    for_scope = tn.ForScope(
+        loop=LoopRegion(label="my_for_loop",
+                        loop_var="i",
+                        initialize_expr=CodeBlock("i = 0 "),
+                        condition_expr=CodeBlock("i < 3"),
+                        update_expr=CodeBlock("i = i+1")),
+        children=[
+            tn.TaskletNode(nodes.Tasklet('assign_1', {}, {'out'}, 'out = 1'), {}, {'out': dace.Memlet('A[1]')}),
+            tn.TaskletNode(nodes.Tasklet('assign_2', {}, {'out'}, 'out = 2'), {}, {'out': dace.Memlet('A[1]')}),
+        ],
+    )
 
     stree = tn.ScheduleTreeRoot(name='tester', containers={'A': data.Array(dace.float64, [20])}, children=[for_scope])
     sdfg = stree.as_sdfg()
@@ -353,14 +353,16 @@ def test_create_loop_for():
 
 
 def test_create_loop_while():
-    while_scope = tn.WhileScope(children=[
-        tn.TaskletNode(nodes.Tasklet('assign_1', {}, {'out'}, 'out = 1'), {}, {'out': dace.Memlet('A[1]')}),
-        tn.TaskletNode(nodes.Tasklet('assign_2', {}, {'out'}, 'out = 2'), {}, {'out': dace.Memlet('A[1]')}),
-    ],
-                                loop=LoopRegion(
-                                    label="my_while_loop",
-                                    condition_expr=CodeBlock("A[1] > 5"),
-                                ))
+    while_scope = tn.WhileScope(
+        children=[
+            tn.TaskletNode(nodes.Tasklet('assign_1', {}, {'out'}, 'out = 1'), {}, {'out': dace.Memlet('A[1]')}),
+            tn.TaskletNode(nodes.Tasklet('assign_2', {}, {'out'}, 'out = 2'), {}, {'out': dace.Memlet('A[1]')}),
+        ],
+        loop=LoopRegion(
+            label="my_while_loop",
+            condition_expr=CodeBlock("A[1] > 5"),
+        ),
+    )
 
     stree = tn.ScheduleTreeRoot(name='tester', containers={'A': data.Array(dace.float64, [20])}, children=[while_scope])
 
@@ -389,13 +391,15 @@ def test_create_if_else():
         name="tester",
         containers={'A': data.Array(dace.float64, [20])},
         children=[
-            tn.IfScope(condition=CodeBlock("A[0] > 0"),
-                       children=[
-                           tn.TaskletNode(nodes.Tasklet("bla", {}, {"out"}, "out=1"), {}, {"out": dace.Memlet("A[1]")}),
-                       ]),
+            tn.IfScope(
+                condition=CodeBlock("A[0] > 0"),
+                children=[
+                    tn.TaskletNode(nodes.Tasklet("bla", {}, {"out"}, "out=1"), {}, {"out": dace.Memlet("A[1]")}),
+                ],
+            ),
             tn.ElseScope(children=[
                 tn.TaskletNode(nodes.Tasklet("blub", {}, {"out"}, "out=2"), {}, {"out": dace.Memlet("A[1]")})
-            ])
+            ]),
         ])
 
     sdfg = stree.as_sdfg()
@@ -423,15 +427,18 @@ def test_create_if_elif_else() -> None:
         name="tester",
         containers={'A': data.Array(dace.float64, [20])},
         children=[
-            tn.IfScope(condition=CodeBlock("A[0] > 0"),
-                       children=[
-                           tn.TaskletNode(nodes.Tasklet("bla", {}, {"out"}, "out=1"), {}, {"out": dace.Memlet("A[1]")}),
-                       ]),
-            tn.ElifScope(condition=CodeBlock("A[0] == 0"),
-                         children=[
-                             tn.TaskletNode(nodes.Tasklet("blub", {}, {"out"}, "out=2"), {},
-                                            {"out": dace.Memlet("A[1]")}),
-                         ]),
+            tn.IfScope(
+                condition=CodeBlock("A[0] > 0"),
+                children=[
+                    tn.TaskletNode(nodes.Tasklet("bla", {}, {"out"}, "out=1"), {}, {"out": dace.Memlet("A[1]")}),
+                ],
+            ),
+            tn.ElifScope(
+                condition=CodeBlock("A[0] == 0"),
+                children=[
+                    tn.TaskletNode(nodes.Tasklet("blub", {}, {"out"}, "out=2"), {}, {"out": dace.Memlet("A[1]")}),
+                ],
+            ),
             tn.ElseScope(children=[
                 tn.TaskletNode(nodes.Tasklet("test", {}, {"out"}, "out=3"), {}, {"out": dace.Memlet("A[1]")})
             ])
@@ -447,15 +454,18 @@ def test_create_if_elif_else() -> None:
 
 
 def test_create_if_without_else():
-    stree = tn.ScheduleTreeRoot(name="tester",
-                                containers={'A': data.Array(dace.float64, [20])},
-                                children=[
-                                    tn.IfScope(condition=CodeBlock("A[0] > 0"),
-                                               children=[
-                                                   tn.TaskletNode(nodes.Tasklet("bla", {}, {"out"}, "out=1"), {},
-                                                                  {"out": dace.Memlet("A[1]")}),
-                                               ]),
-                                ])
+    stree = tn.ScheduleTreeRoot(
+        name="tester",
+        containers={'A': data.Array(dace.float64, [20])},
+        children=[
+            tn.IfScope(
+                condition=CodeBlock("A[0] > 0"),
+                children=[
+                    tn.TaskletNode(nodes.Tasklet("bla", {}, {"out"}, "out=1"), {}, {"out": dace.Memlet("A[1]")}),
+                ],
+            ),
+        ],
+    )
 
     sdfg = stree.as_sdfg()
 
@@ -472,16 +482,18 @@ def test_create_if_without_else():
 
 
 def test_create_map_scope_write():
-    stree = tn.ScheduleTreeRoot(name="tester",
-                                containers={'A': data.Array(dace.float64, [20])},
-                                children=[
-                                    tn.MapScope(node=nodes.MapEntry(nodes.Map("bla", "i",
-                                                                              sbs.Range.from_string("0:20"))),
-                                                children=[
-                                                    tn.TaskletNode(nodes.Tasklet("asdf", {}, {"out"}, "out = i"), {},
-                                                                   {"out": dace.Memlet("A[i]")})
-                                                ])
-                                ])
+    stree = tn.ScheduleTreeRoot(
+        name="tester",
+        containers={'A': data.Array(dace.float64, [20])},
+        children=[
+            tn.MapScope(
+                node=nodes.MapEntry(nodes.Map("bla", "i", sbs.Range.from_string("0:20"))),
+                children=[
+                    tn.TaskletNode(nodes.Tasklet("assign_i", {}, {"out"}, "out = i"), {}, {"out": dace.Memlet("A[i]")})
+                ],
+            )
+        ],
+    )
 
     sdfg = stree.as_sdfg()
     sdfg.validate()
@@ -495,14 +507,16 @@ def test_create_map_scope_read_after_write():
             'B': data.Array(dace.float64, [20], transient=True),
         },
         children=[
-            tn.MapScope(node=nodes.MapEntry(nodes.Map("bla", "i", sbs.Range.from_string("0:20"))),
-                        children=[
-                            tn.TaskletNode(nodes.Tasklet("write", {}, {"out"}, "out = i"), {},
-                                           {"out": dace.Memlet("B[i]")}),
-                            tn.TaskletNode(nodes.Tasklet("read", {"in_field"}, {"out_field"}, "out_field = in_field"),
-                                           {"in_field": dace.Memlet("B[i]")}, {"out_field": dace.Memlet("A[i]")})
-                        ])
-        ])
+            tn.MapScope(
+                node=nodes.MapEntry(nodes.Map("bla", "i", sbs.Range.from_string("0:20"))),
+                children=[
+                    tn.TaskletNode(nodes.Tasklet("write", {}, {"out"}, "out = i"), {}, {"out": dace.Memlet("B[i]")}),
+                    tn.TaskletNode(nodes.Tasklet("read", {"in_field"}, {"out_field"}, "out_field = in_field"),
+                                   {"in_field": dace.Memlet("B[i]")}, {"out_field": dace.Memlet("A[i]")})
+                ],
+            )
+        ],
+    )
 
     sdfg = stree.as_sdfg()
     sdfg.validate()
@@ -513,32 +527,37 @@ def test_create_map_scope_write_after_read():
         name="tester",
         containers={"A": data.Array(dace.float64, [20])},
         children=[
-            tn.MapScope(node=nodes.MapEntry(nodes.Map("bla", "i", sbs.Range.from_string("0:20"))),
-                        children=[
-                            tn.TaskletNode(nodes.Tasklet("read_write", {"read"}, {"write"}, "write = read+1"),
-                                           {"read": dace.Memlet("A[i]")}, {"write": dace.Memlet("A[i]")})
-                        ])
-        ])
+            tn.MapScope(
+                node=nodes.MapEntry(nodes.Map("bla", "i", sbs.Range.from_string("0:20"))),
+                children=[
+                    tn.TaskletNode(nodes.Tasklet("read_write", {"read"}, {"write"}, "write = read+1"),
+                                   {"read": dace.Memlet("A[i]")}, {"write": dace.Memlet("A[i]")})
+                ],
+            )
+        ],
+    )
 
     sdfg = stree.as_sdfg()
     sdfg.validate()
 
 
 def test_create_map_scope_copy():
-    stree = tn.ScheduleTreeRoot(name="tester",
-                                containers={
-                                    'A': data.Array(dace.float64, [20]),
-                                    'B': data.Array(dace.float64, [20]),
-                                },
-                                children=[
-                                    tn.MapScope(node=nodes.MapEntry(nodes.Map("bla", "i",
-                                                                              sbs.Range.from_string("0:20"))),
-                                                children=[
-                                                    tn.TaskletNode(nodes.Tasklet("copy", {"inp"}, {"out"}, "out = inp"),
-                                                                   {"inp": dace.Memlet("A[i]")},
-                                                                   {"out": dace.Memlet("B[i]")})
-                                                ])
-                                ])
+    stree = tn.ScheduleTreeRoot(
+        name="tester",
+        containers={
+            'A': data.Array(dace.float64, [20]),
+            'B': data.Array(dace.float64, [20]),
+        },
+        children=[
+            tn.MapScope(
+                node=nodes.MapEntry(nodes.Map("bla", "i", sbs.Range.from_string("0:20"))),
+                children=[
+                    tn.TaskletNode(nodes.Tasklet("copy", {"inp"}, {"out"}, "out = inp"), {"inp": dace.Memlet("A[i]")},
+                                   {"out": dace.Memlet("B[i]")})
+                ],
+            )
+        ],
+    )
 
     sdfg = stree.as_sdfg()
     sdfg.validate()
@@ -570,15 +589,20 @@ def test_create_nested_map_scope():
         name="tester",
         containers={'A': data.Array(dace.float64, [20])},
         children=[
-            tn.MapScope(node=nodes.MapEntry(nodes.Map("bla", "i", sbs.Range.from_string("0:2"))),
+            tn.MapScope(
+                node=nodes.MapEntry(nodes.Map("map_i", "i", sbs.Range.from_string("0:4"))),
+                children=[
+                    tn.MapScope(
+                        node=nodes.MapEntry(nodes.Map("map_j", "j", sbs.Range.from_string("0:5"))),
                         children=[
-                            tn.MapScope(node=nodes.MapEntry(nodes.Map("blub", "j", sbs.Range.from_string("0:10"))),
-                                        children=[
-                                            tn.TaskletNode(nodes.Tasklet("asdf", {}, {"out"}, "out = i*10+j"), {},
-                                                           {"out": dace.Memlet("A[i*10+j]")})
-                                        ])
-                        ])
-        ])
+                            tn.TaskletNode(nodes.Tasklet("assign", {}, {"out"}, "out = i*5+j"), {},
+                                           {"out": dace.Memlet("A[i*5+j]")})
+                        ],
+                    )
+                ],
+            )
+        ],
+    )
 
     sdfg = stree.as_sdfg()
     sdfg.validate()
@@ -592,36 +616,41 @@ def test_create_nested_map_scope_multi_read():
             'B': data.Array(dace.float64, [10])
         },
         children=[
-            tn.MapScope(node=nodes.MapEntry(nodes.Map("bla", "i", sbs.Range.from_string("0:2"))),
+            tn.MapScope(
+                node=nodes.MapEntry(nodes.Map("bla", "i", sbs.Range.from_string("0:2"))),
+                children=[
+                    tn.MapScope(
+                        node=nodes.MapEntry(nodes.Map("blub", "j", sbs.Range.from_string("0:5"))),
                         children=[
-                            tn.MapScope(node=nodes.MapEntry(nodes.Map("blub", "j", sbs.Range.from_string("0:5"))),
-                                        children=[
-                                            tn.TaskletNode(
-                                                nodes.Tasklet("asdf", {"a_1", "a_2"}, {"out"}, "out = a_1 + a_2"), {
-                                                    "a_1": dace.Memlet("A[i*5+j]"),
-                                                    "a_2": dace.Memlet("A[10+i*5+j]"),
-                                                }, {"out": dace.Memlet("B[i*5+j]")})
-                                        ])
-                        ])
-        ])
+                            tn.TaskletNode(nodes.Tasklet("asdf", {"a_1", "a_2"}, {"out"}, "out = a_1 + a_2"), {
+                                "a_1": dace.Memlet("A[i*5+j]"),
+                                "a_2": dace.Memlet("A[10+i*5+j]"),
+                            }, {"out": dace.Memlet("B[i*5+j]")})
+                        ],
+                    )
+                ],
+            )
+        ],
+    )
 
     sdfg = stree.as_sdfg()
     sdfg.validate()
 
 
 def test_map_with_state_boundary_inside():
-    stree = tn.ScheduleTreeRoot(name="tester",
-                                containers={'A': data.Array(dace.float64, [20])},
-                                children=[
-                                    tn.MapScope(node=nodes.MapEntry(nodes.Map("bla", "i",
-                                                                              sbs.Range.from_string("0:20"))),
-                                                children=[
-                                                    tn.TaskletNode(nodes.Tasklet('bla', {}, {'out'}, 'out = i'), {},
-                                                                   {'out': dace.Memlet('A[1]')}),
-                                                    tn.TaskletNode(nodes.Tasklet('bla2', {}, {'out'}, 'out = 2*i'), {},
-                                                                   {'out': dace.Memlet('A[1]')}),
-                                                ])
-                                ])
+    stree = tn.ScheduleTreeRoot(
+        name="tester",
+        containers={'A': data.Array(dace.float64, [20])},
+        children=[
+            tn.MapScope(
+                node=nodes.MapEntry(nodes.Map("bla", "i", sbs.Range.from_string("0:20"))),
+                children=[
+                    tn.TaskletNode(nodes.Tasklet('bla', {}, {'out'}, 'out = i'), {}, {'out': dace.Memlet('A[1]')}),
+                    tn.TaskletNode(nodes.Tasklet('bla2', {}, {'out'}, 'out = 2*i'), {}, {'out': dace.Memlet('A[1]')}),
+                ],
+            )
+        ],
+    )
 
     sdfg = stree.as_sdfg()
     sdfg.validate()
@@ -635,22 +664,28 @@ def test_map_calculate_temporary_in_two_loops():
             "tmp": data.Array(dace.float64, [20], transient=True)
         },
         children=[
-            tn.MapScope(node=nodes.MapEntry(nodes.Map("first_half", "i", sbs.Range.from_string("0:10"))),
-                        children=[
-                            tn.TaskletNode(nodes.Tasklet("beginning", {}, {'out'}, 'out = i'), {},
-                                           {'out': dace.Memlet("tmp[i]")})
-                        ]),
-            tn.MapScope(node=nodes.MapEntry(nodes.Map("second_half", "i", sbs.Range.from_string("10:20"))),
-                        children=[
-                            tn.TaskletNode(nodes.Tasklet("end", {}, {'out'}, 'out = i'), {},
-                                           {'out': dace.Memlet("tmp[i]")})
-                        ]),
-            tn.MapScope(node=nodes.MapEntry(nodes.Map("read_tmp", "i", sbs.Range.from_string("0:20"))),
-                        children=[
-                            tn.TaskletNode(nodes.Tasklet("read_temp", {"read"}, {"out"}, "out = read + 1"),
-                                           {"read": dace.Memlet("tmp[i]")}, {"out": dace.Memlet("A[i]")})
-                        ])
-        ])
+            tn.MapScope(
+                node=nodes.MapEntry(nodes.Map("first_half", "i", sbs.Range.from_string("0:10"))),
+                children=[
+                    tn.TaskletNode(nodes.Tasklet("beginning", {}, {'out'}, 'out = i'), {},
+                                   {'out': dace.Memlet("tmp[i]")})
+                ],
+            ),
+            tn.MapScope(
+                node=nodes.MapEntry(nodes.Map("second_half", "i", sbs.Range.from_string("10:20"))),
+                children=[
+                    tn.TaskletNode(nodes.Tasklet("end", {}, {'out'}, 'out = i'), {}, {'out': dace.Memlet("tmp[i]")})
+                ],
+            ),
+            tn.MapScope(
+                node=nodes.MapEntry(nodes.Map("read_tmp", "i", sbs.Range.from_string("0:20"))),
+                children=[
+                    tn.TaskletNode(nodes.Tasklet("read_temp", {"read"}, {"out"}, "out = read + 1"),
+                                   {"read": dace.Memlet("tmp[i]")}, {"out": dace.Memlet("A[i]")})
+                ],
+            )
+        ],
+    )
 
     sdfg = stree.as_sdfg(simplify=True)
     sdfg.validate()
@@ -660,13 +695,15 @@ def test_map_calculate_temporary_in_two_loops():
 
 
 def test_edge_assignment_read_after_write():
-    stree = tn.ScheduleTreeRoot(name="tester",
-                                containers={},
-                                children=[
-                                    tn.AssignNode("my_condition", CodeBlock("True"), dace.InterstateEdge()),
-                                    tn.AssignNode("condition", CodeBlock("my_condition"), dace.InterstateEdge()),
-                                    tn.StateBoundaryNode()
-                                ])
+    stree = tn.ScheduleTreeRoot(
+        name="tester",
+        containers={},
+        children=[
+            tn.AssignNode("my_condition", CodeBlock("True"), dace.InterstateEdge()),
+            tn.AssignNode("condition", CodeBlock("my_condition"), dace.InterstateEdge()),
+            tn.StateBoundaryNode(),
+        ],
+    )
 
     sdfg = stree.as_sdfg(simplify=False)
 

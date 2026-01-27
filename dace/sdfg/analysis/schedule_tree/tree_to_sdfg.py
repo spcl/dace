@@ -178,28 +178,30 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
 
     def visit_ForScope(self, node: tn.ForScope, sdfg: SDFG) -> None:
         loop_region = node.loop
+        sdfg.add_node(loop_region)
         loop_state = loop_region.add_state(f"for_loop_state_{id(node)}", is_start_block=True)
         current_state = self._current_state
 
-        _insert_and_split_assignments(sdfg, current_state, loop_region)
+        _insert_and_split_assignments(current_state, loop_region)
 
         self._current_state = loop_state
-        self.visit(node.children, sdfg=loop_region)
+        self.visit(node.children, sdfg=sdfg)
 
-        after_state = _insert_and_split_assignments(sdfg, loop_region, label="loop_after")
+        after_state = _insert_and_split_assignments(loop_region, label="loop_after")
         self._current_state = after_state
 
     def visit_WhileScope(self, node: tn.WhileScope, sdfg: SDFG) -> None:
         loop_region = node.loop
+        sdfg.add_node(loop_region)
         loop_state = loop_region.add_state(f"while_loop_state_{id(node)}", is_start_block=True)
         current_state = self._current_state
 
-        _insert_and_split_assignments(sdfg, current_state, loop_region)
+        _insert_and_split_assignments(current_state, loop_region)
 
         self._current_state = loop_state
-        self.visit(node.children, sdfg=loop_region)
+        self.visit(node.children, sdfg=sdfg)
 
-        after_state = _insert_and_split_assignments(sdfg, loop_region, label="loop_after")
+        after_state = _insert_and_split_assignments(loop_region, label="loop_after")
         self._current_state = after_state
 
     def visit_DoWhileScope(self, node: tn.DoWhileScope, sdfg: SDFG) -> None:
@@ -214,10 +216,11 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
 
         conditional_block = ConditionalBlock(f"if_scope_{id(node)}")
         sdfg.add_node(conditional_block)
-        _insert_and_split_assignments(sdfg,
-                                      before_state,
-                                      conditional_block,
-                                      assignments=self._pending_interstate_assignments())
+        _insert_and_split_assignments(
+            before_state,
+            conditional_block,
+            assignments=self._pending_interstate_assignments(),
+        )
 
         if_body = ControlFlowRegion("if_body", sdfg=sdfg)
         conditional_block.add_branch(node.condition, if_body)
@@ -226,15 +229,16 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
         self._current_state = if_state
 
         # visit children of that branch
-        self.visit(node.children, sdfg=if_body)
+        self.visit(node.children, sdfg=sdfg)
 
         self._current_state = conditional_block
 
         # add merge_state
-        merge_state = _insert_and_split_assignments(sdfg,
-                                                    conditional_block,
-                                                    label="merge_state",
-                                                    assignments=self._pending_interstate_assignments())
+        merge_state = _insert_and_split_assignments(
+            conditional_block,
+            label="merge_state",
+            assignments=self._pending_interstate_assignments(),
+        )
 
         # Check if there's an `ElseScope` following this node (in the parent's children).
         # Filter StateBoundaryNodes, which we inserted earlier, for this analysis.
@@ -277,7 +281,7 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
         self._current_state = else_state
 
         # visit children inside the else branch
-        self.visit(node.children, sdfg=else_body)
+        self.visit(node.children, sdfg=sdfg)
 
         # merge false-branch into merge_state
         merge_state = self._pop_state("merge_state")
@@ -724,11 +728,12 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
         # When creating a state boundary, include all inter-state assignments that precede it.
         pending = self._pending_interstate_assignments()
 
-        self._current_state = create_state_boundary(node,
-                                                    sdfg,
-                                                    self._current_state,
-                                                    StateBoundaryBehavior.STATE_TRANSITION,
-                                                    assignments=pending)
+        self._current_state = create_state_boundary(
+            node,
+            self._current_state,
+            StateBoundaryBehavior.STATE_TRANSITION,
+            assignments=pending,
+        )
 
     def _pending_interstate_assignments(self) -> Dict:
         """
@@ -924,16 +929,16 @@ def _insert_memory_dependency_state_boundaries(scope: tn.ScheduleTreeScope):
 # SDFG content creation functions
 
 
-def create_state_boundary(boundary_node: tn.StateBoundaryNode,
-                          sdfg_region: ControlFlowRegion,
-                          state: SDFGState,
-                          behavior: StateBoundaryBehavior,
-                          assignments: Optional[Dict] = None) -> SDFGState:
+def create_state_boundary(
+    boundary_node: tn.StateBoundaryNode,
+    state: SDFGState,
+    behavior: StateBoundaryBehavior,
+    assignments: Optional[Dict] = None,
+) -> SDFGState:
     """
     Creates a boundary between two states
 
     :param boundary_node: The state boundary node to generate.
-    :param sdfg_region: The control flow block in which to generate the boundary (e.g., SDFG).
     :param state: The last state prior to this boundary.
     :param behavior: The state boundary behavior with which to create the boundary.
     :return: The newly created state.
@@ -946,15 +951,16 @@ def create_state_boundary(boundary_node: tn.StateBoundaryNode,
 
     label = "cf_state_boundary" if boundary_node.due_to_control_flow else "state_boundary"
     assignments = assignments if assignments is not None else {}
-    return _insert_and_split_assignments(sdfg_region, state, label=label, assignments=assignments)
+    return _insert_and_split_assignments(state, label=label, assignments=assignments)
 
 
-def _insert_and_split_assignments(sdfg_region: ControlFlowRegion,
-                                  before_state: ControlFlowBlock,
-                                  after_state: Optional[ControlFlowBlock] = None,
-                                  *,
-                                  label: Optional[str] = None,
-                                  assignments: Optional[Dict] = None) -> ControlFlowBlock:
+def _insert_and_split_assignments(
+    before_state: ControlFlowBlock,
+    after_state: Optional[ControlFlowBlock] = None,
+    *,
+    label: Optional[str] = None,
+    assignments: Optional[Dict] = None,
+) -> ControlFlowBlock:
     """
     Insert given assignments splitting them in case of potential race conditions.
 
@@ -969,6 +975,9 @@ def _insert_and_split_assignments(sdfg_region: ControlFlowRegion,
                  validator.
     """
     assignments = assignments if assignments is not None else {}
+    cf_region = before_state.parent_graph
+    if after_state is not None and after_state.parent_graph != cf_region:
+        raise ValueError("Expected before_state and after_state to be in the same control flow region.")
 
     has_potential_race = False
     for key, value in assignments.items():
@@ -980,19 +989,20 @@ def _insert_and_split_assignments(sdfg_region: ControlFlowRegion,
 
     if not has_potential_race:
         if after_state is not None:
-            sdfg_region.add_edge(before_state, after_state, InterstateEdge(assignments=assignments))
+            cf_region.add_edge(before_state, after_state, InterstateEdge(assignments=assignments))
             return after_state
-        return sdfg_region.add_state_after(before_state, label=label, assignments=assignments)
+
+        return cf_region.add_state_after(before_state, label=label, assignments=assignments)
 
     last_state = before_state
     for index, assignment in enumerate(assignments.items()):
         key, value = assignment
         is_last_state = index == len(assignments) - 1
         if is_last_state and after_state is not None:
-            sdfg_region.add_edge(last_state, after_state, InterstateEdge(assignments={key: value}))
+            cf_region.add_edge(last_state, after_state, InterstateEdge(assignments={key: value}))
             last_state = after_state
         else:
-            last_state = sdfg_region.add_state_after(last_state, label=label, assignments={key: value})
+            last_state = cf_region.add_state_after(last_state, label=label, assignments={key: value})
 
     return last_state
 
