@@ -43,8 +43,15 @@ def validate_control_flow_region(sdfg: 'SDFG',
     from dace.sdfg.scope import is_in_scope
     from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState
 
-    if len(region.source_nodes()) > 1 and region.start_block is None:
-        raise InvalidSDFGError("Starting block undefined", sdfg, None)
+    source_nodes = region.source_nodes()
+    if len(source_nodes) == 0:
+        raise InvalidSDFGError("Starting block is undefined.", sdfg, None)
+
+    if len(region.source_nodes()) > 1:
+        try:
+            region.start_block
+        except:
+            raise InvalidSDFGError("Starting block is ambiguous.", sdfg, None)
 
     in_default_scope = None
 
