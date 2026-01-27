@@ -43,15 +43,11 @@ def validate_control_flow_region(sdfg: 'SDFG',
     from dace.sdfg.scope import is_in_scope
     from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState
 
-    source_nodes = region.source_nodes()
-    if len(source_nodes) == 0:
-        raise InvalidSDFGError("Starting block is undefined.", sdfg, None)
-
     if len(region.source_nodes()) > 1:
         try:
             region.start_block
         except:
-            raise InvalidSDFGError("Starting block is ambiguous.", sdfg, None)
+            raise InvalidSDFGError("Starting block is ambiguous or undefined.", sdfg, None)
 
     in_default_scope = None
 
@@ -347,6 +343,9 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
         for desc in sdfg.arrays.values():
             for sym in desc.free_symbols:
                 symbols[str(sym)] = sym.dtype
+
+        if len(sdfg.nodes()) == 0:
+            raise InvalidSDFGError("SDFGs are required to contain at least a start state.", sdfg, None)
 
         validate_control_flow_region(sdfg, sdfg, initialized_transients, symbols, references, **context)
 

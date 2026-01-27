@@ -10,7 +10,7 @@ def test_validation_no_state():
     """SDFGs require a start block."""
     sdfg = SDFG("empty_sdfg")
 
-    with pytest.raises(InvalidSDFGError, match="Starting block is undefined."):
+    with pytest.raises(InvalidSDFGError, match="SDFGs are required to contain at least a start state."):
         sdfg.validate()
 
 
@@ -20,7 +20,7 @@ def test_validation_ambiguous_start_block():
     state_1 = sdfg.add_state("state_1")
     state_2 = sdfg.add_state("state_2")
 
-    with pytest.raises(InvalidSDFGError, match="Starting block is ambiguous."):
+    with pytest.raises(InvalidSDFGError, match="Starting block is ambiguous or undefined."):
         sdfg.validate()
 
     # Disambiguate by adding an edge between state_1 and state_2.
