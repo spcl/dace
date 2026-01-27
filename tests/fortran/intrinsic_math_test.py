@@ -1,9 +1,11 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import numpy as np
 import pytest
 
 from dace.frontend.fortran import fortran_parser
+from dace.frontend.fortran.fortran_parser import create_singular_sdfg_from_string
+from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 
 def test_fortran_frontend_min_max():
@@ -14,10 +16,10 @@ def test_fortran_frontend_min_max():
                     double precision, dimension(2) :: arg2
                     double precision, dimension(2) :: res1
                     double precision, dimension(2) :: res2
-                    CALL intrinsic_math_test_function(arg1, arg2, res1, res2)
+                    CALL intrinsic_math_test_min_max_function(arg1, arg2, res1, res2)
                     end
 
-                    SUBROUTINE intrinsic_math_test_function(arg1, arg2, res1, res2)
+                    SUBROUTINE intrinsic_math_test_min_max_function(arg1, arg2, res1, res2)
                     double precision, dimension(2) :: arg1
                     double precision, dimension(2) :: arg2
                     double precision, dimension(2) :: res1
@@ -29,12 +31,11 @@ def test_fortran_frontend_min_max():
                     res2(1) = MAX(arg1(1), arg2(1))
                     res2(2) = MAX(arg1(2), arg2(2))
 
-                    END SUBROUTINE intrinsic_math_test_function
+                    END SUBROUTINE intrinsic_math_test_min_max_function
                     """
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_min_max", False)
-    sdfg.simplify(verbose=True)
-    sdfg.compile()
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_min_max", True)
+    sdfg.simplify()
 
     size = 2
     arg1 = np.full([size], 42, order="F", dtype=np.float64)
@@ -61,22 +62,86 @@ def test_fortran_frontend_sqrt():
                     implicit none
                     double precision, dimension(2) :: d
                     double precision, dimension(2) :: res
-                    CALL intrinsic_math_test_function(d, res)
+                    CALL intrinsic_math_test_sqrt_function(d, res)
                     end
 
-                    SUBROUTINE intrinsic_math_test_function(d, res)
+                    SUBROUTINE intrinsic_math_test_sqrt_function(d, res)
                     double precision, dimension(2) :: d
                     double precision, dimension(2) :: res
 
                     res(1) = SQRT(d(1))
                     res(2) = SQRT(d(2))
 
-                    END SUBROUTINE intrinsic_math_test_function
+                    END SUBROUTINE intrinsic_math_test_sqrt_function
                     """
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_sqrt", False)
-    sdfg.simplify(verbose=True)
-    sdfg.compile()
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_sqrt", True)
+    sdfg.simplify()
+
+    size = 2
+    d = np.full([size], 42, order="F", dtype=np.float64)
+    d[0] = 2
+    d[1] = 5
+    res = np.full([2], 42, order="F", dtype=np.float64)
+    sdfg(d=d, res=res)
+    py_res = np.sqrt(d)
+
+    for f_res, p_res in zip(res, py_res):
+        assert abs(f_res - p_res) < 10**-9
+
+
+@pytest.mark.skip(reason="Needs suport for sqrt + datarefs")
+def test_fortran_frontend_sqrt_structure():
+    test_string = """
+                    module lib
+                      implicit none
+                      type test_type
+                          double precision, dimension(2) :: input_data
+                      end type
+
+                      type test_type2
+                          type(test_type) :: var
+                          integer :: test_variable
+                      end type
+                    end module lib
+
+                    PROGRAM intrinsic_math_test_sqrt
+                    use lib, only: test_type2
+                    implicit none
+
+                    double precision, dimension(2) :: d
+                    double precision, dimension(2) :: res
+                    CALL intrinsic_math_test_sqrt_function(d, res)
+                    end
+
+                    SUBROUTINE intrinsic_math_test_sqrt_function(d, res)
+                    use lib, only: test_type2
+                    implicit none
+
+                    double precision, dimension(2) :: d
+                    double precision, dimension(2) :: res
+                    type(test_type2) :: data
+
+                    data%var%input_data = d
+
+                    CALL intrinsic_math_test_function2(res, data)
+
+                    END SUBROUTINE intrinsic_math_test_sqrt_function
+
+                    SUBROUTINE intrinsic_math_test_function2(res, data)
+                    use lib, only: test_type2
+                    implicit none
+                    double precision, dimension(2) :: res
+                    type(test_type2) :: data
+
+                    res(1) = MOD(data%var%input_data(1), 5.0D0)
+                    res(2) = MOD(data%var%input_data(2), 5.0D0)
+
+                    END SUBROUTINE intrinsic_math_test_function2
+                    """
+
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_sqrt", True)
+    sdfg.validate()
 
     size = 2
     d = np.full([size], 42, order="F", dtype=np.float64)
@@ -96,22 +161,21 @@ def test_fortran_frontend_abs():
                     implicit none
                     double precision, dimension(2) :: d
                     double precision, dimension(2) :: res
-                    CALL intrinsic_math_test_function(d, res)
+                    CALL intrinsic_math_test_abs_function(d, res)
                     end
 
-                    SUBROUTINE intrinsic_math_test_function(d, res)
+                    SUBROUTINE intrinsic_math_test_abs_function(d, res)
                     double precision, dimension(2) :: d
                     double precision, dimension(2) :: res
 
                     res(1) = ABS(d(1))
                     res(2) = ABS(d(2))
 
-                    END SUBROUTINE intrinsic_math_test_function
+                    END SUBROUTINE intrinsic_math_test_abs_function
                     """
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_abs", False)
-    sdfg.simplify(verbose=True)
-    sdfg.compile()
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_abs", True)
+    sdfg.simplify()
 
     size = 2
     d = np.full([size], 42, order="F", dtype=np.float64)
@@ -130,22 +194,21 @@ def test_fortran_frontend_exp():
                     implicit none
                     double precision, dimension(2) :: d
                     double precision, dimension(2) :: res
-                    CALL intrinsic_math_test_function(d, res)
+                    CALL intrinsic_math_test_exp_function(d, res)
                     end
 
-                    SUBROUTINE intrinsic_math_test_function(d, res)
+                    SUBROUTINE intrinsic_math_test_exp_function(d, res)
                     double precision, dimension(2) :: d
                     double precision, dimension(2) :: res
 
                     res(1) = EXP(d(1))
                     res(2) = EXP(d(2))
 
-                    END SUBROUTINE intrinsic_math_test_function
+                    END SUBROUTINE intrinsic_math_test_exp_function
                     """
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_exp", False)
-    sdfg.simplify(verbose=True)
-    sdfg.compile()
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_exp", True)
+    sdfg.simplify()
 
     size = 2
     d = np.full([size], 42, order="F", dtype=np.float64)
@@ -165,22 +228,21 @@ def test_fortran_frontend_log():
                     implicit none
                     double precision, dimension(2) :: d
                     double precision, dimension(2) :: res
-                    CALL intrinsic_math_test_function(d, res)
+                    CALL intrinsic_math_test_exp_function(d, res)
                     end
 
-                    SUBROUTINE intrinsic_math_test_function(d, res)
+                    SUBROUTINE intrinsic_math_test_exp_function(d, res)
                     double precision, dimension(2) :: d
                     double precision, dimension(2) :: res
 
                     res(1) = LOG(d(1))
                     res(2) = LOG(d(2))
 
-                    END SUBROUTINE intrinsic_math_test_function
+                    END SUBROUTINE intrinsic_math_test_exp_function
                     """
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_exp", False)
-    sdfg.simplify(verbose=True)
-    sdfg.compile()
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_exp", True)
+    sdfg.simplify()
 
     size = 2
     d = np.full([size], 42, order="F", dtype=np.float64)
@@ -200,10 +262,10 @@ def test_fortran_frontend_mod_float():
                     implicit none
                     double precision, dimension(12) :: d
                     double precision, dimension(6) :: res
-                    CALL intrinsic_math_test_function(d, res)
+                    CALL intrinsic_math_test_mod_function(d, res)
                     end
 
-                    SUBROUTINE intrinsic_math_test_function(d, res)
+                    SUBROUTINE intrinsic_math_test_mod_function(d, res)
                     double precision, dimension(12) :: d
                     double precision, dimension(6) :: res
 
@@ -214,12 +276,11 @@ def test_fortran_frontend_mod_float():
                     res(5) = MOD(d(9), d(10))
                     res(6) = MOD(d(11), d(12))
 
-                    END SUBROUTINE intrinsic_math_test_function
+                    END SUBROUTINE intrinsic_math_test_mod_function
                     """
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_mod", False)
-    sdfg.simplify(verbose=True)
-    sdfg.compile()
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_mod", True)
+    sdfg.simplify()
 
     size = 12
     d = np.full([size], 42, order="F", dtype=np.float64)
@@ -252,10 +313,10 @@ def test_fortran_frontend_mod_integer():
                     implicit none
                     integer, dimension(8) :: d
                     integer, dimension(4) :: res
-                    CALL intrinsic_math_test_function(d, res)
+                    CALL intrinsic_math_test_modulo_function(d, res)
                     end
 
-                    SUBROUTINE intrinsic_math_test_function(d, res)
+                    SUBROUTINE intrinsic_math_test_modulo_function(d, res)
                     integer, dimension(8) :: d
                     integer, dimension(4) :: res
 
@@ -264,12 +325,11 @@ def test_fortran_frontend_mod_integer():
                     res(3) = MOD(d(5), d(6))
                     res(4) = MOD(d(7), d(8))
 
-                    END SUBROUTINE intrinsic_math_test_function
+                    END SUBROUTINE intrinsic_math_test_modulo_function
                     """
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_modulo", False)
-    sdfg.simplify(verbose=True)
-    sdfg.compile()
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_modulo", True)
+    sdfg.simplify()
 
     size = 12
     d = np.full([size], 42, order="F", dtype=np.int32)
@@ -295,10 +355,10 @@ def test_fortran_frontend_modulo_float():
                     implicit none
                     double precision, dimension(12) :: d
                     double precision, dimension(6) :: res
-                    CALL intrinsic_math_test_function(d, res)
+                    CALL intrinsic_math_test_modulo_function(d, res)
                     end
 
-                    SUBROUTINE intrinsic_math_test_function(d, res)
+                    SUBROUTINE intrinsic_math_test_modulo_function(d, res)
                     double precision, dimension(12) :: d
                     double precision, dimension(6) :: res
 
@@ -309,12 +369,11 @@ def test_fortran_frontend_modulo_float():
                     res(5) = MODULO(d(9), d(10))
                     res(6) = MODULO(d(11), d(12))
 
-                    END SUBROUTINE intrinsic_math_test_function
+                    END SUBROUTINE intrinsic_math_test_modulo_function
                     """
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_modulo", False)
-    sdfg.simplify(verbose=True)
-    sdfg.compile()
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_modulo", True)
+    sdfg.simplify()
 
     size = 12
     d = np.full([size], 42, order="F", dtype=np.float64)
@@ -347,10 +406,10 @@ def test_fortran_frontend_modulo_integer():
                     implicit none
                     integer, dimension(8) :: d
                     integer, dimension(4) :: res
-                    CALL intrinsic_math_test_function(d, res)
+                    CALL intrinsic_math_test_modulo_function(d, res)
                     end
 
-                    SUBROUTINE intrinsic_math_test_function(d, res)
+                    SUBROUTINE intrinsic_math_test_modulo_function(d, res)
                     integer, dimension(8) :: d
                     integer, dimension(4) :: res
 
@@ -359,12 +418,11 @@ def test_fortran_frontend_modulo_integer():
                     res(3) = MODULO(d(5), d(6))
                     res(4) = MODULO(d(7), d(8))
 
-                    END SUBROUTINE intrinsic_math_test_function
+                    END SUBROUTINE intrinsic_math_test_modulo_function
                     """
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_modulo", False)
-    sdfg.simplify(verbose=True)
-    sdfg.compile()
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_modulo", True)
+    sdfg.simplify()
 
     size = 12
     d = np.full([size], 42, order="F", dtype=np.int32)
@@ -391,10 +449,10 @@ def test_fortran_frontend_floor():
                     implicit none
                     real, dimension(4) :: d
                     integer, dimension(4) :: res
-                    CALL intrinsic_math_test_function(d, res)
+                    CALL intrinsic_math_test_modulo_function(d, res)
                     end
 
-                    SUBROUTINE intrinsic_math_test_function(d, res)
+                    SUBROUTINE intrinsic_math_test_modulo_function(d, res)
                     real, dimension(4) :: d
                     integer, dimension(4) :: res
 
@@ -403,12 +461,11 @@ def test_fortran_frontend_floor():
                     res(3) = FLOOR(d(3))
                     res(4) = FLOOR(d(4))
 
-                    END SUBROUTINE intrinsic_math_test_function
+                    END SUBROUTINE intrinsic_math_test_modulo_function
                     """
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_modulo", False)
-    sdfg.simplify(verbose=True)
-    sdfg.compile()
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_modulo", True)
+    sdfg.simplify()
 
     size = 4
     d = np.full([size], 42, order="F", dtype=np.float32)
@@ -432,10 +489,10 @@ def test_fortran_frontend_scale():
                     real, dimension(4) :: d
                     integer, dimension(4) :: d2
                     real, dimension(5) :: res
-                    CALL intrinsic_math_test_function(d, d2, res)
+                    CALL intrinsic_math_test_scale_function(d, d2, res)
                     end
 
-                    SUBROUTINE intrinsic_math_test_function(d, d2, res)
+                    SUBROUTINE intrinsic_math_test_scale_function(d, d2, res)
                     real, dimension(4) :: d
                     integer, dimension(4) :: d2
                     real, dimension(5) :: res
@@ -447,12 +504,11 @@ def test_fortran_frontend_scale():
                     res(4) = (SCALE(d(4), d2(4))) + (SCALE(d(4), d2(4))*2)
                     res(5) = (SCALE(SCALE(d(4), d2(4)), d2(4)))
 
-                    END SUBROUTINE intrinsic_math_test_function
+                    END SUBROUTINE intrinsic_math_test_scale_function
                     """
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_modulo", False)
-    sdfg.simplify(verbose=True)
-    sdfg.compile()
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_scale", True)
+    sdfg.simplify()
 
     size = 4
     d = np.full([size], 42, order="F", dtype=np.float32)
@@ -481,10 +537,10 @@ def test_fortran_frontend_exponent():
                     implicit none
                     real, dimension(4) :: d
                     integer, dimension(4) :: res
-                    CALL intrinsic_math_test_function(d, res)
+                    CALL intrinsic_math_test_exponent_function(d, res)
                     end
 
-                    SUBROUTINE intrinsic_math_test_function(d, res)
+                    SUBROUTINE intrinsic_math_test_exponent_function(d, res)
                     real, dimension(4) :: d
                     integer, dimension(4) :: res
 
@@ -493,12 +549,11 @@ def test_fortran_frontend_exponent():
                     res(3) = EXPONENT(d(3))
                     res(4) = EXPONENT(d(4))
 
-                    END SUBROUTINE intrinsic_math_test_function
+                    END SUBROUTINE intrinsic_math_test_exponent_function
                     """
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_modulo", False)
-    sdfg.simplify(verbose=True)
-    sdfg.compile()
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_exponent", True)
+    sdfg.simplify()
 
     size = 4
     d = np.full([size], 42, order="F", dtype=np.float32)
@@ -525,10 +580,10 @@ def test_fortran_frontend_int():
                     real, dimension(4) :: res2
                     integer, dimension(8) :: res3
                     real, dimension(8) :: res4
-                    CALL intrinsic_math_test_function(d, d2, res, res2, res3, res4)
+                    CALL intrinsic_math_test_int_function(d, d2, res, res2, res3, res4)
                     end
 
-                    SUBROUTINE intrinsic_math_test_function(d, d2, res, res2, res3, res4)
+                    SUBROUTINE intrinsic_math_test_int_function(d, d2, res, res2, res3, res4)
                     integer :: n
                     real, dimension(4) :: d
                     real, dimension(8) :: d2
@@ -558,12 +613,11 @@ def test_fortran_frontend_int():
                         res4(n) = ANINT(d2(n), 4)
                     END DO
 
-                    END SUBROUTINE intrinsic_math_test_function
+                    END SUBROUTINE intrinsic_math_test_int_function
                     """
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_modulo", False)
-    sdfg.simplify(verbose=True)
-    sdfg.compile()
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_int", True)
+    sdfg.simplify()
 
     size = 4
     d = np.full([size], 42, order="F", dtype=np.float32)
@@ -604,10 +658,10 @@ def test_fortran_frontend_real():
                     integer, dimension(2) :: d3
                     double precision, dimension(6) :: res
                     real, dimension(6) :: res2
-                    CALL intrinsic_math_test_function(d, d2, d3, res, res2)
+                    CALL intrinsic_math_test_real_function(d, d2, d3, res, res2)
                     end
 
-                    SUBROUTINE intrinsic_math_test_function(d, d2, d3, res, res2)
+                    SUBROUTINE intrinsic_math_test_real_function(d, d2, d3, res, res2)
                     integer :: n
                     double precision, dimension(2) :: d
                     real, dimension(2) :: d2
@@ -629,12 +683,11 @@ def test_fortran_frontend_real():
                     res2(5) = REAL(d3(1))
                     res2(6) = REAL(d3(2))
 
-                    END SUBROUTINE intrinsic_math_test_function
+                    END SUBROUTINE intrinsic_math_test_real_function
                     """
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_modulo", False)
-    sdfg.simplify(verbose=True)
-    sdfg.compile()
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_real", True)
+    sdfg.simplify()
 
     size = 2
     d = np.full([size], 42, order="F", dtype=np.float64)
@@ -655,16 +708,64 @@ def test_fortran_frontend_real():
     assert np.allclose(res2, [7.0, 13.11, 7.0, 13.11, 7., 13.])
 
 
+def test_fortran_frontend_real_kind():
+    test_string = """
+                    PROGRAM intrinsic_math_test_real
+                    implicit none
+                    double precision, dimension(2) :: d
+                    real, dimension(2) :: d2
+                    integer, dimension(2) :: d3
+                    double precision, dimension(6) :: res
+                    CALL intrinsic_math_test_real_function(d, d2, d3, res)
+                    end
+
+                    SUBROUTINE intrinsic_math_test_real_function(d, d2, d3, res)
+                    integer :: n
+                    double precision, dimension(2) :: d
+                    real, dimension(2) :: d2
+                    integer, dimension(2) :: d3
+                    double precision, dimension(6) :: res
+
+                    res(1) = REAL(d(1), 8)
+                    res(2) = REAL(d(2), 8)
+                    res(3) = REAL(d2(1), 8)
+                    res(4) = REAL(d2(2), 8)
+                    res(5) = REAL(d3(1), 8)
+                    res(6) = REAL(d3(2), 8)
+
+                    END SUBROUTINE intrinsic_math_test_real_function
+                    """
+
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_real", True)
+    sdfg.simplify()
+
+    size = 2
+    d = np.full([size], 42, order="F", dtype=np.float64)
+    d[0] = 7.0
+    d[1] = 13.11
+    d2 = np.full([size], 42, order="F", dtype=np.float32)
+    d2[0] = 7.0
+    d2[1] = 13.11
+    d3 = np.full([size], 42, order="F", dtype=np.int32)
+    d3[0] = 7
+    d3[1] = 13
+
+    res = np.full([size * 3], 42, order="F", dtype=np.float64)
+    sdfg(d=d, d2=d2, d3=d3, res=res)
+
+    assert np.allclose(res, [7.0, 13.11, 7.0, 13.11, 7.0, 13.0])
+
+
 def test_fortran_frontend_trig():
     test_string = """
                     PROGRAM intrinsic_math_test_trig
                     implicit none
                     real, dimension(3) :: d
                     real, dimension(6) :: res
-                    CALL intrinsic_math_test_function(d, res)
+                    CALL intrinsic_math_test_trig_function(d, res)
                     end
 
-                    SUBROUTINE intrinsic_math_test_function(d, res)
+                    SUBROUTINE intrinsic_math_test_trig_function(d, res)
                     integer :: n
                     real, dimension(3) :: d
                     real, dimension(6) :: res
@@ -677,12 +778,11 @@ def test_fortran_frontend_trig():
                         res(n+3) = COS(d(n))
                     END DO
 
-                    END SUBROUTINE intrinsic_math_test_function
+                    END SUBROUTINE intrinsic_math_test_trig_function
                     """
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_modulo", False)
-    sdfg.simplify(verbose=True)
-    sdfg.compile()
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_trig", True)
+    sdfg.simplify()
 
     size = 3
     d = np.full([size], 42, order="F", dtype=np.float32)
@@ -702,10 +802,10 @@ def test_fortran_frontend_hyperbolic():
                     implicit none
                     real, dimension(3) :: d
                     real, dimension(9) :: res
-                    CALL intrinsic_math_test_function(d, res)
+                    CALL intrinsic_math_test_hyperbolic_function(d, res)
                     end
 
-                    SUBROUTINE intrinsic_math_test_function(d, res)
+                    SUBROUTINE intrinsic_math_test_hyperbolic_function(d, res)
                     integer :: n
                     real, dimension(3) :: d
                     real, dimension(9) :: res
@@ -722,12 +822,11 @@ def test_fortran_frontend_hyperbolic():
                         res(n+6) = TANH(d(n))
                     END DO
 
-                    END SUBROUTINE intrinsic_math_test_function
+                    END SUBROUTINE intrinsic_math_test_hyperbolic_function
                     """
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_modulo", False)
-    sdfg.simplify(verbose=True)
-    sdfg.compile()
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_hyperbolic", True)
+    sdfg.simplify()
 
     size = 3
     d = np.full([size], 42, order="F", dtype=np.float32)
@@ -744,45 +843,32 @@ def test_fortran_frontend_hyperbolic():
 
 
 def test_fortran_frontend_trig_inverse():
-    test_string = """
-                    PROGRAM intrinsic_math_test_hyperbolic
-                    implicit none
-                    real, dimension(3) :: sincos_args
-                    real, dimension(3) :: tan_args
-                    real, dimension(6) :: tan2_args
-                    real, dimension(12) :: res
-                    CALL intrinsic_math_test_function(sincos_args, tan_args, tan2_args, res)
-                    end
-
-                    SUBROUTINE intrinsic_math_test_function(sincos_args, tan_args, tan2_args, res)
-                    integer :: n
-                    real, dimension(3) :: sincos_args
-                    real, dimension(3) :: tan_args
-                    real, dimension(6) :: tan2_args
-                    real, dimension(12) :: res
-
-                    DO n=1,3
-                        res(n) = ASIN(sincos_args(n))
-                    END DO
-
-                    DO n=1,3
-                        res(n+3) = ACOS(sincos_args(n))
-                    END DO
-
-                    DO n=1,3
-                        res(n+6) = ATAN(tan_args(n))
-                    END DO
-
-                    DO n=1,3
-                        res(n+9) = ATAN2(tan2_args(2*n - 1), tan2_args(2*n))
-                    END DO
-
-                    END SUBROUTINE intrinsic_math_test_function
-                    """
-
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_modulo", False)
-    sdfg.simplify(verbose=True)
-    sdfg.compile()
+    sources, main = SourceCodeBuilder().add_file("""
+subroutine main(sincos_args, tan_args, tan2_args, res)
+  integer :: n
+  real, dimension(3) :: sincos_args
+  real, dimension(3) :: tan_args
+  real, dimension(6) :: tan2_args
+  real, dimension(12) :: res
+  do n = 1, 3
+    res(n) = asin(sincos_args(n))
+  end do
+  do n = 1, 3
+    res(n + 3) = acos(sincos_args(n))
+  end do
+  do n = 1, 3
+    res(n + 6) = atan(tan_args(n))
+  end do
+  do n = 1, 3
+    res(n + 9) = atan2(tan2_args(2*n - 1), tan2_args(2*n))
+  end do
+end subroutine main
+""").check_with_gfortran().get()
+    sdfg = create_singular_sdfg_from_string(
+        sources,
+        'main',
+    )
+    sdfg.simplify()
 
     size = 3
     sincos_args = np.full([size], 42, order="F", dtype=np.float32)
@@ -812,10 +898,80 @@ def test_fortran_frontend_trig_inverse():
     ])
 
 
+def test_fortran_frontend_exp2():
+    test_string = """
+                    PROGRAM intrinsic_math_test_exp2
+                    implicit none
+                    double precision, dimension(2) :: d
+                    double precision, dimension(2) :: res
+                    CALL intrinsic_math_test_exp2_function(d, res)
+                    end
+
+                    SUBROUTINE intrinsic_math_test_exp2_function(d, res)
+                    double precision, dimension(2) :: d
+                    double precision, dimension(2) :: res
+                    integer :: n
+
+                    do n=1,2
+                        res(n) = EXP(- 1.66D0 * d(n))
+                    end do
+
+                    END SUBROUTINE intrinsic_math_test_exp2_function
+                    """
+
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_exp2", True)
+    sdfg.simplify()
+
+    size = 2
+    d = np.full([size], 42, order="F", dtype=np.float64)
+    d[0] = 2
+    d[1] = 4.5
+    res = np.full([2], 42, order="F", dtype=np.float64)
+    sdfg(d=d, res=res)
+    py_res = np.exp(-1.66 * d)
+
+    for f_res, p_res in zip(res, py_res):
+        assert abs(f_res - p_res) < 10**-9
+
+def test_fortran_frontend_epsilon():
+    test_string = """
+                    PROGRAM intrinsic_math_test_epsilon
+                    implicit none
+                    double precision, dimension(2) :: d
+                    double precision, dimension(2) :: res
+                    CALL intrinsic_math_test_epsilon_function(d, res)
+                    end
+
+                    SUBROUTINE intrinsic_math_test_epsilon_function(d, res)
+                    double precision, dimension(2) :: d
+                    double precision, dimension(2) :: res
+                    real :: val
+                    integer :: n
+
+                    val = 3.14
+
+                    res(1) = EPSILON(d(1))
+                    res(2) = EPSILON(val)
+
+                    END SUBROUTINE intrinsic_math_test_epsilon_function
+                    """
+
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_epsilon", True)
+    sdfg.simplify()
+
+    size = 2
+    d = np.full([size], 42, order="F", dtype=np.float64)
+    res = np.full([2], 42, order="F", dtype=np.float64)
+    sdfg(d=d, res=res)
+
+    assert abs(res[0] - np.finfo(np.float64).eps) < 10**-9
+    assert abs(res[1] - np.finfo(np.float32).eps) < 10**-9
+
 if __name__ == "__main__":
 
     test_fortran_frontend_min_max()
     test_fortran_frontend_sqrt()
+    test_fortran_frontend_sqrt_structure()
     test_fortran_frontend_abs()
     test_fortran_frontend_exp()
     test_fortran_frontend_log()
@@ -828,6 +984,9 @@ if __name__ == "__main__":
     test_fortran_frontend_exponent()
     test_fortran_frontend_int()
     test_fortran_frontend_real()
+    test_fortran_frontend_real_kind()
     test_fortran_frontend_trig()
     test_fortran_frontend_hyperbolic()
     test_fortran_frontend_trig_inverse()
+    test_fortran_frontend_exp2()
+    test_fortran_frontend_epsilon()

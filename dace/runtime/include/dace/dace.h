@@ -8,6 +8,7 @@
 #include <numeric>
 #include <tuple>
 #include <cstring>
+#include <type_traits>
 
 // The order in which these are included matters - sorting them
 // alphabetically causes compilation to fail.
