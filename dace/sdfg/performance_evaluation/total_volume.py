@@ -135,9 +135,7 @@ def get_static_symbols(sdfg: SDFG):
 
 def calculate_edge_volume(state: SDFGState, edge:MultiConnectorEdge):
     vol = sp.sympify(1)
-    for (l, u, s) in edge.data.subset.ranges:
-        # plus one because DaCe uses inclusive ranges
-        vol *= (u-l+1)/s    
+    vol = edge.data.subset.num_elements()   
     
     return vol*state.sdfg.arrays[edge.data.data].dtype.bytes
 

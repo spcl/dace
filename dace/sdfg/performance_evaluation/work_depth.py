@@ -11,7 +11,7 @@ from typing import List, Tuple, Dict
 import os
 import sympy as sp
 from copy import deepcopy
-from dace.libraries.blas import MatMul, Dot
+from dace.libraries.blas import MatMul, Dot, Gemm, Gemv
 from dace.libraries.standard import Reduce, Transpose
 from dace.symbolic import pystr_to_symbolic
 import ast
@@ -115,7 +115,11 @@ def get_static_symbols(sdfg: SDFG):
                         code = tasklet.code.as_string.strip()
                         # Expect a single assignment
                         lines = [l.strip() for l in code.splitlines() if l.strip()]
-                        lhs, rhs = lines[0].split('=',1)
+                        try:
+                            lhs, rhs = lines[0].split('=',1)
+                        except:
+                            # Skip mapping for overly complex tasklet code
+                            non_static_symbols.add(sp.Symbol(node.data))
                         lhs = lhs.strip()
                         rhs = rhs.strip()
                         rhs = type_regex.sub("", rhs)
@@ -230,8 +234,149 @@ def count_depth_dot(node, symbols, state):
     result = 1+sp.log(sp.Max(1, symeval(X_memlet.data.subset.size()[-1], symbols)), 2)
     return sp.sympify(result)
 
+def count_work_gemm(node, symbols, state):
+    """
+    Count work for GEMM operation: C = alpha * A @ B + beta * C
+    Work includes:
+    - Matrix multiplication: 2*M*N*K (multiply + add per element)
+    - Alpha scaling: M*N (if alpha != 1)
+    - Beta scaling + addition: 2*M*N (if beta != 0)
+    """
+    A_memlet = next(e for e in state.in_edges(node) if e.dst_conn == '_a')
+    B_memlet = next(e for e in state.in_edges(node) if e.dst_conn == '_b')
+    C_memlet = next(e for e in state.out_edges(node) if e.src_conn == '_c')
+    
+    # Get dimensions
+    # Handle batch dimension if present
+    if len(C_memlet.data.subset) == 3:
+        batch = symeval(C_memlet.data.subset.size()[0], symbols)
+        M = symeval(C_memlet.data.subset.size()[1], symbols)
+        N = symeval(C_memlet.data.subset.size()[2], symbols)
+    else:
+        batch = 1
+        M = symeval(C_memlet.data.subset.size()[-2], symbols) if len(C_memlet.data.subset.size()) >= 2 else 1
+        N = symeval(C_memlet.data.subset.size()[-1], symbols)
+    
+    K = symeval(A_memlet.data.subset.size()[-1], symbols)
+    
+    # Core matrix multiplication: 2*M*N*K (multiply + add)
+    result = 2 * batch * M * N * K
+    
+    # Add work for alpha scaling if alpha != 1
+    alpha = getattr(node, 'alpha', 1)
+    if alpha != 1:
+        result += batch * M * N  # M*N multiplications by alpha
+    
+    # Add work for beta * C if beta != 0
+    beta = getattr(node, 'beta', 0)
+    if beta != 0:
+        result += batch * M * N  # M*N multiplications by beta
+        result += batch * M * N  # M*N additions
+    
+    return sp.sympify(result)
+
+
+def count_depth_gemm(node, symbols, state):
+    """
+    Optimal depth for GEMM: log(K) for the reduction + constant for scaling/addition
+    """
+    A_memlet = next(e for e in state.in_edges(node) if e.dst_conn == '_a')
+    K = symeval(A_memlet.data.subset.size()[-1], symbols)
+    
+    # Depth is dominated by the reduction over K dimension
+    depth = sp.log(sp.Max(1, K), 2)
+    
+    # Add constant depth for alpha and beta operations
+    alpha = getattr(node, 'alpha', 1)
+    beta = getattr(node, 'beta', 0)
+    
+    if alpha != 1:
+        depth += 1  # One multiplication layer
+    if beta != 0:
+        depth += 2  # One multiplication + one addition layer
+    
+    return sp.Max(1, depth)
+
+
+def count_work_gemv(node, symbols, state):
+    """
+    Count work for GEMV operation: y = alpha * A @ x + beta * y
+    Two variants:
+    - GEMV: y = alpha * A @ x + beta * y  (A is MxN, x is N, y is M)
+    - GEMVT: y = alpha * A^T @ x + beta * y  (A is MxN, x is M, y is N)
+    
+    Work includes:
+    - Matrix-vector multiplication: 2*M*N (multiply + add per element)
+    - Alpha scaling: M (if alpha != 1)
+    - Beta scaling + addition: 2*M (if beta != 0)
+    """
+    A_memlet = next(e for e in state.in_edges(node) if e.dst_conn == '_A')
+    x_memlet = next(e for e in state.in_edges(node) if e.dst_conn == '_x')
+    y_memlet = next(e for e in state.out_edges(node) if e.src_conn == '_y')
+    
+    # Get dimensions from A matrix
+    A_shape = A_memlet.data.subset.size()
+    M = symeval(A_shape[-2], symbols)
+    N = symeval(A_shape[-1], symbols)
+    
+    # Check if transpose (GEMVT)
+    trans = getattr(node, 'transA', False)
+    
+    # Output size
+    output_size = N if trans else M
+    
+    # Core matrix-vector multiplication: 2*M*N (each output element needs N multiplies and N-1 adds)
+    result = 2 * M * N
+    
+    # Add work for alpha scaling if alpha != 1
+    alpha = getattr(node, 'alpha', 1)
+    if alpha != 1:
+        result += output_size  # output_size multiplications by alpha
+    
+    # Add work for beta * y if beta != 0
+    beta = getattr(node, 'beta', 0)
+    if beta != 0:
+        result += output_size  # output_size multiplications by beta
+        result += output_size  # output_size additions
+    
+    return sp.sympify(result)
+
+
+def count_depth_gemv(node, symbols, state):
+    """
+    Optimal depth for GEMV: log(N) for the reduction + constant for scaling/addition
+    where N is the reduction dimension
+    """
+    A_memlet = next(e for e in state.in_edges(node) if e.dst_conn == '_A')
+    A_shape = A_memlet.data.subset.size()
+    M = symeval(A_shape[-2], symbols)
+    N = symeval(A_shape[-1], symbols)
+    
+    # Check if transpose
+    trans = getattr(node, 'transA', False)
+    
+    # Reduction dimension
+    reduction_dim = M if trans else N
+    
+    # Depth is dominated by the reduction
+    depth = sp.log(sp.Max(1, reduction_dim), 2)
+    
+    # Add constant depth for alpha and beta operations
+    alpha = getattr(node, 'alpha', 1)
+    beta = getattr(node, 'beta', 0)
+    
+    if alpha != 1:
+        depth += 1  # One multiplication layer
+    if beta != 0:
+        depth += 2  # One multiplication + one addition layer
+    
+    return sp.Max(1, depth)
+
+
 LIBNODES_TO_WORK = {
     MatMul: count_work_matmul,
+    Gemm: count_work_gemm,
+    Gemv: count_work_gemv,
     Transpose: lambda *args: 0,
     Reduce: count_work_reduce,
     Dot: count_work_dot,
@@ -239,6 +384,8 @@ LIBNODES_TO_WORK = {
 
 LIBNODES_TO_DEPTH = {
     MatMul: count_depth_matmul,
+    Gemm: count_depth_gemm,
+    Gemv: count_depth_gemv,
     Transpose: lambda *args: 0,
     Reduce: count_depth_reduce,
     Dot: count_depth_dot,
