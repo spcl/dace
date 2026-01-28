@@ -488,7 +488,6 @@ def add_indirection_subgraph(sdfg: SDFG,
                 access = list(access)
             if not isinstance(access, (list, tuple)):
                 access = [access]
-            conn = None
             if pvisitor.nested:
                 # TODO: Make this work for nested for-loops
                 arr_rng = dace.subsets.Range([(a, a, 1) for a in access])
@@ -496,11 +495,10 @@ def add_indirection_subgraph(sdfg: SDFG,
                     arrname, rng = pvisitor._add_write_access(arr_name, arr_rng, target=None)
                 else:
                     arrname, rng = pvisitor._add_read_access(arr_name, arr_rng, target=None)
-                conn = 'index_%s_%d' % (arr_name, i)
                 arr = sdfg.arrays[arrname]
                 subset = subsets.Range.from_array(arr)
             else:
-                subset = subsets.Indices(access)
+                subset = subsets.Range([(a, a, 1) for a in access])
             # Memlet to load the indirection index
             indexMemlet = Memlet.simple(arrname, subset)
             input_index_memlets.append(indexMemlet)
@@ -1794,8 +1792,8 @@ class ProgramVisitor(ExtNodeVisitor):
         # Inject element to internal SDFG arrays
         ntrans = f'consume_{stream_name}'
         ntrans, _ = sdfg.add_array(ntrans, [1], self.sdfg.arrays[stream_name].dtype, find_new_name=True)
-        internal_memlet = dace.Memlet.simple(ntrans, subsets.Indices([0]))
-        external_memlet = dace.Memlet.simple(stream_name, subsets.Indices([0]), num_accesses=-1)
+        internal_memlet = dace.Memlet.simple(ntrans, subsets.Range([(0, 0, 1)]))
+        external_memlet = dace.Memlet.simple(stream_name, subsets.Range([(0, 0, 1)]), num_accesses=-1)
 
         # Inject to internal tasklet
         if not dec.endswith('scope'):
