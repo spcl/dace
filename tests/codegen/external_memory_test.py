@@ -30,7 +30,7 @@ def test_external_mem(symbolic):
     a = np.random.rand(20)
 
     if symbolic:
-        extra_args = dict(a=a, N=20)
+        extra_args = dict(N=20)
     else:
         extra_args = {}
 

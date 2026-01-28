@@ -7,7 +7,9 @@ import itertools
 import copy
 import os
 import sympy
+import sys
 from typing import Any, Callable, Dict, List, Optional, Set, Sequence, Tuple, Union
+from typing import get_origin, get_args
 import warnings
 
 from dace import data, dtypes, hooks, symbolic
@@ -15,11 +17,6 @@ from dace.config import Config
 from dace.frontend.python import (newast, common as pycommon, cached_program, preprocessing)
 from dace.sdfg import SDFG, utils as sdutils
 from dace.data import create_datadescriptor, Data
-
-try:
-    from typing import get_origin, get_args
-except ImportError:
-    from typing_compat import get_origin, get_args
 
 try:
     import mpi4py
@@ -57,12 +54,28 @@ def _get_locals_and_globals(f):
     result = {'__dace__': True}
     # Update globals, then locals
     result.update(f.__globals__)
+
+    # Python 3.14+: Also get globals from the annotate function
+    if sys.version_info >= (3, 14):
+        annotate_func = getattr(f, '__annotate__', None)
+        if annotate_func is not None:
+            result.update(annotate_func.__globals__)
+
     # grab the free variables (i.e. locals)
     if f.__closure__ is not None:
         result.update({
             k: v
             for k, v in zip(f.__code__.co_freevars, [_get_cell_contents_or_none(x) for x in f.__closure__])
         })
+
+    if sys.version_info >= (3, 14):
+        # Python 3.14+: Also get locals from the annotate function
+        if annotate_func is not None and annotate_func.__closure__ is not None:
+            result.update({
+                k: v
+                for k, v in zip(annotate_func.__code__.co_freevars,
+                                [_get_cell_contents_or_none(x) for x in annotate_func.__closure__])
+            })
 
     return result
 
