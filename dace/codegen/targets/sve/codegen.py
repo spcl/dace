@@ -1,11 +1,11 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
     Code generation: This module is responsible for converting an SDFG into SVE code.
 """
 
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.codegen.prettycode import CodeIOStream
-from dace.codegen.targets.target import TargetCodeGenerator
+from dace.codegen.target import TargetCodeGenerator
 from dace.codegen.targets.framecode import DaCeCodeGenerator
 from dace.sdfg import nodes, SDFG, SDFGState, ScopeSubgraphView, graph as gr
 from dace.codegen.prettycode import CodeIOStream
@@ -15,7 +15,7 @@ from dace.sdfg import graph, state, find_input_arraynode, find_output_arraynode
 from dace.sdfg.scope import is_in_scope
 import itertools
 from dace.codegen.targets.sve import util as util
-from typing import List
+from typing import List, Optional
 import copy
 from six import StringIO
 import dace.codegen.targets.sve.unparse
@@ -29,7 +29,7 @@ from dace.codegen.dispatcher import DefinedType
 import copy
 import numpy as np
 from dace.codegen.targets.cpp import is_write_conflicted
-from dace import data as data
+from dace import data, subsets
 from dace.frontend.operations import detect_reduction_type
 import dace.codegen.targets
 
@@ -71,6 +71,9 @@ class SVECodeGen(TargetCodeGenerator):
                                                  self)
 
         self.cpu_codegen: dace.codegen.targets.CPUCodeGen = self.dispatcher.get_generic_node_dispatcher()
+
+    def get_framecode_generator(self) -> DaCeCodeGenerator:
+        return self.frame
 
     def get_generated_codeobjects(self):
         res = super().get_generated_codeobjects()
@@ -180,7 +183,7 @@ class SVECodeGen(TargetCodeGenerator):
                     ##################
                     # Pointer reference
                     code.write(
-                        f'{dst_type} {dst_name} = {cpp.cpp_ptr_expr(sdfg, edge.data, None, codegen=self.frame)};')
+                        f'{dst_type} {dst_name} = {cpp.cpp_ptr_expr(sdfg, edge.data, None, codegen=self.cpu_codegen)};')
                 elif util.is_vector(dst_type):
                     ##################
                     # Vector load
@@ -200,7 +203,7 @@ class SVECodeGen(TargetCodeGenerator):
                     # Regular load and gather share the first arguments
                     load_args = '{}, {}'.format(
                         util.get_loop_predicate(sdfg, state, edge.dst),
-                        ptr_cast + cpp.cpp_ptr_expr(sdfg, edge.data, DefinedType.Pointer, codegen=self.frame))
+                        ptr_cast + cpp.cpp_ptr_expr(sdfg, edge.data, DefinedType.Pointer, codegen=self.cpu_codegen))
 
                     if stride == 1:
                         code.write('{} = svld1({});'.format(load_lhs, load_args))
@@ -211,7 +214,7 @@ class SVECodeGen(TargetCodeGenerator):
                 else:
                     ##################
                     # Scalar read from array
-                    code.write(f'{dst_type} {dst_name} = {cpp.cpp_array_expr(sdfg, edge.data, codegen=self.frame)};')
+                    code.write(f'{dst_type} {dst_name} = {cpp.cpp_array_expr(sdfg, edge.data, codegen=self)};')
             elif isinstance(desc, data.Scalar):
                 # Refer to shared variable
                 src_type = desc.dtype
@@ -327,7 +330,7 @@ class SVECodeGen(TargetCodeGenerator):
 
                     store_args = '{}, {}'.format(
                         util.get_loop_predicate(sdfg, state, edge.src),
-                        ptr_cast + cpp.cpp_ptr_expr(sdfg, edge.data, DefinedType.Pointer, codegen=self.frame),
+                        ptr_cast + cpp.cpp_ptr_expr(sdfg, edge.data, DefinedType.Pointer, codegen=self.cpu_codegen),
                     )
 
                     if stride == 1:
@@ -339,7 +342,7 @@ class SVECodeGen(TargetCodeGenerator):
                 else:
                     ##################
                     # Scalar write into array
-                    code.write(f'{cpp.cpp_array_expr(sdfg, edge.data, codegen=self.frame)} = {src_name};')
+                    code.write(f'{cpp.cpp_array_expr(sdfg, edge.data, codegen=self)} = {src_name};')
             elif isinstance(desc, data.Scalar):
                 ##################
                 # Write into Scalar
@@ -381,7 +384,7 @@ class SVECodeGen(TargetCodeGenerator):
                 nodedesc.dtype, dtypes.vector):
             # Special allocation if vector Code->Code register in SVE scope
             # We prevent dace::vec<>'s and allocate SVE registers instead
-            ptrname = cpp.ptr(node.data, nodedesc, sdfg, self.frame)
+            ptrname = self.ptr(node.data, nodedesc, sdfg)
             if self.dispatcher.defined_vars.has(ptrname):
                 sve_type = util.TYPE_TO_SVE[nodedesc.dtype.vtype]
                 self.dispatcher.defined_vars.add(ptrname, DefinedType.Scalar, sve_type)
@@ -515,3 +518,23 @@ class SVECodeGen(TargetCodeGenerator):
             callsite_stream.write(result.getvalue(), cfg, state_id, node)
 
         callsite_stream.write('///////////////////\n\n')
+
+    def ptr(self,
+            name: str,
+            desc: data.Data,
+            sdfg: SDFG = None,
+            subset: Optional[subsets.Subset] = None,
+            is_write: Optional[bool] = None,
+            ancestor: int = 0) -> str:
+        """
+        Returns a string that points to the data based on its name and descriptor.
+
+        :param name: Data name.
+        :param desc: Data descriptor.
+        :param sdfg: SDFG in which the data resides.
+        :param subset: Optional subset associated with the data.
+        :param is_write: Whether the access is a write access.
+        :param ancestor: Scope ancestor level.
+        :return: C-compatible name that can be used to access the data.
+        """
+        return cpp.ptr(name, desc, sdfg, self.frame)

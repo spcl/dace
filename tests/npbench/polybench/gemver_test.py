@@ -5,8 +5,7 @@ import numpy as np
 import dace as dc
 import pytest
 import argparse
-from dace.fpga_testing import fpga_test
-from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
+from dace.transformation.interstate import InlineSDFG
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.autodiff import add_backward_pass
 
@@ -69,20 +68,6 @@ def run_gemver(device_type: dace.dtypes.DeviceType):
         sdfg = gemver_kernel.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
         sdfg(alpha, beta, A, np.copy(u1), v1, u2, v2, w, x, y, z, N=N)
-    elif device_type == dace.dtypes.DeviceType.FPGA:
-        # Parse SDFG and apply FPGA friendly optimization
-        sdfg = gemver_kernel.to_sdfg(simplify=True)
-        applied = sdfg.apply_transformations([FPGATransformSDFG])
-        assert applied == 1
-
-        # Use FPGA Expansion for lib nodes, and expand them to enable further optimizations
-        from dace.libraries.blas import Gemv
-        Gemv.default_implementation = "FPGA_Accumulate"
-        sdfg.expand_library_nodes()
-        sdfg.apply_transformations_repeated([InlineSDFG], print_report=True)
-        sdfg.specialize(dict(N=N))
-        sdfg(alpha, beta, A, np.copy(u1), v1, u2, v2, w, x, y, z)
-
     # Compute ground truth and validate
     gemver_kernel.f(alpha, beta, A_ref, u1, v1, u2, v2, w_ref, x_ref, y, z)
     assert np.allclose(A, A_ref)
@@ -157,15 +142,10 @@ def test_autodiff():
     run_gemver_autodiff()
 
 
-@fpga_test(assert_ii_1=False)
-def test_fpga():
-    return run_gemver(dace.dtypes.DeviceType.FPGA)
-
-
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]
@@ -175,5 +155,3 @@ if __name__ == "__main__":
         run_gemver_autodiff()
     elif target == "gpu":
         run_gemver(dace.dtypes.DeviceType.GPU)
-    elif target == "fpga":
-        run_gemver(dace.dtypes.DeviceType.FPGA)

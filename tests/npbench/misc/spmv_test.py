@@ -6,8 +6,6 @@ import dace as dc
 import pytest
 import argparse
 from dace.transformation.auto.auto_optimize import auto_optimize
-from dace.fpga_testing import fpga_test
-from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 
 M, N, nnz = (dc.symbol(s, dtype=dc.int64) for s in ('M', 'N', 'nnz'))
 
@@ -72,21 +70,8 @@ def run_spmv(device_type: dace.dtypes.DeviceType):
         sdfg = spmv_kernel.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
         y = sdfg(A_rows, A_cols, np.copy(A_vals), x, M=M, N=N, nnz=nnz)
-    elif device_type == dace.dtypes.DeviceType.FPGA:
-        # Parse SDFG and apply FPGA friendly optimization
-        sdfg = spmv_kernel.to_sdfg(simplify=True)
-        applied = sdfg.apply_transformations([FPGATransformSDFG])
-        assert applied == 1
-
-        # Use FPGA Expansion for lib nodes, and expand them to enable further optimizations
-        from dace.libraries.blas import Dot
-        Dot.default_implementation = "FPGA_PartialSums"
-        sdfg.expand_library_nodes()
-
-        sdfg.apply_transformations_repeated([InlineSDFG], print_report=True)
-
-        sdfg.specialize(dict(M=M, N=N, nnz=nnz))
-        y = sdfg(A_rows, A_cols, np.copy(A_vals), x)
+    else:
+        raise ValueError(f'Unsupported device type: {device_type}')
 
     # Compute ground truth and Validate result
     y_ref = ground_truth(A_rows, A_cols, A_vals, x)
@@ -103,16 +88,10 @@ def test_gpu():
     run_spmv(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.skip(reason="Missing free symbol")
-@fpga_test(assert_ii_1=False)
-def test_fpga():
-    run_spmv(dace.dtypes.DeviceType.FPGA)
-
-
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]
@@ -121,5 +100,3 @@ if __name__ == "__main__":
         run_spmv(dace.dtypes.DeviceType.CPU)
     elif target == "gpu":
         run_spmv(dace.dtypes.DeviceType.GPU)
-    elif target == "fpga":
-        run_spmv(dace.dtypes.DeviceType.FPGA)
