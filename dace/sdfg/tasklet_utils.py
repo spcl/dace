@@ -8,7 +8,6 @@ and constants involved. It also provides utilities furhter manipulate and analyz
 """
 
 import re
-import sympy
 import dace
 from typing import Dict, Tuple, Set
 from dace.properties import CodeBlock
@@ -89,137 +88,6 @@ def _token_split(string_to_check: str) -> Set[str]:
     tokens = {token.strip() for token in tokens}
 
     return tokens
-
-
-def replace_code(code_str: str,
-                 code_lang: dace.dtypes.Language,
-                 repldict: Dict[str, str],
-                 py_only: bool = False,
-                 use_sym_expr: bool = True) -> str:
-    """
-    Replaces variables in a code string according to a replacement dictionary.
-    Supports Python symbolic substitution and fallback string-based replacement.
-
-    Parameters
-    ----------
-    code_str : str
-        The code string to modify.
-    code_lang : dace.dtypes.Language
-        The programming language of the code.
-    repldict : Dict[str, str]
-        Mapping from variable names to their replacements.
-    py_only: bool
-        Replace only if python tasklet
-    Returns
-    -------
-    str
-        The modified code string with replacements applied.
-    """
-
-    def _str_replace(lhs: str, rhs: str) -> str:
-        code_str = token_replace_dict(rhs, repldict)
-        return f"{lhs.strip()} = {code_str.strip()}"
-
-    def _str_replace_nsplit(code_str: str) -> str:
-        new_code_str = token_replace_dict(code_str, repldict)
-        return new_code_str
-
-    if code_lang == dace.dtypes.Language.Python and use_sym_expr:
-        try:
-            lhs, rhs = code_str.split(" = ")
-            lhs = lhs.strip()
-            rhs = rhs.strip()
-        except Exception as e:
-            try:
-                new_rhs_sym_expr = dace.symbolic.SymExpr(code_str).subs(repldict)
-                cleaned_expr = sympy.pycode(new_rhs_sym_expr, allow_unknown_functions=True).strip()
-                return f"{cleaned_expr}"
-            except Exception as e:
-                return code_str
-        try:
-            new_rhs_sym_expr = dace.symbolic.SymExpr(rhs).subs(repldict)
-            cleaned_expr = sympy.pycode(new_rhs_sym_expr, allow_unknown_functions=True).strip()
-            return f"{lhs.strip()} = {cleaned_expr}"
-        except Exception as e:
-            return _str_replace(lhs, rhs)
-    else:
-        if not py_only:
-            try:
-                lhs, rhs = code_str.split(" = ")
-                lhs = lhs.strip()
-                rhs = rhs.strip()
-                return _str_replace(lhs, rhs)
-            except Exception as e:
-                try:
-                    return _str_replace_nsplit(code_str)
-                except Exception as e:
-                    return code_str
-        else:
-            assert False
-
-
-def tasklet_replace_code(tasklet: dace.nodes.Tasklet,
-                         repldict: Dict[str, str],
-                         py_only: bool = True,
-                         use_sym_expr: bool = True):
-    """
-    Replaces symbols in a tasklet's code according to a replacement dictionary.
-    Updates the tasklet's code in place.
-
-    Parameters
-    ----------
-    tasklet : dace.nodes.Tasklet
-        The tasklet whose code to modify.
-    repldict : Dict[str, str]
-        Mapping from variable names to their replacements.
-
-    Returns
-    -------
-    None
-    """
-    new_code = replace_code(tasklet.code.as_string,
-                            tasklet.code.language,
-                            repldict,
-                            py_only=py_only,
-                            use_sym_expr=use_sym_expr)
-    tasklet.code = CodeBlock(code=new_code, language=tasklet.code.language)
-
-
-def extract_bracket_tokens(s: str) -> list[tuple[str, list[str]]]:
-    """
-    Extracts all contents inside [...] along with the token before the '[' as the name.
-
-    Args:
-        s (str): Input string.
-
-    Returns:
-        List of tuples: [(name_token, string inside brackes)]
-    """
-    results = []
-
-    # Pattern to match <name>[content_inside]
-    pattern = re.compile(r'(\b\w+)\[([^\]]*?)\]')
-
-    for match in pattern.finditer(s):
-        name = match.group(1)  # token before '['
-        content = match.group(2).split()  # split content inside brackets into tokens
-
-        results.append((name, " ".join(content)))
-
-    return {k: v for (k, v) in results}
-
-
-def remove_bracket_tokens(s: str) -> str:
-    """
-    Removes all [...] patterns from the string.
-
-    Args:
-        s (str): Input string.
-
-    Returns:
-        str: String with all [...] removed.
-    """
-    return re.sub(r'\[.*?\]', '', s)
 
 
 def _extract_constant_from_ast_str(src: str) -> str:
@@ -923,9 +791,6 @@ def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
                     return info_dict
 
     raise NotImplementedError("Unhandled case in detect tasklet type")
-
-
-import ast
 
 
 class FuncToOp(ast.NodeTransformer):
