@@ -514,7 +514,7 @@ class OutOfKernelCopyStrategy(CopyStrategy):
         # Generate call and write it
         call += f'DACE_GPU_CHECK({backend}Memcpy2DAsync(_out_{dst}, {dpitch}, _in_{src}, {spitch}, {width}, {height}, {kind}, {gpustream}));\n'
 
-        # Potentially snychronization required if syncdebug is set to true in configurations
+        # Potentially synchronization required if syncdebug is set to true in configurations
         call += generate_sync_debug_call()
 
         # Write for-loop footers
