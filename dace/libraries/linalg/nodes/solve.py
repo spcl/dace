@@ -6,7 +6,8 @@ import dace.properties
 import dace.sdfg.nodes
 import numpy as np
 
-from dace import Memlet
+from dace import Memlet, SDFG, SDFGState
+from dace import symbolic
 from dace.libraries.lapack import Getrf, Getrs
 from dace.libraries.standard import Transpose
 from dace.transformation.transformation import ExpandTransformation
@@ -14,25 +15,24 @@ from dace.libraries.lapack import environments
 from dace.libraries.blas import environments as blas_environments
 
 
-def _make_sdfg_getrs(node, parent_state, parent_sdfg, implementation):
+def _make_sdfg_getrs(node: 'Solve', parent_state, parent_sdfg, implementation):
 
     arr_desc = node.validate(parent_sdfg, parent_state)
-    (ain_shape, ain_dtype, ain_strides, bin_shape, bin_dtype, bin_strides, out_shape, out_dtype, out_strides, n,
-     rhs) = arr_desc
-    dtype = ain_dtype
+    (ain_shape, ain_dtype, ain_strides, bin_shape, bin_dtype, bin_strides, out_shape, out_dtype, out_strides, n, rhs,
+     storage) = arr_desc
 
     sdfg = dace.SDFG("{l}_sdfg".format(l=node.label))
 
     ain_arr = sdfg.add_array('_ain', ain_shape, dtype=ain_dtype, strides=ain_strides)
-    ainout_arr = sdfg.add_array('_ainout', [n, n], dtype=ain_dtype, transient=True)
+    ainout_arr = sdfg.add_array('_ainout', [n, n], dtype=ain_dtype, transient=True, storage=storage)
     bin_arr = sdfg.add_array('_bin', bin_shape, dtype=bin_dtype, strides=bin_strides)
     binout_shape = [n, rhs]
     if implementation == 'cuSolverDn':
         binout_shape = [rhs, n]
-    binout_arr = sdfg.add_array('_binout', binout_shape, dtype=out_dtype, transient=True)
+    binout_arr = sdfg.add_array('_binout', binout_shape, dtype=out_dtype, transient=True, storage=storage)
     bout_arr = sdfg.add_array('_bout', out_shape, dtype=out_dtype, strides=out_strides)
-    ipiv_arr = sdfg.add_array('_pivots', [n], dtype=dace.int32, transient=True)
-    info_arr = sdfg.add_array('_info', [1], dtype=dace.int32, transient=True)
+    ipiv_arr = sdfg.add_array('_pivots', [n], dtype=dace.int32, transient=True, storage=storage)
+    info_arr = sdfg.add_array('_info', [1], dtype=dace.int32, transient=True, storage=storage)
 
     state = sdfg.add_state("{l}_state".format(l=node.label))
 
@@ -145,18 +145,24 @@ class Solve(dace.sdfg.nodes.LibraryNode):
         # NOTE: We currently do not support overwrite == True
         self.overwrite = False
 
-    def validate(self, sdfg, state):
+    def validate(
+        self, sdfg: SDFG, state: SDFGState
+    ) -> tuple[list[symbolic.SymbolicType], dace.dtypes.typeclass, list[symbolic.SymbolicType],
+               list[symbolic.SymbolicType], dace.dtypes.typeclass, list[symbolic.SymbolicType],
+               list[symbolic.SymbolicType], dace.dtypes.typeclass, list[symbolic.SymbolicType], symbolic.SymbolicType,
+               symbolic.SymbolicType, dace.dtypes.StorageType]:
         """
-        :return: A four-tuple (ain, aout, ipiv, info) of the three data
-                 descriptors in the parent SDFG.
+        :return: A tuple containing shapes, dtypes, strides, sizes, and storage:
+                 (ain_shape, ain_dtype, ain_strides, bin_shape, bin_dtype, bin_strides,
+                  out_shape, out_dtype, out_strides, n, rhs, storage).
         """
 
         in_edges = state.in_edges(self)
         if len(in_edges) != 2:
-            raise ValueError("Expected exactly two inputs to inv")
+            raise ValueError("Expected exactly two inputs to solve")
         out_edges = state.out_edges(self)
         if len(out_edges) != 1:
-            raise ValueError("Expected exactly one output from inv")
+            raise ValueError("Expected exactly one output from solve")
 
         desc_ain, desc_bin, desc_out = None, None, None
         for e in state.in_edges(self):
@@ -209,4 +215,4 @@ class Solve(dace.sdfg.nodes.LibraryNode):
             raise ValueError("Overwriting input B is not supported")
 
         return (shape_ain, desc_ain.dtype, strides_ain, shape_bin, desc_bin.dtype, strides_bin, shape_out,
-                desc_out.dtype, strides_out, shape_out[0], shape_out[1])
+                desc_out.dtype, strides_out, shape_out[0], shape_out[1], desc_ain.storage)

@@ -6,6 +6,7 @@ import pytest
 import dace
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
+from dace.sdfg.validation import InvalidSDFGNodeError
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.dead_state_elimination import DeadStateElimination
 from dace.transformation.passes.dead_dataflow_elimination import DeadDataflowElimination
@@ -119,6 +120,30 @@ def test_dse_inside_loop_conditional():
 
     DeadStateElimination().apply_pass(sdfg, {})
     assert set(sdfg.states()) == {start, s, s2, e, end}
+
+
+def test_dse_malformed_conditional_block():
+    sdfg = dace.SDFG("dse_malformed_conditional_block")
+    sdfg.add_symbol("a", dace.int32)
+    condition = ConditionalBlock("cond", sdfg)
+    sdfg.add_node(condition)
+
+    branch_else = ControlFlowRegion("else", sdfg)
+    branch_else.add_state()
+    condition.add_branch(None, branch_else)
+
+    branch_if = ControlFlowRegion("if", sdfg)
+    branch_if.add_state()
+    condition.add_branch(CodeBlock("a > 0"), branch_if)
+
+    merge_state = sdfg.add_state("merge_state")
+    sdfg.add_edge(condition, merge_state, dace.InterstateEdge())
+
+    with pytest.raises(
+            InvalidSDFGNodeError,
+            match="Conditional block detected, where else branch is not the last branch.",
+    ):
+        DeadStateElimination().apply_pass(sdfg, {})
 
 
 def test_dde_simple():
@@ -478,6 +503,7 @@ if __name__ == '__main__':
     test_dse_edge_condition_with_integer_as_boolean_regression()
     test_dse_inside_loop()
     test_dse_inside_loop_conditional()
+    test_dse_malformed_conditional_block()
     test_dde_simple()
     test_dde_libnode()
     test_dde_access_node_in_scope(False)

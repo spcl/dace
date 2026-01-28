@@ -1264,8 +1264,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                 evaluated_constant = symbolic.evaluate(unparsed, self.constants)
                 evaluated = symbolic.symstr(evaluated_constant, cpp_mode=True)
                 value = ast.parse(evaluated).body[0].value
-                if isinstance(evaluated_node, numbers.Number) and evaluated_node != (value.value if sys.version_info
-                                                                                     >= (3, 8) else value.n):
+                if isinstance(evaluated_node, numbers.Number) and evaluated_node != value.value:
                     raise TypeError
                 node.right = ast.parse(evaluated).body[0].value
             except (TypeError, AttributeError, NameError, KeyError, ValueError, SyntaxError):

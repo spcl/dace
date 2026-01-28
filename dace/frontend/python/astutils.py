@@ -178,16 +178,8 @@ def subscript_to_ast_slice(node, without_array=False):
     if not isinstance(node, ast.Subscript):
         raise TypeError('AST node is not a subscript')
 
-    # Python <3.9 compatibility
     result_slice = None
-    if sys.version_info < (3, 9) and isinstance(node.slice, ast.Index):
-        slc = node.slice.value
-        if not isinstance(slc, ast.Tuple):
-            result_slice = [slc]
-    elif sys.version_info < (3, 9) and isinstance(node.slice, ast.ExtSlice):
-        slc = tuple(node.slice.dims)
-    else:
-        slc = node.slice
+    slc = node.slice
 
     # Decode slice tuple
     if result_slice is None:
@@ -202,8 +194,6 @@ def subscript_to_ast_slice(node, without_array=False):
             # Slice
             if isinstance(s, ast.Slice):
                 result_slice.append((s.lower, s.upper, s.step))
-            elif sys.version_info < (3, 9) and isinstance(s, ast.Index):  # Index (Python <3.9)
-                result_slice.append(s.value)
             else:  # Index
                 result_slice.append(s)
 
