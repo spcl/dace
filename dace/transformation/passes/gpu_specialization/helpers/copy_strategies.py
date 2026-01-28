@@ -382,7 +382,7 @@ class OutOfKernelCopyStrategy(CopyStrategy):
 
             call = f'DACE_GPU_CHECK({backend}Memcpy2DAsync(_out_{dst_expr}, {dpitch}, _in_{src_expr}, {spitch}, {width}, {height}, {kind}, {gpustream}));\n'
 
-        # Potentially snychronization required if syncdebug is set to true in configurations
+        # Potentially synchronization required if syncdebug is set to true in configurations
         call = call + generate_sync_debug_call()
         return call
 
