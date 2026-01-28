@@ -497,6 +497,27 @@ def test_prune_single_branch_conditional_block():
     assert sdfg.out_edges(first_state)[0].dst == then_body
 
 
+def test_dde_loop_condition():
+
+    @dace.program
+    def loop_condition(A: dace.float64[20]):
+        for i in dace.map[0:20]:
+            f = 0.0
+            while f < 10.0:
+                with dace.tasklet:
+                    a << A[i]
+                    f_out = a + 1.0
+                    b = f_out
+                    f_out >> f
+                    b >> A[i]
+
+    sdfg = loop_condition.to_sdfg(simplify=False)
+    Pipeline([DeadDataflowElimination()]).apply_pass(sdfg, {})
+    count_f_nodes = sum(1 for a, _ in sdfg.all_nodes_recursive()
+                        if isinstance(a, dace.nodes.AccessNode) and a.data == 'f')
+    assert count_f_nodes == 2
+
+
 if __name__ == '__main__':
     test_dse_simple()
     test_dse_unconditional()
@@ -520,3 +541,4 @@ if __name__ == '__main__':
     test_dce_add_type_hint_of_variable(dace.bool)
     test_dce_add_type_hint_of_variable(np.float64)
     test_prune_single_branch_conditional_block()
+    test_dde_loop_condition()

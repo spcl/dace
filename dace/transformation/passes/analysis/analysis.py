@@ -92,6 +92,7 @@ class ControlFlowBlockReachability(ppl.Pass):
             # Any point inside the loop may reach any other point inside the loop again.
             # TODO(later): This is an overapproximation. A branch terminating in a break is excluded from this.
             closure.update(region.all_control_flow_blocks())
+            closure.add(region)  # The loop condition is also reachable.
 
         # Add all states that this region can reach in its parent graph to the closure.
         for reached_block in block_reach[region.parent_graph.cfg_id][region]:
