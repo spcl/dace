@@ -268,6 +268,10 @@ def integrate_nested_sdfg(sdfg: SDFG):
                         sdfg.arrays[connector] = copy.deepcopy(parent_sdfg.arrays[edge.data.data])
                         sdfg.arrays[connector].transient = False
                         continue
+                    if connector == edge.data.data and sdfg.arrays[connector].is_equivalent(
+                            parent_sdfg.arrays[edge.data.data]):
+                        # No need to add/view, names and descriptors are already equivalent
+                        continue
                     to_add_and_view[connector] = (edge.data.data, parent_sdfg.arrays[edge.data.data], edge.data)
 
     symbols_to_add: Set[symbolic.SymbolicType] = set()
