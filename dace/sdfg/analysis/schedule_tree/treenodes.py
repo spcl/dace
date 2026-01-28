@@ -458,8 +458,10 @@ class ForScope(LoopScope):
         return result + super().as_string(indent)
 
     def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None, **kwargs) -> MemletSet:
+        root = root if root is not None else self.get_root()
+
         result = MemletSet()
-        result.update(self.loop.get_meta_read_memlets())
+        result.update(self.loop.get_meta_read_memlets(arrays=root.containers))
 
         # If loop range is well-formed, use it in propagation
         range = _loop_range(self.loop)
@@ -500,8 +502,9 @@ class WhileScope(LoopScope):
 
     def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None, **kwargs) -> MemletSet:
         root = root if root is not None else self.get_root()
+
         result = MemletSet()
-        result.update(self.loop.get_meta_read_memlets())
+        result.update(self.loop.get_meta_read_memlets(arrays=root.containers))
         result.update(super().input_memlets(root, **kwargs))
         return result
 
@@ -524,8 +527,9 @@ class DoWhileScope(LoopScope):
 
     def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None, **kwargs) -> MemletSet:
         root = root if root is not None else self.get_root()
+
         result = MemletSet()
-        result.update(self.loop.get_meta_read_memlets())
+        result.update(self.loop.get_meta_read_memlets(arrays=root.containers))
         result.update(super().input_memlets(root, **kwargs))
         return result
 

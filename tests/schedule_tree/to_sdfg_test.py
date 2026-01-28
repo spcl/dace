@@ -608,6 +608,41 @@ def test_create_nested_map_scope():
     sdfg.validate()
 
 
+def test_double_map_with_for_loop():
+    stree = tn.ScheduleTreeRoot(
+        name="tester",
+        containers={'A': data.Array(dace.float64, [20])},
+        children=[
+            tn.MapScope(
+                node=nodes.MapEntry(nodes.Map("map_i", "i", sbs.Range.from_string("0:4"))),
+                children=[
+                    tn.MapScope(
+                        node=nodes.MapEntry(nodes.Map("map_j", "j", sbs.Range.from_string("0:5"))),
+                        children=[
+                            tn.ForScope(
+                                loop=LoopRegion(
+                                    label="loop_k",
+                                    loop_var="k",
+                                    initialize_expr=CodeBlock("k = 0 "),
+                                    condition_expr=CodeBlock("k < 3"),
+                                    update_expr=CodeBlock("k = k+1"),
+                                ),
+                                children=[
+                                    tn.TaskletNode(nodes.Tasklet("assign", {}, {"out"}, "out = 1.0"), {},
+                                                   {"out": dace.Memlet("A[i*15+j*3+k]")})
+                                ],
+                            ),
+                        ],
+                    )
+                ],
+            )
+        ],
+    )
+
+    sdfg = stree.as_sdfg()
+    assert sdfg.is_valid()
+
+
 def test_triple_map_flat_if():
     stree = tn.ScheduleTreeRoot(
         name="tester",
