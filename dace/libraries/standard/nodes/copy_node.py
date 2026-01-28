@@ -1,4 +1,4 @@
-# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace import library, nodes
 from dace.transformation.transformation import ExpandTransformation
@@ -6,8 +6,9 @@ from .. import environments
 from functools import reduce
 import operator
 from dace.codegen.common import sym2cpp
+import copy
 
-from dace.libraries.standard.helper import collapse_shape_and_strides, add_dynamic_inputs
+from dace.libraries.standard.helper import add_dynamic_inputs, collapse_shape_and_strides
 
 
 @library.expansion
@@ -27,9 +28,9 @@ class ExpandPure(ExpandTransformation):
         sdfg.add_array(out_name, out_shape_collapsed, out.dtype, out.storage, strides=out_strides_collapsed)
 
         state = sdfg.add_state(f"{node.label}_state", is_start_block=True)
-
         map_lengths = add_dynamic_inputs(dynamic_inputs, sdfg, in_subset, state)
-        sdfg.schedule = dace.dtypes.ScheduleType.Sequential
+
+        sdfg.schedule = dace.dtypes.ScheduleType.Default
 
         map_params = [f"__i{i}" for i in range(len(map_lengths))]
         map_rng = {i: f"0:{s}" for i, s in zip(map_params, map_lengths)}
@@ -38,13 +39,16 @@ class ExpandPure(ExpandTransformation):
         inputs = {"_memcpy_inp": dace.memlet.Memlet(f"{inp_name}[{in_access_expr}]")}
         outputs = {"_memcpy_out": dace.memlet.Memlet(f"{out_name}[{out_access_expr}]")}
         code = "_memcpy_out = _memcpy_inp"
+        if inp.storage == dace.dtypes.StorageType.GPU_Global:
+            schedule = dace.dtypes.ScheduleType.GPU_Device
+        else:
+            schedule = dace.dtypes.ScheduleType.Default
         state.add_mapped_tasklet(f"{node.label}_tasklet",
                                  map_rng,
                                  inputs,
                                  code,
                                  outputs,
-                                 schedule=dace.dtypes.ScheduleType.GPU_Device if out.storage
-                                 == dace.dtypes.StorageType.GPU_Global else dace.dtypes.ScheduleType.Default,
+                                 schedule=schedule,
                                  external_edges=True)
 
         return sdfg
@@ -67,7 +71,6 @@ class ExpandCUDA(ExpandTransformation):
         sdfg = dace.SDFG(f"{node.label}_sdfg")
         sdfg.add_array(inp_name, in_shape_collapsed, inp.dtype, inp.storage, strides=in_strides_collapsed)
         sdfg.add_array(out_name, out_shape_collapsed, out.dtype, out.storage, strides=out_strides_collapsed)
-        sdfg.schedule = dace.dtypes.ScheduleType.Sequential
 
         # Add dynamic inputs
         state = sdfg.add_state(f"{node.label}_state")
@@ -75,6 +78,8 @@ class ExpandCUDA(ExpandTransformation):
 
         in_access = state.add_access(inp_name)
         out_access = state.add_access(out_name)
+
+        # Cuda runtime included in the CUDA environment
         tasklet = state.add_tasklet(
             name=f"memcpy_tasklet",
             inputs={"_memcpy_in"},
@@ -111,7 +116,7 @@ class ExpandCPU(ExpandTransformation):
         sdfg = dace.SDFG(f"{node.label}_sdfg")
         sdfg.add_array(inp_name, in_shape_collapsed, inp.dtype, inp.storage, strides=in_strides_collapsed)
         sdfg.add_array(out_name, out_shape_collapsed, out.dtype, out.storage, strides=out_strides_collapsed)
-        sdfg.schedule = dace.dtypes.ScheduleType.Sequential
+
         state = sdfg.add_state(f"{node.label}_state")
 
         # Add dynamic inputs
@@ -174,7 +179,7 @@ class CopyLibraryNode(nodes.LibraryNode):
 
         data_ies = {ie for ie in state.in_edges(self) if ie.dst_conn == "_in"}
         if len(data_ies) != 1:
-            raise ValueError("Only when edge should be to dst connector `_in`")
+            raise ValueError("Data input edges should be connected to the dst connector `_in`")
         ie = data_ies.pop()
         inp = sdfg.arrays[ie.data.data]
 
@@ -186,13 +191,9 @@ class CopyLibraryNode(nodes.LibraryNode):
             raise ValueError("Missing the output tensor.")
 
         if inp.dtype != out.dtype:
-            raise ValueError(
-                "The datatype of the input and output tensors must match. For copies that also perform type conversion, please extend the library node expansion."
-            )
+            raise ValueError("The datatype of the input and output tensors must match.")
 
         if inp.storage != out.storage:
-            raise ValueError(
-                "The storage of the input and output tensors must match. For CPU<->GPU copy nodes, please extend the library node expansion."
-            )
+            raise ValueError("The storage of the input and output tensors must match.")
 
         return inp_name, inp, in_subset, out_name, out, out_subset, dynamic_inputs

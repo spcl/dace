@@ -28,8 +28,8 @@ class ExpandPure(ExpandTransformation):
         sdfg = dace.SDFG(f"{node.label}_sdfg")
         sdfg.add_array(out_name, out_shape_collapsed, out.dtype, out.storage, strides=out_strides_collapsed)
         sdfg.schedule = dace.dtypes.ScheduleType.Sequential
-        state = sdfg.add_state(f"{node.label}_state")
 
+        state = sdfg.add_state(f"{node.label}_state")
         map_lengths = add_dynamic_inputs(dynamic_inputs, sdfg, out_subset, state)
 
         map_params = [f"__i{i}" for i in range(len(map_lengths))]
