@@ -6,6 +6,7 @@ import pytest
 import dace
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
+from dace.sdfg.validation import InvalidSDFGNodeError
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.dead_state_elimination import DeadStateElimination
 from dace.transformation.passes.dead_dataflow_elimination import DeadDataflowElimination
@@ -119,6 +120,30 @@ def test_dse_inside_loop_conditional():
 
     DeadStateElimination().apply_pass(sdfg, {})
     assert set(sdfg.states()) == {start, s, s2, e, end}
+
+
+def test_dse_malformed_conditional_block():
+    sdfg = dace.SDFG("dse_malformed_conditional_block")
+    sdfg.add_symbol("a", dace.int32)
+    condition = ConditionalBlock("cond", sdfg)
+    sdfg.add_node(condition)
+
+    branch_else = ControlFlowRegion("else", sdfg)
+    branch_else.add_state()
+    condition.add_branch(None, branch_else)
+
+    branch_if = ControlFlowRegion("if", sdfg)
+    branch_if.add_state()
+    condition.add_branch(CodeBlock("a > 0"), branch_if)
+
+    merge_state = sdfg.add_state("merge_state")
+    sdfg.add_edge(condition, merge_state, dace.InterstateEdge())
+
+    with pytest.raises(
+            InvalidSDFGNodeError,
+            match="Conditional block detected, where else branch is not the last branch.",
+    ):
+        DeadStateElimination().apply_pass(sdfg, {})
 
 
 def test_dde_simple():
@@ -472,12 +497,34 @@ def test_prune_single_branch_conditional_block():
     assert sdfg.out_edges(first_state)[0].dst == then_body
 
 
+def test_dde_loop_condition():
+
+    @dace.program
+    def loop_condition(A: dace.float64[20]):
+        for i in dace.map[0:20]:
+            f = 0.0
+            while f < 10.0:
+                with dace.tasklet:
+                    a << A[i]
+                    f_out = a + 1.0
+                    b = f_out
+                    f_out >> f
+                    b >> A[i]
+
+    sdfg = loop_condition.to_sdfg(simplify=False)
+    Pipeline([DeadDataflowElimination()]).apply_pass(sdfg, {})
+    count_f_nodes = sum(1 for a, _ in sdfg.all_nodes_recursive()
+                        if isinstance(a, dace.nodes.AccessNode) and a.data == 'f')
+    assert count_f_nodes == 2
+
+
 if __name__ == '__main__':
     test_dse_simple()
     test_dse_unconditional()
     test_dse_edge_condition_with_integer_as_boolean_regression()
     test_dse_inside_loop()
     test_dse_inside_loop_conditional()
+    test_dse_malformed_conditional_block()
     test_dde_simple()
     test_dde_libnode()
     test_dde_access_node_in_scope(False)
@@ -494,3 +541,4 @@ if __name__ == '__main__':
     test_dce_add_type_hint_of_variable(dace.bool)
     test_dce_add_type_hint_of_variable(np.float64)
     test_prune_single_branch_conditional_block()
+    test_dde_loop_condition()

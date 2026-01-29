@@ -255,24 +255,15 @@ def pop_dims(subset, dims):
 
 
 def compose_and_push_back(first, second, dims=None, popped=None):
-    if isinstance(first, subsets.Indices):
-        subset = first.new_offset(second, negative=False)
-    else:
-        subset = first.compose(second)
+    subset = first.compose(second)
     if dims and popped and len(dims) == len(popped):
-        if isinstance(first, subsets.Indices):
-            indices = subset.Indices
-            for d, p in zip(reversed(dims), reversed(popped)):
-                indices.insert(d, p)
-            subset = subsets.Indices(indices)
-        else:
-            ranges = subset.ranges
-            tsizes = subset.tile_sizes
-            for d, (r, t) in zip(reversed(dims), reversed(popped)):
-                ranges.insert(d, r)
-                tsizes.insert(d, t)
-            subset = subsets.Range(ranges)
-            subset.tile_sizes = tsizes
+        ranges = subset.ranges
+        tsizes = subset.tile_sizes
+        for d, (r, t) in zip(reversed(dims), reversed(popped)):
+            ranges.insert(d, r)
+            tsizes.insert(d, t)
+        subset = subsets.Range(ranges)
+        subset.tile_sizes = tsizes
     return subset
 
 
