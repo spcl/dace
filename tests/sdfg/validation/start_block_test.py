@@ -10,7 +10,7 @@ def test_validation_no_state():
     """SDFGs require a start block."""
     sdfg = SDFG("empty_sdfg")
 
-    with pytest.raises(InvalidSDFGError, match="SDFGs are required to contain at least a start state."):
+    with pytest.raises(InvalidSDFGError, match="SDFGs are required to contain at least one state."):
         sdfg.validate()
 
 

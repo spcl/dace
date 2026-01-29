@@ -345,7 +345,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
                 symbols[str(sym)] = sym.dtype
 
         if len(sdfg.nodes()) == 0:
-            raise InvalidSDFGError("SDFGs are required to contain at least a start state.", sdfg, None)
+            raise InvalidSDFGError("SDFGs are required to contain at least one state.", sdfg, None)
 
         validate_control_flow_region(sdfg, sdfg, initialized_transients, symbols, references, **context)
 
