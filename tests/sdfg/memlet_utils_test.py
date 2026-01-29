@@ -10,9 +10,11 @@ from typing import Tuple, Optional
 
 
 def _replace_zero_with_one(memlet: dace.Memlet) -> dace.Memlet:
-    for i, s in enumerate(memlet.subset):
-        if s == 0:
-            memlet.subset[i] = 1
+    if not isinstance(memlet.subset, dace.subsets.Range):
+        return memlet
+    for i, (rb, re, rs) in enumerate(memlet.subset.ndrange()):
+        if rb == 0:
+            memlet.subset.ranges[i] = (1, 1, rs)
     return memlet
 
 

@@ -866,7 +866,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             raise InvalidSDFGEdgeError("Illegal memlet between disjoint scopes", sdfg, state_id, eid)
 
         # Check dimensionality of memory access
-        if isinstance(e.data.subset, (sbs.Range, sbs.Indices)):
+        if isinstance(e.data.subset, sbs.Range):
             if e.data.subset.dims() != len(sdfg.arrays[e.data.data].shape):
                 raise InvalidSDFGEdgeError(
                     "Memlet subset uses the wrong dimensions"

@@ -86,8 +86,6 @@ def calc_set_image(map_idx, map_set, array_set):
 
 
 def calc_set_union(set_a, set_b):
-    if isinstance(set_a, subsets.Indices) or isinstance(set_b, subsets.Indices):
-        raise NotImplementedError('Set union with indices is not implemented.')
     if not (isinstance(set_a, subsets.Range) and isinstance(set_b, subsets.Range)):
         raise TypeError('Can only compute the union of ranges.')
     if len(set_a) != len(set_b):
