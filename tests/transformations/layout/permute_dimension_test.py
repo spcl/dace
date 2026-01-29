@@ -77,6 +77,7 @@ def test_standalone_execution():
     vals_B_trans = vals_B_orig.copy()
 
     # Execute SDFGs
+    original_sdfg.save("original_sdfg.sdfgz", compress=True)
     original_sdfg(vals_A=vals_A_orig, vals_B=vals_B_orig, neighbors=neighbors, N=N_val, TSTEPS=TSTEPS_val)
     transformed_sdfg(vals_A=vals_A_trans, vals_B=vals_B_trans, neighbors=neighbors, N=N_val, TSTEPS=TSTEPS_val)
 
