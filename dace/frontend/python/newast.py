@@ -488,7 +488,6 @@ def add_indirection_subgraph(sdfg: SDFG,
                 access = list(access)
             if not isinstance(access, (list, tuple)):
                 access = [access]
-            conn = None
             if pvisitor.nested:
                 # TODO: Make this work for nested for-loops
                 arr_rng = dace.subsets.Range([(a, a, 1) for a in access])
@@ -496,7 +495,6 @@ def add_indirection_subgraph(sdfg: SDFG,
                     arrname, rng = pvisitor._add_write_access(arr_name, arr_rng, target=None)
                 else:
                     arrname, rng = pvisitor._add_read_access(arr_name, arr_rng, target=None)
-                conn = 'index_%s_%d' % (arr_name, i)
                 arr = sdfg.arrays[arrname]
                 subset = subsets.Range.from_array(arr)
             else:
