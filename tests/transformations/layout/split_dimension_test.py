@@ -4,7 +4,7 @@ import numpy
 from dace.properties import CodeBlock
 import pytest
 
-from dace.transformation.layout.split_dimension import SplitDimensions
+from dace.transformation.layout.split_dimensions import SplitDimensions
 
 N = dace.symbol("N")
 
