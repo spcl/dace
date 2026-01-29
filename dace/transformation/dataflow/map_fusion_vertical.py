@@ -1549,11 +1549,15 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         def next_nodes(node: nodes.Node) -> Iterable[nodes.Node]:
             return (edge.dst for edge in graph.out_edges(node))
 
-        # Dataflow graph is acyclic, so we do not need to keep a list of
-        #  what we have visited.
+        # Track visited nodes to avoid exponential blowup from visiting
+        # the same node multiple times via different paths in the DAG.
         to_visit: List[nodes.Node] = list(next_nodes(begin))
+        visited: Set[nodes.Node] = set()
         while len(to_visit) > 0:
             node = to_visit.pop()
+            if node in visited:
+                continue
+            visited.add(node)
             if isinstance(node, nodes.AccessNode) and node.data == data:
                 return True
             to_visit.extend(next_nodes(node))
