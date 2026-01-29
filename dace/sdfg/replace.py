@@ -210,6 +210,18 @@ def replace_properties_dict(node: Any,
                     propval[symname] = symbolic.pystr_to_symbolic(str(sym_mapping)).subs(symrepl)
                 except AttributeError:  # If the symbolified value has no subs
                     pass
+        elif isinstance(propclass, properties.ListProperty):
+            newval = []
+            for item in propval:
+                try:
+                    newitem = symbolic.pystr_to_symbolic(str(item)).subs(symrepl)
+                    if propclass.element_type in (str, int, float):  # Not symbolic types
+                        newitem = propclass.element_type(newitem)
+                    newval.append(newitem)
+                except AttributeError:  # If the symbolified value has no subs
+                    newval.append(item)
+
+            setattr(node, pname, newval)
 
 
 def replace_properties(node: Any, symrepl: Dict[symbolic.SymbolicType, symbolic.SymbolicType], name: str,

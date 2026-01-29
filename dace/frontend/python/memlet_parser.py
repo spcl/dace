@@ -79,7 +79,7 @@ def pyexpr_to_symbolic(defined_arrays_and_symbols: Dict[str, Any], expr_ast: ast
 def _ndslice_to_subset(ndslice):
     is_tuple = [isinstance(x, tuple) for x in ndslice]
     if not any(is_tuple):
-        return subsets.Indices(ndslice)
+        return subsets.Range((dim, dim, 1) for dim in ndslice)
     else:
         if not all(is_tuple):
             # If a mix of ranges and indices is found, convert to range

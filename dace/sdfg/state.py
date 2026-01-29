@@ -14,7 +14,7 @@ from typing import (TYPE_CHECKING, Any, AnyStr, Callable, Dict, Iterable, Iterat
 
 import dace
 from dace.frontend.python import astutils
-from dace.sdfg.replace import replace_in_codeblock
+from dace.sdfg.replace import replace_in_codeblock, replace
 import dace.serialize
 from dace import data as dt
 from dace import dtypes
@@ -697,7 +697,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         # Free symbols from nodes
         for n in self.nodes():
             if isinstance(n, nd.EntryNode):
-                new_symbols |= set(n.new_symbols(sdfg, self, {}).keys())
+                new_symbols |= set(map(str, n.new_symbols(sdfg, self, {}).keys()))
             elif isinstance(n, nd.AccessNode):
                 # Add data descriptor symbols
                 freesyms |= set(map(str, n.desc(sdfg).used_symbols(all_symbols)))
@@ -1748,6 +1748,17 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             sdfg.parent_sdfg = self.sdfg
 
             sdfg.update_cfg_list([])
+            if symbol_mapping:
+                from dace.sdfg import dealias  # Avoid circular import
+                replaced_symbols = dealias.remove_symbol_aliases(sdfg, symbol_mapping)
+
+                symbolic.safe_replace(symbol_mapping, lambda m: sdfg.replace_dict(m))
+
+                # Integrate any internal SDFGs after performing replacements
+                for state in sdfg.states():
+                    for node in state.nodes():
+                        if isinstance(node, nd.NestedSDFG) and node.sdfg is not None:
+                            dealias.integrate_nested_sdfg(node.sdfg)
 
         # Make dictionary of autodetect connector types from set
         if isinstance(inputs, (set, collections.abc.KeysView)):
@@ -1760,7 +1771,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             sdfg,
             inputs,
             outputs,
-            symbol_mapping=symbol_mapping,
+            symbol_mapping=None,
             location=location,
             debuginfo=debuginfo,
             path=external_path,
@@ -1772,26 +1783,13 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
 
             # Add "default" undefined symbols if None are given
             symbols = sdfg.free_symbols
-            if symbol_mapping is None:
-                symbol_mapping = {s: s for s in symbols}
-                s.symbol_mapping = symbol_mapping
-
-            # Validate missing symbols
-            missing_symbols = [s for s in symbols if s not in symbol_mapping]
-            if missing_symbols and self.sdfg is not None:
-                # If symbols are missing, try to get them from the parent SDFG
-                parent_mapping = {s: s for s in missing_symbols if s in self.sdfg.symbols}
-                symbol_mapping.update(parent_mapping)
-                s.symbol_mapping = symbol_mapping
-                missing_symbols = [s for s in symbols if s not in symbol_mapping]
-            if missing_symbols:
-                raise ValueError('Missing symbols on nested SDFG "%s": %s' % (name, missing_symbols))
+            symbol_mapping = {s: s for s in symbols}
+            s.symbol_mapping = symbol_mapping
 
             # Add new global symbols to nested SDFG
             for sym, symval in s.symbol_mapping.items():
                 if sym not in sdfg.symbols:
-                    # TODO: Think of a better way to avoid calling
-                    # symbols_defined_at in this moment
+                    # TODO: Think of a better way to avoid calling symbols_defined_at in this moment
                     sdfg.add_symbol(sym, infer_expr_type(symval, self.sdfg.symbols) or dtypes.typeclass(int))
 
         return s
@@ -2582,7 +2580,7 @@ class ReturnBlock(ControlFlowBlock):
         return tmp
 
 
-class StateSubgraphView(SubgraphView, DataflowGraphView):
+class StateSubgraphView(SubgraphView[nd.Node, mm.Memlet], DataflowGraphView):
     """ A read-only subgraph view of an SDFG state. """
 
     def __init__(self, graph, subgraph_nodes):
