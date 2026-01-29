@@ -775,10 +775,7 @@ class Range(Subset):
             idx = 0
             for (rb, re, rs), rt in zip(self.ranges, self.tile_sizes):
                 if re - rb == 0:
-                    if isinstance(other, Indices):
-                        new_subset.append(rb)
-                    else:
-                        new_subset.append((rb, re, rs, rt))
+                    new_subset.append((rb, re, rs, rt))
                 else:
                     if isinstance(other[idx], tuple):
                         new_subset.append((rb + rs * other[idx][0], rb + rs * other[idx][1], rs * other[idx][2], rt))
@@ -790,10 +787,7 @@ class Range(Subset):
             # data_dims) -> all non-data dims remain
             for idx, ((rb, re, rs), rt) in enumerate(zip(self.ranges, self.tile_sizes)):
                 if re - rb == 0:
-                    if isinstance(other, Indices):
-                        new_subset.append(rb)
-                    else:
-                        new_subset.append((rb, re, rs, rt))
+                    new_subset.append((rb, re, rs, rt))
                 else:
                     if isinstance(other[idx], tuple):
                         new_subset.append((rb + rs * other[idx][0], rb + rs * other[idx][1], rs * other[idx][2], rt))
@@ -816,8 +810,6 @@ class Range(Subset):
 
         if isinstance(other, Range):
             return Range(new_subset)
-        elif isinstance(other, Indices):
-            return Indices(new_subset)
         else:
             raise NotImplementedError
 
