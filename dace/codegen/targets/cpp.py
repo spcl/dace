@@ -218,14 +218,17 @@ def memlet_copy_to_absolute_strides(dispatcher: 'TargetDispatcher',
 
 def is_cuda_codegen_in_device(framecode) -> bool:
     """
-    Check the state of the CUDA code generator, whether it is inside device code.
+    Check the state of the (Experimental) CUDA code generator, whether it is inside device code.
     """
     from dace.codegen.targets.cuda import CUDACodeGen
+
+    cudaClass = CUDACodeGen
+
     if framecode is None:
         cuda_codegen_in_device = False
     else:
         for codegen in framecode.targets:
-            if isinstance(codegen, CUDACodeGen):
+            if isinstance(codegen, cudaClass):
                 cuda_codegen_in_device = codegen._in_device_code
                 break
         else:
@@ -248,11 +251,9 @@ def ptr(name: str, desc: data.Data, sdfg: SDFG = None, framecode: 'DaCeCodeGener
         root = name.split('.')[0]
         if root in sdfg.arrays and isinstance(sdfg.arrays[root], data.Structure):
             name = name.replace('.', '->')
-
     # Special case: If memory is persistent and defined in this SDFG, add state
     # struct to name
     if (desc.transient and desc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External)):
-
         if desc.storage == dtypes.StorageType.CPU_ThreadLocal:  # Use unambiguous name for thread-local arrays
             return f'__{sdfg.cfg_id}_{name}'
         elif not is_cuda_codegen_in_device(framecode):  # GPU kernels cannot access state
@@ -807,9 +808,12 @@ def unparse_cr(sdfg, wcr_ast, dtype):
 def connected_to_gpu_memory(node: nodes.Node, state: SDFGState, sdfg: SDFG):
     for e in state.all_edges(node):
         path = state.memlet_path(e)
-        if ((isinstance(path[0].src, nodes.AccessNode)
-             and path[0].src.desc(sdfg).storage is dtypes.StorageType.GPU_Global)):
+        if (((isinstance(path[0].src, nodes.AccessNode)
+              and path[0].src.desc(sdfg).storage is dtypes.StorageType.GPU_Global))
+                or ((isinstance(path[-1].dst, nodes.AccessNode)
+                     and path[-1].dst.desc(sdfg).storage is dtypes.StorageType.GPU_Global))):
             return True
+
     return False
 
 
