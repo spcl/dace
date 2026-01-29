@@ -509,8 +509,7 @@ def count_param_in_expr(expr, param_str: str):
     return count
 
 
-def map_param_appears_in_multiple_dimensions(state: dace.SDFGState,
-                                             map_entry: dace.nodes.MapEntry) -> bool:
+def map_param_appears_in_multiple_dimensions(state: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> bool:
     """
     Check if the last map parameter appears across multiple dimensions or
     function-call argument usages in the state.
@@ -1501,7 +1500,10 @@ def offset_symbol_in_expression(expr_str: str, symbol_to_offset: str, offset: in
     return sympy.pycode(offset_expr)
 
 
-def use_laneid_symbol_in_expression(expr_str: str, symbol_to_offset: str, offset: int, vector_map_param: str = None) -> str:
+def use_laneid_symbol_in_expression(expr_str: str,
+                                    symbol_to_offset: str,
+                                    offset: int,
+                                    vector_map_param: str = None) -> str:
     """
     Returns a new expression string where a specified symbol is replaced with laneid-ed version
     `sym1` -> `sym1_laneid_{offset}`
@@ -1834,10 +1836,11 @@ def instantiate_tasklet_from_info(state: dace.SDFGState, node: dace.nodes.Taskle
         c = c1 if c1 is not None else c2
         expr = f"({l_op} {op} {r_op})"
         if isinstance(lhs_data, dace.data.Array):
-            node.code = dace.properties.CodeBlock(
-                code="\n".join([f"{lhs}[{i}] = {use_laneid_symbol_in_expression(expr, c, i, vector_map_param=vector_map_param)}"
-                                for i in range(vw)]) + "\n",
-                language=dace.Language.Python)
+            node.code = dace.properties.CodeBlock(code="\n".join([
+                f"{lhs}[{i}] = {use_laneid_symbol_in_expression(expr, c, i, vector_map_param=vector_map_param)}"
+                for i in range(vw)
+            ]) + "\n",
+                                                  language=dace.Language.Python)
         else:
             node.code = dace.properties.CodeBlock(code=f"{lhs} = {expr}\n", language=dace.Language.Python)
         #parent_map = state.scope_dict()[node]
@@ -3922,6 +3925,7 @@ def remove_map(map_entry: dace.nodes.MapEntry, state: dace.SDFGState):
             continue
         e.data.subset.replace(repldict)
 
+
 def try_clean_other_subset_going_out_from_map_entry(state: SDFGState, map_entry: dace.nodes.MapEntry):
     id = 0
     #state.sdfg.save("x.sdfg")
@@ -3932,9 +3936,8 @@ def try_clean_other_subset_going_out_from_map_entry(state: SDFGState, map_entry:
             # Add assignment tasklet
             t = state.add_tasklet(f"other_subset_assign_{id}", {"_in"}, {"_out"}, "_out = _in")
             state.remove_edge(oe)
-            state.add_edge(oe.src, oe.src_conn, t, "_in",
-                           dace.memlet.Memlet(data=oe.data.data, subset=oe.data.subset))
-            state.add_edge(t, "_out", oe.dst, oe.dst_conn, 
+            state.add_edge(oe.src, oe.src_conn, t, "_in", dace.memlet.Memlet(data=oe.data.data, subset=oe.data.subset))
+            state.add_edge(t, "_out", oe.dst, oe.dst_conn,
                            dace.memlet.Memlet(data=oe.dst.data, subset=oe.data.other_subset))
             id += 1
 
@@ -3950,7 +3953,7 @@ def detect_halve_index(state: SDFGState, new_inner_map: dace.nodes.MapEntry, vec
         if edge.data.subset is not None:
             detected = False
             detected_divisor = None
-            for b,e,s in edge.data.subset:
+            for b, e, s in edge.data.subset:
                 param, divisor = detect_halve_index_impl(b)
                 print(f"Detected for {b} -> {param} / {divisor} (map_param: {map_param})")
                 if param is not None and divisor is not None:
@@ -3961,19 +3964,18 @@ def detect_halve_index(state: SDFGState, new_inner_map: dace.nodes.MapEntry, vec
                 assert detected_divisor is not None
                 # Multiply end expression with
                 desc = state.sdfg.arrays[edge.data.data]
-                arr_name, arr = state.sdfg.add_array(
-                    name = f"multiplexed_{edge.data.data}",
-                    shape=(vector_length,),
-                    dtype=desc.dtype,
-                    transient=True,
-                    storage=dace.dtypes.StorageType.Register,
-                    find_new_name=True
-                )
+                arr_name, arr = state.sdfg.add_array(name=f"multiplexed_{edge.data.data}",
+                                                     shape=(vector_length, ),
+                                                     dtype=desc.dtype,
+                                                     transient=True,
+                                                     storage=dace.dtypes.StorageType.Register,
+                                                     find_new_name=True)
                 assert vector_length % detected_divisor == 0
-                t = state.add_tasklet("pack_tasklet", {"_in"}, {"_out"},
-                                      f"multiplex_elements(_in, _out, {vector_length // detected_divisor}, {detected_divisor});",
-                                      language=dace.dtypes.Language.CPP,
-                                      code_global=f'#include "dace/vector_intrinsics/multiplex.h"')
+                t = state.add_tasklet(
+                    "pack_tasklet", {"_in"}, {"_out"},
+                    f"multiplex_elements(_in, _out, {vector_length // detected_divisor}, {detected_divisor});",
+                    language=dace.dtypes.Language.CPP,
+                    code_global=f'#include "dace/vector_intrinsics/multiplex.h"')
                 modified_nodes.add(t)
                 dst = edge.dst
                 dstconn = edge.dst_conn
@@ -3981,29 +3983,22 @@ def detect_halve_index(state: SDFGState, new_inner_map: dace.nodes.MapEntry, vec
                 state.remove_edge(edge)
                 new_range_list = list()
                 # Detection means we should have b -> b+8 / d step size 1
-                for (b,e,s) in edge.data.subset:
+                for (b, e, s) in edge.data.subset:
                     nb = b
                     assert hasattr(nb, "subs")
                     ne = nb.subs(detected, f"({detected}+{vector_length})")
                     ns = 1
                     new_range_list.append((nb, ne, ns))
-                e1 = state.add_edge(edge.src, edge.src_conn, t, "_in", 
-                                    dace.memlet.Memlet(
-                                        data=edge.data.data,
-                                        subset=dace.subsets.Range(new_range_list)
-                                    ))
+                e1 = state.add_edge(edge.src, edge.src_conn, t, "_in",
+                                    dace.memlet.Memlet(data=edge.data.data, subset=dace.subsets.Range(new_range_list)))
                 access = state.add_access(arr_name)
                 modified_nodes.add(access)
                 modified_edges.add(e1)
                 modified_edges.add(edge)
                 e2 = state.add_edge(t, "_out", access, None,
-                                    dace.memlet.Memlet.from_array(
-                                        dataname=arr_name, datadesc=arr
-                                    ))
+                                    dace.memlet.Memlet.from_array(dataname=arr_name, datadesc=arr))
                 e3 = state.add_edge(access, None, edge.dst, edge.dst_conn,
-                                    dace.memlet.Memlet.from_array(
-                                        dataname=arr_name, datadesc=arr
-                                    ))
+                                    dace.memlet.Memlet.from_array(dataname=arr_name, datadesc=arr))
                 modified_edges.add(e2)
                 modified_edges.add(e3)
     return modified_nodes, modified_edges

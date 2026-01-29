@@ -110,7 +110,7 @@ scatter_double(_in, idx, _out, {vector_length});
 
                     initializer_values = ", ".join([str(s) for d, s in idx_data_and_subset])
                     scatter_code = DetectScatter.scatter_template.format(initializer_values=initializer_values,
-                                                                      vector_length=vector_length)
+                                                                         vector_length=vector_length)
 
                     # Get the array we are gathering from
                     tasklet_dsts = set()
@@ -127,7 +127,7 @@ scatter_double(_in, idx, _out, {vector_length});
                     state.add_edge(
                         t1, "_out", indirect_dst, None,
                         dace.memlet.Memlet.from_array(indirect_dst.data, state.sdfg.arrays[indirect_dst.data]))
-                    state.add_edge(node, None, t1, "_in", 
+                    state.add_edge(node, None, t1, "_in",
                                    dace.memlet.Memlet.from_array(node.data, state.sdfg.arrays[node.data]))
 
                     found_gathers += 1

@@ -121,7 +121,7 @@ gather_double(_in, idx, _out, {vector_length});
 
                     if not isinstance(indirect_src, dace.nodes.AccessNode):
                         continue
-                    
+
                     # Remove scalar assignment tasklets
                     for src in tasklet_srcs_sorted:
                         state.remove_node(src)

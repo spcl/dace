@@ -52,7 +52,6 @@ def write_runtime(name, variant, runtime_us, vlen=None, cpy=None, output_dir="."
     else:
         output_file = os.path.join(output_dir, f"{filename}.csv")
 
-
     # Check if file exists and has content to determine if we need to write header
     file_exists = os.path.isfile(output_file)
     file_has_content = False

@@ -2099,7 +2099,6 @@ class BranchElimination(transformation.MultiStateTransformation):
 
         return added_scalar_names
 
-
     def _force_fuse(self, state1: dace.SDFGState, state2: dace.SDFGState):
         state1_sink_nodes = {n for n in state1.data_nodes() if state1.out_degree(n) == 0}
         state1_sink_data = {n.data for n in state1.data_nodes() if state1.out_degree(n) == 0}

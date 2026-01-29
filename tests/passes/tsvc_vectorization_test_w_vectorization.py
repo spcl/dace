@@ -919,10 +919,11 @@ def dace_s244(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[
 @dace.program
 def dace_s2244(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D], e: dace.float64[LEN_1D]):
     for nl in range(ITERATIONS):
-        a[LEN_1D -1] = b[LEN_1D-2] + e[LEN_1D-2]
+        a[LEN_1D - 1] = b[LEN_1D - 2] + e[LEN_1D - 2]
         for i in range(LEN_1D - 1):
             a[i] = b[i] + c[i]
-        
+
+
 """
 @dace.program
 def dace_s2244(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D], e: dace.float64[LEN_1D]):
@@ -931,6 +932,7 @@ def dace_s2244(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64
             a[i + 1] = b[i] + e[i]
             a[i] = b[i] + c[i]
 """
+
 
 @dace.program
 def dace_s251(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D], d: dace.float64[LEN_1D]):
@@ -1016,7 +1018,6 @@ def dace_s235(a: dace.float64[LEN_2D], b: dace.float64[LEN_2D], c: dace.float64[
             a[i] = a[i] + b[i] * c[i]
             for j in range(1, LEN_2D):
                 aa[j, i] = aa[j - 1, i] + bb[j, i] * a[i]
-
 
 
 @dace.program
@@ -1251,7 +1252,8 @@ def dace_s291(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
     for nl in range(2 * ITERATIONS):
         a[0] = (b[0] + b[LEN_1D - 1]) * 0.5
         for i in range(1, LEN_1D):
-            a[i] = (b[i] + b[i-1]) * 0.5
+            a[i] = (b[i] + b[i - 1]) * 0.5
+
 
 """
 @dace.program
@@ -1277,6 +1279,7 @@ def dace_s291(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
 #            im2 = im1
 #            im1 = i
 
+
 @dace.program
 def dace_s292(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
     for nl in range(ITERATIONS):
@@ -1284,6 +1287,7 @@ def dace_s292(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
         a[1] = (b[1] + b[0] + b[LEN_1D - 1]) * 0.333
         for i in range(2, LEN_1D):
             a[i] = (b[i] + b[i - 1] + b[i - 2]) * 0.333
+
 
 # ============================================================
 # s293
@@ -1799,6 +1803,7 @@ def dace_s343(
 # %3.5 – Loop rerolling
 # ======================
 
+
 @dace.program
 def dace_s351(
     a: dace.float64[LEN_1D],
@@ -1826,11 +1831,7 @@ def dace_s1351(
 
 
 @dace.program
-def dace_s352(
-    a: dace.float64[LEN_1D],
-    b: dace.float64[LEN_1D],
-    c: dace.float64[2]
-):
+def dace_s352(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[2]):
     dot = 0.0
     for nl in range(8 * ITERATIONS):
         dot = 0.0
@@ -1838,6 +1839,7 @@ def dace_s352(
             dot = dot + (a[i] * b[i] + a[i + 1] * b[i + 1] + a[i + 2] * b[i + 2] + a[i + 3] * b[i + 3] +
                          a[i + 4] * b[i + 4])
     c[0] = dot
+
 
 @dace.program
 def dace_s353(
@@ -1981,8 +1983,7 @@ def dace_s441(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[
 
 
 @dace.program
-def dace_s442(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D],
-              c: dace.float64[LEN_1D], d: dace.float64[LEN_1D],
+def dace_s442(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D], d: dace.float64[LEN_1D],
               e: dace.float64[LEN_1D], indx: dace.int32[LEN_1D]):
     for nl in range(ITERATIONS):
         for i in range(LEN_1D):
@@ -2070,6 +2071,7 @@ def dace_s4112(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], ip: dace.int32[
     for nl in range(ITERATIONS):
         for i in range(LEN_1D):
             a[i] = a[i] + b[ip[i]] * 2.0
+
 
 @dace.program
 def dace_s4121(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D]):
@@ -6025,6 +6027,7 @@ def test_s293():
     )
     return a
 
+
 @pytest.mark.skip
 def test_s2101():
     LEN = G_LEN_2D_VAL
@@ -6046,7 +6049,6 @@ def test_s2101():
             "ITERATIONS": ITERS
         },
     )
-
 
     run_vectorization_test(
         dace_func=dace_s2101,
@@ -6148,7 +6150,7 @@ def test_s4112():
 
     a = np.random.rand(LEN).astype(np.float64)
     b = np.random.rand(LEN).astype(np.float64)
-    ip = np.random.randint(0, LEN//2, size=LEN).astype(np.int32)
+    ip = np.random.randint(0, LEN // 2, size=LEN).astype(np.int32)
 
     compare_kernel(
         dace_s4112,
@@ -6322,7 +6324,7 @@ def test_s4116():
 
     a = np.random.rand(LEN1).astype(np.float64)
     aa = np.random.rand(LEN2, LEN2).astype(np.float64)
-    ip = np.random.randint(1, LEN2-1, size=LEN2).astype(np.int32)
+    ip = np.random.randint(1, LEN2 - 1, size=LEN2).astype(np.int32)
     sum_out = np.zeros(2, dtype=np.float64)
 
     compare_kernel(

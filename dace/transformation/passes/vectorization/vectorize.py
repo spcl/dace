@@ -158,12 +158,13 @@ class Vectorize(ppl.Pass):
 
         self._extend_memlets(state, new_inner_map, modified_nodes, modified_edges)
         # Special case, // 2 (or integer dividing the thing nicely) access -> need to multiplex elements to be able to vectorize
-        new_modified_nodes, new_modified_edges = detect_halve_index(state, new_inner_map, vector_length=self.vector_width)
+        new_modified_nodes, new_modified_edges = detect_halve_index(state,
+                                                                    new_inner_map,
+                                                                    vector_length=self.vector_width)
         modified_edges = modified_edges.union(new_modified_edges)
         modified_nodes = modified_nodes.union(new_modified_nodes)
         self._extend_temporary_scalars(state, new_inner_map, modified_nodes, modified_edges)
         state.sdfg.validate()
-
 
         if not has_single_nested_sdfg:
             if self.insert_copies:
@@ -1350,13 +1351,10 @@ class Vectorize(ppl.Pass):
                     continue
 
                 # If no unit stride dimension continue
-                strides = [s for (b,e,s) in map_entry.map.range]
+                strides = [s for (b, e, s) in map_entry.map.range]
                 if not any({s == 1 for s in strides}):
-                    print(
-                        "Map has no unit-stride dimension"
-                    )
+                    print("Map has no unit-stride dimension")
                     continue
-
 
                 if map_entry.map.label.startswith("vectorloop_"):
                     print(
@@ -1381,9 +1379,7 @@ class Vectorize(ppl.Pass):
                         continue
 
                 if map_param_appears_in_multiple_dimensions(state, map_entry):
-                    print(
-                        "Map param (vectorized) is used to access multiple dimensions, can't vectorize"
-                    )
+                    print("Map param (vectorized) is used to access multiple dimensions, can't vectorize")
                     continue
 
                 opt_nsdfg = get_single_nsdfg_inside_map(state, map_entry)

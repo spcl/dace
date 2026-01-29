@@ -19,7 +19,7 @@
 
 #if !defined(__AVX512F__)
 # error Included the AVX512 header without support AVX512
-#endif 
+#endif
 // --------------------------- vector_mult ---------------------------
 
 template<typename T, int vector_width>

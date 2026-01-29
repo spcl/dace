@@ -24,6 +24,7 @@ def sort_tasklets_by_number(tasklets):
 
     return sorted(tasklets, key=get_number)
 
+
 def detect_fixed_increment(expr_strings):
     """
     Detect whether a list of expressions has a fixed increment.
@@ -78,6 +79,7 @@ def detect_fixed_increment(expr_strings):
     smallest_expr = exprs[min_idx]
 
     return deltas[0], smallest_expr
+
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
@@ -173,7 +175,8 @@ strided_store_double(_in, _out, {vector_length}, {stride});
                         print(f"Found fixed increment {fixed_increment}")
 
                     scatter_code = DetectStridedStore.scatter_template.format(initializer_values=initializer_values,
-                                                                      vector_length=vector_length, stride=fixed_increment)
+                                                                              vector_length=vector_length,
+                                                                              stride=fixed_increment)
 
                     # Get the array we are gathering from
                     tasklet_dsts = set()
@@ -195,11 +198,8 @@ strided_store_double(_in, _out, {vector_length}, {stride});
                     end = base + vector_length * fixed_increment
                     # TODO: support for multi dimensional
                     state.add_edge(
-                        t1, "_out", indirect_dst, indirect_oe.dst_conn, 
-                        dace.memlet.Memlet(
-                            data=indirect_oe.data.data, subset=dace.subsets.Range([(base,end-1,1)])
-                        )
-                    )
+                        t1, "_out", indirect_dst, indirect_oe.dst_conn,
+                        dace.memlet.Memlet(data=indirect_oe.data.data, subset=dace.subsets.Range([(base, end - 1, 1)])))
 
                     assert indirect_oe not in tasklet_oes
                     for oe in tasklet_oes:
@@ -207,7 +207,7 @@ strided_store_double(_in, _out, {vector_length}, {stride});
                             state.remove_edge(oe)
                         oe.dst.remove_in_connector(oe.dst_conn)
                     indirect_dst.add_in_connector(indirect_oe.dst_conn)
-                    state.add_edge(node, None, t1, "_in", 
+                    state.add_edge(node, None, t1, "_in",
                                    dace.memlet.Memlet.from_array(node.data, state.sdfg.arrays[node.data]))
                     found_gathers += 1
 

@@ -56,7 +56,7 @@ if (length >= 4){
             int64_t j = idx[i + lane];
             B[j] = A[i + lane];
         }
-    } 
+    }
 } else {
     // Scalar fallback
     for (int64_t i = 0; i < length; ++i) {

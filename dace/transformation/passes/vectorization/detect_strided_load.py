@@ -22,6 +22,7 @@ def sort_tasklets_by_number(tasklets):
 
     return sorted(tasklets, key=get_number)
 
+
 import sympy as sp
 
 
@@ -174,9 +175,9 @@ strided_load_double(_in, _out, {vector_length}, {stride});
                     else:
                         print(f"Found fixed increment {fixed_increment}")
 
-                
                     gather_code = DetectStridedLoad.gather_template.format(initializer_values=initializer_values,
-                                                                      vector_length=vector_length, stride=fixed_increment)
+                                                                           vector_length=vector_length,
+                                                                           stride=fixed_increment)
 
                     # Get the array we are gathering from
                     tasklet_srcs = set()
@@ -200,11 +201,8 @@ strided_load_double(_in, _out, {vector_length}, {stride});
                     end = base + vector_length * fixed_increment
                     # TODO: support for multi dimensional
                     state.add_edge(
-                        indirect_src, indirect_ie.src_conn, t1, "_in", 
-                        dace.memlet.Memlet(
-                            data=indirect_ie.data.data, subset=dace.subsets.Range([(base,end-1,1)])
-                        )
-                    )
+                        indirect_src, indirect_ie.src_conn, t1, "_in",
+                        dace.memlet.Memlet(data=indirect_ie.data.data, subset=dace.subsets.Range([(base, end - 1, 1)])))
 
                     assert indirect_ie not in tasklet_ies
                     for ie in tasklet_ies:
