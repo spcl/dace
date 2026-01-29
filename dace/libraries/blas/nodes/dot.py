@@ -70,7 +70,6 @@ class ExpandDotOpenBLAS(ExpandTransformation):
         (desc_x, stride_x), (desc_y, stride_y), desc_res, sz = node.validate(parent_sdfg, parent_state)
         dtype = desc_x.dtype.base_type
         veclen = desc_x.dtype.veclen
-        cast = "(float *)" if dtype == dace.float32sr else ""
 
         try:
             func, _, _ = blas_helpers.cublas_type_metadata(dtype)
@@ -83,8 +82,7 @@ class ExpandDotOpenBLAS(ExpandTransformation):
         n = n or node.n or sz
         if veclen != 1:
             n /= veclen
-
-        code = f"_result = cblas_{func}({n}, {cast} _x, {stride_x}, {cast} _y, {stride_y});"
+        code = f"_result = cblas_{func}({n}, _x, {stride_x}, _y, {stride_y});"
         # The return type is scalar in cblas_?dot signature
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors, {'_result': dtype},
@@ -206,16 +204,7 @@ class Dot(dace.sdfg.nodes.LibraryNode):
         if desc_x.dtype != desc_y.dtype:
             raise TypeError(f"Data types of input operands must be equal: {desc_x.dtype}, {desc_y.dtype}")
         if desc_x.dtype.base_type != desc_res.dtype.base_type:
-            arg_types = (desc_x.dtype.base_type, desc_res.dtype.base_type)
-            if dace.float32 in arg_types and dace.float32sr in arg_types:
-                """
-                When using stocastic rounding, a legitimate (i.e not a bug) mismatch between the input and output
-                arguments may arise where one argument is a float32sr and the other is a float32 (round-to-nearest).
-                The underlying data type is the same so this should not cause the validation to fail.
-                """
-                pass
-            else:
-                raise TypeError(f"Data types of input and output must be equal: {desc_x.dtype}, {desc_res.dtype}")
+            raise TypeError(f"Data types of input and output must be equal: {desc_x.dtype}, {desc_res.dtype}")
 
         # Squeeze input memlets
         squeezed1 = copy.deepcopy(in_memlets[0].subset)
