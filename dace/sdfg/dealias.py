@@ -321,7 +321,7 @@ def integrate_nested_sdfg(sdfg: SDFG):
 
         # If there is a shape mismatch, try to adjust the view descriptor
         # using ND array program squeeze semantics.
-        if len(view_desc.shape) != len(parent_desc.shape):
+        if len(view_desc.shape) < len(parent_desc.shape):
             try:
                 unsqueezed_dims = unsqueeze_memlet(Memlet.from_array(inner_name, view_desc),
                                                    parent_memlet,
@@ -334,6 +334,9 @@ def integrate_nested_sdfg(sdfg: SDFG):
                 print("WARNING")
                 # If unsqueezing fails, we keep the original view descriptor
                 pass
+        elif len(view_desc.shape) > len(parent_desc.shape):
+            # View has more dimensions than parent, let passes try to eliminate the view
+            pass
 
         # Replace the original descriptor with the view
         sdfg.arrays[inner_name] = view_desc

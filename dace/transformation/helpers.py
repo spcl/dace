@@ -1002,6 +1002,7 @@ def unsqueeze_memlet(internal_memlet: Memlet,
     if used_other_subset:
         result.other_subset = result.subset
     result.subset = internal_subset
+    to_unsqueeze = []
 
     shape = external_memlet.subset.size()
     if len(internal_subset) < len(external_memlet.subset):
