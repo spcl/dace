@@ -42,5 +42,18 @@ def test_implicit_inline_and_constants():
     assert np.allclose(a, 1)
 
 
+def test_name_propagation():
+    name = "my_complicated_sdfg_test_name"
+    sdfg = dace.SDFG(name)
+    sdfg.add_state("empty", is_start_block=True)
+
+    stree = sdfg.as_schedule_tree()
+    assert stree.name == name
+
+    sdfg = stree.as_sdfg()
+    assert sdfg.name == name
+
+
 if __name__ == '__main__':
     test_implicit_inline_and_constants()
+    test_name_propagation()

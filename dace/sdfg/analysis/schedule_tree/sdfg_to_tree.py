@@ -843,7 +843,7 @@ def as_schedule_tree(sdfg: SDFG, *, in_place: bool = False, toplevel: bool = Tru
     _prepare_sdfg_for_conversion(sdfg, toplevel=toplevel)
 
     if toplevel:
-        result = tn.ScheduleTreeRoot(name="default_stree_name", children=[])
+        result = tn.ScheduleTreeRoot(name=sdfg.name, children=[])
         _create_unified_descriptor_repository(sdfg, result)
         result.add_children(_block_schedule_tree(sdfg))
     else:
