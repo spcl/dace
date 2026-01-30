@@ -53,27 +53,15 @@ ShapeList = List[Size]
 Shape = Union[ShapeTuple, ShapeList]
 DependencyType = Dict[str, Tuple[SDFGState, Union[Memlet, nodes.Tasklet], Tuple[int]]]
 
-if sys.version_info < (3, 8):
-    _simple_ast_nodes = (ast.Constant, ast.Name, ast.NameConstant, ast.Num)
-    BytesConstant = ast.Bytes
-    EllipsisConstant = ast.Ellipsis
-    NameConstant = ast.NameConstant
-    NumConstant = ast.Num
-    StrConstant = ast.Str
-else:
-    _simple_ast_nodes = (ast.Constant, ast.Name)
-    BytesConstant = ast.Constant
-    EllipsisConstant = ast.Constant
-    NameConstant = ast.Constant
-    NumConstant = ast.Constant
-    StrConstant = ast.Constant
+_simple_ast_nodes = (ast.Constant, ast.Name)
+BytesConstant = ast.Constant
+EllipsisConstant = ast.Constant
+NameConstant = ast.Constant
+NumConstant = ast.Constant
+StrConstant = ast.Constant
 
-if sys.version_info < (3, 9):
-    Index = ast.Index
-    ExtSlice = ast.ExtSlice
-else:
-    Index = type(None)
-    ExtSlice = type(None)
+Index = type(None)
+ExtSlice = type(None)
 
 if sys.version_info < (3, 12):
     TypeAlias = type(None)
@@ -1042,7 +1030,7 @@ class TaskletTransformer(ExtNodeTransformer):
     def visit_TopLevelStr(self, node: StrConstant):
         if self.extcode != None:
             raise DaceSyntaxError(self, node, 'Cannot provide more than one intrinsic implementation ' + 'for tasklet')
-        self.extcode = node.value if sys.version_info >= (3, 8) else node.s
+        self.extcode = node.value
 
         # TODO: Should get detected by _parse_Tasklet()
         if self.lang is None:
@@ -1842,12 +1830,10 @@ class ProgramVisitor(ExtNodeVisitor):
 
         if isinstance(node, ast.Name):
             return node.id
-        elif sys.version_info < (3, 8) and isinstance(node, ast.Num):
-            return str(node.n)
-        elif isinstance(node, ast.Constant):
+        if isinstance(node, ast.Constant):
             return str(node.value)
-        else:
-            return str(self.visit(node))
+
+        return str(self.visit(node))
 
     def _parse_slice(self, node: ast.Slice):
         """Parses a range
@@ -1869,9 +1855,7 @@ class ProgramVisitor(ExtNodeVisitor):
         :param node: Index node
         :return: Range in (from, to, step) format
         """
-        if sys.version_info < (3, 9) and isinstance(node, ast.Index):
-            val = self._parse_value(node.value)
-        elif isinstance(node, ast.Tuple):
+        if isinstance(node, ast.Tuple):
             val = self._parse_value(node.elts)
         else:
             val = self._parse_value(node)
@@ -4008,12 +3992,8 @@ class ProgramVisitor(ExtNodeVisitor):
         :raises: DaceSyntaxError if argument is not constant.
         """
         # If constant in AST
-        if sys.version_info < (3, 8):
-            if isinstance(aval, (ast.Str, ast.Num, ast.Bytes, ast.NameConstant, ast.Ellipsis)):
-                return
-        else:
-            if isinstance(aval, ast.Constant):
-                return
+        if isinstance(aval, ast.Constant):
+            return
         # If a constant value (non-AST) is given during parsing
         if not isinstance(parsed[1], str) or parsed[0] != parsed[1]:
             return
@@ -4694,10 +4674,7 @@ class ProgramVisitor(ExtNodeVisitor):
         func = None
         funcname = None
         # If the call directly refers to an SDFG or dace-compatible program
-        if sys.version_info < (3, 8) and isinstance(node.func, ast.Num):
-            if self._has_sdfg(node.func.n):
-                func = node.func.n
-        elif isinstance(node.func, ast.Constant):
+        if isinstance(node.func, ast.Constant):
             if self._has_sdfg(node.func.value):
                 func = node.func.value
 
@@ -4965,7 +4942,7 @@ class ProgramVisitor(ExtNodeVisitor):
             self.visit_Call(node.value)
             return
 
-        elif (sys.version_info.major == 3 and sys.version_info.minor >= 8 and isinstance(node.value, ast.NamedExpr)):
+        elif isinstance(node.value, ast.NamedExpr):
             self.visit_NamedExpr(node.value)
             return
 
@@ -5435,8 +5412,6 @@ class ProgramVisitor(ExtNodeVisitor):
                 res = self._visit_ast_or_value(s)
                 if isinstance(res, (ast.Constant, NumConstant)):
                     res = res.value
-        elif sys.version_info < (3, 9) and isinstance(s, ast.Index):
-            res = self._parse_subscript_slice(s.value, multidim=multidim)
         elif isinstance(s, ast.Slice):
             lower = s.lower
             if isinstance(lower, ast.AST):
@@ -5456,8 +5431,6 @@ class ProgramVisitor(ExtNodeVisitor):
                 res = list(self._parse_subscript_slice(d, multidim=True) for d in s.elts)
             else:
                 res = tuple(self._parse_subscript_slice(d, multidim=True) for d in s.elts)
-        elif sys.version_info < (3, 9) and isinstance(s, ast.ExtSlice):
-            res = tuple(self._parse_subscript_slice(d, multidim=True) for d in s.dims)
         else:
             res = _promote(s)
         # Unpack tuple of a single Python slice object
@@ -5523,10 +5496,7 @@ class ProgramVisitor(ExtNodeVisitor):
             # slice is constant, return the value itself
             nslice = self.visit(node.slice)
             if isinstance(nslice, (Index, Number)):
-                if sys.version_info < (3, 9) and isinstance(nslice, ast.Index):
-                    v = self._parse_value(nslice.value)
-                else:
-                    v = nslice
+                v = nslice
                 try:
                     value, valtype = node_parsed[int(v)]
                     return value
@@ -5581,11 +5551,7 @@ class ProgramVisitor(ExtNodeVisitor):
             if isinstance(r, ast.AST):
                 newnode = r
             elif isinstance(r, (Number, numpy.bool_)):
-                # Compatibility check since Python changed their AST nodes
-                if sys.version_info >= (3, 8):
-                    newnode = ast.Constant(value=r, kind='')
-                else:
-                    newnode = ast.Num(n=r)
+                newnode = ast.Constant(value=r, kind='')
             else:
                 newnode = ast.Name(id=r)
             ast.copy_location(newnode, node)

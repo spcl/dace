@@ -15,20 +15,12 @@ from dace.frontend.python.common import DaceSyntaxError
 
 MemletType = Union[ast.Call, ast.Attribute, ast.Subscript, ast.Name]
 
-if sys.version_info < (3, 8):
-    _simple_ast_nodes = (ast.Constant, ast.Name, ast.NameConstant, ast.Num)
-    BytesConstant = ast.Bytes
-    EllipsisConstant = ast.Ellipsis
-    NameConstant = ast.NameConstant
-    NumConstant = ast.Num
-    StrConstant = ast.Str
-else:
-    _simple_ast_nodes = (ast.Constant, ast.Name)
-    BytesConstant = ast.Constant
-    EllipsisConstant = ast.Constant
-    NameConstant = ast.Constant
-    NumConstant = ast.Constant
-    StrConstant = ast.Constant
+_simple_ast_nodes = (ast.Constant, ast.Name)
+BytesConstant = ast.Constant
+EllipsisConstant = ast.Constant
+NameConstant = ast.Constant
+NumConstant = ast.Constant
+StrConstant = ast.Constant
 
 
 @dataclass
@@ -134,8 +126,7 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
             offsets.append(idx)
             idx += 1
             new_idx += 1
-        elif ((sys.version_info < (3, 8) and isinstance(dim, ast.Ellipsis)) or dim is Ellipsis
-              or (isinstance(dim, ast.Constant) and dim.value is Ellipsis)
+        elif (dim is Ellipsis or (isinstance(dim, ast.Constant) and dim.value is Ellipsis)
               or (isinstance(dim, ast.Name) and dim.id is Ellipsis)):
             if has_ellipsis:
                 raise IndexError('an index can only have a single ellipsis ("...")')

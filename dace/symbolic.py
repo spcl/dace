@@ -1128,26 +1128,12 @@ def evaluate_optional_arrays(expr, sdfg):
     return expr
 
 
-# Depending on the Python version we need to handle different AST nodes to correctly interpret and detect falsy / truthy
-# values.
-if sys.version_info < (3, 8):
-    _SimpleASTNode = (ast.Constant, ast.Name, ast.NameConstant, ast.Num)
-    _SimpleASTNodeT = Union[ast.Constant, ast.Name, ast.NameConstant, ast.Num]
+_SimpleASTNode = (ast.Constant, ast.Name)
+_SimpleASTNodeT = Union[ast.Constant, ast.Name]
 
-    def __comp_convert_truthy_falsy(node: _SimpleASTNodeT):
-        if isinstance(node, ast.Num):
-            node_val = node.n
-        elif isinstance(node, ast.Name):
-            node_val = node.id
-        else:
-            node_val = node.value
-        return ast.copy_location(ast.NameConstant(bool(node_val)), node)
-else:
-    _SimpleASTNode = (ast.Constant, ast.Name)
-    _SimpleASTNodeT = Union[ast.Constant, ast.Name]
 
-    def __comp_convert_truthy_falsy(node: _SimpleASTNodeT):
-        return ast.copy_location(ast.Constant(bool(node.value)), node)
+def __comp_convert_truthy_falsy(node: _SimpleASTNodeT):
+    return ast.copy_location(ast.Constant(bool(node.value)), node)
 
 
 # Convert simple AST node (constant) into a falsy / truthy. Anything other than 0, None, and an empty string '' is
