@@ -2,7 +2,6 @@
 import numpy as np
 
 import dace
-from dace.sdfg import nodes
 from dace.transformation.dataflow import BufferTiling
 
 I = dace.symbol("I")
