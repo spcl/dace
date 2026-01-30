@@ -82,3 +82,8 @@ def test_an_to_an_memlet_with_negative_size():
                 f'`subset` of an AccessNode to AccessNode Memlet contains a negative size; the size was [15, -11]'),
     ):
         sdfg.validate()
+
+
+if __name__ == "__main__":
+    test_an_to_an_memlet_with_zero_size()
+    test_an_to_an_memlet_with_negative_size()
