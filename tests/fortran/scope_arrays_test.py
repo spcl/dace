@@ -1,48 +1,50 @@
-# Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
-from dace.frontend.fortran import fortran_parser
-
-import dace.frontend.fortran.ast_transforms as ast_transforms
 import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
+import dace.frontend.fortran.ast_transforms as ast_transforms
+from dace.frontend.fortran.fortran_parser import create_internal_ast, ParseConfig
+from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 
 def test_fortran_frontend_parent():
     """
     Tests that the Fortran frontend can parse array accesses and that the accessed indices are correct.
     """
-    test_string = """
-                    PROGRAM scope_test
-                    implicit none
-                    double precision d(4)
-                    double precision, dimension(5) :: arr
-                    double precision, dimension(50:54) :: arr3
-                    CALL scope_test_function(d)
-                    end
+    sources, main = SourceCodeBuilder().add_file("""
+program main
+  implicit none
+  double precision d(4)
+  double precision, dimension(5) :: arr  ! This will be pruned by preprocessor.
+  double precision, dimension(50:54) :: arr3
+  call fun(d, arr3)
+end program main
 
-                    SUBROUTINE scope_test_function(d)
-                    double precision d(4)
-                    double precision, dimension(50:54) :: arr4
+! Intentionally gave unique names to variables, to not have them renamed automatically.
+subroutine fun(d1, arr4)
+  implicit none
+  double precision d1(4)
+  double precision, dimension(50:54) :: arr4
+  d1(2) = 5.5
+end subroutine fun
+""").check_with_gfortran().get()
+    cfg = ParseConfig(sources=sources, entry_points=[('main', )])
+    _, program = create_internal_ast(cfg)
+    ast_transforms.ParentScopeAssigner().visit(program)
+    visitor = ast_transforms.ScopeVarsDeclarations(program)
+    visitor.visit(program)
 
-                    d(2)=5.5
+    for var in ['d', 'arr3']:
+        assert ('main', var) in visitor.scope_vars
+        decl = visitor.scope_vars[('main', var)]
+        assert isinstance(decl, ast_internal_classes.Var_Decl_Node)
+        assert decl.name == var
 
-                    END SUBROUTINE scope_test_function
-                    """
-
-    ast, functions = fortran_parser.create_ast_from_string(test_string, "array_access_test")
-    ast_transforms.ParentScopeAssigner().visit(ast)
-    visitor = ast_transforms.ScopeVarsDeclarations()
-    visitor.visit(ast)
-
-    for var in ['d', 'arr', 'arr3']:
-        assert ('scope_test', var) in visitor.scope_vars
-        assert isinstance(visitor.scope_vars[('scope_test', var)], ast_internal_classes.Var_Decl_Node)
-        assert visitor.scope_vars[('scope_test', var)].name == var
-
-    for var in ['d', 'arr4']:
-        assert ('scope_test_function', var) in visitor.scope_vars
-        assert visitor.scope_vars[('scope_test_function', var)].name == var
+    for var in ['d1', 'arr4']:
+        assert ('fun', var) in visitor.scope_vars
+        decl = visitor.scope_vars[('fun', var)]
+        assert isinstance(decl, ast_internal_classes.Var_Decl_Node)
+        assert decl.name == var
 
 
 if __name__ == "__main__":
-
     test_fortran_frontend_parent()
