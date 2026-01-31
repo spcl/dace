@@ -23,7 +23,7 @@ jobs:
     if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
     runs-on: [self-hosted, gpu]
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
       with:
         submodules: 'recursive'
     - name: Install dependencies
