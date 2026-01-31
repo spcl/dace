@@ -6,7 +6,6 @@ Pass derived from ``propagation.py`` that under-approximates write-sets of for-l
 import copy
 from dataclasses import dataclass, field
 import itertools
-import sys
 import warnings
 from collections import defaultdict
 from typing import Dict, List, Set, Tuple, Union

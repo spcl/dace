@@ -8,22 +8,15 @@ import numbers
 import numpy
 import re
 import sympy
-import sys
 import warnings
 
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 import dace
-from dace import data, dtypes, subsets, symbolic, sdfg as sd
+from dace import data, dtypes, symbolic, sdfg
 from dace.config import Config
 from dace.sdfg import SDFG
 from dace.frontend.python import astutils
 from dace.frontend.python.common import (DaceSyntaxError, SDFGConvertible, SDFGClosure, StringLiteral)
-
-BytesConstant = ast.Constant
-EllipsisConstant = ast.Constant
-NameConstant = ast.Constant
-NumConstant = ast.Constant
-StrConstant = ast.Constant
 
 
 class DaceRecursionError(Exception):
@@ -142,14 +135,6 @@ class RewriteSympyEquality(ast.NodeTransformer):
             node.value = bool(node.value)
         elif isinstance(node.value, numpy.number):
             node.value = node.value.item()
-        return self.generic_visit(node)
-
-    # Compatibility for Python 3.7
-    def visit_Num(self, node):
-        if isinstance(node.n, numpy.bool_):
-            node.n = bool(node.n)
-        elif isinstance(node.n, numpy.number):
-            node.n = node.n.item()
         return self.generic_visit(node)
 
 
@@ -1381,7 +1366,7 @@ class CallTreeResolver(ast.NodeVisitor):
 
     def visit_Call(self, node: ast.Call):
         # Only parse calls to parsed SDFGConvertibles
-        if not isinstance(node.func, (NumConstant, ast.Constant)):
+        if not isinstance(node.func, ast.Constant):
             self.seen_calls.add(astutils.unparse(node.func))
             return self.generic_visit(node)
         if hasattr(node.func, 'oldnode'):

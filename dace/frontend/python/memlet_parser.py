@@ -1,8 +1,6 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 import copy
-import sys
-from collections import namedtuple
 from typing import Any, Dict, List, Optional, Tuple, Union
 from dataclasses import dataclass
 
@@ -14,13 +12,6 @@ from dace.symbolic import pystr_to_symbolic, SymbolicType
 from dace.frontend.python.common import DaceSyntaxError
 
 MemletType = Union[ast.Call, ast.Attribute, ast.Subscript, ast.Name]
-
-_simple_ast_nodes = (ast.Constant, ast.Name)
-BytesConstant = ast.Constant
-EllipsisConstant = ast.Constant
-NameConstant = ast.Constant
-NumConstant = ast.Constant
-StrConstant = ast.Constant
 
 
 @dataclass
@@ -101,7 +92,7 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
 
     # Count new axes
     num_new_axes = sum(1 for dim in ast_ndslice
-                       if (dim is None or (isinstance(dim, (ast.Constant, NameConstant)) and dim.value is None)))
+                       if (dim is None or (isinstance(dim, ast.Constant) and dim.value is None)))
 
     for dim in ast_ndslice:
         if isinstance(dim, (str, list, slice)):
@@ -136,7 +127,7 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
                 ndslice[j] = (0, array.shape[j] - 1, 1)
                 idx += 1
                 new_idx += 1
-        elif (dim is None or (isinstance(dim, (ast.Constant, NameConstant)) and dim.value is None)):
+        elif (dim is None or (isinstance(dim, ast.Constant) and dim.value is None)):
             new_axes.append(new_idx)
             new_idx += 1
             # NOTE: Do not increment idx here

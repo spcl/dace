@@ -8,12 +8,9 @@ import inspect
 import numbers
 import numpy
 import sympy
-import sys
 from typing import Any, Dict, List, Optional, Set, Union
 
 from dace import symbolic
-
-NumConstant = ast.Constant
 
 
 def _remove_outer_indentation(src: str):
@@ -424,10 +421,6 @@ def copy_tree(node: ast.AST) -> ast.AST:
 
     class Copier(ast.NodeTransformer):
 
-        def visit_Num(self, node):
-            # Ignore n
-            return ast.copy_location(ast.Num(n=node.n), node)
-
         def visit_Constant(self, node):
             # Ignore value
             return ast.copy_location(ast.Constant(value=node.value, kind=node.kind), node)
@@ -676,10 +669,7 @@ class ConstantExtractor(ast.NodeTransformer):
             raise SyntaxError
         return self.generic_visit(node)
 
-    def visit_Constant(self, node):
-        return self.visit_Num(node)
-
-    def visit_Num(self, node: NumConstant):
+    def visit_Constant(self, node: ast.Constant):
         newname = f'__uu{self.id}'
         self.gvars[newname] = node.value
         self.id += 1

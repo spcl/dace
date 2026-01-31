@@ -54,11 +54,6 @@ Shape = Union[ShapeTuple, ShapeList]
 DependencyType = Dict[str, Tuple[SDFGState, Union[Memlet, nodes.Tasklet], Tuple[int]]]
 
 _simple_ast_nodes = (ast.Constant, ast.Name)
-BytesConstant = ast.Constant
-EllipsisConstant = ast.Constant
-NameConstant = ast.Constant
-NumConstant = ast.Constant
-StrConstant = ast.Constant
 
 Index = type(None)
 ExtSlice = type(None)
@@ -1021,13 +1016,13 @@ class TaskletTransformer(ExtNodeTransformer):
                         raise DaceSyntaxError(self, node, 'Local variable is already a tasklet input or output')
                     self.outputs[connector] = memlet
                     return None  # Remove from final tasklet code
-        elif isinstance(node.value, StrConstant):
+        elif isinstance(node.value, ast.Constant):
             return self.visit_TopLevelStr(node.value)
 
         return self.generic_visit(node)
 
     # Detect external tasklet code
-    def visit_TopLevelStr(self, node: StrConstant):
+    def visit_TopLevelStr(self, node: ast.Constant):
         if self.extcode != None:
             raise DaceSyntaxError(self, node, 'Cannot provide more than one intrinsic implementation ' + 'for tasklet')
         self.extcode = node.value
@@ -1815,7 +1810,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         return indices
 
-    def _parse_value(self, node: Union[ast.Name, NumConstant, ast.Constant]):
+    def _parse_value(self, node: Union[ast.Name, ast.Constant]):
         """Parses a value
 
         Arguments:
@@ -3481,7 +3476,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 # to constant indexes (according to the number of elements in the lhs). These expansions can then be
                 # used to perform an unpacking assignment, similar to what Python does natively.
                 for i in range(len(elts)):
-                    const_node = NumConstant(i)
+                    const_node = ast.Constant(i)
                     ast.copy_location(const_node, node)
                     slice_node = ast.Subscript(rval[0][0], const_node, ast.Load)
                     ast.copy_location(slice_node, node)
@@ -5058,22 +5053,6 @@ class ProgramVisitor(ExtNodeVisitor):
                 rname, _ = self._add_read_access(rname, rng, node)
         return rname
 
-    #### Visitors that return arrays
-    def visit_Str(self, node: StrConstant):
-        # A string constant returns a string literal
-        return StringLiteral(node.s)
-
-    def visit_Bytes(self, node: BytesConstant):
-        # A bytes constant returns a string literal
-        return StringLiteral(node.s)
-
-    def visit_Num(self, node: NumConstant):
-        if isinstance(node.n, bool):
-            return dace.bool_(node.n)
-        if isinstance(node.n, (int, float, complex)):
-            return dtypes.dtype_to_typeclass(type(node.n))(node.n)
-        return node.n
-
     def visit_Constant(self, node: ast.Constant):
         if isinstance(node.value, bool) and numpy_version < '2.0.0':
             return dace.bool_(node.value)
@@ -5086,9 +5065,6 @@ class ProgramVisitor(ExtNodeVisitor):
     def visit_Name(self, node: ast.Name):
         # If visiting a name, check if it is a defined variable or a global
         return self._visitname(node.id, node)
-
-    def visit_NameConstant(self, node: NameConstant):
-        return self.visit_Constant(node)
 
     def visit_Attribute(self, node: ast.Attribute):
         result = self.visit(node.value)
@@ -5410,7 +5386,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 res = self.visit(s)
             else:
                 res = self._visit_ast_or_value(s)
-                if isinstance(res, (ast.Constant, NumConstant)):
+                if isinstance(res, ast.Constant):
                     res = res.value
         elif isinstance(s, ast.Slice):
             lower = s.lower

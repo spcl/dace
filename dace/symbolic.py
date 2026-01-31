@@ -2,7 +2,6 @@
 import ast
 from collections import Counter
 from functools import lru_cache
-import sys
 import sympy
 import pickle
 import re

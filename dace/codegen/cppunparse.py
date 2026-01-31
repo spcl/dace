@@ -76,8 +76,6 @@ import six
 import sys
 import ast
 import numpy as np
-import os
-import tokenize
 import warnings
 
 import sympy
@@ -86,12 +84,6 @@ from numbers import Number
 from six import StringIO
 from dace import dtypes
 from dace.sdfg import type_inference
-
-BytesConstant = ast.Constant
-EllipsisConstant = ast.Constant
-NameConstant = ast.Constant
-NumConstant = ast.Constant
-StrConstant = ast.Constant
 
 # Large float and imaginary literals get turned into infinities in the AST.
 # We unparse those infinities to INFSTR.
@@ -570,7 +562,7 @@ class CPPUnparser:
             self.write('/* async */ ')
 
         if getattr(t, "returns", False):
-            if isinstance(t.returns, NameConstant):
+            if isinstance(t.returns, ast.Constant):
                 if t.returns.value is None:
                     self.write('void')
                 else:
@@ -717,9 +709,6 @@ class CPPUnparser:
             self.write(_py2c_reserved[t.id])
         else:
             self.write(t.id)
-
-    def _NameConstant(self, t):
-        self.write(_py2c_nameconst[t.value])
 
     def _Repr(self, t):
         raise NotImplementedError('Invalid C++')
@@ -887,12 +876,12 @@ class CPPUnparser:
             self.write(")")
         # Special cases for powers
         elif t.op.__class__.__name__ == 'Pow':
-            if isinstance(t.right, (NumConstant, ast.Constant, ast.UnaryOp)):
+            if isinstance(t.right, (ast.Constant, ast.UnaryOp)):
                 power = None
-                if isinstance(t.right, (NumConstant, ast.Constant)):
+                if isinstance(t.right, ast.Constant):
                     power = t.right.value
                 elif isinstance(t.right, ast.UnaryOp) and isinstance(t.right.op, ast.USub):
-                    if isinstance(t.right.operand, (NumConstant, ast.Constant)):
+                    if isinstance(t.right.operand, ast.Constant):
                         power = -(t.right.operand.value)
 
                 if power is not None and int(power) == power:
