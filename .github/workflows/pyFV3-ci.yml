@@ -30,18 +30,18 @@ jobs:
               python-version: [3.11.7]
 
       steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
               repository: 'NOAA-GFDL/PyFV3'
               ref: 'ci/DaCe'
               submodules: 'recursive'
               path: 'pyFV3'
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
             path: 'dace'
             submodules: 'recursive'
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
               python-version: ${{ matrix.python-version }}
       - name: Install library dependencies
