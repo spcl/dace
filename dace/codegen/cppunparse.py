@@ -76,8 +76,6 @@ import six
 import sys
 import ast
 import numpy as np
-import os
-import tokenize
 import warnings
 
 import sympy
@@ -86,19 +84,6 @@ from numbers import Number
 from six import StringIO
 from dace import dtypes
 from dace.sdfg import type_inference
-
-if sys.version_info < (3, 8):
-    BytesConstant = ast.Bytes
-    EllipsisConstant = ast.Ellipsis
-    NameConstant = ast.NameConstant
-    NumConstant = ast.Num
-    StrConstant = ast.Str
-else:
-    BytesConstant = ast.Constant
-    EllipsisConstant = ast.Constant
-    NameConstant = ast.Constant
-    NumConstant = ast.Constant
-    StrConstant = ast.Constant
 
 # Large float and imaginary literals get turned into infinities in the AST.
 # We unparse those infinities to INFSTR.
@@ -577,7 +562,7 @@ class CPPUnparser:
             self.write('/* async */ ')
 
         if getattr(t, "returns", False):
-            if isinstance(t.returns, NameConstant):
+            if isinstance(t.returns, ast.Constant):
                 if t.returns.value is None:
                     self.write('void')
                 else:
@@ -725,14 +710,11 @@ class CPPUnparser:
         else:
             self.write(t.id)
 
-    def _NameConstant(self, t):
-        self.write(_py2c_nameconst[t.value])
-
     def _Repr(self, t):
         raise NotImplementedError('Invalid C++')
 
     def _Num(self, t):
-        t_n = t.value if sys.version_info >= (3, 8) else t.n
+        t_n = t.value
         repr_n = str(t_n)
         # For complex values, use ``dtype_to_typeclass``
         if isinstance(t_n, complex):
@@ -854,18 +836,11 @@ class CPPUnparser:
 
     def _UnaryOp(self, t):
         # Dispatch constants after applying the operation
-        if sys.version_info[:2] < (3, 8):
-            if isinstance(t.operand, ast.Num):
-                newval = self.unop_lambda[t.op.__class__.__name__](t.operand.n)
-                newnode = ast.Num(n=newval)
-                self.dispatch(newnode)
-                return
-        else:
-            if isinstance(t.operand, ast.Constant):
-                newval = self.unop_lambda[t.op.__class__.__name__](t.operand.value)
-                newnode = ast.Constant(value=newval)
-                self.dispatch(newnode)
-                return
+        if isinstance(t.operand, ast.Constant):
+            newval = self.unop_lambda[t.op.__class__.__name__](t.operand.value)
+            newnode = ast.Constant(value=newval)
+            self.dispatch(newnode)
+            return
 
         self.write("(")
         self.write(self.unop[t.op.__class__.__name__])
@@ -901,13 +876,13 @@ class CPPUnparser:
             self.write(")")
         # Special cases for powers
         elif t.op.__class__.__name__ == 'Pow':
-            if isinstance(t.right, (NumConstant, ast.Constant, ast.UnaryOp)):
+            if isinstance(t.right, (ast.Constant, ast.UnaryOp)):
                 power = None
-                if isinstance(t.right, (NumConstant, ast.Constant)):
-                    power = t.right.value if sys.version_info >= (3, 8) else t.right.n
+                if isinstance(t.right, ast.Constant):
+                    power = t.right.value
                 elif isinstance(t.right, ast.UnaryOp) and isinstance(t.right.op, ast.USub):
-                    if isinstance(t.right.operand, (NumConstant, ast.Constant)):
-                        power = -(t.right.operand.value if sys.version_info >= (3, 8) else t.right.operand.n)
+                    if isinstance(t.right.operand, ast.Constant):
+                        power = -(t.right.operand.value)
 
                 if power is not None and int(power) == power:
                     negative = power < 0
@@ -989,8 +964,7 @@ class CPPUnparser:
         # it or add an extra space to get 3 .__abs__().
         if isinstance(t.value, ast.Constant) and isinstance(t.value.value, int):
             self.write(" ")
-        elif sys.version_info < (3, 8) and isinstance(t.value, ast.Num) and isinstance(t.value.n, int):
-            self.write(" ")
+
         if (isinstance(t.value, ast.Name) and t.value.id in ('dace', 'dace::math', 'dace::cmath')):
             self.write("::")
         else:
@@ -1044,11 +1018,6 @@ class CPPUnparser:
             else:
                 comma = True
             self.dispatch(e)
-        if sys.version_info[:2] < (3, 5):
-            if t.starargs:
-                raise NotImplementedError('Invalid C++')
-            if t.kwargs:
-                raise NotImplementedError('Invalid C++')
 
         self.write(")")
 

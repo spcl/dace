@@ -1,30 +1,10 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
-import sys
 from collections import defaultdict
 from typing import Tuple
 
-if sys.version_info < (3, 8):
-    _simple_ast_nodes = (ast.Constant, ast.Name, ast.NameConstant, ast.Num)
-    BytesConstant = ast.Bytes
-    EllipsisConstant = ast.Ellipsis
-    NameConstant = ast.NameConstant
-    NumConstant = ast.Num
-    StrConstant = ast.Str
-else:
-    _simple_ast_nodes = (ast.Constant, ast.Name)
-    BytesConstant = ast.Constant
-    EllipsisConstant = ast.Constant
-    NameConstant = ast.Constant
-    NumConstant = ast.Constant
-    StrConstant = ast.Constant
-
-if sys.version_info < (3, 9):
-    Index = ast.Index
-    ExtSlice = ast.ExtSlice
-else:
-    Index = type(None)
-    ExtSlice = type(None)
+Index = type(None)
+ExtSlice = type(None)
 
 
 class SubscriptConverter(ast.NodeTransformer):
@@ -93,7 +73,7 @@ class SubscriptConverter(ast.NodeTransformer):
         index_tuple = node.slice
         if isinstance(index_tuple, (ast.Subscript, Index)):
             index_tuple = index_tuple.value
-        if isinstance(index_tuple, (ast.Constant, NumConstant)):
+        if isinstance(index_tuple, ast.Constant):
             index_tuple = (index_tuple, )
         if isinstance(index_tuple, ast.Tuple):
             index_tuple = index_tuple.elts

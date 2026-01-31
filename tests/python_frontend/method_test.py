@@ -3,7 +3,6 @@
 import pytest
 import dace
 import numpy as np
-import sys
 import time
 
 
@@ -129,12 +128,10 @@ def test_static_withclass():
 
 @pytest.mark.skip(reason="Python 3.13 removed chained @classmethods, making this impossible for now")
 def test_classmethod():
-    # Only available in Python 3.9+
-    if sys.version_info >= (3, 9):
-        A = np.random.rand(20)
-        # Modify value first
-        MyTestClass.classvalue = 4
-        assert np.allclose(MyTestClass.clsmethod(A), A + 4)
+    A = np.random.rand(20)
+    # Modify value first
+    MyTestClass.classvalue = 4
+    assert np.allclose(MyTestClass.clsmethod(A), A + 4)
 
 
 def test_nested_methods():
