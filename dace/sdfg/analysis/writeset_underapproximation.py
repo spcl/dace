@@ -6,15 +6,9 @@ Pass derived from ``propagation.py`` that under-approximates write-sets of for-l
 import copy
 from dataclasses import dataclass, field
 import itertools
-import sys
 import warnings
 from collections import defaultdict
 from typing import Dict, List, Set, Tuple, Union
-
-if sys.version_info >= (3, 8):
-    from typing import TypedDict
-else:
-    from typing_extensions import TypedDict
 
 import sympy
 
