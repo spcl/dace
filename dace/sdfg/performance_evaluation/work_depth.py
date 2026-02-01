@@ -7,7 +7,7 @@ from collections import deque
 from dace.sdfg import nodes as nd, propagation, InterstateEdge
 from dace import SDFG, SDFGState, dtypes
 from dace.subsets import Range
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Callable, Sequence, Union
 import os
 import sympy as sp
 from copy import deepcopy
@@ -57,7 +57,7 @@ def symeval(val, symbols):
 def evaluate_symbols(base, new):
     result = {}
     for k, v in new.items():
-        result[k] = symeval(v, base)
+        result[k] = symeval(pystr_to_symbolic(v), base)
     return result
 
 
@@ -175,7 +175,7 @@ class ArithmeticCounter(ast.NodeVisitor):
         raise NotImplementedError
 
 
-def count_arithmetic_ops_code(code):
+def count_arithmetic_ops_code(code: Union[Sequence[ast.AST], str, ast.AST]) -> int:
     ctr = ArithmeticCounter()
     if isinstance(code, (tuple, list)):
         for stmt in code:
@@ -223,8 +223,8 @@ class DepthCounter(ast.NodeVisitor):
         raise NotImplementedError
 
 
-def count_depth_code(code):
-    ctr = ArithmeticCounter()
+def count_depth_code(code: Union[Sequence[ast.AST], str, ast.AST]) -> int:
+    ctr = DepthCounter()
     if isinstance(code, (tuple, list)):
         for stmt in code:
             ctr.visit(stmt)
@@ -235,11 +235,14 @@ def count_depth_code(code):
     return ctr.count
 
 
-def tasklet_work(tasklet_node, state):
+def tasklet_work(tasklet_node: nd.Tasklet, state: SDFGState):
     if tasklet_node.code.language == dtypes.Language.CPP:
         # simplified work analysis for CPP tasklets.
+        total_accesses = 0
         for oedge in state.out_edges(tasklet_node):
-            return oedge.data.num_accesses
+            if not oedge.data.is_empty():
+                total_accesses += oedge.data.num_accesses
+        return total_accesses if total_accesses > 0 else 1
     elif tasklet_node.code.language == dtypes.Language.Python:
         return count_arithmetic_ops_code(tasklet_node.code.code)
     else:
@@ -249,11 +252,14 @@ def tasklet_work(tasklet_node, state):
         return 1
 
 
-def tasklet_depth(tasklet_node, state):
+def tasklet_depth(tasklet_node: nd.Tasklet, state: SDFGState):
     if tasklet_node.code.language == dtypes.Language.CPP:
         # Depth == work for CPP tasklets.
+        total_accesses = 0
         for oedge in state.out_edges(tasklet_node):
-            return oedge.data.num_accesses
+            if not oedge.data.is_empty():
+                total_accesses += oedge.data.num_accesses
+        return total_accesses if total_accesses > 0 else 1
     if tasklet_node.code.language == dtypes.Language.Python:
         return count_depth_code(tasklet_node.code.code)
     else:
@@ -263,15 +269,15 @@ def tasklet_depth(tasklet_node, state):
         return 1
 
 
-def get_tasklet_work(node, state):
+def get_tasklet_work(node: nd.Tasklet, state: SDFGState):
     return sp.sympify(tasklet_work(node, state)), sp.sympify(-1)
 
 
-def get_tasklet_work_depth(node, state):
+def get_tasklet_work_depth(node: nd.Tasklet, state: SDFGState):
     return sp.sympify(tasklet_work(node, state)), sp.sympify(tasklet_depth(node, state))
 
 
-def get_tasklet_avg_par(node, state):
+def get_tasklet_avg_par(node: nd.Tasklet, state: SDFGState):
     return sp.sympify(tasklet_work(node, state)), sp.sympify(tasklet_depth(node, state))
 
 
@@ -296,7 +302,7 @@ def do_initial_subs(w, d, eq, subs1):
 
 def sdfg_work_depth(sdfg: SDFG,
                     w_d_map: Dict[str, Tuple[sp.Expr, sp.Expr]],
-                    analyze_tasklet,
+                    analyze_tasklet: Callable[[nd.Tasklet, SDFGState], Tuple[sp.Expr, sp.Expr]],
                     symbols: Dict[str, str],
                     equality_subs: Tuple[Dict[str, sp.Symbol], Dict[str, sp.Expr]],
                     subs1: Dict[str, sp.Expr],
@@ -337,6 +343,15 @@ def sdfg_work_depth(sdfg: SDFG,
 
         state_works[state], state_depths[state] = state_work, state_depth
         w_d_map[get_uuid(state)] = (state_works[state], state_depths[state])
+
+    edge_w_d_map: Dict[Tuple[str, str], Tuple[sp.Expr, sp.Expr]] = {}
+    for isedge in sdfg.edges():
+        edge_work, edge_depth = sp.sympify(0), sp.sympify(0)
+        if isedge.data.assignments:
+            for v in isedge.data.assignments.values():
+                edge_depth = sp.Max(edge_depth, count_depth_code(v))
+                edge_work += count_arithmetic_ops_code(v)
+        edge_w_d_map[(get_uuid(isedge.src), get_uuid(isedge.dst))] = (edge_work, edge_depth)
 
     # Prepare the SDFG for a depth analysis by breaking loops. This removes the edge between the last loop state and
     # the guard, and instead places an edge between the last loop state and the exit state.
@@ -379,7 +394,7 @@ def sdfg_work_depth(sdfg: SDFG,
     # add a dummy exit to the SDFG, such that each path ends there.
     dummy_exit = sdfg.add_state('dummy_exit')
     for state in sdfg.nodes():
-        if len(sdfg.out_edges(state)) == 0 and state != dummy_exit:
+        if len(sdfg.out_edges(state)) == 0 and state is not dummy_exit:
             sdfg.add_edge(state, dummy_exit, InterstateEdge())
 
     # These two dicts save the current length of the "heaviest", resp. "deepest", paths at each state.
@@ -403,6 +418,10 @@ def sdfg_work_depth(sdfg: SDFG,
 
         if ie is not None:
             visited.add(ie)
+            edge_uid = (get_uuid(ie.src), get_uuid(ie.dst))
+            if edge_uid in edge_w_d_map:  # Skip new edges we added to `dummy_exit`
+                work += edge_w_d_map[edge_uid][0]
+                depth += edge_w_d_map[edge_uid][1]
 
         if state in state_value_map:
             # update value map:
