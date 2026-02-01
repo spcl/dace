@@ -96,6 +96,7 @@ def test_nsdfg_memlet_propagation_with_one_sparse_dimension():
     inner_out = map_state.edges()[2].data
     if inner_out.volume != 1:
         raise RuntimeError('Expected a volume of 1 on the inner output memlet')
+    # TODO: (frontend issue) The index `i` is not extracted out of the tasklet for some reason
     if inner_out.subset[0] != (i, i, 1) or inner_out.subset[1] != (0, N - 1, 1):
         raise RuntimeError('Expected subset of inner out memlet to be [i, 0:N], found ' + str(inner_out.subset))
 
@@ -121,6 +122,9 @@ def test_nested_conditional_in_loop_in_map():
                 A[i, j] = A[i, j] * A[i, j]
 
     sdfg = nested_conditional_in_loop_in_map.to_sdfg(simplify=True)
+    dace.propagate_memlets_sdfg(sdfg)
+
+    # TODO: (frontend issue) A[0][0] does not exist in the SDFG
 
     # Verify that the memlet propagation works correctly
     i = dace.symbol('i')

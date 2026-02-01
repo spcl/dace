@@ -1,6 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-from dace.sdfg import propagation
+from dace.sdfg import propagation, dealias
+from dace.transformation.pass_pipeline import Pipeline
+from dace.transformation.passes import ArrayElimination
 import numpy as np
 
 
@@ -27,8 +29,8 @@ def make_sdfg(squeeze, name):
     a2 = nstate.add_write('a2' if squeeze else 'a')
     t1 = nstate.add_tasklet('add99', {}, {'out'}, 'out = i + 99')
     t2 = nstate.add_tasklet('add101', {}, {'out'}, 'out = i + 101')
-    nstate.add_edge(t1, 'out', a1, None, dace.Memlet('a1[i]' if squeeze else 'a[i, 1]'))
-    nstate.add_edge(t2, 'out', a2, None, dace.Memlet('a2[i]' if squeeze else 'a[i+2, 0]'))
+    nstate.add_edge(t1, 'out', a1, None, dace.Memlet('a1[i]' if squeeze else 'a[i, j]'))
+    nstate.add_edge(t2, 'out', a2, None, dace.Memlet('a2[i]' if squeeze else 'a[i+2, j-1]'))
     nsdfg.add_loop(None, nstate, None, 'i', '0', 'i < N - 2', 'i + 1')
 
     # Connect nested SDFG to toplevel one
@@ -44,6 +46,11 @@ def make_sdfg(squeeze, name):
     else:
         # This memlet is expected to propagate to A[0:N, j - 1:j + 1].
         state.add_memlet_path(nsdfg_node, mx, w, src_conn='a', memlet=dace.Memlet('A[0:N+1, j-1:j+1]'))
+    dealias.integrate_nested_sdfg(nsdfg)
+
+    # Apply array elimination to remove squeeze views
+    for tsdfg in sdfg.all_sdfgs_recursive():
+        Pipeline([ArrayElimination()]).apply_pass(tsdfg, {})
 
     propagation.propagate_memlets_sdfg(sdfg)
 
