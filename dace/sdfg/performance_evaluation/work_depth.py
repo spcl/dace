@@ -345,14 +345,6 @@ class DepthCounter(ast.NodeVisitor):
             depths.append(self.visit(node.step))
         return max(depths) if depths else 0
 
-    def visit_Module(self, node):
-        # For a module, process statements sequentially to track dependencies
-        max_depth = 0
-        for stmt in node.body:
-            stmt_depth = self.visit(stmt)
-            max_depth = max(max_depth, stmt_depth)
-        return max_depth
-
     def generic_visit(self, node):
         # For unhandled nodes, try to get max depth from children
         max_depth = 0
