@@ -70,8 +70,8 @@ def test_dynamic_map_range_scalar():
     def test(A: dace.float64[20], B: dace.float64[20]):
         N = dace.define_local_scalar(dace.int32)
         N = 5
-        for i in dace.map[0:N]:
-            for j in dace.map[0:N]:
+        for i in dace.map[0:N] @ dace.ScheduleType.Sequential:
+            for j in dace.map[0:N] @ dace.ScheduleType.CPU_Multicore:
                 with dace.tasklet:
                     a << A[i]
                     b >> B[j]
@@ -80,7 +80,7 @@ def test_dynamic_map_range_scalar():
     A = np.random.rand(20)
     B = np.zeros(20)
     test(A, B)
-    assert np.allclose(B[:5], A[:5] + 1)
+    assert np.allclose(B[:5], A[4] + 1)
 
 
 if __name__ == '__main__':

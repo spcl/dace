@@ -4,7 +4,7 @@ import tempfile
 import numpy as np
 
 import dace as dp
-from dace.sdfg import SDFG
+from dace.sdfg import SDFG, dealias
 from dace.memlet import Memlet
 
 
@@ -17,16 +17,18 @@ def test():
 
         @dp.tasklet
         def init():
+            inp << input
             out >> output
-            out = input
+            out = inp
 
         for k in range(4):
 
             @dp.tasklet
             def do():
+                inp << input
                 oin << output
                 out >> output
-                out = oin * input
+                out = oin * inp
 
     # Construct SDFG
     mysdfg = SDFG('outer_sdfg')
@@ -40,6 +42,9 @@ def test():
     # Add edges
     state.add_memlet_path(A, map_entry, nsdfg, dst_conn='input', memlet=Memlet.simple(A, 'i,j'))
     state.add_memlet_path(nsdfg, map_exit, B, src_conn='output', memlet=Memlet.simple(B, 'i,j'))
+
+    # Integrate
+    dealias.integrate_nested_sdfg(nsdfg.sdfg)
 
     N = 64
 
@@ -57,22 +62,26 @@ def test():
 
 def test_external_nsdfg():
     N = dp.symbol('N')
+    i = dp.symbol('i')
+    j = dp.symbol('j')
 
     @dp.program
-    def sdfg_internal(input: dp.float32, output: dp.float32[1]):
+    def sdfg_internal(input: dp.float32[N, N], output: dp.float32[N, N]):
 
         @dp.tasklet
         def init():
-            out >> output
-            out = input
+            inp << input[i, j]
+            out >> output[i, j]
+            out = inp
 
         for k in range(4):
 
             @dp.tasklet
             def do():
-                oin << output
-                out >> output
-                out = oin * input
+                inp << input[i, j]
+                oin << output[i, j]
+                out >> output[i, j]
+                out = oin * inp
 
     # Construct SDFG
     mysdfg = SDFG('outer_sdfg')
@@ -84,7 +93,14 @@ def test_external_nsdfg():
     internal = sdfg_internal.to_sdfg()
     fd, filename = tempfile.mkstemp(suffix='.sdfg')
     internal.save(filename)
-    nsdfg = state.add_nested_sdfg(None, {'input'}, {'output'}, name='sdfg_internal', external_path=filename)
+    nsdfg = state.add_nested_sdfg(None, {'input'}, {'output'},
+                                  name='sdfg_internal',
+                                  external_path=filename,
+                                  symbol_mapping={
+                                      'N': N,
+                                      'i': i,
+                                      'j': j
+                                  })
 
     # Add edges
     state.add_memlet_path(A, map_entry, nsdfg, dst_conn='input', memlet=Memlet.simple(A, 'i,j'))
