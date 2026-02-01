@@ -7,7 +7,7 @@ import dace as dc
 from dace import symbolic
 from dace.frontend.python.parser import DaceProgram
 from dace.sdfg.performance_evaluation.work_depth import (analyze_sdfg, get_tasklet_work_depth, get_tasklet_avg_par,
-                                                         parse_assumptions)
+                                                         parse_assumptions, count_arithmetic_ops_code, count_depth_code)
 from dace.sdfg.performance_evaluation.helpers import get_uuid
 from dace.sdfg.performance_evaluation.assumptions import ContradictingAssumptions
 import sympy as sp
@@ -327,6 +327,126 @@ def test_assumption_system_contradictions(assumptions):
         parse_assumptions(assumptions, set())
 
 
+def test_depth_counter_vs_work_counter():
+    """
+    Test that the DepthCounter correctly computes depth (longest chain of dependent operations)
+    which can differ from work (total number of operations).
+
+    Depth measures the critical path through the expression tree, while work measures
+    the total number of operations.
+    """
+    # Test case 1: (a + b) * (c + d)
+    # Work = 3 (two additions + one multiplication)
+    # Depth = 2 (additions can be parallel, then multiplication)
+    code1 = "(a + b) * (c + d)"
+    assert count_arithmetic_ops_code(code1) == 3, "Work should be 3"
+    assert count_depth_code(code1) == 2, "Depth should be 2"
+
+    # Test case 2: a + b + c + d (left-associative: ((a + b) + c) + d)
+    # Work = 3 (three additions)
+    # Depth = 3 (sequential chain of additions)
+    code2 = "a + b + c + d"
+    assert count_arithmetic_ops_code(code2) == 3, "Work should be 3"
+    assert count_depth_code(code2) == 3, "Depth should be 3"
+
+    # Test case 3: (a + b) * (c + d) + (e + f) * (g + h)
+    # Work = 7 (4 additions + 2 multiplications + 1 addition)
+    # Depth = 3 (parallel adds, then parallel mults, then final add)
+    code3 = "(a + b) * (c + d) + (e + f) * (g + h)"
+    assert count_arithmetic_ops_code(code3) == 7, "Work should be 7"
+    assert count_depth_code(code3) == 3, "Depth should be 3"
+
+    # Test case 4: Simple single operation
+    # Work = 1, Depth = 1
+    code4 = "a + b"
+    assert count_arithmetic_ops_code(code4) == 1, "Work should be 1"
+    assert count_depth_code(code4) == 1, "Depth should be 1"
+
+    # Test case 5: Unary operation with binary operation
+    # -a + b: Work = 2, Depth = 2 (unary then add, but unary on a, so depth is 1+1=2)
+    code5 = "-a + b"
+    assert count_arithmetic_ops_code(code5) == 2, "Work should be 2"
+    assert count_depth_code(code5) == 2, "Depth should be 2"
+
+    # Test case 6: Function call with independent arguments
+    # max(a + b, c + d): Work = 2 (two adds, max is 0), Depth = 1 (parallel adds, max is 0)
+    code6 = "max(a + b, c + d)"
+    assert count_arithmetic_ops_code(code6) == 2, "Work should be 2"
+    assert count_depth_code(code6) == 1, "Depth should be 1"
+
+    # Test case 7: Nested function calls
+    # sqrt(a + b): Work = 2 (add + sqrt), Depth = 2 (add then sqrt)
+    code7 = "sqrt(a + b)"
+    assert count_arithmetic_ops_code(code7) == 2, "Work should be 2"
+    assert count_depth_code(code7) == 2, "Depth should be 2"
+
+    # Test case 8: AugAssign with parallel sub-expressions
+    # x += a * b + c * d: Work = 4 (2 mults + 1 add + 1 augassign), Depth = 3
+    code8 = "x += a * b + c * d"
+    assert count_arithmetic_ops_code(code8) == 4, "Work should be 4"
+    assert count_depth_code(code8) == 3, "Depth should be 3"
+
+    # Test case 9: Multiple independent statements (no data dependency)
+    # a = x + y; b = z + w  --> Work = 2, Depth = 1 (parallel, no dependency)
+    code9 = """
+a = x + y
+b = z + w
+"""
+    assert count_arithmetic_ops_code(code9) == 2, "Work should be 2"
+    assert count_depth_code(code9) == 1, "Depth should be 1 (independent statements)"
+
+    # Test case 10: Multiple statements WITH data dependency
+    # a = x + y; b = a + z  --> Work = 2, Depth = 2 (b depends on a)
+    code10 = """
+a = x + y
+b = a + z
+"""
+    assert count_arithmetic_ops_code(code10) == 2, "Work should be 2"
+    assert count_depth_code(code10) == 2, "Depth should be 2 (b depends on a)"
+
+    # Test case 11: Chain of 3 dependent statements
+    # a = x + y; b = a * 2; c = b + z  --> Work = 3, Depth = 3
+    code11 = """
+a = x + y
+b = a * 2
+c = b + z
+"""
+    assert count_arithmetic_ops_code(code11) == 3, "Work should be 3"
+    assert count_depth_code(code11) == 3, "Depth should be 3 (chain: a -> b -> c)"
+
+    # Test case 12: Diamond dependency pattern
+    # a = x + y; b = a + 1; c = a + 2; d = b + c  --> Work = 4, Depth = 3
+    # a has depth 1, b and c both have depth 2 (depend on a), d has depth 3
+    code12 = """
+a = x + y
+b = a + 1
+c = a + 2
+d = b + c
+"""
+    assert count_arithmetic_ops_code(code12) == 4, "Work should be 4"
+    assert count_depth_code(code12) == 3, "Depth should be 3 (diamond: a -> b,c -> d)"
+
+    # Test case 13: AugAssign chain
+    # x += 1; x += 2; x += 3  --> Work = 3, Depth = 3 (each depends on previous x)
+    code13 = """
+x += 1
+x += 2
+x += 3
+"""
+    assert count_arithmetic_ops_code(code13) == 3, "Work should be 3"
+    assert count_depth_code(code13) == 3, "Depth should be 3 (augassign chain)"
+
+    # Test case 14: Single complex statement with tree structure
+    # result = (a+b)*(c+d) + (e+f)*(g+h) + (i+j)*(k+l)
+    # The AST is left-associative: ((prod1 + prod2) + prod3)
+    # prod1 has depth 2, prod2 has depth 2, prod3 has depth 2
+    # (prod1 + prod2) = max(2,2) + 1 = 3
+    # ((prod1 + prod2) + prod3) = max(3, 2) + 1 = 4
+    code14 = "(a+b)*(c+d) + (e+f)*(g+h) + (i+j)*(k+l)"
+    assert count_arithmetic_ops_code(code14) == 11, "Work should be 11"
+    assert count_depth_code(code14) == 4, "Depth should be 4"
+
+
 if __name__ == '__main__':
     for test_name in work_depth_test_cases.keys():
         test_work_depth(test_name)
@@ -339,3 +459,5 @@ if __name__ == '__main__':
 
     for assumptions in tests_for_exception:
         test_assumption_system_contradictions(assumptions)
+
+    test_depth_counter_vs_work_counter()
