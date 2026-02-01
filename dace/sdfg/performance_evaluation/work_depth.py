@@ -390,12 +390,8 @@ def count_depth_code(code: Union[Sequence[ast.AST], str, ast.AST]) -> int:
 
 def tasklet_work(tasklet_node: nd.Tasklet, state: SDFGState):
     if tasklet_node.code.language == dtypes.Language.CPP:
-        # simplified work analysis for CPP tasklets.
-        total_accesses = 0
-        for oedge in state.out_edges(tasklet_node):
-            if not oedge.data.is_empty():
-                total_accesses += oedge.data.num_accesses
-        return total_accesses if total_accesses > 0 else 1
+        warnings.warn('Work of CPP tasklets cannot be exactly determined.')
+        return 1
     elif tasklet_node.code.language == dtypes.Language.Python:
         return count_arithmetic_ops_code(tasklet_node.code.code)
     else:
@@ -407,12 +403,8 @@ def tasklet_work(tasklet_node: nd.Tasklet, state: SDFGState):
 
 def tasklet_depth(tasklet_node: nd.Tasklet, state: SDFGState):
     if tasklet_node.code.language == dtypes.Language.CPP:
-        # Depth == work for CPP tasklets.
-        total_accesses = 0
-        for oedge in state.out_edges(tasklet_node):
-            if not oedge.data.is_empty():
-                total_accesses += oedge.data.num_accesses
-        return total_accesses if total_accesses > 0 else 1
+        warnings.warn('Depth of CPP tasklets cannot be exactly determined.')
+        return 1
     if tasklet_node.code.language == dtypes.Language.Python:
         return count_depth_code(tasklet_node.code.code)
     else:
