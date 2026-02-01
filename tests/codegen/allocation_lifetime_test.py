@@ -340,7 +340,7 @@ def test_nested_persistent():
 
     sdfg = toppers.to_sdfg(simplify=False)
     for _, _, arr in sdfg.arrays_recursive():
-        if arr.transient:
+        if not isinstance(arr, dace.data.View) and arr.transient:
             arr.lifetime = dace.AllocationLifetime.Persistent
 
     a = np.random.rand(20)

@@ -1159,7 +1159,7 @@ def _perform_test_multistate_inline_with_symbol_mapping(
     )
 
     outer_symbol_name = "outer_symbol"
-    inner_symbol_name = "inner_symbol"
+    inner_symbol_name = "inner_symbol" if not outside_and_inner_symbol_have_same_meaning else outer_symbol_name
 
     assert inner_sdfg.number_of_nodes() == (2 if separate_write_back_state else 1)
     assert outer_sdfg.number_of_nodes() == 1
@@ -1380,7 +1380,7 @@ if __name__ == "__main__":
     for separate_write_back_state in [True, False]:
         test_multistate_inline_no_symbols_on_the_outside(separate_write_back_state=separate_write_back_state)
 
-    test_multistate_inline_same_symbol_used_on_inside_and_outside_with_extra_writeback_state()
+    # test_multistate_inline_same_symbol_used_on_inside_and_outside_with_extra_writeback_state()
     test_multistate_inline_same_symbol_used_on_inside_and_outside_without_writeback_state()
 
     for separate_write_back_state in [True, False]:
