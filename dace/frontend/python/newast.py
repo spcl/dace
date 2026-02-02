@@ -1036,6 +1036,22 @@ class TaskletTransformer(ExtNodeTransformer):
 
         return node
 
+    def visit_FunctionDef(self, node: ast.FunctionDef):
+        # Parse function definition as a tasklet
+        # Skip visiting arguments, only visit body statements
+        new_body: list[ast.AST] = []
+        for stmt in node.body:
+            result = self.visit_TopLevel(stmt)
+            if result is not None:
+                if isinstance(result, list):
+                    new_body.extend(result)
+                else:
+                    new_body.append(result)
+
+        node.body = new_body
+
+        return node
+
     def visit_Name(self, node: ast.Name):
         # If accessing a symbol, add it to the SDFG symbol list
         if (isinstance(node.ctx, ast.Load) and node.id in self.defined
