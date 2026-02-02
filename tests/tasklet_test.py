@@ -3,7 +3,7 @@ import dace
 import math as mt
 import numpy as np
 import pytest
-from dace.sdfg.validation import InvalidSDFGError
+from dace.frontend.python.common import DaceSyntaxError
 
 
 def test_decorator_syntax():
@@ -14,8 +14,10 @@ def test_decorator_syntax():
         @dace.tasklet
         def myprint():
             a << input
-            for i in range(0, N):
-                for j in range(0, M):
+            n << N
+            m << M
+            for i in range(0, n):
+                for j in range(0, m):
                     mt.sin(a[i, j])
 
     input = dace.ndarray([10, 10], dtype=dace.float32)
@@ -32,8 +34,8 @@ def test_invalid_array_access():
             out >> output[0]
             out = input[1]  # Invalid access, must go through memlet
 
-    with pytest.raises(InvalidSDFGError):
-        tester.to_sdfg(simplify=False)
+    with pytest.raises(DaceSyntaxError):
+        tester.to_sdfg()
 
 
 def test_invalid_scalar_access():
@@ -44,8 +46,8 @@ def test_invalid_scalar_access():
             out >> output[0]
             out = input  # Invalid access, must go through memlet
 
-    with pytest.raises(InvalidSDFGError):
-        tester.to_sdfg(simplify=False)
+    with pytest.raises(DaceSyntaxError):
+        tester.to_sdfg()
 
 
 def test_invalid_array_access_decorator_syntax():
@@ -58,8 +60,8 @@ def test_invalid_array_access_decorator_syntax():
             out >> output[0]
             out = input[1]  # Invalid access, must go through memlet
 
-    with pytest.raises(InvalidSDFGError):
-        tester.to_sdfg(simplify=False)
+    with pytest.raises(DaceSyntaxError):
+        tester.to_sdfg()
 
 
 def test_invalid_scalar_access_decorator_syntax():
@@ -72,8 +74,39 @@ def test_invalid_scalar_access_decorator_syntax():
             out >> output[0]
             out = input  # Invalid access, must go through memlet
 
-    with pytest.raises(InvalidSDFGError):
-        tester.to_sdfg(simplify=False)
+    with pytest.raises(DaceSyntaxError):
+        tester.to_sdfg()
+
+
+def test_store_into_symbol_memlet():
+    N = dace.symbol('N')
+
+    @dace.program
+    def tester(input: dace.int64[N]):
+
+        @dace.tasklet
+        def tasklet():
+            inp << input[0]
+            out = inp
+            out >> N
+
+    with pytest.raises(DaceSyntaxError, match="Symbolic variables"):
+        tester.to_sdfg()
+
+
+def test_store_into_symbol():
+    N = dace.symbol('N')
+
+    @dace.program
+    def tester(input: dace.int64[N]):
+
+        @dace.tasklet
+        def tasklet():
+            inp << input[0]
+            N = inp  # Invalid access, cannot store into symbol
+
+    with pytest.raises(DaceSyntaxError):
+        tester.to_sdfg()
 
 
 if __name__ == "__main__":
@@ -82,3 +115,5 @@ if __name__ == "__main__":
     test_invalid_scalar_access()
     test_invalid_array_access_decorator_syntax()
     test_invalid_scalar_access_decorator_syntax()
+    test_store_into_symbol_memlet()
+    test_store_into_symbol()

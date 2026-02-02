@@ -946,6 +946,9 @@ class TaskletTransformer(ExtNodeTransformer):
                 target = node.value.right
                 name = rname(target)
                 name_sub = False
+                if isinstance(node.value.right, ast.Name) and node.value.right.id in self.defined:
+                    if isinstance(self.defined[node.value.right.id], symbolic.symbol):
+                        raise DaceSyntaxError(self, node, 'Symbolic variables cannot be used as memlet targets')
                 if isinstance(node.value.op, ast.LShift):
                     squeezed_rng = None
                     if self.nested:
@@ -1039,6 +1042,16 @@ class TaskletTransformer(ExtNodeTransformer):
                 and isinstance(self.defined[node.id], symbolic.symbol)):
             if node.id not in self.sdfg.symbols:
                 self.sdfg.add_symbol(node.id, self.defined[node.id].dtype)
+            return self.generic_visit(node)
+        # Storing into a symbol is not allowed
+        if (isinstance(node.ctx, ast.Store) and node.id in self.defined
+                and isinstance(self.defined[node.id], symbolic.symbol)):
+            raise DaceSyntaxError(self, node, f'Symbol "{node.id}" cannot be assigned to within a tasklet scope.')
+        # Arrays and scalars are not allowed to be accessed from tasklets without a memlet
+        if node.id in self.defined and isinstance(self.defined[node.id], data.Data):
+            raise DaceSyntaxError(
+                self, node, f'{type(self.defined[node.id]).__name__} "{node.id}" cannot be accessed from within a '
+                'tasklet scope without a memlet.')
         return self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> Any:
