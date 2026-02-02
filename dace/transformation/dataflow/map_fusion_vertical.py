@@ -70,7 +70,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
     :param assume_always_shared: Handle all intermediate nodes as if they were classified as
         "shared", see `partition_first_outputs()` for more.
     :param require_exclusive_intermediates: If `True` then the transformation will only apply
-        if all intermediates are "eclusive", i.e., can be removed, see `partition_first_outputs()`.
+        if all intermediates are "exclusive", i.e., can be removed, see `partition_first_outputs()`.
     :param require_all_intermediates: If `True` then the transformation will only apply if
         all outputs of the first Map are intermediate, i.e., are consumed by the second Map.
     :param consolidate_edges_only_if_not_extending: If `True` the transformation will only
