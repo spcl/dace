@@ -58,8 +58,8 @@ def doitgen(A, C4):
         def compute_sum(p: _[0:NP], s: _[0:NP]):
             inA << A[r, q, s]
             inC4 << C4[s, p]
-            s >> sum(1, lambda a, b: a + b, 0)[p]
-            s = inA * inC4
+            outs >> sum(1, lambda a, b: a + b, 0)[p]
+            outs = inA * inC4
 
         @dace.map
         def compute_A(p: _[0:NP]):
