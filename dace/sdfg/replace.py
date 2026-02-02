@@ -81,7 +81,7 @@ def replace_dict(subgraph: 'StateSubgraphView',
                     desc = node.desc(state)
                 # In case the AccessNode name was replaced in the sdfg.arrays but not in the SDFG itself
                 # then we have to look for the replaced value in the sdfg.arrays
-                elif repl[node.data] in state.sdfg.arrays:
+                elif node.data in repl and repl[node.data] in state.sdfg.arrays:
                     desc = state.sdfg.arrays[repl[node.data]]
                 else:
                     continue
