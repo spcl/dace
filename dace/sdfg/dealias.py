@@ -411,6 +411,7 @@ def integrate_nested_sdfg(sdfg: SDFG):
     for sym_name, sym_type in symtypes.items():
         if sym_name not in sdfg.symbols:
             # Add the symbol to the SDFG and the parent node's symbol mapping
+            # TODO: If a data descriptor/symbol already exists with the same name, do something else
             sdfg.add_symbol(sym_name, sym_type)
         parent_node.symbol_mapping[sym_name] = sym_name
 
