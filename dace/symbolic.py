@@ -1,11 +1,11 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
+from collections import Counter
 from functools import lru_cache
-import sys
 import sympy
 import pickle
 import re
-from typing import Any, Callable, Dict, Iterable, Optional, Set, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, Optional, Set, Tuple, Union, TYPE_CHECKING
 import numpy
 
 import sympy.abc
@@ -122,6 +122,27 @@ class symbol(sympy.Symbol):
                 raise RuntimeError('Cannot validate constraint %s for symbol %s' % (str(constraint), self.name))
         if fail is not None:
             raise RuntimeError('Value %s invalidates constraint %s for symbol %s' % (str(value), str(fail), self.name))
+
+    # Type stubs for arithmetic operators (inherited from sympy.Symbol at runtime)
+    if TYPE_CHECKING:
+        # yapf: disable
+        def __add__(self, other: Any) -> sympy.Expr: ...
+        def __radd__(self, other: Any) -> sympy.Expr: ...
+        def __sub__(self, other: Any) -> sympy.Expr: ...
+        def __rsub__(self, other: Any) -> sympy.Expr: ...
+        def __mul__(self, other: Any) -> sympy.Expr: ...
+        def __rmul__(self, other: Any) -> sympy.Expr: ...
+        def __truediv__(self, other: Any) -> sympy.Expr: ...
+        def __rtruediv__(self, other: Any) -> sympy.Expr: ...
+        def __floordiv__(self, other: Any) -> sympy.Expr: ...
+        def __rfloordiv__(self, other: Any) -> sympy.Expr: ...
+        def __mod__(self, other: Any) -> sympy.Expr: ...
+        def __rmod__(self, other: Any) -> sympy.Expr: ...
+        def __pow__(self, other: Any) -> sympy.Expr: ...
+        def __rpow__(self, other: Any) -> sympy.Expr: ...
+        def __neg__(self) -> sympy.Expr: ...
+        def __pos__(self) -> sympy.Expr: ...
+        # yapf: enable
 
 
 class UndefinedSymbol(symbol):
@@ -384,6 +405,8 @@ def symlist(values):
     except TypeError:
         values = [values]
 
+    skip = set()
+
     for expr in values:
         if isinstance(expr, SymExpr):
             true_expr = expr.expr
@@ -392,6 +415,12 @@ def symlist(values):
         else:
             continue
         for atom in sympy.preorder_traversal(true_expr):
+            if atom in skip:
+                continue
+            if isinstance(atom, Attr):
+                # Skip attributes
+                skip.add(atom.args[1])
+                continue
             if isinstance(atom, symbol):
                 result[atom.name] = atom
     return result
@@ -1098,26 +1127,12 @@ def evaluate_optional_arrays(expr, sdfg):
     return expr
 
 
-# Depending on the Python version we need to handle different AST nodes to correctly interpret and detect falsy / truthy
-# values.
-if sys.version_info < (3, 8):
-    _SimpleASTNode = (ast.Constant, ast.Name, ast.NameConstant, ast.Num)
-    _SimpleASTNodeT = Union[ast.Constant, ast.Name, ast.NameConstant, ast.Num]
+_SimpleASTNode = (ast.Constant, ast.Name)
+_SimpleASTNodeT = Union[ast.Constant, ast.Name]
 
-    def __comp_convert_truthy_falsy(node: _SimpleASTNodeT):
-        if isinstance(node, ast.Num):
-            node_val = node.n
-        elif isinstance(node, ast.Name):
-            node_val = node.id
-        else:
-            node_val = node.value
-        return ast.copy_location(ast.NameConstant(bool(node_val)), node)
-else:
-    _SimpleASTNode = (ast.Constant, ast.Name)
-    _SimpleASTNodeT = Union[ast.Constant, ast.Name]
 
-    def __comp_convert_truthy_falsy(node: _SimpleASTNodeT):
-        return ast.copy_location(ast.Constant(bool(node.value)), node)
+def __comp_convert_truthy_falsy(node: _SimpleASTNodeT):
+    return ast.copy_location(ast.Constant(bool(node.value)), node)
 
 
 # Convert simple AST node (constant) into a falsy / truthy. Anything other than 0, None, and an empty string '' is
@@ -1367,7 +1382,8 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
 
     def _print_Function(self, expr):
         if str(expr.func) in self.arrays:
-            return f'{expr.func}[{expr.args[0]}]'
+            indices = ", ".join(self._print(arg) for arg in expr.args)
+            return f'{expr.func}[{indices}]'
         if self.cpp_mode and str(expr.func) == 'int_floor':
             return '((%s) / (%s))' % (self._print(expr.args[0]), self._print(expr.args[1]))
         if str(expr.func) == 'AND':
@@ -1682,9 +1698,38 @@ def symbols_in_code(code: str, potential_symbols: Set[str] = None, symbols_to_ig
         # Don't bother tokenizing for an empty set of potential symbols
         return set()
 
-    tokens = set(re.findall(_NAME_TOKENS, code))
+    tokens_list = re.findall(_NAME_TOKENS, code)
+    token_counts = Counter(tokens_list)
+    tokens = set(tokens_list)
     if potential_symbols is not None:
         tokens &= potential_symbols
+
+    # Remove 'e' from tokens if it appears as part of scientific notation
+    for match in _NAME_TOKENS.finditer(code):
+        s, e = match.span()
+        token = match.group(0)
+
+        # Check prev. literal is a digit and the next digit involves a number or +/-
+        # Check if token starts with e e.g. `e`, `e5`
+        if token.startswith('e') and s > 0:
+            # If token directly has a digit to the left `1e5`, `1e-3`
+            if code[s - 1].isdigit():
+                if len(token) > 1:
+                    rest = token[1:]  # everything after 'e'
+                    # If the rest is `+/- then digits` or just digits then rm
+                    if rest and (rest[0] in '+-' and rest[1:].isdigit() or rest.isdigit()):
+                        # Discard only if the count of this token is now zero, as `e = 1e-5` will mean token e was found twice
+                        token_counts[token] -= 1
+                        if token_counts[token] == 0:
+                            tokens.discard(token)
+                else:
+                    if e < len(code) and s > 0:
+                        if code[s - 1].isdigit() and code[e] in '-+0123456789':
+                            # Discard only if the count of this token is now zero, as `e = 1e-5` will mean token e was found twice
+                            token_counts[token] -= 1
+                            if token_counts[token] == 0:
+                                tokens.discard(token)
+
     if symbols_to_ignore is None:
         return tokens
     return tokens - symbols_to_ignore

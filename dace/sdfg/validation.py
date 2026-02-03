@@ -1,4 +1,4 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Exception classes and methods for validation of SDFGs. """
 
 import copy
@@ -43,8 +43,11 @@ def validate_control_flow_region(sdfg: 'SDFG',
     from dace.sdfg.scope import is_in_scope
     from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState
 
-    if len(region.source_nodes()) > 1 and region.start_block is None:
-        raise InvalidSDFGError("Starting block undefined", sdfg, None)
+    if len(region.source_nodes()) > 1:
+        try:
+            region.start_block
+        except:
+            raise InvalidSDFGError("Starting block is ambiguous or undefined.", sdfg, None)
 
     in_default_scope = None
 
@@ -226,8 +229,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
     """
     # Avoid import loop
     from dace import data as dt
-    from dace.codegen.targets import fpga
-    from dace.sdfg.scope import is_devicelevel_fpga, is_devicelevel_gpu
+    from dace.sdfg.scope import is_devicelevel_gpu
     from dace.sdfg.state import ConditionalBlock
 
     references = references or set()
@@ -330,35 +332,8 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
                     "Array %s cannot be both persistent/external and use Register as "
                     "storage type. Please use a different storage location." % name, sdfg, None)
 
-            # Check for valid bank assignments
-            try:
-                bank_assignment = fpga.parse_location_bank(desc)
-            except ValueError as e:
-                raise InvalidSDFGError(str(e), sdfg, None)
-            if bank_assignment is not None:
-                if bank_assignment[0] == "DDR" or bank_assignment[0] == "HBM":
-                    try:
-                        tmp = subsets.Range.from_string(bank_assignment[1])
-                    except SyntaxError:
-                        raise InvalidSDFGError(
-                            "Memory bank specifier must be convertible to subsets.Range"
-                            f" for array {name}", sdfg, None)
-                    try:
-                        low, high = fpga.get_multibank_ranges_from_subset(bank_assignment[1], sdfg)
-                    except ValueError as e:
-                        raise InvalidSDFGError(str(e), sdfg, None)
-                    if (high - low < 1):
-                        raise InvalidSDFGError(
-                            "Memory bank specifier must at least define one bank to be used"
-                            f" for array {name}", sdfg, None)
-                    if (high - low > 1 and (high - low != desc.shape[0] or len(desc.shape) < 2)):
-                        raise InvalidSDFGError(
-                            "Arrays that use a multibank access pattern must have the size of the first dimension equal"
-                            f" the number of banks and have at least 2 dimensions for array {name}", sdfg, None)
-
         # Check if SDFG is located within a GPU kernel
         context['in_gpu'] = is_devicelevel_gpu(sdfg, None, None)
-        context['in_fpga'] = is_devicelevel_fpga(sdfg, None, None)
 
         initialized_transients = {'__pystate'}
         initialized_transients.update(sdfg.constants_prop.keys())
@@ -368,6 +343,9 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
         for desc in sdfg.arrays.values():
             for sym in desc.free_symbols:
                 symbols[str(sym)] = sym.dtype
+
+        if len(sdfg.nodes()) == 0:
+            raise InvalidSDFGError("SDFGs are required to contain at least one state.", sdfg, None)
 
         validate_control_flow_region(sdfg, sdfg, initialized_transients, symbols, references, **context)
 
@@ -386,8 +364,6 @@ def _accessible(sdfg: 'dace.sdfg.SDFG', container: str, context: Dict[str, bool]
     storage = sdfg.arrays[container].storage
     if storage == dtypes.StorageType.GPU_Global or storage in dtypes.GPU_STORAGES:
         return context.get('in_gpu', False)
-    if storage == dtypes.StorageType.FPGA_Global or storage in dtypes.FPGA_STORAGES:
-        return context.get('in_fpga', False)
 
     return True
 
@@ -438,12 +414,11 @@ def validate_state(state: 'dace.sdfg.SDFGState',
     # Avoid import loops
     from dace import data as dt
     from dace import subsets as sbs
-    from dace.codegen.targets import fpga
     from dace.config import Config
     from dace.sdfg import SDFG
     from dace.sdfg import nodes as nd
     from dace.sdfg import utils as sdutil
-    from dace.sdfg.scope import (is_devicelevel_fpga, is_devicelevel_gpu, scope_contains_scope)
+    from dace.sdfg.scope import is_devicelevel_gpu, scope_contains_scope
 
     sdfg = sdfg or state.parent
     state_id = state_id if state_id is not None else state.parent_graph.node_id(state)
@@ -454,8 +429,6 @@ def validate_state(state: 'dace.sdfg.SDFGState',
     # Obtain whether we are already in an accelerator context
     if not hasattr(context, 'in_gpu'):
         context['in_gpu'] = is_devicelevel_gpu(sdfg, state, None)
-    if not hasattr(context, 'in_fpga'):
-        context['in_fpga'] = is_devicelevel_fpga(sdfg, state, None)
 
     # Reference check
     if id(state) in references:
@@ -610,17 +583,6 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 nid,
             )
 
-        # Tasklets may only access 1 HBM bank at a time
-        if isinstance(node, nd.Tasklet):
-            for attached in state.all_edges(node):
-                if attached.data.data in sdfg.arrays:
-                    if fpga.is_multibank_array_with_distributed_index(sdfg.arrays[attached.data.data]):
-                        low, high, _ = attached.data.subset[0]
-                        if (low != high):
-                            raise InvalidSDFGNodeError(
-                                "Tasklets may only be directly connected"
-                                " to HBM-memlets accessing only one bank", sdfg, state_id, nid)
-
         # Connector tests
         ########################################
         # Tasklet connector tests
@@ -764,9 +726,6 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                     if pn.schedule in dtypes.GPU_SCHEDULES:
                         memlet_context['in_gpu'] = True
                         break
-                    if pn.schedule == dtypes.ScheduleType.FPGA_Device:
-                        memlet_context['in_fpga'] = True
-                        break
                     if pn.schedule == dtypes.ScheduleType.Default:
                         # Default schedule memlet accessibility validation is deferred
                         # to after schedule/storage inference
@@ -784,7 +743,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 and (not isinstance(dst_node, nd.AccessNode) or (name != dst_node.data and name != e.dst_conn))):
             raise InvalidSDFGEdgeError(
                 "Memlet data does not match source or destination "
-                "data nodes)",
+                "data nodes",
                 sdfg,
                 state_id,
                 eid,
@@ -796,11 +755,24 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             if not memlet_context.get('in_default', False) and not _accessible(sdfg, e.data.data, memlet_context):
                 # Rerun slightly more expensive but foolproof test
                 memlet_context['in_gpu'] = is_devicelevel_gpu(sdfg, state, e.dst)
-                memlet_context['in_fpga'] = is_devicelevel_fpga(sdfg, state, e.dst)
                 if not _accessible(sdfg, e.data.data, memlet_context):
                     raise InvalidSDFGEdgeError(
                         f'Data container "{e.data.data}" is stored as {sdfg.arrays[e.data.data].storage} '
                         'but accessed on host', sdfg, state_id, eid)
+
+        # Ensure empty memlets are properly connected to tasklets:
+        # Empty memlets may only connect two adjacent tasklets
+        if e.data.is_empty():
+            if len(path) == 1 and isinstance(src_node, nd.Tasklet) and isinstance(dst_node, nd.Tasklet):
+                pass
+            elif isinstance(dst_node, nd.Tasklet) and path[-1].dst_conn:
+                raise InvalidSDFGEdgeError(
+                    f'Empty memlet connected to tasklet input connector "{path[-1].dst_conn}". This '
+                    'is only allowed when connecting two adjacent tasklets.', sdfg, state_id, eid)
+            elif isinstance(src_node, nd.Tasklet) and path[0].src_conn:
+                raise InvalidSDFGEdgeError(
+                    f'Empty memlet connected to tasklet output connector "{path[0].src_conn}". This '
+                    'is only allowed when connecting two adjacent tasklets.', sdfg, state_id, eid)
 
         # Check memlet subset validity with respect to source/destination nodes
         if e.data.data is not None and e.data.allow_oob == False:
@@ -900,7 +872,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             raise InvalidSDFGEdgeError("Illegal memlet between disjoint scopes", sdfg, state_id, eid)
 
         # Check dimensionality of memory access
-        if isinstance(e.data.subset, (sbs.Range, sbs.Indices)):
+        if isinstance(e.data.subset, sbs.Range):
             if e.data.subset.dims() != len(sdfg.arrays[e.data.data].shape):
                 raise InvalidSDFGEdgeError(
                     "Memlet subset uses the wrong dimensions"

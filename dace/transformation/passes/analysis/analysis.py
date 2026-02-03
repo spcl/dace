@@ -92,6 +92,7 @@ class ControlFlowBlockReachability(ppl.Pass):
             # Any point inside the loop may reach any other point inside the loop again.
             # TODO(later): This is an overapproximation. A branch terminating in a break is excluded from this.
             closure.update(region.all_control_flow_blocks())
+            closure.add(region)  # The loop condition is also reachable.
 
         # Add all states that this region can reach in its parent graph to the closure.
         for reached_block in block_reach[region.parent_graph.cfg_id][region]:
@@ -1044,3 +1045,70 @@ class StatePropagation(ppl.ControlFlowRegionPass):
             # Propagate the number of executions.
             self._propagate_in_cfg(region, pipeline_results[ControlFlowBlockReachability.__name__][region.cfg_id],
                                    starting_execs, starting_dynamic)
+
+
+@properties.make_properties
+@transformation.explicit_cf_compatible
+class ConditionUniqueWrites(ppl.Pass):
+    """
+    Finds all access nodes in ConditionalBlocks, which are not written in all branches (i.e. these locations are not guaranteed to be written to).
+    """
+
+    CATEGORY: str = 'Analysis'
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Nothing
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        # If anything was modified, reapply
+        return modified & ppl.Modifies.CFG
+
+    def depends_on(self):
+        return {}
+
+    def apply_pass(self, top_sdfg: SDFG, pipeline_res: Dict) -> Set[nd.AccessNode]:
+        """
+        :return: A set of access nodes, which are unique writes in conditional blocks.
+        """
+        cond_unique = set()
+        for cfb in top_sdfg.all_control_flow_blocks(recursive=True):
+            if not isinstance(cfb, ConditionalBlock):
+                continue
+
+            # No else branch -> all access nodes are unique
+            if not any(cnd is None for cnd, br in cfb.branches):
+                cond_unique.update(an for an in cfb.data_nodes())
+                continue
+
+            # Build a mapping of access_node -> written subset -> set of branches it appears in
+            access_write_branch = {}
+            for _, br in cfb.branches:
+                for st in br.all_states():
+                    for an in st.data_nodes():
+                        array_name = an.data
+                        write_subsets = set(e.data.dst_subset for e in st.in_edges(an))
+                        wss = str(write_subsets)
+                        if array_name not in access_write_branch:
+                            access_write_branch[array_name] = {}
+                        if wss not in access_write_branch[array_name]:
+                            access_write_branch[array_name][wss] = {"branches": set(), "access_nodes": set()}
+                        access_write_branch[array_name][wss]["branches"].add(br)
+                        access_write_branch[array_name][wss]["access_nodes"].add(an)
+
+            # Eliminate all write subset that appear in all branches
+            for array_name, ws_br in list(access_write_branch.items()):
+                to_remove = []
+                for wss, brd in list(ws_br.items()):
+                    if len(brd["branches"]) == len(cfb.branches):
+                        to_remove.append(wss)
+                for wss in to_remove:
+                    del ws_br[wss]
+                if len(ws_br) == 0:
+                    del access_write_branch[array_name]
+
+            # All remaining access nodes are unique
+            for array_name, ws_br in access_write_branch.items():
+                for wss, brd in ws_br.items():
+                    cond_unique.update(brd["access_nodes"])
+
+        return cond_unique

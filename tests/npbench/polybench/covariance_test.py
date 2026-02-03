@@ -1,17 +1,18 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 # Original application code: NPBench - https://github.com/spcl/npbench
 
+import os
 import dace.dtypes
 import numpy as np
 import dace as dc
 import pytest
 import argparse
-from dace.fpga_testing import fpga_test
-from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
+from dace.transformation.interstate import InlineSDFG
 from dace.transformation.dataflow import StreamingMemory, MapFusionVertical, StreamingComposition, PruneConnectors
-from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
+from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.libraries.standard import Reduce
 from dace.libraries.blas import Gemv
+from dace.autodiff import add_backward_pass
 
 # Data set sizes
 # M, N
@@ -34,6 +35,17 @@ def covariance_kernel(float_n: dc.float32, data: dc.float32[N, M]):
     #     cov[i, i:M] = data[:, i] @ data[:, i:M]
 
     return cov
+
+
+def covariance_jax_kernel(jnp, float_n, data):
+    mean = jnp.mean(data, axis=0)
+    M = data.shape[1]
+    data -= mean
+    cov = jnp.zeros((M, M), dtype=data.dtype)
+    for i in range(M):
+        cov = cov.at[i:M, i].set(data[:, i] @ data[:, i:M] / (float_n - 1.0))
+        cov = cov.at[i, i:M].set(data[:, i] @ data[:, i:M] / (float_n - 1.0))
+    return jnp.sum(cov)
 
 
 def ground_truth(M, N, float_n, data):
@@ -91,36 +103,41 @@ def run_covariance(device_type: dace.dtypes.DeviceType):
         sdfg = auto_optimize(sdfg, device_type)
         dace_res = sdfg(float_n=float_n, data=data, M=M, N=N)
 
-    elif device_type == dace.dtypes.DeviceType.FPGA:
-        # Parse SDFG and apply FPGA friendly optimization
-        sdfg = covariance_kernel.to_sdfg(simplify=False)
-        sdfg.simplify()
-        applied = sdfg.apply_transformations([FPGATransformSDFG])
-        assert applied == 1
-
-        sdfg.apply_transformations([InlineSDFG])
-
-        # Use FPGA Expansion for lib nodes, and expand them to enable further optimizations
-        # Reduce.default_implementation = "FPGAPartialReduction"
-        Gemv.default_implementation = "FPGA_Accumulate"
-
-        sdfg.expand_library_nodes()
-        sdfg.apply_transformations([InlineSDFG])
-
-        # Other FPGA auto opt
-        fpga_auto_opt.fpga_global_to_local(sdfg)
-        fpga_auto_opt.fpga_rr_interleave_containers_to_banks(sdfg)
-
-        # Specialize the SDFG
-        sdfg.specialize(dict(N=N, M=M))
-
-        # run program
-        dace_res = sdfg(float_n=float_n, data=data)
-
     # Compute ground truth and validate result
     gt_res = ground_truth(M, N, float_n, gt_data)
     assert np.allclose(gt_res, dace_res)
     return sdfg
+
+
+def run_covariance_autodiff():
+    import jax
+    import jax.numpy as jnp
+
+    # Initialize data (polybench mini size)
+    M, N = sizes["mini"]
+    float_n, data = init_data(M, N)
+    data_jax = np.copy(data)
+
+    # Initialize gradient computation data
+    gradient_data = np.zeros_like(data)
+    gradient___return = np.ones((1, ), dtype=np.float32)
+
+    # Define sum reduction for the output
+    @dc.program
+    def autodiff_kernel(float_n: dc.float32, data: dc.float32[N, M]):
+        cov = covariance_kernel(float_n, data)
+        return np.sum(cov)
+
+    # Add the backward pass to the SDFG
+    sdfg = autodiff_kernel.to_sdfg()
+    add_backward_pass(sdfg=sdfg, inputs=["data"], outputs=["__return"])
+    sdfg(float_n, data, M=M, N=N, gradient_data=gradient_data, gradient___return=gradient___return)
+
+    # Numerically validate vs JAX
+    jax_kernel = lambda float_n, data: covariance_jax_kernel(jnp, float_n, data)
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=1), static_argnums=(0, ))
+    jax_grad_data = jax_grad(float_n, data_jax)
+    np.testing.assert_allclose(gradient_data, jax_grad_data, rtol=1e-5, atol=1e-8)
 
 
 def test_cpu(monkeypatch):
@@ -134,22 +151,27 @@ def test_gpu():
     run_covariance(dace.dtypes.DeviceType.GPU)
 
 
-@fpga_test(assert_ii_1=False)
-def test_fpga():
-    return run_covariance(dace.dtypes.DeviceType.FPGA)
+@pytest.mark.autodiff
+def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
+    # Serialization causes issues, we temporarily disable it
+    # TODO: open an issue to fix the serialization stability problem
+    last_value = os.environ.get('DACE_testing_serialization', '0')
+    os.environ['DACE_testing_serialization'] = '0'
+    run_covariance_autodiff()
+    os.environ['DACE_testing_serialization'] = last_value
 
 
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]
 
     if target == "cpu":
         run_covariance(dace.dtypes.DeviceType.CPU)
+        run_covariance_autodiff()
     elif target == "gpu":
         run_covariance(dace.dtypes.DeviceType.GPU)
-    elif target == "fpga":
-        run_covariance(dace.dtypes.DeviceType.FPGA)

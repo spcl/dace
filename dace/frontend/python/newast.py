@@ -33,6 +33,7 @@ from dace.sdfg import SDFG, SDFGState
 from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, FunctionCallRegion,
                              LoopRegion, ControlFlowRegion, NamedRegion)
 from dace.sdfg.replace import replace_datadesc_names
+from dace.sdfg.type_inference import infer_expr_type
 from dace.symbolic import pystr_to_symbolic, inequal_symbols
 
 import numpy
@@ -52,27 +53,10 @@ ShapeList = List[Size]
 Shape = Union[ShapeTuple, ShapeList]
 DependencyType = Dict[str, Tuple[SDFGState, Union[Memlet, nodes.Tasklet], Tuple[int]]]
 
-if sys.version_info < (3, 8):
-    _simple_ast_nodes = (ast.Constant, ast.Name, ast.NameConstant, ast.Num)
-    BytesConstant = ast.Bytes
-    EllipsisConstant = ast.Ellipsis
-    NameConstant = ast.NameConstant
-    NumConstant = ast.Num
-    StrConstant = ast.Str
-else:
-    _simple_ast_nodes = (ast.Constant, ast.Name)
-    BytesConstant = ast.Constant
-    EllipsisConstant = ast.Constant
-    NameConstant = ast.Constant
-    NumConstant = ast.Constant
-    StrConstant = ast.Constant
+_simple_ast_nodes = (ast.Constant, ast.Name)
 
-if sys.version_info < (3, 9):
-    Index = ast.Index
-    ExtSlice = ast.ExtSlice
-else:
-    Index = type(None)
-    ExtSlice = type(None)
+Index = type(None)
+ExtSlice = type(None)
 
 if sys.version_info < (3, 12):
     TypeAlias = type(None)
@@ -487,7 +471,6 @@ def add_indirection_subgraph(sdfg: SDFG,
                 access = list(access)
             if not isinstance(access, (list, tuple)):
                 access = [access]
-            conn = None
             if pvisitor.nested:
                 # TODO: Make this work for nested for-loops
                 arr_rng = dace.subsets.Range([(a, a, 1) for a in access])
@@ -495,7 +478,6 @@ def add_indirection_subgraph(sdfg: SDFG,
                     arrname, rng = pvisitor._add_write_access(arr_name, arr_rng, target=None)
                 else:
                     arrname, rng = pvisitor._add_read_access(arr_name, arr_rng, target=None)
-                conn = 'index_%s_%d' % (arr_name, i)
                 arr = sdfg.arrays[arrname]
                 subset = subsets.Range.from_array(arr)
             else:
@@ -535,6 +517,9 @@ def add_indirection_subgraph(sdfg: SDFG,
     if ind_entry:  # Amend newsubset when a range is indirected
         for i, idx in enumerate(nonsqz_dims):
             newsubset[idx] = '__i%d' % i
+
+    # Squeeze size-1 dimensions out of expression
+    newsubset = [s for shp, s in zip(array.shape, newsubset) if shp != 1]
 
     tasklet.code = CodeBlock(
         code.format(arr='__ind_' + local_name, index=', '.join([symbolic.symstr(s) for s in newsubset])))
@@ -961,6 +946,9 @@ class TaskletTransformer(ExtNodeTransformer):
                 target = node.value.right
                 name = rname(target)
                 name_sub = False
+                if isinstance(node.value.right, ast.Name) and node.value.right.id in self.defined:
+                    if isinstance(self.defined[node.value.right.id], symbolic.symbol):
+                        raise DaceSyntaxError(self, node, 'Symbolic variables cannot be used as memlet targets')
                 if isinstance(node.value.op, ast.LShift):
                     squeezed_rng = None
                     if self.nested:
@@ -1031,20 +1019,36 @@ class TaskletTransformer(ExtNodeTransformer):
                         raise DaceSyntaxError(self, node, 'Local variable is already a tasklet input or output')
                     self.outputs[connector] = memlet
                     return None  # Remove from final tasklet code
-        elif isinstance(node.value, StrConstant):
+        elif isinstance(node.value, ast.Constant):
             return self.visit_TopLevelStr(node.value)
 
         return self.generic_visit(node)
 
     # Detect external tasklet code
-    def visit_TopLevelStr(self, node: StrConstant):
+    def visit_TopLevelStr(self, node: ast.Constant):
         if self.extcode != None:
             raise DaceSyntaxError(self, node, 'Cannot provide more than one intrinsic implementation ' + 'for tasklet')
-        self.extcode = node.value if sys.version_info >= (3, 8) else node.s
+        self.extcode = node.value
 
         # TODO: Should get detected by _parse_Tasklet()
         if self.lang is None:
             self.lang = dtypes.Language.CPP
+
+        return node
+
+    def visit_FunctionDef(self, node: ast.FunctionDef):
+        # Parse function definition as a tasklet
+        # Skip visiting arguments, only visit body statements
+        new_body: list[ast.AST] = []
+        for stmt in node.body:
+            result = self.visit_TopLevel(stmt)
+            if result is not None:
+                if isinstance(result, list):
+                    new_body.extend(result)
+                else:
+                    new_body.append(result)
+
+        node.body = new_body
 
         return node
 
@@ -1054,6 +1058,16 @@ class TaskletTransformer(ExtNodeTransformer):
                 and isinstance(self.defined[node.id], symbolic.symbol)):
             if node.id not in self.sdfg.symbols:
                 self.sdfg.add_symbol(node.id, self.defined[node.id].dtype)
+            return self.generic_visit(node)
+        # Storing into a symbol is not allowed
+        if (isinstance(node.ctx, ast.Store) and node.id in self.defined
+                and isinstance(self.defined[node.id], symbolic.symbol)):
+            raise DaceSyntaxError(self, node, f'Symbol "{node.id}" cannot be assigned to within a tasklet scope.')
+        # Arrays and scalars are not allowed to be accessed from tasklets without a memlet
+        if node.id in self.defined and isinstance(self.defined[node.id], data.Data):
+            raise DaceSyntaxError(
+                self, node, f'{type(self.defined[node.id]).__name__} "{node.id}" cannot be accessed from within a '
+                'tasklet scope without a memlet.')
         return self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> Any:
@@ -1627,7 +1641,6 @@ class ProgramVisitor(ExtNodeVisitor):
         object to maintain compatibility with global symbols. Used to maintain
         typed symbols in SDFG scopes (e.g., map, consume).
         """
-        from dace.codegen.tools.type_inference import infer_expr_type
         result = {}
 
         # Add map inputs first
@@ -1826,7 +1839,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         return indices
 
-    def _parse_value(self, node: Union[ast.Name, NumConstant, ast.Constant]):
+    def _parse_value(self, node: Union[ast.Name, ast.Constant]):
         """Parses a value
 
         Arguments:
@@ -1841,12 +1854,10 @@ class ProgramVisitor(ExtNodeVisitor):
 
         if isinstance(node, ast.Name):
             return node.id
-        elif sys.version_info < (3, 8) and isinstance(node, ast.Num):
-            return str(node.n)
-        elif isinstance(node, ast.Constant):
+        if isinstance(node, ast.Constant):
             return str(node.value)
-        else:
-            return str(self.visit(node))
+
+        return str(self.visit(node))
 
     def _parse_slice(self, node: ast.Slice):
         """Parses a range
@@ -1868,9 +1879,7 @@ class ProgramVisitor(ExtNodeVisitor):
         :param node: Index node
         :return: Range in (from, to, step) format
         """
-        if sys.version_info < (3, 9) and isinstance(node, ast.Index):
-            val = self._parse_value(node.value)
-        elif isinstance(node, ast.Tuple):
+        if isinstance(node, ast.Tuple):
             val = self._parse_value(node.elts)
         else:
             val = self._parse_value(node)
@@ -2008,7 +2017,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     if symbolic.issymbolic(atom, self.sdfg.constants):
                         # Check for undefined variables
                         atomstr = str(atom)
-                        if atomstr not in self.defined:
+                        if atomstr not in self.defined and atomstr not in self.sdfg.arrays:
                             raise DaceSyntaxError(self, node, 'Undefined variable "%s"' % atom)
                         # Add to global SDFG symbols
 
@@ -2454,8 +2463,6 @@ class ProgramVisitor(ExtNodeVisitor):
             self._add_dependencies(state, tasklet, me, mx, inputs, outputs, map_inputs, symbols)
         elif iterator == 'range':
             # Create an extra typed symbol for the loop iterate
-            from dace.codegen.tools.type_inference import infer_expr_type
-
             sym_name = indices[0]
             integer = True
             nonnegative = None
@@ -3242,8 +3249,14 @@ class ProgramVisitor(ExtNodeVisitor):
         else:
             var_name = self.get_target_name()
 
-        parent_name = self.scope_vars[name]
-        parent_array = self.scope_arrays[parent_name]
+        parent_name = self.scope_vars[until(name, '.')]
+        if '.' in name:
+            struct_field = name[name.index('.'):]
+            parent_name += struct_field
+            scope_ndict = dace.sdfg.NestedDict(self.scope_arrays)
+            parent_array = scope_ndict[parent_name]
+        else:
+            parent_array = self.scope_arrays[parent_name]
 
         has_indirection = (_subset_has_indirection(rng, self) or _subset_is_local_symbol_dependent(rng, self))
         strides = list(parent_array.strides)
@@ -3416,7 +3429,7 @@ class ProgramVisitor(ExtNodeVisitor):
             return self.accesses[(name, rng, 'w')]
         elif name in self.variables:
             return (self.variables[name], rng)
-        elif (name, rng, 'r') in self.accesses or name in self.scope_vars:
+        elif (name, rng, 'r') in self.accesses or until(name, '.') in self.scope_vars:
             return self._add_access(name, rng, 'w', target, new_name, arr_type)
         else:
             raise NotImplementedError
@@ -3492,7 +3505,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 # to constant indexes (according to the number of elements in the lhs). These expansions can then be
                 # used to perform an unpacking assignment, similar to what Python does natively.
                 for i in range(len(elts)):
-                    const_node = NumConstant(i)
+                    const_node = ast.Constant(i)
                     ast.copy_location(const_node, node)
                     slice_node = ast.Subscript(rval[0][0], const_node, ast.Load)
                     ast.copy_location(slice_node, node)
@@ -3524,8 +3537,10 @@ class ProgramVisitor(ExtNodeVisitor):
                     while isinstance(last_subscript.value, ast.Subscript):
                         last_subscript = last_subscript.value
                 if isinstance(target, ast.Subscript) and not isinstance(last_subscript.value, ast.Name):
-                    store_target = copy.copy(last_subscript.value)
-                    store_target.ctx = ast.Store()
+                    store_target = astutils.copy_tree(last_subscript.value)
+                    for n in ast.walk(store_target):  # Recursively make attributes into stores
+                        if hasattr(n, 'ctx'):
+                            n.ctx = ast.Store()
                     true_name = self.visit(store_target)
                     # Refresh defined variables and arrays
                     defined_vars = {**self.variables, **self.scope_vars}
@@ -3733,7 +3748,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     raise IndexError('Boolean array indexing cannot be combined with indirect access')
 
             if self.nested and not new_data and not visited_target:
-                new_name, new_rng = self._add_write_access(name, rng, target)
+                new_name, new_rng = self._add_write_access(true_name, rng, target)
                 # Local symbol or local data dependent
                 if _subset_is_local_symbol_dependent(rng, self):
                     new_rng = rng
@@ -4001,12 +4016,8 @@ class ProgramVisitor(ExtNodeVisitor):
         :raises: DaceSyntaxError if argument is not constant.
         """
         # If constant in AST
-        if sys.version_info < (3, 8):
-            if isinstance(aval, (ast.Str, ast.Num, ast.Bytes, ast.NameConstant, ast.Ellipsis)):
-                return
-        else:
-            if isinstance(aval, ast.Constant):
-                return
+        if isinstance(aval, ast.Constant):
+            return
         # If a constant value (non-AST) is given during parsing
         if not isinstance(parsed[1], str) or parsed[0] != parsed[1]:
             return
@@ -4687,10 +4698,7 @@ class ProgramVisitor(ExtNodeVisitor):
         func = None
         funcname = None
         # If the call directly refers to an SDFG or dace-compatible program
-        if sys.version_info < (3, 8) and isinstance(node.func, ast.Num):
-            if self._has_sdfg(node.func.n):
-                func = node.func.n
-        elif isinstance(node.func, ast.Constant):
+        if isinstance(node.func, ast.Constant):
             if self._has_sdfg(node.func.value):
                 func = node.func.value
 
@@ -4958,7 +4966,7 @@ class ProgramVisitor(ExtNodeVisitor):
             self.visit_Call(node.value)
             return
 
-        elif (sys.version_info.major == 3 and sys.version_info.minor >= 8 and isinstance(node.value, ast.NamedExpr)):
+        elif isinstance(node.value, ast.NamedExpr):
             self.visit_NamedExpr(node.value)
             return
 
@@ -5074,22 +5082,6 @@ class ProgramVisitor(ExtNodeVisitor):
                 rname, _ = self._add_read_access(rname, rng, node)
         return rname
 
-    #### Visitors that return arrays
-    def visit_Str(self, node: StrConstant):
-        # A string constant returns a string literal
-        return StringLiteral(node.s)
-
-    def visit_Bytes(self, node: BytesConstant):
-        # A bytes constant returns a string literal
-        return StringLiteral(node.s)
-
-    def visit_Num(self, node: NumConstant):
-        if isinstance(node.n, bool):
-            return dace.bool_(node.n)
-        if isinstance(node.n, (int, float, complex)):
-            return dtypes.dtype_to_typeclass(type(node.n))(node.n)
-        return node.n
-
     def visit_Constant(self, node: ast.Constant):
         if isinstance(node.value, bool) and numpy_version < '2.0.0':
             return dace.bool_(node.value)
@@ -5102,9 +5094,6 @@ class ProgramVisitor(ExtNodeVisitor):
     def visit_Name(self, node: ast.Name):
         # If visiting a name, check if it is a defined variable or a global
         return self._visitname(node.id, node)
-
-    def visit_NameConstant(self, node: NameConstant):
-        return self.visit_Constant(node)
 
     def visit_Attribute(self, node: ast.Attribute):
         result = self.visit(node.value)
@@ -5426,10 +5415,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 res = self.visit(s)
             else:
                 res = self._visit_ast_or_value(s)
-                if isinstance(res, (ast.Constant, NumConstant)):
+                if isinstance(res, ast.Constant):
                     res = res.value
-        elif sys.version_info < (3, 9) and isinstance(s, ast.Index):
-            res = self._parse_subscript_slice(s.value, multidim=multidim)
         elif isinstance(s, ast.Slice):
             lower = s.lower
             if isinstance(lower, ast.AST):
@@ -5449,8 +5436,6 @@ class ProgramVisitor(ExtNodeVisitor):
                 res = list(self._parse_subscript_slice(d, multidim=True) for d in s.elts)
             else:
                 res = tuple(self._parse_subscript_slice(d, multidim=True) for d in s.elts)
-        elif sys.version_info < (3, 9) and isinstance(s, ast.ExtSlice):
-            res = tuple(self._parse_subscript_slice(d, multidim=True) for d in s.dims)
         else:
             res = _promote(s)
         # Unpack tuple of a single Python slice object
@@ -5516,10 +5501,7 @@ class ProgramVisitor(ExtNodeVisitor):
             # slice is constant, return the value itself
             nslice = self.visit(node.slice)
             if isinstance(nslice, (Index, Number)):
-                if sys.version_info < (3, 9) and isinstance(nslice, ast.Index):
-                    v = self._parse_value(nslice.value)
-                else:
-                    v = nslice
+                v = nslice
                 try:
                     value, valtype = node_parsed[int(v)]
                     return value
@@ -5574,11 +5556,7 @@ class ProgramVisitor(ExtNodeVisitor):
             if isinstance(r, ast.AST):
                 newnode = r
             elif isinstance(r, (Number, numpy.bool_)):
-                # Compatibility check since Python changed their AST nodes
-                if sys.version_info >= (3, 8):
-                    newnode = ast.Constant(value=r, kind='')
-                else:
-                    newnode = ast.Num(n=r)
+                newnode = ast.Constant(value=r, kind='')
             else:
                 newnode = ast.Name(id=r)
             ast.copy_location(newnode, node)

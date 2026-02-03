@@ -5,11 +5,10 @@ import numpy as np
 import dace as dc
 import pytest
 import argparse
-from dace.fpga_testing import fpga_test, xilinx_test
-from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
-from dace.transformation.dataflow import StreamingMemory, StreamingComposition
-from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
+from dace.transformation.interstate import InlineSDFG
+from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.config import set_temporary
+from dace.autodiff import add_backward_pass
 
 C_in, C_out, H, K, N, W = (dc.symbol(s, dc.int64) for s in ('C_in', 'C_out', 'H', 'K', 'N', 'W'))
 
@@ -72,6 +71,43 @@ def conv2d_bias_np(input, weights, bias):
     return conv2d_np(input, weights) + bias
 
 
+def conv2d_lax(jnp, lax, input, weights):
+    # Kernel size, number of input images, and output dimensions.
+    K = weights.shape[0]  # Assuming square kernel of size K x K.
+    N = input.shape[0]  # Batch size.
+    H_out = input.shape[1] - K + 1  # Output height.
+    W_out = input.shape[2] - K + 1  # Output width.
+    C_out = weights.shape[3]  # Number of output channels.
+
+    # Allocate output array.
+    output = jnp.empty((N, H_out, W_out, C_out), dtype=input.dtype)
+
+    # Row update: iterate over output rows.
+    def row_update(out, i):
+        # Column update: iterate over output columns.
+        def col_update(out, j):
+            # Extract a patch from 'input' at the given (i, j) position.
+            patch = lax.dynamic_slice(input, (0, i, j, 0), (N, K, K, input.shape[-1]))
+            # Expand dims on the patch to broadcast with weights.
+            # weights: shape (K, K, in_channels, C_out)
+            # patch[..., None] becomes shape (N, K, K, in_channels, 1)
+            # We add a new leading dimension to weights to broadcast:
+            conv = jnp.sum(patch[..., None] * weights[None, :, :, :], axis=(1, 2, 3))
+            # conv now has shape (N, C_out). Update output at (0, i, j, 0).
+            out = lax.dynamic_update_slice(out, conv[:, None, None, :], (0, i, j, 0))
+            return out, None
+
+        out, _ = lax.scan(col_update, out, jnp.arange(W_out))
+        return out, None
+
+    output, _ = lax.scan(row_update, output, jnp.arange(H_out))
+    return output
+
+
+def conv2d_bias_jax_kernel(jnp, lax, input, weights, bias):
+    return jnp.sum(conv2d_lax(jnp, lax, input, weights) + bias)
+
+
 def run_conv2d_bias(device_type: dace.dtypes.DeviceType):
     '''
     Runs conv2d_bias for the given device
@@ -87,24 +123,57 @@ def run_conv2d_bias(device_type: dace.dtypes.DeviceType):
         sdfg = conv2d_bias_kernel.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
         out = sdfg(input, weight, bias, C_in=C_in, C_out=C_out, H=H, K=K, N=N, W=W)
-    elif device_type == dace.dtypes.DeviceType.FPGA:
-        # Parse SDFG and apply FPGA friendly optimization
-        sdfg = conv2d_bias_kernel.to_sdfg(simplify=True)
-        applied = sdfg.apply_transformations([FPGATransformSDFG])
-        assert applied == 1
-
-        # Use FPGA Expansion for lib nodes, and expand them to enable further optimizations
-        from dace.libraries.standard import Reduce
-        Reduce.default_implementation = "FPGAPartialReduction"
-        sdfg.expand_library_nodes()
-        sdfg.apply_transformations_repeated([InlineSDFG], print_report=True)
-        sdfg.specialize(dict(C_in=C_in, C_out=C_out, H=H, K=K, N=N, W=W))
-        out = sdfg(input, weight, bias)
 
     # Compute ground truth and validate
     out_ref = conv2d_bias_np(input, weight, bias)
     assert np.allclose(out, out_ref)
     return sdfg
+
+
+def run_conv2d_bias_autodiff():
+    import jax
+    import jax.numpy as jnp
+    import jax.lax as lax
+
+    # Initialize data (npbench test size)
+    N, C_in, C_out, K, H, W = 4, 3, 8, 2, 12, 12
+    input, weights, bias = initialize(C_in, C_out, H, K, N, W)
+
+    # Initialize gradient computation data
+    gradient_input = np.zeros_like(input, dtype=np.float32)
+    gradient___return = np.ones((1, ), dtype=np.float32)
+
+    # Define sum reduction for the output
+    @dc.program
+    def autodiff_kernel(input: dc.float32[N, H, W, C_in], weights: dc.float32[K, K, C_in, C_out],
+                        bias: dc.float32[C_out]):
+        A = conv2d(input, weights) + bias
+        return np.sum(A)
+
+    # Add the backward pass to the SDFG
+    sdfg = autodiff_kernel.to_sdfg()
+    add_backward_pass(sdfg=sdfg, inputs=["input"], outputs=["__return"])
+
+    sdfg(input,
+         weights,
+         bias,
+         C_in=C_in,
+         C_out=C_out,
+         H=H,
+         K=K,
+         N=N,
+         W=W,
+         gradient_input=gradient_input,
+         gradient___return=gradient___return)
+
+    # Enable float32 for JAX to match DaCe consistency
+    jax.config.update("jax_enable_x64", False)
+
+    # Numerically validate vs JAX
+    jax_kernel = lambda input, weights, bias: conv2d_bias_jax_kernel(jnp, lax, input, weights, bias)
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=0))
+    jax_grad_input = jax_grad(input, weights, bias)
+    np.testing.assert_allclose(gradient_input, jax_grad_input, atol=1e-6, rtol=1e-6)
 
 
 def test_cpu():
@@ -117,22 +186,22 @@ def test_gpu():
     run_conv2d_bias(dace.dtypes.DeviceType.GPU)
 
 
-@fpga_test(assert_ii_1=False)
-def test_fpga():
-    return run_conv2d_bias(dace.dtypes.DeviceType.FPGA)
+@pytest.mark.autodiff
+def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
+    run_conv2d_bias_autodiff()
 
 
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]
 
     if target == "cpu":
         run_conv2d_bias(dace.dtypes.DeviceType.CPU)
+        run_conv2d_bias_autodiff()
     elif target == "gpu":
         run_conv2d_bias(dace.dtypes.DeviceType.GPU)
-    elif target == "fpga":
-        run_conv2d_bias(dace.dtypes.DeviceType.FPGA)
