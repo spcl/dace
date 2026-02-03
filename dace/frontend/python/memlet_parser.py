@@ -63,13 +63,13 @@ def _ndslice_to_subset(ndslice):
     is_tuple = [isinstance(x, tuple) for x in ndslice]
     if not any(is_tuple):
         return subsets.Range.from_indices(ndslice)
-    else:
-        if not all(is_tuple):
-            # If a mix of ranges and indices is found, convert to range
-            for i in range(len(ndslice)):
-                if not is_tuple[i]:
-                    ndslice[i] = (ndslice[i], ndslice[i], 1)
-        return subsets.Range(ndslice)
+
+    if not all(is_tuple):
+        # If a mix of ranges and indices is found, convert to range
+        for i in range(len(ndslice)):
+            if not is_tuple[i]:
+                ndslice[i] = (ndslice[i], ndslice[i], 1)
+    return subsets.Range(ndslice)
 
 
 def _parse_dim_atom(das, atom):
