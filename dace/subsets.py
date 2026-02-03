@@ -1,10 +1,10 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+from __future__ import annotations
+
 import dace.serialize
-from dace import data, symbolic, dtypes
-import re
+from dace import symbolic
 import sympy as sp
 from functools import reduce
-import sympy.core.sympify
 from typing import List, Optional, Sequence, Set, Union
 import warnings
 from dace.config import Config
@@ -322,8 +322,12 @@ class Range(Subset):
         self.tile_sizes = parsed_tiles
 
     @staticmethod
-    def from_indices(indices: 'Indices'):
-        return Range([(i, i, 1) for i in indices.indices])
+    def from_indices(indices: Union[Indices, Sequence[int | str | symbolic.SymbolicType]]):
+        if isinstance(indices, Indices):
+            return Range([(i, i, 1) for i in indices.indices])
+
+        indices = [symbolic.pystr_to_symbolic(i) for i in indices]
+        return Range([(i, i, 1) for i in indices])
 
     def to_json(self):
         ret = []
@@ -498,9 +502,9 @@ class Range(Subset):
             return
         if not isinstance(other, Subset):
             if isinstance(other, (list, tuple)):
-                other = Indices(other)
+                other = Range.from_indices(other)
             else:
-                other = Indices([other for _ in self.ranges])
+                other = Range.from_indices([other for _ in self.ranges])
         mult = -1 if negative else 1
         if indices is None:
             indices = set(range(len(self.ranges)))
@@ -516,9 +520,9 @@ class Range(Subset):
             return Range(self.ranges)
         if not isinstance(other, Subset):
             if isinstance(other, (list, tuple)):
-                other = Indices(other)
+                other = Range.from_indices(other)
             else:
-                other = Indices([other for _ in self.ranges])
+                other = Range.from_indices([other for _ in self.ranges])
         mult = -1 if negative else 1
         if indices is None:
             indices = set(range(len(self.ranges)))
