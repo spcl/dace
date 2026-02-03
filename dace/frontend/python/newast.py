@@ -481,7 +481,7 @@ def add_indirection_subgraph(sdfg: SDFG,
                 arr = sdfg.arrays[arrname]
                 subset = subsets.Range.from_array(arr)
             else:
-                subset = subsets.Indices(access)
+                subset = subsets.Range.from_indices(access)
             # Memlet to load the indirection index
             indexMemlet = Memlet.simple(arrname, subset)
             input_index_memlets.append(indexMemlet)
@@ -1777,8 +1777,8 @@ class ProgramVisitor(ExtNodeVisitor):
         # Inject element to internal SDFG arrays
         ntrans = f'consume_{stream_name}'
         ntrans, _ = sdfg.add_array(ntrans, [1], self.sdfg.arrays[stream_name].dtype, find_new_name=True)
-        internal_memlet = dace.Memlet.simple(ntrans, subsets.Indices([0]))
-        external_memlet = dace.Memlet.simple(stream_name, subsets.Indices([0]), num_accesses=-1)
+        internal_memlet = dace.Memlet.simple(ntrans, subsets.Range.from_indices([0]))
+        external_memlet = dace.Memlet.simple(stream_name, subsets.Range.from_indices([0]), num_accesses=-1)
 
         # Inject to internal tasklet
         if not dec.endswith('scope'):

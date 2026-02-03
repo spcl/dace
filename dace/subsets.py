@@ -720,7 +720,7 @@ class Range(Subset):
                         tsize = tokens[3]
                 else:
                     tsize = 1
-            except sympy.SympifyError:
+            except sp.SympifyError:
                 raise SyntaxError("Invalid range: {}".format(string))
             # Append range
             ranges.append((begin, end, step, tsize))
@@ -1152,9 +1152,9 @@ def bounding_box_union(subset_a: Subset, subset_b: Subset) -> Range:
                 elif len(brb.free_symbols) == 0:
                     minrb = brb
                 else:
-                    minrb = sympy.Min(arb, brb)
+                    minrb = sp.Min(arb, brb)
             else:
-                minrb = sympy.Min(arb, brb)
+                minrb = sp.Min(arb, brb)
 
         try:
             maxre = max(are, bre)
@@ -1165,9 +1165,9 @@ def bounding_box_union(subset_a: Subset, subset_b: Subset) -> Range:
                 elif len(bre.free_symbols) == 0:
                     maxre = are
                 else:
-                    maxre = sympy.Max(are, bre)
+                    maxre = sp.Max(are, bre)
             else:
-                maxre = sympy.Max(are, bre)
+                maxre = sp.Max(are, bre)
 
         result.append((minrb, maxre, 1))
 
