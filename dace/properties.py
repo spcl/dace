@@ -171,7 +171,14 @@ class Property(Generic[T]):
             val = int(val)
 
         # Check if type matches before setting
-        if (self.dtype is not None and not isinstance(val, self.dtype) and not (val is None and self.allow_none)):
+
+        if hasattr(self.dtype, "_Proxy"):
+            accepted_types = (self.dtype, self.dtype._Proxy)
+        else:
+            accepted_types = (self.dtype,)
+
+        if (self.dtype is not None and not isinstance(val, accepted_types) and not (val is None and self.allow_none)):
+
             if isinstance(val, str):
                 raise TypeError("Received str for property {} of type {}. Use "
                                 "from_string method of the property.".format(self.attr_name, self.dtype))

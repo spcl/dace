@@ -315,7 +315,8 @@ class TargetDispatcher(object):
                 self.register_array_dispatcher(stype, func)
             return
 
-        if not isinstance(storage_type, dtypes.StorageType): raise TypeError
+        if not (isinstance(storage_type, dtypes.StorageType) or isinstance(storage_type, dtypes.CheckableEnumMeta._Proxy)): 
+            raise TypeError
         if not isinstance(func, target.TargetCodeGenerator): raise TypeError
         self._array_dispatchers[storage_type] = func
 
@@ -345,8 +346,8 @@ class TargetDispatcher(object):
             :see: TargetCodeGenerator
         """
 
-        if not isinstance(src_storage, dtypes.StorageType): raise TypeError
-        if not isinstance(dst_storage, dtypes.StorageType): raise TypeError
+        if not (isinstance(src_storage, dtypes.StorageType) or isinstance(src_storage, dtypes.CheckableEnumMeta._Proxy)): raise TypeError
+        if not (isinstance(dst_storage, dtypes.StorageType) or isinstance(dst_storage, dtypes.CheckableEnumMeta._Proxy)): raise TypeError
         if (dst_schedule is not None and not isinstance(dst_schedule, dtypes.ScheduleType)):
             raise TypeError
         if not isinstance(func, target.TargetCodeGenerator): raise TypeError
