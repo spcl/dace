@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import sys
 from .version import __version__
+from . import attr_enum
 from .dtypes import *
 
 # Import built-in hooks

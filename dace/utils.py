@@ -56,3 +56,10 @@ def find_new_name(name: str, existing_names: Sequence[str]) -> str:
 def deduplicate(iterable):
     """ Removes duplicates in the passed iterable. """
     return type(iterable)([i for i in sorted(set(iterable), key=lambda x: iterable.index(x))])
+
+
+def until(val, substr):
+    """ Helper function that returns the substring of a string until a certain pattern. """
+    if substr not in val:
+        return val
+    return val[:val.find(substr)]
