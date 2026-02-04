@@ -76,7 +76,7 @@ def dealias_sdfg(sdfg: SDFG):
 
                     if replacements.get(name, None) is not None:
                         # There's an incoming and an outgoing connector with the same name.
-                        # Make sure both map to the same memory in the parent sdfg
+                        # Make sure both map to the same memory in the parent sdfg.
                         assert replacements[name] == parent_name
                         assert name in inv_replacements[parent_name]
                         break
@@ -566,7 +566,7 @@ def _state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
             # Replace symbols and memlets in nested SDFGs to match the namespace of the parent SDFG
             replace_symbols_until_set(node)
 
-            # Create memlets for nested SDFG mapping, or nview schedule nodes if slice cannot be determined
+            # Create memlets for nested SDFG mapping, or NView schedule nodes if slice cannot be determined.
             for e in state.all_edges(node):
                 conn = e.dst_conn if e.dst is node else e.src_conn
                 if e.data.is_empty() or not conn:
@@ -585,7 +585,7 @@ def _state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
                         else:
                             nested_array_mapping_output[conn] = e.data
 
-                if no_mapping:  # Must use view (nview = nested SDFG view)
+                if no_mapping:  # Must use view (NView = nested SDFG view)
                     if conn not in generated_nviews:
                         nview_node = tn.NView(target=conn,
                                               source=e.data.data,
@@ -716,8 +716,7 @@ def _block_schedule_tree(block: ControlFlowBlock) -> List[tn.ScheduleTreeNode]:
             if variant == "do-while":
                 return [tn.DoWhileScope(loop=block, children=children)]
 
-            # If we end up here, we don't need more granularity and just use
-            # a general loop scope
+            # If we end up here, we don't need more granularity and just use a general loop scope.
             return [tn.LoopScope(loop=block, children=children)]
 
         return children
@@ -802,6 +801,7 @@ def _create_unified_descriptor_repository(sdfg: SDFG, stree: tn.ScheduleTreeRoot
     """
     Creates a single descriptor repository from an SDFG and all nested SDFGs. This includes
     data containers, symbols, constants, etc.
+
     :param sdfg: The top-level SDFG to create the repository from.
     :param stree: The tree root in which to make the unified descriptor repository.
     """
