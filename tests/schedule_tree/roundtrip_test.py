@@ -25,7 +25,7 @@ def test_implicit_inline_and_constants():
     # Inject constant into nested SDFG
     assert len(list(sdfg.all_sdfgs_recursive())) > 1
     sdfg.add_constant('cst', 13)  # Add an unused constant
-    sdfg.sdfg_list[-1].add_constant('cst', 1, dace.data.Scalar(dace.float64))
+    sdfg.cfg_list[-1].add_constant('cst', 1, dace.data.Scalar(dace.float64))
     tasklet = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet))
     tasklet.code.as_string = tasklet.code.as_string.replace('12', 'cst')
 

@@ -8,9 +8,9 @@ from dace.codegen import control_flow as cf
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.analysis.schedule_tree import tree_to_sdfg as t2s, treenodes as tn
-import pytest
-
 from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
+
+import pytest
 
 
 def test_state_boundaries_none():

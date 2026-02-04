@@ -1,3 +1,5 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace import nodes
 
