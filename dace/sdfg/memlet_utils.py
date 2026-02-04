@@ -1,4 +1,5 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+from __future__ import annotations
 
 import ast
 from collections import defaultdict
@@ -10,7 +11,7 @@ from dace.sdfg.scope import is_devicelevel_gpu
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.frontend.python import memlet_parser
 import itertools
-from typing import Callable, Dict, Iterable, Optional, Set, TypeVar, Tuple, Union
+from typing import Callable, Dict, Iterable, Optional, Set, TypeVar, Tuple, Union, Generator, Any
 
 
 class MemletReplacer(ast.NodeTransformer):
@@ -92,7 +93,7 @@ class MemletSet(Set[Memlet]):
     Set updates and unions also perform unions on the contained memlet subsets.
     """
 
-    def __init__(self, iterable: Optional[Iterable[Memlet]] = None, intersection_is_contained: bool = True):
+    def __init__(self, iterable: Optional[Iterable[Memlet]] = None, intersection_is_contained: bool = True) -> None:
         """
         Initializes a memlet set.
 
@@ -106,14 +107,14 @@ class MemletSet(Set[Memlet]):
         if iterable is not None:
             self.update(iterable)
 
-    def __iter__(self):
+    def __iter__(self) -> Generator[Memlet, Any, None]:
         for subset in self.internal_set.values():
             yield from subset
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.internal_set)
 
-    def update(self, *iterable: Iterable[Memlet]):
+    def update(self, *iterable: Iterable[Memlet]) -> None:
         """
         Updates set of memlets via union of existing ranges.
         """
@@ -128,7 +129,7 @@ class MemletSet(Set[Memlet]):
         for elem in to_update:
             self.add(elem)
 
-    def add(self, elem: Memlet):
+    def add(self, elem: Memlet) -> None:
         """
         Adds a memlet to the set, potentially performing a union of existing ranges.
         """
@@ -175,7 +176,7 @@ class MemletSet(Set[Memlet]):
 
         return False
 
-    def union(self, *s: Iterable[Memlet]) -> 'MemletSet':
+    def union(self, *s: Iterable[Memlet]) -> MemletSet:
         """
         Performs a set-union (with memlet union) over the given sets of memlets.
 
@@ -195,7 +196,7 @@ class MemletDict(Dict[Memlet, T]):
     """
     covers_cache: Dict[Tuple, bool] = {}
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs) -> None:
         self.internal_dict: Dict[str, Dict[Memlet, T]] = defaultdict(dict)
         if kwargs:
             self.update(kwargs)
@@ -229,10 +230,10 @@ class MemletDict(Dict[Memlet, T]):
     def _setkey(self, key: Memlet, value: T) -> None:
         self.internal_dict[key.data][key] = value
 
-    def clear(self):
+    def clear(self) -> None:
         self.internal_dict.clear()
 
-    def update(self, mapping: Dict[Memlet, T]):
+    def update(self, mapping: Dict[Memlet, T]) -> None:
         for k, v in mapping.items():
             ak = self._getkey(k)
             if ak is None:

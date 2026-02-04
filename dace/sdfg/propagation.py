@@ -423,10 +423,6 @@ class GenericSMemlet(SeparableMemletPattern):
             if symbolic.issymbolic(dim):
                 used_symbols.update(dim.free_symbols)
 
-        # if any(s not in defined_vars for s in (used_symbols - set(self.params))):
-        #     # Cannot propagate symbols that are undefined outside scope (e.g., internal symbols)
-        #     return False
-
         if (used_symbols & set(self.params)
                 and any(symbolic.pystr_to_symbolic(s) not in defined_vars for s in node_range.free_symbols)):
             # Cannot propagate symbols that are undefined in the outer range
@@ -1525,11 +1521,11 @@ def propagate_subset(memlets: List[Memlet],
                 tmp_subset = pattern.propagate(arr, [subset], rng)
                 break
         else:
-            # No patterns found. Propagate the entire array whenever symbols are used
+            # No patterns found. Propagate the entire array whenever symbols are used.
             entire_array = subsets.Range.from_array(arr)
             paramset = set(map(str, params))
             # Fill in the entire array only if one of the parameters appears in the
-            # free symbols list of the subset dimension or is undefined outside
+            # free symbols list of the subset dimension or is undefined outside.
             tmp_subset_rng = []
             for s, ea in zip(subset, entire_array):
                 if isinstance(subset, subsets.Indices):
