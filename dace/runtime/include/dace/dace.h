@@ -4,6 +4,7 @@
 
 // Necessary headers
 #include <cstdio>
+#include <cstdint>
 #include <cmath>
 #include <numeric>
 #include <tuple>
