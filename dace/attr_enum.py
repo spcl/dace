@@ -21,7 +21,10 @@ class _ExtensibleAttributeEnumMeta(EnumMeta):
             del namespace[key]
             # Also remove from EnumDict's member tracking if present
             if hasattr(namespace, '_member_names') and key in namespace._member_names:
-                del namespace._member_names[key]
+                if isinstance(namespace._member_names, list):
+                    namespace._member_names.remove(key)
+                else:
+                    del namespace._member_names[key]
 
         cls = super().__new__(mcs, name, bases, namespace, **kwargs)
 

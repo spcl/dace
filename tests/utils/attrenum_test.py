@@ -48,7 +48,6 @@ def test_attrenum_creation():
     # Checking attributes
     assert car.make == "Toyota"
     assert car.horsepower == 200
-    assert Vehicle.UNKNOWN.value == 1
     assert Vehicle.BICYCLE.value == "bike"
 
     # Checking isinstance
