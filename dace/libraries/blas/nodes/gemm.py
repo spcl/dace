@@ -526,10 +526,7 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
                                     desc="If applicable, chooses the vendor-provided implementation "
                                     "(algorithm) for the multiplication")
     accumulator_type = properties.TypeClassProperty(
-        default=None,
-        choices=dtypes.Typeclasses,
-        allow_none=True,
-        desc="Accumulator or intermediate storage type used in multiplication")
+        default=None, allow_none=True, desc="Accumulator or intermediate storage type used in multiplication")
     compute_type = properties.Property(default=None,
                                        dtype=str,
                                        allow_none=True,
