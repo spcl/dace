@@ -218,7 +218,7 @@ _CTYPES = {
     numpy.int8: "int8_t",
     numpy.int16: "int16_t",
     numpy.int32: "int32_t",
-    numpy.intc: "int32_t",
+    numpy.intc: "int",
     numpy.int64: "int64_t",
     numpy.uint8: "uint8_t",
     numpy.uint16: "uint16_t",
