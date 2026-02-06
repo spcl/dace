@@ -5315,7 +5315,10 @@ class ProgramVisitor(ExtNodeVisitor):
                         return False
                 return True
 
-            is_index = range_is_index(expr.subset)
+            # We also check the type of the slice attribute of the node
+            # in order to distinguish between A[0] and A[0:1], which are semantically different in numpy
+            # (the former is an index, the latter is a slice).
+            is_index = range_is_index(expr.subset) and not isinstance(node.slice, ast.Slice)
             other_subset = copy.deepcopy(expr.subset)
         strides = list(arrobj.strides)
 
