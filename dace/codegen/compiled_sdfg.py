@@ -205,7 +205,7 @@ class CompiledSDFG(object):
            Python objects (pyobjects) returned directly.
     """
 
-    def __init__(self, sdfg, lib: ReloadableDLL, argnames: List[str] = None):
+    def __init__(self, sdfg, lib: ReloadableDLL, argnames: Optional[List[str]] = None):
         from dace.sdfg import SDFG
         self._sdfg: SDFG = sdfg
         self._lib = lib

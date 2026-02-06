@@ -5,35 +5,28 @@ flexible code generation with multiple backends by dispatching certain
 functionality to registered code generators based on user-defined predicates.
 """
 from dace.codegen.prettycode import CodeIOStream
-import aenum
-from dace import config, data as dt, dtypes, nodes, registry
+from dace import attr_enum, config, data as dt, dtypes, nodes
 from dace.memlet import Memlet
 from dace.codegen import exceptions as cgx, prettycode
 from dace.codegen import target
 from dace.sdfg import utils as sdutil, SDFG, SDFGState, ScopeSubgraphView
 from dace.sdfg.graph import MultiConnectorEdge
-from typing import Callable, Dict, List, Optional, Set, Tuple, Union, TYPE_CHECKING
+from enum import auto
+from typing import Callable, Dict, List, Optional, Set, Tuple, Union
 
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
 
-if TYPE_CHECKING:
-    import enum
-    AutoNumberEnum = enum.Enum
-else:
-    AutoNumberEnum = aenum.AutoNumberEnum
 
-
-@registry.extensible_enum
-class DefinedType(AutoNumberEnum):
+class DefinedType(attr_enum.ExtensibleAttributeEnum):
     """ Data types for `DefinedMemlets`.
 
         :see: DefinedMemlets
     """
-    Pointer = ()  # Pointer
-    Scalar = ()  # A copyable scalar moved by value (e.g., POD)
-    Object = ()  # An object moved by reference
-    Stream = ()  # A stream object moved by reference and accessed via a push/pop API
-    StreamArray = ()  # An array of Streams
+    Pointer = auto()  # Pointer
+    Scalar = auto()  # A copyable scalar moved by value (e.g., POD)
+    Object = auto()  # An object moved by reference
+    Stream = auto()  # A stream object moved by reference and accessed via a push/pop API
+    StreamArray = auto()  # An array of Streams
 
 
 class DefinedMemlets:

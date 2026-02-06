@@ -33,6 +33,7 @@ from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, Contro
 from dace.sdfg.replace import replace_datadesc_names
 from dace.sdfg.type_inference import infer_expr_type
 from dace.symbolic import pystr_to_symbolic, inequal_symbols
+from dace.utils import until
 
 import numpy
 import sympy
@@ -65,13 +66,6 @@ else:
 class SkipCall(Exception):
     """ Exception used to skip calls to functions that cannot be parsed. """
     pass
-
-
-def until(val, substr):
-    """ Helper function that returns the substring of a string until a certain pattern. """
-    if substr not in val:
-        return val
-    return val[:val.find(substr)]
 
 
 # Array names that sympy and other python dependencies cannot accept
