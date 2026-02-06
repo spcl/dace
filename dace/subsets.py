@@ -320,7 +320,7 @@ class Range(Subset):
         self.tile_sizes = parsed_tiles
 
     @staticmethod
-    def from_indices(indices: Union[Indices, Sequence[int | str | symbolic.SymbolicType]]):
+    def from_indices(indices: Union["Indices", Sequence[int | str | symbolic.SymbolicType]]):
         if isinstance(indices, Indices):
             return Range([(i, i, 1) for i in indices.indices])
 
