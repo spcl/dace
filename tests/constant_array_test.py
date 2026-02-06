@@ -1,9 +1,5 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-from __future__ import print_function
-
-import argparse
 import dace
-from dace import nodes
 import numpy as np
 from dace.transformation.dataflow.redundant_array import RedundantArray, RedundantSecondArray
 from dace.transformation.interstate.state_fusion import StateFusion

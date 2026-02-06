@@ -1,10 +1,8 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import dace.serialize
-from dace import data, symbolic, dtypes
-import re
+from dace import symbolic
 import sympy as sp
 from functools import reduce
-import sympy.core.sympify
 from typing import List, Optional, Sequence, Set, Union
 import warnings
 from dace.config import Config
@@ -322,8 +320,12 @@ class Range(Subset):
         self.tile_sizes = parsed_tiles
 
     @staticmethod
-    def from_indices(indices: 'Indices'):
-        return Range([(i, i, 1) for i in indices.indices])
+    def from_indices(indices: Union["Indices", Sequence[int | str | symbolic.SymbolicType]]):
+        if isinstance(indices, Indices):
+            return Range([(i, i, 1) for i in indices.indices])
+
+        indices = [symbolic.pystr_to_symbolic(i) for i in indices]
+        return Range([(i, i, 1) for i in indices])
 
     def to_json(self):
         ret = []
@@ -498,9 +500,9 @@ class Range(Subset):
             return
         if not isinstance(other, Subset):
             if isinstance(other, (list, tuple)):
-                other = Indices(other)
+                other = Range.from_indices(other)
             else:
-                other = Indices([other for _ in self.ranges])
+                other = Range.from_indices([other for _ in self.ranges])
         mult = -1 if negative else 1
         if indices is None:
             indices = set(range(len(self.ranges)))
@@ -516,9 +518,9 @@ class Range(Subset):
             return Range(self.ranges)
         if not isinstance(other, Subset):
             if isinstance(other, (list, tuple)):
-                other = Indices(other)
+                other = Range.from_indices(other)
             else:
-                other = Indices([other for _ in self.ranges])
+                other = Range.from_indices([other for _ in self.ranges])
         mult = -1 if negative else 1
         if indices is None:
             indices = set(range(len(self.ranges)))
@@ -716,7 +718,7 @@ class Range(Subset):
                         tsize = tokens[3]
                 else:
                     tsize = 1
-            except sympy.SympifyError:
+            except sp.SympifyError:
                 raise SyntaxError("Invalid range: {}".format(string))
             # Append range
             ranges.append((begin, end, step, tsize))
@@ -1148,9 +1150,9 @@ def bounding_box_union(subset_a: Subset, subset_b: Subset) -> Range:
                 elif len(brb.free_symbols) == 0:
                     minrb = brb
                 else:
-                    minrb = sympy.Min(arb, brb)
+                    minrb = sp.Min(arb, brb)
             else:
-                minrb = sympy.Min(arb, brb)
+                minrb = sp.Min(arb, brb)
 
         try:
             maxre = max(are, bre)
@@ -1161,9 +1163,9 @@ def bounding_box_union(subset_a: Subset, subset_b: Subset) -> Range:
                 elif len(bre.free_symbols) == 0:
                     maxre = are
                 else:
-                    maxre = sympy.Max(are, bre)
+                    maxre = sp.Max(are, bre)
             else:
-                maxre = sympy.Max(are, bre)
+                maxre = sp.Max(are, bre)
 
         result.append((minrb, maxre, 1))
 

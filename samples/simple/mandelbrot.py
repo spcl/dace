@@ -1,7 +1,5 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 """ A code sample that uses a data-centric map to compute the Mandelbrot set in parallel. """
-from __future__ import print_function
-
 import argparse
 import dace
 import numpy as np

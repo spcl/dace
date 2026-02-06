@@ -3,6 +3,7 @@ import sys
 from .version import __version__
 from . import attr_enum
 from .dtypes import *
+from . import serialize
 
 # Import built-in hooks
 from .builtin_hooks import *

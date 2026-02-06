@@ -3,8 +3,6 @@
     compiles each target separately, links all targets to one binary, and
     returns the corresponding CompiledSDFG object. """
 
-from __future__ import print_function
-
 import collections
 import os
 import six
