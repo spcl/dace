@@ -5,7 +5,6 @@ Utility functions for DaCe.
 This module provides general utility functions that are used across various parts of DaCe.
 """
 
-import math
 from typing import Iterable, Sequence, Union
 
 import sympy
