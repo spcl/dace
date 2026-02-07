@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Functionality relating to Memlet propagation (deducing external memlets
 from internal memory accesses and scope ranges).
@@ -1426,7 +1426,12 @@ def propagate_memlet(dfg_state,
     # Propagate subset
     if isinstance(entry_node, nodes.MapEntry):
         mapnode = entry_node.map
-        return propagate_subset(aggdata, arr, mapnode.params, mapnode.range, defined_vars, use_dst=use_dst)
+        return propagate_subset(aggdata,
+                                arr,
+                                mapnode.params,
+                                mapnode.range,
+                                defined_variables=defined_vars,
+                                use_dst=use_dst)
 
     elif isinstance(entry_node, nodes.ConsumeEntry):
         # Nothing to analyze/propagate in consume
@@ -1445,7 +1450,9 @@ def propagate_subset(memlets: List[Memlet],
                      arr: data.Data,
                      params: List[str],
                      rng: subsets.Subset,
+                     *,
                      defined_variables: Set[symbolic.SymbolicType] = None,
+                     undefined_variables: Set[symbolic.SymbolicType] = None,
                      use_dst: bool = False) -> Memlet:
     """ Tries to propagate a list of memlets through a range (computes the
         image of the memlet function applied on an integer set of, e.g., a
@@ -1458,8 +1465,12 @@ def propagate_subset(memlets: List[Memlet],
                     range to propagate with.
         :param defined_variables: A set of symbols defined that will remain the
                                   same throughout propagation. If None, assumes
-                                  that all symbols outside of `params` have been
-                                  defined.
+                                  that all symbols outside of ``params``, except
+                                  for ``undefined_variables``, have been defined.
+        :param undefined_variables: A set of symbols that are explicitly considered
+                                    as not defined throughout propagation, such as
+                                    locals. Their existence will trigger propagating
+                                    the entire memlet.
         :param use_dst: Whether to propagate the memlets' dst subset or use the
                         src instead, depending on propagation direction.
         :return: Memlet with propagated subset and volume.
@@ -1473,6 +1484,13 @@ def propagate_subset(memlets: List[Memlet],
             defined_variables |= memlet.free_symbols
         defined_variables -= set(params)
         defined_variables = set(symbolic.pystr_to_symbolic(p) for p in defined_variables)
+    else:
+        defined_variables = set(defined_variables)
+
+    if undefined_variables is not None:
+        defined_variables = defined_variables - set(symbolic.pystr_to_symbolic(p) for p in undefined_variables)
+    else:
+        undefined_variables = set()
 
     # Propagate subset
     variable_context = [defined_variables, [symbolic.pystr_to_symbolic(p) for p in params]]
@@ -1503,18 +1521,31 @@ def propagate_subset(memlets: List[Memlet],
                 tmp_subset = pattern.propagate(arr, [subset], rng)
                 break
         else:
-            # No patterns found. Emit a warning and propagate the entire
-            # array whenever symbols are used
-            warnings.warn('Cannot find appropriate memlet pattern to '
-                          'propagate %s through %s' % (str(subset), str(rng)))
+            # No patterns found. Propagate the entire array whenever symbols are used.
             entire_array = subsets.Range.from_array(arr)
             paramset = set(map(str, params))
             # Fill in the entire array only if one of the parameters appears in the
-            # free symbols list of the subset dimension
-            tmp_subset = subsets.Range([
-                ea if any(set(map(str, _freesyms(sd))) & paramset for sd in s) else s
-                for s, ea in zip(subset, entire_array)
-            ])
+            # free symbols list of the subset dimension or is undefined outside.
+            tmp_subset_rng = []
+            for s, ea in zip(subset, entire_array):
+                if isinstance(subset, subsets.Indices):
+                    fsyms = _freesyms(s)
+                    fsyms_str = set(map(str, fsyms))
+                    contains_params = len(fsyms_str & paramset) != 0
+                    contains_undefs = len(fsyms & undefined_variables) != 0
+                else:
+                    contains_params = False
+                    contains_undefs = False
+                    for sdim in s:
+                        fsyms = _freesyms(sdim)
+                        fsyms_str = set(map(str, fsyms))
+                        contains_params |= len(fsyms_str & paramset) != 0
+                        contains_undefs |= len(fsyms & undefined_variables) != 0
+                if contains_params or contains_undefs:
+                    tmp_subset_rng.append(ea)
+                else:
+                    tmp_subset_rng.append(s)
+            tmp_subset = subsets.Range(tmp_subset_rng)
 
         # Union edges as necessary
         if new_subset is None:

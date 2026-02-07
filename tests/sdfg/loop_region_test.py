@@ -311,7 +311,7 @@ def test_loop_to_stree_triple_nested_for():
     stree = s2t.as_schedule_tree(sdfg)
 
     po_nodes = list(stree.preorder_traversal())[1:]
-    assert [type(n) for n in po_nodes] == [tn.LoopScope, tn.LoopScope, tn.LoopScope, tn.TaskletNode, tn.LibraryCall]
+    assert [type(n) for n in po_nodes] == [tn.ForScope, tn.ForScope, tn.ForScope, tn.TaskletNode, tn.LibraryCall]
 
 
 if __name__ == '__main__':

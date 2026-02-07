@@ -43,7 +43,8 @@ def dealias_sdfg(sdfg: SDFG):
 
         replacements: Dict[str, str] = {}
         inv_replacements: Dict[str, List[str]] = {}
-        parent_edges: Dict[str, Memlet] = {}
+        parent_edges_inputs: Dict[str, Memlet] = {}
+        parent_edges_outputs: Dict[str, Memlet] = {}
         to_unsqueeze: Set[str] = set()
 
         parent_sdfg = nsdfg.parent_sdfg
@@ -53,18 +54,41 @@ def dealias_sdfg(sdfg: SDFG):
         for name, desc in nsdfg.arrays.items():
             if desc.transient:
                 continue
-            for edge in parent_state.edges_by_connector(parent_node, name):
+            for edge in parent_state.in_edges_by_connector(parent_node, name):
                 parent_name = edge.data.data
                 assert parent_name in parent_sdfg.arrays
-                if parent_name != name:
+                if name != parent_name:
+                    parent_edges_inputs[name] = edge
                     replacements[name] = parent_name
-                    parent_edges[name] = edge
                     if parent_name in inv_replacements:
                         inv_replacements[parent_name].append(name)
                         to_unsqueeze.add(parent_name)
                     else:
                         inv_replacements[parent_name] = [name]
+                    # We found an incoming edge for name and we don't expect a second one.
                     break
+
+            for edge in parent_state.out_edges_by_connector(parent_node, name):
+                parent_name = edge.data.data
+                assert parent_name in parent_sdfg.arrays
+                if name != parent_name:
+                    parent_edges_outputs[name] = edge
+
+                    if replacements.get(name, None) is not None:
+                        # There's an incoming and an outgoing connector with the same name.
+                        # Make sure both map to the same memory in the parent sdfg.
+                        assert replacements[name] == parent_name
+                        assert name in inv_replacements[parent_name]
+                        break
+                    else:
+                        replacements[name] = parent_name
+                        if parent_name in inv_replacements:
+                            inv_replacements[parent_name].append(name)
+                            to_unsqueeze.add(parent_name)
+                        else:
+                            inv_replacements[parent_name] = [name]
+                        # We found an outgoing edge for name and we don't expect a second one.
+                        break
 
         if to_unsqueeze:
             for parent_name in to_unsqueeze:
@@ -94,14 +118,18 @@ def dealias_sdfg(sdfg: SDFG):
                         # destination subset
                         if isinstance(src, nd.AccessNode) and src.data in child_names:
                             src_data = src.data
-                            new_src_memlet = unsqueeze_memlet(e.data, parent_edges[src.data].data, use_src_subset=True)
+                            new_src_memlet = unsqueeze_memlet(e.data,
+                                                              parent_edges_inputs[src.data].data,
+                                                              use_src_subset=True)
                         else:
                             src_data = None
                             new_src_memlet = None
                             # We need to take directionality of the memlet into account
                         if isinstance(dst, nd.AccessNode) and dst.data in child_names:
                             dst_data = dst.data
-                            new_dst_memlet = unsqueeze_memlet(e.data, parent_edges[dst.data].data, use_dst_subset=True)
+                            new_dst_memlet = unsqueeze_memlet(e.data,
+                                                              parent_edges_outputs[dst.data].data,
+                                                              use_dst_subset=True)
                         else:
                             dst_data = None
                             new_dst_memlet = None
@@ -120,23 +148,26 @@ def dealias_sdfg(sdfg: SDFG):
                     syms = e.data.read_symbols()
                     for memlet in e.data.get_read_memlets(nsdfg.arrays):
                         if memlet.data in child_names:
-                            repl_dict[str(memlet)] = unsqueeze_memlet(memlet, parent_edges[memlet.data].data)
+                            repl_dict[str(memlet)] = unsqueeze_memlet(memlet, parent_edges_inputs[memlet.data].data)
                             if memlet.data in syms:
                                 syms.remove(memlet.data)
                     for s in syms:
-                        if s in parent_edges:
+                        if s in parent_edges_inputs:
                             if s in nsdfg.arrays:
-                                repl_dict[s] = parent_edges[s].data.data
+                                repl_dict[s] = parent_edges_inputs[s].data.data
                             else:
-                                repl_dict[s] = str(parent_edges[s].data)
+                                repl_dict[s] = str(parent_edges_inputs[s].data)
                     e.data.replace_dict(repl_dict)
                 for name in child_names:
-                    edge = parent_edges[name]
-                    for e in parent_state.memlet_tree(edge):
-                        if e.data.data == parent_name:
-                            e.data.subset = subsets.Range.from_array(parent_arr)
-                        else:
-                            e.data.other_subset = subsets.Range.from_array(parent_arr)
+                    for edge in [parent_edges_inputs.get(name, None), parent_edges_outputs.get(name, None)]:
+                        if edge is None:
+                            continue
+
+                        for e in parent_state.memlet_tree(edge):
+                            if e.data.data == parent_name:
+                                e.data.subset = subsets.Range.from_array(parent_arr)
+                            else:
+                                e.data.other_subset = subsets.Range.from_array(parent_arr)
 
         if replacements:
             struct_outside_replacements: Dict[str, str] = {}
@@ -523,6 +554,10 @@ def _state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
             result = subnodes
         elif isinstance(node, dace.nodes.ExitNode):
             result = scopes.pop()
+            parent = result[-1]
+            assert isinstance(parent, tn.ScheduleTreeScope)
+            for child in parent.children:
+                child.parent = parent
         elif isinstance(node, dace.nodes.NestedSDFG):
             nested_array_mapping_input = {}
             nested_array_mapping_output = {}
@@ -531,7 +566,7 @@ def _state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
             # Replace symbols and memlets in nested SDFGs to match the namespace of the parent SDFG
             replace_symbols_until_set(node)
 
-            # Create memlets for nested SDFG mapping, or nview schedule nodes if slice cannot be determined
+            # Create memlets for nested SDFG mapping, or NView schedule nodes if slice cannot be determined.
             for e in state.all_edges(node):
                 conn = e.dst_conn if e.dst is node else e.src_conn
                 if e.data.is_empty() or not conn:
@@ -550,7 +585,7 @@ def _state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
                         else:
                             nested_array_mapping_output[conn] = e.data
 
-                if no_mapping:  # Must use view (nview = nested SDFG view)
+                if no_mapping:  # Must use view (NView = nested SDFG view)
                     if conn not in generated_nviews:
                         nview_node = tn.NView(target=conn,
                                               source=e.data.data,
@@ -565,6 +600,12 @@ def _state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
             # Insert the nested SDFG flattened
             nested_stree = as_schedule_tree(node.sdfg, in_place=True, toplevel=False)
             result.extend(nested_stree.children)
+
+            if generated_nviews:
+                # Insert matching NViewEnd nodes to define the scope NView nodes.
+                for target in generated_nviews:
+                    result.append(tn.NViewEnd(target=target))
+
         elif isinstance(node, dace.nodes.Tasklet):
             in_memlets = {e.dst_conn: e.data for e in state.in_edges(node) if e.dst_conn}
             out_memlets = {e.src_conn: e.data for e in state.out_edges(node) if e.src_conn}
@@ -664,11 +705,23 @@ def _block_schedule_tree(block: ControlFlowBlock) -> List[tn.ScheduleTreeNode]:
                     pivot = None
 
         if isinstance(block, LoopRegion):
-            # If this is a loop region, wrap everything in a LoopScope node.
-            loop_node = tn.LoopScope(loop=block, children=children)
-            return [loop_node]
+            # If this is a loop region, wrap everything in a loop scope node.
+            variant = tn.loop_variant(block)
+            if variant == "for":
+                return [tn.ForScope(loop=block, children=children)]
+
+            if variant == "while":
+                return [tn.WhileScope(loop=block, children=children)]
+
+            if variant == "do-while":
+                return [tn.DoWhileScope(loop=block, children=children)]
+
+            # If we end up here, we don't need more granularity and just use a general loop scope.
+            return [tn.LoopScope(loop=block, children=children)]
+
         return children
-    elif isinstance(block, ConditionalBlock):
+
+    if isinstance(block, ConditionalBlock):
         result: List[tn.ScheduleTreeNode] = []
         if_node = tn.IfScope(condition=block.branches[0][0], children=_block_schedule_tree(block.branches[0][1]))
         result.append(if_node)
@@ -680,9 +733,11 @@ def _block_schedule_tree(block: ControlFlowBlock) -> List[tn.ScheduleTreeNode]:
                 else_node = tn.ElseScope(children=_block_schedule_tree(branch_body))
                 result.append(else_node)
         return result
-    elif isinstance(block, SDFGState):
+
+    if isinstance(block, SDFGState):
         return _state_schedule_tree(block)
-    elif isinstance(block, ReturnBlock):
+
+    if isinstance(block, ReturnBlock):
         # For return blocks, add a goto node to the end of the schedule tree.
         # NOTE: Return blocks currently always exit the entire SDFG context they are contained in, meaning that the exit
         # goto has target=None. However, in the future we want to adapt Return blocks to be able to return only a
@@ -690,8 +745,8 @@ def _block_schedule_tree(block: ControlFlowBlock) -> List[tn.ScheduleTreeNode]:
         # entire SDFG.
         goto_node = tn.GotoNode(target=None)
         return [goto_node]
-    else:
-        raise tn.UnsupportedScopeException(type(block).__name__)
+
+    raise tn.UnsupportedScopeException(type(block).__name__)
 
 
 def _generate_views_in_scope(
@@ -725,7 +780,47 @@ def _generate_views_in_scope(
     return result
 
 
-def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) -> tn.ScheduleTreeScope:
+def _prepare_sdfg_for_conversion(sdfg: SDFG, *, toplevel: bool) -> None:
+    from dace.transformation import helpers as xfh  # Avoid import loop
+
+    # Split edges with assignments and conditions
+    xfh.split_interstate_edges(sdfg)
+
+    # Replace code->code edges with data<->code edges
+    xfh.replace_code_to_code_edges(sdfg)
+
+    if toplevel:  # Top-level SDFG preparation (only perform once)
+        # Handle name collisions (in arrays, state labels, symbols)
+        remove_name_collisions(sdfg)
+
+        # Ensure no arrays alias in SDFG tree
+        dealias_sdfg(sdfg)
+
+
+def _create_unified_descriptor_repository(sdfg: SDFG, stree: tn.ScheduleTreeRoot):
+    """
+    Creates a single descriptor repository from an SDFG and all nested SDFGs. This includes
+    data containers, symbols, constants, etc.
+
+    :param sdfg: The top-level SDFG to create the repository from.
+    :param stree: The tree root in which to make the unified descriptor repository.
+    """
+    stree.containers = sdfg.arrays
+    stree.symbols = sdfg.symbols
+    stree.constants = sdfg.constants_prop
+
+    # Since the SDFG is assumed to be de-aliased and contain unique names, we union the contents of
+    # the nested SDFGs' descriptor repositories
+    for nsdfg in sdfg.all_sdfgs_recursive():
+        transients = {k: v for k, v in nsdfg.arrays.items() if v.transient}
+        symbols = {k: v for k, v in nsdfg.symbols.items() if k not in stree.symbols}
+        constants = {k: v for k, v in nsdfg.constants_prop.items() if k not in stree.constants}
+        stree.containers.update(transients)
+        stree.symbols.update(symbols)
+        stree.constants.update(constants)
+
+
+def as_schedule_tree(sdfg: SDFG, *, in_place: bool = False, toplevel: bool = True) -> tn.ScheduleTreeRoot:
     """
     Converts an SDFG into a schedule tree. The schedule tree is a tree of nodes that represent the execution order of
     the SDFG.
@@ -741,30 +836,21 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
                      usable after the conversion if ``in_place`` is True!
     :return: A schedule tree representing the given SDFG.
     """
-    from dace.transformation import helpers as xfh  # Avoid import loop
 
     if not in_place:
         sdfg = copy.deepcopy(sdfg)
 
-    # Prepare SDFG for conversion
-    #############################
+    _prepare_sdfg_for_conversion(sdfg, toplevel=toplevel)
 
-    # Split edges with assignments and conditions
-    xfh.split_interstate_edges(sdfg)
+    if toplevel:
+        result = tn.ScheduleTreeRoot(name=sdfg.name, children=[])
+        _create_unified_descriptor_repository(sdfg, result)
+        result.add_children(_block_schedule_tree(sdfg))
+    else:
+        result = tn.ScheduleTreeScope(children=_block_schedule_tree(sdfg))
 
-    # Replace code->code edges with data<->code edges
-    xfh.replace_code_to_code_edges(sdfg)
-
-    if toplevel:  # Top-level SDFG preparation (only perform once)
-        # Handle name collisions (in arrays, state labels, symbols)
-        remove_name_collisions(sdfg)
-        # Ensure no arrays alias in SDFG tree
-        dealias_sdfg(sdfg)
-
-    #############################
-
-    result = tn.ScheduleTreeScope(children=_block_schedule_tree(sdfg))
     tn.validate_has_no_other_node_types(result)
+    tn.validate_children_and_parents_align(result, root=toplevel)
 
     # Clean up tree
     stpasses.remove_unused_and_duplicate_labels(result)

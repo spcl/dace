@@ -1,13 +1,17 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+from __future__ import annotations
 
 import ast
-import itertools
+from collections import defaultdict
+import copy
 from dace import data, Memlet, subsets, symbolic, dtypes
+from dace.frontend.python import memlet_parser
 from dace.sdfg import SDFGState, SDFG, nodes, utils as sdutil
 from dace.sdfg.scope import is_devicelevel_gpu
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.frontend.python import memlet_parser
-from typing import Callable, Dict, Optional, Set, Union, Tuple
+import itertools
+from typing import Callable, Dict, Iterable, Optional, Set, TypeVar, Tuple, Union, Generator, Any
 
 
 class MemletReplacer(ast.NodeTransformer):
@@ -81,6 +85,180 @@ class MemletReplacer(ast.NodeTransformer):
         if isinstance(node.value, ast.Name) and node.value.id in self.array_filter:
             return self._replace(node)
         return self.generic_visit(node)
+
+
+class MemletSet(Set[Memlet]):
+    """
+    Implements a set of memlets that considers subsets that intersect or are covered by its other memlets.
+    Set updates and unions also perform unions on the contained memlet subsets.
+    """
+
+    def __init__(self, iterable: Optional[Iterable[Memlet]] = None, intersection_is_contained: bool = True) -> None:
+        """
+        Initializes a memlet set.
+
+        :param iterable: An optional iterable of memlets to initialize the set with.
+        :param intersection_is_contained: Whether the check ``m in memlet_set`` should return True if the memlet
+                                          only intersects with the contents of the set. If False, only completely
+                                          covered subsets would return True.
+        """
+        self.internal_set: Dict[str, Set[Memlet]] = {}
+        self.intersection_is_contained = intersection_is_contained
+        if iterable is not None:
+            self.update(iterable)
+
+    def __iter__(self) -> Generator[Memlet, Any, None]:
+        for subset in self.internal_set.values():
+            yield from subset
+
+    def __len__(self) -> int:
+        return len(self.internal_set)
+
+    def update(self, *iterable: Iterable[Memlet]) -> None:
+        """
+        Updates set of memlets via union of existing ranges.
+        """
+        if len(iterable) == 0:
+            return
+        if len(iterable) > 1:
+            for i in iterable:
+                self.update(i)
+            return
+
+        to_update, = iterable
+        for elem in to_update:
+            self.add(elem)
+
+    def add(self, elem: Memlet) -> None:
+        """
+        Adds a memlet to the set, potentially performing a union of existing ranges.
+        """
+        if elem.data not in self.internal_set:
+            self.internal_set[elem.data] = {elem}
+            return
+
+        # Memlet is in set, either perform a union (if possible) or add to internal set
+        # TODO(later): Consider other_subset as well
+        for existing_memlet in self.internal_set[elem.data]:
+            try:
+                if subsets.intersects(existing_memlet.subset, elem.subset) == True:  # Definitely intersects
+                    if existing_memlet.subset.covers(elem.subset):
+                        break  # Nothing to do
+
+                    # Create a new union memlet
+                    self.internal_set[elem.data].remove(existing_memlet)
+                    new_memlet = copy.deepcopy(existing_memlet)
+                    new_memlet.subset = subsets.union(existing_memlet.subset, elem.subset)
+                    self.internal_set[elem.data].add(new_memlet)
+                    break
+            except TypeError:  # Indeterminate
+                pass
+        else:  # all intersections were False or indeterminate (may or does not intersect with existing memlets)
+            self.internal_set[elem.data].add(elem)
+
+    def __contains__(self, elem: Memlet) -> bool:
+        """
+        Returns True iff the memlet or a range superset thereof exists in this set.
+        """
+        if elem.data not in self.internal_set:
+            return False
+        for existing_memlet in self.internal_set[elem.data]:
+            if existing_memlet.subset.covers(elem.subset):
+                return True
+            if self.intersection_is_contained:
+                try:
+                    if subsets.intersects(existing_memlet.subset, elem.subset) == False:
+                        continue
+                    else:  # May intersect or indeterminate
+                        return True
+                except TypeError:
+                    return True
+
+        return False
+
+    def union(self, *s: Iterable[Memlet]) -> MemletSet:
+        """
+        Performs a set-union (with memlet union) over the given sets of memlets.
+
+        :return: New memlet set containing the union of this set and the inputs.
+        """
+        newset = MemletSet(self)
+        newset.update(s)
+        return newset
+
+
+T = TypeVar('T')
+
+
+class MemletDict(Dict[Memlet, T]):
+    """
+    Implements a dictionary with memlet keys that considers subsets that intersect or are covered by its other memlets.
+    """
+    covers_cache: Dict[Tuple, bool] = {}
+
+    def __init__(self, **kwargs) -> None:
+        self.internal_dict: Dict[str, Dict[Memlet, T]] = defaultdict(dict)
+        if kwargs:
+            self.update(kwargs)
+
+    def _getkey(self, elem: Memlet) -> Optional[Memlet]:
+        """
+        Returns the corresponding key (exact, covered, intersecting, or indeterminately intersecting memlet) if
+        exists in the dictionary, or None if it does not.
+        """
+        if elem.data not in self.internal_dict:
+            return None
+        for existing_memlet in self.internal_dict[elem.data]:
+            key = (existing_memlet.subset, elem.subset)
+            is_covered = self.covers_cache.get(key, None)
+            if is_covered is None:
+                is_covered = existing_memlet.subset.covers(elem.subset)
+                self.covers_cache[key] = is_covered
+            if is_covered:
+                return existing_memlet
+            try:
+                if subsets.intersects(existing_memlet.subset, elem.subset) == False:  # Definitely does not intersect
+                    continue
+            except TypeError:
+                pass
+
+            # May or will intersect
+            return existing_memlet
+
+        return None
+
+    def _setkey(self, key: Memlet, value: T) -> None:
+        self.internal_dict[key.data][key] = value
+
+    def clear(self) -> None:
+        self.internal_dict.clear()
+
+    def update(self, mapping: Dict[Memlet, T]) -> None:
+        for k, v in mapping.items():
+            ak = self._getkey(k)
+            if ak is None:
+                self._setkey(k, v)
+            else:
+                self._setkey(ak, v)
+
+    def __contains__(self, elem: Memlet) -> bool:
+        """
+        Returns True iff the memlet or a range superset thereof exists in this dictionary.
+        """
+        return self._getkey(elem) is not None
+
+    def __getitem__(self, key: Memlet) -> T:
+        actual_key = self._getkey(key)
+        if actual_key is None:
+            raise KeyError(key)
+        return self.internal_dict[key.data][actual_key]
+
+    def __setitem__(self, key: Memlet, value: T) -> None:
+        actual_key = self._getkey(key)
+        if actual_key is None:
+            self._setkey(key, value)
+        else:
+            self._setkey(actual_key, value)
 
 
 def memlet_to_map(
