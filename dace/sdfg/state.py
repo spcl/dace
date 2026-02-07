@@ -1782,8 +1782,9 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             sdfg.parent_nsdfg_node = s
 
             # Add "default" undefined symbols if None are given
-            symbols = sdfg.free_symbols
-            symbol_mapping = {s: s for s in symbols}
+            if not symbol_mapping:
+                symbols = sdfg.free_symbols
+                symbol_mapping = {s: s for s in symbols}
             s.symbol_mapping = symbol_mapping
 
             # Add new global symbols to nested SDFG
@@ -1791,6 +1792,8 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                 if sym not in sdfg.symbols:
                     # TODO: Think of a better way to avoid calling symbols_defined_at in this moment
                     sdfg.add_symbol(sym, infer_expr_type(symval, self.sdfg.symbols) or dtypes.typeclass(int))
+        else:
+            s.symbol_mapping = symbol_mapping
 
         return s
 

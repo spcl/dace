@@ -640,6 +640,10 @@ class NestedSDFG(CodeNode):
             self.sdfg.parent = context
             self.sdfg.parent_sdfg = context.sdfg if context else None
 
+            # Integrate nested SDFG into its parent SDFG
+            from dace.sdfg import dealias  # Avoid import loop
+            dealias.integrate_nested_sdfg(self.sdfg)
+
     def __deepcopy__(self, memo):
         cls = self.__class__
         result = cls.__new__(cls)
