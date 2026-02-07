@@ -683,7 +683,7 @@ def _validate_ufunc_num_arguments(visitor: ProgramVisitor, ast_node: ast.Call, u
         :param ufunc_name: Name of the ufunc
         :param num_inputs: Number of ufunc inputs
         :param num_outputs: Number of ufunc outputs
-        :param num_args: Number of positional argumnents in the ufunc call
+        :param num_args: Number of positional arguments in the ufunc call
 
         :raises DaCeSyntaxError: When validation fails
     """

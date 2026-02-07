@@ -244,10 +244,10 @@ class SDFGCutout(SDFG):
                 continue
             dataname = memlet.data
             if '.' in dataname:
-                # This is an access to a struct memeber, which typically happens for the memlets between an access node
+                # This is an access to a struct member, which typically happens for the memlets between an access node
                 # pointing to a struct (or view thereof), and a view pointing to the member. Assert that this is indeed
                 # the case (i.e., only one '.' is found in the name of the data being accessed), and if so, clone the
-                # struct (or struct view) data descriptor instad.
+                # struct (or struct view) data descriptor instead.
                 parts = dataname.split('.')
                 if len(parts) == 2:
                     dataname = parts[0]

@@ -396,7 +396,7 @@ class AST_translator:
         write_names = list(dict.fromkeys([i.name for i in output_vars]))
         read_names = list(dict.fromkeys([i.name for i in input_vars]))
 
-        # Collect the parameters and the function signature to comnpare and link
+        # Collect the parameters and the function signature to compare and link
         parameters = node.args.copy()
 
         new_sdfg = SDFG(node.name.name)
