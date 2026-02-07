@@ -641,6 +641,16 @@ class NestedSDFG(CodeNode):
             self.sdfg.parent_sdfg = context.sdfg if context else None
 
             # Integrate nested SDFG into its parent SDFG
+            self.integrate_into_parent()
+
+    def integrate_into_parent(self):
+        """
+        Integrates a nested SDFG into its parent SDFG, ensuring that all data descriptors that are connected to
+        the nested SDFG are shared with the parent SDFG.
+
+        For more information, see ``dace.sdfg.dealias.integrate_nested_sdfg()``.
+        """
+        if self.sdfg is not None:
             from dace.sdfg import dealias  # Avoid import loop
             dealias.integrate_nested_sdfg(self.sdfg)
 
