@@ -102,7 +102,7 @@ def to_json(obj):
         # If the object knows how to convert itself, let it. By calling the
         # method directly on the type, this works for both static and
         # non-static implementations of to_json.
-        return type(obj).to_json(obj)
+        return obj.to_json()
     elif type(obj) in {bool, int, float, list, dict, str}:
         # Some types are natively understood by JSON
         return obj

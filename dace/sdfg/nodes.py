@@ -65,6 +65,8 @@ class Node(object):
             if k == 'guid':  # Skip ID
                 continue
             setattr(result, k, dcpy(v, memo))
+        # Generate new guid for the copy
+        result.guid = graph.generate_element_id(result)
         return result
 
     def validate(self, sdfg, state):
@@ -303,15 +305,15 @@ class AccessNode(Node):
 
     def __deepcopy__(self, memo):
         node = object.__new__(AccessNode)
-        node._data = self._data
-        node._setzero = self._setzero
-        node._instrument = self._instrument
-        node._instrument_condition = dcpy(self._instrument_condition, memo=memo)
-        node._in_connectors = dcpy(self._in_connectors, memo=memo)
-        node._out_connectors = dcpy(self._out_connectors, memo=memo)
-        node._debuginfo = dcpy(self._debuginfo, memo=memo)
+        node.data = self.data
+        node.setzero = self.setzero
+        node.instrument = self.instrument
+        node.instrument_condition = dcpy(self.instrument_condition, memo=memo)
+        node.in_connectors = dcpy(self.in_connectors, memo=memo)
+        node.out_connectors = dcpy(self.out_connectors, memo=memo)
+        node.debuginfo = dcpy(self.debuginfo, memo=memo)
 
-        node._guid = graph.generate_element_id(node)
+        node.guid = graph.generate_element_id(node)
 
         return node
 
@@ -455,7 +457,7 @@ class Tasklet(CodeNode):
 
     @property
     def name(self):
-        return self._label
+        return self.label
 
     def validate(self, sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState'):
         if not dtypes.validate_name(self.label):
@@ -648,8 +650,10 @@ class NestedSDFG(CodeNode):
             if k in ('guid', ):
                 continue
             setattr(result, k, dcpy(v, memo))
-        if result._sdfg is not None:
-            result._sdfg.parent_nsdfg_node = result
+        if result.sdfg is not None:
+            result.sdfg.parent_nsdfg_node = result
+        # Generate new guid for the copy
+        result.guid = graph.generate_element_id(result)
         return result
 
     @staticmethod
@@ -1071,8 +1075,7 @@ class Map(object):
 
     def __str__(self):
         return self.label + "[" + ", ".join(
-            ["{}={}".format(i, r)
-             for i, r in zip(self._params, [sbs.Range.dim_to_string(d) for d in self._range])]) + "]"
+            ["{}={}".format(i, r) for i, r in zip(self.params, [sbs.Range.dim_to_string(d) for d in self.range])]) + "]"
 
     def __repr__(self):
         return type(self).__name__ + ' (' + self.__str__() + ')'
@@ -1286,9 +1289,9 @@ class Consume(object):
     def __str__(self):
         if self.condition is not None:
             return ("%s [%s=0:%s], Condition: %s" %
-                    (self._label, self.pe_index, self.num_pes, CodeProperty.to_string(self.condition)))
+                    (self.label, self.pe_index, self.num_pes, CodeProperty.to_string(self.condition)))
         else:
-            return ("%s [%s=0:%s]" % (self._label, self.pe_index, self.num_pes))
+            return ("%s [%s=0:%s]" % (self.label, self.pe_index, self.num_pes))
 
     def validate(self, sdfg, state, node):
         if not dtypes.validate_name(self.label):

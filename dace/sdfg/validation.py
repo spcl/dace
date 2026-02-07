@@ -255,7 +255,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
 
         # Check the names of data descriptors and co.
         seen_names: Set[str] = set()
-        for obj_names in [sdfg.arrays.keys(), sdfg.symbols.keys(), sdfg._rdistrarrays.keys(), sdfg._subarrays.keys()]:
+        for obj_names in [sdfg.arrays.keys(), sdfg.symbols.keys(), sdfg.rdistrarrays.keys(), sdfg.subarrays.keys()]:
             if not seen_names.isdisjoint(obj_names):
                 raise InvalidSDFGError(
                     f'Found duplicated names: "{seen_names.intersection(obj_names)}". Please ensure '
@@ -278,7 +278,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
                 warnings.warn(f'Found constant "{const_name}" that does not refer to an array or a symbol.')
 
         # Validate data descriptors
-        for name, desc in sdfg._arrays.items():
+        for name, desc in sdfg.arrays.items():
             if id(desc) in references:
                 raise InvalidSDFGError(
                     f'Duplicate data descriptor object detected: "{name}". Please copy objects '
@@ -437,7 +437,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             'rather than using multiple references to the same one', sdfg, state_id)
     references.add(id(state))
 
-    if not dtypes.validate_name(state._label):
+    if not dtypes.validate_name(state.label):
         raise InvalidSDFGError("Invalid state name", sdfg, state_id)
 
     if state.sdfg != sdfg:

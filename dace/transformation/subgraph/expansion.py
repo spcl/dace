@@ -308,7 +308,7 @@ class MultiExpansion(transformation.SubgraphTransformation):
             for edge in dynamic_edges:
                 # Remove old edge and connector
                 graph.remove_edge(edge)
-                edge.dst._in_connectors.remove(edge.dst_conn)
+                edge.dst.in_connectors.remove(edge.dst_conn)
 
                 # Propagate to each range it belongs to
                 path = []

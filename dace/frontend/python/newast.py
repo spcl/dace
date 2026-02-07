@@ -1371,10 +1371,7 @@ class ProgramVisitor(ExtNodeVisitor):
         result.update(self.sdfg.arrays)
 
         # MPI-related stuff
-        result.update({
-            v: self.sdfg.process_grids[v]
-            for k, v in self.variables.items() if v in self.sdfg.process_grids
-        })
+        result.update({v: self.sdfg.pgrids[v] for k, v in self.variables.items() if v in self.sdfg.pgrids})
         try:
             from mpi4py import MPI
             result.update({k: v for k, v in self.globals.items() if isinstance(v, MPI.Comm)})
@@ -3602,11 +3599,10 @@ class ProgramVisitor(ExtNodeVisitor):
 
             new_data, rng = None, None
             dtype_keys = tuple(dtypes.dtype_to_typeclass().keys())
-            if not (
-                    result in self.sdfg.symbols or symbolic.issymbolic(result) or isinstance(result, dtype_keys) or
-                (isinstance(result, str) and any(
-                    result in x
-                    for x in [self.sdfg.arrays, self.sdfg._pgrids, self.sdfg._subarrays, self.sdfg._rdistrarrays]))):
+            if not (result in self.sdfg.symbols or symbolic.issymbolic(result) or isinstance(result, dtype_keys) or
+                    (isinstance(result, str) and any(
+                        result in x
+                        for x in [self.sdfg.arrays, self.sdfg.pgrids, self.sdfg.subarrays, self.sdfg.rdistrarrays]))):
                 raise DaceSyntaxError(
                     self, node, "In assignments, the rhs may only be "
                     "data, numerical/boolean constants "
@@ -3630,7 +3626,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         true_name, new_data = self.sdfg.add_scalar(true_name, ttype, transient=True, find_new_name=True)
                     self.variables[name] = true_name
                     defined_vars[name] = true_name
-                if any(result in x for x in [self.sdfg._pgrids, self.sdfg._rdistrarrays, self.sdfg._subarrays]):
+                if any(result in x for x in [self.sdfg.pgrids, self.sdfg.rdistrarrays, self.sdfg.subarrays]):
                     # NOTE: In previous versions some `pgrid` and subgrid related replacement function,
                     #   see `dace/frontend/common/distr.py`, created dummy variables with the same name
                     #   as the entities, such as process grids, they created. Thus the frontend was
@@ -4648,7 +4644,7 @@ class ProgramVisitor(ExtNodeVisitor):
         # Avoid cast of output pointers to scalars in code generation
         for cname in outargs:
             if (cname in self.sdfg.arrays and tuple(self.sdfg.arrays[cname].shape) == (1, )):
-                tasklet._out_connectors[f'__out_{cname}'] = dtypes.pointer(self.sdfg.arrays[cname].dtype)
+                tasklet.out_connectors[f'__out_{cname}'] = dtypes.pointer(self.sdfg.arrays[cname].dtype)
 
         # Setup arguments in graph
         for arg in dtypes.deduplicate(args):
@@ -5167,8 +5163,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
         result = []
         for operand in operands:
-            if isinstance(operand, str) and operand in self.sdfg.process_grids:
-                result.append((operand, type(self.sdfg.process_grids[operand]).__name__))
+            if isinstance(operand, str) and operand in self.sdfg.pgrids:
+                result.append((operand, type(self.sdfg.pgrids[operand]).__name__))
             elif isinstance(operand, str) and operand in self.sdfg.arrays:
                 result.append((operand, type(self.sdfg.arrays[operand])))
             elif isinstance(operand, str) and operand in self.scope_arrays:

@@ -1313,6 +1313,10 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
             else:
                 setattr(result, k, None)
 
+        # Generate new guid for the copy
+        from dace.sdfg import graph
+        result.guid = graph.generate_element_id(result)
+
         return result
 
     @property
@@ -1550,7 +1554,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         from dace.sdfg import SDFG
         arrays = set(n.data for n in self.data_nodes())
         sdfg = SDFG(self.label)
-        sdfg._arrays = dace.sdfg.NestedDict({k: self.sdfg.arrays[k] for k in arrays})
+        sdfg.arrays = dace.sdfg.NestedDict({k: self.sdfg.arrays[k] for k in arrays})
         sdfg.add_node(self)
 
         return sdfg._repr_html_()
@@ -2353,8 +2357,8 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             'The "SDFGState.add_array" API is deprecated, please '
             'use "SDFG.add_array" and "SDFGState.add_access"', DeprecationWarning)
         # Workaround to allow this legacy API
-        if name in self.sdfg._arrays:
-            del self.sdfg._arrays[name]
+        if name in self.sdfg.arrays:
+            del self.sdfg.arrays[name]
         self.sdfg.add_array(name,
                             shape,
                             dtype,
@@ -2386,8 +2390,8 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             'The "SDFGState.add_stream" API is deprecated, please '
             'use "SDFG.add_stream" and "SDFGState.add_access"', DeprecationWarning)
         # Workaround to allow this legacy API
-        if name in self.sdfg._arrays:
-            del self.sdfg._arrays[name]
+        if name in self.sdfg.arrays:
+            del self.sdfg.arrays[name]
         self.sdfg.add_stream(
             name,
             dtype,
@@ -2415,8 +2419,8 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             'The "SDFGState.add_scalar" API is deprecated, please '
             'use "SDFG.add_scalar" and "SDFGState.add_access"', DeprecationWarning)
         # Workaround to allow this legacy API
-        if name in self.sdfg._arrays:
-            del self.sdfg._arrays[name]
+        if name in self.sdfg.arrays:
+            del self.sdfg.arrays[name]
         self.sdfg.add_scalar(name, dtype, storage, transient, lifetime, debuginfo)
         return self.add_access(name, debuginfo)
 
