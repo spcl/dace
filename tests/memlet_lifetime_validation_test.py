@@ -1,23 +1,24 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import numpy as np
-
 import dace as dp
 from dace.sdfg import SDFG, InvalidSDFGError
 from dace.memlet import Memlet
-from dace.data import Scalar
+
+import pytest
 
 
 def test():
-    print('SDFG memlet lifetime validation test')
     # Externals (parameters, symbols)
     N = dp.symbol('N')
 
     # Construct SDFG 1
     sdfg1 = SDFG('shouldntwork1')
+    sdfg1.add_array('A', [N], dp.int32)
+    sdfg1.add_array('B', [N], dp.int32)
+    sdfg1.add_transient('T', [1], dp.int32)
     state = sdfg1.add_state()
-    A = state.add_array('A', [N], dp.int32)
-    B = state.add_array('B', [N], dp.int32)
-    T = state.add_transient('T', [1], dp.int32)
+    A = state.add_access('A')
+    B = state.add_access('B')
+    T = state.add_access('T')
 
     tasklet_gen = state.add_tasklet('mytasklet', {'a'}, {'b'}, 'b = 5*a')
     map_entry, map_exit = state.add_map('mymap', dict(k='0:N'))
@@ -33,18 +34,18 @@ def test():
     state.add_edge(map_exit, 'OUT_1', tasklet_gen, 'a', Memlet.simple(B, '0'))
     state.add_edge(tasklet_gen, 'b', A, None, Memlet.simple(A, '0'))
 
-    try:
+    with pytest.raises(InvalidSDFGError):
         sdfg1.validate()
-        raise AssertionError("SDFG passed validation, test FAILED")
-    except InvalidSDFGError:
-        print("Test passed, exception successfully caught")
 
     # Construct SDFG 3
     sdfg2 = SDFG('shouldntwork2')
+    sdfg2.add_array('A', [N], dp.int32)
+    sdfg2.add_array('B', [N], dp.int32)
+    sdfg2.add_transient('T', [N], dp.int32)
     state = sdfg2.add_state()
-    A = state.add_array('A', [N], dp.int32)
-    B = state.add_array('B', [N], dp.int32)
-    T = state.add_transient('T', [N], dp.int32)
+    A = state.add_access('A')
+    B = state.add_access('B')
+    T = state.add_access('T')
 
     tasklet_gen = state.add_tasklet('mytasklet', {'a'}, {'b'}, 'b = 5*a')
     map1_entry, map1_exit = state.add_map('mymap1', dict(k='0:N'))
@@ -67,11 +68,8 @@ def test():
     state.add_edge(T, None, map2_exit, 'IN_1', Memlet.simple(B, 'i'))
     state.add_edge(map2_exit, 'OUT_1', B, None, Memlet.simple(B, '0:N'))
 
-    try:
+    with pytest.raises(InvalidSDFGError):
         sdfg2.validate()
-        raise AssertionError("SDFG passed validation, test FAILED")
-    except (InvalidSDFGError, KeyError):
-        print("Test passed, exception successfully caught")
 
 
 if __name__ == '__main__':

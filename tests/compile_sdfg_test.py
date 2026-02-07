@@ -19,15 +19,17 @@ def test():
 
     # Construct SDFG
     mysdfg = SDFG('mysdfg')
+    mysdfg.add_array('A', [N], dp.int32)
+    mysdfg.add_array('B', [N], dp.int32)
     state = mysdfg.add_state()
-    A_ = state.add_array('A', [N], dp.int32)  # NOTE: The names A and B are not
-    B_ = state.add_array('B', [N], dp.int32)  # reserved, this is just to
-    # clarify that
+    # NOTE: The names A and B are not reserved, this is just to clarify that
     # variable name != array name
+    A_ = state.add_access('A')
+    B_ = state.add_access('B')
 
     # Easy way to add a tasklet
-    tasklet, map_entry, map_exit = state.add_mapped_tasklet('mytasklet', dict(i='0:N'), dict(a=Memlet.simple(A_, 'i')),
-                                                            'b = 5*a', dict(b=Memlet.simple(B_, 'i')))
+    _, map_entry, map_exit = state.add_mapped_tasklet('mytasklet', dict(i='0:N'), dict(a=Memlet.simple(A_, 'i')),
+                                                      'b = 5*a', dict(b=Memlet.simple(B_, 'i')))
     # Alternatively (the explicit way):
     #map_entry, map_exit = state.add_map('mymap', dict(i='0:N'))
     #tasklet = state.add_tasklet('mytasklet', {'a'}, {'b'}, 'b = 5*a')
@@ -41,7 +43,6 @@ def test():
     mysdfg(A=input, B=output, N=n)
 
     diff = np.linalg.norm(5 * input - output) / n
-    print("Difference:", diff)
     assert diff <= 1e-5
 
 
