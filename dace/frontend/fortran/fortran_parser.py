@@ -360,7 +360,7 @@ class AST_translator:
         if node.name not in sdfg.symbols:
             sdfg.add_symbol(node.name, datatype)
             if self.last_sdfg_states.get(cfg) is None:
-                bstate = cfg.add_state("SDFGbegin", is_start_state=True)
+                bstate = cfg.add_state("SDFGbegin", is_start_block=True)
                 self.last_sdfg_states[cfg] = bstate
             if node.init is not None:
                 substate = cfg.add_state(f"Dummystate_{node.name}")

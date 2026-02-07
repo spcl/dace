@@ -85,7 +85,7 @@ class ExpandCSRMMPure(ExpandTransformation):
         nsdfg = SDFG(node.label + "_nsdfg")
 
         operands = _get_csrmm_operands(node, state, sdfg)
-        nstate = nsdfg.add_state("state", is_start_state=True)
+        nstate = nsdfg.add_state("state", is_start_block=True)
         for name, desc in operands.items():
             desc = desc[1]
 

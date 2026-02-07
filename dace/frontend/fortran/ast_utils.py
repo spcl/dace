@@ -61,7 +61,7 @@ def add_simple_state_to_sdfg(state: SDFGState, top_sdfg: SDFG, state_name: str):
     if state.last_sdfg_states.get(top_sdfg) is not None:
         substate = top_sdfg.add_state(state_name)
     else:
-        substate = top_sdfg.add_state(state_name, is_start_state=True)
+        substate = top_sdfg.add_state(state_name, is_start_block=True)
     finish_add_state_to_sdfg(state, top_sdfg, substate)
     return substate
 

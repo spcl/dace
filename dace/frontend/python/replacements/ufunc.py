@@ -1157,7 +1157,7 @@ def _create_subgraph(visitor: ProgramVisitor,
                     else:
                         raise NotImplementedError
 
-                cond_state = nested_sdfg.add_state(label=state.label + "_where_cond", is_start_state=True)
+                cond_state = nested_sdfg.add_state(label=state.label + "_where_cond", is_start_block=True)
                 where_data = sdfg.arrays[where]
                 if isinstance(where_data, data.Scalar):
                     name = nested_sdfg_inputs[where]

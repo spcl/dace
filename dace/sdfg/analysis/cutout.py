@@ -257,7 +257,7 @@ class SDFGCutout(SDFG):
             cutout.add_datadesc(dataname, new_desc)
 
         # Add a single state with the extended subgraph
-        new_state = cutout.add_state(state.label, is_start_state=True)
+        new_state = cutout.add_state(state.label, is_start_block=True)
         if preserve_guids:
             new_state.guid = state.guid
         in_translation = dict()
@@ -475,13 +475,13 @@ class SDFGCutout(SDFG):
                 new_el: SDFGState = create_element(is_edge.src)
                 in_translation[is_edge.src] = new_el
                 out_translation[new_el] = is_edge.src
-                cutout.add_node(new_el, is_start_state=(is_edge.src == start_state))
+                cutout.add_node(new_el, is_start_block=(is_edge.src == start_state))
                 new_el.parent = cutout
             if is_edge.dst not in in_translation:
                 new_el: SDFGState = create_element(is_edge.dst)
                 in_translation[is_edge.dst] = new_el
                 out_translation[new_el] = is_edge.dst
-                cutout.add_node(new_el, is_start_state=(is_edge.dst == start_state))
+                cutout.add_node(new_el, is_start_block=(is_edge.dst == start_state))
                 new_el.parent = cutout
             new_isedge: InterstateEdge = create_element(is_edge.data)
             in_translation[is_edge.data] = new_isedge
@@ -494,7 +494,7 @@ class SDFGCutout(SDFG):
                 new_el = create_element(state)
                 in_translation[state] = new_el
                 out_translation[new_el] = state
-                cutout.add_node(new_el, is_start_state=(state == start_state))
+                cutout.add_node(new_el, is_start_block=(state == start_state))
                 new_el.parent = cutout
 
         in_translation[sdfg.cfg_id] = cutout.cfg_id

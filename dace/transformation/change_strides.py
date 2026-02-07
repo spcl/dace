@@ -52,7 +52,7 @@ def change_strides(sdfg: dace.SDFG, stride_one_values: List[str], schedule: Sche
     for dname, stype in sdfg.symbols.items():
         new_sdfg.add_symbol(dname, stype)
 
-    changed_stride_state = new_sdfg.add_state("with_changed_strides", is_start_state=True)
+    changed_stride_state = new_sdfg.add_state("with_changed_strides", is_start_block=True)
     inputs, outputs = sdfg.read_and_write_sets()
     # Get all arrays which are persistent == not transient
     persistent_arrays = {name: desc for name, desc in sdfg.arrays.items() if not desc.transient}
@@ -77,8 +77,8 @@ def change_strides(sdfg: dace.SDFG, stride_one_values: List[str], schedule: Sche
     inputs.intersection_update(persistent_arrays.keys())
     outputs.intersection_update(persistent_arrays.keys())
     nsdfg = changed_stride_state.add_nested_sdfg(sdfg, inputs=inputs, outputs=outputs)
-    transform_state = new_sdfg.add_state_before(changed_stride_state, label="transform_data", is_start_state=True)
-    transform_state_back = new_sdfg.add_state_after(changed_stride_state, "transform_data_back", is_start_state=False)
+    transform_state = new_sdfg.add_state_before(changed_stride_state, label="transform_data", is_start_block=True)
+    transform_state_back = new_sdfg.add_state_after(changed_stride_state, "transform_data_back", is_start_block=False)
 
     # copy arrays
     for dname, desc in sdfg.arrays.items():
