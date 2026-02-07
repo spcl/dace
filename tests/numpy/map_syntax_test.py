@@ -61,6 +61,45 @@ def test_nested_map_with_indirection():
     assert np.allclose(b, ref)
 
 
+@pytest.mark.parametrize(["scope_type"], [["map"], ["for"]])
+@pytest.mark.parametrize(["scope_use_type"], [["scalar"], ["view"]])
+def test_nested_map_with_indirection_view(scope_type, scope_use_type):
+    N = dace.symbol('N')
+
+    @dace.program
+    def indirect_to_indirectv(arr1: dace.float64[N], ind: dace.int32[10], arr2: dace.float64[N]):
+        for i in dace.map[0:9]:
+            begin, end, end2, stride = ind[i], ind[i + 1:i + 2], ind[i + 1], 1
+            for _ in dace.map[0:1]:
+                if scope_use_type == "scalar":
+                    if scope_type == "map":
+                        for j in dace.map[begin:end2:stride]:
+                            arr2[j] = arr1[j] + end
+                    else:
+                        for j in range(begin, end2, stride):
+                            arr2[j] = arr1[j] + end
+                else:
+                    if scope_type == "map":
+                        for j in dace.map[begin:end:stride]:
+                            arr2[j] = arr1[j] + end
+                    else:
+                        for j in range(begin, end, stride):
+                            arr2[j] = arr1[j] + end
+
+    a = np.random.rand(50)
+    b = np.zeros(50)
+    ind = np.array([0, 5, 10, 15, 20, 25, 30, 35, 40, 45], dtype=np.int32)
+    sdfg = indirect_to_indirectv.to_sdfg(simplify=False)
+    sdfg(a, ind, b)
+
+    ref = np.zeros(50)
+    for i in range(9):
+        begin, end = ind[i], ind[i + 1]
+        ref[begin:end] = a[begin:end] + end
+
+    assert np.allclose(b, ref)
+
+
 def test_dynamic_map_range_scalar():
     """
     From issue #650.
@@ -87,4 +126,8 @@ if __name__ == '__main__':
     test_copy3d()
     test_map_python()
     test_nested_map_with_indirection()
+    test_nested_map_with_indirection_view("map", "scalar")
+    test_nested_map_with_indirection_view("for", "scalar")
+    test_nested_map_with_indirection_view("map", "view")
+    test_nested_map_with_indirection_view("for", "view")
     test_dynamic_map_range_scalar()
