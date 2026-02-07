@@ -80,6 +80,8 @@ state.add_memlet_path(y_in1, nested_sdfg, dst_conn='_y', memlet=Memlet.simple(y_
 
 state.add_memlet_path(nested_sdfg, z_out1, src_conn='_res', memlet=Memlet.simple(z_out1, "0:n"))
 
+nested_sdfg.integrate_into_parent()
+
 
 def test_nested_vectorization():
     # Compile
