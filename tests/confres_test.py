@@ -1,9 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from __future__ import print_function
-
-import argparse
 import dace
-import math
 import numpy as np
 
 W = dace.symbol('W')

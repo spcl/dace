@@ -3,7 +3,6 @@ import ast
 from collections import OrderedDict
 import copy
 import itertools
-import networkx as nx
 import re
 import sys
 import time
@@ -15,7 +14,6 @@ import operator
 
 import dace
 from dace import data, dtypes, subsets, symbolic, sdfg as sd
-from dace import sourcemap
 from dace.config import Config
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python import astutils
@@ -35,6 +33,7 @@ from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, Contro
 from dace.sdfg.replace import replace_datadesc_names
 from dace.sdfg.type_inference import infer_expr_type
 from dace.symbolic import pystr_to_symbolic, inequal_symbols
+from dace.utils import until
 
 import numpy
 import sympy
@@ -67,13 +66,6 @@ else:
 class SkipCall(Exception):
     """ Exception used to skip calls to functions that cannot be parsed. """
     pass
-
-
-def until(val, substr):
-    """ Helper function that returns the substring of a string until a certain pattern. """
-    if substr not in val:
-        return val
-    return val[:val.find(substr)]
 
 
 # Array names that sympy and other python dependencies cannot accept
@@ -481,7 +473,7 @@ def add_indirection_subgraph(sdfg: SDFG,
                 arr = sdfg.arrays[arrname]
                 subset = subsets.Range.from_array(arr)
             else:
-                subset = subsets.Indices(access)
+                subset = subsets.Range.from_indices(access)
             # Memlet to load the indirection index
             indexMemlet = Memlet.simple(arrname, subset)
             input_index_memlets.append(indexMemlet)
@@ -1777,8 +1769,8 @@ class ProgramVisitor(ExtNodeVisitor):
         # Inject element to internal SDFG arrays
         ntrans = f'consume_{stream_name}'
         ntrans, _ = sdfg.add_array(ntrans, [1], self.sdfg.arrays[stream_name].dtype, find_new_name=True)
-        internal_memlet = dace.Memlet.simple(ntrans, subsets.Indices([0]))
-        external_memlet = dace.Memlet.simple(stream_name, subsets.Indices([0]), num_accesses=-1)
+        internal_memlet = dace.Memlet.simple(ntrans, subsets.Range.from_indices([0]))
+        external_memlet = dace.Memlet.simple(stream_name, subsets.Range.from_indices([0]), num_accesses=-1)
 
         # Inject to internal tasklet
         if not dec.endswith('scope'):
@@ -5296,82 +5288,97 @@ class ProgramVisitor(ExtNodeVisitor):
             # Make copy slicing state
             rnode = self.current_state.add_read(array, debuginfo=self.current_lineinfo)
             return self._array_indirection_subgraph(rnode, expr)
+
+        is_index = False
+        if isinstance(expr.subset, subsets.Indices):
+            is_index = True
+            other_subset = subsets.Range([(i, i, 1) for i in expr.subset])
         else:
-            is_index = False
-            if isinstance(expr.subset, subsets.Indices):
-                is_index = True
-                other_subset = subsets.Range([(i, i, 1) for i in expr.subset])
-            else:
-                other_subset = copy.deepcopy(expr.subset)
-            strides = list(arrobj.strides)
 
-            # Make new axes and squeeze for scalar subsets (as per numpy behavior)
-            # For example: A[0, np.newaxis, 5:7] results in a 1x2 ndarray
-            new_axes = []
-            if expr.new_axes:
-                new_axes = other_subset.unsqueeze(expr.new_axes)
-                for i in new_axes:
-                    strides.insert(i, 1)
-            length = len(other_subset)
-            nsqz = other_subset.squeeze(ignore_indices=new_axes)
-            sqz = [i for i in range(length) if i not in nsqz]
-            for i in reversed(sqz):
-                strides.pop(i)
-            if not strides:
-                strides = None
+            def range_is_index(range: subsets.Range) -> bool:
+                """
+                Check if the given subset range is an index.
 
-            if is_index:
-                tmp = self.get_target_name(default=f'{array}_index')
-                tmp, tmparr = self.sdfg.add_scalar(tmp,
-                                                   arrobj.dtype,
-                                                   arrobj.storage,
-                                                   transient=True,
-                                                   find_new_name=True)
-            else:
-                for i in range(len(other_subset.ranges)):
-                    rb, re, rs = other_subset.ranges[i]
-                    if (rs < 0) == True:
-                        raise DaceSyntaxError(
-                            self, node, 'Negative strides are not supported in subscripts. '
-                            'Please use a Map scope to express this operation.')
-                    re = re - rb
-                    rb = 0
-                    if rs != 1:
-                        # NOTE: We use the identity floor(A/B) = ceiling((A + 1) / B) - 1
-                        # because Range.size() uses the ceiling method and that way we avoid
-                        # false negatives when testing the equality of data shapes.
-                        # re = re // rs
-                        re = sympy.ceiling((re + 1) / rs) - 1
-                        strides[i] *= rs
-                        rs = 1
-                    other_subset.ranges[i] = (rb, re, rs)
+                Conditions for an index are as follows:
+                - tile_size of each range has to be 1
+                - the range increment has to be 1
+                - start/stop element of the range have to be equal
+                """
+                for r, t in zip(range.ranges, range.tile_sizes):
+                    if t != 1 or r[2] != 1 or r[0] != r[1]:
+                        return False
+                return True
 
-                tmp, tmparr = self.sdfg.add_view(array,
-                                                 other_subset.size(),
-                                                 arrobj.dtype,
-                                                 storage=arrobj.storage,
-                                                 strides=strides,
-                                                 find_new_name=True)
-                self.views[tmp] = (array,
-                                   Memlet(data=array,
-                                          subset=str(expr.subset),
-                                          other_subset=str(other_subset),
-                                          volume=expr.accesses,
-                                          wcr=expr.wcr))
-            self.variables[tmp] = tmp
-            if not isinstance(tmparr, data.View):
-                rnode = self.current_state.add_read(array, debuginfo=self.current_lineinfo)
-                wnode = self.current_state.add_write(tmp, debuginfo=self.current_lineinfo)
-                # NOTE: We convert the subsets to string because keeping the original symbolic information causes
-                # equality check failures, e.g., in LoopToMap.
-                self.current_state.add_nedge(
-                    rnode, wnode,
-                    Memlet(data=array,
-                           subset=str(expr.subset),
-                           other_subset=str(other_subset),
-                           volume=expr.accesses,
-                           wcr=expr.wcr))
-            return tmp
+            # We also check the type of the slice attribute of the node
+            # in order to distinguish between A[0] and A[0:1], which are semantically different in numpy
+            # (the former is an index, the latter is a slice).
+            is_index = range_is_index(expr.subset) and not isinstance(node.slice, ast.Slice)
+            other_subset = copy.deepcopy(expr.subset)
+        strides = list(arrobj.strides)
+
+        # Make new axes and squeeze for scalar subsets (as per numpy behavior)
+        # For example: A[0, np.newaxis, 5:7] results in a 1x2 ndarray
+        new_axes = []
+        if expr.new_axes:
+            new_axes = other_subset.unsqueeze(expr.new_axes)
+            for i in new_axes:
+                strides.insert(i, 1)
+        length = len(other_subset)
+        nsqz = other_subset.squeeze(ignore_indices=new_axes)
+        sqz = [i for i in range(length) if i not in nsqz]
+        for i in reversed(sqz):
+            strides.pop(i)
+        if not strides:
+            strides = None
+
+        if is_index:
+            tmp = self.get_target_name(default=f'{array}_index')
+            tmp, tmparr = self.sdfg.add_scalar(tmp, arrobj.dtype, arrobj.storage, transient=True, find_new_name=True)
+        else:
+            for i in range(len(other_subset.ranges)):
+                rb, re, rs = other_subset.ranges[i]
+                if (rs < 0) == True:
+                    raise DaceSyntaxError(
+                        self, node, 'Negative strides are not supported in subscripts. '
+                        'Please use a Map scope to express this operation.')
+                re = re - rb
+                rb = 0
+                if rs != 1:
+                    # NOTE: We use the identity floor(A/B) = ceiling((A + 1) / B) - 1
+                    # because Range.size() uses the ceiling method and that way we avoid
+                    # false negatives when testing the equality of data shapes.
+                    # re = re // rs
+                    re = sympy.ceiling((re + 1) / rs) - 1
+                    strides[i] *= rs
+                    rs = 1
+                other_subset.ranges[i] = (rb, re, rs)
+
+            tmp, tmparr = self.sdfg.add_view(array,
+                                             other_subset.size(),
+                                             arrobj.dtype,
+                                             storage=arrobj.storage,
+                                             strides=strides,
+                                             find_new_name=True)
+            self.views[tmp] = (array,
+                               Memlet(data=array,
+                                      subset=str(expr.subset),
+                                      other_subset=str(other_subset),
+                                      volume=expr.accesses,
+                                      wcr=expr.wcr))
+        self.variables[tmp] = tmp
+        if not isinstance(tmparr, data.View):
+            rnode = self.current_state.add_read(array, debuginfo=self.current_lineinfo)
+            wnode = self.current_state.add_write(tmp, debuginfo=self.current_lineinfo)
+            # NOTE: We convert the subsets to string because keeping the original symbolic information causes
+            # equality check failures, e.g., in LoopToMap.
+            self.current_state.add_nedge(
+                rnode, wnode,
+                Memlet(data=array,
+                       subset=str(expr.subset),
+                       other_subset=str(other_subset),
+                       volume=expr.accesses,
+                       wcr=expr.wcr))
+        return tmp
 
     def _parse_subscript_slice(self,
                                s: ast.AST,

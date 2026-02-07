@@ -2,7 +2,6 @@
 """ A module that contains various DaCe type definitions. """
 import ctypes
 import json
-import aenum
 import inspect
 import numpy
 import re
@@ -10,70 +9,63 @@ from sympy import Float, Integer
 from collections import OrderedDict
 from functools import wraps
 from typing import Any, Dict, TYPE_CHECKING
+
 from dace.config import Config
-from dace.registry import extensible_enum, undefined_safe_enum
 
-if TYPE_CHECKING:
-    import enum
-    AutoNumberEnum = enum.Enum
-else:
-    AutoNumberEnum = aenum.AutoNumberEnum
+from enum import auto, Enum
+from dace.attr_enum import ExtensibleAttributeEnum
+from dace.registry import undefined_safe_enum
 
 
 @undefined_safe_enum
-@extensible_enum
-class DeviceType(AutoNumberEnum):
-    CPU = ()  #: Multi-core CPU
-    GPU = ()  #: GPU (AMD or NVIDIA)
-    Snitch = ()  #: Compute Cluster (RISC-V)
+class DeviceType(ExtensibleAttributeEnum):
+    CPU = auto()  #: Multi-core CPU
+    GPU = auto()  #: GPU (AMD or NVIDIA)
+    Snitch = auto()  #: Compute Cluster (RISC-V)
 
 
 @undefined_safe_enum
-@extensible_enum
-class StorageType(AutoNumberEnum):
+class StorageType(ExtensibleAttributeEnum):
     """ Available data storage types in the SDFG. """
 
-    Default = ()  #: Scope-default storage location
-    Register = ()  #: Local data on registers, stack, or equivalent memory
-    CPU_Pinned = ()  #: Host memory that can be DMA-accessed from accelerators
-    CPU_Heap = ()  #: Host memory allocated on heap
-    CPU_ThreadLocal = ()  #: Thread-local host memory
-    GPU_Global = ()  #: GPU global memory
-    GPU_Shared = ()  #: On-GPU shared memory
-    SVE_Register = ()  #: SVE register
-    Snitch_TCDM = ()  #: Cluster-private memory
-    Snitch_L2 = ()  #: External memory
-    Snitch_SSR = ()  #: Memory accessed by SSR streamer
+    Default = auto()  #: Scope-default storage location
+    Register = auto()  #: Local data on registers, stack, or equivalent memory
+    CPU_Pinned = auto()  #: Host memory that can be DMA-accessed from accelerators
+    CPU_Heap = auto()  #: Host memory allocated on heap
+    CPU_ThreadLocal = auto()  #: Thread-local host memory
+    GPU_Global = auto()  #: GPU global memory
+    GPU_Shared = auto()  #: On-GPU shared memory
+    SVE_Register = auto()  #: SVE register
+    Snitch_TCDM = auto()  #: Cluster-private memory
+    Snitch_L2 = auto()  #: External memory
+    Snitch_SSR = auto()  #: Memory accessed by SSR streamer
 
 
-@undefined_safe_enum
-@extensible_enum
-class OMPScheduleType(AutoNumberEnum):
+class OMPScheduleType(Enum):
     """ Available OpenMP shedule types for Maps with CPU-Multicore schedule. """
-    Default = ()  #: OpenMP library default
-    Static = ()  #: Static schedule
-    Dynamic = ()  #: Dynamic schedule
-    Guided = ()  #: Guided schedule
+    Default = auto()  #: OpenMP library default
+    Static = auto()  #: Static schedule
+    Dynamic = auto()  #: Dynamic schedule
+    Guided = auto()  #: Guided schedule
 
 
 @undefined_safe_enum
-@extensible_enum
-class ScheduleType(AutoNumberEnum):
+class ScheduleType(ExtensibleAttributeEnum):
     """ Available map schedule types in the SDFG. """
-    Default = ()  #: Scope-default parallel schedule
-    Sequential = ()  #: Sequential code (single-thread)
-    MPI = ()  #: MPI processes
-    CPU_Multicore = ()  #: OpenMP parallel for loop
-    CPU_Persistent = ()  #: OpenMP parallel region
-    SVE_Map = ()  #: Arm SVE
+    Default = auto()  #: Scope-default parallel schedule
+    Sequential = auto()  #: Sequential code (single-thread)
+    MPI = auto()  #: MPI processes
+    CPU_Multicore = auto()  #: OpenMP parallel for loop
+    CPU_Persistent = auto()  #: OpenMP parallel region
+    SVE_Map = auto()  #: Arm SVE
 
-    GPU_Device = ()  #: Kernel
-    GPU_ThreadBlock = ()  #: Thread-block code
-    GPU_ThreadBlock_Dynamic = ()  #: Allows rescheduling work within a block
-    GPU_Persistent = ()
+    GPU_Device = auto()  #: Kernel
+    GPU_ThreadBlock = auto()  #: Thread-block code
+    GPU_ThreadBlock_Dynamic = auto()  #: Allows rescheduling work within a block
+    GPU_Persistent = auto()
 
-    Snitch = ()
-    Snitch_Multicore = ()
+    Snitch = auto()
+    Snitch_Multicore = auto()
 
 
 # A subset of GPU schedule types
@@ -96,87 +88,79 @@ GPU_STORAGES = [
 ]
 
 
-@undefined_safe_enum
-class ReductionType(AutoNumberEnum):
+class ReductionType(Enum):
     """ Reduction types natively supported by the SDFG compiler. """
 
-    Custom = ()  #: Defined by an arbitrary lambda function
-    Min = ()  #: Minimum value
-    Max = ()  #: Maximum value
-    Sum = ()  #: Sum
-    Product = ()  #: Product
-    Logical_And = ()  #: Logical AND (&&)
-    Bitwise_And = ()  #: Bitwise AND (&)
-    Logical_Or = ()  #: Logical OR (||)
-    Bitwise_Or = ()  #: Bitwise OR (|)
-    Logical_Xor = ()  #: Logical XOR (!=)
-    Bitwise_Xor = ()  #: Bitwise XOR (^)
-    Min_Location = ()  #: Minimum value and its location
-    Max_Location = ()  #: Maximum value and its location
-    Exchange = ()  #: Set new value, return old value
+    Custom = auto()  #: Defined by an arbitrary lambda function
+    Min = auto()  #: Minimum value
+    Max = auto()  #: Maximum value
+    Sum = auto()  #: Sum
+    Product = auto()  #: Product
+    Logical_And = auto()  #: Logical AND (&&)
+    Bitwise_And = auto()  #: Bitwise AND (&)
+    Logical_Or = auto()  #: Logical OR (||)
+    Bitwise_Or = auto()  #: Bitwise OR (|)
+    Logical_Xor = auto()  #: Logical XOR (!=)
+    Bitwise_Xor = auto()  #: Bitwise XOR (^)
+    Min_Location = auto()  #: Minimum value and its location
+    Max_Location = auto()  #: Maximum value and its location
+    Exchange = auto()  #: Set new value, return old value
 
     # Only supported in OpenMP
-    Sub = ()  #: Subtraction (only supported in OpenMP)
-    Div = ()  #: Division (only supported in OpenMP)
+    Sub = auto()  #: Subtraction (only supported in OpenMP)
+    Div = auto()  #: Division (only supported in OpenMP)
 
 
-@undefined_safe_enum
-@extensible_enum
-class AllocationLifetime(AutoNumberEnum):
+class AllocationLifetime(Enum):
     """ Options for allocation span (when to allocate/deallocate) of data. """
 
-    Scope = ()  #: Allocated/Deallocated on innermost scope start/end
-    State = ()  #: Allocated throughout the containing state
-    SDFG = ()  #: Allocated throughout the innermost SDFG (possibly nested)
-    Global = ()  #: Allocated throughout the entire program (outer SDFG)
-    Persistent = ()  #: Allocated throughout multiple invocations (init/exit)
-    External = ()  #: Allocated and managed outside the generated code
+    Scope = auto()  #: Allocated/Deallocated on innermost scope start/end
+    State = auto()  #: Allocated throughout the containing state
+    SDFG = auto()  #: Allocated throughout the innermost SDFG (possibly nested)
+    Global = auto()  #: Allocated throughout the entire program (outer SDFG)
+    Persistent = auto()  #: Allocated throughout multiple invocations (init/exit)
+    External = auto()  #: Allocated and managed outside the generated code
 
 
 @undefined_safe_enum
-@extensible_enum
-class Language(AutoNumberEnum):
+class Language(ExtensibleAttributeEnum):
     """ Available programming languages for SDFG tasklets. """
 
-    Python = ()
-    CPP = ()
-    OpenCL = ()
-    SystemVerilog = ()
-    MLIR = ()
+    Python = auto()
+    CPP = auto()
+    OpenCL = auto()
+    SystemVerilog = auto()
+    MLIR = auto()
 
 
 @undefined_safe_enum
-@extensible_enum
-class InstrumentationType(AutoNumberEnum):
+class InstrumentationType(ExtensibleAttributeEnum):
     """ Types of instrumentation providers. """
 
-    No_Instrumentation = ()
-    Timer = ()
-    PAPI_Counters = ()
-    LIKWID_CPU = ()
-    LIKWID_GPU = ()
-    GPU_Events = ()
-    GPU_TX_MARKERS = ()
+    No_Instrumentation = auto()
+    Timer = auto()
+    PAPI_Counters = auto()
+    LIKWID_CPU = auto()
+    LIKWID_GPU = auto()
+    GPU_Events = auto()
+    GPU_TX_MARKERS = auto()
 
 
 @undefined_safe_enum
-@extensible_enum
-class DataInstrumentationType(AutoNumberEnum):
+class DataInstrumentationType(ExtensibleAttributeEnum):
     """ Types of data container instrumentation providers. """
 
-    No_Instrumentation = ()
-    Save = ()
-    Restore = ()
+    No_Instrumentation = auto()
+    Save = auto()
+    Restore = auto()
 
 
-@undefined_safe_enum
-@extensible_enum
-class TilingType(AutoNumberEnum):
+class TilingType(Enum):
     """ Available tiling types in a `StripMining` transformation. """
 
-    Normal = ()
-    CeilRange = ()
-    NumberOfTiles = ()
+    Normal = auto()
+    CeilRange = auto()
+    NumberOfTiles = auto()
 
 
 # Maps from ScheduleType to default StorageType
@@ -231,9 +215,9 @@ _CTYPES = {
     complex: "dace::complex64",
     bool: "bool",
     numpy.bool_: "bool",
-    numpy.int8: "char",
-    numpy.int16: "short",
-    numpy.int32: "int",
+    numpy.int8: "int8_t",
+    numpy.int16: "int16_t",
+    numpy.int32: "int32_t",
     numpy.intc: "int",
     numpy.int64: "int64_t",
     numpy.uint8: "uint8_t",
@@ -1202,7 +1186,6 @@ if TYPE_CHECKING:
     class string(_DaCeArray, npt.NDArray[numpy.str_]): ...
     class vector(_DaCeArray, npt.NDArray[numpy.void]): ...
     class MPI_Request(_DaCeArray, npt.NDArray[numpy.void]): ...
-    class float32sr(_DaCeArray, npt.NDArray[numpy.float32]): ...
     # yapf: enable
 else:
     # Runtime definitions
@@ -1223,27 +1206,6 @@ else:
     complex128 = typeclass(numpy.complex128)
     string = stringtype()
     MPI_Request = opaque('MPI_Request')
-
-
-@undefined_safe_enum
-@extensible_enum
-class Typeclasses(AutoNumberEnum):
-    bool = bool
-    bool_ = bool_
-    int8 = int8
-    int16 = int16
-    int32 = int32
-    int64 = int64
-    uint8 = uint8
-    uint16 = uint16
-    uint32 = uint32
-    uint64 = uint64
-    float16 = float16
-    float32 = float32
-    float64 = float64
-    complex64 = complex64
-    complex128 = complex128
-
 
 _bool = bool
 

@@ -1,7 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import unittest
-from aenum import AutoNumberEnum
-from dace import registry
+from enum import auto
+from dace import registry, attr_enum
 
 
 @registry.make_registry
@@ -13,10 +13,9 @@ class Extension(ExtensibleClass):
     pass
 
 
-@registry.extensible_enum
-class ExtensibleEnumeration(AutoNumberEnum):
-    a = ()
-    b = ()
+class ExtensibleEnumeration(attr_enum.ExtensibleAttributeEnum):
+    a = auto()
+    b = auto()
 
 
 class RegistryTests(unittest.TestCase):
@@ -62,13 +61,6 @@ class RegistryTests(unittest.TestCase):
         ExtensibleEnumeration.register('c')
         self.assertTrue(ExtensibleEnumeration.c in ExtensibleEnumeration)
         self.assertEqual(ExtensibleEnumeration.c.value, 3)
-
-    def test_enum_registry_fail(self):
-        with self.assertRaises(TypeError):
-
-            @registry.extensible_enum
-            class NotAnEnum(object):
-                pass
 
 
 if __name__ == '__main__':
