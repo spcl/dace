@@ -264,13 +264,18 @@ def integrate_nested_sdfg(sdfg: SDFG):
                 # Only process non-transient arrays
                 if not sdfg.arrays[connector].transient:
                     # If the parent data descriptor is equivalent to the inner data descriptor, simply copy it
-                    if parent_sdfg.arrays[edge.data.data] == sdfg.arrays[connector]:
+                    if parent_sdfg.arrays[edge.data.data].is_equivalent(sdfg.arrays[connector]):
                         sdfg.arrays[connector] = copy.deepcopy(parent_sdfg.arrays[edge.data.data])
+
+                        # Make non-reference descriptor
+                        if isinstance(
+                                sdfg.arrays[connector],
+                            (data.ArrayView, data.ContainerView, data.ArrayReference, data.ContainerArrayReference)):
+                            sdfg.arrays[connector] = sdfg.arrays[connector].as_array()
+                        elif isinstance(sdfg.arrays[connector], (data.StructureView, data.StructureReference)):
+                            sdfg.arrays[connector] = sdfg.arrays[connector].as_structure()
+
                         sdfg.arrays[connector].transient = False
-                        continue
-                    if connector == edge.data.data and sdfg.arrays[connector].is_equivalent(
-                            parent_sdfg.arrays[edge.data.data]):
-                        # No need to add/view, names and descriptors are already equivalent
                         continue
                     to_add_and_view[connector] = (edge.data.data, parent_sdfg.arrays[edge.data.data], edge.data)
 
