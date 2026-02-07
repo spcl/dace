@@ -4,11 +4,9 @@ from dace import dtypes, memlet as mm, properties, data as dt, propagate_memlets
 from dace.symbolic import symstr
 import dace.library
 from dace import SDFG, SDFGState
-from dace.frontend.common import op_repository as oprepo
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.blas.blas_helpers import (to_blastype, get_gemm_opts, check_access, dtype_to_cudadatatype,
-                                              to_cublas_computetype)
+from dace.libraries.blas.blas_helpers import (to_blastype, check_access, to_cublas_computetype)
 from dace.libraries.sparse import environments
 import numpy as np
 
