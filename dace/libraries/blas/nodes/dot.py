@@ -166,7 +166,6 @@ class Dot(dace.sdfg.nodes.LibraryNode):
     # Object fields
     n = dace.properties.SymbolicProperty(allow_none=True, default=None)
     accumulator_type = dace.properties.TypeClassProperty(default=None,
-                                                         choices=dtypes.Typeclasses,
                                                          allow_none=True,
                                                          desc="Accumulator or intermediate storage type")
 

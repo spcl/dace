@@ -1,7 +1,4 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from __future__ import print_function
-import os
-
 import dace
 from dace.transformation.dataflow import GPUTransformMap, Vectorization
 from dace.codegen import compiled_sdfg, common

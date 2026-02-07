@@ -69,7 +69,6 @@
 ##########################################################################
 ### END OF astunparse LICENSES
 
-from __future__ import print_function, unicode_literals
 from functools import lru_cache
 import inspect
 import six

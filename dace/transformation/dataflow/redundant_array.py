@@ -72,14 +72,14 @@ def _validate_subsets(edge: graph.MultiConnectorEdge,
                     if padding > 0:
                         if isinstance(src_subset, subsets.Indices):
                             indices = [0] * padding + src_subset.indices
-                            src_subset = subsets.Indices(indices)
+                            src_subset = subsets.Range.from_indices(indices)
                         elif isinstance(src_subset, subsets.Range):
                             ranges = [(0, 0, 1)] * padding + src_subset.ranges
                             src_subset = subsets.Range(ranges)
                     elif padding < 0:
                         if isinstance(src_subset, subsets.Indices):
                             indices = src_subset.indices[-padding:]
-                            src_subset = subsets.Indices(indices)
+                            src_subset = subsets.Range.from_indices(indices)
                         elif isinstance(src_subset, subsets.Range):
                             ranges = src_subset.ranges[-padding:]
                             src_subset = subsets.Range(ranges)
@@ -103,14 +103,14 @@ def _validate_subsets(edge: graph.MultiConnectorEdge,
                     if padding > 0:
                         if isinstance(dst_subset, subsets.Indices):
                             indices = [0] * padding + dst_subset.indices
-                            dst_subset = subsets.Indices(indices)
+                            dst_subset = subsets.Range.from_indices(indices)
                         elif isinstance(dst_subset, subsets.Range):
                             ranges = [(0, 0, 1)] * padding + dst_subset.ranges
                             dst_subset = subsets.Range(ranges)
                     elif padding < 0:
                         if isinstance(dst_subset, subsets.Indices):
                             indices = dst_subset.indices[-padding:]
-                            dst_subset = subsets.Indices(indices)
+                            dst_subset = subsets.Range.from_indices(indices)
                         elif isinstance(dst_subset, subsets.Range):
                             ranges = dst_subset.ranges[-padding:]
                             dst_subset = subsets.Range(ranges)
