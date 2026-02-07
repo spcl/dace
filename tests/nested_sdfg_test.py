@@ -32,9 +32,11 @@ def test():
 
     # Construct SDFG
     mysdfg = SDFG('outer_sdfg')
+    mysdfg.add_array('A', [N, N], dp.float32)
+    mysdfg.add_array('B', [N, N], dp.float32)
     state = mysdfg.add_state()
-    A = state.add_array('A', [N, N], dp.float32)
-    B = state.add_array('B', [N, N], dp.float32)
+    A = state.add_access('A')
+    B = state.add_access('B')
 
     map_entry, map_exit = state.add_map('elements', [('i', '0:N'), ('j', '0:N')])
     nsdfg = state.add_nested_sdfg(sdfg_internal.to_sdfg(), {'input'}, {'output'})
@@ -53,7 +55,6 @@ def test():
     mysdfg(A=input, B=output, N=N)
 
     diff = np.linalg.norm(output - np.power(input, 5)) / (N * N)
-    print("Difference:", diff)
     assert diff <= 1e-5
 
 
@@ -80,9 +81,11 @@ def test_external_nsdfg():
 
     # Construct SDFG
     mysdfg = SDFG('outer_sdfg')
+    mysdfg.add_array('A', [N, N], dp.float32)
+    mysdfg.add_array('B', [N, N], dp.float32)
     state = mysdfg.add_state()
-    A = state.add_array('A', [N, N], dp.float32)
-    B = state.add_array('B', [N, N], dp.float32)
+    A = state.add_access('A')
+    B = state.add_access('B')
 
     map_entry, map_exit = state.add_map('elements', [('i', '0:N'), ('j', '0:N')])
     internal = sdfg_internal.to_sdfg()
@@ -104,7 +107,6 @@ def test_external_nsdfg():
     mysdfg(A=input, B=output, N=N)
 
     diff = np.linalg.norm(output - np.power(input, 5)) / (N * N)
-    print("Difference:", diff)
     assert diff <= 1e-5
 
     os.close(fd)
