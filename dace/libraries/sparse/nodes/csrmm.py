@@ -4,11 +4,9 @@ from dace import dtypes, memlet as mm, properties, data as dt, propagate_memlets
 from dace.symbolic import symstr
 import dace.library
 from dace import SDFG, SDFGState
-from dace.frontend.common import op_repository as oprepo
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.blas.blas_helpers import (to_blastype, get_gemm_opts, check_access, dtype_to_cudadatatype,
-                                              to_cublas_computetype)
+from dace.libraries.blas.blas_helpers import (to_blastype, check_access, to_cublas_computetype)
 from dace.libraries.sparse import environments
 import numpy as np
 
@@ -85,7 +83,7 @@ class ExpandCSRMMPure(ExpandTransformation):
         nsdfg = SDFG(node.label + "_nsdfg")
 
         operands = _get_csrmm_operands(node, state, sdfg)
-        nstate = nsdfg.add_state("state", is_start_state=True)
+        nstate = nsdfg.add_state("state", is_start_block=True)
         for name, desc in operands.items():
             desc = desc[1]
 

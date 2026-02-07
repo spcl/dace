@@ -683,7 +683,7 @@ def _validate_ufunc_num_arguments(visitor: ProgramVisitor, ast_node: ast.Call, u
         :param ufunc_name: Name of the ufunc
         :param num_inputs: Number of ufunc inputs
         :param num_outputs: Number of ufunc outputs
-        :param num_args: Number of positional argumnents in the ufunc call
+        :param num_args: Number of positional arguments in the ufunc call
 
         :raises DaCeSyntaxError: When validation fails
     """
@@ -1157,7 +1157,7 @@ def _create_subgraph(visitor: ProgramVisitor,
                     else:
                         raise NotImplementedError
 
-                cond_state = nested_sdfg.add_state(label=state.label + "_where_cond", is_start_state=True)
+                cond_state = nested_sdfg.add_state(label=state.label + "_where_cond", is_start_block=True)
                 where_data = sdfg.arrays[where]
                 if isinstance(where_data, data.Scalar):
                     name = nested_sdfg_inputs[where]
