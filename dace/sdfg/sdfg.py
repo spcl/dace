@@ -2867,7 +2867,7 @@ class SDFG(ControlFlowRegion):
                 if isinstance(node, nd.NestedSDFG):
                     node.sdfg.expand_library_nodes(recursive=recursive)  # Call recursively
                 elif isinstance(node, nd.LibraryNode):
-                    impl_name = node.expand(self, state)
+                    impl_name = node.expand(state)
                     if Config.get_bool('debugprint'):
                         print('Automatically expanded library node \"{}\" with '
                               'implementation \"{}\".'.format(str(node), impl_name))
