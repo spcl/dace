@@ -886,7 +886,7 @@ def test_custom_generator_with_break():
         try:
             return next(generator), False
         except StopIteration:
-            return None, True
+            return 0, True
 
     @dace
     def tester(a: dace.float64[20]):
