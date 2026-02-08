@@ -1292,7 +1292,7 @@ class BackwardPassGenerator:
                         expansion = node.implementation
 
                     node.implementation = expansion
-                    node.expand(parent_graph.parent, parent_graph)
+                    node.expand(parent_graph)
                     expanded_something = True
 
         return expanded_something
