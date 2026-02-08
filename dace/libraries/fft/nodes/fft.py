@@ -50,7 +50,6 @@ class DFTExpansion(xf.ExpandTransformation):
         if len(indesc.shape) != 1:
             raise NotImplementedError('Native SDFG expansion for FFT does not yet support N-dimensional inputs')
 
-        warnings.warn('Performance Warning: No assumptions on FFT input size, falling back to DFT')
         return dft.dft_explicit.to_sdfg(indesc, outdesc, N=indesc.shape[0], factor=node.factor)
 
 
@@ -67,7 +66,6 @@ class IDFTExpansion(xf.ExpandTransformation):
         if len(indesc.shape) != 1:
             raise NotImplementedError('Native SDFG expansion for IFFT does not yet support N-dimensional inputs')
 
-        warnings.warn('Performance Warning: No assumptions on IFFT input size, falling back to DFT')
         return dft.idft_explicit.to_sdfg(indesc, outdesc, N=indesc.shape[0], factor=node.factor)
 
 
