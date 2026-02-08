@@ -417,8 +417,8 @@ def test_persistent_loop_bound():
     index = 2
     active_size = 7
     l_ref = np.copy(l)
-    tester.f(l_ref, index, active_size)
-    tester(l, index, active_size)
+    tester.f(l_ref, np.uint64(index), np.uint64(active_size))
+    tester(l, np.uint64(index), np.uint64(active_size))
 
     assert np.allclose(l, l_ref)
 
@@ -583,8 +583,8 @@ def test_multisize():
     assert code.count('new double') == 1
     assert code.count('delete[]') == 1
 
-    res1 = sdfg(cond=0)
-    res2 = sdfg(cond=1)
+    res1 = sdfg(cond=np.uint64(0))
+    res2 = sdfg(cond=np.uint64(1))
 
     assert np.allclose(res1, 5)
     assert np.allclose(res2, 6)
