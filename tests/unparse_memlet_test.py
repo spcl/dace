@@ -5,8 +5,8 @@ import numpy as np
 N = dace.symbol('N')
 
 
-@dace.program(dace.float64[N], dace.float64[N])
-def floor_div(Input, Output):
+@dace.program
+def floor_div(Input: dace.float64[N], Output: dace.float64[N]):
 
     @dace.map(_[0:N])
     def div(i):

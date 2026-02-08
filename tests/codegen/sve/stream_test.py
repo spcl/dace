@@ -8,8 +8,8 @@ N = dace.symbol('N')
 
 def test_stream_push():
 
-    @dace.program(dace.float32[N], dace.float32[N])
-    def program(A, B):
+    @dace.program
+    def program(A: dace.float32[N], B: dace.float32[N]):
         stream = dace.define_stream(dace.float32, N)
         for i in dace.map[0:N]:
             with dace.tasklet:

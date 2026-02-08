@@ -21,8 +21,8 @@ def init_array(data, corr, mean, stddev, n, m):
             data[i, j] = datatype(i * j) / m + i
 
 
-@dace.program(datatype[N, M], datatype[M, M], datatype[M], datatype[M])
-def correlation(data, corr, mean, stddev):
+@dace.program
+def correlation(data: datatype[N, M], corr: datatype[M, M], mean: datatype[M], stddev: datatype[M]):
 
     @dace.map
     def comp_mean(j: _[0:M], i: _[0:N]):

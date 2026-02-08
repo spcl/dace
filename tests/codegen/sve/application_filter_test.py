@@ -7,8 +7,8 @@ import pytest
 N = dace.symbol('N', positive=True)
 
 
-@dace.program(dace.float32[N], dace.float32[N], dace.uint32[1], dace.float32)
-def pbf(A, out, outsz, ratio):
+@dace.program
+def pbf(A: dace.float32[N], out: dace.float32[N], outsz: dace.uint32[1], ratio: dace.float32):
     ostream = dace.define_stream(dace.float32, N)
 
     @dace.map(_[0:N])

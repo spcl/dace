@@ -9,8 +9,8 @@ N = dace.symbol('N')
 KERNEL = np.array([[0, -1, 0], [-1, 0, -1], [0, -1, 0]], dtype=np.float32)
 
 
-@dace.program(dace.float32[N, N], dace.float32[N, N])
-def stencil3x3(A, B):
+@dace.program
+def stencil3x3(A: dace.float32[N, N], B: dace.float32[N, N]):
 
     @dace.map(_[1:N - 1, 1:N - 1])
     def a2b(y, x):

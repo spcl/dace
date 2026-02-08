@@ -54,8 +54,8 @@ def init_array(C, A, B, alpha, beta, ni, nj, nk):
             B[i, j] = datatype(i * (j + 2) % nj) / nj
 
 
-@dace.program(datatype[NI, NJ], datatype[NI, NK], datatype[NK, NJ], datatype[1], datatype[1])
-def gemm(C, A, B, alpha, beta):
+@dace.program
+def gemm(C: datatype[NI, NJ], A: datatype[NI, NK], B: datatype[NK, NJ], alpha: datatype[1], beta: datatype[1]):
 
     @dace.map
     def mult_c(i: _[0:NI], j: _[0:NJ]):
