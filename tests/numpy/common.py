@@ -1,4 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import contextlib
 import inspect
 from copy import deepcopy as dc
 from collections import OrderedDict
@@ -6,6 +7,7 @@ from typing import Callable
 
 import dace
 import numpy as np
+import pytest
 
 from numpy.random import default_rng
 
@@ -18,7 +20,8 @@ def compare_numpy_output(device=dace.dtypes.DeviceType.CPU,
                          check_dtype=False,
                          validation_func=None,
                          casting=None,
-                         max_value=10) -> Callable[[Callable], Callable[[], None]]:
+                         max_value=10,
+                         expect_div_by_zero=False) -> Callable[[Callable], Callable[[], None]]:
     """ Check that the `dace.program` func works identically to python
         (including errors).
 
@@ -41,6 +44,7 @@ def compare_numpy_output(device=dace.dtypes.DeviceType.CPU,
         :param casting: If set, then the reference output is computed on the
                         cast inputs.
         :param max_value: The maximum value allowed in the inputs.
+        :param expect_div_by_zero: If `True`, allows division by zero without raising an error.
     """
 
     def decorator(func):
@@ -107,6 +111,9 @@ def compare_numpy_output(device=dace.dtypes.DeviceType.CPU,
             # save exceptions
             dace_thrown, numpy_thrown = None, None
 
+            contextmgr = (pytest.warns(
+                match="divide by zero encountered") if expect_div_by_zero else contextlib.nullcontext())
+
             try:
                 if validation_func:
                     # Works only with 1D inputs of the same size!
@@ -115,7 +122,8 @@ def compare_numpy_output(device=dace.dtypes.DeviceType.CPU,
                     for inp_args in zip(*reference_input):
                         reference_result.append(validation_func(*inp_args))
                 else:
-                    reference_result = func(**reference_input)
+                    with contextmgr:
+                        reference_result = func(**reference_input)
             except Exception as e:
                 numpy_thrown = e
 

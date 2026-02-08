@@ -903,7 +903,12 @@ def test_custom_generator_with_break():
     expected = np.copy(aa)
     expected[:20] = np.arange(20, 0, -1)
 
-    tester(aa)
+    with pytest.warns(UserWarning,
+                      match='Automatically creating callback to Python interpreter from method "reverse_range"'):
+        with pytest.warns(UserWarning, match='Cannot infer return type of function call "reverse_range"'):
+            with pytest.warns(UserWarning,
+                              match='Automatically creating callback to Python interpreter from method "my_next"'):
+                tester(aa)
     assert np.allclose(aa, expected)
 
 
