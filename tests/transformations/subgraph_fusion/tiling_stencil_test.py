@@ -1,5 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
+import contextlib
+
 import dace
 from dace.sdfg import SDFG
 from dace.transformation.subgraph.stencil_tiling import StencilTiling
@@ -123,7 +125,11 @@ def invoke_stencil(tile_size, offset=False, unroll=False, view=False):
     assert st.can_be_applied(sdfg, subgraph)
     if unroll:
         st.unroll_loops = True
-    st.apply(sdfg)
+
+    ctxmgr = (pytest.warns(match="Either all ranges are equal to one or range difference is symbolic")
+              if unroll else contextlib.nullcontext())
+    with ctxmgr:
+        st.apply(sdfg)
     if view:
         sdfg.view()
     sdfg.name = 'tiled'
