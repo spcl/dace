@@ -140,10 +140,10 @@ def run_covariance_autodiff():
     np.testing.assert_allclose(gradient_data, jax_grad_data, rtol=1e-5, atol=1e-8)
 
 
-def test_cpu(monkeypatch):
+def test_cpu():
     # Serialization causes issues, we temporarily disable it
-    monkeypatch.setenv("DACE_testing_serialization", 0)
-    run_covariance(dace.dtypes.DeviceType.CPU)
+    with dace.config.set_temporary("testing", "serialization", value=False):
+        run_covariance(dace.dtypes.DeviceType.CPU)
 
 
 @pytest.mark.gpu

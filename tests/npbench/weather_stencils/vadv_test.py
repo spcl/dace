@@ -333,10 +333,10 @@ def run_vadv_autodiff():
     np.testing.assert_allclose(gradient_utens, jax_grad_utens)
 
 
-def test_cpu(monkeypatch):
+def test_cpu():
     # NOTE: Serialization fails because of "k - k" expression simplified to "0"
-    monkeypatch.setenv("DACE_testing_serialization", 0)
-    run_vadv(dace.dtypes.DeviceType.CPU)
+    with dace.config.set_temporary("testing", "serialization", value=False):
+        run_vadv(dace.dtypes.DeviceType.CPU)
 
 
 @pytest.mark.gpu

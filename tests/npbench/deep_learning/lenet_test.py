@@ -298,10 +298,10 @@ def run_lenet_autodiff():
     np.testing.assert_allclose(gradient_input, jax_grad_input, rtol=1e-6)
 
 
-def test_cpu(monkeypatch):
+def test_cpu():
     # Serialization causes issues, we temporarily disable it
-    monkeypatch.setenv("DACE_testing_serialization", 0)
-    run_lenet(dace.dtypes.DeviceType.CPU)
+    with dace.config.set_temporary("testing", "serialization", value=False):
+        run_lenet(dace.dtypes.DeviceType.CPU)
 
 
 @pytest.mark.skip(reason="std::runtime_error")
