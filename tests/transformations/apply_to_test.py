@@ -88,7 +88,7 @@ def test_applyto_pattern_2():
         sdfg, first_map_exit=map_exit_1, array=tmp, second_map_entry=map_entry_2)
     with pytest.raises(
             ValueError,
-            match='Transformation cannot be applied on the given subgraph \("can_be_applied" failed\)',
+            match=r'Transformation cannot be applied on the given subgraph \("can_be_applied" failed\)',
     ):
         MapFusionVertical.apply_to(sdfg,
                                    verify=True,
@@ -118,7 +118,7 @@ def test_applyto_subgraph_2():
 
     with pytest.raises(
             ValueError,
-            match='Transformation cannot be applied on the given subgraph \("can_be_applied" failed\)',
+            match=r'Transformation cannot be applied on the given subgraph \("can_be_applied" failed\)',
     ):
         SubgraphFusion.apply_to(sdfg, state.nodes())
 
