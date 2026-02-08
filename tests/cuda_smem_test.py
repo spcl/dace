@@ -8,8 +8,8 @@ import pytest
 N = dace.symbol('N')
 
 
-@dace.program(dace.float64[N], dace.float64[N])
-def cudahello(A, Vout):
+@dace.program
+def cudahello(A: dace.float64[N], Vout: dace.float64[N]):
 
     @dace.mapscope(_[0:ceiling(N / 32)])
     def multiplication(i):

@@ -17,8 +17,8 @@ def was_vectorized(sdfg: dace.SDFG) -> bool:
     return b'.128' in output
 
 
-@dace.program(dace.float32[N], dace.float32[N])
-def cudahello(V, Vout):
+@dace.program
+def cudahello(V: dace.float32[N], Vout: dace.float32[N]):
     # Transient variable
     @dace.map(_[0:N])
     def multiplication(i):

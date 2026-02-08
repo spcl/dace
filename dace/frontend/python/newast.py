@@ -3448,7 +3448,12 @@ class ProgramVisitor(ExtNodeVisitor):
                 simple_type = dtype
                 storage = dtypes.StorageType.Default
             if not isinstance(simple_type, dtypes.typeclass):
-                raise TypeError
+                if simple_type in (int, float, complex, bool):
+                    simple_type = dtypes.typeclass(simple_type)
+                elif simple_type is str:
+                    simple_type = dtypes.string
+                else:
+                    raise TypeError
         except:
             dtype = None
             storage = dtypes.StorageType.Default

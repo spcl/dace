@@ -1,5 +1,7 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import contextlib
+
+import pytest
 import dace
 import numpy as np
 
@@ -34,7 +36,8 @@ def test_context_manager_decorator():
             A[:] = 0
 
     A = np.random.rand(20)
-    prog(A)
+    with pytest.warns(match="Automatically creating callback"):
+        prog(A)
     assert ctx.should_pass
 
 
@@ -70,7 +73,9 @@ def test_ctxmgr_name_clash():
             prog_b()
         return i
 
-    sdfg = ctxmgr_name_clashing_0.to_sdfg()
+    with pytest.warns(match="Automatically creating callback"):
+        with pytest.warns(match="Cannot infer return type"):
+            sdfg = ctxmgr_name_clashing_0.to_sdfg()
 
     for i, f in enumerate([ctxmgr_name_clashing_0, ctxmgr_name_clashing_1]):
 
@@ -80,7 +85,12 @@ def test_ctxmgr_name_clash():
         a_count = 0
         b_count = 0
         for _ in range(100):
-            res = f()
+            if _ == 0 and i == 0:
+                with pytest.warns(match="Automatically creating callback"):
+                    with pytest.warns(match="Cannot infer return type"):
+                        res = f()
+            else:
+                res = f()
             if res[0] == 0:
                 a_count += 1
             else:

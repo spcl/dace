@@ -34,9 +34,9 @@ def init_array(A, u1, v1, u2, v2, w, x, y, z, alpha, beta, n):
             A[i, j] = datatype(i * j % n) / n
 
 
-@dace.program(datatype[N, N], datatype[N], datatype[N], datatype[N], datatype[N], datatype[N], datatype[N], datatype[N],
-              datatype[N], datatype[1], datatype[1])
-def gemver(A, u1, v1, u2, v2, w, x, y, z, alpha, beta):
+@dace.program
+def gemver(A: datatype[N, N], u1: datatype[N], v1: datatype[N], u2: datatype[N], v2: datatype[N], w: datatype[N],
+           x: datatype[N], y: datatype[N], z: datatype[N], alpha: datatype[1], beta: datatype[1]):
 
     @dace.map
     def add_uv(i: _[0:N], j: _[0:N]):

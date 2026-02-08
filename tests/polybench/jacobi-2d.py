@@ -34,8 +34,8 @@ args = [
 ]
 
 
-@dace.program(datatype[N, N], datatype[N, N])  #, dace.int32, dace.int32)
-def jacobi2d(A, B):  #, N, tsteps):
+@dace.program
+def jacobi2d(A: datatype[N, N], B: datatype[N, N]):  #, N, tsteps):
     for t in range(tsteps):
 
         @dace.map

@@ -12,8 +12,8 @@ K = dace.symbol('K')
 BINS = 256
 
 
-@dace.program(dace.uint8[H, W], dace.uint32[BINS])
-def histogram(A, hist):
+@dace.program
+def histogram(A: dace.uint8[H, W], hist: dace.uint32[BINS]):
     # Declarative version
     tmp = dace.define_local([BINS, H, W], dace.uint32)
 
@@ -31,8 +31,8 @@ def histogram(A, hist):
     dace.reduce(lambda a, b: a + b, tmp, hist, axis=(1, 2))
 
 
-@dace.program(dace.float32[H, W], dace.float32[H, W], dace.float32[1])
-def mapreduce_test(A, B, sum):
+@dace.program
+def mapreduce_test(A: dace.float32[H, W], B: dace.float32[H, W], sum: dace.float32[1]):
     tmp = dace.define_local([H, W], dace.float32)
 
     @dace.map(_[0:H, 0:W])
@@ -47,8 +47,8 @@ def mapreduce_test(A, B, sum):
     sum[:] = dace.reduce(lambda a, b: a + b, tmp, identity=0)
 
 
-@dace.program(dace.float64[M, N], dace.float64[N, K], dace.float64[M, K])
-def mapreduce_test_2(A, B, C):
+@dace.program
+def mapreduce_test_2(A: dace.float64[M, N], B: dace.float64[N, K], C: dace.float64[M, K]):
     # Transient variable
     tmp = dace.define_local([M, K, N], dtype=A.dtype)
 
@@ -63,8 +63,8 @@ def mapreduce_test_2(A, B, C):
     C[:] = dace.reduce(lambda a, b: a + b, tmp, axis=2, identity=0)
 
 
-@dace.program(dace.float32[1, H, 1, W, 1], dace.float32[H, W], dace.float32[1])
-def mapreduce_test_3(A, B, sum):
+@dace.program
+def mapreduce_test_3(A: dace.float32[1, H, 1, W, 1], B: dace.float32[H, W], sum: dace.float32[1]):
     tmp = dace.define_local([1, H, 1, W, 1], dace.float32)
 
     @dace.map(_[0:H, 0:W])
@@ -79,8 +79,8 @@ def mapreduce_test_3(A, B, sum):
     dace.reduce(lambda a, b: a + b, tmp, sum)
 
 
-@dace.program(dace.float64[M, N], dace.float64[N, K], dace.float64[M, K], dace.float64[M, K, N])
-def mapreduce_test_4(A, B, C, D):
+@dace.program
+def mapreduce_test_4(A: dace.float64[M, N], B: dace.float64[N, K], C: dace.float64[M, K], D: dace.float64[M, K, N]):
     # Transient variable
     tmp = dace.define_local([M, K, N], dtype=A.dtype)
 
@@ -97,8 +97,8 @@ def mapreduce_test_4(A, B, C, D):
     dace.reduce(lambda a, b: a + b, tmp, C, axis=2, identity=0)
 
 
-@dace.program(dace.float64[M, K], dace.float64[K, N], dace.float64[M, N])
-def mapreduce_twomaps(A, B, C):
+@dace.program
+def mapreduce_twomaps(A: dace.float64[M, K], B: dace.float64[K, N], C: dace.float64[M, N]):
     # Transient variable
     tmp = dace.define_local([M, N, K], dtype=A.dtype)
 
@@ -120,8 +120,8 @@ def mapreduce_twomaps(A, B, C):
             out_C = ti
 
 
-@dace.program(dace.float64[M, K], dace.float64[K, N], dace.float64[M, N])
-def mapreduce_onemap(A, B, C):
+@dace.program
+def mapreduce_onemap(A: dace.float64[M, K], B: dace.float64[K, N], C: dace.float64[M, N]):
     # Transient variable
     tmp = dace.define_local([M, N, K], dtype=A.dtype)
 

@@ -40,7 +40,7 @@ def check_transformation_option(orig_sdfg: dace.SDFG, N: int, options: Dict[str,
 
     for argName, argType in orig_sdfg.arglist().items():
         if isinstance(argType, dace.data.Scalar):
-            input_data_orig[argName] = 32
+            input_data_orig[argName] = argType.dtype.type(32)
             continue
 
         shape = []

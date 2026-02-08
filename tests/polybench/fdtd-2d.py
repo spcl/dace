@@ -52,9 +52,8 @@ def init_array(ex, ey, hz, _fict_, nx, ny, tmax):
             hz[i, j] = datatype(i * (j + 3)) / nx
 
 
-@dace.program(datatype[NX, NY], datatype[NX, NY], datatype[NX, NY],
-              datatype[TMAX])  #, dace.int32, dace.int32, dace.int32)
-def fdtd2d(ex, ey, hz, _fict_):
+@dace.program
+def fdtd2d(ex: datatype[NX, NY], ey: datatype[NX, NY], hz: datatype[NX, NY], _fict_: datatype[TMAX]):
     for t in range(TMAX):
 
         @dace.map

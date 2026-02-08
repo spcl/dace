@@ -142,7 +142,7 @@ def run_covariance_autodiff():
 
 def test_cpu(monkeypatch):
     # Serialization causes issues, we temporarily disable it
-    monkeypatch.setenv("DACE_testing_serialization", 0)
+    monkeypatch.setenv("DACE_testing_serialization", "0")
     run_covariance(dace.dtypes.DeviceType.CPU)
 
 

@@ -6,8 +6,8 @@ from dace.transformation.dataflow import StripMining
 N = dace.symbol('N')
 
 
-@dace.program(dace.float64, dace.float64[N], dace.float64[N])
-def axpy(A, X, Y):
+@dace.program
+def axpy(A: dace.float64, X: dace.float64[N], Y: dace.float64[N]):
 
     @dace.map(_[0:N])
     def multiplication(i):

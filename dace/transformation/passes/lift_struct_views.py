@@ -59,9 +59,7 @@ class RecodeAttributeNodes(ast.NodeTransformer):
                 raise RuntimeError(f'Failed to add connector {new_connector_name}')
 
         # Construct the correct AST replacement node (direct access, i.e., name node).
-        replacement = ast.Name()
-        replacement.ctx = ast.Load()
-        replacement.id = new_connector_name
+        replacement = ast.Name(id=new_connector_name, ctx=ast.Load())
 
         # Insert the appropriate view, if it does not exist yet.
         view_name = 'v_' + self.data_node.data + '_' + node.attr
@@ -120,9 +118,7 @@ class RecodeAttributeNodes(ast.NodeTransformer):
         self.views_constructed.add(attr_view_name)
 
         # Construct the correct AST replacement node (direct access, i.e., name node).
-        replacement = ast.Name()
-        replacement.ctx = ast.Load()
-        replacement.id = new_connector_name
+        replacement = ast.Name(id=new_connector_name, ctx=ast.Load())
 
         # Add access nodes for the views and connect them appropriately.
         slice_view_node = self.state.add_access(slice_view_name)
@@ -223,9 +219,7 @@ class InterstateEdgeRecoder(ast.NodeTransformer):
         self.views_constructed.add(view_name)
 
         # Construct the correct AST replacement node (direct access, i.e., name node).
-        replacement = ast.Name()
-        replacement.ctx = ast.Load()
-        replacement.id = view_name
+        replacement = ast.Name(id=view_name, ctx=ast.Load())
 
         # Add access nodes for the view and the original container and connect them appropriately.
         lift_state, data_node = self._get_or_create_lifting_state()
@@ -260,9 +254,7 @@ class InterstateEdgeRecoder(ast.NodeTransformer):
         self.views_constructed.add(attr_view_name)
 
         # Construct the correct AST replacement node (direct access, i.e., name node).
-        replacement = ast.Name()
-        replacement.ctx = ast.Load()
-        replacement.id = attr_view_name
+        replacement = ast.Name(id=attr_view_name, ctx=ast.Load())
 
         # Add access nodes for the views to the slice and attribute and connect them appropriately to the original data
         # container.

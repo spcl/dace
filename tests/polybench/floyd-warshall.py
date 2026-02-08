@@ -25,8 +25,8 @@ def init_array(path, n):
                 path[i, j] = datatype(999)
 
 
-@dace.program(datatype[N, N])
-def floyd_warshall(path):
+@dace.program
+def floyd_warshall(path: datatype[N, N]):
 
     @dace.mapscope
     def k_map(k: _[0:N]):

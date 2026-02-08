@@ -669,7 +669,9 @@ def test_constant_proper_use_2():
     arr = np.ones((12), np.float64)
     scal = 2
 
-    program(arr, 'cfg')
+    with pytest.warns(match="Automatically creating callback"):
+        program(arr, 'cfg')
+
     assert np.allclose(arr, 2)
 
 
@@ -707,7 +709,8 @@ def test_constant_field():
     ns = SimpleNamespace(scal=2)
     arr = np.ones((12), np.float64)
 
-    program(arr, ns)
+    with pytest.warns(match="Automatically creating callback"):
+        program(arr, ns)
 
 
 if __name__ == '__main__':
