@@ -37,7 +37,7 @@ class ExpandPure(ExpandTransformation):
                                     out_tensor.storage,
                                     strides=out_tensor.strides)
 
-        init_state = sdfg.add_state(f"{node.label}_init", is_start_state=True)
+        init_state = sdfg.add_state(f"{node.label}_init", is_start_block=True)
         init_state.add_mapped_tasklet(
             f"{node.label}_init_tasklet", {
                 f"__i{i}": f"0:{symstr(s)}"
@@ -126,7 +126,7 @@ class ExpandTTGT(ExpandTransformation):
         # NOTE: We use the numpy.transpose replacement because:
         # (1) It will return the tensor itself if transposition is uncessary.
         # (2) It will use matrix transpose operation for 2-mode tensors.
-        state = sdfg.add_state(f"{node.label}_inp_transpose_state", is_start_state=True)
+        state = sdfg.add_state(f"{node.label}_inp_transpose_state", is_start_block=True)
 
         if node.left_axes == list(range(len(node.left_axes))):
             transA = True

@@ -1,6 +1,5 @@
 # Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
 
-from venv import create
 import warnings
 
 from dace.data import Scalar
@@ -9,7 +8,7 @@ import dace.frontend.fortran.ast_components as ast_components
 import dace.frontend.fortran.ast_transforms as ast_transforms
 import dace.frontend.fortran.ast_utils as ast_utils
 import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
-from typing import List, Optional, Tuple, Set
+from typing import List, Optional
 from dace import dtypes
 from dace import Language as lang
 from dace import data as dat
@@ -360,7 +359,7 @@ class AST_translator:
         if node.name not in sdfg.symbols:
             sdfg.add_symbol(node.name, datatype)
             if self.last_sdfg_states.get(cfg) is None:
-                bstate = cfg.add_state("SDFGbegin", is_start_state=True)
+                bstate = cfg.add_state("SDFGbegin", is_start_block=True)
                 self.last_sdfg_states[cfg] = bstate
             if node.init is not None:
                 substate = cfg.add_state(f"Dummystate_{node.name}")
@@ -397,7 +396,7 @@ class AST_translator:
         write_names = list(dict.fromkeys([i.name for i in output_vars]))
         read_names = list(dict.fromkeys([i.name for i in input_vars]))
 
-        # Collect the parameters and the function signature to comnpare and link
+        # Collect the parameters and the function signature to compare and link
         parameters = node.args.copy()
 
         new_sdfg = SDFG(node.name.name)

@@ -244,10 +244,10 @@ class SDFGCutout(SDFG):
                 continue
             dataname = memlet.data
             if '.' in dataname:
-                # This is an access to a struct memeber, which typically happens for the memlets between an access node
+                # This is an access to a struct member, which typically happens for the memlets between an access node
                 # pointing to a struct (or view thereof), and a view pointing to the member. Assert that this is indeed
                 # the case (i.e., only one '.' is found in the name of the data being accessed), and if so, clone the
-                # struct (or struct view) data descriptor instad.
+                # struct (or struct view) data descriptor instead.
                 parts = dataname.split('.')
                 if len(parts) == 2:
                     dataname = parts[0]
@@ -257,7 +257,7 @@ class SDFGCutout(SDFG):
             cutout.add_datadesc(dataname, new_desc)
 
         # Add a single state with the extended subgraph
-        new_state = cutout.add_state(state.label, is_start_state=True)
+        new_state = cutout.add_state(state.label, is_start_block=True)
         if preserve_guids:
             new_state.guid = state.guid
         in_translation = dict()
@@ -475,13 +475,13 @@ class SDFGCutout(SDFG):
                 new_el: SDFGState = create_element(is_edge.src)
                 in_translation[is_edge.src] = new_el
                 out_translation[new_el] = is_edge.src
-                cutout.add_node(new_el, is_start_state=(is_edge.src == start_state))
+                cutout.add_node(new_el, is_start_block=(is_edge.src == start_state))
                 new_el.parent = cutout
             if is_edge.dst not in in_translation:
                 new_el: SDFGState = create_element(is_edge.dst)
                 in_translation[is_edge.dst] = new_el
                 out_translation[new_el] = is_edge.dst
-                cutout.add_node(new_el, is_start_state=(is_edge.dst == start_state))
+                cutout.add_node(new_el, is_start_block=(is_edge.dst == start_state))
                 new_el.parent = cutout
             new_isedge: InterstateEdge = create_element(is_edge.data)
             in_translation[is_edge.data] = new_isedge
@@ -494,7 +494,7 @@ class SDFGCutout(SDFG):
                 new_el = create_element(state)
                 in_translation[state] = new_el
                 out_translation[new_el] = state
-                cutout.add_node(new_el, is_start_state=(state == start_state))
+                cutout.add_node(new_el, is_start_block=(state == start_state))
                 new_el.parent = cutout
 
         in_translation[sdfg.cfg_id] = cutout.cfg_id
