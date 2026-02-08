@@ -3,7 +3,6 @@ import copy
 import dace
 from dace.sdfg import nodes
 from dace.sdfg.graph import SubgraphView
-from dace.transformation.helpers import nest_state_subgraph
 import numpy as np
 import unittest
 import sys

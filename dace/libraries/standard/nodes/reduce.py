@@ -8,7 +8,7 @@ import functools
 import platform
 import dace.serialize
 import dace.library
-from dace.sdfg import SDFG, SDFGState, devicelevel_block_size, propagation
+from dace.sdfg import SDFG, SDFGState, dealias, devicelevel_block_size, propagation
 from dace.sdfg import graph
 from dace.frontend.python.astutils import unparse
 from dace.properties import Property, LambdaProperty, ListProperty
@@ -1278,6 +1278,8 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
             nstate.add_memlet_path(actual_nested_sdfg, bmx2, s_mem3, src_conn='s_mem', memlet=dace.Memlet('s_mem[_b1]'))
 
             real_state.add_memlet_path(inner_in, ime, id, dst_conn='b', memlet=dace.Memlet('_in[_i]'))
+
+            dealias.integrate_nested_sdfg(nested_sdfg)
 
             if mini_warps:
                 cond_tasklet = nstate.add_tasklet(

@@ -1,7 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
-from dace import nodes
+from dace import nodes, propagate_memlets_sdfg
 
 
 def test_decreasing_propagation():
@@ -16,6 +16,7 @@ def test_decreasing_propagation():
                 q[i, j] = q[j - 12, 17 - i]
 
     sdfg = copy_nw_corner.to_sdfg()
+    propagate_memlets_sdfg(sdfg)
     me = None
     state = None
     for n, s in sdfg.all_nodes_recursive():

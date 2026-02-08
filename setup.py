@@ -83,6 +83,7 @@ setup(name='dace',
               'ipykernel',
               'nbconvert',
               'pytest-timeout',
+              'pytest-xdist',
           ],
           'ml-testing': [
               'coverage', 'pytest-cov', 'scipy', 'absl-py', 'opt_einsum', 'pymlir', 'click', 'ipykernel', 'nbconvert',

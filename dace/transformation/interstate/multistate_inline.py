@@ -94,9 +94,6 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             if not isinstance(edge.src, nodes.AccessNode):
                 return False
 
-            if edge.data.subset != subsets.Range.from_array(sdfg.arrays[edge.data.data]):
-                return False
-
             outer_desc = sdfg.arrays[edge.data.data]
             if isinstance(outer_desc, data.View):
                 return False
@@ -113,9 +110,6 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                 return False
 
             if not isinstance(edge.dst, nodes.AccessNode):
-                return False
-
-            if edge.data.subset != subsets.Range.from_array(sdfg.arrays[edge.data.data]):
                 return False
 
             outer_desc = sdfg.arrays[edge.data.data]
@@ -311,8 +305,6 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         # Modify start state as necessary
         if outer_start_state is nsdfg_state:
             outer_state.parent_graph.start_block = outer_state.parent_graph.node_id(source)
-
-        # TODO: Modify memlets by offsetting
 
         # Replace nested SDFG parents with new SDFG
         for nstate in nsdfg.states():
