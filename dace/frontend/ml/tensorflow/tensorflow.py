@@ -4,11 +4,8 @@
 
 from functools import partial
 import numpy as np
-import os
-import pickle
 import re
-import math
-from typing import Any, List
+from typing import Any
 import warnings
 
 import dace
@@ -16,9 +13,8 @@ from dace.memlet import Memlet
 from dace import SDFG, SDFGState, dtypes
 from dace.data import Scalar
 from dace.sdfg.nodes import Tasklet, NestedSDFG
-from dace.symbolic import symstr, SymExpr
+from dace.symbolic import symstr
 from .winograd import winograd_convolution
-from .transformations.redundant_array import TensorflowRedundantArray
 
 try:
     import tensorflow as tf
@@ -787,7 +783,8 @@ class TFSession:
         # If node already present set it non transient, otherwise add node
         if not nodeArray:
             dtype = dace.typeclass(_tensortype(node))
-            state.add_array(label, shape, dtype, lifetime=dtypes.AllocationLifetime.SDFG)
+            state.sdfg.add_array(label, shape, dtype, lifetime=dtypes.AllocationLifetime.SDFG)
+            state.add_access(label)
         else:
             nodeArray[0].desc(self.graph).transient = False
 
@@ -814,7 +811,8 @@ class TFSession:
             outputNode.desc(self.graph).transient = False
         except (LookupError):
             dtype = dace.typeclass(_tensortype(node))
-            state.add_array(label, shape, dtype)
+            state.sdfg.add_array(label, shape, dtype)
+            state.add_access(label)
 
         # If not already added to the varDict, add a placeholder
         # zero-initialized array to it so a value error is not triggered.
@@ -899,7 +897,8 @@ class TFSession:
             # create node for the training examples
             shape = dace.properties.ShapeProperty.from_string(",".join(inputShape))
             dtype = _tensortype(node)
-            inputNode = state.add_array(name=label + "_Inp", shape=shape, dtype=dace.typeclass(dtype))
+            state.sdfg.add_array(name=label + "_Inp", shape=shape, dtype=dace.typeclass(dtype))
+            inputNode = state.add_access(label + "_Inp")
 
             # create and add map
             mapDict = dict(zip(inputParams, inputDims))
@@ -2249,12 +2248,14 @@ class TFSession:
             try:
                 outpNode = _find_node(self.state, label)
             except (LookupError):
-                outpNode = self.state.add_array(
+                self.state.sdfg.add_array(
                     label,
                     _tensorshape(outputTensor),
                     _tensortype(outputTensor),
                     lifetime=dtypes.AllocationLifetime.SDFG,
                 )
+                self.state.sdfg.add_array(label)
+                outpNode = self.state.add_access(label)
             outpNode.desc(self.graph).transient = False
 
     def visit_Reshape(self, node):

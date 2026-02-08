@@ -8,7 +8,6 @@ from dace.memlet import Memlet
 
 # Constructs an SDFG with two consecutive tasklets
 def test():
-    print('SDFG consecutive tasklet test')
     # Externals (parameters, symbols)
     N = dp.symbol('N')
     n = 20
@@ -19,9 +18,11 @@ def test():
 
     # Construct SDFG
     mysdfg = SDFG('ctasklet')
+    mysdfg.add_array('A', [N], dp.int32)
+    mysdfg.add_array('B', [N], dp.int32)
     state = mysdfg.add_state()
-    A_ = state.add_array('A', [N], dp.int32)
-    B_ = state.add_array('B', [N], dp.int32)
+    A_ = state.add_access('A')
+    B_ = state.add_access('B')
 
     map_entry, map_exit = state.add_map('mymap', dict(i='0:N'))
     tasklet = state.add_tasklet('mytasklet', {'a'}, {'b'}, 'b = 5*a')
@@ -37,7 +38,6 @@ def test():
     mysdfg(A=input, B=output, N=n)
 
     diff = np.linalg.norm(10 * input - output) / n
-    print("Difference:", diff)
     assert diff <= 1e-5
 
 

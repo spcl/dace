@@ -5,9 +5,6 @@ import pytest
 
 
 def test():
-    print("==== Program start ====")
-    print('Copy ND tests')
-
     N = dace.symbol('N')
     n = 20
 
@@ -103,16 +100,11 @@ def test():
         np.linalg.norm(array_data[21][10, 10:30] - array_data[20][10:30, 20]) / 20
     ]
 
-    print('Differences: ', diffs)
-
     assert all([diff < 1e-7 for diff in diffs])
 
 
 @pytest.mark.gpu
 def test_gpu():
-    print("==== Program start ====")
-    print('Copy ND tests')
-
     N = dace.symbol('N')
     n = 20
 
@@ -218,8 +210,6 @@ def test_gpu():
         np.linalg.norm(array_data[21][10, 10:30] - array_data[20][10:30, 20]) / 20,
         np.linalg.norm(array_data[23][:, 1:-1, 1:-1, :] - array_data[22]) / 1680
     ]
-
-    print('Differences: ', diffs)
 
     assert all([diff < 1e-7 for diff in diffs])
 
