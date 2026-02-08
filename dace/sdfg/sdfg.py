@@ -2413,9 +2413,9 @@ class SDFG(ControlFlowRegion):
             while sdfg.is_loaded():
                 sdfg.name = f'{self.name}_{index}'
                 index += 1
-            if self.name != sdfg.name:
-                warnings.warn(f"SDFG '{self.name}' is already loaded by another object, recompiling under a different "
-                              f"name '{sdfg.name}'.")
+            if self.name != sdfg.name and Config.get_bool('debugprint'):
+                print(f"SDFG '{self.name}' is already loaded by another object, recompiling under a different "
+                      f"name '{sdfg.name}'.")
 
             try:
                 # Fill in scope entry/exit connectors
