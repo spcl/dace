@@ -472,7 +472,10 @@ class DaceProgram(pycommon.SDFGConvertible):
 
         with hooks.invoke_sdfg_call_hooks(sdfg) as sdfg:
             if self.distributed_compilation and mpi4py:
-                binaryobj = distributed_compile(sdfg, mpi4py.MPI.COMM_WORLD, validate=self.validate)
+                binaryobj = distributed_compile(sdfg,
+                                                mpi4py.MPI.COMM_WORLD,
+                                                validate=self.validate,
+                                                argnames=self.argnames)
             else:
                 # Compile SDFG (note: this is done after symbol inference due to shape
                 # altering transformations such as Vectorization)

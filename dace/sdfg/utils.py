@@ -1681,12 +1681,18 @@ def load_precompiled_sdfg(folder: str, argnames: Optional[List[str]] = None) -> 
     )
 
 
-def distributed_compile(sdfg: SDFG, comm, validate: bool = True) -> csdfg.CompiledSDFG:
+def distributed_compile(sdfg: SDFG,
+                        comm,
+                        *,
+                        validate: bool = True,
+                        argnames: Optional[List[str]] = None) -> csdfg.CompiledSDFG:
     """
     Compiles an SDFG in rank 0 of MPI communicator ``comm``. Then, the compiled SDFG is loaded in all other ranks.
 
     :param sdfg: SDFG to be compiled.
     :param comm: MPI communicator. ``Intracomm`` is the base mpi4py communicator class.
+    :param validate: If True, validates the SDFG prior to generating code.
+    :param argnames: Names of arguments of the compiled SDFG.
     :return: Compiled SDFG.
     :note: This method can be used only if the module mpi4py is installed.
     """
@@ -1705,7 +1711,7 @@ def distributed_compile(sdfg: SDFG, comm, validate: bool = True) -> csdfg.Compil
 
     # Loads compiled SDFG.
     if rank > 0:
-        func = load_precompiled_sdfg(folder)
+        func = load_precompiled_sdfg(folder, argnames=argnames)
 
     comm.Barrier()
 
