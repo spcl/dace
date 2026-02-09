@@ -12,6 +12,8 @@ def test_blockreduce():
     sdfg = dace.SDFG('block_reduction')
     sdfg.add_array('A', (128, ), dace.float32)
     sdfg.add_array('B', (2, ), dace.float32)
+    sdfg.add_transient('tA', (2, ), dace.float32)
+    sdfg.add_transient('tB', (1, ), dace.float32)
     state = sdfg.add_state('a')
 
     # Nodes
@@ -21,8 +23,8 @@ def test_blockreduce():
     mei, mxi = state.add_map('mymap2', dict(i='0:32'))
     red = state.add_reduce('lambda a,b: a+b', None, 0)
     red.implementation = 'CUDA (block)'
-    tA = state.add_transient('tA', (2, ), dace.float32)
-    tB = state.add_transient('tB', (1, ), dace.float32)
+    tA = state.add_access('tA')
+    tB = state.add_access('tB')
     write_tasklet = state.add_tasklet('writeout', {'inp'}, {'out'}, 'if i == 0: out = inp')
 
     # Edges
