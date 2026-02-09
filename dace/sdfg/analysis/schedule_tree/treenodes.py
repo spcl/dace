@@ -51,9 +51,7 @@ class ContextPushPop:
     def __enter__(self) -> None:
         assert not self._ctx.access_cache[(self._state, id(
             self._node))], "Expecting an empty access_cache when entering the context."
-        # self._node.parent = self._parent_scope
-        # if self._parent_scope is not None: # Exception for ScheduleTreeRoot
-        #     self._parent_scope.children.append(self._node)
+
         self._ctx.current_scope = self._node
 
     def __exit__(
@@ -64,7 +62,6 @@ class ContextPushPop:
     ) -> None:
         cache_key = (self._state, id(self._node))
         assert cache_key in self._ctx.access_cache
-        # self._ctx.access_cache[cache_key].clear()
 
         self._ctx.current_scope = self._parent_scope
 
@@ -436,7 +433,7 @@ class LoopScope(ControlFlowScope):
         if variant in ["for", "while", "do-while"]:
             return super().as_string(indent)
 
-        return NotImplementedError  # TODO: nice error message
+        return NotImplementedError(f"Unknown LoopRegion variant '{variant}.")
 
 
 @dataclass
@@ -713,20 +710,6 @@ class ConsumeScope(DataflowScope):
         return result + super().as_string(indent)
 
 
-# TODO: to be removed. looks like `Pipeline` nodes aren't a thing anymore
-# @dataclass
-# class PipelineScope(MapScope):
-#     """
-#     Pipeline scope.
-#     """
-#     node: nodes.PipelineEntry
-#
-#     def as_string(self, indent: int = 0):
-#         rangestr = ', '.join(subsets.Range.dim_to_string(d) for d in self.node.map.range)
-#         result = indent * INDENTATION + f'pipeline {", ".join(self.node.map.params)} in [{rangestr}]:\n'
-#         return result + super().as_string(indent)
-
-
 @dataclass
 class TaskletNode(ScheduleTreeNode):
     node: nodes.Tasklet
@@ -859,7 +842,8 @@ class NViewEnd(ScheduleTreeNode):
     Artificial node to denote the scope end of the associated Nested SDFG view node.
     """
 
-    target: str  #: target name of the associated NView container
+    target: str
+    """Target name of the associated NView container."""
 
     def as_string(self, indent: int = 0):
         return indent * INDENTATION + f"end nview {self.target}"
@@ -1035,7 +1019,7 @@ def _loop_range(
     if start is None or step is None or end is None:
         return None
 
-    return (start, end, step)  # `end` is inclusive
+    return (start, end, step)
 
 
 def _match_loop_condition(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:

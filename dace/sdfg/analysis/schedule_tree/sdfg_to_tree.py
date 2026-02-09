@@ -797,7 +797,7 @@ def _prepare_sdfg_for_conversion(sdfg: SDFG, *, toplevel: bool) -> None:
         dealias_sdfg(sdfg)
 
 
-def _create_unified_descriptor_repository(sdfg: SDFG, stree: tn.ScheduleTreeRoot):
+def _create_unified_descriptor_repository(sdfg: SDFG, stree: tn.ScheduleTreeRoot) -> None:
     """
     Creates a single descriptor repository from an SDFG and all nested SDFGs. This includes
     data containers, symbols, constants, etc.

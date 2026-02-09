@@ -5,7 +5,7 @@ from dace import symbolic
 from dace.memlet import Memlet
 from dace.sdfg import nodes, memlet_utils as mmu
 from dace.sdfg.sdfg import SDFG, ControlFlowRegion, InterstateEdge
-from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, LoopRegion, SDFGState
+from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, SDFGState
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg import propagation
 from enum import Enum, auto
@@ -101,35 +101,28 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
         return popped
 
     def visit_ScheduleTreeRoot(self, node: tn.ScheduleTreeRoot, sdfg: SDFG) -> None:
-        # -- to be torched --
         assert self._current_state is None, "Expected no 'current_state' at root."
         assert not self._state_stack, "Expected empty state stack at root."
         assert not self._dataflow_stack, "Expected empty dataflow stack at root."
         assert not self._interstate_symbols, "Expected empty list of symbols at root."
-        # end -- to be torched --
 
         self._current_state = sdfg.add_state(label="tree_root", is_start_block=True)
         self._ctx = tn.Context(root=node, access_cache={}, current_scope=None)
         with node.scope(self._current_state, self._ctx):
             self.visit(node.children, sdfg=sdfg)
 
-        # -- to be torched --
         assert not self._state_stack, "Expected empty state stack."
         assert not self._dataflow_stack, "Expected empty dataflow stack."
         assert not self._interstate_symbols, "Expected empty list of symbols to add."
-        # end -- to be torched --
 
     def visit_GBlock(self, node: tn.GBlock, sdfg: SDFG) -> None:
-        # Let's see if we need this for the first prototype ...
-        raise NotImplementedError(f"{type(node)} not implemented")
+        raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
 
     def visit_StateLabel(self, node: tn.StateLabel, sdfg: SDFG) -> None:
-        # Let's see if we need this for the first prototype ...
-        raise NotImplementedError(f"{type(node)} not implemented")
+        raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
 
     def visit_GotoNode(self, node: tn.GotoNode, sdfg: SDFG) -> None:
-        # Let's see if we need this for the first prototype ...
-        raise NotImplementedError(f"{type(node)} not implemented")
+        raise NotImplementedError(f"Support for{type(node)} not yet implemented.")
 
     def visit_AssignNode(self, node: tn.AssignNode, sdfg: SDFG) -> None:
         # We just collect them here. They'll be added when state boundaries are added,
@@ -209,11 +202,10 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
         self._current_state = after_state
 
     def visit_DoWhileScope(self, node: tn.DoWhileScope, sdfg: SDFG) -> None:
-        # AFAIK we don't support for do-while loops in the gt4py -> dace bridge.
-        raise NotImplementedError(f"{type(node)} not implemented")
+        raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
 
     def visit_LoopScope(self, node: tn.LoopScope, sdfg: SDFG) -> None:
-        raise NotImplementedError("TODO: LoopScopes are not yet implemented")
+        raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
 
     def visit_IfScope(self, node: tn.IfScope, sdfg: SDFG) -> None:
         before_state = self._current_state
@@ -260,20 +252,16 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
             self._current_state = merge_state
 
     def visit_StateIfScope(self, node: tn.StateIfScope, sdfg: SDFG) -> None:
-        # Let's see if we need this for the first prototype ...
-        raise NotImplementedError(f"{type(node)} not implemented")
+        raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
 
     def visit_BreakNode(self, node: tn.BreakNode, sdfg: SDFG) -> None:
-        # AFAIK we don't support for break statements in the gt4py/dace bridge.
-        raise NotImplementedError(f"{type(node)} not implemented")
+        raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
 
     def visit_ContinueNode(self, node: tn.ContinueNode, sdfg: SDFG) -> None:
-        # AFAIK we don't support for continue statements in the gt4py/dace bridge.
-        raise NotImplementedError(f"{type(node)} not implemented")
+        raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
 
     def visit_ElifScope(self, node: tn.ElifScope, sdfg: SDFG) -> None:
-        # AFAIK we don't support elif scopes in the gt4py/dace bridge.
-        raise NotImplementedError(f"{type(node)} not implemented")
+        raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
 
     def visit_ElseScope(self, node: tn.ElseScope, sdfg: SDFG) -> None:
         # get ConditionalBlock form stack
@@ -561,8 +549,7 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
         assert len(self._current_state.in_edges(map_exit)) > 0
 
     def visit_ConsumeScope(self, node: tn.ConsumeScope, sdfg: SDFG) -> None:
-        # AFAIK we don't support consume scopes in the gt4py/dace bridge.
-        raise NotImplementedError(f"{type(node)} not implemented")
+        raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
 
     def visit_TaskletNode(self, node: tn.TaskletNode, sdfg: SDFG) -> None:
         # Add Tasklet to current state
@@ -668,8 +655,7 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
                 assert scope_node is None
 
     def visit_LibraryCall(self, node: tn.LibraryCall, sdfg: SDFG) -> None:
-        # AFAIK we expand all library calls in the gt4py/dace bridge before coming here.
-        raise NotImplementedError(f"{type(node)} not implemented")
+        raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
 
     def visit_CopyNode(self, node: tn.CopyNode, sdfg: SDFG) -> None:
         # ensure we have an access_cache and fetch it
@@ -689,12 +675,10 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
         self._current_state.add_memlet_path(source, target, memlet=node.memlet)
 
     def visit_DynScopeCopyNode(self, node: tn.DynScopeCopyNode, sdfg: SDFG) -> None:
-        # AFAIK we don't support dyn scope copy nodes in the gt4py/dace bridge.
-        raise NotImplementedError(f"{type(node)} not implemented")
+        raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
 
     def visit_ViewNode(self, node: tn.ViewNode, sdfg: SDFG) -> None:
-        # Let's see if we need this for the first prototype ...
-        raise NotImplementedError(f"{type(node)} not implemented")
+        raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
 
     def visit_NView(self, node: tn.NView, sdfg: SDFG) -> None:
         # Basic working principle:
@@ -726,8 +710,7 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
         raise RuntimeError(f"No matching NView found for target {node.target} in {self._nviews_free}.")
 
     def visit_RefSetNode(self, node: tn.RefSetNode, sdfg: SDFG) -> None:
-        # Let's see if we need this for the first prototype ...
-        raise NotImplementedError(f"{type(node)} not implemented")
+        raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
 
     def visit_StateBoundaryNode(self, node: tn.StateBoundaryNode, sdfg: SDFG) -> None:
         # When creating a state boundary, include all inter-state assignments that precede it.
