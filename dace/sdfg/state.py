@@ -3536,8 +3536,10 @@ class LoopRegion(ControlFlowRegion):
         free_syms = set() if free_syms is None else free_syms
         used_before_assignment = set() if used_before_assignment is None else used_before_assignment
 
-        defined_syms.add(self.loop_variable)
         if self.init_statement is not None:
+            # Loops with no initialization statement do not redefine the loop variable
+            defined_syms.add(self.loop_variable)
+
             free_syms |= self.init_statement.get_free_symbols()
         if self.update_statement is not None:
             free_syms |= self.update_statement.get_free_symbols()
