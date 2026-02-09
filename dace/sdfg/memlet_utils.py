@@ -93,7 +93,7 @@ class MemletSet(Set[Memlet]):
     Set updates and unions also perform unions on the contained memlet subsets.
     """
 
-    def __init__(self, iterable: Optional[Iterable[Memlet]] = None, intersection_is_contained: bool = True) -> None:
+    def __init__(self, iterable: Optional[Iterable[Memlet]] = None, *, intersection_is_contained: bool = True) -> None:
         """
         Initializes a memlet set.
 
@@ -192,22 +192,28 @@ T = TypeVar('T')
 
 class MemletDict(Dict[Memlet, T]):
     """
-    Implements a dictionary with memlet keys that considers subsets that intersect or are covered by its other memlets.
+    Implements a dictionary with memlet keys that considers subsets that intersect
+    or are covered by its other memlets.
     """
-    covers_cache: Dict[Tuple, bool] = {}
 
     def __init__(self, **kwargs) -> None:
         self.internal_dict: Dict[str, Dict[Memlet, T]] = defaultdict(dict)
+        self.covers_cache: Dict[Tuple, bool] = defaultdict()
+
         if kwargs:
             self.update(kwargs)
 
+    def __len__(self) -> int:
+        return len(self.internal_dict)
+
     def _getkey(self, elem: Memlet) -> Optional[Memlet]:
         """
-        Returns the corresponding key (exact, covered, intersecting, or indeterminately intersecting memlet) if
-        exists in the dictionary, or None if it does not.
+        Returns the corresponding key (exact, covered, intersecting, or indeterminately intersecting memlet)
+        if it exists in the dictionary, or None if it does not.
         """
         if elem.data not in self.internal_dict:
             return None
+
         for existing_memlet in self.internal_dict[elem.data]:
             key = (existing_memlet.subset, elem.subset)
             is_covered = self.covers_cache.get(key, None)
@@ -216,6 +222,7 @@ class MemletDict(Dict[Memlet, T]):
                 self.covers_cache[key] = is_covered
             if is_covered:
                 return existing_memlet
+
             try:
                 if subsets.intersects(existing_memlet.subset, elem.subset) == False:  # Definitely does not intersect
                     continue
@@ -234,12 +241,12 @@ class MemletDict(Dict[Memlet, T]):
         self.internal_dict.clear()
 
     def update(self, mapping: Dict[Memlet, T]) -> None:
-        for k, v in mapping.items():
-            ak = self._getkey(k)
-            if ak is None:
-                self._setkey(k, v)
+        for key, value in mapping.items():
+            actual_key = self._getkey(key)
+            if actual_key is None:
+                self._setkey(key, value)
             else:
-                self._setkey(ak, v)
+                self._setkey(actual_key, value)
 
     def __contains__(self, elem: Memlet) -> bool:
         """
@@ -251,6 +258,7 @@ class MemletDict(Dict[Memlet, T]):
         actual_key = self._getkey(key)
         if actual_key is None:
             raise KeyError(key)
+
         return self.internal_dict[key.data][actual_key]
 
     def __setitem__(self, key: Memlet, value: T) -> None:
