@@ -2286,8 +2286,9 @@ class SDFG(ControlFlowRegion):
         :return: The generated LoopRegion block.
         """
         label = self._ensure_unique_block_name(label or "loop")
-        loop_region = LoopRegion(label, condition_expr, loop_var, f'{loop_var} = {initialize_expr}',
-                                 f'{loop_var} = {increment_expr}')
+        loop_region = LoopRegion(label, condition_expr, loop_var,
+                                 f'{loop_var} = {initialize_expr}' if initialize_expr else None,
+                                 f'{loop_var} = {increment_expr}' if increment_expr else None)
 
         # Capture subgraphview of loop body
         if loop_start_block in self.nodes() or loop_start_block in self.states():
