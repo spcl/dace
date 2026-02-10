@@ -6,8 +6,8 @@ import numpy as np
 # Dynamically creates DaCe programs with the same name
 def program_generator(size, factor):
 
-    @dace.program(dace.float64[size], dace.float64[size], size=size, factor=factor)
-    def reloadable_lib(input, output):
+    @dace.program
+    def reloadable_lib(input: dace.float64[size], output: dace.float64[size]):
 
         @dace.map(_[0:size])
         def tasklet(i):

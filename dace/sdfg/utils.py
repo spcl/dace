@@ -2746,7 +2746,7 @@ def expand_nodes(sdfg: SDFG, predicate: Callable[[nd.Node], bool]):
                 expand_nodes(node.sdfg, predicate=predicate)
             elif isinstance(node, nd.LibraryNode):
                 if predicate(node):
-                    impl_name = node.expand(sdfg, state)
+                    impl_name = node.expand(state)
                     if config.Config.get_bool('debugprint'):
                         print("Automatically expanded library node \"{}\" with implementation \"{}\".".format(
                             str(node), impl_name))

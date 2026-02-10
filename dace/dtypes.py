@@ -884,7 +884,7 @@ class callback(typeclass):
         """ Returns the ctypes version of the typeclass. """
         from dace import data
 
-        return_ctype = self.cfunc_return_type().as_ctypes()
+        return_ctype = self.cfunc_return_type().as_ctypes() if len(self.return_types) > 0 else None
         input_ctypes = []
 
         for some_arg in self.input_types:

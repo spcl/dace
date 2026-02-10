@@ -1401,7 +1401,7 @@ class LibraryNode(CodeNode):
         if isinstance(state_or_sdfg, SDFGState):
             # New interface: expand(state, implementation=None, **kwargs)
             actual_state = state_or_sdfg
-            sdfg = actual_state.parent_graph
+            sdfg = actual_state.parent
             implementation = state_or_impl
             expansion_kwargs = kwargs
         else:

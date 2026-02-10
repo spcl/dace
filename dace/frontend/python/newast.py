@@ -2483,17 +2483,7 @@ class ProgramVisitor(ExtNodeVisitor):
                                       nonnegative=nonnegative,
                                       positive=positive)
 
-            # TODO: What if two consecutive loops use the same symbol
-            # but different ranges?
-            if sym_name in self.sdfg.symbols.keys():
-                for k, v in self.symbols.items():
-                    if (str(k) == sym_name and v != subsets.Range([(start, stop + eoff, step)])):
-                        warnings.warn("Two for-loops using the same variable ({}) but "
-                                      "different ranges in the same nested SDFG level. "
-                                      "This may work but is not officially supported."
-                                      "".format(sym_name))
-                        break
-            else:
+            if sym_name not in self.sdfg.symbols:
                 sym_name = self.sdfg.add_symbol(sym_name, sym_obj.dtype, find_new_name=True)
 
             extra_syms = {sym_name: sym_obj}
@@ -3448,7 +3438,12 @@ class ProgramVisitor(ExtNodeVisitor):
                 simple_type = dtype
                 storage = dtypes.StorageType.Default
             if not isinstance(simple_type, dtypes.typeclass):
-                raise TypeError
+                if simple_type in (int, float, complex, bool):
+                    simple_type = dtypes.typeclass(simple_type)
+                elif simple_type is str:
+                    simple_type = dtypes.string
+                else:
+                    raise TypeError
         except:
             dtype = None
             storage = dtypes.StorageType.Default
