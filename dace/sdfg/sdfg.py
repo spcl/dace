@@ -2257,7 +2257,8 @@ class SDFG(ControlFlowRegion):
                  initialize_expr: str,
                  condition_expr: str,
                  increment_expr: str,
-                 loop_end_block: ControlFlowBlock = None) -> LoopRegion:
+                 loop_end_block: Optional[ControlFlowBlock] = None,
+                 label: Optional[str] = None) -> LoopRegion:
         """
         Helper function that adds a looping control flow block around a
         given block/state (or sequence of blocks, if ``loop_end_block`` is provided).
@@ -2281,12 +2282,15 @@ class SDFG(ControlFlowRegion):
         :param loop_end_block: If the loop wraps multiple blocks, the block
                                where the loop iteration ends. If None, sets
                                the end block to ``loop_start_block`` as well.
+        :param label: An optional label for the loop region.
         :return: The generated LoopRegion block.
         """
-        loop_region = LoopRegion("loop", condition_expr, loop_var, initialize_expr, f'{loop_var} = {increment_expr}')
+        label = self._ensure_unique_block_name(label or "loop")
+        loop_region = LoopRegion(label, condition_expr, loop_var, f'{loop_var} = {initialize_expr}',
+                                 f'{loop_var} = {increment_expr}')
 
         # Capture subgraphview of loop body
-        if loop_start_block in self.states():
+        if loop_start_block in self.nodes() or loop_start_block in self.states():
             # Find all reachable blocks in loop body
             if loop_end_block is None:
                 blocks = {loop_start_block}
@@ -2333,7 +2337,9 @@ class SDFG(ControlFlowRegion):
     ):
         """
         Helper function that adds a looping state machine around a
-        given state (or sequence of states).
+        given state (or sequence of states). It is recommended to use
+        ``add_loop`` instead of this function, unless creating a loop
+        state machine is explicitly requested.
 
         :param before_state: The state after which the loop should
                              begin, or None if the loop is the first

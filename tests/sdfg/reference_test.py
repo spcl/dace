@@ -336,7 +336,7 @@ def _create_loop_reference_internal_use():
     state = sdfg.add_state()
     after = sdfg.add_state()
     sdfg.add_edge(state, after, dace.InterstateEdge())
-    sdfg.add_loop(istate, state, None, 'i', '0', 'i < 20', 'i + 1', loop_end_state=after)
+    sdfg.add_loop(istate, state, None, 'i', '0', 'i < 20', 'i + 1', loop_end_block=after)
 
     # Reference set inside loop
     state.add_edge(state.add_read('A'), None, state.add_write('ref'), 'set', dace.Memlet('A[i]'))

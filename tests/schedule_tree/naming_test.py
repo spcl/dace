@@ -18,11 +18,11 @@ def _irreducible_loop_to_loop():
     # Add a loop
     l1 = sdfg.add_state()
     l2 = sdfg.add_state_after(l1)
-    sdfg.add_loop(s1, l1, s2, 'i', '0', 'i < 10', 'i + 1', loop_end_state=l2)
+    sdfg.add_loop_state_machine(s1, l1, s2, 'i', '0', 'i < 10', 'i + 1', loop_end_state=l2)
 
     l3 = sdfg.add_state()
     l4 = sdfg.add_state_after(l3)
-    sdfg.add_loop(s2, l3, e, 'i', '0', 'i < 10', 'i + 1', loop_end_state=l4)
+    sdfg.add_loop_state_machine(s2, l3, e, 'i', '0', 'i < 10', 'i + 1', loop_end_state=l4)
 
     # Irreducible part
     sdfg.add_edge(l3, l1, dace.InterstateEdge('i < 5'))
