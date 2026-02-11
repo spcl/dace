@@ -270,7 +270,7 @@ class ScheduleTreeRoot(ScheduleTreeScope):
                 validate: bool = True,
                 simplify: bool = True,
                 validate_all: bool = False,
-                skip: Set[str] = set(),
+                skip: Optional[Set[str]] = None,
                 verbose: bool = False) -> SDFG:
         """
         Convert this schedule tree representation (back) into an SDFG.
@@ -292,8 +292,8 @@ class ScheduleTreeRoot(ScheduleTreeScope):
             sdfg.validate()
 
         if simplify:
-            from dace.transformation.passes.simplify import SimplifyPass
-            SimplifyPass(validate=validate, validate_all=validate_all, skip=skip, verbose=verbose).apply_pass(sdfg, {})
+            skip = set() if skip is None else skip
+            sdfg.simplify(validate=validate, validate_all=validate_all, verbose=verbose, skip=skip)
 
         return sdfg
 
