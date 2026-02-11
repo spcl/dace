@@ -1,6 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 from copy import deepcopy
-import re
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import ControlFlowRegion, SDFGState, StateSubgraphView
 import functools
@@ -22,9 +21,10 @@ from dace.sdfg.scope import is_devicelevel_gpu, is_in_scope
 from dace.sdfg.validation import validate_memlet_data
 from typing import TYPE_CHECKING, Optional, Tuple, Union
 
+import re
+
 if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
-
 
 def replace_float_literals(expr: str) -> str:
     """
@@ -46,7 +46,6 @@ def replace_float_literals(expr: str) -> str:
         return str(int(val))
 
     return float_literal.sub(convert, expr)
-
 
 @registry.autoregister_params(name='cpu')
 class CPUCodeGen(TargetCodeGenerator):
@@ -1289,7 +1288,6 @@ class CPUCodeGen(TargetCodeGenerator):
                             result += "const {} {} = {};".format(memlet_type, local_name, expr)
                         else:
                             # Pointer reference
-                            result += "//C2\n"
                             pruned_expr = replace_float_literals(expr)
                             result += "{} __restrict__ {} = {};".format(ctypedef, local_name, pruned_expr)
                 else:
@@ -1297,7 +1295,6 @@ class CPUCodeGen(TargetCodeGenerator):
                     # be read if necessary
                     memlet_type = 'const %s' % memlet_type
                     if is_pointer:
-                        result += "//C1\n"
                         result += "{} __restrict__ {} = {};".format(memlet_type, local_name, expr)
                     else:
                         result += "{} &{} = {};".format(memlet_type, local_name, expr)
@@ -1558,8 +1555,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 is_global = desc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent,
                                               dtypes.AllocationLifetime.External)
                 defined_type, _ = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
-                base_ptr = cpp.cpp_ptr_expr(sdfg, edge.data, defined_type, codegen=self._frame)
-
+                base_ptr = cpp.cpp_ptr_expr(sdfg, edge.data, defined_type, codegen=self)
                 base_ptr = replace_float_literals(base_ptr)
                 callsite_stream.write(f'{cdtype.ctype} __restrict__ {edge.src_conn} = {base_ptr};', cfg, state_id,
                                       src_node)
@@ -1922,9 +1918,6 @@ class CPUCodeGen(TargetCodeGenerator):
                     if node.map.unroll_factor:
                         unroll_pragma += f" {node.map.unroll_factor}"
                     result.write(unroll_pragma, cfg, state_id, node)
-
-                if node.map.vectorize is not None and node.map.vectorize is True:
-                    result.write(f"#pragma clang loop vectorize(enable)\n", cfg, state_id, node)
 
                 result.write(
                     "for (auto %s = %s; %s < %s; %s += %s) {\n" %
