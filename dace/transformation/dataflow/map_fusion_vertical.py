@@ -758,7 +758,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             #  It will only have the shape `new_inter_shape` which is basically its
             #  output within one Map iteration.
             #  NOTE: The insertion process might generate a new name.
-            new_inter_name: str = f"__s{self.state_id}_n{state.node_id(out_edge.src)}{out_edge.src_conn}_n{state.node_id(out_edge.dst)}{out_edge.dst_conn}"
+            new_inter_name: str = f"__map_fusion_reduced_data_of_{inter_name}"
 
             # Now generate the intermediate data container.
             if len(new_inter_shape) == 0:
