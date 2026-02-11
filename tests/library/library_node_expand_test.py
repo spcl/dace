@@ -87,7 +87,8 @@ def test_old_library_node_expand_interface():
     sdfg, state, addnode = create_test_sdfg()
 
     # Test with old interface
-    result = addnode.expand(sdfg, state)
+    with pytest.warns(DeprecationWarning, match=r"The expand\(sdfg, state\) interface is deprecated"):
+        result = addnode.expand(sdfg, state)
     assert result == 'pure'
 
 

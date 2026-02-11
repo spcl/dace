@@ -17,16 +17,18 @@ def test():
 
         @dp.tasklet
         def init():
+            inp << input
             out >> output
-            out = input
+            out = inp
 
         for k in range(4):
 
             @dp.tasklet
             def do():
+                inp << input
                 oin << output
                 out >> output
-                out = oin * input
+                out = oin * inp
 
     # Construct SDFG
     mysdfg = SDFG('outer_sdfg')
@@ -63,16 +65,18 @@ def test_external_nsdfg():
 
         @dp.tasklet
         def init():
+            inp << input
             out >> output
-            out = input
+            out = inp
 
         for k in range(4):
 
             @dp.tasklet
             def do():
+                inp << input
                 oin << output
                 out >> output
-                out = oin * input
+                out = oin * inp
 
     # Construct SDFG
     mysdfg = SDFG('outer_sdfg')

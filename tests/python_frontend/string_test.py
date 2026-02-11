@@ -23,7 +23,8 @@ def test_string_literal_in_callback():
         cb('a')
 
     a = np.random.rand(1)
-    tester(a)
+    with pytest.warns(match="Automatically creating callback"):
+        tester(a)
 
     assert success is True
 
@@ -42,7 +43,8 @@ def test_bytes_literal_in_callback():
         cb(b'Hello World!')
 
     a = np.random.rand(1)
-    tester(a)
+    with pytest.warns(match="Automatically creating callback"):
+        tester(a)
 
     assert success is True
 
@@ -61,7 +63,8 @@ def test_string_literal_in_callback_2():
         cb("b'Hello World!'")
 
     a = np.random.rand(1)
-    tester(a)
+    with pytest.warns(match="Automatically creating callback"):
+        tester(a)
 
     assert success is True
 
@@ -121,7 +124,8 @@ def test_string_literal_in_complex_object():
     def tester(a: int):
         cb(a={'hello': {'w': 'orld'}, 2: 3}, b=a, c={'something', HashableObject(9)})
 
-    tester(4)
+    with pytest.warns(match="Automatically creating callback"):
+        tester(4)
     assert success is True
 
 

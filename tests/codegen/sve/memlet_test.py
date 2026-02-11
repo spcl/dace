@@ -8,8 +8,8 @@ M = dace.symbol('M')
 
 def test_contiguous_map():
 
-    @dace.program(dace.float64[N], dace.float64[N])
-    def program(A, B):
+    @dace.program
+    def program(A: dace.float64[N], B: dace.float64[N]):
         for i in dace.map[0:N]:
             with dace.tasklet:
                 a << A[i]
@@ -24,8 +24,8 @@ def test_contiguous_map():
 
 def test_stride_map():
 
-    @dace.program(dace.float64[N], dace.float64[N])
-    def program(A, B):
+    @dace.program
+    def program(A: dace.float64[N], B: dace.float64[N]):
         for i in dace.map[0:N:2]:
             with dace.tasklet:
                 a << A[i]
@@ -41,8 +41,8 @@ def test_stride_map():
 
 def test_fake_stride():
 
-    @dace.program(dace.float64[N], dace.float64[N])
-    def program(A, B):
+    @dace.program
+    def program(A: dace.float64[N], B: dace.float64[N]):
         for i in dace.map[0:N:2]:
             with dace.tasklet:
                 a << A[i / 2]
@@ -60,8 +60,8 @@ def test_fake_stride():
 
 def test_matrix_stride():
 
-    @dace.program(dace.float64[N, M], dace.float64[M, N])
-    def program(A, B):
+    @dace.program
+    def program(A: dace.float64[N, M], B: dace.float64[M, N]):
         for i, j in dace.map[0:N, 0:M]:
             with dace.tasklet:
                 a << A[i, j]
@@ -79,8 +79,8 @@ def test_matrix_stride():
 
 def test_indirect_load_explicit():
 
-    @dace.program(dace.int64[N], dace.int64[N], dace.int64[N])
-    def program(A, B, C):
+    @dace.program
+    def program(A: dace.int64[N], B: dace.int64[N], C: dace.int64[N]):
         for i in dace.map[0:N]:
             with dace.tasklet:
                 a << A[:]
@@ -95,8 +95,8 @@ def test_indirect_load_explicit():
 
 def test_indirect_load_implicit():
 
-    @dace.program(dace.int64[N], dace.int64[N], dace.int64[N])
-    def program(A, B, C):
+    @dace.program
+    def program(A: dace.int64[N], B: dace.int64[N], C: dace.int64[N]):
         for i in dace.map[0:N]:
             with dace.tasklet:
                 a << A[B[i]]

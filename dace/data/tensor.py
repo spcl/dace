@@ -541,14 +541,14 @@ class Tensor(Structure):
     This abstraction is based on [https://doi.org/10.1145/3276493].
     """
 
-    value_dtype = TypeClassProperty(default=dtypes.int32, choices=dtypes.Typeclasses)
+    value_dtype = TypeClassProperty(default=dtypes.int32)
     tensor_shape = ShapeProperty(default=[])
     indices = ListProperty(element_type=TensorIndex)
     index_ordering = ListProperty(element_type=symbolic.SymExpr)
     value_count = SymbolicProperty(default=0)
 
     def __init__(self,
-                 value_dtype: dtypes.Typeclasses,
+                 value_dtype: dtypes.typeclass,
                  tensor_shape,
                  indices: List[Tuple[TensorIndex, Union[int, symbolic.SymExpr]]],
                  value_count: symbolic.SymExpr,

@@ -1,11 +1,13 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import aenum
+from dataclasses import is_dataclass
 import enum
 import json
 import numpy as np
 import warnings
+from dace import attr_enum
 import dace.dtypes
 from dace import config
+from dace.utils import until
 
 
 class SerializableObject(object):
@@ -73,6 +75,7 @@ _DACE_SERIALIZE_TYPES = {
 
 
 def get_serializer(type_name):
+    type_name = until(type_name, '.')
     if type_name in _DACE_SERIALIZE_TYPES:
         return _DACE_SERIALIZE_TYPES[type_name]
 
@@ -106,10 +109,25 @@ def to_json(obj):
     elif isinstance(obj, np.ndarray):
         # Special case for external structures (numpy arrays)
         return NumpySerializer.to_json(obj)
+    elif is_dataclass(obj):
+        # Serialize dataclass as a dictionary
+        retval = {"type": type(obj).__name__}
+        for field in obj.__dataclass_fields__.values():
+            retval[field.name] = to_json(getattr(obj, field.name))
+        return retval
+    elif isinstance(obj, attr_enum.ExtensibleAttributeEnum):
+        if obj._is_template:
+            # Store the full dataclass representation for templates
+            return {'type': f'{obj.__class__.__name__}.{obj._name_}'}
+        elif is_dataclass(obj._value_):
+            # Store the full dataclass representation for instances
+            retval = to_json(obj._value_)
+            retval['type'] = f'{obj.__class__.__name__}.{obj._name_}'
+            return retval
+        else:
+            # Store just the name of this key
+            return obj._name_
     elif isinstance(obj, enum.Enum):
-        # Store just the name of this key
-        return obj._name_
-    elif isinstance(obj, aenum.Enum):
         # Store just the name of this key
         return obj._name_
     else:
@@ -123,7 +141,7 @@ def from_json(obj, context=None, known_type=None):
             # For enums, resolve using the type if known
             if issubclass(known_type, enum.Enum) and isinstance(obj, str):
                 return known_type[obj]
-            if issubclass(known_type, aenum.Enum) and isinstance(obj, str):
+            if issubclass(known_type, attr_enum.ExtensibleAttributeEnum) and isinstance(obj, str):
                 return known_type[obj]
             # If we can, convert from string
             if isinstance(obj, str):
@@ -157,7 +175,16 @@ def from_json(obj, context=None, known_type=None):
 
     if t:
         try:
-            deserialized = get_serializer(t).from_json(obj, context=context)
+            serializer = get_serializer(t)
+            if is_dataclass(serializer):
+                # Special case for dataclasses
+                field_values = {}
+                for field in serializer.__dataclass_fields__.values():
+                    if field.name in obj:
+                        field_values[field.name] = from_json(obj[field.name], context, known_type=field.type)
+                deserialized = serializer(**field_values)
+            else:
+                deserialized = serializer.from_json(obj, context=context)
         except Exception as ex:
             if config.Config.get_bool('testing', 'deserialize_exception'):
                 raise

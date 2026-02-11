@@ -406,10 +406,11 @@ def test_promote_indirection_impossible():
     def testprog13(A: dace.float64[20, 20], scal: dace.int32):
         i = 2
         with dace.tasklet:
+            ii << i
             s << scal
             a << A(1)[:, :]
             out >> A(1)[:, :]
-            out[i, s] = a[s, i]
+            out[ii, s] = a[s, ii]
 
     sdfg: dace.SDFG = testprog13.to_sdfg(simplify=False)
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'i'}

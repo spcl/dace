@@ -208,7 +208,7 @@ class SubArray(object):
     """
 
     name = Property(dtype=str, desc="The type's name.")
-    dtype = TypeClassProperty(default=dtypes.int32, choices=dtypes.Typeclasses)
+    dtype = TypeClassProperty(default=dtypes.int32)
     shape = ShapeProperty(default=[], desc="The array's shape.")
     subshape = ShapeProperty(default=[], desc="The sub-array's shape.")
     pgrid = Property(dtype=str,

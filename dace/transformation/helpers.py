@@ -12,7 +12,6 @@ import dace.subsets as subsets
 from typing import Dict, Iterable, List, Optional, Tuple, Set, Union
 
 from dace import data, dtypes, symbolic
-from dace.codegen import control_flow as cf
 from dace.sdfg import nodes, utils
 from dace.sdfg.graph import Edge, SubgraphView, MultiConnectorEdge
 from dace.sdfg.scope import ScopeSubgraphView, ScopeTree
@@ -171,7 +170,7 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
             ret_cond.add_branch(CodeBlock(did_return_inner), ret_branch)
 
         nsdfg = SDFG("nested_sdfg", constants=sdfg.constants_prop, parent=new_state)
-        nsdfg.add_node(source_node, is_start_state=True)
+        nsdfg.add_node(source_node, is_start_block=True)
         nsdfg.add_nodes_from([s for s in blocks if s is not source_node])
         for e in subgraph.edges():
             nsdfg.add_edge(e.src, e.dst, e.data)

@@ -7,8 +7,8 @@ N = dace.symbol('N')
 
 def test_map_simple():
     # One dimensional
-    @dace.program(dace.float64[N], dace.float64[N])
-    def program(A, B):
+    @dace.program
+    def program(A: dace.float64[N], B: dace.float64[N]):
         for i in dace.map[0:N]:
             with dace.tasklet:
                 a << A[i]
@@ -22,8 +22,8 @@ def test_map_simple():
 
 def test_map_advanced():
     # Multidimensional + stride
-    @dace.program(dace.float64[16 * N], dace.float64[16 * N])
-    def program(A, B):
+    @dace.program
+    def program(A: dace.float64[16 * N], B: dace.float64[16 * N]):
         for i, j, k in dace.map[0:N, 0:N:2, 1:8 * N + 1:N * 2]:
             with dace.tasklet:
                 a << A[k]

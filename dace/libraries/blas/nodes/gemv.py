@@ -232,8 +232,6 @@ class ExpandGemvOpenBLAS(ExpandTransformation):
                                                                                    name_out="_y")
         dtype_a = outer_array_a.dtype.type
         dtype = outer_array_x.dtype.base_type
-        cast = "(float *)" if dtype == dace.float32sr else ""
-
         veclen = outer_array_x.dtype.veclen
         alpha = f'{dtype.ctype}({node.alpha})'
         beta = f'{dtype.ctype}({node.beta})'
@@ -282,7 +280,7 @@ class ExpandGemvOpenBLAS(ExpandTransformation):
             alpha = '&__alpha'
             beta = '&__beta'
 
-        code += f"""cblas_{func}({layout}, {trans}, {m}, {n}, {alpha}, {cast} _A, {lda},
+        code += f"""cblas_{func}({layout}, {trans}, {m}, {n}, {alpha}, _A, {lda},
                                 _x, {strides_x[0]}, {beta}, _y, {strides_y[0]});"""
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,

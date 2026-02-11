@@ -2413,9 +2413,9 @@ class SDFG(ControlFlowRegion):
             while sdfg.is_loaded():
                 sdfg.name = f'{self.name}_{index}'
                 index += 1
-            if self.name != sdfg.name:
-                warnings.warn(f"SDFG '{self.name}' is already loaded by another object, recompiling under a different "
-                              f"name '{sdfg.name}'.")
+            if self.name != sdfg.name and Config.get_bool('debugprint'):
+                print(f"SDFG '{self.name}' is already loaded by another object, recompiling under a different "
+                      f"name '{sdfg.name}'.")
 
             try:
                 # Fill in scope entry/exit connectors
@@ -2867,7 +2867,7 @@ class SDFG(ControlFlowRegion):
                 if isinstance(node, nd.NestedSDFG):
                     node.sdfg.expand_library_nodes(recursive=recursive)  # Call recursively
                 elif isinstance(node, nd.LibraryNode):
-                    impl_name = node.expand(self, state)
+                    impl_name = node.expand(state)
                     if Config.get_bool('debugprint'):
                         print('Automatically expanded library node \"{}\" with '
                               'implementation \"{}\".'.format(str(node), impl_name))

@@ -3,7 +3,6 @@
 #define __DACE_REDUCTION_H
 
 #include <cstdint>
-#include <dace/stocastic_rounding.h>
 
 #include "types.h"
 #include "vector.h"
@@ -117,40 +116,6 @@ namespace dace {
         template <typename WCR>
         static DACE_HDFI float reduce(WCR wcr, float *ptr, const float& value) {
             float old = *ptr;
-            *ptr = wcr(old, value);
-            return old;
-        }
-    };
-
-    template <>
-    struct wcr_custom<dace::float32sr> {
-        template <typename WCR>
-        static DACE_HDFI dace::float32sr reduce_atomic(WCR wcr, dace::float32sr *ptr, const dace::float32sr& value) {
-            #ifdef DACE_USE_GPU_ATOMICS
-                // Stochastic rounding version of atomic float reduction
-                int *iptr = reinterpret_cast<int *>(ptr);
-                int old = *iptr, assumed;
-                do {
-                    assumed = old;
-                    float old_val = __int_as_float(assumed);
-                    float new_val = static_cast<float>(wcr(static_cast<dace::float32sr>(old_val), value));
-                    old = atomicCAS(iptr, assumed, __float_as_int(new_val));
-                } while (assumed != old);
-                return static_cast<dace::float32sr>(__int_as_float(old));
-            #else
-                dace::float32sr old;
-                #pragma omp critical
-                {
-                    old = *ptr;
-                    *ptr = wcr(old, value);
-                }
-                return old;
-            #endif
-        }
-
-        template <typename WCR>
-        static DACE_HDFI dace::float32sr reduce(WCR wcr, dace::float32sr *ptr, const dace::float32sr& value) {
-            dace::float32sr old = *ptr;
             *ptr = wcr(old, value);
             return old;
         }
@@ -347,31 +312,6 @@ namespace dace {
 
         DACE_HDFI float operator()(const float &a, const float &b) const { return ::max(a, b); }
     };
-
-
-    template <>
-    struct _wcr_fixed<ReductionType::Min, dace::float32sr> {
-
-        static DACE_HDFI dace::float32sr reduce_atomic(dace::float32sr *ptr, const dace::float32sr& value) {
-            return wcr_custom<dace::float32sr>::reduce_atomic(
-                _wcr_fixed<ReductionType::Min, dace::float32sr>(), ptr, value);
-        }
-
-
-        DACE_HDFI dace::float32sr operator()(const dace::float32sr &a, const dace::float32sr &b) const { return ::min(a, b); }
-    };
-
-    template <>
-    struct _wcr_fixed<ReductionType::Max, dace::float32sr> {
-
-        static DACE_HDFI dace::float32sr reduce_atomic(dace::float32sr *ptr, const dace::float32sr& value) {
-            return wcr_custom<dace::float32sr>::reduce_atomic(
-                _wcr_fixed<ReductionType::Max, dace::float32sr>(), ptr, value);
-        }
-
-        DACE_HDFI dace::float32sr operator()(const dace::float32sr &a, const dace::float32sr &b) const { return ::max(a, b); }
-    };
-
 
     template <>
     struct _wcr_fixed<ReductionType::Min, double> {
