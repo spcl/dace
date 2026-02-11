@@ -1,5 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
+import warnings
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
 import itertools
@@ -757,7 +758,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             # This is the name of the new "intermediate" node that we will create.
             #  It will only have the shape `new_inter_shape` which is basically its
             #  output within one Map iteration.
-            #  NOTE: The insertion process might generate a new name.
+            # NOTE: For exclusive intermediate data there is no name collision, but
+            #   for shared intermediate there _might_ be a name collision if the
+            #   intermediate could be used in another MapFusionVertical operation.
             new_inter_name: str = f"__map_fusion_reduced_data_of_{inter_name}"
 
             # Now generate the intermediate data container.
