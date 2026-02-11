@@ -1,6 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-import warnings
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
 import itertools
@@ -761,7 +760,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             # NOTE: For exclusive intermediate data there is no name collision, but
             #   for shared intermediate there _might_ be a name collision if the
             #   intermediate could be used in another MapFusionVertical operation.
-            new_inter_name: str = f"__map_fusion_reduced_data_of_{inter_name}"
+            new_inter_name: str = f"__map_fusion_{inter_name}"
 
             # Now generate the intermediate data container.
             if len(new_inter_shape) == 0:
