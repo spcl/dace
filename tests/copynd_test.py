@@ -133,7 +133,8 @@ def test(device: str):
         np.linalg.norm(array_data[15] - array_data[14][4, 1, 2, 1:(N - 1):2]) / (N / 2 - 1),
         np.linalg.norm(array_data[17][2, 10:30, 20:40] - array_data[16][20:40, 10:30]) / 400,
         np.linalg.norm(array_data[19][10:30, 10] - array_data[18][20, 10:30]) / 20,
-        np.linalg.norm(array_data[21][10, 10:30] - array_data[20][10:30, 20]) / 20
+        np.linalg.norm(array_data[21][10, 10:30] - array_data[20][10:30, 20]) / 20,
+        np.linalg.norm(array_data[23][:, 1:-1, 1:-1, :] - array_data[22]) / 1680
     ]
 
     assert all([diff < 1e-7 for diff in diffs])
