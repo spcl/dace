@@ -22,9 +22,9 @@ jobs:
         simplify: [0,1,autoopt]
         compiler: [gcc]
         include:
-          - compiler: clang
-            python-version: '3.14'
+          - python-version: '3.14'
             simplify: autoopt
+            compiler: clang
 
     steps:
     - uses: actions/checkout@v6
