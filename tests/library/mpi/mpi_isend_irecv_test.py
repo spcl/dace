@@ -135,7 +135,7 @@ def test_isend_irecv():
     sdfg = None
     if rank == 0:
         sdfg = mpi4py_isend_irecv.to_sdfg(simplify=True)
-    func = utils.distributed_compile(sdfg, commworld, argnames=["rank", "size"])
+    func = utils.distributed_compile(sdfg, commworld)
 
     val = func(rank=rank, size=size)
     ref = mpi4py_isend_irecv.f(rank, size)

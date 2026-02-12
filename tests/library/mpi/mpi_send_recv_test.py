@@ -106,7 +106,7 @@ def test_dace_send_recv():
         sdfg = dace_send_recv.to_sdfg(simplify=True)
         # Disable OpenMP section to allow blocking
         sdfg.openmp_sections = False
-    mpi_sdfg = utils.distributed_compile(sdfg, comm, argnames=["rank", "size"])
+    mpi_sdfg = utils.distributed_compile(sdfg, comm)
 
     val = mpi_sdfg(rank=rank, size=commsize)
     assert (val[0] == (rank - 1) % commsize)

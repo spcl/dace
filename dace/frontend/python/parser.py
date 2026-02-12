@@ -472,10 +472,7 @@ class DaceProgram(pycommon.SDFGConvertible):
 
         with hooks.invoke_sdfg_call_hooks(sdfg) as sdfg:
             if self.distributed_compilation and mpi4py:
-                binaryobj = distributed_compile(sdfg,
-                                                mpi4py.MPI.COMM_WORLD,
-                                                validate=self.validate,
-                                                argnames=self.argnames)
+                binaryobj = distributed_compile(sdfg, mpi4py.MPI.COMM_WORLD, validate=self.validate)
             else:
                 # Compile SDFG (note: this is done after symbol inference due to shape
                 # altering transformations such as Vectorization)
@@ -811,7 +808,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         :param kwargs: Optional compile-time keyword arguments.
         """
         from dace.sdfg import utils as sdutil  # Avoid import loop
-        csdfg = sdutil.load_precompiled_sdfg(path, self.argnames)
+        csdfg = sdutil.load_precompiled_sdfg(path)
         _, cachekey = self._load_sdfg(None, *args, **kwargs)
 
         # Update SDFG cache with the SDFG and compiled version

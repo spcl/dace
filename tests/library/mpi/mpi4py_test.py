@@ -24,7 +24,7 @@ def test_comm_world_bcast():
     sdfg = None
     if rank == 0:
         sdfg = comm_world_bcast.to_sdfg()
-    func = utils.distributed_compile(sdfg, commworld, argnames=["A"])
+    func = utils.distributed_compile(sdfg, commworld)
 
     if rank == 0:
         A = np.arange(10, dtype=np.int32)
@@ -59,7 +59,7 @@ def test_external_comm_bcast():
     sdfg = None
     if rank == 0:
         sdfg = external_comm_bcast.to_sdfg()
-    func = utils.distributed_compile(sdfg, commworld, argnames=["A"])
+    func = utils.distributed_compile(sdfg, commworld)
 
     if rank == 0:
         A = np.arange(10, dtype=np.int32)
@@ -97,7 +97,7 @@ def test_process_grid_bcast():
     sdfg = None
     if rank == 0:
         sdfg = pgrid_bcast.to_sdfg()
-    func = utils.distributed_compile(sdfg, commworld, argnames=["A"])
+    func = utils.distributed_compile(sdfg, commworld)
 
     if rank == 0:
         A = np.arange(10, dtype=np.int32)
@@ -138,7 +138,7 @@ def test_sub_grid_bcast():
     sdfg = None
     if rank == 0:
         sdfg = subgrid_bcast.to_sdfg()
-    func = utils.distributed_compile(sdfg, commworld, argnames=["A", "rank"])
+    func = utils.distributed_compile(sdfg, commworld)
 
     if rank == 0:
         A = np.arange(10, dtype=np.int32)
@@ -210,7 +210,7 @@ def test_direct_use_of_MPICOMM_all_reduce():
     sdfg = None
     if rank == 0:
         sdfg = simple_all_reduce.to_sdfg(a=A)
-    func = utils.distributed_compile(sdfg, commworld, argnames=["a"])
+    func = utils.distributed_compile(sdfg, commworld)
 
     func(a=A)
     commworld.Barrier()
@@ -271,7 +271,7 @@ def test_3mm():
     sdfg = None
     if rank == 0:
         sdfg = k3mm.to_sdfg(A=A, B=B, C=C, D=D)
-    func = utils.distributed_compile(sdfg, commworld, argnames=["A", "B", "C", "D"])
+    func = utils.distributed_compile(sdfg, commworld)
 
     E = func(A=A, B=B, C=C, D=D)
     commworld.Barrier()
@@ -304,7 +304,7 @@ def test_isend_irecv():
     sdfg = None
     if rank == 0:
         sdfg = mpi4py_isend_irecv.to_sdfg(simplify=True)
-    func = utils.distributed_compile(sdfg, commworld, argnames=["rank", "size"])
+    func = utils.distributed_compile(sdfg, commworld)
 
     val = func(rank=rank, size=size)
     ref = mpi4py_isend_irecv.f(rank, size)
@@ -332,7 +332,7 @@ def test_send_recv():
     sdfg = None
     if rank == 0:
         sdfg = mpi4py_send_recv.to_sdfg(simplify=True)
-    func = utils.distributed_compile(sdfg, commworld, argnames=["rank", "size"])
+    func = utils.distributed_compile(sdfg, commworld)
 
     val = func(rank=rank, size=size)
     ref = mpi4py_send_recv.f(rank, size)
@@ -357,7 +357,7 @@ def test_alltoall():
     sdfg = None
     if rank == 0:
         sdfg = mpi4py_alltoall.to_sdfg(simplify=True, size=size)
-    func = utils.distributed_compile(sdfg, commworld, argnames=["rank", "size"])
+    func = utils.distributed_compile(sdfg, commworld)
 
     val = func(rank=rank)
     ref = mpi4py_alltoall.f(rank, size)

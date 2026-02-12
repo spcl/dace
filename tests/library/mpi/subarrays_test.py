@@ -29,7 +29,7 @@ def test_subarray_scatter():
     sdfg = None
     if rank == 0:
         sdfg = block_scatter.to_sdfg()
-    func = utils.distributed_compile(sdfg, commworld, argnames=["A"])
+    func = utils.distributed_compile(sdfg, commworld)
 
     A = np.arange(64 * even_size * even_size, dtype=np.int32).reshape(8 * even_size, 8 * even_size).copy()
     lA_ref = A.reshape(2, 4 * even_size, even_size // 2, 16).transpose(0, 2, 1, 3)
@@ -68,7 +68,7 @@ def test_subarray_scatter_bcast():
     sdfg = None
     if rank == 0:
         sdfg = block_scatter_bcast.to_sdfg()
-    func = utils.distributed_compile(sdfg, commworld, argnames=["A"])
+    func = utils.distributed_compile(sdfg, commworld)
 
     A = np.arange(8 * even_size, dtype=np.int32)
 
@@ -107,7 +107,7 @@ def test_subarray_gather():
     sdfg = None
     if rank == 0:
         sdfg = block_gather.to_sdfg()
-    func = utils.distributed_compile(sdfg, commworld, argnames=["A"])
+    func = utils.distributed_compile(sdfg, commworld)
 
     A_ref = np.arange(64 * even_size * even_size, dtype=np.int32).reshape(8 * even_size, 8 * even_size)
     lA = A_ref.reshape(2, 4 * even_size, even_size // 2, 16).transpose(0, 2, 1, 3)
@@ -146,7 +146,7 @@ def test_subarray_gather_reduce():
     sdfg = None
     if rank == 0:
         sdfg = block_gather_reduce.to_sdfg()
-    func = utils.distributed_compile(sdfg, commworld, argnames=["A"])
+    func = utils.distributed_compile(sdfg, commworld)
 
     A_ref = np.arange(8 * even_size, dtype=np.int32)
     if rank < even_size:

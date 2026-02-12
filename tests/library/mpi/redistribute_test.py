@@ -48,7 +48,7 @@ def test_redistribute_matrix_2d_2d():
     sdfg = None
     if rank == 0:
         sdfg = matrix_2d_2d.to_sdfg()
-    func = utils.distributed_compile(sdfg, commworld, argnames=["A"])
+    func = utils.distributed_compile(sdfg, commworld)
 
     A = np.arange(64 * even_size * even_size, dtype=np.int32).reshape(8 * even_size, 8 * even_size)
     lA = A.reshape(2, 4 * even_size, even_size // 2, 16).transpose(0, 2, 1, 3)
@@ -105,7 +105,7 @@ def test_redistribute_matrix_2d_2d_2():
     sdfg = None
     if rank == 0:
         sdfg = matrix_2d_2d_2.to_sdfg()
-    func = utils.distributed_compile(sdfg, commworld, argnames=["A"])
+    func = utils.distributed_compile(sdfg, commworld)
 
     A = np.arange(64 * even_size * even_size, dtype=np.int32).reshape(8 * even_size, 8 * even_size)
     lA = A.reshape(2, 4 * even_size, even_size // 2, 16).transpose(0, 2, 1, 3)
@@ -171,7 +171,7 @@ def test_redistribute_matrix_2d_2d_3():
     sdfg = None
     if rank == 0:
         sdfg = matrix_2d_2d_3.to_sdfg()
-    func = utils.distributed_compile(sdfg, commworld, argnames=["A"])
+    func = utils.distributed_compile(sdfg, commworld)
 
     A = np.arange(64 * even_size * even_size, dtype=np.int32).reshape(8 * even_size, 8 * even_size)
     lA = A.reshape(2, 4 * even_size, even_size // 2, 16).transpose(0, 2, 1, 3)
@@ -228,7 +228,7 @@ def test_redistribute_vector_2d_2d():
     sdfg = None
     if rank == 0:
         sdfg = vector_2d_2d.to_sdfg()
-    func = utils.distributed_compile(sdfg, commworld, argnames=["A"])
+    func = utils.distributed_compile(sdfg, commworld)
 
     A = np.arange(8 * even_size, dtype=np.int32)
     lB_ref = A.reshape(even_size // 2, 16)

@@ -44,7 +44,7 @@ def test_process_grid():
     if size < 2:
         raise ValueError("Please run this test with at least two processes.")
 
-    func = utils.distributed_compile(sdfg, commworld, argnames=["dims", "periods", "coords", "valid", "P"])
+    func = utils.distributed_compile(sdfg, commworld)
 
     dims = np.zeros((2, ), dtype=np.int32)
     periods = np.zeros((2, ), dtype=np.int32)
@@ -97,7 +97,7 @@ def test_sub_grid():
     if size < 2:
         raise ValueError("Please run this test with at least two processes.")
 
-    func = utils.distributed_compile(sdfg, commworld, argnames=["dims", "periods", "coords", "valid", "P"])
+    func = utils.distributed_compile(sdfg, commworld)
 
     dims = np.zeros((1, ), dtype=np.int32)
     periods = np.zeros((1, ), dtype=np.int32)
@@ -132,7 +132,7 @@ def test_process_grid_bcast():
     sdfg = None
     if rank == 0:
         sdfg = pgrid_bcast.to_sdfg()
-    func = utils.distributed_compile(sdfg, commworld, argnames=["A", "P"])
+    func = utils.distributed_compile(sdfg, commworld)
 
     if rank == 0:
         A = np.arange(10, dtype=np.int32)
@@ -170,7 +170,7 @@ def test_sub_grid_bcast():
     sdfg = None
     if rank == 0:
         sdfg = subgrid_bcast.to_sdfg()
-    func = utils.distributed_compile(sdfg, commworld, argnames=["A", "P"])
+    func = utils.distributed_compile(sdfg, commworld)
 
     if rank == 0:
         A = np.arange(10, dtype=np.int32)
