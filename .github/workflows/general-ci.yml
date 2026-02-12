@@ -35,9 +35,10 @@ jobs:
         wget https://apt.llvm.org/llvm.sh
         chmod +x llvm.sh
         sudo ./llvm.sh 21
+        sudo apt-get install -y libomp-dev
         echo "CXX=$(which clang++)" >> $GITHUB_ENV
         echo "CC=$(which clang)" >> $GITHUB_ENV
-        echo "OpenMP_ROOT=$(dpkg -L libomp)" >> $GITHUB_ENV
+        echo "OpenMP_ROOT=$(dpkg -L libomp-dev)" >> $GITHUB_ENV
     - name: Install dependencies
       run: |
         # Make dependency setup faster
