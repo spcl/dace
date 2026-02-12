@@ -35,8 +35,8 @@ jobs:
         wget https://apt.llvm.org/llvm.sh
         chmod +x llvm.sh
         sudo ./llvm.sh 21
-        echo "CXX=clang++" >> $GITHUB_ENV
-        echo "CC=clang" >> $GITHUB_ENV
+        echo "CXX=$(which clang++)" >> $GITHUB_ENV
+        echo "CC=$(which clang)" >> $GITHUB_ENV
     - name: Install dependencies
       run: |
         # Make dependency setup faster
