@@ -757,8 +757,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             # This is the name of the new "intermediate" node that we will create.
             #  It will only have the shape `new_inter_shape` which is basically its
             #  output within one Map iteration.
-            #  NOTE: The insertion process might generate a new name.
-            new_inter_name: str = f"__s{self.state_id}_n{state.node_id(out_edge.src)}{out_edge.src_conn}_n{state.node_id(out_edge.dst)}{out_edge.dst_conn}"
+            # NOTE: For exclusive intermediate data there is no name collision, but
+            #   for shared intermediate there _might_ be a name collision if the
+            #   intermediate could be used in another MapFusionVertical operation.
+            new_inter_name: str = f"__map_fusion_{inter_name}"
 
             # Now generate the intermediate data container.
             if len(new_inter_shape) == 0:
