@@ -7,7 +7,7 @@ from dace.memlet import Memlet
 
 
 def test():
-    print('Multidimensional offset and stride test')
+    """Multidimensional offset and stride test"""
     # Externals (parameters, symbols)
     N = dp.symbol('N')
     n = 20
@@ -18,9 +18,12 @@ def test():
 
     # Construct SDFG
     mysdfg = SDFG('offset_stride')
+    mysdfg.add_array('A', [6, 6], dp.float32, offset=[2, 3], strides=[N, 1], total_size=N * N)
+    mysdfg.add_array('B', [3, 2], dp.float32, offset=[-1, -1], strides=[3, 1], total_size=12)
+
     state = mysdfg.add_state()
-    A_ = state.add_array('A', [6, 6], dp.float32, offset=[2, 3], strides=[N, 1], total_size=N * N)
-    B_ = state.add_array('B', [3, 2], dp.float32, offset=[-1, -1], strides=[3, 1], total_size=12)
+    A_ = state.add_access('A')
+    B_ = state.add_access('B')
 
     map_entry, map_exit = state.add_map('mymap', [('i', '1:4'), ('j', '1:3')])
     tasklet = state.add_tasklet('mytasklet', {'a'}, {'b'}, 'b = a')
@@ -34,7 +37,6 @@ def test():
     mysdfg(A=input, B=output, N=n)
 
     diff = np.linalg.norm(output[0:3, 0:2] - input[3:6, 4:6]) / n
-    print("Difference:", diff)
     assert diff <= 1e-5
 
 
