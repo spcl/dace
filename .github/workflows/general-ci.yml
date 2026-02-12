@@ -18,8 +18,13 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ['3.10']
-        simplify: [autoopt]
+        python-version: ['3.10','3.14']
+        simplify: [0,1,autoopt]
+        compiler: [gcc]
+        include:
+          - compiler: clang
+            python-version: '3.14'
+            simplify: autoopt
 
     steps:
     - uses: actions/checkout@v6
@@ -30,7 +35,7 @@ jobs:
       with:
         python-version: ${{ matrix.python-version }}
     - name: Setup LLVM
-      if: matrix.python-version == '3.10' && matrix.simplify == 'autoopt'
+      if: matrix.compiler == 'clang'
       run: |
         wget https://apt.llvm.org/llvm.sh
         chmod +x llvm.sh
