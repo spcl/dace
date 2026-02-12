@@ -37,8 +37,9 @@ test_cscs_gh200:
   image: ${CSCS_REGISTRY_PATH}/public/dace-gpu:${DOCKER_TAG}
   variables:
     TEST_VARIANTS: 'gpu'
-    SLURM_GPUS_PER_NODE: 4
+    SLURM_GPUS_PER_NODE: 1
     SLURM_JOB_NUM_NODES: 1
+    SLURM_PARTITION: 'shared'
     SLURM_TIMELIMIT: 30
     PYTEST_XDIST_AUTO_NUM_WORKERS: 32
   needs:
