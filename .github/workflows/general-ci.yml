@@ -38,7 +38,6 @@ jobs:
         sudo apt-get install -y libomp-dev
         echo "CXX=$(which clang++)" >> $GITHUB_ENV
         echo "CC=$(which clang)" >> $GITHUB_ENV
-        echo "OpenMP_ROOT=$(dpkg -L libomp-dev)" >> $GITHUB_ENV
     - name: Install dependencies
       run: |
         # Make dependency setup faster
