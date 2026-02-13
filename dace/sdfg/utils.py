@@ -894,7 +894,8 @@ def remove_edge_and_dangling_path(state: SDFGState, edge: MultiConnectorEdge) ->
                 # If the node is not isolated we must look at its connectors and clean them.
                 if isinstance(curr_edge.dst, nd.EntryNode) and curr_edge.dst_conn.startswith("IN_"):
                     curr_edge.dst.remove_out_connector("OUT_" + curr_edge.dst_conn[3:])
-                if curr_edge.dst_conn:
+                if curr_edge.dst_conn and len(list(state.in_edges_by_connector(curr_edge.dst,
+                                                                               curr_edge.dst_conn))) == 0:
                     curr_edge.dst.remove_in_connector(curr_edge.dst_conn)
 
             # There is a fan-out, i.e. the `curr_edge.src_conn` is still in use and we are done here.
@@ -907,7 +908,8 @@ def remove_edge_and_dangling_path(state: SDFGState, edge: MultiConnectorEdge) ->
             else:
                 if isinstance(curr_edge.src, nd.ExitNode) and curr_edge.src_conn.startswith("OUT_"):
                     curr_edge.src.remove_in_connector("IN_" + curr_edge.src_conn[4:])
-                if curr_edge.src_conn:
+                if curr_edge.src_conn and len(list(state.out_edges_by_connector(curr_edge.src,
+                                                                                curr_edge.src_conn))) == 0:
                     curr_edge.src.remove_out_connector(curr_edge.src_conn)
 
             # The connector might be collecting.
