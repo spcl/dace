@@ -195,9 +195,8 @@ class Node(object):
             :return: True if the operation was successful.
         """
         if not connector_name:
-            warnings.warn(
-                f'Tried to remove the { "\'None\'" if connector_name is None else "EMPTY-STRING"} from the in-connectors of node {str(self)}',
-                stacklevel=1)
+            warnings.warn(f'Tried to remove the {connector_name} from the in-connectors of node {str(self)}',
+                          stacklevel=1)
             return False
 
         if connector_name not in self.in_connectors:
@@ -215,9 +214,8 @@ class Node(object):
             :return: True if the operation was successful.
         """
         if not connector_name:
-            warnings.warn(
-                f'Tried to remove the { "\'None\'" if connector_name is None else "EMPTY-STRING"} from the out-connectors of node {str(self)}',
-                stacklevel=1)
+            warnings.warn(f'Tried to remove the {connector_name} from the out-connectors of node {str(self)}',
+                          stacklevel=1)
             return False
 
         if connector_name not in self.out_connectors:
