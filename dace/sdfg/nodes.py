@@ -194,11 +194,14 @@ class Node(object):
             :param connector_name: The name of the connector to remove.
             :return: True if the operation was successful.
         """
+        assert connector_name is not None
 
-        if connector_name in self.in_connectors:
-            connectors = self.in_connectors
-            del connectors[connector_name]
-            self.in_connectors = connectors
+        if connector_name not in self.in_connectors:
+            return False
+
+        connectors = self.in_connectors
+        del connectors[connector_name]
+        self.in_connectors = connectors
         return True
 
     def remove_out_connector(self, connector_name: str):
@@ -207,11 +210,14 @@ class Node(object):
             :param connector_name: The name of the connector to remove.
             :return: True if the operation was successful.
         """
+        assert connector_name is not None
 
-        if connector_name in self.out_connectors:
-            connectors = self.out_connectors
-            del connectors[connector_name]
-            self.out_connectors = connectors
+        if connector_name not in self.out_connectors:
+            return False
+
+        connectors = self.out_connectors
+        del connectors[connector_name]
+        self.out_connectors = connectors
         return True
 
     def _next_connector_int(self) -> int:
