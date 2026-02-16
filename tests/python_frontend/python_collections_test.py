@@ -1,331 +1,675 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-"""Tests for using Python collections (lists, tuples, dicts) with DaCe programs.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""Tests for native Python collection data descriptors.
 
-Currently, DaCe handles Python lists and tuples by converting them to NumPy
-arrays when passed as arguments to @dace.program functions. Tuples can be
-returned from DaCe programs. This test suite documents and verifies the current
-behavior and serves as a foundation for future native collection support.
+Tests the PythonList, PythonTuple, PythonDict, PythonClass, and
+PythonGenerator data descriptor classes defined in dace.data.pydata.
 """
-import dace
+import copy
+import json
+from collections import OrderedDict
+
 import numpy as np
 import pytest
 
-# ============================================================================
-# Tests for passing Python lists as arguments
-# ============================================================================
-
-
-def test_list_arg_1d():
-    """Test passing a 1D Python list as an argument (auto-converted to array)."""
-
-    @dace.program
-    def add_one(a: dace.float64[5]):
-        return a + 1
-
-    result = add_one([1.0, 2.0, 3.0, 4.0, 5.0])
-    expected = np.array([2.0, 3.0, 4.0, 5.0, 6.0])
-    assert np.allclose(result, expected)
-
-
-def test_list_arg_2d():
-    """Test passing a 2D nested Python list as an argument."""
-
-    @dace.program
-    def double(a: dace.float64[2, 3]):
-        return a * 2
-
-    result = double([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
-    expected = np.array([[2.0, 4.0, 6.0], [8.0, 10.0, 12.0]])
-    assert np.allclose(result, expected)
-
-
-def test_list_arg_integer():
-    """Test passing a list of integers as an argument."""
-
-    @dace.program
-    def sum_elements(a: dace.int64[4]):
-        result = dace.define_local_scalar(dace.int64)
-        result = 0
-        for i in range(4):
-            result = result + a[i]
-        return result
-
-    result = sum_elements([10, 20, 30, 40])
-    assert result == 100
-
-
-def test_list_arg_inout():
-    """Test that lists are copied (not modified in-place) when passed."""
-
-    @dace.program
-    def fill_fives(a: dace.float64[3]):
-        a[:] = 5.0
-
-    original = [1.0, 2.0, 3.0]
-    # Lists get converted to numpy arrays internally; the original list is unchanged
-    fill_fives(original)
-    # The original Python list should remain unchanged
-    assert original == [1.0, 2.0, 3.0]
-
+import dace
+from dace import dtypes, serialize
+from dace.data import (Array, Data, Scalar, Stream, Structure, PythonList, PythonTuple, PythonDict, PythonClass,
+                       PythonGenerator)
 
 # ============================================================================
-# Tests for passing Python tuples as arguments
+# PythonList tests
 # ============================================================================
 
 
-def test_tuple_arg_not_supported():
-    """Tuples are not auto-converted to arrays at runtime (unlike lists).
+class TestPythonList:
 
-    This documents the current limitation: while lists are silently cast to
-    numpy arrays when passed to compiled DaCe programs, tuples raise a
-    TypeError. Users should convert tuples to numpy arrays explicitly.
-    """
+    def test_creation_basic(self):
+        """Test basic PythonList construction."""
+        desc = PythonList(dace.float64, 10)
+        assert isinstance(desc, Array)
+        assert desc.dtype == dace.float64
+        assert desc.shape == (10, )
+        assert desc.element_type == dace.float64
 
-    @dace.program
-    def add_one(a: dace.float64[4]):
-        return a + 1
+    def test_creation_empty(self):
+        """Test creating an empty PythonList."""
+        desc = PythonList(dace.int32, 0)
+        assert desc.shape == (0, )
+        assert desc.dtype == dace.int32
 
-    with pytest.raises(TypeError, match="Passing an object.*tuple.*to an array"):
-        add_one((10.0, 20.0, 30.0, 40.0))
+    def test_creation_transient(self):
+        """Test creating a transient PythonList."""
+        desc = PythonList(dace.float64, 5, transient=True)
+        assert desc.transient is True
 
+    def test_repr(self):
+        """Test string representation."""
+        desc = PythonList(dace.float64, 3)
+        assert 'PythonList' in repr(desc)
 
-def test_tuple_arg_as_numpy():
-    """Test that tuples work when explicitly converted to numpy arrays first."""
+    def test_clone(self):
+        """Test cloning a PythonList."""
+        desc = PythonList(dace.float64, 10, transient=True)
+        cloned = desc.clone()
+        assert isinstance(cloned, PythonList)
+        assert cloned.dtype == desc.dtype
+        assert cloned.shape == desc.shape
+        assert cloned.transient == desc.transient
 
-    @dace.program
-    def add_one(a: dace.float64[4]):
-        return a + 1
+    def test_as_arg_nanobind(self):
+        """Test that as_arg generates nanobind type."""
+        desc = PythonList(dace.float64, 5)
+        arg = desc.as_arg(with_types=True, name='my_list')
+        assert 'nb::list' in arg
 
-    result = add_one(np.array((10.0, 20.0, 30.0, 40.0)))
-    expected = np.array([11.0, 21.0, 31.0, 41.0])
-    assert np.allclose(result, expected)
+    def test_as_arg_for_call(self):
+        """Test that as_arg for call returns just the name."""
+        desc = PythonList(dace.float64, 5)
+        arg = desc.as_arg(with_types=True, for_call=True, name='my_list')
+        assert arg == 'my_list'
 
+    def test_from_python_list_float(self):
+        """Test creating descriptor from a Python float list."""
+        desc = PythonList.from_python_list([1.0, 2.0, 3.0])
+        assert desc.dtype == dace.float64
+        assert desc.shape == (3, )
 
-# ============================================================================
-# Tests for returning tuples from DaCe programs
-# ============================================================================
+    def test_from_python_list_int(self):
+        """Test creating descriptor from a Python int list."""
+        desc = PythonList.from_python_list([1, 2, 3, 4])
+        assert desc.dtype == dace.int64
+        assert desc.shape == (4, )
 
+    def test_from_python_list_empty(self):
+        """Test creating descriptor from an empty list."""
+        desc = PythonList.from_python_list([])
+        assert desc.dtype == dace.int32
+        assert desc.shape == (0, )
 
-def test_return_tuple_scalars():
-    """Test returning a tuple of scalar values."""
+    def test_json_round_trip(self):
+        """Test JSON serialization round-trip."""
+        desc = PythonList(dace.float64, 10, transient=True)
+        json_obj = desc.to_json()
+        assert json_obj['type'] == 'PythonList'
 
-    @dace.program
-    def compute():
-        return 42, 7
+        restored = PythonList.from_json(json_obj)
+        assert isinstance(restored, PythonList)
+        assert restored.dtype == desc.dtype
+        assert restored.shape == desc.shape
+        assert restored.transient == desc.transient
 
-    result = compute()
-    assert isinstance(result, tuple)
-    assert len(result) == 2
-    assert result[0] == 42
-    assert result[1] == 7
+    def test_add_to_sdfg(self):
+        """Test adding a PythonList descriptor to an SDFG."""
+        sdfg = dace.SDFG('test_list_sdfg')
+        desc = PythonList(dace.float64, 5)
+        sdfg.add_datadesc('my_list', desc)
+        assert 'my_list' in sdfg.arrays
+        assert isinstance(sdfg.arrays['my_list'], PythonList)
 
+    def test_sdfg_json_round_trip(self):
+        """Test that SDFG with PythonList survives serialization."""
+        sdfg = dace.SDFG('test_list_sdfg_json')
+        desc = PythonList(dace.float64, 5)
+        sdfg.add_datadesc('my_list', desc)
 
-def test_return_tuple_arrays():
-    """Test returning a tuple of arrays."""
-
-    @dace.program
-    def split_compute(a: dace.float64[4]):
-        return a + 1, a * 2
-
-    inp = np.array([1.0, 2.0, 3.0, 4.0])
-    result = split_compute(inp)
-    assert isinstance(result, tuple)
-    assert len(result) == 2
-    assert np.allclose(result[0], np.array([2.0, 3.0, 4.0, 5.0]))
-    assert np.allclose(result[1], np.array([2.0, 4.0, 6.0, 8.0]))
-
-
-def test_return_tuple_mixed():
-    """Test returning a tuple with both scalar and array results."""
-
-    @dace.program
-    def compute_with_sum(a: dace.float64[3]):
-        doubled = a * 2
-        total = np.sum(a)
-        return doubled, total
-
-    inp = np.array([1.0, 2.0, 3.0])
-    result = compute_with_sum(inp)
-    assert isinstance(result, tuple)
-    assert len(result) == 2
-    assert np.allclose(result[0], np.array([2.0, 4.0, 6.0]))
-    assert np.isclose(result[1], 6.0)
-
-
-def test_return_triple():
-    """Test returning a 3-element tuple."""
-
-    @dace.program
-    def three_things():
-        return 1, 2, 3
-
-    result = three_things()
-    assert isinstance(result, tuple)
-    assert len(result) == 3
-    assert result == (1, 2, 3)
-
-
-# ============================================================================
-# Tests for using list/tuple literals within DaCe programs
-# ============================================================================
-
-
-def test_list_literal_as_shape():
-    """Test using a list literal to define an array shape."""
-
-    @dace.program
-    def create_array():
-        a = np.zeros([3, 4], dtype=dace.float64)
-        a[:, :] = 1.0
-        return a
-
-    result = create_array()
-    assert result.shape == (3, 4)
-    assert np.allclose(result, np.ones((3, 4)))
-
-
-def test_tuple_literal_as_shape():
-    """Test using a tuple literal to define an array shape."""
-
-    @dace.program
-    def create_array():
-        a = np.zeros((2, 5), dtype=dace.float64)
-        a[:, :] = 2.0
-        return a
-
-    result = create_array()
-    assert result.shape == (2, 5)
-    assert np.allclose(result, 2.0 * np.ones((2, 5)))
-
-
-def test_range_as_collection():
-    """Test using range() which produces a collection-like iterable."""
-
-    @dace.program
-    def sum_range(a: dace.float64[10]):
-        for i in range(10):
-            a[i] = a[i] + 1.0
-
-    a = np.zeros(10)
-    sum_range(a)
-    assert np.allclose(a, np.ones(10))
+        # Serialize and deserialize SDFG
+        json_str = sdfg.to_json()
+        restored_sdfg = dace.SDFG.from_json(json_str)
+        assert 'my_list' in restored_sdfg.arrays
+        assert isinstance(restored_sdfg.arrays['my_list'], PythonList)
+        assert restored_sdfg.arrays['my_list'].dtype == dace.float64
 
 
 # ============================================================================
-# Tests for the create_datadescriptor function with collections
+# PythonTuple tests
 # ============================================================================
 
 
-def test_create_datadescriptor_from_list():
-    """Test that create_datadescriptor correctly converts a list."""
-    from dace.data import create_datadescriptor
+class TestPythonTuple:
 
-    desc = create_datadescriptor([1.0, 2.0, 3.0])
-    assert isinstance(desc, dace.data.Array)
-    assert desc.shape == (3, )
+    def test_creation_basic(self):
+        """Test basic PythonTuple construction."""
+        desc = PythonTuple(dace.int32, 3)
+        assert isinstance(desc, Array)
+        assert desc.dtype == dace.int32
+        assert desc.shape == (3, )
+        assert desc.element_type == dace.int32
 
+    def test_creation_transient(self):
+        """Test creating a transient PythonTuple."""
+        desc = PythonTuple(dace.float64, 2, transient=True)
+        assert desc.transient is True
 
-def test_create_datadescriptor_from_tuple():
-    """Test that create_datadescriptor correctly converts a tuple."""
-    from dace.data import create_datadescriptor
+    def test_repr(self):
+        """Test string representation."""
+        desc = PythonTuple(dace.int32, 3)
+        assert 'PythonTuple' in repr(desc)
 
-    desc = create_datadescriptor((1, 2, 3, 4))
-    assert isinstance(desc, dace.data.Array)
-    assert desc.shape == (4, )
+    def test_clone(self):
+        """Test cloning a PythonTuple."""
+        desc = PythonTuple(dace.float64, 5)
+        cloned = desc.clone()
+        assert isinstance(cloned, PythonTuple)
+        assert cloned.dtype == desc.dtype
+        assert cloned.shape == desc.shape
 
+    def test_as_arg_nanobind(self):
+        """Test that as_arg generates nanobind tuple type."""
+        desc = PythonTuple(dace.float64, 3)
+        arg = desc.as_arg(with_types=True, name='my_tuple')
+        assert 'nb::tuple' in arg
 
-def test_create_datadescriptor_from_nested_list():
-    """Test that create_datadescriptor correctly converts a nested list."""
-    from dace.data import create_datadescriptor
+    def test_from_python_tuple_float(self):
+        """Test creating descriptor from a Python float tuple."""
+        desc = PythonTuple.from_python_tuple((1.0, 2.0, 3.0))
+        assert desc.dtype == dace.float64
+        assert desc.shape == (3, )
 
-    desc = create_datadescriptor([[1, 2], [3, 4], [5, 6]])
-    assert isinstance(desc, dace.data.Array)
-    assert desc.shape == (3, 2)
+    def test_from_python_tuple_int(self):
+        """Test creating descriptor from a Python int tuple."""
+        desc = PythonTuple.from_python_tuple((10, 20))
+        assert desc.dtype == dace.int64
+        assert desc.shape == (2, )
 
+    def test_from_python_tuple_empty(self):
+        """Test creating descriptor from an empty tuple."""
+        desc = PythonTuple.from_python_tuple(())
+        assert desc.shape == (0, )
 
-def test_create_datadescriptor_preserves_dtype():
-    """Test that create_datadescriptor infers the correct dtype."""
-    from dace.data import create_datadescriptor
+    def test_json_round_trip(self):
+        """Test JSON serialization round-trip."""
+        desc = PythonTuple(dace.float64, 3, transient=True)
+        json_obj = desc.to_json()
+        assert json_obj['type'] == 'PythonTuple'
 
-    # Float list
-    desc_float = create_datadescriptor([1.0, 2.0])
-    assert desc_float.dtype == dace.float64
+        restored = PythonTuple.from_json(json_obj)
+        assert isinstance(restored, PythonTuple)
+        assert restored.dtype == desc.dtype
+        assert restored.shape == desc.shape
 
-    # Integer list
-    desc_int = create_datadescriptor([1, 2])
-    assert desc_int.dtype == dace.int64
+    def test_add_to_sdfg(self):
+        """Test adding a PythonTuple descriptor to an SDFG."""
+        sdfg = dace.SDFG('test_tuple_sdfg')
+        desc = PythonTuple(dace.int32, 3)
+        sdfg.add_datadesc('my_tuple', desc)
+        assert 'my_tuple' in sdfg.arrays
+        assert isinstance(sdfg.arrays['my_tuple'], PythonTuple)
 
 
 # ============================================================================
-# Tests combining collections with DaCe operations
+# PythonDict tests
 # ============================================================================
 
 
-def test_list_arg_with_map():
-    """Test using a list argument in a mapped computation."""
+class TestPythonDict:
 
-    @dace.program
-    def elementwise_square(a: dace.float64[5]):
-        return a * a
+    def test_creation_basic(self):
+        """Test basic PythonDict construction with known keys."""
+        desc = PythonDict(key_type=dace.string,
+                          value_type=dace.float64,
+                          keys_and_values={
+                              'x': dace.float64,
+                              'y': dace.float64
+                          },
+                          name='PointDict')
+        assert isinstance(desc, Structure)
+        assert desc.key_type == dace.string
+        assert desc.value_type == dace.float64
+        assert 'x' in desc.members
+        assert 'y' in desc.members
 
-    result = elementwise_square([1.0, 2.0, 3.0, 4.0, 5.0])
-    expected = np.array([1.0, 4.0, 9.0, 16.0, 25.0])
-    assert np.allclose(result, expected)
+    def test_creation_empty(self):
+        """Test creating an empty PythonDict."""
+        desc = PythonDict()
+        assert isinstance(desc, Structure)
+        assert len(desc.members) == 0
+
+    def test_creation_with_data_descriptors(self):
+        """Test creating PythonDict with explicit Data descriptors as values."""
+        desc = PythonDict(key_type=dace.string,
+                          value_type=dace.float64,
+                          keys_and_values={
+                              'a': Scalar(dace.float64),
+                              'b': Array(dace.float64, shape=(3, ))
+                          },
+                          name='MixedDict')
+        assert isinstance(desc.members['a'], Scalar)
+        assert isinstance(desc.members['b'], Array)
+
+    def test_repr(self):
+        """Test string representation."""
+        desc = PythonDict(key_type=dace.string,
+                          value_type=dace.float64,
+                          keys_and_values={'x': dace.float64},
+                          name='MyDict')
+        r = repr(desc)
+        assert 'PythonDict' in r
+        assert 'x' in r
+
+    def test_clone(self):
+        """Test cloning a PythonDict."""
+        desc = PythonDict(key_type=dace.string,
+                          value_type=dace.float64,
+                          keys_and_values={
+                              'x': dace.float64,
+                              'y': dace.float64
+                          },
+                          name='TestDict')
+        cloned = desc.clone()
+        assert isinstance(cloned, PythonDict)
+        assert cloned.key_type == desc.key_type
+        assert cloned.value_type == desc.value_type
+        assert set(cloned.members.keys()) == set(desc.members.keys())
+
+    def test_as_arg_nanobind(self):
+        """Test that as_arg generates nanobind dict type."""
+        desc = PythonDict(key_type=dace.string, value_type=dace.float64, keys_and_values={'x': dace.float64})
+        arg = desc.as_arg(with_types=True, name='my_dict')
+        assert 'nb::dict' in arg
+
+    def test_from_python_dict(self):
+        """Test creating descriptor from an actual Python dict."""
+        desc = PythonDict.from_python_dict({'a': 1.0, 'b': 2.0, 'c': 3.0})
+        assert desc.key_type == dace.string
+        assert 'a' in desc.members
+        assert 'b' in desc.members
+        assert 'c' in desc.members
+
+    def test_from_python_dict_int_values(self):
+        """Test creating descriptor from dict with int values."""
+        desc = PythonDict.from_python_dict({'count': 42, 'size': 100})
+        assert 'count' in desc.members
+        assert 'size' in desc.members
+
+    def test_from_python_dict_non_string_keys_fails(self):
+        """Test that non-string keys raise TypeError."""
+        with pytest.raises(TypeError, match='keys must be strings'):
+            PythonDict.from_python_dict({1: 'a', 2: 'b'})
+
+    def test_from_python_dict_with_array_value(self):
+        """Test creating descriptor from dict with numpy array values."""
+        desc = PythonDict.from_python_dict({'data': np.array([1.0, 2.0, 3.0]), 'label': 42})
+        assert isinstance(desc.members['data'], Array)
+        assert isinstance(desc.members['label'], Scalar)
+
+    def test_json_round_trip(self):
+        """Test JSON serialization round-trip."""
+        desc = PythonDict(key_type=dace.string,
+                          value_type=dace.float64,
+                          keys_and_values={
+                              'x': dace.float64,
+                              'y': dace.float64
+                          },
+                          name='TestDict')
+        json_obj = desc.to_json()
+        assert json_obj['type'] == 'PythonDict'
+
+        restored = PythonDict.from_json(json_obj)
+        assert isinstance(restored, PythonDict)
+
+    def test_add_to_sdfg(self):
+        """Test adding a PythonDict descriptor to an SDFG."""
+        sdfg = dace.SDFG('test_dict_sdfg')
+        desc = PythonDict(key_type=dace.string,
+                          value_type=dace.float64,
+                          keys_and_values={
+                              'x': dace.float64,
+                              'y': dace.float64
+                          },
+                          name='PointDict')
+        sdfg.add_datadesc('my_dict', desc)
+        assert 'my_dict' in sdfg.arrays
+        assert isinstance(sdfg.arrays['my_dict'], PythonDict)
+
+    def test_dict_keys_as_connectors(self):
+        """Test that dict keys correspond to structure members (connectors)."""
+        desc = PythonDict(key_type=dace.string,
+                          value_type=dace.float64,
+                          keys_and_values={
+                              'alpha': dace.float64,
+                              'beta': dace.float64,
+                              'gamma': dace.float64
+                          })
+        # Keys should be accessible as structure member names
+        assert set(desc.members.keys()) == {'alpha', 'beta', 'gamma'}
+        # All structure member keys should be accessible
+        assert set(desc.keys()) >= {'alpha', 'beta', 'gamma'}
 
 
-def test_multiple_list_args():
-    """Test passing multiple list arguments.
-
-    Note: When multiple lists are passed, they are each converted to temporary
-    numpy arrays. Due to memory reuse of temporary allocations, both arguments
-    may end up pointing to the same buffer. To avoid this, convert at least one
-    list to a numpy array before passing.
-    """
-
-    @dace.program
-    def add_arrays(a: dace.float64[3], b: dace.float64[3]):
-        return a + b
-
-    # Use explicit numpy arrays to avoid the temporary buffer reuse issue
-    a = np.array([1.0, 2.0, 3.0])
-    b = np.array([4.0, 5.0, 6.0])
-    result = add_arrays(a, b)
-    expected = np.array([5.0, 7.0, 9.0])
-    assert np.allclose(result, expected)
+# ============================================================================
+# PythonClass tests
+# ============================================================================
 
 
-def test_mixed_list_and_array_args():
-    """Test passing both a list and a numpy array as arguments."""
+class TestPythonClass:
 
-    @dace.program
-    def add_arrays(a: dace.float64[3], b: dace.float64[3]):
-        return a + b
+    def test_creation_basic(self):
+        """Test basic PythonClass construction."""
+        desc = PythonClass(class_name='Point', fields={'x': dace.float64, 'y': dace.float64, 'z': dace.float64})
+        assert isinstance(desc, Structure)
+        assert desc.class_name == 'Point'
+        assert 'x' in desc.members
+        assert 'y' in desc.members
+        assert 'z' in desc.members
 
-    arr = np.array([10.0, 20.0, 30.0])
-    result = add_arrays([1.0, 2.0, 3.0], arr)
-    expected = np.array([11.0, 22.0, 33.0])
-    assert np.allclose(result, expected)
+    def test_creation_empty(self):
+        """Test creating PythonClass with no fields."""
+        desc = PythonClass(class_name='Empty')
+        assert len(desc.members) == 0
+
+    def test_creation_with_array_field(self):
+        """Test PythonClass with array-typed fields."""
+        desc = PythonClass(class_name='MyObj',
+                           fields={
+                               'value': dace.float64,
+                               'data': Array(dace.float64, shape=(10, ))
+                           })
+        assert isinstance(desc.members['value'], Scalar)
+        assert isinstance(desc.members['data'], Array)
+
+    def test_repr(self):
+        """Test string representation."""
+        desc = PythonClass(class_name='Foo', fields={'bar': dace.int32})
+        r = repr(desc)
+        assert 'PythonClass' in r
+        assert 'Foo' in r
+
+    def test_clone(self):
+        """Test cloning a PythonClass."""
+        desc = PythonClass(class_name='Point', fields={'x': dace.float64, 'y': dace.float64})
+        cloned = desc.clone()
+        assert isinstance(cloned, PythonClass)
+        assert cloned.class_name == desc.class_name
+        assert set(cloned.members.keys()) == set(desc.members.keys())
+
+    def test_as_arg_nanobind(self):
+        """Test that as_arg generates nanobind object type."""
+        desc = PythonClass(class_name='Obj', fields={'x': dace.float64})
+        arg = desc.as_arg(with_types=True, name='my_obj')
+        assert 'nb::object' in arg
+
+    def test_from_python_class(self):
+        """Test creating descriptor from a Python class with type annotations."""
+
+        class Point:
+            x: float
+            y: float
+            z: int
+
+        desc = PythonClass.from_python_class(Point)
+        assert desc.class_name == 'Point'
+        assert 'x' in desc.members
+        assert 'y' in desc.members
+        assert 'z' in desc.members
+
+    def test_from_python_instance(self):
+        """Test creating descriptor from a Python instance."""
+
+        class Particle:
+            x: float
+            y: float
+            mass: float
+
+            def __init__(self, x, y, mass):
+                self.x = x
+                self.y = y
+                self.mass = mass
+
+        p = Particle(1.0, 2.0, 3.0)
+        desc = PythonClass.from_python_class(p)
+        assert desc.class_name == 'Particle'
+        assert 'x' in desc.members
+        assert 'y' in desc.members
+        assert 'mass' in desc.members
+
+    def test_from_python_class_with_overrides(self):
+        """Test creating descriptor with field overrides."""
+
+        class Vec:
+            x: float
+            y: float
+
+        desc = PythonClass.from_python_class(Vec, x=dace.float32, y=dace.float32)
+        assert isinstance(desc.members['x'], Scalar)
+        assert isinstance(desc.members['y'], Scalar)
+
+    def test_json_round_trip(self):
+        """Test JSON serialization round-trip."""
+        desc = PythonClass(class_name='MyClass', fields={'a': dace.float64, 'b': dace.int32})
+        json_obj = desc.to_json()
+        assert json_obj['type'] == 'PythonClass'
+
+        restored = PythonClass.from_json(json_obj)
+        assert isinstance(restored, PythonClass)
+
+    def test_add_to_sdfg(self):
+        """Test adding a PythonClass descriptor to an SDFG."""
+        sdfg = dace.SDFG('test_class_sdfg')
+        desc = PythonClass(class_name='Point', fields={'x': dace.float64, 'y': dace.float64})
+        sdfg.add_datadesc('my_obj', desc)
+        assert 'my_obj' in sdfg.arrays
+        assert isinstance(sdfg.arrays['my_obj'], PythonClass)
+
+
+# ============================================================================
+# PythonGenerator tests
+# ============================================================================
+
+
+class TestPythonGenerator:
+
+    def test_creation_basic(self):
+        """Test basic PythonGenerator construction."""
+        desc = PythonGenerator(dace.int64)
+        assert isinstance(desc, Stream)
+        assert desc.dtype == dace.int64
+        assert desc.buffer_size == 1
+        assert desc.shape == (1, )
+
+    def test_creation_float(self):
+        """Test PythonGenerator with float type."""
+        desc = PythonGenerator(dace.float64)
+        assert desc.dtype == dace.float64
+
+    def test_creation_transient(self):
+        """Test creating a transient PythonGenerator."""
+        desc = PythonGenerator(dace.int32, transient=True)
+        assert desc.transient is True
+
+    def test_repr(self):
+        """Test string representation."""
+        desc = PythonGenerator(dace.int64)
+        assert 'PythonGenerator' in repr(desc)
+
+    def test_clone(self):
+        """Test cloning a PythonGenerator."""
+        desc = PythonGenerator(dace.float64, transient=True)
+        cloned = desc.clone()
+        assert isinstance(cloned, PythonGenerator)
+        assert cloned.dtype == desc.dtype
+        assert cloned.transient == desc.transient
+
+    def test_as_arg_nanobind(self):
+        """Test that as_arg generates nanobind object type."""
+        desc = PythonGenerator(dace.int64)
+        arg = desc.as_arg(with_types=True, name='my_gen')
+        assert 'nb::object' in arg
+
+    def test_json_round_trip(self):
+        """Test JSON serialization round-trip."""
+        desc = PythonGenerator(dace.float64, transient=True)
+        json_obj = desc.to_json()
+        assert json_obj['type'] == 'PythonGenerator'
+
+        restored = PythonGenerator.from_json(json_obj)
+        assert isinstance(restored, PythonGenerator)
+        assert restored.dtype == desc.dtype
+
+    def test_add_to_sdfg(self):
+        """Test adding a PythonGenerator descriptor to an SDFG."""
+        sdfg = dace.SDFG('test_gen_sdfg')
+        desc = PythonGenerator(dace.int64)
+        sdfg.add_datadesc('my_gen', desc)
+        assert 'my_gen' in sdfg.arrays
+        assert isinstance(sdfg.arrays['my_gen'], PythonGenerator)
+
+
+# ============================================================================
+# SDFG integration tests
+# ============================================================================
+
+
+class TestSDFGIntegration:
+
+    def test_python_list_in_sdfg_with_state(self):
+        """Test using PythonList as data in an SDFG with a state."""
+        sdfg = dace.SDFG('list_sdfg')
+        sdfg.add_datadesc('input_list', PythonList(dace.float64, 5))
+        sdfg.add_datadesc('output_list', PythonList(dace.float64, 5, transient=True))
+
+        state = sdfg.add_state('process')
+        r = state.add_read('input_list')
+        w = state.add_write('output_list')
+        state.add_nedge(r, w, dace.Memlet('input_list[0:5]'))
+
+        sdfg.validate()
+
+    def test_python_dict_in_sdfg(self):
+        """Test using PythonDict as data in an SDFG."""
+        sdfg = dace.SDFG('dict_sdfg')
+        desc = PythonDict(key_type=dace.string,
+                          value_type=dace.float64,
+                          keys_and_values={
+                              'x': dace.float64,
+                              'y': dace.float64
+                          },
+                          name='PointDict')
+        sdfg.add_datadesc('point', desc)
+
+        state = sdfg.add_state('init')
+        assert 'point' in sdfg.arrays
+
+    def test_python_class_in_sdfg(self):
+        """Test using PythonClass as data in an SDFG."""
+        sdfg = dace.SDFG('class_sdfg')
+        desc = PythonClass(class_name='Particle', fields={'x': dace.float64, 'y': dace.float64, 'mass': dace.float64})
+        sdfg.add_datadesc('particle', desc)
+
+        state = sdfg.add_state('init')
+        assert 'particle' in sdfg.arrays
+        assert isinstance(sdfg.arrays['particle'], PythonClass)
+
+    def test_python_list_sdfg_serialization(self):
+        """Test full SDFG serialization with PythonList."""
+        sdfg = dace.SDFG('list_serial')
+        sdfg.add_datadesc('data', PythonList(dace.float64, 10))
+        state = sdfg.add_state('s0')
+
+        # Serialize -> deserialize
+        json_str = sdfg.to_json()
+        restored = dace.SDFG.from_json(json_str)
+
+        assert 'data' in restored.arrays
+        assert isinstance(restored.arrays['data'], PythonList)
+        assert restored.arrays['data'].shape == (10, )
+
+    def test_python_dict_sdfg_serialization(self):
+        """Test full SDFG serialization with PythonDict."""
+        sdfg = dace.SDFG('dict_serial')
+        desc = PythonDict(key_type=dace.string,
+                          value_type=dace.float64,
+                          keys_and_values={
+                              'a': dace.float64,
+                              'b': dace.float64
+                          },
+                          name='MyDict')
+        sdfg.add_datadesc('cfg', desc)
+        state = sdfg.add_state('s0')
+
+        json_str = sdfg.to_json()
+        restored = dace.SDFG.from_json(json_str)
+
+        assert 'cfg' in restored.arrays
+        assert isinstance(restored.arrays['cfg'], PythonDict)
+
+    def test_python_generator_sdfg_serialization(self):
+        """Test full SDFG serialization with PythonGenerator."""
+        sdfg = dace.SDFG('gen_serial')
+        sdfg.add_datadesc('gen', PythonGenerator(dace.int64))
+        state = sdfg.add_state('s0')
+
+        json_str = sdfg.to_json()
+        restored = dace.SDFG.from_json(json_str)
+
+        assert 'gen' in restored.arrays
+        assert isinstance(restored.arrays['gen'], PythonGenerator)
+
+    def test_multiple_collection_types_in_sdfg(self):
+        """Test using multiple collection types together in an SDFG."""
+        sdfg = dace.SDFG('multi_collection')
+
+        sdfg.add_datadesc('my_list', PythonList(dace.float64, 10))
+        sdfg.add_datadesc('my_tuple', PythonTuple(dace.int32, 3))
+        sdfg.add_datadesc(
+            'my_dict',
+            PythonDict(key_type=dace.string,
+                       value_type=dace.float64,
+                       keys_and_values={'param': dace.float64},
+                       name='Config'))
+        sdfg.add_datadesc('my_obj', PythonClass(class_name='Obj', fields={
+            'val': dace.float64,
+        }))
+        sdfg.add_datadesc('my_gen', PythonGenerator(dace.int64))
+
+        state = sdfg.add_state('work')
+        sdfg.validate()
+
+        # All descriptors should be retrievable
+        assert isinstance(sdfg.arrays['my_list'], PythonList)
+        assert isinstance(sdfg.arrays['my_tuple'], PythonTuple)
+        assert isinstance(sdfg.arrays['my_dict'], PythonDict)
+        assert isinstance(sdfg.arrays['my_obj'], PythonClass)
+        assert isinstance(sdfg.arrays['my_gen'], PythonGenerator)
+
+
+# ============================================================================
+# Imports/exports test
+# ============================================================================
+
+
+class TestImports:
+
+    def test_importable_from_dace_data(self):
+        """Test that all classes are importable from dace.data."""
+        from dace.data import PythonList, PythonTuple, PythonDict, PythonClass, PythonGenerator
+        assert PythonList is not None
+        assert PythonTuple is not None
+        assert PythonDict is not None
+        assert PythonClass is not None
+        assert PythonGenerator is not None
+
+    def test_in_all(self):
+        """Test that all classes are in __all__."""
+        import dace.data as dd
+        assert 'PythonList' in dd.__all__
+        assert 'PythonTuple' in dd.__all__
+        assert 'PythonDict' in dd.__all__
+        assert 'PythonClass' in dd.__all__
+        assert 'PythonGenerator' in dd.__all__
+
+    def test_inheritance(self):
+        """Test that the class hierarchy is correct."""
+        assert issubclass(PythonList, Array)
+        assert issubclass(PythonList, Data)
+        assert issubclass(PythonTuple, Array)
+        assert issubclass(PythonTuple, Data)
+        assert issubclass(PythonDict, Structure)
+        assert issubclass(PythonDict, Data)
+        assert issubclass(PythonClass, Structure)
+        assert issubclass(PythonClass, Data)
+        assert issubclass(PythonGenerator, Stream)
+        assert issubclass(PythonGenerator, Data)
 
 
 if __name__ == '__main__':
-    test_list_arg_1d()
-    test_list_arg_2d()
-    test_list_arg_integer()
-    test_list_arg_inout()
-    test_tuple_arg_not_supported()
-    test_tuple_arg_as_numpy()
-    test_return_tuple_scalars()
-    test_return_tuple_arrays()
-    test_return_tuple_mixed()
-    test_return_triple()
-    test_list_literal_as_shape()
-    test_tuple_literal_as_shape()
-    test_range_as_collection()
-    test_create_datadescriptor_from_list()
-    test_create_datadescriptor_from_tuple()
-    test_create_datadescriptor_from_nested_list()
-    test_create_datadescriptor_preserves_dtype()
-    test_list_arg_with_map()
-    test_multiple_list_args()
-    test_mixed_list_and_array_args()
-    print("All tests passed!")
+    pytest.main([__file__, '-v'])

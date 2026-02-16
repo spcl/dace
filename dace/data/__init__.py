@@ -54,6 +54,15 @@ Offset = TensorIndexOffset
 # ML-related data descriptors
 from dace.data.ml import ParameterArray
 
+# Native Python collection descriptors
+from dace.data.pydata import (
+    PythonList,
+    PythonTuple,
+    PythonDict,
+    PythonClass,
+    PythonGenerator,
+)
+
 # Descriptor creation and array creation from descriptors
 from dace.data.creation import (
     create_datadescriptor,
@@ -101,6 +110,12 @@ __all__ = [
     'Offset',
     # ML descriptors
     'ParameterArray',
+    # Python collection descriptors
+    'PythonList',
+    'PythonTuple',
+    'PythonDict',
+    'PythonClass',
+    'PythonGenerator',
     # Functions
     'create_datadescriptor',
     'make_array_from_descriptor',
