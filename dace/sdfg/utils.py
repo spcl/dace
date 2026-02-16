@@ -1662,14 +1662,13 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
     return counter
 
 
-def load_precompiled_sdfg(folder: str, argnames: Optional[List[str]] = None) -> csdfg.CompiledSDFG:
+def load_precompiled_sdfg(folder: str) -> csdfg.CompiledSDFG:
     """
     Loads a pre-compiled SDFG from an output folder (e.g. ".dacecache/program").
     Folder must contain a file called "program.sdfg" and a subfolder called
     "build" with the shared object.
 
     :param folder: Path to SDFG output folder.
-    :param argnames: Names of arguments of the compiled SDFG.
     :return: A callable CompiledSDFG object.
     """
     sdfg = SDFG.from_file(os.path.join(folder, 'program.sdfg'))
@@ -1677,16 +1676,17 @@ def load_precompiled_sdfg(folder: str, argnames: Optional[List[str]] = None) -> 
     return csdfg.CompiledSDFG(
         sdfg,
         csdfg.ReloadableDLL(os.path.join(folder, 'build', f'lib{sdfg.name}.{suffix}'), sdfg.name),
-        argnames,
+        sdfg.arg_names,
     )
 
 
-def distributed_compile(sdfg: SDFG, comm, validate: bool = True) -> csdfg.CompiledSDFG:
+def distributed_compile(sdfg: SDFG, comm, *, validate: bool = True) -> csdfg.CompiledSDFG:
     """
     Compiles an SDFG in rank 0 of MPI communicator ``comm``. Then, the compiled SDFG is loaded in all other ranks.
 
     :param sdfg: SDFG to be compiled.
     :param comm: MPI communicator. ``Intracomm`` is the base mpi4py communicator class.
+    :param validate: If True, validates the SDFG prior to generating code.
     :return: Compiled SDFG.
     :note: This method can be used only if the module mpi4py is installed.
     """

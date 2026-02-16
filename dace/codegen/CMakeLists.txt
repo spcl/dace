@@ -155,7 +155,7 @@ function(expand_deferred_variables VAR_NAME)
 endfunction()
 
 # Environment-specified external dependencies
-if (${CMAKE_VERSION} VERSION_LESS ${DACE_ENV_MINIMUM_VERSION})
+if (DEFINED DACE_ENV_MINIMUM_VERSION AND ${CMAKE_VERSION} VERSION_LESS ${DACE_ENV_MINIMUM_VERSION})
   message(FATAL_ERROR "Packages require CMake version >= ${DACE_ENV_MINIMUM_VERSION}.")
 endif()
 # Include any CMake files specified
