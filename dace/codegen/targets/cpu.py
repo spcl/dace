@@ -66,6 +66,15 @@ class CPUCodeGen(TargetCodeGenerator):
                     continue
 
                 self._dispatcher.defined_vars.add(name, DefinedType.Scalar, arg_type.dtype.ctype)
+            elif isinstance(arg_type, (data.PythonList, data.PythonTuple)):
+                # Python collections use nanobind types (nb::list, nb::tuple)
+                self._dispatcher.defined_vars.add(name, DefinedType.Pointer, arg_type.as_arg(name=''))
+            elif isinstance(arg_type, (data.PythonDict, data.PythonClass)):
+                # Python dicts/classes use nanobind types (nb::dict, nb::object)
+                self._dispatcher.defined_vars.add(name, DefinedType.Pointer, arg_type.as_arg(name=''))
+            elif isinstance(arg_type, data.PythonGenerator):
+                # Python generators use nanobind types (nb::object)
+                self._dispatcher.defined_vars.add(name, DefinedType.Stream, arg_type.as_arg(name=''))
             elif isinstance(arg_type, data.Array):
                 self._dispatcher.defined_vars.add(name, DefinedType.Pointer, dtypes.pointer(arg_type.dtype).ctype)
             elif isinstance(arg_type, data.Stream):

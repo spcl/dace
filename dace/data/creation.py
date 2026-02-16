@@ -101,6 +101,10 @@ def create_datadescriptor(obj, no_custom_desc=False):
         else:
             dtype = dtypes.typeclass(obj.dtype.type)
         return Array(dtype=dtype, strides=tuple(s // obj.itemsize for s in obj.strides), shape=obj.shape)
+    elif isinstance(obj, dict):
+        # Dictionaries become PythonDict descriptors
+        from dace.data.pydata import PythonDict
+        return PythonDict.from_python_dict(obj)
     elif type(obj).__module__ == "cupy" and type(obj).__name__ == "ndarray":
         # special case for CuPy and HIP, which does not support __cuda_array_interface__
         storage = dtypes.StorageType.GPU_Global

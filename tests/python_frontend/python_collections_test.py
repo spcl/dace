@@ -14,7 +14,7 @@ import pytest
 import dace
 from dace import dtypes, serialize
 from dace.data import (Array, Data, Scalar, Stream, Structure, PythonList, PythonTuple, PythonDict, PythonClass,
-                       PythonGenerator)
+                       PythonGenerator, create_datadescriptor)
 
 # ============================================================================
 # PythonList tests
@@ -41,6 +41,14 @@ class TestPythonList:
         """Test creating a transient PythonList."""
         desc = PythonList(dace.float64, 5, transient=True)
         assert desc.transient is True
+
+    def test_validate_must_be_1d(self):
+        """Test that PythonList enforces 1D shape."""
+        desc = PythonList(dace.float64, 5)
+        # Force a non-1D shape and check validation fails
+        desc._shape = (2, 3)
+        with pytest.raises(TypeError, match='PythonList must always be 1D'):
+            desc.validate()
 
     def test_repr(self):
         """Test string representation."""
@@ -112,7 +120,6 @@ class TestPythonList:
         desc = PythonList(dace.float64, 5)
         sdfg.add_datadesc('my_list', desc)
 
-        # Serialize and deserialize SDFG
         json_str = sdfg.to_json()
         restored_sdfg = dace.SDFG.from_json(json_str)
         assert 'my_list' in restored_sdfg.arrays
@@ -139,6 +146,13 @@ class TestPythonTuple:
         """Test creating a transient PythonTuple."""
         desc = PythonTuple(dace.float64, 2, transient=True)
         assert desc.transient is True
+
+    def test_validate_must_be_1d(self):
+        """Test that PythonTuple enforces 1D shape."""
+        desc = PythonTuple(dace.float64, 5)
+        desc._shape = (2, 3)
+        with pytest.raises(TypeError, match='PythonTuple must always be 1D'):
+            desc.validate()
 
     def test_repr(self):
         """Test string representation."""
@@ -204,7 +218,7 @@ class TestPythonTuple:
 class TestPythonDict:
 
     def test_creation_basic(self):
-        """Test basic PythonDict construction with known keys."""
+        """Test basic PythonDict construction."""
         desc = PythonDict(key_type=dace.string,
                           value_type=dace.float64,
                           keys_and_values={
@@ -225,7 +239,7 @@ class TestPythonDict:
         assert len(desc.members) == 0
 
     def test_creation_with_data_descriptors(self):
-        """Test creating PythonDict with explicit Data descriptors as values."""
+        """Test creating PythonDict with explicit Data descriptors."""
         desc = PythonDict(key_type=dace.string,
                           value_type=dace.float64,
                           keys_and_values={
@@ -322,7 +336,7 @@ class TestPythonDict:
         assert isinstance(sdfg.arrays['my_dict'], PythonDict)
 
     def test_dict_keys_as_connectors(self):
-        """Test that dict keys correspond to structure members (connectors)."""
+        """Test that dict keys are accessible via connectors."""
         desc = PythonDict(key_type=dace.string,
                           value_type=dace.float64,
                           keys_and_values={
@@ -330,9 +344,7 @@ class TestPythonDict:
                               'beta': dace.float64,
                               'gamma': dace.float64
                           })
-        # Keys should be accessible as structure member names
         assert set(desc.members.keys()) == {'alpha', 'beta', 'gamma'}
-        # All structure member keys should be accessible
         assert set(desc.keys()) >= {'alpha', 'beta', 'gamma'}
 
 
@@ -389,7 +401,7 @@ class TestPythonClass:
         assert 'nb::object' in arg
 
     def test_from_python_class(self):
-        """Test creating descriptor from a Python class with type annotations."""
+        """Test creating descriptor from a Python class with annotations."""
 
         class Point:
             x: float
@@ -565,7 +577,6 @@ class TestSDFGIntegration:
         sdfg.add_datadesc('data', PythonList(dace.float64, 10))
         state = sdfg.add_state('s0')
 
-        # Serialize -> deserialize
         json_str = sdfg.to_json()
         restored = dace.SDFG.from_json(json_str)
 
@@ -624,12 +635,87 @@ class TestSDFGIntegration:
         state = sdfg.add_state('work')
         sdfg.validate()
 
-        # All descriptors should be retrievable
         assert isinstance(sdfg.arrays['my_list'], PythonList)
         assert isinstance(sdfg.arrays['my_tuple'], PythonTuple)
         assert isinstance(sdfg.arrays['my_dict'], PythonDict)
         assert isinstance(sdfg.arrays['my_obj'], PythonClass)
         assert isinstance(sdfg.arrays['my_gen'], PythonGenerator)
+
+
+# ============================================================================
+# Python frontend integration tests
+# ============================================================================
+
+
+class TestFrontendIntegration:
+
+    def test_create_datadescriptor_from_dict(self):
+        """Test that create_datadescriptor creates PythonDict from a dict."""
+        desc = create_datadescriptor({'x': 1.0, 'y': 2.0})
+        assert isinstance(desc, PythonDict)
+        assert 'x' in desc.members
+        assert 'y' in desc.members
+
+    def test_create_datadescriptor_from_dict_int_values(self):
+        """Test create_datadescriptor with dict of int values."""
+        desc = create_datadescriptor({'count': 42, 'size': 100})
+        assert isinstance(desc, PythonDict)
+        assert 'count' in desc.members
+
+    def test_create_datadescriptor_from_dict_mixed_values(self):
+        """Test create_datadescriptor with dict of mixed types."""
+        desc = create_datadescriptor({'data': np.array([1.0, 2.0]), 'label': 42})
+        assert isinstance(desc, PythonDict)
+        assert isinstance(desc.members['data'], Array)
+        assert isinstance(desc.members['label'], Scalar)
+
+
+# ============================================================================
+# Code generation integration tests
+# ============================================================================
+
+
+class TestCodegenIntegration:
+
+    def test_python_list_codegen_arg_type(self):
+        """Test that PythonList generates nb::list type."""
+        desc = PythonList(dace.float64, 5)
+        arg = desc.as_arg(with_types=True, name='my_list')
+        assert arg == 'nb::list my_list'
+
+    def test_python_tuple_codegen_arg_type(self):
+        """Test that PythonTuple generates nb::tuple type."""
+        desc = PythonTuple(dace.int32, 3)
+        arg = desc.as_arg(with_types=True, name='my_tuple')
+        assert arg == 'nb::tuple my_tuple'
+
+    def test_python_dict_codegen_arg_type(self):
+        """Test that PythonDict generates nb::dict type."""
+        desc = PythonDict(key_type=dace.string, value_type=dace.float64)
+        arg = desc.as_arg(with_types=True, name='my_dict')
+        assert arg == 'nb::dict my_dict'
+
+    def test_python_class_codegen_arg_type(self):
+        """Test that PythonClass generates nb::object type."""
+        desc = PythonClass(class_name='Obj', fields={'x': dace.float64})
+        arg = desc.as_arg(with_types=True, name='my_obj')
+        assert arg == 'nb::object my_obj'
+
+    def test_python_generator_codegen_arg_type(self):
+        """Test that PythonGenerator generates nb::object type."""
+        desc = PythonGenerator(dace.int64)
+        arg = desc.as_arg(with_types=True, name='my_gen')
+        assert arg == 'nb::object my_gen'
+
+    def test_codegen_sdfg_with_collections_validates(self):
+        """Test that SDFG with Python collection descriptors validates."""
+        sdfg = dace.SDFG('codegen_test')
+        sdfg.add_datadesc('my_list', PythonList(dace.float64, 5))
+        sdfg.add_datadesc(
+            'my_dict',
+            PythonDict(key_type=dace.string, value_type=dace.float64, keys_and_values={'x': dace.float64}, name='D'))
+        state = sdfg.add_state('s0')
+        sdfg.validate()
 
 
 # ============================================================================
@@ -641,7 +727,7 @@ class TestImports:
 
     def test_importable_from_dace_data(self):
         """Test that all classes are importable from dace.data."""
-        from dace.data import PythonList, PythonTuple, PythonDict, PythonClass, PythonGenerator
+        from dace.data import (PythonList, PythonTuple, PythonDict, PythonClass, PythonGenerator)
         assert PythonList is not None
         assert PythonTuple is not None
         assert PythonDict is not None

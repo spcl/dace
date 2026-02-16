@@ -39,7 +39,7 @@ class PythonList(Array):
     ``nb::list`` (nanobind) when used in Python-interoperable contexts.
     Supports dynamic-length lists at the SDFG level.
 
-    :param element_type: The DaCe type of the list elements (e.g., ``dace.float64``).
+    :param dtype: The DaCe type of the list elements (e.g., ``dace.float64``).
     :param size: Number of elements (can be symbolic).
     :param transient: Whether this is a transient (temporary) data container.
 
@@ -69,6 +69,11 @@ class PythonList(Array):
                                          location=location,
                                          lifetime=lifetime,
                                          debuginfo=debuginfo)
+
+    def validate(self):
+        if len(self.shape) != 1:
+            raise TypeError('PythonList must always be 1D, got shape %s' % (self.shape, ))
+        super(PythonList, self).validate()
 
     def __repr__(self):
         return 'PythonList (element_type=%s, size=%s)' % (self.dtype, self.shape[0])
@@ -143,7 +148,7 @@ class PythonTuple(Array):
     ``nb::tuple`` (nanobind). Unlike PythonList, tuples are conceptually
     immutable. The size is always fixed.
 
-    :param element_type: The DaCe type of the tuple elements (e.g., ``dace.float64``).
+    :param dtype: The DaCe type of the tuple elements (e.g., ``dace.float64``).
     :param size: Number of elements.
     :param transient: Whether this is a transient (temporary) data container.
 
@@ -173,6 +178,11 @@ class PythonTuple(Array):
                                           location=location,
                                           lifetime=lifetime,
                                           debuginfo=debuginfo)
+
+    def validate(self):
+        if len(self.shape) != 1:
+            raise TypeError('PythonTuple must always be 1D, got shape %s' % (self.shape, ))
+        super(PythonTuple, self).validate()
 
     def __repr__(self):
         return 'PythonTuple (element_type=%s, size=%s)' % (self.dtype, self.shape[0])
@@ -241,27 +251,23 @@ class PythonDict(Structure):
     """
     Data descriptor for a Python dictionary.
 
-    Extends :class:`Structure` to represent a dictionary where keys are known
-    at compile time and encoded as structure members (connectors). The key
-    and value types are tracked. Code-generated as ``nb::dict`` (nanobind).
-
-    Each key in the dictionary becomes a member of the underlying structure.
-    This means that keys must be known at SDFG construction time.
+    Extends :class:`Structure` to represent a dictionary with typed keys
+    and values. Dictionary keys are accessed via connectors in the dataflow
+    graph. Code-generated as ``nb::dict`` (nanobind).
 
     :param key_type: The DaCe type for dictionary keys (e.g., ``dace.string``).
     :param value_type: The DaCe type for dictionary values (e.g., ``dace.float64``).
-    :param keys_and_values: A dictionary mapping string keys to Data descriptors
-        representing the values.
+    :param keys_and_values: An optional dictionary mapping string keys to Data
+        descriptors representing the values.
     :param name: Name for this dict type.
     :param transient: Whether this is a transient (temporary) data container.
 
     Example usage::
 
-        # Create a PythonDict from known keys
+        # Create a PythonDict descriptor with key and value types
         desc = PythonDict(
             key_type=dace.string,
             value_type=dace.float64,
-            keys_and_values={'x': dace.float64, 'y': dace.float64},
             name='MyDict'
         )
 
