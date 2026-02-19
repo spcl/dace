@@ -57,7 +57,7 @@ def program(f: F,
                           on the generated DaCe program during compilation.
     :param device: Transform the function to run on the target device.
     :param recreate_sdfg: Whether to recreate the SDFG from the Python code. If False, the SDFG will be loaded from the
-                          cache (``<build folder>/<program name>/program.sdfg``) if it exists.
+                          cache (``<build folder>/<program name>/program.sdfgz``) if it exists.
                           Use this if you want to modify the SDFG after the first call to the function.
     :param regenerate_code: Whether to regenerate the code from the SDFG. If False, the code in the build folder will be
                             used if it exists. Use this if you want to modify the generated code without DaCe overriding
@@ -126,7 +126,7 @@ def method(f: F,
                           on the generated DaCe program during compilation.
     :param device: Transform the function to run on the target device.
     :param recreate_sdfg: Whether to recreate the SDFG from the Python code. If False, the SDFG will be loaded from the
-                          cache (``<build folder>/<program name>/program.sdfg``) if it exists.
+                          cache (``<build folder>/<program name>/program.sdfgz``) if it exists.
                           Use this if you want to modify the SDFG after the first call to the function.
     :param regenerate_code: Whether to regenerate the code from the SDFG. If False, the code in the build folder will be
                             used if it exists. Use this if you want to modify the generated code without DaCe overriding

@@ -41,8 +41,6 @@ def make_sdfg(outer_shape, inner_shape, outer_index, inner_index):
     nsdfg_node = state.add_nested_sdfg(nsdfg, {}, {'C', 'D'})
     state.add_edge(nsdfg_node, 'C', A, None, dace.Memlet('A'))
     state.add_edge(nsdfg_node, 'D', B, None, dace.Memlet('B'))
-
-    sdfg.save('_dacegraphs/program.sdfg')
     return sdfg
 
 
@@ -53,7 +51,6 @@ def test_same_shape():
     sdfg = make_sdfg([1], [1], '0', '0')
     sdfg.simplify()
 
-    sdfg.save('_dacegraphs/program.sdfg')
     sdfg(A=A, B=B)
 
     assert len(sdfg.node(0).nodes()) == 8
@@ -61,7 +58,6 @@ def test_same_shape():
     expected = np.array([2**2, (2**2) + (2**6)], dtype=np.float32)
     result = np.array([A[0], B[0]], dtype=np.float32)
     diff = np.linalg.norm(expected - result)
-    print('Difference:', diff)
     assert diff <= 1e-6
 
 
@@ -79,7 +75,6 @@ def test_different_shape():
     expected = np.array([2**2, (2**2) + (2**6)], dtype=np.float32)
     result = np.array([A[1, 0], B[1, 0]], dtype=np.float32)
     diff = np.linalg.norm(expected - result)
-    print('Difference:', diff)
     assert diff <= 1e-6
 
 

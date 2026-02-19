@@ -1665,13 +1665,13 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
 def load_precompiled_sdfg(folder: str) -> csdfg.CompiledSDFG:
     """
     Loads a pre-compiled SDFG from an output folder (e.g. ".dacecache/program").
-    Folder must contain a file called "program.sdfg" and a subfolder called
+    Folder must contain a file called "program.sdfgz" and a subfolder called
     "build" with the shared object.
 
     :param folder: Path to SDFG output folder.
     :return: A callable CompiledSDFG object.
     """
-    sdfg = SDFG.from_file(os.path.join(folder, 'program.sdfg'))
+    sdfg = SDFG.from_file(os.path.join(folder, 'program.sdfgz'))
     suffix = config.Config.get('compiler', 'library_extension')
     return csdfg.CompiledSDFG(
         sdfg,
