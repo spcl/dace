@@ -98,7 +98,7 @@ def generate_program_folder(sdfg, code_objects: List[CodeObject], out_path: str,
 
     if sdfg is not None:
         # Save the SDFG itself and its hash
-        hash = sdfg.save(os.path.join(out_path, "program.sdfg"), hash=True)
+        hash = sdfg.save(os.path.join(out_path, "program.sdfgz"), hash=True, compress=True)
         filepath = os.path.join(out_path, 'include', 'hash.h')
         contents = f'#define __HASH_{sdfg.name} "{hash}"\n'
         if not identical_file_exists(filepath, contents):
