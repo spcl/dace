@@ -3722,6 +3722,8 @@ class ConditionalBlock(AbstractControlFlowRegion):
 
     def to_json(self, parent=None):
         json = super().to_json(parent)
+        del json['nodes']
+        del json['edges']
         json['branches'] = [(condition.to_json() if condition is not None else None, cfg.to_json())
                             for condition, cfg in self._branches]
         return json
