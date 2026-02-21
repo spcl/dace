@@ -13,7 +13,7 @@ from dace.transformation import pass_pipeline as ppl, transformation
 
 import ast
 from dace.sdfg.nodes import CodeBlock
-from dace.codegen.tools.type_inference import infer_types
+from dace.sdfg import infer_types
 
 
 class ASTSplitter:
