@@ -56,6 +56,12 @@ private:
         // This is equivalent to rounding up to the nearest representable number with probability 1 - distance to the
         // next representable number. The modified double is finally cast to float32.
 
+        // If x is exactly representable as float32, return it deterministically
+        float f = static_cast<float>(x);
+        if (static_cast<double>(f) == x) {
+            return f;
+        }
+
         uint64_t rbits = get_random_u64(); // it's quicker to use u64 over u32, perhaps due casting?
 
         // if x is subnormal, round randomly; N.B fast-math forces subnormal values to 0

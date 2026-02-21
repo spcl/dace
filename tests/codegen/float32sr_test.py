@@ -12,7 +12,6 @@ import dace.libraries.blas as blas
 N = 1000
 M = 5
 EPS = 0.05
-USE_GPU = False
 TYPE = dace.float32sr
 NP_TYPE = np.float32
 
@@ -33,12 +32,7 @@ def test_add():
     B = np.array([b] * N, dtype=NP_TYPE)
     OUT = np.zeros(N, dtype=NP_TYPE)
 
-    if USE_GPU:
-        sdfg = fn.to_sdfg()
-        sdfg.apply_gpu_transformations()
-        sdfg(A=A, B=B, OUT=OUT)
-    else:
-        fn(A, B, OUT)
+    fn(A, B, OUT)
 
     count = Counter(OUT)
     emp_prob = count[max(count.keys())] / N
@@ -66,12 +60,7 @@ def test_sub():
     B = np.array([b] * N, dtype=NP_TYPE)
     OUT = np.zeros(N, dtype=NP_TYPE)
 
-    if USE_GPU:
-        sdfg = fn.to_sdfg()
-        sdfg.apply_gpu_transformations()
-        sdfg(A=A, B=B, OUT=OUT)
-    else:
-        fn(A, B, OUT)
+    fn(A, B, OUT)
 
     count = Counter(OUT)
     emp_prob = count[max(count.keys())] / N
@@ -93,12 +82,7 @@ def test_sub_exact_rep():
     B = np.array([b] * N, dtype=NP_TYPE)
     OUT = np.zeros(N, dtype=NP_TYPE)
 
-    if USE_GPU:
-        sdfg = fn.to_sdfg()
-        sdfg.apply_gpu_transformations()
-        sdfg(A=A, B=B, OUT=OUT)
-    else:
-        fn(A, B, OUT)
+    fn(A, B, OUT)
 
     count = Counter(OUT)
     emp_prob = count[max(count.keys())] / N
@@ -126,12 +110,7 @@ def test_mult():
     B = np.array([b] * N, dtype=NP_TYPE)
     OUT = np.zeros(N, dtype=NP_TYPE)
 
-    if USE_GPU:
-        sdfg = fn.to_sdfg()
-        sdfg.apply_gpu_transformations()
-        sdfg(A=A, B=B, OUT=OUT)
-    else:
-        fn(A, B, OUT)
+    fn(A, B, OUT)
 
     count = Counter(OUT)
     emp_prob = count[max(count.keys())] / N
@@ -159,12 +138,7 @@ def test_div():
     B = np.array([b] * N, dtype=NP_TYPE)
     OUT = np.zeros(N, dtype=NP_TYPE)
 
-    if USE_GPU:
-        sdfg = fn.to_sdfg()
-        sdfg.apply_gpu_transformations()
-        sdfg(A=A, B=B, OUT=OUT)
-    else:
-        fn(A, B, OUT)
+    fn(A, B, OUT)
 
     count = Counter(OUT)
     emp_prob = count[max(count.keys())] / N
@@ -190,12 +164,7 @@ def test_dot_runs():
     B = np.array([b] * M, dtype=NP_TYPE)
     OUT = np.zeros(1, dtype=NP_TYPE)
 
-    if USE_GPU:
-        sdfg = fn.to_sdfg()
-        sdfg.apply_gpu_transformations()
-        sdfg(A=A, B=B, OUT=OUT)
-    else:
-        fn(A, B, OUT)
+    fn(A, B, OUT)
 
     expected = np.dot(A, B)
     print(expected)
@@ -217,12 +186,7 @@ def test_matrix_mult_runs():
     B = np.array([b] * M * M, dtype=NP_TYPE)
     OUT = np.zeros((M, M), dtype=NP_TYPE)
 
-    if USE_GPU:
-        sdfg = fn.to_sdfg()
-        sdfg.apply_gpu_transformations()
-        sdfg(A=A, B=B, OUT=OUT)
-    else:
-        fn(A, B, OUT)
+    fn(A, B, OUT)
 
     A = A.reshape((M, M))
     B = B.reshape((M, M))
@@ -336,12 +300,7 @@ def test_init_properties():
     C = np.array([c] * N, dtype=NP_TYPE)
     OUT = np.zeros(N, dtype=NP_TYPE)
 
-    if USE_GPU:
-        sdfg = dace_test_init_properties.to_sdfg()
-        sdfg.apply_gpu_transformations()
-        sdfg(C=C, OUT=OUT)
-    else:
-        dace_test_init_properties(C, OUT)
+    dace_test_init_properties(C, OUT)
 
     count = Counter(OUT)
     emp_prob = count[max(count.keys())] / N
@@ -354,12 +313,7 @@ def test_assignment_properties():
     c = 1.5401030001
     OUT = np.zeros(N, dtype=NP_TYPE)
 
-    if USE_GPU:
-        sdfg = dace_test_assignment_properties.to_sdfg()
-        sdfg.apply_gpu_transformations()
-        sdfg(OUT=OUT, c=c)
-    else:
-        dace_test_assignment_properties(OUT, c)
+    dace_test_assignment_properties(OUT, c)
 
     count = Counter(OUT)
     emp_prob = count[max(count.keys())] / N
@@ -367,6 +321,21 @@ def test_assignment_properties():
 
     print(count)
     assert abs(emp_prob - theoretical_prob) < 0.05
+
+
+def test_assignment_properties_exact_rep():
+    """ Check that doubles are exactly represented when assigned """
+    c = 1.5
+    OUT = np.zeros(N, dtype=NP_TYPE)
+
+    dace_test_assignment_properties(OUT, c)
+
+    count = Counter(OUT)
+    emp_prob = count[max(count.keys())] / N
+    _, _, theoretical_prob = calc_bounds(c, NP_TYPE)
+
+    print(count)
+    assert emp_prob == theoretical_prob
 
 
 def test_mixed_addition_properties():
@@ -377,20 +346,15 @@ def test_mixed_addition_properties():
     B = np.array([b] * N, dtype=np.float64)
     OUT = np.zeros(N, dtype=NP_TYPE)
 
-    if USE_GPU:
-        sdfg = dace_test_mixed_addition_properties.to_sdfg()
-        sdfg.apply_gpu_transformations()
-        sdfg(A=A, B=B, OUT=OUT)
-    else:
-        dace_test_mixed_addition_properties(A, B, OUT)
+    dace_test_mixed_addition_properties(A, B, OUT)
 
     count = Counter(OUT)
     emp_prob = count[max(count.keys())] / N
     theoretical_prob = 1
 
-    print(f"Empircal count: {count}")
+    print(f"Empirical count: {count}")
     print(f"Theoretical prob: {theoretical_prob}")
-    assert abs(emp_prob - theoretical_prob) < 0.05
+    assert emp_prob == theoretical_prob
 
 
 def test_single_mixed_addition_properties():
@@ -401,20 +365,15 @@ def test_single_mixed_addition_properties():
     B = np.array([b] * N, dtype=NP_TYPE)
     OUT = np.zeros(N, dtype=NP_TYPE)
 
-    if USE_GPU:
-        sdfg = dace_test_single_mixed_addition_properties.to_sdfg()
-        sdfg.apply_gpu_transformations()
-        sdfg(A=A, B=B, OUT=OUT)
-    else:
-        dace_test_single_mixed_addition_properties(A, B, OUT)
+    dace_test_single_mixed_addition_properties(A, B, OUT)
 
     count = Counter(OUT)
     emp_prob = count[max(count.keys())] / N
     theoretical_prob = 1
 
-    print(f"Empircal count: {count}")
+    print(f"Empirical count: {count}")
     print(f"Theoretical prob: {theoretical_prob}")
-    assert abs(emp_prob - theoretical_prob) < 0.05
+    assert emp_prob == theoretical_prob
 
 
 def calc_bounds(higher_prec_val, np_type):
@@ -456,5 +415,6 @@ if __name__ == "__main__":
     test_cholesky()
     test_init_properties()
     test_assignment_properties()
+    test_assignment_properties_exact_rep()
     test_mixed_addition_properties()
     test_single_mixed_addition_properties()
