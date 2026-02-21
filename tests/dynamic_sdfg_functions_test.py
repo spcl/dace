@@ -29,9 +29,11 @@ def test_dynamic_sdfg_with_math_functions():
 
     # Construct SDFG
     mysdfg = SDFG('mymodexp')
+    mysdfg.add_array('A', [N], dp.float32)
+    mysdfg.add_array('B', [N], dp.float32)
     state = mysdfg.add_state()
-    A = state.add_array('A', [N], dp.float32)
-    B = state.add_array('B', [N], dp.float32)
+    A = state.add_access('A')
+    B = state.add_access('B')
 
     # Easy way to add a tasklet
     tasklet, map_entry, map_exit = state.add_mapped_tasklet('mytasklet', dict(i='0:N'),
@@ -46,7 +48,6 @@ def test_dynamic_sdfg_with_math_functions():
     #mymodexp_prog(input, output)
 
     diff = np.linalg.norm(np.exp(input) - output) / n
-    print("Difference:", diff)
     assert diff <= 1e-5
 
 

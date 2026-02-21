@@ -11,11 +11,13 @@ def test_strip_mining():
     """
     # 1. The program
     sdfg = dace.SDFG("assign")
+    sdfg.add_array("A", (64, ), dtype=dace.uint32)
+    sdfg.add_array("B", (1, ), dtype=dace.uint32)
     state = sdfg.add_state("main")
 
     # inputs
-    A = state.add_array("A", (64, ), dtype=dace.uint32)
-    B = state.add_array("B", (1, ), dtype=dace.uint32)
+    A = state.add_access("A")
+    B = state.add_access("B")
 
     # kernel map
     map_entry, map_exit = state.add_map("map", dict(i="0:64"))
