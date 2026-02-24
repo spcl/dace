@@ -150,8 +150,7 @@ class StreamingMemory(xf.SingleStateTransformation):
             return False
         # If does not exist on off-chip memory, skip
         if sdfg.arrays[access.data].storage not in [
-                dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_Pinned, dtypes.StorageType.GPU_Global,
-                dtypes.StorageType.FPGA_Global
+                dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_Pinned, dtypes.StorageType.GPU_Global
         ]:
             return False
 
@@ -204,10 +203,6 @@ class StreamingMemory(xf.SingleStateTransformation):
 
             access = self.access
             desc = sdfg.arrays[access.data]
-
-            # Array has to be global array
-            if desc.storage != dtypes.StorageType.FPGA_Global:
-                return False
 
             # Type has to divide target bytes
             if self.memory_buffering_target_bytes % desc.dtype.bytes != 0:
@@ -417,7 +412,7 @@ class StreamingMemory(xf.SingleStateTransformation):
                     newdesc = input_gearbox_newdesc
 
             else:
-                # Qualify name to avoid name clashes if memory interfaces are not decoupled for Xilinx
+                # Qualify name to avoid name clashes
                 stream_name = "stream_" + dnode.data
                 name, newdesc = sdfg.add_stream(stream_name,
                                                 desc.dtype,
@@ -696,7 +691,7 @@ class StreamingComposition(xf.SingleStateTransformation):
 
         # Create new stream of shape 1
         desc = sdfg.arrays[access.data]
-        # Qualify name to avoid name clashes if memory interfaces are not decoupled for Xilinx
+        # Qualify name to avoid name clashes
         stream_name = "stream_" + access.data
         name, newdesc = sdfg.add_stream(stream_name,
                                         desc.dtype,

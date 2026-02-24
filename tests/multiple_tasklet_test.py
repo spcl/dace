@@ -19,9 +19,11 @@ def test():
 
     # Construct SDFG
     mysdfg = SDFG('multiple_tasklets')
+    mysdfg.add_array('A', [N], dp.int32)
+    mysdfg.add_array('B', [N], dp.int32)
     state = mysdfg.add_state()
-    A = state.add_array('A', [N], dp.int32)
-    B = state.add_array('B', [N], dp.int32)
+    A = state.add_access('A')
+    B = state.add_access('B')
 
     map_entry, map_exit = state.add_map('mymap', dict(i='0:N:2'))
 
@@ -41,7 +43,6 @@ def test():
     mysdfg(A=input, B=output, N=n)
 
     diff = np.linalg.norm(5 * input - output) / n
-    print("Difference:", diff)
     assert diff <= 1e-5
 
 

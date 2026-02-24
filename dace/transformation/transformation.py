@@ -710,7 +710,6 @@ class ExpandTransformation(PatternTransformation):
                                               node.in_connectors,
                                               node.out_connectors,
                                               name=node.name,
-                                              schedule=node.schedule,
                                               debuginfo=node.debuginfo)
         elif isinstance(expansion, nd.CodeNode):
             expansion.debuginfo = node.debuginfo
@@ -721,10 +720,6 @@ class ExpandTransformation(PatternTransformation):
                 nsdfg.parent_sdfg = sdfg
                 nsdfg.update_cfg_list([])
                 nsdfg.parent_nsdfg_node = expansion
-
-                # Update schedule to match library node schedule
-                nsdfg.schedule = node.schedule
-
             elif isinstance(expansion, (nd.EntryNode, nd.LibraryNode)):
                 if expansion.schedule is ScheduleType.Default:
                     expansion.schedule = node.schedule
@@ -738,7 +733,7 @@ class ExpandTransformation(PatternTransformation):
 
         # Fix nested schedules
         if isinstance(expansion, nd.NestedSDFG):
-            infer_types.set_default_schedule_and_storage_types(expansion.sdfg, [expansion.schedule], True)
+            infer_types.set_default_schedule_and_storage_types(expansion.sdfg, [node.schedule], True)
 
         type(self).postprocessing(sdfg, state, expansion)
 

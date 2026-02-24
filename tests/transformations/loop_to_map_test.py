@@ -550,7 +550,7 @@ def test_thread_local_transient_single_state():
 
     sdfg.apply_transformations_repeated([LoopLifting])
     sdfg.apply_transformations_repeated(LoopToMap)
-    assert not ('A' in sdfg.arrays)
+    assert 'A' not in sdfg.arrays
 
     ref = (np.arange(10, dtype=np.int32) + 6) * 2
     val = sdfg()
@@ -631,7 +631,7 @@ def test_thread_local_transient_multi_state():
 
     sdfg.apply_transformations_repeated([LoopLifting])
     sdfg.apply_transformations_repeated(LoopToMap)
-    assert not ('A' in sdfg.arrays)
+    assert 'A' not in sdfg.arrays
 
     ref = (np.arange(10, dtype=np.int32) + 6) * 2
     val = sdfg()
@@ -783,6 +783,23 @@ def test_self_loop_to_map():
     assert np.allclose(a, ref)
 
 
+def test_nested_sdfg_nested_loop():
+
+    def tester_init(A, n):
+        A[0, n] = n
+        for j in range(10):
+            for k in range(10):
+                A[j, k] = 0
+
+    @dace.program
+    def tester(A: dace.float32[10, 10]):
+        for i in range(10):
+            tester_init(A, i)
+
+    sdfg = tester.to_sdfg(simplify=False)  # Avoid inlining nested SDFG
+    assert sdfg.apply_transformations_repeated(LoopToMap) == 2
+
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
@@ -822,3 +839,4 @@ if __name__ == "__main__":
     test_rotated_loop_to_map(False)
     test_rotated_loop_to_map(True)
     test_self_loop_to_map()
+    test_nested_sdfg_nested_loop()

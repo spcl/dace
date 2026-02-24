@@ -6,10 +6,9 @@ import numpy as np
 import dace as dc
 import pytest
 import argparse
-from dace.fpga_testing import fpga_test, xilinx_test
-from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
+from dace.transformation.interstate import InlineSDFG
 from dace.transformation.dataflow import StreamingMemory, MapFusionVertical, StreamingComposition, PruneConnectors
-from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
+from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.config import set_temporary
 
 N = dc.symbol('N', dtype=dc.int32)
@@ -100,18 +99,6 @@ def run_nussinov(device_type: dace.dtypes.DeviceType):
         sdfg = auto_optimize(sdfg, device_type)
         dace_res = sdfg(seq=seq, N=N)
 
-    elif device_type == dace.dtypes.DeviceType.FPGA:
-        # Parse SDFG and apply FPGA friendly optimization
-        sdfg = kernel.to_sdfg(simplify=True)
-        applied = sdfg.apply_transformations([FPGATransformSDFG])
-        assert applied == 1
-
-        fpga_auto_opt.fpga_global_to_local(sdfg)  # Necessary
-        fpga_auto_opt.fpga_rr_interleave_containers_to_banks(sdfg)
-
-        sdfg.specialize(dict(N=N))
-        dace_res = sdfg(seq=seq)
-
     # Compute ground truth and validate result
     gt_res = ground_truth(N, seq)
 
@@ -128,21 +115,10 @@ def test_gpu():
     run_nussinov(dace.dtypes.DeviceType.GPU)
 
 
-@fpga_test(assert_ii_1=False)
-def test_fpga():
-    return run_nussinov(dace.dtypes.DeviceType.FPGA)
-
-
-@xilinx_test(assert_ii_1=False)
-def test_xilinx_decoupled_array_interfaces():
-    with set_temporary("compiler", "xilinx", "decouple_array_interfaces", value=True):
-        return run_nussinov(dace.dtypes.DeviceType.FPGA)
-
-
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]
@@ -151,5 +127,3 @@ if __name__ == "__main__":
         run_nussinov(dace.dtypes.DeviceType.CPU)
     elif target == "gpu":
         run_nussinov(dace.dtypes.DeviceType.GPU)
-    elif target == "fpga":
-        run_nussinov(dace.dtypes.DeviceType.FPGA)

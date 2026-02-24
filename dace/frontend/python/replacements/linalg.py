@@ -28,9 +28,6 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
 
     if len(arr1.shape) > 1 and len(arr2.shape) > 1:  # matrix * matrix
 
-        if len(arr1.shape) > 3 or len(arr2.shape) > 3:
-            raise SyntaxError('Matrix multiplication of tensors of dimensions > 3 not supported')
-
         res = symbolic.equal(arr1.shape[-1], arr2.shape[-2])
         if res is None:
             warnings.warn(
@@ -41,10 +38,12 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
 
         from dace.libraries.blas.nodes.matmul import _get_batchmm_opts
 
-        # Determine batched multiplication
+        # Determine batched multiplication (supports N-D tensors)
         bopt = _get_batchmm_opts(arr1.shape, arr1.strides, arr2.shape, arr2.strides, None, None)
         if bopt:
-            output_shape = (bopt['b'], arr1.shape[-2], arr2.shape[-1])
+            # Multi-dimensional batch: use batch_dims if available, otherwise use flattened batch size
+            batch_dims = bopt.get('batch_dims', [bopt['b']])
+            output_shape = tuple(batch_dims) + (arr1.shape[-2], arr2.shape[-1])
         else:
             output_shape = (arr1.shape[-2], arr2.shape[-1])
 

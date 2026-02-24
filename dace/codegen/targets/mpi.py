@@ -4,7 +4,7 @@ import dace
 from dace import registry, symbolic, dtypes
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.codeobject import CodeObject
-from dace.codegen.targets.target import TargetCodeGenerator, make_absolute
+from dace.codegen.target import TargetCodeGenerator, make_absolute
 from dace.codegen.targets.cpp import mangle_dace_state_struct_name
 from dace.sdfg import nodes, SDFG
 from dace.config import Config

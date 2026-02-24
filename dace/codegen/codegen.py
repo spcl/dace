@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import functools
 from typing import List
 
@@ -12,9 +12,6 @@ from dace.codegen.codeobject import CodeObject
 from dace.codegen import exceptions as exc
 from dace.config import Config
 from dace.sdfg import infer_types
-
-# Import CPU code generator. TODO: Remove when refactored
-from dace.codegen.targets import cpp, cpu
 
 from dace.codegen.instrumentation import InstrumentationProvider
 from dace.sdfg.state import SDFGState
@@ -61,6 +58,7 @@ def generate_dummy(sdfg: SDFG, frame: framecode.DaCeCodeGenerator) -> str:
     # allocate the array args using calloc
     for argname, arg in al.items():
         if isinstance(arg, data.Array):
+            from dace.codegen.targets import cpp
             dims_mul = cpp.sym2cpp(functools.reduce(lambda a, b: a * b, arg.shape, 1))
             basetype = str(arg.dtype)
             allocations += ("    " + str(arg.as_arg(name=argname, with_types=True)) + " = (" + basetype + "*) calloc(" +
@@ -160,7 +158,7 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     :param validate: If True, validates the SDFG before generating the code.
     :return: List of code objects that correspond to files to compile.
     """
-    from dace.codegen.targets.target import TargetCodeGenerator  # Avoid import loop
+    from dace.codegen.target import TargetCodeGenerator  # Avoid import loop
 
     # Before compiling, validate SDFG correctness
     if validate:
@@ -176,7 +174,7 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
             sdfg.save(f'{tmp_dir}/test.sdfg', hash=False)
             sdfg2 = SDFG.from_file(f'{tmp_dir}/test.sdfg')
             sdfg2.save(f'{tmp_dir}/test2.sdfg', hash=False)
-            print('Testing SDFG serialization...')
+
             if not filecmp.cmp(f'{tmp_dir}/test.sdfg', f'{tmp_dir}/test2.sdfg'):
                 with open(f'{tmp_dir}/test.sdfg', 'r') as f1:
                     with open(f'{tmp_dir}/test2.sdfg', 'r') as f2:
@@ -217,6 +215,7 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
 
     # Instantiate CPU first (as it is used by the other code generators)
     # TODO: Refactor the parts used by other code generators out of CPU
+    from dace.codegen.targets import cpu
     default_target = cpu.CPUCodeGen
     for k, v in TargetCodeGenerator.extensions().items():
         # If another target has already been registered as CPU, use it instead

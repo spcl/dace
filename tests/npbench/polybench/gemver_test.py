@@ -5,11 +5,9 @@ import numpy as np
 import dace as dc
 import pytest
 import argparse
-from dace.fpga_testing import fpga_test, xilinx_test
-from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
-from dace.transformation.dataflow import StreamingMemory, StreamingComposition
-from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
-from dace.config import set_temporary
+from dace.transformation.interstate import InlineSDFG
+from dace.transformation.auto.auto_optimize import auto_optimize
+from dace.autodiff import add_backward_pass
 
 # Data set sizes
 # N
@@ -45,6 +43,13 @@ def initialize(N, datatype=np.float64):
     return alpha, beta, A, u1, v1, u2, v2, w, x, y, z
 
 
+def gemver_jax_kernel(jnp, alpha, beta, A, u1, v1, u2, v2, w, x, y, z):
+    A += jnp.outer(u1, v1) + jnp.outer(u2, v2)
+    x += beta * y @ A + z
+    w += alpha * A @ x
+    return jnp.sum(w)
+
+
 def run_gemver(device_type: dace.dtypes.DeviceType):
     '''
     Runs Gemver for the given device
@@ -63,20 +68,6 @@ def run_gemver(device_type: dace.dtypes.DeviceType):
         sdfg = gemver_kernel.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
         sdfg(alpha, beta, A, np.copy(u1), v1, u2, v2, w, x, y, z, N=N)
-    elif device_type == dace.dtypes.DeviceType.FPGA:
-        # Parse SDFG and apply FPGA friendly optimization
-        sdfg = gemver_kernel.to_sdfg(simplify=True)
-        applied = sdfg.apply_transformations([FPGATransformSDFG])
-        assert applied == 1
-
-        # Use FPGA Expansion for lib nodes, and expand them to enable further optimizations
-        from dace.libraries.blas import Gemv
-        Gemv.default_implementation = "FPGA_Accumulate"
-        sdfg.expand_library_nodes()
-        sdfg.apply_transformations_repeated([InlineSDFG], print_report=True)
-        sdfg.specialize(dict(N=N))
-        sdfg(alpha, beta, A, np.copy(u1), v1, u2, v2, w, x, y, z)
-
     # Compute ground truth and validate
     gemver_kernel.f(alpha, beta, A_ref, u1, v1, u2, v2, w_ref, x_ref, y, z)
     assert np.allclose(A, A_ref)
@@ -84,6 +75,56 @@ def run_gemver(device_type: dace.dtypes.DeviceType):
     assert np.allclose(w, w_ref)
 
     return sdfg
+
+
+def run_gemver_autodiff():
+    import jax
+    import jax.numpy as jnp
+
+    # Initialize data (polybench mini size)
+    N = sizes["mini"]
+    alpha, beta, A, u1, v1, u2, v2, w, x, y, z = initialize(N)
+    A_jax, u1_jax, v1_jax, u2_jax, v2_jax, w_jax, x_jax, y_jax, z_jax = map(np.copy, (A, u1, v1, u2, v2, w, x, y, z))
+
+    # Initialize gradient computation data
+    gradient_A = np.zeros_like(A)
+    gradient___return = np.ones((1, ), dtype=np.float64)
+
+    # Define sum reduction for the output
+    @dc.program
+    def autodiff_kernel(alpha: dc.float64, beta: dc.float64, A: dc.float64[N, N], u1: dc.float64[N], v1: dc.float64[N],
+                        u2: dc.float64[N], v2: dc.float64[N], w: dc.float64[N], x: dc.float64[N], y: dc.float64[N],
+                        z: dc.float64[N]):
+        gemver_kernel(alpha, beta, A, u1, v1, u2, v2, w, x, y, z)
+        return np.sum(w)
+
+    # Add the backward pass to the SDFG
+    sdfg = autodiff_kernel.to_sdfg()
+    add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["__return"])
+    sdfg(alpha,
+         beta,
+         A,
+         np.copy(u1),
+         v1,
+         u2,
+         v2,
+         w,
+         x,
+         y,
+         z,
+         N=N,
+         gradient_A=gradient_A,
+         gradient___return=gradient___return)
+
+    # Enable float64 support
+    jax.config.update("jax_enable_x64", True)
+
+    # Numerically validate vs JAX
+    jax_kernel = lambda alpha, beta, A, u1, v1, u2, v2, w, x, y, z: gemver_jax_kernel(
+        jnp, alpha, beta, A, u1, v1, u2, v2, w, x, y, z)
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=2))
+    jax_grad_A = jax_grad(alpha, beta, A_jax, u1_jax, v1_jax, u2_jax, v2_jax, w_jax, x_jax, y_jax, z_jax)
+    np.testing.assert_allclose(gradient_A, jax_grad_A)
 
 
 def test_cpu():
@@ -95,22 +136,22 @@ def test_gpu():
     run_gemver(dace.dtypes.DeviceType.GPU)
 
 
-@fpga_test(assert_ii_1=False)
-def test_fpga():
-    return run_gemver(dace.dtypes.DeviceType.FPGA)
+@pytest.mark.autodiff
+def test_autodiff():
+    pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
+    run_gemver_autodiff()
 
 
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]
 
     if target == "cpu":
         run_gemver(dace.dtypes.DeviceType.CPU)
+        run_gemver_autodiff()
     elif target == "gpu":
         run_gemver(dace.dtypes.DeviceType.GPU)
-    elif target == "fpga":
-        run_gemver(dace.dtypes.DeviceType.FPGA)

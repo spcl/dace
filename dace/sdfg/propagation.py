@@ -16,6 +16,7 @@ from sympy import Symbol, ceiling
 from sympy.concrete.summations import Sum
 
 from dace import data, dtypes, registry, subsets, symbolic
+from dace.config import Config
 from dace.memlet import Memlet
 from dace.sdfg import graph as gr
 from dace.sdfg import nodes
@@ -1089,6 +1090,8 @@ def propagate_memlets_nested_sdfg(parent_sdfg: 'SDFG', parent_state: 'SDFGState'
                 # range that only exists inside the nested SDFG. If that's the
                 # case, use the entire range.
                 if border_memlet.src_subset is not None:
+                    if border_memlet.data is None:
+                        border_memlet.data = connector
                     fallback_subset = subsets.Range.from_array(sdfg.arrays[border_memlet.data])
                     for i, rng in enumerate(border_memlet.src_subset):
                         fall_back = False
@@ -1099,6 +1102,8 @@ def propagate_memlets_nested_sdfg(parent_sdfg: 'SDFG', parent_state: 'SDFGState'
                         if fall_back:
                             border_memlet.src_subset[i] = fallback_subset[i]
                 if border_memlet.dst_subset is not None:
+                    if border_memlet.data is None:
+                        border_memlet.data = connector
                     fallback_subset = subsets.Range.from_array(sdfg.arrays[border_memlet.data])
                     for i, rng in enumerate(border_memlet.dst_subset):
                         fall_back = False
@@ -1501,8 +1506,8 @@ def propagate_subset(memlets: List[Memlet],
         else:
             # No patterns found. Emit a warning and propagate the entire
             # array whenever symbols are used
-            warnings.warn('Cannot find appropriate memlet pattern to '
-                          'propagate %s through %s' % (str(subset), str(rng)))
+            if Config.get_bool('debugprint'):
+                print(f'Cannot find appropriate memlet pattern to propagate {subset} through {rng}')
             entire_array = subsets.Range.from_array(arr)
             paramset = set(map(str, params))
             # Fill in the entire array only if one of the parameters appears in the

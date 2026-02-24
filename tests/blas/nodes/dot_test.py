@@ -9,11 +9,9 @@ import scipy
 import dace
 from dace.memlet import Memlet
 
-from dace.fpga_testing import xilinx_test, intel_fpga_test
 import dace.libraries.blas as blas
 
-from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
-from dace.transformation.dataflow import StreamingMemory
+from dace.transformation.interstate import InlineSDFG
 from dace.config import set_temporary
 
 
@@ -48,23 +46,9 @@ def pure_graph(implementation, dtype, veclen):
     return sdfg
 
 
-def fpga_graph(implementation, dtype, veclen):
-    sdfg = pure_graph(implementation, dtype, veclen)
-    sdfg.apply_transformations_repeated([FPGATransformSDFG, InlineSDFG])
-    sdfg.expand_library_nodes()
-    sdfg.apply_transformations_repeated([InlineSDFG, StreamingMemory], [{}, {"storage": dace.StorageType.FPGA_Local}])
-    return sdfg
-
-
 def run_test(target, size, vector_length):
     if target == "pure":
         sdfg = pure_graph("pure", dace.float32, vector_length)
-    elif target == "intel_fpga":
-        dace.Config.set("compiler", "fpga", "vendor", value="intel_fpga")
-        sdfg = fpga_graph("FPGA_Accumulate", dace.float32, vector_length)
-    elif target == "xilinx":
-        dace.Config.set("compiler", "fpga", "vendor", value="xilinx")
-        sdfg = fpga_graph("FPGA_PartialSums", dace.float32, vector_length)
     else:
         print(f"Unsupported target: {target}")
         exit(-1)
@@ -94,25 +78,6 @@ def run_test(target, size, vector_length):
 
 def test_dot_pure():
     assert isinstance(run_test("pure", 64, 1), dace.SDFG)
-
-
-# TODO: Refactor to use assert or return True/False (pytest deprecation of returning non-booleans)
-@xilinx_test()
-def test_dot_xilinx():
-    return run_test("xilinx", 64, 16)
-
-
-# TODO: Refactor to use assert or return True/False (pytest deprecation of returning non-booleans)
-@xilinx_test()
-def test_dot_xilinx_decoupled():
-    with set_temporary("compiler", "xilinx", "decouple_array_interfaces", value=True):
-        return run_test("xilinx", 64, 16)
-
-
-# TODO: Refactor to use assert or return True/False (pytest deprecation of returning non-booleans)
-@intel_fpga_test()
-def test_dot_intel_fpga():
-    return run_test("intel_fpga", 64, 16)
 
 
 if __name__ == "__main__":

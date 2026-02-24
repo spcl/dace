@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import argparse
 from dace.frontend.octave import parse

@@ -1,6 +1,4 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-from __future__ import annotations
-
 import copy
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 

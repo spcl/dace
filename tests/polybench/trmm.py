@@ -32,8 +32,8 @@ def init_array(A, B, alpha, n, m):
             B[i, j] = datatype((n + (i - j)) % n) / n
 
 
-@dace.program(datatype[M, M], datatype[M, N], datatype[1])
-def trmm(A, B, alpha):
+@dace.program
+def trmm(A: datatype[M, M], B: datatype[M, N], alpha: datatype[1]):
 
     @dace.mapscope
     def compute(j: _[0:N]):

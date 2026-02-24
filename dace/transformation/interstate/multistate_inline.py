@@ -78,8 +78,6 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         nested_sdfg = self.nested_sdfg
         if nested_sdfg.no_inline:
             return False
-        if nested_sdfg.schedule == dtypes.ScheduleType.FPGA_Device:
-            return False
 
         # Not nested in scope
         if state.entry_node(nested_sdfg) is not None:
@@ -145,9 +143,6 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                 has_return = True
         if has_return:
             sdutil.inline_control_flow_regions(nsdfg, lower_returns=True)
-
-        if nsdfg_node.schedule != dtypes.ScheduleType.Default:
-            infer_types.set_default_schedule_and_storage_types(nsdfg, [nsdfg_node.schedule])
 
         #######################################################
         # Collect and update top-level SDFG metadata
@@ -279,13 +274,13 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         symbolic.safe_replace(repldict, lambda m: replace_datadesc_names(nsdfg, m), value_as_string=True)
 
-        # Make unique names for states
-        statenames = set(s.label for s in sdfg.states())
-        for nstate in nsdfg.states():
-            if nstate.label in statenames:
-                newname = data.find_new_name(nstate.label, statenames)
-                nstate.label = newname
-            statenames.add(nstate.label)
+        # Make unique names for all control-flow blocks
+        node_names = set(cfr.label for cfr in sdfg.all_control_flow_blocks(recursive=True))
+        for node in nsdfg.all_control_flow_blocks(recursive=True):
+            if node.label in node_names:
+                node_name = data.find_new_name(node.label, node_names)
+                node.label = node_name
+            node_names.add(node.label)
 
         #######################################################
         # Add nested SDFG states into top-level SDFG
