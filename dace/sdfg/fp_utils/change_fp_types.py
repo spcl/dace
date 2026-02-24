@@ -49,16 +49,23 @@ def _get_array_view_paths(sdfg: dace.SDFG, arrays_to_replace: Set[str]) -> Dict[
     return view_sets
 
 
-def _change_fp_type_recursive(sdfg: dace.SDFG, src_fptype: dace.dtypes.typeclass, dst_fptype: dace.dtypes.typeclass,
+def _change_fp_type_recursive(sdfg: dace.SDFG,
+                              src_fptype: dace.dtypes.typeclass,
+                              dst_fptype: dace.dtypes.typeclass,
                               arrays_to_replace: Set[str]):
     # Need to collect all views that depend on the arrays and add them to the set
-    view_sets = _get_array_view_paths(sdfg, arrays_to_replace)
-    for k, view_set in view_sets.items():
-        arrays_to_replace = arrays_to_replace.union(view_set)
+    if arrays_to_replace is not None:
+        view_sets = _get_array_view_paths(sdfg, arrays_to_replace)
+        for k, view_set in view_sets.items():
+            arrays_to_replace = arrays_to_replace.union(view_set)
+        cur_arrays_to_replace = arrays_to_replace
+    else:
+        cur_arrays_to_replace = {k for k, v in sdfg.arrays.items() if v.dtype == src_fptype} if arrays_to_replace is None else arrays_to_replace
 
     # Change FP-types of the arrays (and views that depend on them)
     named_array_set = set()
-    for name in arrays_to_replace:
+
+    for name in cur_arrays_to_replace:
         arr = sdfg.arrays[name]
         named_array_set.add((name, arr))
         arr.dtype = dst_fptype
@@ -82,16 +89,19 @@ def _change_fp_type_recursive(sdfg: dace.SDFG, src_fptype: dace.dtypes.typeclass
         for node in state.nodes():
             if isinstance(node, dace.nodes.NestedSDFG):
                 # Continue changing FP-types depending on the connectors
-                new_replacements = set()
-                for ie in state.in_edges(node):
-                    if ie.data is not None and ie.data.data in arrays_to_replace:
-                        new_replacements.add(ie.dst_conn)
+                if arrays_to_replace is not None:
+                    new_replacements = set()
+                    for ie in state.in_edges(node):
+                        if ie.data is not None and ie.data.data in cur_arrays_to_replace:
+                            new_replacements.add(ie.dst_conn)
 
-                for oe in state.out_edges(node):
-                    if oe.data is not None and oe.data.data in arrays_to_replace:
-                        new_replacements.add(oe.src_conn)
+                    for oe in state.out_edges(node):
+                        if oe.data is not None and oe.data.data in cur_arrays_to_replace:
+                            new_replacements.add(oe.src_conn)
 
-                _change_fp_type_recursive(node.sdfg, src_fptype, dst_fptype, new_replacements)
+                    _change_fp_type_recursive(node.sdfg, src_fptype, dst_fptype, new_replacements)
+                else:
+                    _change_fp_type_recursive(node.sdfg, src_fptype, dst_fptype, None)
 
 
 def change_fptype(sdfg: dace.SDFG,
@@ -100,9 +110,7 @@ def change_fptype(sdfg: dace.SDFG,
                   cast_in_and_out_data: bool = False,
                   arrays_to_replace: Union[Set[str], None] = None):
     # If arrays_to_replace is None, all arrays are replaced
-    if arrays_to_replace is None:
-        arrays_to_replace = {name for name, arr in sdfg.arrays.items() if arr.dtype == src_fptype}
-    else:
+    if arrays_to_replace is not None:
         # Check types are matchig
         for name in arrays_to_replace:
             arr = sdfg.arrays[name]
@@ -111,14 +119,20 @@ def change_fptype(sdfg: dace.SDFG,
                     f"Array {name} from the passed inputs has fptype {arr.dtype} but function was provided src fp type ({src_fptype})"
                 )
 
+    # Do it before changing fp types
+    for k, v in sdfg.arrays.items():
+        print(k, v.dtype, src_fptype, v.dtype == src_fptype)
+    cur_arrays_to_replace = {k for k, v in sdfg.arrays.items() if v.dtype == src_fptype} if arrays_to_replace is None else arrays_to_replace
+
     _change_fp_type_recursive(sdfg, src_fptype, dst_fptype, arrays_to_replace)
+
 
     # Replace all occurences of the arrays in the SDFG with their replaced counterparts
     if cast_in_and_out_data is True:
         # If we cast in data, the interface stays the same, we add new arrays
         # e.g. A -> A_(dst_fptype.to_string)
         array_name_mapping = dict()
-        for name in arrays_to_replace:
+        for name in cur_arrays_to_replace:
             array_name_mapping[name] = f"{name}_{dst_fptype.to_string()}"
 
         _repl_recursive_with_connectors(sdfg, array_name_mapping)
