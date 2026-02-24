@@ -66,9 +66,9 @@ def _change_fp_type_recursive(sdfg: dace.SDFG, src_fptype: dace.dtypes.typeclass
     # For all non-transients that read from these arrays, or that write to these arrays
     # change their fp type accordingly
     # TODO: this is not fail-safe, and some casts might need to be inserted
-    # For example if input is kept fp64, output fp64, and then this access node connects to both,
+    # For example if input is kept fp64, output fp32, and then this access node connects to both,
     # then the generated copy will cause problems still although this pattern should be rare, as
-    # it makes no sense at all
+    # it makes no sense at al
     for state in sdfg.all_states():
         for node in state.data_nodes():
             ietypes = {sdfg.arrays[ie.data.data].dtype for ie in state.in_edges(node) if ie.data is not None}
