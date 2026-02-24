@@ -53,8 +53,6 @@ def _change_fp_type_recursive(sdfg: dace.SDFG, src_fptype: dace.dtypes.typeclass
                               arrays_to_replace: Set[str]):
     # Need to collect all views that depend on the arrays and add them to the set
     view_sets = _get_array_view_paths(sdfg, arrays_to_replace)
-    print(view_sets)
-
     for k, view_set in view_sets.items():
         arrays_to_replace = arrays_to_replace.union(view_set)
 
@@ -65,6 +63,21 @@ def _change_fp_type_recursive(sdfg: dace.SDFG, src_fptype: dace.dtypes.typeclass
         named_array_set.add((name, arr))
         arr.dtype = dst_fptype
 
+    # For all non-transients that read from these arrays, or that write to these arrays
+    # change their fp type accordingly
+    # TODO: this is not fail-safe, and some casts might need to be inserted
+    # For example if input is kept fp64, output fp64, and then this access node connects to both,
+    # then the generated copy will cause problems still although this pattern should be rare, as
+    # it makes no sense at all
+    for state in sdfg.all_states():
+        for node in state.data_nodes():
+            ietypes = {sdfg.arrays[ie.data.data].dtype for ie in state.in_edges(node) if ie.data is not None}
+            oetypes = {sdfg.arrays[oe.data.data].dtype for oe in state.out_edges(node) if oe.data is not None}
+
+            etypes = ietypes.union(oetypes)
+            if any(etype == dst_fptype for etype in etypes):
+                sdfg.arrays[node.data].dtype = dst_fptype
+
     for state in sdfg.all_states():
         for node in state.nodes():
             if isinstance(node, dace.nodes.NestedSDFG):
@@ -73,10 +86,12 @@ def _change_fp_type_recursive(sdfg: dace.SDFG, src_fptype: dace.dtypes.typeclass
                 for ie in state.in_edges(node):
                     if ie.data is not None and ie.data.data in arrays_to_replace:
                         new_replacements.add(ie.dst_conn)
+
                 for oe in state.out_edges(node):
                     if oe.data is not None and oe.data.data in arrays_to_replace:
-                        new_replacements.add(oe.dst_conn)
-                _change_fp_type_recursive(sdfg, src_fptype, dst_fptype, new_replacements)
+                        new_replacements.add(oe.src_conn)
+
+                _change_fp_type_recursive(node.sdfg, src_fptype, dst_fptype, new_replacements)
 
 
 def change_fptype(sdfg: dace.SDFG,
