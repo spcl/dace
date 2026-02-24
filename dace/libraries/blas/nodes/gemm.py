@@ -196,7 +196,7 @@ class ExpandGemmOpenBLAS(ExpandTransformation):
 
         code += ("cblas_{func}(CblasColMajor, {ta}, {tb}, "
                  "{M}, {N}, {K}, {alpha},{cast} {x}, {lda}, {cast} {y}, {ldb}, {beta}, "
-                 "{cast} _c, {ldc});").format_map(opt)
+                 "_c, {ldc});").format_map(opt)
 
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name,

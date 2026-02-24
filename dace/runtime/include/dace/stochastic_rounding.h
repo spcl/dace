@@ -56,10 +56,11 @@ private:
         // This is equivalent to rounding up to the nearest representable number with probability 1 - distance to the
         // next representable number. The modified double is finally cast to float32.
 
-        // If x is exactly representable as float32, return it deterministically
-        float f = static_cast<float>(x);
-        if (static_cast<double>(f) == x) {
-            return f;
+        // If x is exactly representable as float32, return it deterministically.
+        uint64_t bits_x = double_to_bits(x);
+        const uint64_t excess_mask = 0x000000001FFFFFFF;  // lower 29 mantissa bits of double
+        if ((bits_x & excess_mask) == 0) {
+            return static_cast<float>(x);
         }
 
         uint64_t rbits = get_random_u64(); // it's quicker to use u64 over u32, perhaps due casting?
@@ -69,8 +70,8 @@ private:
             return static_cast<float>(x + rand_subnormal(rbits));
         }
 
-        uint64_t bits = double_to_bits(x);
         const uint64_t mask = 0x000000001FFFFFFF;  // mask last 29 surplus bits of the double prec mantissa
+        uint64_t bits = bits_x;
 
         bits += (rbits & mask);  // add stochastic perturbation
         bits &= ~mask;           // truncate lower bits

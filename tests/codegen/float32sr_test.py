@@ -316,11 +316,13 @@ def test_assignment_properties():
     dace_test_assignment_properties(OUT, c)
 
     count = Counter(OUT)
-    emp_prob = count[max(count.keys())] / N
-    _, _, theoretical_prob = calc_bounds(c, NP_TYPE)
+    _, _, prob_lower, _ = calc_bounds(c)
+    # Lower outcome is the smaller of the two float32 values
+    keys_sorted = sorted(count.keys())
+    freq_lower = count[keys_sorted[0]] / N if keys_sorted else 0
 
     print(count)
-    assert abs(emp_prob - theoretical_prob) < 0.05
+    assert abs(freq_lower - prob_lower) < 0.05
 
 
 def test_assignment_properties_exact_rep():
@@ -332,7 +334,7 @@ def test_assignment_properties_exact_rep():
 
     count = Counter(OUT)
     emp_prob = count[max(count.keys())] / N
-    _, _, theoretical_prob = calc_bounds(c, NP_TYPE)
+    _, _, _, theoretical_prob = calc_bounds(c)
 
     print(count)
     assert emp_prob == theoretical_prob
@@ -376,31 +378,47 @@ def test_single_mixed_addition_properties():
     assert emp_prob == theoretical_prob
 
 
-def calc_bounds(higher_prec_val, np_type):
-    rounded_val = np_type(higher_prec_val)
+EXCESS_MASK_F32 = 0x1FFFFFFF
+MASK_F64_TRUNCATE_TO_F32 = (1 << 64) - 1 - EXCESS_MASK_F32
 
-    if rounded_val == higher_prec_val:
+
+def _double_exactly_representable_as_float32(x: float) -> bool:
+    bits = np.array([x], dtype=np.float64).view(np.uint64)[0]
+    return (bits & EXCESS_MASK_F32) == 0
+
+
+def _float32_neighbors_from_bits(x: float):
+    bits = np.array([x], dtype=np.float64).view(np.uint64)[0]
+    bits_lower = bits & MASK_F64_TRUNCATE_TO_F32
+    lower_f64 = np.array([bits_lower], dtype=np.uint64).view(np.float64)[0]
+    lower_f32 = np.float32(lower_f64)
+    upper_f32 = np.nextafter(lower_f32, np.float32(np.inf))
+    upper_f64 = np.float64(upper_f32)
+    return lower_f64, upper_f64
+
+
+def calc_bounds(higher_prec_val):
+    if _double_exactly_representable_as_float32(higher_prec_val):
         print("Exactly represented")
-        return 0, 0, 1
+        return 0, 0, 1, 1
 
-    lower = np.nextafter(rounded_val, -np.inf, dtype=np_type)
-    upper = np.nextafter(rounded_val, np.inf, dtype=np_type)
-
-    if rounded_val < higher_prec_val:
-        lower = rounded_val
-    else:
-        upper = rounded_val
+    lower_f64, upper_f64 = _float32_neighbors_from_bits(higher_prec_val)
+    lower_diff = abs(higher_prec_val - lower_f64)
+    upper_diff = abs(upper_f64 - higher_prec_val)
+    lower, upper = np.float32(lower_f64), np.float32(upper_f64)
 
     print(f"lower: {lower}, upper: {upper}")
-
     print(f" C: {higher_prec_val}")
-    lower_diff = abs(higher_prec_val - lower)
     print(f"LF: {lower_diff}")
-    upper_diff = abs(upper - higher_prec_val)
     print(f"UF: {upper_diff}")
-    theoretical_prob = lower_diff / (lower_diff + upper_diff)
+    total = lower_diff + upper_diff
+    if total == 0:
+        return 0, 0, 1, 1
 
-    return lower_diff, upper_diff, theoretical_prob
+    prob_lower = upper_diff / total
+    theoretical_prob = max(prob_lower, 1 - prob_lower)
+
+    return lower_diff, upper_diff, prob_lower, theoretical_prob
 
 
 if __name__ == "__main__":
@@ -410,11 +428,12 @@ if __name__ == "__main__":
     test_mult()
     test_div()
     test_dot_runs()
-    test_matrix_mult_runs()
-    test_gemv()
-    test_cholesky()
     test_init_properties()
     test_assignment_properties()
     test_assignment_properties_exact_rep()
     test_mixed_addition_properties()
     test_single_mixed_addition_properties()
+
+    test_matrix_mult_runs()
+    test_gemv()
+    test_cholesky()
