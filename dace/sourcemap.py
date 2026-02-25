@@ -4,15 +4,22 @@ import re
 import json
 import os
 import socket
-from typing import Optional
+from typing import Optional, TypedDict
 from dace import Config, dtypes
 from dace.sdfg import state
 from dace.sdfg import nodes
 
 
+class NodeInfo(TypedDict):
+    debuginfo: dict[str, int | str]
+    cfg_id: int
+    state_id: int
+    node_id: int
+
+
 class SdfgLocation:
 
-    def __init__(self, cfg_id, state_id, node_ids):
+    def __init__(self, cfg_id: int, state_id: int, node_ids: list[int]):
         self.cfg_id = cfg_id
         self.state_id = state_id
         self.node_ids = node_ids
@@ -328,11 +335,12 @@ class MapPython:
         for dbinfo_source in self.debuginfo:
             db_sorted.append(
                 sorted(dbinfo_source,
-                       key=lambda n: (n['debuginfo']['start_line'], n['debuginfo']['start_column'], n['debuginfo'][
-                           'end_line'], n['debuginfo']['end_column'])))
+                       key=lambda n:
+                       (n['debuginfo'].get('start_line', 0), n['debuginfo'].get('start_column', 0), n['debuginfo'].get(
+                           'end_line', 0), n['debuginfo'].get('end_column', 0))))
         return db_sorted
 
-    def make_info(self, debuginfo, node_id: int, state_id: int, cfg_id: int) -> dict:
+    def make_info(self, debuginfo, node_id: int, state_id: int, cfg_id: int) -> NodeInfo:
         """ Creates an object for the current node with
             the most important information
 
@@ -345,7 +353,7 @@ class MapPython:
         return {"debuginfo": debuginfo, "cfg_id": cfg_id, "state_id": state_id, "node_id": node_id}
 
     def sdfg_debuginfo(self, graph, cfg_id: int = 0, state_id: int = 0):
-        """ Recursively retracts all debuginfo from the nodes
+        """ Recursively extracts all debuginfo from the nodes
 
             :param graph: An SDFG or SDFGState to check for nodes
             :param cfg_id: Id of the current SDFG/NestedSDFG
@@ -387,10 +395,10 @@ class MapPython:
         """
         for file_dbinfo in self.debuginfo:
             for node in file_dbinfo:
-                src_file = node["debuginfo"]["filename"]
+                src_file = node["debuginfo"].get("filename")
                 if not src_file in self.map:
                     self.map[src_file] = {}
-                for line in range(node["debuginfo"]["start_line"], node["debuginfo"]["end_line"] + 1):
+                for line in range(node["debuginfo"].get("start_line", 0), node["debuginfo"].get("end_line", 0) + 1):
                     # Maps a python line to a list of nodes
                     # The nodes have been sorted by priority
                     if not str(line) in self.map[src_file]:
