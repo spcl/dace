@@ -180,6 +180,7 @@ class ExpandGemmOpenBLAS(ExpandTransformation):
 
         opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, dtype.ctype, func)
         opt['cast'] = "(float *)" if dtype == dace.float32sr else ""
+        opt['c'] = '_c'
 
         # Adaptations for BLAS API
         opt['ta'] = 'CblasNoTrans' if opt['ta'] == 'N' else 'CblasTrans'
@@ -196,7 +197,7 @@ class ExpandGemmOpenBLAS(ExpandTransformation):
 
         code += ("cblas_{func}(CblasColMajor, {ta}, {tb}, "
                  "{M}, {N}, {K}, {alpha},{cast} {x}, {lda}, {cast} {y}, {ldb}, {beta}, "
-                 "_c, {ldc});").format_map(opt)
+                 "{cast} {c}, {ldc});").format_map(opt)
 
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name,
