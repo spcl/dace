@@ -317,10 +317,10 @@ class MapPython:
         """
         divided = []
         for dbinfo in self.debuginfo:
-            source = dbinfo['debuginfo']['filename']
+            source = dbinfo['debuginfo'].get('filename')
             exists = False
             for src_infos in divided:
-                if len(src_infos) > 0 and src_infos[0]['debuginfo']['filename'] == source:
+                if len(src_infos) > 0 and src_infos[0]['debuginfo'].get('filename') == source:
                     src_infos.append(dbinfo)
                     exists = True
                     break

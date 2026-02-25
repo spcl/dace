@@ -1327,13 +1327,17 @@ class DebugInfo:
     """ Source code location identifier of a node/edge in an SDFG. Used for
         IDE and debugging purposes. """
 
-    def __init__(self, start_line, start_column=0, end_line=-1, end_column=0, filename=None):
+    def __init__(self, start_line, start_column=0, end_line=-1, end_column=0, filename=None, file_index=None):
         self.start_line = start_line
         self.end_line = end_line if end_line >= 0 else start_line
         self.start_column = start_column
         self.end_column = end_column
+
+        if filename is not None and file_index is not None:
+            raise ValueError("Cannot specify both filename and file_index in DebugInfo")
+
         self.filename = filename
-        self.file_index = None
+        self.file_index = file_index
 
     # NOTE: Manually marking as serializable to avoid an import loop
     # The data structure is a property on its own (pointing to a range of code),
@@ -1350,16 +1354,15 @@ class DebugInfo:
             result['end_column'] = self.end_column
         if self.file_index is not None:
             result['file_index'] = self.file_index
-        else:
-            if self.filename:
-                result['filename'] = self.filename
+        elif self.filename:
+            result['filename'] = self.filename
 
         return result
 
     @staticmethod
     def from_json(json_obj: dict[str, int | str], context=None):
-        return DebugInfo(json_obj.get('start_line'), json_obj.get('start_column', 0), json_obj.get('end_line'),
-                         json_obj.get('end_column', 0), json_obj.get('filename'))
+        return DebugInfo(json_obj.get('start_line'), json_obj.get('start_column', 0), json_obj.get('end_line', -1),
+                         json_obj.get('end_column', 0), json_obj.get('filename'), json_obj.get('file_index'))
 
     def __deepcopy__(self, memo) -> 'DebugInfo':
         """Performs a `deepcopy` of `self`.
