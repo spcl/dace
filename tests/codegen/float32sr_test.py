@@ -421,6 +421,17 @@ def calc_bounds(higher_prec_val):
     return lower_diff, upper_diff, prob_lower, theoretical_prob
 
 
+def test_serialization():
+    from dace.dtypes import json_to_typeclass
+    restored = json_to_typeclass("float32sr")
+    assert restored is dace.float32sr
+
+    ptr_type = dace.pointer(dace.float32sr)
+    ptr_json = dace.serialize.to_json(ptr_type)
+    ptr_restored = dace.serialize.from_json(ptr_json)
+    assert ptr_restored == ptr_type
+
+
 if __name__ == "__main__":
     test_add()
     test_sub()
@@ -433,6 +444,7 @@ if __name__ == "__main__":
     test_assignment_properties_exact_rep()
     test_mixed_addition_properties()
     test_single_mixed_addition_properties()
+    test_serialization()
 
     test_matrix_mult_runs()
     test_gemv()
