@@ -79,6 +79,14 @@ namespace dace
 
             }
 
+            // Allow float* source when T is float32sr (layout-compatible)
+            template <typename... Args>
+            static auto Copy(const float *src, T *dst, const int& dst_stride, const Args&... dst_otherdims)
+                -> typename std::enable_if<std::is_same<T, float32sr>::value, void>::type
+            {
+                Copy(reinterpret_cast<const T*>(src), dst, dst_stride, dst_otherdims...);
+            }
+
             template <typename ACCUMULATE, typename... Args>
             static DACE_HDFI void Accumulate(const T *src, T *dst, ACCUMULATE acc, const int& dst_stride, const Args&... dst_otherdims)
             {
@@ -118,6 +126,14 @@ namespace dace
                         src + i * src_stride, dst + i * DST_STRIDE, src_otherdims...);
             }
 
+            // Allow float* source when T is float32sr (layout-compatible)
+            template <typename... Args>
+            static auto Copy(const float *src, T *dst, const int& src_stride, const Args&... src_otherdims)
+                -> typename std::enable_if<std::is_same<T, float32sr>::value, void>::type
+            {
+                Copy(reinterpret_cast<const T*>(src), dst, src_stride, src_otherdims...);
+            }
+
             template <typename ACCUMULATE, typename... Args>
             static DACE_HDFI void Accumulate(const T *src, T *dst, ACCUMULATE acc, const int& src_stride, const Args&... src_otherdims)
             {
@@ -152,8 +168,16 @@ namespace dace
 
                 __DACE_UNROLL
                 for (int i = 0; i < COPYDIM; ++i)
-                    CopyND<T, VECLEN, ALIGNED, OTHER_COPYDIMS...>::Dynamic::Copy(
-                        src + i * src_stride, dst + i * dst_stride, otherdims...);
+                    CopyND<T, VECLEN, ALIGNED, OTHER_COPYDIMS...>::template Dynamic::Copy(
+                        src + i * src_stride, dst + i * dst_stride, src_stride, dst_stride, otherdims...);
+            }
+
+            // Allow float* source when T is float32sr (layout-compatible)
+            template <typename... Args>
+            static auto Copy(const float *src, T *dst, const int& src_stride, const int& dst_stride, const Args&... otherdims)
+                -> typename std::enable_if<std::is_same<T, float32sr>::value, void>::type
+            {
+                Copy(reinterpret_cast<const T*>(src), dst, src_stride, dst_stride, otherdims...);
             }
 
             template <typename ACCUMULATE, typename... Args>
