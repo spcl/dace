@@ -662,7 +662,7 @@ class SDFG(ControlFlowRegion):
         for edge, _ in self.all_edges_recursive():
             _replace_index_with_file(edge)
 
-    def to_json(self, hash=False):
+    def to_json(self, hash=False, include_transformation_history=False):
         """ Serializes this object to JSON format.
 
             :return: A string representing the JSON-serialized SDFG.
@@ -680,6 +680,24 @@ class SDFG(ControlFlowRegion):
         # Ensure properties are serialized correctly
         if 'constants_prop' in tmp['attributes']:
             tmp['attributes']['constants_prop'] = json.loads(dace.serialize.dumps(tmp['attributes']['constants_prop']))
+
+        if is_root and not include_transformation_history:
+            # Strip transformation history from JSON recursively
+            def _strip_transformation_history(json_obj: Any):
+                if isinstance(json_obj, dict):
+                    if 'type' in json_obj and json_obj['type'] == 'SDFG' and 'attributes' in json_obj:
+                        if 'transformation_hist' in json_obj['attributes']:
+                            del json_obj['attributes']['transformation_hist']
+                        if 'orig_sdfg' in json_obj['attributes']:
+                            del json_obj['attributes']['orig_sdfg']
+
+                    for v in json_obj.values():
+                        _strip_transformation_history(v)
+                elif isinstance(json_obj, (list, tuple)):
+                    for v in json_obj:
+                        _strip_transformation_history(v)
+
+            _strip_transformation_history(tmp)
 
         tmp['attributes']['name'] = self.name
         if hash:
@@ -1712,7 +1730,8 @@ class SDFG(ControlFlowRegion):
              hash=None,
              exception=None,
              compress=False,
-             readable=False) -> Optional[str]:
+             readable=False,
+             include_transformation_history=False) -> Optional[str]:
         """ Save this SDFG to a file.
 
             :param filename: File name to save to.
@@ -1724,7 +1743,8 @@ class SDFG(ControlFlowRegion):
                               SDFG.
             :param compress: If True, uses gzip to compress the file upon saving.
             :param readable: If True, saves the JSON in a human-readable format.
-            :return: The hash of the SDFG, or None if failed/not requested.
+            :param include_transformation_history: If True, includes the transformation history in the saved SDFG.
+            :return: The hash of the SDFG, or None if not requested.
         """
         filename = os.path.expanduser(filename)
 
@@ -1746,7 +1766,7 @@ class SDFG(ControlFlowRegion):
         else:
             hash = True if hash is None else hash
             with fileopen(filename, "w") as fp:
-                json_output = self.to_json(hash=hash)
+                json_output = self.to_json(hash=hash, include_transformation_history=include_transformation_history)
                 if exception:
                     json_output['error'] = exception.to_json()
                 dace.serialize.dump(json_output, fp, readable=readable)
