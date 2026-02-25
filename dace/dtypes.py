@@ -757,7 +757,7 @@ class struct(typeclass):
 
     def as_ctypes(self):
         """ Returns the ctypes version of the typeclass. """
-        self_as_json = json.dumps(self.to_json(), sort_keys=True)
+        self_as_json = json.dumps(self.to_json(), sort_keys=True, separators=(',', ':'))
         if self_as_json in struct.STRUCT_CTYPES:
             return struct.STRUCT_CTYPES[self_as_json]
         # Populate the ctype fields for the struct class.

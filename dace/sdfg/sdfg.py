@@ -1646,7 +1646,13 @@ class SDFG(ControlFlowRegion):
 
         return dtypes.deduplicate(shared)
 
-    def save(self, filename: str, use_pickle=False, hash=None, exception=None, compress=False) -> Optional[str]:
+    def save(self,
+             filename: str,
+             use_pickle=False,
+             hash=None,
+             exception=None,
+             compress=False,
+             readable=False) -> Optional[str]:
         """ Save this SDFG to a file.
 
             :param filename: File name to save to.
@@ -1657,6 +1663,7 @@ class SDFG(ControlFlowRegion):
             :param exception: If not None, stores error information along with
                               SDFG.
             :param compress: If True, uses gzip to compress the file upon saving.
+            :param readable: If True, saves the JSON in a human-readable format.
             :return: The hash of the SDFG, or None if failed/not requested.
         """
         filename = os.path.expanduser(filename)
@@ -1682,7 +1689,7 @@ class SDFG(ControlFlowRegion):
                 json_output = self.to_json(hash=hash)
                 if exception:
                     json_output['error'] = exception.to_json()
-                dace.serialize.dump(json_output, fp)
+                dace.serialize.dump(json_output, fp, readable=readable)
             if hash and 'hash' in json_output['attributes']:
                 return json_output['attributes']['hash']
 

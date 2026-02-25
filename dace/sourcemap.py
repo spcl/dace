@@ -64,7 +64,7 @@ def send(data: json):
     HOST = socket.gethostname()
     PORT = os.environ["DACE_port"]
 
-    data_bytes = bytes(json.dumps(data), "utf-8")
+    data_bytes = bytes(json.dumps(data, indent=None, separators=(',', ':')), "utf-8")
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.connect((HOST, int(PORT)))
         s.sendall(data_bytes)
@@ -85,7 +85,7 @@ def save(language: str, name: str, map: dict, build_folder: str) -> str:
     path = os.path.abspath(os.path.join(folder, 'map', 'map_' + language + '.json'))
 
     with open(path, "w") as json_file:
-        json.dump(map, json_file, indent=4)
+        json.dump(map, json_file, indent=None, separators=(',', ':'))
 
     return os.path.abspath(folder)
 
