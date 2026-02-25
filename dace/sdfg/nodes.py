@@ -277,7 +277,7 @@ class AccessNode(Node):
     """ A node that accesses data in the SDFG. Denoted by a circular shape. """
 
     setzero = Property(dtype=bool, desc="Initialize to zero", default=False)
-    debuginfo = DebugInfoProperty()
+    debuginfo = DebugInfoProperty(allow_none=True)
     data = DataProperty(desc="Data (array, stream, scalar) to access")
 
     instrument = EnumProperty(dtype=dtypes.DataInstrumentationType,
@@ -399,7 +399,7 @@ class Tasklet(CodeNode):
                              default=CodeBlock("", dtypes.Language.CPP))
     code_exit = CodeProperty(desc="Extra code that is called on DaCe runtime cleanup",
                              default=CodeBlock("", dtypes.Language.CPP))
-    debuginfo = DebugInfoProperty()
+    debuginfo = DebugInfoProperty(allow_none=True)
 
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
                               desc="Measure execution statistics with given method",
@@ -601,7 +601,7 @@ class NestedSDFG(CodeNode):
                                   value_type=dace.symbolic.pystr_to_symbolic,
                                   desc="Mapping between internal symbols and their values, expressed as "
                                   "symbolic expressions")
-    debuginfo = DebugInfoProperty()
+    debuginfo = DebugInfoProperty(allow_none=True)
     is_collapsed = Property(dtype=bool, desc="Show this node/scope/state as collapsed", default=False)
 
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
@@ -1008,7 +1008,7 @@ class Map(object):
                              desc="How much iterations should be unrolled."
                              " To prevent unrolling, set this value to 1.")
     collapse = Property(dtype=int, default=1, desc="How many dimensions to collapse into the parallel range")
-    debuginfo = DebugInfoProperty()
+    debuginfo = DebugInfoProperty(allow_none=True)
     is_collapsed = Property(dtype=bool, desc="Show this node/scope/state as collapsed", default=False)
 
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
@@ -1260,7 +1260,7 @@ class Consume(object):
     condition = CodeProperty(desc="Quiescence condition", allow_none=True, default=None)
     schedule = EnumProperty(dtype=dtypes.ScheduleType, desc="Consume schedule", default=dtypes.ScheduleType.Default)
     chunksize = Property(dtype=int, desc="Maximal size of elements to consume at a time", default=1)
-    debuginfo = DebugInfoProperty()
+    debuginfo = DebugInfoProperty(allow_none=True)
     is_collapsed = Property(dtype=bool, desc="Show this node/scope/state as collapsed", default=False)
 
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
@@ -1330,7 +1330,7 @@ class LibraryNode(CodeNode):
                             desc="If set, determines the default device mapping of "
                             "the node upon expansion, if expanded to a nested SDFG.",
                             default=dtypes.ScheduleType.Default)
-    debuginfo = DebugInfoProperty()
+    debuginfo = DebugInfoProperty(allow_none=True)
 
     def __init__(self, name, *args, schedule=None, **kwargs):
         super().__init__(*args, **kwargs)

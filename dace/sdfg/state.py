@@ -3855,7 +3855,7 @@ class UnstructuredControlFlow(ControlFlowRegion):
 @make_properties
 class NamedRegion(ControlFlowRegion):
 
-    debuginfo = DebugInfoProperty()
+    debuginfo = DebugInfoProperty(allow_none=True)
 
     def __init__(self, label: str, sdfg: Optional['SDFG'] = None, debuginfo: Optional[dtypes.DebugInfo] = None):
         super().__init__(label, sdfg)

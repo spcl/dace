@@ -1333,22 +1333,33 @@ class DebugInfo:
         self.start_column = start_column
         self.end_column = end_column
         self.filename = filename
+        self.file_index = None
 
     # NOTE: Manually marking as serializable to avoid an import loop
     # The data structure is a property on its own (pointing to a range of code),
     # so it is serialized as a dictionary directly.
     def to_json(self):
-        return dict(type='DebugInfo',
-                    start_line=self.start_line,
-                    end_line=self.end_line,
-                    start_column=self.start_column,
-                    end_column=self.end_column,
-                    filename=self.filename)
+        result = {'type': 'DebugInfo'}
+        if self.start_line is not None:
+            result['start_line'] = self.start_line
+        if self.end_line is not None and self.end_line != self.start_line:
+            result['end_line'] = self.end_line
+        if self.start_column:
+            result['start_column'] = self.start_column
+        if self.end_column and self.end_column != self.start_column:
+            result['end_column'] = self.end_column
+        if self.file_index is not None:
+            result['file_index'] = self.file_index
+        else:
+            if self.filename:
+                result['filename'] = self.filename
+
+        return result
 
     @staticmethod
-    def from_json(json_obj, context=None):
-        return DebugInfo(json_obj['start_line'], json_obj['start_column'], json_obj['end_line'], json_obj['end_column'],
-                         json_obj['filename'])
+    def from_json(json_obj: dict[str, int | str], context=None):
+        return DebugInfo(json_obj.get('start_line'), json_obj.get('start_column', 0), json_obj.get('end_line'),
+                         json_obj.get('end_column', 0), json_obj.get('filename'))
 
     def __deepcopy__(self, memo) -> 'DebugInfo':
         """Performs a `deepcopy` of `self`.

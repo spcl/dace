@@ -608,6 +608,60 @@ class SDFG(ControlFlowRegion):
         """
         return self.cfg_id
 
+    def compute_debuginfo_files(self) -> list[str]:
+        """
+        Computes the set of files that are referenced in the SDFG's debug information, and adds them to the SDFG's
+        debug information properties.
+
+        :return: A list of files that are referenced in the SDFG's debug information, in the order they were indexed.
+        """
+        files: list[str] = []
+
+        def _replace_file_with_index(element: Any):
+            if getattr(element, 'debuginfo', False):
+                debuginfo: dtypes.DebugInfo = element.debuginfo
+                if debuginfo.filename:
+                    # Replace filename with number
+                    try:
+                        fileindex = files.index(debuginfo.filename)
+                    except ValueError:
+                        files.append(debuginfo.filename)
+                        fileindex = len(files) - 1
+                    debuginfo.file_index = fileindex
+
+        _replace_file_with_index(self)
+        for _, _, arr in self.arrays_recursive():
+            _replace_file_with_index(arr)
+        for node, _ in self.all_nodes_recursive():
+            _replace_file_with_index(node)
+        for edge, _ in self.all_edges_recursive():
+            _replace_file_with_index(edge)
+
+        return files
+
+    def rematerialize_debuginfo_files(self, files: list[str]) -> None:
+        """
+        Replaces file indices in the SDFG's debug information with the actual file names, using the provided list of
+        files.
+
+        :param files: A list of files that are referenced in the SDFG's debug information, in the order they were indexed.
+        """
+
+        def _replace_index_with_file(element: Any):
+            if getattr(element, 'debuginfo', False):
+                debuginfo: dtypes.DebugInfo = element.debuginfo
+                if debuginfo.file_index is not None:
+                    debuginfo.filename = files[debuginfo.file_index]
+                    debuginfo.file_index = None
+
+        _replace_index_with_file(self)
+        for _, _, arr in self.arrays_recursive():
+            _replace_index_with_file(arr)
+        for node, _ in self.all_nodes_recursive():
+            _replace_index_with_file(node)
+        for edge, _ in self.all_edges_recursive():
+            _replace_index_with_file(edge)
+
     def to_json(self, hash=False):
         """ Serializes this object to JSON format.
 
@@ -617,8 +671,11 @@ class SDFG(ControlFlowRegion):
         is_root = self.parent_sdfg is None
         if is_root:
             self.reset_cfg_list()
+            source_files = self.compute_debuginfo_files()
 
         tmp = super().to_json()
+        if is_root:
+            tmp['source_files'] = source_files
 
         # Ensure properties are serialized correctly
         if 'constants_prop' in tmp['attributes']:
@@ -668,6 +725,9 @@ class SDFG(ControlFlowRegion):
 
         if 'start_block' in json_obj:
             ret._start_block = json_obj['start_block']
+
+        if 'source_files' in json_obj:  # This will only happen on the root SDFG, once deserialization is complete
+            ret.rematerialize_debuginfo_files(json_obj['source_files'])
 
         return ret
 
