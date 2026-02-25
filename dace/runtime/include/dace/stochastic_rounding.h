@@ -2,6 +2,8 @@
 #ifndef __DACE_SROUND_H
 #define __DACE_SROUND_H
 
+#include <array>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
