@@ -13,7 +13,8 @@ def _program(A: dace.float64[10, 10], B: dace.float64[10, 10], C: dace.float64[1
 
 
 @dace.program
-def _program2(A: dace.float64[10, 10], B: dace.float64[10, 10], C: dace.float64[10, 10], idx: dace.int64[10, 10],
+def _program2(A: dace.float64[10, 10], B: dace.float64[10, 10],
+              C: dace.float64[10, 10], idx: dace.int64[10, 10],
               idy: dace.int64[10, 10]):
     for i, j in dace.map[0:10, 0:10]:
         C[i, j] = A[i, j] + B[idy[i, j], idx[i, j]]
