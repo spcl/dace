@@ -105,6 +105,16 @@ def generate_program_folder(sdfg, code_objects: List[CodeObject], out_path: str,
             with open(filepath, 'w') as hfile:
                 hfile.write(contents)
 
+    # Write cachedir tag
+    cachedir_tag = os.path.join(out_path, "CACHEDIR.TAG")
+    if not os.path.exists(cachedir_tag):
+        with open(cachedir_tag, "w") as f:
+            f.write("""Signature: 8a477f597d28d172789f06886806bc55
+# This file is a cache directory tag created by DaCe.
+# For information about cache directory tags, see:
+#	http://www.brynosaurus.com/cachedir/
+""")
+
     return out_path
 
 
