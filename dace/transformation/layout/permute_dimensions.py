@@ -220,7 +220,7 @@ class PermuteArrayDimensions(ppl.Pass):
 
         # Go through all interstate edges
         for edge in sdfg.all_interstate_edges():
-            for k, v in edge.data.assignments.items():
+            for k, v in edge.data.items():
                 # Replace array names if present, according to the permute conditions
                 if any(name in v for name in permute_map.keys()):
                     # Time to replace
