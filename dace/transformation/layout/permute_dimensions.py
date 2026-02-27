@@ -231,11 +231,16 @@ class PermuteArrayDimensions(ppl.Pass):
 
         # Go through all interstate edges
         for edge in sdfg.all_interstate_edges():
+            new_assignments = dict()
             for k, v in edge.data.assignments.items():
                 # Replace array names if present, according to the permute conditions
                 if any(name in v or name in k for name in permute_map.keys()):
                     # Time to replace
-                    _parse_interstate_edge(v, permute_map, sdfg)
+                    new_v = _parse_interstate_edge(v, permute_map, sdfg)
+                    new_assignments[k] = new_v
+                else:
+                    new_assignments[k] = v
+            edge.data.assignments = new_assignments
 
 def permute_args(expr, permute_map: dict[str, list[int]]):
     """Recursively permute function call arguments in a SymPy/DaCe expression.
