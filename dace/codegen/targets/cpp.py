@@ -13,7 +13,7 @@ import sys
 import warnings
 
 import sympy as sp
-from six import StringIO
+from io import StringIO
 from typing import IO, TYPE_CHECKING, List, Optional, Tuple, Union
 
 import dace

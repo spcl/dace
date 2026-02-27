@@ -1,6 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from dace.codegen import cppunparse
-import six
 
 
 def _test_py2cpp(func, expected_string):
@@ -43,8 +42,7 @@ def test():
     return (c * b);
 }""")
 
-    if six.PY3:
-        success &= _test_py2cpp("""def typed(a: int, b: float) -> float:
+    success &= _test_py2cpp("""def typed(a: int, b: float) -> float:
     c = a + b
     return c*b
 """, """float typed(int a, float b) {
@@ -77,8 +75,7 @@ def test():
 }""")
 
     # void return value
-    if six.PY3:
-        success &= _test_py2cpp("""
+    success &= _test_py2cpp("""
 def lfunc() -> None:
     exit(1 >> 3)
 """, """void lfunc() {
@@ -90,8 +87,7 @@ def lfunc() -> None:
 l = (l + 8);""")
 
     # Operations (augmented assignment)
-    if six.PY3:
-        success &= _test_py2cpp('l *= 3; l //= 8', """l *= 3;
+    success &= _test_py2cpp('l *= 3; l //= 8', """l *= 3;
 l = dace::math::ifloor(l / 8);""")
 
     success &= _test_pyexpr2cpp('a << 3', '(a << 3)')
