@@ -69,12 +69,14 @@ class PermuteArrayDimensions(ppl.Pass):
         inverse_perm = [inverse_map[i] for i in sorted(inverse_map)]
         return inverse_perm
 
-    def _permute_index(self, root: dace.SDFG, sdfg: dace.SDFG, permute_map: Dict[str, List[int]],
+    def _permute_index(self, root: dace.SDFG, sdfg: dace.SDFG,
+                       permute_map: Dict[str, List[int]],
                        add_permute_maps: bool):
         # If top-level SDFG, namely the root is equal to the sdfg, we might need to add a transpose state and maps to
         # permute the arrays, otherwise we just replace the arrays with the permuted shape
         name_map = dict()
         permute_states_to_skip = set()
+
         for arr_name, arr in list(sdfg.arrays.items()):
             if arr_name in permute_map:
                 permute_indices = permute_map[arr_name]
@@ -128,15 +130,15 @@ class PermuteArrayDimensions(ppl.Pass):
                     old_shape = sdfg.arrays[old_name].shape
                     new_shape = sdfg.arrays[new_name].shape
                     permute_indices = permute_map[old_name]
+
                     # Only non-transient glb arrays are input arrays
-                    if sdfg.arrays[old_name].transient is False:
-                        self._add_permute_map(sdfg=sdfg,
-                                              state=permute_state,
-                                              old_shape=old_shape,
-                                              new_shape=new_shape,
-                                              permute_indices=permute_indices,
-                                              old_name=old_name,
-                                              new_name=new_name)
+                    self._add_permute_map(sdfg=sdfg,
+                                            state=permute_state,
+                                            old_shape=old_shape,
+                                            new_shape=new_shape,
+                                            permute_indices=permute_indices,
+                                            old_name=old_name,
+                                            new_name=new_name)
 
                 # Add maps to permute the arrays back to their original shape
                 for old_name, new_name in name_map.items():
@@ -166,21 +168,30 @@ class PermuteArrayDimensions(ppl.Pass):
                     # it will be per_A -> (A)(NestedSDFG)
                     # If before it was A -> (nA)(NestedSDFG)
                     # it will be per_A -> (nA)(NestedSDFG)
+
                     # The nested SDFG needs to have identity as the name map
                     # Update the names for the nested SDFG
                     # But only if the full array is passed, for example A[i] (array) -> tmp_X (scalar) does not require replacement
 
                     # TODO: views, do they need any changes?
+                    # Open issue, what to do when we get all subsets, vs. only some of the subsets
+                    # If we permute [a, b, c] -> [b, a, c], if we get subset [c] nothing changes,
+                    # but if we get subset [a, b] we need to change it to [b, a]
+                    # For now: the length of shape should be either 1 (no change needed), or the full length of the array (full change needed), otherwise we raise an exception as we do not know how to permute it
                     for ie in state.in_edges(node):
                         src_name = ie.data.data
                         dst_name = ie.dst_conn
-                        if src_name in permute_map and sdfg.arrays[src_name].shape == node.sdfg.arrays[dst_name].shape:
+                        dst_dimensionality = len(node.sdfg.arrays[dst_name].shape)
+                        src_dimensionality = len(sdfg.arrays[src_name].shape)
+                        if src_name in permute_map and src_dimensionality == dst_dimensionality:
                             new_permute_map[dst_name] = permute_map[src_name]
                     for oe in state.out_edges(node):
-                        src_name = oe.src_conn
-                        dst_name = oe.data.data
-                        if dst_name in permute_map and sdfg.arrays[dst_name].shape == node.sdfg.arrays[src_name].shape:
-                            new_permute_map[src_name] = permute_map[dst_name]
+                        dst_name = oe.src_conn
+                        src_name = oe.data.data
+                        dst_dimensionality = len(node.sdfg.arrays[src_name].shape)
+                        src_dimensionality = len(sdfg.arrays[src_name].shape)
+                        if src_name in permute_map and src_dimensionality == dst_dimensionality:
+                            new_permute_map[dst_name] = permute_map[src_name]
 
                     self._permute_index(root=root, sdfg=node.sdfg, permute_map=new_permute_map, add_permute_maps=False)
 
@@ -220,12 +231,37 @@ class PermuteArrayDimensions(ppl.Pass):
 
         # Go through all interstate edges
         for edge in sdfg.all_interstate_edges():
-            for k, v in edge.data.items():
+            new_assignments = dict()
+            for k, v in edge.data.assignments.items():
                 # Replace array names if present, according to the permute conditions
-                if any(name in v for name in permute_map.keys()):
+                if any(name in v or name in k for name in permute_map.keys()):
                     # Time to replace
-                    _parse_interstate_edge(v, sdfg)
+                    new_v = _parse_interstate_edge(v, permute_map, sdfg)
+                    new_assignments[k] = new_v
+                else:
+                    new_assignments[k] = v
+            edge.data.assignments = new_assignments
 
+def permute_args(expr, permute_map: dict[str, list[int]]):
+    """Recursively permute function call arguments in a SymPy/DaCe expression.
+    
+    permute_map: {func_name: perm} where perm[new_pos] = old_pos.
+    Returns the original expression object if nothing changed.
+    """
+    if not expr.args:
+        return expr
+    args = tuple(permute_args(a, permute_map) for a in expr.args)
+    name = str(expr.func)
+    if name in permute_map:
+        perm = permute_map[name]
+        args = tuple(args[perm[i]] for i in range(len(args)))
+    if args == expr.args:
+        return expr
+    return expr.func(*args)
 
-def _parse_interstate_edge(edge_data: str, sdfg: dace.SDFG):
-    print(edge_data)
+def _parse_interstate_edge(edge_data: str, permute_map: dict[str, list[int]], sdfg: dace.SDFG = None):
+    symbolic_expr: dace.symbolic.SymExpr = dace.symbolic.pystr_to_symbolic(edge_data)
+    permuted_symbolic_expr: dace.symbolic.SymExpr = permute_args(symbolic_expr, permute_map)
+    permuted_str_expr: str = dace.symbolic.symstr(sym=permuted_symbolic_expr,
+                                                  arrayexprs=frozenset(sdfg.arrays.keys()))
+    return permuted_str_expr
