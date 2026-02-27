@@ -17,6 +17,7 @@ class PermuteArrayDimensions(ppl.Pass):
         self._add_permute_maps = add_permute_maps
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
+        # Once permutaiton is done, no re-application is needed, ever
         return False
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Dict[str, Any]) -> int:
@@ -25,6 +26,9 @@ class PermuteArrayDimensions(ppl.Pass):
 
     def _add_permute_map(self, sdfg: dace.SDFG, state: dace.SDFGState, old_shape: List[int], new_shape: List[int],
                          permute_indices: List[int], old_name: str, new_name: str):
+        """
+        Adds a map that copies-in data from the original data layout to the permute layout
+        """
         old_access = state.add_access(old_name)
         new_access = state.add_access(new_name)
         range_dict = dict()
@@ -34,7 +38,7 @@ class PermuteArrayDimensions(ppl.Pass):
             range_dict[f"i{i}"] = f"0:{new_shape[i]}"  # Could use old shape too
 
         # Add map that computes B[permute_indices[i], ..., permute_indices[k]] = A[i, j, ..., k]
-        map_entry, map_exit = state.add_map("permute_impl", range_dict)
+        map_entry, map_exit = state.add_map(f"permute_map_impl_{old_name}", range_dict)
 
         src_access = ", ".join(f"i{i}" for i in range(len(permute_indices)))
         dst_access = ", ".join(f"i{permute_indices[i]}" for i in range(len(permute_indices)))
@@ -165,6 +169,8 @@ class PermuteArrayDimensions(ppl.Pass):
                     # The nested SDFG needs to have identity as the name map
                     # Update the names for the nested SDFG
                     # But only if the full array is passed, for example A[i] (array) -> tmp_X (scalar) does not require replacement
+
+                    # TODO: views, do they need any changes?
                     for ie in state.in_edges(node):
                         src_name = ie.data.data
                         dst_name = ie.dst_conn
@@ -175,16 +181,19 @@ class PermuteArrayDimensions(ppl.Pass):
                         dst_name = oe.data.data
                         if dst_name in permute_map and sdfg.arrays[dst_name].shape == node.sdfg.arrays[src_name].shape:
                             new_permute_map[src_name] = permute_map[dst_name]
+
                     self._permute_index(root=root, sdfg=node.sdfg, permute_map=new_permute_map, add_permute_maps=False)
 
         for state in sdfg.all_states():
             if sdfg == root and (state in permute_states_to_skip):
                 continue
             for node in state.nodes():
-                # Replace array access with the new Name
+                # Replace array access with the new Name (can be identity if we have not added permute maps)
                 if isinstance(node, dace.nodes.AccessNode):
                     if node.data in name_map:
                         node.data = name_map[node.data]
+
+            # Go through all memlets
             for edge in state.edges():
                 if edge.data is not None and edge.data.data is not None and edge.data.data in name_map:
                     # Replace map connectors to reference to correct permuted array (e.g. IN_A -> IN_per_A)
@@ -208,3 +217,15 @@ class PermuteArrayDimensions(ppl.Pass):
                     for i in range(len(permute_indices)):
                         new_subset.append(edge.data.subset[permute_indices[i]])
                     edge.data.subset = dace.subsets.Range(new_subset)
+
+        # Go through all interstate edges
+        for edge in sdfg.all_interstate_edges():
+            for k, v in edge.data.items():
+                # Replace array names if present, according to the permute conditions
+                if any(name in v for name in permute_map.keys()):
+                    # Time to replace
+                    _parse_interstate_edge(v, sdfg)
+
+
+def _parse_interstate_edge(edge_data: str, sdfg: dace.SDFG):
+    print(edge_data)
