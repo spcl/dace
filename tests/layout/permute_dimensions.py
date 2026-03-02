@@ -15,12 +15,16 @@ Array shapes:
 import dace
 import numpy as np
 import pytest
+import copy
+from dace.transformation.layout.permute_dimensions import PermuteDimensions
+from dace.transformation.dataflow.map_interchange import MapInterchange
 
 # Symbols
 nblks_c = dace.symbol("nblks_c")
 nlev = dace.symbol("nlev")
 nproma = dace.symbol("nproma")
 
+N_BLKS, N_LEV, N_PROMA = 2, 4, 16
 
 @dace.program
 def indirect_stencil(
@@ -50,58 +54,24 @@ def generate_input(N_blks: int, N_lev: int, N_proma: int, rng=None):
     return A, B
 
 
-def generate_permutation_indices(N_blks: int, N_lev: int, N_proma: int, rng=None):
-    """
-    Variant 1 — Permutation:
-    For each (jb, jc), the 3 neighbors point to randomly permuted block and cell
-    indices. This creates scattered, non-local access patterns.
-
-    ieidx[n, jb, jc] ∈ [0, N_proma)   (cell index of neighbor)
-    ieblk[n, jb, jc] ∈ [0, N_blks)    (block index of neighbor)
-    """
-    if rng is None:
-        rng = np.random.default_rng(42)
-
-    ieidx = np.empty((3, N_blks, N_proma), dtype=np.int32)
-    ieblk = np.empty((3, N_blks, N_proma), dtype=np.int32)
-
-    for jb in range(N_blks):
-        for jc in range(N_proma):
-            ieblk[:, jb, jc] = rng.choice(N_blks, size=3, replace=True)
-            ieidx[:, jb, jc] = rng.choice(np.arange(1, N_proma - 1), size=3, replace=True)
-
-    return ieidx, ieblk
-
-
-def generate_linear_indices(N_blks: int, N_lev: int, N_proma: int):
-    """
-    Variant 2 — Linear consecutive:
-    Neighbors map to consecutive cells in row-major (block, cell) order.
-
-      flat_base = jb * N_proma + jc
-      neighbor n → flat_base + (n + 1)
-      ieblk = flat // N_proma   (block)
-      ieidx = flat %  N_proma   (cell)
-    """
-    total_cells = N_blks * N_proma
-
-    ieidx = np.empty((3, N_blks, N_proma), dtype=np.int32)
-    ieblk = np.empty((3, N_blks, N_proma), dtype=np.int32)
-
-    for jb in range(N_blks):
-        for jc in range(N_proma):
-            flat_base = jb * N_proma + jc
-            for n in range(3):
-                flat_nb = (flat_base + n + 1) % total_cells
-                ieblk[n, jb, jc] = flat_nb // N_proma
-                ieidx[n, jb, jc] = flat_nb % N_proma
-
+def generate_safe_indices(N_BLKS, N_LEV, N_PROMA):
+    rng = np.random.default_rng(42)
+    
+    # ieblk must be in [0, N_BLKS)
+    ieblk = rng.integers(0, N_BLKS, size=(3, N_BLKS, N_PROMA), dtype=np.int32)
+    
+    # ieidx must be in [0, N_PROMA)
+    # If your stencil is (1 : N_PROMA-1), the neighbors can technically 
+    # be anywhere in the range [0, N_PROMA).
+    ieidx = rng.integers(0, N_PROMA, size=(3, N_BLKS, N_PROMA), dtype=np.int32)
+    
     return ieidx, ieblk
 
 
 # ---------------------------------------------------------------------------
 # Reference & validation
 # ---------------------------------------------------------------------------
+
 
 def generate_weights(N_blks: int, N_lev: int, N_proma: int, rng=None):
     """Generate e_bln_c_s interpolation weights."""
@@ -125,10 +95,6 @@ def reference(A, e_bln_c_s, ieidx, ieblk):
     return B
 
 
-
-N_BLKS, N_LEV, N_PROMA = 2, 4, 16
-
-
 @pytest.fixture
 def input_data():
     A, B = generate_input(N_BLKS, N_LEV, N_PROMA)
@@ -138,7 +104,7 @@ def input_data():
 
 def test_sanity_permutation_indices(input_data):
     A, B, e_bln_c_s = input_data
-    ieidx, ieblk = generate_permutation_indices(N_BLKS, N_LEV, N_PROMA)
+    ieidx, ieblk = generate_safe_indices(N_BLKS, N_LEV, N_PROMA)
     B_ref = reference(A, e_bln_c_s, ieidx, ieblk)
 
     B[:] = 0.0
@@ -148,22 +114,35 @@ def test_sanity_permutation_indices(input_data):
     np.testing.assert_allclose(B, B_ref, atol=1e-14)
 
 
-def test_sanity_linear_indices(input_data):
+def test_permute_on_safe_indices(input_data):
     A, B, e_bln_c_s = input_data
-    ieidx, ieblk = generate_linear_indices(N_BLKS, N_LEV, N_PROMA)
-    B_ref = reference(A, e_bln_c_s, ieidx, ieblk)
-
-    B[:] = 0.0
-    indirect_stencil(A, B, e_bln_c_s, ieidx, ieblk,
-                     nblks_c=N_BLKS, nlev=N_LEV, nproma=N_PROMA)
-
-    np.testing.assert_allclose(B, B_ref, atol=1e-14)
-
-def test_permute_on_linear_indices(input_data):
-    A, B, e_bln_c_s = input_data
-    ieidx, ieblk = generate_linear_indices(N_BLKS, N_LEV, N_PROMA)
+    ieidx, ieblk = generate_safe_indices(N_BLKS, N_LEV, N_PROMA)
     B_ref = reference(A, e_bln_c_s, ieidx, ieblk)
 
     B[:] = 0.0
     sdfg = indirect_stencil.to_sdfg()
+    sdfg.validate()
+
     sdfg.save("before_permute.sdfgz", compress=True)
+
+    sdfg2 = copy.deepcopy(sdfg)
+
+    PermuteDimensions(permute_map={"A": [0, 2, 1],
+                                   "B": [0, 2, 1],
+                                   "e_bln_c_s": [0, 2, 1],
+                                   "ieidx": [1, 2, 0],
+                                   "ieblk": [1, 2, 0]},
+                      add_permute_maps=True).apply_pass(sdfg2, {})
+
+    sdfg2.save("after_permute.sdfgz", compress=True)
+    sdfg2.validate()
+
+    sdfg2(A, B, e_bln_c_s, ieidx, ieblk,
+         nblks_c=N_BLKS, nlev=N_LEV, nproma=N_PROMA)
+
+    np.testing.assert_allclose(B, B_ref, atol=1e-14)
+
+if __name__ == "__main__":
+    A, B = generate_input(N_BLKS, N_LEV, N_PROMA)
+    e_bln_c_s = generate_weights(N_BLKS, N_LEV, N_PROMA)
+    test_permute_on_safe_indices((A, B, e_bln_c_s))
