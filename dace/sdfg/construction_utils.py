@@ -2,7 +2,7 @@
 import dace
 from typing import Dict, Set, Union
 import copy
-from dace.sdfg import ControlFlowRegion
+from dace.sdfg.state import ControlFlowRegion
 from dace.sdfg.propagation import propagate_memlets_state
 import copy
 from dace.properties import CodeBlock
