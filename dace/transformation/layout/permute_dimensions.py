@@ -13,9 +13,12 @@ class PermuteDimensions(ppl.Pass):
         return (ppl.Modifies.States & ppl.Modifies.AccessNodes & ppl.Modifies.Edges & ppl.Modifies.Descriptors
                 & ppl.Modifies.NestedSDFGs & ppl.Modifies.Memlets)
 
-    def __init__(self, permute_map: Dict[str, List[int]], add_permute_maps: bool):
+    def __init__(self, permute_map: Dict[str, List[int]],
+                 add_permute_maps: bool,
+                 column_major: bool = False):
         self._permute_map = permute_map
         self._add_permute_maps = add_permute_maps
+        self._column_major = column_major
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         # Once permutaiton is done, no re-application is needed, ever
@@ -98,9 +101,16 @@ class PermuteDimensions(ppl.Pass):
                     permuted_shape.append(arr_shape[i])
 
                 # Permuted array is packed (contiguous one-dimensional memory)
+                strides = None
+                if self._column_major:
+                    strides = [1]
+                    for i in range(len(permuted_shape) - 1):
+                        strides.append(strides[-1] * permuted_shape[i])
+                
                 permuted_arr = dace.data.Array(
                     dtype=arr.dtype,
                     shape=permuted_shape,
+                    strides=strides,
                     transient=True if (add_permute_maps and root == sdfg) else arr.transient,
                     allow_conflicts=arr.allow_conflicts,
                     storage=arr.storage,
