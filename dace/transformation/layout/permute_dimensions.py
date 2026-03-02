@@ -1,11 +1,12 @@
 import dace
+
 from typing import Dict, List, Any
 from dace.transformation import pass_pipeline as ppl
 from dataclasses import dataclass
 
 
 @dataclass
-class PermuteArrayDimensions(ppl.Pass):
+class PermuteDimensions(ppl.Pass):
 
     def modifies(self) -> ppl.Modifies:
         # This is an analysis pass, so it does not modify anything
@@ -31,26 +32,31 @@ class PermuteArrayDimensions(ppl.Pass):
         """
         old_access = state.add_access(old_name)
         new_access = state.add_access(new_name)
+
         range_dict = dict()
         assert len(old_shape) == len(
             new_shape), f"Old shape {old_shape} and new shape {new_shape} must have the same length"
         for i in range(len(old_shape)):
-            range_dict[f"i{i}"] = f"0:{new_shape[i]}"  # Could use old shape too
+            range_dict[f"i{i}"] = f"0:{old_shape[i]}"  # Could use old shape too
 
         # Add map that computes B[permute_indices[i], ..., permute_indices[k]] = A[i, j, ..., k]
         map_entry, map_exit = state.add_map(f"permute_map_impl_{old_name}", range_dict)
 
         src_access = ", ".join(f"i{i}" for i in range(len(permute_indices)))
         dst_access = ", ".join(f"i{permute_indices[i]}" for i in range(len(permute_indices)))
+
         map_entry.add_in_connector("IN_" + old_name)
         map_entry.add_out_connector("OUT_" + old_name)
         map_exit.add_in_connector("IN_" + new_name)
         map_exit.add_out_connector("OUT_" + new_name)
+
         state.add_edge(old_access, None, map_entry, "IN_" + old_name,
                        dace.Memlet.from_array(old_name, sdfg.arrays[old_name]))
         state.add_edge(map_exit, "OUT_" + new_name, new_access, None,
                        dace.Memlet.from_array(new_name, sdfg.arrays[new_name]))
+
         assign_tasklet = state.add_tasklet("assign", {"_in1"}, {"_out1"}, f"_out1 = _in1")
+
         state.add_edge(map_entry, "OUT_" + old_name, assign_tasklet, "_in1",
                        dace.Memlet(expr=f"{old_name}[{src_access}]"))
         state.add_edge(assign_tasklet, "_out1", map_exit, "IN_" + new_name,
@@ -188,7 +194,7 @@ class PermuteArrayDimensions(ppl.Pass):
                     for oe in state.out_edges(node):
                         dst_name = oe.src_conn
                         src_name = oe.data.data
-                        dst_dimensionality = len(node.sdfg.arrays[src_name].shape)
+                        dst_dimensionality = len(node.sdfg.arrays[dst_name].shape)
                         src_dimensionality = len(sdfg.arrays[src_name].shape)
                         if src_name in permute_map and src_dimensionality == dst_dimensionality:
                             new_permute_map[dst_name] = permute_map[src_name]
