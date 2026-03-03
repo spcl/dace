@@ -13,9 +13,7 @@ class PermuteDimensions(ppl.Pass):
         return (ppl.Modifies.States & ppl.Modifies.AccessNodes & ppl.Modifies.Edges & ppl.Modifies.Descriptors
                 & ppl.Modifies.NestedSDFGs & ppl.Modifies.Memlets)
 
-    def __init__(self, permute_map: Dict[str, List[int]],
-                 add_permute_maps: bool,
-                 column_major: bool = False):
+    def __init__(self, permute_map: Dict[str, List[int]], add_permute_maps: bool, column_major: bool = False):
         self._permute_map = permute_map
         self._add_permute_maps = add_permute_maps
         self._column_major = column_major
@@ -78,8 +76,7 @@ class PermuteDimensions(ppl.Pass):
         inverse_perm = [inverse_map[i] for i in sorted(inverse_map)]
         return inverse_perm
 
-    def _permute_index(self, root: dace.SDFG, sdfg: dace.SDFG,
-                       permute_map: Dict[str, List[int]],
+    def _permute_index(self, root: dace.SDFG, sdfg: dace.SDFG, permute_map: Dict[str, List[int]],
                        add_permute_maps: bool):
         # If top-level SDFG, namely the root is equal to the sdfg, we might need to add a transpose state and maps to
         # permute the arrays, otherwise we just replace the arrays with the permuted shape
@@ -106,7 +103,7 @@ class PermuteDimensions(ppl.Pass):
                     strides = [1]
                     for i in range(len(permuted_shape) - 1):
                         strides.append(strides[-1] * permuted_shape[i])
-                
+
                 permuted_arr = dace.data.Array(
                     dtype=arr.dtype,
                     shape=permuted_shape,
@@ -149,12 +146,12 @@ class PermuteDimensions(ppl.Pass):
 
                     # Only non-transient glb arrays are input arrays
                     self._add_permute_map(sdfg=sdfg,
-                                            state=permute_state,
-                                            old_shape=old_shape,
-                                            new_shape=new_shape,
-                                            permute_indices=permute_indices,
-                                            old_name=old_name,
-                                            new_name=new_name)
+                                          state=permute_state,
+                                          old_shape=old_shape,
+                                          new_shape=new_shape,
+                                          permute_indices=permute_indices,
+                                          old_name=old_name,
+                                          new_name=new_name)
 
                 # Add maps to permute the arrays back to their original shape
                 for old_name, new_name in name_map.items():
@@ -258,9 +255,10 @@ class PermuteDimensions(ppl.Pass):
                     new_assignments[k] = v
             edge.data.assignments = new_assignments
 
+
 def permute_args(expr, permute_map: dict[str, list[int]]):
     """Recursively permute function call arguments in a SymPy/DaCe expression.
-    
+
     permute_map: {func_name: perm} where perm[new_pos] = old_pos.
     Returns the original expression object if nothing changed.
     """
@@ -275,9 +273,9 @@ def permute_args(expr, permute_map: dict[str, list[int]]):
         return expr
     return expr.func(*args)
 
+
 def _parse_interstate_edge(edge_data: str, permute_map: dict[str, list[int]], sdfg: dace.SDFG = None):
     symbolic_expr: dace.symbolic.SymExpr = dace.symbolic.pystr_to_symbolic(edge_data)
     permuted_symbolic_expr: dace.symbolic.SymExpr = permute_args(symbolic_expr, permute_map)
-    permuted_str_expr: str = dace.symbolic.symstr(sym=permuted_symbolic_expr,
-                                                  arrayexprs=frozenset(sdfg.arrays.keys()))
+    permuted_str_expr: str = dace.symbolic.symstr(sym=permuted_symbolic_expr, arrayexprs=frozenset(sdfg.arrays.keys()))
     return permuted_str_expr

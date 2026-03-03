@@ -86,10 +86,7 @@ def copy_graph_contents(old_graph: ControlFlowRegion,
     return node_map
 
 
-
-def move_state_after(graph: ControlFlowRegion, 
-                     state_to_move: dace.SDFGState, 
-                     target_predecessor: dace.SDFGState):
+def move_state_after(graph: ControlFlowRegion, state_to_move: dace.SDFGState, target_predecessor: dace.SDFGState):
     """
     Creates an empty hull state, inserts it after target_predecessor,
     and connects it to state_to_move.
@@ -104,8 +101,7 @@ def move_state_after(graph: ControlFlowRegion,
 
     # 1. Create the empty hull state
     hull_label = f"{state_to_move.label}_hull"
-    hull_state = graph.add_state(hull_label,
-                                 is_start_block=state_to_move.parent_graph.start_block == state_to_move)
+    hull_state = graph.add_state(hull_label, is_start_block=state_to_move.parent_graph.start_block == state_to_move)
 
     # 2. Handle the target_predecessor's outgoing edges
     # We want the hull to sit between target_predecessor and its original successors
@@ -115,7 +111,7 @@ def move_state_after(graph: ControlFlowRegion,
     # 3. Disconnect state_to_move from its current location
     in_edges = graph.in_edges(state_to_move)
     out_edges = graph.out_edges(state_to_move)
-    
+
     # Optional: logic to stitch the 'gap' left by state_to_move
     # (e.g., connecting its old predecessor to its old successor)
     for e in in_edges + out_edges:
@@ -128,14 +124,12 @@ def move_state_after(graph: ControlFlowRegion,
         graph.add_edge(hull_state, e.dst, copy.deepcopy(e.data))
 
     # Add state after the predecessor
-    added_state = graph.add_state_after(state_to_move, label=state_to_move.label,
-                                        is_start_block=False)
+    added_state = graph.add_state_after(state_to_move, label=state_to_move.label, is_start_block=False)
 
     return added_state
 
-def move_state_before(graph: ControlFlowRegion, 
-                     state_to_move: dace.SDFGState, 
-                     target_successor: dace.SDFGState):
+
+def move_state_before(graph: ControlFlowRegion, state_to_move: dace.SDFGState, target_successor: dace.SDFGState):
     """
     Creates an empty hull state, inserts it after target_successor,
     and connects it to state_to_move.
@@ -150,8 +144,7 @@ def move_state_before(graph: ControlFlowRegion,
 
     # 1. Create the empty hull state
     hull_label = f"{state_to_move.label}_hull"
-    hull_state = graph.add_state(hull_label,
-                                 is_start_block=state_to_move.parent_graph.start_block == state_to_move)
+    hull_state = graph.add_state(hull_label, is_start_block=state_to_move.parent_graph.start_block == state_to_move)
 
     # 2. Handle the target_successor's outgoing edges
     # We want the hull to sit between target_successor and its original successors
@@ -161,7 +154,7 @@ def move_state_before(graph: ControlFlowRegion,
     # 3. Disconnect state_to_move from its current location
     in_edges = graph.in_edges(state_to_move)
     out_edges = graph.out_edges(state_to_move)
-    
+
     # Optional: logic to stitch the 'gap' left by state_to_move
     # (e.g., connecting its old successor to its old successor)
     for e in in_edges + out_edges:
@@ -174,10 +167,10 @@ def move_state_before(graph: ControlFlowRegion,
         graph.add_edge(hull_state, e.dst, copy.deepcopy(e.data))
 
     # Add state after the successor
-    added_state = graph.add_state_befor(state_to_move, label=state_to_move.label,
-                                        is_start_block=False)
+    added_state = graph.add_state_before(state_to_move, label=state_to_move.label, is_start_block=False)
 
     return added_state
+
 
 def move_branch_cfg_up_discard_conditions(if_block: ConditionalBlock, body_to_take: ControlFlowRegion):
     """
