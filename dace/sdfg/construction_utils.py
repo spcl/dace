@@ -99,6 +99,9 @@ def move_state_after(graph: ControlFlowRegion, state_to_move: dace.SDFGState, ta
         if oe.dst == state_to_move:
             return
 
+    assert state_to_move != target_predecessor, "Cannot move a state after itself"
+    assert state_to_move in graph.nodes() and target_predecessor in graph.nodes(), "Both states must be in the graph"
+
     # 1. Create the empty hull state
     hull_label = f"{state_to_move.label}_hull"
     hull_state = graph.add_state(hull_label, is_start_block=state_to_move.parent_graph.start_block == state_to_move)
@@ -124,9 +127,12 @@ def move_state_after(graph: ControlFlowRegion, state_to_move: dace.SDFGState, ta
         graph.add_edge(hull_state, e.dst, copy.deepcopy(e.data))
 
     # Add state after the predecessor
-    added_state = graph.add_state_after(state_to_move, label=state_to_move.label, is_start_block=False)
+    graph.add_edge(target_predecessor, state_to_move, dace.InterstateEdge())
+    for e in following_edges:
+        graph.add_edge(state_to_move, e.dst, copy.deepcopy(e.data))
+        graph.remove_edge(e)
 
-    return added_state
+    return state_to_move
 
 
 def move_state_before(graph: ControlFlowRegion, state_to_move: dace.SDFGState, target_successor: dace.SDFGState):
@@ -141,6 +147,9 @@ def move_state_before(graph: ControlFlowRegion, state_to_move: dace.SDFGState, t
     for ie in graph.in_edges(target_successor):
         if ie.src == state_to_move:
             return
+
+    assert state_to_move != target_successor, "Cannot move a state before itself"
+    assert state_to_move in graph.nodes() and target_successor in graph.nodes(), "Both states must be in the graph"
 
     # 1. Create the empty hull state
     hull_label = f"{state_to_move.label}_hull"
@@ -166,10 +175,13 @@ def move_state_before(graph: ControlFlowRegion, state_to_move: dace.SDFGState, t
     for e in out_edges:
         graph.add_edge(hull_state, e.dst, copy.deepcopy(e.data))
 
-    # Add state after the successor
-    added_state = graph.add_state_before(state_to_move, label=state_to_move.label, is_start_block=False)
+    # Add state before the successor
+    graph.add_edge(state_to_move, target_successor, dace.InterstateEdge())
+    for e in following_edges:
+        graph.add_edge(e.src, state_to_move, copy.deepcopy(e.data))
+        graph.remove_edge(e)
 
-    return added_state
+    return state_to_move
 
 
 def move_branch_cfg_up_discard_conditions(if_block: ConditionalBlock, body_to_take: ControlFlowRegion):
