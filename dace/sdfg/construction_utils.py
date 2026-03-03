@@ -174,7 +174,7 @@ def move_state_before(graph: ControlFlowRegion,
         graph.add_edge(hull_state, e.dst, copy.deepcopy(e.data))
 
     # Add state after the successor
-    added_state = graph.add_state_befor(state_to_move, label=state_to_move.label,
+    added_state = graph.add_state_before(state_to_move, label=state_to_move.label,
                                         is_start_block=False)
 
     return added_state
