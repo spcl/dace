@@ -26,6 +26,7 @@ import re
 if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
 
+
 def replace_float_literals(expr: str) -> str:
     """
     Replace floating-point literals like 1.0, 2.000, 3., .5 with integer literals.
@@ -46,6 +47,7 @@ def replace_float_literals(expr: str) -> str:
         return str(int(val))
 
     return float_literal.sub(convert, expr)
+
 
 @registry.autoregister_params(name='cpu')
 class CPUCodeGen(TargetCodeGenerator):

@@ -1240,20 +1240,10 @@ def dtype_to_typeclass(dtype=None):
         return DTYPE_TO_TYPECLASS
     return DTYPE_TO_TYPECLASS[dtype]
 
-FLOAT_TYPES = {float64,
-               float32,
-               float16}
 
-INT_TYPES = {int8,
-             int16,
-             int32,
-             int64,
-             uintp,
-             uint8,
-             uint16,
-             uint32,
-             uint64}
+FLOAT_TYPES = {float64, float32, float16}
 
+INT_TYPES = {int8, int16, int32, int64, uintp, uint8, uint16, uint32, uint64}
 
 # Since this overrides the builtin bool, this should be after the
 # DTYPE_TO_TYPECLASS dictionary
