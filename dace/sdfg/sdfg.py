@@ -2458,7 +2458,11 @@ class SDFG(ControlFlowRegion):
         dll = cs.ReloadableDLL(binary_filename, self.name)
         return dll.is_loaded()
 
-    def compile(self, output_file=None, validate=True, return_program_handle=True) -> 'CompiledSDFG':
+    def compile(self,
+                output_file=None,
+                validate=True,
+                return_program_handle=True,
+                ctypes_abi: bool = False) -> 'CompiledSDFG':
         """ Compiles a runnable binary from this SDFG.
 
             :param output_file: If not None, copies the output library file to
@@ -2466,6 +2470,7 @@ class SDFG(ControlFlowRegion):
             :param validate: If True, validates the SDFG prior to generating
                              code.
             :param return_program_handle: If False, does not load the generated library.
+            :param ctypes_abi: If True, disables the nanobind call path and uses ctypes dispatch only.
             :return: A callable CompiledSDFG object, or None if ``return_program_handle=False``.
         """
 
@@ -2479,7 +2484,7 @@ class SDFG(ControlFlowRegion):
             # Try to see if a cached version of the binary exists
             binary_filename = compiler.get_binary_name(build_folder, self.name)
             if os.path.isfile(binary_filename):
-                return compiler.load_from_file(self, binary_filename)
+                return compiler.load_from_file(self, binary_filename, ctypes_abi=ctypes_abi)
 
         ############################
         # DaCe Compilation Process #
@@ -2534,7 +2539,7 @@ class SDFG(ControlFlowRegion):
 
         # Get the function handle
         if return_program_handle:
-            return compiler.get_program_handle(shared_library, sdfg)
+            return compiler.get_program_handle(shared_library, sdfg, ctypes_abi=ctypes_abi)
 
     def argument_typecheck(self, args, kwargs, types_only=False):
         """ Checks if arguments and keyword arguments match the SDFG

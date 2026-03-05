@@ -391,13 +391,13 @@ def identical_file_exists(filename: str, file_contents: str):
     return True
 
 
-def get_program_handle(library_path, sdfg):
+def get_program_handle(library_path, sdfg, ctypes_abi: bool = False):
     lib = csd.ReloadableDLL(library_path, sdfg.name)
     # Load and return the compiled function
-    return csd.CompiledSDFG(sdfg, lib, sdfg.arg_names)
+    return csd.CompiledSDFG(sdfg, lib, sdfg.arg_names, ctypes_abi=ctypes_abi)
 
 
-def load_from_file(sdfg, binary_filename):
+def load_from_file(sdfg, binary_filename, ctypes_abi: bool = False):
     if not os.path.isfile(binary_filename):
         raise FileNotFoundError('File not found: ' + binary_filename)
 
@@ -405,7 +405,7 @@ def load_from_file(sdfg, binary_filename):
     lib = csd.ReloadableDLL(binary_filename, sdfg.name)
 
     # Load and return the compiled function
-    return csd.CompiledSDFG(sdfg, lib, sdfg.arg_names)
+    return csd.CompiledSDFG(sdfg, lib, sdfg.arg_names, ctypes_abi=ctypes_abi)
 
 
 def get_binary_name(object_folder, object_name, lib_extension=Config.get('compiler', 'library_extension')):
