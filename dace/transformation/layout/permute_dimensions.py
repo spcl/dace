@@ -41,7 +41,11 @@ class PermuteDimensions(ppl.Pass):
             range_dict[f"i{i}"] = f"0:{old_shape[i]}"  # Could use old shape too
 
         # Add map that computes B[permute_indices[i], ..., permute_indices[k]] = A[i, j, ..., k]
-        map_entry, map_exit = state.add_map(f"permute_map_impl_{old_name}", range_dict)
+        is_gpu_map = old_name in sdfg.arrays and new_name in sdfg.arrays and \
+                        sdfg.arrays[old_name].storage in (dace.dtypes.StorageType.GPU_Global,) and \
+                        sdfg.arrays[new_name].storage in (dace.dtypes.StorageType.GPU_Global,)
+        sched = dace.dtypes.ScheduleType.GPU_Device if is_gpu_map else dace.dtypes.ScheduleType.Default
+        map_entry, map_exit = state.add_map(f"permute_map_impl_{old_name}", range_dict, schedule=sched)
 
         src_access = ", ".join(f"i{i}" for i in range(len(permute_indices)))
         dst_access = ", ".join(f"i{permute_indices[i]}" for i in range(len(permute_indices)))
