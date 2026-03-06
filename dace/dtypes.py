@@ -17,6 +17,9 @@ from dace.attr_enum import ExtensibleAttributeEnum
 from dace.registry import undefined_safe_enum
 
 
+from dace.fp_impls.fp32sr import Float32sr
+from dace.fp_impls.fp64sr import Float64sr
+
 @undefined_safe_enum
 class DeviceType(ExtensibleAttributeEnum):
     CPU = auto()  #: Multi-core CPU
@@ -1180,7 +1183,9 @@ if TYPE_CHECKING:
     class uint64(_DaCeArray, npt.NDArray[numpy.uint64]): ...
     class float16(_DaCeArray, npt.NDArray[numpy.float16]): ...
     class float32(_DaCeArray, npt.NDArray[numpy.float32]): ...
+    class float32sr(_DaCeArray, npt.NDArray[numpy.float32]): ...
     class float64(_DaCeArray, npt.NDArray[numpy.float64]): ...
+    class float64sr(_DaCeArray, npt.NDArray[numpy.float64]): ...
     class complex64(_DaCeArray, npt.NDArray[numpy.complex64]): ...
     class complex128(_DaCeArray, npt.NDArray[numpy.complex128]): ...
     class string(_DaCeArray, npt.NDArray[numpy.str_]): ...
@@ -1201,7 +1206,9 @@ else:
     uint64 = typeclass(numpy.uint64)
     float16 = typeclass(numpy.float16)
     float32 = typeclass(numpy.float32)
+    float32sr = Float32sr()
     float64 = typeclass(numpy.float64)
+    float64sr = Float64sr()
     complex64 = typeclass(numpy.complex64)
     complex128 = typeclass(numpy.complex128)
     string = stringtype()
@@ -1229,7 +1236,9 @@ def dtype_to_typeclass(dtype=None):
         numpy.uintc: uint32,
         numpy.float16: float16,
         numpy.float32: float32,
+        numpy.float32: float32sr,
         numpy.float64: float64,
+        numpy.float64: float64sr,
         numpy.complex64: complex64,
         numpy.complex128: complex128,
         # FIXME
@@ -1258,7 +1267,9 @@ TYPECLASS_TO_STRING = {
     int64: "dace::int64",
     float16: "dace::float16",
     float32: "dace::float32",
+    float32sr: "dace::float32sr",
     float64: "dace::float64",
+    float64sr: "dace::float64sr",
     complex64: "dace::complex64",
     complex128: "dace::complex128"
 }
