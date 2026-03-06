@@ -109,8 +109,8 @@ class SDFGCutout(SDFG):
                     pass
             transformation.subgraph = new_subgraph
 
-    def to_json(self, hash=False):
-        cutout_json = super().to_json(hash)
+    def to_json(self, hash=False, include_transformation_history=False):
+        cutout_json = super().to_json(hash, include_transformation_history)
         cutout_json['type'] = SDFG.__name__
         return cutout_json
 

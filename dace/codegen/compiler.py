@@ -5,7 +5,7 @@
 
 import collections
 import os
-import six
+import io
 import shutil
 import shlex
 import subprocess
@@ -104,6 +104,16 @@ def generate_program_folder(sdfg, code_objects: List[CodeObject], out_path: str,
         if not identical_file_exists(filepath, contents):
             with open(filepath, 'w') as hfile:
                 hfile.write(contents)
+
+    # Write cachedir tag
+    cachedir_tag = os.path.join(out_path, "CACHEDIR.TAG")
+    if not os.path.exists(cachedir_tag):
+        with open(cachedir_tag, "w") as f:
+            f.write("""Signature: 8a477f597d28d172789f06886806bc55
+# This file is a cache directory tag created by DaCe.
+# For information about cache directory tags, see:
+#	http://www.brynosaurus.com/cachedir/
+""")
 
     return out_path
 
@@ -406,7 +416,7 @@ def get_binary_name(object_folder, object_name, lib_extension=Config.get('compil
 
 def _run_liveoutput(command, output_stream=None, **kwargs):
     process = subprocess.Popen(command, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, **kwargs)
-    output = six.StringIO()
+    output = io.StringIO()
     while True:
         line = process.stdout.readline().rstrip()
         if not line:

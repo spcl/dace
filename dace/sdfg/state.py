@@ -3722,6 +3722,8 @@ class ConditionalBlock(AbstractControlFlowRegion):
 
     def to_json(self, parent=None):
         json = super().to_json(parent)
+        del json['nodes']
+        del json['edges']
         json['branches'] = [(condition.to_json() if condition is not None else None, cfg.to_json())
                             for condition, cfg in self._branches]
         return json
@@ -3853,7 +3855,7 @@ class UnstructuredControlFlow(ControlFlowRegion):
 @make_properties
 class NamedRegion(ControlFlowRegion):
 
-    debuginfo = DebugInfoProperty()
+    debuginfo = DebugInfoProperty(allow_none=True)
 
     def __init__(self, label: str, sdfg: Optional['SDFG'] = None, debuginfo: Optional[dtypes.DebugInfo] = None):
         super().__init__(label, sdfg)

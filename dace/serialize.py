@@ -201,8 +201,11 @@ def loads(*args, context=None, **kwargs):
     return from_json(loaded, context)
 
 
-def dumps(*args, **kwargs):
-    return json.dumps(*args, default=to_json, indent=2, **kwargs)
+def dumps(*args, readable=False, **kwargs):
+    if readable:
+        return json.dumps(*args, default=to_json, indent=2, **kwargs)
+    else:
+        return json.dumps(*args, default=to_json, indent=None, separators=(',', ':'), **kwargs)
 
 
 def load(*args, context=None, **kwargs):
@@ -210,8 +213,11 @@ def load(*args, context=None, **kwargs):
     return from_json(loaded, context)
 
 
-def dump(*args, **kwargs):
-    return json.dump(*args, default=to_json, indent=2, **kwargs)
+def dump(*args, readable=False, **kwargs):
+    if readable:
+        return json.dump(*args, default=to_json, indent=2, **kwargs)
+    else:
+        return json.dump(*args, default=to_json, indent=None, separators=(',', ':'), **kwargs)
 
 
 def all_properties_to_json(object_with_properties):
