@@ -23,6 +23,8 @@ from dace.transformation.dataflow.map_interchange import MapInterchange
 nblks_c = dace.symbol("nblks_c")
 nlev = dace.symbol("nlev")
 nproma = dace.symbol("nproma")
+nblk = 2
+
 
 N_BLKS, N_LEV, N_PROMA = 2, 4, 16
 
@@ -141,8 +143,75 @@ def test_permute_on_safe_indices(input_data):
 
     np.testing.assert_allclose(B, B_ref, atol=1e-14)
 
+@dace.program
+def interp_ekinh(
+    z_kin_hor_e: dace.float64[nblk, nlev, nproma],
+    e_bln_c_s: dace.float64[nblk, 3, nproma],
+    ieidx: dace.int32[3, nblk, nproma],
+    ieblk: dace.int32[3, nblk, nproma],
+    z_ekinh: dace.float64[nblk, nlev, nproma],
+):
+    for jb in range(nblk):
+        for jk, jc in dace.map[0:nlev, 0:nproma]:
+            z_ekinh[jb, jk, jc] = (
+                e_bln_c_s[jb, 0, jc] * z_kin_hor_e[ieblk[0, jb, jc], jk, ieidx[0, jb, jc]]
+              + e_bln_c_s[jb, 1, jc] * z_kin_hor_e[ieblk[1, jb, jc], jk, ieidx[1, jb, jc]]
+              + e_bln_c_s[jb, 2, jc] * z_kin_hor_e[ieblk[2, jb, jc], jk, ieidx[2, jb, jc]]
+            )
+
+@pytest.mark.parametrize("seed", [42, 123, 7])
+def test_interp_ekinh(seed):
+    NPROMA = 16
+    NLEV = 10
+    rng = np.random.default_rng(seed)
+    z_kin_hor_e = rng.random((nblk, NLEV, NPROMA))
+    e_bln_c_s = rng.random((nblk, 3, NPROMA))
+    ieidx = rng.integers(0, NPROMA, size=(3, nblk, NPROMA), dtype=np.int32)
+    ieblk = rng.integers(0, nblk, size=(3, nblk, NPROMA), dtype=np.int32)
+    z_ekinh_dace = np.zeros((nblk, NLEV, NPROMA))
+    z_ekinh_ref = np.zeros_like(z_ekinh_dace)
+
+    interp_ekinh(
+        z_kin_hor_e=z_kin_hor_e,
+        e_bln_c_s=e_bln_c_s,
+        ieidx=ieidx,
+        ieblk=ieblk,
+        z_ekinh=z_ekinh_ref,
+        nlev=NLEV,
+        nproma=NPROMA,
+    )
+
+    sdfg = copy.deepcopy(interp_ekinh.to_sdfg())
+    sdfg.save("before_permute_interp_ekinh.sdfgz", compress=True)
+    PermuteDimensions(permute_map={
+        "z_kin_hor_e": [0, 2, 1],
+        "e_bln_c_s": [0, 2, 1],
+        "ieidx": [1, 2, 0],
+        "ieblk": [1, 2, 0],
+        "z_ekinh": [0, 2, 1],
+    }, add_permute_maps=True).apply_pass(sdfg, {})
+    sdfg.save("after_permute_interp_ekinh.sdfgz", compress=True)
+
+    sdfg(
+        z_kin_hor_e=z_kin_hor_e,
+        e_bln_c_s=e_bln_c_s,
+        ieidx=ieidx,
+        ieblk=ieblk,
+        z_ekinh=z_ekinh_dace,
+        nlev=NLEV,
+        nproma=NPROMA,
+    )
+
+    diff = np.max(np.abs(z_ekinh_dace - z_ekinh_ref))
+    print(f"[seed={seed}] Max error: {diff}")
+    print(f"DaCe:  {z_ekinh_dace.flat[:10]}")
+    print(f"Ref:   {z_ekinh_ref.flat[:10]}")
+    assert np.allclose(z_ekinh_dace, z_ekinh_ref), f"FAILED (seed={seed})"
 
 if __name__ == "__main__":
+    for seed in [42, 123, 7]:
+        test_interp_ekinh(seed)
+
     A, B = generate_input(N_BLKS, N_LEV, N_PROMA)
     e_bln_c_s = generate_weights(N_BLKS, N_LEV, N_PROMA)
     test_permute_on_safe_indices((A, B, e_bln_c_s))
