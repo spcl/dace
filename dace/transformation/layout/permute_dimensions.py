@@ -37,8 +37,17 @@ class PermuteDimensions(ppl.Pass):
         range_dict = dict()
         assert len(old_shape) == len(
             new_shape), f"Old shape {old_shape} and new shape {new_shape} must have the same length"
+
         for i in range(len(old_shape)):
             range_dict[f"i{i}"] = f"0:{old_shape[i]}"  # Could use old shape too
+        
+        # A good heuristic is to have the unit stride write at the end (or better to use something like cuTensor)
+        # such that it is generated as slightly better code
+        new_range_dict = dict()
+        for i in permute_indices:
+            k, v = f"i{i}", range_dict[f"i{i}"]
+            new_range_dict[k] = v
+        range_dict = new_range_dict
 
         # Add map that computes B[permute_indices[i], ..., permute_indices[k]] = A[i, j, ..., k]
         is_gpu_map = old_name in sdfg.arrays and new_name in sdfg.arrays and \
