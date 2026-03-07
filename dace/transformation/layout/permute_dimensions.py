@@ -37,22 +37,14 @@ class PermuteDimensions(ppl.Pass):
         range_dict = dict()
         assert len(old_shape) == len(
             new_shape), f"Old shape {old_shape} and new shape {new_shape} must have the same length"
-
         for i in range(len(old_shape)):
             range_dict[f"i{i}"] = f"0:{old_shape[i]}"  # Could use old shape too
-
-        # No guarantee that the biggest dimension will not be on the Z, but
-        # innermost dimension being the X is a good bet
-        range_dict = {}
-        for i in reversed(range(len(old_shape))):
-            range_dict[f"i{i}"] = f"0:{old_shape[i]}"
 
         # Add map that computes B[permute_indices[i], ..., permute_indices[k]] = A[i, j, ..., k]
         is_gpu_map = old_name in sdfg.arrays and new_name in sdfg.arrays and \
                         sdfg.arrays[old_name].storage in (dace.dtypes.StorageType.GPU_Global,) and \
                         sdfg.arrays[new_name].storage in (dace.dtypes.StorageType.GPU_Global,)
         sched = dace.dtypes.ScheduleType.GPU_Device if is_gpu_map else dace.dtypes.ScheduleType.Default
-        
         map_entry, map_exit = state.add_map(f"permute_map_impl_{old_name}", range_dict, schedule=sched)
 
         src_access = ", ".join(f"i{i}" for i in range(len(permute_indices)))
