@@ -27,54 +27,36 @@ class PermuteDimensions(ppl.Pass):
         return 0
 
     def _add_permute_map(self, sdfg: dace.SDFG, state: dace.SDFGState, old_shape: List[int], new_shape: List[int],
-                         permute_indices: List[int], old_name: str, new_name: str):
+                            permute_indices: List[int], old_name: str, new_name: str):
         """
-        Adds a map that copies-in data from the original data layout to the permute layout
+        Adds a transpose that copies data from the original layout to the permuted layout
+        using the TensorTranspose library node.
+
+        For GPU arrays, the cuTENSOR implementation is used (cutensorPermute).
+        For CPU arrays, the pure (map-based) implementation is used.
         """
+        from dace.libraries.standard import TensorTranspose
+
         old_access = state.add_access(old_name)
         new_access = state.add_access(new_name)
 
-        range_dict = dict()
-        assert len(old_shape) == len(
-            new_shape), f"Old shape {old_shape} and new shape {new_shape} must have the same length"
+        assert len(old_shape) == len(new_shape), \
+            f"Old shape {old_shape} and new shape {new_shape} must have the same length"
 
-        for i in range(len(old_shape)):
-            range_dict[f"i{i}"] = f"0:{old_shape[i]}"  # Could use old shape too
-        
-        # A good heuristic is to have the unit stride write at the end (or better to use something like cuTensor)
-        # such that it is generated as slightly better code
-        new_range_dict = dict()
-        for i in permute_indices:
-            k, v = f"i{i}", range_dict[f"i{i}"]
-            new_range_dict[k] = v
-        range_dict = new_range_dict
+        is_gpu = (old_name in sdfg.arrays and new_name in sdfg.arrays
+                and sdfg.arrays[old_name].storage in (dace.dtypes.StorageType.GPU_Global,)
+                and sdfg.arrays[new_name].storage in (dace.dtypes.StorageType.GPU_Global,))
 
-        # Add map that computes B[permute_indices[i], ..., permute_indices[k]] = A[i, j, ..., k]
-        is_gpu_map = old_name in sdfg.arrays and new_name in sdfg.arrays and \
-                        sdfg.arrays[old_name].storage in (dace.dtypes.StorageType.GPU_Global,) and \
-                        sdfg.arrays[new_name].storage in (dace.dtypes.StorageType.GPU_Global,)
-        sched = dace.dtypes.ScheduleType.GPU_Device if is_gpu_map else dace.dtypes.ScheduleType.Default
-        map_entry, map_exit = state.add_map(f"permute_map_impl_{old_name}", range_dict, schedule=sched)
+        impl = "cuTENSOR" if is_gpu else "pure"
 
-        src_access = ", ".join(f"i{i}" for i in range(len(permute_indices)))
-        dst_access = ", ".join(f"i{permute_indices[i]}" for i in range(len(permute_indices)))
+        tnode = TensorTranspose(f"permute_{old_name}_to_{new_name}", axes=permute_indices)
+        tnode.implementation = impl
+        state.add_node(tnode)
 
-        map_entry.add_in_connector("IN_" + old_name)
-        map_entry.add_out_connector("OUT_" + old_name)
-        map_exit.add_in_connector("IN_" + new_name)
-        map_exit.add_out_connector("OUT_" + new_name)
-
-        state.add_edge(old_access, None, map_entry, "IN_" + old_name,
-                       dace.Memlet.from_array(old_name, sdfg.arrays[old_name]))
-        state.add_edge(map_exit, "OUT_" + new_name, new_access, None,
-                       dace.Memlet.from_array(new_name, sdfg.arrays[new_name]))
-
-        assign_tasklet = state.add_tasklet("assign", {"_in1"}, {"_out1"}, f"_out1 = _in1")
-
-        state.add_edge(map_entry, "OUT_" + old_name, assign_tasklet, "_in1",
-                       dace.Memlet(expr=f"{old_name}[{src_access}]"))
-        state.add_edge(assign_tasklet, "_out1", map_exit, "IN_" + new_name,
-                       dace.Memlet(expr=f"{new_name}[{dst_access}]"))
+        state.add_edge(old_access, None, tnode, "_inp_tensor",
+                    dace.Memlet.from_array(old_name, sdfg.arrays[old_name]))
+        state.add_edge(tnode, "_out_tensor", new_access, None,
+                    dace.Memlet.from_array(new_name, sdfg.arrays[new_name]))
 
     def _inverse_permute_indices(self, permute_indices: List[int]) -> List[int]:
         # implicit([0, 1, 2, 3]) -> [0, 3, 1, 2]
