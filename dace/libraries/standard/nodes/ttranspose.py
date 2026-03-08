@@ -9,6 +9,7 @@ from numbers import Number
 from .. import environments
 from dace.libraries.environments.cutensor import cuTensor
 
+
 @library.expansion
 class ExpandPure(ExpandTransformation):
     """ Implements the pure expansion of TensorTranspose library node. """
@@ -107,9 +108,8 @@ class ExpandCuTensor(ExpandTransformation):
         inp_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
 
         if node.beta != 0:
-            raise NotImplementedError(
-                "cuTENSOR v2 cutensorPermute does not support beta != 0. "
-                "Use the 'pure' expansion or implement via cutensorElementwiseBinary.")
+            raise NotImplementedError("cuTENSOR v2 cutensorPermute does not support beta != 0. "
+                                      "Use the 'pure' expansion or implement via cutensorElementwiseBinary.")
 
         ndim = len(inp_tensor.shape)
         dtype = inp_tensor.dtype.base_type
@@ -201,7 +201,6 @@ class ExpandCuTensor(ExpandTransformation):
                                 code,
                                 language=dace.dtypes.Language.CPP)
         return tasklet
-
 
 
 @library.node
