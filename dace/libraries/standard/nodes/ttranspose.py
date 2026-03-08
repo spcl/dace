@@ -2,7 +2,7 @@
 import dace
 import multiprocessing
 from dace import library, nodes, properties
-from dace.libraries.blas import blas_helpers
+from dace.libraries.helpers import cutensor_helpers
 from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
 from numbers import Number
@@ -65,7 +65,7 @@ class ExpandHPTT(ExpandTransformation):
         inp_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
         axes = ','.join([symstr(a) for a in node.axes])
         shape = ','.join([symstr(s) for s in inp_tensor.shape])
-        dchar = blas_helpers.to_blastype(inp_tensor.dtype.type).lower()
+        dchar = cutensor_helpers.to_cutensortype(inp_tensor.dtype.type).lower()
         if dchar not in ('s', 'd', 'c', 'z'):
             raise TypeError("HPTT supports only single and double (and corresponding complex) FP datatypes")
         alpha = symstr(node.alpha)
@@ -113,8 +113,8 @@ class ExpandCuTensor(ExpandTransformation):
 
         ndim = len(inp_tensor.shape)
         dtype = inp_tensor.dtype.base_type
-        _, cuda_type, _ = blas_helpers.cublas_type_metadata(dtype)
-        cuda_dtype = blas_helpers.dtype_to_cudadatatype(dtype)
+        _, cuda_type, _ = cutensor_helpers.cutensor_type_metadata(dtype)
+        cuda_dtype = cutensor_helpers.dtype_to_cutensordatatype(dtype)
 
         # cuTENSOR v2 data-type enum: CUDA_R_32F -> CUTENSOR_R_32F, etc.
         cutensor_dtype = cuda_dtype.replace('CUDA', 'CUTENSOR')
