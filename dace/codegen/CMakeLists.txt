@@ -73,7 +73,6 @@ if(DACE_ENABLE_CUDA)
   set(CUDAToolkit_ROOT ${CUDA_TOOLKIT_ROOT_DIR})
 
   find_package(CUDAToolkit REQUIRED)
-  enable_language(CUDA)
   set(CMAKE_CUDA_STANDARD 17)
   set(CMAKE_CUDA_SEPARABLE_COMPILATION ON)
 
@@ -271,9 +270,7 @@ set_property(TARGET ${DACE_PROGRAM_NAME} PROPERTY CXX_STANDARD ${DACE_CPP_STANDA
 
 # Create DaCe loader stub
 add_library(dacestub_${DACE_PROGRAM_NAME} SHARED "${CMAKE_SOURCE_DIR}/tools/dacestub.cpp")
-target_link_libraries(dacestub_${DACE_PROGRAM_NAME} ${CMAKE_DL_LIBS} OpenMP::OpenMP_CXX Threads::Threads)
-target_link_options(dacestub_${DACE_PROGRAM_NAME} PUBLIC ${OpenMP_CXX_FLAGS})
-target_compile_options(dacestub_${DACE_PROGRAM_NAME} PUBLIC ${OpenMP_CXX_FLAGS})
+target_link_libraries(dacestub_${DACE_PROGRAM_NAME} Threads::Threads OpenMP::OpenMP_CXX ${CMAKE_DL_LIBS})
 
 # Windows-specific fixes
 if (MSVC_IDE)
