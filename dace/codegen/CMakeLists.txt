@@ -57,7 +57,7 @@ include_directories(${DACE_RUNTIME_DIR}/include)
 
 # Global DaCe external dependencies
 find_package(Threads REQUIRED)
-find_package(OpenMP REQUIRED)
+find_package(OpenMP REQUIRED COMPONENTS CXX)
 
 list(APPEND DACE_LIBS Threads::Threads)
 list(APPEND DACE_LIBS OpenMP::OpenMP_CXX)
@@ -271,7 +271,9 @@ set_property(TARGET ${DACE_PROGRAM_NAME} PROPERTY CXX_STANDARD ${DACE_CPP_STANDA
 
 # Create DaCe loader stub
 add_library(dacestub_${DACE_PROGRAM_NAME} SHARED "${CMAKE_SOURCE_DIR}/tools/dacestub.cpp")
-target_link_libraries(dacestub_${DACE_PROGRAM_NAME} OpenMP::OpenMP_CXX OpenMP::OpenMP_C Threads::Threads ${CMAKE_DL_LIBS})
+target_link_libraries(dacestub_${DACE_PROGRAM_NAME} ${CMAKE_DL_LIBS} OpenMP::OpenMP_CXX Threads::Threads)
+target_link_options(dacestub_${DACE_PROGRAM_NAME} PUBLIC ${OpenMP_CXX_FLAGS})
+target_compile_options(dacestub_${DACE_PROGRAM_NAME} PUBLIC ${OpenMP_CXX_FLAGS})
 
 # Windows-specific fixes
 if (MSVC_IDE)
