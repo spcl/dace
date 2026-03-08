@@ -74,6 +74,8 @@ DACE_EXPORTED void unload_library(void *hLibrary) {
         return;
 
     // Workaround so that OpenMP does not go ballistic when calling dlclose()
+    // The volatile write prevents the compiler from optimizing away the call,
+    // which ensures libgomp remains in DT_NEEDED and is loaded before dlclose.
     omp_get_max_threads();
 
 #ifdef _WIN32
