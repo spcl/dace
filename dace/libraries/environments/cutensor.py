@@ -14,7 +14,7 @@ class cuTensor:
     cmake_link_flags = ["-L -lcutensor"]
     cmake_files = []
 
-    headers = {'frame': ["../include/dace_cutensor.h"], 'cuda': ["../include/dace_cutensor.h"]}
+    headers = {'frame': ["dace/dace_cutensor.h"], 'cuda': ["dace/dace_cutensor.h"]}
     state_fields = ["dace::linalg::CuTensorHandle cutensor_handle;"]
     init_code = ""
     finalize_code = ""

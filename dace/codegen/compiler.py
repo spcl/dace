@@ -5,7 +5,7 @@
 
 import collections
 import os
-import six
+import io
 import shutil
 import shlex
 import subprocess
@@ -416,7 +416,7 @@ def get_binary_name(object_folder, object_name, lib_extension=Config.get('compil
 
 def _run_liveoutput(command, output_stream=None, **kwargs):
     process = subprocess.Popen(command, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, **kwargs)
-    output = six.StringIO()
+    output = io.StringIO()
     while True:
         line = process.stdout.readline().rstrip()
         if not line:
