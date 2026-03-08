@@ -2,13 +2,12 @@
 import dace
 import multiprocessing
 from dace import library, nodes, properties
-from dace.libraries.helpers import cutensor_helpers
 from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
 from numbers import Number
 from .. import environments
 from dace.libraries.environments.cutensor import cuTensor
-
+import warnings
 
 @library.expansion
 class ExpandPure(ExpandTransformation):
@@ -62,10 +61,12 @@ class ExpandHPTT(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
+        from dace.libraries.linalg import blas_helpers
+
         inp_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
         axes = ','.join([symstr(a) for a in node.axes])
         shape = ','.join([symstr(s) for s in inp_tensor.shape])
-        dchar = cutensor_helpers.to_cutensortype(inp_tensor.dtype.type).lower()
+        dchar = blas_helpers.to_blastype(inp_tensor.dtype.type).lower()
         if dchar not in ('s', 'd', 'c', 'z'):
             raise TypeError("HPTT supports only single and double (and corresponding complex) FP datatypes")
         alpha = symstr(node.alpha)
@@ -83,7 +84,6 @@ class ExpandHPTT(ExpandTransformation):
                                 language=dace.dtypes.Language.CPP)
 
         return tasklet
-
 
 @library.expansion
 class ExpandCuTensor(ExpandTransformation):
@@ -103,6 +103,26 @@ class ExpandCuTensor(ExpandTransformation):
 
     environments = [cuTensor]
 
+    # cuTENSOR v2 type mapping: (tensor data type, compute descriptor, alpha C type)
+    #
+    # Only floating-point and complex types are supported.
+    # Integer types are NOT supported by cutensorPermute:
+    #   - Native integer descriptors (CUTENSOR_R_32I etc.) are accepted by the
+    #     API but the kernel segfaults at execution time.
+    #   - Reinterpret-casting integers as same-width floats does not work either:
+    #     cutensorPermute computes B = alpha * op(A), and GPU hardware
+    #     canonicalizes NaN bit patterns during float multiplication. Negative
+    #     integers have bit patterns that are NaN when read as float, so
+    #     1.0 * NaN destroys the original bits (e.g., -83 -> 2147483647).
+    # For integer types, we fall back to the pure (map-based) expansion.
+    _TYPE_MAP = {
+        dace.float16:    ('CUTENSOR_R_16F',  'CUTENSOR_COMPUTE_DESC_16F',  '__half'),
+        dace.float32:    ('CUTENSOR_R_32F',  'CUTENSOR_COMPUTE_DESC_32F',  'float'),
+        dace.float64:    ('CUTENSOR_R_64F',  'CUTENSOR_COMPUTE_DESC_64F',  'double'),
+        dace.complex64:  ('CUTENSOR_C_32F',  'CUTENSOR_COMPUTE_DESC_32F',  'float'),
+        dace.complex128: ('CUTENSOR_C_64F',  'CUTENSOR_COMPUTE_DESC_64F',  'double'),
+    }
+
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
         inp_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
@@ -113,15 +133,16 @@ class ExpandCuTensor(ExpandTransformation):
 
         ndim = len(inp_tensor.shape)
         dtype = inp_tensor.dtype.base_type
-        _, cuda_type, _ = cutensor_helpers.cutensor_type_metadata(dtype)
-        cuda_dtype = cutensor_helpers.dtype_to_cutensordatatype(dtype)
 
-        # cuTENSOR v2 data-type enum: CUDA_R_32F -> CUTENSOR_R_32F, etc.
-        cutensor_dtype = cuda_dtype.replace('CUDA', 'CUTENSOR')
-        # Compute descriptor: CUTENSOR_COMPUTE_DESC_32F, _64F, …
-        compute_desc = f"CUTENSOR_COMPUTE_DESC{cuda_dtype[cuda_dtype.rfind('_'):]}"
+        if dtype not in ExpandCuTensor._TYPE_MAP:
+            # Fall back to pure expansion for unsupported types (integers, etc.).
+            # The pure expansion generates a GPU map when data is GPU_Global,
+            # so integer transposes still execute on the GPU.
+            warnings.warn("CuTensor does not support integer tensors, falling back to pure implementation")
+            return ExpandPure.expansion(node, parent_state, parent_sdfg)
 
-        alpha_val = f"({cuda_type}){node.alpha}"
+        cutensor_dtype, compute_desc, alpha_type = ExpandCuTensor._TYPE_MAP[dtype]
+        alpha_val = f"({alpha_type}){node.alpha}"
 
         # Input modes: identity mapping  [0, 1, …, n-1]
         modes_a = list(range(ndim))
@@ -135,9 +156,6 @@ class ExpandCuTensor(ExpandTransformation):
         stride_a_str = ', '.join(symstr(s) for s in inp_tensor.strides)
         stride_c_str = ', '.join(symstr(s) for s in out_tensor.strides)
 
-        # NOTE: The environment must provide a cuTENSOR **v2** handle
-        # (cutensorHandle_t created via cutensorCreate). If your environment
-        # still initialises a v1 handle via cutensorInit, it needs updating.
         code = f"""\
 {cuTensor.handle_setup_code(node)}
 {{
@@ -151,7 +169,7 @@ class ExpandCuTensor(ExpandTransformation):
     int64_t  stridesA[{ndim}] = {{{stride_a_str}}};
     int64_t  stridesC[{ndim}] = {{{stride_c_str}}};
 
-    {cuda_type} alpha = {alpha_val};
+    {alpha_type} alpha = {alpha_val};
 
     // --- tensor descriptors (v2: alignment hint in bytes, 256 is safe) ---
     cutensorTensorDescriptor_t descA, descC;
@@ -201,7 +219,6 @@ class ExpandCuTensor(ExpandTransformation):
                                 code,
                                 language=dace.dtypes.Language.CPP)
         return tasklet
-
 
 @library.node
 class TensorTranspose(nodes.LibraryNode):
