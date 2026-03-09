@@ -61,7 +61,8 @@ class PermuteDimensions(ppl.Pass):
         else:
             # Map iterates over the OLD shape
             map_params = [f"__i{d}" for d in range(len(old_shape))]
-            map_ranges = {p: f"0:{s}" for p, s in zip(map_params, old_shape)}
+            map_ranges = {p: f"0:{s}" for p, s in zip(list(reversed(map_params)),
+                                                      list(reversed(old_shape)))}
 
             # Read indices: i0, i1, i2, ...
             read_indices = ", ".join(map_params)
@@ -174,15 +175,14 @@ class PermuteDimensions(ppl.Pass):
                     new_shape = sdfg.arrays[new_name].shape
                     # Permute map is of form map[old] = new, we need to invert it
                     inverse_permute_indices = self._inverse_permute_indices(permute_map[old_name])
-                    # Only non-transient glb arrays are output arrays
-                    if sdfg.arrays[old_name].transient is False:
-                        self._add_permute_map(sdfg=sdfg,
-                                              state=permute_out_state,
-                                              old_shape=new_shape,
-                                              new_shape=old_shape,
-                                              permute_indices=inverse_permute_indices,
-                                              old_name=new_name,
-                                              new_name=old_name)
+
+                    self._add_permute_map(sdfg=sdfg,
+                                            state=permute_out_state,
+                                            old_shape=new_shape,
+                                            new_shape=old_shape,
+                                            permute_indices=inverse_permute_indices,
+                                            old_name=new_name,
+                                            new_name=old_name)
 
         # The transformation has added the permuted shapes and maps to permute them if the user requested it.
         # The transformation has yet permuted the memlets as we want to access the previous defined arrays
