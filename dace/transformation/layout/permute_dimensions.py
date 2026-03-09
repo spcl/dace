@@ -13,8 +13,12 @@ class PermuteDimensions(ppl.Pass):
         return (ppl.Modifies.States & ppl.Modifies.AccessNodes & ppl.Modifies.Edges & ppl.Modifies.Descriptors
                 & ppl.Modifies.NestedSDFGs & ppl.Modifies.Memlets)
 
-    def __init__(self, permute_map: Dict[str, List[int]], add_permute_maps: bool, column_major: bool = False):
+    def __init__(self, permute_map: Dict[str, List[int]],
+                 add_permute_maps: bool,
+                 use_permute_libnodes: bool = False,
+                 column_major: bool = False):
         self._permute_map = permute_map
+        self._use_permute_libnodes = use_permute_libnodes
         self._add_permute_maps = add_permute_maps
         self._column_major = column_major
 
@@ -35,28 +39,44 @@ class PermuteDimensions(ppl.Pass):
         For GPU arrays, the cuTENSOR implementation is used (cutensorPermute).
         For CPU arrays, the pure (map-based) implementation is used.
         """
-        from dace.libraries.standard import TensorTranspose
+        if self._use_permute_libnodes:
+            from dace.libraries.standard import TensorTranspose
 
-        old_access = state.add_access(old_name)
-        new_access = state.add_access(new_name)
+            old_access = state.add_access(old_name)
+            new_access = state.add_access(new_name)
 
-        assert len(old_shape) == len(new_shape), \
-            f"Old shape {old_shape} and new shape {new_shape} must have the same length"
+            assert len(old_shape) == len(new_shape), \
+                f"Old shape {old_shape} and new shape {new_shape} must have the same length"
 
-        is_gpu = (old_name in sdfg.arrays and new_name in sdfg.arrays
-                and sdfg.arrays[old_name].storage in (dace.dtypes.StorageType.GPU_Global,)
-                and sdfg.arrays[new_name].storage in (dace.dtypes.StorageType.GPU_Global,))
+            impl = "pure"
 
-        impl = "cuTENSOR" if is_gpu else "pure"
+            tnode = TensorTranspose(f"permute_{old_name}_to_{new_name}", axes=permute_indices)
+            tnode.implementation = impl
+            state.add_node(tnode)
 
-        tnode = TensorTranspose(f"permute_{old_name}_to_{new_name}", axes=permute_indices)
-        tnode.implementation = impl
-        state.add_node(tnode)
+            state.add_edge(old_access, None, tnode, "_inp_tensor",
+                        dace.Memlet.from_array(old_name, sdfg.arrays[old_name]))
+            state.add_edge(tnode, "_out_tensor", new_access, None,
+                        dace.Memlet.from_array(new_name, sdfg.arrays[new_name]))
+        else:
+            # Map iterates over the OLD shape
+            map_params = [f"__i{d}" for d in range(len(old_shape))]
+            map_ranges = {p: f"0:{s}" for p, s in zip(map_params, old_shape)}
 
-        state.add_edge(old_access, None, tnode, "_inp_tensor",
-                    dace.Memlet.from_array(old_name, sdfg.arrays[old_name]))
-        state.add_edge(tnode, "_out_tensor", new_access, None,
-                    dace.Memlet.from_array(new_name, sdfg.arrays[new_name]))
+            # Read indices: i0, i1, i2, ...
+            read_indices = ", ".join(map_params)
+
+            # Write indices: permuted, e.g. [1,0,2] → __i1, __i0, __i2
+            write_indices = ", ".join(map_params[permute_indices[d]] for d in range(len(permute_indices)))
+
+            state.add_mapped_tasklet(
+                name=f"permute_{old_name}_to_{new_name}",
+                map_ranges=map_ranges,
+                inputs={"__inp": dace.Memlet.simple(old_name, read_indices)},
+                code="__out = __inp",
+                outputs={"__out": dace.Memlet.simple(new_name, write_indices)},
+                external_edges=True,
+            )
 
     def _inverse_permute_indices(self, permute_indices: List[int]) -> List[int]:
         # implicit([0, 1, 2, 3]) -> [0, 3, 1, 2]
