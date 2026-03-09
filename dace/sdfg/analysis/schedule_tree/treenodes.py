@@ -7,10 +7,7 @@ from dace.sdfg import InterstateEdge
 from dace.sdfg.state import LoopRegion, SDFGState
 from dace.symbolic import symbol
 from dace.memlet import Memlet
-from typing import TYPE_CHECKING, Dict, Iterator, List, Literal, Optional, Set, Union
-
-if TYPE_CHECKING:
-    pass
+from typing import Dict, Iterator, List, Literal, Optional, Set, Union
 
 INDENTATION = '  '
 
