@@ -23,16 +23,12 @@ state.add_edge(n, 'nout', B, None, Memlet.simple('B', '0', wcr_str='lambda a, b:
 
 
 def test():
-    print('Nested conflict resolution test')
-
     Bdata = np.ones([1], np.int32)
     sdfg(B=Bdata)
 
     B_regression = np.array([2], dtype=np.int32)
 
     diff = B_regression[0] - Bdata[0]
-    print("Difference:", diff)
-    print("==== Program end ====")
     assert diff == 0
 
 

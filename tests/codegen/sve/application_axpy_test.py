@@ -24,11 +24,7 @@ def axpy(A: dace.float64, X: dace.float64[N], Y: dace.float64[N]):
 
 @pytest.mark.sve
 def test_axpy():
-    print("==== Program start ====")
-
     N = 24
-
-    print('Scalar-vector multiplication %d' % (N))
 
     # Initialize arrays: Randomize A and X, zero Y
     A = dace.float64(np.random.rand())
@@ -53,6 +49,4 @@ def test_axpy():
         c_axpy(X_regression, Y_regression, N, A_regression)
 
     diff = np.linalg.norm(Y_regression - Y) / N
-    print("Difference:", diff)
-    print("==== Program end ====")
     assert diff <= 1e-5

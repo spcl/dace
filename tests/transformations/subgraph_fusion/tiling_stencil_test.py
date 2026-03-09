@@ -151,11 +151,8 @@ def invoke_stencil(tile_size, offset=False, unroll=False, view=False):
     csdfg(A=A, B=B3, N=100)
     del csdfg
 
-    print(np.linalg.norm(B1))
-    print(np.linalg.norm(B3))
     assert np.allclose(B1, B2)
     assert np.allclose(B1, B3)
-    print("PASS")
 
 
 test_settings = list(itertools.product([1, 8], [False, True], [False, True]))
@@ -167,6 +164,5 @@ def test_all(tile, offset, unroll):
 
 
 if __name__ == '__main__':
-    for (t, o, u) in itertools.product([1, 8], [False, True], [False, True]):
-        print(f"Testing config {t}, {o}, {u}")
+    for (t, o, u) in test_settings:
         test_all(t, o, u)

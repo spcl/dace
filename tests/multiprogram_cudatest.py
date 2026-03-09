@@ -28,8 +28,6 @@ def prog2(A: dace.float32[32], B: dace.float32[32]):
 ######################################
 @pytest.mark.gpu
 def test_multiprogram():
-    print('Multi-program CUDA test')
-
     A = np.random.rand(32).astype(np.float32)
     B = np.random.rand(32).astype(np.float32)
     C = np.random.rand(32).astype(np.float32)
@@ -47,8 +45,6 @@ def test_multiprogram():
     s2func(A=B, B=C)
 
     diff = np.linalg.norm(A - C)
-
-    print('Difference:', diff)
     assert diff <= 1e-5
 
 

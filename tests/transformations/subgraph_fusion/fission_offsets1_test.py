@@ -90,8 +90,6 @@ def test_offsets_array():
     csdfg = sdfg.compile()
     csdfg(A=A_cpy)
     del csdfg
-    print(np.linalg.norm(A_cpy))
-    print(np.linalg.norm(expected))
     assert (np.allclose(A_cpy, expected))
 
     subgraph = SubgraphView(sdfg.nodes()[0], sdfg.nodes()[0].nodes())

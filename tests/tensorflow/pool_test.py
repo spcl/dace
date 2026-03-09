@@ -29,7 +29,6 @@ def test_pooling():
         print(tf_output.shape)
         print(tf.norm(dace_output - tf_output).eval(session=sess_tf))
         raise AssertionError("max pool test failed")
-    print("Max pool test passed")
 
     # AVG pool test
     tf_output = sess_tf.run(avg_pool_outp, feed_dict={input_placeholder: input_tensor})
@@ -41,7 +40,6 @@ def test_pooling():
         print(tf_output.shape)
         print(tf.norm(dace_output - tf_output).eval(session=sess_tf))
         raise AssertionError("avg pool test failed")
-    print("Average pool test passed")
 
     # AVG pool gradient test
     np.random.seed(0)

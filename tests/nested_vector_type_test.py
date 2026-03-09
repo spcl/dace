@@ -96,7 +96,6 @@ def test_nested_vectorization():
     ref_result = scipy.linalg.blas.saxpy(a, b, a=scaling)
 
     diff = np.linalg.norm(c - ref_result)
-    print('Difference:', diff)
     assert diff < 1e-8
 
 

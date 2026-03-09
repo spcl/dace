@@ -145,8 +145,6 @@ def onetest(program):
     N = 20
     K = 5
 
-    print('Matrix multiplication %dx%dx%d' % (M, N, K))
-
     A = np.random.rand(M, K)
     B = np.random.rand(K, N)
     C = np.zeros([M, N], np.float64)
@@ -158,15 +156,12 @@ def onetest(program):
     sdfg(A=A, B=B, C=C, M=M, N=N, K=K)
 
     diff = np.linalg.norm(C_regression - C) / (M * N)
-    print("Difference:", diff)
     assert diff <= 1e-5
 
 
 def test_basic():
     W = 128
     H = 128
-
-    print('Map-Reduce Test %dx%d' % (W, H))
 
     A = dace.ndarray([H, W], dtype=dace.float32)
     B = dace.ndarray([H, W], dtype=dace.float32)
@@ -180,8 +175,6 @@ def test_basic():
     diff = np.linalg.norm(5 * A - B) / np.linalg.norm(5 * A)
     diff_res = np.linalg.norm(np.sum(B) - res[0]) / np.linalg.norm(np.sum(B))
     # diff_res = abs((np.sum(B) - res[0])).view(type=np.ndarray)
-    print("Difference:", diff, diff_res)
-    print("==== Program end ====")
     assert diff <= 1e-5 and diff_res <= 1
 
 
@@ -189,8 +182,6 @@ def test_mmm():
     M = 50
     N = 20
     K = 5
-
-    print('Matrix multiplication %dx%dx%d' % (M, N, K))
 
     # Initialize arrays: Randomize A and B, zero C
     A = dace.ndarray([M, N], dtype=dace.float64)
@@ -211,17 +202,12 @@ def test_mmm():
     np.dot(A_regression, B_regression, C_regression)
 
     diff = np.linalg.norm(C_regression - C) / np.linalg.norm(C_regression)
-    print(C_regression)
-    print(C)
-    print("Difference:", diff)
     assert diff <= 1e-10
 
 
 def test_extradims():
     W = 128
     H = 128
-
-    print('Map-Reduce Test %dx%d' % (W, H))
 
     A = dace.ndarray([1, H, 1, W, 1], dtype=dace.float32)
     B = dace.ndarray([H, W], dtype=dace.float32)
@@ -234,8 +220,6 @@ def test_extradims():
 
     diff = np.linalg.norm(5 * A.reshape((H, W)) - B) / (H * W)
     diff_res = abs((np.sum(B) - res[0])).view(type=np.ndarray)
-    print("Difference:", diff, diff_res)
-    print("==== Program end ====")
     assert diff <= 1e-5 and diff_res <= 1
 
 
@@ -243,8 +227,6 @@ def test_permuted():
     M = 50
     N = 20
     K = 5
-
-    print('Matrix multiplication %dx%dx%d' % (M, N, K))
 
     # Initialize arrays: Randomize A and B, zero C
     A = dace.ndarray([M, N], dtype=dace.float64)
@@ -267,15 +249,12 @@ def test_permuted():
     np.dot(A_regression, B_regression, C_regression)
 
     diff = np.linalg.norm(C_regression - C) / (M * K)
-    print("Difference:", diff)
     assert diff <= 1e-5
 
 
 def test_histogram():
     W = 32
     H = 32
-
-    print('Histogram (dec) %dx%d' % (W, H))
 
     A = np.random.randint(0, BINS, (H, W)).astype(np.uint8)
     hist = np.zeros([BINS], dtype=np.uint32)
@@ -286,8 +265,6 @@ def test_histogram():
     sdfg(A=A, hist=hist, H=H, W=W)
 
     diff = np.linalg.norm(np.histogram(A, bins=BINS, range=(0, BINS))[0] - hist)
-    print("Difference:", diff)
-    print("==== Program end ====")
     assert diff <= 1e-5
 
 

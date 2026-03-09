@@ -83,7 +83,6 @@ def test_fortran_frontend_bit_size_symbolic():
     res2 = np.full([size, size2, size3], 42, order="F", dtype=np.int32)
     res3 = np.full([size + size2, size2 * 5, size3 + size * size2], 42, order="F", dtype=np.int32)
     sdfg(res=res, res2=res2, res3=res3, arrsize=size, arrsize2=size2, arrsize3=size3)
-    print(res)
 
     assert res[0] == size
     assert res[1] == size * size2 * size3

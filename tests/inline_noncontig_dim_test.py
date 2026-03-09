@@ -31,23 +31,17 @@ state.add_memlet_path(nsdfg_node, map_exit, B, src_conn='bB', memlet=dace.Memlet
 
 
 def test():
-    print('Nested SDFG with non-contiguous access test')
-
     input = np.random.rand(2, 3, 4).astype(np.float32)
     output = np.zeros(shape=(2, 3, 4), dtype=np.float32)
 
     sdfg(A=input, B=output)
     diff1 = np.linalg.norm(output - input * 5)
-    print("Difference (without simplification):", diff1)
-
     output = np.zeros(shape=(2, 3, 4), dtype=np.float32)
 
     sdfg.simplify()
     sdfg(A=input, B=output)
     diff2 = np.linalg.norm(output - input * 5)
-    print("Difference:", diff2)
 
-    print("==== Program end ====")
     assert (diff1 <= 1e-5 and diff2 <= 1e-5)
 
 

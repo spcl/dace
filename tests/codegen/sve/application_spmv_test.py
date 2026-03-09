@@ -32,8 +32,6 @@ def test_spmv():
     H = 64
     nnz = 640
 
-    print('Sparse Matrix-Vector Multiplication %dx%d (%d non-zero elements)' % (W, H, nnz))
-
     A_row = dace.ndarray([H + 1], dtype=dace.uint32)
     A_col = dace.ndarray([nnz], dtype=dace.uint32)
     A_val = dace.ndarray([nnz], dtype=dace.float32)
@@ -44,9 +42,7 @@ def test_spmv():
     # Assuming uniform sparsity distribution across rows
     nnz_per_row = nnz // H
     nnz_last_row = nnz_per_row + (nnz % H)
-    if nnz_last_row > W:
-        print('Too many nonzeros per row')
-        exit(1)
+    assert nnz_last_row <= W, 'Too many nonzeros per row'
 
     # RANDOMIZE SPARSE MATRIX
     A_row[0] = dace.uint32(0)
@@ -78,6 +74,4 @@ def test_spmv():
         dace.timethis('spmv', 'scipy', 0, A_sparse.dot, x)
 
     diff = np.linalg.norm(A_sparse.dot(x) - b) / float(H)
-    print("Difference:", diff)
-    print("==== Program end ====")
     assert diff <= 1e-5

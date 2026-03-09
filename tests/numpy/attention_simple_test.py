@@ -67,9 +67,7 @@ def attn_fwd(
 
 
 def test_attn_simple():
-    print("=== Generating SDFG ===")
     sdfg = attn_fwd.to_sdfg()
-    print("=== Compiling ===")
     sdfg.compile()
 
 

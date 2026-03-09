@@ -110,14 +110,12 @@ def test_expand_without_dynamic_inputs():
     sdfg = expansion.to_sdfg()
     sdfg(A=A, rng=b)
     diff = np.linalg.norm(A - expected)
-    print('Difference (before transformation):', diff)
 
     sdfg.apply_transformations(MapExpansion)
 
     sdfg(A=A, rng=b)
     expected[:, 5:10, :] *= 2
     diff2 = np.linalg.norm(A - expected)
-    print('Difference:', diff2)
     assert (diff <= 1e-5) and (diff2 <= 1e-5)
 
 
@@ -140,7 +138,6 @@ def test_expand_with_limits():
     sdfg.simplify()
     sdfg(A=A)
     diff = np.linalg.norm(A - expected)
-    print('Difference (before transformation):', diff)
 
     sdfg.apply_transformations(MapExpansion, options=dict(expansion_limit=1))
 
@@ -168,7 +165,6 @@ def test_expand_with_limits():
     sdfg(A=A)
     expected *= 2
     diff2 = np.linalg.norm(A - expected)
-    print('Difference:', diff2)
     assert (diff <= 1e-5) and (diff2 <= 1e-5)
     assert len(map_entries) == 2
 

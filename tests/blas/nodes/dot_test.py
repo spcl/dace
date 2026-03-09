@@ -44,12 +44,10 @@ def pure_graph(implementation, dtype, veclen):
 
 
 def run_test(target, size, vector_length):
-    if target == "pure":
-        sdfg = pure_graph("pure", dace.float32, vector_length)
-    else:
-        print(f"Unsupported target: {target}")
-        exit(-1)
+    if target != "pure":
+        raise ValueError(f"Unsupported target: {target}")
 
+    sdfg = pure_graph("pure", dace.float32, vector_length)
     dot = sdfg.compile()
 
     x = np.ndarray(size, dtype=np.float32)

@@ -31,7 +31,6 @@ def test_threadlocal():
 
     sdfg(A=A)
     assert np.all(A >= 0)
-    print('OK. Detected threads:', np.max(A) + 1)
 
 
 if __name__ == '__main__':

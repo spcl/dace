@@ -99,8 +99,7 @@ def test():
 
     for i, val in enumerate(array_out):
         if val != 2 * i:
-            print(i, val)
-            raise ValueError
+            raise ValueError(f"Failed for i={i} and val={val}.")
 
 
 if __name__ == '__main__':

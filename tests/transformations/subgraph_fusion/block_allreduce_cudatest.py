@@ -43,8 +43,6 @@ def test_blockallreduce():
     result2 = csdfg(A=A, M=30, N=30)
     del csdfg
 
-    print(np.linalg.norm(result1))
-    print(np.linalg.norm(result2))
     assert np.allclose(result1, result2)
 
 

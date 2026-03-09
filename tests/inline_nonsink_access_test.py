@@ -61,7 +61,6 @@ def test_same_shape():
     expected = np.array([2**2, (2**2) + (2**6)], dtype=np.float32)
     result = np.array([A[0], B[0]], dtype=np.float32)
     diff = np.linalg.norm(expected - result)
-    print('Difference:', diff)
     assert diff <= 1e-6
 
 
@@ -79,7 +78,6 @@ def test_different_shape():
     expected = np.array([2**2, (2**2) + (2**6)], dtype=np.float32)
     result = np.array([A[1, 0], B[1, 0]], dtype=np.float32)
     diff = np.linalg.norm(expected - result)
-    print('Difference:', diff)
     assert diff <= 1e-6
 
 

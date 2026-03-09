@@ -78,11 +78,7 @@ def test_getri(implementation, dtype):
     # the x is input AND output, the "result" argument gives the lapack status!
     inv_sdfg(x=A1, result_getrf=lapack_status1, result_getri=lapack_status2, pivots=pivots, n=size)
 
-    if np.allclose(A1, A3):
-        print("Test ran successfully for {}.".format(implementation))
-    else:
-        print(A1 - A3)
-        raise ValueError("Validation error!")
+    assert np.allclose(A1, A3)
 
 
 ###############################################################################

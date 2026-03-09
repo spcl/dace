@@ -32,7 +32,6 @@ def test_double_buffering():
     sdfg(A=A, B=B, C=C)
 
     diff = np.linalg.norm(expected_C - C) / (256 * 256)
-    print('Difference (before):', diff)
 
     # Apply local storage transformation on inner map (last two transformations)
     sdfg.simplify()
@@ -50,7 +49,6 @@ def test_double_buffering():
     sdfg(A=A, B=B, C=C)
 
     diff2 = np.linalg.norm(expected_C - C) / (256 * 256)
-    print('Difference (after):', diff2)
 
     assert (diff <= 1e-5 and diff2 <= 1e-5)
 

@@ -25,9 +25,7 @@ def test():
     plus_1(X_in=X, num=num, X_out=Y, N=10)
 
     diff = np.linalg.norm((X[0:num[0]] + 1) - Y[0:num[0]])
-    if any(abs(y - 0.0) > 1e-5 for y in Y[num[0]:]) or diff > 1e-5:
-        print('Y =', Y)
-        raise AssertionError
+    assert not (any(abs(y - 0.0) > 1e-5 for y in Y[num[0]:]) or diff > 1e-5)
 
 
 if __name__ == "__main__":

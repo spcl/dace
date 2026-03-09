@@ -52,8 +52,6 @@ def test_mean():
             print(tf.norm(output_dace - output_tf).eval(session=sess_tf))
             raise AssertionError("mean test {i} failed".format(i=index))
 
-    print("mean tests passed!")
-
 
 @pytest.mark.tensorflow
 def test_addn():
@@ -75,7 +73,6 @@ def test_addn():
         print(output_tf)
         print(tf.norm(output_dace - output_tf).eval(session=sess_tf))
         raise AssertionError("AddN test failed")
-    print("AddN test passed!")
 
 
 @pytest.mark.tensorflow

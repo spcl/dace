@@ -24,8 +24,6 @@ def cudahello(A: dace.float64[N], Vout: dace.float64[N]):
 def _test(sdfg):
     N = 144
 
-    print('Vector double CUDA (shared memory) %d' % (N))
-
     V = dace.ndarray([N], dace.float64)
     Vout = dace.ndarray([N], dace.float64)
     V[:] = np.random.rand(N).astype(dace.float64.type)
@@ -34,7 +32,6 @@ def _test(sdfg):
     sdfg(A=V, Vout=Vout, N=N)
 
     diff = np.linalg.norm(2 * V - Vout) / N
-    print("Difference:", diff)
     assert diff <= 1e-5
 
 

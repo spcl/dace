@@ -16,8 +16,6 @@ def cr_complex(input, output):
 
 
 def test_cr_complex():
-    print('CR non-atomic (complex value) test')
-
     A = np.random.rand(N).astype(np.complex128)
     A += np.random.rand(N).astype(np.complex128) * 1j
     B = np.ndarray([1], dtype=A.dtype)
@@ -26,7 +24,6 @@ def test_cr_complex():
     cr_complex(A, B)
 
     diff = abs(np.sum(A) - B[0])
-    print("Difference:", diff)
     assert diff <= 1e-5
 
 

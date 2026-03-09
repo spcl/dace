@@ -96,8 +96,6 @@ def _test_matmul(implementation, dtype, impl_name, storage, data_layout='CCC', e
     diff = np.linalg.norm(ref - z)
     assert diff < eps
 
-    print("Test ran successfully for {}.".format(implementation))
-
 
 @pytest.mark.gpu
 def test_types():
@@ -144,7 +142,6 @@ def test_batchmm():
     ref = x @ y
 
     diff = np.linalg.norm(ref - z)
-    print('Difference:', diff)
     assert diff < 1e-6
 
 

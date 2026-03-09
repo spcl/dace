@@ -50,7 +50,6 @@ def test_conv_simple(num_in_channels, kernel_size, num_filters, bias):
     else:
         sdfg(X_=X, W_=W, Z_=dace_Z)
 
-    print(torch_Z - dace_Z)
     assert np.allclose(torch_Z, dace_Z)
 
 

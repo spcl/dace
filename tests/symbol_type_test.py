@@ -31,7 +31,6 @@ def test_nested_symbol_type():
     res = np.zeros(1, dtype=np.float32)
     compiledSDFG(data=res, s=np.float32(1.5))
 
-    print("res:", res[0])
     assert res[0] == np.float32(1.5)
 
 

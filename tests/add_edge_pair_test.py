@@ -30,7 +30,6 @@ def test():
     sdfg(A=A, B=B)
 
     diff = np.linalg.norm(B[0] - np.sum(2 * A))
-    print('Difference:', diff)
     assert diff <= 1e-5
 
 

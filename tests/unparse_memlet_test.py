@@ -28,7 +28,6 @@ def test():
         expected = 2.0 * np.sum(A[0:N // 2]) + A[N // 2]
     actual = np.sum(B)
     diff = abs(actual - expected)
-    print('Difference:', diff)
     assert diff <= 1e-5
 
 

@@ -29,7 +29,6 @@ def sdfg_with_children(A: dp.float32[N, N], B: dp.float32[N, N]):
 
 
 def test():
-    print('Nested SDFG test (Python syntax)')
     # Externals (parameters, symbols)
     N = 64
 
@@ -40,7 +39,6 @@ def test():
     sdfg(A=input, B=output, N=N)
 
     diff = np.linalg.norm(output - np.power(input, 5)) / (N * N)
-    print("Difference:", diff)
     assert diff <= 1e-5
 
 

@@ -82,8 +82,6 @@ def test_2fuse():
     del csdfg
 
     assert np.allclose(res1, res2)
-    print("PASS")
-    return
 
 
 def test_1fuse():
@@ -104,11 +102,7 @@ def test_1fuse():
     res2 = csdfg(X_in=X_in, H=10, B=10, SN=20, SM=20)
     del csdfg
 
-    print(np.linalg.norm(res1))
-    print(np.linalg.norm(res2))
     assert np.allclose(res1, res2)
-    print("PASS")
-    return
 
 
 def test_1fuse():
@@ -130,10 +124,7 @@ def test_1fuse():
     res2 = csdfg(X_in=X_in, H=10, B=10, SN=20, SM=20)
     del csdfg
 
-    print(np.linalg.norm(res1))
-    print(np.linalg.norm(res2))
     assert np.allclose(res1, res2)
-    print("PASS")
 
 
 if __name__ == "__main__":

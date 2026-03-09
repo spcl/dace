@@ -24,7 +24,6 @@ def test():
     inline_noinput(A)
 
     diff = np.linalg.norm(A - np.array([5., 3.]))
-    print('Difference:', diff)
     assert diff < 1e-5
 
 

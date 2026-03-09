@@ -23,7 +23,6 @@ def stencil3x3(A: dace.float32[N, N], B: dace.float32[N, N]):
 
 def test():
     N = 20
-    print('Conv2D %dx%d' % (N, N))
 
     A = dace.ndarray([N, N], dtype=dace.float32)
     B = dace.ndarray([N, N], dtype=dace.float32)
@@ -48,7 +47,6 @@ def test():
     regression = ndimage.convolve(regression, KERNEL, mode='constant', cval=0.0)
 
     residual = np.linalg.norm(B[1:N - 1, 1:N - 1] - regression) / ((N - 2)**2)
-    print("Residual:", residual)
 
     #print(A.view(type=np.ndarray))
     #print(regression.view(type=np.ndarray))

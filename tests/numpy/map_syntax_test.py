@@ -23,7 +23,6 @@ def test_copy3d():
     copy3d(A, B)
 
     diff = np.linalg.norm(B - A) / (M * N)
-    print('Difference:', diff)
     assert diff < 1e-5
 
 

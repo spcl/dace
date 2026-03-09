@@ -45,7 +45,6 @@ def test_reuse():
     C_regression = np.dot(np.dot(A, np.dot(np.dot(A, B), np.dot(A, B))), np.dot(B, D))
 
     diff = np.linalg.norm(C_regression - C) / (m * n)
-    print("Difference:", diff)
     assert diff <= 1e-5
 
 

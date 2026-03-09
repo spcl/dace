@@ -14,7 +14,6 @@ def test_output():
     elementwise(A=A.copy(), B=B)
 
     diff = np.linalg.norm(np.log(A) - B)
-    print('Difference:', diff)
     assert diff < 1e-5
 
 
@@ -29,7 +28,6 @@ def test_output_none():
     elementise_none(A=A.copy(), B=B)
 
     diff = np.linalg.norm(np.log(A) - B)
-    print('Difference:', diff)
     assert diff < 1e-5
 
 
@@ -44,7 +42,6 @@ def test_cast():
     elementwise_cast(A=A.copy(), B=B)
 
     diff = np.linalg.norm(A - B)
-    print('Difference:', diff)
     assert diff < 1e-5
 
 

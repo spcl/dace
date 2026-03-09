@@ -42,8 +42,6 @@ def test():
     csdfg = sdfg.compile()
     csdfg(A=A, C=C2, N=N)
 
-    print(np.linalg.norm(C1))
-    print(np.linalg.norm(C2))
     assert np.allclose(C1, C2)
 
 

@@ -119,7 +119,6 @@ def _test_quantitatively(sdfg, graph):
     assert np.allclose(out1, out1_base)
     assert np.allclose(out2, out2_base)
     assert np.allclose(out3, out3_base)
-    print('PASS')
 
 
 def test_complex():

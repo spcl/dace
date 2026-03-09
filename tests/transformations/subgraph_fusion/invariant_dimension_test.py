@@ -115,7 +115,6 @@ def _test_quantitatively(sdfg, graph):
     del csdfg
 
     assert np.allclose(C1, C2)
-    print('PASS')
 
 
 def test_invariant_dim():

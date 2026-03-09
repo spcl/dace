@@ -67,8 +67,6 @@ def test():
     H = 1024
     MAXITER = 30
 
-    print('Jacobi 5-point Stencil %dx%d (%d steps)' % (W, H, MAXITER))
-
     A = np.ndarray((H, W), dtype=np.float32)
 
     # Initialize arrays: Randomize A, zero B
@@ -76,8 +74,6 @@ def test():
     A[1:H - 1, 1:W - 1] = np.random.rand((H - 2), (W - 2)).astype(dace.float32.type)
     regression = np.ndarray([H - 2, W - 2], dtype=np.float32)
     regression[:] = A[1:H - 1, 1:W - 1]
-
-    #print(A.view(type=np.ndarray))
 
     #############################################
     # Run DaCe program
@@ -97,7 +93,6 @@ def test():
         regression = ndimage.convolve(regression, kernel, mode='constant', cval=0.0)
 
     residual = np.linalg.norm(A[1:H - 1, 1:W - 1] - regression) / (H * W)
-    print("Residual:", residual)
 
     assert residual <= 0.05
 

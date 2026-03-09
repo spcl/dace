@@ -65,7 +65,6 @@ def test():
     for i in range(5):
         diff += np.linalg.norm(out_data[i] - refdata[i])
 
-    print('Difference:', diff)
     assert diff <= 1e-5
 
 

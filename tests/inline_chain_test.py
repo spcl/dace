@@ -30,7 +30,6 @@ def test():
     inline_chain_test(A)
 
     diff = np.linalg.norm(A - (refA + 2)) / 400
-    print('Difference:', diff)
     assert diff <= 1e-5
 
 

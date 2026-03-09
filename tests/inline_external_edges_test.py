@@ -43,7 +43,6 @@ def test():
     expected = np.array([2.0, 2.0, 7.0, 7.0])
     result = np.array([L[0], L[1], M[0], M[1]])
     diff = np.linalg.norm(expected - result)
-    print('Difference:', diff)
     assert diff <= 1e-5
 
 

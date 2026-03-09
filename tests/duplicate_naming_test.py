@@ -46,7 +46,6 @@ def test():
     duplicate_naming(A, B, W=W)
 
     diff = np.linalg.norm(4 * A - B) / W
-    print("Difference:", diff)
     assert diff <= 1e-5
 
 

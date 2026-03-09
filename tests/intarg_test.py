@@ -28,8 +28,6 @@ def test():
     intarg(A, B, 5, W=W)
 
     diff = np.linalg.norm(5 * A - B) / W
-    print("Difference:", diff)
-    print("==== Program end ====")
     assert diff <= 1e-5
 
 

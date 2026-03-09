@@ -367,7 +367,6 @@ def test_fusion_simple():
     compile_and_run_sdfg(sdfg, A=A, B=B, out=out)
 
     diff = abs(np.sum(A * A + B) - out)
-    print('Difference:', diff)
     assert diff <= 1e-3
 
 
@@ -381,7 +380,6 @@ def test_fusion_rename():
     compile_and_run_sdfg(sdfg, A=A, B=B, out=out)
 
     diff = abs(np.sum(A * A + B) - out)
-    print('Difference:', diff)
     assert diff <= 1e-3
 
 
@@ -430,10 +428,8 @@ def test_multiple_fusions():
     compile_and_run_sdfg(sdfg, A=A, B=B, C=C, out=out)
     diff1 = np.linalg.norm(A * A + 1 - B)
     diff2 = np.linalg.norm(A * A + 2 - C)
-    print('Difference1:', diff1)
-    assert diff1 <= 1e-4
 
-    print('Difference2:', diff2)
+    assert diff1 <= 1e-4
     assert diff2 <= 1e-4
 
 
@@ -447,7 +443,6 @@ def test_fusion_chain():
     B = np.zeros_like(A)
     sdfg(A=A, B=B)
     diff = np.linalg.norm(A * 8 + 5 - B)
-    print('Difference:', diff)
     assert diff <= 1e-4
 
 

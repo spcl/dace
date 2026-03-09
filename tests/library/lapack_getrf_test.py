@@ -91,10 +91,7 @@ def test_getrf(implementation, dtype, storage):
     # the x is input AND output, the "result" argument gives the lapack status!
     getrf_sdfg(x=A, result=lapack_status, pivots=pivots, n=size)
 
-    if np.allclose(A, lu_ref):
-        print("Test ran successfully for {}.".format(implementation))
-    else:
-        raise ValueError("Validation error!")
+    assert np.allclose(A, lu_ref)
 
 
 ###############################################################################

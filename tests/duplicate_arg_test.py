@@ -26,7 +26,6 @@ def test_dot():
     dot(A, A, out_AA, N=n)
 
     diff_aa = np.linalg.norm(np.dot(A, A) - out_AA) / float(n)
-    print("Difference:", diff_aa)
     assert diff_aa <= 1e-5
 
 

@@ -29,8 +29,6 @@ def test_callback():
     for test in tests:
         output_tf = sess_tf.run(test)
         output_dace = sess_dace.run(test)
-        print(output_dace)
-        print(output_tf)
         assert np.linalg.norm(output_dace - output_tf) < 1e-8
 
 
