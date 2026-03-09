@@ -18,6 +18,7 @@ from dace.sdfg.utils import in_edge_with_name
 from dace.transformation.passes.analysis import AccessSets
 
 # Import ParameterArray from the data package for backward compatibility
+from dace.data.ml import ParameterArray  # noqa: F401
 
 
 @dace.library.expansion
