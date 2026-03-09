@@ -2,7 +2,6 @@ from typing import Union
 import dace
 import numpy as np
 import copy
-import sys
 import time
 import pytest
 

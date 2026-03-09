@@ -105,7 +105,6 @@ def test_slice():
 
 if __name__ == '__main__':
     try:
-        import tensorflow
         test_shapen()
         test_mean()
         test_addn()

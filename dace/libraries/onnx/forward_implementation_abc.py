@@ -102,4 +102,3 @@ class ONNXForward(abc.ABC):
 
 
 # Import op_implementations to trigger registration of all implementations
-import dace.libraries.onnx.op_implementations

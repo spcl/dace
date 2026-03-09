@@ -1,6 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-from dace.transformation import optimizer
 from dace.transformation.dataflow import GPUTransformMap
 import numpy as np
 import pytest

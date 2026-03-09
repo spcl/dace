@@ -2,8 +2,7 @@
 import copy
 import dace
 import dace.sdfg.utils as sdutils
-import pytest
-from dace.transformation.passes.analysis.scope_data_and_symbol_analysis import ScopeDataAndSymbolAnalysis, ScopeAnalysis
+from dace.transformation.passes.analysis.scope_data_and_symbol_analysis import ScopeDataAndSymbolAnalysis
 
 
 def _add_shared_memory(sdfg: dace.SDFG, add_src_access_node: bool = False):

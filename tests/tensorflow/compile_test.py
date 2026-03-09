@@ -30,7 +30,6 @@ def test_compile():
 
 if __name__ == '__main__':
     try:
-        import tensorflow
         test_compile()
     except ImportError:
         pass

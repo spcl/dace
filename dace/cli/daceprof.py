@@ -9,7 +9,7 @@ import runpy
 import sys
 import os
 import shutil
-from typing import Callable, List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union
 import warnings
 
 import dace

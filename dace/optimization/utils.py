@@ -1,15 +1,10 @@
 import os
-import json
-import pickle
-import tempfile
 import math
 import dace
 import itertools
 import numpy as np
 
 from typing import Dict
-
-from dace.codegen.instrumentation.data import data_report
 
 
 def measure(sdfg, dreport=None, repetitions=30, print_report: bool = False):

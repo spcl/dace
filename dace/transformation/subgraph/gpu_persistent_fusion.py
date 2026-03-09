@@ -5,7 +5,7 @@ from dace import nodes, Memlet
 from dace.sdfg import SDFG, SDFGState, InterstateEdge
 from dace.dtypes import StorageType, ScheduleType
 from dace.properties import Property, make_properties
-from dace.sdfg.state import AbstractControlFlowRegion, LoopRegion
+from dace.sdfg.state import AbstractControlFlowRegion
 from dace.sdfg.graph import SubgraphView
 from dace.transformation.transformation import SubgraphTransformation
 

@@ -3,13 +3,12 @@
     AST to SVE: This module is responsible for converting an AST into SVE code.
 """
 
-from dace.frontend.python.wrappers import stream
 import dace
 import ast
 from dace.codegen import cppunparse
-from dace.sdfg import nodes, SDFG, SDFGState, ScopeSubgraphView, graph as gr
-from typing import IO, Tuple, Union
-from dace import registry, symbolic, dtypes
+from dace.sdfg import nodes, SDFG
+from typing import IO
+from dace import dtypes
 from dace.codegen.targets.sve import preprocess as preprocess
 from dace.codegen.targets.sve import util as util
 import dace.frontend.python.astutils as astutils

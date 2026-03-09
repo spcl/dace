@@ -9,8 +9,8 @@ import inspect
 import itertools
 import warnings
 import sympy
-from typing import (TYPE_CHECKING, Any, AnyStr, Callable, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Type,
-                    Union, overload)
+from typing import (TYPE_CHECKING, Any, AnyStr, Callable, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Union,
+                    overload)
 
 import dace
 from dace.frontend.python import astutils

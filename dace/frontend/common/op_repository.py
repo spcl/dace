@@ -1,7 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import itertools
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
-from dace.dtypes import paramdec, deduplicate
+from dace.dtypes import paramdec
 
 MethodType = Callable[..., Tuple[str]]
 
