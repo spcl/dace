@@ -2508,6 +2508,10 @@ class SDFG(ControlFlowRegion):
                 # Fill in scope entry/exit connectors
                 sdfg.fill_scope_connectors()
 
+                # Canonicalize the SDFG to ensure that code generation is deterministic 
+                # and does not depend on the order of states or edges in the SDFG.
+                sdfg.canonicalize()
+
                 # Generate code for the program by traversing the SDFG state by state
                 program_objects = codegen.generate_code(sdfg, validate=validate)
             except Exception:
@@ -3006,3 +3010,36 @@ class SDFG(ControlFlowRegion):
                 break
         self.root_sdfg.using_explicit_control_flow = found_explicit_cf_block
         return found_explicit_cf_block
+
+    def canonicalize(self, visited=None):
+        """
+        Forces all internal dictionaries and graph structures into a deterministic, 
+        lexicographical order to guarantee stable code generation.
+        """
+        if visited is None:
+            visited = set()
+            
+        if id(self) in visited:
+            return
+        visited.add(id(self))
+
+        from dace.sdfg.utils import canonicalize_graph_dicts 
+        
+        # 1. Sort Arrays, Symbols, and Constants in-place
+        for attr in ['_arrays', 'symbols', 'constants_prop']:
+            if hasattr(self, attr):
+                val = getattr(self, attr)
+                if val and hasattr(val, 'keys') and hasattr(val, 'pop'):
+                    for k in sorted(list(val.keys())):
+                        val[k] = val.pop(k)
+
+        # 2. Canonicalize the top-level graph
+        canonicalize_graph_dicts(self)
+
+        # 3. Recursively canonicalize all states and nested SDFGs
+        for state in self.nodes():
+            canonicalize_graph_dicts(state)
+            
+            for node in state.nodes():
+                if hasattr(node, 'sdfg') and node.sdfg is not None:
+                    node.sdfg.canonicalize(visited)

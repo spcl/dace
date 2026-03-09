@@ -2754,3 +2754,60 @@ def expand_nodes(sdfg: SDFG, predicate: Callable[[nd.Node], bool]):
 
         if expanded_something:
             states.append(state)
+
+
+def get_deterministic_node_key(node):
+    """Generates a stable string key for Graph nodes to break topological tie-breaks."""
+    node_type = type(node).__name__
+    identifier = getattr(node, 'label', getattr(node, 'name', getattr(node, 'data', str(node))))
+    return f"{node_type}_{identifier}"
+
+
+def get_deterministic_edge_key(edge):
+    """Generates a stable string key for Graph edges, including Memlet data for Multi-Edges."""
+    src_conn = getattr(edge, 'src_conn', '')
+    dst_conn = getattr(edge, 'dst_conn', '')
+    # Include stringified Memlet data to differentiate parallel edges
+    data_str = str(getattr(edge, 'data', '')) 
+    return f"{get_deterministic_node_key(edge.src)}:{src_conn}->{get_deterministic_node_key(edge.dst)}:{dst_conn}_{data_str}"
+
+
+def canonicalize_graph_dicts(graph):
+    """Sorts internal nodes, edge dictionaries, and NetworkX graphs in-place."""
+    
+    # 1. Sort Node dictionary in-place
+    if hasattr(graph, '_nodes'):
+        for k in sorted(list(graph._nodes.keys()), key=get_deterministic_node_key):
+            graph._nodes[k] = graph._nodes.pop(k)
+            
+        # Sort the nested edge dictionaries inside _nodes in-place
+        for node, (in_edges, out_edges) in graph._nodes.items():
+            for e_key in sorted(list(in_edges.keys()), key=lambda k: get_deterministic_edge_key(in_edges[k])):
+                in_edges[e_key] = in_edges.pop(e_key)
+            for e_key in sorted(list(out_edges.keys()), key=lambda k: get_deterministic_edge_key(out_edges[k])):
+                out_edges[e_key] = out_edges.pop(e_key)
+                
+    # 2. Sort master Edge dictionary in-place
+    if hasattr(graph, '_edges'):
+        for e_key in sorted(list(graph._edges.keys()), key=lambda k: get_deterministic_edge_key(graph._edges[k])):
+            graph._edges[e_key] = graph._edges.pop(e_key)
+
+    # 3. Rebuild the NetworkX graph to ensure downstream utilities are also deterministic
+    if hasattr(graph, '_nx'):
+        old_nx = graph._nx
+        graph._nx = type(old_nx)()
+        
+        for n in graph._nodes.keys():
+            graph._nx.add_node(n, **old_nx.nodes.get(n, {}))
+            
+        for e_obj in graph._edges.values():
+            edge_attrs = {'data': e_obj.data}
+
+            if hasattr(e_obj, 'src_conn'):
+                edge_attrs['src_conn'] = e_obj.src_conn
+                edge_attrs['dst_conn'] = e_obj.dst_conn
+
+            if hasattr(e_obj, 'key'):
+                graph._nx.add_edge(e_obj.src, e_obj.dst, key=e_obj.key, **edge_attrs)
+            else:
+                graph._nx.add_edge(e_obj.src, e_obj.dst, **edge_attrs)
