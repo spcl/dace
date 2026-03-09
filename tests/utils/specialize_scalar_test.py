@@ -128,7 +128,6 @@ def test_interstate_assignment():
     sdutil.specialize_scalar(sdfg=sdfg, scalar_name="nlev", scalar_val="90")
     for e in sdfg.all_interstate_edges():
         assert e.data.assignments == {"nlev_sym": "90"}
-    return sdfg
 
 
 def test_interstate_read():

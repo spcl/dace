@@ -872,7 +872,7 @@ class ExpandReduceCUDABlockAll(pm.ExpandTransformation):
         sub_expansion = ExpandReduceCUDABlock()
         sub_expansion.setup_match(sdfg, state.parent_graph.cfg_id, state_id, {}, 0)
         return sub_expansion.expansion(node=node, state=state, sdfg=sdfg)
-        #return reduce_node.expand(sdfg, state)
+        #return reduce_node.expand(state)
 
 
 @dace.library.expansion

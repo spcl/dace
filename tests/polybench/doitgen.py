@@ -46,8 +46,8 @@ def init_array(A, C4, nr, nq, np):
             C4[i, j] = datatype((i * j) % np) / np
 
 
-@dace.program(datatype[NR, NQ, NP], datatype[NP, NP])
-def doitgen(A, C4):
+@dace.program
+def doitgen(A: datatype[NR, NQ, NP], C4: datatype[NP, NP]):
 
     @dace.mapscope
     def doit(r: _[0:NR], q: _[0:NQ]):

@@ -8,8 +8,8 @@ H = dace.symbol('H')
 W = dace.symbol('W')
 
 
-@dace.program(dace.float64[H, W], dace.float64[H, W])
-def cudahello(V, Vout):
+@dace.program
+def cudahello(V: dace.float64[H, W], Vout: dace.float64[H, W]):
 
     @dace.map(_[0:H, 0:W])
     def multiplication(i, j):

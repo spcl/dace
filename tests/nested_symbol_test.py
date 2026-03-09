@@ -1,7 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
-import warnings
 import pytest
 
 from dace.sdfg import dealias
@@ -35,7 +34,7 @@ def test_nested_symbol():
 
 def test_nested_symbol_dynamic():
     if not dace.Config.get_bool('optimizer', 'automatic_simplification'):
-        warnings.warn("Test disabled (missing allocation lifetime support)")
+        pytest.skip(reason="Test disabled (missing allocation lifetime support)")
         return
 
     A = np.random.rand(5)

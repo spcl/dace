@@ -452,7 +452,6 @@ class DaceProgram(pycommon.SDFGConvertible):
             # If the cache does not just contain a parsed SDFG
             if entry.compiled_sdfg is not None:
                 kwargs.update(arg_mapping)
-                entry.compiled_sdfg.clear_return_values()
                 return entry.compiled_sdfg(**self._create_sdfg_args(entry.sdfg, args, kwargs))
 
         # Clear cache to enforce deletion and closure of compiled program
@@ -809,7 +808,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         :param kwargs: Optional compile-time keyword arguments.
         """
         from dace.sdfg import utils as sdutil  # Avoid import loop
-        csdfg = sdutil.load_precompiled_sdfg(path, self.argnames)
+        csdfg = sdutil.load_precompiled_sdfg(path)
         _, cachekey = self._load_sdfg(None, *args, **kwargs)
 
         # Update SDFG cache with the SDFG and compiled version

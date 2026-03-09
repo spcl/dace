@@ -719,7 +719,10 @@ class DebugInfoProperty(Property):
 
     def __init__(self, **kwargs):
         if 'default' not in kwargs:
-            kwargs['default'] = DebugInfo(0, 0, 0, 0)
+            if kwargs.get('allow_none', False):
+                kwargs['default'] = None
+            else:
+                kwargs['default'] = DebugInfo(None)
         super().__init__(dtype=DebugInfo, **kwargs)
 
     @property

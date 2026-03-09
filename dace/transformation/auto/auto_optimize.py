@@ -421,7 +421,7 @@ def set_fast_implementations(sdfg: SDFG,
                     if (node.default_implementation == 'specialize'
                             and (len(set(node.implementations)
                                      & set(implementation_prio))) == 0):
-                        node.expand(current_sdfg, state)
+                        node.expand(state)
 
     # general nodes
     for node, _ in sdfg.all_nodes_recursive():

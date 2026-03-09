@@ -112,7 +112,8 @@ def test_auto_unroll_tuple():
     a = np.zeros([1])
     b = np.zeros([2])
     c = np.zeros([1])
-    tounroll(a, b, c)
+    with pytest.warns(match='implicitly unrolled'):
+        tounroll(a, b, c)
     assert a[0] == 5
     assert b[0] == 5
     assert b[1] == 5
@@ -131,7 +132,8 @@ def test_auto_unroll_dictionary():
 
     a = np.zeros([1])
     d = {1: 2, 3: 4}
-    tounroll(a, d)
+    with pytest.warns(match='implicitly unrolled'):
+        tounroll(a, d)
     assert a[0] == 4
 
 
@@ -147,7 +149,8 @@ def test_auto_unroll_dictionary_method():
 
     a = np.zeros([1])
     d = {1: 2, 3: 4}
-    tounroll(a, d)
+    with pytest.warns(match='implicitly unrolled'):
+        tounroll(a, d)
     assert a[0] == 6
 
 
@@ -174,7 +177,8 @@ def test_tuple_elements_enumerate():
             A[i] += val
 
     a = np.zeros([3])
-    tounroll(a)
+    with pytest.warns(match='implicitly unrolled'):
+        tounroll(a)
     assert np.allclose(a, np.array([1, 2, 3]))
 
 
@@ -195,7 +199,8 @@ def test_list_global_enumerate():
         "rain": np.zeros([3]),
         "nope": np.zeros([3]),
     }
-    enumerate_parsing(a, q)
+    with pytest.warns(match='implicitly unrolled'):
+        enumerate_parsing(a, q)
     assert np.allclose(q["vapor"], np.array([1, 1, 1]))
     assert np.allclose(q["rain"], np.array([1, 1, 1]))
     assert np.allclose(q["nope"], np.array([0, 0, 0]))
@@ -218,7 +223,8 @@ def test_tuple_global_enumerate():
         "rain": np.zeros([3]),
         "nope": np.zeros([3]),
     }
-    enumerate_parsing(a, q)
+    with pytest.warns(match='implicitly unrolled'):
+        enumerate_parsing(a, q)
     assert np.allclose(q["vapor"], np.array([1, 1, 1]))
     assert np.allclose(q["rain"], np.array([1, 1, 1]))
     assert np.allclose(q["nope"], np.array([0, 0, 0]))
@@ -234,7 +240,8 @@ def test_tuple_elements_zip():
             A += 2 * a + b
 
     a = np.zeros([1])
-    tounroll(a)
+    with pytest.warns(match='implicitly unrolled'):
+        tounroll(a)
     assert np.allclose(a, (2 + 3 + 4) * 2 + (4 + 5 + 6))
 
 
@@ -326,7 +333,8 @@ def test_arrays_keys_closure():
         for arr in d.keys():
             d[arr].arr += 1
 
-    prog()
+    with pytest.warns(match='implicitly unrolled'):
+        prog()
     assert np.allclose(d['0a0'].arr, expected['0a0'])
     assert np.allclose(d['1b1'].arr, expected['1b1'])
 
@@ -341,7 +349,8 @@ def test_arrays_keys_daceconstant():
     dd = {'0a0': Wrapper(), '1b1': Wrapper()}
     expected = {'0a0': dd['0a0'].arr + 1, '1b1': dd['1b1'].arr + 1}
 
-    prog(dd)
+    with pytest.warns(match='implicitly unrolled'):
+        prog(dd)
     assert np.allclose(dd['0a0'].arr, expected['0a0'])
     assert np.allclose(dd['1b1'].arr, expected['1b1'])
 
@@ -355,7 +364,8 @@ def test_arrays_values():
         for arr in d.values():
             arr += 1
 
-    prog()
+    with pytest.warns(match='implicitly unrolled'):
+        prog()
     assert np.allclose(d[0], expected[0])
     assert np.allclose(d[1], expected[1])
 
@@ -374,7 +384,8 @@ def test_objects():
     wrapped_arrays = {"0": Wrapper(), "1": Wrapper()}
     scal = 2
 
-    program(wrapped_arrays, scal)
+    with pytest.warns(match='implicitly unrolled'):
+        program(wrapped_arrays, scal)
 
 
 def test_nounroll():

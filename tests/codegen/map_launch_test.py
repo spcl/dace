@@ -83,7 +83,8 @@ def _run_test(
 
 
 def test_launch_cpu_zero_sized_map():
-    _run_test(1, 1, on_gpu=False)
+    with pytest.warns(match="zero or negative sized range"):
+        _run_test(1, 1, on_gpu=False)
 
 
 def test_launch_cpu_sym_zero_sized_map():
@@ -91,7 +92,8 @@ def test_launch_cpu_sym_zero_sized_map():
 
 
 def test_launch_cpu_negative_sized_map():
-    _run_test(1, 0, on_gpu=False)
+    with pytest.warns(match="zero or negative sized range"):
+        _run_test(1, 0, on_gpu=False)
 
 
 def test_launch_cpu_sym_negative_sized_map():

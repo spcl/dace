@@ -300,7 +300,7 @@ def run_lenet_autodiff():
 
 def test_cpu(monkeypatch):
     # Serialization causes issues, we temporarily disable it
-    monkeypatch.setenv("DACE_testing_serialization", 0)
+    monkeypatch.setenv("DACE_testing_serialization", "0")
     run_lenet(dace.dtypes.DeviceType.CPU)
 
 

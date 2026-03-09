@@ -167,12 +167,13 @@ def _store_data(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState
             # We want to build the memlet as if this was not in a a loop
             nb_enclosing_loops = 0
 
-    new_store_node = forward_state.add_array(
+    forward_state.sdfg.add_array(
         name=new_store_node_name,
         shape=shape,
         dtype=original_desc.dtype,
         transient=True,
     )
+    new_store_node = forward_state.add_access(new_store_node_name)
 
     # Connect the edge source and connector to the new access node
     # We will save the memlets we create and return them
@@ -186,7 +187,7 @@ def _store_data(bwd_generator: 'BackwardPassGenerator', forward_state: SDFGState
     # In the other cases, we need to route the storing through maps
     all_edges = ad_utils.get_all_path_edges(forward_state, forward_an, edge)
 
-    # Get the map nest memlet informtation
+    # Get the map nest memlet information
     start_range, param_list, shape_list, param_dict = ad_utils.get_map_nest_information(all_edges)
 
     # The parameters to add for the current memlet in the loop
