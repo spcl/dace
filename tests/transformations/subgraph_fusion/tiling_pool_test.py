@@ -1,7 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
 import dace
-from dace.sdfg import SDFG
 from dace.transformation.subgraph.stencil_tiling import StencilTiling
 from dace.transformation.subgraph import SubgraphFusion
 from dace.sdfg.graph import SubgraphView

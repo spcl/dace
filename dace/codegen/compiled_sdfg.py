@@ -13,12 +13,10 @@ import pathlib
 import sys
 
 import numpy as np
-import sympy as sp
 
 from dace import data as dt, dtypes, hooks, symbolic
 from dace.codegen import exceptions as cgx
 from dace.config import Config
-from dace.frontend import operations
 
 
 class ReloadableDLL(object):

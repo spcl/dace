@@ -111,7 +111,6 @@ def test_fused_batch_norm():
 
 if __name__ == '__main__':
     try:
-        import tensorflow
         test_fused_batch_norm()
     except ImportError:
         pass

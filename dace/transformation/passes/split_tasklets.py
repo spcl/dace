@@ -9,8 +9,6 @@ from dace.transformation import pass_pipeline as ppl, transformation
 import ast
 from dace.sdfg.nodes import CodeBlock
 
-import re
-
 
 class ASTSplitter:
 

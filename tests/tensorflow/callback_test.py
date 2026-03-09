@@ -36,7 +36,6 @@ def test_callback():
 
 if __name__ == '__main__':
     try:
-        import tensorflow
         test_callback()
     except ImportError:
         pass

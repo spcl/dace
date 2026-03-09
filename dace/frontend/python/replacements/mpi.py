@@ -9,7 +9,7 @@ from dace.frontend.python.replacements.utils import ProgramVisitor
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState
 from numbers import Integral, Number
-from typing import Sequence, Tuple, Union
+from typing import Sequence, Union
 
 ShapeType = Sequence[Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]]
 RankType = Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]
@@ -287,7 +287,6 @@ def _intracomm_alltoall(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, icomm:
 def _pgrid_alltoall(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, pgrid: str, inp_buffer: str, out_buffer: str):
     """ Equivalent to `dace.comm.Alltoall(inp_buffer, out_buffer, grid=pgrid)`. """
 
-    from mpi4py import MPI
     return _alltoall(pv, sdfg, state, inp_buffer, out_buffer, grid=pgrid)
 
 
@@ -618,7 +617,6 @@ def _pgrid_isend(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, pgrid: str, b
                  dst: Union[str, sp.Expr, Number], tag: Union[str, sp.Expr, Number]):
     """ Equivalent to `dace.comm.Isend(buffer, dst, tag, req, grid=pgrid)`. """
 
-    from mpi4py import MPI
     req, _ = sdfg.add_array("isend_req", [1], dace.dtypes.opaque("MPI_Request"), transient=True, find_new_name=True)
     _isend(pv, sdfg, state, buffer, dst, tag, req, grid=pgrid)
     return req
@@ -837,7 +835,6 @@ def _pgrid_irecv(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, pgrid: str, b
                  src: Union[str, sp.Expr, Number], tag: Union[str, sp.Expr, Number]):
     """ Equivalent to `dace.comm.Isend(buffer, dst, tag, req, grid=pgrid)`. """
 
-    from mpi4py import MPI
     req, _ = sdfg.add_array("irecv_req", [1], dace.dtypes.opaque("MPI_Request"), transient=True, find_new_name=True)
     _irecv(pv, sdfg, state, buffer, src, tag, req, grid=pgrid)
     return req

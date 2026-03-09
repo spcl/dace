@@ -15,7 +15,6 @@ from dace.symbolic import symbol, SymExpr, symstr
 import sympy
 import sys
 import dace.frontend.python.astutils
-import inspect
 from typing import Callable, Union
 
 # Additional function names that can be used to infer types

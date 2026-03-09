@@ -1,9 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ DaCe Python parsing functionality and entry point to Python frontend. """
 import ast
-from dataclasses import dataclass
 import inspect
-import itertools
 import copy
 import os
 import sympy
@@ -171,7 +169,6 @@ class DaceProgram(pycommon.SDFGConvertible):
                  method: bool = False,
                  use_explicit_cf: bool = True,
                  ignore_type_hints: bool = False):
-        from dace.codegen import compiled_sdfg  # Avoid import loops
 
         self.f = f
         self.dec_args = args

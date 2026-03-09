@@ -102,7 +102,6 @@ def test_conv():
 
 if __name__ == '__main__':
     try:
-        import tensorflow
         test_conv()
     except ImportError:
         pass

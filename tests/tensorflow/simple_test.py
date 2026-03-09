@@ -27,7 +27,6 @@ def test_simple():
 
 if __name__ == '__main__':
     try:
-        import tensorflow
         test_simple()
     except ImportError:
         pass

@@ -211,7 +211,6 @@ def test_error_handling():
     class NotConvertible(SDFGConvertible):
 
         def __call__(self, a):
-            import numpy as np
             print('A very pythonic method', a)
 
         def __sdfg__(self, *args, **kwargs):
@@ -251,7 +250,6 @@ def test_nested_class_error_handling():
 
         @not_convertible
         def __call__(self, a):
-            import numpy as np
             print('A very pythonic method', a)
 
     A = np.random.rand(20)

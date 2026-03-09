@@ -15,7 +15,6 @@ import warnings
 
 import numpy as np
 import sympy as sp
-import dace  # For evaluation of data types
 
 numpy_version = np.lib.NumpyVersion(np.__version__)
 
