@@ -2757,25 +2757,41 @@ def expand_nodes(sdfg: SDFG, predicate: Callable[[nd.Node], bool]):
 
 
 def get_deterministic_node_key(node):
-    """Generates a stable string key for Graph nodes to break topological tie-breaks."""
+    """
+    Generates a stable string key for Graph nodes to ensure deterministic sorting.
+
+    :param node: The DaCe graph node object to be evaluated.
+    :return: A stable string representation of the node.
+    """
     node_type = type(node).__name__
     identifier = getattr(node, 'label', getattr(node, 'name', getattr(node, 'data', str(node))))
     return f"{node_type}_{identifier}"
 
 
 def get_deterministic_edge_key(edge):
-    """Generates a stable string key for Graph edges, including Memlet data for Multi-Edges."""
-    src_conn = getattr(edge, 'src_conn', '')
-    dst_conn = getattr(edge, 'dst_conn', '')
-    # Include stringified Memlet data to differentiate parallel edges
-    data_str = str(getattr(edge, 'data', '')) 
-    return f"{get_deterministic_node_key(edge.src)}:{src_conn}->{get_deterministic_node_key(edge.dst)}:{dst_conn}_{data_str}"
+    """
+    Generates a stable string key for Graph edges to ensure deterministic sorting.
+
+    :param edge: The DaCe graph edge object (or InterstateEdge) to be evaluated.
+    :return: A stable string representation of the edge.
+    """
+    return str(edge)
 
 
-def canonicalize_graph_dicts(graph):
-    """Sorts internal nodes, edge dictionaries, and NetworkX graphs in-place."""
-    
-    # 1. Sort Node dictionary in-place
+def sort_graph_dicts_alphabetically(graph):
+    """
+    Sorts internal graph nodes, edge dictionaries, and NetworkX backends in-place.
+
+    This function performs three critical phases:
+    1. Alphabetizes the master `_nodes` dictionary and its nested adjacency lists.
+    2. Alphabetizes the master `_edges` dictionary.
+    3. Tears down and sequentially rebuilds the underlying NetworkX graph (`_nx`) 
+       using the newly sorted nodes and edges.
+
+    :param graph: The DaCe graph structure (SDFG, SDFGState, or generic Graph) 
+                  whose internal structures need to be stabilized.
+    """
+
     if hasattr(graph, '_nodes'):
         for k in sorted(list(graph._nodes.keys()), key=get_deterministic_node_key):
             graph._nodes[k] = graph._nodes.pop(k)
@@ -2786,13 +2802,11 @@ def canonicalize_graph_dicts(graph):
                 in_edges[e_key] = in_edges.pop(e_key)
             for e_key in sorted(list(out_edges.keys()), key=lambda k: get_deterministic_edge_key(out_edges[k])):
                 out_edges[e_key] = out_edges.pop(e_key)
-                
-    # 2. Sort master Edge dictionary in-place
+
     if hasattr(graph, '_edges'):
         for e_key in sorted(list(graph._edges.keys()), key=lambda k: get_deterministic_edge_key(graph._edges[k])):
             graph._edges[e_key] = graph._edges.pop(e_key)
 
-    # 3. Rebuild the NetworkX graph to ensure downstream utilities are also deterministic
     if hasattr(graph, '_nx'):
         old_nx = graph._nx
         graph._nx = type(old_nx)()

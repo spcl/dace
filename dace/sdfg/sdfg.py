@@ -2508,10 +2508,6 @@ class SDFG(ControlFlowRegion):
                 # Fill in scope entry/exit connectors
                 sdfg.fill_scope_connectors()
 
-                # Canonicalize the SDFG to ensure that code generation is deterministic 
-                # and does not depend on the order of states or edges in the SDFG.
-                sdfg.canonicalize()
-
                 # Generate code for the program by traversing the SDFG state by state
                 program_objects = codegen.generate_code(sdfg, validate=validate)
             except Exception:
@@ -3011,10 +3007,17 @@ class SDFG(ControlFlowRegion):
         self.root_sdfg.using_explicit_control_flow = found_explicit_cf_block
         return found_explicit_cf_block
 
-    def canonicalize(self, visited=None):
+    def sort_sdfg_alphabetically(self, visited=None):
         """
         Forces all internal dictionaries and graph structures into a deterministic, 
         lexicographical order to guarantee stable code generation.
+
+        This method operates in-place and recursively processes all internal 
+        dataflow states and nested SDFGs.
+
+        :param visited: A set of memory addresses (IDs) of already processed SDFGs. 
+                        Used internally to prevent infinite recursion in the event 
+                        of cyclic nested SDFG references.
         """
         if visited is None:
             visited = set()
@@ -3023,9 +3026,9 @@ class SDFG(ControlFlowRegion):
             return
         visited.add(id(self))
 
-        from dace.sdfg.utils import canonicalize_graph_dicts 
-        
-        # 1. Sort Arrays, Symbols, and Constants in-place
+        # Avoid import loops
+        from dace.sdfg.utils import sort_graph_dicts_alphabetically
+
         for attr in ['_arrays', 'symbols', 'constants_prop']:
             if hasattr(self, attr):
                 val = getattr(self, attr)
@@ -3033,13 +3036,11 @@ class SDFG(ControlFlowRegion):
                     for k in sorted(list(val.keys())):
                         val[k] = val.pop(k)
 
-        # 2. Canonicalize the top-level graph
-        canonicalize_graph_dicts(self)
+        sort_graph_dicts_alphabetically(self)
 
-        # 3. Recursively canonicalize all states and nested SDFGs
         for state in self.nodes():
-            canonicalize_graph_dicts(state)
+            sort_graph_dicts_alphabetically(state)
             
             for node in state.nodes():
                 if hasattr(node, 'sdfg') and node.sdfg is not None:
-                    node.sdfg.canonicalize(visited)
+                    node.sdfg.sort_sdfg_alphabetically(visited)
