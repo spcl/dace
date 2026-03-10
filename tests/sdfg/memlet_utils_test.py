@@ -210,7 +210,7 @@ def test_non_lin_delin_8():
     _perform_non_lin_delin_test(sdfg, e)
 
 
-def test_MemletSet() -> None:
+def test_memlet_set() -> None:
     empty_set = mu.MemletSet()
     assert len(empty_set) == 0
 
@@ -240,7 +240,7 @@ def test_MemletSet() -> None:
     assert internal_memlet.subset == dace.subsets.Range.from_string("0:10")
 
 
-def test_MemletDict() -> None:
+def test_memlet_dict() -> None:
     A_01 = dace.Memlet("A[0:1]")
     A_02 = dace.Memlet("A[0:2]")
     A_34 = dace.Memlet("A[3:4]")
@@ -280,5 +280,5 @@ if __name__ == '__main__':
     test_non_lin_delin_7()
     test_non_lin_delin_8()
 
-    test_MemletSet()
-    test_MemletDict()
+    test_memlet_set()
+    test_memlet_dict()
