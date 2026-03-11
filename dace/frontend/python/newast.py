@@ -9,7 +9,7 @@ import time
 from os import path
 import warnings
 from numbers import Number
-from typing import Any, Dict, Iterable, List, Set, Tuple, Union, Callable, Optional, Literal
+from typing import Any, Dict, Iterable, List, NamedTuple, Set, Tuple, Union, Callable, Optional, Literal
 import operator
 
 import dace
@@ -50,7 +50,17 @@ Size = Union[int, dace.symbolic.symbol]
 ShapeTuple = Tuple[Size]
 ShapeList = List[Size]
 Shape = Union[ShapeTuple, ShapeList]
-DependencyType = Dict[str, Tuple[SDFGState, Union[Memlet, nodes.Tasklet], Tuple[int]]]
+
+
+class DependencyType(NamedTuple):
+    """
+    Represents a dependency in the SDFG, including the control flow block,
+    the memlet or tasklet involved, and the inner dimension indices, if differ from the outer indices on the memlet.
+    """
+    block: ControlFlowBlock
+    memlet: Union[Memlet, nodes.Tasklet]
+    inner_indices: tuple[int, ...]
+
 
 _simple_ast_nodes = (ast.Constant, ast.Name)
 
@@ -1186,8 +1196,8 @@ class ProgramVisitor(ExtNodeVisitor):
         self.last_block = self.current_state
         self.last_cfg_target = self.sdfg
 
-        self.inputs: DependencyType = {}
-        self.outputs: DependencyType = {}
+        self.inputs: dict[str, DependencyType] = {}
+        self.outputs: dict[str, DependencyType] = {}
         self.current_lineinfo = dtypes.DebugInfo(line_offset, col_offset, line_offset, col_offset, filename)
         self.current_ast_stack: List[ast.AST] = []
         self.default_output_index: int = 0
@@ -2044,6 +2054,8 @@ class ProgramVisitor(ExtNodeVisitor):
                         candidate = atomstr
                         if candidate in self.variables and self.variables[candidate] in self.sdfg.arrays:
                             candidate = self.variables[candidate]
+                        elif candidate in self.scope_vars and self.scope_vars[candidate] in self.sdfg.arrays:
+                            candidate = self.scope_vars[candidate]
 
                         if candidate in self.sdfg.arrays and (isinstance(self.sdfg.arrays[candidate], data.Scalar) or
                                                               (isinstance(self.sdfg.arrays[candidate], data.Array)
@@ -2504,10 +2516,12 @@ class ProgramVisitor(ExtNodeVisitor):
             except:
                 pass
 
+            data_dtypes = {k: v.dtype for k, v in self.defined.items() if hasattr(v, 'dtype')}
+            data_dtypes.update(self.sdfg.symbols)
             sym_obj = symbolic.symbol(indices[0],
-                                      dtypes.result_type_of(infer_expr_type(ranges[0][0], self.sdfg.symbols),
-                                                            infer_expr_type(ranges[0][1], self.sdfg.symbols),
-                                                            infer_expr_type(ranges[0][2], self.sdfg.symbols)),
+                                      dtypes.result_type_of(infer_expr_type(ranges[0][0], data_dtypes),
+                                                            infer_expr_type(ranges[0][1], data_dtypes),
+                                                            infer_expr_type(ranges[0][2], data_dtypes)),
                                       integer=integer,
                                       nonnegative=nonnegative,
                                       positive=positive)
@@ -2542,6 +2556,12 @@ class ProgramVisitor(ExtNodeVisitor):
                                                 init_expr='%s = %s' % (indices[0], astutils.unparse(ast_ranges[0][0])),
                                                 update_expr=incr[indices[0]],
                                                 inverted=False)
+
+            # Add used symbols as loop inputs
+            used_symbols_set = set(loop_region.used_symbols(all_symbols=True))
+            used_data_descs = {k: v for k, v in self.defined.items() if k in used_symbols_set and not v.transient}
+            self.inputs.update({k: (self.cfg_target, Memlet.from_array(k, v), []) for k, v in used_data_descs.items()})
+
             _, first_subblock, _, _ = self._recursive_visit(node.body,
                                                             f'for_{node.lineno}',
                                                             node.lineno,

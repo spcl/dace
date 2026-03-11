@@ -74,17 +74,17 @@ def test_nested_map_with_indirection_view(scope_type, scope_use_type):
                 if scope_use_type == "scalar":
                     if scope_type == "map":
                         for j in dace.map[begin:end2:stride]:
-                            arr2[j] = arr1[j] + end
+                            arr2[j] = arr1[j] + end[0]
                     else:
                         for j in range(begin, end2, stride):
-                            arr2[j] = arr1[j] + end
+                            arr2[j] = arr1[j] + end[0]
                 else:
                     if scope_type == "map":
                         for j in dace.map[begin:end:stride]:
-                            arr2[j] = arr1[j] + end
+                            arr2[j] = arr1[j] + end[0]
                     else:
-                        for j in range(begin, end, stride):
-                            arr2[j] = arr1[j] + end
+                        for j in range(begin, end[0], stride):
+                            arr2[j] = arr1[j] + end[0]
 
     a = np.random.rand(50)
     b = np.zeros(50)
