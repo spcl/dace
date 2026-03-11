@@ -1482,7 +1482,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             # otherwise streams do not behave as expected becasue they are
             # allocated on host side
             streams_to_reset = [
-                node for node in state.data_nodes() if isinstance(node.desc(sdfg), dace.nodes.data.Stream)
+                node for node in state.data_nodes() if isinstance(node.desc(sdfg), dace.data.Stream)
                 and node.desc(sdfg).lifetime == dtypes.AllocationLifetime.Scope
             ]
             for stream in streams_to_reset:
