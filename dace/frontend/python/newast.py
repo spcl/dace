@@ -2559,7 +2559,10 @@ class ProgramVisitor(ExtNodeVisitor):
 
             # Add used symbols as loop inputs
             used_symbols_set = set(loop_region.used_symbols(all_symbols=True))
-            used_data_descs = {k: v for k, v in self.defined.items() if k in used_symbols_set and not v.transient}
+            used_data_descs = {
+                k: v
+                for k, v in self.defined.items() if k in used_symbols_set and not getattr(v, 'transient', True)
+            }
             self.inputs.update({k: (self.cfg_target, Memlet.from_array(k, v), []) for k, v in used_data_descs.items()})
 
             _, first_subblock, _, _ = self._recursive_visit(node.body,
