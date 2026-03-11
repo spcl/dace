@@ -3007,21 +3007,22 @@ class SDFG(ControlFlowRegion):
         self.root_sdfg.using_explicit_control_flow = found_explicit_cf_block
         return found_explicit_cf_block
 
-    def sort_sdfg_alphabetically(self, visited=None):
+    def sort_sdfg_alphabetically(self, visited: Optional[Set[int]] = None) -> None:
         """
-        Forces all internal dictionaries and graph structures into a deterministic, 
+        Forces all internal dictionaries and graph structures into a deterministic,
         lexicographical order to guarantee stable code generation.
 
-        This method operates in-place and recursively processes all internal 
+        This method operates in-place and recursively processes all internal
         dataflow states and nested SDFGs.
 
-        :param visited: A set of memory addresses (IDs) of already processed SDFGs. 
-                        Used internally to prevent infinite recursion in the event 
+
+        :param visited: A set of memory addresses (IDs) of already processed SDFGs.
+                        Used internally to prevent infinite recursion in the event
                         of cyclic nested SDFG references.
         """
         if visited is None:
             visited = set()
-            
+
         if id(self) in visited:
             return
         visited.add(id(self))
@@ -3040,7 +3041,7 @@ class SDFG(ControlFlowRegion):
 
         for state in self.nodes():
             sort_graph_dicts_alphabetically(state)
-            
+
             for node in state.nodes():
                 if hasattr(node, 'sdfg') and node.sdfg is not None:
                     node.sdfg.sort_sdfg_alphabetically(visited)

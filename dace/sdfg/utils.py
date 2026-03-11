@@ -7,6 +7,7 @@ import os
 import warnings
 import networkx as nx
 import time
+import re
 
 import dace.sdfg.nodes
 from dace.codegen import compiled_sdfg as csdfg
@@ -2756,46 +2757,64 @@ def expand_nodes(sdfg: SDFG, predicate: Callable[[nd.Node], bool]):
             states.append(state)
 
 
-def get_deterministic_node_key(node):
+def get_deterministic_node_key(node: Any) -> str:
     """
     Generates a stable string key for Graph nodes to ensure deterministic sorting.
+    Strips memory addresses, sequential IDs, partial hashes, and UUIDs.
+
 
     :param node: The DaCe graph node object to be evaluated.
     :return: A stable string representation of the node.
     """
     node_type = type(node).__name__
-    identifier = getattr(node, 'label', getattr(node, 'name', getattr(node, 'data', str(node))))
+    raw_identifier = getattr(node, 'label', getattr(node, 'name', getattr(node, 'data', str(node))))
+
+    # 1. Strip memory addresses (e.g., <... object at 0x...>)
+    identifier = re.sub(r' at 0x[0-9a-fA-F]+', '', raw_identifier)
+
+    # 2. Strip full UUIDs (supports hyphens, underscores, or flat 32-char hex)
+    # Catches: 550e8400-e29b-41d4-a716-446655440000, 550e8400_e29b... or 550e8400e29b...
+    identifier = re.sub(
+        r'_?[0-9a-fA-F]{8}[-_]?[0-9a-fA-F]{4}[-_]?[0-9a-fA-F]{4}[-_]?[0-9a-fA-F]{4}[-_]?[0-9a-fA-F]{12}', '',
+        identifier)
+
     return f"{node_type}_{identifier}"
 
 
-def get_deterministic_edge_key(edge):
+def get_deterministic_edge_key(edge: Any) -> str:
     """
     Generates a stable string key for Graph edges to ensure deterministic sorting.
+
 
     :param edge: The DaCe graph edge object (or InterstateEdge) to be evaluated.
     :return: A stable string representation of the edge.
     """
-    return str(edge)
+    src_conn = getattr(edge, 'src_conn', '')
+    dst_conn = getattr(edge, 'dst_conn', '')
+    data_str = str(getattr(edge, 'data', ''))
+
+    return f"{get_deterministic_node_key(edge.src)}:{src_conn}->{get_deterministic_node_key(edge.dst)}:{dst_conn}_{data_str}"
 
 
-def sort_graph_dicts_alphabetically(graph):
+def sort_graph_dicts_alphabetically(graph: Any) -> None:
     """
     Sorts internal graph nodes, edge dictionaries, and NetworkX backends in-place.
 
     This function performs three critical phases:
     1. Alphabetizes the master `_nodes` dictionary and its nested adjacency lists.
     2. Alphabetizes the master `_edges` dictionary.
-    3. Tears down and sequentially rebuilds the underlying NetworkX graph (`_nx`) 
+    3. Tears down and sequentially rebuilds the underlying NetworkX graph (`_nx`)
        using the newly sorted nodes and edges.
 
-    :param graph: The DaCe graph structure (SDFG, SDFGState, or generic Graph) 
+
+    :param graph: The DaCe graph structure (SDFG, SDFGState, or generic Graph)
                   whose internal structures need to be stabilized.
     """
 
     if hasattr(graph, '_nodes'):
         for k in sorted(list(graph._nodes.keys()), key=get_deterministic_node_key):
             graph._nodes[k] = graph._nodes.pop(k)
-            
+
         # Sort the nested edge dictionaries inside _nodes in-place
         for node, (in_edges, out_edges) in graph._nodes.items():
             for e_key in sorted(list(in_edges.keys()), key=lambda k: get_deterministic_edge_key(in_edges[k])):
@@ -2810,10 +2829,10 @@ def sort_graph_dicts_alphabetically(graph):
     if hasattr(graph, '_nx'):
         old_nx = graph._nx
         graph._nx = type(old_nx)()
-        
+
         for n in graph._nodes.keys():
             graph._nx.add_node(n, **old_nx.nodes.get(n, {}))
-            
+
         for e_obj in graph._edges.values():
             edge_attrs = {'data': e_obj.data}
 
