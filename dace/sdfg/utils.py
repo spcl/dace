@@ -8,6 +8,7 @@ import warnings
 import networkx as nx
 import time
 import re
+import hashlib
 
 import dace.sdfg.nodes
 from dace.codegen import compiled_sdfg as csdfg
@@ -2757,82 +2758,168 @@ def expand_nodes(sdfg: SDFG, predicate: Callable[[nd.Node], bool]):
             states.append(state)
 
 
+# Pre-compile the regex for performance since it will be called thousands of times
+# Strips:
+# 1. Memory addresses (0x...)
+# 2. Full UUIDs (with hyphens, underscores, or flat hex)
+# 3. Partial UUIDs / Short hashes appended at the end (e.g., _a1b2c3d4)
+VOLATILE_STR_REGEX = re.compile(
+    r'(0x[0-9a-fA-F]+|_?[0-9a-fA-F]{8}[-_]?[0-9a-fA-F]{4}[-_]?[0-9a-fA-F]{4}[-_]?[0-9a-fA-F]{4}[-_]?[0-9a-fA-F]{12}|_[0-9a-fA-F]{8}$)'
+)
+
+
 def get_deterministic_node_key(node: Any) -> str:
     """
-    Generates a stable string key for Graph nodes to ensure deterministic sorting.
-    Strips memory addresses, sequential IDs, partial hashes, and UUIDs.
+    Generates a highly stable, deterministic string key for DaCe graph nodes
+    based on their semantic properties rather than memory locations.
 
+    During SDFG compilation, relying on memory addresses or volatile UUIDs
+    for sorting leads to non-deterministic code generation. This function
+    extracts the intrinsic semantic identity of a node to ensure structural
+    collisions are resolved deterministically.
 
-    :param node: The DaCe graph node object to be evaluated.
-    :return: A stable string representation of the node.
+    The generated key incorporates:
+        - Node type and cleaned label (stripping UUIDs and hex addresses)
+        - Graph topology (in-degree and out-degree)
+        - Interface semantics (in/out connectors)
+        - Loop and memory semantics (map parameters, schedules, access types)
+        - Internal code logic (via a stable MD5 hash of Tasklet code)
+        - Nested SDFG structural size
+
+    :param node: The DaCe graph node (e.g., Tasklet, AccessNode, MapEntry)
+                 to be evaluated.
+    :return: A stable string representing the node's semantic identity.
     """
     node_type = type(node).__name__
-    raw_identifier = getattr(node, 'label', getattr(node, 'name', getattr(node, 'data', str(node))))
 
-    # 1. Strip memory addresses (e.g., <... object at 0x...>)
-    identifier = re.sub(r' at 0x[0-9a-fA-F]+', '', raw_identifier)
+    # Extract core identifier
+    raw_label = getattr(node, 'data', getattr(node, 'label', str(node)))
 
-    # 2. Strip full UUIDs (supports hyphens, underscores, or flat 32-char hex)
-    # Catches: 550e8400-e29b-41d4-a716-446655440000, 550e8400_e29b... or 550e8400e29b...
-    identifier = re.sub(
-        r'_?[0-9a-fA-F]{8}[-_]?[0-9a-fA-F]{4}[-_]?[0-9a-fA-F]{4}[-_]?[0-9a-fA-F]{4}[-_]?[0-9a-fA-F]{12}', '',
-        identifier)
+    # Strip volatile metadata
+    clean_label = VOLATILE_STR_REGEX.sub('', str(raw_label))
 
-    return f"{node_type}_{identifier}"
+    parts = [node_type, clean_label]
+
+    # 1. Topological Context
+    in_degree = getattr(node, 'in_degree', 0)
+    out_degree = getattr(node, 'out_degree', 0)
+    parts.append(f"i{in_degree}o{out_degree}")
+
+    # 2. Interface Semantics (Connectors for Tasklets / NestedSDFGs)
+    if hasattr(node, 'in_connectors') and node.in_connectors:
+        parts.append("inC:" + "-".join(sorted(node.in_connectors.keys())))
+    if hasattr(node, 'out_connectors') and node.out_connectors:
+        parts.append("outC:" + "-".join(sorted(node.out_connectors.keys())))
+
+    # 3. Loop Semantics (Map Parameters & Schedules)
+    if hasattr(node, 'map') and hasattr(node.map, 'params'):
+        parts.append("map:" + "-".join(node.map.params))
+        if hasattr(node.map, 'schedule'):
+            parts.append(f"sch:{str(node.map.schedule)}")
+
+    # 4. Memory Semantics (Access Types for AccessNodes)
+    if hasattr(node, 'access'):
+        parts.append(f"acc:{str(node.access)}")
+
+    # 5. Internal Code Semantics (Tasklets)
+    if hasattr(node, 'code') and hasattr(node.code, 'as_string'):
+        # Hash the code to prevent massive strings while guaranteeing uniqueness.
+        # MD5 is used because Python's built-in hash() is non-deterministic across runs.
+        code_str = str(node.code.as_string).strip()
+        code_hash = hashlib.md5(code_str.encode('utf-8')).hexdigest()[:8]
+        parts.append(f"code:{code_hash}")
+
+    # 6. Nested SDFG Differentiation
+    if hasattr(node, 'sdfg') and node.sdfg:
+        parts.append(f"nsdfg_states:{len(node.sdfg.nodes())}")
+
+    return "_".join(parts)
 
 
 def get_deterministic_edge_key(edge: Any) -> str:
     """
-    Generates a stable string key for Graph edges to ensure deterministic sorting.
+    Generates a highly stable string key for graph edges to ensure
+    deterministic sorting.
 
+    This function extracts the semantic connection points (connectors)
+    and the data payload (Memlets or Interstate conditions), explicitly
+    stripping volatile memory addresses and generated UUIDs to prevent
+    non-deterministic compiler graph traversals.
 
-    :param edge: The DaCe graph edge object (or InterstateEdge) to be evaluated.
-    :return: A stable string representation of the edge.
+    :param edge: The DaCe graph edge (or InterstateEdge) to be evaluated.
+    :return: A stable string representation of the edge's routing and payload.
     """
-    src_conn = getattr(edge, 'src_conn', '')
-    dst_conn = getattr(edge, 'dst_conn', '')
-    data_str = str(getattr(edge, 'data', ''))
+    # 1. Extract raw strings
+    raw_src_conn = str(getattr(edge, 'src_conn', ''))
+    raw_dst_conn = str(getattr(edge, 'dst_conn', ''))
+    raw_data_str = str(getattr(edge, 'data', ''))
 
-    return f"{get_deterministic_node_key(edge.src)}:{src_conn}->{get_deterministic_node_key(edge.dst)}:{dst_conn}_{data_str}"
+    # 2. Strip volatile hashes/addresses from connectors and payload
+    clean_src_conn = VOLATILE_STR_REGEX.sub('', raw_src_conn)
+    clean_dst_conn = VOLATILE_STR_REGEX.sub('', raw_dst_conn)
+    clean_data_str = VOLATILE_STR_REGEX.sub('', raw_data_str)
+
+    # 3. Retrieve the stabilized keys for the source and destination nodes
+    src_key = get_deterministic_node_key(edge.src)
+    dst_key = get_deterministic_node_key(edge.dst)
+
+    return f"{src_key}[{clean_src_conn}]->{dst_key}[{clean_dst_conn}]({clean_data_str})"
 
 
 def sort_graph_dicts_alphabetically(graph: Any) -> None:
     """
-    Sorts internal graph nodes, edge dictionaries, and NetworkX backends in-place.
+    Sorts internal graph nodes, edge dictionaries, and NetworkX backends in-place
+    using semantically-aware deterministic keys.
 
-    This function performs three critical phases:
-    1. Alphabetizes the master `_nodes` dictionary and its nested adjacency lists.
-    2. Alphabetizes the master `_edges` dictionary.
-    3. Tears down and sequentially rebuilds the underlying NetworkX graph (`_nx`)
-       using the newly sorted nodes and edges.
+    In DaCe, the order in which code is generated heavily depends on
+    the iteration order of the graph's internal dictionaries. This function performs
+    a deep, in-place sort of these structures to guarantee that graph traversal
+    and code generation are perfectly deterministic across different executions.
 
+    The stabilization process occurs in four phases:
+        1. Alphabetizes the master `_nodes` dictionary based on semantic node keys.
+        2. Alphabetizes the nested adjacency lists (`in_edges`, `out_edges`) for
+           every node based on semantic edge keys.
+        3. Alphabetizes the master `_edges` dictionary.
+        4. Tears down and sequentially rebuilds the underlying NetworkX graph (`_nx`)
+           so its internal node/edge registries match the newly stabilized order.
 
-    :param graph: The DaCe graph structure (SDFG, SDFGState, or generic Graph)
-                  whose internal structures need to be stabilized.
+    :param graph: The DaCe graph structure (e.g., SDFGState or generic Graph)
+                  whose internal dictionaries need to be stabilized.
     """
-
+    # 1. Sort the master Nodes dictionary
     if hasattr(graph, '_nodes'):
-        for k in sorted(list(graph._nodes.keys()), key=get_deterministic_node_key):
+        sorted_nodes = sorted(graph._nodes.keys(), key=get_deterministic_node_key)
+        for k in sorted_nodes:
+            # Pop and re-insert to enforce deterministic insertion order
             graph._nodes[k] = graph._nodes.pop(k)
 
-        # Sort the nested edge dictionaries inside _nodes in-place
+        # 2. Sort the nested adjacency lists (In/Out Edges) within each node
         for node, (in_edges, out_edges) in graph._nodes.items():
-            for e_key in sorted(list(in_edges.keys()), key=lambda k: get_deterministic_edge_key(in_edges[k])):
+            sorted_in = sorted(in_edges.keys(), key=lambda k: get_deterministic_edge_key(in_edges[k]))
+            for e_key in sorted_in:
                 in_edges[e_key] = in_edges.pop(e_key)
-            for e_key in sorted(list(out_edges.keys()), key=lambda k: get_deterministic_edge_key(out_edges[k])):
+
+            sorted_out = sorted(out_edges.keys(), key=lambda k: get_deterministic_edge_key(out_edges[k]))
+            for e_key in sorted_out:
                 out_edges[e_key] = out_edges.pop(e_key)
 
+    # 3. Sort the master Edges dictionary
     if hasattr(graph, '_edges'):
-        for e_key in sorted(list(graph._edges.keys()), key=lambda k: get_deterministic_edge_key(graph._edges[k])):
+        sorted_edge_keys = sorted(graph._edges.keys(), key=lambda k: get_deterministic_edge_key(graph._edges[k]))
+        for e_key in sorted_edge_keys:
             graph._edges[e_key] = graph._edges.pop(e_key)
 
+    # 4. Rebuild the NetworkX backend to match the new deterministic order
     if hasattr(graph, '_nx'):
         old_nx = graph._nx
         graph._nx = type(old_nx)()
 
+        # Add nodes sequentially
         for n in graph._nodes.keys():
             graph._nx.add_node(n, **old_nx.nodes.get(n, {}))
 
+        # Add edges sequentially using the newly sorted master edge list
         for e_obj in graph._edges.values():
             edge_attrs = {'data': e_obj.data}
 

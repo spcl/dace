@@ -22,14 +22,29 @@ def test_sdfg_alphabetical_sorting():
     state.add_edge(tasklet, 'b', b, None, dace.Memlet.from_array('B', sdfg.arrays['B']))
 
     # 2. Intentionally scramble the internal dictionaries to simulate non-determinism
-    # Scramble top-level arrays
-    array_items = list(sdfg._arrays.items())
-    random.shuffle(array_items)
+
+    def scramble_dict_in_place(d):
+        """Helper to randomize dictionary insertion order without changing its type."""
+        if not d: return
+        keys = list(d.keys())
+        random.shuffle(keys)
+        for k in keys:
+            # Pop and re-insert to shuffle the underlying Python 3.7+ insertion order
+            d[k] = d.pop(k)
+
+    # Scramble top-level arrays (Safely mutating the NestedDict in-place)
+    scramble_dict_in_place(sdfg._arrays)
 
     # Scramble state nodes
-    node_items = list(state._nodes.items())
-    random.shuffle(node_items)
-    state._nodes = dict(node_items)
+    scramble_dict_in_place(state._nodes)
+
+    # Scramble master edges
+    scramble_dict_in_place(state._edges)
+
+    # Scramble nested adjacency lists (in_edges / out_edges)
+    for node, (in_edges, out_edges) in state._nodes.items():
+        scramble_dict_in_place(in_edges)
+        scramble_dict_in_place(out_edges)
 
     # 3. Apply the canonicalizer
     sdfg.sort_sdfg_alphabetically()

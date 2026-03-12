@@ -3009,12 +3009,20 @@ class SDFG(ControlFlowRegion):
 
     def sort_sdfg_alphabetically(self, visited: Optional[Set[int]] = None) -> None:
         """
-        Forces all internal dictionaries and graph structures into a deterministic,
-        lexicographical order to guarantee stable code generation.
+        Forces all internal dictionaries, graph structures, and metadata registries
+        into a deterministic, semantically-aware order to guarantee stable code generation.
 
-        This method operates in-place and recursively processes all internal
-        dataflow states and nested SDFGs.
+        In DaCe, the code generators rely heavily on the iteration order
+        of internal dictionaries. This method performs a deep, in-place stabilization
+        of the entire SDFG hierarchy to eliminate stochastic compilation jitter
+        caused by memory addresses or volatile UUIDs.
 
+        The stabilization process executes in four phases:
+            1. Global Metadata: Alphabetizes arrays, symbols, and constants.
+            2. State Machine: Sorts the top-level SDFG (States and Interstate Edges)
+               using semantic topological keys.
+            3. Dataflow: Sorts the internal nodes and memlet edges within every State.
+            4. Recursion: Recursively applies this stabilization to all Nested SDFGs.
 
         :param visited: A set of memory addresses (IDs) of already processed SDFGs.
                         Used internally to prevent infinite recursion in the event
@@ -3023,6 +3031,7 @@ class SDFG(ControlFlowRegion):
         if visited is None:
             visited = set()
 
+        # Cycle prevention for recursive nested SDFGs
         if id(self) in visited:
             return
         visited.add(id(self))
@@ -3030,18 +3039,24 @@ class SDFG(ControlFlowRegion):
         # Avoid import loops
         from dace.sdfg.utils import sort_graph_dicts_alphabetically
 
+        # 1. Stabilize Global Metadata (Arrays, Symbols, Constants)
         for attr in ['_arrays', 'symbols', 'constants_prop']:
             if hasattr(self, attr):
                 val = getattr(self, attr)
+                # Ensure the attribute exists, is dict-like, and supports pop
                 if val and hasattr(val, 'keys') and hasattr(val, 'pop'):
+                    # Cast keys to a list to safely iterate while mutating the dict
                     for k in sorted(list(val.keys())):
                         val[k] = val.pop(k)
 
+        # 2. Stabilize the top-level State Machine (States and Interstate edges)
         sort_graph_dicts_alphabetically(self)
 
+        # 3. Stabilize the Dataflow inside each State
         for state in self.nodes():
             sort_graph_dicts_alphabetically(state)
 
+            # 4. Recurse into Nested SDFGs
             for node in state.nodes():
                 if hasattr(node, 'sdfg') and node.sdfg is not None:
                     node.sdfg.sort_sdfg_alphabetically(visited)
