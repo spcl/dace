@@ -212,7 +212,7 @@ required:
                 description: >
                     Specify the default data types to use in generating code.
                     If "Python", Python's semantics will be followed (i.e., `float`  and `int`
-                    are represented using 64 bits). If the property is set to "C", C's semantcs will be
+                    are represented using 64 bits). If the property is set to "C", C's semantics will be
                     used (`float` and `int` are represented using 32bits).
 
             unique_functions:
@@ -261,6 +261,18 @@ required:
                 description: >
                     If set, specifies additional arguments to the initial invocation
                     of ``cmake``.
+
+            lineinfo:
+                type: str
+                default: "inspect"
+                title: Add line info
+                description: >
+                    Wether or not to add line info from the parsed code in the
+                    generated SDFG. Valid options are `inspect` and `none`.
+                    "inspect": During parsing, inspect the python call stack and
+                    automatically add line info from the parsed source code in the
+                    resulting SDFG.
+                    "none": Do not save any line info in the resulting SDFG.
 
             #############################################
             # CPU compiler

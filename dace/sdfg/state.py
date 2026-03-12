@@ -39,26 +39,35 @@ if TYPE_CHECKING:
 NodeT = Union[nd.Node, 'ControlFlowBlock']
 EdgeT = Union[MultiConnectorEdge[mm.Memlet], Edge['dace.sdfg.InterstateEdge']]
 GraphT = Union['ControlFlowRegion', 'SDFGState']
-ConfigurableDebugInfo = Literal["config", "inspect", "none"] | dtypes.DebugInfo | None
+ConfigurableDebugInfo = Literal["config"] | dtypes.DebugInfo | None
 
 
 def _get_debug_info(
     debug_info: ConfigurableDebugInfo,
     default_lineinfo: dtypes.DebugInfo | None,
 ) -> dtypes.DebugInfo | None:
-    """...TODO..."""
+    """Returns a DebugInfo from the stack, if configured.
+
+    If lineinfo is configured in the config, this function inspects the python
+    stacktrace and returns a DebugInfo object for the position that called this
+    function. `default_lineinfo` has precedence, if given.
+    """
 
     if isinstance(debug_info, dtypes.DebugInfo):
         warnings.warn(
-            "Passing debug_info of type DebugInfo is deprecated. Use one of `'config'`, `'inspect'`, or `'none'` instead.",
+            "Passing debug_info of type DebugInfo is deprecated. Pass `'config'` and set `compiler.lineinfo` in your DaCe config.",
             DeprecationWarning,
             stacklevel=3)
         return debug_info
 
     if debug_info is None:
-        warnings.warn("Passing debug_info=None is deprecated", DeprecationWarning, stacklevel=3)
+        warnings.warn(
+            "Passing debug_info=None is deprecated. Pass `'config'` and set `compiler.lineinfo` in your DaCe config.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
 
-    do_inspect = debug_info == "inspect" or debug_info == "config"  # TODO: (if config and config is not release)
+    do_inspect = dace.Config.get("compiler", "lineinfo") == "inspect" if debug_info == "config" else False
     if (debug_info is None or do_inspect) and default_lineinfo is not None:
         return default_lineinfo
 
