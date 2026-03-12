@@ -245,8 +245,9 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
         for k, v in frame._dispatcher.instrumentation.items()
     }
 
-    # NOTE: THE SDFG IS ASSUMED TO BE FROZEN (not change) FROM THIS POINT ONWARDS
     sdfg.sort_sdfg_alphabetically()
+
+    # NOTE: THE SDFG IS ASSUMED TO BE FROZEN (not change) FROM THIS POINT ONWARDS
 
     # Generate frame code (and the rest of the code)
     (global_code, frame_code, used_targets, used_environments) = frame.generate_code(sdfg, None)
