@@ -45,10 +45,18 @@ class OffloadToAccelerator(ppl.Pass):
         :return: Some object if pass was applied, or None if nothing changed.
         """
 
+        for state in sdfg.bfs_nodes():
+            print(state)
+        print()
+        for state in sdfg.states():
+            print(state)
+        return
         self.set_toplevel_to_GPU(sdfg, nodes.MapEntry)
         self.set_toplevel_to_GPU(sdfg, nodes.LibraryNode)
 
-        self.find_and_insert_copies(sdfg)
+        gpu_set, cpu_set = self.copy_analysis(sdfg)
+        for access_node in gpu_set:
+            access_node.desc(sdfg).storage = dace.dtypes.StorageType.GPU_Global
         print("program is ready")
 
 
@@ -71,8 +79,147 @@ class OffloadToAccelerator(ppl.Pass):
                         "All maps must have default or CPU schedule before pass." \
                         f"Node {node} has schedule type {self.get_schedule(node)}" )
 
+    def is_schedule_node(self, node):
+        return isinstance(node, nodes.MapEntry) or isinstance(node, nodes.MapExit) or isinstance(node, nodes.LibraryNode)
+
+    def get_schedule(self, node):
+        if isinstance(node, nodes.MapEntry) or isinstance(node, nodes.MapExit):
+            return node.map.schedule
+        elif isinstance(node, nodes.LibraryNode):
+            return node.schedule
+        else:
+            assert False
+        
+    def set_schedule(self, node):
+        if isinstance(node, nodes.MapEntry) or isinstance(node, nodes.MapExit):
+            node.map.schedule = dtypes.ScheduleType.GPU_Device
+        elif isinstance(node, nodes.LibraryNode):
+            node.schedule = dtypes.ScheduleType.GPU_Device
+        else:
+            assert False
+
+    def has_GPU_schedule(self, node):
+        return self.get_schedule(node) in dtypes.GPU_SCHEDULES
+
+    def get_all_input_nodes(self, state, node, type=None):
+        input_nodes = set()
+        for e in state.in_edges(node):
+            root_src = state.memlet_tree(e).root().edge.src
+            if not type or isinstance(root_src, type):
+                input_nodes.add(root_src)
+        return input_nodes
+
+    def get_all_output_nodes(self, state, node, type=None):
+        output_nodes = set()
+        for e in state.out_edges(node):
+            root_dst = state.memlet_tree(e).root().edge.dst
+            if not type or isinstance(root_dst, type):
+                output_nodes.add(root_dst)
+        return output_nodes
     
-    def find_and_insert_copies(self, sdfg):
+    ######
+
+    def data_used_by_map(self): pass
+
+    def data_used_by_state(self): pass
+
+    def data_used_by_graph(self): pass
+
+
+
+    ## V2: interstate
+
+    def copy_analysis(self, sdfg: SDFG):
+        pre_gpu_set, pre_cpu_set = set(), set()
+        last_state = None
+
+        # ASSUME: states are arranged as a line graph
+        for state in sdfg.states():
+            print(f"\n\nstate: {state}")
+
+            # get locations of arrays within this state
+            gpu_set, cpu_set = set(), set()
+            for node in state.data_nodes():
+                self._find_data_location(state, node, gpu_set, cpu_set)
+            
+            # check whether copies are needed within state
+            copy_within_state = gpu_set & cpu_set
+            if copy_within_state:
+                #raise NotImplemented(f"cannot handle copies within states: {state} needs copies of {copy_within_state}")
+                print(f"copy within state {state}: {copy_within_state}")
+
+            # check whether copies are needed between states
+            if last_state:
+                copy_to_gpu = pre_cpu_set & gpu_set
+                copy_to_cpu = pre_gpu_set & cpu_set
+                print(pre_gpu_set)
+                print(f"copy to cpu {cpu_set}: {copy_to_cpu}")
+                if copy_to_gpu:
+                    print(f"copy to gpu {last_state} -> {state}: {copy_to_gpu}")
+                if copy_to_cpu:
+                    print(f"copy to cpu {last_state} -> {state}: {copy_to_cpu}")
+
+            # check the interstate edge condition
+            pre_gpu_set = gpu_set
+            pre_cpu_set = cpu_set
+            last_state = state
+
+            print(f"gpu_data: {pre_gpu_set}")
+            print(f"cpu_data: {pre_cpu_set}")
+
+        return pre_gpu_set, pre_cpu_set
+            
+    
+    def _find_data_location(self, state:dace.SDFGState, node:nodes.AccessNode, gpu_set:Set, cpu_set:Set):
+        """
+        pre condition: node is nodes.AccessNode
+        post condition: node in gpu_set or neighbour in cpu_set
+        """
+        assert isinstance(node, nodes.AccessNode) # defensive
+        if node in gpu_set or node in cpu_set:
+            return
+        
+        # get all new neighbours
+        neighbours : Set = self.get_all_input_nodes(state, node) | self.get_all_output_nodes(state, node)
+        
+        for neighbour in neighbours:
+            
+            if self.is_schedule_node(neighbour):
+                if not self.has_GPU_schedule(neighbour):
+                    raise RuntimeError(f"Node {node} is expected to be scheduled for GPU but isn't.")
+                gpu_set.add(node)
+                
+            elif isinstance(neighbour, nodes.AccessNode):
+                # recurse on neighbour
+                # Assumption: access nodes are acylic in sdfgs.
+                self._find_data_location(state, neighbour, gpu_set, cpu_set)
+                # post condition: neighbour in gpu_set or neighbour in cpu_set
+                
+                if neighbour in gpu_set and neighbour in cpu_set:
+                    if not (node in gpu_set or node in cpu_set): 
+                        # if neighbour is both, and this node is still undefined
+                        # assume GPU schedule for this node
+                        gpu_set.add(node)
+                    else:
+                        # if the node is not undefined, leave as is
+                        pass
+
+                elif neighbour in gpu_set: 
+                    gpu_set.add(node)
+
+                else:
+                    cpu_set.add(node)
+    
+            else:
+                # different node, i.e. control flow -> data needed on CPU
+                cpu_set.add(node)
+
+
+
+
+    ## V1: intrastate
+        
+    def find_all_intrastate_copies(self, sdfg):
         gpu_access_nodes = set()
 
         for state in sdfg.states():
@@ -82,25 +229,25 @@ class OffloadToAccelerator(ppl.Pass):
                     if isinstance(node, nodes.MapEntry):
                         #print(f"checking map entry node {node}")
                         for input in self.get_all_input_nodes(state, node):
-                            self._insert_copies(sdfg, state, input, node, gpu_access_nodes)
+                            self._find_intrastate_copies(sdfg, state, input, node, gpu_access_nodes)
 
                     elif isinstance(node, nodes.MapExit):
                         #print(f"checking map exit node {node}")
                         for output in self.get_all_output_nodes(state, node):
-                            self._insert_copies(sdfg, state, output, node, gpu_access_nodes)
+                            self._find_intrastate_copies(sdfg, state, output, node, gpu_access_nodes)
                         
                     elif isinstance(node, nodes.LibraryNode):
                         #print(f"checking library node {node}")
                         neighbours = self.get_all_input_nodes(state, node)
                         neighbours |= self.get_all_output_nodes(state, node)
                         for neighbour in neighbours:
-                            self._insert_copies(sdfg, state, neighbour, node, gpu_access_nodes)
+                            self._find_intrastate_copies(sdfg, state, neighbour, node, gpu_access_nodes)
 
                     else:
                         raise RuntimeError(f"unknown schedule node {node} in find_and_insert_copies")
 
 
-    def _insert_copies(self, sdfg:dace.SDFG, state:dace.SDFGState, node:nodes.Node, prev:nodes.Node, gpu_access_nodes:set):
+    def _find_intrastate_copies(self, sdfg:dace.SDFG, state:dace.SDFGState, node:nodes.Node, prev:nodes.Node, gpu_access_nodes:set):
         # if wrong node or already visited, return
         if not isinstance(node, nodes.AccessNode): return
         if node in gpu_access_nodes: return
@@ -126,7 +273,7 @@ class OffloadToAccelerator(ppl.Pass):
                 # if the neighbouring access node is already marked as GPU, no action needed
                 # otherwise, assume current node's data lives on GPU and recurse on the neighbour
                 if not neighbour in gpu_access_nodes:
-                    self._insert_copies(sdfg, state, neighbour, node, gpu_access_nodes)
+                    self._find_intrastate_copies(sdfg, state, neighbour, node, gpu_access_nodes)
 
             else:
                 # different node, i.e. control flow -> data needed on CPU: insert copy
@@ -146,46 +293,4 @@ class OffloadToAccelerator(ppl.Pass):
             #    do we still need an initial copy of B to the GPU or can be do a partial copy back?
             # A?: all arrays need to be copied back because of sideeffects?
 
-
-    def is_schedule_node(self, node):
-        return isinstance(node, nodes.MapEntry) or isinstance(node, nodes.MapExit) or isinstance(node, nodes.LibraryNode)
-
-    def get_schedule(self, node):
-        if isinstance(node, nodes.MapEntry) or isinstance(node, nodes.MapExit):
-            return node.map.schedule
-        elif isinstance(node, nodes.LibraryNode):
-            return node.schedule
-        else:
-            assert False
-        
-    def set_schedule(self, node):
-        if isinstance(node, nodes.MapEntry) or isinstance(node, nodes.MapExit):
-            node.map.schedule = dtypes.ScheduleType.GPU_Device
-        elif isinstance(node, nodes.LibraryNode):
-            node.schedule = dtypes.ScheduleType.GPU_Device
-        else:
-            assert False
-
-    def has_GPU_schedule(self, node):
-        GPU_SCHEDULES = (
-            dtypes.ScheduleType.GPU_Device,
-            dtypes.ScheduleType.GPU_Default
-        )
-        return self.get_schedule(node) in GPU_SCHEDULES
-
-    def get_all_input_nodes(self, state, node, type=None):
-        input_nodes = set()
-        for e in state.in_edges(node):
-            root_src = state.memlet_tree(e).root().edge.src
-            if not type or isinstance(root_src, type):
-                input_nodes.add(root_src)
-        return input_nodes
-
-    def get_all_output_nodes(self, state, node, type=None):
-        output_nodes = set()
-        for e in state.out_edges(node):
-            root_dst = state.memlet_tree(e).root().edge.dst
-            if not type or isinstance(root_dst, type):
-                output_nodes.add(root_dst)
-        return output_nodes
         
