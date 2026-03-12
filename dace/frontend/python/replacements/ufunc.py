@@ -868,7 +868,7 @@ def _validate_shapes(visitor: ProgramVisitor, ast_node: ast.Call, sdfg: SDFG, uf
     except SyntaxError as e:
         raise mem_parser.DaceSyntaxError(
             visitor, ast_node, "Shape validation in numpy.{f} call failed. The following error "
-            "occured : {m}".format(f=ufunc_name, m=str(e)))
+            "occurred : {m}".format(f=ufunc_name, m=str(e)))
     return result
 
 

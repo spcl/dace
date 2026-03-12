@@ -74,7 +74,7 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
         * If scalar is not integral (i.e., int type), it must also appear in
           an inter-state condition to be promotable.
 
-    These conditions must apply on all occurences of the scalar in order for
+    These conditions must apply on all occurrences of the scalar in order for
     it to be promotable.
 
     :param sdfg: The SDFG to query.

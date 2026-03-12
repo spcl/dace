@@ -2552,7 +2552,7 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
     # This function replaces a scalar with the name <scalar_name> with a constant
     # A scalar can appear on:
     # 1. Interstate Edge
-    # -> For 1: Replace occurence on the interstate edge with scalar_name
+    # -> For 1: Replace occurrence on the interstate edge with scalar_name
     # 2. Dynamic Input to a Map
     # -> For 2: Rm. dynamic in connector, remove the edge and the node if the degree is None
     # 3. Access Node

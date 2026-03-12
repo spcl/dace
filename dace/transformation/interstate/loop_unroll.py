@@ -152,7 +152,7 @@ class LoopUnroll(xf.MultiStateTransformation):
             data = copy.deepcopy(edge.data)
             iteration_region.add_edge(src, dst, data)
 
-        # Replace occurences of the loop variables on all interstate edges
+        # Replace occurrences of the loop variables on all interstate edges
         for edge, parent_graph in iteration_region.all_edges_recursive():  # Recursion needed for nested SDFGs
             if isinstance(edge.data, InterstateEdge):
                 src = edge.src

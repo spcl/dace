@@ -164,7 +164,7 @@ class LoopOverwriteElimination(transformation.MultiStateTransformation):
         last_iteration = start + (end - start) // stride * stride
         itervar = self.loop.loop_variable
 
-        # Rewrite each occurence of the loop variable in the loop body
+        # Rewrite each occurrence of the loop variable in the loop body
         self.loop.replace(itervar, last_iteration)
 
         # Add the loop contents to the parent graph.

@@ -1130,7 +1130,7 @@ class SnitchCodeGen(TargetCodeGenerator):
         ccode = code.clean_code
         state_struct = re.findall(r"struct (\w+) {", ccode)
         if len(state_struct) == 1:
-            # match all occurences, except for the one prepended by "struct "
+            # match all occurrences, except for the one prepended by "struct "
             # dbg(f'found declaration of state struct {state_struct}')
             state_struct = state_struct[0]
             ccode = re.sub(r"(?<!struct )({})".format(state_struct), r"struct {}".format(state_struct), ccode)

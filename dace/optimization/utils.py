@@ -96,13 +96,13 @@ def subprocess_measure(cutout: dace.SDFG, dreport, repetitions: int = 30, timeou
     proc.join(timeout)
 
     if proc.exitcode != 0:
-        print("Error occured during measuring")
+        print("Error occurred during measuring")
         return math.inf
 
     if proc.exception:
         error, traceback = proc.exception
         print(traceback)
-        print("Error occured during measuring: ", error)
+        print("Error occurred during measuring: ", error)
         runtime = math.inf
 
     try:

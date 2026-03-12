@@ -247,7 +247,7 @@ class AST_BuiltInFunCall(AST_Node):
                 return None
 
         # The args to those functions can be supplied as a 1x2 matrix or
-        # two seperate values, the semantics are the same.
+        # two separate values, the semantics are the same.
         dims = []
         if isinstance(self.args, AST_Matrix):
             dims = self.args.get_values_row_major()

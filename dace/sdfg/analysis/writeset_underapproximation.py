@@ -97,7 +97,7 @@ class SeparableUnderapproximationMemlet(UnderapproximationMemletPattern):
     def _iteration_variables_appear_only_once(self, data_dims, expressions, other_params, params):
         for expr in expressions:
             for param in params:
-                occured_before = False
+                occurred_before = False
                 for dim in range(data_dims):
                     # collect free_symbols in current dimension
                     free_symbols = []
@@ -118,9 +118,9 @@ class SeparableUnderapproximationMemlet(UnderapproximationMemletPattern):
                         free_symbols += [curr_dim_expr]
 
                     if param in free_symbols:
-                        if occured_before:
+                        if occurred_before:
                             return False
-                        occured_before = True
+                        occurred_before = True
 
                     for other_param in set(params) | set(other_params):
                         if other_param is param:
