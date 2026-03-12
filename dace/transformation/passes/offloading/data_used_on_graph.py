@@ -60,6 +60,7 @@ def test_example() -> dace.SDFG:
     #               D[j] = B[j] * 2
 
     sdfg.save("example.sdfg", compress=False)
+    sdfg.view()
 
     # Expected SDFG structure:
     #
@@ -126,4 +127,4 @@ def test_example() -> dace.SDFG:
     return sdfg
 
 
-test_example().view()
+test_example()

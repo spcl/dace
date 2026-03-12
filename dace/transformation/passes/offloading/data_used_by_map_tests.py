@@ -9,10 +9,12 @@ import pytest
 import dace
 import numpy as np
 
+from dace.transformation.passes.offloading.OffloadToAccelerator import OffloadToAccelerator as OtA
+
 N = dace.symbol('N')
 M = dace.symbol('M')
 
-def data_used_by_map(state: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> dict[str, dace.dtypes.DeviceType]:
+def data_used_by_map(sdfg : dace.SDFG, state: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> dict[str, dace.dtypes.DeviceType]:
     """
     Collects all data containers accessed within a map scope and returns
     their storage types.
@@ -49,7 +51,12 @@ def data_used_by_map(state: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> d
         "B": dace.dtypes.DeviceType.CPU
     }
     """
-    return dict()
+    gpu_set, cpu_set = OtA().get_data_locations_of_map(sdfg, state, map_entry)
+    d = {}
+    for name in gpu_set: d[name] = dace.dtypes.DeviceType.GPU
+    for name in cpu_set: d[name] = dace.dtypes.DeviceType.CPU
+    print(f"gpu_set: {gpu_set}\ncpu_set: {cpu_set}\n")
+    return d
 
 def _find_map_entry(state, map_label=None, schedule=None):
     """Return the first MapEntry matching optional label/schedule filters."""
@@ -117,8 +124,9 @@ def test_triple_nested_maps_gpu():
 
     sdfg.save('triple_nested.sdfg')
     sdfg.validate()
+    #sdfg.view()
 
-    result = data_used_by_map(state, outer_entry)
+    result = data_used_by_map(sdfg, state, outer_entry)
 
     # All three arrays must be reported
     assert set(result.keys()) == {'A', 'B', 'C'}
@@ -126,6 +134,74 @@ def test_triple_nested_maps_gpu():
     for name in ('A', 'B', 'C'):
         assert result[name] == dace.dtypes.DeviceType.GPU, \
             f"{name} should be GPU_Global, got {result[name]}"
+
+
+def test_triple_nested_maps_outer_only_array():
+    """
+    Triple-nested map with an extra outer-only array D.
+
+    Outer sequential map reads D[i] and writes E[i], while inner maps
+    use A, B, C as in the original test. D/E are only accessed at the
+    outer level and not by inner maps.
+    """
+    sdfg = dace.SDFG('triple_nested_outer_only')
+    sdfg.add_array('A', [20, 10], dace.float64, storage=dace.StorageType.GPU_Global)
+    sdfg.add_array('B', [10, 15], dace.float64, storage=dace.StorageType.GPU_Global)
+    sdfg.add_array('C', [20, 15], dace.float64, storage=dace.StorageType.GPU_Global)
+    sdfg.add_array('D', [20], dace.float64, storage=dace.StorageType.Default)
+    sdfg.add_array('E', [20], dace.float64, storage=dace.StorageType.Default)
+
+    state = sdfg.add_state('compute')
+
+    outer_entry, outer_exit = state.add_map(
+        'seq_outer', {'i': '0:20'}, schedule=dace.ScheduleType.Sequential)
+    mid_entry, mid_exit = state.add_map(
+        'gpu_mid', {'j': '0:15'}, schedule=dace.ScheduleType.GPU_Device)
+    inner_entry, inner_exit = state.add_map(
+        'seq_inner', {'k': '0:10'}, schedule=dace.ScheduleType.Sequential)
+
+    tasklet = state.add_tasklet('mac', {'a', 'b', 'cin'}, {'cout'},
+                                'cout = cin + a * b')
+    outer_tasklet = state.add_tasklet('outer_only', {'d_in'}, {'e_out'},
+                                      'e_out = d_in')
+
+    a_node = state.add_read('A')
+    b_node = state.add_read('B')
+    c_read = state.add_access('C')
+    c_write = state.add_write('C')
+
+    d_read = state.add_read('D')
+    e_write = state.add_write('E')
+
+    state.add_memlet_path(a_node, outer_entry, mid_entry, inner_entry, tasklet,
+                          dst_conn='a', memlet=dace.Memlet('A[i, k]'))
+    state.add_memlet_path(b_node, outer_entry, mid_entry, inner_entry, tasklet,
+                          dst_conn='b', memlet=dace.Memlet('B[k, j]'))
+    state.add_memlet_path(c_read, outer_entry, mid_entry, inner_entry, tasklet,
+                          dst_conn='cin', memlet=dace.Memlet('C[i, j]'))
+    state.add_memlet_path(tasklet, inner_exit, mid_exit, outer_exit, c_write,
+                          src_conn='cout', memlet=dace.Memlet('C[i, j]'))
+
+    state.add_memlet_path(d_read, outer_entry, outer_tasklet,
+                          dst_conn='d_in', memlet=dace.Memlet('D[i]'))
+    state.add_memlet_path(outer_tasklet, outer_exit, e_write,
+                          src_conn='e_out', memlet=dace.Memlet('E[i]'))
+
+    sdfg.save('triple_nested_outer_only.sdfg')
+    sdfg.validate()
+    #sdfg.view()
+
+    result = data_used_by_map(sdfg, state, outer_entry)
+
+    assert set(result.keys()) == {'A', 'B', 'C', 'D', 'E'}
+    for name in ('A', 'B', 'C'):
+        assert result[name] == dace.dtypes.DeviceType.GPU, \
+            f"{name} should be GPU, got {result[name]}"
+        
+    for name in ('D', 'E'):
+        assert result[name] == dace.dtypes.DeviceType.CPU, \
+            f"{name} should be CPU, got {result[name]}"
+        
 
 
 def make_row_col_add_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace.nodes.MapEntry]:
@@ -209,10 +285,10 @@ def make_row_col_add_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace.nodes.MapEn
     state.add_memlet_path(c_inside_w, outer_exit, c_write,
                           memlet=dace.Memlet('C[i, 0:N]'))
 
-    return sdfg, inner_entry
+    return sdfg, state, outer_entry, inner_entry
 
 
-def test_row_col_add_views():
+def test_row_col_add_views_outer():
     """Validate the manually-built SDFG against numpy."""
     n = 8
     rng = np.random.default_rng(42)
@@ -224,10 +300,11 @@ def test_row_col_add_views():
     for i in range(n):
         C_ref[i, :] += A[:, i]
 
-    sdfg, state, inner_entry = make_row_col_add_sdfg()
+    sdfg, state, outer_entry, inner_entry = make_row_col_add_sdfg()
     sdfg.validate()
 
     sdfg.save("row_col_add_views.sdfg")
+    ##sdfg.view()
 
     # TODO:
     # Important! You should decide if you want to report the original array,
@@ -236,14 +313,41 @@ def test_row_col_add_views():
     # needs to be set, therefore I would report both of them here. 
     # All three arrays must be reported
 
-    result = data_used_by_map(state, inner_entry)
+    # test with outer entry
+    result = data_used_by_map(sdfg, state, outer_entry)
     assert set(result.keys()) == {'A', 'C', 'A_col_view', 'C_row_view'}
-    # All reside on GPU
+    # All reside on CPU
     for name in ('A', 'C', 'A_col_view', 'C_row_view'):
         assert result[name] == dace.dtypes.DeviceType.CPU, \
             f"{name} should be CPU, got {result[name]}"
 
 
+def test_row_col_add_views_inner():
+    """Validate the manually-built SDFG against numpy."""
+    n = 8
+    rng = np.random.default_rng(42)
+    A = rng.random((n, n))
+    C = rng.random((n, n))
+    C_ref = C.copy()
+
+    # Reference: for i in range(N): C[i, :] += A[:, i]
+    for i in range(n):
+        C_ref[i, :] += A[:, i]
+
+    sdfg, state, outer_entry, inner_entry = make_row_col_add_sdfg()
+    sdfg.validate()
+
+    sdfg.save("row_col_add_views.sdfg")
+    ##sdfg.view()
+        
+    # test with inner entry
+    result = data_used_by_map(sdfg, state, inner_entry)
+    assert set(result.keys()) == {'A', 'C', 'A_col_view', 'C_row_view'}
+    # All reside on CPU
+    for name in ('A', 'C', 'A_col_view', 'C_row_view'):
+        assert result[name] == dace.dtypes.DeviceType.CPU, \
+            f"{name} should be CPU, got {result[name]}"
+        
 # ---------------------------------------------------------------------------
 #  Test 3 (trivial) — Single map, CPU arrays
 # ---------------------------------------------------------------------------
@@ -265,9 +369,10 @@ def test_single_map_cpu():
     state.add_memlet_path(tasklet, exit_, y_node, src_conn='y',
                           memlet=dace.Memlet('Y[i]'))
 
-    result = data_used_by_map(state, entry)
+    result = data_used_by_map(sdfg, state, entry)
 
     sdfg.save("single_map_cpu.sdfg")
+    #sdfg.view()
 
     assert set(result.keys()) == {'X', 'Y'}
     for name in ('X', 'Y'):
@@ -282,8 +387,9 @@ def test_empty_map():
     state.add_edge(entry, None, exit_, None, dace.Memlet())
 
     sdfg.save("empty_map.sdfg")
+    #sdfg.view()
 
-    result = data_used_by_map(state, entry)
+    result = data_used_by_map(sdfg, state, entry)
     assert result == {}
 
 
@@ -292,8 +398,8 @@ def make_non_input_readwrite_node_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dac
     C[i,j] = C[i,j] + 1
     A[i,j] = B[i,j] + C[i,j]
 
+    A: input only
     B: input only
-    A: output only
     C: non-transient, read-modify-write inside the map
     """
     sdfg = dace.SDFG('inplace_c')
@@ -345,8 +451,9 @@ def test_map_with_non_input_readwrite_node() -> dace.SDFG:
 
     sdfg.validate()
     sdfg.save("non_input_readwrite.sdfg")
+    #sdfg.view()
 
-    result = data_used_by_map(state, entry)
+    result = data_used_by_map(sdfg, state, entry)
     assert set(result.keys()) == {'A', 'C', 'B'}
     # All reside on GPU
     for name in ('A', 'C', 'B'):
@@ -356,7 +463,10 @@ def test_map_with_non_input_readwrite_node() -> dace.SDFG:
 
 if __name__ == "__main__":
     test_triple_nested_maps_gpu()
-    test_row_col_add_views()
+    test_triple_nested_maps_outer_only_array()
+    test_row_col_add_views_outer()
+    test_row_col_add_views_inner()
     test_single_map_cpu()
     test_empty_map()
     test_map_with_non_input_readwrite_node()
+    print("YESS! All tests passed.")

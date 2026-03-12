@@ -1,6 +1,7 @@
 import dace
-from dace import dtypes, properties
+from dace import dtypes, properties, data
 from dace.sdfg import nodes, SDFG
+from dace.sdfg.utils import get_last_view_node
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
 
@@ -45,21 +46,10 @@ class OffloadToAccelerator(ppl.Pass):
         :return: Some object if pass was applied, or None if nothing changed.
         """
 
-        for state in sdfg.bfs_nodes():
-            print(state)
-        print()
-        for state in sdfg.states():
-            print(state)
-        return
         self.set_toplevel_to_GPU(sdfg, nodes.MapEntry)
         self.set_toplevel_to_GPU(sdfg, nodes.LibraryNode)
 
-        gpu_set, cpu_set = self.copy_analysis(sdfg)
-        for access_node in gpu_set:
-            access_node.desc(sdfg).storage = dace.dtypes.StorageType.GPU_Global
-        print("program is ready")
-
-
+    ### STEP 1 ###
     def set_toplevel_to_GPU(self, sdfg: SDFG, type:Type):
         assert type in (nodes.MapEntry, nodes.MapExit, nodes.LibraryNode)
 
@@ -78,6 +68,9 @@ class OffloadToAccelerator(ppl.Pass):
                         raise RuntimeError("Invalid SDFG for OffloadToAccelerator pass." \
                         "All maps must have default or CPU schedule before pass." \
                         f"Node {node} has schedule type {self.get_schedule(node)}" )
+
+    
+    ### HELPERS ###
 
     def is_schedule_node(self, node):
         return isinstance(node, nodes.MapEntry) or isinstance(node, nodes.MapExit) or isinstance(node, nodes.LibraryNode)
@@ -100,6 +93,13 @@ class OffloadToAccelerator(ppl.Pass):
 
     def has_GPU_schedule(self, node):
         return self.get_schedule(node) in dtypes.GPU_SCHEDULES
+    
+
+    def get_children(self, state, node):
+        return {e.dst for e in state.out_edges(node)}
+    
+    def get_predecessors(self, state, node):
+        return {e.src for e in state.in_edges(node)}
 
     def get_all_input_nodes(self, state, node, type=None):
         input_nodes = set()
@@ -112,63 +112,95 @@ class OffloadToAccelerator(ppl.Pass):
     def get_all_output_nodes(self, state, node, type=None):
         output_nodes = set()
         for e in state.out_edges(node):
+            print(state, node, e)
             root_dst = state.memlet_tree(e).root().edge.dst
             if not type or isinstance(root_dst, type):
                 output_nodes.add(root_dst)
         return output_nodes
     
-    ######
+    ### STEP 2 ###
 
-    def BFS(self, start, get_neighbour, process, result):
+    def get_data_locations_of_map(self, sdfg: SDFG, state: dace.SDFGState, map_entry: dace.nodes.MapEntry):
+        """
+        finds all arrays accessed by a map, i.e. arrays which are
+            - part of the read/write set of an enclosed tasklet
+            - data of an enclosed access node
+            - accessed by a second, enclosed map
+            - the original arrays behind an accessed view
+        
+        and decides whether their location should be on gpu or a cpu, i.e.
+            - gpu if ANY parent map has a gpu schedule (even if the direct parent has cpu-schedule)
+            - cpu else
 
-        # BFS
-        visited = set()
-        queue = []
-        visited = [start]
+        returns two sets (gpu_set, cpu_set) with the names of the respective arrays
+        """
+        def _add_data(data_name: str, gpu_set:set, cpu_set:set, is_gpu:bool):
+            if data_name in gpu_set: # has already been accessed on GPU
+                if not is_gpu: # is now accessed on CPU
+                    raise RuntimeError("GPU->CPU within map. This should never happen. If outer map is GPU then inner data must also be on GPU (seq map runs as kernel)")
 
-        while queue:
-            node = queue.popleft()
+            elif data_name in cpu_set: # has already been accessed on CPU
+                if is_gpu: # is now accessed on GPU
+                    raise RuntimeError(f"CPU->GPU copy needed within map for {data_name}")
+
+            else:
+                assert isinstance(data_name, str), f"{data_name} -> {data_name.__class__.__name__}"
+                (gpu_set if is_gpu else cpu_set).add(data_name)
+
+        def _add_access_or_view_data(sdfg: SDFG, state: dace.SDFGState, node:nodes.AccessNode, gpu_set:set, cpu_set:set, is_gpu:bool):
+            data_name = node.data
+            _add_data(data_name, gpu_set, cpu_set, is_gpu) # add given node.data to sets
             
-            process(node, result)
-
-            for neighbor in get_neighbour(node):
-                if neighbor not in visited:
-                    visited.add(neighbor)
-                    queue.append(neighbor)
-
-        return result
-
-
-    def data_used_by_map(self, state: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> dict[str, dace.dtypes.DeviceType]:
-
-        data_dict = {}
-
-        # BFS
-        visited = set()
-        queue = []
-        visited = [map_entry]
-
-        while queue:
-            node = queue.popleft()
-            
-            # process node
-            if isinstance(node, nodes.AccessNode):
+            if isinstance(sdfg.arrays[data_name], data.View): # check if its a view (alias of another data container) - if so, find original and add it too
+                access_node = node
+                if not isinstance(node, nodes.AccessNode): # node could e.g. be a Memlet. In that case, we need to find the corresponding view access node by iteration.
+                    for n in state.data_nodes():
+                        if n.data == data_name:
+                            access_node = n
+                            break
+                   
+                original = get_last_view_node(state, access_node) # once the view access node is known, its original access node can be found and it's data added
+                #print(f"\t\tis_view of {access_node}")
+                _add_data(original.data, gpu_set, cpu_set, is_gpu)
                 
-                pass
-            #
+        def _recursive_helper(sdfg: SDFG, state: dace.SDFGState, map_entry: dace.nodes.MapEntry, gpu_set:Set, cpu_set:Set, is_gpu:bool):
+            is_gpu = is_gpu or map_entry.map.schedule in dtypes.GPU_SCHEDULES # Q: how not to hardcode?
+            
+            map_nodes = [n for n, parent in state.scope_dict().items() if parent is map_entry]
+            #print(f"map {map_entry}\n\tis_gpu: {is_gpu}\n\tmap nodes: {map_nodes}")
+            for node in map_nodes:
+                #print(f"\tnode: {node}\n\t\tgpu:{gpu_set}, cpu:{cpu_set}")
+                if isinstance(node, nodes.AccessNode): # internal access node -> add
+                    _add_access_or_view_data(sdfg, state, node, gpu_set, cpu_set, is_gpu)
 
-            for neighbor in self.get_all_output_nodes(node):
-                if neighbor not in visited:
-                    visited.add(neighbor)
-                    queue.append(neighbor)
+                elif isinstance(node, nodes.Tasklet): # find original accessed array -> add
+                    reads = {e.data for e in state.in_edges(node)}
+                    writes = {e.data for e in state.out_edges(node)}
+                    #print(f"\t\treads {reads} writes {writes}")
+                    for node in reads | writes:
+                        _add_access_or_view_data(sdfg, state, node, gpu_set, cpu_set, is_gpu)
 
-    def data_used_by_state(self): pass
+                elif isinstance(node, nodes.MapEntry): # recurse on inner map
+                    _recursive_helper(sdfg, state, node, gpu_set, cpu_set, is_gpu)
+        
 
-    def data_used_by_sdfg(self): pass
+        # function body
+        gpu_set, cpu_set = set(), set()
+        _recursive_helper(sdfg, state, map_entry, gpu_set, cpu_set, False)
+        return gpu_set, cpu_set
+
+    
+    def get_data_locations_of_state(self): pass
+
+    def get_data_locations_of_sdfg(self): pass
 
 
 
-    ## V2: interstate
+    """
+    # first attempt at get_data_locations_of_state and
+    # get_data_locations_of_sdfg
+    # not functional, but I'll reuse pieces when implementing
+    # the above functions properly
 
     def copy_analysis(self, sdfg: SDFG):
         pre_gpu_set, pre_cpu_set = set(), set()
@@ -212,10 +244,9 @@ class OffloadToAccelerator(ppl.Pass):
             
     
     def _find_data_location(self, state:dace.SDFGState, node:nodes.AccessNode, gpu_set:Set, cpu_set:Set):
-        """
-        pre condition: node is nodes.AccessNode
-        post condition: node in gpu_set or neighbour in cpu_set
-        """
+        #pre condition: node is nodes.AccessNode
+        #post condition: node in gpu_set or neighbour in cpu_set
+        
         assert isinstance(node, nodes.AccessNode) # defensive
         if node in gpu_set or node in cpu_set:
             return
@@ -255,83 +286,22 @@ class OffloadToAccelerator(ppl.Pass):
                 # different node, i.e. control flow -> data needed on CPU
                 cpu_set.add(node)
 
+    def BFS(self, start, get_neighbour, process, result):
 
+        # BFS
+        visited = set()
+        queue = []
+        visited = [start]
 
-
-    ## V1: intrastate
-        
-    def find_all_intrastate_copies(self, sdfg):
-        gpu_access_nodes = set()
-
-        for state in sdfg.states():
-            for node in state.nodes():
-                if self.is_schedule_node(node) and self.has_GPU_schedule(node): # map entry, exit or library node
-
-                    if isinstance(node, nodes.MapEntry):
-                        #print(f"checking map entry node {node}")
-                        for input in self.get_all_input_nodes(state, node):
-                            self._find_intrastate_copies(sdfg, state, input, node, gpu_access_nodes)
-
-                    elif isinstance(node, nodes.MapExit):
-                        #print(f"checking map exit node {node}")
-                        for output in self.get_all_output_nodes(state, node):
-                            self._find_intrastate_copies(sdfg, state, output, node, gpu_access_nodes)
-                        
-                    elif isinstance(node, nodes.LibraryNode):
-                        #print(f"checking library node {node}")
-                        neighbours = self.get_all_input_nodes(state, node)
-                        neighbours |= self.get_all_output_nodes(state, node)
-                        for neighbour in neighbours:
-                            self._find_intrastate_copies(sdfg, state, neighbour, node, gpu_access_nodes)
-
-                    else:
-                        raise RuntimeError(f"unknown schedule node {node} in find_and_insert_copies")
-
-
-    def _find_intrastate_copies(self, sdfg:dace.SDFG, state:dace.SDFGState, node:nodes.Node, prev:nodes.Node, gpu_access_nodes:set):
-        # if wrong node or already visited, return
-        if not isinstance(node, nodes.AccessNode): return
-        if node in gpu_access_nodes: return
-        
-        # otherwise, mark as data needed on GPU
-        gpu_access_nodes.add(node)
-        
-        # get neighbours = input + output - prev
-        inputs = self.get_all_input_nodes(state, node)
-        neighbours = inputs | self.get_all_output_nodes(state, node) 
-        if prev in neighbours: neighbours.remove(prev) # prevent cylical recursion
-
-        # check all neighbours and insert copies where needed
-        #print(f"checking node {node} with neighbours {neighbours}\n")
-        for neighbour in neighbours:
-
-            if self.is_schedule_node(neighbour):
-                # if neighbour is schedule node it must have GPU schedule, no action needed
-                if not self.has_GPU_schedule(neighbour):
-                    raise RuntimeError(f"Node {node} is expected to be scheduled for GPU but isn't.")
+        while queue:
+            node = queue.popleft()
             
-            elif isinstance(neighbour, nodes.AccessNode):
-                # if the neighbouring access node is already marked as GPU, no action needed
-                # otherwise, assume current node's data lives on GPU and recurse on the neighbour
-                if not neighbour in gpu_access_nodes:
-                    self._find_intrastate_copies(sdfg, state, neighbour, node, gpu_access_nodes)
+            process(node, result)
 
-            else:
-                # different node, i.e. control flow -> data needed on CPU: insert copy
-                raise NotImplemented(f"Copy needed between {node} and {neighbour}")
+            for neighbor in get_neighbour(node):
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    queue.append(neighbor)
 
-        # if its a non-transient node, a copy from/to userspace is also needed
-        if not node.desc(sdfg)._transient:
-      
-            if not inputs and node.has_reads(state):
-                print(f"copy input node {node} to GPU at beginning of the program")
-                # raise NotImplemented
-            elif node.has_writes(state): # can also be a result if it isn't returned (pass by pointer), so checking for no outputs doesn't work
-                print(f"copy result node {node} back from GPU at the end of the program")
-                # raise NotImplemented  
-        
-            # Q: Heat3d: array B is partially overwritten but never read from 
-            #    do we still need an initial copy of B to the GPU or can be do a partial copy back?
-            # A?: all arrays need to be copied back because of sideeffects?
-
-        
+        return result
+    """
