@@ -119,11 +119,52 @@ class OffloadToAccelerator(ppl.Pass):
     
     ######
 
-    def data_used_by_map(self): pass
+    def BFS(self, start, get_neighbour, process, result):
+
+        # BFS
+        visited = set()
+        queue = []
+        visited = [start]
+
+        while queue:
+            node = queue.popleft()
+            
+            process(node, result)
+
+            for neighbor in get_neighbour(node):
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    queue.append(neighbor)
+
+        return result
+
+
+    def data_used_by_map(self, state: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> dict[str, dace.dtypes.DeviceType]:
+
+        data_dict = {}
+
+        # BFS
+        visited = set()
+        queue = []
+        visited = [map_entry]
+
+        while queue:
+            node = queue.popleft()
+            
+            # process node
+            if isinstance(node, nodes.AccessNode):
+                
+                pass
+            #
+
+            for neighbor in self.get_all_output_nodes(node):
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    queue.append(neighbor)
 
     def data_used_by_state(self): pass
 
-    def data_used_by_graph(self): pass
+    def data_used_by_sdfg(self): pass
 
 
 

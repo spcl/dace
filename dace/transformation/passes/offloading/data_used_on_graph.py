@@ -123,3 +123,7 @@ def test_example() -> dace.SDFG:
     # but this is a very late step in the pipeline, so we can ignore it for now.
 
     sdfg.validate()
+    return sdfg
+
+
+test_example().view()
