@@ -213,6 +213,9 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
         if len(xforms) != len(set(xforms)):
             raise ValueError('Transformation set must be unique')
 
+        # Sort SDFG dictionaries for deterministic pattern matching.
+        sdfg.sort_sdfg_alphabetically()
+
         if self.order_by_transformation:
             applied_anything = True
             while applied_anything:

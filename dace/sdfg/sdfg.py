@@ -3007,7 +3007,7 @@ class SDFG(ControlFlowRegion):
         self.root_sdfg.using_explicit_control_flow = found_explicit_cf_block
         return found_explicit_cf_block
 
-    def sort_sdfg_alphabetically(self, visited: Optional[Set[int]] = None) -> None:
+    def sort_sdfg_alphabetically(self, rebuild_nx: bool = False, visited: Optional[Set[int]] = None) -> None:
         """
         Forces all internal dictionaries, graph structures, and metadata registries
         into a deterministic, semantically-aware order to guarantee stable code generation.
@@ -3024,6 +3024,10 @@ class SDFG(ControlFlowRegion):
             3. Dataflow: Sorts the internal nodes and memlet edges within every State.
             4. Recursion: Recursively applies this stabilization to all Nested SDFGs.
 
+        :param rebuild_nx: If True, rebuilds the internal NetworkX graph in each
+                           sorted graph. Default is False for performance, since
+                           DaCe's codegen and pattern matching do not rely on the
+                           internal _nx iteration order.
         :param visited: A set of memory addresses (IDs) of already processed SDFGs.
                         Used internally to prevent infinite recursion in the event
                         of cyclic nested SDFG references.
@@ -3037,7 +3041,13 @@ class SDFG(ControlFlowRegion):
         visited.add(id(self))
 
         # Avoid import loops
-        from dace.sdfg.utils import sort_graph_dicts_alphabetically
+        from dace.sdfg.utils import sort_graph_dicts_alphabetically, get_deterministic_node_key
+
+        # Invalidate the node key cache before each full sort pass to prevent
+        # stale keys from a previous SDFG state being reused after transformations
+        # have modified the graph structure.
+        if hasattr(get_deterministic_node_key, '__defaults__'):
+            get_deterministic_node_key.__defaults__[0].clear()
 
         # 1. Stabilize Global Metadata (Arrays, Symbols, Constants)
         for attr in ['_arrays', 'symbols', 'constants_prop']:
@@ -3050,13 +3060,13 @@ class SDFG(ControlFlowRegion):
                         val[k] = val.pop(k)
 
         # 2. Stabilize the top-level State Machine (States and Interstate edges)
-        sort_graph_dicts_alphabetically(self)
+        sort_graph_dicts_alphabetically(self, rebuild_nx=rebuild_nx)
 
         # 3. Stabilize the Dataflow inside each State
         for state in self.nodes():
-            sort_graph_dicts_alphabetically(state)
+            sort_graph_dicts_alphabetically(state, rebuild_nx=rebuild_nx)
 
             # 4. Recurse into Nested SDFGs
             for node in state.nodes():
                 if hasattr(node, 'sdfg') and node.sdfg is not None:
-                    node.sdfg.sort_sdfg_alphabetically(visited)
+                    node.sdfg.sort_sdfg_alphabetically(rebuild_nx=rebuild_nx, visited=visited)

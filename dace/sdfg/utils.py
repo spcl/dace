@@ -2768,7 +2768,7 @@ VOLATILE_STR_REGEX = re.compile(
 )
 
 
-def get_deterministic_node_key(node: Any) -> str:
+def get_deterministic_node_key(node: Any, _cache: Dict[int, str] = {}) -> str:
     """
     Generates a highly stable, deterministic string key for DaCe graph nodes
     based on their semantic properties rather than memory locations.
@@ -2786,10 +2786,20 @@ def get_deterministic_node_key(node: Any) -> str:
         - Internal code logic (via a stable MD5 hash of Tasklet code)
         - Nested SDFG structural size
 
+    Results are cached per node identity to avoid redundant recomputation
+    during sort comparisons. The cache is invalidated at the start of each
+    sort_sdfg_alphabetically() call.
+
     :param node: The DaCe graph node (e.g., Tasklet, AccessNode, MapEntry)
                  to be evaluated.
+    :param _cache: Internal mutable default dict used as an identity-based
+                   cache. Cleared between sort passes to avoid stale keys.
     :return: A stable string representing the node's semantic identity.
     """
+    node_id = id(node)
+    if node_id in _cache:
+        return _cache[node_id]
+
     node_type = type(node).__name__
 
     # Extract core identifier
@@ -2833,7 +2843,9 @@ def get_deterministic_node_key(node: Any) -> str:
     if hasattr(node, 'sdfg') and node.sdfg:
         parts.append(f"nsdfg_states:{len(node.sdfg.nodes())}")
 
-    return "_".join(parts)
+    result = "_".join(parts)
+    _cache[node_id] = result
+    return result
 
 
 def get_deterministic_edge_key(edge: Any) -> str:
@@ -2866,7 +2878,7 @@ def get_deterministic_edge_key(edge: Any) -> str:
     return f"{src_key}[{clean_src_conn}]->{dst_key}[{clean_dst_conn}]({clean_data_str})"
 
 
-def sort_graph_dicts_alphabetically(graph: Any) -> None:
+def sort_graph_dicts_alphabetically(graph: Any, rebuild_nx: bool = False) -> None:
     """
     Sorts internal graph nodes, edge dictionaries, and NetworkX backends in-place
     using semantically-aware deterministic keys.
@@ -2881,11 +2893,17 @@ def sort_graph_dicts_alphabetically(graph: Any) -> None:
         2. Alphabetizes the nested adjacency lists (`in_edges`, `out_edges`) for
            every node based on semantic edge keys.
         3. Alphabetizes the master `_edges` dictionary.
-        4. Tears down and sequentially rebuilds the underlying NetworkX graph (`_nx`)
-           so its internal node/edge registries match the newly stabilized order.
+        4. (Optional) Tears down and sequentially rebuilds the underlying NetworkX
+           graph (`_nx`) so its internal node/edge registries match the newly
+           stabilized order. Skipped by default since pattern matching builds
+           its own NetworkX digraph via collapse_multigraph_to_nx.
 
     :param graph: The DaCe graph structure (e.g., SDFGState or generic Graph)
                   whose internal dictionaries need to be stabilized.
+    :param rebuild_nx: If True, rebuilds the internal NetworkX graph to match
+                       the new order. Default is False for performance, since
+                       DaCe's codegen and pattern matching do not rely on the
+                       internal _nx iteration order.
     """
     # 1. Sort the master Nodes dictionary
     if hasattr(graph, '_nodes'):
@@ -2910,8 +2928,8 @@ def sort_graph_dicts_alphabetically(graph: Any) -> None:
         for e_key in sorted_edge_keys:
             graph._edges[e_key] = graph._edges.pop(e_key)
 
-    # 4. Rebuild the NetworkX backend to match the new deterministic order
-    if hasattr(graph, '_nx'):
+    # 4. Optionally rebuild the NetworkX backend to match the new deterministic order
+    if rebuild_nx and hasattr(graph, '_nx'):
         old_nx = graph._nx
         graph._nx = type(old_nx)()
 
