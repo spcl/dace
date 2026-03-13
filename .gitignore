@@ -194,3 +194,7 @@ _all_tests/
 # Ignore downloaded ONNX models
 /*.onnx
 /*.bin
+
+*.sdfgz
+*.sdfg
+*.json
