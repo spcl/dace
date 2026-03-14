@@ -43,13 +43,13 @@ def test_huge_python_int_becomes_oo():
     """Python int beyond float64 range must map to sympy.oo.
     Original comment: int(1.8e308) == expr is True because Python
     has variable-bit integers, but numpy.float64() overflows."""
-    result = sympy_numeric_fix(10 ** 309)
+    result = sympy_numeric_fix(10**309)
     assert result == sympy.oo
 
 
 def test_huge_negative_python_int_becomes_neg_oo():
     """Negative Python int beyond float64 range must map to -sympy.oo."""
-    result = sympy_numeric_fix(-(10 ** 309))
+    result = sympy_numeric_fix(-(10**309))
     assert result == -sympy.oo
 
 
@@ -60,9 +60,7 @@ def test_max_float_literal_roundtrip():
     result = symstr(expr, cpp_mode=True)
 
     # Must contain 0.0 (the float literal), not bare 0 (int literal)
-    assert "0.0" in result, \
-        f"Float literal 0.0 was demoted to int: '{result}'. " \
-        f"This causes Max<int>(a, 0) in C++ template instantiation."
+    assert "0.0" in result, f"Float literal 0.0 was demoted to int: '{result}'. "
 
 
 def test_max_float_literal_not_int():
@@ -73,9 +71,8 @@ def test_max_float_literal_not_int():
 
     # Strip spaces for robust matching
     clean = result.replace(" ", "")
-    # Should not end with ,0) — that's the int literal
-    assert not clean.endswith(",0)"), \
-        f"Got integer literal in Max call: '{result}'"
+    # Should not end with ,0)
+    assert not clean.endswith(",0)"), f"Got integer literal in Max call: '{result}'"
 
 
 def test_max_int_literal_stays_int():
@@ -84,7 +81,6 @@ def test_max_int_literal_stays_int():
     expr = pystr_to_symbolic("max(a, 0)")
     result = symstr(expr, cpp_mode=True)
 
-    # This one SHOULD have bare 0 — user explicitly wrote int
+    # This one SHOULD have bare 0, not 0.0
     clean = result.replace(" ", "")
-    assert "0.0" not in clean, \
-        f"Integer literal 0 was promoted to float: '{result}'"
+    assert "0.0" not in clean, f"Integer literal 0 was promoted to float: '{result}'"
