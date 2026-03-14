@@ -240,14 +240,7 @@ class SplitArray(ppl.Pass):
             else:
                 return sp.Symbol(new_name)
 
-        def _promote_int_constants(expr):
-            """Replace sympy Integer atoms with Float so 0 -> 0.0 in codegen."""
-            if isinstance(expr, sp.Integer):
-                return sp.Float(float(expr))
-            if not expr.args:
-                return expr
-            return expr.func(*(_promote_int_constants(a) for a in expr.args))
-        
+
         for iedge in sdfg.all_interstate_edges():
             # Rewrite assignments
             changed = False
@@ -255,7 +248,6 @@ class SplitArray(ppl.Pass):
             for k, v in iedge.data.assignments.items():
                 v_sym = dace.symbolic.pystr_to_symbolic(v)
                 v_new = _rewrite_expr(v_sym)
-                #v_new = _promote_int_constants(v_new)
                 new_assignments[k] = dace.symbolic.symstr(v_new, arrayexprs=frozenset(sdfg.arrays.keys()))
                 if v_new is not v_sym:
                     changed = True
