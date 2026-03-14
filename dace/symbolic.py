@@ -7,7 +7,7 @@ import pickle
 import re
 from typing import Any, Callable, Dict, FrozenSet, Iterable, Optional, Set, Tuple, Union, TYPE_CHECKING
 import numpy
-
+import math
 import sympy.abc
 import sympy.printing.str
 
@@ -691,12 +691,12 @@ def sympy_numeric_fix(expr):
     """ Fix for printing out integers as floats with ".00000000".
         Converts the float constants in a given expression to integers. """
     if not isinstance(expr, sympy.Basic) or isinstance(expr, sympy.Number):
+        # Preserve explicit sympy.Float if finite, so 0.0 stays 0.0 in codegen.
+        # Non-finite values (+-1.8e308 -> inf) fall through to the overflow path.
+        if isinstance(expr, sympy.Float) and math.isfinite(float(expr)):
+            return expr
         try:
-            # NOTE: If expr is ~ 1.8e308, i.e. infinity, `numpy.int64(expr)`
-            # will throw OverflowError (which we want).
-            # `int(1.8e308) == expr` evaluates unfortunately to True
-            # because Python has variable-bit integers.
-            if numpy.int64(expr) == expr:
+            if numpy.int64(expr) == expr and expr != 0:
                 return int(expr)
         except OverflowError:
             try:
@@ -707,12 +707,9 @@ def sympy_numeric_fix(expr):
                     return sympy.oo
                 else:
                     return -sympy.oo
-
-    # Check if expression contains UndefinedSymbol and propagate it
     for atom in expr.atoms():
         if isinstance(atom, UndefinedSymbol):
             return UndefinedSymbol()
-
     return expr
 
 
