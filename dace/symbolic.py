@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 from collections import Counter
 from functools import lru_cache
@@ -1373,9 +1373,23 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
 
     def _print_Float(self, expr):
         nf = sympy_numeric_fix(expr)
-        if isinstance(nf, int) or nf != expr:
-            return self._print(nf)
-        return super()._print_Float(expr)
+        # Format with enough precision, then strip trailing zeros
+        # but always keep at least one digit after the dot.
+        # 5.00000000000000 -> "5.0"
+        # 0.00000000000000 -> "0.0"
+        # 3.14000000000000 -> "3.14"
+        # 1e-14            -> "1e-14"
+        fval = float(nf)
+        s = f"{fval:.15g}"
+        if '.' not in s and 'e' not in s and 'E' not in s:
+            s += '.0'
+        elif '.' in s:
+            # Strip trailing zeros but keep at least one after dot
+            # to avoid unwanted promotions to integers
+            int_part, frac_part = s.split('.')
+            frac_part = frac_part.rstrip('0') or '0'
+            s = f"{int_part}.{frac_part}"
+        return s
 
     def _print_Function(self, expr):
         if str(expr.func) in self.arrays:
