@@ -127,8 +127,9 @@ def test_melt_kernel():
     sdfg.replace_dict({"nclv": 5})
     sdfg.validate()
 
-    assert len(sdfg.nodes()) == 1
-    loop = sdfg.nodes()[0]
+    loops = {n for n in sdfg.nodes() if isinstance(n, LoopRegion)}
+    assert len(loops) == 1
+    loop = loops.pop()
 
     LoopUnroll().apply_to(sdfg=sdfg, loop=loop)
     sdfg.validate()
