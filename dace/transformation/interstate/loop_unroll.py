@@ -80,6 +80,7 @@ class LoopUnroll(xf.MultiStateTransformation):
             iteration_region = self.instantiate_loop_iteration(graph, self.loop, current_index,
                                                                str(i) if is_symbolic else None)
             iteration_region.replace_dict({self.loop.loop_variable: current_index}, replace_keys=True)
+            iteration_region.replace_meta_accesses({self.loop.loop_variable: str(current_index)})
 
             # Connect iterations with unconditional edges
             if len(unrolled_iterations) > 0:

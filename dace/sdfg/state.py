@@ -3584,8 +3584,6 @@ class LoopRegion(ControlFlowRegion):
             if self.loop_variable and self.loop_variable in repl:
                 self.loop_variable = repl[self.loop_variable]
 
-        self.replace_meta_accesses(repl)
-
         from dace.sdfg.replace import replace_properties_dict
         replace_properties_dict(self, repl, symrepl)
 
