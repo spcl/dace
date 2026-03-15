@@ -79,6 +79,7 @@ class LoopUnroll(xf.MultiStateTransformation):
             is_symbolic |= symbolic.issymbolic(current_index)
             iteration_region = self.instantiate_loop_iteration(graph, self.loop, current_index,
                                                                str(i) if is_symbolic else None)
+            iteration_region.replace_dict({self.loop.loop_variable: current_index}, replace_keys=True)
 
             # Connect iterations with unconditional edges
             if len(unrolled_iterations) > 0:
@@ -142,7 +143,7 @@ class LoopUnroll(xf.MultiStateTransformation):
             new_block = serialize.from_json(serialize.to_json(block), context={'sdfg': graph.sdfg})
             assert block not in block_map
             block_map[block] = new_block
-            new_block.replace(loop.loop_variable, value)
+            new_block.replace_dict({loop.loop_variable: value})
             iteration_region.add_node(new_block, is_start_block=(block is loop.start_block))
 
         for edge in loop.edges():
