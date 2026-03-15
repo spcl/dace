@@ -553,19 +553,14 @@ class SplitArray(ppl.Pass):
             if changed:
                 iedge.data.assignments = new_assignments
 
-    # ------------------------------------------------------------------ #
-    #  Phase 4: Update access nodes and remove old arrays
-    # ------------------------------------------------------------------ #
-
     def _replace_access_nodes(self, sdfg: dace.SDFG, split_map: Dict[str, List[Optional[str]]]):
         """Point access nodes to the new split arrays.
-
         If an access node has different input and output array names (read from
         one split variant, write to another), the node is duplicated so each
         variant gets its own access node.
         """
         for state in sdfg.all_states():
-            for dnode in state.data_nodes():
+            for dnode in list(state.data_nodes()):
                 if dnode.data not in split_map:
                     continue
 
@@ -575,21 +570,38 @@ class SplitArray(ppl.Pass):
                 out_names = {oe.data.data for oe in out_edges if oe.data.data is not None}
                 unique_names = in_names | out_names
 
-                assert len(unique_names) == 1 or (len(in_names) == 1 and len(out_names) == 1), (
-                    f"Expected 1 unique name or 1-in/1-out, got in={in_names}, out={out_names} in {state}"
+                # All edges agree on one name (or no edges at all) -> just rename
+                if len(unique_names) <= 1:
+                    if unique_names:
+                        dnode.data = next(iter(unique_names))
+                    continue
+
+                # Multiple in-names combined with out-names is unsupported
+                assert len(in_names) <= 1 or len(out_names) == 0, (
+                    f"Multiple in-names with out-names unsupported: "
+                    f"in={in_names}, out={out_names} in {state}"
                 )
 
-                if len(in_names) == 1 and len(out_names) == 1 and in_names != out_names:
-                    # Different read/write targets: split into two access nodes
-                    dup_dnode = state.add_access(dnode.data)
-                    for oe in out_edges:
+                if len(out_names) > 0:
+                    # <=1 in-name, multiple out-names -> split out-edges
+                    if in_names:
+                        dnode.data = next(iter(in_names))
+                    for oe in list(out_edges):
+                        dup = state.add_access(oe.data.data)
                         state.remove_edge(oe)
-                        state.add_edge(dup_dnode, None, oe.dst, oe.dst_conn, copy.deepcopy(oe.data))
-                    dnode.data = in_names.pop()
-                    dup_dnode.data = out_names.pop()
-                    # No dependency edge needed — they are independent arrays after split
+                        state.add_edge(dup, None, oe.dst, oe.dst_conn, copy.deepcopy(oe.data))
+                        if in_names:
+                            state.add_edge(dnode, None, dup, None, dace.memlet.Memlet())
+                    if not in_names:
+                        state.remove_node(dnode)
                 else:
-                    dnode.data = unique_names.pop()
+                    # Multiple in-names, no out-names -> split in-edges
+                    for ie in list(in_edges):
+                        dup = state.add_access(ie.data.data)
+                        state.remove_edge(ie)
+                        state.add_edge(ie.src, ie.src_conn, dup, None, copy.deepcopy(ie.data))
+                    state.remove_node(dnode)
+
 
     def _remove_split_arrays(self, sdfg: dace.SDFG, split_map: Dict[str, List[Optional[str]]]):
         """Remove original (pre-split) array descriptors from the SDFG."""
@@ -639,6 +651,6 @@ class SplitArray(ppl.Pass):
 
         # Phase 4: Nested SDFG propagation (currently raises not-implemented error)
         self._pass_to_nsdfgs(sdfg, split_map)
-
+        sdfg.save("split_array_intermediate.sdfgz", compress=True)
         # Phase 5: Cleanup
         self._remove_split_arrays(sdfg, split_map)
