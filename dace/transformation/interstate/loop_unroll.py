@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Loop unroll transformation """
 
 import ast
@@ -103,9 +103,9 @@ class LoopUnroll(xf.MultiStateTransformation):
 
         # If we remove start block we need to update the new start-block
         was_start_block = graph.start_block == self.loop
+        oes = graph.out_edges(self.loop)
         graph.remove_node(self.loop)
         if was_start_block:
-            oes = graph.out_edges(self.loop)
             if len(oes) > 0:
                 oe = oes[0]
                 oes2 = graph.out_edges(oe.dst)

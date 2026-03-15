@@ -43,13 +43,13 @@ def test_huge_python_int_becomes_oo():
     """Python int beyond float64 range must map to sympy.oo.
     Original comment: int(1.8e308) == expr is True because Python
     has variable-bit integers, but numpy.float64() overflows."""
-    result = sympy_numeric_fix(10 ** 309)
+    result = sympy_numeric_fix(10**309)
     assert result == sympy.oo
 
 
 def test_huge_negative_python_int_becomes_neg_oo():
     """Negative Python int beyond float64 range must map to -sympy.oo."""
-    result = sympy_numeric_fix(-(10 ** 309))
+    result = sympy_numeric_fix(-(10**309))
     assert result == -sympy.oo
 
 
