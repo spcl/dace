@@ -110,41 +110,63 @@ class SplitArray(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def _unroll_loops_that_depend_only_on_split_dimensions(
-        self,
-        sdfg: dace.SDFG,
-    ):
-        maps_to_unroll = set()
-        loops_to_unroll = set()
+    def _unroll_loops_that_depend_only_on_split_dimensions(self, sdfg: dace.SDFG):
+        # Phase 1: Identify candidates by label BEFORE replacing symbols
+        unrollable_map_labels = set()
+        unrollable_loop_labels = set()
 
         for n, g in sdfg.all_nodes_recursive():
             if isinstance(n, dace.nodes.MapEntry):
+                all_valid = True
                 for p, r in zip(n.map.params, n.map.range):
-                    extent: dace.symbolic.SymExpr = ((r[1] + 1) - r[1] // r[2])
+                    extent = ((r[1] + 1) - r[0]) // r[2]
                     freesyms = {str(s) for s in extent.free_symbols}
-                    if freesyms.issubset(self._symbol_map.keys()):
-                        maps_to_unroll.add((n, g))
+                    if not freesyms.issubset(self._symbol_map.keys()):
+                        all_valid = False
+                        break
+                if all_valid:
+                    unrollable_map_labels.add(n.map.label)
             elif isinstance(n, LoopRegion):
                 beg = loop_analysis.get_init_assignment(n)
                 end = loop_analysis.get_loop_end(n)
                 step = loop_analysis.get_loop_stride(n)
+                if beg is None or end is None or step is None:
+                    continue
                 extent = ((end + 1) - beg) // step
                 freesyms = {str(s) for s in extent.free_symbols}
                 if freesyms.issubset(self._symbol_map.keys()):
-                    loops_to_unroll.add((n, g))
+                    unrollable_loop_labels.add(n.label)
 
-        # Replace the symbols with integers
+        # Phase 2: Replace symbols with integers
         sdfg.replace_dict(self._symbol_map)
 
-        for n, g in maps_to_unroll:
-            if n in g.nodes():
-                MapUnroll().apply_to(sdfg=n.sdfg, options={}, map_entry=n)
+        # Phase 3: Unroll one at a time, rescanning after each mutation
+        while True:
+            target = self._find_map_by_label(sdfg, unrollable_map_labels)
+            if target is None:
+                break
+            n, g = target
+            MapUnroll().apply_to(sdfg=g.sdfg, options={}, map_entry=n)
 
-        for n, g in loops_to_unroll:
-            if n in g.nodes():
-                LoopUnroll().apply_to(sdfg=n.sdfg, options={
-                    "inline_iterations": True,
-                }, loop=n)
+        while True:
+            target = self._find_loop_by_label(sdfg, unrollable_loop_labels)
+            if target is None:
+                break
+            n, g = target
+            LoopUnroll().apply_to(sdfg=n.sdfg, options={"inline_iterations": True}, loop=n)
+
+    def _find_map_by_label(self, sdfg, labels):
+        for n, g in sdfg.all_nodes_recursive():
+            if isinstance(n, dace.nodes.MapEntry) and n.map.label in labels:
+                return (n, g)
+        return None
+
+    def _find_loop_by_label(self, sdfg, labels):
+        for n, g in sdfg.all_nodes_recursive():
+            if isinstance(n, LoopRegion) and n.label in labels:
+                return (n, g)
+        return None
+
 
     def _collect_arrays_to_split(self, sdfg: dace.SDFG) -> Dict[str, List[Optional[str]]]:
         """
@@ -308,6 +330,8 @@ class SplitArray(ppl.Pass):
                         all_access_exprs = all_access_exprs.union(set(map(str, access_exprs)))
 
         if len(all_data_depdent_dims) > 0:
+            if len(all_data_depdent_dims) > 1:
+                sdfg.save("failing.sdfgz", compress=True)
             assert len(
                 all_data_depdent_dims
             ) == 1, f"Multiple data dependent dims not supported yet. Found: {all_data_depdent_dims} in state {state} of sdfg {sdfg}."
@@ -389,7 +413,7 @@ class SplitArray(ppl.Pass):
                         if mapped_data != edge.data.data:
                             edge.data = dace.memlet.Memlet(data=mapped_data, subset=new_subset)
                 SplitArray.c += 1
-                sdfg.validate()
+                #sdfg.validate()
                 #sdfg.save("hmm.sdfg")
                 #raise Exception(extent, canonical_access, all_access_exprs, dims)
             else:
@@ -535,6 +559,7 @@ class SplitArray(ppl.Pass):
 
         # 2. Create the new arrays that will be used after splitting
         self._split_data_descriptors(sdfg, split_map)
+        sdfg.validate()
         sdfg.save("after_unrolling.sdfg")
 
         # 3. Split arrays for accesses
@@ -548,6 +573,7 @@ class SplitArray(ppl.Pass):
         # TODO: Passing to nested SDFGs
         # self._pass_to_nsdfgs(sdfg)
         sdfg.save("after_replacing.sdfg")
+        sdfg.validate()
 
         # 3. Pass the arrays to the Nested SDFGs
         # (Don't forget they can go through maps)

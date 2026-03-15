@@ -7,7 +7,6 @@ import pytest
 from dace.transformation.layout.split_array import SplitArray
 from itertools import product
 
-
 klev = dace.symbol('klev', dtype=dace.int32)
 klon = dace.symbol('klon', dtype=dace.int32)
 nclv = dace.symbol('nclv', dtype=dace.int32)
@@ -19,17 +18,22 @@ ncldqr = dace.symbol('ncldqr', dtype=dace.int32)
 ncldqs = dace.symbol('ncldqs', dtype=dace.int32)
 ncldqv = dace.symbol('ncldqv', dtype=dace.int32)
 
-
 NAME_ORDER = ["ncldql", "ncldqi", "ncldqr", "ncldqs", "ncldqv"]
-NAME_MAP = {i : NAME_ORDER[i] for i in range(5)}
+NAME_MAP = {i: NAME_ORDER[i] for i in range(5)}
 
 CONDENSE_CST = dict(
-    retv=0.6077, rtice=250.16, rtwat=273.16,
+    retv=0.6077,
+    rtice=250.16,
+    rtwat=273.16,
     rtwat_rtice_r=1.0 / (273.16 - 250.16),
-    r5alvcp=5.4697e6, r4les=35.86,
-    r5alscp=6.3147e6, r4ies=7.66,
-    rthomo=250.0, rlmin=1e-12,
+    r5alvcp=5.4697e6,
+    r4les=35.86,
+    r5alscp=6.3147e6,
+    r4ies=7.66,
+    rthomo=250.0,
+    rlmin=1e-12,
 )
+
 
 @dace.program
 def condense_kernel(
@@ -40,9 +44,15 @@ def condense_kernel(
     ztp1: dace.float64[klev, klon],
     zsolqa: dace.float64[nclv, nclv, klon],
     zqxfg: dace.float64[nclv, klon],
-    retv: dace.float64, rtice: dace.float64, rtwat: dace.float64,
-    rtwat_rtice_r: dace.float64, r5alvcp: dace.float64, r4les: dace.float64,
-    r5alscp: dace.float64, r4ies: dace.float64, rthomo: dace.float64,
+    retv: dace.float64,
+    rtice: dace.float64,
+    rtwat: dace.float64,
+    rtwat_rtice_r: dace.float64,
+    r5alvcp: dace.float64,
+    r4les: dace.float64,
+    r5alscp: dace.float64,
+    r4ies: dace.float64,
+    rthomo: dace.float64,
     rlmin: dace.float64,
 ):
     for jk in range(klev):
@@ -50,11 +60,11 @@ def condense_kernel(
             if za[jk, jl] > 1e-14:
                 if zdqs[jl] <= -rlmin:
                     lc = max(-zdqs[jl], 0.0)
-                    af = min(1.0, ((max(rtice, min(rtwat, ztp1[jk, jl])) - rtice) * rtwat_rtice_r) ** 2)
+                    af = min(1.0, ((max(rtice, min(rtwat, ztp1[jk, jl])) - rtice) * rtwat_rtice_r)**2)
                     zcor = 1.0 / (1.0 - retv * zqsmix[jk, jl])
-                    cdm_full = (zqv[jk, jl] - zqsmix[jk, jl]) / (1.0 + zcor * zqsmix[jk, jl] * (
-                        af * r5alvcp / (ztp1[jk, jl] - r4les) ** 2
-                        + (1.0 - af) * r5alscp / (ztp1[jk, jl] - r4ies) ** 2))
+                    cdm_full = (zqv[jk, jl] - zqsmix[jk, jl]) / (1.0 + zcor * zqsmix[jk, jl] *
+                                                                 (af * r5alvcp / (ztp1[jk, jl] - r4les)**2 +
+                                                                  (1.0 - af) * r5alscp / (ztp1[jk, jl] - r4ies)**2))
                     cdm_part = (zqv[jk, jl] - za[jk, jl] * zqsmix[jk, jl]) / za[jk, jl]
                     if za[jk, jl] > 0.99:
                         cdm = cdm_full
@@ -75,28 +85,37 @@ def condense_kernel(
 def condense_ref(za, zdqs, zqsmix, zqv, ztp1, zsolqa, zqxfg, cst, sym):
     KLEV, KLON = sym['klev'], sym['klon']
     QL, QI, QV = sym['ncldql'] - 1, sym['ncldqi'] - 1, sym['ncldqv'] - 1
-    retv = cst['retv']; rtice = cst['rtice']; rtwat = cst['rtwat']
-    rr = cst['rtwat_rtice_r']; r5a = cst['r5alvcp']; r4l = cst['r4les']
-    r5s = cst['r5alscp']; r4i = cst['r4ies']; rth = cst['rthomo']; rlm = cst['rlmin']
+    retv = cst['retv']
+    rtice = cst['rtice']
+    rtwat = cst['rtwat']
+    rr = cst['rtwat_rtice_r']
+    r5a = cst['r5alvcp']
+    r4l = cst['r4les']
+    r5s = cst['r5alscp']
+    r4i = cst['r4ies']
+    rth = cst['rthomo']
+    rlm = cst['rlmin']
 
     for jk in range(KLEV):
         for jl in range(KLON):
             if za[jk, jl] > 1e-14 and zdqs[jl] <= -rlm:
                 lc = max(-zdqs[jl], 0.0)
-                af = min(1.0, ((max(rtice, min(rtwat, ztp1[jk, jl])) - rtice) * rr) ** 2)
+                af = min(1.0, ((max(rtice, min(rtwat, ztp1[jk, jl])) - rtice) * rr)**2)
                 zcor = 1.0 / (1.0 - retv * zqsmix[jk, jl])
-                cdm_f = (zqv[jk, jl] - zqsmix[jk, jl]) / (1.0 + zcor * zqsmix[jk, jl] * (
-                    af * r5a / (ztp1[jk, jl] - r4l) ** 2
-                    + (1.0 - af) * r5s / (ztp1[jk, jl] - r4i) ** 2))
+                cdm_f = (zqv[jk, jl] - zqsmix[jk, jl]) / (1.0 + zcor * zqsmix[jk, jl] *
+                                                          (af * r5a / (ztp1[jk, jl] - r4l)**2 + (1.0 - af) * r5s /
+                                                           (ztp1[jk, jl] - r4i)**2))
                 cdm_p = (zqv[jk, jl] - za[jk, jl] * zqsmix[jk, jl]) / za[jk, jl]
                 cdm = cdm_f if za[jk, jl] > 0.99 else cdm_p
                 lc = za[jk, jl] * max(min(lc, cdm), 0.0)
                 if lc >= rlm:
                     if ztp1[jk, jl] > rth:
-                        zsolqa[QV, QL, jl] += lc; zsolqa[QL, QV, jl] -= lc
+                        zsolqa[QV, QL, jl] += lc
+                        zsolqa[QL, QV, jl] -= lc
                         zqxfg[QL, jl] += lc
                     else:
-                        zsolqa[QV, QI, jl] += lc; zsolqa[QI, QV, jl] -= lc
+                        zsolqa[QV, QI, jl] += lc
+                        zsolqa[QI, QV, jl] -= lc
                         zqxfg[QI, jl] += lc
 
 
@@ -157,13 +176,17 @@ def init_tendency_ref(
             for jl in range(kidia, kfdia + 1):
                 tendency_loc_cld[jm - 1, jk - 1, jl - kidia] = 0.0
 
+
 # ----------------------------------------------------------------
 # Helpers
 # ----------------------------------------------------------------
 def xfill(shape, lo=0.0, hi=1.0):
-    a = np.empty(shape, np.float64); n = a.size
+    a = np.empty(shape, np.float64)
+    n = a.size
     i = np.arange(1, n + 1, dtype=np.uint64)
-    i ^= i << np.uint64(13); i ^= i >> np.uint64(7); i ^= i << np.uint64(17)
+    i ^= i << np.uint64(13)
+    i ^= i >> np.uint64(7)
+    i ^= i << np.uint64(17)
     a.ravel()[:] = lo + (hi - lo) * (i % np.uint64(10000)).astype(np.float64) / 10000.0
     return a
 
@@ -181,43 +204,40 @@ def _check_split_result(split_args, ref_arrays, nclv_v, names):
         ref = ref_arrays[name]
 
         if name == 'zsolqa':
-            rebuilt = np.array([
-                [split_args[_make_split_name(name, i, j)] for j in range(nclv_v)]
-                for i in range(nclv_v)
-            ])
+            rebuilt = np.array([[split_args[_make_split_name(name, i, j)] for j in range(nclv_v)]
+                                for i in range(nclv_v)])
         elif name in ('zqxfg', 'tendency_loc_cld'):
-            rebuilt = np.array([
-                split_args[_make_split_name(name, i)] for i in range(nclv_v)
-            ])
+            rebuilt = np.array([split_args[_make_split_name(name, i)] for i in range(nclv_v)])
         else:
             rebuilt = split_args[name]
 
-        np.testing.assert_allclose(rebuilt, ref, atol=1e-14,
+        np.testing.assert_allclose(rebuilt,
+                                   ref,
+                                   atol=1e-14,
                                    err_msg=f"{name}: max diff = {np.max(np.abs(rebuilt - ref))}")
+
 
 def test_condense():
     KLEV, KLON, NCLV = 16, 512, 5
     QL, QI, QR, QS, QV = 1, 2, 3, 4, 5
-    SYM = dict(klev=KLEV, klon=KLON, nclv=NCLV,
-               ncldql=QL, ncldqi=QI, ncldqr=QR, ncldqs=QS, ncldqv=QV)
+    SYM = dict(klev=KLEV, klon=KLON, nclv=NCLV, ncldql=QL, ncldqi=QI, ncldqr=QR, ncldqs=QS, ncldqv=QV)
 
     def _make_inputs():
         return dict(
-            za     = xfill((KLEV, KLON), 0.0, 1.0),
-            zdqs   = xfill((KLON,), -0.01, 0.01),
-            zqsmix = xfill((KLEV, KLON), 0.001, 0.02),
-            zqv    = xfill((KLEV, KLON), 0.001, 0.02),
-            ztp1   = xfill((KLEV, KLON), 200.0, 300.0),
-            zsolqa = xfill((NCLV, NCLV, KLON), -0.001, 0.001),
-            zqxfg  = xfill((NCLV, KLON), 0.0, 0.01),
+            za=xfill((KLEV, KLON), 0.0, 1.0),
+            zdqs=xfill((KLON, ), -0.01, 0.01),
+            zqsmix=xfill((KLEV, KLON), 0.001, 0.02),
+            zqv=xfill((KLEV, KLON), 0.001, 0.02),
+            ztp1=xfill((KLEV, KLON), 200.0, 300.0),
+            zsolqa=xfill((NCLV, NCLV, KLON), -0.001, 0.001),
+            zqxfg=xfill((NCLV, KLON), 0.0, 0.01),
         )
 
     inp_ref = _make_inputs()
     inp_dace = clone(inp_ref)
 
-    condense_ref(inp_ref['za'], inp_ref['zdqs'], inp_ref['zqsmix'],
-                    inp_ref['zqv'], inp_ref['ztp1'], inp_ref['zsolqa'],
-                    inp_ref['zqxfg'], CONDENSE_CST, SYM)
+    condense_ref(inp_ref['za'], inp_ref['zdqs'], inp_ref['zqsmix'], inp_ref['zqv'], inp_ref['ztp1'], inp_ref['zsolqa'],
+                 inp_ref['zqxfg'], CONDENSE_CST, SYM)
 
     csdfg = condense_kernel.compile(**SYM)
     csdfg(**inp_dace, **CONDENSE_CST, **SYM)
@@ -228,9 +248,8 @@ def test_condense():
     inp_ref = _make_inputs()
     inp_split = clone(inp_ref)
 
-    condense_ref(inp_ref['za'], inp_ref['zdqs'], inp_ref['zqsmix'],
-                    inp_ref['zqv'], inp_ref['ztp1'], inp_ref['zsolqa'],
-                    inp_ref['zqxfg'], CONDENSE_CST, SYM)
+    condense_ref(inp_ref['za'], inp_ref['zdqs'], inp_ref['zqsmix'], inp_ref['zqv'], inp_ref['ztp1'], inp_ref['zsolqa'],
+                 inp_ref['zqxfg'], CONDENSE_CST, SYM)
 
     symbol_map = {
         "nclv": 5,
@@ -240,9 +259,7 @@ def test_condense():
         "ncldqs": 4,
         "ncldqv": 5,
     }
-    name_map = {
-        "nclv": NAME_ORDER
-    }
+    name_map = {"nclv": NAME_ORDER}
     sdfg = condense_kernel.to_sdfg()
     sdfg.name = "condense_original"
     sdfg.compile()
@@ -263,10 +280,8 @@ def test_condense():
     args['zqv'] = inp_split['zqv']
     args['ztp1'] = inp_split['ztp1']
 
-
     csdfg(**args)
     _check_split_result(args, inp_ref, NCLV, ['zsolqa', 'zqxfg'])
-
 
 
 def test_melt():
@@ -276,44 +291,41 @@ def test_melt():
 
     def _make_inputs(KLON, NCLV, QI, QS, QR):
         iphase = np.ones(NCLV, dtype=np.int32)
-        imelt  = np.ones(NCLV, dtype=np.int32)
-        iphase[QI - 1] = 2; imelt[QI - 1] = QR
-        iphase[QS - 1] = 2; imelt[QS - 1] = QR
+        imelt = np.ones(NCLV, dtype=np.int32)
+        iphase[QI - 1] = 2
+        imelt[QI - 1] = QR
+        iphase[QS - 1] = 2
+        imelt[QS - 1] = QR
         return dict(
-            zqxfg    = xfill((NCLV, KLON), 0.0, 0.01),
-            zsolqa   = xfill((NCLV, NCLV, KLON), -0.001, 0.001),
-            zmeltmax = xfill((KLON,), 0.0, 0.005),
-            zicetot  = xfill((KLON,), 0.0, 0.02),
-            iphase   = iphase,
-            imelt    = imelt,
+            zqxfg=xfill((NCLV, KLON), 0.0, 0.01),
+            zsolqa=xfill((NCLV, NCLV, KLON), -0.001, 0.001),
+            zmeltmax=xfill((KLON, ), 0.0, 0.005),
+            zicetot=xfill((KLON, ), 0.0, 0.02),
+            iphase=iphase,
+            imelt=imelt,
         )
 
     """DaCe program without any pass matches numpy reference."""
     inp_ref = _make_inputs(KLON, NCLV, QI, QS, QR)
     inp_dace = clone(inp_ref)
 
-    melt_ref(inp_ref['zqxfg'], inp_ref['zsolqa'], inp_ref['zmeltmax'],
-            inp_ref['zicetot'], inp_ref['imelt'], SYM)
+    melt_ref(inp_ref['zqxfg'], inp_ref['zsolqa'], inp_ref['zmeltmax'], inp_ref['zicetot'], inp_ref['imelt'], SYM)
 
     csdfg = melt_kernel.compile(**SYM)
     csdfg(**inp_dace, **SYM)
 
     np.testing.assert_allclose(inp_dace['zsolqa'], inp_ref['zsolqa'], atol=1e-14)
     np.testing.assert_allclose(inp_dace['zqxfg'], inp_ref['zqxfg'], atol=1e-14)
-
     """DaCe program + SplitArray pass matches numpy reference."""
     inp_ref = _make_inputs(KLON, NCLV, QI, QS, QR)
     inp_split = clone(inp_ref)
 
-    melt_ref(inp_ref['zqxfg'], inp_ref['zsolqa'], inp_ref['zmeltmax'],
-                inp_ref['zicetot'], inp_ref['imelt'], SYM)
+    melt_ref(inp_ref['zqxfg'], inp_ref['zsolqa'], inp_ref['zmeltmax'], inp_ref['zicetot'], inp_ref['imelt'], SYM)
 
     symbol_map = {
         "nclv": 5,
     }
-    name_map = {
-        "nclv": NAME_ORDER
-    }
+    name_map = {"nclv": NAME_ORDER}
     sdfg = melt_kernel.to_sdfg()
     SplitArray(symbol_map=symbol_map, name_map=name_map).apply_pass(sdfg, {})
     csdfg = sdfg.compile()
@@ -323,12 +335,12 @@ def test_melt():
     if 'zsolqa_0' in sdfg_keys:
         for i in range(NCLV):
             args[f'zsolqa_{i}'] = inp_split['zsolqa'][i].copy()
-            args[f'zqxfg_{i}']  = inp_split['zqxfg'][i].copy()
+            args[f'zqxfg_{i}'] = inp_split['zqxfg'][i].copy()
         for i in range(NCLV):
             args[f'iphase_{i}'] = inp_split['iphase'][i].copy()
-            args[f'imelt_{i}']  = inp_split['imelt'][i].copy()
+            args[f'imelt_{i}'] = inp_split['imelt'][i].copy()
         args['zmeltmax'] = inp_split['zmeltmax']
-        args['zicetot']  = inp_split['zicetot']
+        args['zicetot'] = inp_split['zicetot']
     else:
         args.update(inp_split)
 
@@ -342,9 +354,7 @@ def test_init_tendency():
     SYM = dict(klev=KLEV, klon=KLON, nclv=NCLV)
 
     def _make_inputs():
-        return dict(
-            tendency_loc_cld=xfill((NCLV, KLEV, KLON), -1.0, 1.0),
-        )
+        return dict(tendency_loc_cld=xfill((NCLV, KLEV, KLON), -1.0, 1.0), )
 
     inp_ref = _make_inputs()
     inp_dace = clone(inp_ref)
@@ -365,9 +375,7 @@ def test_init_tendency():
     symbol_map = {
         "nclv": 5,
     }
-    name_map = {
-        "nclv": NAME_ORDER
-    }
+    name_map = {"nclv": NAME_ORDER}
 
     sdfg = init_tendency.to_sdfg()
     SplitArray(symbol_map=symbol_map, name_map=name_map).apply_pass(sdfg, {})
@@ -381,6 +389,7 @@ def test_init_tendency():
     csdfg(**args)
 
     _check_split_result(args, inp_ref, NCLV, ['tendency_loc_cld'])
+
 
 if __name__ == "__main__":
     test_condense()
