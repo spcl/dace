@@ -17,94 +17,79 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-    build_and_validate_pyFV3:
-      if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
-      runs-on: ubuntu-latest
-      strategy:
-          matrix:
-              python-version: [3.12]
+  configure:
+    runs-on: ubuntu-latest
+    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
+    name: "Read test configuration"
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+     - name: Checkout to repository
+       uses: actions/checkout@v6
+     - name: Set matrix data
+       id: set-matrix
+       run: echo "matrix={\"include\":$(jq -c . < .github/workflows/pyFV3-regression-matrix.json)}" >> $GITHUB_OUTPUT
 
-      steps:
-      - name: Checkout pyFV3
-        uses: actions/checkout@v6
-        with:
-              repository: 'romanc/pyFV3' # TODO: revert to `NOAA-GFDL/pyFV3`
-              ref: romanc/backend-translate-overrides # TODO: remove once merged
-              submodules: 'recursive'
-              path: 'pyFV3'
+  build_and_validate_pyFV3:
+    runs-on: ubuntu-latest
+    needs: configure
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.configure.outputs.matrix) }}
+    name: "${{ matrix.module }} regression test"
 
-      - name: Checkout dace
-        uses: actions/checkout@v6
-        with:
-            path: 'dace'
+    steps:
+    - name: Checkout pyFV3
+      uses: actions/checkout@v6
+      with:
+            repository: 'romanc/pyFV3' # TODO: revert to `NOAA-GFDL/pyFV3`
+            ref: romanc/backend-translate-overrides # TODO: remove once merged
             submodules: 'recursive'
+            path: 'pyFV3'
 
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v6
-        with:
-              python-version: ${{ matrix.python-version }}
+    - name: Checkout dace
+      uses: actions/checkout@v6
+      with:
+          path: 'dace'
+          submodules: 'recursive'
 
-      - name: Install OpenMPI
-        run: pip install openmpi
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v6
+      with:
+            python-version: 3.12
 
-      # We install `dace` after `pyFV3` to build pyFV3 with the current version of DaCe
-      - name: Install pyFV3 and dace
-        run: |
-          pip install ./pyFV3[ndsl,test]
-          pip install ./dace
+    - name: Install OpenMPI
+      run: pip install openmpi
 
-      - name: Print versions
-        run: |
-          gcc --version
-          python --version
-          pip --version
-          pip list
+    # We install `dace` after `pyFV3` to build pyFV3 with the current version of DaCe
+    - name: Install pyFV3 and dace
+      run: |
+        pip install ./pyFV3[ndsl,test]
+        pip install ./dace
 
-      - name: Download data
-        run: |
-          cd pyFV3
-          mkdir -p test_data
-          cd test_data
-          wget --retry-connrefused https://portal.nccs.nasa.gov/datashare/astg/smt/pace-regression-data/8.1.3_c12_6ranks_standard.D_SW.tar.gz
-          tar -xzvf 8.1.3_c12_6ranks_standard.D_SW.tar.gz
-          wget --retry-connrefused https://portal.nccs.nasa.gov/datashare/astg/smt/pace-regression-data/8.1.3_c12_6ranks_standard.RiemSolver3.tar.gz
-          tar -xzvf 8.1.3_c12_6ranks_standard.RiemSolver3.tar.gz
-          wget --retry-connrefused https://portal.nccs.nasa.gov/datashare/astg/smt/pace-regression-data/8.1.3_c12_6ranks_standard.Remapping.tar.gz
-          tar -xzvf 8.1.3_c12_6ranks_standard.Remapping.tar.gz
-          cd ../..
+    - name: Print versions
+      run: |
+        gcc --version
+        python --version
+        pip --version
+        pip list
 
-      # Clean up caches between run for stale un-expanded SDFG to trip the build system (NDSL side issue)
-      - name: "Regression test: Riemann Solver on D-grid (RiemSolver3)"
-        env:
-          FV3_DACEMODE: BuildAndRun
-          NDSL_LOGLEVEL: Debug
-        run: |
-          rm -rf ./.gt_cache_FV3_A
-          pytest -v -s --data_path=./pyFV3/test_data/8.1.3/c12_6ranks_standard/dycore \
-              --backend=orch:dace:cpu:IJK --which_modules=Riem_Solver3 \
-              --threshold_overrides_file=./pyFV3/tests/savepoint/translate/overrides/standard.yaml \
-              ./pyFV3/tests/savepoint
+    - name: Download data
+      run: |
+        cd pyFV3
+        mkdir -p test_data
+        cd test_data
+        wget --retry-connrefused https://portal.nccs.nasa.gov/datashare/astg/smt/pace-regression-data/${{ matrix.archive }}
+        tar -xzvf ${{ matrix.archive }}
+        cd ../..
 
-      - name: "Regression test: Shallow water lagrangian dynamics on D-grid (D_SW) (on rank 0 only)"
-        if: always() # run even if Riemann Solver failed
-        env:
-          FV3_DACEMODE: BuildAndRun
-          NDSL_LOGLEVEL: Debug
-        run: |
-          rm -rf ./.gt_cache_FV3_A
-          pytest -v -s --data_path=./pyFV3/test_data/8.1.3/c12_6ranks_standard/dycore \
-              --backend=orch:dace:cpu:IJK --which_modules=D_SW --which_rank=0 \
-              --threshold_overrides_file=./pyFV3/tests/savepoint/translate/overrides/standard.yaml \
-              ./pyFV3/tests/savepoint
-
-      - name: "Regression test: Remapping (on rank 0 only)"
-        if: always() # run even if Riemann Solver or Shallow Water Solver failed
-        env:
-          FV3_DACEMODE: BuildAndRun
-          NDSL_LOGLEVEL: Debug
-        run: |
-          rm -rf ./.gt_cache_FV3_A
-          pytest -v -s --data_path=./pyFV3/test_data/8.1.3/c12_6ranks_standard/dycore \
-              --backend=orch:dace:cpu:IJK --which_modules=Remapping --which_rank=0 \
-              --threshold_overrides_file=./pyFV3/tests/savepoint/translate/overrides/standard.yaml \
-              ./pyFV3/tests/savepoint
+    - name: "Regression test: ${{ matrix.name }}"
+      env:
+        FV3_DACEMODE: BuildAndRun
+        NDSL_LOGLEVEL: Debug
+      run: |
+        pytest -v -s --data_path=./pyFV3/test_data/8.1.3/c12_6ranks_standard/dycore \
+            --backend=orch:dace:cpu:KIJ --which_modules=${{ matrix.module }} \
+            ${{ matrix.extra_args }} \
+            --threshold_overrides_file=./pyFV3/tests/savepoint/translate/overrides/standard.yaml \
+            ./pyFV3/tests/savepoint

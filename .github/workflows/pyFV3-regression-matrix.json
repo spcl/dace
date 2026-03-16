@@ -1,0 +1,20 @@
+[
+    {
+        "name":"Shallow water lagrangian dynamics on D-grid (D_SW) (on rank 0 only)",
+        "archive":"8.1.3_c12_6ranks_standard.D_SW.tar.gz",
+        "module":"D_SW",
+        "extra_args":"--which_rank=0"
+    },
+    {
+        "name":"Riemann Solver on D-grid (RiemSolver3)",
+        "archive":"8.1.3_c12_6ranks_standard.RiemSolver3.tar.gz",
+        "module":"Riem_Solver3",
+        "extra_args":"--which_rank=0"
+    },
+    {
+        "name":"Remapping (on rank 0 only)",
+        "archive":"8.1.3_c12_6ranks_standard.Remapping.tar.gz",
+        "module":"Remapping",
+        "extra_args":"--which_rank=0"
+    }
+]
