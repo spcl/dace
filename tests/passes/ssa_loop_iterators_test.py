@@ -94,8 +94,9 @@ def test_loop_var_reconstruction():
     sdfg.validate()
 
     # Check that a reconstruction state was added
-    reconstruction_states = [s for s in sdfg.all_states()
-                             if hasattr(s, 'label') and 'SSA_loop_var_reconstruction' in s.label]
+    reconstruction_states = [
+        s for s in sdfg.all_states() if hasattr(s, 'label') and 'SSA_loop_var_reconstruction' in s.label
+    ]
     assert len(reconstruction_states) == 1, f"Expected 1 reconstruction state, found {len(reconstruction_states)}"
 
     # Check that assignment is correct
@@ -108,7 +109,9 @@ def test_loop_var_reconstruction():
 
     assignments = out_edges[0].data.assignments
     assert 'i' in assignments, f"Expected assignment to 'i', got {assignments}"
-    assert str(assignments['i']) == f"({(str(loop_analysis.get_loop_end(loop)))})", f"Expected loop end assignment, got {assignments['i']}"
+    assert str(
+        assignments['i']
+    ) == f"({(str(loop_analysis.get_loop_end(loop)))})", f"Expected loop end assignment, got {assignments['i']}"
 
     # Verify correctness
     A = np.zeros(10)
