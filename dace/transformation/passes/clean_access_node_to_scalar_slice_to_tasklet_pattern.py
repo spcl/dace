@@ -28,6 +28,12 @@ class CleanAccessNodeToScalarSliceToTaskletPattern(ppl.Pass):
             return None, None, None
 
         for e1 in state.out_edges(access_node):
+            if e1.data is None or e1.data.subset is None:
+                continue
+
+            if e1.data.wcr is not None:
+                continue
+
             an2 = e1.dst
             if not isinstance(an2, dace.nodes.AccessNode):
                 continue
@@ -103,7 +109,16 @@ class CleanAccessNodeToScalarSliceToTaskletPattern(ppl.Pass):
                         ie = ies[0]
                         assert oe.dst == tasklet
                         state.remove_node(an2)
-                        state.add_edge(ie.src, ie.src_conn, oe.dst, oe.dst_conn, copy.deepcopy(ie.data))
+
+                        # find correct subset
+                        if ie.data == an1.data:
+                            new_subset = copy.deepcopy(ie.data.subset)
+                        else:
+                            assert ie.data == an2.data
+                            assert ie.data.other_subset is not None
+                            new_subset = copy.deepcopy(ie.data.other_subset)
+                        state.add_edge(ie.src, ie.src_conn, oe.dst, oe.dst_conn, 
+                                       dace.memlet.Memlet(an1.data, new_subset))
 
     def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
         self._apply_recursive(sdfg)
