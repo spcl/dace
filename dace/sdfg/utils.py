@@ -1859,7 +1859,11 @@ def _tswds_cf_region(
                     yield from _tswds_cf_region(sdfg, edge.src, symbols, recursive)
 
             # Add edge symbols into defined symbols
-            issyms = edge.data.new_symbols(sdfg, symbols)
+            try:
+                issyms = edge.data.new_symbols(sdfg, symbols)
+            except Exception as e:
+                print(f"Error while getting new symbols from edge {edge} in region {region}: {e}")
+                raise Exception(e)
             symbols.update({k: v for k, v in issyms.items() if v is not None})
 
             # Destination
