@@ -140,52 +140,61 @@ class SplitArray(ppl.Pass):
     # ------------------------------------------------------------------ #
     #  Phase 0: Unroll loops/maps over split dimensions
     # ------------------------------------------------------------------ #
-
     def _unroll_loops_that_depend_only_on_split_dimensions(self, sdfg: dace.SDFG):
         """Unroll maps and loops whose iteration range matches a split-dimension extent.
-
         After ``replace_dict``, extents that depended only on split symbols become
         concrete integers. We unroll one at a time and rescan, because each
         unroll mutates the graph and invalidates node references.
         """
-        # Snapshot shapes before symbols are replaced with constants
         assert self._array_dim_map, "Expected _array_dim_map to be populated before unrolling loops/maps"
-
         sdfg.replace_dict(self._symbol_map)
         potential_ranges = set(self._symbol_map.values())
-        print(f"Potential ranges: {potential_ranges}")
-        print("Call unroll")
 
-        # Find-one-and-unroll loop: rescan after every mutation
         while True:
             target = None
+            target_extent = None
+
             for n, g in sdfg.all_nodes_recursive():
                 if isinstance(n, dace.nodes.MapEntry):
-                    all_valid = True
+                    has_split_dim = False
                     for _, r in zip(n.map.params, n.map.range):
                         extent = ((r[1] + 1) - r[0]) // r[2]
-                        if int(extent) in potential_ranges:
-                            all_valid = False
+                        if extent.free_symbols:
+                            continue
+                        try:
+                            val = int(extent)
+                        except (TypeError, ValueError):
+                            continue
+                        if val in potential_ranges:
+                            has_split_dim = True
+                            target_extent = val
                             break
-                    if all_valid:
+                    if has_split_dim:
                         target = ("map", n, g)
                         break
+
                 elif isinstance(n, LoopRegion):
                     beg = loop_analysis.get_init_assignment(n)
                     end = loop_analysis.get_loop_end(n)
                     step = loop_analysis.get_loop_stride(n)
-                    print(beg, end, step)
                     if beg is None or end is None or step is None:
                         continue
                     extent = ((end + 1) - beg) // step
-                    print(extent, )
-                    if not extent.free_symbols and int(extent) in potential_ranges:
+                    if extent.free_symbols:
+                        continue
+                    try:
+                        val = int(extent)
+                    except (TypeError, ValueError):
+                        continue
+                    if val in potential_ranges:
                         target = ("loop", n, g)
+                        target_extent = val
                         break
+
             if target is None:
                 break
+
             kind, n, g = target
-            print(f"Unroll {n} with extent {extent} in {g}")
             if kind == "map":
                 MapUnroll().apply_to(sdfg=g.sdfg, options={}, map_entry=n)
             else:
