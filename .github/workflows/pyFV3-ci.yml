@@ -42,8 +42,7 @@ jobs:
     - name: Checkout pyFV3
       uses: actions/checkout@v6
       with:
-            repository: 'romanc/pyFV3' # TODO: revert to `NOAA-GFDL/pyFV3`
-            ref: romanc/backend-translate-overrides # TODO: remove once merged
+            repository: 'NOAA-GFDL/pyFV3'
             submodules: 'recursive'
             path: 'pyFV3'
 
