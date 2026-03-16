@@ -3030,39 +3030,41 @@ class SDFG(ControlFlowRegion):
                            internal _nx iteration order.
         :param visited: A set of memory addresses (IDs) of already processed SDFGs.
                         Used internally to prevent infinite recursion in the event
-                        of cyclic nested SDFG references.
+                        of cyclic nested SDFG references. Also serves as the signal
+                        for the top-level entry point: the node key cache is only
+                        cleared when ``visited`` is ``None`` (i.e., on the first call),
+                        not on recursive calls into nested SDFGs where parent keys
+                        are still valid.
         """
+        # Avoid import loops
+        from dace.sdfg.utils import sort_graph_dicts_alphabetically, _node_key_cache
+
         if visited is None:
             visited = set()
+            # Only clear the cache at the top-level entry point, not on
+            # recursive calls into nested SDFGs where parent keys are
+            # still valid.
+            _node_key_cache.clear()
 
         # Cycle prevention for recursive nested SDFGs
         if id(self) in visited:
             return
         visited.add(id(self))
 
-        # Avoid import loops
-        from dace.sdfg.utils import sort_graph_dicts_alphabetically, get_deterministic_node_key
-
-        # Invalidate the node key cache before each full sort pass to prevent
-        # stale keys from a previous SDFG state being reused after transformations
-        # have modified the graph structure.
-        if hasattr(get_deterministic_node_key, '__defaults__'):
-            get_deterministic_node_key.__defaults__[0].clear()
-
         # 1. Stabilize Global Metadata (Arrays, Symbols, Constants)
         for attr in ['_arrays', 'symbols', 'constants_prop']:
             if hasattr(self, attr):
                 val = getattr(self, attr)
-                # Ensure the attribute exists, is dict-like, and supports pop
-                if val and hasattr(val, 'keys') and hasattr(val, 'pop'):
-                    # Cast keys to a list to safely iterate while mutating the dict
-                    for k in sorted(list(val.keys())):
-                        val[k] = val.pop(k)
+                # Ensure the attribute exists, is dict-like, and supports clear/update
+                if val and hasattr(val, 'keys') and hasattr(val, 'clear'):
+                    sorted_items = sorted(val.items(), key=lambda item: item[0])
+                    val.clear()
+                    val.update(sorted_items)
 
         # 2. Stabilize the top-level State Machine (States and Interstate edges)
         sort_graph_dicts_alphabetically(self, rebuild_nx=rebuild_nx)
 
-        # 3. Stabilize the Dataflow inside each State
+        # 3. Stabilize the Dataflow inside each State and recurse into Nested SDFGs
         for state in self.nodes():
             sort_graph_dicts_alphabetically(state, rebuild_nx=rebuild_nx)
 

@@ -2766,17 +2766,34 @@ def expand_nodes(sdfg: SDFG, predicate: Callable[[nd.Node], bool]):
             states.append(state)
 
 
-# Pre-compile the regex for performance since it will be called thousands of times
-# Strips:
-# 1. Memory addresses (0x...)
-# 2. Full UUIDs (with hyphens, underscores, or flat hex)
-# 3. Partial UUIDs / Short hashes appended at the end (e.g., _a1b2c3d4)
-VOLATILE_STR_REGEX = re.compile(
-    r'(0x[0-9a-fA-F]+|_?[0-9a-fA-F]{8}[-_]?[0-9a-fA-F]{4}[-_]?[0-9a-fA-F]{4}[-_]?[0-9a-fA-F]{4}[-_]?[0-9a-fA-F]{12}|_[0-9a-fA-F]{8}$)'
-)
+# Module-level cache for node keys, cleared at the start of each
+# sort_sdfg_alphabetically() call to prevent stale entries after
+# transformations modify the graph structure. Keyed by id(node).
+_node_key_cache: Dict[int, str] = {}
 
 
-def get_deterministic_node_key(node: Any, _cache: Dict[int, str] = {}) -> str:
+def _resolve_degree(node: Any, attr: str) -> int:
+    """
+    Safely resolves in_degree or out_degree from a node, handling both
+    the case where it is a plain attribute (int) and where it is a bound
+    method (as on NetworkX nodes or DaCe Graph objects).
+
+    :param node: The graph node to inspect.
+    :param attr: The attribute name ('in_degree' or 'out_degree').
+    :return: The integer degree value, or 0 if the attribute is absent.
+    """
+    val = getattr(node, attr, None)
+    if val is None:
+        return 0
+    if callable(val):
+        try:
+            return val()
+        except TypeError:
+            return 0
+    return val
+
+
+def get_deterministic_node_key(node: Any) -> str:
     """
     Generates a highly stable, deterministic string key for DaCe graph nodes
     based on their semantic properties rather than memory locations.
@@ -2787,7 +2804,7 @@ def get_deterministic_node_key(node: Any, _cache: Dict[int, str] = {}) -> str:
     collisions are resolved deterministically.
 
     The generated key incorporates:
-        - Node type and cleaned label (stripping UUIDs and hex addresses)
+        - Node type and label
         - Graph topology (in-degree and out-degree)
         - Interface semantics (in/out connectors)
         - Loop and memory semantics (map parameters, schedules, access types)
@@ -2800,28 +2817,23 @@ def get_deterministic_node_key(node: Any, _cache: Dict[int, str] = {}) -> str:
 
     :param node: The DaCe graph node (e.g., Tasklet, AccessNode, MapEntry)
                  to be evaluated.
-    :param _cache: Internal mutable default dict used as an identity-based
-                   cache. Cleared between sort passes to avoid stale keys.
     :return: A stable string representing the node's semantic identity.
     """
     node_id = id(node)
-    if node_id in _cache:
-        return _cache[node_id]
+    if node_id in _node_key_cache:
+        return _node_key_cache[node_id]
 
     node_type = type(node).__name__
 
     # Extract core identifier
     raw_label = getattr(node, 'data', getattr(node, 'label', str(node)))
 
-    # Strip volatile metadata
-    clean_label = VOLATILE_STR_REGEX.sub('', str(raw_label))
-
-    parts = [node_type, clean_label]
+    parts = [node_type, str(raw_label)]
 
     # 1. Topological Context
-    in_degree = getattr(node, 'in_degree', 0)
-    out_degree = getattr(node, 'out_degree', 0)
-    parts.append(f"i{in_degree}o{out_degree}")
+    in_deg = _resolve_degree(node, 'in_degree')
+    out_deg = _resolve_degree(node, 'out_degree')
+    parts.append(f"i{in_deg}o{out_deg}")
 
     # 2. Interface Semantics (Connectors for Tasklets / NestedSDFGs)
     if hasattr(node, 'in_connectors') and node.in_connectors:
@@ -2852,7 +2864,7 @@ def get_deterministic_node_key(node: Any, _cache: Dict[int, str] = {}) -> str:
         parts.append(f"nsdfg_states:{len(node.sdfg.nodes())}")
 
     result = "_".join(parts)
-    _cache[node_id] = result
+    _node_key_cache[node_id] = result
     return result
 
 
@@ -2862,8 +2874,7 @@ def get_deterministic_edge_key(edge: Any) -> str:
     deterministic sorting.
 
     This function extracts the semantic connection points (connectors)
-    and the data payload (Memlets or Interstate conditions), explicitly
-    stripping volatile memory addresses and generated UUIDs to prevent
+    and the data payload (Memlets or Interstate conditions) to prevent
     non-deterministic compiler graph traversals.
 
     :param edge: The DaCe graph edge (or InterstateEdge) to be evaluated.
@@ -2874,16 +2885,11 @@ def get_deterministic_edge_key(edge: Any) -> str:
     raw_dst_conn = str(getattr(edge, 'dst_conn', ''))
     raw_data_str = str(getattr(edge, 'data', ''))
 
-    # 2. Strip volatile hashes/addresses from connectors and payload
-    clean_src_conn = VOLATILE_STR_REGEX.sub('', raw_src_conn)
-    clean_dst_conn = VOLATILE_STR_REGEX.sub('', raw_dst_conn)
-    clean_data_str = VOLATILE_STR_REGEX.sub('', raw_data_str)
-
-    # 3. Retrieve the stabilized keys for the source and destination nodes
+    # 2. Retrieve the stabilized keys for the source and destination nodes
     src_key = get_deterministic_node_key(edge.src)
     dst_key = get_deterministic_node_key(edge.dst)
 
-    return f"{src_key}[{clean_src_conn}]->{dst_key}[{clean_dst_conn}]({clean_data_str})"
+    return f"{src_key}[{raw_src_conn}]->{dst_key}[{raw_dst_conn}]({raw_data_str})"
 
 
 def sort_graph_dicts_alphabetically(graph: Any, rebuild_nx: bool = False) -> None:
@@ -2915,26 +2921,25 @@ def sort_graph_dicts_alphabetically(graph: Any, rebuild_nx: bool = False) -> Non
     """
     # 1. Sort the master Nodes dictionary
     if hasattr(graph, '_nodes'):
-        sorted_nodes = sorted(graph._nodes.keys(), key=get_deterministic_node_key)
-        for k in sorted_nodes:
-            # Pop and re-insert to enforce deterministic insertion order
-            graph._nodes[k] = graph._nodes.pop(k)
+        sorted_node_items = sorted(graph._nodes.items(), key=lambda item: get_deterministic_node_key(item[0]))
+        graph._nodes.clear()
+        graph._nodes.update(sorted_node_items)
 
         # 2. Sort the nested adjacency lists (In/Out Edges) within each node
         for node, (in_edges, out_edges) in graph._nodes.items():
-            sorted_in = sorted(in_edges.keys(), key=lambda k: get_deterministic_edge_key(in_edges[k]))
-            for e_key in sorted_in:
-                in_edges[e_key] = in_edges.pop(e_key)
+            sorted_in_items = sorted(in_edges.items(), key=lambda item: get_deterministic_edge_key(item[1]))
+            in_edges.clear()
+            in_edges.update(sorted_in_items)
 
-            sorted_out = sorted(out_edges.keys(), key=lambda k: get_deterministic_edge_key(out_edges[k]))
-            for e_key in sorted_out:
-                out_edges[e_key] = out_edges.pop(e_key)
+            sorted_out_items = sorted(out_edges.items(), key=lambda item: get_deterministic_edge_key(item[1]))
+            out_edges.clear()
+            out_edges.update(sorted_out_items)
 
     # 3. Sort the master Edges dictionary
     if hasattr(graph, '_edges'):
-        sorted_edge_keys = sorted(graph._edges.keys(), key=lambda k: get_deterministic_edge_key(graph._edges[k]))
-        for e_key in sorted_edge_keys:
-            graph._edges[e_key] = graph._edges.pop(e_key)
+        sorted_edge_items = sorted(graph._edges.items(), key=lambda item: get_deterministic_edge_key(item[1]))
+        graph._edges.clear()
+        graph._edges.update(sorted_edge_items)
 
     # 4. Optionally rebuild the NetworkX backend to match the new deterministic order
     if rebuild_nx and hasattr(graph, '_nx'):
