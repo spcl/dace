@@ -1,4 +1,5 @@
 import dace
+from dace.sdfg.state import MultiConnectorEdge
 from dace.transformation import pass_pipeline as ppl
 from dace.sdfg import utils as sdutil
 from typing import Optional, Set, Dict
@@ -21,50 +22,49 @@ class CleanAccessNodeToScalarSliceToTaskletPattern(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def _check_pattern(self, state: dace.SDFGState, access_node: dace.nodes.AccessNode, used_elsewhere: Set[str]):
+    def _check_pattern(self, state: dace.SDFGState, out_edge: MultiConnectorEdge[dace.Memlet], access_node: dace.nodes.AccessNode, used_elsewhere: Set[str]):
         sdfg = state.sdfg
 
         if not isinstance(access_node, dace.nodes.AccessNode):
             return None, None, None
 
-        for e1 in state.out_edges(access_node):
-            if e1.data is None or e1.data.subset is None:
-                continue
+        e1 = out_edge
+        if e1.data is None or e1.data.subset is None:
+            return None, None, None
 
-            if e1.data.wcr is not None:
-                continue
+        if e1.data.wcr is not None:
+            return None, None, None
 
-            an2 = e1.dst
-            if not isinstance(an2, dace.nodes.AccessNode):
-                continue
+        an2 = e1.dst
+        if not isinstance(an2, dace.nodes.AccessNode):
+            return None, None, None
 
-            desc = sdfg.arrays.get(an2.data)
-            if desc is None or not desc.transient:
-                continue
+        desc = sdfg.arrays.get(an2.data)
+        if desc is None or not desc.transient:
+            return None, None, None
 
-            if not (isinstance(desc, dace.data.Scalar) or
-                    (isinstance(desc, dace.data.Array) and len(desc.shape) == 1 and desc.total_size == 1)):
-                continue
+        if not (isinstance(desc, dace.data.Scalar) or
+                (isinstance(desc, dace.data.Array) and len(desc.shape) == 1 and desc.total_size == 1)):
+            return None, None, None
 
-            if state.in_degree(an2) != 1 or state.out_degree(an2) != 1:
-                continue
+        if state.in_degree(an2) != 1 or state.out_degree(an2) != 1:
+            return None, None, None
 
-            e2 = state.out_edges(an2)[0]
-            tasklet = e2.dst
-            if not isinstance(tasklet, dace.nodes.Tasklet):
-                continue
+        e2 = state.out_edges(an2)[0]
+        tasklet = e2.dst
+        if not isinstance(tasklet, dace.nodes.Tasklet):
+            return None, None, None
 
-            if e2.data.subset != dace.subsets.Range([(0, 0, 1)]):
-                continue
+        if e2.data.subset != dace.subsets.Range([(0, 0, 1)]):
+            return None, None, None
 
-            # Do not remove if the scalar is read or written in any other state
-            if not self.permissive:
-                if an2.data in used_elsewhere:
-                    continue
+        # Do not remove if the scalar is read or written in any other state
+        if not self.permissive:
+            if an2.data in used_elsewhere:
+                return None, None, None
 
-            return access_node, an2, tasklet
+        return access_node, an2, tasklet
 
-        return None, None, None
 
     def _collect_other_state_data(self, sdfg: dace.SDFG, current_state: dace.SDFGState) -> Set[str]:
         """Collect all data names that appear in any state other than current_state."""
@@ -91,7 +91,7 @@ class CleanAccessNodeToScalarSliceToTaskletPattern(ppl.Pass):
             if not self.permissive:
                 used_elsewhere = {name for name, states in global_data.items() if states - {state}}
             else:
-                used_elsewhere = dict()
+                used_elsewhere = set()
 
             pre_transform_state_nodes = list(state.nodes())
             for node in pre_transform_state_nodes:
@@ -100,25 +100,28 @@ class CleanAccessNodeToScalarSliceToTaskletPattern(ppl.Pass):
                 if isinstance(node, dace.nodes.NestedSDFG):
                     self._apply_recursive(node.sdfg)
                 else:
-                    an1, an2, tasklet = self._check_pattern(state, node, used_elsewhere)
-                    if an1 is not None and an2 is not None and tasklet is not None:
-                        ies = state.in_edges(an2)
-                        oes = state.out_edges(an2)
-                        assert len(oes) == 1 and len(ies) == 1
-                        oe = oes[0]
-                        ie = ies[0]
-                        assert oe.dst == tasklet
-                        state.remove_node(an2)
+                    for e in state.out_edges(node):
+                        an1, an2, tasklet = self._check_pattern(state, e, node, used_elsewhere)
+                        if an1 is not None and an2 is not None and tasklet is not None:
+                            ies = state.in_edges(an2)
+                            oes = state.out_edges(an2)
+                            assert len(oes) == 1 and len(ies) == 1
+                            oe = oes[0]
+                            ie = ies[0]
+                            assert oe.dst == tasklet
+                            state.remove_node(an2)
 
-                        # find correct subset
-                        if ie.data.data == an1.data:
-                            new_subset = copy.deepcopy(ie.data.subset)
-                        else:
-                            assert ie.data.data == an2.data
-                            assert ie.data.other_subset is not None
-                            new_subset = copy.deepcopy(ie.data.other_subset)
-                        state.add_edge(ie.src, ie.src_conn, oe.dst, oe.dst_conn, 
-                                       dace.memlet.Memlet(an1.data, new_subset))
+                            # find correct subset
+                            if ie.data.data == an1.data:
+                                new_subset = copy.deepcopy(ie.data.subset)
+                            else:
+                                assert ie.data.data == an2.data
+                                assert ie.data.other_subset is not None
+                                new_subset = copy.deepcopy(ie.data.other_subset)
+                            state.add_edge(ie.src, ie.src_conn, oe.dst, oe.dst_conn, 
+                                        dace.memlet.Memlet(data=an1.data, subset=new_subset))
 
     def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
+        # TODO: add a test involving other subset and then one not involving
+        # TODO: Add a test for multiple edges come out from the src
         self._apply_recursive(sdfg)
