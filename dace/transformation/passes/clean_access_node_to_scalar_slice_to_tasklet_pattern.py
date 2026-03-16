@@ -111,10 +111,10 @@ class CleanAccessNodeToScalarSliceToTaskletPattern(ppl.Pass):
                         state.remove_node(an2)
 
                         # find correct subset
-                        if ie.data == an1.data:
+                        if ie.data.data == an1.data:
                             new_subset = copy.deepcopy(ie.data.subset)
                         else:
-                            assert ie.data == an2.data
+                            assert ie.data.data == an2.data
                             assert ie.data.other_subset is not None
                             new_subset = copy.deepcopy(ie.data.other_subset)
                         state.add_edge(ie.src, ie.src_conn, oe.dst, oe.dst_conn, 
