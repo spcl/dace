@@ -1,9 +1,7 @@
-# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-
 from dace.transformation import pass_pipeline as ppl
 from dace.sdfg import utils as sdutil
-from typing import Optional
+from typing import Optional, Set, Dict
 import copy
 from dace.transformation.transformation import explicit_cf_compatible
 
@@ -11,73 +9,93 @@ from dace.transformation.transformation import explicit_cf_compatible
 @dace.properties.make_properties
 @explicit_cf_compatible
 class CleanAccessNodeToScalarSliceToTaskletPattern(ppl.Pass):
+    permissive = dace.properties.Property(
+        dtype=bool, default=False, desc="If permissive the pass does not check if scalar is used in other states")
+
+    def __init__(self, permissive: bool = False):
+        self.permissive = permissive
+
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.AccessNodes | ppl.Modifies.Memlets
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def _check_pattern(self, state: dace.SDFGState, access_node: dace.nodes.AccessNode):
-        # Requirements:
-        # Path exists: an1 (access_node) -> an2 -> tasklet
-        # In and out degree of an2 is 1
-        # an2 is scalar or array of length 1, also transient
-        # an2 access susbet is [0]
-        # Optional: should check if it is reused
+    def _check_pattern(self, state: dace.SDFGState, access_node: dace.nodes.AccessNode, used_elsewhere: Set[str]):
         sdfg = state.sdfg
 
-        # an1 must be an AccessNode
         if not isinstance(access_node, dace.nodes.AccessNode):
             return None, None, None
 
-        # For each successor of an1, check if it's a candidate an2
         for e1 in state.out_edges(access_node):
             an2 = e1.dst
             if not isinstance(an2, dace.nodes.AccessNode):
                 continue
 
-            # an2 must be transient
             desc = sdfg.arrays.get(an2.data)
             if desc is None or not desc.transient:
                 continue
 
-            # an2 must be scalar or array of total size 1
-            if not (isinstance(desc, dace.data.Scalar) or (isinstance(desc, dace.data.Array) and len(desc.shape) == 1 and desc.total_size == 1)):
+            if not (isinstance(desc, dace.data.Scalar) or
+                    (isinstance(desc, dace.data.Array) and len(desc.shape) == 1 and desc.total_size == 1)):
                 continue
 
-            # an2 must have exactly one incoming and one outgoing edge
             if state.in_degree(an2) != 1 or state.out_degree(an2) != 1:
                 continue
 
-            # The outgoing edge of an2 must go to a Tasklet
             e2 = state.out_edges(an2)[0]
             tasklet = e2.dst
             if not isinstance(tasklet, dace.nodes.Tasklet):
                 continue
 
-            # an2's access subset (on the outgoing edge) should be [0]
-            if e2.data.subset != dace.subsets.Range([(0,0,1)]):
+            if e2.data.subset != dace.subsets.Range([(0, 0, 1)]):
                 continue
+
+            # Do not remove if the scalar is read or written in any other state
+            if not self.permissive:
+                if an2.data in used_elsewhere:
+                    continue
 
             return access_node, an2, tasklet
 
         return None, None, None
 
-    def _apply_recursive(self, sdfg: dace.SDFG):
-        # TODO: Implement a check for when the scalar is reused later
+    def _collect_other_state_data(self, sdfg: dace.SDFG, current_state: dace.SDFGState) -> Set[str]:
+        """Collect all data names that appear in any state other than current_state."""
+        names = set()
         for state in sdfg.all_states():
-            pre_transform_state_nodes = state.nodes()
+            if state is current_state:
+                continue
+            for dn in state.data_nodes():
+                names.add(dn.data)
+        return names
+
+    def _apply_recursive(self, sdfg: dace.SDFG):
+        # Pre-compute per-state: which data names appear in other states
+        all_states = list(sdfg.all_states())
+        # Global set of all data names across all states
+        if not self.permissive:
+            global_data: Dict[str, Set[dace.SDFGState]] = {}
+            for state in all_states:
+                for dn in state.data_nodes():
+                    global_data.setdefault(dn.data, set()).add(state)
+
+        for state in all_states:
+            # Data names used in at least one other state
+            if not self.permissive:
+                used_elsewhere = {name for name, states in global_data.items() if states - {state}}
+            else:
+                used_elsewhere = dict()
+
+            pre_transform_state_nodes = list(state.nodes())
             for node in pre_transform_state_nodes:
-                # Might be already removed
                 if node not in state.nodes():
                     continue
                 if isinstance(node, dace.nodes.NestedSDFG):
                     self._apply_recursive(node.sdfg)
                 else:
-                    # Look for the pattern
-                    an1, an2, tasklet = self._check_pattern(state, node)
+                    an1, an2, tasklet = self._check_pattern(state, node, used_elsewhere)
                     if an1 is not None and an2 is not None and tasklet is not None:
-                        # Remove an2, rewrite to tasklet
                         ies = state.in_edges(an2)
                         oes = state.out_edges(an2)
                         assert len(oes) == 1 and len(ies) == 1
@@ -87,7 +105,5 @@ class CleanAccessNodeToScalarSliceToTaskletPattern(ppl.Pass):
                         state.remove_node(an2)
                         state.add_edge(ie.src, ie.src_conn, oe.dst, oe.dst_conn, copy.deepcopy(ie.data))
 
-
     def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
         self._apply_recursive(sdfg)
-
