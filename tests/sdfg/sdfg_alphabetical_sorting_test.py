@@ -1,4 +1,3 @@
-import copy
 import random
 
 import dace
@@ -55,19 +54,19 @@ def _snapshot_order(sdfg):
     result.append(('arrays', tuple(sdfg._arrays.keys())))
 
     # State machine
-    state_node_keys = tuple(get_deterministic_node_key(n) for n in sdfg._nodes.keys())
+    state_node_keys = tuple(get_deterministic_node_key(n, graph=sdfg) for n in sdfg._nodes.keys())
     result.append(('sdfg_nodes', state_node_keys))
 
     # Dataflow per state
     for i, state in enumerate(sdfg.nodes()):
-        node_keys = tuple(get_deterministic_node_key(n) for n in state._nodes.keys())
-        edge_keys = tuple(get_deterministic_edge_key(state._edges[k]) for k in state._edges.keys())
+        node_keys = tuple(get_deterministic_node_key(n, graph=state) for n in state._nodes.keys())
+        edge_keys = tuple(get_deterministic_edge_key(state._edges[k], graph=state) for k in state._edges.keys())
         result.append((f'state_{i}_nodes', node_keys))
         result.append((f'state_{i}_edges', edge_keys))
 
         for j, (node, (in_edges, out_edges)) in enumerate(state._nodes.items()):
-            in_keys = tuple(get_deterministic_edge_key(in_edges[k]) for k in in_edges.keys())
-            out_keys = tuple(get_deterministic_edge_key(out_edges[k]) for k in out_edges.keys())
+            in_keys = tuple(get_deterministic_edge_key(in_edges[k], graph=state) for k in in_edges.keys())
+            out_keys = tuple(get_deterministic_edge_key(out_edges[k], graph=state) for k in out_edges.keys())
             result.append((f'state_{i}_node_{j}_in', in_keys))
             result.append((f'state_{i}_node_{j}_out', out_keys))
 
@@ -107,12 +106,12 @@ def test_sdfg_alphabetical_sorting_basic():
 
     # Assert that graph nodes are sorted
     node_keys = list(state._nodes.keys())
-    expected_node_keys = sorted(node_keys, key=get_deterministic_node_key)
+    expected_node_keys = sorted(node_keys, key=lambda n: get_deterministic_node_key(n, graph=state))
     assert node_keys == expected_node_keys, "Graph nodes were not deterministically sorted!"
 
     # Assert that graph edges are sorted
     edge_keys = list(state._edges.keys())
-    expected_edge_keys = sorted(edge_keys, key=lambda k: get_deterministic_edge_key(state._edges[k]))
+    expected_edge_keys = sorted(edge_keys, key=lambda k: get_deterministic_edge_key(state._edges[k], graph=state))
     assert edge_keys == expected_edge_keys, "Graph edges were not deterministically sorted!"
 
     # Assert that metadata dicts are sorted
@@ -122,11 +121,11 @@ def test_sdfg_alphabetical_sorting_basic():
     # Assert that per-node adjacency lists are sorted
     for node, (in_edges, out_edges) in state._nodes.items():
         in_keys = list(in_edges.keys())
-        expected_in = sorted(in_keys, key=lambda k: get_deterministic_edge_key(in_edges[k]))
+        expected_in = sorted(in_keys, key=lambda k: get_deterministic_edge_key(in_edges[k], graph=state))
         assert in_keys == expected_in, f"In-edges for {node} were not deterministically sorted!"
 
         out_keys = list(out_edges.keys())
-        expected_out = sorted(out_keys, key=lambda k: get_deterministic_edge_key(out_edges[k]))
+        expected_out = sorted(out_keys, key=lambda k: get_deterministic_edge_key(out_edges[k], graph=state))
         assert out_keys == expected_out, f"Out-edges for {node} were not deterministically sorted!"
 
 
@@ -194,17 +193,60 @@ def test_sdfg_alphabetical_sorting_idempotency():
     assert snapshot_first == snapshot_second, ("Sorting is not idempotent! Second sort produced a different order.")
 
 
+def _build_multistate_test_sdfg():
+    """Build an SDFG with multiple states and interstate edges to exercise
+    ControlFlowRegion sorting paths."""
+    sdfg = dace.SDFG('multistate_test')
+    sdfg.add_array('A', [10], dace.float64)
+    sdfg.add_array('B', [10], dace.float64)
+    sdfg.add_scalar('s', dace.float64, transient=True)
+
+    state0 = sdfg.add_state('init')
+    state1 = sdfg.add_state('compute')
+    state2 = sdfg.add_state('finalize')
+
+    # Add interstate edges
+    sdfg.add_edge(state0, state1, dace.InterstateEdge())
+    sdfg.add_edge(state1, state2, dace.InterstateEdge())
+
+    # Add dataflow in the compute state
+    a = state1.add_read('A')
+    b = state1.add_write('B')
+    tasklet = state1.add_tasklet('work', {'a'}, {'b'}, 'b = a * 2')
+    state1.add_edge(a, None, tasklet, 'a', dace.Memlet.from_array('A', sdfg.arrays['A']))
+    state1.add_edge(tasklet, 'b', b, None, dace.Memlet.from_array('B', sdfg.arrays['B']))
+
+    return sdfg
+
+
+def test_sdfg_alphabetical_sorting_multistate():
+    """
+    Tests that an SDFG with multiple states and interstate edges is
+    sorted correctly at both the state machine and dataflow levels.
+    Exercises the all_control_flow_regions() / all_states() paths.
+    """
+    reference_snapshot = None
+
+    for seed in range(10):
+        sdfg = _build_multistate_test_sdfg()
+
+        random.seed(seed)
+        _scramble_sdfg(sdfg)
+
+        sdfg.sort_sdfg_alphabetically()
+
+        snapshot = _snapshot_order(sdfg)
+
+        if reference_snapshot is None:
+            reference_snapshot = snapshot
+        else:
+            assert snapshot == reference_snapshot, (f"Multi-state sort produced different order with seed={seed}! "
+                                                    f"Expected:\n{reference_snapshot}\nGot:\n{snapshot}")
+
+
 if __name__ == "__main__":
     test_sdfg_alphabetical_sorting_basic()
-    print("PASSED: test_sdfg_alphabetical_sorting_basic")
-
     test_sdfg_alphabetical_sorting_rebuild_nx()
-    print("PASSED: test_sdfg_alphabetical_sorting_rebuild_nx")
-
     test_sdfg_alphabetical_sorting_stability()
-    print("PASSED: test_sdfg_alphabetical_sorting_stability")
-
     test_sdfg_alphabetical_sorting_idempotency()
-    print("PASSED: test_sdfg_alphabetical_sorting_idempotency")
-
-    print("\nAll tests passed!")
+    test_sdfg_alphabetical_sorting_multistate()

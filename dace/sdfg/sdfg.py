@@ -3019,13 +3019,13 @@ class SDFG(ControlFlowRegion):
 
         The stabilization process executes in four phases:
             1. Global Metadata: Alphabetizes arrays, symbols, and constants.
-            2. State Machine: Sorts the top-level SDFG (States and Interstate Edges)
-               using semantic topological keys.
-            3. Dataflow: Sorts the internal nodes and memlet edges within every State.
-            4. Recursion: Recursively applies this stabilization to all Nested SDFGs.
-
-        This method is a no-op unless the ``compiler.sdfg_alphabetical_sorting`` configuration
-        option is set to ``True``.
+            2. Control Flow Regions: Sorts every ``ControlFlowRegion`` in this
+               SDFG (including the SDFG itself, ``LoopRegion``s,
+               ``ConditionalBlock``s, etc.) at the state machine level.
+            3. Dataflow: Sorts the internal nodes and memlet edges within every
+               ``SDFGState``.
+            4. Nested SDFGs: Recursively applies this stabilization to all
+               ``NestedSDFG`` nodes found in the states.
 
         :param rebuild_nx: If True, rebuilds the internal NetworkX graph in each
                            sorted graph. Default is False for performance, since
@@ -3033,30 +3033,22 @@ class SDFG(ControlFlowRegion):
                            internal _nx iteration order.
         :param visited: A set of memory addresses (IDs) of already processed SDFGs.
                         Used internally to prevent infinite recursion in the event
-                        of cyclic nested SDFG references. Also serves as the signal
-                        for the top-level entry point: the node key cache is only
-                        cleared when ``visited`` is ``None`` (i.e., on the first call),
-                        not on recursive calls into nested SDFGs where parent keys
-                        are still valid.
+                        of cyclic nested SDFG references.
         """
-        # Only perform sorting when deterministic code generation is enabled.
-        if not Config.get_bool('compiler', 'sdfg_alphabetical_sorting'):
-            return
-
         # Avoid import loops
-        from dace.sdfg.utils import sort_graph_dicts_alphabetically, _node_key_cache
+        from dace.sdfg.utils import sort_graph_dicts_alphabetically
 
         if visited is None:
             visited = set()
-            # Only clear the cache at the top-level entry point, not on
-            # recursive calls into nested SDFGs where parent keys are
-            # still valid.
-            _node_key_cache.clear()
 
         # Cycle prevention for recursive nested SDFGs
         if id(self) in visited:
             return
         visited.add(id(self))
+
+        # Stack-local cache, private to this sort invocation.
+        # Safe for concurrent SDFG processing — no global state.
+        _cache: Dict[int, tuple] = {}
 
         # 1. Stabilize Global Metadata (Arrays, Symbols, Constants)
         for attr in ['_arrays', 'symbols', 'constants_prop']:
@@ -3068,14 +3060,19 @@ class SDFG(ControlFlowRegion):
                     val.clear()
                     val.update(sorted_items)
 
-        # 2. Stabilize the top-level State Machine (States and Interstate edges)
-        sort_graph_dicts_alphabetically(self, rebuild_nx=rebuild_nx)
+        # 2. Stabilize all ControlFlowRegions (state machine level).
+        #    This includes the SDFG itself, plus any nested LoopRegions,
+        #    ConditionalBlocks, etc. — but does NOT recurse into nested SDFGs.
+        for cfr in self.all_control_flow_regions(recursive=False):
+            sort_graph_dicts_alphabetically(cfr, rebuild_nx=rebuild_nx, _cache=_cache)
 
-        # 3. Stabilize the Dataflow inside each State and recurse into Nested SDFGs
-        for state in self.nodes():
-            sort_graph_dicts_alphabetically(state, rebuild_nx=rebuild_nx)
+        # 3. Stabilize the Dataflow inside each SDFGState.
+        #    all_states() traverses into nested ControlFlowRegions but NOT
+        #    into nested SDFGs.
+        for state in self.all_states():
+            sort_graph_dicts_alphabetically(state, rebuild_nx=rebuild_nx, _cache=_cache)
 
             # 4. Recurse into Nested SDFGs
             for node in state.nodes():
-                if hasattr(node, 'sdfg') and node.sdfg is not None:
+                if isinstance(node, nd.NestedSDFG):
                     node.sdfg.sort_sdfg_alphabetically(rebuild_nx=rebuild_nx, visited=visited)

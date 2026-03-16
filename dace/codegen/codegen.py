@@ -245,8 +245,9 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
         for k, v in frame._dispatcher.instrumentation.items()
     }
 
-    # Sort SDFG dictionaries for deterministic pattern matching.
-    sdfg.sort_sdfg_alphabetically()
+    # Sort SDFG for deterministic code generation, if enabled.
+    if Config.get_bool('compiler', 'sdfg_alphabetical_sorting'):
+        sdfg.sort_sdfg_alphabetically()
 
     # NOTE: THE SDFG IS ASSUMED TO BE FROZEN (not change) FROM THIS POINT ONWARDS
 
