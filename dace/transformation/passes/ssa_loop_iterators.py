@@ -26,6 +26,7 @@ def replace_symbol_by_name(expr: sp.Basic, old_name: str, new: Union[str, sp.Bas
         return expr
     return expr.subs(repl)
 
+
 @dace.properties.make_properties
 @explicit_cf_compatible
 class SSALoopIterators(ppl.Pass):
@@ -53,19 +54,19 @@ class SSALoopIterators(ppl.Pass):
                     if to_repl:
                         v = node.symbol_mapping.pop(str(loop_var))
                         v_symexpr = dace.symbolic.SymExpr(v)
-                        node.symbol_mapping[str(next_ssa_loop_var)] = replace_symbol_by_name(v_symexpr, loop_var, next_ssa_loop_var)
-                    
+                        node.symbol_mapping[str(next_ssa_loop_var)] = replace_symbol_by_name(
+                            v_symexpr, loop_var, next_ssa_loop_var)
+
                     # Now we can replace what is inside
                     to_repl |= str(loop_var) in inner_sdfg.symbols
                     if to_repl:
                         self._repl_recursive(inner_sdfg, loop_var, next_ssa_loop_var)
 
-
     def _apply_recursive(self, sdfg: dace.SDFG):
         for cfg in sdfg.all_control_flow_regions():
             if isinstance(cfg, LoopRegion):
                 loop_var = cfg.loop_variable
-                loop_end = f"({loop_analysis.get_loop_end(cfg)})" # Inclusive
+                loop_end = f"({loop_analysis.get_loop_end(cfg)})"  # Inclusive
                 next_ssa_loop_var = f"{SSALoopIterators.FOR_IT_NAME}_{SSALoopIterators.loop_var_counter}"
                 # Replace loop variable with next_ssa_loop_var in the loop body,
                 # and assign loop_var = loop_end at the end of the loop
@@ -73,11 +74,11 @@ class SSALoopIterators(ppl.Pass):
 
                 # Assign to the variable after the loop end
                 parent_graph = cfg.parent_graph
-                parent_graph.add_state_after(cfg, f"SSA_loop_var_reconstruction_{SSALoopIterators.loop_var_counter}",
-                                            assignments={loop_var: loop_end})
+                parent_graph.add_state_after(cfg,
+                                             f"SSA_loop_var_reconstruction_{SSALoopIterators.loop_var_counter}",
+                                             assignments={loop_var: loop_end})
 
                 SSALoopIterators.loop_var_counter += 1
-
 
         for state in sdfg.all_states():
             for node in state.nodes():
