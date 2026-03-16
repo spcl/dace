@@ -1671,7 +1671,15 @@ def load_precompiled_sdfg(folder: str) -> csdfg.CompiledSDFG:
     :param folder: Path to SDFG output folder.
     :return: A callable CompiledSDFG object.
     """
-    sdfg = SDFG.from_file(os.path.join(folder, 'program.sdfgz'))
+    sdfg: SDFG | None = None
+    if os.path.exists(os.path.join(folder, 'program.sdfgz')):
+        sdfg = SDFG.from_file(os.path.join(folder, 'program.sdfgz'))
+    elif os.path.exists(os.path.join(folder, 'program.sdfg')):
+        # attempt to load uncompressed sdfg (backwards compatibility)
+        sdfg = SDFG.from_file(os.path.join(folder, 'program.sdfg'))
+    if sdfg is None:
+        raise ValueError(f"Pre-compiled SDFG not found in `{folder}`.")
+
     suffix = config.Config.get('compiler', 'library_extension')
     return csdfg.CompiledSDFG(
         sdfg,

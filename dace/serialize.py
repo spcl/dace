@@ -201,7 +201,9 @@ def loads(*args, context=None, **kwargs):
     return from_json(loaded, context)
 
 
-def dumps(*args, **kwargs):
+def dumps(*args, readable=False, **kwargs):
+    if readable:
+        return json.dumps(*args, default=to_json, indent=2, **kwargs)
     return json.dumps(*args, default=to_json, indent=None, separators=(',', ':'), **kwargs)
 
 
@@ -210,7 +212,9 @@ def load(*args, context=None, **kwargs):
     return from_json(loaded, context)
 
 
-def dump(*args, **kwargs):
+def dump(*args, readable=False, **kwargs):
+    if readable:
+        return json.dump(*args, default=to_json, indent=2, **kwargs)
     return json.dump(*args, default=to_json, indent=None, separators=(',', ':'), **kwargs)
 
 

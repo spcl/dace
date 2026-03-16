@@ -48,7 +48,7 @@ class Memlet(object):
                          'value, and returns the value after resolution')
 
     # Code generation and validation hints
-    debuginfo = DebugInfoProperty(desc='Line information to track source and generated code')
+    debuginfo = DebugInfoProperty(desc='Line information to track source and generated code', allow_none=True)
     wcr_nonatomic = Property(dtype=bool,
                              default=False,
                              desc='If True, always generates non-conflicting '
