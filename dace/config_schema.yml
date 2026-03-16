@@ -251,6 +251,17 @@ required:
                     If set, specifies additional arguments to the initial invocation
                     of ``cmake``.
 
+            sdfg_alphabetical_sorting:
+                type: bool
+                default: false
+                title: SDFG alphabetical sorting
+                description: >
+                    When enabled, sorts all internal SDFG dictionaries
+                    (nodes, edges, arrays, symbols) into a canonical
+                    alphabetical order before code generation. This
+                    guarantees reproducible output across consecutive
+                    compilations at the cost of additional sorting overhead.
+
             #############################################
             # CPU compiler
             cpu:

@@ -4,6 +4,9 @@ import random
 import dace
 from dace.sdfg.utils import get_deterministic_node_key, get_deterministic_edge_key
 
+# Enable alphabetical sorting for all tests in this module.
+dace.Config.set("compiler", "sdfg_alphabetical_sorting", value=True)
+
 
 def _scramble_dict_in_place(d):
     """Helper to randomize dictionary insertion order without changing its type."""
@@ -143,7 +146,9 @@ def test_sdfg_alphabetical_sorting_rebuild_nx():
     # The NX node order must match the _nodes dict order
     nx_nodes = list(state._nx.nodes())
     dace_nodes = list(state._nodes.keys())
-    assert nx_nodes == dace_nodes, ("NetworkX node order does not match sorted DaCe _nodes dict order!")
+    assert nx_nodes == dace_nodes, (
+        "NetworkX node order does not match sorted DaCe _nodes dict order!"
+    )
 
 
 def test_sdfg_alphabetical_sorting_stability():
@@ -167,8 +172,10 @@ def test_sdfg_alphabetical_sorting_stability():
         if reference_snapshot is None:
             reference_snapshot = snapshot
         else:
-            assert snapshot == reference_snapshot, (f"Sort produced different order with seed={seed}! "
-                                                    f"Expected:\n{reference_snapshot}\nGot:\n{snapshot}")
+            assert snapshot == reference_snapshot, (
+                f"Sort produced different order with seed={seed}! "
+                f"Expected:\n{reference_snapshot}\nGot:\n{snapshot}"
+            )
 
 
 def test_sdfg_alphabetical_sorting_idempotency():
@@ -188,7 +195,9 @@ def test_sdfg_alphabetical_sorting_idempotency():
     sdfg.sort_sdfg_alphabetically()
     snapshot_second = _snapshot_order(sdfg)
 
-    assert snapshot_first == snapshot_second, ("Sorting is not idempotent! Second sort produced a different order.")
+    assert snapshot_first == snapshot_second, (
+        "Sorting is not idempotent! Second sort produced a different order."
+    )
 
 
 if __name__ == "__main__":

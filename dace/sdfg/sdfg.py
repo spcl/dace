@@ -3024,6 +3024,9 @@ class SDFG(ControlFlowRegion):
             3. Dataflow: Sorts the internal nodes and memlet edges within every State.
             4. Recursion: Recursively applies this stabilization to all Nested SDFGs.
 
+        This method is a no-op unless the ``compiler.sdfg_alphabetical_sorting`` configuration
+        option is set to ``True``.
+
         :param rebuild_nx: If True, rebuilds the internal NetworkX graph in each
                            sorted graph. Default is False for performance, since
                            DaCe's codegen and pattern matching do not rely on the
@@ -3036,6 +3039,10 @@ class SDFG(ControlFlowRegion):
                         not on recursive calls into nested SDFGs where parent keys
                         are still valid.
         """
+        # Only perform sorting when deterministic code generation is enabled.
+        if not Config.get_bool('compiler', 'sdfg_alphabetical_sorting'):
+            return
+
         # Avoid import loops
         from dace.sdfg.utils import sort_graph_dicts_alphabetically, _node_key_cache
 
