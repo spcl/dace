@@ -7,7 +7,7 @@ from collections import deque
 from dace.sdfg import nodes as nd, propagation, InterstateEdge
 from dace import SDFG, SDFGState, dtypes
 from dace.subsets import Range
-from typing import List, Tuple, Dict, Callable, Sequence, Union
+from typing import List, Tuple, Dict
 import os
 import sympy as sp
 from copy import deepcopy
@@ -172,7 +172,7 @@ def evaluate_symbols(base, new):
 
     result = {}
     for k, v in new.items():
-        result[k] = symeval(pystr_to_symbolic(v), base)
+        result[k] = symeval(v, base)
     return result
 
 
@@ -453,7 +453,7 @@ class ArithmeticCounter(ast.NodeVisitor):
         raise NotImplementedError
 
 
-def count_arithmetic_ops_code(code: Union[Sequence[ast.AST], str, ast.AST]) -> int:
+def count_arithmetic_ops_code(code):
     ctr = ArithmeticCounter()
     if isinstance(code, (tuple, list)):
         for stmt in code:
@@ -466,37 +466,20 @@ def count_arithmetic_ops_code(code: Union[Sequence[ast.AST], str, ast.AST]) -> i
 
 
 class DepthCounter(ast.NodeVisitor):
-    """
-    Computes the depth (longest chain of dependent operations) of a Python AST expression.
-
-    Unlike ArithmeticCounter which sums all operations, this computes the critical path
-    through the expression tree, tracking data dependencies across statements.
-
-    For example:
-    - `a + b` has depth 1
-    - `(a + b) * c` has depth 2 (add, then multiply)
-    - `(a + b) * (c + d)` has depth 2 (both adds can be parallel, then multiply)
-    - `a = x + y; b = a + z` has depth 2 (a has depth 1, b depends on a so depth 2)
-    - `a = x + y; b = z + w` has depth 1 (independent statements, parallel)
-    """
-
+    # so far this is identical to the ArithmeticCounter above.
     def __init__(self):
-        # Track the depth at which each variable was last assigned
-        self.var_depths: Dict[str, int] = {}
+        self.count = 0
 
     def visit_BinOp(self, node):
         if isinstance(node.op, ast.MatMult):
             raise NotImplementedError('MatMult op count requires shape '
                                       'inference')
-        # Depth is 1 (for this operation) + max depth of the two operands
-        left_depth = self.visit(node.left)
-        right_depth = self.visit(node.right)
-        return 1 + max(left_depth, right_depth)
+        self.count += 1
+        return self.generic_visit(node)
 
     def visit_UnaryOp(self, node):
-        # Depth is 1 (for this operation) + depth of operand
-        operand_depth = self.visit(node.operand)
-        return 1 + operand_depth
+        self.count += 1
+        return self.generic_visit(node)
 
     def visit_Call(self, node):
         fname = astunparse.unparse(node.func)[:-1]
@@ -504,54 +487,12 @@ class DepthCounter(ast.NodeVisitor):
             print(
                 'WARNING: Unrecognized python function "%s". If this is a type conversion, like "dace.float64", then this is fine.'
                 % fname)
-            # Still need to visit arguments to get their depth
-            arg_depths = [self.visit(arg) for arg in node.args]
-            return max(arg_depths) if arg_depths else 0
-        op_cost = PYFUNC_TO_ARITHMETICS[fname]
-        # Get the maximum depth among all arguments
-        arg_depths = [self.visit(arg) for arg in node.args]
-        max_arg_depth = max(arg_depths) if arg_depths else 0
-        return op_cost + max_arg_depth
+            return self.generic_visit(node)
+        self.count += PYFUNC_TO_ARITHMETICS[fname]
+        return self.generic_visit(node)
 
     def visit_AugAssign(self, node):
-        # e.g., x += expr is equivalent to x = x + expr
-        # Get the target variable name
-        target_name = None
-        if isinstance(node.target, ast.Name):
-            target_name = node.target.id
-
-        # Get the current depth of the target variable (it's being read)
-        target_depth = self.visit(node.target)
-        # Get the depth of the value expression
-        value_depth = self.visit(node.value)
-        # The operation depth is 1 + max of target and value depths
-        result_depth = 1 + max(target_depth, value_depth)
-
-        # Update the variable's depth
-        if target_name:
-            self.var_depths[target_name] = result_depth
-
-        return result_depth
-
-    def visit_Assign(self, node):
-        # Compute the depth of the value expression
-        value_depth = self.visit(node.value)
-
-        # Update the depth of all target variables
-        for target in node.targets:
-            if isinstance(target, ast.Name):
-                self.var_depths[target.id] = value_depth
-            elif isinstance(target, ast.Tuple) or isinstance(target, ast.List):
-                # Handle tuple/list unpacking: a, b = ...
-                for elt in target.elts:
-                    if isinstance(elt, ast.Name):
-                        self.var_depths[elt.id] = value_depth
-
-        return value_depth
-
-    def visit_Expr(self, node):
-        # Expression statement, just propagate
-        return self.visit(node.value)
+        return self.visit_BinOp(node)
 
     def visit_For(self, node):
         raise NotImplementedError
@@ -559,109 +500,24 @@ class DepthCounter(ast.NodeVisitor):
     def visit_While(self, node):
         raise NotImplementedError
 
-    def visit_Name(self, node):
-        # Variable reference: return the tracked depth if known, else 0
-        return self.var_depths.get(node.id, 0)
 
-    def visit_Constant(self, node):
-        # Constants have no computational depth
-        return 0
-
-    def visit_Num(self, node):
-        # For older Python AST compatibility - numbers have no depth
-        return 0
-
-    def visit_Subscript(self, node):
-        # Array access - both the array and index computation contribute to depth
-        array_depth = self.visit(node.value)
-        index_depth = self.visit(node.slice)
-        return max(array_depth, index_depth)
-
-    def visit_Index(self, node):
-        # For older Python AST compatibility
-        return self.visit(node.value)
-
-    def visit_Tuple(self, node):
-        # Tuple elements can be computed in parallel
-        if node.elts:
-            return max(self.visit(e) for e in node.elts)
-        return 0
-
-    def visit_List(self, node):
-        # List elements can be computed in parallel
-        if node.elts:
-            return max(self.visit(e) for e in node.elts)
-        return 0
-
-    def visit_Compare(self, node):
-        # Comparisons: don't count as arithmetic depth (matching ArithmeticCounter)
-        # but still traverse to find any arithmetic in operands
-        depths = [self.visit(node.left)]
-        depths.extend(self.visit(c) for c in node.comparators)
-        return max(depths)
-
-    def visit_BoolOp(self, node):
-        # Boolean operations (and, or): don't count as arithmetic depth
-        # (matching ArithmeticCounter), but traverse values
-        return max(self.visit(v) for v in node.values)
-
-    def visit_IfExp(self, node):
-        # Ternary expression: test must be computed first, then one of body/orelse
-        test_depth = self.visit(node.test)
-        body_depth = self.visit(node.body)
-        orelse_depth = self.visit(node.orelse)
-        return test_depth + max(body_depth, orelse_depth)
-
-    def visit_Slice(self, node):
-        # Slice: max depth of lower, upper, step
-        depths = []
-        if node.lower:
-            depths.append(self.visit(node.lower))
-        if node.upper:
-            depths.append(self.visit(node.upper))
-        if node.step:
-            depths.append(self.visit(node.step))
-        return max(depths) if depths else 0
-
-    def generic_visit(self, node):
-        # For unhandled nodes, try to get max depth from children
-        max_depth = 0
-        for child in ast.iter_child_nodes(node):
-            child_depth = self.visit(child)
-            if isinstance(child_depth, int):
-                max_depth = max(max_depth, child_depth)
-        return max_depth
-
-
-def count_depth_code(code: Union[Sequence[ast.AST], str, ast.AST]) -> int:
-    """
-    Compute the depth (longest chain of dependent operations) of Python code.
-
-    Tracks data dependencies across statements via variable assignments.
-    For example:
-    - `a = x + y; b = a + z` has depth 2 (b depends on a)
-    - `a = x + y; b = z + w` has depth 1 (independent)
-    """
-    ctr = DepthCounter()
+def count_depth_code(code):
+    ctr = ArithmeticCounter()
     if isinstance(code, (tuple, list)):
-        if not code:
-            return 0
-        # Process statements sequentially to track dependencies
-        max_depth = 0
         for stmt in code:
-            stmt_depth = ctr.visit(stmt)
-            max_depth = max(max_depth, stmt_depth)
-        return max_depth
+            ctr.visit(stmt)
     elif isinstance(code, str):
-        return ctr.visit(ast.parse(code))
+        ctr.visit(ast.parse(code))
     else:
-        return ctr.visit(code)
+        ctr.visit(code)
+    return ctr.count
 
 
-def tasklet_work(tasklet_node: nd.Tasklet, state: SDFGState):
+def tasklet_work(tasklet_node, state):
     if tasklet_node.code.language == dtypes.Language.CPP:
-        warnings.warn('Work of CPP tasklets cannot be exactly determined.')
-        return 1
+        # simplified work analysis for CPP tasklets.
+        for oedge in state.out_edges(tasklet_node):
+            return oedge.data.num_accesses
     elif tasklet_node.code.language == dtypes.Language.Python:
         return count_arithmetic_ops_code(tasklet_node.code.code)
     else:
@@ -671,10 +527,11 @@ def tasklet_work(tasklet_node: nd.Tasklet, state: SDFGState):
         return 1
 
 
-def tasklet_depth(tasklet_node: nd.Tasklet, state: SDFGState):
+def tasklet_depth(tasklet_node, state):
     if tasklet_node.code.language == dtypes.Language.CPP:
-        warnings.warn('Depth of CPP tasklets cannot be exactly determined.')
-        return 1
+        # Depth == work for CPP tasklets.
+        for oedge in state.out_edges(tasklet_node):
+            return oedge.data.num_accesses
     if tasklet_node.code.language == dtypes.Language.Python:
         return count_depth_code(tasklet_node.code.code)
     else:
@@ -684,15 +541,15 @@ def tasklet_depth(tasklet_node: nd.Tasklet, state: SDFGState):
         return 1
 
 
-def get_tasklet_work(node: nd.Tasklet, state: SDFGState):
+def get_tasklet_work(node, state):
     return sp.sympify(tasklet_work(node, state)), sp.sympify(-1)
 
 
-def get_tasklet_work_depth(node: nd.Tasklet, state: SDFGState):
+def get_tasklet_work_depth(node, state):
     return sp.sympify(tasklet_work(node, state)), sp.sympify(tasklet_depth(node, state))
 
 
-def get_tasklet_avg_par(node: nd.Tasklet, state: SDFGState):
+def get_tasklet_avg_par(node, state):
     return sp.sympify(tasklet_work(node, state)), sp.sympify(tasklet_depth(node, state))
 
 
@@ -879,10 +736,6 @@ def control_flow_region_work_depth(cfr: ControlFlowRegion,
 
         if ie is not None:
             visited.add(ie)
-            edge_uid = (get_uuid(ie.src), get_uuid(ie.dst))
-            if edge_uid in edge_w_d_map:  # Skip new edges we added to `dummy_exit`
-                work += edge_w_d_map[edge_uid][0]
-                depth += edge_w_d_map[edge_uid][1]
 
         if region in region_value_map:
             # update value map:
