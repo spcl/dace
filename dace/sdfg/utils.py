@@ -7,7 +7,6 @@ import os
 import warnings
 import networkx as nx
 import time
-import hashlib
 
 import dace.sdfg.nodes
 from dace.codegen import compiled_sdfg as csdfg
@@ -2765,7 +2764,7 @@ def expand_nodes(sdfg: SDFG, predicate: Callable[[nd.Node], bool]):
             states.append(state)
 
 
-def get_deterministic_node_key(node: Any, _cache: Optional[Dict[int, tuple]] = None, graph: Any = None) -> tuple:
+def get_deterministic_node_key(graph: Any, node: Any, node_key_cache: Optional[Dict[int, tuple]] = None) -> tuple:
     """
     Generates a highly stable, deterministic key for DaCe graph nodes
     based on their semantic properties rather than memory locations.
@@ -2781,33 +2780,33 @@ def get_deterministic_node_key(node: Any, _cache: Optional[Dict[int, tuple]] = N
     tiebreaker.
 
     The dynamic parts incorporate:
-        - Graph topology (in-degree and out-degree, when the containing graph
-          is provided)
-        - Interface semantics (in/out connectors)
-        - Loop and memory semantics (map parameters, schedules, access types)
-        - Internal code logic (via a stable MD5 hash of Tasklet code)
-        - Nested SDFG structural size
+        - Graph topology (in-degree and out-degree)
+        - Interface semantics (in/out connectors, always included for
+          ``nd.Node`` subclasses even when empty)
+        - Loop and memory semantics (map parameters, ranges, schedules)
+        - Internal code logic (Tasklet code string)
+        - Nested SDFG structural size and symbol mapping
 
-    When called from the sorting path, an optional ``_cache`` dict can be
-    provided to avoid redundant recomputation during sort comparisons.
+    When called from the sorting path, an optional ``node_key_cache`` dict
+    can be provided to avoid redundant recomputation during sort comparisons.
     The cache is private to each ``sort_sdfg_alphabetically()`` invocation
     and lives on the stack, so concurrent SDFG processing is safe.
 
+    :param graph: The containing graph (e.g., SDFGState or ControlFlowRegion)
+                  used to compute in-degree and out-degree. May be ``None``,
+                  in which case degree information is omitted from the key.
     :param node: The DaCe graph node (e.g., Tasklet, AccessNode, MapEntry)
                  to be evaluated.
-    :param _cache: Optional node-key cache dict, private to the current
-                   ``sort_sdfg_alphabetically()`` call. When ``None``,
-                   no caching is performed.
-    :param graph: The containing graph (e.g., SDFGState or ControlFlowRegion)
-                  used to compute in-degree and out-degree. When ``None``,
-                  degree information is omitted from the key.
+    :param node_key_cache: Optional node-key cache dict, private to the current
+                           ``sort_sdfg_alphabetically()`` call. When ``None``,
+                           no caching is performed.
     :return: A tuple ``(node_type, label, dynamic_parts)`` representing
              the node's semantic identity.
     """
-    if _cache is not None:
+    if node_key_cache is not None:
         node_id = id(node)
-        if node_id in _cache:
-            return _cache[node_id]
+        if node_id in node_key_cache:
+            return node_key_cache[node_id]
 
     node_type = type(node).__name__
 
@@ -2831,43 +2830,38 @@ def get_deterministic_node_key(node: Any, _cache: Optional[Dict[int, tuple]] = N
             # Node might not belong to this graph (e.g., during NX rebuild)
             pass
 
-    # 2. Interface Semantics (Connectors for Tasklets / NestedSDFGs)
-    if hasattr(node, 'in_connectors') and node.in_connectors:
-        parts.append("inC:" + "-".join(sorted(node.in_connectors.keys())))
-    if hasattr(node, 'out_connectors') and node.out_connectors:
-        parts.append("outC:" + "-".join(sorted(node.out_connectors.keys())))
+    # 2. Interface Semantics (Connectors)
+    if isinstance(node, nd.Node):
+        parts.append("inC:{" + "-".join(sorted(node.in_connectors.keys())) + "}")
+        parts.append("outC:{" + "-".join(sorted(node.out_connectors.keys())) + "}")
 
-    # 3. Loop Semantics (Map Parameters & Schedules)
-    if hasattr(node, 'map') and hasattr(node.map, 'params'):
+    # 3. Map Semantics (Parameters, Ranges & Schedules)
+    if isinstance(node, (nd.MapEntry, nd.MapExit)):
         parts.append("map:" + "-".join(node.map.params))
-        if hasattr(node.map, 'schedule'):
-            parts.append(f"sch:{str(node.map.schedule)}")
+        parts.append("range:" + str(node.map.range))
+        parts.append(f"sch:{str(node.map.schedule)}")
 
-    # 4. Memory Semantics (Access Types for AccessNodes)
-    if hasattr(node, 'access'):
-        parts.append(f"acc:{str(node.access)}")
-
-    # 5. Internal Code Semantics (Tasklets)
-    if hasattr(node, 'code') and hasattr(node.code, 'as_string'):
-        # Hash the code to prevent massive strings while guaranteeing uniqueness.
-        # MD5 is used because Python's built-in hash() is non-deterministic across runs.
+    # 4. Internal Code Semantics (Tasklets)
+    if isinstance(node, nd.Tasklet):
         code_str = str(node.code.as_string).strip()
-        code_hash = hashlib.md5(code_str.encode('utf-8')).hexdigest()[:8]
-        parts.append(f"code:{code_hash}")
+        parts.append(f"code:{code_str}")
 
-    # 6. Nested SDFG Differentiation
-    if hasattr(node, 'sdfg') and node.sdfg:
+    # 5. Nested SDFG Differentiation
+    if isinstance(node, nd.NestedSDFG):
         parts.append(f"nsdfg_states:{len(node.sdfg.nodes())}")
+        # Include symbol mapping for further differentiation
+        sorted_syms = dict(sorted({str(k): str(v) for k, v in node.symbol_mapping.items()}.items()))
+        parts.append(f"symmap:{sorted_syms}")
 
     # Tuple enforces lexicographic order: group by type, then label,
     # then use dynamic parts as a tiebreaker.
     result = (node_type, str(raw_label), "_".join(parts))
-    if _cache is not None:
-        _cache[id(node)] = result
+    if node_key_cache is not None:
+        node_key_cache[id(node)] = result
     return result
 
 
-def get_deterministic_edge_key(edge: Any, _cache: Optional[Dict[int, tuple]] = None, graph: Any = None) -> tuple:
+def get_deterministic_edge_key(graph: Any, edge: Any, node_key_cache: Optional[Dict[int, tuple]] = None) -> tuple:
     """
     Generates a highly stable key for graph edges to ensure
     deterministic sorting.
@@ -2880,11 +2874,11 @@ def get_deterministic_edge_key(edge: Any, _cache: Optional[Dict[int, tuple]] = N
     and would produce a memory-address-based representation, the function
     extracts the ``condition`` and ``assignments`` attributes instead.
 
-    :param edge: The DaCe graph edge (or InterstateEdge) to be evaluated.
-    :param _cache: Optional node-key cache dict, passed through to
-                   :func:`get_deterministic_node_key`.
     :param graph: The containing graph, passed through to
                   :func:`get_deterministic_node_key` for degree computation.
+    :param edge: The DaCe graph edge (or InterstateEdge) to be evaluated.
+    :param node_key_cache: Optional node-key cache dict, passed through to
+                           :func:`get_deterministic_node_key`.
     :return: A tuple representing the edge's routing and payload.
     """
     # 1. Extract connector strings
@@ -2897,21 +2891,21 @@ def get_deterministic_edge_key(edge: Any, _cache: Optional[Dict[int, tuple]] = N
     edge_data = getattr(edge, 'data', '')
     if hasattr(edge_data, 'condition') and hasattr(edge_data, 'assignments'):
         cond_str = str(edge_data.condition)
-        assign_str = str(edge_data.assignments)
-        raw_data_str = f"cond:{cond_str}_assign:{assign_str}"
+        sorted_assigns = dict(sorted({str(k): str(v) for k, v in edge_data.assignments.items()}.items()))
+        raw_data_str = f"cond:{cond_str}_assign:{sorted_assigns}"
     else:
         raw_data_str = str(edge_data)
 
     # 3. Retrieve the stabilized keys for the source and destination nodes
-    src_key = get_deterministic_node_key(edge.src, _cache, graph)
-    dst_key = get_deterministic_node_key(edge.dst, _cache, graph)
+    src_key = get_deterministic_node_key(graph, edge.src, node_key_cache)
+    dst_key = get_deterministic_node_key(graph, edge.dst, node_key_cache)
 
     return (src_key, raw_src_conn, dst_key, raw_dst_conn, raw_data_str)
 
 
-def sort_graph_dicts_alphabetically(graph: Any,
+def sort_graph_dicts_alphabetically(graph: Union['ControlFlowRegion', 'SDFGState'],
                                     rebuild_nx: bool = False,
-                                    _cache: Optional[Dict[int, tuple]] = None) -> None:
+                                    node_key_cache: Optional[Dict[int, tuple]] = None) -> None:
     """
     Sorts internal graph nodes, edge dictionaries, and NetworkX backends in-place
     using semantically-aware deterministic keys.
@@ -2931,36 +2925,33 @@ def sort_graph_dicts_alphabetically(graph: Any,
            stabilized order. Skipped by default since pattern matching builds
            its own NetworkX digraph via collapse_multigraph_to_nx.
 
-    :param graph: The DaCe graph structure (e.g., SDFGState or generic Graph)
+    :param graph: The DaCe graph structure (e.g., SDFGState or ControlFlowRegion)
                   whose internal dictionaries need to be stabilized.
     :param rebuild_nx: If True, rebuilds the internal NetworkX graph to match
                        the new order. Default is False for performance, since
                        DaCe's codegen and pattern matching do not rely on the
                        internal _nx iteration order.
-    :param _cache: Optional node-key cache dict, private to the current
-                   ``sort_sdfg_alphabetically()`` call. Passed through to
-                   key functions to avoid redundant computation.
+    :param node_key_cache: Optional node-key cache dict, private to the current
+                           ``sort_sdfg_alphabetically()`` call. Passed through to
+                           key functions to avoid redundant computation.
     """
     # 1. Sort the master Nodes dictionary
     sorted_node_items = sorted(graph._nodes.items(),
-                               key=lambda item: get_deterministic_node_key(item[0], _cache, graph))
+                               key=lambda item: get_deterministic_node_key(graph, item[0], node_key_cache))
     graph._nodes.clear()
     graph._nodes.update(sorted_node_items)
 
     # 2. Sort the nested adjacency lists (In/Out Edges) within each node
     for node, (in_edges, out_edges) in graph._nodes.items():
-        sorted_in_items = sorted(in_edges.items(), key=lambda item: get_deterministic_edge_key(item[1], _cache, graph))
-        in_edges.clear()
-        in_edges.update(sorted_in_items)
-
-        sorted_out_items = sorted(out_edges.items(),
-                                  key=lambda item: get_deterministic_edge_key(item[1], _cache, graph))
-        out_edges.clear()
-        out_edges.update(sorted_out_items)
+        for edges in [in_edges, out_edges]:
+            sorted_edges = sorted(edges.items(),
+                                  key=lambda item: get_deterministic_edge_key(graph, item[1], node_key_cache))
+            edges.clear()
+            edges.update(sorted_edges)
 
     # 3. Sort the master Edges dictionary
     sorted_edge_items = sorted(graph._edges.items(),
-                               key=lambda item: get_deterministic_edge_key(item[1], _cache, graph))
+                               key=lambda item: get_deterministic_edge_key(graph, item[1], node_key_cache))
     graph._edges.clear()
     graph._edges.update(sorted_edge_items)
 
