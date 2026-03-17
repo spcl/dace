@@ -93,7 +93,7 @@ if(DACE_ENABLE_CUDA)
 
   set(CMAKE_CUDA_ARCHITECTURES "${LOCAL_CUDA_ARCHITECTURES}")
   enable_language(CUDA)
-  list(APPEND DACE_LIBS CUDA::cudart CUDA::nvtx3)
+  list(APPEND DACE_LIBS CUDA::cudart)
   add_definitions(-DWITH_CUDA)
 
   if (MSVC_IDE)
