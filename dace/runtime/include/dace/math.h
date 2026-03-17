@@ -42,7 +42,9 @@ DACE_CONSTEXPR DACE_HDFI T min(const T& val)
 template <typename T, typename... Ts>
 DACE_CONSTEXPR DACE_HDFI typename std::common_type<T, Ts...>::type min(const T& a, const Ts&... ts)
 {
-    return (a < min(ts...)) ? a : min(ts...);
+    using R = typename std::common_type<T, Ts...>::type;
+    R ra = a, rb = min(ts...);
+    return ra < rb ? ra : rb;
 }
 
 template <typename T>
@@ -53,7 +55,9 @@ DACE_CONSTEXPR DACE_HDFI T max(const T& val)
 template <typename T, typename... Ts>
 DACE_CONSTEXPR DACE_HDFI typename std::common_type<T, Ts...>::type max(const T& a, const Ts&... ts)
 {
-    return (a > max(ts...)) ? a : max(ts...);
+    using R = typename std::common_type<T, Ts...>::type;
+    R ra = a, rb = max(ts...);
+    return ra > rb ? ra : rb;
 }
 
 template <typename T, typename T2>
@@ -522,7 +526,14 @@ namespace dace
             return (thrust::complex<T>)thrust::pow(a, b);
         }
 #endif
-        template<typename T, typename U>
+        template<typename T, typename U
+#ifndef __CUDACC__
+#ifndef __HIPCC__
+                 , typename = std::enable_if_t<!std::is_same<T, dace::half>::value &&
+                                               !std::is_same<U, dace::half>::value>
+#endif
+#endif
+                 >
         DACE_CONSTEXPR DACE_HDFI auto pow(const T& a, const U& b)
         {
             return std::pow(a, b);
@@ -545,6 +556,39 @@ namespace dace
                 result *= a;
             return result;
         }
+
+        // pow overloads for CPU half: promote to float, return half.
+        // Templated with SFINAE to avoid interfering with unrelated pow calls.
+#ifndef __CUDACC__
+#ifndef __HIPCC__
+        template <typename H, typename = std::enable_if_t<std::is_same<H, dace::half>::value>>
+        static inline dace::half pow(const H& a, const dace::half& b) {
+            return dace::half(std::pow(float(a), float(b)));
+        }
+        template <typename H, typename = std::enable_if_t<std::is_same<H, dace::half>::value>>
+        static inline dace::half pow(const H& a, double b) {
+            return dace::half(std::pow(float(a), float(b)));
+        }
+        template <typename H, typename = std::enable_if_t<std::is_same<H, dace::half>::value>>
+        static inline dace::half pow(const H& a, float b) {
+            return dace::half(std::pow(float(a), b));
+        }
+        template <typename H, typename = std::enable_if_t<std::is_same<H, dace::half>::value>>
+        static inline dace::half pow(const H& a, int b) {
+            return dace::half(std::pow(float(a), b));
+        }
+        // pow with half as second argument
+        static inline double pow(double a, const dace::half& b) {
+            return std::pow(a, static_cast<double>(static_cast<float>(b)));
+        }
+        static inline float pow(float a, const dace::half& b) {
+            return std::pow(a, float(b));
+        }
+        static inline float pow(int a, const dace::half& b) {
+            return std::pow(float(a), float(b));
+        }
+#endif
+#endif
 
         template<typename T>
         DACE_HDFI T ipow(const T& a, const unsigned int& b) {

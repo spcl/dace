@@ -220,13 +220,13 @@ namespace dace
 
         // The code generator guarantees us that `b > 0`.
         DACE_HDFI typeless_pi_exp ipow(const typeless_pi_mult& pi, const unsigned int& b) {
-            return typeless_pi_exp(pow(pi.mult, b), b);
+            using std::pow; return typeless_pi_exp(pow(pi.mult, b), b);
         }
         DACE_HDFI typeless_pi_exp ipow(const typeless_pi& pi, const unsigned int& b) {
             return typeless_pi_exp(1, b);
         }
         DACE_HDFI typeless_pi_exp ipow(const typeless_pi_exp& pi, const unsigned int& b) {
-            return typeless_pi_exp(pow(pi.mult, b), pi.exp * b);
+            using std::pow; return typeless_pi_exp(pow(pi.mult, b), pi.exp * b);
         }
 
 #       define DEF_PI_OPS(op) 										\

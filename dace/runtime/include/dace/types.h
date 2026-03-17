@@ -96,20 +96,27 @@ namespace dace
     typedef std::complex<float> complex64;
     typedef std::complex<double> complex128;
     struct half {
+        // 16-bit storage format. All arithmetic goes through float.
+        // Only half(float) and operator float() are implicit — this gives
+        // a single implicit conversion path and avoids ternary/overload ambiguity.
         // source: https://stackoverflow.com/a/26779139/15853075
+        uint16_t h;
+        half() = default;
         half(float f) {
             union { float fval; uint32_t x; } u;
             u.fval = f;
             h = ((u.x>>16)&0x8000)|((((u.x&0x7f800000)-0x38000000)>>13)&0x7c00)|((u.x>>13)&0x03ff);
         }
-        operator float() {
+        explicit half(double d) : half(float(d)) {}
+        explicit half(int i) : half(float(i)) {}
+        operator float() const {
             union { float f; uint32_t tmp; } u;
             u.tmp = ((h&0x8000)<<16) | (((h&0x7c00)+0x1C000)<<13) | ((h&0x03FF)<<13);
             return u.f;
         }
-        uint16_t h;
     };
     typedef half float16;
+
     #endif
 
     enum NumAccesses
@@ -153,5 +160,21 @@ namespace dace
         Exchange = 13
     };
 }
+
+// Resolve common_type ambiguity for CPU half (both half(float) and
+// operator float() are implicit).
+#ifndef __CUDACC__
+#ifndef __HIPCC__
+#include <type_traits>
+namespace std {
+    template<> struct common_type<dace::half, float>  { using type = float; };
+    template<> struct common_type<float, dace::half>  { using type = float; };
+    template<> struct common_type<dace::half, double> { using type = double; };
+    template<> struct common_type<double, dace::half> { using type = double; };
+    template<> struct common_type<dace::half, int>    { using type = float; };
+    template<> struct common_type<int, dace::half>    { using type = float; };
+}
+#endif
+#endif
 
 #endif  // __DACE_TYPES_H
