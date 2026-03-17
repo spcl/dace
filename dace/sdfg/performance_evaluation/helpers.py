@@ -5,6 +5,9 @@ from dace import SDFG, SDFGState, nodes
 from collections import deque
 from typing import List, Dict, Set, Tuple, Optional, Union
 import networkx as nx
+import sympy as sp
+from dace.sdfg.state import ControlFlowRegion
+from dace.sdfg.propagation import propagate_states
 
 NodeT = str
 EdgeT = Tuple[NodeT, NodeT]
@@ -335,3 +338,72 @@ def find_loop_guards_tails_exits(sdfg_nx: nx.DiGraph):
     # remove artificial end node
     sdfg_nx.remove_node(artificial_end_node)
     return nodes_oNodes_exits
+
+def get_legacy_loop_body(cfr, guard, tail, exits):
+    """
+    Get all nodes in a legacy loop body.
+    A node is in the loop body if:
+    - It's reachable from guard
+    - It can reach tail
+    - It's not an exit node
+    """
+    # Forward reachability from guard
+    forward_reachable = set()
+    queue = deque([guard])
+    while queue:
+        node = queue.popleft()
+        if node in forward_reachable:
+            continue
+        forward_reachable.add(node)
+        for edge in cfr.out_edges(node):
+            queue.append(edge.dst)
+    
+    # Backward reachability to tail
+    backward_reachable = set()
+    queue = deque([tail])
+    while queue:
+        node = queue.popleft()
+        if node in backward_reachable:
+            continue
+        backward_reachable.add(node)
+        for edge in cfr.in_edges(node):
+            queue.append(edge.src)
+    
+    # Loop body = (forward AND backward) - exits
+    loop_body = (forward_reachable & backward_reachable) - set(exits)
+    
+    return loop_body
+
+def get_legacy_loop_ranges(cfr: ControlFlowRegion) -> Dict[SDFGState, Tuple[sp.Expr, sp.Expr, sp.Expr, sp.Symbol]]:
+    """
+    Builds a map from loop guard states to their loop variable and iteration
+    range, harvesting the annotations set by propagate_states /
+    _annotate_loop_ranges.
+
+    Must be called AFTER propagate_states has been run on the SDFG.
+
+    :param cfr: The ControlFlowRegion to inspect (only its direct nodes are
+                checked, not descendants, since control_flow_region_work_depth
+                is called recursively anyway).
+    :return: A dict mapping each legacy loop guard SDFGState to a tuple
+             (loop_var, start, stop, stride)
+    """
+    #propagate_states(cfr)
+    result: Dict[SDFGState, Tuple[sp.Symbol, sp.Expr, sp.Expr, sp.Expr]] = {}
+
+    for node in cfr.nodes():
+        if not getattr(node, 'is_loop_guard', False):
+            continue
+
+        itvar_str: str = node.itvar
+        loop_var: sp.Symbol = sp.Symbol(itvar_str)
+
+        # guard.ranges[itvar] is a subsets.Range with one entry: [(start, stop, stride)]
+        rng = node.ranges[itvar_str][0]   # -> (start, stop, stride)
+        start  = sp.sympify(rng[0])
+        stop   = sp.sympify(rng[1])
+        stride = sp.sympify(rng[2])
+
+        result[node] = (loop_var, start, stop, stride)
+
+    return result
