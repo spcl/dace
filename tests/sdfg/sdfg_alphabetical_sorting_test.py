@@ -54,19 +54,19 @@ def _snapshot_order(sdfg):
     result.append(('arrays', tuple(sdfg._arrays.keys())))
 
     # State machine
-    state_node_keys = tuple(get_deterministic_node_key(n, graph=sdfg) for n in sdfg._nodes.keys())
+    state_node_keys = tuple(get_deterministic_node_key(sdfg, n) for n in sdfg._nodes.keys())
     result.append(('sdfg_nodes', state_node_keys))
 
     # Dataflow per state
     for i, state in enumerate(sdfg.nodes()):
-        node_keys = tuple(get_deterministic_node_key(n, graph=state) for n in state._nodes.keys())
-        edge_keys = tuple(get_deterministic_edge_key(state._edges[k], graph=state) for k in state._edges.keys())
+        node_keys = tuple(get_deterministic_node_key(state, n) for n in state._nodes.keys())
+        edge_keys = tuple(get_deterministic_edge_key(state, state._edges[k]) for k in state._edges.keys())
         result.append((f'state_{i}_nodes', node_keys))
         result.append((f'state_{i}_edges', edge_keys))
 
         for j, (node, (in_edges, out_edges)) in enumerate(state._nodes.items()):
-            in_keys = tuple(get_deterministic_edge_key(in_edges[k], graph=state) for k in in_edges.keys())
-            out_keys = tuple(get_deterministic_edge_key(out_edges[k], graph=state) for k in out_edges.keys())
+            in_keys = tuple(get_deterministic_edge_key(state, in_edges[k]) for k in in_edges.keys())
+            out_keys = tuple(get_deterministic_edge_key(state, out_edges[k]) for k in out_edges.keys())
             result.append((f'state_{i}_node_{j}_in', in_keys))
             result.append((f'state_{i}_node_{j}_out', out_keys))
 
@@ -99,6 +99,7 @@ def test_sdfg_alphabetical_sorting_basic():
     state = sdfg.nodes()[0]
 
     # Scramble everything
+    random.seed(42)
     _scramble_sdfg(sdfg)
 
     # Apply the canonicalizer
@@ -106,12 +107,12 @@ def test_sdfg_alphabetical_sorting_basic():
 
     # Assert that graph nodes are sorted
     node_keys = list(state._nodes.keys())
-    expected_node_keys = sorted(node_keys, key=lambda n: get_deterministic_node_key(n, graph=state))
+    expected_node_keys = sorted(node_keys, key=lambda n: get_deterministic_node_key(state, n))
     assert node_keys == expected_node_keys, "Graph nodes were not deterministically sorted!"
 
     # Assert that graph edges are sorted
     edge_keys = list(state._edges.keys())
-    expected_edge_keys = sorted(edge_keys, key=lambda k: get_deterministic_edge_key(state._edges[k], graph=state))
+    expected_edge_keys = sorted(edge_keys, key=lambda k: get_deterministic_edge_key(state, state._edges[k]))
     assert edge_keys == expected_edge_keys, "Graph edges were not deterministically sorted!"
 
     # Assert that metadata dicts are sorted
@@ -121,11 +122,11 @@ def test_sdfg_alphabetical_sorting_basic():
     # Assert that per-node adjacency lists are sorted
     for node, (in_edges, out_edges) in state._nodes.items():
         in_keys = list(in_edges.keys())
-        expected_in = sorted(in_keys, key=lambda k: get_deterministic_edge_key(in_edges[k], graph=state))
+        expected_in = sorted(in_keys, key=lambda k: get_deterministic_edge_key(state, in_edges[k]))
         assert in_keys == expected_in, f"In-edges for {node} were not deterministically sorted!"
 
         out_keys = list(out_edges.keys())
-        expected_out = sorted(out_keys, key=lambda k: get_deterministic_edge_key(out_edges[k], graph=state))
+        expected_out = sorted(out_keys, key=lambda k: get_deterministic_edge_key(state, out_edges[k]))
         assert out_keys == expected_out, f"Out-edges for {node} were not deterministically sorted!"
 
 
@@ -137,6 +138,7 @@ def test_sdfg_alphabetical_sorting_rebuild_nx():
     sdfg = _build_test_sdfg()
     state = sdfg.nodes()[0]
 
+    random.seed(42)
     _scramble_sdfg(sdfg)
 
     # Sort with NX rebuild enabled
@@ -180,6 +182,7 @@ def test_sdfg_alphabetical_sorting_idempotency():
     """
     sdfg = _build_test_sdfg()
 
+    random.seed(42)
     _scramble_sdfg(sdfg)
 
     # Sort once
