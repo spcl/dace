@@ -241,7 +241,7 @@ Typeclasses
 The typeclasses that can be used as element types for data containers are versatile, and can be used for performance
 and compatibility with other codes:
 
-    * Base types such as :pycode:`dace.uint8` (see :class:`~dace.dtypes.Typeclasses` for a full list)
+    * Base types such as :pycode:`dace.uint8` (see :class:`~dace.dtypes.typeclass` for a full list)
     * Native :class:`~dace.dtypes.vector` types (vectors of vectors also supported)
 
         * Example: :pycode:`dace.vector(dtype, vector_length)`

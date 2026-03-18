@@ -2,11 +2,10 @@
 import ast
 from collections import Counter
 from functools import lru_cache
-import sys
 import sympy
 import pickle
 import re
-from typing import Any, Callable, Dict, Iterable, Optional, Set, Tuple, Union
+from typing import Any, Callable, Dict, FrozenSet, Iterable, Optional, Set, Tuple, Union, TYPE_CHECKING
 import numpy
 
 import sympy.abc
@@ -123,6 +122,27 @@ class symbol(sympy.Symbol):
                 raise RuntimeError('Cannot validate constraint %s for symbol %s' % (str(constraint), self.name))
         if fail is not None:
             raise RuntimeError('Value %s invalidates constraint %s for symbol %s' % (str(value), str(fail), self.name))
+
+    # Type stubs for arithmetic operators (inherited from sympy.Symbol at runtime)
+    if TYPE_CHECKING:
+        # yapf: disable
+        def __add__(self, other: Any) -> sympy.Expr: ...
+        def __radd__(self, other: Any) -> sympy.Expr: ...
+        def __sub__(self, other: Any) -> sympy.Expr: ...
+        def __rsub__(self, other: Any) -> sympy.Expr: ...
+        def __mul__(self, other: Any) -> sympy.Expr: ...
+        def __rmul__(self, other: Any) -> sympy.Expr: ...
+        def __truediv__(self, other: Any) -> sympy.Expr: ...
+        def __rtruediv__(self, other: Any) -> sympy.Expr: ...
+        def __floordiv__(self, other: Any) -> sympy.Expr: ...
+        def __rfloordiv__(self, other: Any) -> sympy.Expr: ...
+        def __mod__(self, other: Any) -> sympy.Expr: ...
+        def __rmod__(self, other: Any) -> sympy.Expr: ...
+        def __pow__(self, other: Any) -> sympy.Expr: ...
+        def __rpow__(self, other: Any) -> sympy.Expr: ...
+        def __neg__(self) -> sympy.Expr: ...
+        def __pos__(self) -> sympy.Expr: ...
+        # yapf: enable
 
 
 class UndefinedSymbol(symbol):
@@ -1107,26 +1127,12 @@ def evaluate_optional_arrays(expr, sdfg):
     return expr
 
 
-# Depending on the Python version we need to handle different AST nodes to correctly interpret and detect falsy / truthy
-# values.
-if sys.version_info < (3, 8):
-    _SimpleASTNode = (ast.Constant, ast.Name, ast.NameConstant, ast.Num)
-    _SimpleASTNodeT = Union[ast.Constant, ast.Name, ast.NameConstant, ast.Num]
+_SimpleASTNode = (ast.Constant, ast.Name)
+_SimpleASTNodeT = Union[ast.Constant, ast.Name]
 
-    def __comp_convert_truthy_falsy(node: _SimpleASTNodeT):
-        if isinstance(node, ast.Num):
-            node_val = node.n
-        elif isinstance(node, ast.Name):
-            node_val = node.id
-        else:
-            node_val = node.value
-        return ast.copy_location(ast.NameConstant(bool(node_val)), node)
-else:
-    _SimpleASTNode = (ast.Constant, ast.Name)
-    _SimpleASTNodeT = Union[ast.Constant, ast.Name]
 
-    def __comp_convert_truthy_falsy(node: _SimpleASTNodeT):
-        return ast.copy_location(ast.Constant(bool(node.value)), node)
+def __comp_convert_truthy_falsy(node: _SimpleASTNodeT):
+    return ast.copy_location(ast.Constant(bool(node.value)), node)
 
 
 # Convert simple AST node (constant) into a falsy / truthy. Anything other than 0, None, and an empty string '' is
@@ -1461,7 +1467,7 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
 
 
 @lru_cache(maxsize=16384)
-def symstr(sym, arrayexprs: Optional[Set[str]] = None, cpp_mode=False) -> str:
+def symstr(sym, arrayexprs: Optional[FrozenSet[str]] = None, cpp_mode=False) -> str:
     """
     Convert a symbolic expression to a compilable expression.
 

@@ -8,15 +8,9 @@ import inspect
 import numbers
 import numpy
 import sympy
-import sys
 from typing import Any, Dict, List, Optional, Set, Union
 
 from dace import symbolic
-
-if sys.version_info >= (3, 8):
-    NumConstant = ast.Constant
-else:
-    NumConstant = ast.Num
 
 
 def _remove_outer_indentation(src: str):
@@ -67,13 +61,7 @@ def is_constant(node: ast.AST) -> bool:
     """
     Returns True iff the AST node is a constant value
     """
-    if sys.version_info >= (3, 8):
-        if isinstance(node, ast.Constant):
-            return True
-    else:
-        if isinstance(node, (ast.Num, ast.Str, ast.NameConstant)):  # For compatibility
-            return True
-    return False
+    return isinstance(node, ast.Constant)
 
 
 def evalnode(node: ast.AST, gvars: Dict[str, Any]) -> Any:
@@ -87,14 +75,9 @@ def evalnode(node: ast.AST, gvars: Dict[str, Any]) -> Any:
     """
     if not isinstance(node, ast.AST):
         return node
-    if sys.version_info < (3, 9) and isinstance(node, ast.Index):  # For compatibility
-        node = node.value
-    if sys.version_info >= (3, 8):
-        if isinstance(node, ast.Constant):
-            return node.value
-    else:
-        if isinstance(node, ast.Num):  # For compatibility
-            return node.n
+
+    if isinstance(node, ast.Constant):
+        return node.value
 
     # Replace internal constants with their values
     node = copy_tree(node)
@@ -118,8 +101,6 @@ def rname(node):
 
     if isinstance(node, str):
         return node
-    if sys.version_info < (3, 8) and isinstance(node, ast.Num):
-        return str(node.n)
     if isinstance(node, ast.Name):  # form x
         return node.id
     if isinstance(node, ast.Constant):
@@ -178,16 +159,8 @@ def subscript_to_ast_slice(node, without_array=False):
     if not isinstance(node, ast.Subscript):
         raise TypeError('AST node is not a subscript')
 
-    # Python <3.9 compatibility
     result_slice = None
-    if sys.version_info < (3, 9) and isinstance(node.slice, ast.Index):
-        slc = node.slice.value
-        if not isinstance(slc, ast.Tuple):
-            result_slice = [slc]
-    elif sys.version_info < (3, 9) and isinstance(node.slice, ast.ExtSlice):
-        slc = tuple(node.slice.dims)
-    else:
-        slc = node.slice
+    slc = node.slice
 
     # Decode slice tuple
     if result_slice is None:
@@ -202,8 +175,6 @@ def subscript_to_ast_slice(node, without_array=False):
             # Slice
             if isinstance(s, ast.Slice):
                 result_slice.append((s.lower, s.upper, s.step))
-            elif sys.version_info < (3, 9) and isinstance(s, ast.Index):  # Index (Python <3.9)
-                result_slice.append(s.value)
             else:  # Index
                 result_slice.append(s)
 
@@ -239,11 +210,7 @@ class ExtUnparser(astunparse.Unparser):
     def _Subscript(self, t):
         self.dispatch(t.value)
         self.write('[')
-        # Compatibility
-        if sys.version_info < (3, 9) and isinstance(t.slice, ast.Index):
-            slc = t.slice.value
-        else:
-            slc = t.slice
+        slc = t.slice
         # Get rid of the tuple parentheses in expressions like "A[(i, j)]""
         if isinstance(slc, ast.Tuple):
             for elt in slc.elts[:-1]:
@@ -453,10 +420,6 @@ def copy_tree(node: ast.AST) -> ast.AST:
     """
 
     class Copier(ast.NodeTransformer):
-
-        def visit_Num(self, node):
-            # Ignore n
-            return ast.copy_location(ast.Num(n=node.n), node)
 
         def visit_Constant(self, node):
             # Ignore value
@@ -706,12 +669,9 @@ class ConstantExtractor(ast.NodeTransformer):
             raise SyntaxError
         return self.generic_visit(node)
 
-    def visit_Constant(self, node):
-        return self.visit_Num(node)
-
-    def visit_Num(self, node: NumConstant):
+    def visit_Constant(self, node: ast.Constant):
         newname = f'__uu{self.id}'
-        self.gvars[newname] = node.value if sys.version_info >= (3, 8) else node.n
+        self.gvars[newname] = node.value
         self.id += 1
         return ast.copy_location(ast.Name(id=newname, ctx=ast.Load()), node)
 
@@ -781,23 +741,15 @@ class ASTHelperMixin:
         return node
 
 
-def create_constant(value: Any, node: Optional[ast.AST] = None) -> ast.AST:
+def create_constant(value: Any, node: Optional[ast.AST] = None) -> ast.Constant:
     """
     Cross-Python-AST-version helper function that creates an AST constant node from a given value.
 
     :param value: The value to create a constant from.
     :param node: An optional node to copy the source location information from.
-    :return: An AST node (``ast.Constant`` after Python 3.8) that represents this value.
+    :return: An ``ast.Constant`` that represents this value.
     """
-    if sys.version_info >= (3, 8):
-        newnode = ast.Constant(value=value, kind='')
-    else:
-        if value is None:
-            newnode = ast.NameConstant(value=None)
-        elif isinstance(value, str):
-            newnode = ast.Str(s=value)
-        else:
-            newnode = ast.Num(n=value)
+    newnode = ast.Constant(value=value, kind='')
 
     if node is not None:
         newnode = ast.copy_location(newnode, node)
@@ -811,10 +763,8 @@ def escape_string(value: Union[bytes, str]):
     """
     if isinstance(value, bytes):
         return f"{chr(0xFFFF)}{value.decode('utf-8')}"
-    if sys.version_info >= (3, 0):
-        return value.encode("unicode_escape").decode("utf-8")
-    # Python 2.x
-    return value.encode('string_escape')
+
+    return value.encode("unicode_escape").decode("utf-8")
 
 
 def parse_function_arguments(node: ast.Call, argnames: List[str]) -> Dict[str, ast.AST]:

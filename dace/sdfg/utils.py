@@ -1662,27 +1662,39 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
     return counter
 
 
-def load_precompiled_sdfg(folder: str):
+def load_precompiled_sdfg(folder: str) -> csdfg.CompiledSDFG:
     """
     Loads a pre-compiled SDFG from an output folder (e.g. ".dacecache/program").
-    Folder must contain a file called "program.sdfg" and a subfolder called
+    Folder must contain a file called "program.sdfgz" and a subfolder called
     "build" with the shared object.
 
     :param folder: Path to SDFG output folder.
     :return: A callable CompiledSDFG object.
     """
-    sdfg = SDFG.from_file(os.path.join(folder, 'program.sdfg'))
+    sdfg: SDFG | None = None
+    if os.path.exists(os.path.join(folder, 'program.sdfgz')):
+        sdfg = SDFG.from_file(os.path.join(folder, 'program.sdfgz'))
+    elif os.path.exists(os.path.join(folder, 'program.sdfg')):
+        # attempt to load uncompressed sdfg (backwards compatibility)
+        sdfg = SDFG.from_file(os.path.join(folder, 'program.sdfg'))
+    if sdfg is None:
+        raise ValueError(f"Pre-compiled SDFG not found in `{folder}`.")
+
     suffix = config.Config.get('compiler', 'library_extension')
-    return csdfg.CompiledSDFG(sdfg,
-                              csdfg.ReloadableDLL(os.path.join(folder, 'build', f'lib{sdfg.name}.{suffix}'), sdfg.name))
+    return csdfg.CompiledSDFG(
+        sdfg,
+        csdfg.ReloadableDLL(os.path.join(folder, 'build', f'lib{sdfg.name}.{suffix}'), sdfg.name),
+        sdfg.arg_names,
+    )
 
 
-def distributed_compile(sdfg: SDFG, comm, validate: bool = True) -> csdfg.CompiledSDFG:
+def distributed_compile(sdfg: SDFG, comm, *, validate: bool = True) -> csdfg.CompiledSDFG:
     """
     Compiles an SDFG in rank 0 of MPI communicator ``comm``. Then, the compiled SDFG is loaded in all other ranks.
 
     :param sdfg: SDFG to be compiled.
     :param comm: MPI communicator. ``Intracomm`` is the base mpi4py communicator class.
+    :param validate: If True, validates the SDFG prior to generating code.
     :return: Compiled SDFG.
     :note: This method can be used only if the module mpi4py is installed.
     """
@@ -1881,31 +1893,6 @@ def traverse_sdfg_with_defined_symbols(
         symbols.update({str(s): s.dtype for s in desc.free_symbols})
 
     yield from _tswds_cf_region(sdfg, sdfg, symbols, recursive)
-
-
-def is_fpga_kernel(sdfg, state):
-    """
-    Returns whether the given state is an FPGA kernel and should be dispatched
-    to the FPGA code generator.
-
-    :return: True if this is an FPGA kernel, False otherwise.
-    """
-    if ("is_FPGA_kernel" in state.location and state.location["is_FPGA_kernel"] == False):
-        return False
-    data_nodes = state.data_nodes()
-    at_least_one_fpga_array = False
-    for n in data_nodes:
-        desc = n.desc(sdfg)
-        if desc.storage in (dtypes.StorageType.FPGA_Global, dtypes.StorageType.FPGA_Local,
-                            dtypes.StorageType.FPGA_Registers, dtypes.StorageType.FPGA_ShiftRegister):
-            at_least_one_fpga_array = True
-        if isinstance(desc, dt.Scalar):
-            continue
-        if desc.storage not in (dtypes.StorageType.FPGA_Global, dtypes.StorageType.FPGA_Local,
-                                dtypes.StorageType.FPGA_Registers, dtypes.StorageType.FPGA_ShiftRegister):
-            return False
-
-    return at_least_one_fpga_array
 
 
 CFBlockDictT = Dict[ControlFlowBlock, ControlFlowBlock]
@@ -2767,7 +2754,7 @@ def expand_nodes(sdfg: SDFG, predicate: Callable[[nd.Node], bool]):
                 expand_nodes(node.sdfg, predicate=predicate)
             elif isinstance(node, nd.LibraryNode):
                 if predicate(node):
-                    impl_name = node.expand(sdfg, state)
+                    impl_name = node.expand(state)
                     if config.Config.get_bool('debugprint'):
                         print("Automatically expanded library node \"{}\" with implementation \"{}\".".format(
                             str(node), impl_name))

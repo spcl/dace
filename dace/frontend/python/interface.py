@@ -3,7 +3,9 @@
 
 import inspect
 from functools import wraps
-from typing import Any, Callable, Deque, Dict, Generator, Optional, Tuple, TypeVar, Union, overload, TYPE_CHECKING
+from typing import (Any, Callable, Deque, Dict, Generator, Optional, Tuple, TypeVar, Union, overload, TYPE_CHECKING,
+                    Generic, Iterable, Iterator)
+from typing_extensions import Self
 
 from dace import dtypes
 from dace.dtypes import paramdec
@@ -55,7 +57,7 @@ def program(f: F,
                           on the generated DaCe program during compilation.
     :param device: Transform the function to run on the target device.
     :param recreate_sdfg: Whether to recreate the SDFG from the Python code. If False, the SDFG will be loaded from the
-                          cache (``<build folder>/<program name>/program.sdfg``) if it exists.
+                          cache (``<build folder>/<program name>/program.sdfgz``) if it exists.
                           Use this if you want to modify the SDFG after the first call to the function.
     :param regenerate_code: Whether to regenerate the code from the SDFG. If False, the code in the build folder will be
                             used if it exists. Use this if you want to modify the generated code without DaCe overriding
@@ -124,7 +126,7 @@ def method(f: F,
                           on the generated DaCe program during compilation.
     :param device: Transform the function to run on the target device.
     :param recreate_sdfg: Whether to recreate the SDFG from the Python code. If False, the SDFG will be loaded from the
-                          cache (``<build folder>/<program name>/program.sdfg``) if it exists.
+                          cache (``<build folder>/<program name>/program.sdfgz``) if it exists.
                           Use this if you want to modify the SDFG after the first call to the function.
     :param regenerate_code: Whether to regenerate the code from the SDFG. If False, the code in the build folder will be
                             used if it exists. Use this if you want to modify the generated code without DaCe overriding
@@ -189,18 +191,20 @@ def method(f: F,
 
 # DaCe functions
 
-
 # Dataflow constructs
-class MapGenerator:
+_MapT = TypeVar('_MapT')
+
+
+class MapGenerator(Generic[_MapT], Iterable[_MapT]):
     """
     An SDFG map generator class that allows applying operators on it, used
     for syntactic sugar.
     """
 
-    def __init__(self, rng: Union[slice, Tuple[slice]]):
+    def __init__(self, rng: Union[slice, tuple[slice, ...]]):
         self.rng = rng
 
-    def __matmul__(self, schedule: dtypes.ScheduleType):
+    def __matmul__(self, schedule: dtypes.ScheduleType) -> Self:
         """
         Syntactic sugar for specifying the schedule of the map.
         This enables controlling the hardware scheduling of the map as follows:
@@ -213,15 +217,32 @@ class MapGenerator:
         # Ignored in Python mode
         return self
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[_MapT]:
         return ndloop.ndrange(self.rng)
 
 
 class MapMetaclass(type):
     """ Metaclass for map, to enable ``dace.map[0:N]`` syntax. """
 
-    @classmethod
-    def __getitem__(cls, rng: Union[slice, Tuple[slice]]) -> Generator[Tuple[int], None, None]:
+    # yapf: disable
+    # Type overloads for proper unpacking based on number of slices
+    @overload
+    def __getitem__(cls, rng: slice) -> MapGenerator[int]: ...
+    @overload
+    def __getitem__(cls, rng: tuple[slice, slice]) -> MapGenerator[tuple[int, int]]: ...
+    @overload
+    def __getitem__(cls, rng: tuple[slice, slice, slice]) -> MapGenerator[tuple[int, int, int]]: ...
+    @overload
+    def __getitem__(cls, rng: tuple[slice, slice, slice, slice]) -> MapGenerator[tuple[int, int, int, int]]: ...
+    @overload
+    def __getitem__(cls, rng: tuple[slice, slice, slice, slice, slice]) -> MapGenerator[tuple[int, int, int, int, int]]: ...
+    @overload
+    def __getitem__(cls, rng: tuple[slice, slice, slice, slice, slice, slice]) -> MapGenerator[tuple[int, int, int, int, int, int]]: ...
+    @overload
+    def __getitem__(cls, rng: tuple[slice, ...]) -> MapGenerator[tuple[int, ...]]: ...
+    # yapf: enable
+
+    def __getitem__(cls, rng: Union[slice, tuple[slice, ...]]) -> MapGenerator[Any]:
         """
         Iterates over an N-dimensional region in parallel.
 

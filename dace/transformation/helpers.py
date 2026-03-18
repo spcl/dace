@@ -12,7 +12,6 @@ import dace.subsets as subsets
 from typing import Dict, Iterable, List, Optional, Tuple, Set, Union
 
 from dace import data, dtypes, symbolic
-from dace.codegen import control_flow as cf
 from dace.sdfg import nodes, utils
 from dace.sdfg.graph import Edge, SubgraphView, MultiConnectorEdge
 from dace.sdfg.scope import ScopeSubgraphView, ScopeTree
@@ -171,7 +170,7 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
             ret_cond.add_branch(CodeBlock(did_return_inner), ret_branch)
 
         nsdfg = SDFG("nested_sdfg", constants=sdfg.constants_prop, parent=new_state)
-        nsdfg.add_node(source_node, is_start_state=True)
+        nsdfg.add_node(source_node, is_start_block=True)
         nsdfg.add_nodes_from([s for s in blocks if s is not source_node])
         for e in subgraph.edges():
             nsdfg.add_edge(e.src, e.dst, e.data)
@@ -971,6 +970,7 @@ def unsqueeze_memlet(internal_memlet: Memlet,
                      external_offset: Tuple[int] = None) -> Memlet:
     """ Unsqueezes and offsets a memlet, as per the semantics of nested
         SDFGs.
+
         :param internal_memlet: The internal memlet (inside nested SDFG) before modification.
         :param external_memlet: The external memlet before modification.
         :param preserve_minima: Do not change the subset's minimum elements.
@@ -1611,40 +1611,6 @@ def replace_code_to_code_edges(sdfg: SDFG):
             state.add_edge(edge.src, edge.src_conn, aname, None, edge.data)
             state.add_edge(aname, None, edge.dst, edge.dst_conn, copy.deepcopy(edge.data))
             state.remove_edge(edge)
-
-
-def can_run_state_on_fpga(state: SDFGState):
-    """
-    Checks if state can be executed on FPGA. Used by FPGATransformState
-    and HbmTransform.
-    """
-    for node, graph in state.all_nodes_recursive():
-        # Consume scopes are currently unsupported
-        if isinstance(node, (nodes.ConsumeEntry, nodes.ConsumeExit)):
-            return False
-
-        # Streams have strict conditions due to code generator limitations
-        if (isinstance(node, nodes.AccessNode) and isinstance(graph.sdfg.arrays[node.data], data.Stream)):
-            nodedesc = graph.sdfg.arrays[node.data]
-            sdict = graph.scope_dict()
-            if nodedesc.storage in [
-                    dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_Pinned, dtypes.StorageType.CPU_ThreadLocal
-            ]:
-                return False
-
-            # Cannot allocate FIFO from CPU code
-            if sdict[node] is None:
-                return False
-
-            # Arrays of streams cannot have symbolic size on FPGA
-            if symbolic.issymbolic(nodedesc.total_size, graph.sdfg.constants):
-                return False
-
-            # Streams cannot be unbounded on FPGA
-            if nodedesc.buffer_size < 1:
-                return False
-
-    return True
 
 
 def make_map_internal_write_external(sdfg: SDFG, state: SDFGState, map_exit: nodes.MapExit, access: nodes.AccessNode,

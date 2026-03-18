@@ -24,8 +24,8 @@ class ExpandRedistribute(ExpandTransformation):
 
         inp_symbols = [symbolic.symbol(f"__inp_s{i}") for i in range(len(inp_buffer.shape))]
         out_symbols = [symbolic.symbol(f"__out_s{i}") for i in range(len(out_buffer.shape))]
-        inp_subset = subsets.Indices(inp_symbols)
-        out_subset = subsets.Indices(out_symbols)
+        inp_subset = subsets.Range.from_indices(inp_symbols)
+        out_subset = subsets.Range.from_indices(out_symbols)
         inp_offset = cpp.cpp_offset_expr(inp_buffer, inp_subset)
         out_offset = cpp.cpp_offset_expr(out_buffer, out_subset)
         print(inp_offset)

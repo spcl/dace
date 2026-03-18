@@ -134,9 +134,10 @@ def test_highdim_default_block_size():
 
     with dace.config.set_temporary('compiler', 'cuda', 'default_block_size', value='32, 8, 2'):
         with pytest.warns(UserWarning, match='has more dimensions'):
-            sdfg = tester.to_sdfg()
-            gpu_code = sdfg.generate_code()[1]
-            assert 'dim3(32, 16, 1)' in gpu_code.code
+            with pytest.warns(match='No `gpu_block_size` property'):
+                sdfg = tester.to_sdfg()
+                gpu_code = sdfg.generate_code()[1]
+                assert 'dim3(32, 16, 1)' in gpu_code.code
 
 
 def test_block_size_mismatch_warning():

@@ -5,8 +5,7 @@ import numpy as np
 import dace as dc
 import pytest
 import argparse
-from dace.fpga_testing import fpga_test
-from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
+from dace.transformation.interstate import InlineSDFG
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.autodiff import add_backward_pass
 
@@ -69,24 +68,6 @@ def run_doitgen(device_type: dace.dtypes.DeviceType):
         sdfg = auto_optimize(sdfg, device_type)
         sdfg(A, C4, NR=NR, NQ=NQ, NP=NP)
 
-    elif device_type == dace.dtypes.DeviceType.FPGA:
-        # Parse SDFG and apply FPGA friendly optimization
-        sdfg = doitgen_kernel.to_sdfg(simplify=True)
-        applied = sdfg.apply_transformations([FPGATransformSDFG])
-        assert applied == 1
-
-        # Use FPGA Expansion for lib nodes, and expand them to enable further optimizations
-        from dace.libraries.blas import Gemm
-        Gemm.default_implementation = "FPGA1DSystolic"
-        sdfg.expand_library_nodes()
-        sdfg.apply_transformations_repeated([InlineSDFG], print_report=True)
-        sdfg.states()[0].location["is_FPGA_kernel"] = False
-        # we need to specialize both the top-level SDFG and the nested SDFG
-        sdfg.specialize(dict(NR=NR, NQ=NQ, NP=NP))
-        sdfg.states()[0].nodes()[0].sdfg.specialize(dict(NR=NR, NQ=NQ, NP=NP))
-        # TODO: add support for `long long` in Intel FPGA, set systolic array size
-        sdfg(A, C4)
-
     # Compute ground truth and Validate result
     ground_truth(NR, NQ, NP, A_ref, C4)
     assert np.allclose(A, A_ref)
@@ -142,16 +123,10 @@ def test_autodiff():
     run_doitgen_autodiff()
 
 
-@pytest.mark.skip(reason="long long support for IntelFPGA")
-@fpga_test(assert_ii_1=False)
-def test_fpga():
-    return run_doitgen(dace.dtypes.DeviceType.FPGA)
-
-
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]
@@ -161,5 +136,3 @@ if __name__ == "__main__":
         run_doitgen_autodiff()
     elif target == "gpu":
         run_doitgen(dace.dtypes.DeviceType.GPU)
-    elif target == "fpga":
-        run_doitgen(dace.dtypes.DeviceType.FPGA)

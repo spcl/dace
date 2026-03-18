@@ -1,13 +1,11 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Handles compilation of code objects. Creates the proper folder structure,
     compiles each target separately, links all targets to one binary, and
     returns the corresponding CompiledSDFG object. """
 
-from __future__ import print_function
-
 import collections
 import os
-import six
+import io
 import shutil
 import shlex
 import subprocess
@@ -18,10 +16,10 @@ import warnings
 import dace
 from dace.config import Config
 from dace.codegen import exceptions as cgx
-from dace.codegen.targets.target import TargetCodeGenerator
+from dace.codegen.target import TargetCodeGenerator
 from dace.codegen.codeobject import CodeObject
 from dace.codegen import compiled_sdfg as csd
-from dace.codegen.targets.target import make_absolute
+from dace.codegen.target import make_absolute
 
 T = TypeVar('T')
 
@@ -100,12 +98,22 @@ def generate_program_folder(sdfg, code_objects: List[CodeObject], out_path: str,
 
     if sdfg is not None:
         # Save the SDFG itself and its hash
-        hash = sdfg.save(os.path.join(out_path, "program.sdfg"), hash=True)
+        hash = sdfg.save(os.path.join(out_path, "program.sdfgz"), hash=True, compress=True)
         filepath = os.path.join(out_path, 'include', 'hash.h')
         contents = f'#define __HASH_{sdfg.name} "{hash}"\n'
         if not identical_file_exists(filepath, contents):
             with open(filepath, 'w') as hfile:
                 hfile.write(contents)
+
+    # Write cachedir tag
+    cachedir_tag = os.path.join(out_path, "CACHEDIR.TAG")
+    if not os.path.exists(cachedir_tag):
+        with open(cachedir_tag, "w") as f:
+            f.write("""Signature: 8a477f597d28d172789f06886806bc55
+# This file is a cache directory tag created by DaCe.
+# For information about cache directory tags, see:
+#	http://www.brynosaurus.com/cachedir/
+""")
 
     return out_path
 
@@ -189,9 +197,11 @@ def configure_and_compile(program_folder, program_name=None, output_stream=None)
 
     # Generate CMake options for each compiler
     libraries = set()
+    cmake_files = []
     for target_name, target in sorted(targets.items()):
         try:
             cmake_command += target.cmake_options()
+            cmake_files += target.cmake_files()
             libraries |= unique_flags(Config.get("compiler", target_name, "libs"))
         except KeyError:
             pass
@@ -199,7 +209,7 @@ def configure_and_compile(program_folder, program_name=None, output_stream=None)
             raise cgx.CompilerConfigurationError(str(ex))
 
     cmake_command.append("-DDACE_LIBS=\"{}\"".format(" ".join(sorted(libraries))))
-
+    cmake_command.append(f"-DDACE_CMAKE_FILES=\"{';'.join(cmake_files)}\"")
     cmake_command.append(f"-DCMAKE_BUILD_TYPE={Config.get('compiler', 'build_type')}")
 
     # Set linker and linker arguments, iff they have been specified
@@ -406,7 +416,7 @@ def get_binary_name(object_folder, object_name, lib_extension=Config.get('compil
 
 def _run_liveoutput(command, output_stream=None, **kwargs):
     process = subprocess.Popen(command, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, **kwargs)
-    output = six.StringIO()
+    output = io.StringIO()
     while True:
         line = process.stdout.readline().rstrip()
         if not line:

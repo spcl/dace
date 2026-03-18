@@ -1,9 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-from dace.fpga_testing import intel_fpga_test
 from dace.libraries.stencil import Stencil
 import numpy as np
-from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
+from dace.transformation.interstate import InlineSDFG
 
 SIZE = dace.symbol("size")
 ROWS = dace.symbol("rows")
@@ -84,19 +83,6 @@ def test_stencil_node_1d():
     run_stencil_1d(make_sdfg_1d("pure", 1), 32)
 
 
-def stencil_node_1d_fpga_array(vector_length: int):
-    sdfg = make_sdfg_1d(dace.Config.get("compiler", "fpga", "vendor"), vector_length)
-    assert sdfg.apply_transformations(FPGATransformSDFG) == 1
-    assert sdfg.apply_transformations(InlineSDFG) == 1
-    run_stencil_1d(sdfg, 32)
-    return sdfg
-
-
-@intel_fpga_test()
-def test_stencil_node_1d_fpga_array():
-    return stencil_node_1d_fpga_array(1)
-
-
 def run_stencil_2d(sdfg, rows, cols, specialize: bool):
     a = np.zeros((rows, cols), dtype=DTYPE)
     a[1:-1, 1:-1] = np.arange(1, (rows - 2) * (cols - 2) + 1, dtype=DTYPE).reshape((rows - 2, cols - 2))
@@ -117,28 +103,6 @@ def test_stencil_node_2d():
     run_stencil_2d(make_sdfg_2d("pure", 1), 16, 32, False)
 
 
-def stencil_node_2d_fpga_array(vector_length: int):
-    sdfg = make_sdfg_2d(dace.Config.get("compiler", "fpga", "vendor"), vector_length)
-    sdfg.specialize({"cols": 8})
-    assert sdfg.apply_transformations(FPGATransformSDFG) == 1
-    assert sdfg.apply_transformations(InlineSDFG) == 1
-    run_stencil_2d(sdfg, 4, 8, True)
-    return sdfg
-
-
-@intel_fpga_test()
-def test_stencil_node_2d_fpga_array():
-    return stencil_node_2d_fpga_array(1)
-
-
-@intel_fpga_test()
-def test_stencil_node_2d_fpga_array_vectorized():
-    return stencil_node_2d_fpga_array(4)
-
-
 if __name__ == "__main__":
     test_stencil_node_1d()
-    test_stencil_node_1d_fpga_array(None)
     test_stencil_node_2d()
-    test_stencil_node_2d_fpga_array(None)
-    test_stencil_node_2d_fpga_array_vectorized(None)

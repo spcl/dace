@@ -153,7 +153,7 @@ Existing nodes in `treenodes.py`:
 - `GBlock` (general control flow block)
 
 **Dataflow Scopes:**
-- `MapScope`, `ConsumeScope`, `PipelineScope`
+- `MapScope`, `ConsumeScope`
 
 **Leaf Nodes:**
 - `TaskletNode`, `LibraryCall`, `CopyNode`, `ViewNode`

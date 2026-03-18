@@ -5,10 +5,8 @@ import numpy as np
 import dace as dc
 import pytest
 import argparse
-from dace.fpga_testing import fpga_test, xilinx_test
-from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
-from dace.transformation.dataflow import StreamingMemory, StreamingComposition
-from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
+from dace.transformation.interstate import InlineSDFG
+from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.config import set_temporary
 from dace.autodiff import add_backward_pass
 
@@ -105,20 +103,6 @@ def run_heat_3d(device_type: dace.dtypes.DeviceType):
         after_maps = count_maps(sdfg)
         assert after_maps < initial_maps, f"Expected less maps, initially {initial_maps} many maps, but after optimization {after_maps}"
         sdfg(TSTEPS, A, B, N=N)
-    elif device_type == dace.dtypes.DeviceType.FPGA:
-        # Parse SDFG and apply FPGA friendly optimization
-        sdfg = heat_3d_kernel.to_sdfg(simplify=True)
-        applied = sdfg.apply_transformations([FPGATransformSDFG])
-        assert applied == 1
-
-        # Use FPGA Expansion for lib nodes, and expand them to enable further optimizations
-        from dace.libraries.blas import Dot
-        Dot.default_implementation = "FPGA_PartialSums"
-        sdfg.expand_library_nodes()
-        sdfg.apply_transformations_repeated([InlineSDFG], print_report=True)
-        sdfg.specialize(dict(N=N))
-        sdfg(TSTEPS, A, B)
-
     # Compute ground truth and validate
     ground_truth(TSTEPS, A_ref, B_ref)
     assert np.allclose(A, A_ref)
@@ -175,15 +159,10 @@ def test_autodiff():
     run_heat_3d_autodiff()
 
 
-@fpga_test(assert_ii_1=False)
-def test_fpga():
-    return run_heat_3d(dace.dtypes.DeviceType.FPGA)
-
-
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]
@@ -193,5 +172,3 @@ if __name__ == "__main__":
         run_heat_3d_autodiff()
     elif target == "gpu":
         run_heat_3d(dace.dtypes.DeviceType.GPU)
-    elif target == "fpga":
-        run_heat_3d(dace.dtypes.DeviceType.FPGA)
