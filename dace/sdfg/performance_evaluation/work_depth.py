@@ -707,13 +707,13 @@ def do_initial_subs(w, d, eq, subs1):
     return result
 
 
-def sdfg_work_depth(sdfg: SDFG,
-                    w_d_map: Dict[str, Tuple[sp.Expr, sp.Expr]],
-                    analyze_tasklet,
-                    symbols: Dict[str, str],
-                    equality_subs: Tuple[Dict[str, sp.Symbol], Dict[str, sp.Expr]],
-                    subs1: Dict[str, sp.Expr],
-                    detailed_analysis: bool = False) -> Tuple[sp.Expr, sp.Expr]:
+def control_flow_region_work_depth(cfr: ControlFlowRegion,
+                                   w_d_map: Dict[str, Tuple[sp.Expr|List[Tuple[sp.Expr, sp.Expr]], sp.Expr|List[Tuple[sp.Expr, sp.Expr]]]],
+                                   analyze_tasklet: Callable[[nd.Tasklet, SDFGState], Tuple[sp.Expr, sp.Expr]],
+                                   symbols: Dict[str, str],
+                                   equality_subs: Tuple[Dict[str, sp.Symbol], Dict[str, sp.Expr]],
+                                   subs1: Dict[str, sp.Expr],
+                                   detailed_analysis: bool = False) -> Tuple[sp.Expr|List[Tuple[sp.Expr, sp.Expr]], sp.Expr|List[Tuple[sp.Expr, sp.Expr]]]:
     """
     Analyze the work and depth of a given (structured) ControlFLowRegion.
     First we determine the work and depth of each state. Then we break loops in the state machine, such that we get a DAG.
@@ -887,15 +887,6 @@ def sdfg_work_depth(sdfg: SDFG,
                 edge_work += count_arithmetic_ops_code(v)
         edge_w_d_map[(get_uuid(isedge.src), get_uuid(isedge.dst))] = (edge_work, edge_depth)
 
-    edge_w_d_map: Dict[Tuple[str, str], Tuple[sp.Expr, sp.Expr]] = {}
-    for isedge in sdfg.edges():
-        edge_work, edge_depth = sp.sympify(0), sp.sympify(0)
-        if isedge.data.assignments:
-            for v in isedge.data.assignments.values():
-                edge_depth = sp.Max(edge_depth, count_depth_code(v))
-                edge_work += count_arithmetic_ops_code(v)
-        edge_w_d_map[(get_uuid(isedge.src), get_uuid(isedge.dst))] = (edge_work, edge_depth)
-
     # Prepare the SDFG for a depth analysis by breaking loops. This removes the edge between the last loop state and
     # the guard, and instead places an edge between the last loop state and the exit state.
     # This transforms the state machine into a DAG. Hence, we can find the "heaviest" and "deepest" paths in linear time.
@@ -1002,10 +993,10 @@ def sdfg_work_depth(sdfg: SDFG,
     # ================================= End of Legacy Loop Handling =================================
     
     # add a dummy exit to the SDFG, such that each path ends there.
-    dummy_exit = sdfg.add_state('dummy_exit')
-    for state in sdfg.nodes():
-        if len(sdfg.out_edges(state)) == 0 and state != dummy_exit:
-            sdfg.add_edge(state, dummy_exit, InterstateEdge())
+    dummy_exit = cfr.add_state('dummy_exit')
+    for region in cfr.nodes():
+        if len(cfr.out_edges(region)) == 0 and region is not dummy_exit:
+            cfr.add_edge(region, dummy_exit, InterstateEdge())
 
     # These two dicts save the current length of the "heaviest", resp. "deepest", paths at each state.
     work_map: Dict[AbstractControlFlowRegion, sp.Expr] = {}
