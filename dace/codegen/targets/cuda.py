@@ -32,6 +32,7 @@ from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
 from dace.transformation import helpers as xfh
 from dace.transformation.passes import analysis as ap
 from dace.transformation.dataflow.add_threadblock_map import AddThreadBlockMap
+import os
 
 if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
@@ -47,6 +48,7 @@ def _expr(val):
         return val.expr
     return val
 
+no_sync = os.environ.get('_DACE_NO_SYNC', '0').lower() in ('1', 'yes', 'on', 'true')
 
 def cpu_to_gpu_cpred(sdfg, state, src_node, dst_node):
     """ Copy predicate from CPU to GPU that determines when a copy is illegal.
@@ -144,8 +146,9 @@ class CUDACodeGen(TargetCodeGenerator):
 
     def _emit_sync(self, codestream: CodeIOStream):
         if Config.get_bool('compiler', 'cuda', 'syncdebug'):
-            codestream.write('''DACE_GPU_CHECK({backend}GetLastError());
-            DACE_GPU_CHECK({backend}DeviceSynchronize());'''.format(backend=self.backend))
+            if not no_sync:
+                codestream.write('''DACE_GPU_CHECK({backend}GetLastError());
+                DACE_GPU_CHECK({backend}DeviceSynchronize());'''.format(backend=self.backend))
 
     def preprocess(self, sdfg: SDFG) -> None:
         # Determine GPU backend
@@ -1444,9 +1447,10 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         streams_to_sync = set()
 
                 for stream in streams_to_sync:
-                    callsite_stream.write(
-                        'DACE_GPU_CHECK(%sStreamSynchronize(__state->gpu_context->streams[%d]));' %
-                        (self.backend, stream), cfg, state.block_id)
+                    if not no_sync:
+                        callsite_stream.write(
+                            'DACE_GPU_CHECK(%sStreamSynchronize(__state->gpu_context->streams[%d]));' %
+                            (self.backend, stream), cfg, state.block_id)
 
             # After synchronizing streams, generate state footer normally
             callsite_stream.write('\n')
