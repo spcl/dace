@@ -3,7 +3,6 @@ Tests for data_used_by_map: given a map entry node in a state, returns a dict
 mapping data container names to their storage type for all data accessed
 within the map scope.
 """
-from typing import Tuple
 
 import pytest
 import dace
@@ -204,7 +203,7 @@ def test_triple_nested_maps_outer_only_array():
         
 
 
-def make_row_col_add_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace.nodes.MapEntry]:
+def make_row_col_add_sdfg() -> tuple[dace.SDFG, dace.SDFGState, dace.nodes.MapEntry]:
     sdfg = dace.SDFG('row_col_add_views')
 
     # --- Data descriptors ---

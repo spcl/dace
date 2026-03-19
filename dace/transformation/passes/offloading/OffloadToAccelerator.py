@@ -1,9 +1,12 @@
 import dace
 from dace import dtypes, properties, data
+from dace.memlet import Memlet
 from dace.sdfg import nodes, SDFG
+from dace.sdfg.state import SDFGState, ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.sdfg.utils import get_last_view_node
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
+import dace.data 
 
 from typing import Any, Dict, Tuple, List, Optional, Set, Type, Union
 import numpy as np
@@ -70,7 +73,7 @@ class OffloadToAccelerator(ppl.Pass):
                         f"Node {node} has schedule type {self.get_schedule(node)}" )
 
     
-    ### HELPERS ###
+    ### generic HELPERS ###
 
     def is_schedule_node(self, node):
         return isinstance(node, nodes.MapEntry) or isinstance(node, nodes.MapExit) or isinstance(node, nodes.LibraryNode)
@@ -101,26 +104,69 @@ class OffloadToAccelerator(ppl.Pass):
     def get_predecessors(self, state, node):
         return {e.src for e in state.in_edges(node)}
 
-    def get_all_input_nodes(self, state, node, type=None):
-        input_nodes = set()
-        for e in state.in_edges(node):
-            root_src = state.memlet_tree(e).root().edge.src
-            if not type or isinstance(root_src, type):
-                input_nodes.add(root_src)
-        return input_nodes
-
-    def get_all_output_nodes(self, state, node, type=None):
-        output_nodes = set()
-        for e in state.out_edges(node):
-            print(state, node, e)
-            root_dst = state.memlet_tree(e).root().edge.dst
-            if not type or isinstance(root_dst, type):
-                output_nodes.add(root_dst)
-        return output_nodes
     
+
     ### STEP 2 ###
 
-    def get_data_locations_of_map(self, sdfg: SDFG, state: dace.SDFGState, map_entry: dace.nodes.MapEntry):
+    # helpers to get the set of arrays accessed / connected to nodes or edges #
+
+    def get_arrays_used_by_access_node(self, sdfg:SDFG, state:SDFGState, access_node:nodes.AccessNode) -> set[str]:
+        data_name = access_node.data
+        container = sdfg.arrays[data_name]
+        arrays : set[str] = {data_name}
+
+        if isinstance(container, data.Array):
+            return arrays
+
+        elif isinstance(container, data.View):
+            original = get_last_view_node(state, access_node) # once the view access node is known, its original access node can be found and it's data added
+            return arrays | self.get_arrays_used_by_access_node(sdfg, state, original)
+            
+        else: # might be a scalar access of another array
+            for pred in self.get_predecessors(state, access_node):
+                if isinstance(pred, nodes.AccessNode):
+                    arrays |= self.get_arrays_used_by_access_node(sdfg, state, pred)
+            return arrays
+       
+    def get_arrays_used_by_edge(self, sdfg:SDFG, state:SDFGState, edge, is_out_edge:bool):
+        if not edge.data.is_empty():
+
+            data_name = edge.data.data
+            container = sdfg.arrays[data_name]
+
+            if isinstance(container, data.Array): # array access on edge
+                return {data_name}
+
+            elif isinstance(container, data.View): # view -> we need to find the corresponding view access node by iteration.
+                for n in state.data_nodes(): 
+                    if n.data == data_name:
+                        return self.get_arrays_used_by_access_node(n)
+                
+            else: # might be a scalar access of an array slice
+                if is_out_edge:
+                    if isinstance(edge.dst, nodes.AccessNode):
+                        return self.get_arrays_used_by_access_node(sdfg, state, edge.dst)
+                else:
+                    if isinstance(edge.src, nodes.AccessNode):
+                        return self.get_arrays_used_by_access_node(sdfg, state, edge.src)
+                
+        return set()
+    
+    def get_arrays_used_by_node(self, sdfg, state, node):
+        arrays : set[str] = set()
+
+        for e in state.in_edges(node):
+            arrays |= self.get_arrays_used_by_edge(sdfg, state, e, False)
+
+        for e in state.out_edges(node):
+            arrays |= self.get_arrays_used_by_edge(sdfg, state, e, True)
+
+        return arrays
+
+
+    # find all accessed arrays and sort them into gpu and cpu sets #
+
+    def get_data_locations_of_map(self, sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEntry):
         """
         finds all arrays accessed by a map, i.e. arrays which are
             - part of the read/write set of an enclosed tasklet
@@ -134,6 +180,8 @@ class OffloadToAccelerator(ppl.Pass):
 
         returns two sets (gpu_set, cpu_set) with the names of the respective arrays
         """
+
+        # helper to validate data and add it to correct set
         def _add_data(data_name: str, gpu_set:set[str], cpu_set:set[str], is_gpu:bool) -> tuple[set[str], set[str]]:
             if data_name in gpu_set: # has already been accessed on GPU
                 if not is_gpu: # is now accessed on CPU
@@ -147,162 +195,142 @@ class OffloadToAccelerator(ppl.Pass):
                 assert isinstance(data_name, str), f"{data_name} -> {data_name.__class__.__name__}"
                 (gpu_set if is_gpu else cpu_set).add(data_name)
 
-        def _add_node_data(sdfg: SDFG, state: dace.SDFGState, node:nodes.AccessNode, gpu_set:set[str], cpu_set:set[str], is_gpu:bool):
-            data_name = node.data
-            _add_data(data_name, gpu_set, cpu_set, is_gpu) # add given node.data to sets
+        # main work horse, can recurse to nested maps
+        def _recursive_helper(sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEntry, gpu_set:set[str], cpu_set:set[str], is_gpu:bool):
+            is_gpu = is_gpu or map_entry.map.schedule in dtypes.GPU_SCHEDULES # TODO Q: how not to hardcode?
             
-            if isinstance(sdfg.arrays[data_name], data.View): # check if its a view (alias of another data container) - if so, find original and add it too
-                access_node = node
-                if not isinstance(node, nodes.AccessNode): # node could e.g. be a Memlet. In that case, we need to find the corresponding view access node by iteration.
-                    for n in state.data_nodes():
-                        if n.data == data_name:
-                            access_node = n
-                            break
-                   
-                original = get_last_view_node(state, access_node) # once the view access node is known, its original access node can be found and it's data added
-                #print(f"\t\tis_view of {access_node}")
-                _add_data(original.data, gpu_set, cpu_set, is_gpu)
-                
-        def _recursive_helper(sdfg: SDFG, state: dace.SDFGState, map_entry: dace.nodes.MapEntry, gpu_set:set[str], cpu_set:set[str], is_gpu:bool):
-            is_gpu = is_gpu or map_entry.map.schedule in dtypes.GPU_SCHEDULES # Q: how not to hardcode?
-            
-            map_nodes = [n for n, parent in state.scope_dict().items() if parent is map_entry]
+            # get all nodes within this map's scope
+            map_nodes = [n for n, parent in state.scope_dict().items() if parent is map_entry] 
             #print(f"map {map_entry}\n\tis_gpu: {is_gpu}\n\tmap nodes: {map_nodes}")
+
             for node in map_nodes:
                 #print(f"\tnode: {node}\n\t\tgpu:{gpu_set}, cpu:{cpu_set}")
                 if isinstance(node, nodes.AccessNode): # internal access node -> add
-                    _add_node_data(sdfg, state, node, gpu_set, cpu_set, is_gpu)
+                    for name in self.get_arrays_used_by_access_node(sdfg, state, node):
+                        _add_data(name, gpu_set, cpu_set, is_gpu)
 
                 elif isinstance(node, nodes.Tasklet): # find original accessed array -> add
-                    reads = {e.data for e in state.in_edges(node)}
-                    writes = {e.data for e in state.out_edges(node)}
-                    #print(f"\t\treads {reads} writes {writes}")
-                    for node in reads | writes:
-                        _add_node_data(sdfg, state, node, gpu_set, cpu_set, is_gpu)
+                    for name in self.get_arrays_used_by_node(sdfg, state, node):
+                        _add_data(name, gpu_set, cpu_set, is_gpu)
+                        # TODO Q: isn't this double if I already check the access nodes?
 
                 elif isinstance(node, nodes.MapEntry): # recurse on inner map
                     _recursive_helper(sdfg, state, node, gpu_set, cpu_set, is_gpu)
         
-
-        # function body
+        # function body, calls recursive helper
         gpu_set : set[str] = set()
         cpu_set : set[str] = set()
         _recursive_helper(sdfg, state, map_entry, gpu_set, cpu_set, False)
         return gpu_set, cpu_set
 
-    
-    def get_data_locations_of_state(self): pass
 
-    def get_data_locations_of_sdfg(self): pass
+    def get_data_locations_of_state(self, sdfg: SDFG, state: SDFGState) -> tuple[set[str], set[str]]:
+        # iterate through all toplevel nodes of this state
+        #  - map entry -> give to get_data_locations_of_map, which handles all nodes inside scope
+        #  - control flow (nested) -> recurse
+        #  - non-nested toplevel scopes -> add accessed data to cpu set
+        gpu_set : set[str] = set()
+        cpu_set : set[str] = set()
 
+        top_level_nodes = state.scope_children()[None]
+        for node in top_level_nodes:
 
+            g,c = set(), set()
 
-    """
-    # first attempt at get_data_locations_of_state and
-    # get_data_locations_of_sdfg
-    # not functional, but I'll reuse pieces when implementing
-    # the above functions properly
+            # process map and all nodes within -> may be on GPU
+            if isinstance(node, nodes.MapEntry):
+                g,c = self.get_data_locations_of_map(sdfg, state, node)
+                #print(f"map: {node}, gpu: {g}, cpu: {c}")
 
-    def copy_analysis(self, sdfg: SDFG):
-        pre_gpu_set, pre_cpu_set = set(), set()
-        last_state = None
-
-        # ASSUME: states are arranged as a line graph
-        for state in sdfg.states():
-            print(f"\n\nstate: {state}")
-
-            # get locations of arrays within this state
-            gpu_set, cpu_set = set(), set()
-            for node in state.data_nodes():
-                self._find_data_location(state, node, gpu_set, cpu_set)
-            
-            # check whether copies are needed within state
-            copy_within_state = gpu_set & cpu_set
-            if copy_within_state:
-                #raise NotImplemented(f"cannot handle copies within states: {state} needs copies of {copy_within_state}")
-                print(f"copy within state {state}: {copy_within_state}")
-
-            # check whether copies are needed between states
-            if last_state:
-                copy_to_gpu = pre_cpu_set & gpu_set
-                copy_to_cpu = pre_gpu_set & cpu_set
-                print(pre_gpu_set)
-                print(f"copy to cpu {cpu_set}: {copy_to_cpu}")
-                if copy_to_gpu:
-                    print(f"copy to gpu {last_state} -> {state}: {copy_to_gpu}")
-                if copy_to_cpu:
-                    print(f"copy to cpu {last_state} -> {state}: {copy_to_cpu}")
-
-            # check the interstate edge condition
-            pre_gpu_set = gpu_set
-            pre_cpu_set = cpu_set
-            last_state = state
-
-            print(f"gpu_data: {pre_gpu_set}")
-            print(f"cpu_data: {pre_cpu_set}")
-
-        return pre_gpu_set, pre_cpu_set
-            
-    
-    def _find_data_location(self, state:dace.SDFGState, node:nodes.AccessNode, gpu_set:Set, cpu_set:Set):
-        #pre condition: node is nodes.AccessNode
-        #post condition: node in gpu_set or neighbour in cpu_set
-        
-        assert isinstance(node, nodes.AccessNode) # defensive
-        if node in gpu_set or node in cpu_set:
-            return
-        
-        # get all new neighbours
-        neighbours : Set = self.get_all_input_nodes(state, node) | self.get_all_output_nodes(state, node)
-        
-        for neighbour in neighbours:
-            
-            if self.is_schedule_node(neighbour):
-                if not self.has_GPU_schedule(neighbour):
-                    raise RuntimeError(f"Node {node} is expected to be scheduled for GPU but isn't.")
-                gpu_set.add(node)
-                
-            elif isinstance(neighbour, nodes.AccessNode):
-                # recurse on neighbour
-                # Assumption: access nodes are acylic in sdfgs.
-                self._find_data_location(state, neighbour, gpu_set, cpu_set)
-                # post condition: neighbour in gpu_set or neighbour in cpu_set
-                
-                if neighbour in gpu_set and neighbour in cpu_set:
-                    if not (node in gpu_set or node in cpu_set): 
-                        # if neighbour is both, and this node is still undefined
-                        # assume GPU schedule for this node
-                        gpu_set.add(node)
-                    else:
-                        # if the node is not undefined, leave as is
-                        pass
-
-                elif neighbour in gpu_set: 
-                    gpu_set.add(node)
-
+            # library nodes are usually GPU, can be CPU
+            elif isinstance(node, nodes.LibraryNode):
+                if self.has_GPU_schedule(node):
+                    g = self.get_arrays_used_by_node(sdfg, state, node)
                 else:
-                    cpu_set.add(node)
-    
+                    c = self.get_arrays_used_by_node(sdfg, state, node)
+                #print(f"lib: {node}, gpu: {g}, cpu: {c}")
+
+            # recurse if nested
+            elif isinstance(node, ControlFlowRegion):
+                g,c = self.get_data_locations_of_cfregion(sdfg, node)
+                #print(f"cfr: {node}, gpu: {g}, cpu: {c}")
+
+            # all else is definitely on CPU
+            elif isinstance(node, nodes.Tasklet): # outside a map scope (else handled by locations_of_map) -> cpu
+                c = self.get_arrays_used_by_node(sdfg, state, node)
+                #print(f"task: {node}, gpu: {g}, cpu: {c}")
+                
+            elif isinstance(node, nodes.MapExit) or isinstance(node, nodes.AccessNode):
+                pass # nothing to do, access nodes are covered via tasklets
+
             else:
-                # different node, i.e. control flow -> data needed on CPU
-                cpu_set.add(node)
+                raise RuntimeError(f"unhandled node {node} of type {node.__class__.__name__} in state {state}")
 
-    def BFS(self, start, get_neighbour, process, result):
+            gpu_set |= g
+            cpu_set |= c
 
-        # BFS
-        visited = set()
-        queue = []
-        visited = [start]
+        return gpu_set, cpu_set
+    
 
-        while queue:
-            node = queue.popleft()
+    def get_data_locations_of_condblock(self, sdfg: SDFG, block:ConditionalBlock) -> tuple[set[str], set[str]]:
+        gpu_set : set[str] = set()
+        cpu_set : set[str] = set()
+
+        # get array accesses in condition
+        for memlet in block.get_meta_read_memlets():
+            if memlet.data in sdfg.arrays:
+                cpu_set.add(memlet.data)
+
+        # add array accesses in branches
+        for _, branch in block.branches:
+            g,c = self.get_data_locations_of_cfregion(sdfg, branch)
+            gpu_set |= g
+            cpu_set |= c
+
+        return gpu_set, cpu_set
+    
+
+    def get_data_locations_of_loop(self, sdfg: SDFG, loop:LoopRegion) -> tuple[set[str], set[str]]:
+        # get array accesses in init_statement, update_statement, and loop_condition
+        cpu_set : set[str] = set()
+        for memlet in loop.get_meta_read_memlets():
+            if memlet.data in sdfg.arrays:
+                cpu_set.add(memlet.data)
+        
+        # add array accesses in loop body
+        gpu_set, c = self.get_data_locations_of_cfregion(sdfg, loop)
+        cpu_set |= c
+
+        return gpu_set, cpu_set
+    
+
+    def get_data_locations_of_cfregion(self, sdfg:SDFG, cf: ControlFlowRegion) -> tuple[set[str], set[str]]:
+        gpu_set : set[str] = set()
+        cpu_set : set[str] = set()
+
+        for block in cf.bfs_nodes():
+
+            if isinstance(block, SDFGState):
+                g,c = self.get_data_locations_of_state(sdfg, block)
+
+            elif isinstance(block, ConditionalBlock):
+                g,c = self.get_data_locations_of_condblock(sdfg, block)
+
+            elif isinstance(block, LoopRegion):
+                g,c = self.get_data_locations_of_loop(sdfg, block)
+
+            elif isinstance(block, ControlFlowRegion):
+                g,c = self.get_data_locations_of_cfregion(sdfg, block)
+
+            else:
+                raise RuntimeError(f"Unknown block type: {block} of type {block.__class__.__name__}")
+        
+            gpu_set |= g
+            cpu_set |= c
             
-            process(node, result)
+        return gpu_set, cpu_set
 
-            for neighbor in get_neighbour(node):
-                if neighbor not in visited:
-                    visited.add(neighbor)
-                    queue.append(neighbor)
 
-        return result
-    """
+    # wrapper
+    def get_data_locations(self, sdfg:SDFG):
+        return self.get_data_locations_of_cfregion(sdfg, sdfg)
