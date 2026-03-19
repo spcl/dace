@@ -18,12 +18,16 @@ class PermuteDimensions(ppl.Pass):
                  use_permute_libnodes: bool = False,
                  column_major: bool = False):
         self._permute_map = permute_map
+        # Clean identity maps
+        for k, v in list(self._permute_map.items()):
+            if all(i == v[i] for i in range(len(v))):
+                del self._permute_map[k]
         self._use_permute_libnodes = use_permute_libnodes
         self._add_permute_maps = add_permute_maps
         self._column_major = column_major
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
-        # Once permutaiton is done, no re-application is needed, ever
+        # Once permutation is done, no re-application is needed, ever
         return False
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Dict[str, Any]) -> int:
