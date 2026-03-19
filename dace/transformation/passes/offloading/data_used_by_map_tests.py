@@ -392,7 +392,7 @@ def test_empty_map():
     assert result == {}
 
 
-def make_non_input_readwrite_node_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace.nodes.MapEntry]:
+def make_non_input_readwrite_node_sdfg() -> tuple[dace.SDFG, dace.SDFGState, dace.nodes.MapEntry]:
     """
     C[i,j] = C[i,j] + 1
     A[i,j] = B[i,j] + C[i,j]

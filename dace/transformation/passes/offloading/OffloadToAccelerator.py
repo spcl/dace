@@ -49,8 +49,64 @@ class OffloadToAccelerator(ppl.Pass):
         :return: Some object if pass was applied, or None if nothing changed.
         """
 
+        # step 1: offload maps and library nodes -> heuristic only! document TODO
         self.set_toplevel_to_GPU(sdfg, nodes.MapEntry)
         self.set_toplevel_to_GPU(sdfg, nodes.LibraryNode)
+        """
+        library node -> GPU
+        map cpu
+            library node -> Seq
+            map cpu
+                library node -> Seq
+                map gpu
+                    library node -> Seq
+
+        let user set the schedule to anything else than Device -> stays that way
+        if user set to GPU device, then map cannot be offloaded (known limitation)
+        """
+
+        # step 2: copy analysis
+        gpu_set, cpu_set = self.get_data_locations(sdfg)
+
+        for name in gpu_set - cpu_set:
+            sdfg.arrays[name].storage = dtypes.StorageType.GPU_GLOBAL
+
+        for name in cpu_set - gpu_set:
+            sdfg.arrays[name].storage = dtypes.StorageType.CPU_GLOBAL
+
+        # step 3: insert copies
+        both = gpu_set & cpu_set
+        if both:
+            raise NotImplemented(f"the following nodes are needed on GPU and CPU: {gpu_set & cpu_set}")
+        
+
+        """
+        1) use Yakup's sfgds as unit test cases
+        2) implement my own test suite, check in with Yakup
+        3) implement copy pass
+
+        next meeting monday 9.30
+        
+        heat3d everything on GPU
+        assume inputs on CPU, then copy in beginning -> implement two options, all on GPU, all on CPU -> check non transient, copy if mismatch
+        
+        copying:
+            access node connected to other access node is a copy
+
+            node needs A on GPU
+                    |
+            access node A_gpu, GPU storage  <-- ADD TODO
+                    |
+            access node A_cpu, CPU storage
+                    |
+            node needs A on CPU
+
+        copy in beginning, now there is A and A_gpu
+        node by node, set to use A_gpu
+
+        track before and after in linegraph
+        """
+        
 
     ### STEP 1 ###
     def set_toplevel_to_GPU(self, sdfg: SDFG, type:Type):
@@ -155,6 +211,9 @@ class OffloadToAccelerator(ppl.Pass):
     def get_arrays_used_by_node(self, sdfg, state, node):
         arrays : set[str] = set()
 
+        if isinstance(node, nodes.AccessNode):
+            return self.get_arrays_used_by_access_node(sdfg, state, node)
+
         for e in state.in_edges(node):
             arrays |= self.get_arrays_used_by_edge(sdfg, state, e, False)
 
@@ -205,18 +264,33 @@ class OffloadToAccelerator(ppl.Pass):
 
             for node in map_nodes:
                 #print(f"\tnode: {node}\n\t\tgpu:{gpu_set}, cpu:{cpu_set}")
-                if isinstance(node, nodes.AccessNode): # internal access node -> add
+                if isinstance(node, nodes.MapEntry): # recurse on inner map
+                    _recursive_helper(sdfg, state, node, gpu_set, cpu_set, is_gpu)
+                
+                elif isinstance(node, nodes.AccessNode): # find accessed arrays -> add
                     for name in self.get_arrays_used_by_access_node(sdfg, state, node):
                         _add_data(name, gpu_set, cpu_set, is_gpu)
 
-                elif isinstance(node, nodes.Tasklet): # find original accessed array -> add
+                elif isinstance(node, nodes.Tasklet): # find accessed arrays -> add
                     for name in self.get_arrays_used_by_node(sdfg, state, node):
                         _add_data(name, gpu_set, cpu_set, is_gpu)
-                        # TODO Q: isn't this double if I already check the access nodes?
 
-                elif isinstance(node, nodes.MapEntry): # recurse on inner map
-                    _recursive_helper(sdfg, state, node, gpu_set, cpu_set, is_gpu)
-        
+                elif isinstance(node, ControlFlowRegion):
+                    g,c = self.get_data_locations_of_cfregion(sdfg, node)
+                    if not is_gpu:
+                        gpu_set |= g
+                        cpu_set |= c
+                    else:
+                        gpu_set |= g | c
+
+                elif isinstance(node, nodes.MapExit) or isinstance(node, nodes.LibraryNode):
+                    pass # nothing to do
+
+                else:
+                    raise RuntimeError(f"inside map: unhandled node {node} of type {node.__class__.__name__} in state {state}")
+
+             
+
         # function body, calls recursive helper
         gpu_set : set[str] = set()
         cpu_set : set[str] = set()
@@ -322,6 +396,9 @@ class OffloadToAccelerator(ppl.Pass):
             elif isinstance(block, ControlFlowRegion):
                 g,c = self.get_data_locations_of_cfregion(sdfg, block)
 
+            elif isinstance(block, nodes.ReturnBlock, ContinueBlock, BreakBlock):
+                pass
+
             else:
                 raise RuntimeError(f"Unknown block type: {block} of type {block.__class__.__name__}")
         
@@ -332,5 +409,5 @@ class OffloadToAccelerator(ppl.Pass):
 
 
     # wrapper
-    def get_data_locations(self, sdfg:SDFG):
+    def get_data_locations(self, sdfg:SDFG) -> tuple[set[str], set[str]]:
         return self.get_data_locations_of_cfregion(sdfg, sdfg)
