@@ -60,10 +60,10 @@ class OffloadToAccelerator(ppl.Pass):
                 if not isinstance(node, type): # filter
                     continue
                     
-                if scope_dict[node] is None: # toplevel node -> offload
+                if scope_dict[node] is None: # toplevel node -> change schedule
                     self.set_schedule(node)
 
-                else: # within nested scope -> must not offload (defensive check)
+                else: # within nested scope -> must not have GPU schedule (defensive check)
                     if self.has_GPU_schedule(node):
                         raise RuntimeError("Invalid SDFG for OffloadToAccelerator pass." \
                         "All maps must have default or CPU schedule before pass." \
@@ -134,7 +134,7 @@ class OffloadToAccelerator(ppl.Pass):
 
         returns two sets (gpu_set, cpu_set) with the names of the respective arrays
         """
-        def _add_data(data_name: str, gpu_set:set, cpu_set:set, is_gpu:bool):
+        def _add_data(data_name: str, gpu_set:set[str], cpu_set:set[str], is_gpu:bool) -> tuple[set[str], set[str]]:
             if data_name in gpu_set: # has already been accessed on GPU
                 if not is_gpu: # is now accessed on CPU
                     raise RuntimeError("GPU->CPU within map. This should never happen. If outer map is GPU then inner data must also be on GPU (seq map runs as kernel)")
@@ -147,7 +147,7 @@ class OffloadToAccelerator(ppl.Pass):
                 assert isinstance(data_name, str), f"{data_name} -> {data_name.__class__.__name__}"
                 (gpu_set if is_gpu else cpu_set).add(data_name)
 
-        def _add_access_or_view_data(sdfg: SDFG, state: dace.SDFGState, node:nodes.AccessNode, gpu_set:set, cpu_set:set, is_gpu:bool):
+        def _add_node_data(sdfg: SDFG, state: dace.SDFGState, node:nodes.AccessNode, gpu_set:set[str], cpu_set:set[str], is_gpu:bool):
             data_name = node.data
             _add_data(data_name, gpu_set, cpu_set, is_gpu) # add given node.data to sets
             
@@ -163,7 +163,7 @@ class OffloadToAccelerator(ppl.Pass):
                 #print(f"\t\tis_view of {access_node}")
                 _add_data(original.data, gpu_set, cpu_set, is_gpu)
                 
-        def _recursive_helper(sdfg: SDFG, state: dace.SDFGState, map_entry: dace.nodes.MapEntry, gpu_set:Set, cpu_set:Set, is_gpu:bool):
+        def _recursive_helper(sdfg: SDFG, state: dace.SDFGState, map_entry: dace.nodes.MapEntry, gpu_set:set[str], cpu_set:set[str], is_gpu:bool):
             is_gpu = is_gpu or map_entry.map.schedule in dtypes.GPU_SCHEDULES # Q: how not to hardcode?
             
             map_nodes = [n for n, parent in state.scope_dict().items() if parent is map_entry]
@@ -171,21 +171,22 @@ class OffloadToAccelerator(ppl.Pass):
             for node in map_nodes:
                 #print(f"\tnode: {node}\n\t\tgpu:{gpu_set}, cpu:{cpu_set}")
                 if isinstance(node, nodes.AccessNode): # internal access node -> add
-                    _add_access_or_view_data(sdfg, state, node, gpu_set, cpu_set, is_gpu)
+                    _add_node_data(sdfg, state, node, gpu_set, cpu_set, is_gpu)
 
                 elif isinstance(node, nodes.Tasklet): # find original accessed array -> add
                     reads = {e.data for e in state.in_edges(node)}
                     writes = {e.data for e in state.out_edges(node)}
                     #print(f"\t\treads {reads} writes {writes}")
                     for node in reads | writes:
-                        _add_access_or_view_data(sdfg, state, node, gpu_set, cpu_set, is_gpu)
+                        _add_node_data(sdfg, state, node, gpu_set, cpu_set, is_gpu)
 
                 elif isinstance(node, nodes.MapEntry): # recurse on inner map
                     _recursive_helper(sdfg, state, node, gpu_set, cpu_set, is_gpu)
         
 
         # function body
-        gpu_set, cpu_set = set(), set()
+        gpu_set : set[str] = set()
+        cpu_set : set[str] = set()
         _recursive_helper(sdfg, state, map_entry, gpu_set, cpu_set, False)
         return gpu_set, cpu_set
 
