@@ -230,7 +230,6 @@ def test_non_standard_strides_returns_false():
     """Test array with non-standard strides - should return False"""
     array = create_array((10, 20, 30), (2, 20, 400))  # Custom strides
     subset = create_subset([(0, 9, 1), (0, 19, 1), (0, 29, 1)])
-
     result = subset.is_contiguous_subset(array)
     assert result is False
 

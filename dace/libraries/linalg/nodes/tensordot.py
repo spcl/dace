@@ -1,7 +1,7 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import collections
 import dace
-import dace.libraries.linalg.environments as environments
+import dace.libraries.environments as environments
 
 from dace import library, nodes, properties
 from dace.utils import prod as _prod

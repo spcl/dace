@@ -1,13 +1,13 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import multiprocessing
 from dace import library, nodes, properties
-from dace.libraries.blas import blas_helpers
 from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
 from numbers import Number
 from .. import environments
-
+from dace.libraries.environments.cutensor import cuTensor
+import warnings
 
 @library.expansion
 class ExpandPure(ExpandTransformation):
@@ -61,6 +61,8 @@ class ExpandHPTT(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
+        from dace.libraries.linalg import blas_helpers
+
         inp_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
         axes = ','.join([symstr(a) for a in node.axes])
         shape = ','.join([symstr(s) for s in inp_tensor.shape])
@@ -83,12 +85,150 @@ class ExpandHPTT(ExpandTransformation):
 
         return tasklet
 
+@library.expansion
+class ExpandCuTensor(ExpandTransformation):
+    """
+    Implements the TensorTranspose library node using the cuTENSOR v2 API
+    (cutensorPermute). Requires cuTENSOR >= 2.0.
+
+    The permutation is expressed as:
+        C_{modesC} = alpha * A_{modesA}
+    where modesA is the identity [0, 1, ..., n-1] and modesC encodes the
+    axis permutation.
+
+    NOTE: beta != 0 is not supported by cutensorPermute. For
+    C = alpha * perm(A) + beta * C, use ExpandPure or implement via
+    cutensorElementwiseBinary.
+    """
+
+    environments = [cuTensor]
+
+    # cuTENSOR v2 type mapping: (tensor data type, compute descriptor, alpha C type)
+    #
+    # Only floating-point and complex types are supported.
+    # Integer types are NOT supported by cutensorPermute:
+    #   - Native integer descriptors (CUTENSOR_R_32I etc.) are accepted by the
+    #     API but the kernel segfaults at execution time.
+    #   - Reinterpret-casting integers as same-width floats does not work either:
+    #     cutensorPermute computes B = alpha * op(A), and GPU hardware
+    #     canonicalizes NaN bit patterns during float multiplication. Negative
+    #     integers have bit patterns that are NaN when read as float, so
+    #     1.0 * NaN destroys the original bits (e.g., -83 -> 2147483647).
+    # For integer types, we fall back to the pure (map-based) expansion.
+    _TYPE_MAP = {
+        dace.float16:    ('CUTENSOR_R_16F',  'CUTENSOR_COMPUTE_DESC_16F',  '__half'),
+        dace.float32:    ('CUTENSOR_R_32F',  'CUTENSOR_COMPUTE_DESC_32F',  'float'),
+        dace.float64:    ('CUTENSOR_R_64F',  'CUTENSOR_COMPUTE_DESC_64F',  'double'),
+        dace.complex64:  ('CUTENSOR_C_32F',  'CUTENSOR_COMPUTE_DESC_32F',  'float'),
+        dace.complex128: ('CUTENSOR_C_64F',  'CUTENSOR_COMPUTE_DESC_64F',  'double'),
+    }
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg):
+        inp_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
+
+        if node.beta != 0:
+            raise NotImplementedError("cuTENSOR v2 cutensorPermute does not support beta != 0. "
+                                      "Use the 'pure' expansion or implement via cutensorElementwiseBinary.")
+
+        ndim = len(inp_tensor.shape)
+        dtype = inp_tensor.dtype.base_type
+
+        if dtype not in ExpandCuTensor._TYPE_MAP:
+            # Fall back to pure expansion for unsupported types (integers, etc.).
+            # The pure expansion generates a GPU map when data is GPU_Global,
+            # so integer transposes still execute on the GPU.
+            warnings.warn("CuTensor does not support integer tensors, falling back to pure implementation")
+            return ExpandPure.expansion(node, parent_state, parent_sdfg)
+
+        cutensor_dtype, compute_desc, alpha_type = ExpandCuTensor._TYPE_MAP[dtype]
+        alpha_val = f"({alpha_type}){node.alpha}"
+
+        # Input modes: identity mapping  [0, 1, …, n-1]
+        modes_a = list(range(ndim))
+        # Output modes: the permutation   [axes[0], axes[1], …]
+        modes_c = list(node.axes)
+
+        modes_a_str = ', '.join(str(m) for m in modes_a)
+        modes_c_str = ', '.join(str(m) for m in modes_c)
+        extent_a_str = ', '.join(symstr(s) for s in inp_tensor.shape)
+        extent_c_str = ', '.join(symstr(s) for s in out_tensor.shape)
+        stride_a_str = ', '.join(symstr(s) for s in inp_tensor.strides)
+        stride_c_str = ', '.join(symstr(s) for s in out_tensor.strides)
+
+        code = f"""\
+{cuTensor.handle_setup_code(node)}
+{{
+    // ---- cuTENSOR v2 permutation ----------------------------------------
+    const uint32_t kNdim = {ndim};
+
+    int32_t  modesA[{ndim}]   = {{{modes_a_str}}};
+    int32_t  modesC[{ndim}]   = {{{modes_c_str}}};
+    int64_t  extentA[{ndim}]  = {{{extent_a_str}}};
+    int64_t  extentC[{ndim}]  = {{{extent_c_str}}};
+    int64_t  stridesA[{ndim}] = {{{stride_a_str}}};
+    int64_t  stridesC[{ndim}] = {{{stride_c_str}}};
+
+    {alpha_type} alpha = {alpha_val};
+
+    // --- tensor descriptors (v2: alignment hint in bytes, 256 is safe) ---
+    cutensorTensorDescriptor_t descA, descC;
+    dace::linalg::CheckCuTensorError(cutensorCreateTensorDescriptor(
+        __dace_cutensor_handle, &descA, kNdim,
+        extentA, stridesA, {cutensor_dtype}, 256));
+    dace::linalg::CheckCuTensorError(cutensorCreateTensorDescriptor(
+        __dace_cutensor_handle, &descC, kNdim,
+        extentC, stridesC, {cutensor_dtype}, 256));
+
+    // --- operation descriptor (permutation) ------------------------------
+    cutensorOperationDescriptor_t opDesc;
+    dace::linalg::CheckCuTensorError(cutensorCreatePermutation(
+        __dace_cutensor_handle, &opDesc,
+        descA, modesA, CUTENSOR_OP_IDENTITY,
+        descC, modesC,
+        {compute_desc}));
+
+    // --- plan preference & plan ------------------------------------------
+    cutensorPlanPreference_t planPref;
+    dace::linalg::CheckCuTensorError(cutensorCreatePlanPreference(
+        __dace_cutensor_handle, &planPref,
+        CUTENSOR_ALGO_DEFAULT, CUTENSOR_JIT_MODE_NONE));
+
+    cutensorPlan_t plan;
+    dace::linalg::CheckCuTensorError(cutensorCreatePlan(
+        __dace_cutensor_handle, &plan, opDesc, planPref, 0));
+
+    // --- execute ---------------------------------------------------------
+    dace::linalg::CheckCuTensorError(cutensorPermute(
+        __dace_cutensor_handle, plan,
+        (const void*)&alpha, _inp_tensor, _out_tensor,
+        __dace_current_stream));
+
+    // --- cleanup ---------------------------------------------------------
+    cutensorDestroyPlan(plan);
+    cutensorDestroyPlanPreference(planPref);
+    cutensorDestroyOperationDescriptor(opDesc);
+    cutensorDestroyTensorDescriptor(descC);
+    cutensorDestroyTensorDescriptor(descA);
+}}
+"""
+
+        tasklet = nodes.Tasklet(node.name,
+                                node.in_connectors,
+                                node.out_connectors,
+                                code,
+                                language=dace.dtypes.Language.CPP)
+        return tasklet
 
 @library.node
 class TensorTranspose(nodes.LibraryNode):
     """ Implements out-of-place tensor transpositions. """
 
-    implementations = {"pure": ExpandPure, "HPTT": ExpandHPTT}
+    implementations = {
+        "pure": ExpandPure,
+        "HPTT": ExpandHPTT,
+        "cuTENSOR": ExpandCuTensor,
+    }
     default_implementation = 'pure'
 
     axes = properties.ListProperty(element_type=int, default=[], desc="Permutation of input tensor's modes")

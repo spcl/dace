@@ -142,7 +142,7 @@ class _ConfigData(threading.local):
             self._cfg_filename = filename
             try:
                 if os.path.isfile(filename):
-                    self.load()
+                    self.load(filename, None)
                     break
             except (FileNotFoundError, PermissionError, OSError):
                 # If any filesystem-related error happened during file load, move on to next candidate
