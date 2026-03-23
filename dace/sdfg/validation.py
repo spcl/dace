@@ -1055,22 +1055,45 @@ class InvalidSDFGNodeError(InvalidSDFGError):
         self.state_id = state_id
         self.node_id = node_id
         self.path = None
+        # Cache the state directly for reliable __str__ when state_id is
+        # relative to a sub-region rather than the top-level SDFG.
+        self._state = None
 
     def to_json(self):
         return dict(message=self.message, cfg_id=self.sdfg.cfg_id, state_id=self.state_id, node_id=self.node_id)
 
     def __str__(self):
-        state = self.sdfg.node(self.state_id)
         locinfo = ''
+        state = self._state
+        if state is None:
+            try:
+                state = self.sdfg.node(self.state_id)
+            except (StopIteration, Exception):
+                # state_id may be relative to a sub-region, not the top-level SDFG.
+                # Search all states as a fallback.
+                for s in self.sdfg.all_states():
+                    try:
+                        if s.parent.node_id(s) == self.state_id:
+                            state = s
+                            break
+                    except Exception:
+                        continue
 
-        if self.node_id is not None:
+        if state is not None and self.node_id is not None:
             from dace.sdfg.nodes import Node
-            node: Node = state.node(self.node_id)
-            nodestr = f', node {node}'
-            locinfo = self._getlineinfo(node)
-        else:
+            try:
+                node: Node = state.node(self.node_id)
+                nodestr = f', node {node}'
+                locinfo = self._getlineinfo(node)
+            except (StopIteration, Exception):
+                nodestr = f', node_id {self.node_id}'
+        elif state is not None:
             nodestr = ''
             locinfo = self._getlineinfo(state)
+        else:
+            nodestr = ''
+
+        state_label = state.label if state is not None else f'state_id={self.state_id}'
 
         if locinfo:
             locinfo = '\nOriginating from source code at ' + locinfo
@@ -1078,7 +1101,7 @@ class InvalidSDFGNodeError(InvalidSDFGError):
         if self.path:
             locinfo += f'\nInvalid SDFG saved for inspection in {os.path.abspath(self.path)}'
 
-        return f'{self.message} (at state {state.label}{nodestr}){locinfo}'
+        return f'{self.message} (at state {state_label}{nodestr}){locinfo}'
 
 
 class NodeNotExpandedError(InvalidSDFGNodeError):

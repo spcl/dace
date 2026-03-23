@@ -655,6 +655,30 @@ namespace dace
         {
           return std::log10(a);
         }
+#ifdef __CUDACC__
+        // float16 overloads — resolve ambiguous std::func(half) on CUDA
+        DACE_HDFI dace::float16 sqrt(const dace::float16& a) {
+            return dace::float16(sqrtf(float(a)));
+        }
+        DACE_HDFI dace::float16 log(const dace::float16& a) {
+            return dace::float16(logf(float(a)));
+        }
+        DACE_HDFI dace::float16 log10(const dace::float16& a) {
+            return dace::float16(log10f(float(a)));
+        }
+        DACE_HDFI dace::float16 tanh(const dace::float16& a) {
+            return dace::float16(tanhf(float(a)));
+        }
+        DACE_HDFI dace::float16 exp(const dace::float16& a) {
+            return dace::float16(expf(float(a)));
+        }
+        DACE_HDFI dace::float16 sin(const dace::float16& a) {
+            return dace::float16(sinf(float(a)));
+        }
+        DACE_HDFI dace::float16 cos(const dace::float16& a) {
+            return dace::float16(cosf(float(a)));
+        }
+#endif
     }
 
     namespace cmath

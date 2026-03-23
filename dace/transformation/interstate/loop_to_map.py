@@ -72,6 +72,8 @@ class LoopToMap(xf.MultiStateTransformation):
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         # If loop information cannot be determined, fail.
+        if not isinstance(self.loop, LoopRegion):
+            return False
         start = loop_analysis.get_init_assignment(self.loop)
         end = loop_analysis.get_loop_end(self.loop)
         step = loop_analysis.get_loop_stride(self.loop)

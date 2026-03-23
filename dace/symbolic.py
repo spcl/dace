@@ -762,6 +762,8 @@ class OR(sympy.Function):
         :param y: Second operand.
         :return: Return value (literal or symbolic).
         """
+        if x == sympy.true or y == sympy.true or x is True or y is True:
+            return sympy.true
         if x.is_Boolean and y.is_Boolean:
             return x or y
 
@@ -780,6 +782,12 @@ class AND(sympy.Function):
         :param y: Second operand.
         :return: Return value (literal or symbolic).
         """
+        if x == sympy.false or y == sympy.false or x is False or y is False:
+            return sympy.false
+        if x == sympy.true or x is True:
+            return y
+        if y == sympy.true or y is True:
+            return x
         if x.is_Boolean and y.is_Boolean:
             return x and y
 

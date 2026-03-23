@@ -620,4 +620,14 @@ class TargetDispatcher(object):
 
         # Dispatch
         self._used_targets.add(target)
+        if not hasattr(target, 'define_out_memlet'):
+            from dace import nodes as _n
+            _src_st = dtypes.StorageType.Register if isinstance(src_node, _n.CodeNode) else src_node.desc(sdfg).storage
+            _dst_st = dtypes.StorageType.Register if isinstance(dst_node, (_n.CodeNode, _n.EntryNode)) else dst_node.desc(sdfg).storage
+            _ent = state.entry_node(src_node) if isinstance(src_node, _n.Tasklet) else state.entry_node(dst_node)
+            _sched = _ent.map.schedule if _ent else None
+            raise AttributeError(
+                f"IllegalCopy: {src_node}->{dst_node} "
+                f"src_st={_src_st} dst_st={_dst_st} sched={_sched} "
+                f"sdfg={sdfg.label} state={state.label}")
         target.define_out_memlet(sdfg, cfg, dfg, state_id, src_node, dst_node, edge, function_stream, output_stream)
