@@ -3,8 +3,7 @@
 import sympy as sp
 from dace import sdfg as sd, symbolic, properties
 from dace import data as dt
-from dace.sdfg import SDFGState
-from dace.sdfg.state import LoopRegion, ConditionalBlock
+from dace.sdfg.state import LoopRegion
 from dace.data import Scalar
 from dace.transformation import transformation as xf
 from dace.transformation import pass_pipeline as ppl

@@ -32,7 +32,6 @@ def test_tiling_number_of_tiles():
     sdfg.apply_transformations(StripMining, options=[{'tile_size': '16', 'tiling_type': dace.TilingType.NumberOfTiles}])
     sdfg(A=A, X=X, Y=Y, N=size)
     assert np.allclose(Y, A * X + Z)
-    print('PASS')
 
 
 if __name__ == "__main__":

@@ -1,12 +1,9 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
-from typing import Tuple, Union
+from typing import Tuple
 import dace
-from dace import subsets as dace_sbs
 from dace.sdfg import nodes as dace_nodes
 from dace.sdfg.utils import canonicalize_memlet_trees
-
-import pytest
 
 from .transformations import utility
 

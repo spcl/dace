@@ -46,7 +46,6 @@ def test_multistream_copy():
 
     refC = np.array([a[0], b[1]], dtype=np.float32)
     diff = np.linalg.norm(c - refC)
-    print('Difference:', diff)
     assert diff <= 1e-5
 
 

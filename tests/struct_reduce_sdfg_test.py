@@ -23,7 +23,6 @@ def test():
     expected = (5.0, 7.0, 9.0)
     diff = tuple(abs(x - y) for x, y in zip(inout[0], expected))
 
-    print('Difference:', diff)
     assert all(d <= 1e-5 for d in diff)
 
 

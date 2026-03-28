@@ -1,9 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-from dace.transformation import transformation
 from dace.transformation.interstate import StateFusion
 import networkx as nx
 import numpy as np
+import pytest
 
 
 # Inter-state condition tests
@@ -59,11 +59,8 @@ def test_fuse_assignment_in_use():
     state4.add_edge(state3.add_tasklet('two', {}, {'a'}, 'a = k'), 'a', state3.add_write('A'), None,
                     dace.Memlet('A[1]'))
 
-    try:
+    with pytest.raises(ValueError):
         StateFusion.apply_to(sdfg, first_state=state3, second_state=state4)
-        raise AssertionError('States fused, test failed')
-    except ValueError:
-        print('Exception successfully caught')
 
 
 # Connected components tests

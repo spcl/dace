@@ -48,7 +48,6 @@ def onetest(program):
     sdfg(A=A, B=B)
 
     diff = np.linalg.norm(expected - B)
-    print('Difference:', diff)
     assert diff < 1e-5
 
 
@@ -66,7 +65,6 @@ def onetest_subrange_of_subrange(program):
     sdfg(A=A, B=B)
 
     diff = np.linalg.norm(expected - B)
-    print('Difference:', diff)
     assert diff < 1e-5
 
 

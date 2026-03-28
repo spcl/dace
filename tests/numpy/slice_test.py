@@ -23,7 +23,6 @@ def test():
 
     slicetest(A, B, C)
     diff = np.linalg.norm(C - (A[1:N] * B[:, 0:N - 1]))
-    print('Difference:', diff)
     assert diff <= 1e-5
 
 

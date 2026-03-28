@@ -8,7 +8,6 @@ from dace.memlet import Memlet
 
 # Constructs an SDFG with multiple tasklets manually and runs it
 def test():
-    print('SDFG multiple tasklet test')
     # Externals (parameters, symbols)
     N = dp.symbol('N')
     n = 20

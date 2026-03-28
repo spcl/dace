@@ -26,15 +26,12 @@ state.add_nedge(SB, B, Memlet.simple('B', '0'))
 
 
 def test():
-    print('Nested stream test')
-
     Bdata = np.zeros([2], np.int32)
     sdfg(B=Bdata)
 
     B_regression = np.array([2, 0], dtype=np.int32)
 
     diff = np.linalg.norm(B_regression - Bdata)
-    print("Difference:", diff)
     assert diff == 0
 
 

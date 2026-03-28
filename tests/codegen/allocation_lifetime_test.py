@@ -173,11 +173,8 @@ def test_alloc_persistent_register():
     sdfg.arrays['tmp'].storage = dace.StorageType.Register
     sdfg.arrays['tmp'].lifetime = dace.AllocationLifetime.Persistent
 
-    try:
+    with pytest.raises(dace.sdfg.InvalidSDFGError):
         sdfg.validate()
-        raise AssertionError('SDFG should not be valid')
-    except dace.sdfg.InvalidSDFGError:
-        print('Exception caught, test passed')
 
 
 def test_alloc_persistent():

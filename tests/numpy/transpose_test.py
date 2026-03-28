@@ -44,7 +44,6 @@ def test_transpose():
 
     realB = np.transpose(A)
     rel_error = np.linalg.norm(B - realB) / np.linalg.norm(realB)
-    print('Relative_error:', rel_error)
     assert rel_error <= 1e-5
 
 

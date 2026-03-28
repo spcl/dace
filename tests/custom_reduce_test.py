@@ -13,7 +13,6 @@ def test_custom_reduce():
     B = np.zeros([1], dtype=np.float32)
     customreduction(A, B)
     diff = (B - np.min(A))
-    print('Difference:', diff)
     assert diff <= 1e-5
 
 

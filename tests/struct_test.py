@@ -1,5 +1,4 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import ctypes
 import dace
 import numpy as np
 
@@ -66,7 +65,6 @@ def test():
     for i in range(5):
         diff += np.linalg.norm(out_data[i] - refdata[i])
 
-    print('Difference:', diff)
     assert diff <= 1e-5
 
 

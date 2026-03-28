@@ -1,5 +1,4 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import math
 import numpy as np
 
 import dace as dp
@@ -8,7 +7,6 @@ from dace.memlet import Memlet
 
 
 def test():
-    print('Dynamic SDFG test with vectorization and min')
     # Externals (parameters, symbols)
     N = dp.symbol('N')
     n = 20
@@ -45,8 +43,6 @@ def test():
     mysdfg(A=input, B=input2, C=output, N=n)
 
     diff = np.linalg.norm(np.minimum(input, input2) - output) / n
-    print("Difference:", diff)
-    print("==== Program end ====")
     assert diff <= 1e-5
 
 

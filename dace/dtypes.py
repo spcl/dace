@@ -721,8 +721,6 @@ class struct(typeclass):
         if json_obj['type'] != "struct":
             raise TypeError("Invalid type for struct")
 
-        import dace.serialize  # Avoid import loop
-
         ret = struct(json_obj['name'])
         ret._data = {k: json_to_typeclass(v, context) for k, v in json_obj['data']}
         ret._length = {k: v for k, v in json_obj['length']}

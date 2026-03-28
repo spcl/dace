@@ -5,9 +5,6 @@ import numpy as np
 import dace as dc
 import pytest
 import argparse
-from dace.transformation.interstate import InlineSDFG
-from dace.transformation.auto.auto_optimize import auto_optimize
-from dace.config import set_temporary
 from dace.autodiff import add_backward_pass
 
 # Dataset sizes
@@ -93,7 +90,6 @@ def run_seidel_2d(device_type: dace.dtypes.DeviceType):
         N,
         A_ref,
     )
-    print(np.linalg.norm(A - A_ref) / np.linalg.norm(A_ref))
     assert np.allclose(A, A_ref)
     return sdfg
 

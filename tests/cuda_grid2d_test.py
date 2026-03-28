@@ -22,8 +22,6 @@ def _test(sdfg):
     W = 128
     H = 64
 
-    print('Vector double CUDA (grid 2D) %dx%d' % (W, H))
-
     V = dace.ndarray([H, W], dace.float64)
     Vout = dace.ndarray([H, W], dace.float64)
     V[:] = np.random.rand(H, W).astype(dace.float64.type)
@@ -32,8 +30,6 @@ def _test(sdfg):
     sdfg(V=V, Vout=Vout, H=H, W=W)
 
     diff = np.linalg.norm(2 * V - Vout) / (H * W)
-    print("Difference:", diff)
-    print("==== Program end ====")
     assert diff <= 1e-5
 
 

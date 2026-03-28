@@ -62,8 +62,6 @@ def test_dynamic_map():
     sdfg(A_row=A_row, A_col=A_col, A_val=A_val, x=x, b=b, H=A_sparse.shape[0], W=A_sparse.shape[1], nnz=A_sparse.nnz)
 
     diff = np.linalg.norm(A_sparse.dot(x) - b) / float(height)
-    print("Difference:", diff)
-    print("==== Program end ====")
     assert diff <= 1e-5
 
 

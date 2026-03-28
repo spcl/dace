@@ -31,12 +31,9 @@ def test():
 
     mean = stats[0] / W
     variance = stats[1] / W - mean * mean
-    print("Mean: %f, Variance: %f" % (mean, variance))
 
     diff_mean = abs(mean - np.mean(A))
-    print("Difference (mean):", diff_mean)
     diff_var = abs(variance - np.var(A))
-    print("Difference (variance):", diff_var)
     assert diff_mean <= 1e-5 and diff_var <= 1e-4
 
 

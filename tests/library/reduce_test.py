@@ -63,7 +63,6 @@ _case_params = [([1, 64, 60, 60], (0, 2, 3), [64], np.float32), ([8, 512, 4096],
 @pytest.mark.parametrize('impl,test_case', itertools.product(_impls, _case_params))
 def test_multidim_gpu(impl, test_case):
     in_shape, ax, out_shape, dtype = test_case
-    print(in_shape, ax, out_shape, dtype)
     axes = ax
 
     @dace.program

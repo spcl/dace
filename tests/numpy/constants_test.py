@@ -49,7 +49,6 @@ def _perform_test(
     expected,
     dtype=np.float64,
 ):
-    print(f"PERFORM: {code}")
     dace_dtype = dace.dtypes.dtype_to_typeclass(dtype)
     sdfg = _make_sdfg(code=code, dtype=dace_dtype)
     _test_sdfg(sdfg=sdfg, expected=expected, dtype=dtype)

@@ -30,10 +30,7 @@ def test_matmul_delegation():
 
     reference = ((matrix0 @ matrix1) @ vector0) @ vector1
     rel_error = (result - reference) / reference
-    if rel_error > 1e-5:
-        raise ValueError("Result mismatch: {} (expected {})".format(result, reference))
-    else:
-        print("Linear algebra multiplication delegation test verified.")
+    assert rel_error <= 1e-5
 
 
 def test_matmul_delegation2():
@@ -47,10 +44,7 @@ def test_matmul_delegation2():
 
     reference = vector1 @ (matrix0 @ matrix1) @ vector0
     rel_error = (result - reference) / reference
-    if rel_error > 1e-5:
-        raise ValueError("Result mismatch: {} (expected {})".format(result, reference))
-    else:
-        print("Linear algebra multiplication delegation test no.2 verified.")
+    assert rel_error <= 1e-5
 
 
 if __name__ == '__main__':

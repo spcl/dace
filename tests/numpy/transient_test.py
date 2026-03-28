@@ -32,7 +32,6 @@ def test():
     ttest(A, B)
 
     diff = np.linalg.norm(B - realB) / (M * K * N)
-    print('Difference:', diff)
     assert diff <= 1e-5
 
 

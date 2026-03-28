@@ -1,12 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-import dace.transformation.subgraph.helpers as helpers
-import dace.sdfg.nodes as nodes
 import numpy as np
 
 from dace.sdfg.graph import SubgraphView
-
-import sys
 
 from dace.transformation.subgraph import SubgraphFusion
 from util import expand_maps, expand_reduce, fusion
@@ -123,7 +119,6 @@ def _test_quantitatively(sdfg, graph):
     assert np.allclose(out1, out1_base)
     assert np.allclose(out2, out2_base)
     assert np.allclose(out3, out3_base)
-    print('PASS')
 
 
 def test_complex():

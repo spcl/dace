@@ -320,8 +320,6 @@ def test_persistent_fusion():
     reference = nx.shortest_path(graph, source=srcnode)
     reference = np.array([len(reference[v]) - 1 if v in reference else np.iinfo(vtype).max for v in range(V)])
 
-    print('Breadth-First Search (E = {}, V = {})'.format(E, V))
-
     # Allocate output arrays
     depth = np.ndarray([V], vtype)
 

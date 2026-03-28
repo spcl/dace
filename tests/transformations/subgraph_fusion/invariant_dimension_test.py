@@ -2,17 +2,13 @@
 import dace
 from dace.transformation.subgraph import SubgraphFusion
 import dace.sdfg.utils as utils
-import dace.transformation.subgraph.helpers as helpers
-import dace.sdfg.nodes as nodes
 import dace.subsets as subsets
 import numpy as np
 
 import itertools
 
 from dace.sdfg.graph import SubgraphView
-from typing import Union, List
 
-import sys
 from util import fusion
 
 N, M, O = [dace.symbol(s) for s in ['N', 'M', 'O']]
@@ -119,7 +115,6 @@ def _test_quantitatively(sdfg, graph):
     del csdfg
 
     assert np.allclose(C1, C2)
-    print('PASS')
 
 
 def test_invariant_dim():

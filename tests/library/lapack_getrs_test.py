@@ -113,12 +113,7 @@ def test_getrs(implementation, dtype, storage):
                pivots=np.ndarray([0, 0], dtype=np.int32),
                n=2)
 
-    if np.allclose(np.dot(a1, b2), b1):
-        print("Test ran successfully for {}.".format(implementation))
-    else:
-        print(b2)
-        print(np.dot(a1, b2) - b1)
-        raise ValueError("Validation error!")
+    assert np.allclose(np.dot(a1, b2), b1)
 
 
 ###############################################################################

@@ -50,7 +50,6 @@ def _test(sdfg):
     U = 5
     dims = tuple(s for s in (N, M, K, L, X, Y, Z, W, U))
     outdims = tuple(s for s in (N, M, K, L))
-    print('High-dimensional GPU kernel test', dims)
 
     A = dace.ndarray((N, M, K, L, X, Y, Z, W, U), dtype=dace.uint64)
     B = dace.ndarray((N, M, K, L), dtype=dace.uint64)
@@ -66,7 +65,6 @@ def _test(sdfg):
     sdfg(A=A, B=B, N=N, M=M, K=K, L=L, X=X, Y=Y, Z=Z, W=W, U=U)
 
     diff = np.linalg.norm(B_regression - B) / (N * M * K * L)
-    print('Difference:', diff)
     assert diff <= 1e-5
 
 

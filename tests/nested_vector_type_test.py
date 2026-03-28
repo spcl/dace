@@ -2,7 +2,6 @@
 
 import dace
 from dace.memlet import Memlet
-import dace.libraries.blas as blas
 import numpy as np
 import scipy
 
@@ -97,7 +96,6 @@ def test_nested_vectorization():
     ref_result = scipy.linalg.blas.saxpy(a, b, a=scaling)
 
     diff = np.linalg.norm(c - ref_result)
-    print('Difference:', diff)
     assert diff < 1e-8
 
 

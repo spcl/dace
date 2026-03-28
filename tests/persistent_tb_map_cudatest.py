@@ -40,8 +40,6 @@ def test_persistent_thread_block():
 
     N = 1050
 
-    print('Dot product (N = {})'.format(N))
-
     A = np.random.rand(N).astype(np.float32)
     B = np.random.rand(N).astype(np.float32)
     out_AB = np.zeros(1, dtype=np.float64)
@@ -52,7 +50,6 @@ def test_persistent_thread_block():
     sdfg(A=A, B=A, out=out_AA, N=N)
 
     assert (np.allclose(out_AB, np.dot(A, B)) and np.allclose(out_AA, np.dot(A, A))), "Result doesn't match!"
-    print("Complete.")
 
 
 if __name__ == "__main__":

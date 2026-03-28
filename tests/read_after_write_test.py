@@ -40,7 +40,6 @@ def test():
     raw_prog(A, B, W=W)
 
     diff = np.linalg.norm(4 * A - B) / W
-    print("Difference:", diff)
     assert diff <= 1e-5
 
 

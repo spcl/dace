@@ -127,7 +127,6 @@ def test_multistream_custom():
     dp.Config.set('compiler', 'cpu', 'libs', value=oldconf)
 
     diff = np.linalg.norm(C - out_ref)
-    print('Difference:', diff)
     assert diff <= 1e-5
 
 

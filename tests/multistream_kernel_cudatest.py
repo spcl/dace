@@ -61,8 +61,6 @@ sdfg.validate()
 ######################################
 @pytest.mark.gpu
 def test_multistream_kernel():
-    print('Multi-stream kernel test')
-
     a = np.random.rand(2).astype(np.float32)
     b = np.random.rand(2).astype(np.float32)
     c = np.random.rand(2).astype(np.float32)
@@ -71,7 +69,6 @@ def test_multistream_kernel():
 
     refC = (a + 1) * (b + 2)
     diff = np.linalg.norm(c - refC)
-    print('Difference:', diff)
     assert diff <= 1e-5
 
 

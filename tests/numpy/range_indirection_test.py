@@ -31,8 +31,6 @@ def test():
         npA[x[j]] += npA[x[j - 1]]
 
     rel_norm = np.linalg.norm(npA - A) / np.linalg.norm(npA)
-
-    print(rel_norm)
     assert rel_norm < 1e-12
 
 

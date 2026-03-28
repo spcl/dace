@@ -57,7 +57,6 @@ def test_gemm():
 
     realC = 1.0 * (A @ B) + 1.0 * origC
     diff = np.linalg.norm(C - realC) / (M * N)
-    print('Difference:', diff)
     assert diff < 1e-5
 
 

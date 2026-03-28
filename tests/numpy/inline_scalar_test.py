@@ -19,7 +19,6 @@ def test_inline_scalar():
     transpose_add(A, B)
 
     diff = np.linalg.norm(A.transpose() - B + 1)
-    print('Difference:', diff)
     assert diff < 1e-5
 
 

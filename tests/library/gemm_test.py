@@ -1,12 +1,10 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import pytest
-import warnings
 import itertools
 import sys
 import dace
 import random
 import numpy as np
-from dace.codegen.exceptions import CompilerConfigurationError, CompilationError
 from dace.libraries.blas import Gemm
 
 M = dace.symbol('M')
@@ -95,7 +93,6 @@ def params_generator(grid):
 _test_params = []
 for param_grid in [_param_grid_trans, _param_grid_scalars, _param_grid_complex, _param_grid_broadcast_C]:
     for params in params_generator(param_grid):
-        print("Testing params:", params)
         _test_params.append(params)
 
 
@@ -131,8 +128,6 @@ def _do_test_gemm(implementation, params):
     if transB:
         B_shape = list(reversed(trans_B_shape))
 
-    print(f'Matrix multiplication {M}x{K}x{N} (alpha={alpha}, beta={beta})')
-
     np_dtype = np.complex64 if complex else np.float32
 
     # Initialize arrays: Randomize A and B, zero C
@@ -164,7 +159,6 @@ def _do_test_gemm(implementation, params):
         sdfg(A=A, B=B, C=Y)
 
     diff = np.linalg.norm(Y_regression - Y) / (M * N)
-    print("Difference:", diff)
     assert diff <= 1e-5
 
 

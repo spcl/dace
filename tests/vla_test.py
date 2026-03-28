@@ -33,7 +33,6 @@ def test():
         assert any('Variable-length' in str(warn.message) for warn in w)
 
     diff = np.linalg.norm(A - B)
-    print('Difference:', diff)
     assert diff < 1e-5
 
 

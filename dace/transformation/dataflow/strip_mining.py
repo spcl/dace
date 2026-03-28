@@ -4,7 +4,7 @@
 
 import dace
 from copy import deepcopy as dcpy
-from dace import dtypes, registry, subsets, symbolic
+from dace import dtypes, subsets, symbolic
 from dace.sdfg import SDFG, SDFGState
 from dace.properties import EnumProperty, make_properties, Property, SymbolicProperty
 from dace.sdfg import nodes

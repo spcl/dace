@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from dace.frontend.fortran import ast_transforms, fortran_parser
+from dace.frontend.fortran import fortran_parser
 
 
 def test_fortran_frontend_product_array():

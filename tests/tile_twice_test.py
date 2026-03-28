@@ -25,7 +25,6 @@ def test():
     sdfg(a=A)
 
     diff = np.linalg.norm(A - expected)
-    print('Difference:', diff)
     assert diff <= 1e-8
 
 

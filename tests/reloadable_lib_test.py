@@ -19,8 +19,6 @@ def program_generator(size, factor):
 
 
 def test():
-    print('Reloadable DaCe program test')
-
     array_one = np.random.rand(10).astype(np.float64)
     array_two = np.random.rand(20).astype(np.float64)
     output_one = np.zeros(10, dtype=np.float64)
@@ -34,7 +32,6 @@ def test():
 
     diff1 = np.linalg.norm(2.0 * array_one - output_one) / 10.0
     diff2 = np.linalg.norm(4.0 * array_two - output_two) / 20.0
-    print("Differences:", diff1, diff2)
     assert diff1 <= 1e-5 and diff2 <= 1e-5
 
 

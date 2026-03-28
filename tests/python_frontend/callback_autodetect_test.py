@@ -153,7 +153,6 @@ def test_callback_from_module():
     with pytest.warns(match="Automatically creating callback"):
         modcallback(A, B)
     diff = np.linalg.norm(B - np.median(A, axis=1))
-    print('Difference:', diff)
     assert diff <= 1e-5
 
 

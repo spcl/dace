@@ -34,8 +34,6 @@ def test_filter():
     N = 64
     ratio = np.float32(0.5)
 
-    print('Predicate-Based Filter. size=%d, ratio=%f' % (N, ratio))
-
     A = np.random.rand(N).astype(np.float32)
     B = np.zeros_like(A)
     outsize = dace.scalar(dace.uint32)

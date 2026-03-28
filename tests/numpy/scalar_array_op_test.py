@@ -19,7 +19,6 @@ def test():
 
     saoptest(A, 10, B)
     diff = np.linalg.norm(B - (50 * A))
-    print('Difference:', diff)
     assert diff <= 1e-5
 
 

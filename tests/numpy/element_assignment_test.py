@@ -34,7 +34,6 @@ def test_elementwise():
 
     optest(A, B, C)
     diff = np.linalg.norm(C - ((-A) * B))
-    print('Difference:', diff)
     assert diff <= 1e-5
 
 

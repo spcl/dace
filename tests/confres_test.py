@@ -32,8 +32,6 @@ def test():
     W = 20
     H = 20
 
-    print('Conflict Resolution Test %dx%d' % (W, H))
-
     A = dace.ndarray([W, H], dtype=dace.float32)
     B = dace.ndarray([H, W, H], dtype=dace.float32)
     red1 = dace.ndarray([3], dtype=dace.float32)

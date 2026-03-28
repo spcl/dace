@@ -1,7 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import argparse
 import dace
-import math
 import numpy as np
 
 W = dace.symbol('W')
@@ -28,8 +26,6 @@ def test():
     TW = 16
     TH = 16
 
-    print('Transpose (Tiled) %dx%d (tile size: %dx%d)' % (W, H, TW, TH))
-
     A = dace.ndarray([H, W], dtype=dace.float32)
     B = dace.ndarray([H, W], dtype=dace.float32)
     A[:] = np.random.rand(H, W).astype(dace.float32.type)
@@ -38,7 +34,6 @@ def test():
     transpose_tiled(A, B, TW=TW, TH=TH)
 
     diff = np.linalg.norm(np.transpose(A) - B) / (H * W)
-    print("Difference:", diff)
     assert diff <= 1e-5
 
 

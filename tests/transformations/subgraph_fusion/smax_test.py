@@ -1,18 +1,12 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import sys
-from typing import List, Union
 
 import numpy as np
 from util import expand_maps, expand_reduce, fusion
 
 import dace
-import dace.dtypes as dtypes
 import dace.libraries.standard as stdlib
 import dace.sdfg.nodes as nodes
-import dace.transformation.subgraph.helpers as helpers
 from dace.sdfg.graph import SubgraphView
-from dace.transformation.dataflow import ReduceExpansion
-from dace.transformation.subgraph import MultiExpansion, SubgraphFusion
 
 dace_dtype = dace.float32
 H, B, SN, SM = (dace.symbol(s) for s in ('H', 'B', 'SN', 'SM'))
@@ -88,8 +82,6 @@ def test_2fuse():
     del csdfg
 
     assert np.allclose(res1, res2)
-    print("PASS")
-    return
 
 
 def test_1fuse():
@@ -110,11 +102,7 @@ def test_1fuse():
     res2 = csdfg(X_in=X_in, H=10, B=10, SN=20, SM=20)
     del csdfg
 
-    print(np.linalg.norm(res1))
-    print(np.linalg.norm(res2))
     assert np.allclose(res1, res2)
-    print("PASS")
-    return
 
 
 def test_1fuse():
@@ -136,10 +124,7 @@ def test_1fuse():
     res2 = csdfg(X_in=X_in, H=10, B=10, SN=20, SM=20)
     del csdfg
 
-    print(np.linalg.norm(res1))
-    print(np.linalg.norm(res2))
     assert np.allclose(res1, res2)
-    print("PASS")
 
 
 if __name__ == "__main__":

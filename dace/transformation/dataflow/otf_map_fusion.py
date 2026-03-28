@@ -13,10 +13,9 @@ from dace.sdfg import nodes as nds
 from dace.memlet import Memlet
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
-from dace import data as dt
 from dace import dtypes
 from dace import symbolic, nodes
-from dace.properties import SymbolicProperty, make_properties, Property
+from dace.properties import SymbolicProperty, make_properties
 
 from dace.transformation.dataflow.stream_transient import AccumulateTransient
 from dace.transformation.dataflow.local_storage import OutLocalStorage, InLocalStorage

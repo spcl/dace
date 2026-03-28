@@ -42,8 +42,6 @@ def test():
     local_inline(A, B, C)
 
     diff = np.linalg.norm((-(-A + 1) + 1) - C) / W
-    print("Difference:", diff)
-    print("==== Program end ====")
     assert diff <= 1e-5
 
 

@@ -76,12 +76,7 @@ def run_ger(target: str,
     ref = scipy.linalg.blas.sger(alpha=alpha, x=x, y=y, a=ref)
 
     diff = np.linalg.norm(res - ref)
-    if diff >= eps * n * m:
-        raise RuntimeError(f"Validation failed: {diff}")
-    else:
-        print("Validation successful.")
-
-    return sdfg
+    assert diff < eps * n * m
 
 
 def test_ger_pure():

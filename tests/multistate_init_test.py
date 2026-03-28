@@ -38,8 +38,6 @@ def test():
     multistate_init(A, W=W)
 
     diff = np.linalg.norm(4 * regression - A) / W
-    print("Difference:", diff)
-    print("==== Program end ====")
     assert diff <= 1e-5
 
 

@@ -33,7 +33,6 @@ def test_xchg():
         elif A[i] != 4:
             raise ValueError('Values can be either 1 or 4')
     assert locked[0] == 4
-    print('PASS. Winner:', winner)
 
 
 if __name__ == '__main__':
