@@ -27,17 +27,40 @@ class ReloadableDLL(object):
     bypasses Python's dynamic library reloading issues.
     """
 
-    def __init__(self, library_filename, program_name):
+    def __init__(self, library_filename, *program_name, **kwargs):
         """
         Creates a new reloadable shared object.
 
+        The library filename must always be given, but the stub file can either be
+        found by specifing `program_name` or a path directly.
+
         :param library_filename: Path to library file.
-        :param program_name: Name of the DaCe program (for use in finding
-                             the stub library loader).
+        :param program_name: Name of the DaCe program (for use in finding the stub library loader).
+        :param libstub_path: Direct path of the libstub.
         """
-        self._stub_filename = os.path.join(os.path.dirname(os.path.realpath(library_filename)),
-                                           f'libdacestub_{program_name}.{Config.get("compiler", "library_extension")}')
         self._library_filename = os.path.realpath(library_filename)
+
+        prog_name, libstub_path = None, None
+        if len(program_name) != 0:
+            assert len(program_name) == 1
+            assert len(kwargs) == 0
+            prog_name = program_name[0]
+        elif "program_name" in kwargs:
+            assert len(kwargs) == 1
+            prog_name = kwargs["program_name"]
+        elif "libstub_path" in kwargs:
+            assert len(kwargs) == 1
+            libstub_path = kwargs["libstub_path"]
+        else:
+            raise ValueError("Not able to find everything.")
+
+        if prog_name is not None:
+            self._stub_filename = os.path.join(
+                os.path.dirname(os.path.realpath(library_filename)),
+                f'libdacestub_{prog_name}.{Config.get("compiler", "library_extension")}')
+        else:
+            self._stub_filename = os.path.realpath(libstub_path)
+
         self._stub = None
         self._lib = None
 
@@ -478,12 +501,14 @@ class CompiledSDFG(object):
 
         # Pickle the SDFG and arguments
         with tempfile.NamedTemporaryFile(mode='wb', delete=False) as f:
-            pickle.dump({
-                'library_path': self._lib._library_filename,
-                "sdfg": self.sdfg,
-                'args': args,
-                'kwargs': kwargs
-            }, f)
+            pickle.dump(
+                {
+                    'library_path': self._lib._library_filename,
+                    'stublibrary_path': self._lib._stub_filename,
+                    "sdfg": self.sdfg,
+                    'args': args,
+                    'kwargs': kwargs
+                }, f)
             temp_path = f.name
 
         # Call the SDFG in a separate process
@@ -498,9 +523,10 @@ Config.set('compiler', 'allow_view_arguments', value=True)  # Python 3.14+
 with open(r"{temp_path}", "rb") as f:
     data = pickle.load(f)
 library_path = data['library_path']
+libstub_path = data['stublibrary_path']
 sdfg = data['sdfg']
 
-lib = csd.ReloadableDLL(library_path, sdfg.name)
+lib = csd.ReloadableDLL(library_filename=library_path, libstub_path=libstub_path)
 obj = csd.CompiledSDFG(sdfg, lib, sdfg.arg_names)
 obj(*data['args'], **data['kwargs'])
 

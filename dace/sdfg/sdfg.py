@@ -2448,12 +2448,17 @@ class SDFG(ControlFlowRegion):
 
     def is_loaded(self) -> bool:
         """
-        Returns True if the SDFG binary is already loaded in the current
-        process.
+        Returns True if the SDFG binary is already loaded in the current process.
+        Returns `False` if the file does not exist.
         """
         # Avoid import loops
         from dace.codegen import compiled_sdfg as cs, compiler
 
+        # Note here is kind of a "leak". The issue is that while the library is not
+        #  loaded the stub library is loaded. However, it is never unloaded, because
+        #  the `unload()` function is not called. This is probably not an issue, but
+        #  it is not super nice.
+        # TODO: Fix
         binary_filename = compiler.get_binary_name(self.build_folder, self.name)
         dll = cs.ReloadableDLL(binary_filename, self.name)
         return dll.is_loaded()
@@ -2475,11 +2480,15 @@ class SDFG(ControlFlowRegion):
         # Compute build folder path before running codegen
         build_folder = self.build_folder
 
+        folder_version = Config.get('compiler.build_folder_version')
+
         if not self._recompile or Config.get_bool('compiler', 'use_cache'):
             # Try to see if a cached version of the binary exists
-            binary_filename = compiler.get_binary_name(build_folder, self.name)
-            if os.path.isfile(binary_filename):
-                return compiler.load_from_file(self, binary_filename)
+            lib_path, _ = compiler.get_library_paths(object_folder=build_folder,
+                                                     sdfg_name=self.name,
+                                                     folder_version=folder_version)
+            if lib_path.is_file():
+                return compiler.load_precompiled_sdfg(folder=build_folder, sdfg=self, folder_version=folder_version)
 
         ############################
         # DaCe Compilation Process #
@@ -2509,6 +2518,7 @@ class SDFG(ControlFlowRegion):
                 sdfg.fill_scope_connectors()
 
                 # Generate code for the program by traversing the SDFG state by state
+                #  It is not yet written to disc.
                 program_objects = codegen.generate_code(sdfg, validate=validate)
             except Exception:
                 fpath = os.path.join('_dacegraphs', 'failing.sdfgz')
@@ -2517,14 +2527,17 @@ class SDFG(ControlFlowRegion):
                 raise
 
             # Generate the program folder and write the source files
-            program_folder = compiler.generate_program_folder(sdfg, program_objects, build_folder)
+            program_folder = compiler.generate_program_folder(sdfg,
+                                                              program_objects,
+                                                              build_folder,
+                                                              folder_version=folder_version)
         else:
             # The code was already generated, just load the program folder
             program_folder = build_folder
             sdfg = self
 
         # Compile the code and get the shared library path
-        shared_library = compiler.configure_and_compile(program_folder, sdfg.name)
+        shared_library = compiler.configure_and_compile(program_folder, sdfg.name, folder_version=folder_version)
 
         # If provided, save output to path or filename
         if output_file is not None:
@@ -2534,7 +2547,7 @@ class SDFG(ControlFlowRegion):
 
         # Get the function handle
         if return_program_handle:
-            return compiler.get_program_handle(shared_library, sdfg)
+            return compiler.load_precompiled_sdfg(folder=build_folder, sdfg=self, folder_version=folder_version)
 
     def argument_typecheck(self, args, kwargs, types_only=False):
         """ Checks if arguments and keyword arguments match the SDFG

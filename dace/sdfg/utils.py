@@ -1662,7 +1662,7 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
     return counter
 
 
-def load_precompiled_sdfg(folder: str) -> csdfg.CompiledSDFG:
+def load_precompiled_sdfg(folder: str, folder_version: Optional[str] = None) -> csdfg.CompiledSDFG:
     """
     Loads a pre-compiled SDFG from an output folder (e.g. ".dacecache/program").
     Folder must contain a file called "program.sdfgz" and a subfolder called
@@ -1680,10 +1680,13 @@ def load_precompiled_sdfg(folder: str) -> csdfg.CompiledSDFG:
     if sdfg is None:
         raise ValueError(f"Pre-compiled SDFG not found in `{folder}`.")
 
-    suffix = config.Config.get('compiler', 'library_extension')
+    # TODO(phimuell): The build folder must be specified here to `folder`.
+    lib_path, libstub_path = csdfg.get_library_paths(object_folder=folder,
+                                                     sdfg=sdfg.name,
+                                                     folder_version=folder_version)
     return csdfg.CompiledSDFG(
         sdfg,
-        csdfg.ReloadableDLL(os.path.join(folder, 'build', f'lib{sdfg.name}.{suffix}'), sdfg.name),
+        csdfg.ReloadableDLL(library_filename=lib_path, libstub_path=libstub_path),
         sdfg.arg_names,
     )
 

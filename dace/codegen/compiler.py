@@ -10,7 +10,8 @@ import shutil
 import shlex
 import subprocess
 import re
-from typing import Any, Callable, Dict, List, Set, Tuple, TypeVar, Union
+import pathlib
+from typing import Any, Callable, Dict, List, Set, Tuple, TypeVar, Union, Optional
 import warnings
 
 import dace
@@ -24,15 +25,27 @@ from dace.codegen.target import make_absolute
 T = TypeVar('T')
 
 
-def generate_program_folder(sdfg, code_objects: List[CodeObject], out_path: str, config=None):
-    """ Writes all files required to configure and compile the DaCe program
-        into the specified folder.
+def generate_program_folder(
+    sdfg,
+    code_objects: List[CodeObject],
+    out_path: str,
+    config=None,
+    folder_version: Optional[str] = None,
+) -> str:
+    """Writes all files required to configure and compile the DaCe program into the specified folder.
 
-        :param sdfg: The SDFG to generate the program folder for.
-        :param code_objects: List of generated code objects.
-        :param out_path: The folder in which the build files should be written.
-        :return: Path to the program folder.
+    This function respects the ``compiler.build_folder_version`` configuration variable,
+    thus depending on its value the content might be different. However, in any case
+    the source files are always generated.
+
+    :param sdfg: The SDFG to generate the program folder for.
+    :param code_objects: List of generated code objects.
+    :param out_path: The folder in which the build files should be written.
+    :return: Path to the program folder.
     """
+
+    if folder_version is None:
+        folder_version = Config.get('compiler.build_folder_version')
 
     src_path = os.path.join(out_path, "src")
     filelist = list()
@@ -78,6 +91,7 @@ def generate_program_folder(sdfg, code_objects: List[CodeObject], out_path: str,
             filelist.append("{},{},{}".format(target_name, target_type, basename))
 
     # Write list of files
+    #  Needed to communicate with `configure_and_compile()`, deleted in production mode.
     with open(os.path.join(out_path, "dace_files.csv"), "w") as filelist_file:
         filelist_file.write("\n".join(filelist))
 
@@ -87,17 +101,19 @@ def generate_program_folder(sdfg, code_objects: List[CodeObject], out_path: str,
         environments |= obj.environments
 
     # Write list of environments
+    #  Needed to communicate with `configure_and_compile()`, deleted in production mode.
     with open(os.path.join(out_path, "dace_environments.csv"), "w") as env_file:
         env_file.write("\n".join(environments))
 
     # Copy a full snapshot of configuration script
-    if config is not None:
-        config.save(os.path.join(out_path, "dace.conf"), all=True)
-    else:
-        Config.save(os.path.join(out_path, "dace.conf"), all=True)
+    if folder_version in ["full"]:
+        if config is not None:
+            config.save(os.path.join(out_path, "dace.conf"), all=True)
+        else:
+            Config.save(os.path.join(out_path, "dace.conf"), all=True)
 
-    if sdfg is not None:
-        # Save the SDFG itself and its hash
+    # Save the SDFG itself and its hash
+    if folder_version in ["full"] and (sdfg is not None):
         hash = sdfg.save(os.path.join(out_path, "program.sdfgz"), hash=True, compress=True)
         filepath = os.path.join(out_path, 'include', 'hash.h')
         contents = f'#define __HASH_{sdfg.name} "{hash}"\n'
@@ -105,11 +121,17 @@ def generate_program_folder(sdfg, code_objects: List[CodeObject], out_path: str,
             with open(filepath, 'w') as hfile:
                 hfile.write(contents)
 
+    # Write the version file.
+    if folder_version in ["full"]:
+        with open(os.path.join(out_path, "VERSION"), "w") as version_file:
+            version_file.write(folder_version)
+
     # Write cachedir tag
-    cachedir_tag = os.path.join(out_path, "CACHEDIR.TAG")
-    if not os.path.exists(cachedir_tag):
-        with open(cachedir_tag, "w") as f:
-            f.write("""Signature: 8a477f597d28d172789f06886806bc55
+    if folder_version in ["full"]:
+        cachedir_tag = os.path.join(out_path, "CACHEDIR.TAG")
+        if not os.path.exists(cachedir_tag):
+            with open(cachedir_tag, "w") as f:
+                f.write("""Signature: 8a477f597d28d172789f06886806bc55
 # This file is a cache directory tag created by DaCe.
 # For information about cache directory tags, see:
 #	http://www.brynosaurus.com/cachedir/
@@ -118,17 +140,28 @@ def generate_program_folder(sdfg, code_objects: List[CodeObject], out_path: str,
     return out_path
 
 
-def configure_and_compile(program_folder, program_name=None, output_stream=None):
-    """ Configures and compiles a DaCe program in the specified folder into a
-        shared library file.
-
-        :param program_folder: Folder containing all files necessary to build,
-                               equivalent to what was passed to
-                               `generate_program_folder`.
-        :param output_stream: Additional output stream to write to (used for
-                              other clients such as the vscode extension).
-        :return: Path to the compiled shared library file.
+def configure_and_compile(
+    program_folder,
+    program_name=None,
+    output_stream=None,
+    folder_version: Optional[str] = None,
+) -> pathlib.Path:
     """
+    Configures and compiles a DaCe program in the specified folder into a shared library file.
+
+    This function respects the ``compiler.build_folder_version`` configuration variable,
+    thus depending on its value the content might be different.
+
+    :param program_folder: Folder containing all files necessary to build, equivalent to
+                           what was passed to `generate_program_folder`.
+    :param output_stream: Additional output stream to write to (used for other clients
+                          such as the vscode extension).
+    :return: Path to the compiled shared library file.
+    """
+
+    if folder_version is None:
+        folder_version = Config.get('compiler.build_folder_version')
+    assert folder_version in ["full", "production"]
 
     if program_name is None:
         program_name = os.path.basename(program_folder)
@@ -139,8 +172,9 @@ def configure_and_compile(program_folder, program_name=None, output_stream=None)
     build_folder = os.path.join(program_folder, "build")
     os.makedirs(build_folder, exist_ok=True)
 
-    # Prepare performance report folder
-    os.makedirs(os.path.join(program_folder, "perf"), exist_ok=True)
+    # Prepare performance report folder if requested.
+    if folder_version == "full":
+        os.makedirs(os.path.join(program_folder, "perf"), exist_ok=True)
 
     # Read list of DaCe files to compile.
     # We do this instead of iterating over source files in the directory to
@@ -228,6 +262,7 @@ def configure_and_compile(program_folder, program_name=None, output_stream=None)
         print(f'Running CMake: {cmake_command}')
 
     cmake_filename = os.path.join(build_folder, 'cmake_configure.sh')
+
     ##############################################
     # Configure
     try:
@@ -264,10 +299,72 @@ def configure_and_compile(program_folder, program_name=None, output_stream=None)
         else:
             raise cgx.CompilationError('Compiler failure:\n' + ex.output)
 
-    shared_library_path = os.path.join(build_folder, "lib{}.{}".format(program_name,
-                                                                       Config.get('compiler', 'library_extension')))
+    # Get the names of the library files that were generated.
+    #  Currently we are still in the full version.
+    lib_path, libstub_path = get_library_paths(object_folder=program_folder,
+                                               sdfg_name=program_name,
+                                               folder_version="full")
 
-    return shared_library_path
+    # In production mode, we are now deleting what we need and relocating it.
+    if folder_version == "production":
+        lib_path = pathlib.Path(shutil.move(src=lib_path, dst=program_folder))
+        libstub_path = pathlib.Path(shutil.move(src=libstub_path, dst=program_folder))
+
+        for to_delete in ["include", "src", "build"]:
+            shutil.rmtree(os.path.join(build_folder, to_delete))
+
+    return lib_path
+
+
+def load_precompiled_sdfg(
+    folder: Union[pathlib.Path, str],
+    sdfg: Optional[dace.SDFG] = None,
+    folder_version: Optional[str] = None,
+) -> csd.CompiledSDFG:
+    """
+    Loads a pre-compiled SDFG from an output folder (e.g. ".dacecache/program").
+    Folder must contain a file called "program.sdfgz" and a subfolder called
+    "build" with the shared object.
+
+    :param folder: Path to SDFG output folder.
+    :return: A callable CompiledSDFG object.
+    """
+    folder = pathlib.Path(folder)
+
+    # TODO: Find out what should happen with `dace.sdfg.utils.load_precompiled_sdfg()`.
+
+    # Try to find the sdfg from disc, if not given.
+    if sdfg is not None:
+        assert isinstance(sdfg, dace.SDFG)
+    else:
+        for name in ['program.sdfgz', 'program.sdfg']:
+            if (folder / name).exists():
+                sdfg = SDFG.from_file(folder / name)
+                break
+        else:
+            raise ValueError(f"Could not locate the SDFG for `{folder}`.")
+
+    # Now find the folder version.
+    if folder_version is not None:
+        pass
+    elif (folder / 'VERSION').exists():
+        raise NotImplementedError()
+    else:
+        folder_version = Config.get('compiler.build_folder_version')
+    assert folder_version in ["full", "production"]
+
+    lib_path, libstub_path = get_library_paths(
+        object_folder=folder,
+        sdfg_name=sdfg.name,
+        lib_extension=None,
+        folder_version=folder_version,
+    )
+
+    return csd.CompiledSDFG(
+        sdfg,
+        csd.ReloadableDLL(library_filename=lib_path, libstub_path=libstub_path),
+        sdfg.arg_names,
+    )
 
 
 def _get_or_eval(value_or_function: Union[T, Callable[[], T]]) -> T:
@@ -392,12 +489,14 @@ def identical_file_exists(filename: str, file_contents: str):
 
 
 def get_program_handle(library_path, sdfg):
+    # TODO: consider removing it or `load_from_file()`.
     lib = csd.ReloadableDLL(library_path, sdfg.name)
     # Load and return the compiled function
     return csd.CompiledSDFG(sdfg, lib, sdfg.arg_names)
 
 
 def load_from_file(sdfg, binary_filename):
+    # TODO: consider removing it or `get_program_handle()`.
     if not os.path.isfile(binary_filename):
         raise FileNotFoundError('File not found: ' + binary_filename)
 
@@ -408,10 +507,45 @@ def load_from_file(sdfg, binary_filename):
     return csd.CompiledSDFG(sdfg, lib, sdfg.arg_names)
 
 
-def get_binary_name(object_folder, object_name, lib_extension=Config.get('compiler', 'library_extension')):
+def get_binary_name(object_folder, object_name, lib_extension=None) -> str:
+    # TODO: consider removing it.
+    if lib_extension is None:
+        lib_extension = Config.get('compiler', 'library_extension')
+
     name = None
     name = os.path.join(object_folder, "build", 'lib%s.%s' % (object_name, lib_extension))
     return name
+
+
+def get_library_paths(
+    object_folder: str,
+    sdfg_name: str,
+    lib_extension: Optional[str] = None,
+    folder_version: Optional[str] = None,
+) -> Tuple[pathlib.Path, pathlib.Path]:
+    """Returns the standard paths of the to the binary object.
+
+    does not check if they exists.
+
+    """
+    if lib_extension is None:
+        lib_extension = Config.get('compiler', 'library_extension')
+    if folder_version is None:
+        folder_version = Config.get('compiler.build_folder_version')
+
+    folder_hirarchy = [object_folder]
+    if folder_version == 'full':
+        folder_hirarchy.append('build')
+    elif folder_version == 'production':
+        # Nothing to add, they are on the top.
+        pass
+    else:
+        raise ValueError(f"Unknown folder version '{folder_version}' found.")
+
+    lib_path = pathlib.Path(os.path.join(*folder_hirarchy, f'lib{sdfg_name}.{lib_extension}'))
+    libstub_path = pathlib.Path(os.path.join(*folder_hirarchy, f'libdacestub_{sdfg_name}.{lib_extension}'))
+
+    return lib_path, libstub_path
 
 
 def _run_liveoutput(command, output_stream=None, **kwargs):
