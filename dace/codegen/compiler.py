@@ -44,7 +44,25 @@ def generate_program_folder(
     :param folder_version: Version of the program folder that should be generated,
                            if not given ``compiler.build_folder_version`` is used.
     :return: Path to the program folder.
+
+    :note: The ``config`` argument is retained for compatibility and should not be used.
     """
+
+    # NOTE: In older version the argument `config` could be a used to pass a custom
+    #   "configuration" (probably a `dict`) object, that would then be written to
+    #   `dace.conf` inside the folder. If nothing was provided the content of the
+    #   global `dace.Config` would be used. However, since _everything_ is consulting
+    #   `dace.Config` for advice, an external configuration, i.e. settings different
+    #   from `dace.Config` can not take effect and storing it is wrong. Thus this
+    #   feature was dropped.
+    if config is not None:
+        warnings.warn(
+            'Passed a not `None` `config` argument to `generate_program_folder()`.'
+            ' This has no effect and will be ignored. Instead `dace.Config` will'
+            ' be used.',
+            category=UserWarning,
+            stacklevel=2,
+        )
 
     if folder_version is None:
         folder_version = Config.get('compiler', 'build_folder_version')
@@ -109,8 +127,7 @@ def generate_program_folder(
 
     # Copy a full snapshot of configuration script
     if folder_version in ["full"]:
-        config_source = Config if config is None else config
-        config_source.save(out_path / "dace.conf", all=True)
+        Config.save(os.path.join(out_path, "dace.conf"), all=True)
 
     # Save the SDFG itself and its hash
     if folder_version in ["full"] and (sdfg is not None):
