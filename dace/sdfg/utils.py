@@ -9,7 +9,7 @@ import networkx as nx
 import time
 
 import dace.sdfg.nodes
-from dace.codegen import compiled_sdfg as csdfg
+from dace.codegen import compiled_sdfg as csdfg, compiler as sdfg_compiler
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.sdfg import SDFG, InterstateEdge
 from dace.sdfg.nodes import Node, NestedSDFG
@@ -1681,9 +1681,9 @@ def load_precompiled_sdfg(folder: str, folder_version: Optional[str] = None) -> 
         raise ValueError(f"Pre-compiled SDFG not found in `{folder}`.")
 
     # TODO(phimuell): The build folder must be specified here to `folder`.
-    lib_path, libstub_path = csdfg.get_library_paths(object_folder=folder,
-                                                     sdfg=sdfg.name,
-                                                     folder_version=folder_version)
+    lib_path, libstub_path = sdfg_compiler.get_library_paths(object_folder=folder,
+                                                             sdfg=sdfg.name,
+                                                             folder_version=folder_version)
     return csdfg.CompiledSDFG(
         sdfg,
         csdfg.ReloadableDLL(library_filename=lib_path, libstub_path=libstub_path),
@@ -1701,6 +1701,8 @@ def distributed_compile(sdfg: SDFG, comm, *, validate: bool = True) -> csdfg.Com
     :return: Compiled SDFG.
     :note: This method can be used only if the module mpi4py is installed.
     """
+
+    # TODO: Think if it should be relocated to `codegen`
 
     rank = comm.Get_rank()
     func = None
