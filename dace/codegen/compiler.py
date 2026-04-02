@@ -301,15 +301,13 @@ def configure_and_compile(
 
     # Get the names of the library files that were generated.
     #  Currently we are still in the full version.
-    lib_path, libstub_path = get_library_paths(object_folder=program_folder,
-                                               sdfg_name=program_name,
-                                               folder_version="full")
+    lib_path = get_binary_name(object_folder=program_folder, sdfg_name=program_name, folder_version="full")
+    libstub_path = _get_stub_library_path(lib_path)
 
     # In production mode, we are now deleting what we need and relocating it.
     if folder_version == "production":
         lib_path = pathlib.Path(shutil.move(src=lib_path, dst=program_folder))
         libstub_path = pathlib.Path(shutil.move(src=libstub_path, dst=program_folder))
-
         for to_delete in ["include", "src", "build"]:
             shutil.rmtree(os.path.join(build_folder, to_delete))
 
@@ -341,27 +339,6 @@ def load_from_file(sdfg, binary_filename):
         stacklevel=2,
     )
     return get_program_handle(library_path=binary_filename, sdfg=sdfg)
-
-
-def get_library_paths(
-    object_folder: str,
-    sdfg_name: str,
-    lib_extension: Optional[str] = None,
-    folder_version: Optional[str] = None,
-) -> Tuple[pathlib.Path, pathlib.Path]:
-    """Returns the i
-    Returns the standard paths of the to the binary object.
-
-    does not check if they exists.
-
-    """
-    lib_path = get_binary_name(object_folder=object_folder,
-                               sdfg_name=sdfg_name,
-                               lib_extension=lib_extension,
-                               folder_version=folder_version)
-    libstub_path = _get_stub_library_path(lib_path)
-
-    return lib_path, libstub_path
 
 
 def get_binary_name(
