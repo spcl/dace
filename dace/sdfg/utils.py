@@ -1662,7 +1662,7 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
     return counter
 
 
-def load_precompiled_sdfg(*args, **kwargs) -> csd.CompiledSDFG:
+def load_precompiled_sdfg(*args, **kwargs) -> csdfg.CompiledSDFG:
     # Deprecated use the one in `dace.codegen.compiler`.
     return sdfg_compiler.load_precompiled_sdfg(*args, **kwargs)
 
