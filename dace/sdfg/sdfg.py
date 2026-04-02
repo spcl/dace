@@ -2547,7 +2547,7 @@ class SDFG(ControlFlowRegion):
 
         # Get the function handle
         if return_program_handle:
-            return compiler.load_precompiled_sdfg(folder=build_folder, sdfg=self, folder_version=folder_version)
+            return compiler.load_precompiled_sdfg(folder=build_folder, sdfg=sdfg, folder_version=folder_version)
 
     def argument_typecheck(self, args, kwargs, types_only=False):
         """ Checks if arguments and keyword arguments match the SDFG
