@@ -130,8 +130,11 @@ def generate_program_folder(
         Config.save(os.path.join(out_path, "dace.conf"), all=True)
 
     # Save the SDFG itself and its hash
-    if folder_version in ["full"] and (sdfg is not None):
-        hash = sdfg.save(os.path.join(out_path, "program.sdfgz"), hash=True, compress=True)
+    if sdfg is not None:
+        if folder_version in ["full"]:
+            hash = sdfg.save(os.path.join(out_path, "program.sdfgz"), hash=True, compress=True)
+        else:
+            hash = sdfg.hash_sdfg()
         filepath = os.path.join(out_path, 'include', 'hash.h')
         contents = f'#define __HASH_{sdfg.name} "{hash}"\n'
         if not identical_file_exists(filepath, contents):
@@ -324,8 +327,13 @@ def configure_and_compile(
     if folder_version == "production":
         lib_path = pathlib.Path(shutil.move(src=lib_path, dst=program_folder))
         libstub_path = pathlib.Path(shutil.move(src=libstub_path, dst=program_folder))
-        for to_delete in ["include", "src", "build"]:
-            shutil.rmtree(os.path.join(build_folder, to_delete))
+        program_folder = pathlib.Path(program_folder)
+        # TODO: Find out where `map/` and `sample/` are generated and suppress their generation.
+        for to_delete in ["include", "src", "build", "map", "sample", "dace_environments.csv", "dace_files.csv"]:
+            if (program_folder / to_delete).is_dir():
+                shutil.rmtree(os.path.join(program_folder, to_delete))
+            else:
+                (program_folder / to_delete).unlink()
 
     return lib_path
 
