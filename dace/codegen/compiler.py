@@ -316,22 +316,120 @@ def configure_and_compile(
     return lib_path
 
 
+def get_program_handle(library_path: Union[pathlib.Path, str], sdfg: 'dace.SDFG') -> csd.CompiledSDFG:
+    """Generate a ``CompiledSDFG`` form a precompiled library.
+
+    :param library_path: Path to the compiled library representing ``sdfg``.
+    :param sdfg: The SDFG.
+
+    :note: There is also ``load_precompiled_sdfg()``.
+    """
+    library_path = pathlib.Path(library_path)
+    if not library_path.is_file():
+        raise FileNotFoundError('Compiled SDFG library not found: ' + library_path)
+    libstub_path = _get_stub_library_path(library_path)
+    assert libstub_path.is_file()
+
+    lib = csd.ReloadableDLL(library_filename=library_path, libstub_path=libstub_path)
+    return csd.CompiledSDFG(sdfg, lib, sdfg.arg_names)
+
+
+def load_from_file(sdfg, binary_filename):
+    warnings.warn(
+        'Used deprecated ``load_from_file()`` function, use ``get_program_handle()`` instead.',
+        category=DeprecationWarning,
+        stacklevel=2,
+    )
+    return get_program_handle(library_path=binary_filename, sdfg=sdfg)
+
+
+def get_library_paths(
+    object_folder: str,
+    sdfg_name: str,
+    lib_extension: Optional[str] = None,
+    folder_version: Optional[str] = None,
+) -> Tuple[pathlib.Path, pathlib.Path]:
+    """Returns the i
+    Returns the standard paths of the to the binary object.
+
+    does not check if they exists.
+
+    """
+    lib_path = get_binary_name(object_folder=object_folder,
+                               sdfg_name=sdfg_name,
+                               lib_extension=lib_extension,
+                               folder_version=folder_version)
+    libstub_path = _get_stub_library_path(lib_path)
+
+    return lib_path, libstub_path
+
+
+def get_binary_name(
+    object_folder: Union[pathlib.Path, str],
+    sdfg_name: str,
+    lib_extension: Optional[str] = None,
+    folder_version: Optional[str] = None,
+) -> pathlib.Path:
+    """Returns the path to the compiled library.
+
+    This returns the path to the library containing the compiled SDFG code.
+    The returned path is not resolved nor checked if it exists.
+
+    :param object_folder: The build folder of the SDFG, i.e. `sdfg.build_folder`.
+    :param sdfg_name: The name of the SDFG, i.e. `sdfg.name`.
+    :param lib_extension: The extension of the library, i.e. file extension.
+                          If not given the config option `compiler.library_extension` is used.
+    :param folder_version: The version of the build folder. If not given the config option
+                           `compiler.build_folder_version` is used.
+    """
+    if lib_extension is None:
+        lib_extension = Config.get('compiler', 'library_extension')
+    if folder_version is None:
+        folder_version = Config.get('compiler', 'build_folder_version')
+
+    folder_hirarchy = [object_folder]
+    if folder_version == 'full':
+        folder_hirarchy.append('build')
+    elif folder_version == 'production':
+        # Nothing to add, they are on the top.
+        pass
+    else:
+        raise ValueError(f"Unknown folder version '{folder_version}' found.")
+
+    return pathlib.Path(os.path.join(*folder_hirarchy, f'lib{sdfg_name}.{lib_extension}'))
+
+
+def _get_stub_library_path(sdfg_lib_path: Union[pathlib.Path, str]) -> pathlib.Path:
+    """Transforms the library path to the accompanying stub library.
+
+    The function will not resolve the path it will just manipulate the filename.
+    """
+    sdfg_lib_path = pathlib.Path(sdfg_lib_path)
+    parent = sdfg_lib_path.parent
+    lib_name = sdfg_lib_path.name
+    assert lib_name.startswith('lib') and len(lib_name) > 3
+
+    return parent / ('libdacestub_' + lib_name[3:])
+
+
 def load_precompiled_sdfg(
     folder: Union[pathlib.Path, str],
     sdfg: Optional['dace.SDFG'] = None,
     folder_version: Optional[str] = None,
 ) -> csd.CompiledSDFG:
-    """
+    """Loads a precompiled SDFG from a folder.
+
     Loads a pre-compiled SDFG from an output folder (e.g. ".dacecache/program").
     Folder must contain a file called "program.sdfgz" and a subfolder called
     "build" with the shared object.
 
-    :param folder: Path to SDFG output folder.
+    :param folder: Path to SDFG output folder, i.e. its build folder.
+    :param sdfg: If given then ``program.sdfg(z)`` does not need to be present. Optional.
+    :param fodler_version: Override the folder version. If not given, either the ``VERSION``
+                           file inside the folder or the configuration variable is used.
     :return: A callable CompiledSDFG object.
     """
     folder = pathlib.Path(folder)
-
-    # TODO: Find out what should happen with `dace.sdfg.utils.load_precompiled_sdfg()`.
 
     # Try to find the sdfg from disc, if not given.
     if sdfg is not None:
@@ -351,7 +449,7 @@ def load_precompiled_sdfg(
         with open(folder / 'VERSION', 'rt') as F:
             folder_version = F.readline().strip()
     else:
-        folder_version = Config.get('compiler.build_folder_version')
+        folder_version = Config.get('compiler', 'build_folder_version')
     assert folder_version in ["full", "production"]
 
     return csd.CompiledSDFG(
@@ -480,102 +578,6 @@ def identical_file_exists(filename: str, file_contents: str):
         return False
 
     return True
-
-
-def get_program_handle(library_path: Union[pathlib.Path, str], sdfg: 'dace.SDFG') -> csd.CompiledSDFG:
-    """Generate a ``CompiledSDFG`` form a precompiled library.
-
-    :param library_path: Path to the compiled library representing ``sdfg``.
-    :param sdfg: The SDFG.
-
-    :note: There is also ``load_precompiled_sdfg()``.
-    """
-    library_path = pathlib.Path(library_path)
-    if not library_path.is_file():
-        raise FileNotFoundError('Compiled SDFG library not found: ' + library_path)
-    libstub_path = _get_stub_library_path(library_path)
-    assert libstub_path.is_file()
-
-    lib = csd.ReloadableDLL(library_filename=library_path, libstub_path=libstub_path)
-    return csd.CompiledSDFG(sdfg, lib, sdfg.arg_names)
-
-
-def load_from_file(sdfg, binary_filename):
-    warnings.warn(
-        'Used deprecated ``load_from_file()`` function, use ``get_program_handle()`` instead.',
-        category=DeprecationWarning,
-        stacklevel=2,
-    )
-    return get_program_handle(library_path=binary_filename, sdfg=sdfg)
-
-
-def get_library_paths(
-    object_folder: str,
-    sdfg_name: str,
-    lib_extension: Optional[str] = None,
-    folder_version: Optional[str] = None,
-) -> Tuple[pathlib.Path, pathlib.Path]:
-    """Returns the i
-    Returns the standard paths of the to the binary object.
-
-    does not check if they exists.
-
-    """
-    lib_path = get_binary_name(object_folder=object_folder,
-                               sdfg_name=sdfg_name,
-                               lib_extension=lib_extension,
-                               folder_version=folder_version)
-    libstub_path = _get_stub_library_path(lib_path)
-
-    return lib_path, libstub_path
-
-
-def get_binary_name(
-    object_folder: Union[pathlib.Path, str],
-    sdfg_name: str,
-    lib_extension: Optional[str] = None,
-    folder_version: Optional[str] = None,
-) -> pathlib.Path:
-    """Returns the path to the compiled library.
-
-    This returns the path to the library containing the compiled SDFG code.
-    The returned path is not resolved nor checked if it exists.
-
-    :param object_folder: The build folder of the SDFG, i.e. `sdfg.build_folder`.
-    :param sdfg_name: The name of the SDFG, i.e. `sdfg.name`.
-    :param lib_extension: The extension of the library, i.e. file extension.
-                          If not given the config option `compiler.library_extension` is used.
-    :param folder_version: The version of the build folder. If not given the config option
-                           `compiler.build_folder_version` is used.
-    """
-    if lib_extension is None:
-        lib_extension = Config.get('compiler', 'library_extension')
-    if folder_version is None:
-        folder_version = Config.get('compiler', 'build_folder_version')
-
-    folder_hirarchy = [object_folder]
-    if folder_version == 'full':
-        folder_hirarchy.append('build')
-    elif folder_version == 'production':
-        # Nothing to add, they are on the top.
-        pass
-    else:
-        raise ValueError(f"Unknown folder version '{folder_version}' found.")
-
-    return pathlib.Path(os.path.join(*folder_hirarchy, f'lib{sdfg_name}.{lib_extension}'))
-
-
-def _get_stub_library_path(sdfg_lib_path: Union[pathlib.Path, str]) -> pathlib.Path:
-    """Transforms the library path to the accompanying stub library.
-
-    The function will not resolve the path it will just manipulate the filename.
-    """
-    sdfg_lib_path = pathlib.Path(sdfg_lib_path)
-    parent = sdfg_lib_path.parent
-    lib_name = sdfg_lib_path.name
-    assert lib_name.startswith('lib') and len(lib_name) > 3
-
-    return parent / ('libdacestub_' + lib_name[3:])
 
 
 def _run_liveoutput(command, output_stream=None, **kwargs):

@@ -1663,7 +1663,13 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
 
 
 def load_precompiled_sdfg(*args, **kwargs) -> csdfg.CompiledSDFG:
-    # Deprecated use the one in `dace.codegen.compiler`.
+
+    warnings.warn(
+        'Used deprecated ``dace.sdfg.utils.load_precompiled_sdfg()`` function, use the one from ``dace.codegen.compiler`` instead.',
+        category=DeprecationWarning,
+        stacklevel=2,
+    )
+
     return sdfg_compiler.load_precompiled_sdfg(*args, **kwargs)
 
 
