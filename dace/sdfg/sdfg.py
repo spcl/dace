@@ -1783,6 +1783,11 @@ class SDFG(ControlFlowRegion):
         :param verbose: Be verbose, `False` by default.
         """
         from dace.cli.sdfv import view
+
+        # Ensure external nested SDFGs are loaded.
+        for _ in self.all_sdfgs_recursive(load_ext=True):
+            pass
+
         view(self, filename=filename, verbose=verbose)
 
     @staticmethod
