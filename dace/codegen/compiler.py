@@ -108,7 +108,7 @@ def generate_program_folder(
     # Copy a full snapshot of configuration script
     if folder_version in ["full"]:
         config_source = Config if config is None else config
-        config.save(out_path / "dace.conf", all=True)
+        config_source.save(out_path / "dace.conf", all=True)
 
     # Save the SDFG itself and its hash
     if folder_version in ["full"] and (sdfg is not None):
