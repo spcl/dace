@@ -2488,9 +2488,9 @@ class SDFG(ControlFlowRegion):
 
         if not self._recompile or Config.get_bool('compiler', 'use_cache'):
             # Try to see if a cached version of the binary exists
-            lib_path, _ = compiler.get_binary_name(object_folder=build_folder,
-                                                   sdfg_name=self.name,
-                                                   folder_version=folder_version)
+            lib_path = compiler.get_binary_name(object_folder=build_folder,
+                                                sdfg_name=self.name,
+                                                folder_version=folder_version)
             if lib_path.is_file():
                 return compiler.load_precompiled_sdfg(folder=build_folder, sdfg=self, folder_version=folder_version)
 
