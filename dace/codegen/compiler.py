@@ -41,11 +41,13 @@ def generate_program_folder(
     :param sdfg: The SDFG to generate the program folder for.
     :param code_objects: List of generated code objects.
     :param out_path: The folder in which the build files should be written.
+    :param folder_version: Version of the program folder that should be generated,
+                           if not given ``compiler.build_folder_version`` is used.
     :return: Path to the program folder.
     """
 
     if folder_version is None:
-        folder_version = Config.get('compiler.build_folder_version')
+        folder_version = Config.get('compiler', 'build_folder_version')
 
     src_path = os.path.join(out_path, "src")
     filelist = list()
