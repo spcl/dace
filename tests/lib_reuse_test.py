@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import pytest
+import pathlib
 
 import dace
 from dace.frontend.python.parser import DaceProgram
@@ -32,14 +33,18 @@ def test_reload():
     prog_one = program_generator(10, 2.0)
     prog_two = program_generator(20, 4.0)
 
-    # This should create two libraries for the two SDFGs, as they compile over
-    # the same folder
+    # This should create two libraries for the two SDFGs, as they compile over the same folder
     func1 = prog_one.compile()
     try:
         func2 = prog_two.compile()
     except CompilationError:
         # On some systems (e.g., Windows), the file will be locked, so compilation will fail
         pytest.skip('Compilation failed due to locked file. Skipping test.')
+
+    lib1_path = pathlib.Path(func1.filename)
+    lib2_path = pathlib.Path(func2.filename)
+    assert lib1_path != lib2_path
+    assert lib1_path.parent == lib2_path.parent
 
     func1(input=array_one, output=output_one)
     func2(input=array_two, output=output_two)
@@ -62,6 +67,11 @@ def test_load_precompiled():
 
     func1(input=inp, output=output_one)
     func2(input=inp, output=output_two)
+
+    lib1_path = pathlib.Path(func1.filename)
+    lib2_path = pathlib.Path(func2.filename)
+    assert lib1_path != lib2_path
+    assert lib1_path.parent == lib2_path.parent
 
     assert (np.allclose(output_one, output_two))
 
