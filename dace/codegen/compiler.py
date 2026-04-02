@@ -348,7 +348,8 @@ def load_precompiled_sdfg(
     if folder_version is not None:
         pass
     elif (folder / 'VERSION').exists():
-        raise NotImplementedError()
+        with open(folder / 'VERSION', 'rt') as F:
+            folder_version = F.readline().strip()
     else:
         folder_version = Config.get('compiler.build_folder_version')
     assert folder_version in ["full", "production"]
