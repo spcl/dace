@@ -2492,7 +2492,9 @@ class SDFG(ControlFlowRegion):
                                                 sdfg_name=self.name,
                                                 folder_version=folder_version)
             if lib_path.is_file():
-                return compiler.load_precompiled_sdfg(folder=build_folder, sdfg=self, folder_version=folder_version)
+                if return_program_handle:
+                    return compiler.load_precompiled_sdfg(folder=build_folder, sdfg=self, folder_version=folder_version)
+                return
 
         ############################
         # DaCe Compilation Process #
