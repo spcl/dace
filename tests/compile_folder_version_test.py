@@ -2,8 +2,14 @@
 import numpy as np
 import pytest
 import uuid
+import pathlib
+import copy
+import re
+
+from typing import Tuple
 
 import dace
+from dace.codegen import compiler as sdfg_compiler
 
 
 def _make_test_sdfg() -> dace.SDFG:
@@ -35,18 +41,110 @@ def _make_test_sdfg() -> dace.SDFG:
     return sdfg
 
 
-def _perform_compile_test_for(version: str):
-    a, b, c = (np.array(np.random.rand(10), copy=True, dtype=dace.float64.as_numpy_dtype()) for _ in range(3))
-    ref = a + b
+def _load_and_run_sdfg(build_folder, sdfg):
+    res = {name: np.array(np.random.rand(10), copy=True, dtype=np.float64) for name in "abc"}
+    ref = copy.deepcopy(res)
+    ref["c"] = ref["a"] + ref["b"]
+
+    csdfg = sdfg_compiler.load_precompiled_sdfg(build_folder, sdfg)
+    csdfg(**res)
+
+    assert all(np.allclose(ref[n], res[n]) for n in res.keys())
+
+
+def test_full_folder_version():
     with dace.config.temporary_config() as Config:
-        Config.set('compiler', 'build_folder_version', value=version)
+        Config.set('compiler', 'build_folder_version', value="full")
         sdfg = _make_test_sdfg()
-        csdfg = sdfg.compile()
-        # PERFROM INSPECTION OF THE FOLDER
+        build_folder = pathlib.Path(sdfg.build_folder)
+        assert not build_folder.exists()
 
-        csdfg(a=a, b=b, c=c)
-        assert np.allclose(c, ref)
+        not_csdfg = sdfg.compile(return_program_handle=False)
+        assert not_csdfg is None
+
+    assert build_folder.exists()
+    assert sdfg_compiler.get_folder_version(build_folder) == "full"
+
+    expected_files = {
+        "build": pathlib.Path.is_dir,
+        "include": pathlib.Path.is_dir,
+        "map": pathlib.Path.is_dir,
+        "perf": pathlib.Path.is_dir,
+        "sample": pathlib.Path.is_dir,
+        "src": pathlib.Path.is_dir,
+        "CACHEDIR.TAG": pathlib.Path.is_file,
+        "dace.conf": pathlib.Path.is_file,
+        "dace_files.csv": pathlib.Path.is_file,
+        "dace_environments.csv": pathlib.Path.is_file,
+        "program.sdfgz": pathlib.Path.is_file,
+        "VERSION": pathlib.Path.is_file,
+    }
+
+    for found_path in build_folder.iterdir():
+        found_file = found_path.name
+        assert found_file in expected_files
+        assert expected_files[found_file](found_path)
+
+    # Now run it.
+    _load_and_run_sdfg(build_folder, sdfg)
+
+    # Special case for full is that if there is no `VERSION` it is still full.
+    version_file = build_folder / "VERSION"
+    assert version_file.exists()
+    version_file.unlink()
+    assert not version_file.exists()
+    assert sdfg_compiler.get_folder_version(build_folder) == "full"
 
 
-def test_w():
-    _perform_compile_test_for("full")
+def test_production_folder_version():
+    with dace.config.temporary_config() as Config:
+        Config.set('compiler', 'build_folder_version', value="production")
+        sdfg = _make_test_sdfg()
+        build_folder = pathlib.Path(sdfg.build_folder)
+        assert not build_folder.exists()
+
+        not_csdfg = sdfg.compile(return_program_handle=False)
+        assert not_csdfg is None
+
+    assert build_folder.exists()
+    assert sdfg_compiler.get_folder_version(build_folder) == "production"
+
+    lib_path = sdfg_compiler.get_binary_name(build_folder, sdfg_name=sdfg.name, folder_version="production")
+    libstub_path = sdfg_compiler._get_stub_library_path(lib_path.name)
+
+    expected_files = {
+        "VERSION": pathlib.Path.is_file,
+        lib_path.name: pathlib.Path.is_file,
+        libstub_path.name: pathlib.Path.is_file,
+    }
+
+    for found_path in build_folder.iterdir():
+        found_file = found_path.name
+        assert found_file in expected_files
+        assert expected_files[found_file](found_path)
+
+    # Now run it.
+    _load_and_run_sdfg(build_folder, sdfg)
+
+    # If we delete the VERSION file we will get an error.
+    version_file = build_folder / "VERSION"
+    assert version_file.exists()
+    version_file.unlink()
+    assert not version_file.exists()
+
+    with pytest.raises(ValueError, match=re.escape('Folder version was ``full`` but no ``build/`` folder found.')):
+        sdfg_compiler.get_folder_version(build_folder)
+
+
+def test_reload_folder():
+    # Similar to `test_reload()` but with multiple versions.
+    #  Probably update that test.
+    pass
+
+
+def test_aleard_loaded_and_comple_again():
+    pass
+
+
+def test_build_with_scheme_one_and_then_switch():
+    pass
