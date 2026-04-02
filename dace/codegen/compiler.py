@@ -408,6 +408,23 @@ def load_precompiled_sdfg(
     """
     folder = pathlib.Path(folder)
 
+    if not folder.is_dir():
+        raise NotADirectoryError(f'Can not load the SDFG from folder ``{folder}``.')
+
+    # Now find the folder version.
+    #  The `VERSION` file takes precedence.
+    if (folder / 'VERSION').exists():
+        with open(folder / 'VERSION', 'rt') as F:
+            folder_version = F.readline().strip()
+    elif folder_version is not None:
+        pass
+    else:
+        folder_version = Config.get('compiler', 'build_folder_version')
+    assert folder_version in ["full", "production"]
+
+    if folder_version == "full" and (not (folder / "build").is_dir()):
+        raise ValueError(f'Folder version was ``full`` but no ``build/`` folder found.')
+
     # Try to find the sdfg from disc, if not given.
     if sdfg is not None:
         assert isinstance(sdfg, dace.SDFG)
@@ -418,16 +435,6 @@ def load_precompiled_sdfg(
                 break
         else:
             raise ValueError(f"Could not locate the SDFG for `{folder}`.")
-
-    # Now find the folder version.
-    if folder_version is not None:
-        pass
-    elif (folder / 'VERSION').exists():
-        with open(folder / 'VERSION', 'rt') as F:
-            folder_version = F.readline().strip()
-    else:
-        folder_version = Config.get('compiler', 'build_folder_version')
-    assert folder_version in ["full", "production"]
 
     return csd.CompiledSDFG(
         sdfg,
