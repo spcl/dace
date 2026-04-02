@@ -2497,7 +2497,7 @@ class SDFG(ControlFlowRegion):
                     #   The reason is that if code is generated the `CompiledSDFG.sdfg` attribute
                     #   of the returned handle is deepcopied. This means that changes to `self`
                     #   will not affect the attribute. But currently this is the case.
-                    return compiler.load_precompiled_sdfg(folder=build_folder, sdfg=self, folder_version=folder_version)
+                    return compiler.load_precompiled_sdfg(folder=build_folder, sdfg=self)
                 return
 
         ############################
@@ -2558,7 +2558,7 @@ class SDFG(ControlFlowRegion):
 
         # Get the function handle
         if return_program_handle:
-            return compiler.load_precompiled_sdfg(folder=build_folder, sdfg=sdfg, folder_version=folder_version)
+            return compiler.load_precompiled_sdfg(folder=build_folder, sdfg=sdfg)
 
     def argument_typecheck(self, args, kwargs, types_only=False):
         """ Checks if arguments and keyword arguments match the SDFG

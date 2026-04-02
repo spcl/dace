@@ -1,8 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import pytest
+
 import dace
 from dace.frontend.python.parser import DaceProgram
 from dace.codegen.exceptions import CompilationError
-from dace.sdfg.utils import load_precompiled_sdfg
+from dace.sdfg.compiler import load_precompiled_sdfg
 import numpy as np
 
 
@@ -22,8 +24,6 @@ def program_generator(size: int, factor: float) -> DaceProgram:
 
 
 def test_reload():
-    print('Reloadable DaCe program test')
-
     array_one = np.random.rand(10).astype(np.float64)
     array_two = np.random.rand(20).astype(np.float64)
     output_one = np.zeros(10, dtype=np.float64)
@@ -38,10 +38,8 @@ def test_reload():
     try:
         func2 = prog_two.compile()
     except CompilationError:
-        # On some systems (e.g., Windows), the file will be locked, so
-        # compilation will fail
-        print('Compilation failed due to locked file. Skipping test.')
-        return
+        # On some systems (e.g., Windows), the file will be locked, so compilation will fail
+        pytest.skip('Compilation failed due to locked file. Skipping test.')
 
     func1(input=array_one, output=output_one)
     func2(input=array_two, output=output_two)

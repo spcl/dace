@@ -107,10 +107,8 @@ def generate_program_folder(
 
     # Copy a full snapshot of configuration script
     if folder_version in ["full"]:
-        if config is not None:
-            config.save(os.path.join(out_path, "dace.conf"), all=True)
-        else:
-            Config.save(os.path.join(out_path, "dace.conf"), all=True)
+        config_source = Config if config is None else config
+        config.save(out_path / "dace.conf", all=True)
 
     # Save the SDFG itself and its hash
     if folder_version in ["full"] and (sdfg is not None):
@@ -121,10 +119,9 @@ def generate_program_folder(
             with open(filepath, 'w') as hfile:
                 hfile.write(contents)
 
-    # Write the version file.
-    if folder_version in ["full"]:
-        with open(os.path.join(out_path, "VERSION"), "w") as version_file:
-            version_file.write(folder_version)
+    # The version file is always generated. In case it is missing we assume the old version.
+    with open(os.path.join(out_path, "VERSION"), "w") as version_file:
+        version_file.write(folder_version)
 
     # Write cachedir tag
     if folder_version in ["full"]:
@@ -314,18 +311,26 @@ def configure_and_compile(
     return lib_path
 
 
-def get_program_handle(library_path: Union[pathlib.Path, str], sdfg: 'dace.SDFG') -> csd.CompiledSDFG:
-    """Generate a ``CompiledSDFG`` form a precompiled library.
+def get_program_handle(
+    library_path: Union[pathlib.Path, str],
+    sdfg: 'dace.SDFG',
+    stub_library_path: Union[pathlib.Path, str, None] = None,
+) -> csd.CompiledSDFG:
+    """Construct a  ``CompiledSDFG`` form a precompiled library directly.
+
+    This function is similar to the (preferred) ``load_precompiled_sdfg()``. However,
+    instead of passing the build folder of the SDFG to the function, the path to the
+    compiled library is passed directly.
 
     :param library_path: Path to the compiled library representing ``sdfg``.
-    :param sdfg: The SDFG.
-
-    :note: There is also ``load_precompiled_sdfg()``.
+    :param sdfg: The SDFG, will be referenced by the returned ``CompiledSDFG``.
+    :param stub_library_path: The path to the stub library.
     """
     library_path = pathlib.Path(library_path)
     if not library_path.is_file():
         raise FileNotFoundError('Compiled SDFG library not found: ' + library_path)
-    libstub_path = _get_stub_library_path(library_path)
+    libstub_path = _get_stub_library_path(library_path) if stub_library_path is None else pathlib.Path(
+        stub_library_path).resolve()
     assert libstub_path.is_file()
 
     lib = csd.ReloadableDLL(library_filename=library_path, libstub_path=libstub_path)
@@ -347,10 +352,7 @@ def get_binary_name(
     lib_extension: Optional[str] = None,
     folder_version: Optional[str] = None,
 ) -> pathlib.Path:
-    """Returns the path to the compiled library.
-
-    This returns the path to the library containing the compiled SDFG code.
-    The returned path is not resolved nor checked if it exists.
+    """Returns the supposed location of the compiled library given the boundary conditions.
 
     :param object_folder: The build folder of the SDFG, i.e. `sdfg.build_folder`.
     :param sdfg_name: The name of the SDFG, i.e. `sdfg.name`.
@@ -377,49 +379,43 @@ def get_binary_name(
 
 
 def _get_stub_library_path(sdfg_lib_path: Union[pathlib.Path, str]) -> pathlib.Path:
-    """Transforms the library path to the accompanying stub library.
-
-    The function will not resolve the path it will just manipulate the filename.
+    """Returns the supposed location of the compiled stub library given the path of the compiled library.
     """
     sdfg_lib_path = pathlib.Path(sdfg_lib_path)
     parent = sdfg_lib_path.parent
     lib_name = sdfg_lib_path.name
     assert lib_name.startswith('lib') and len(lib_name) > 3
 
-    return parent / ('libdacestub_' + lib_name[3:])
+    return sdfg_lib_path.parent / ('libdacestub_' + lib_name[3:])
 
 
 def load_precompiled_sdfg(
     folder: Union[pathlib.Path, str],
     sdfg: Optional['dace.SDFG'] = None,
-    folder_version: Optional[str] = None,
 ) -> csd.CompiledSDFG:
-    """Loads a precompiled SDFG from a folder.
+    """Loads a precompiled SDFG from ``folder``.
 
-    Loads a pre-compiled SDFG from an output folder (e.g. ".dacecache/program").
-    Folder must contain a file called "program.sdfgz" and a subfolder called
-    "build" with the shared object.
+    If ``sdfg`` is not given then the function expects to find the ``program.sdfg(z)``
+    dump file inside ``folder``. If the folder does not contain a ``VERSION`` file
+    it assumes that it is an old style ``full`` folder otherwise, the information
+    from ``VERSION`` is consulted.
 
     :param folder: Path to SDFG output folder, i.e. its build folder.
-    :param sdfg: If given then ``program.sdfg(z)`` does not need to be present. Optional.
-    :param fodler_version: Override the folder version. If not given, either the ``VERSION``
-                           file inside the folder or the configuration variable is used.
+    :param sdfg: If given then ``program.sdfg(z)`` does not need to be present.
     :return: A callable CompiledSDFG object.
+
+    :note: If ``sdfg`` is given then it is referenced by the returned ``CompiledSDFG``.
     """
     folder = pathlib.Path(folder)
 
     if not folder.is_dir():
         raise NotADirectoryError(f'Can not load the SDFG from folder ``{folder}``.')
 
-    # Now find the folder version.
-    #  The `VERSION` file takes precedence.
     if (folder / 'VERSION').exists():
         with open(folder / 'VERSION', 'rt') as F:
             folder_version = F.readline().strip()
-    elif folder_version is not None:
-        pass
     else:
-        folder_version = Config.get('compiler', 'build_folder_version')
+        folder_version = "full"  # Old style full folder version.
     assert folder_version in ["full", "production"]
 
     if folder_version == "full" and (not (folder / "build").is_dir()):
@@ -436,11 +432,8 @@ def load_precompiled_sdfg(
         else:
             raise ValueError(f"Could not locate the SDFG for `{folder}`.")
 
-    return csd.CompiledSDFG(
-        sdfg,
-        csd.ReloadableDLL(get_binary_name(folder, sdfg_name=sdfg.name, folder_version=folder_version)),
-        sdfg.arg_names,
-    )
+    return get_program_handle(library_path=get_binary_name(folder, sdfg_name=sdfg.name, folder_version=folder_version),
+                              sdfg=sdfg)
 
 
 def _get_or_eval(value_or_function: Union[T, Callable[[], T]]) -> T:

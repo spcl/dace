@@ -1699,7 +1699,7 @@ def distributed_compile(sdfg: SDFG, comm, *, validate: bool = True) -> csdfg.Com
 
     # Loads compiled SDFG.
     if rank > 0:
-        func = load_precompiled_sdfg(folder)
+        func = sdfg_compiler.load_precompiled_sdfg(folder)
 
     comm.Barrier()
 
