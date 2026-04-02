@@ -3006,3 +3006,60 @@ class SDFG(ControlFlowRegion):
                 break
         self.root_sdfg.using_explicit_control_flow = found_explicit_cf_block
         return found_explicit_cf_block
+
+    def sort_sdfg_alphabetically(self, rebuild_nx: bool = False) -> None:
+        """
+        Forces all internal dictionaries, graph structures, and metadata registries
+        into a deterministic, semantically-aware order to guarantee stable code generation.
+
+        In DaCe, the code generators rely heavily on the iteration order
+        of internal dictionaries. This method performs a deep, in-place stabilization
+        of the entire SDFG hierarchy to eliminate stochastic compilation jitter
+        caused by memory addresses or volatile UUIDs.
+
+        The stabilization process executes in four phases:
+            1. Global Metadata: Alphabetizes arrays, symbols, and constants.
+            2. Control Flow Regions: Sorts every ``ControlFlowRegion`` in this
+               SDFG (including the SDFG itself, ``LoopRegion``s,
+               ``ConditionalBlock``s, etc.) at the state machine level.
+            3. Dataflow: Sorts the internal nodes and memlet edges within every
+               ``SDFGState``.
+            4. Nested SDFGs: Recursively applies this stabilization to all
+               ``NestedSDFG`` nodes found in the states.
+
+        :param rebuild_nx: If True, rebuilds the internal NetworkX graph in each
+                           sorted graph. Default is False for performance, since
+                           DaCe's codegen and pattern matching do not rely on the
+                           internal _nx iteration order.
+        """
+        # Avoid import loops
+        from dace.sdfg.utils import sort_graph_dicts_alphabetically
+
+        # Stack-local cache for node keys, private to this sort invocation.
+        # Safe for concurrent SDFG processing — no global state.
+        node_key_cache: Dict[int, tuple] = {}
+
+        # 1. Stabilize Global Metadata (Arrays, Symbols, Constants)
+        for attr in ['_arrays', 'symbols', 'constants_prop']:
+            val = getattr(self, attr)
+            if val:
+                sorted_items = sorted(val.items(), key=lambda item: item[0])
+                val.clear()
+                val.update(sorted_items)
+
+        # 2. Stabilize all ControlFlowRegions (state machine level).
+        #    This includes the SDFG itself, plus any nested LoopRegions,
+        #    ConditionalBlocks, etc. — but does NOT recurse into nested SDFGs.
+        for cfr in self.all_control_flow_regions(recursive=False):
+            sort_graph_dicts_alphabetically(cfr, rebuild_nx=rebuild_nx, node_key_cache=node_key_cache)
+
+        # 3. Stabilize the Dataflow inside each SDFGState.
+        #    all_states() traverses into nested ControlFlowRegions but NOT
+        #    into nested SDFGs.
+        for state in self.all_states():
+            sort_graph_dicts_alphabetically(state, rebuild_nx=rebuild_nx, node_key_cache=node_key_cache)
+
+            # 4. Recurse into Nested SDFGs
+            for node in state.nodes():
+                if isinstance(node, nd.NestedSDFG):
+                    node.sdfg.sort_sdfg_alphabetically(rebuild_nx=rebuild_nx)
