@@ -2493,6 +2493,10 @@ class SDFG(ControlFlowRegion):
                                                 folder_version=folder_version)
             if lib_path.is_file():
                 if return_program_handle:
+                    # NOTE: We should not pass `self` as `sdfg` argument, but instead deepcopy it.
+                    #   The reason is that if code is generated the `CompiledSDFG.sdfg` attribute
+                    #   of the returned handle is deepcopied. This means that changes to `self`
+                    #   will not affect the attribute. But currently this is the case.
                     return compiler.load_precompiled_sdfg(folder=build_folder, sdfg=self, folder_version=folder_version)
                 return
 
@@ -2540,6 +2544,7 @@ class SDFG(ControlFlowRegion):
         else:
             # The code was already generated, just load the program folder
             program_folder = build_folder
+            # NOTE: See the note above about deepcopying.
             sdfg = self
 
         # Compile the code and get the shared library path
