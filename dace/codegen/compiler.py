@@ -365,6 +365,23 @@ def load_from_file(sdfg, binary_filename):
     return get_program_handle(library_path=binary_filename, sdfg=sdfg)
 
 
+def get_folder_version(object_folder: Union[pathlib.Path, str]) -> str:
+    """Inspect `object_folder` and determine which version the folder has.
+
+    This will inspect `VERSION` file and if not present assume `full`.
+    """
+    object_folder = pathlib.Path(object_folder)
+
+    if (object_folder / 'VERSION').exists():
+        with open(folder / 'VERSION', 'rt') as F:
+            folder_version = F.readline().strip()
+    else:
+        folder_version = "full"  # Old style full folder version.
+
+    assert folder_version in ["full", "production"]
+    return folder_version
+
+
 def get_binary_name(
     object_folder: Union[pathlib.Path, str],
     sdfg_name: str,
@@ -430,13 +447,7 @@ def load_precompiled_sdfg(
     if not folder.is_dir():
         raise NotADirectoryError(f'Can not load the SDFG from folder ``{folder}``.')
 
-    if (folder / 'VERSION').exists():
-        with open(folder / 'VERSION', 'rt') as F:
-            folder_version = F.readline().strip()
-    else:
-        folder_version = "full"  # Old style full folder version.
-    assert folder_version in ["full", "production"]
-
+    folder_version = get_folder_version(folder)
     if folder_version == "full" and (not (folder / "build").is_dir()):
         raise ValueError(f'Folder version was ``full`` but no ``build/`` folder found.')
 
