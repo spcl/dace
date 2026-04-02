@@ -4,7 +4,7 @@ import pytest
 import dace
 from dace.frontend.python.parser import DaceProgram
 from dace.codegen.exceptions import CompilationError
-from dace.sdfg.compiler import load_precompiled_sdfg
+from dace.codegen.compiler import load_precompiled_sdfg
 import numpy as np
 
 
