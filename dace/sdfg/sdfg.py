@@ -2461,11 +2461,10 @@ class SDFG(ControlFlowRegion):
 
         # Note here is kind of a "leak". The issue is that while the library is not
         #  loaded the stub library is loaded. However, it is never unloaded, because
-        #  the `unload()` function is not called. This is probably not an issue, but
-        #  it is not super nice.
-        # TODO: Fix
+        #  the `unload()` function is not called. This is technically not an issue
+        #  as `ctypes` will do that at some later point.
         binary_filename = compiler.get_binary_name(self.build_folder, self.name)
-        dll = cs.ReloadableDLL(binary_filename, self.name)
+        dll = cs.ReloadableDLL(binary_filename)
         return dll.is_loaded()
 
     def compile(self, output_file=None, validate=True, return_program_handle=True) -> 'CompiledSDFG':

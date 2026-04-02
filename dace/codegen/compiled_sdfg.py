@@ -27,39 +27,21 @@ class ReloadableDLL(object):
     bypasses Python's dynamic library reloading issues.
     """
 
-    def __init__(self, library_filename, *program_name, **kwargs):
-        """
-        Creates a new reloadable shared object.
+    def __init__(self, library_filename, **kwargs):
+        """Creates a new reloadable shared object.
 
-        The library filename must always be given, but the stub file can either be
-        found by specifing `program_name` or a path directly.
+        The path to the library must be given. The path of the stub library is inferred
+        from it. This means it is expected that it is located in the same folder,
+        see `_get_stub_library_path()` for more information.
 
         :param library_filename: Path to library file.
-        :param program_name: Name of the DaCe program (for use in finding the stub library loader).
-        :param libstub_path: Direct path of the libstub.
+        :param libstub_path: Optional path to the stub library.
         """
-        self._library_filename = os.path.realpath(library_filename)
+        from dace.codegen.compiler import _get_stub_library_path
 
-        prog_name, libstub_path = None, None
-        if len(program_name) != 0:
-            assert len(program_name) == 1
-            assert len(kwargs) == 0
-            prog_name = program_name[0]
-        elif "program_name" in kwargs:
-            assert len(kwargs) == 1
-            prog_name = kwargs["program_name"]
-        elif "libstub_path" in kwargs:
-            assert len(kwargs) == 1
-            libstub_path = kwargs["libstub_path"]
-        else:
-            raise ValueError("Not able to find everything.")
-
-        if prog_name is not None:
-            self._stub_filename = os.path.join(
-                os.path.dirname(os.path.realpath(library_filename)),
-                f'libdacestub_{prog_name}.{Config.get("compiler", "library_extension")}')
-        else:
-            self._stub_filename = os.path.realpath(libstub_path)
+        self._library_filename = pathlib.Path(library_filename).resolve()
+        self._stub_filename = _get_stub_library_path(kwargs.pop("libstub_path", self._library_filename))
+        assert len(kwargs) == 0
 
         self._stub = None
         self._lib = None
