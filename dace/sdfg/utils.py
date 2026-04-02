@@ -2766,42 +2766,39 @@ def expand_nodes(sdfg: SDFG, predicate: Callable[[nd.Node], bool]):
 
 def get_deterministic_node_key(graph: Any, node: Any, node_key_cache: Optional[Dict[int, tuple]] = None) -> tuple:
     """
-    Generates a highly stable, deterministic key for DaCe graph nodes
-    based on their semantic properties rather than memory locations.
+    Generates a deterministic key for DaCe graph nodes based on their
+    semantic properties rather than memory locations.
 
-    During SDFG compilation, relying on memory addresses or volatile UUIDs
-    for sorting leads to non-deterministic code generation. This function
-    extracts the intrinsic semantic identity of a node to ensure structural
-    collisions are resolved deterministically.
+    The generated key is a tuple of typed components that ensures correct
+    lexicographic ordering — integers compare as integers, not as digit
+    strings (e.g., ``10 > 3`` but ``"10" < "3"``).
 
-    The generated key is a tuple of ``(node_type, label, dynamic_parts)``
-    which enforces lexicographic ordering: nodes are first grouped by type,
-    then by label, with the remaining semantic properties acting as a
-    tiebreaker.
+    The key components are:
 
-    The dynamic parts incorporate:
-        - Graph topology (in-degree and out-degree)
-        - Interface semantics (in/out connectors, always included for
-          ``nd.Node`` subclasses even when empty)
-        - Loop and memory semantics (map parameters, ranges, schedules)
-        - Internal code logic (Tasklet code string)
-        - Nested SDFG structural size and symbol mapping
+        0. **Node type** (``str``): Class name (e.g., ``"AccessNode"``).
+        1. **Label** (``str``): Data descriptor name or node label.
+        2. **In-degree** (``int``): Number of incoming edges.
+        3. **Out-degree** (``int``): Number of outgoing edges.
+        4. **In-connectors** (``tuple[str, ...]``): Sorted input connector names.
+        5. **Out-connectors** (``tuple[str, ...]``): Sorted output connector names.
+        6. **Extra** (``str``): Type-specific tiebreaker — map parameters and
+           range for ``MapEntry``/``MapExit``, code string for ``Tasklet``,
+           state count and symbol mapping for ``NestedSDFG``.
 
-    When called from the sorting path, an optional ``node_key_cache`` dict
-    can be provided to avoid redundant recomputation during sort comparisons.
-    The cache is private to each ``sort_sdfg_alphabetically()`` invocation
-    and lives on the stack, so concurrent SDFG processing is safe.
+    An optional ``node_key_cache`` dict (keyed by ``id(node)``) can be
+    provided to avoid redundant recomputation when the same node is
+    referenced by multiple edges during sorting. The cache is private to
+    each ``sort_sdfg_alphabetically()`` invocation and lives on the stack,
+    so concurrent SDFG processing is safe.
 
-    :param graph: The containing graph (e.g., SDFGState or ControlFlowRegion)
-                  used to compute in-degree and out-degree. May be ``None``,
-                  in which case degree information is omitted from the key.
-    :param node: The DaCe graph node (e.g., Tasklet, AccessNode, MapEntry)
-                 to be evaluated.
-    :param node_key_cache: Optional node-key cache dict, private to the current
-                           ``sort_sdfg_alphabetically()`` call. When ``None``,
-                           no caching is performed.
-    :return: A tuple ``(node_type, label, dynamic_parts)`` representing
-             the node's semantic identity.
+    :param graph: The containing graph (e.g., ``SDFGState`` or
+                  ``ControlFlowRegion``) used to compute in-degree and
+                  out-degree. May be ``None``, in which case degree
+                  defaults to zero.
+    :param node: The DaCe graph node to be evaluated.
+    :param node_key_cache: Optional cache dict to avoid redundant
+                           recomputation during sort comparisons.
+    :return: A 7-tuple representing the node's semantic identity.
     """
     if node_key_cache is not None:
         node_id = id(node)
@@ -2812,50 +2809,37 @@ def get_deterministic_node_key(graph: Any, node: Any, node_key_cache: Optional[D
 
     # Extract core identifier
     if hasattr(node, 'data'):
-        raw_label = node.data
+        raw_label = str(node.data)
     elif hasattr(node, 'label'):
-        raw_label = node.label
+        raw_label = str(node.label)
     else:
         raw_label = str(node)
 
-    parts = []
-
-    # 1. Topological Context (requires the containing graph)
+    # Topological context
+    in_deg = 0
+    out_deg = 0
     if graph is not None:
         try:
             in_deg = graph.in_degree(node)
             out_deg = graph.out_degree(node)
-            parts.append(f"i{in_deg}o{out_deg}")
         except (ValueError, KeyError):
-            # Node might not belong to this graph (e.g., during NX rebuild)
             pass
 
-    # 2. Interface Semantics (Connectors)
-    if isinstance(node, nd.Node):
-        parts.append("inC:{" + "-".join(sorted(node.in_connectors.keys())) + "}")
-        parts.append("outC:{" + "-".join(sorted(node.out_connectors.keys())) + "}")
+    # Interface semantics (connectors)
+    in_conn = tuple(sorted(node.in_connectors.keys())) if isinstance(node, nd.Node) else ()
+    out_conn = tuple(sorted(node.out_connectors.keys())) if isinstance(node, nd.Node) else ()
 
-    # 3. Map Semantics (Parameters, Ranges & Schedules)
+    # Type-specific tiebreakers
+    extra = ''
     if isinstance(node, (nd.MapEntry, nd.MapExit)):
-        parts.append("map:" + "-".join(node.map.params))
-        parts.append("range:" + str(node.map.range))
-        parts.append(f"sch:{str(node.map.schedule)}")
-
-    # 4. Internal Code Semantics (Tasklets)
-    if isinstance(node, nd.Tasklet):
-        code_str = str(node.code.as_string).strip()
-        parts.append(f"code:{code_str}")
-
-    # 5. Nested SDFG Differentiation
-    if isinstance(node, nd.NestedSDFG):
-        parts.append(f"nsdfg_states:{len(node.sdfg.nodes())}")
-        # Include symbol mapping for further differentiation
+        extra = '-'.join(node.map.params) + ':' + str(node.map.range) + ':' + str(node.map.schedule)
+    elif isinstance(node, nd.Tasklet):
+        extra = str(node.code.as_string).strip()
+    elif isinstance(node, nd.NestedSDFG):
         sorted_syms = dict(sorted({str(k): str(v) for k, v in node.symbol_mapping.items()}.items()))
-        parts.append(f"symmap:{sorted_syms}")
+        extra = f"states:{len(node.sdfg.nodes())}_syms:{sorted_syms}"
 
-    # Tuple enforces lexicographic order: group by type, then label,
-    # then use dynamic parts as a tiebreaker.
-    result = (node_type, str(raw_label), "_".join(parts))
+    result = (node_type, raw_label, in_deg, out_deg, in_conn, out_conn, extra)
     if node_key_cache is not None:
         node_key_cache[id(node)] = result
     return result
@@ -2863,44 +2847,57 @@ def get_deterministic_node_key(graph: Any, node: Any, node_key_cache: Optional[D
 
 def get_deterministic_edge_key(graph: Any, edge: Any, node_key_cache: Optional[Dict[int, tuple]] = None) -> tuple:
     """
-    Generates a highly stable key for graph edges to ensure
-    deterministic sorting.
+    Generates a deterministic key for graph edges to ensure stable sorting.
 
-    This function extracts the semantic connection points (connectors)
-    and the data payload (Memlets or Interstate conditions) to prevent
-    non-deterministic compiler graph traversals.
+    The key groups edges first by their endpoint node pair, then by
+    connectors, then by data payload::
 
-    For interstate edges, whose data object lacks a stable ``__str__()``
-    and would produce a memory-address-based representation, the function
-    extracts the ``condition`` and ``assignments`` attributes instead.
+        (src_node_key, dst_node_key, src_connector, dst_connector, data_str)
+
+    For Memlet edges, only the data descriptor name (plus ``wcr`` and
+    ``dynamic`` flags) is used as the payload — the full Memlet string
+    representation is avoided because it includes subset detail that
+    does not improve disambiguation but produces unnecessarily different
+    sort orders.
+
+    For interstate edges, the condition and sorted assignments are
+    extracted, since ``InterstateEdge.__str__()`` produces an unstable
+    memory-address-based representation.
 
     :param graph: The containing graph, passed through to
                   :func:`get_deterministic_node_key` for degree computation.
-    :param edge: The DaCe graph edge (or InterstateEdge) to be evaluated.
-    :param node_key_cache: Optional node-key cache dict, passed through to
-                           :func:`get_deterministic_node_key`.
-    :return: A tuple representing the edge's routing and payload.
+    :param edge: The DaCe graph edge to be evaluated.
+    :param node_key_cache: Optional cache dict for node keys.
+    :return: A 5-tuple representing the edge's routing and payload.
     """
-    # 1. Extract connector strings
-    raw_src_conn = str(getattr(edge, 'src_conn', ''))
-    raw_dst_conn = str(getattr(edge, 'dst_conn', ''))
-
-    # 2. Extract data payload, handling InterstateEdge specially since it
-    #    lacks __str__() and would produce an unstable memory-address-based
-    #    representation.
-    edge_data = getattr(edge, 'data', '')
-    if hasattr(edge_data, 'condition') and hasattr(edge_data, 'assignments'):
-        cond_str = str(edge_data.condition)
-        sorted_assigns = dict(sorted({str(k): str(v) for k, v in edge_data.assignments.items()}.items()))
-        raw_data_str = f"cond:{cond_str}_assign:{sorted_assigns}"
-    else:
-        raw_data_str = str(edge_data)
-
-    # 3. Retrieve the stabilized keys for the source and destination nodes
+    # 1. Retrieve the stabilized keys for source and destination nodes
     src_key = get_deterministic_node_key(graph, edge.src, node_key_cache)
     dst_key = get_deterministic_node_key(graph, edge.dst, node_key_cache)
 
-    return (src_key, raw_src_conn, dst_key, raw_dst_conn, raw_data_str)
+    # 2. Extract connector strings
+    src_conn = str(getattr(edge, 'src_conn', '') or '')
+    dst_conn = str(getattr(edge, 'dst_conn', '') or '')
+
+    # 3. Extract deterministic data payload
+    edge_data = getattr(edge, 'data', None)
+    if edge_data is None:
+        data_str = ''
+    elif hasattr(edge_data, 'condition') and hasattr(edge_data, 'assignments'):
+        # InterstateEdge: extract condition and sorted assignments
+        cond_str = str(edge_data.condition)
+        sorted_assigns = tuple(sorted((str(k), str(v)) for k, v in edge_data.assignments.items()))
+        data_str = f"cond:{cond_str}_assign:{sorted_assigns}"
+    elif hasattr(edge_data, 'data'):
+        # Memlet: use data name + wcr + dynamic flag
+        data_str = str(edge_data.data or '')
+        if edge_data.wcr:
+            data_str += f"_wcr:{edge_data.wcr}"
+        if edge_data.dynamic:
+            data_str += "_dyn"
+    else:
+        data_str = str(edge_data)
+
+    return (src_key, dst_key, src_conn, dst_conn, data_str)
 
 
 def sort_graph_dicts_alphabetically(graph: Union['ControlFlowRegion', 'SDFGState'],
