@@ -386,6 +386,9 @@ def get_folder_version(object_folder: Union[pathlib.Path, str]) -> str:
     else:
         folder_version = "full"  # Old style full folder version.
 
+    if folder_version == "full" and (not (object_folder / "build").is_dir()):
+        raise ValueError('Folder version was ``full`` but no ``build/`` folder found.')
+
     assert folder_version in ["full", "production"]
     return folder_version
 
@@ -456,8 +459,6 @@ def load_precompiled_sdfg(
         raise NotADirectoryError(f'Can not load the SDFG from folder ``{folder}``.')
 
     folder_version = get_folder_version(folder)
-    if folder_version == "full" and (not (folder / "build").is_dir()):
-        raise ValueError(f'Folder version was ``full`` but no ``build/`` folder found.')
 
     # Try to find the sdfg from disc, if not given.
     if sdfg is not None:
