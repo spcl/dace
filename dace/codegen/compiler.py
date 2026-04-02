@@ -373,7 +373,7 @@ def get_folder_version(object_folder: Union[pathlib.Path, str]) -> str:
     object_folder = pathlib.Path(object_folder)
 
     if (object_folder / 'VERSION').exists():
-        with open(folder / 'VERSION', 'rt') as F:
+        with open(object_folder / 'VERSION', 'rt') as F:
             folder_version = F.readline().strip()
     else:
         folder_version = "full"  # Old style full folder version.
