@@ -1682,9 +1682,8 @@ def distributed_compile(sdfg: SDFG, comm, *, validate: bool = True) -> csdfg.Com
     :param validate: If True, validates the SDFG prior to generating code.
     :return: Compiled SDFG.
     :note: This method can be used only if the module mpi4py is installed.
+    :todo: Relocate this function to `dace.codegen.compiler`.
     """
-
-    # TODO: Think if it should be relocated to `codegen`
 
     rank = comm.Get_rank()
     func = None
