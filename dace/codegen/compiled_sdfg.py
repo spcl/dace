@@ -39,8 +39,8 @@ class ReloadableDLL(object):
         """
         from dace.codegen.compiler import _get_stub_library_path
 
-        self._library_filename = pathlib.Path(library_filename).resolve()
-        self._stub_filename = _get_stub_library_path(kwargs.pop("libstub_path", self._library_filename))
+        self._library_filename = str(pathlib.Path(library_filename).resolve())
+        self._stub_filename = str(_get_stub_library_path(kwargs.pop("libstub_path", self._library_filename)))
         assert len(kwargs) == 0
 
         self._stub = None
