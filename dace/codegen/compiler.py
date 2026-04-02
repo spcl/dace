@@ -318,7 +318,7 @@ def configure_and_compile(
 
 def load_precompiled_sdfg(
     folder: Union[pathlib.Path, str],
-    sdfg: Optional[dace.SDFG] = None,
+    sdfg: Optional['dace.SDFG'] = None,
     folder_version: Optional[str] = None,
 ) -> csd.CompiledSDFG:
     """

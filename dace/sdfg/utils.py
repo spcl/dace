@@ -1662,33 +1662,9 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
     return counter
 
 
-def load_precompiled_sdfg(folder: str, folder_version: Optional[str] = None) -> csdfg.CompiledSDFG:
-    """
-    Loads a pre-compiled SDFG from an output folder (e.g. ".dacecache/program").
-    Folder must contain a file called "program.sdfgz" and a subfolder called
-    "build" with the shared object.
-
-    :param folder: Path to SDFG output folder.
-    :return: A callable CompiledSDFG object.
-    """
-    sdfg: SDFG | None = None
-    if os.path.exists(os.path.join(folder, 'program.sdfgz')):
-        sdfg = SDFG.from_file(os.path.join(folder, 'program.sdfgz'))
-    elif os.path.exists(os.path.join(folder, 'program.sdfg')):
-        # attempt to load uncompressed sdfg (backwards compatibility)
-        sdfg = SDFG.from_file(os.path.join(folder, 'program.sdfg'))
-    if sdfg is None:
-        raise ValueError(f"Pre-compiled SDFG not found in `{folder}`.")
-
-    # TODO(phimuell): The build folder must be specified here to `folder`.
-    lib_path, libstub_path = sdfg_compiler.get_library_paths(object_folder=folder,
-                                                             sdfg=sdfg.name,
-                                                             folder_version=folder_version)
-    return csdfg.CompiledSDFG(
-        sdfg,
-        csdfg.ReloadableDLL(library_filename=lib_path, libstub_path=libstub_path),
-        sdfg.arg_names,
-    )
+def load_precompiled_sdfg(*args, **kwargs) -> csd.CompiledSDFG:
+    # Deprecated use the one in `dace.codegen.compiler`.
+    return sdfg_compiler.load_precompiled_sdfg(*args, **kwargs)
 
 
 def distributed_compile(sdfg: SDFG, comm, *, validate: bool = True) -> csdfg.CompiledSDFG:
