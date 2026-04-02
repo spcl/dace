@@ -2486,7 +2486,7 @@ class SDFG(ControlFlowRegion):
 
         # Get the folder version, but if the folder already exist, then use the `VERSION` file.
         if os.path.isdir(build_folder):
-            folder_version = get_folder_version(build_folder)
+            folder_version = compiler.get_folder_version(build_folder)
         else:
             folder_version = Config.get('compiler.build_folder_version')
 
