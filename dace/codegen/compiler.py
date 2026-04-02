@@ -339,7 +339,7 @@ def load_precompiled_sdfg(
     else:
         for name in ['program.sdfgz', 'program.sdfg']:
             if (folder / name).exists():
-                sdfg = SDFG.from_file(folder / name)
+                sdfg = dace.SDFG.from_file(folder / name)
                 break
         else:
             raise ValueError(f"Could not locate the SDFG for `{folder}`.")
