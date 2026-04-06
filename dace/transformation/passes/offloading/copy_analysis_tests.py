@@ -156,6 +156,7 @@ def division_by_zero(A: dace.float64[N], B: dace.float64[N], c: dace.float64):
 
 ## tests
 from dace.transformation.passes.offloading.OffloadToAccelerator import OffloadToAccelerator as OtA
+from dace.sdfg import nodes
 
 def pretty_print(gpu_set, cpu_set):
     print("both GPU and CPU:")
@@ -171,14 +172,49 @@ def pretty_print(gpu_set, cpu_set):
         print("\t", name)
 
 
+def test(test, cpu_only, nested_arrays=set()):
+    
+    sdfg = test.to_sdfg()
 
-sdfg = condense_3d.to_sdfg()
-#sdfg.view()
+    all_a = set(sdfg.arrays.keys()) | nested_arrays
+    
+    # run analsis
+    ota = OtA()
+    ota.set_toplevel_to_GPU(sdfg, nodes.MapEntry)
+    ota.set_toplevel_to_GPU(sdfg, nodes.LibraryNode)
+    gpu_set, cpu_set = ota.get_data_locations(sdfg)
 
-gpu_set, cpu_set = OtA().get_data_locations(sdfg)
-all_a = set(sdfg.arrays.keys())
+    # print/view
+    #sdfg.view()
+    #pretty_print(gpu_set, cpu_set)
+    #print(all_a)
+    print()
 
-assert not gpu_set
-assert cpu_set == all_a, f"The analysis failed to find these arrays: {all_a - cpu_set}"
+    # test results
+    empty, full = (gpu_set, cpu_set) if cpu_only else (cpu_set, gpu_set)
+    
+    assert all_a == (cpu_set | gpu_set), f"Copy analysis failed to find these arrays: {all_a - empty - full} - or found inexistent arrays {empty | full - all_a}"
+    assert not empty, f"{"gpu set" if cpu_only else "cpu set"} was supposed to be empty but is {empty}"
+    assert all_a == full, f"{"cpu set" if cpu_only else "gpu set"} was supposed contain all arrays but is missing {all_a - full}"
 
-print("Test passed - all arrays were found")
+
+test(condense_3d, True)
+print(f"condense_3d passed")
+
+test(condense_split, True)
+print(f"condense_split passed")
+
+test(interstate_boolean_op_two, False,  {'__tmp_131_19_r', '__tmp_132_30_r', 'A_slice_plus_B_slice', '__tmp_134_12_w', '__tmp_132_20_r'})
+print(f"interstate_boolean_op_two passed")
+
+test(memset_4d, False)
+print(f"memset_4d passed")
+
+test(nested_matrix_gather_load, False, {'__tmp_139_23_r', '__tmp_139_18_r', '__tmp_139_18_r_slice', '__tmp_139_34_r', 'C_slice', '__tmp_139_8_w'})
+print(f"nested_matrix_gather_load passed")
+
+test(nested_matrix_gather_load_specialized, False, {'__tmp_144_23_r', '__tmp_144_18_r', 'C_slice', '__tmp_144_8_w', '__tmp_144_18_r_slice'})
+print(f"nested_matrix_gather_load_specialized passed")
+
+test(division_by_zero, False, {'__tmp_151_11_r', 'B_slice', '__tmp_154_12_w', '__tmp_152_12_w', '__tmp_152_19_r'})
+print(f"division_by_zero passed")

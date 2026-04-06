@@ -173,19 +173,32 @@ class OffloadToAccelerator(ppl.Pass):
         container = sdfg.arrays[data_name]
         arrays : set[str] = {data_name}
 
-        if isinstance(container, data.Array):
-            return arrays
-
-        elif isinstance(container, data.View):
+        if isinstance(container, data.View):
             original = get_last_view_node(state, access_node) # once the view access node is known, its original access node can be found and it's data added
             return arrays | self.get_arrays_used_by_access_node(sdfg, state, original)
             
-        else: # might be a scalar access of another array
-            for pred in self.get_predecessors(state, access_node):
-                if isinstance(pred, nodes.AccessNode):
-                    arrays |= self.get_arrays_used_by_access_node(sdfg, state, pred)
-            return arrays
-       
+        # recursively see if there is a chain of access nodes involved
+        arrays |= self.get_arrays_used_by_incoming_access_nodes(sdfg, state, access_node)
+        return arrays
+        
+    def get_arrays_used_by_incoming_access_nodes(self, sdfg:SDFG, state:SDFGState, node:nodes.Node) -> set[str]:
+        arrays : set[str] = set()
+
+        for n in self.get_predecessors(state, node):
+            if isinstance(n, nodes.AccessNode):
+                arrays |= self.get_arrays_used_by_access_node(sdfg, state, n)
+                 
+        return arrays
+    
+    def get_arrays_used_by_outgoing_access_nodes(self, sdfg:SDFG, state:SDFGState, node:nodes.Node) -> set[str]:
+        arrays : set[str] = set()
+
+        for n in self.get_children(state, node):
+            if isinstance(n, nodes.AccessNode):
+                arrays |= self.get_arrays_used_by_access_node(sdfg, state, n)
+                 
+        return arrays
+
     def get_arrays_used_by_edge(self, sdfg:SDFG, state:SDFGState, edge, is_out_edge:bool):
         if not edge.data.is_empty():
 
@@ -216,12 +229,17 @@ class OffloadToAccelerator(ppl.Pass):
         if isinstance(node, nodes.AccessNode):
             return self.get_arrays_used_by_access_node(sdfg, state, node)
 
+        # edges
         for e in state.in_edges(node):
             arrays |= self.get_arrays_used_by_edge(sdfg, state, e, False)
-
+        
         for e in state.out_edges(node):
             arrays |= self.get_arrays_used_by_edge(sdfg, state, e, True)
 
+        # neighbouring access nodes
+        arrays |= self.get_arrays_used_by_incoming_access_nodes(sdfg, state, node)
+        arrays |= self.get_arrays_used_by_outgoing_access_nodes(sdfg, state, node)
+       
         return arrays
 
 
@@ -261,9 +279,20 @@ class OffloadToAccelerator(ppl.Pass):
             is_gpu = is_gpu or map_entry.map.schedule in dtypes.GPU_SCHEDULES # TODO Q: how not to hardcode?
             
             # get all nodes within this map's scope
-            map_nodes = [n for n, parent in state.scope_dict().items() if parent is map_entry] 
+            map_nodes = [n for n, parent in state.scope_dict().items() if parent is map_entry]
             #print(f"map {map_entry}\n\tis_gpu: {is_gpu}\n\tmap nodes: {map_nodes}")
 
+            # input & output nodes
+            if is_gpu:
+                gpu_set |= self.get_arrays_used_by_incoming_access_nodes(sdfg, state, map_entry)
+                #print(f"map entry (gpu): {gpu_set}")
+                gpu_set |= self.get_arrays_used_by_outgoing_access_nodes(sdfg, state, state.exit_node(map_entry))
+                #print(f"map exit (gpu): {gpu_set}")
+            else:
+                cpu_set |= self.get_arrays_used_by_incoming_access_nodes(sdfg, state, map_entry)
+                gpu_set |= self.get_arrays_used_by_outgoing_access_nodes(sdfg, state, state.exit_node(map_entry))
+
+            # internal nodes
             for node in map_nodes:
                 #print(f"\tnode: {node}\n\t\tgpu:{gpu_set}, cpu:{cpu_set}")
                 if isinstance(node, nodes.MapEntry): # recurse on inner map
@@ -274,11 +303,12 @@ class OffloadToAccelerator(ppl.Pass):
                         _add_data(name, gpu_set, cpu_set, is_gpu)
 
                 elif isinstance(node, nodes.Tasklet): # find accessed arrays -> add
+                    #print("map taSKLET:", node)
                     for name in self.get_arrays_used_by_node(sdfg, state, node):
                         _add_data(name, gpu_set, cpu_set, is_gpu)
 
-                elif isinstance(node, ControlFlowRegion):
-                    g,c = self.get_data_locations_of_cfregion(sdfg, node)
+                elif isinstance(node, (ControlFlowRegion, nodes.NestedSDFG)):
+                    g,c = self.get_data_locations_of_cfregion(sdfg, node) if isinstance(node, ControlFlowRegion) else self.get_data_locations(node.sdfg)
                     if not is_gpu:
                         gpu_set |= g
                         cpu_set |= c
@@ -297,6 +327,7 @@ class OffloadToAccelerator(ppl.Pass):
         gpu_set : set[str] = set()
         cpu_set : set[str] = set()
         _recursive_helper(sdfg, state, map_entry, gpu_set, cpu_set, False)
+        #print(f"map {map_entry}, gpu {gpu_set}, cpu {cpu_set}\n")
         return gpu_set, cpu_set
 
 
@@ -316,7 +347,9 @@ class OffloadToAccelerator(ppl.Pass):
             # process map and all nodes within -> may be on GPU
             if isinstance(node, nodes.MapEntry):
                 g,c = self.get_data_locations_of_map(sdfg, state, node)
-                #print(f"map: {node}, gpu: {g}, cpu: {c}")
+
+            elif isinstance(node, nodes.MapExit):
+                pass
 
             # library nodes are usually GPU, can be CPU
             elif isinstance(node, nodes.LibraryNode):
@@ -335,9 +368,9 @@ class OffloadToAccelerator(ppl.Pass):
             elif isinstance(node, nodes.Tasklet): # outside a map scope (else handled by locations_of_map) -> cpu
                 c = self.get_arrays_used_by_node(sdfg, state, node)
                 #print(f"task: {node}, gpu: {g}, cpu: {c}")
-                
-            elif isinstance(node, nodes.MapExit) or isinstance(node, nodes.AccessNode):
-                pass # nothing to do, access nodes are covered via tasklets
+
+            elif isinstance(node, nodes.AccessNode):
+                pass # nothing to do; cannot be classified without context
 
             else:
                 raise RuntimeError(f"unhandled node {node} of type {node.__class__.__name__} in state {state}")
@@ -345,6 +378,7 @@ class OffloadToAccelerator(ppl.Pass):
             gpu_set |= g
             cpu_set |= c
 
+        #print(f"state {state}, gpu {gpu_set}, cpu {cpu_set}")
         return gpu_set, cpu_set
     
 
@@ -399,6 +433,9 @@ class OffloadToAccelerator(ppl.Pass):
             elif isinstance(block, ControlFlowRegion):
                 g,c = self.get_data_locations_of_cfregion(sdfg, block)
 
+            elif isinstance(block, nodes.NestedSDFG):
+                g,c = self.get_data_locations(block)
+
             elif isinstance(block, (ReturnBlock, ContinueBlock, BreakBlock)):
                 pass
 
@@ -414,7 +451,7 @@ class OffloadToAccelerator(ppl.Pass):
             arrays = edge.data.used_arrays(sdfg.arrays)
             cpu_set |= arrays # conditions are always on cpu
         
-        
+        #print(f"cfr {cfr}, gpu {gpu_set}, cpu {cpu_set}\n")
         return gpu_set, cpu_set
 
 
