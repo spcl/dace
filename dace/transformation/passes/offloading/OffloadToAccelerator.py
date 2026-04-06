@@ -1,15 +1,14 @@
-import dace
+
 from dace import dtypes, properties, data
 from dace.memlet import Memlet
 from dace.sdfg import nodes, SDFG
-from dace.sdfg.state import SDFGState, ConditionalBlock, ControlFlowRegion, LoopRegion
+from dace.sdfg.state import SDFGState, ConditionalBlock, ControlFlowRegion, LoopRegion, ReturnBlock, ContinueBlock, BreakBlock
 from dace.sdfg.utils import get_last_view_node
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
-import dace.data 
+import dace
 
 from typing import Any, Dict, Tuple, List, Optional, Set, Type, Union
-import numpy as np
 
 @properties.make_properties
 @explicit_cf_compatible
@@ -81,12 +80,15 @@ class OffloadToAccelerator(ppl.Pass):
         
 
         """
+        make new branch
+        organise test suite
+        
         1) use Yakup's sfgds as unit test cases
         2) implement my own test suite, check in with Yakup
         3) implement copy pass
 
         next meeting monday 9.30
-        
+
         heat3d everything on GPU
         assume inputs on CPU, then copy in beginning -> implement two options, all on GPU, all on CPU -> check non transient, copy if mismatch
         
@@ -378,11 +380,12 @@ class OffloadToAccelerator(ppl.Pass):
         return gpu_set, cpu_set
     
 
-    def get_data_locations_of_cfregion(self, sdfg:SDFG, cf: ControlFlowRegion) -> tuple[set[str], set[str]]:
+    def get_data_locations_of_cfregion(self, sdfg:SDFG, cfr: ControlFlowRegion) -> tuple[set[str], set[str]]:
         gpu_set : set[str] = set()
         cpu_set : set[str] = set()
 
-        for block in cf.bfs_nodes():
+        # 1) iterate through all nodes
+        for block in cfr.bfs_nodes():
 
             if isinstance(block, SDFGState):
                 g,c = self.get_data_locations_of_state(sdfg, block)
@@ -396,7 +399,7 @@ class OffloadToAccelerator(ppl.Pass):
             elif isinstance(block, ControlFlowRegion):
                 g,c = self.get_data_locations_of_cfregion(sdfg, block)
 
-            elif isinstance(block, nodes.ReturnBlock, ContinueBlock, BreakBlock):
+            elif isinstance(block, (ReturnBlock, ContinueBlock, BreakBlock)):
                 pass
 
             else:
@@ -404,7 +407,14 @@ class OffloadToAccelerator(ppl.Pass):
         
             gpu_set |= g
             cpu_set |= c
-            
+
+
+        # 2) iterate through all interstate edges
+        for edge in cfr.edges():
+            arrays = edge.data.used_arrays(sdfg.arrays)
+            cpu_set |= arrays # conditions are always on cpu
+        
+        
         return gpu_set, cpu_set
 
 

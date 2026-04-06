@@ -171,13 +171,14 @@ def pretty_print(gpu_set, cpu_set):
         print("\t", name)
 
 
-sdfg = condense_3d.to_sdfg()
-sdfg.view()
-gpu_set, cpu_set = OtA().get_data_locations(sdfg)
-pretty_print(gpu_set, cpu_set)
 
-{"zdqs", "zdqs_index_0", "neg_zdqs_slice"}
-{"rtwat", "min_rtwat_ztp1_slice", "rtice", "max_rtice_expr", "expr_minus_rtice", "rtwat_rtice_r", "expr_rtice_times_rtwat_rtice_r", "expr_rtice_rtwat_rtice_pow_2"}
-{"zpt1", "ztp1_index", "ztp1_index_0", "ztp1_index_1", "r4les", "zpt1_slice_minus_r4les", "r4ies", "zpt1_slice_minus_r4ies", "zpt1_slice_r4ies_pow_2"}
-{"r5alscp", "__tmp1", "__tmp2", "__tmp3", "__tmp4", "__tmp5", "af", "af_times_r5alscp", "af_r5alvcp_div_ztp1_slice_r4les_2", "af_r5alvcp_ztp1_slice_r4les_2_plus_1_0_af_r5alscp_ztp1_slice_r4ies_2"}
-{"za", "za_index_0", "za_index_1", "zqsmix"}
+sdfg = condense_3d.to_sdfg()
+#sdfg.view()
+
+gpu_set, cpu_set = OtA().get_data_locations(sdfg)
+all_a = set(sdfg.arrays.keys())
+
+assert not gpu_set
+assert cpu_set == all_a, f"The analysis failed to find these arrays: {all_a - cpu_set}"
+
+print("Test passed - all arrays were found")
