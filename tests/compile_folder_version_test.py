@@ -143,51 +143,6 @@ def test_production_folder_version():
     assert sdfg_compiler.get_folder_version(build_folder, probe=True) is None
 
 
-def _test_already_loaded_and_comple_again_impl(folder_version: str) -> None:
-    with dace.config.temporary_config() as conf:
-        conf.set('compiler', 'build_folder_version', value=folder_version)
-
-        sdfg = _make_test_sdfg()
-        build_folder = pathlib.Path(sdfg.build_folder).resolve()
-        assert not build_folder.exists()
-
-        csdfg1 = sdfg.compile()
-
-    assert sdfg_compiler.get_folder_version(build_folder) == folder_version
-
-    # Note this should ensure that new code is generate and it is not just loaded.
-    with dace.config.temporary_config() as conf:
-        conf.set('compiler', 'use_cache', value=False)
-        sdfg._recompile = True
-        sdfg.regenerate_code = True
-
-        csdfg2 = sdfg.compile()
-        lib1_path = pathlib.Path(csdfg1.filename)
-        lib2_path = pathlib.Path(csdfg2.filename)
-
-    assert sdfg_compiler.get_folder_version(build_folder) == folder_version
-    assert lib1_path != lib2_path
-    assert lib1_path.exists()
-    assert lib2_path.exists()
-    assert str(lib1_path).startswith(str(build_folder))
-    assert str(lib2_path).startswith(str(build_folder))
-
-    if folder_version == "production":
-        assert lib1_path.parent == build_folder
-        assert lib2_path.parent == build_folder
-    else:
-        assert str(lib1_path).startswith(str(build_folder))
-        assert str(lib2_path).startswith(str(build_folder))
-
-    _run_sdfg(csdfg1)
-    _run_sdfg(csdfg2)
-
-
-def test_already_loaded_and_comple_again():
-    _test_already_loaded_and_comple_again_impl("full")
-    _test_already_loaded_and_comple_again_impl("production")
-
-
 def _test_build_with_scheme_one_and_then_switch_impl(
     version1: str,
     version2: str,
@@ -262,6 +217,17 @@ def test_build_with_scheme_one_and_then_switch():
     _test_build_with_scheme_one_and_then_switch_impl(
         version1="production",
         version2="full",
+    )
+
+
+def test_already_loaded_and_comple_again():
+    _test_build_with_scheme_one_and_then_switch_impl(
+        version1="full",
+        version2="full",
+    )
+    _test_build_with_scheme_one_and_then_switch_impl(
+        version1="production",
+        version2="production",
     )
 
 
