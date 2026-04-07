@@ -418,7 +418,9 @@ def get_folder_version(object_folder: Union[pathlib.Path, str], probe: bool = Fa
             folder_version = F.readline().strip()
         return folder_version
     else:
-        # Test if this is an old style folder.
+        # This is to check an old style folder, i.e. a cache folder that was generated before
+        #  the `VERSION` file was introduced. We do some small sanity checks.
+        # TODO: Phase out this feature, after there are no old style caches.
         found_sub_folder = False
         for sub_folder in ["build", "map", "src", "include", "sample"]:
             if (object_folder / sub_folder).is_dir():
