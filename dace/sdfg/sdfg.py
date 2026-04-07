@@ -2451,7 +2451,7 @@ class SDFG(ControlFlowRegion):
         for k, v in symbols.items():
             self.add_constant(str(k), v)
 
-    def is_loaded(self) -> bool:
+    def is_loaded(self, folder_version: Optional[str] = None) -> bool:
         """
         Returns True if the SDFG binary is already loaded in the current process.
         Returns `False` if the file does not exist.
@@ -2459,11 +2459,17 @@ class SDFG(ControlFlowRegion):
         # Avoid import loops
         from dace.codegen import compiled_sdfg as cs, compiler
 
+        build_folder = self.build_folder
+        if folder_version is None:
+            folder_version = compiler.get_folder_version(build_folder, probe=True)
+        if folder_version is None:
+            folder_version = Config.get('compiler', 'build_folder_version')
+
         # Note here is kind of a "leak". The issue is that while the library is not
         #  loaded the stub library is loaded. However, it is never unloaded, because
         #  the `unload()` function is not called. This is technically not an issue
         #  as `ctypes` will do that at some later point.
-        binary_filename = compiler.get_binary_name(self.build_folder, self.name)
+        binary_filename = compiler.get_binary_name(self.build_folder, self.name, folder_version=folder_version)
         dll = cs.ReloadableDLL(binary_filename)
         return dll.is_loaded()
 
@@ -2485,10 +2491,9 @@ class SDFG(ControlFlowRegion):
         build_folder = self.build_folder
 
         # Get the folder version, but if the folder already exist, then use the `VERSION` file.
-        if os.path.isdir(build_folder):
-            folder_version = compiler.get_folder_version(build_folder)
-        else:
-            folder_version = Config.get('compiler.build_folder_version')
+        folder_version = compiler.get_folder_version(build_folder, probe=True)
+        if folder_version is None:
+            folder_version = Config.get('compiler', 'build_folder_version')
 
         if not self._recompile or Config.get_bool('compiler', 'use_cache'):
             # Try to see if a cached version of the binary exists
@@ -2520,7 +2525,7 @@ class SDFG(ControlFlowRegion):
 
             # Rename SDFG to avoid runtime issues with clashing names
             index = 0
-            while sdfg.is_loaded():
+            while sdfg.is_loaded(folder_version=folder_version):
                 sdfg.name = f'{self.name}_{index}'
                 index += 1
             if self.name != sdfg.name and Config.get_bool('debugprint'):
