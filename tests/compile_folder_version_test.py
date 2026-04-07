@@ -41,15 +41,19 @@ def _make_test_sdfg() -> dace.SDFG:
     return sdfg
 
 
-def _load_and_run_sdfg(build_folder, sdfg):
+def _run_sdfg(csdfg):
     res = {name: np.array(np.random.rand(10), copy=True, dtype=np.float64) for name in "abc"}
     ref = copy.deepcopy(res)
     ref["c"] = ref["a"] + ref["b"]
 
-    csdfg = sdfg_compiler.load_precompiled_sdfg(build_folder, sdfg)
     csdfg(**res)
 
     assert all(np.allclose(ref[n], res[n]) for n in res.keys())
+
+
+def _load_and_run_sdfg(build_folder, sdfg):
+    csdfg = sdfg_compiler.load_precompiled_sdfg(build_folder, sdfg)
+    _run_sdfg(csdfg)
 
 
 def test_full_folder_version():
@@ -136,14 +140,48 @@ def test_production_folder_version():
         sdfg_compiler.get_folder_version(build_folder)
 
 
-def test_reload_folder():
-    # Similar to `test_reload()` but with multiple versions.
-    #  Probably update that test.
-    pass
+def _test_already_loaded_and_comple_again_impl(folder_version: str) -> None:
+    with dace.config.temporary_config() as conf:
+        conf.set('compiler', 'build_folder_version', value=folder_version)
+
+        sdfg = _make_test_sdfg()
+        build_folder = pathlib.Path(sdfg.build_folder).resolve()
+        assert not build_folder.exists()
+
+        csdfg1 = sdfg.compile()
+
+    assert sdfg_compiler.get_folder_version(build_folder) == folder_version
+
+    # Note this should ensure that new code is generate and it is not just loaded.
+    conf.set('compiler', 'use_cache', value=False)
+    sdfg._recompile = True
+    sdfg.regenerate_code = True
+
+    csdfg2 = sdfg.compile()
+    lib1_path = pathlib.Path(csdfg1.filename)
+    lib2_path = pathlib.Path(csdfg2.filename)
+
+    assert sdfg_compiler.get_folder_version(build_folder) == folder_version
+    assert lib1_path != lib2_path
+    assert lib1_path.exists()
+    assert lib2_path.exists()
+    assert str(lib1_path).startswith(str(build_folder))
+    assert str(lib2_path).startswith(str(build_folder))
+
+    if folder_version == "production":
+        assert lib1_path.parent == build_folder
+        assert lib2_path.parent == build_folder
+    else:
+        assert str(lib1_path).startswith(str(build_folder))
+        assert str(lib2_path).startswith(str(build_folder))
+
+    _run_sdfg(csdfg1)
+    _run_sdfg(csdfg2)
 
 
-def test_aleard_loaded_and_comple_again():
-    pass
+def test_already_loaded_and_comple_again():
+    _test_already_loaded_and_comple_again_impl("full")
+    _test_already_loaded_and_comple_again_impl("production")
 
 
 def test_build_with_scheme_one_and_then_switch():
