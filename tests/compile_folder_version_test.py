@@ -136,8 +136,11 @@ def test_production_folder_version():
     version_file.unlink()
     assert not version_file.exists()
 
-    with pytest.raises(ValueError, match=re.escape('Folder version was ``full`` but no ``build/`` folder found.')):
+    with pytest.raises(NotADirectoryError,
+                       match=re.escape(f'``{build_folder}`` does not appear to be a valid build folder.')):
         sdfg_compiler.get_folder_version(build_folder)
+
+    assert sdfg_compiler.get_folder_version(build_folder, probe=True) is None
 
 
 def _test_already_loaded_and_comple_again_impl(folder_version: str) -> None:
