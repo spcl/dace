@@ -11,7 +11,7 @@ import shlex
 import subprocess
 import re
 import pathlib
-from typing import Any, Callable, Dict, List, Set, Tuple, TypeVar, Union, Optional
+from typing import Any, Callable, Dict, List, Literal, Set, Tuple, TypeVar, Union, Optional, overload
 import warnings
 
 import dace
@@ -380,24 +380,61 @@ def load_from_file(sdfg, binary_filename):
     return get_program_handle(library_path=binary_filename, sdfg=sdfg)
 
 
-def get_folder_version(object_folder: Union[pathlib.Path, str]) -> str:
+@overload
+def get_folder_version(object_folder: Union[pathlib.Path, str], probe: Literal[False] = False) -> str:
+    ...
+
+
+@overload
+def get_folder_version(object_folder: Union[pathlib.Path, str], probe: Literal[True]) -> Optional[str]:
+    ...
+
+
+@overload
+def get_folder_version(object_folder: Union[pathlib.Path, str], probe: bool) -> Optional[str]:
+    ...
+
+
+def get_folder_version(object_folder: Union[pathlib.Path, str], probe: bool = False) -> Optional[str]:
     """Inspect `object_folder` and determine which version the folder has.
 
-    This will inspect `VERSION` file and if not present assume `full`.
+    If the function find the ``VERSION`` file it will examine it to get the version.
+    If the version file is absent the function assumes that it is the full format,
+    however, it performs some checks to ensure that.
+
+    The function also has the optional argument ``probe`` if given and the folder
+    version could not be inferred the function will return ``None`` instead of
+    generating an error.
     """
     object_folder = pathlib.Path(object_folder)
+
+    if not object_folder.is_dir():
+        if probe:
+            return None
+        raise NotADirectoryError("The build folder does not exists.")
 
     if (object_folder / 'VERSION').exists():
         with open(object_folder / 'VERSION', 'rt') as F:
             folder_version = F.readline().strip()
+        return folder_version
     else:
-        folder_version = "full"  # Old style full folder version.
+        # Test if this is an old style folder.
+        found_sub_folder = False
+        for sub_folder in ["build", "map", "src", "include", "sample"]:
+            if (object_folder / sub_folder).is_dir():
+                found_sub_folder = True
+            elif found_sub_folder:
+                raise NotADirectoryError(f'Expected that folder ``{object_folder}`` contains ``{sub_folder}``')
 
-    if folder_version == "full" and (not (object_folder / "build").is_dir()):
-        raise ValueError('Folder version was ``full`` but no ``build/`` folder found.')
-
-    assert folder_version in ["full", "production"]
-    return folder_version
+        if found_sub_folder:
+            # All expected folders where found, so expect that this is a 'full' format folder.
+            return "full"
+        elif probe:
+            # None of the files where found. Thus this is probably an empty folder that just exist.
+            return None
+        else:
+            # Up for discussion what to do here.
+            raise NotADirectoryError(f'``{object_folder}`` does not appear to be a valid build folder.')
 
 
 def get_binary_name(
