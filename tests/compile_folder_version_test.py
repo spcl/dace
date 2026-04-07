@@ -153,13 +153,14 @@ def _test_already_loaded_and_comple_again_impl(folder_version: str) -> None:
     assert sdfg_compiler.get_folder_version(build_folder) == folder_version
 
     # Note this should ensure that new code is generate and it is not just loaded.
-    conf.set('compiler', 'use_cache', value=False)
-    sdfg._recompile = True
-    sdfg.regenerate_code = True
+    with dace.config.temporary_config() as conf:
+        conf.set('compiler', 'use_cache', value=False)
+        sdfg._recompile = True
+        sdfg.regenerate_code = True
 
-    csdfg2 = sdfg.compile()
-    lib1_path = pathlib.Path(csdfg1.filename)
-    lib2_path = pathlib.Path(csdfg2.filename)
+        csdfg2 = sdfg.compile()
+        lib1_path = pathlib.Path(csdfg1.filename)
+        lib2_path = pathlib.Path(csdfg2.filename)
 
     assert sdfg_compiler.get_folder_version(build_folder) == folder_version
     assert lib1_path != lib2_path
@@ -184,11 +185,85 @@ def test_already_loaded_and_comple_again():
     _test_already_loaded_and_comple_again_impl("production")
 
 
+def _test_build_with_scheme_one_and_then_switch_impl(
+    version1: str,
+    version2: str,
+) -> None:
+    with dace.config.temporary_config() as conf:
+        conf.set('compiler', 'build_folder_version', value=version1)
+
+        sdfg = _make_test_sdfg()
+        build_folder = pathlib.Path(sdfg.build_folder).resolve()
+        assert not build_folder.exists()
+
+        csdfg1 = sdfg.compile()
+
+    lib1_path = pathlib.Path(csdfg1.filename)
+    assert sdfg_compiler.get_folder_version(build_folder) == version1
+    assert lib1_path.exists()
+
+    with dace.config.temporary_config() as conf:
+        conf.set('compiler', 'build_folder_version', value=version1)
+
+        # This is for ensuring that the code is actually regenerated.
+        conf.set('compiler', 'use_cache', value=False)
+        sdfg._recompile = True
+        sdfg.regenerate_code = True
+
+        csdfg2 = sdfg.compile()
+
+    lib2_path = pathlib.Path(csdfg2.filename)
+
+    assert sdfg_compiler.get_folder_version(build_folder) == version1
+    assert csdfg1.sdfg.name != csdfg2.sdfg.name
+    assert lib1_path != lib2_path
+    assert lib1_path.exists()  # Still existing.
+    assert lib2_path.exists()
+    assert str(lib1_path).startswith(str(build_folder))
+    assert str(lib2_path).startswith(str(build_folder))
+
+    if version1 == "production":
+        assert lib1_path.parent == build_folder
+        assert lib2_path.parent == build_folder
+        libstub1_path = sdfg_compiler._get_stub_library_path(lib1_path.name)
+        libstub2_path = sdfg_compiler._get_stub_library_path(lib2_path.name)
+
+        expected_files = {
+            "VERSION": pathlib.Path.is_file,
+            lib1_path.name: pathlib.Path.is_file,
+            libstub1_path.name: pathlib.Path.is_file,
+            lib2_path.name: pathlib.Path.is_file,
+            libstub2_path.name: pathlib.Path.is_file,
+        }
+        for found_path in build_folder.iterdir():
+            found_file = found_path.name
+            assert found_file in expected_files
+            assert expected_files[found_file](found_path)
+
+    else:
+        assert str(lib1_path).startswith(str(build_folder / "build"))
+        assert str(lib2_path).startswith(str(build_folder / "build"))
+        assert (build_folder / "build").is_dir()
+        assert (build_folder / "src").is_dir()
+        assert (build_folder / "include").is_dir()
+
+    _run_sdfg(csdfg1)
+    _run_sdfg(csdfg2)
+
+
 def test_build_with_scheme_one_and_then_switch():
-    pass
+    _test_build_with_scheme_one_and_then_switch_impl(
+        version1="full",
+        version2="production",
+    )
+    _test_build_with_scheme_one_and_then_switch_impl(
+        version1="production",
+        version2="full",
+    )
 
 
 if __name__ == '__main__':
     test_full_folder_version()
     test_production_folder_version()
     test_already_loaded_and_comple_again()
+    test_build_with_scheme_one_and_then_switch()
