@@ -186,3 +186,9 @@ def test_already_loaded_and_comple_again():
 
 def test_build_with_scheme_one_and_then_switch():
     pass
+
+
+if __name__ == '__main__':
+    test_full_folder_version()
+    test_production_folder_version()
+    test_already_loaded_and_comple_again()
