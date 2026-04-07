@@ -130,10 +130,6 @@ def generate_program_folder(
     with open(os.path.join(out_path, "dace_environments.csv"), "w") as env_file:
         env_file.write("\n".join(environments))
 
-    # Copy a full snapshot of configuration script
-    if folder_version in ["full"]:
-        Config.save(os.path.join(out_path, "dace.conf"), all=True)
-
     # Save the SDFG itself and its hash
     if sdfg is not None:
         if folder_version in ["full"]:
@@ -146,20 +142,26 @@ def generate_program_folder(
             with open(filepath, 'w') as hfile:
                 hfile.write(contents)
 
-    # The version file is always generated. In case it is missing we assume the old version.
-    with open(os.path.join(out_path, "VERSION"), "w") as version_file:
-        version_file.write(folder_version)
-
-    # Write cachedir tag
+    # Generate the parts of the folder that are exclusive to the full folder mode.
     if folder_version in ["full"]:
+
+        # Copy a full snapshot of configuration script
+        Config.save(os.path.join(out_path, "dace.conf"), all=True)
+
+        # Write cachedir tag
         cachedir_tag = os.path.join(out_path, "CACHEDIR.TAG")
         if not os.path.exists(cachedir_tag):
             with open(cachedir_tag, "w") as f:
-                f.write("""Signature: 8a477f597d28d172789f06886806bc55
-# This file is a cache directory tag created by DaCe.
-# For information about cache directory tags, see:
-#	http://www.brynosaurus.com/cachedir/
-""")
+                f.write("\n".join([
+                    "Signature: 8a477f597d28d172789f06886806bc55",
+                    "# This file is a cache directory tag created by DaCe.",
+                    "# For information about cache directory tags, see:",
+                    "#	http://www.brynosaurus.com/cachedir/",
+                ]))
+
+    # The version file is always generated. In case it is missing we assume the old version.
+    with open(os.path.join(out_path, "VERSION"), "w") as version_file:
+        version_file.write(folder_version)
 
     return out_path
 
