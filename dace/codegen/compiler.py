@@ -110,6 +110,11 @@ def generate_program_folder(
         if code_object.linkable == True:
             filelist.append("{},{},{}".format(target_name, target_type, basename))
 
+        # Generate the source map.
+        if sdfg and (folder_version in ["full"]):
+            if code_object.language == 'cpp' and code_object.title == 'Frame':
+                code_object.create_source_map(sdfg)
+
     # Write list of files
     #  Needed to communicate with `configure_and_compile()`, deleted in production mode.
     with open(os.path.join(out_path, "dace_files.csv"), "w") as filelist_file:
@@ -328,8 +333,8 @@ def configure_and_compile(
         lib_path = pathlib.Path(shutil.move(src=lib_path, dst=program_folder))
         libstub_path = pathlib.Path(shutil.move(src=libstub_path, dst=program_folder))
         program_folder = pathlib.Path(program_folder)
-        # TODO: Find out where `map/` and `sample/` are generated and suppress their generation.
-        for to_delete in ["include", "src", "build", "map", "sample", "dace_environments.csv", "dace_files.csv"]:
+        # TODO: Find out where `sample/` are generated and suppress their generation.
+        for to_delete in ["include", "src", "build", "sample", "dace_environments.csv", "dace_files.csv"]:
             if (program_folder / to_delete).is_dir():
                 shutil.rmtree(os.path.join(program_folder, to_delete))
             else:
