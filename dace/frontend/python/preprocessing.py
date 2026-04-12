@@ -441,10 +441,15 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
     """ Resolves global constants and lambda expressions if not
         already defined in the given scope. """
 
-    def __init__(self, globals: Dict[str, Any], resolve_functions: bool = False, default_args: Set[str] = None):
+    def __init__(self,
+                 globals: Dict[str, Any],
+                 resolve_functions: bool = False,
+                 default_args: Set[str] = None,
+                 preserve_object_attributes: bool = False):
         self._globals = globals
         self.resolve_functions = resolve_functions
         self.default_args = default_args or set()
+        self.preserve_object_attributes = preserve_object_attributes
         self.current_scope = set()
         self.toplevel_function = True
         self.do_not_detect_callables = False
@@ -462,6 +467,9 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
             for child in ast.walk(node))
 
     def _should_preserve_attribute_access(self, node: ast.Attribute) -> bool:
+        if not self.preserve_object_attributes:
+            return False
+
         try:
             base_value = astutils.evalnode(node.value, self.globals)
         except Exception:
@@ -2248,6 +2256,7 @@ def preprocess_dace_program(f: Callable[..., Any],
                             parent_closure: Optional[SDFGClosure] = None,
                             default_args: Optional[Set[str]] = None,
                             normalize_generic_for_loops: bool = False,
+                            preserve_object_attributes: bool = False,
                             disallowed_stmts: Optional[Set[str]] = None) -> Tuple[PreprocessedAST, SDFGClosure]:
     """
     Preprocesses a ``@dace.program`` and all its nested functions, returning
@@ -2286,7 +2295,7 @@ def preprocess_dace_program(f: Callable[..., Any],
 
     try:
         src_ast = MPIResolver(global_vars).visit(src_ast)
-    except (ImportError, ModuleNotFoundError):
+    except (ImportError, ModuleNotFoundError, RuntimeError):
         pass
     src_ast = ModuloConverter().visit(src_ast)
 
@@ -2297,7 +2306,10 @@ def preprocess_dace_program(f: Callable[..., Any],
     # Resolve constants to their values (if they are not already defined in this scope)
     # and symbols to their names
     resolved = {k: v for k, v in global_vars.items() if k not in (argtypes.keys() - default_args) and k != '_'}
-    closure_resolver = GlobalResolver(resolved, resolve_functions, default_args=default_args)
+    closure_resolver = GlobalResolver(resolved,
+                                      resolve_functions,
+                                      default_args=default_args,
+                                      preserve_object_attributes=preserve_object_attributes)
 
     # Append element to call stack and handle max recursion depth
     if parent_closure is not None:

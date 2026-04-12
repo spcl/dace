@@ -1378,7 +1378,7 @@ class ProgramVisitor(ExtNodeVisitor):
         try:
             from mpi4py import MPI
             result.update({k: v for k, v in self.globals.items() if isinstance(v, MPI.Comm)})
-        except (ImportError, ModuleNotFoundError):
+        except (ImportError, ModuleNotFoundError, RuntimeError):
             pass
 
         return result
