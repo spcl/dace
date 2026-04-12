@@ -8,15 +8,18 @@ import copy
 import os
 import sympy
 import sys
-from typing import Any, Callable, Dict, List, Optional, Set, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Sequence, Tuple, Union
 from typing import get_origin, get_args
 import warnings
 
 from dace import data, dtypes, hooks, symbolic
 from dace.config import Config
-from dace.frontend.python import (newast, common as pycommon, cached_program, preprocessing)
+from dace.frontend.python import (newast, common as pycommon, cached_program, preprocessing, schedule_tree_frontend)
 from dace.sdfg import SDFG, utils as sdutils
 from dace.data import create_datadescriptor, Data
+
+if TYPE_CHECKING:
+    from dace.sdfg.analysis.schedule_tree import treenodes as tn
 
 try:
     import mpi4py
@@ -220,6 +223,9 @@ class DaceProgram(pycommon.SDFGConvertible):
 
         # Cache SDFGs with last used arguments
         self._cache = cached_program.DaceProgramCache(self._eval_closure)
+        self._schedule_tree_cache: Dict[cached_program.ProgramCacheKey,
+                                        'tn.ScheduleTreeRoot'] = (cached_program.LimitedSizeDict(
+                                            size_limit=self._cache.size))
         # These sets fill up after the first parsing of the program and stay
         # the same unless the argument types change
         self.closure_array_keys: Set[str] = set()
@@ -300,6 +306,37 @@ class DaceProgram(pycommon.SDFGConvertible):
             self._cache.add(cachekey, sdfg, None)
 
         return sdfg
+
+    def to_schedule_tree(self, *args, use_cache: bool = False, **kwargs) -> 'tn.ScheduleTreeRoot':
+        """
+        Creates a schedule tree directly from the DaCe Python frontend.
+
+        :param args: JIT argument examples.
+        :param kwargs: JIT keyword argument examples.
+        :param use_cache: If True, reuses a cached schedule tree when possible.
+        :return: A schedule-tree root object.
+        """
+        self.global_vars = _get_locals_and_globals(self.f)
+
+        if self.methodobj is not None:
+            self.global_vars[self.objname] = self.methodobj
+
+        argtypes, _, constant_args, specified = self._get_type_annotations(args, kwargs)
+        self.global_vars.update(constant_args)
+
+        cachekey = None
+        if use_cache:
+            cachekey = self._cache.make_key(argtypes, specified, self.closure_array_keys, self.closure_constant_keys,
+                                            constant_args)
+            if cachekey in self._schedule_tree_cache:
+                return copy.deepcopy(self._schedule_tree_cache[cachekey])
+
+        stree = self._generate_schedule_tree(args, kwargs)
+
+        if use_cache:
+            self._schedule_tree_cache[cachekey] = copy.deepcopy(stree)
+
+        return stree
 
     def __sdfg__(self, *args, **kwargs) -> SDFG:
         return self._parse(args, kwargs, simplify=None, save=False, validate=False)
@@ -826,6 +863,92 @@ class DaceProgram(pycommon.SDFGConvertible):
         """
         _, key = self._load_sdfg(None, *args, **kwargs)
         return key
+
+    def _generate_schedule_tree(self, args: Tuple[Any], kwargs: Dict[str, Any]) -> 'tn.ScheduleTreeRoot':
+        """Generates a schedule tree directly from the preprocessed frontend AST."""
+        dace_func = self.f
+
+        argtypes, _, gvars, specified = self._get_type_annotations(args, kwargs)
+
+        if self.methodobj is not None:
+            self.global_vars[self.objname] = self.methodobj
+
+        for name, descriptor in argtypes.items():
+            if isinstance(descriptor, data.View):
+                argtypes[name] = descriptor.as_array()
+                argtypes[name].transient = False
+            else:
+                descriptor_copy = copy.deepcopy(descriptor)
+                if descriptor_copy.transient:
+                    descriptor_copy.transient = False
+                argtypes[name] = descriptor_copy
+
+        global_vars = copy.copy(self.global_vars)
+
+        removed_args = set()
+        for name, descriptor in argtypes.items():
+            if descriptor.dtype.type is None:
+                global_vars[name] = None
+                removed_args.add(name)
+
+        modules = {k: v.__name__ for k, v in global_vars.items() if dtypes.ismodule(v)}
+        modules['builtins'] = ''
+
+        global_vars.update({v.name: v for _, v in global_vars.items() if isinstance(v, symbolic.symbol)})
+
+        unspecified_default_args = {k: v for k, v in self.default_args.items() if k not in specified}
+        removed_args.update(unspecified_default_args)
+        gvars.update(unspecified_default_args)
+
+        global_vars.update(gvars)
+
+        argtypes = {k: v for k, v in argtypes.items() if k not in removed_args}
+        for argtype in argtypes.values():
+            global_vars.update({v.name: v for v in argtype.free_symbols})
+
+        parsed_ast, closure = preprocessing.preprocess_dace_program(dace_func,
+                                                                    argtypes,
+                                                                    global_vars,
+                                                                    modules,
+                                                                    resolve_functions=self.resolve_functions,
+                                                                    default_args=unspecified_default_args.keys(),
+                                                                    normalize_generic_for_loops=True,
+                                                                    disallowed_stmts=set())
+
+        self.closure_arg_mapping = {k: v for k, (_, _, v, _) in closure.closure_arrays.items()}
+        self.closure_array_keys = set(closure.closure_arrays.keys()) - removed_args
+        self.closure_constant_keys = set(closure.closure_constants.keys()) - removed_args
+        self.resolver = closure
+
+        constants: Dict[str, Tuple[Data, Any]] = {}
+        for name, value in closure.closure_constants.items():
+            if name in removed_args:
+                continue
+            try:
+                descriptor = create_datadescriptor(value)
+            except (TypeError, ValueError):
+                descriptor = None
+            if descriptor is not None:
+                constants[name] = (descriptor, value)
+
+        callback_mapping = {name: original_name for name, (original_name, _, _) in closure.callbacks.items()}
+        arg_names = [name for name in self.argnames if name in argtypes]
+
+        stree = schedule_tree_frontend.build_schedule_tree(self.name,
+                                                           parsed_ast,
+                                                           argtypes,
+                                                           constants=constants,
+                                                           callback_mapping=callback_mapping,
+                                                           arg_names=arg_names)
+
+        for name, (_, descriptor, _, _) in closure.closure_arrays.items():
+            if name in removed_args or name in stree.containers:
+                continue
+            stree.containers[name] = copy.deepcopy(descriptor)
+            for free_symbol in descriptor.free_symbols:
+                stree.symbols.setdefault(free_symbol.name, free_symbol)
+
+        return stree
 
     def _generate_pdp(self,
                       args: Tuple[Any],
