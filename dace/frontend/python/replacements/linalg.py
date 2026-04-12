@@ -328,3 +328,29 @@ def _einsum(pv: ProgramVisitor,
                               output_name=pv.get_target_name(),
                               alpha=alpha,
                               beta=beta)
+
+
+# -------------------------------------------------------------------- #
+#  Descriptor inference for operators (schedule-tree frontend)           #
+# -------------------------------------------------------------------- #
+
+from dace.frontend.common.op_repository import infers_operator_descriptor
+from dace.frontend.python.schedule_tree.expression_support import (_matmul_output_shape)
+
+
+@infers_operator_descriptor('MatMult')
+def _infer_matmult(left_desc, right_desc):
+    """Infer result descriptor for the ``@`` (MatMult) operator."""
+    left_shape = tuple(left_desc.shape)
+    right_shape = tuple(right_desc.shape)
+    out_shape = _matmul_output_shape(left_shape, right_shape)
+    if out_shape is None:
+        return None
+
+    type1 = left_desc.dtype.type
+    type2 = right_desc.dtype.type
+    restype = dtypes.dtype_to_typeclass(np.result_type(type1, type2).type)
+
+    if len(out_shape) == 0:
+        return data.Scalar(restype)
+    return data.Array(restype, list(out_shape), transient=True)

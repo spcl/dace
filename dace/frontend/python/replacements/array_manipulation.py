@@ -839,3 +839,234 @@ def _hsplit(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, ary: str,
 def _vsplit(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, ary: str,
             indices_or_sections: Union[symbolic.SymbolicType, List[symbolic.SymbolicType], str]):
     return _split_core(visitor, sdfg, state, ary, indices_or_sections, axis=0, allow_uneven=False)
+
+
+# -------------------------------------------------------------------- #
+#  Descriptor inference for array manipulation (schedule-tree frontend)  #
+# -------------------------------------------------------------------- #
+
+from dace.frontend.common.op_repository import (infers_descriptor, infers_method_descriptor,
+                                                infers_attribute_descriptor)
+from dace.frontend.python.replacements.type_inference import _get_desc, _to_int
+from dace.frontend.python.replacements.utils import normalize_axes
+
+# -- Free functions ---------------------------------------------------- #
+
+
+@infers_descriptor('numpy.reshape')
+def _infer_reshape(input_descs, arr, newshape, **_kw):
+    desc = _get_desc(input_descs, arr)
+    if desc is None:
+        return None
+    if not isinstance(newshape, (tuple, list)):
+        return None
+    shape = []
+    for s in newshape:
+        v = _to_int(s)
+        if v is not None:
+            shape.append(v)
+        elif symbolic.issymbolic(s):
+            shape.append(s)
+        else:
+            return None
+    if not shape:
+        return None
+    return data.Array(desc.dtype, shape, transient=True)
+
+
+@infers_descriptor('numpy.transpose')
+def _infer_transpose(input_descs, arr, axes=None, **_kw):
+    desc = _get_desc(input_descs, arr)
+    if desc is None:
+        return None
+    shape = list(desc.shape)
+    if axes is None:
+        shape = list(reversed(shape))
+    else:
+        if not isinstance(axes, (tuple, list)):
+            return None
+        shape = [shape[i] for i in axes]
+    if len(shape) == 0:
+        return data.Scalar(desc.dtype)
+    return data.Array(desc.dtype, shape, transient=True)
+
+
+@infers_descriptor('numpy.flip')
+def _infer_flip(input_descs, arr, axis=None, **_kw):
+    """flip preserves shape and dtype."""
+    desc = _get_desc(input_descs, arr)
+    if desc is None:
+        return None
+    if isinstance(desc, data.Scalar):
+        return data.Scalar(desc.dtype)
+    return data.Array(desc.dtype, list(desc.shape), transient=True)
+
+
+@infers_descriptor('numpy.squeeze')
+def _infer_squeeze(input_descs, arr, axis=None, **_kw):
+    desc = _get_desc(input_descs, arr)
+    if desc is None:
+        return None
+    shape = list(desc.shape)
+    if axis is None:
+        shape = [s for s in shape if s != 1]
+    else:
+        if not isinstance(axis, (tuple, list)):
+            axis = (axis, )
+        axis = tuple(_to_int(a) for a in axis)
+        if any(a is None for a in axis):
+            return None
+        axis = tuple(normalize_axes(axis, len(shape)))
+        shape = [s for i, s in enumerate(shape) if i not in axis]
+    if not shape:
+        return data.Scalar(desc.dtype)
+    return data.Array(desc.dtype, shape, transient=True)
+
+
+@infers_descriptor('numpy.expand_dims')
+def _infer_expand_dims(input_descs, arr, axis, **_kw):
+    desc = _get_desc(input_descs, arr)
+    if desc is None:
+        return None
+    shape = list(desc.shape)
+    if not isinstance(axis, (tuple, list)):
+        axis = (axis, )
+    axis = tuple(_to_int(a) for a in axis)
+    if any(a is None for a in axis):
+        return None
+    ndim_out = len(shape) + len(axis)
+    axis = tuple(a if a >= 0 else a + ndim_out for a in axis)
+    out_shape = [None] * ndim_out
+    for a in sorted(axis):
+        out_shape[a] = 1
+    si = 0
+    for i in range(ndim_out):
+        if out_shape[i] is None:
+            out_shape[i] = shape[si]
+            si += 1
+    return data.Array(desc.dtype, out_shape, transient=True)
+
+
+@infers_descriptor('numpy.concatenate')
+def _infer_concatenate(input_descs, arrays, axis=0, **_kw):
+    if not isinstance(arrays, (tuple, list)) or len(arrays) == 0:
+        return None
+    descs = [_get_desc(input_descs, a) for a in arrays]
+    if any(d is None for d in descs):
+        return None
+    shape = list(descs[0].shape)
+    if axis is None:
+        # Flatten all, then concatenate
+        total = sum(data._prod(d.shape) for d in descs)
+        return data.Array(descs[0].dtype, [total], transient=True)
+    ax = _to_int(axis)
+    if ax is None:
+        return None
+    if ax < 0:
+        ax += len(shape)
+    shape[ax] = sum(d.shape[ax] for d in descs)
+    return data.Array(descs[0].dtype, shape, transient=True)
+
+
+@infers_descriptor('numpy.stack')
+def _infer_stack(input_descs, arrays, axis=0, **_kw):
+    if not isinstance(arrays, (tuple, list)) or len(arrays) == 0:
+        return None
+    descs = [_get_desc(input_descs, a) for a in arrays]
+    if any(d is None for d in descs):
+        return None
+    shape = list(descs[0].shape)
+    ax = _to_int(axis)
+    if ax is None:
+        return None
+    if ax < 0:
+        ax += len(shape) + 1
+    shape.insert(ax, len(arrays))
+    return data.Array(descs[0].dtype, shape, transient=True)
+
+
+# -- Method inference -------------------------------------------------- #
+
+
+def _infer_method_reshape(self_desc, *newshape, **_kw):
+    if len(newshape) == 1 and isinstance(newshape[0], (tuple, list)):
+        newshape = newshape[0]
+    shape = []
+    for s in newshape:
+        v = _to_int(s)
+        if v is not None:
+            shape.append(v)
+        elif symbolic.issymbolic(s):
+            shape.append(s)
+        else:
+            return None
+    if not shape:
+        return None
+    return data.Array(self_desc.dtype, shape, transient=True)
+
+
+for _cls in ('Array', 'View'):
+    infers_method_descriptor(_cls, 'reshape')(_infer_method_reshape)
+
+
+def _infer_method_flatten(self_desc, **_kw):
+    total = data._prod(self_desc.shape)
+    return data.Array(self_desc.dtype, [total], transient=True)
+
+
+for _cls in ('Array', 'Scalar', 'View'):
+    infers_method_descriptor(_cls, 'flatten')(_infer_method_flatten)
+    infers_method_descriptor(_cls, 'ravel')(_infer_method_flatten)
+
+
+def _infer_method_transpose(self_desc, *axes, **_kw):
+    shape = list(self_desc.shape)
+    if len(axes) == 0 or axes[0] is None:
+        shape = list(reversed(shape))
+    else:
+        if len(axes) == 1 and isinstance(axes[0], (tuple, list)):
+            axes = axes[0]
+        shape = [shape[i] for i in axes]
+    if len(shape) == 0:
+        return data.Scalar(self_desc.dtype)
+    return data.Array(self_desc.dtype, shape, transient=True)
+
+
+for _cls in ('Array', 'View'):
+    infers_method_descriptor(_cls, 'transpose')(_infer_method_transpose)
+
+
+def _infer_method_astype(self_desc, dtype, **_kw):
+    if dtype is None:
+        return None
+    if isinstance(dtype, type) and dtype in dtypes._CONSTANT_TYPES[:-1]:
+        dtype = dtypes.typeclass(dtype)
+    if not isinstance(dtype, dtypes.typeclass):
+        return None
+    if isinstance(self_desc, data.Scalar):
+        return data.Scalar(dtype)
+    return data.Array(dtype, list(self_desc.shape), transient=True)
+
+
+for _cls in ('Array', 'Scalar', 'View'):
+    infers_method_descriptor(_cls, 'astype')(_infer_method_astype)
+
+# -- Attribute inference ----------------------------------------------- #
+
+
+def _infer_attr_T(self_desc):
+    shape = list(reversed(self_desc.shape))
+    return data.Array(self_desc.dtype, shape, transient=True)
+
+
+for _cls in ('Array', 'View'):
+    infers_attribute_descriptor(_cls, 'T')(_infer_attr_T)
+
+
+def _infer_attr_flat(self_desc):
+    total = data._prod(self_desc.shape)
+    return data.Array(self_desc.dtype, [total], transient=True)
+
+
+for _cls in ('Array', 'Scalar', 'View'):
+    infers_attribute_descriptor(_cls, 'flat')(_infer_attr_flat)

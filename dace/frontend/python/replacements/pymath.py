@@ -120,3 +120,31 @@ def _abs(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: Union[str, Num
 @oprepo.replaces('round')
 def _round(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: Union[str, Number, symbolic.symbol]):
     return simple_call(pv, sdfg, state, input, 'round', dtypes.typeclass(int))
+
+
+# -------------------------------------------------------------------- #
+#  Descriptor inference for math attributes (schedule-tree frontend)     #
+# -------------------------------------------------------------------- #
+
+from dace import data
+from dace.frontend.common.op_repository import infers_attribute_descriptor
+from dace.frontend.python.replacements.utils import complex_to_scalar as _complex_to_scalar
+
+
+def _infer_attr_real(self_desc):
+    out_dtype = _complex_to_scalar(self_desc.dtype)
+    if isinstance(self_desc, data.Scalar):
+        return data.Scalar(out_dtype)
+    return data.Array(out_dtype, list(self_desc.shape), transient=True)
+
+
+def _infer_attr_imag(self_desc):
+    out_dtype = _complex_to_scalar(self_desc.dtype)
+    if isinstance(self_desc, data.Scalar):
+        return data.Scalar(out_dtype)
+    return data.Array(out_dtype, list(self_desc.shape), transient=True)
+
+
+for _cls in ('Array', 'Scalar', 'View'):
+    infers_attribute_descriptor(_cls, 'real')(_infer_attr_real)
+    infers_attribute_descriptor(_cls, 'imag')(_infer_attr_imag)

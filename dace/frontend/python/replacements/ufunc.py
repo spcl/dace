@@ -1872,6 +1872,36 @@ def _ndarray_any(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwa
     return implement_ufunc_reduce(pv, None, sdfg, state, 'logical_or', [arr], kwargs)[0]
 
 
+# -------------------------------------------------------------------- #
+#  Descriptor inference for method reductions (schedule-tree frontend)   #
+# -------------------------------------------------------------------- #
+
+from dace.frontend.common.op_repository import infers_method_descriptor
+from dace.frontend.python.replacements.type_inference import _method_reduction_descriptor
+
+
+def _infer_method_reduction(self_desc, axis=None, **_kw):
+    return _method_reduction_descriptor(self_desc, axis)
+
+
+for _cls in ('Array', 'View', 'Scalar'):
+    for _method in ('sum', 'prod', 'all', 'any'):
+        infers_method_descriptor(_cls, _method)(_infer_method_reduction)
+
+
+def _infer_method_mean(self_desc, axis=None, **_kw):
+    import numpy as _np
+    out_dtype = self_desc.dtype
+    if out_dtype.type in (int, _np.int32, _np.int64, _np.int16, _np.int8, _np.uint8, _np.uint16, _np.uint32, _np.uint64,
+                          bool, _np.bool_):
+        out_dtype = dtypes.float64
+    return _method_reduction_descriptor(self_desc, axis, dtype_override=out_dtype)
+
+
+for _cls in ('Array', 'View', 'Scalar'):
+    infers_method_descriptor(_cls, 'mean')(_infer_method_mean)
+
+
 @oprepo.replaces('numpy.clip')
 def _clip(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a, a_min=None, a_max=None, **kwargs):
     if a_min is None and a_max is None:

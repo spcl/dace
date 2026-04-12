@@ -13,6 +13,8 @@ import functools
 from numbers import Integral, Number
 from typing import Any, Dict, Callable, Optional, Union
 
+import numpy as np
+
 
 @oprepo.replaces('dace.reduce')
 def reduce(pv: ProgramVisitor,
@@ -390,3 +392,58 @@ def _ndarray_argmin(pv: ProgramVisitor,
         state.add_nedge(r, w, Memlet.from_array(newarr, sdfg.arrays[newarr]))
         newarr = out
     return newarr
+
+
+# -------------------------------------------------------------------- #
+#  Descriptor inference for reductions (schedule-tree frontend)          #
+# -------------------------------------------------------------------- #
+
+from dace.frontend.common.op_repository import infers_descriptor, infers_method_descriptor
+from dace.frontend.python.replacements.type_inference import (_reduction_descriptor, _method_reduction_descriptor,
+                                                              _get_desc)
+
+
+def _infer_basic_reduction(input_descs, arr, axis=None, **_kw):
+    return _reduction_descriptor(input_descs, arr, axis)
+
+
+for _name in ('numpy.sum', 'numpy.prod', 'numpy.max', 'numpy.amax', 'numpy.min', 'numpy.amin', 'numpy.any',
+              'numpy.all'):
+    infers_descriptor(_name)(_infer_basic_reduction)
+
+
+@infers_descriptor('numpy.mean')
+def _infer_mean(input_descs, arr, axis=None, **_kw):
+    desc = _get_desc(input_descs, arr)
+    if desc is None:
+        return None
+    out_dtype = desc.dtype
+    if out_dtype.type in (int, np.int32, np.int64, np.int16, np.int8, np.uint8, np.uint16, np.uint32, np.uint64, bool,
+                          np.bool_):
+        out_dtype = dtypes.float64
+    return _reduction_descriptor(input_descs, arr, axis, dtype_override=out_dtype)
+
+
+@infers_descriptor('numpy.argmax')
+@infers_descriptor('numpy.argmin')
+def _infer_argminmax(input_descs, arr, axis=None, **_kw):
+    return _reduction_descriptor(input_descs, arr, axis, dtype_override=dtypes.int64)
+
+
+# Method inference for .max(), .min(), .argmax(), .argmin()
+def _infer_method_basic_reduction(self_desc, axis=None, **_kw):
+    return _method_reduction_descriptor(self_desc, axis)
+
+
+for _cls in ('Array', 'View', 'Scalar'):
+    for _method in ('max', 'min'):
+        infers_method_descriptor(_cls, _method)(_infer_method_basic_reduction)
+
+
+def _infer_method_argminmax(self_desc, axis=None, **_kw):
+    return _method_reduction_descriptor(self_desc, axis, dtype_override=dtypes.int64)
+
+
+for _cls in ('Array', 'View', 'Scalar'):
+    for _method in ('argmax', 'argmin'):
+        infers_method_descriptor(_cls, _method)(_infer_method_argminmax)
