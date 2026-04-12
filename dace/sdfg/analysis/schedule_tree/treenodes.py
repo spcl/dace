@@ -540,13 +540,16 @@ class RefSetNode(ScheduleTreeNode):
     Reference set node. Sets a reference to a data container.
     """
     target: str
-    memlet: Memlet
+    memlet: Optional[Memlet]
     src_desc: Union[data.Data, nodes.CodeNode]
     ref_desc: data.Data
+    source_expr: Optional[str] = None
 
     def as_string(self, indent: int = 0):
         if isinstance(self.src_desc, nodes.CodeNode):
             return indent * INDENTATION + f'{self.target} = refset from {type(self.src_desc).__name__.lower()}'
+        if self.source_expr is not None:
+            return indent * INDENTATION + f'{self.target} = refset to {self.source_expr}'
         return indent * INDENTATION + f'{self.target} = refset to {self.memlet}'
 
 
