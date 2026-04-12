@@ -46,6 +46,17 @@ class PreprocessedAST:
     program_globals: Dict[str, Any]
 
 
+def __dace_iterator_init(iterable):
+    return iterable.__iter__()
+
+
+def __dace_iterator_next(iterator, sentinel):
+    try:
+        return iterator.__next__()
+    except StopIteration:
+        return sentinel
+
+
 class StructTransformer(ast.NodeTransformer):
     """
     A Python AST transformer that replaces ``Call`` nodes to create structs with
@@ -445,6 +456,64 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
     def globals(self):
         return {k: v for k, v in self._globals.items() if k not in self.current_scope}
 
+    def _contains_preserved_attribute_access(self, node: ast.AST) -> bool:
+        return any(
+            isinstance(child, ast.Attribute) and self._should_preserve_attribute_access(child)
+            for child in ast.walk(node))
+
+    def _should_preserve_attribute_access(self, node: ast.Attribute) -> bool:
+        try:
+            base_value = astutils.evalnode(node.value, self.globals)
+        except Exception:
+            return False
+
+        if self._is_native_attribute_base(base_value):
+            return False
+
+        # User objects should remain attribute accesses in the preprocessed AST.
+        # The schedule-tree frontend can then decide whether to render them as
+        # direct attributes or as explicit protocol calls (__get__/__set__/etc.).
+        preserve_direct_attribute = True
+
+        try:
+            static_attr = inspect.getattr_static(base_value, node.attr)
+        except AttributeError:
+            static_attr = None
+
+        if static_attr is not None and self._is_descriptor(static_attr):
+            if isinstance(node.ctx, ast.Load) and hasattr(static_attr, '__get__'):
+                return True
+            if isinstance(node.ctx, (ast.Store, ast.Del)) and (hasattr(static_attr, '__set__')
+                                                               or hasattr(static_attr, '__delete__')):
+                return True
+
+        objtype = type(base_value)
+        if isinstance(node.ctx, ast.Load):
+            if '__getattr__' in objtype.__dict__:
+                return True
+            getattribute = objtype.__dict__.get('__getattribute__')
+            if getattribute is not None and getattribute is not object.__getattribute__:
+                return True
+        if isinstance(node.ctx, (ast.Store, ast.Del)):
+            setattr_method = objtype.__dict__.get('__setattr__')
+            if setattr_method is not None and setattr_method is not object.__setattr__:
+                return True
+
+        return preserve_direct_attribute
+
+    def _is_descriptor(self, value: Any) -> bool:
+        return any(hasattr(value, attr) for attr in ('__get__', '__set__', '__delete__'))
+
+    def _is_native_attribute_base(self, value: Any) -> bool:
+        if dtypes.ismodule(value):
+            return True
+        if isinstance(value,
+                      (dtypes.typeclass, symbolic.symbol, sympy.Basic, data.Data, SDFG, numpy.ndarray, numpy.generic)):
+            return True
+
+        module_name = getattr(type(value), '__module__', '')
+        return module_name.startswith(('numpy', 'dace', 'sympy', 'builtins'))
+
     def generic_visit(self, node: ast.AST):
         if hasattr(node, 'body') or hasattr(node, 'orelse'):
             oldscope = self.current_scope
@@ -689,6 +758,11 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
         return self.generic_visit(node)
 
     def _visit_potential_constant(self, node: ast.AST, recurse_on_fail: bool) -> Optional[ast.AST]:
+        if self._contains_preserved_attribute_access(node):
+            if recurse_on_fail:
+                return self.generic_visit(node)
+            return node
+
         # Try to evaluate the expression with only the globals
         try:
             global_val = astutils.evalnode(node, self.globals)
@@ -1221,6 +1295,311 @@ class LoopUnroller(ast.NodeTransformer):
         return self.visit_For(node)
 
 
+class IteratorForLoopNormalizer(ast.NodeTransformer):
+    """
+    Rewrites non-range/map for-loops into simpler control-flow that the direct
+    schedule-tree frontend can lower. Array-like iteration, zip, and enumerate
+    are normalized to index-based loops; remaining iterators fall back to an
+    explicit iterator protocol while-loop.
+    """
+
+    def __init__(self, globals: Dict[str, Any], argtypes: Dict[str, data.Data], closure_resolver: GlobalResolver):
+        super().__init__()
+        self.globals = globals
+        self.argtypes = argtypes
+        self.resolver = closure_resolver
+        self._counter = 0
+
+    def visit_For(self, node: ast.For) -> Any:
+        node = self.generic_visit(node)
+
+        if self._is_structured_iterator(node.iter):
+            return node
+
+        rewritten = self._normalize_indexed_iteration(node)
+        if rewritten is not None:
+            return rewritten
+
+        rewritten = self._normalize_zip_iteration(node)
+        if rewritten is not None:
+            return rewritten
+
+        rewritten = self._normalize_enumerate_iteration(node)
+        if rewritten is not None:
+            return rewritten
+
+        return self._normalize_generic_iteration(node)
+
+    def _is_structured_iterator(self, iterator: ast.AST) -> bool:
+        schedule_target = iterator.left if isinstance(iterator, ast.BinOp) and isinstance(iterator.op,
+                                                                                          ast.MatMult) else iterator
+        if isinstance(schedule_target, ast.Call):
+            return astutils.rname(schedule_target.func) in {'range', 'prange', 'parrange'}
+        if isinstance(schedule_target, ast.Subscript):
+            return astutils.rname(schedule_target.value) == 'dace.map'
+        return False
+
+    def _normalize_indexed_iteration(self, node: ast.For) -> Optional[ast.For]:
+        length_expr = self._indexed_iterator_length(node.iter)
+        if length_expr is None:
+            return None
+
+        index_name = self._fresh_name('iter_idx')
+        yielded_value = self._indexed_iterator_value(node.iter, index_name, node)
+        if yielded_value is None:
+            return None
+        replacements = self._target_replacements(node.target, yielded_value)
+        if replacements is None:
+            return None
+
+        rewritten = ast.For(target=ast.Name(id=index_name, ctx=ast.Store()),
+                            iter=self._make_range_call(length_expr),
+                            body=self._rewrite_body(node.body, replacements),
+                            orelse=[astutils.copy_tree(stmt) for stmt in node.orelse])
+        return ast.fix_missing_locations(ast.copy_location(rewritten, node))
+
+    def _normalize_zip_iteration(self, node: ast.For) -> Optional[Any]:
+        if not isinstance(node.iter, ast.Call) or astutils.rname(node.iter.func) != 'zip' or len(node.iter.args) == 0:
+            return None
+
+        return self._normalize_generic_zip_iteration(node)
+
+    def _normalize_enumerate_iteration(self, node: ast.For) -> Optional[Any]:
+        if not isinstance(node.iter, ast.Call) or astutils.rname(node.iter.func) != 'enumerate' or len(
+                node.iter.args) == 0:
+            return None
+
+        iterable = node.iter.args[0]
+        start = astutils.copy_tree(node.iter.args[1]) if len(node.iter.args) > 1 else astutils.create_constant(0, node)
+
+        return self._normalize_generic_iteration(node, enumerate_start=start)
+
+    def _normalize_generic_zip_iteration(self, node: ast.For) -> Any:
+        iterator_names = [self._fresh_name('iter') for _ in node.iter.args]
+        value_names = [self._fresh_name('iter_value') for _ in node.iter.args]
+        sentinel_id = self._sentinel_name(node)
+
+        init_nodes: List[ast.AST] = []
+        for iterator_name, value_name, arg in zip(iterator_names, value_names, node.iter.args):
+            init_nodes.append(self._assign(iterator_name, self._helper_call('__dace_iterator_init', [arg]), node))
+            init_nodes.append(
+                self._assign(
+                    value_name,
+                    self._helper_call(
+                        '__dace_iterator_next',
+                        [ast.Name(id=iterator_name, ctx=ast.Load()),
+                         ast.Name(id=sentinel_id, ctx=ast.Load())]), node))
+
+        yielded_value = ast.Tuple(elts=[ast.Name(id=value_name, ctx=ast.Load()) for value_name in value_names],
+                                  ctx=ast.Load())
+        replacements = self._target_replacements(node.target, yielded_value)
+        destructuring_setup = None
+        if replacements is None:
+            destructuring_setup = self._destructuring_setup(node.target, yielded_value, node)
+            if destructuring_setup is None:
+                return node
+            replacements = {}
+
+        test = ast.BoolOp(op=ast.And(),
+                          values=[
+                              ast.Compare(left=ast.Name(id=value_name, ctx=ast.Load()),
+                                          ops=[ast.IsNot()],
+                                          comparators=[ast.Name(id=sentinel_id, ctx=ast.Load())])
+                              for value_name in value_names
+                          ])
+        body: List[ast.AST] = []
+        if destructuring_setup is not None:
+            body.append(destructuring_setup)
+        body.extend(self._rewrite_body(node.body, replacements))
+        for iterator_name, value_name in zip(iterator_names, value_names):
+            body.append(
+                self._assign(
+                    value_name,
+                    self._helper_call(
+                        '__dace_iterator_next',
+                        [ast.Name(id=iterator_name, ctx=ast.Load()),
+                         ast.Name(id=sentinel_id, ctx=ast.Load())]), node))
+
+        loop = ast.While(test=test, body=body, orelse=[astutils.copy_tree(stmt) for stmt in node.orelse])
+        return [*init_nodes, ast.fix_missing_locations(ast.copy_location(loop, node))]
+
+    def _normalize_generic_iteration(self, node: ast.For, enumerate_start: Optional[ast.AST] = None) -> Any:
+        iterator_name = self._fresh_name('iter')
+        value_name = self._fresh_name('iter_value')
+        sentinel_id = self._sentinel_name(node)
+
+        init_nodes: List[ast.AST] = [
+            self._assign(iterator_name, self._helper_call('__dace_iterator_init', [node.iter]), node),
+            self._assign(
+                value_name,
+                self._helper_call(
+                    '__dace_iterator_next',
+                    [ast.Name(id=iterator_name, ctx=ast.Load()),
+                     ast.Name(id=sentinel_id, ctx=ast.Load())]), node),
+        ]
+
+        counter_name: Optional[str] = None
+        if enumerate_start is not None:
+            counter_name = self._fresh_name('iter_index')
+            init_nodes.append(self._assign(counter_name, enumerate_start, node))
+            yielded_value: ast.AST = ast.Tuple(
+                elts=[ast.Name(id=counter_name, ctx=ast.Load()),
+                      ast.Name(id=value_name, ctx=ast.Load())],
+                ctx=ast.Load())
+        else:
+            yielded_value = ast.Name(id=value_name, ctx=ast.Load())
+
+        replacements = self._target_replacements(node.target, yielded_value)
+        destructuring_setup = None
+        if replacements is None:
+            destructuring_setup = self._destructuring_setup(node.target, yielded_value, node)
+            if destructuring_setup is None:
+                return node
+            replacements = {}
+
+        body: List[ast.AST] = []
+        if destructuring_setup is not None:
+            body.append(destructuring_setup)
+        body.extend(self._rewrite_body(node.body, replacements))
+        if counter_name is not None:
+            body.append(
+                self._assign(
+                    counter_name,
+                    ast.BinOp(left=ast.Name(id=counter_name, ctx=ast.Load()),
+                              op=ast.Add(),
+                              right=astutils.create_constant(1, node)), node))
+        body.append(
+            self._assign(
+                value_name,
+                self._helper_call(
+                    '__dace_iterator_next',
+                    [ast.Name(id=iterator_name, ctx=ast.Load()),
+                     ast.Name(id=sentinel_id, ctx=ast.Load())]), node))
+
+        test = ast.Compare(left=ast.Name(id=value_name, ctx=ast.Load()),
+                           ops=[ast.IsNot()],
+                           comparators=[ast.Name(id=sentinel_id, ctx=ast.Load())])
+        loop = ast.While(test=test, body=body, orelse=[astutils.copy_tree(stmt) for stmt in node.orelse])
+        return [*init_nodes, ast.fix_missing_locations(ast.copy_location(loop, node))]
+
+    def _is_indexable_expr(self, node: ast.AST) -> bool:
+        if isinstance(node, ast.Name) and node.id in self.argtypes:
+            descriptor = self.argtypes[node.id]
+            return hasattr(descriptor, 'shape') and not isinstance(descriptor, data.Scalar)
+        try:
+            value = astutils.evalnode(node, self.globals)
+        except SyntaxError:
+            return False
+        return dtypes.is_array(value) or (hasattr(value, '__len__') and hasattr(value, '__getitem__'))
+
+    def _indexed_iterator_length(self, iterator: ast.AST) -> Optional[ast.AST]:
+        if self._is_indexable_expr(iterator):
+            return self._make_len_call(iterator)
+
+        if isinstance(iterator, ast.Call):
+            call_name = astutils.rname(iterator.func)
+            if call_name == 'zip' and iterator.args:
+                lengths = [self._indexed_iterator_length(arg) for arg in iterator.args]
+                if any(length is None for length in lengths):
+                    return None
+                return self._make_min_call(lengths)
+            if call_name == 'enumerate' and iterator.args:
+                return self._indexed_iterator_length(iterator.args[0])
+
+        return None
+
+    def _indexed_iterator_value(self, iterator: ast.AST, index_name: str, location: ast.AST) -> Optional[ast.AST]:
+        if self._is_indexable_expr(iterator):
+            return self._make_subscript(iterator, index_name)
+
+        if isinstance(iterator, ast.Call):
+            call_name = astutils.rname(iterator.func)
+            if call_name == 'zip' and iterator.args:
+                values = [self._indexed_iterator_value(arg, index_name, location) for arg in iterator.args]
+                if any(value is None for value in values):
+                    return None
+                return ast.Tuple(elts=values, ctx=ast.Load())
+            if call_name == 'enumerate' and iterator.args:
+                inner_value = self._indexed_iterator_value(iterator.args[0], index_name, location)
+                if inner_value is None:
+                    return None
+                start = astutils.copy_tree(iterator.args[1]) if len(iterator.args) > 1 else astutils.create_constant(
+                    0, location)
+                counter = ast.BinOp(left=start, op=ast.Add(), right=ast.Name(id=index_name, ctx=ast.Load()))
+                return ast.Tuple(elts=[counter, inner_value], ctx=ast.Load())
+
+        return None
+
+    def _sentinel_name(self, node: ast.AST) -> str:
+        sentinel = self.resolver.global_value_to_node(object(), node, self._fresh_name('iter_end'), keep_object=True)
+        return sentinel.id
+
+    def _fresh_name(self, prefix: str) -> str:
+        name = f'__dace_{prefix}_{self._counter}'
+        self._counter += 1
+        return name
+
+    def _make_range_call(self, stop: ast.AST) -> ast.Call:
+        return ast.Call(func=ast.Name(id='range', ctx=ast.Load()), args=[stop], keywords=[])
+
+    def _make_len_call(self, value: ast.AST) -> ast.Call:
+        return ast.Call(func=ast.Name(id='len', ctx=ast.Load()), args=[astutils.copy_tree(value)], keywords=[])
+
+    def _make_min_call(self, values: List[ast.AST]) -> ast.Call:
+        return ast.Call(func=ast.Name(id='min', ctx=ast.Load()), args=values, keywords=[])
+
+    def _make_subscript(self, value: ast.AST, index_name: str) -> ast.Subscript:
+        return ast.Subscript(value=astutils.copy_tree(value),
+                             slice=ast.Name(id=index_name, ctx=ast.Load()),
+                             ctx=ast.Load())
+
+    def _helper_call(self, helper_name: str, args: List[ast.AST]) -> ast.Call:
+        return ast.Call(func=ast.Name(id=helper_name, ctx=ast.Load()),
+                        args=[astutils.copy_tree(arg) for arg in args],
+                        keywords=[])
+
+    def _assign(self, target_name: str, value: ast.AST, location: ast.AST) -> ast.Assign:
+        return ast.fix_missing_locations(
+            ast.copy_location(ast.Assign(targets=[ast.Name(id=target_name, ctx=ast.Store())], value=value), location))
+
+    def _target_replacements(self, target: ast.AST, value: ast.AST) -> Optional[Dict[str, ast.AST]]:
+        result: Dict[str, ast.AST] = {}
+
+        def _collect(current_target: ast.AST, current_value: ast.AST) -> bool:
+            if isinstance(current_target, ast.Name):
+                result[current_target.id] = current_value
+                return True
+
+            if isinstance(current_target, (ast.Tuple, ast.List)):
+                if not isinstance(current_value, (ast.Tuple, ast.List)):
+                    return False
+                if len(current_target.elts) != len(current_value.elts):
+                    return False
+                return all(
+                    _collect(sub_target, sub_value)
+                    for sub_target, sub_value in zip(current_target.elts, current_value.elts))
+
+            return False
+
+        if not _collect(target, value):
+            return None
+        return result
+
+    def _rewrite_body(self, body: List[ast.AST], replacements: Dict[str, ast.AST]) -> List[ast.AST]:
+        rewritten: List[ast.AST] = []
+        for stmt in body:
+            copied = astutils.copy_tree(stmt)
+            replace = astutils.ASTFindReplace({name: astutils.copy_tree(value) for name, value in replacements.items()})
+            rewritten.append(ast.fix_missing_locations(replace.visit(copied)))
+        return rewritten
+
+    def _destructuring_setup(self, target: ast.AST, value: ast.AST, location: ast.AST) -> Optional[ast.Assign]:
+        if not isinstance(target, (ast.Tuple, ast.List)):
+            return None
+        setup = ast.Assign(targets=[astutils.copy_tree(target)], value=astutils.copy_tree(value))
+        return ast.fix_missing_locations(ast.copy_location(setup, location))
+
+
 class ExpressionInliner(ast.NodeTransformer):
     """
     Replaces dace.inline() expressions by their bodies if they can be
@@ -1478,6 +1857,299 @@ class DisallowedAssignmentChecker(ast.NodeVisitor):
                 'currently unsupported.')
 
 
+class NamedExprDesugarer(ast.NodeTransformer):
+    """Lifts walrus operator (NamedExpr / :=) assignments out of expressions.
+
+    ``if (x := f()): body`` becomes::
+
+        x = f()
+        if x: body
+
+    ``while (x := f()): body`` becomes::
+
+        x = f()
+        while x:
+            body
+            x = f()
+    """
+
+    def _extract_named_exprs(self, node: ast.AST):
+        """Find NamedExpr nodes in an expression and return (assignments, rewritten_expr)."""
+        assignments = []
+
+        class _Replacer(ast.NodeTransformer):
+
+            def visit_NamedExpr(self, ne: ast.NamedExpr) -> ast.AST:
+                # Recurse into the value first
+                ne.value = self.visit(ne.value)
+                assign = ast.Assign(targets=[copy.deepcopy(ne.target)], value=ne.value)
+                ast.copy_location(assign, ne)
+                assignments.append(assign)
+                replacement = ast.Name(id=ne.target.id, ctx=ast.Load())
+                return ast.copy_location(replacement, ne)
+
+        rewritten = _Replacer().visit(copy.deepcopy(node))
+        return assignments, rewritten
+
+    def _has_named_expr(self, node: ast.AST) -> bool:
+        for child in ast.walk(node):
+            if isinstance(child, ast.NamedExpr):
+                return True
+        return False
+
+    def visit_If(self, node: ast.If) -> ast.AST:
+        self.generic_visit(node)
+        if not self._has_named_expr(node.test):
+            return node
+        assignments, new_test = self._extract_named_exprs(node.test)
+        node.test = new_test
+        ast.fix_missing_locations(node)
+        return assignments + [node]
+
+    def visit_While(self, node: ast.While) -> ast.AST:
+        self.generic_visit(node)
+        if not self._has_named_expr(node.test):
+            return node
+        assignments, new_test = self._extract_named_exprs(node.test)
+        node.test = new_test
+        # Add re-evaluation at end of loop body
+        for assign in assignments:
+            node.body.append(copy.deepcopy(assign))
+        ast.fix_missing_locations(node)
+        return assignments + [node]
+
+    def visit_Assign(self, node: ast.Assign) -> ast.AST:
+        self.generic_visit(node)
+        if not self._has_named_expr(node.value):
+            return node
+        assignments, new_value = self._extract_named_exprs(node.value)
+        node.value = new_value
+        ast.fix_missing_locations(node)
+        return assignments + [node]
+
+    def visit_Expr(self, node: ast.Expr) -> ast.AST:
+        self.generic_visit(node)
+        if not self._has_named_expr(node.value):
+            return node
+        assignments, new_value = self._extract_named_exprs(node.value)
+        node.value = new_value
+        ast.fix_missing_locations(node)
+        return assignments + [node]
+
+    def visit_Return(self, node: ast.Return) -> ast.AST:
+        self.generic_visit(node)
+        if node.value is None or not self._has_named_expr(node.value):
+            return node
+        assignments, new_value = self._extract_named_exprs(node.value)
+        node.value = new_value
+        ast.fix_missing_locations(node)
+        return assignments + [node]
+
+
+class ComprehensionDesugarer(ast.NodeTransformer):
+    """Desugars all comprehensions and generator expressions to explicit loops.
+
+    ``[expr for x in iter if cond]`` becomes::
+
+        __comp_tmp_N = []
+        for x in iter:
+            if cond:
+                __comp_tmp_N.append(expr)
+
+    Set and dict comprehensions are handled similarly.
+    Generator expressions consumed by a call (e.g. ``sum(x for x in ...)``)
+    are desugared to list comprehensions then wrapped in the call.
+    """
+
+    def __init__(self):
+        self._counter = 0
+
+    def _fresh_name(self) -> str:
+        self._counter += 1
+        return f'__comp_tmp_{self._counter}'
+
+    def _build_loop_nest(self, generators, body_stmt, target_node) -> list:
+        """Build nested for/if statements from comprehension generators."""
+        stmts = body_stmt
+        # Build inside-out
+        for gen in reversed(generators):
+            # Wrap with if-filters
+            for if_clause in reversed(gen.ifs):
+                if_node = ast.If(test=if_clause, body=stmts if isinstance(stmts, list) else [stmts], orelse=[])
+                ast.copy_location(if_node, target_node)
+                stmts = [if_node]
+            # Wrap with for-loop
+            for_node = ast.For(target=gen.target,
+                               iter=gen.iter,
+                               body=stmts if isinstance(stmts, list) else [stmts],
+                               orelse=[])
+            ast.copy_location(for_node, target_node)
+            stmts = [for_node]
+        return stmts if isinstance(stmts, list) else [stmts]
+
+    def _desugar_listcomp(self, node: ast.ListComp, target_node: ast.AST) -> Tuple[str, list]:
+        name = self._fresh_name()
+        # __comp_tmp = []
+        init = ast.Assign(targets=[ast.Name(id=name, ctx=ast.Store())], value=ast.List(elts=[], ctx=ast.Load()))
+        ast.copy_location(init, target_node)
+        # __comp_tmp.append(elt)
+        append_call = ast.Expr(
+            value=ast.Call(func=ast.Attribute(value=ast.Name(id=name, ctx=ast.Load()), attr='append', ctx=ast.Load()),
+                           args=[node.elt],
+                           keywords=[]))
+        ast.copy_location(append_call, target_node)
+        loops = self._build_loop_nest(node.generators, [append_call], target_node)
+        return name, [init] + loops
+
+    def _desugar_setcomp(self, node: ast.SetComp, target_node: ast.AST) -> Tuple[str, list]:
+        name = self._fresh_name()
+        # __comp_tmp = set()
+        init = ast.Assign(targets=[ast.Name(id=name, ctx=ast.Store())],
+                          value=ast.Call(func=ast.Name(id='set', ctx=ast.Load()), args=[], keywords=[]))
+        ast.copy_location(init, target_node)
+        # __comp_tmp.add(elt)
+        add_call = ast.Expr(
+            value=ast.Call(func=ast.Attribute(value=ast.Name(id=name, ctx=ast.Load()), attr='add', ctx=ast.Load()),
+                           args=[node.elt],
+                           keywords=[]))
+        ast.copy_location(add_call, target_node)
+        loops = self._build_loop_nest(node.generators, [add_call], target_node)
+        return name, [init] + loops
+
+    def _desugar_dictcomp(self, node: ast.DictComp, target_node: ast.AST) -> Tuple[str, list]:
+        name = self._fresh_name()
+        # __comp_tmp = {}
+        init = ast.Assign(targets=[ast.Name(id=name, ctx=ast.Store())], value=ast.Dict(keys=[], values=[]))
+        ast.copy_location(init, target_node)
+        # __comp_tmp[key] = value
+        assign_stmt = ast.Assign(
+            targets=[ast.Subscript(value=ast.Name(id=name, ctx=ast.Load()), slice=node.key, ctx=ast.Store())],
+            value=node.value)
+        ast.copy_location(assign_stmt, target_node)
+        loops = self._build_loop_nest(node.generators, [assign_stmt], target_node)
+        return name, [init] + loops
+
+    def _desugar_generatorexp(self, node: ast.GeneratorExp, target_node: ast.AST) -> Tuple[str, list]:
+        # Desugar generator expressions as list comprehensions
+        listcomp = ast.ListComp(elt=node.elt, generators=node.generators)
+        ast.copy_location(listcomp, target_node)
+        return self._desugar_listcomp(listcomp, target_node)
+
+    def _find_and_desugar(self, node: ast.AST) -> Tuple[list, ast.AST]:
+        """Walk an expression, desugar any comprehensions found, return (prefix_stmts, rewritten_expr)."""
+        prefix_stmts = []
+
+        outer_self = self
+
+        class _Replacer(ast.NodeTransformer):
+
+            def visit_ListComp(self, lc: ast.ListComp) -> ast.AST:
+                # Recurse into sub-expressions first
+                lc = self.generic_visit(lc)
+                name, stmts = outer_self._desugar_listcomp(lc, lc)
+                prefix_stmts.extend(stmts)
+                return ast.Name(id=name, ctx=ast.Load())
+
+            def visit_SetComp(self, sc: ast.SetComp) -> ast.AST:
+                sc = self.generic_visit(sc)
+                name, stmts = outer_self._desugar_setcomp(sc, sc)
+                prefix_stmts.extend(stmts)
+                return ast.Name(id=name, ctx=ast.Load())
+
+            def visit_DictComp(self, dc: ast.DictComp) -> ast.AST:
+                dc = self.generic_visit(dc)
+                name, stmts = outer_self._desugar_dictcomp(dc, dc)
+                prefix_stmts.extend(stmts)
+                return ast.Name(id=name, ctx=ast.Load())
+
+            def visit_GeneratorExp(self, ge: ast.GeneratorExp) -> ast.AST:
+                ge = self.generic_visit(ge)
+                name, stmts = outer_self._desugar_generatorexp(ge, ge)
+                prefix_stmts.extend(stmts)
+                return ast.Name(id=name, ctx=ast.Load())
+
+        rewritten = _Replacer().visit(copy.deepcopy(node))
+        return prefix_stmts, rewritten
+
+    def _has_comprehension(self, node: ast.AST) -> bool:
+        for child in ast.walk(node):
+            if isinstance(child, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+                return True
+        return False
+
+    def visit_Assign(self, node: ast.Assign) -> ast.AST:
+        self.generic_visit(node)
+        if not self._has_comprehension(node.value):
+            return node
+        prefix, new_value = self._find_and_desugar(node.value)
+        node.value = new_value
+        ast.fix_missing_locations(node)
+        result = prefix + [node]
+        for stmt in result:
+            ast.fix_missing_locations(stmt)
+        return result
+
+    def visit_Expr(self, node: ast.Expr) -> ast.AST:
+        self.generic_visit(node)
+        if not self._has_comprehension(node.value):
+            return node
+        prefix, new_value = self._find_and_desugar(node.value)
+        node.value = new_value
+        ast.fix_missing_locations(node)
+        result = prefix + [node]
+        for stmt in result:
+            ast.fix_missing_locations(stmt)
+        return result
+
+    def visit_Return(self, node: ast.Return) -> ast.AST:
+        self.generic_visit(node)
+        if node.value is None or not self._has_comprehension(node.value):
+            return node
+        prefix, new_value = self._find_and_desugar(node.value)
+        node.value = new_value
+        ast.fix_missing_locations(node)
+        result = prefix + [node]
+        for stmt in result:
+            ast.fix_missing_locations(stmt)
+        return result
+
+    def visit_If(self, node: ast.If) -> ast.AST:
+        self.generic_visit(node)
+        if not self._has_comprehension(node.test):
+            return node
+        prefix, new_test = self._find_and_desugar(node.test)
+        node.test = new_test
+        ast.fix_missing_locations(node)
+        result = prefix + [node]
+        for stmt in result:
+            ast.fix_missing_locations(stmt)
+        return result
+
+    def visit_For(self, node: ast.For) -> ast.AST:
+        self.generic_visit(node)
+        if not self._has_comprehension(node.iter):
+            return node
+        prefix, new_iter = self._find_and_desugar(node.iter)
+        node.iter = new_iter
+        ast.fix_missing_locations(node)
+        result = prefix + [node]
+        for stmt in result:
+            ast.fix_missing_locations(stmt)
+        return result
+
+    def visit_AugAssign(self, node: ast.AugAssign) -> ast.AST:
+        self.generic_visit(node)
+        if not self._has_comprehension(node.value):
+            return node
+        prefix, new_value = self._find_and_desugar(node.value)
+        node.value = new_value
+        ast.fix_missing_locations(node)
+        result = prefix + [node]
+        for stmt in result:
+            ast.fix_missing_locations(stmt)
+        return result
+
+
 class AugAssignExpander(ast.NodeTransformer):
 
     def visit_AugAssign(self, node: ast.AugAssign) -> ast.Assign:
@@ -1487,8 +2159,10 @@ class AugAssignExpander(ast.NodeTransformer):
         return ast.copy_location(ast.Assign(targets=[target], value=newvalue), node)
 
 
-def find_disallowed_statements(node: ast.AST):
-    from dace.frontend.python.newast import DISALLOWED_STMTS  # Avoid import loop
+def find_disallowed_statements(node: ast.AST, stmts=None):
+    if stmts is None:
+        from dace.frontend.python.newast import DISALLOWED_STMTS  # Avoid import loop
+        stmts = DISALLOWED_STMTS
     # Skip everything until the function contents (in case there are disallowed statements in a decorator)
     if isinstance(node, ast.Module) and isinstance(node.body[0], ast.FunctionDef):
         nodes = node.body[0].body
@@ -1498,7 +2172,7 @@ def find_disallowed_statements(node: ast.AST):
     for topnode in nodes:
         for subnode in ast.walk(topnode):
             # Found disallowed statement
-            if type(subnode).__name__ in DISALLOWED_STMTS:
+            if type(subnode).__name__ in stmts:
                 return type(subnode).__name__
 
             # Calls with double-starred arguments (**args)
@@ -1572,7 +2246,9 @@ def preprocess_dace_program(f: Callable[..., Any],
                             modules: Dict[str, Any],
                             resolve_functions: bool = False,
                             parent_closure: Optional[SDFGClosure] = None,
-                            default_args: Optional[Set[str]] = None) -> Tuple[PreprocessedAST, SDFGClosure]:
+                            default_args: Optional[Set[str]] = None,
+                            normalize_generic_for_loops: bool = False,
+                            disallowed_stmts: Optional[Set[str]] = None) -> Tuple[PreprocessedAST, SDFGClosure]:
     """
     Preprocesses a ``@dace.program`` and all its nested functions, returning
     a preprocessed AST object and the closure of the resulting SDFG.
@@ -1614,6 +2290,10 @@ def preprocess_dace_program(f: Callable[..., Any],
         pass
     src_ast = ModuloConverter().visit(src_ast)
 
+    if normalize_generic_for_loops:
+        global_vars['__dace_iterator_init'] = __dace_iterator_init
+        global_vars['__dace_iterator_next'] = __dace_iterator_next
+
     # Resolve constants to their values (if they are not already defined in this scope)
     # and symbols to their names
     resolved = {k: v for k, v in global_vars.items() if k not in (argtypes.keys() - default_args) and k != '_'}
@@ -1633,7 +2313,12 @@ def preprocess_dace_program(f: Callable[..., Any],
         closure_resolver.closure.callstack = parent_closure.callstack + [fid]
 
     # Find disallowed AST nodes
-    disallowed = find_disallowed_statements(src_ast)
+    if disallowed_stmts is None:
+        disallowed = find_disallowed_statements(src_ast)
+    elif disallowed_stmts:
+        disallowed = find_disallowed_statements(src_ast, disallowed_stmts)
+    else:
+        disallowed = None  # Empty set means nothing is disallowed
     if disallowed:
         raise TypeError(f'Converting function "{f.__name__}" ({src_file}:{src_line}) to callback due to disallowed '
                         f'keyword: {disallowed}')
@@ -1661,10 +2346,16 @@ def preprocess_dace_program(f: Callable[..., Any],
             closure_resolver.toplevel_function = True
             src_ast = closure_resolver.visit(src_ast)
             DisallowedAssignmentChecker(src_file).visit(src_ast)
+            if normalize_generic_for_loops:
+                src_ast = ComprehensionDesugarer().visit(src_ast)
             src_ast = LoopUnroller(resolved, src_file, closure_resolver).visit(src_ast)
+            if normalize_generic_for_loops:
+                src_ast = IteratorForLoopNormalizer(resolved, argtypes, closure_resolver).visit(src_ast)
             src_ast = ExpressionInliner(resolved, src_file, closure_resolver).visit(src_ast)
             src_ast = ContextManagerInliner(resolved, src_file, closure_resolver).visit(src_ast)
             src_ast = ConditionalCodeResolver(resolved).visit(src_ast)
+            if normalize_generic_for_loops:
+                src_ast = NamedExprDesugarer().visit(src_ast)
             src_ast = DeadCodeEliminator().visit(src_ast)
         except Exception:
             if Config.get_bool('frontend', 'verbose_errors'):
