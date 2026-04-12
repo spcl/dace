@@ -17,3 +17,7 @@ from .operators import *
 from .pymath import *
 from .reduction import *
 from .ufunc import *
+
+# Lightweight descriptor-inference registrations for the schedule-tree frontend.
+# Imported for side effects (populates Replacements._dtype_rep).
+from . import type_inference as _type_inference  # noqa: F401
