@@ -623,10 +623,10 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
                 return
             kind = 'reference' if isinstance(inferred_descriptor, data.Reference) else 'container'
             self._register_binding(name, inferred_descriptor, kind=kind)
-
-        scalar_descriptor = self._infer_scalar_descriptor(value, annotated_descriptor)
-        if scalar_descriptor is not None:
-            self._register_binding(name, scalar_descriptor, kind='scalar')
+        else:
+            scalar_descriptor = self._infer_scalar_descriptor(value, annotated_descriptor)
+            if scalar_descriptor is not None:
+                self._register_binding(name, scalar_descriptor, kind='scalar')
 
         if self._emit_computed_assignment(ast.Name(id=name, ctx=ast.Store()), value, annotated_descriptor):
             return

@@ -246,6 +246,11 @@ class DaceProgram(pycommon.SDFGConvertible):
                 setattr(result, k, copy.deepcopy(v, memo))
         return result
 
+    def _reject_async_program(self) -> None:
+        if inspect.iscoroutinefunction(self.f) or inspect.isasyncgenfunction(self.f):
+            raise SyntaxError('Async @dace.program functions are unsupported. '
+                              'Use a synchronous @dace.program and call async helpers as callbacks.')
+
     def auto_optimize(self, sdfg: SDFG, symbols: Dict[str, int] = None) -> SDFG:
         """ Invoke automatic optimization heuristics on internal program. """
         # Avoid import loop
@@ -316,6 +321,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         :param use_cache: If True, reuses a cached schedule tree when possible.
         :return: A schedule-tree root object.
         """
+        self._reject_async_program()
         self.global_vars = _get_locals_and_globals(self.f)
 
         if self.methodobj is not None:
@@ -541,6 +547,8 @@ class DaceProgram(pycommon.SDFGConvertible):
         :param validate: If True, validates the resulting SDFG after creation.
         :return: The generated SDFG object.
         """
+
+        self._reject_async_program()
 
         # Obtain DaCe program as SDFG
         sdfg, cached = self._generate_pdp(args, kwargs, simplify=simplify)

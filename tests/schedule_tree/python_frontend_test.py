@@ -937,6 +937,16 @@ def test_async_function_produces_callback():
     assert any(c.reason == 'async function' for c in callbacks)
 
 
+def test_async_dace_program_to_schedule_tree_is_rejected():
+
+    @dace.program
+    async def async_prog(A: dace.float64[10]):
+        return A
+
+    with pytest.raises(SyntaxError, match='Async @dace.program functions are unsupported'):
+        async_prog.to_schedule_tree()
+
+
 def test_delete_noop_for_arrays():
     """del of a known DaCe array should be a no-op (no node emitted)."""
 

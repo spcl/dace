@@ -1,22 +1,28 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
+import asyncio
 import collections
 import copy
 from dataclasses import dataclass
+import functools
 import inspect
 import numbers
 import numpy
 import re
 import sympy
+import threading
 import warnings
 
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Tuple, Union
 import dace
 from dace import data, dtypes, symbolic, sdfg
 from dace.config import Config
 from dace.sdfg import SDFG
 from dace.frontend.python import astutils
 from dace.frontend.python.common import (DaceSyntaxError, SDFGConvertible, SDFGClosure, StringLiteral)
+
+if TYPE_CHECKING:
+    from dace.frontend.python.parser import DaceProgram
 
 
 class DaceRecursionError(Exception):
@@ -394,9 +400,37 @@ def flatten_callback(func: Callable, node: ast.Call, global_vars: Dict[str, Any]
     # Filter arguments from AST
     poscount = len(node.args)
 
+    def _wrap_async_callback(callback: Callable) -> Callable:
+        if not inspect.iscoroutinefunction(func):
+            return callback
+
+        @functools.wraps(callback)
+        def _wrapped(*all_args):
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                return asyncio.run(callback(*all_args))
+
+            holder: Dict[str, Any] = {}
+
+            def _runner() -> None:
+                try:
+                    holder['result'] = asyncio.run(callback(*all_args))
+                except BaseException as ex:
+                    holder['error'] = ex
+
+            worker = threading.Thread(target=_runner)
+            worker.start()
+            worker.join()
+            if 'error' in holder:
+                raise holder['error']
+            return holder.get('result')
+
+        return _wrapped
+
     # Nothing to do, early exit
     if not node.keywords and not instructions_exist:
-        return func
+        return _wrap_async_callback(func)
 
     keywords = [kw.arg for kw in node.keywords]
 
@@ -434,7 +468,7 @@ def flatten_callback(func: Callable, node: ast.Call, global_vars: Dict[str, Any]
 
             return cb_func
 
-    return make_cb(keywords, poscount, unflatten_instructions)
+    return _wrap_async_callback(make_cb(keywords, poscount, unflatten_instructions))
 
 
 class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
@@ -665,6 +699,9 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
                 newnode = ast.Name(id=cbname, ctx=ast.Load())
                 if isinstance(parent_node, ast.Call):
                     newnode.oldnode = parent_node.func
+
+                if inspect.iscoroutinefunction(value):
+                    return newnode
 
                 # Decorated or functions with missing source code
                 sast, _, _, _ = astutils.function_to_ast(value)
@@ -1699,7 +1736,7 @@ class CallTreeResolver(ast.NodeVisitor):
 
         return res
 
-    def _get_given_args(self, node: ast.Call, function: 'DaceProgram') -> Set[str]:
+    def _get_given_args(self, node: ast.Call, function) -> Set[str]:
         """ Returns a set of names of the given arguments from the positional and keyword arguments """
         from dace.frontend.python.parser import DaceProgram  # Avoid import loop
 
