@@ -5,11 +5,7 @@ import numpy as np
 import dace as dc
 import pytest
 import argparse
-from dace.fpga_testing import fpga_test, xilinx_test
-from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
-from dace.transformation.dataflow import StreamingMemory, StreamingComposition
-from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
-from dace.config import set_temporary
+from dace.transformation.auto.auto_optimize import auto_optimize
 
 XN, YN, N = (dc.symbol(s, dtype=dc.int64) for s in ['XN', 'YN', 'N'])
 
@@ -134,15 +130,8 @@ def run_mandelbrot2(device_type: dace.dtypes.DeviceType):
         sdfg = mandelbrot_kernel.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
         Z, N = sdfg(xmin, xmax, ymin, ymax, maxiter, horizon, XN=XN, YN=YN)
-    elif device_type == dace.dtypes.DeviceType.FPGA:
-        # Parse SDFG and apply FPGA friendly optimization
-        sdfg = mandelbrot_kernel.to_sdfg(simplify=True)
-        applied = sdfg.apply_transformations([FPGATransformSDFG])
-        assert applied == 1
-
-        sdfg.apply_transformations_repeated([InlineSDFG], print_report=True)
-        sdfg.specialize(dict(XN=XN, YN=YN))
-        Z, N = sdfg(xmin, xmax, ymin, ymax, maxiter, horizon)
+    else:
+        raise ValueError(f'Unsupported device type: {device_type}')
 
     # Compute ground truth and validate
     Z_ref, N_ref = ground_truth(xmin, xmax, ymin, ymax, XN, YN, maxiter)
@@ -162,16 +151,10 @@ def test_gpu():
     run_mandelbrot2(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.skip(reason="Parsing error (see issue #1139)")
-@fpga_test(assert_ii_1=False)
-def test_fpga():
-    return run_mandelbrot2(dace.dtypes.DeviceType.FPGA)
-
-
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]
@@ -180,5 +163,3 @@ if __name__ == "__main__":
         run_mandelbrot2(dace.dtypes.DeviceType.CPU)
     elif target == "gpu":
         run_mandelbrot2(dace.dtypes.DeviceType.GPU)
-    elif target == "fpga":
-        run_mandelbrot2(dace.dtypes.DeviceType.FPGA)

@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes implementing the different types of nodes of the stateful
     dataflow multigraph representation. """
 
@@ -20,6 +20,7 @@ from dace.frontend.operations import detect_reduction_type
 from dace.symbolic import issymbolic, pystr_to_symbolic
 from dace import data, subsets as sbs, dtypes
 from dace.sdfg import tasklet_validation as tval
+from dace.sdfg.type_inference import infer_types, infer_expr_type
 import pydoc
 import warnings
 
@@ -276,7 +277,7 @@ class AccessNode(Node):
     """ A node that accesses data in the SDFG. Denoted by a circular shape. """
 
     setzero = Property(dtype=bool, desc="Initialize to zero", default=False)
-    debuginfo = DebugInfoProperty()
+    debuginfo = DebugInfoProperty(allow_none=True)
     data = DataProperty(desc="Data (array, stream, scalar) to access")
 
     instrument = EnumProperty(dtype=dtypes.DataInstrumentationType,
@@ -411,7 +412,7 @@ class Tasklet(CodeNode):
                              default=CodeBlock("", dtypes.Language.CPP))
     code_exit = CodeProperty(desc="Extra code that is called on DaCe runtime cleanup",
                              default=CodeBlock("", dtypes.Language.CPP))
-    debuginfo = DebugInfoProperty()
+    debuginfo = DebugInfoProperty(allow_none=True)
 
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
                               desc="Measure execution statistics with given method",
@@ -551,9 +552,6 @@ class Tasklet(CodeNode):
             raise TypeError('Cannot infer output connectors of tasklet "%s", '
                             'not all input connectors have types' % str(self))
 
-        # Avoid import loop
-        from dace.codegen.tools.type_inference import infer_types
-
         # Get symbols defined at beginning of node, and infer all types in
         # tasklet
         syms = state.symbols_defined_at(self)
@@ -612,15 +610,11 @@ class NestedSDFG(CodeNode):
                              default=None,
                              allow_none=True,
                              desc='Path to a file containing the SDFG for this nested SDFG')
-    schedule = EnumProperty(dtype=dtypes.ScheduleType,
-                            desc="SDFG schedule",
-                            allow_none=True,
-                            default=dtypes.ScheduleType.Default)
     symbol_mapping = DictProperty(key_type=str,
                                   value_type=dace.symbolic.pystr_to_symbolic,
                                   desc="Mapping between internal symbols and their values, expressed as "
                                   "symbolic expressions")
-    debuginfo = DebugInfoProperty()
+    debuginfo = DebugInfoProperty(allow_none=True)
     is_collapsed = Property(dtype=bool, desc="Show this node/scope/state as collapsed", default=False)
 
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
@@ -640,7 +634,6 @@ class NestedSDFG(CodeNode):
                  inputs: Set[str],
                  outputs: Set[str],
                  symbol_mapping: Dict[str, Any] = None,
-                 schedule=dtypes.ScheduleType.Default,
                  location=None,
                  debuginfo=None,
                  path: Optional[str] = None):
@@ -650,7 +643,6 @@ class NestedSDFG(CodeNode):
         self.sdfg: 'dace.SDFG' = sdfg
         self.ext_sdfg_path = path
         self.symbol_mapping = symbol_mapping or {}
-        self.schedule = schedule
         self.debuginfo = debuginfo
 
     def load_external(self, context: Optional['dace.SDFGState']) -> None:
@@ -883,8 +875,6 @@ class MapEntry(EntryNode):
         return set(k for k in self._map.range.free_symbols if k not in dyn_inputs)
 
     def new_symbols(self, sdfg, state, symbols) -> Dict[str, dtypes.typeclass]:
-        from dace.codegen.tools.type_inference import infer_expr_type
-
         result = {}
         # Add map params
         for p, rng in zip(self._map.params, self._map.range):
@@ -1034,7 +1024,7 @@ class Map(object):
                              desc="How much iterations should be unrolled."
                              " To prevent unrolling, set this value to 1.")
     collapse = Property(dtype=int, default=1, desc="How many dimensions to collapse into the parallel range")
-    debuginfo = DebugInfoProperty()
+    debuginfo = DebugInfoProperty(allow_none=True)
     is_collapsed = Property(dtype=bool, desc="Show this node/scope/state as collapsed", default=False)
 
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
@@ -1200,8 +1190,6 @@ class ConsumeEntry(EntryNode):
         return result - dyn_inputs
 
     def new_symbols(self, sdfg, state, symbols) -> Dict[str, dtypes.typeclass]:
-        from dace.codegen.tools.type_inference import infer_expr_type
-
         result = {}
         # Add PE index
         result[self._consume.pe_index] = infer_expr_type(self._consume.num_pes, symbols)
@@ -1288,7 +1276,7 @@ class Consume(object):
     condition = CodeProperty(desc="Quiescence condition", allow_none=True, default=None)
     schedule = EnumProperty(dtype=dtypes.ScheduleType, desc="Consume schedule", default=dtypes.ScheduleType.Default)
     chunksize = Property(dtype=int, desc="Maximal size of elements to consume at a time", default=1)
-    debuginfo = DebugInfoProperty()
+    debuginfo = DebugInfoProperty(allow_none=True)
     is_collapsed = Property(dtype=bool, desc="Show this node/scope/state as collapsed", default=False)
 
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
@@ -1333,120 +1321,6 @@ ConsumeEntry = indirect_properties(Consume, lambda obj: obj.consume)(ConsumeEntr
 # ------------------------------------------------------------------------------
 
 
-@dace.serialize.serializable
-class PipelineEntry(MapEntry):
-
-    @staticmethod
-    def map_type():
-        return PipelineScope
-
-    @property
-    def pipeline(self):
-        return self._map
-
-    @pipeline.setter
-    def pipeline(self, val):
-        self._map = val
-
-    def new_symbols(self, sdfg, state, symbols) -> Dict[str, dtypes.typeclass]:
-        result = super().new_symbols(sdfg, state, symbols)
-        for param in self.map.params:
-            result[param] = dtypes.int64  # Overwrite params from Map
-        for param in self.pipeline.additional_iterators:
-            result[param] = dtypes.int64
-        result[self.pipeline.iterator_str()] = dtypes.int64
-        try:
-            result[self.pipeline.init_condition()] = dtypes.bool
-        except ValueError:
-            pass  # Overlaps
-        try:
-            result[self.pipeline.drain_condition()] = dtypes.bool
-        except ValueError:
-            pass  # Overlaps
-        return result
-
-
-@dace.serialize.serializable
-class PipelineExit(MapExit):
-
-    @staticmethod
-    def map_type():
-        return PipelineScope
-
-    @property
-    def pipeline(self):
-        return self._map
-
-    @pipeline.setter
-    def pipeline(self, val):
-        self._map = val
-
-
-@make_properties
-class PipelineScope(Map):
-    """ This a convenience-subclass of Map that allows easier implementation of
-        loop nests (using regular Map indices) that need a constant-sized
-        initialization and drain phase (e.g., N*M + c iterations), which would
-        otherwise need a flattened one-dimensional map.
-    """
-    init_size = SymbolicProperty(default=0, desc="Number of initialization iterations.")
-    init_overlap = Property(dtype=bool,
-                            default=True,
-                            desc="Whether to increment regular map indices during initialization.")
-    drain_size = SymbolicProperty(default=1, desc="Number of drain iterations.")
-    drain_overlap = Property(dtype=bool,
-                             default=True,
-                             desc="Whether to increment regular map indices during pipeline drain.")
-    additional_iterators = Property(dtype=dict, desc="Additional iterators, managed by the user inside the scope.")
-
-    def __init__(self,
-                 *args,
-                 init_size=0,
-                 init_overlap=False,
-                 drain_size=0,
-                 drain_overlap=False,
-                 additional_iterators={},
-                 **kwargs):
-        super(PipelineScope, self).__init__(*args, **kwargs)
-        self.init_size = init_size
-        self.init_overlap = init_overlap
-        self.drain_size = drain_size
-        self.drain_overlap = drain_overlap
-        self.additional_iterators = additional_iterators
-
-    def iterator_str(self):
-        return "__" + "".join(self.params)
-
-    def loop_bound_str(self):
-        from dace.codegen.common import sym2cpp
-        bound = 1
-        for begin, end, step in self.range:
-            bound *= (step + end - begin) // step
-        # Add init and drain phases when relevant
-        add_str = (" + " + sym2cpp(self.init_size) if self.init_size != 0 and not self.init_overlap else "")
-        add_str += (" + " + sym2cpp(self.drain_size) if self.drain_size != 0 and not self.drain_overlap else "")
-        return sym2cpp(bound) + add_str
-
-    def init_condition(self):
-        """Variable that can be checked to see if pipeline is currently in
-           initialization phase."""
-        if self.init_size == 0:
-            raise ValueError("No init condition exists for " + self.label)
-        return self.iterator_str() + "_init"
-
-    def drain_condition(self):
-        """Variable that can be checked to see if pipeline is currently in
-           draining phase."""
-        if self.drain_size == 0:
-            raise ValueError("No drain condition exists for " + self.label)
-        return self.iterator_str() + "_drain"
-
-
-PipelineEntry = indirect_properties(PipelineScope, lambda obj: obj.map)(PipelineEntry)
-
-# ------------------------------------------------------------------------------
-
-
 # Based on https://stackoverflow.com/a/2020083/6489142
 def full_class_path(cls_or_obj: Union[type, object]):
     if isinstance(cls_or_obj, type):
@@ -1472,7 +1346,7 @@ class LibraryNode(CodeNode):
                             desc="If set, determines the default device mapping of "
                             "the node upon expansion, if expanded to a nested SDFG.",
                             default=dtypes.ScheduleType.Default)
-    debuginfo = DebugInfoProperty()
+    debuginfo = DebugInfoProperty(allow_none=True)
 
     def __init__(self, name, *args, schedule=None, **kwargs):
         super().__init__(*args, **kwargs)
@@ -1543,7 +1417,7 @@ class LibraryNode(CodeNode):
         if isinstance(state_or_sdfg, SDFGState):
             # New interface: expand(state, implementation=None, **kwargs)
             actual_state = state_or_sdfg
-            sdfg = actual_state.parent_graph
+            sdfg = actual_state.parent
             implementation = state_or_impl
             expansion_kwargs = kwargs
         else:

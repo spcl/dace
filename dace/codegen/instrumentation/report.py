@@ -443,4 +443,4 @@ class InstrumentationReport(object):
         report_json['sdfgHash'] = self.sdfg_hash
         report_json['traceEvents'] = [ev.save() for ev in self.events]
         with open(filename, 'w') as fp:
-            json.dump(report_json, fp)
+            json.dump(report_json, fp, indent=None, separators=(',', ':'))

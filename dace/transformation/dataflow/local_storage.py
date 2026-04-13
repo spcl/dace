@@ -99,7 +99,7 @@ class LocalStorage(xf.SingleStateTransformation, ABC):
 
         to_data_mm = copy.deepcopy(invariant_memlet)
         from_data_mm = copy.deepcopy(invariant_memlet)
-        offset = subsets.Indices([r[0] for r in invariant_memlet.subset])
+        offset = subsets.Range.from_indices([r[0] for r in invariant_memlet.subset])
 
         # Reconnect, assuming one edge to the access node
         graph.remove_edge(original_edge)

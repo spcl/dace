@@ -29,8 +29,8 @@ def init_array(C, A, B, alpha, beta, n, m):
             C[i, j] = datatype((i * j + 3) % n) / m
 
 
-@dace.program(datatype[N, N], datatype[N, M], datatype[N, M], datatype[1], datatype[1])
-def syr2k(C, A, B, alpha, beta):
+@dace.program
+def syr2k(C: datatype[N, N], A: datatype[N, M], B: datatype[N, M], alpha: datatype[1], beta: datatype[1]):
 
     @dace.mapscope
     def mult_c_rows(i: _[0:N]):

@@ -141,8 +141,6 @@ class InlineSDFG(transformation.SingleStateTransformation):
 
         # Ensure that every connector has at least one corresponding access
         # node in the (nested) SDFG. Otherwise, inlining is not possible.
-        # NOTE: FPGA-compatible SDFGs can have input connectors for data that
-        # are only written.
         inp_data = {conn: set() for conn in in_connectors}
         for e in graph.in_edges(nested_sdfg):
             src = graph.memlet_path(e)[0].src
@@ -156,12 +154,31 @@ class InlineSDFG(transformation.SingleStateTransformation):
         rem_inpconns = dc(in_connectors)
         rem_outconns = dc(out_connectors)
         nstate: SDFGState = nested_sdfg.sdfg.nodes()[0]
+        # Verify that all connectors have a corresponding access node that is valid
+        valid_inpconns = set()
+        valid_outconns = set()
         for node in nstate.nodes():
             if isinstance(node, nodes.AccessNode):
+                if node.data not in valid_inpconns and node.data in in_connectors:
+                    if nstate.entry_node(node) is not None:
+                        pass  # Invalid matching node, in scope
+                    elif nstate.in_degree(node) > 0:
+                        pass  # Invalid matching node, has incoming edges
+                    else:
+                        valid_inpconns.add(node.data)
+                if node.data not in valid_outconns and node.data in out_connectors:
+                    if nstate.entry_node(node) is not None:
+                        pass  # Invalid matching node, in scope
+                    elif nstate.out_degree(node) > 0:
+                        pass  # Invalid matching node, has outgoing edges
+                    else:
+                        valid_outconns.add(node.data)
                 if node.data in rem_inpconns:
                     rem_inpconns.remove(node.data)
                 if node.data in rem_outconns:
                     rem_outconns.remove(node.data)
+        if len(valid_inpconns) != len(in_connectors) or len(valid_outconns) != len(out_connectors):
+            return False
         if len(rem_outconns) > 0:
             # Check if remaining outputs would disconnect anything or can be pruned
             for conn in rem_outconns:
@@ -246,9 +263,6 @@ class InlineSDFG(transformation.SingleStateTransformation):
         nsdfg_node = self.nested_sdfg
         nsdfg: SDFG = nsdfg_node.sdfg
         nstate: SDFGState = nsdfg.nodes()[0]
-
-        if nsdfg_node.schedule != dtypes.ScheduleType.Default:
-            infer_types.set_default_schedule_and_storage_types(nsdfg, [nsdfg_node.schedule])
 
         nsdfg_scope_entry = state.entry_node(nsdfg_node)
         nsdfg_scope_exit = (state.exit_node(nsdfg_scope_entry) if nsdfg_scope_entry is not None else None)
@@ -861,13 +875,6 @@ class InlineTransients(transformation.SingleStateTransformation):
     def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False):
         nsdfg = self.nsdfg
 
-        # Not every schedule is supported
-        if not permissive:
-            if nsdfg.schedule not in (None, dtypes.ScheduleType.Default, dtypes.ScheduleType.Sequential,
-                                      dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent,
-                                      dtypes.ScheduleType.GPU_Device):
-                return False
-
         candidates = InlineTransients._candidates(sdfg, graph, nsdfg)
         return len(candidates) > 0
 
@@ -1222,7 +1229,7 @@ class NestSDFG(transformation.MultiStateTransformation):
                         # If this transient has a symbolic shape, and if any symbol is in in the "ranges"
                         # of the state then substitute it with its max value (if it can be inferred).
                         # This is useful for the cases where the transient comes from a slice operation
-                        # (e.g. array[:i] or array[i:]), and we are on devices such as FPGAs that do not
+                        # (e.g. array[:i] or array[i:]), and we are on devices that do not
                         # support dynamic memory allocation.
 
                         propagation.propagate_states(nested_sdfg)

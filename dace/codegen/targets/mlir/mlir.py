@@ -1,8 +1,9 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import os
 from typing import TYPE_CHECKING
 from dace import registry, dtypes
 from dace.codegen.codeobject import CodeObject
-from dace.codegen.targets.target import TargetCodeGenerator
+from dace.codegen.target import TargetCodeGenerator
 from dace.codegen.targets.cpu import CPUCodeGen
 from dace.sdfg import nodes
 from dace.sdfg.sdfg import SDFG
@@ -40,3 +41,8 @@ class MLIRCodeGen(TargetCodeGenerator):
     def cmake_options():
         options = []
         return options
+
+    @staticmethod
+    def cmake_files():
+        mlir_cmake = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'mlir.cmake')
+        return [mlir_cmake]

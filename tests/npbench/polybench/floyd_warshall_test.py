@@ -6,10 +6,9 @@ import numpy as np
 import dace as dc
 import pytest
 import argparse
-from dace.fpga_testing import fpga_test
-from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG, StateFusion
+from dace.transformation.interstate import InlineSDFG, StateFusion
 from dace.transformation.dataflow import StreamingMemory, MapFusionVertical, StreamingComposition, PruneConnectors
-from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
+from dace.transformation.auto.auto_optimize import auto_optimize
 
 # Data set sizes
 # N
@@ -64,53 +63,6 @@ def run_floyd_warshall(device_type: dace.dtypes.DeviceType):
         sdfg = auto_optimize(sdfg, device_type)
         sdfg(path=path, N=N)
 
-    elif device_type == dace.dtypes.DeviceType.FPGA:
-        # Parse SDFG and apply FPGA friendly optimization
-        sdfg = kernel.to_sdfg(simplify=True)
-        # sdfg.apply_transformations_repeated([MapFusionVertical])
-        applied = sdfg.apply_transformations([FPGATransformSDFG])
-        assert applied == 1
-
-        sm_applied = sdfg.apply_transformations_repeated([InlineSDFG, StreamingMemory],
-                                                         [{}, {
-                                                             'storage': dace.StorageType.FPGA_Local
-                                                         }],
-                                                         print_report=True)
-        sc_applied = sdfg.apply_transformations_repeated([InlineSDFG, StreamingComposition],
-                                                         [{}, {
-                                                             'storage': dace.StorageType.FPGA_Local
-                                                         }],
-                                                         print_report=True,
-                                                         permissive=True)
-        assert sc_applied == 1
-
-        # Prune connectors after Streaming Composition
-        pruned_conns = sdfg.apply_transformations_repeated(PruneConnectors,
-                                                           options=[{
-                                                               'remove_unused_containers': True
-                                                           }])
-
-        assert pruned_conns == 1
-        sdfg.apply_transformations_repeated(StateFusion)
-
-        fpga_auto_opt.fpga_rr_interleave_containers_to_banks(sdfg)
-
-        # In this case, we want to generate the top-level state as an host-based state,
-        # not an FPGA kernel. We need to explicitly indicate that
-        for state in sdfg.states():
-            if any([isinstance(node, dace.nodes.NestedSDFG) for node in state.nodes()]):
-                state.location["is_FPGA_kernel"] = False
-
-        # we need to specialize both the top-level SDFG and the nested SDFG
-        sdfg.specialize(dict(N=N))
-        for state in sdfg.states():
-            for node in state.nodes():
-                if isinstance(node, dace.nodes.NestedSDFG):
-                    node.sdfg.specialize(dict(N=N))
-
-        # run program
-        sdfg(path=path)
-
     # Compute ground truth and validate result
     ground_truth(gt_path, N)
     assert np.allclose(path, gt_path)
@@ -126,15 +78,10 @@ def test_gpu():
     run_floyd_warshall(dace.dtypes.DeviceType.GPU)
 
 
-@fpga_test(assert_ii_1=False)
-def test_fpga():
-    return run_floyd_warshall(dace.dtypes.DeviceType.FPGA)
-
-
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]
@@ -143,5 +90,3 @@ if __name__ == "__main__":
         run_floyd_warshall(dace.dtypes.DeviceType.CPU)
     elif target == "gpu":
         run_floyd_warshall(dace.dtypes.DeviceType.GPU)
-    elif target == "fpga":
-        run_floyd_warshall(dace.dtypes.DeviceType.FPGA)

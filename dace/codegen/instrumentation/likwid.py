@@ -324,7 +324,7 @@ class LIKWIDInstrumentationGPU(InstrumentationProvider):
         the Likwid tool.
     """
 
-    perf_whitelist_schedules = [dtypes.ScheduleType.GPU_Default, dtypes.ScheduleType.GPU_Device]
+    perf_whitelist_schedules = [dtypes.ScheduleType.GPU_Device]
 
     def __init__(self):
         self._likwid_used = False

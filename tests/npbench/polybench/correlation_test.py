@@ -92,9 +92,6 @@ def run_correlation(device_type: dace.dtypes.DeviceType):
         corr = sdfg(float_n, data, M=M, N=N)
         os.environ['DACE_testing_serialization'] = last_value
 
-    elif device_type == dace.dtypes.DeviceType.FPGA:
-        pass  # Not Yet Implemented
-
     # Compute ground truth and validate result
 
     corr_ref = ground_truth(M, float_n_ref, data_ref)
@@ -160,7 +157,7 @@ def test_autodiff():
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]
@@ -170,5 +167,3 @@ if __name__ == "__main__":
         run_correlation_autodiff()
     elif target == "gpu":
         run_correlation(dace.dtypes.DeviceType.GPU)
-    elif target == "fpga":
-        run_correlation(dace.dtypes.DeviceType.FPGA)

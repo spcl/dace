@@ -8,29 +8,15 @@ import numbers
 import numpy
 import re
 import sympy
-import sys
 import warnings
 
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 import dace
-from dace import data, dtypes, subsets, symbolic, sdfg as sd
+from dace import data, dtypes, symbolic, sdfg
 from dace.config import Config
 from dace.sdfg import SDFG
 from dace.frontend.python import astutils
 from dace.frontend.python.common import (DaceSyntaxError, SDFGConvertible, SDFGClosure, StringLiteral)
-
-if sys.version_info < (3, 8):
-    BytesConstant = ast.Bytes
-    EllipsisConstant = ast.Ellipsis
-    NameConstant = ast.NameConstant
-    NumConstant = ast.Num
-    StrConstant = ast.Str
-else:
-    BytesConstant = ast.Constant
-    EllipsisConstant = ast.Constant
-    NameConstant = ast.Constant
-    NumConstant = ast.Constant
-    StrConstant = ast.Constant
 
 
 class DaceRecursionError(Exception):
@@ -149,14 +135,6 @@ class RewriteSympyEquality(ast.NodeTransformer):
             node.value = bool(node.value)
         elif isinstance(node.value, numpy.number):
             node.value = node.value.item()
-        return self.generic_visit(node)
-
-    # Compatibility for Python 3.7
-    def visit_Num(self, node):
-        if isinstance(node.n, numpy.bool_):
-            node.n = bool(node.n)
-        elif isinstance(node.n, numpy.number):
-            node.n = node.n.item()
         return self.generic_visit(node)
 
 
@@ -355,16 +333,10 @@ def _create_unflatten_instruction(arg: ast.AST, global_vars: Dict[str, Any]) -> 
         # Remake keyword argument names from AST
         kwarg_names = []
         for kw in arg.keys:
-            if sys.version_info >= (3, 8) and isinstance(kw, ast.Constant):
-                kwarg_names.append(kw.value)
-            elif sys.version_info < (3, 8) and isinstance(kw, ast.Num):
-                kwarg_names.append(kw.n)
-            elif sys.version_info < (3, 8) and isinstance(kw, (ast.Str, ast.Bytes)):
-                kwarg_names.append(kw.s)
-            elif sys.version_info < (3, 8) and isinstance(kw, ast.NameConstant):
-                kwarg_names.append(kw.value)
-            else:
+            if not isinstance(kw, ast.Constant):
                 raise NotImplementedError(f'Key type {type(kw).__name__} is not supported')
+
+            kwarg_names.append(kw.value)
 
         return (make_remake(kwarg_names), len(arg.keys), False)
     return (None, 1, False)
@@ -781,8 +753,7 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
     def visit_Call(self, node: ast.Call) -> Any:
         from dace.frontend.python.interface import in_program, inline  # Avoid import loop
 
-        if (hasattr(node.func, 'value') and isinstance(node.func.value, SDFGConvertible)
-                or sys.version_info < (3, 8) and hasattr(node.func, 'n') and isinstance(node.func.n, SDFGConvertible)):
+        if hasattr(node.func, 'value') and isinstance(node.func.value, SDFGConvertible):
             # Skip already-parsed calls
             return self.generic_visit(node)
 
@@ -886,10 +857,7 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
             parsed = [
                 not isinstance(v, ast.FormattedValue) or isinstance(v.value, ast.Constant) for v in visited.values
             ]
-            values = [
-                v.s if sys.version_info < (3, 8) and isinstance(v, ast.Str) else astutils.unparse(v.value)
-                for v in visited.values
-            ]
+            values = [astutils.unparse(v.value) for v in visited.values]
             return ast.copy_location(
                 ast.Constant(kind='', value=''.join(('{%s}' % v) if not p else v for p, v in zip(parsed, values))),
                 node)
@@ -1398,7 +1366,7 @@ class CallTreeResolver(ast.NodeVisitor):
 
     def visit_Call(self, node: ast.Call):
         # Only parse calls to parsed SDFGConvertibles
-        if not isinstance(node.func, (NumConstant, ast.Constant)):
+        if not isinstance(node.func, ast.Constant):
             self.seen_calls.add(astutils.unparse(node.func))
             return self.generic_visit(node)
         if hasattr(node.func, 'oldnode'):
@@ -1406,7 +1374,7 @@ class CallTreeResolver(ast.NodeVisitor):
                 self.seen_calls.add(astutils.unparse(node.func.oldnode.func))
             else:
                 self.seen_calls.add(astutils.rname(node.func.oldnode))
-        value = node.func.value if sys.version_info >= (3, 8) else node.func.n
+        value = node.func.value
 
         if not hasattr(value, '__sdfg__') or isinstance(value, SDFG):
             return self.generic_visit(node)

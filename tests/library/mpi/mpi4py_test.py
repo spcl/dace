@@ -362,8 +362,7 @@ def test_alltoall():
     val = func(rank=rank)
     ref = mpi4py_alltoall.f(rank, size)
 
-    if (not np.allclose(val, ref)):
-        raise (ValueError("The received values are not what I expected."))
+    assert np.allclose(val, ref), "The received values are not what I expected."
 
 
 if __name__ == "__main__":

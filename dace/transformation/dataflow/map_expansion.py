@@ -34,7 +34,7 @@ class MapExpansion(pm.SingleStateTransformation):
                                   dtype=dtypes.ScheduleType,
                                   default=dtypes.ScheduleType.Sequential,
                                   allow_none=True)
-    expansion_limit = Property(desc="How many unidimensional maps will be creaed, known as k. "
+    expansion_limit = Property(desc="How many unidimensional maps will be created, known as k. "
                                "If None, the default no limit is in place.",
                                dtype=int,
                                allow_none=True,

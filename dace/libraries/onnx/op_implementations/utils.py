@@ -98,7 +98,7 @@ def program_for_node(program,
 
     sdfg = result.to_sdfg()
 
-    if node.schedule in [dtypes.ScheduleType.GPU_Default] + dtypes.GPU_SCHEDULES:
+    if node.schedule in dtypes.GPU_SCHEDULES:
         sdfg.apply_gpu_transformations()
 
     return sdfg

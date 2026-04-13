@@ -1,35 +1,32 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Contains the DaCe code generator target dispatcher, which is responsible for
 flexible code generation with multiple backends by dispatching certain
 functionality to registered code generators based on user-defined predicates.
 """
 from dace.codegen.prettycode import CodeIOStream
-import aenum
-from dace import config, data as dt, dtypes, nodes, registry
+from dace import attr_enum, config, data as dt, dtypes, nodes
 from dace.memlet import Memlet
 from dace.codegen import exceptions as cgx, prettycode
-from dace.codegen.targets import target
+from dace.codegen import target
 from dace.sdfg import utils as sdutil, SDFG, SDFGState, ScopeSubgraphView
 from dace.sdfg.graph import MultiConnectorEdge
+from enum import auto
 from typing import Callable, Dict, List, Optional, Set, Tuple, Union
 
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
 
 
-@registry.extensible_enum
-class DefinedType(aenum.AutoNumberEnum):
+class DefinedType(attr_enum.ExtensibleAttributeEnum):
     """ Data types for `DefinedMemlets`.
 
         :see: DefinedMemlets
     """
-    Pointer = ()  # Pointer
-    Scalar = ()  # A copyable scalar moved by value (e.g., POD)
-    Object = ()  # An object moved by reference
-    Stream = ()  # A stream object moved by reference and accessed via a push/pop API
-    StreamArray = ()  # An array of Streams
-    FPGA_ShiftRegister = ()  # A shift-register object used in FPGA code generation
-    ArrayInterface = ()  # An object representing an interface to an array, used mostly in FPGA
+    Pointer = auto()  # Pointer
+    Scalar = auto()  # A copyable scalar moved by value (e.g., POD)
+    Object = auto()  # An object moved by reference
+    Stream = auto()  # A stream object moved by reference and accessed via a push/pop API
+    StreamArray = auto()  # An array of Streams
 
 
 class DefinedMemlets:

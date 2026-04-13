@@ -5,10 +5,8 @@ import numpy as np
 import dace as dc
 import pytest
 import argparse
-from dace.fpga_testing import fpga_test, xilinx_test
-from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
-from dace.transformation.dataflow import StreamingMemory, StreamingComposition
-from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
+from dace.transformation.interstate import InlineSDFG
+from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.autodiff import add_backward_pass
 
 # Data set sizes
@@ -53,20 +51,6 @@ def run_gesummv(device_type: dace.dtypes.DeviceType):
         sdfg = gesummv_kernel.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
         C = sdfg(alpha, beta, A, B, x, N=N)
-    elif device_type == dace.dtypes.DeviceType.FPGA:
-        # Parse SDFG and apply FPGA friendly optimization
-        sdfg = gesummv_kernel.to_sdfg(simplify=True)
-        applied = sdfg.apply_transformations([FPGATransformSDFG])
-        assert applied == 1
-
-        # Use FPGA Expansion for lib nodes, and expand them to enable further optimizations
-        from dace.libraries.blas import Gemv
-        Gemv.default_implementation = "FPGA_Accumulate"
-        sdfg.expand_library_nodes()
-        sdfg.apply_transformations_repeated([InlineSDFG], print_report=True)
-        sdfg.specialize(dict(N=N))
-        C = sdfg(alpha, beta, A, B, x)
-
     # Compute ground truth and validate
     C_ref = gesummv_kernel.f(alpha, beta, A, B, x)
     assert np.allclose(C, C_ref)
@@ -122,16 +106,10 @@ def test_autodiff():
     run_gesummv_autodiff()
 
 
-@pytest.mark.skip(reason="Xilinx synthesis fails")
-@fpga_test(assert_ii_1=False)
-def test_fpga():
-    return run_gesummv(dace.dtypes.DeviceType.FPGA)
-
-
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]
@@ -141,5 +119,3 @@ if __name__ == "__main__":
         run_gesummv_autodiff()
     elif target == "gpu":
         run_gesummv(dace.dtypes.DeviceType.GPU)
-    elif target == "fpga":
-        run_gesummv(dace.dtypes.DeviceType.FPGA)

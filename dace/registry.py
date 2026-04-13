@@ -2,11 +2,15 @@
 """ Contains class decorators to ease creating classes and enumerations whose
     subclasses and values can be registered externally. """
 
-import aenum
-from typing import Dict, Type
+from dace import attr_enum
+from enum import Enum
+from typing import Dict, Type, TypeVar, TYPE_CHECKING
+
+T = TypeVar('T')
+E = TypeVar('E', bound=attr_enum.ExtensibleAttributeEnum)
 
 
-def make_registry(cls: Type):
+def make_registry(cls: Type[T]) -> Type[T]:
     """
     Decorator that turns a class into a user-extensible class with three
     class methods: ``register``, ``unregister``, and ``extensions``.
@@ -73,30 +77,11 @@ def autoregister_params(**params):
     return lambda cls: autoregister(cls, **params)
 
 
-def undefined_safe_enum(cls: Type):
+def undefined_safe_enum(cls: type[E]) -> type[E]:
     """
     Decorator that adds a value ``Undefined`` to an enumeration.
     """
-    if not issubclass(cls, aenum.Enum):
-        raise TypeError("Only aenum.Enum subclasses may be used with undefined values")
-    aenum.extend_enum(cls, 'Undefined')
-    return cls
-
-
-def extensible_enum(cls: Type):
-    """
-    Decorator that adds a function called ``register`` to an enumeration,
-    extending its values. Note that new values cannot be unregistered.
-
-    New entries can be registered either with a single, string argument for
-    a new name (a value will be auto-assigned), or with additional arguments
-    for the value.
-    """
-    if not issubclass(cls, aenum.Enum):
-        raise TypeError("Only aenum.Enum subclasses may be made extensible")
-
-    def _extend_enum(cls: Type, name: str, *value):
-        aenum.extend_enum(cls, name, *value)
-
-    cls.register = lambda name, *args: _extend_enum(cls, name, *args)
+    if not issubclass(cls, attr_enum.ExtensibleAttributeEnum):
+        raise TypeError("Only ExtensibleAttributeEnum subclasses may be used with undefined values")
+    cls.register('Undefined')
     return cls
