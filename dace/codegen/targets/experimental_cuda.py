@@ -18,7 +18,7 @@ from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.common import update_persistent_desc
 from dace.codegen.targets.cpp import (codeblock_to_cpp, memlet_copy_to_absolute_strides, mangle_dace_state_struct_name,
                                       ptr, sym2cpp)
-from dace.codegen.targets.target import IllegalCopy, TargetCodeGenerator, make_absolute
+from dace.codegen.target import IllegalCopy, TargetCodeGenerator, make_absolute
 
 # DaCe transformation imports
 from dace.transformation.passes import analysis as ap
