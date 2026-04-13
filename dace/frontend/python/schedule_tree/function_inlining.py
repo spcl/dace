@@ -8,6 +8,7 @@ collects them, generates the callee schedule trees (in parallel when there are
 multiple independent callees), and inlines the results.
 """
 
+import ast
 import copy
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -75,7 +76,30 @@ def _callee_key(scope: tn.FunctionCallScope) -> int:
     multiple specialisations of the same function for different argument
     types, this should be extended to include the type signature.
     """
-    return id(scope._callee_program)
+    return hash((id(scope._callee_program), _specialization_key(scope)))
+
+
+def _specialization_key(scope: tn.FunctionCallScope) -> Tuple:
+    return (_specialization_values_key(getattr(scope, '_call_args',
+                                               [])), _specialization_kwargs_key(getattr(scope, '_call_kwargs', {})),
+            tuple(
+                sorted((name, ast.dump(lambda_node))
+                       for name, lambda_node in getattr(scope, '_lambda_bindings', {}).items())),
+            tuple(sorted((name, id(value)) for name, value in getattr(scope, '_callable_bindings', {}).items())))
+
+
+def _specialization_values_key(values: List[object]) -> Tuple:
+    return tuple(_specialization_value_key(value) for value in values)
+
+
+def _specialization_kwargs_key(values: Dict[str, object]) -> Tuple:
+    return tuple(sorted((name, _specialization_value_key(value)) for name, value in values.items()))
+
+
+def _specialization_value_key(value: object) -> Tuple[str, str]:
+    if isinstance(value, data.Data):
+        return ('descriptor', repr(value))
+    return (type(value).__name__, repr(value))
 
 
 def _build_callee_trees(scopes: List[tn.FunctionCallScope]) -> Dict[int, tn.ScheduleTreeRoot]:
@@ -115,9 +139,10 @@ def _parse_callee(scope: tn.FunctionCallScope) -> tn.ScheduleTreeRoot:
     leaf-level callees are fully inlined before we return.
     """
     callee = scope._callee_program
-    # Build concrete arguments from the argument mapping so that
-    # to_schedule_tree has the full type information it needs.
-    return callee.to_schedule_tree()
+    return callee._generate_schedule_tree(tuple(getattr(scope, '_call_args', [])),
+                                          dict(getattr(scope, '_call_kwargs', {})),
+                                          lambda_bindings=dict(getattr(scope, '_lambda_bindings', {})),
+                                          callable_bindings=dict(getattr(scope, '_callable_bindings', {})))
 
 
 # -------------------------------------------------------------------- #

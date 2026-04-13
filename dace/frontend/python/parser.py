@@ -872,11 +872,17 @@ class DaceProgram(pycommon.SDFGConvertible):
         _, key = self._load_sdfg(None, *args, **kwargs)
         return key
 
-    def _generate_schedule_tree(self, args: Tuple[Any], kwargs: Dict[str, Any]) -> 'tn.ScheduleTreeRoot':
+    def _generate_schedule_tree(self,
+                                args: Tuple[Any],
+                                kwargs: Dict[str, Any],
+                                *,
+                                lambda_bindings: Optional[Dict[str, ast.Lambda]] = None,
+                                callable_bindings: Optional[Dict[str, Any]] = None) -> 'tn.ScheduleTreeRoot':
         """Generates a schedule tree directly from the preprocessed frontend AST."""
         dace_func = self.f
 
         argtypes, _, gvars, specified = self._get_type_annotations(args, kwargs)
+        runtime_args = self._bind_schedule_tree_arguments(args, kwargs)
 
         if self.methodobj is not None:
             self.global_vars[self.objname] = self.methodobj
@@ -943,12 +949,21 @@ class DaceProgram(pycommon.SDFGConvertible):
         callback_mapping = {name: original_name for name, (original_name, _, _) in closure.callbacks.items()}
         arg_names = [name for name in self.argnames if name in argtypes]
 
+        seeded_callable_bindings = dict(callable_bindings or {})
+        for name, value in runtime_args.items():
+            if name in removed_args or name in seeded_callable_bindings:
+                continue
+            if callable(value):
+                seeded_callable_bindings[name] = value
+
         stree = schedule_tree_frontend.build_schedule_tree(self.name,
                                                            parsed_ast,
                                                            argtypes,
                                                            constants=constants,
                                                            callback_mapping=callback_mapping,
-                                                           arg_names=arg_names)
+                                                           arg_names=arg_names,
+                                                           lambda_bindings=lambda_bindings,
+                                                           callable_bindings=seeded_callable_bindings)
 
         for name, (_, descriptor, _, _) in closure.closure_arrays.items():
             if name in removed_args or name in stree.containers:
@@ -958,6 +973,13 @@ class DaceProgram(pycommon.SDFGConvertible):
                 stree.symbols.setdefault(free_symbol.name, free_symbol)
 
         return stree
+
+    def _bind_schedule_tree_arguments(self, args: Tuple[Any], kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        """Return a parameter-to-value map for direct schedule-tree specialization."""
+        filtered_kwargs = {k: v for k, v in kwargs.items() if k not in self.symbols}
+        parameters = [p for p in self.signature.parameters.values() if self.objname is None or p.name != self.objname]
+        bound = inspect.Signature(parameters).bind_partial(*args, **filtered_kwargs)
+        return dict(bound.arguments)
 
     def _generate_pdp(self,
                       args: Tuple[Any],

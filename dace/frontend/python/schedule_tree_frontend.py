@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from dace import data, dtypes, symbolic
 from dace.data.pydata import PythonList, PythonTuple
 from dace.frontend.python import astutils, memlet_parser, preprocessing
+from dace.frontend.python.schedule_tree.lambda_support import extract_lambda_ast, inline_lambda_call
 from dace.frontend.python.schedule_tree.static_evaluation import UNRESOLVED, try_resolve_static_value
 from dace.frontend.python.schedule_tree.match_support import UnsupportedMatchPatternError, lower_match_to_statements
 from dace.frontend.python.schedule_tree import (ExpressionPlanningContext, GenericExpressionSupportLibrary,
@@ -112,6 +113,8 @@ def build_schedule_tree(name: str,
                         constants: Optional[Dict[str, Tuple[data.Data, Any]]] = None,
                         callback_mapping: Optional[Dict[str, str]] = None,
                         arg_names: Optional[Sequence[str]] = None,
+                        lambda_bindings: Optional[Dict[str, ast.Lambda]] = None,
+                        callable_bindings: Optional[Dict[str, Any]] = None,
                         inline_calls: bool = True) -> tn.ScheduleTreeRoot:
     """
     Build a schedule tree directly from a preprocessed Python AST.
@@ -128,7 +131,9 @@ def build_schedule_tree(name: str,
                                         argtypes,
                                         constants=constants,
                                         callback_mapping=callback_mapping,
-                                        arg_names=arg_names)
+                                        arg_names=arg_names,
+                                        lambda_bindings=lambda_bindings,
+                                        callable_bindings=callable_bindings)
     root = builder.build()
     if inline_calls:
         resolve_function_calls(root)
@@ -145,7 +150,9 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
                  *,
                  constants: Optional[Dict[str, Tuple[data.Data, Any]]] = None,
                  callback_mapping: Optional[Dict[str, str]] = None,
-                 arg_names: Optional[Sequence[str]] = None) -> None:
+                 arg_names: Optional[Sequence[str]] = None,
+                 lambda_bindings: Optional[Dict[str, ast.Lambda]] = None,
+                 callable_bindings: Optional[Dict[str, Any]] = None) -> None:
         self.name = name
         self.parsed_ast = parsed_ast
         self.argtypes = {k: _clone_descriptor(v) for k, v in argtypes.items()}
@@ -160,6 +167,12 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         self.scope_stack: List[tn.ScheduleTreeScope] = [self.root]
         self.bindings: Dict[str, _Binding] = {}
         self.annotated_descriptors: Dict[str, data.Data] = {}
+        self.lambda_bindings: Dict[str, ast.Lambda] = {
+            key: copy.deepcopy(value)
+            for key, value in (lambda_bindings or {}).items()
+        }
+        self.callable_bindings: Dict[str, Any] = dict(callable_bindings or {})
+        self._global_lambda_cache: Dict[str, Optional[ast.Lambda]] = {}
         self.expression_support = GenericExpressionSupportLibrary()
         self.numpy_support = NumpySupportLibrary()
 
@@ -198,12 +211,13 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
     def visit_Expr(self, node: ast.Expr) -> None:
         if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
             return
-        if self._is_dace_program_call(node.value):
-            self._materialize_call_args(node.value)
-            self._emit_function_call(node.value)
+        value = self._inline_known_lambda_calls(node.value)
+        if self._is_dace_program_call(value):
+            self._materialize_call_args(value)
+            self._emit_function_call(value)
             return
         planned_value = self.expression_support.plan_expression(self._expression_planning_context(),
-                                                                node.value,
+                                                                value,
                                                                 materialize_root=False)
         if self._handle_expression(planned_value):
             return
@@ -212,29 +226,32 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
     def visit_Return(self, node: ast.Return) -> None:
         if node.value is None:
             values: List[CodeBlock] = []
-        elif self._is_dace_program_call(node.value):
-            # Materialize array-valued arguments, emit the function call;
-            # the inlining pass will propagate the callee's return value.
-            self._materialize_call_args(node.value)
-            tmp = self._fresh_transient_name('__stree_retval')
-            self._emit_function_call(node.value, return_targets=[tmp])
-            self._append_node(tn.ReturnNode(values=[CodeBlock(tmp)]))
-            return
-        elif isinstance(node.value, ast.Tuple):
-            planned_values = [
-                self.expression_support.plan_expression(self._expression_planning_context(),
-                                                        value,
-                                                        materialize_root=True) for value in node.value.elts
-            ]
-            values = [
-                CodeBlock(self._format_runtime_expression(self._materialize_return_value(v))) for v in planned_values
-            ]
         else:
-            planned_value = self.expression_support.plan_expression(self._expression_planning_context(),
-                                                                    node.value,
-                                                                    materialize_root=True)
-            planned_value = self._materialize_return_value(planned_value)
-            values = [CodeBlock(self._format_runtime_expression(planned_value))]
+            return_value = self._inline_known_lambda_calls(node.value)
+            if self._is_dace_program_call(return_value):
+                # Materialize array-valued arguments, emit the function call;
+                # the inlining pass will propagate the callee's return value.
+                self._materialize_call_args(return_value)
+                tmp = self._fresh_transient_name('__stree_retval')
+                self._emit_function_call(return_value, return_targets=[tmp])
+                self._append_node(tn.ReturnNode(values=[CodeBlock(tmp)]))
+                return
+            if isinstance(return_value, ast.Tuple):
+                planned_values = [
+                    self.expression_support.plan_expression(self._expression_planning_context(),
+                                                            value,
+                                                            materialize_root=True) for value in return_value.elts
+                ]
+                values = [
+                    CodeBlock(self._format_runtime_expression(self._materialize_return_value(v)))
+                    for v in planned_values
+                ]
+            else:
+                planned_value = self.expression_support.plan_expression(self._expression_planning_context(),
+                                                                        return_value,
+                                                                        materialize_root=True)
+                planned_value = self._materialize_return_value(planned_value)
+                values = [CodeBlock(self._format_runtime_expression(planned_value))]
         self._append_node(tn.ReturnNode(values=values))
 
     def _materialize_return_value(self, value: ast.AST) -> ast.AST:
@@ -533,7 +550,8 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
     def _initialize_root_scope(self) -> None:
         for name, descriptor in self.argtypes.items():
             self.root.containers[name] = _clone_descriptor(descriptor)
-            self.bindings[name] = _Binding(descriptor=_clone_descriptor(descriptor), kind='container')
+            kind = 'callback' if self._is_callback_descriptor(descriptor) else 'container'
+            self.bindings[name] = _Binding(descriptor=_clone_descriptor(descriptor), kind=kind)
             self.globals[name] = descriptor
             for free_symbol in descriptor.free_symbols:
                 self.root.symbols[free_symbol.name] = free_symbol
@@ -546,6 +564,12 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
                            target: ast.AST,
                            value: ast.AST,
                            annotated_descriptor: Optional[data.Data] = None) -> None:
+        if isinstance(target, ast.Name):
+            self._update_callable_binding(target.id, value)
+            self._update_lambda_binding(target.id, value)
+
+        value = self._inline_known_lambda_calls(value)
+
         # Intercept nested @dace.program calls — materialize array-valued
         # arguments into temporaries first, then emit FunctionCallScope.
         if self._is_dace_program_call(value):
@@ -644,11 +668,18 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
                                   source_expr=self._format_runtime_expression(value)))
                 return
             kind = 'reference' if isinstance(inferred_descriptor, data.Reference) else 'container'
+            if self._is_callback_descriptor(inferred_descriptor):
+                kind = 'callback'
             self._register_binding(name, inferred_descriptor, kind=kind)
         else:
             scalar_descriptor = self._infer_scalar_descriptor(value, annotated_descriptor)
             if scalar_descriptor is not None:
-                self._register_binding(name, scalar_descriptor, kind='scalar')
+                kind = 'callback' if self._is_callback_descriptor(scalar_descriptor) else 'scalar'
+                self._register_binding(name, scalar_descriptor, kind=kind)
+
+        if self._is_callback_expression(value):
+            self._append_node(tn.AssignNode(name=name, value=CodeBlock(self._format_runtime_expression(value))))
+            return
 
         if self._emit_computed_assignment(ast.Name(id=name, ctx=ast.Store()), value, annotated_descriptor):
             return
@@ -936,6 +967,9 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         return result
 
     def _infer_descriptor(self, node: ast.AST, target_name: str) -> Optional[data.Data]:
+        if isinstance(node, ast.Lambda):
+            return data.Scalar(dtypes.callback(None), transient=True)
+
         if isinstance(node, ast.Call):
             call_name = astutils.rname(node.func)
             if isinstance(node.func, ast.Attribute) and node.func.attr == 'reshape':
@@ -1350,22 +1384,36 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             return False
         return isinstance(value, ast.Attribute)
 
+    def _is_callback_expression(self, node: ast.AST) -> bool:
+        if self._resolve_known_lambda_node(node) is not None or self._resolve_known_callable(node) is not None:
+            return True
+        if isinstance(node, ast.Name):
+            binding = self.bindings.get(node.id)
+            if binding is not None and self._is_callback_descriptor(binding.descriptor):
+                return True
+        access = self._resolve_data_access(node)
+        if access is None:
+            return False
+        _, _, descriptor, view_descriptor = access
+        return self._is_callback_descriptor(view_descriptor or descriptor)
+
     # ------------------------------------------------------------------ #
     #  Function-call detection for nested @dace.program calls              #
     # ------------------------------------------------------------------ #
 
-    @staticmethod
-    def _is_dace_program_call(node: ast.AST) -> bool:
+    def _is_dace_program_call(self, node: ast.AST) -> bool:
         """Return True when *node* is a call to a ``@dace.program``."""
-        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Constant):
+        if not isinstance(node, ast.Call):
             return False
-        value = node.func.value
+        value = self._resolve_callable_value(node.func)
+        if value is UNRESOLVED:
+            return False
         from dace import SDFG
         return hasattr(value, '__sdfg__') and not isinstance(value, SDFG)
 
     def _extract_argument_mapping(self, call_node: ast.Call) -> Dict[str, str]:
         """Build ``{callee_param: caller_expression}`` from a call AST node."""
-        callee = call_node.func.value
+        callee = self._resolve_callable_value(call_node.func)
         sig = inspect.signature(callee.f)
         params = [p for p in sig.parameters.values() if p.name != 'self']
 
@@ -1377,11 +1425,62 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             mapping[kw.arg] = self._format_runtime_expression(kw.value)
         return mapping
 
+    def _call_parameter_nodes(self, call_node: ast.Call) -> Dict[str, ast.AST]:
+        callee = self._resolve_callable_value(call_node.func)
+        sig = inspect.signature(callee.f)
+        params = [param for param in sig.parameters.values() if param.name != 'self']
+        keywords = {kw.arg: kw.value for kw in call_node.keywords if kw.arg is not None}
+        bound = inspect.Signature(params).bind_partial(*call_node.args, **keywords)
+        return dict(bound.arguments)
+
+    def _specialize_call_argument(self, node: ast.AST) -> Any:
+        lambda_node = self._resolve_known_lambda_node(node)
+        if lambda_node is not None:
+            return self._callback_specialization_value()
+
+        callable_value = self._resolve_known_callable(node)
+        if callable_value is not None:
+            return callable_value
+
+        descriptor = self._infer_plannable_expression_descriptor(node)
+        if descriptor is not None:
+            specialized = _clone_descriptor(descriptor)
+            specialized.transient = False
+            return specialized
+
+        value = try_resolve_static_value(node, self._evaluation_context())
+        if value is not UNRESOLVED:
+            return value
+
+        return _unparse(node)
+
+    def _extract_call_specialization(
+            self, call_node: ast.Call) -> Tuple[List[Any], Dict[str, Any], Dict[str, ast.Lambda], Dict[str, Any]]:
+        parameter_nodes = self._call_parameter_nodes(call_node)
+        lambda_bindings: Dict[str, ast.Lambda] = {}
+        callable_bindings: Dict[str, Any] = {}
+
+        for param_name, argument_node in parameter_nodes.items():
+            lambda_node = self._resolve_known_lambda_node(argument_node)
+            if lambda_node is not None:
+                lambda_bindings[param_name] = lambda_node
+                continue
+
+            callable_value = self._resolve_known_callable(argument_node)
+            if callable_value is not None:
+                callable_bindings[param_name] = callable_value
+
+        args = [self._specialize_call_argument(arg) for arg in call_node.args]
+        kwargs = {kw.arg: self._specialize_call_argument(kw.value) for kw in call_node.keywords if kw.arg is not None}
+        return args, kwargs, lambda_bindings, callable_bindings
+
     def _emit_function_call(self, call_node: ast.Call, return_targets: Optional[List[str]] = None) -> None:
         """Create a :class:`FunctionCallScope` placeholder and append it."""
-        callee = call_node.func.value
+        callee = self._resolve_callable_value(call_node.func)
         callee_name = getattr(callee.f, '__name__', None) or getattr(callee, 'name', '<anonymous>')
         arguments = self._extract_argument_mapping(call_node)
+        specialization_args, specialization_kwargs, lambda_bindings, callable_bindings = self._extract_call_specialization(
+            call_node)
 
         scope = tn.FunctionCallScope(
             children=[],
@@ -1390,6 +1489,10 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         # Transient metadata consumed by the inlining pass.
         scope._callee_program = callee
         scope._call_node = call_node
+        scope._call_args = specialization_args
+        scope._call_kwargs = specialization_kwargs
+        scope._lambda_bindings = lambda_bindings
+        scope._callable_bindings = callable_bindings
         scope._return_targets = return_targets
         self._append_node(scope)
 
@@ -1397,9 +1500,13 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         """Materialize array-valued call arguments into temporaries in-place."""
         ctx = self._expression_planning_context()
         for i, arg in enumerate(call_node.args):
-            call_node.args[i] = self.expression_support.plan_expression(ctx, arg, materialize_root=True)
+            call_node.args[i] = self.expression_support.plan_expression(ctx,
+                                                                        self._inline_known_lambda_calls(arg),
+                                                                        materialize_root=True)
         for kw in call_node.keywords:
-            kw.value = self.expression_support.plan_expression(ctx, kw.value, materialize_root=True)
+            kw.value = self.expression_support.plan_expression(ctx,
+                                                               self._inline_known_lambda_calls(kw.value),
+                                                               materialize_root=True)
 
     def _should_lower_as_library_call(self, node: ast.Call) -> bool:
         call_name = astutils.rname(node.func)
@@ -1454,6 +1561,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
                                          resolve_output_target=self._resolve_output_target)
 
     def _infer_plannable_expression_descriptor(self, node: ast.AST) -> Optional[data.Data]:
+        node = self._inline_known_lambda_calls(node)
         generic_descriptor = self.expression_support.infer_expression_descriptor(self._expression_planning_context(),
                                                                                  node)
         if generic_descriptor is not None:
@@ -1475,6 +1583,100 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             return result
 
         return None
+
+    def _resolve_callable_value(self, node: ast.AST) -> Any:
+        if isinstance(node, ast.Name) and node.id in self.callable_bindings:
+            return self.callable_bindings[node.id]
+        if isinstance(node, ast.Constant):
+            return node.value
+        return try_resolve_static_value(node, self._evaluation_context())
+
+    def _is_callback_descriptor(self, descriptor: Optional[data.Data]) -> bool:
+        return isinstance(descriptor, data.Scalar) and isinstance(descriptor.dtype, dtypes.callback)
+
+    def _callback_specialization_value(self) -> data.Scalar:
+        return data.Scalar(dtypes.callback(None), transient=False)
+
+    def _resolve_known_callable(self, node: ast.AST) -> Optional[Any]:
+        value = self._resolve_callable_value(node)
+        if value is UNRESOLVED or not callable(value):
+            return None
+        from dace import SDFG
+        if hasattr(value, '__sdfg__') and not isinstance(value, SDFG):
+            return None
+        return value
+
+    def _update_callable_binding(self, name: str, value: ast.AST) -> None:
+        resolved = self._resolve_known_callable(value)
+        if resolved is None:
+            self.callable_bindings.pop(name, None)
+            return
+        self.callable_bindings[name] = resolved
+
+    def _update_lambda_binding(self, name: str, value: ast.AST) -> None:
+        lambda_node = self._resolve_known_lambda_node(value)
+        if lambda_node is None:
+            self.lambda_bindings.pop(name, None)
+            return
+        self.lambda_bindings[name] = lambda_node
+
+    def _resolve_known_lambda_node(self, node: ast.AST) -> Optional[ast.Lambda]:
+        if isinstance(node, ast.Lambda):
+            return copy.deepcopy(node)
+        if not isinstance(node, ast.Name):
+            return None
+        if node.id in self.lambda_bindings:
+            return copy.deepcopy(self.lambda_bindings[node.id])
+        if node.id in self.callable_bindings:
+            lambda_node = self._resolve_global_lambda_node(self.callable_bindings[node.id])
+            return copy.deepcopy(lambda_node) if lambda_node is not None else None
+        if node.id in self._global_lambda_cache:
+            cached = self._global_lambda_cache[node.id]
+            return copy.deepcopy(cached) if cached is not None else None
+        value = self.globals.get(node.id)
+        lambda_node = self._resolve_global_lambda_node(value) if value is not None else None
+        self._global_lambda_cache[node.id] = copy.deepcopy(lambda_node) if lambda_node is not None else None
+        return copy.deepcopy(lambda_node) if lambda_node is not None else None
+
+    def _resolve_global_lambda_node(self, value: Any) -> Optional[ast.Lambda]:
+        lambda_node = extract_lambda_ast(value)
+        if lambda_node is None:
+            return None
+
+        lambda_globals = copy.copy(getattr(value, '__globals__', {}))
+        closure = getattr(value, '__closure__', None)
+        freevars = getattr(getattr(value, '__code__', None), 'co_freevars', ())
+        if closure is not None:
+            for name, cell in zip(freevars, closure):
+                try:
+                    lambda_globals[name] = cell.cell_contents
+                except ValueError:
+                    lambda_globals[name] = None
+
+        resolver = preprocessing.GlobalResolver(lambda_globals, preserve_object_attributes=True)
+        resolver.toplevel_function = False
+        return ast.fix_missing_locations(resolver.visit(copy.deepcopy(lambda_node)))
+
+    def _inline_known_lambda_calls(self, node: ast.AST) -> ast.AST:
+        builder = self
+
+        class _KnownLambdaInliner(ast.NodeTransformer):
+
+            def visit_Call(self, call_node: ast.Call) -> ast.AST:
+                rewritten = ast.Call(
+                    func=self.visit(call_node.func),
+                    args=[self.visit(arg) for arg in call_node.args],
+                    keywords=[ast.keyword(arg=kw.arg, value=self.visit(kw.value)) for kw in call_node.keywords])
+                lambda_node = builder._resolve_known_lambda_node(rewritten.func)
+                if lambda_node is None:
+                    return ast.copy_location(rewritten, call_node)
+                try:
+                    inlined = inline_lambda_call(lambda_node, rewritten)
+                except TypeError:
+                    return ast.copy_location(rewritten, call_node)
+                return ast.copy_location(self.visit(inlined), call_node)
+
+        return ast.fix_missing_locations(_KnownLambdaInliner().visit(copy.deepcopy(node)))
 
     def _emit_if_chain(self, node: ast.If) -> None:
         parent = self.scope_stack[-1]
