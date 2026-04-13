@@ -873,13 +873,77 @@ def test_match_capture_guard_and_or_lower_natively():
     assert any(isinstance(c, tn.ElseScope) for c in stree.children)
 
 
-def test_match_sequence_falls_back_to_callback():
+def test_match_fixed_length_sequence_lowers_natively():
 
     @dace.program
     def match_prog(A: dace.int32[2], B: dace.int32[1]):
         match (A[0], A[1]):
             case (0, x):
                 B[0] = x
+            case _:
+                B[0] = -1
+
+    stree = match_prog.to_schedule_tree()
+
+    assert not any(isinstance(c, tn.PythonCallbackNode) for c in stree.preorder_traversal())
+    assert any(isinstance(c, tn.IfScope) for c in stree.children)
+    assert any(isinstance(c, tn.ElseScope) for c in stree.children)
+
+
+def test_match_sequence_guard_support_is_native():
+
+    @dace.program
+    def match_prog(A: dace.int32[2], B: dace.int32[1]):
+        match (A[0], A[1]):
+            case (x, y) if x < y and y > 0:
+                B[0] = x + y
+            case _:
+                B[0] = -1
+
+    stree = match_prog.to_schedule_tree()
+
+    assert not any(isinstance(c, tn.PythonCallbackNode) for c in stree.preorder_traversal())
+    if_scopes = [c for c in stree.children if isinstance(c, tn.IfScope)]
+    assert len(if_scopes) == 1
+    assert 'len(' in if_scopes[0].condition.as_string
+    assert '__stree_tmp[0]' in if_scopes[0].condition.as_string
+    assert '__stree_tmp[1]' in if_scopes[0].condition.as_string
+
+
+def test_match_mapping_case_forces_callback_for_whole_match():
+
+    @dace.program
+    def match_prog(A: dace.int32[2], B: dace.int32[1]):
+        match (A[0], A[1]):
+            case (0, x):
+                B[0] = x
+            case {'x': x}:
+                B[0] = x
+            case _:
+                B[0] = -1
+
+    stree = match_prog.to_schedule_tree()
+
+    callbacks = [c for c in stree.children if isinstance(c, tn.PythonCallbackNode)]
+    assert len(callbacks) >= 1
+    assert callbacks[0].reason == 'match/case'
+
+
+def test_match_class_case_forces_callback_for_whole_match():
+
+    class Pair:
+
+        def __init__(self, x: int, y: int):
+            self.x = x
+            self.y = y
+
+    pair = Pair(1, 2)
+
+    @dace.program
+    def match_prog(B: dace.int32[1]):
+        match pair:
+            case Pair(x, y):
+                B[0] = x + y
             case _:
                 B[0] = -1
 

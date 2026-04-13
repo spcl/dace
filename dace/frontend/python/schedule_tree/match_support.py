@@ -3,7 +3,7 @@
 
 import ast
 import copy
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Tuple
 
 
 class UnsupportedMatchPatternError(TypeError):
@@ -17,8 +17,9 @@ def lower_match_to_statements(node: ast.Match, subject_expr: ast.AST) -> List[as
     """Lower a supported ``match`` node to equivalent ``if`` statements.
 
     Supported patterns are limited to value, singleton, wildcard, capture,
-    alias, guarded cases, and ``or`` patterns without bindings.
-    Unsupported structural patterns raise :class:`UnsupportedMatchPatternError`.
+    alias, guarded cases, ``or`` patterns without bindings, and fixed-length
+    sequence patterns without starred items. Class and mapping patterns, and
+    more advanced structural patterns, still fall back to callbacks.
     """
     lowered: List[ast.stmt] = []
 
@@ -52,6 +53,20 @@ def _lower_pattern(pattern: ast.pattern, subject_expr: ast.AST) -> Tuple[Optiona
         return ast.Compare(left=copy.deepcopy(subject_expr), ops=[ast.Is()],
                            comparators=[ast.Constant(pattern.value)]), []
 
+    if isinstance(pattern, ast.MatchSequence):
+        if any(isinstance(subpattern, ast.MatchStar) for subpattern in pattern.patterns):
+            raise UnsupportedMatchPatternError('sequence patterns with starred items are not supported yet')
+
+        conditions: List[ast.AST] = [_fixed_length_sequence_condition(subject_expr, len(pattern.patterns))]
+        bindings: _Bindings = []
+        for index, subpattern in enumerate(pattern.patterns):
+            element_expr = ast.Subscript(value=copy.deepcopy(subject_expr), slice=ast.Constant(index), ctx=ast.Load())
+            element_condition, element_bindings = _lower_pattern(subpattern, element_expr)
+            if element_condition is not None:
+                conditions.append(element_condition)
+            bindings.extend(element_bindings)
+        return _combine_conditions(conditions), bindings
+
     if isinstance(pattern, ast.MatchAs):
         if pattern.pattern is None:
             if pattern.name is None:
@@ -71,11 +86,41 @@ def _lower_pattern(pattern: ast.pattern, subject_expr: ast.AST) -> Tuple[Optiona
             return None, []
         return ast.BoolOp(op=ast.Or(), values=[condition for condition, _ in alternatives]), []
 
+    if isinstance(pattern, (ast.MatchClass, ast.MatchMapping, ast.MatchStar)):
+        raise UnsupportedMatchPatternError(f'Unsupported match pattern: {type(pattern).__name__}')
+
     raise UnsupportedMatchPatternError(f'Unsupported match pattern: {type(pattern).__name__}')
 
 
 def _eq_condition(left: ast.AST, right: ast.AST) -> ast.Compare:
     return ast.Compare(left=copy.deepcopy(left), ops=[ast.Eq()], comparators=[copy.deepcopy(right)])
+
+
+def _fixed_length_sequence_condition(subject_expr: ast.AST, length: int) -> ast.AST:
+    return _combine_conditions([
+        ast.BoolOp(op=ast.Or(),
+                   values=[
+                       ast.Call(func=ast.Name(id='isinstance', ctx=ast.Load()),
+                                args=[copy.deepcopy(subject_expr),
+                                      ast.Name(id='tuple', ctx=ast.Load())],
+                                keywords=[]),
+                       ast.Call(func=ast.Name(id='isinstance', ctx=ast.Load()),
+                                args=[copy.deepcopy(subject_expr),
+                                      ast.Name(id='list', ctx=ast.Load())],
+                                keywords=[]),
+                   ]),
+        ast.Compare(left=ast.Call(func=ast.Name(id='len', ctx=ast.Load()),
+                                  args=[copy.deepcopy(subject_expr)],
+                                  keywords=[]),
+                    ops=[ast.Eq()],
+                    comparators=[ast.Constant(length)]),
+    ])
+
+
+def _combine_conditions(conditions: List[ast.AST]) -> ast.AST:
+    if len(conditions) == 1:
+        return conditions[0]
+    return ast.BoolOp(op=ast.And(), values=conditions)
 
 
 def _substitute_capture_loads(node: ast.AST, bindings: Dict[str, ast.AST]) -> ast.AST:
