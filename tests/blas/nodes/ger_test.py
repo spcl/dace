@@ -57,7 +57,7 @@ def run_ger(target: str,
 
     if target == "pure":
         ger_node, state, sdfg = pure_graph("pure", dace.float32, veclen)
-        ger_node.expand(sdfg, state)
+        ger_node.expand(state)
         sdfg.apply_transformations_repeated([InlineSDFG])
     else:
         raise ValueError("Unsupported target")

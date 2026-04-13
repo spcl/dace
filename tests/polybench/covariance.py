@@ -20,8 +20,8 @@ def init_array(data, cov, mean, n, m):
             data[i, j] = datatype(i * j) / m
 
 
-@dace.program(datatype[N, M], datatype[M, M], datatype[M])
-def covariance(data, cov, mean):
+@dace.program
+def covariance(data: datatype[N, M], cov: datatype[M, M], mean: datatype[M]):
     mean[:] = 0.0
 
     @dace.map

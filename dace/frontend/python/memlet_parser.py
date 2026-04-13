@@ -1,8 +1,6 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 import copy
-import sys
-from collections import namedtuple
 from typing import Any, Dict, List, Optional, Tuple, Union
 from dataclasses import dataclass
 
@@ -14,21 +12,6 @@ from dace.symbolic import pystr_to_symbolic, SymbolicType
 from dace.frontend.python.common import DaceSyntaxError
 
 MemletType = Union[ast.Call, ast.Attribute, ast.Subscript, ast.Name]
-
-if sys.version_info < (3, 8):
-    _simple_ast_nodes = (ast.Constant, ast.Name, ast.NameConstant, ast.Num)
-    BytesConstant = ast.Bytes
-    EllipsisConstant = ast.Ellipsis
-    NameConstant = ast.NameConstant
-    NumConstant = ast.Num
-    StrConstant = ast.Str
-else:
-    _simple_ast_nodes = (ast.Constant, ast.Name)
-    BytesConstant = ast.Constant
-    EllipsisConstant = ast.Constant
-    NameConstant = ast.Constant
-    NumConstant = ast.Constant
-    StrConstant = ast.Constant
 
 
 @dataclass
@@ -79,14 +62,14 @@ def pyexpr_to_symbolic(defined_arrays_and_symbols: Dict[str, Any], expr_ast: ast
 def _ndslice_to_subset(ndslice):
     is_tuple = [isinstance(x, tuple) for x in ndslice]
     if not any(is_tuple):
-        return subsets.Indices(ndslice)
-    else:
-        if not all(is_tuple):
-            # If a mix of ranges and indices is found, convert to range
-            for i in range(len(ndslice)):
-                if not is_tuple[i]:
-                    ndslice[i] = (ndslice[i], ndslice[i], 1)
-        return subsets.Range(ndslice)
+        return subsets.Range.from_indices(ndslice)
+
+    if not all(is_tuple):
+        # If a mix of ranges and indices is found, convert to range
+        for i in range(len(ndslice)):
+            if not is_tuple[i]:
+                ndslice[i] = (ndslice[i], ndslice[i], 1)
+    return subsets.Range(ndslice)
 
 
 def _parse_dim_atom(das, atom):
@@ -109,7 +92,7 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
 
     # Count new axes
     num_new_axes = sum(1 for dim in ast_ndslice
-                       if (dim is None or (isinstance(dim, (ast.Constant, NameConstant)) and dim.value is None)))
+                       if (dim is None or (isinstance(dim, ast.Constant) and dim.value is None)))
 
     for dim in ast_ndslice:
         if isinstance(dim, (str, list, slice)):
@@ -134,8 +117,7 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
             offsets.append(idx)
             idx += 1
             new_idx += 1
-        elif ((sys.version_info < (3, 8) and isinstance(dim, ast.Ellipsis)) or dim is Ellipsis
-              or (isinstance(dim, ast.Constant) and dim.value is Ellipsis)
+        elif (dim is Ellipsis or (isinstance(dim, ast.Constant) and dim.value is Ellipsis)
               or (isinstance(dim, ast.Name) and dim.id is Ellipsis)):
             if has_ellipsis:
                 raise IndexError('an index can only have a single ellipsis ("...")')
@@ -145,7 +127,7 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
                 ndslice[j] = (0, array.shape[j] - 1, 1)
                 idx += 1
                 new_idx += 1
-        elif (dim is None or (isinstance(dim, (ast.Constant, NameConstant)) and dim.value is None)):
+        elif (dim is None or (isinstance(dim, ast.Constant) and dim.value is None)):
             new_axes.append(new_idx)
             new_idx += 1
             # NOTE: Do not increment idx here

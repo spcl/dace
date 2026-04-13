@@ -199,14 +199,15 @@ def test_gemm_symbolic():
     rB = state.add_read("B")
     wC = state.add_write("C")
 
-    libnode = Gemm('_Gemm_', transA=False, transB=False, alpha=1.0, beta=0.0)
-    state.add_node(libnode)
+    with pytest.warns(match="may not match"):
+        libnode = Gemm('_Gemm_', transA=False, transB=False, alpha=1.0, beta=0.0)
+        state.add_node(libnode)
 
-    state.add_edge(rA, None, libnode, '_a', dace.Memlet.from_array(A, A_arr))
-    state.add_edge(rB, None, libnode, '_b', dace.Memlet.from_array(B, B_arr))
-    state.add_edge(libnode, '_c', wC, None, dace.Memlet.from_array(C, C_arr))
+        state.add_edge(rA, None, libnode, '_a', dace.Memlet.from_array(A, A_arr))
+        state.add_edge(rB, None, libnode, '_b', dace.Memlet.from_array(B, B_arr))
+        state.add_edge(libnode, '_c', wC, None, dace.Memlet.from_array(C, C_arr))
 
-    sdfg.validate()
+        sdfg.validate()
 
 
 def test_gemm_symbolic_1():
@@ -227,10 +228,8 @@ def test_gemm_symbolic_1():
     state.add_edge(rB, None, libnode, '_b', dace.Memlet.from_array(B, B_arr))
     state.add_edge(libnode, '_c', wC, None, dace.Memlet.from_array(C, C_arr))
 
-    try:
+    with pytest.raises(dace.sdfg.InvalidSDFGError):
         sdfg.validate()
-    except dace.sdfg.InvalidSDFGError:
-        pass
 
 
 if __name__ == "__main__":

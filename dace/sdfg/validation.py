@@ -43,8 +43,11 @@ def validate_control_flow_region(sdfg: 'SDFG',
     from dace.sdfg.scope import is_in_scope
     from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState
 
-    if len(region.source_nodes()) > 1 and region.start_block is None:
-        raise InvalidSDFGError("Starting block undefined", sdfg, None)
+    if len(region.source_nodes()) > 1:
+        try:
+            region.start_block
+        except:
+            raise InvalidSDFGError("Starting block is ambiguous or undefined.", sdfg, None)
 
     in_default_scope = None
 
@@ -271,8 +274,6 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
                     # This should actually be an error, but there is a lots of code that depends on it.
                     warnings.warn(f'Mismatch between constant and symbol type of "{const_name}", '
                                   f'expected to find "{const_type}" but found "{sdfg.symbols[const_name]}".')
-            else:
-                warnings.warn(f'Found constant "{const_name}" that does not refer to an array or a symbol.')
 
         # Validate data descriptors
         for name, desc in sdfg._arrays.items():
@@ -340,6 +341,9 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
         for desc in sdfg.arrays.values():
             for sym in desc.free_symbols:
                 symbols[str(sym)] = sym.dtype
+
+        if len(sdfg.nodes()) == 0:
+            raise InvalidSDFGError("SDFGs are required to contain at least one state.", sdfg, None)
 
         validate_control_flow_region(sdfg, sdfg, initialized_transients, symbols, references, **context)
 
@@ -866,7 +870,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             raise InvalidSDFGEdgeError("Illegal memlet between disjoint scopes", sdfg, state_id, eid)
 
         # Check dimensionality of memory access
-        if isinstance(e.data.subset, (sbs.Range, sbs.Indices)):
+        if isinstance(e.data.subset, sbs.Range):
             if e.data.subset.dims() != len(sdfg.arrays[e.data.data].shape):
                 raise InvalidSDFGEdgeError(
                     "Memlet subset uses the wrong dimensions"

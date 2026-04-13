@@ -97,7 +97,8 @@ def test_function_that_needs_replacement():
     A = np.random.rand(20)
     with dace.config.set_temporary('frontend', 'typed_callbacks_only', value=True):
         with pytest.raises(DaceSyntaxError):
-            notworking(A)
+            with pytest.warns(match="Automatically creating callback"):
+                notworking(A)
 
 
 @pytest.mark.parametrize('typed_callbacks', (False, True))
@@ -115,9 +116,12 @@ def test_nested_autoparse(typed_callbacks):
     with dace.config.set_temporary('frontend', 'typed_callbacks_only', value=typed_callbacks):
         if typed_callbacks:
             with pytest.raises(DaceSyntaxError, match='numpy.allclose'):
-                notworking2(A)
+                with pytest.warns(match="Automatically creating callback"):
+                    notworking2(A)
         else:
-            result = notworking2(A)
+            with pytest.warns(match="Automatically creating callback"):
+                with pytest.warns(match="Cannot infer return type"):
+                    result = notworking2(A)
             assert result is True
 
 
@@ -136,7 +140,8 @@ def test_nested_recursion_fail():
     A = np.random.rand(20)
     with dace.config.set_temporary('frontend', 'typed_callbacks_only', value=True):
         with pytest.raises(DaceSyntaxError, match='nested_a'):
-            recursive_autoparse(A)
+            with pytest.warns(match="due to recursion"):
+                recursive_autoparse(A)
 
 
 def test_nested_recursion2_fail():
@@ -157,7 +162,8 @@ def test_nested_recursion2_fail():
     A = np.random.rand(20)
     with dace.config.set_temporary('frontend', 'typed_callbacks_only', value=True):
         with pytest.raises(DaceSyntaxError, match='nested_'):
-            recursive_autoparse(A)
+            with pytest.warns(match="due to recursion"):
+                recursive_autoparse(A)
 
 
 def test_nested_autoparse_dec_fail():
@@ -176,7 +182,8 @@ def test_nested_autoparse_dec_fail():
     A = np.random.rand(20)
     with dace.config.set_temporary('frontend', 'typed_callbacks_only', value=True):
         with pytest.raises(DaceSyntaxError, match='notworking_nested'):
-            notworking3(A)
+            with pytest.warns(match="Automatically creating callback"):
+                notworking3(A)
 
 
 def freefunction2(A):

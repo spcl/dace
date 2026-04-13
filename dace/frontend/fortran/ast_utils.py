@@ -1,13 +1,7 @@
 # Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
 
-from fparser.api import parse
-import os
-import sys
-from fparser.common.readfortran import FortranStringReader, FortranFileReader
-
 #dace imports
 from dace import subsets
-from dace.data import Scalar
 from dace.sdfg import SDFG, SDFGState, InterstateEdge
 from dace import Memlet
 from dace.sdfg.nodes import Tasklet
@@ -15,7 +9,6 @@ from dace import dtypes
 from dace import symbolic as sym
 from dace import DebugInfo as di
 from dace import Language as lang
-from dace.properties import CodeBlock
 from numpy import finfo as finf
 from numpy import float64 as fl
 
@@ -61,7 +54,7 @@ def add_simple_state_to_sdfg(state: SDFGState, top_sdfg: SDFG, state_name: str):
     if state.last_sdfg_states.get(top_sdfg) is not None:
         substate = top_sdfg.add_state(state_name)
     else:
-        substate = top_sdfg.add_state(state_name, is_start_state=True)
+        substate = top_sdfg.add_state(state_name, is_start_block=True)
     finish_add_state_to_sdfg(state, top_sdfg, substate)
     return substate
 

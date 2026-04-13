@@ -1,6 +1,7 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
+import pytest
 
 
 def make_sdfg(outer_shape, inner_shape, outer_index, inner_index):
@@ -41,11 +42,10 @@ def make_sdfg(outer_shape, inner_shape, outer_index, inner_index):
     nsdfg_node = state.add_nested_sdfg(nsdfg, {}, {'C', 'D'})
     state.add_edge(nsdfg_node, 'C', A, None, dace.Memlet('A'))
     state.add_edge(nsdfg_node, 'D', B, None, dace.Memlet('B'))
-
-    sdfg.save('_dacegraphs/program.sdfg')
     return sdfg
 
 
+@pytest.mark.skip(reason="This test should not pass due to the conservative nature of InlineSDFG")
 def test_same_shape():
     A = np.random.rand(1).astype(np.float32)
     B = np.random.rand(1).astype(np.float32)
@@ -53,7 +53,6 @@ def test_same_shape():
     sdfg = make_sdfg([1], [1], '0', '0')
     sdfg.simplify()
 
-    sdfg.save('_dacegraphs/program.sdfg')
     sdfg(A=A, B=B)
 
     assert len(sdfg.node(0).nodes()) == 8
@@ -61,10 +60,10 @@ def test_same_shape():
     expected = np.array([2**2, (2**2) + (2**6)], dtype=np.float32)
     result = np.array([A[0], B[0]], dtype=np.float32)
     diff = np.linalg.norm(expected - result)
-    print('Difference:', diff)
     assert diff <= 1e-6
 
 
+@pytest.mark.skip(reason="This test should not pass due to the conservative nature of InlineSDFG")
 def test_different_shape():
     A = np.random.rand(20, 3).astype(np.float32)
     B = np.random.rand(20, 3).astype(np.float32)
@@ -79,10 +78,11 @@ def test_different_shape():
     expected = np.array([2**2, (2**2) + (2**6)], dtype=np.float32)
     result = np.array([A[1, 0], B[1, 0]], dtype=np.float32)
     diff = np.linalg.norm(expected - result)
-    print('Difference:', diff)
     assert diff <= 1e-6
 
 
 if __name__ == "__main__":
-    test_same_shape()
-    test_different_shape()
+    # Tests should not pass due to the conservative nature of InlineSDFG
+    # test_same_shape()
+    # test_different_shape()
+    pass

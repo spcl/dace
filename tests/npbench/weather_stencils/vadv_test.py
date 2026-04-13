@@ -335,7 +335,7 @@ def run_vadv_autodiff():
 
 def test_cpu(monkeypatch):
     # NOTE: Serialization fails because of "k - k" expression simplified to "0"
-    monkeypatch.setenv("DACE_testing_serialization", 0)
+    monkeypatch.setenv("DACE_testing_serialization", "0")
     run_vadv(dace.dtypes.DeviceType.CPU)
 
 

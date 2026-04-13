@@ -1,19 +1,16 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from __future__ import print_function
-
 import dace
 from dace.frontend.python.parser import DaceProgram
 from dace.codegen.exceptions import CompilationError
 from dace.sdfg.utils import load_precompiled_sdfg
 import numpy as np
-import os
 
 
 # Dynamically creates DaCe programs with the same name
 def program_generator(size: int, factor: float) -> DaceProgram:
 
-    @dace.program(dace.float64[size], dace.float64[size], size=size, factor=factor)
-    def lib_reuse(input, output):
+    @dace.program
+    def lib_reuse(input: dace.float64[size], output: dace.float64[size]):
 
         @dace.map(_[0:size])
         def tasklet(i):

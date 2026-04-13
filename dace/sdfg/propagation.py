@@ -16,6 +16,7 @@ from sympy import Symbol, ceiling
 from sympy.concrete.summations import Sum
 
 from dace import data, dtypes, registry, subsets, symbolic
+from dace.config import Config
 from dace.memlet import Memlet
 from dace.sdfg import graph as gr
 from dace.sdfg import nodes
@@ -1505,8 +1506,8 @@ def propagate_subset(memlets: List[Memlet],
         else:
             # No patterns found. Emit a warning and propagate the entire
             # array whenever symbols are used
-            warnings.warn('Cannot find appropriate memlet pattern to '
-                          'propagate %s through %s' % (str(subset), str(rng)))
+            if Config.get_bool('debugprint'):
+                print(f'Cannot find appropriate memlet pattern to propagate {subset} through {rng}')
             entire_array = subsets.Range.from_array(arr)
             paramset = set(map(str, params))
             # Fill in the entire array only if one of the parameters appears in the

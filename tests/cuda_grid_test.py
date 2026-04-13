@@ -1,7 +1,4 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from __future__ import print_function
-import os
-
 import dace
 from dace.transformation.dataflow import GPUTransformMap, Vectorization
 from dace.codegen import compiled_sdfg, common
@@ -20,8 +17,8 @@ def was_vectorized(sdfg: dace.SDFG) -> bool:
     return b'.128' in output
 
 
-@dace.program(dace.float32[N], dace.float32[N])
-def cudahello(V, Vout):
+@dace.program
+def cudahello(V: dace.float32[N], Vout: dace.float32[N]):
     # Transient variable
     @dace.map(_[0:N])
     def multiplication(i):

@@ -7,12 +7,11 @@ import dace
 import copy
 import uuid
 import pytest
-import gc
 import uuid
 
 from dace import SDFG, SDFGState, data as dace_data, symbolic as dace_symbolic
 from dace.sdfg import nodes
-from dace.transformation.dataflow import MapFusionVertical, MapExpansion
+from dace.transformation.dataflow import MapFusion, MapFusionVertical, MapExpansion
 
 
 def count_nodes(
@@ -3215,6 +3214,11 @@ def test_map_fusion_stable_label(forward_fusion: bool):
     assert all(np.allclose(ref[k], res[k]) for k in ref)
 
 
+def test_map_fusion_is_deprecated() -> None:
+    with pytest.deprecated_call(match="MapFusion is deprecated"):
+        MapFusion()
+
+
 if __name__ == '__main__':
     test_fusion_intrinsic_memlet_direction()
     test_fusion_dynamic_producer()
@@ -3262,3 +3266,4 @@ if __name__ == '__main__':
     test_map_fusion_multiple_top_level_connections_with_shared_intermediate(False)
     test_map_fusion_stable_label(forward_fusion=True)
     test_map_fusion_stable_label(forward_fusion=False)
+    test_map_fusion_is_deprecated()

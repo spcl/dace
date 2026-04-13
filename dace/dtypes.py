@@ -2,7 +2,6 @@
 """ A module that contains various DaCe type definitions. """
 import ctypes
 import json
-import aenum
 import inspect
 import numpy
 import re
@@ -10,71 +9,63 @@ from sympy import Float, Integer
 from collections import OrderedDict
 from functools import wraps
 from typing import Any, Dict, TYPE_CHECKING
+
 from dace.config import Config
-from dace.registry import extensible_enum, undefined_safe_enum
 
-if TYPE_CHECKING:
-    import enum
-    AutoNumberEnum = enum.Enum
-else:
-    AutoNumberEnum = aenum.AutoNumberEnum
+from enum import auto, Enum
+from dace.attr_enum import ExtensibleAttributeEnum
+from dace.registry import undefined_safe_enum
 
 
 @undefined_safe_enum
-@extensible_enum
-class DeviceType(AutoNumberEnum):
-    CPU = ()  #: Multi-core CPU
-    GPU = ()  #: GPU (AMD or NVIDIA)
-    Snitch = ()  #: Compute Cluster (RISC-V)
+class DeviceType(ExtensibleAttributeEnum):
+    CPU = auto()  #: Multi-core CPU
+    GPU = auto()  #: GPU (AMD or NVIDIA)
+    Snitch = auto()  #: Compute Cluster (RISC-V)
 
 
 @undefined_safe_enum
-@extensible_enum
-class StorageType(AutoNumberEnum):
+class StorageType(ExtensibleAttributeEnum):
     """ Available data storage types in the SDFG. """
 
-    Default = ()  #: Scope-default storage location
-    Register = ()  #: Local data on registers, stack, or equivalent memory
-    CPU_Pinned = ()  #: Host memory that can be DMA-accessed from accelerators
-    CPU_Heap = ()  #: Host memory allocated on heap
-    CPU_ThreadLocal = ()  #: Thread-local host memory
-    GPU_Global = ()  #: GPU global memory
-    GPU_Shared = ()  #: On-GPU shared memory
-    SVE_Register = ()  #: SVE register
-    Snitch_TCDM = ()  #: Cluster-private memory
-    Snitch_L2 = ()  #: External memory
-    Snitch_SSR = ()  #: Memory accessed by SSR streamer
+    Default = auto()  #: Scope-default storage location
+    Register = auto()  #: Local data on registers, stack, or equivalent memory
+    CPU_Pinned = auto()  #: Host memory that can be DMA-accessed from accelerators
+    CPU_Heap = auto()  #: Host memory allocated on heap
+    CPU_ThreadLocal = auto()  #: Thread-local host memory
+    GPU_Global = auto()  #: GPU global memory
+    GPU_Shared = auto()  #: On-GPU shared memory
+    SVE_Register = auto()  #: SVE register
+    Snitch_TCDM = auto()  #: Cluster-private memory
+    Snitch_L2 = auto()  #: External memory
+    Snitch_SSR = auto()  #: Memory accessed by SSR streamer
 
 
-@undefined_safe_enum
-@extensible_enum
-class OMPScheduleType(AutoNumberEnum):
+class OMPScheduleType(Enum):
     """ Available OpenMP shedule types for Maps with CPU-Multicore schedule. """
-    Default = ()  #: OpenMP library default
-    Static = ()  #: Static schedule
-    Dynamic = ()  #: Dynamic schedule
-    Guided = ()  #: Guided schedule
+    Default = auto()  #: OpenMP library default
+    Static = auto()  #: Static schedule
+    Dynamic = auto()  #: Dynamic schedule
+    Guided = auto()  #: Guided schedule
 
 
 @undefined_safe_enum
-@extensible_enum
-class ScheduleType(AutoNumberEnum):
+class ScheduleType(ExtensibleAttributeEnum):
     """ Available map schedule types in the SDFG. """
-    Default = ()  #: Scope-default parallel schedule
-    Sequential = ()  #: Sequential code (single-thread)
-    MPI = ()  #: MPI processes
-    CPU_Multicore = ()  #: OpenMP parallel for loop
-    CPU_Persistent = ()  #: OpenMP parallel region
-    SVE_Map = ()  #: Arm SVE
+    Default = auto()  #: Scope-default parallel schedule
+    Sequential = auto()  #: Sequential code (single-thread)
+    MPI = auto()  #: MPI processes
+    CPU_Multicore = auto()  #: OpenMP parallel for loop
+    CPU_Persistent = auto()  #: OpenMP parallel region
+    SVE_Map = auto()  #: Arm SVE
 
-    GPU_Device = ()  #: Kernel
-    GPU_ThreadBlock = ()  #: Thread-block code
-    GPU_ThreadBlock_Dynamic = ()  #: Allows rescheduling work within a block
-    GPU_Persistent = ()
-    GPU_Warp = ()
+    GPU_Device = auto()  #: Kernel
+    GPU_ThreadBlock = auto()  #: Thread-block code
+    GPU_ThreadBlock_Dynamic = auto()  #: Allows rescheduling work within a block
+    GPU_Persistent = auto()
 
-    Snitch = ()
-    Snitch_Multicore = ()
+    Snitch = auto()
+    Snitch_Multicore = auto()
 
 
 # A subset of GPU schedule types
@@ -104,87 +95,79 @@ GPU_STORAGES = [
 GPU_KERNEL_ACCESSIBLE_STORAGES = [StorageType.GPU_Global, StorageType.GPU_Shared, StorageType.Register]
 
 
-@undefined_safe_enum
-class ReductionType(AutoNumberEnum):
+class ReductionType(Enum):
     """ Reduction types natively supported by the SDFG compiler. """
 
-    Custom = ()  #: Defined by an arbitrary lambda function
-    Min = ()  #: Minimum value
-    Max = ()  #: Maximum value
-    Sum = ()  #: Sum
-    Product = ()  #: Product
-    Logical_And = ()  #: Logical AND (&&)
-    Bitwise_And = ()  #: Bitwise AND (&)
-    Logical_Or = ()  #: Logical OR (||)
-    Bitwise_Or = ()  #: Bitwise OR (|)
-    Logical_Xor = ()  #: Logical XOR (!=)
-    Bitwise_Xor = ()  #: Bitwise XOR (^)
-    Min_Location = ()  #: Minimum value and its location
-    Max_Location = ()  #: Maximum value and its location
-    Exchange = ()  #: Set new value, return old value
+    Custom = auto()  #: Defined by an arbitrary lambda function
+    Min = auto()  #: Minimum value
+    Max = auto()  #: Maximum value
+    Sum = auto()  #: Sum
+    Product = auto()  #: Product
+    Logical_And = auto()  #: Logical AND (&&)
+    Bitwise_And = auto()  #: Bitwise AND (&)
+    Logical_Or = auto()  #: Logical OR (||)
+    Bitwise_Or = auto()  #: Bitwise OR (|)
+    Logical_Xor = auto()  #: Logical XOR (!=)
+    Bitwise_Xor = auto()  #: Bitwise XOR (^)
+    Min_Location = auto()  #: Minimum value and its location
+    Max_Location = auto()  #: Maximum value and its location
+    Exchange = auto()  #: Set new value, return old value
 
     # Only supported in OpenMP
-    Sub = ()  #: Subtraction (only supported in OpenMP)
-    Div = ()  #: Division (only supported in OpenMP)
+    Sub = auto()  #: Subtraction (only supported in OpenMP)
+    Div = auto()  #: Division (only supported in OpenMP)
 
 
-@undefined_safe_enum
-@extensible_enum
-class AllocationLifetime(AutoNumberEnum):
+class AllocationLifetime(Enum):
     """ Options for allocation span (when to allocate/deallocate) of data. """
 
-    Scope = ()  #: Allocated/Deallocated on innermost scope start/end
-    State = ()  #: Allocated throughout the containing state
-    SDFG = ()  #: Allocated throughout the innermost SDFG (possibly nested)
-    Global = ()  #: Allocated throughout the entire program (outer SDFG)
-    Persistent = ()  #: Allocated throughout multiple invocations (init/exit)
-    External = ()  #: Allocated and managed outside the generated code
+    Scope = auto()  #: Allocated/Deallocated on innermost scope start/end
+    State = auto()  #: Allocated throughout the containing state
+    SDFG = auto()  #: Allocated throughout the innermost SDFG (possibly nested)
+    Global = auto()  #: Allocated throughout the entire program (outer SDFG)
+    Persistent = auto()  #: Allocated throughout multiple invocations (init/exit)
+    External = auto()  #: Allocated and managed outside the generated code
 
 
 @undefined_safe_enum
-@extensible_enum
-class Language(AutoNumberEnum):
+class Language(ExtensibleAttributeEnum):
     """ Available programming languages for SDFG tasklets. """
 
-    Python = ()
-    CPP = ()
-    OpenCL = ()
-    SystemVerilog = ()
-    MLIR = ()
+    Python = auto()
+    CPP = auto()
+    OpenCL = auto()
+    SystemVerilog = auto()
+    MLIR = auto()
 
 
 @undefined_safe_enum
-@extensible_enum
-class InstrumentationType(AutoNumberEnum):
+class InstrumentationType(ExtensibleAttributeEnum):
     """ Types of instrumentation providers. """
 
-    No_Instrumentation = ()
-    Timer = ()
-    PAPI_Counters = ()
-    LIKWID_CPU = ()
-    LIKWID_GPU = ()
-    GPU_Events = ()
-    GPU_TX_MARKERS = ()
+    No_Instrumentation = auto()
+    Timer = auto()
+    PAPI_Counters = auto()
+    LIKWID_CPU = auto()
+    LIKWID_GPU = auto()
+    GPU_Events = auto()
+    GPU_TX_MARKERS = auto()
 
 
 @undefined_safe_enum
-@extensible_enum
-class DataInstrumentationType(AutoNumberEnum):
+class DataInstrumentationType(ExtensibleAttributeEnum):
     """ Types of data container instrumentation providers. """
 
-    No_Instrumentation = ()
-    Save = ()
-    Restore = ()
+    No_Instrumentation = auto()
+    Save = auto()
+    Restore = auto()
 
 
-@undefined_safe_enum
-@extensible_enum
-class TilingType(AutoNumberEnum):
+class TilingType(Enum):
     """ Available tiling types in a `StripMining` transformation. """
 
-    Normal = ()
-    CeilRange = ()
-    NumberOfTiles = ()
+    Normal = auto()
+    CeilRange = auto()
+    NumberOfTiles = auto()
 
 
 # Maps from ScheduleType to default StorageType
@@ -241,9 +224,9 @@ _CTYPES = {
     complex: "dace::complex64",
     bool: "bool",
     numpy.bool_: "bool",
-    numpy.int8: "char",
-    numpy.int16: "short",
-    numpy.int32: "int",
+    numpy.int8: "int8_t",
+    numpy.int16: "int16_t",
+    numpy.int32: "int32_t",
     numpy.intc: "int",
     numpy.int64: "int64_t",
     numpy.uint8: "uint8_t",
@@ -783,7 +766,7 @@ class struct(typeclass):
 
     def as_ctypes(self):
         """ Returns the ctypes version of the typeclass. """
-        self_as_json = json.dumps(self.to_json(), sort_keys=True)
+        self_as_json = json.dumps(self.to_json(), sort_keys=True, separators=(',', ':'))
         if self_as_json in struct.STRUCT_CTYPES:
             return struct.STRUCT_CTYPES[self_as_json]
         # Populate the ctype fields for the struct class.
@@ -840,43 +823,6 @@ class pyobject(opaque):
 
     def to_python(self, obj_id: int):
         return ctypes.cast(obj_id, ctypes.py_object).value
-
-
-class Float32sr(typeclass):
-
-    def __init__(self):
-        self.type = numpy.float32
-        self.bytes = 4
-        self.dtype = self
-        self.typename = "float"
-        self.stochastically_rounded = True
-
-    def to_json(self):
-        return 'float32sr'
-
-    @staticmethod
-    def from_json(json_obj, context=None):
-        from dace.symbolic import pystr_to_symbolic  # must be included!
-        return float32sr()
-
-    @property
-    def ctype(self):
-        return "dace::float32sr"
-
-    @property
-    def ctype_unaligned(self):
-        return self.ctype
-
-    def as_ctypes(self):
-        """ Returns the ctypes version of the typeclass. """
-        return _FFI_CTYPES[self.type]
-
-    def as_numpy_dtype(self):
-        return numpy.dtype(self.type)
-
-    @property
-    def base_type(self):
-        return self
 
 
 class compiletime:
@@ -947,7 +893,7 @@ class callback(typeclass):
         """ Returns the ctypes version of the typeclass. """
         from dace import data
 
-        return_ctype = self.cfunc_return_type().as_ctypes()
+        return_ctype = self.cfunc_return_type().as_ctypes() if len(self.return_types) > 0 else None
         input_ctypes = []
 
         for some_arg in self.input_types:
@@ -1249,7 +1195,6 @@ if TYPE_CHECKING:
     class string(_DaCeArray, npt.NDArray[numpy.str_]): ...
     class vector(_DaCeArray, npt.NDArray[numpy.void]): ...
     class MPI_Request(_DaCeArray, npt.NDArray[numpy.void]): ...
-    class float32sr(_DaCeArray, npt.NDArray[numpy.float32]): ...
     class gpuStream_t(_DaCeArray, npt.NDArray[numpy.void]): ...
     # yapf: enable
 else:
@@ -1272,29 +1217,6 @@ else:
     string = stringtype()
     MPI_Request = opaque('MPI_Request')
     gpuStream_t = opaque('gpuStream_t')
-    float32sr = Float32sr()
-
-
-@undefined_safe_enum
-@extensible_enum
-class Typeclasses(AutoNumberEnum):
-    bool = bool
-    bool_ = bool_
-    int8 = int8
-    int16 = int16
-    int32 = int32
-    int64 = int64
-    uint8 = uint8
-    uint16 = uint16
-    uint32 = uint32
-    uint64 = uint64
-    float16 = float16
-    float32 = float32
-    float64 = float64
-    complex64 = complex64
-    complex128 = complex128
-    gpuStream_t = gpuStream_t
-
 
 _bool = bool
 
@@ -1416,28 +1338,42 @@ class DebugInfo:
     """ Source code location identifier of a node/edge in an SDFG. Used for
         IDE and debugging purposes. """
 
-    def __init__(self, start_line, start_column=0, end_line=-1, end_column=0, filename=None):
+    def __init__(self, start_line, start_column=0, end_line=-1, end_column=0, filename=None, file_index=None):
         self.start_line = start_line
         self.end_line = end_line if end_line >= 0 else start_line
         self.start_column = start_column
         self.end_column = end_column
+
+        if filename is not None and file_index is not None:
+            raise ValueError("Cannot specify both filename and file_index in DebugInfo")
+
         self.filename = filename
+        self.file_index = file_index
 
     # NOTE: Manually marking as serializable to avoid an import loop
     # The data structure is a property on its own (pointing to a range of code),
     # so it is serialized as a dictionary directly.
     def to_json(self):
-        return dict(type='DebugInfo',
-                    start_line=self.start_line,
-                    end_line=self.end_line,
-                    start_column=self.start_column,
-                    end_column=self.end_column,
-                    filename=self.filename)
+        result = {'type': 'DebugInfo'}
+        if self.start_line is not None:
+            result['start_line'] = self.start_line
+        if self.end_line is not None and self.end_line != self.start_line:
+            result['end_line'] = self.end_line
+        if self.start_column:
+            result['start_column'] = self.start_column
+        if self.end_column and self.end_column != self.start_column:
+            result['end_column'] = self.end_column
+        if self.file_index is not None:
+            result['file_index'] = self.file_index
+        elif self.filename:
+            result['filename'] = self.filename
+
+        return result
 
     @staticmethod
-    def from_json(json_obj, context=None):
-        return DebugInfo(json_obj['start_line'], json_obj['start_column'], json_obj['end_line'], json_obj['end_column'],
-                         json_obj['filename'])
+    def from_json(json_obj: dict[str, int | str], context=None):
+        return DebugInfo(json_obj.get('start_line'), json_obj.get('start_column', 0), json_obj.get('end_line', -1),
+                         json_obj.get('end_column', 0), json_obj.get('filename'), json_obj.get('file_index'))
 
     def __deepcopy__(self, memo) -> 'DebugInfo':
         """Performs a `deepcopy` of `self`.

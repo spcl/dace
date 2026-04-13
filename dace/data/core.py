@@ -56,7 +56,7 @@ class Data:
                 if isinstance(v, Data):
                     v.transient = value
 
-    dtype = TypeClassProperty(default=dtypes.int32, choices=dtypes.Typeclasses)
+    dtype = TypeClassProperty(default=dtypes.int32)
     shape = ShapeProperty(default=[])
     transient = Property(dtype=bool, default=False, setter=_transient_setter)
     storage = EnumProperty(dtype=dtypes.StorageType, desc="Storage location", default=dtypes.StorageType.Default)

@@ -934,7 +934,7 @@ def test_ufunc_maximum_ff(A: dace.float32[10], B: dace.float32[10]):
     return np.maximum(A, B)
 
 
-@compare_numpy_output(check_dtype=True)
+@compare_numpy_output(check_dtype=True, expect_div_by_zero=True)
 def test_ufunc_maximum_nan_ff(A: dace.float32[10], B: dace.float32[10]):
     C = np.true_divide(A, 0)
     return np.maximum(C, B)
@@ -945,7 +945,7 @@ def test_ufunc_fmax_ff(A: dace.float32[10], B: dace.float32[10]):
     return np.fmax(A, B)
 
 
-@compare_numpy_output(check_dtype=True)
+@compare_numpy_output(check_dtype=True, expect_div_by_zero=True)
 def test_ufunc_fmax_nan_ff(A: dace.float32[10], B: dace.float32[10]):
     C = np.true_divide(A, 0)
     return np.fmax(C, B)
@@ -956,7 +956,7 @@ def test_ufunc_minimum_ff(A: dace.float32[10], B: dace.float32[10]):
     return np.minimum(A, B)
 
 
-@compare_numpy_output(check_dtype=True)
+@compare_numpy_output(check_dtype=True, expect_div_by_zero=True)
 def test_ufunc_minimum_nan_ff(A: dace.float32[10], B: dace.float32[10]):
     C = np.true_divide(A, 0)
     return np.minimum(C, B)
@@ -967,7 +967,7 @@ def test_ufunc_fmin_ff(A: dace.float32[10], B: dace.float32[10]):
     return np.fmin(A, B)
 
 
-@compare_numpy_output(check_dtype=True)
+@compare_numpy_output(check_dtype=True, expect_div_by_zero=True)
 def test_ufunc_fmin_nan_ff(A: dace.float32[10], B: dace.float32[10]):
     C = np.true_divide(A, 0)
     return np.fmin(C, B)

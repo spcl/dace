@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import functools
+import json
 from typing import List
 
 import dace
@@ -178,8 +179,10 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
             if not filecmp.cmp(f'{tmp_dir}/test.sdfg', f'{tmp_dir}/test2.sdfg'):
                 with open(f'{tmp_dir}/test.sdfg', 'r') as f1:
                     with open(f'{tmp_dir}/test2.sdfg', 'r') as f2:
-                        diff = difflib.unified_diff(f1.readlines(),
-                                                    f2.readlines(),
+                        data1 = json.dumps(json.load(f1), indent=2).splitlines(keepends=True)
+                        data2 = json.dumps(json.load(f2), indent=2).splitlines(keepends=True)
+                        diff = difflib.unified_diff(data1,
+                                                    data2,
                                                     fromfile='test.sdfg  (first save)',
                                                     tofile='test2.sdfg (after roundtrip)')
                 diff = ''.join(diff)
