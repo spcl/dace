@@ -836,7 +836,7 @@ def test_import_produces_callback():
     assert any(c.reason == 'import' for c in callbacks)
 
 
-def test_match_wrapped_as_callback():
+def test_match_lowers_to_if_chain():
 
     @dace.program
     def match_prog(A: dace.int32[1]):
@@ -845,6 +845,43 @@ def test_match_wrapped_as_callback():
                 A[0] = 1
             case _:
                 A[0] = 2
+
+    stree = match_prog.to_schedule_tree()
+
+    assert not any(isinstance(c, tn.PythonCallbackNode) for c in stree.children)
+    assert any(isinstance(c, tn.IfScope) for c in stree.children)
+    assert any(isinstance(c, tn.ElseScope) for c in stree.children)
+
+
+def test_match_capture_guard_and_or_lower_natively():
+
+    @dace.program
+    def match_prog(A: dace.int32[1], B: dace.int32[1]):
+        match A[0]:
+            case 0 | 1:
+                B[0] = 7
+            case x if x > 2:
+                B[0] = x
+            case _:
+                B[0] = -1
+
+    stree = match_prog.to_schedule_tree()
+
+    assert not any(isinstance(c, tn.PythonCallbackNode) for c in stree.preorder_traversal())
+    assert any(isinstance(c, tn.IfScope) for c in stree.children)
+    assert any(isinstance(c, tn.ElifScope) for c in stree.children)
+    assert any(isinstance(c, tn.ElseScope) for c in stree.children)
+
+
+def test_match_sequence_falls_back_to_callback():
+
+    @dace.program
+    def match_prog(A: dace.int32[2], B: dace.int32[1]):
+        match (A[0], A[1]):
+            case (0, x):
+                B[0] = x
+            case _:
+                B[0] = -1
 
     stree = match_prog.to_schedule_tree()
 

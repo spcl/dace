@@ -12,6 +12,7 @@ from dace import data, dtypes, symbolic
 from dace.data.pydata import PythonList, PythonTuple
 from dace.frontend.python import astutils, memlet_parser, preprocessing
 from dace.frontend.python.schedule_tree.static_evaluation import UNRESOLVED, try_resolve_static_value
+from dace.frontend.python.schedule_tree.match_support import UnsupportedMatchPatternError, lower_match_to_statements
 from dace.frontend.python.schedule_tree import (ExpressionPlanningContext, GenericExpressionSupportLibrary,
                                                 NumpyLoweringContext, NumpySupportLibrary, ScheduleTreeTypeInference,
                                                 _Binding, resolve_function_calls)
@@ -417,8 +418,15 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         self._wrap_as_callback(node, 'await')
 
     def visit_Match(self, node: ast.AST) -> None:
-        # Match/case desugaring deferred to follow-up; wrap as callback for now
-        self._wrap_as_callback(node, 'match/case')
+        subject = self._match_subject_expression(node.subject)
+        try:
+            lowered = lower_match_to_statements(node, subject)
+        except UnsupportedMatchPatternError:
+            self._wrap_as_callback(node, 'match/case')
+            return
+
+        for stmt in lowered:
+            self.visit(stmt)
 
     # ------------------------------------------------------------------ #
     #  Category B visitors — try to lower, fall back to callback          #
@@ -507,6 +515,20 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         if not isinstance(node, ast.FunctionDef):
             raise TypeError('Expected a preprocessed FunctionDef as schedule-tree frontend input')
         return node
+
+    def _match_subject_expression(self, subject: ast.AST) -> ast.AST:
+        planned = self.expression_support.plan_expression(self._expression_planning_context(),
+                                                          subject,
+                                                          materialize_root=False)
+        if isinstance(planned, (ast.Name, ast.Constant)):
+            return planned
+
+        descriptor = self._infer_compute_descriptor(planned)
+        if descriptor is None:
+            descriptor = self._infer_scalar_descriptor(planned, None)
+        if descriptor is None:
+            descriptor = _pyobject_scalar_descriptor()
+        return self._materialize_temporary_expression(planned, descriptor)
 
     def _initialize_root_scope(self) -> None:
         for name, descriptor in self.argtypes.items():

@@ -13,6 +13,7 @@ from typing import Any, Dict, Iterable as TypingIterable, Iterator as TypingIter
 from dace import data, dtypes, symbolic
 from dace.data.pydata import PythonList, PythonTuple
 from dace.frontend.python import astutils, memlet_parser
+from dace.frontend.python.schedule_tree.match_support import UnsupportedMatchPatternError, lower_match_to_statements
 from dace.frontend.python.schedule_tree.static_evaluation import UNRESOLVED, try_resolve_static_value
 from dace.sdfg.type_inference import infer_expr_type
 
@@ -110,6 +111,14 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
         then_bindings = self._visit_branch(node.body, before)
         else_bindings = self._visit_branch(node.orelse, before)
         self._merge_branch_bindings(before, then_bindings, else_bindings)
+
+    def visit_Match(self, node: ast.Match) -> None:
+        try:
+            lowered = lower_match_to_statements(node, copy.deepcopy(node.subject))
+        except UnsupportedMatchPatternError:
+            return
+        for stmt in lowered:
+            self.visit(stmt)
 
     def visit_While(self, node: ast.While) -> None:
         for stmt in node.body:
