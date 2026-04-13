@@ -1,4 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+import pytest
+
 import dace
 from dace.sdfg.analysis.schedule_tree import sdfg_to_tree, treenodes as tn
 from dace.transformation.helpers import nest_state_subgraph, nest_sdfg_subgraph, nest_sdfg_control_flow
@@ -122,7 +124,8 @@ def test_nest_cf_simple_while_loop():
             i = update(A[i])
         return A
 
-    sdfg = simple_while_loop.to_sdfg()
+    with pytest.warns(match="Automatically creating callback"):
+        sdfg = simple_while_loop.to_sdfg()
     nest_sdfg_control_flow(sdfg)
 
     assert np.array_equal(sdfg(update=update), np.arange(10, dtype=np.int32))

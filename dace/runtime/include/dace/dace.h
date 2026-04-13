@@ -4,6 +4,7 @@
 
 // Necessary headers
 #include <cstdio>
+#include <cstdint>
 #include <cmath>
 #include <numeric>
 #include <tuple>
@@ -24,7 +25,6 @@
 #include "perf/reporting.h"
 #include "comm.h"
 #include "serialization.h"
-#include "stocastic_rounding.h"
 
 #if defined(__CUDACC__) || defined(__HIPCC__)
 #include "cuda/cudacommon.cuh"

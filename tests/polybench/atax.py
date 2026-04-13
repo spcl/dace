@@ -40,8 +40,8 @@ def init_array(A, x, y, n, m):
             A[i, j] = datatype((i + j) % n) / (5 * m)
 
 
-@dace.program(datatype[M, N], datatype[N], datatype[N])
-def atax(A, x, y):
+@dace.program
+def atax(A: datatype[M, N], x: datatype[N], y: datatype[N]):
     tmp = dace.define_local([M], dtype=datatype)
 
     @dace.map

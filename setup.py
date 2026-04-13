@@ -57,7 +57,7 @@ setup(name='dace',
           "License :: OSI Approved :: BSD License",
           "Operating System :: OS Independent",
       ],
-      python_requires='>=3.9, <3.14',
+      python_requires='>=3.10, <3.15',
       packages=find_packages(exclude=["*.tests", "*.tests.*", "tests.*", "tests"]),
       package_data={
           '': [
@@ -67,8 +67,8 @@ setup(name='dace',
       },
       include_package_data=True,
       install_requires=[
-          'numpy', 'networkx >= 2.5, <= 3.5', 'astunparse', 'sympy >= 1.9', 'pyyaml', 'ply', 'fparser >= 0.1.3',
-          'aenum >= 3.1', 'dill', 'pyreadline;platform_system=="Windows"', 'packaging', 'typing-extensions'
+          'numpy', 'networkx >= 2.5, <= 3.5', 'astunparse', 'sympy >= 1.9', 'pyyaml', 'ply', 'fparser >= 0.1.3', 'dill',
+          'pyreadline;platform_system=="Windows"', 'packaging', 'typing-extensions'
       ] + cmake_requires,
       extras_require={
           'ml': ['onnx', 'torch', 'onnxsim', 'onnxscript', 'onnxruntime', 'protobuf', 'ninja'],

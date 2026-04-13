@@ -21,8 +21,8 @@ def init_array(seq, table, n):
     table[:] = datatype(0)
 
 
-@dace.program(datatype[N], datatype[N, N])
-def nussinov(seq, table):
+@dace.program
+def nussinov(seq: datatype[N], table: datatype[N, N]):
     for i in range(N - 1, -1, -1):
         for j in range(i + 1, N, 1):
             if j - 1 >= 0:

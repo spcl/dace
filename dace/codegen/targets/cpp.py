@@ -13,7 +13,7 @@ import sys
 import warnings
 
 import sympy as sp
-from six import StringIO
+from io import StringIO
 from typing import IO, TYPE_CHECKING, List, Optional, Tuple, Union
 
 import dace
@@ -81,7 +81,7 @@ def copy_expr(
         if offset is None:
             s = None
         elif not isinstance(offset, subsets.Subset):
-            s = subsets.Indices(offset)
+            s = subsets.Range.from_indices(offset)
         else:
             s = offset
         o = None
@@ -530,7 +530,7 @@ def cpp_array_expr(sdfg,
                    framecode: Optional['DaCeCodeGenerator'] = None):
     """ Converts an Indices/Range object to a C++ array access string. """
     subset = memlet.subset if not use_other_subset else memlet.other_subset
-    s = subset if relative_offset else subsets.Indices(offset)
+    s = subset if relative_offset else subsets.Range.from_indices(offset)
     o = offset if relative_offset else None
     desc = (sdfg.arrays[memlet.data] if referenced_array is None else referenced_array)
     offset_cppstr = cpp_offset_expr(desc, s, o, packed_veclen, indices=indices)
@@ -579,7 +579,7 @@ def cpp_ptr_expr(sdfg,
                  codegen: 'TargetCodeGenerator' = None):
     """ Converts a memlet to a C++ pointer expression. """
     subset = memlet.subset if not use_other_subset else memlet.other_subset
-    s = subset if relative_offset else subsets.Indices(offset)
+    s = subset if relative_offset else subsets.Range.from_indices(offset)
     o = offset if relative_offset else None
     desc = sdfg.arrays[memlet.data]
     if isinstance(indices, str):
@@ -1268,8 +1268,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                 evaluated_constant = symbolic.evaluate(unparsed, self.constants)
                 evaluated = symbolic.symstr(evaluated_constant, cpp_mode=True)
                 value = ast.parse(evaluated).body[0].value
-                if isinstance(evaluated_node, numbers.Number) and evaluated_node != (value.value if sys.version_info
-                                                                                     >= (3, 8) else value.n):
+                if isinstance(evaluated_node, numbers.Number) and evaluated_node != value.value:
                     raise TypeError
                 node.right = ast.parse(evaluated).body[0].value
             except (TypeError, AttributeError, NameError, KeyError, ValueError, SyntaxError):

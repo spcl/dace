@@ -7,6 +7,7 @@ import itertools
 import copy
 import os
 import sympy
+import sys
 from typing import Any, Callable, Dict, List, Optional, Set, Sequence, Tuple, Union
 from typing import get_origin, get_args
 import warnings
@@ -53,12 +54,28 @@ def _get_locals_and_globals(f):
     result = {'__dace__': True}
     # Update globals, then locals
     result.update(f.__globals__)
+
+    # Python 3.14+: Also get globals from the annotate function
+    if sys.version_info >= (3, 14):
+        annotate_func = getattr(f, '__annotate__', None)
+        if annotate_func is not None:
+            result.update(annotate_func.__globals__)
+
     # grab the free variables (i.e. locals)
     if f.__closure__ is not None:
         result.update({
             k: v
             for k, v in zip(f.__code__.co_freevars, [_get_cell_contents_or_none(x) for x in f.__closure__])
         })
+
+    if sys.version_info >= (3, 14):
+        # Python 3.14+: Also get locals from the annotate function
+        if annotate_func is not None and annotate_func.__closure__ is not None:
+            result.update({
+                k: v
+                for k, v in zip(annotate_func.__code__.co_freevars,
+                                [_get_cell_contents_or_none(x) for x in annotate_func.__closure__])
+            })
 
     return result
 
@@ -435,7 +452,6 @@ class DaceProgram(pycommon.SDFGConvertible):
             # If the cache does not just contain a parsed SDFG
             if entry.compiled_sdfg is not None:
                 kwargs.update(arg_mapping)
-                entry.compiled_sdfg.clear_return_values()
                 return entry.compiled_sdfg(**self._create_sdfg_args(entry.sdfg, args, kwargs))
 
         # Clear cache to enforce deletion and closure of compiled program
@@ -484,7 +500,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         :param simplify: Whether to apply simplification pass or not (None
                        uses configuration-defined value).
         :param save: If True, saves the generated SDFG to
-                    ``_dacegraphs/program.sdfg`` after parsing.
+                    ``_dacegraphs/program.sdfgz`` after parsing.
         :param validate: If True, validates the resulting SDFG after creation.
         :return: The generated SDFG object.
         """
@@ -507,7 +523,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         # Save the SDFG. Skip this step if running from a cached SDFG, as
         # it might overwrite the cached SDFG.
         if not cached and not Config.get_bool('compiler', 'use_cache') and save:
-            sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
+            sdfg.save(os.path.join('_dacegraphs', 'program.sdfgz'), compress=True)
 
         # Validate SDFG
         if validate:
@@ -786,7 +802,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         function is called.
 
         :param path: Path to SDFG build folder (e.g., ".dacecache/program").
-                     Path has to include ``program.sdfg`` and the binary shared
+                     Path has to include ``program.sdfgz`` and the binary shared
                      object under the ``build`` folder.
         :param args: Optional compile-time arguments.
         :param kwargs: Optional compile-time keyword arguments.
@@ -893,7 +909,12 @@ class DaceProgram(pycommon.SDFGConvertible):
         # If recreate flag is False, check and load from cache
         if not self.recreate_sdfg:
             build_folder = SDFG(self.name).build_folder
-            sdfg, _ = self.load_sdfg(os.path.join(build_folder, 'program.sdfg'), *args, **kwargs)
+            sdfg, _ = self.load_sdfg(os.path.join(build_folder, 'program.sdfgz'), *args, **kwargs)
+
+            if sdfg is None:
+                # attempt to load uncompressed sdfg (backwards compatibility)
+                sdfg, _ = self.load_sdfg(os.path.join(build_folder, 'program.sdfg'), *args, **kwargs)
+
             if sdfg is not None:
                 return sdfg, True
 

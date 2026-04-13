@@ -9,8 +9,8 @@ N = dace.symbol('N')
 
 def test_wcr_sum():
 
-    @dace.program(dace.float64[N], dace.float64[1])
-    def program(A, B):
+    @dace.program
+    def program(A: dace.float64[N], B: dace.float64[1]):
         for i in dace.map[0:N]:
             with dace.tasklet:
                 a << A[i]
@@ -25,8 +25,8 @@ def test_wcr_sum():
 
 def test_wcr_min():
 
-    @dace.program(dace.float64[N], dace.float64[1])
-    def program(A, B):
+    @dace.program
+    def program(A: dace.float64[N], B: dace.float64[1]):
         for i in dace.map[0:N]:
             with dace.tasklet:
                 a << A[i]
@@ -41,8 +41,8 @@ def test_wcr_min():
 
 def test_wcr_max():
 
-    @dace.program(dace.float64[N], dace.float64[1])
-    def program(A, B):
+    @dace.program
+    def program(A: dace.float64[N], B: dace.float64[1]):
         for i in dace.map[0:N]:
             with dace.tasklet:
                 a << A[i]

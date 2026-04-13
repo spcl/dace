@@ -40,7 +40,7 @@ def pure_graph(dtype, transposed, expansion, veclen, alpha, beta, expansion_args
     state.add_memlet_path(gemv_node, result, src_conn="_y", memlet=Memlet(f"y[0:{y_size}]"))
 
     if expansion_args is not None:
-        gemv_node.expand(sdfg, state, **expansion_args)
+        gemv_node.expand(state, **expansion_args)
 
     return sdfg
 

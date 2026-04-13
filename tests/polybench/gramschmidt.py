@@ -26,8 +26,8 @@ def init_array(A, R, Q, m, n):
             R[i, j] = datatype(0)
 
 
-@dace.program(datatype[M, N], datatype[N, N], datatype[M, N])
-def gramschmidt(A, R, Q):
+@dace.program
+def gramschmidt(A: datatype[M, N], R: datatype[N, N], Q: datatype[M, N]):
 
     nrm = dace.define_local([1], datatype)
 
