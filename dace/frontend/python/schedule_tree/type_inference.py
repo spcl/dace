@@ -52,6 +52,17 @@ def _normalize_dtype(dtype: Any) -> Optional[dtypes.typeclass]:
         return None
 
 
+def _pyobject_scalar_descriptor() -> data.Scalar:
+    return data.Scalar(dtypes.pyobject(), transient=True)
+
+
+def _should_fallback_to_pyobject_scalar(node: ast.AST, value: Any = UNRESOLVED) -> bool:
+    if value is None or isinstance(value, (str, bytes, numbers.Number, bool, type(Ellipsis))):
+        return False
+    return isinstance(node, (ast.Await, ast.Attribute, ast.BinOp, ast.BoolOp, ast.Call, ast.Compare, ast.FormattedValue,
+                             ast.IfExp, ast.JoinedStr, ast.Name, ast.NamedExpr, ast.UnaryOp, ast.Yield, ast.YieldFrom))
+
+
 class ScheduleTreeTypeInference(ast.NodeVisitor):
     """Conservative binding inference for the direct schedule-tree frontend."""
 
@@ -539,11 +550,17 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
         if inferred_type is not None:
             return data.Scalar(inferred_type, transient=True)
 
-        value = self._safe_eval(node, self._evaluation_context())
+        value = try_resolve_static_value(node, self._evaluation_context())
         if isinstance(value, numbers.Number) or isinstance(value, bool):
             dtype = _normalize_dtype(type(value))
             if dtype is not None:
                 return data.Scalar(dtype, transient=True)
+
+        if _should_fallback_to_pyobject_scalar(node, value):
+            return _pyobject_scalar_descriptor()
+
+        if value is UNRESOLVED:
+            return None
         return None
 
     def _try_descriptor_inference(self, node: ast.Call) -> Optional[data.Data]:

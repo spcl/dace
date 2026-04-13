@@ -93,6 +93,17 @@ def _normalize_dtype(dtype: Any) -> Optional[dtypes.typeclass]:
         return None
 
 
+def _pyobject_scalar_descriptor() -> data.Scalar:
+    return data.Scalar(dtypes.pyobject(), transient=True)
+
+
+def _should_fallback_to_pyobject_scalar(node: ast.AST, value: Any = UNRESOLVED) -> bool:
+    if value is None or isinstance(value, (str, bytes, numbers.Number, bool, type(Ellipsis))):
+        return False
+    return isinstance(node, (ast.Await, ast.Attribute, ast.BinOp, ast.BoolOp, ast.Call, ast.Compare, ast.FormattedValue,
+                             ast.IfExp, ast.JoinedStr, ast.Name, ast.NamedExpr, ast.UnaryOp, ast.Yield, ast.YieldFrom))
+
+
 def build_schedule_tree(name: str,
                         parsed_ast: preprocessing.PreprocessedAST,
                         argtypes: Dict[str, data.Data],
@@ -327,6 +338,15 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
                     outputs.add(child.id)
                 elif isinstance(child.ctx, ast.Load):
                     inputs.add(child.id)
+            elif isinstance(child, ast.alias):
+                if child.asname:
+                    outputs.add(child.asname)
+                else:
+                    outputs.add(child.name.split('.')[0])
+            elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                outputs.add(child.name)
+            elif isinstance(child, ast.ExceptHandler) and isinstance(child.name, str):
+                outputs.add(child.name)
         return inputs, outputs
 
     def _callback_code_text(self, node: ast.AST) -> str:
@@ -356,6 +376,10 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         code_text = self._callback_code_text(node)
         inputs, outputs = self._analyze_name_flow(node)
         known_inputs = sorted(inputs & set(self.bindings))
+        for output_name in sorted(outputs):
+            binding = self.bindings.get(output_name)
+            if binding is None or binding.descriptor is None:
+                self._register_binding(output_name, _pyobject_scalar_descriptor(), kind='scalar')
         try:
             code = CodeBlock(code_text)
         except Exception:
@@ -1026,13 +1050,16 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             return data.Scalar(inferred_type, transient=True)
 
         value = try_resolve_static_value(node, self._evaluation_context())
-        if value is UNRESOLVED:
-            return None
-
         if isinstance(value, numbers.Number) or isinstance(value, bool):
             dtype = _normalize_dtype(type(value))
             if dtype is not None:
                 return data.Scalar(dtype, transient=True)
+
+        if _should_fallback_to_pyobject_scalar(node, value):
+            return _pyobject_scalar_descriptor()
+
+        if value is UNRESOLVED:
+            return None
 
         return None
 

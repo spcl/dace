@@ -836,6 +836,23 @@ def test_import_produces_callback():
     assert any(c.reason == 'import' for c in callbacks)
 
 
+def test_match_wrapped_as_callback():
+
+    @dace.program
+    def match_prog(A: dace.int32[1]):
+        match A[0]:
+            case 0:
+                A[0] = 1
+            case _:
+                A[0] = 2
+
+    stree = match_prog.to_schedule_tree()
+
+    callbacks = [c for c in stree.children if isinstance(c, tn.PythonCallbackNode)]
+    assert len(callbacks) >= 1
+    assert callbacks[0].reason == 'match/case'
+
+
 def test_class_def_produces_callback():
 
     @dace.program
@@ -870,6 +887,20 @@ def test_global_traces_container():
     assert isinstance(stree, tn.ScheduleTreeRoot)
 
 
+def test_global_untraceable_callback():
+
+    @dace.program
+    def global_prog(A: dace.float64[10]):
+        global missing_name
+        A[0] = 1.0
+
+    stree = global_prog.to_schedule_tree()
+
+    callbacks = [c for c in stree.children if isinstance(c, tn.PythonCallbackNode)]
+    assert len(callbacks) >= 1
+    assert callbacks[0].reason == 'global scope'
+
+
 def test_nested_funcdef_produces_callback():
 
     @dace.program
@@ -886,6 +917,24 @@ def test_nested_funcdef_produces_callback():
     callbacks = [c for c in stree.children if isinstance(c, tn.PythonCallbackNode)]
     assert len(callbacks) >= 1
     assert any(c.reason == 'nested function' for c in callbacks)
+
+
+def test_async_function_produces_callback():
+
+    @dace.program
+    def nested_prog(A: dace.float64[10]):
+
+        async def helper(x):
+            return x
+
+        A[0] = 1.0
+        return A
+
+    stree = nested_prog.to_schedule_tree()
+
+    callbacks = [c for c in stree.children if isinstance(c, tn.PythonCallbackNode)]
+    assert len(callbacks) >= 1
+    assert any(c.reason == 'async function' for c in callbacks)
 
 
 def test_delete_noop_for_arrays():
@@ -951,6 +1000,20 @@ def test_comprehension_desugaring():
     # After desugaring, we should see loop constructs instead of a single TaskletNode
     # Check that it at least doesn't crash and produces a valid tree
     assert isinstance(stree, tn.ScheduleTreeRoot)
+
+
+def test_generator_immediate_consumption_desugaring():
+
+    @dace.program
+    def gen_prog(A: dace.float64[8]):
+        total = sum(x for x in A)
+        return total
+
+    stree = gen_prog.to_schedule_tree()
+
+    assert isinstance(stree, tn.ScheduleTreeRoot)
+    assert not any(isinstance(child, tn.PythonCallbackNode) for child in stree.children)
+    assert any(isinstance(child, tn.LoopScope) for child in stree.children)
 
 
 def test_generic_visit_warns():
