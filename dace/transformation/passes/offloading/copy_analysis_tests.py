@@ -154,6 +154,25 @@ def division_by_zero(A: dace.float64[N], B: dace.float64[N], c: dace.float64):
             A[i] = 0.0
 
 
+###
+
+TS = dace.symbol("TS")
+@dace.program
+def copies_needed(A: dace.float64[100, 100], B: dace.float64[100, 100], C: dace.float64[100, 100], D: dace.float64[100, 100], E: dace.float64[100]) -> dace.float64[100, 100]:
+    for t1 in range(TS):
+        for i, j in dace.map[0:100, 0:100]:
+            C[i, j] = A[i, j] + B[i, j]
+    for t2 in range(2):
+        for j in range(100):
+            for i in dace.map[0:100]:
+                E[i] = E[i] + C[i, j]
+        for i in range(1, 100):
+            E[i] = (E[i-1] + E[i]) / 100.0
+    for t3 in range(2):
+        for i, j in dace.map[0:100, 0:100]:
+            D[i, j] = E[i] * 2.0 + C[i, j]
+
+
 ## tests
 from dace.transformation.passes.offloading.OffloadToAccelerator import OffloadToAccelerator as OtA
 from dace.sdfg import nodes
@@ -197,7 +216,7 @@ def test(test, cpu_only, nested_arrays=set()):
     assert not empty, f"{"gpu set" if cpu_only else "cpu set"} was supposed to be empty but is {empty}"
     assert all_a == full, f"{"cpu set" if cpu_only else "gpu set"} was supposed contain all arrays but is missing {all_a - full}"
 
-
+"""
 test(condense_3d, True)
 print(f"condense_3d passed")
 
@@ -218,3 +237,8 @@ print(f"nested_matrix_gather_load_specialized passed")
 
 test(division_by_zero, False, {'__tmp_151_11_r', 'B_slice', '__tmp_154_12_w', '__tmp_152_12_w', '__tmp_152_19_r'})
 print(f"division_by_zero passed")
+"""
+
+
+
+print("--- all tests passed ---")

@@ -2,7 +2,7 @@
 from dace import dtypes, properties, data
 from dace.memlet import Memlet
 from dace.sdfg import nodes, SDFG
-from dace.sdfg.state import SDFGState, ConditionalBlock, ControlFlowRegion, LoopRegion, ReturnBlock, ContinueBlock, BreakBlock
+from dace.sdfg.state import SDFGState, ConditionalBlock, ControlFlowRegion, LoopRegion, ReturnBlock, ContinueBlock, BreakBlock, ControlFlowBlock
 from dace.sdfg.utils import get_last_view_node
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
@@ -167,37 +167,50 @@ class OffloadToAccelerator(ppl.Pass):
     ### STEP 2 ###
 
     # helpers to get the set of arrays accessed / connected to nodes or edges #
-
-    def get_arrays_used_by_access_node(self, sdfg:SDFG, state:SDFGState, access_node:nodes.AccessNode) -> set[str]:
-        data_name = access_node.data
-        container = sdfg.arrays[data_name]
-        arrays : set[str] = {data_name}
-
-        if isinstance(container, data.View):
-            original = get_last_view_node(state, access_node) # once the view access node is known, its original access node can be found and it's data added
-            return arrays | self.get_arrays_used_by_access_node(sdfg, state, original)
-            
-        # recursively see if there is a chain of access nodes involved
-        arrays |= self.get_arrays_used_by_incoming_access_nodes(sdfg, state, access_node)
-        return arrays
         
     def get_arrays_used_by_incoming_access_nodes(self, sdfg:SDFG, state:SDFGState, node:nodes.Node) -> set[str]:
         arrays : set[str] = set()
 
+        # if current node is access node
+        #print(f"incoming of {node}")
+        if isinstance(node, nodes.AccessNode): 
+            data_name = node.data
+            arrays = {data_name} # add current access node
+            #print(f"accessing {data_name}")
+
+            if isinstance(sdfg.arrays[data_name], data.View): # trace it if it is a view
+                original = get_last_view_node(state, node) # once the view access node is known, its original access node can be found and it's data added
+                #print(f"is view of {original}")
+                arrays |= self.get_arrays_used_by_incoming_access_nodes(sdfg, state, original)
+                
+        # check if more access nodes UPstream
         for n in self.get_predecessors(state, node):
             if isinstance(n, nodes.AccessNode):
-                arrays |= self.get_arrays_used_by_access_node(sdfg, state, n)
-                 
+                #print(f"found pred access node {n.data}")
+                arrays |= self.get_arrays_used_by_incoming_access_nodes(sdfg, state, n)
+
+        #print(f"incoming of {node} are {arrays}") 
         return arrays
     
     def get_arrays_used_by_outgoing_access_nodes(self, sdfg:SDFG, state:SDFGState, node:nodes.Node) -> set[str]:
         arrays : set[str] = set()
 
+        # if current node is access node
+        if isinstance(node, nodes.AccessNode): 
+            data_name = node.data
+            arrays = {data_name} # add current access node
+
+            if isinstance(sdfg.arrays[data_name], data.View): # trace it if it is a view
+                original = get_last_view_node(state, node) # once the view access node is known, its original access node can be found and it's data added
+                arrays |= self.get_arrays_used_by_outgoing_access_nodes(sdfg, state, original)
+                
+        # check if more access nodes DOWNstream
         for n in self.get_children(state, node):
             if isinstance(n, nodes.AccessNode):
-                arrays |= self.get_arrays_used_by_access_node(sdfg, state, n)
+                arrays |= self.get_arrays_used_by_outgoing_access_nodes(sdfg, state, n)
                  
         return arrays
+
 
     def get_arrays_used_by_edge(self, sdfg:SDFG, state:SDFGState, edge, is_out_edge:bool):
         if not edge.data.is_empty():
@@ -211,23 +224,22 @@ class OffloadToAccelerator(ppl.Pass):
             elif isinstance(container, data.View): # view -> we need to find the corresponding view access node by iteration.
                 for n in state.data_nodes(): 
                     if n.data == data_name:
-                        return self.get_arrays_used_by_access_node(n)
+                        if is_out_edge:
+                            return self.get_arrays_used_by_outgoing_access_nodes(sdfg, state, n)
+                        return self.get_arrays_used_by_incoming_access_nodes(sdfg, state, n)
                 
             else: # might be a scalar access of an array slice
                 if is_out_edge:
                     if isinstance(edge.dst, nodes.AccessNode):
-                        return self.get_arrays_used_by_access_node(sdfg, state, edge.dst)
+                        return self.get_arrays_used_by_outgoing_access_nodes(sdfg, state, edge.dst)
                 else:
                     if isinstance(edge.src, nodes.AccessNode):
-                        return self.get_arrays_used_by_access_node(sdfg, state, edge.src)
+                        return self.get_arrays_used_by_incoming_access_nodes(sdfg, state, edge.src)
                 
         return set()
     
     def get_arrays_used_by_node(self, sdfg, state, node):
         arrays : set[str] = set()
-
-        if isinstance(node, nodes.AccessNode):
-            return self.get_arrays_used_by_access_node(sdfg, state, node)
 
         # edges
         for e in state.in_edges(node):
@@ -268,7 +280,8 @@ class OffloadToAccelerator(ppl.Pass):
 
             elif data_name in cpu_set: # has already been accessed on CPU
                 if is_gpu: # is now accessed on GPU
-                    raise RuntimeError(f"CPU->GPU copy needed within map for {data_name}")
+                    gpu_set.add(data_name)
+                    #raise RuntimeError("CPU->GPU copy needed within map for " + data_name)
 
             else:
                 assert isinstance(data_name, str), f"{data_name} -> {data_name.__class__.__name__}"
@@ -285,12 +298,14 @@ class OffloadToAccelerator(ppl.Pass):
             # input & output nodes
             if is_gpu:
                 gpu_set |= self.get_arrays_used_by_incoming_access_nodes(sdfg, state, map_entry)
-                #print(f"map entry (gpu): {gpu_set}")
+                #print(f"map entry {map_entry} (gpu): {gpu_set}")
                 gpu_set |= self.get_arrays_used_by_outgoing_access_nodes(sdfg, state, state.exit_node(map_entry))
-                #print(f"map exit (gpu): {gpu_set}")
+                #print(f"map exit {map_entry} (gpu): {gpu_set}")
             else:
                 cpu_set |= self.get_arrays_used_by_incoming_access_nodes(sdfg, state, map_entry)
                 gpu_set |= self.get_arrays_used_by_outgoing_access_nodes(sdfg, state, state.exit_node(map_entry))
+                #print(f"map entry {map_entry} (cpu): {gpu_set} & {cpu_set}")
+                #print(f"map exit {map_entry} (cpu): {gpu_set} & {cpu_set}")
 
             # internal nodes
             for node in map_nodes:
@@ -299,7 +314,7 @@ class OffloadToAccelerator(ppl.Pass):
                     _recursive_helper(sdfg, state, node, gpu_set, cpu_set, is_gpu)
                 
                 elif isinstance(node, nodes.AccessNode): # find accessed arrays -> add
-                    for name in self.get_arrays_used_by_access_node(sdfg, state, node):
+                    for name in self.get_arrays_used_by_outgoing_access_nodes(sdfg, state, node):
                         _add_data(name, gpu_set, cpu_set, is_gpu)
 
                 elif isinstance(node, nodes.Tasklet): # find accessed arrays -> add
@@ -378,7 +393,7 @@ class OffloadToAccelerator(ppl.Pass):
             gpu_set |= g
             cpu_set |= c
 
-        #print(f"state {state}, gpu {gpu_set}, cpu {cpu_set}")
+        print(f"state {state}, gpu {gpu_set}, cpu {cpu_set}")
         return gpu_set, cpu_set
     
 
@@ -413,48 +428,194 @@ class OffloadToAccelerator(ppl.Pass):
 
         return gpu_set, cpu_set
     
+    def get_data_locations_of_cfblock(self, sdfg:SDFG, block: ControlFlowBlock) -> tuple[set[str], set[str]]:
+        if isinstance(block, SDFGState):
+            return self.get_data_locations_of_state(sdfg, block)
+
+        elif isinstance(block, ConditionalBlock):
+            return self.get_data_locations_of_condblock(sdfg, block)
+
+        elif isinstance(block, LoopRegion):
+            return self.get_data_locations_of_loop(sdfg, block)
+
+        elif isinstance(block, ControlFlowRegion):
+            return self.get_data_locations_of_cfregion(sdfg, block)
+
+        elif isinstance(block, nodes.NestedSDFG):
+            return self.get_data_locations(block)
+
+        elif isinstance(block, (ReturnBlock, ContinueBlock, BreakBlock)):
+            return set(), set() # do nothing
+
+        raise RuntimeError(f"Unknown block type: {block} of type {block.__class__.__name__}")
+        
 
     def get_data_locations_of_cfregion(self, sdfg:SDFG, cfr: ControlFlowRegion) -> tuple[set[str], set[str]]:
         gpu_set : set[str] = set()
         cpu_set : set[str] = set()
 
         # 1) iterate through all nodes
+        #print(f"*** cfr {cfr}")
         for block in cfr.bfs_nodes():
-
-            if isinstance(block, SDFGState):
-                g,c = self.get_data_locations_of_state(sdfg, block)
-
-            elif isinstance(block, ConditionalBlock):
-                g,c = self.get_data_locations_of_condblock(sdfg, block)
-
-            elif isinstance(block, LoopRegion):
-                g,c = self.get_data_locations_of_loop(sdfg, block)
-
-            elif isinstance(block, ControlFlowRegion):
-                g,c = self.get_data_locations_of_cfregion(sdfg, block)
-
-            elif isinstance(block, nodes.NestedSDFG):
-                g,c = self.get_data_locations(block)
-
-            elif isinstance(block, (ReturnBlock, ContinueBlock, BreakBlock)):
-                pass
-
-            else:
-                raise RuntimeError(f"Unknown block type: {block} of type {block.__class__.__name__}")
-        
+            g,c = self.get_data_locations_of_cfblock(sdfg, block)
             gpu_set |= g
             cpu_set |= c
-
+            #print("gpu:", g, "\ncpu:", c)
 
         # 2) iterate through all interstate edges
         for edge in cfr.edges():
             arrays = edge.data.used_arrays(sdfg.arrays)
             cpu_set |= arrays # conditions are always on cpu
+            print("edge:", edge, "->", arrays)
         
-        #print(f"cfr {cfr}, gpu {gpu_set}, cpu {cpu_set}\n")
+        #print(f"***cfr {cfr}, gpu {gpu_set}, cpu {cpu_set}\n")
         return gpu_set, cpu_set
 
 
     # wrapper
     def get_data_locations(self, sdfg:SDFG) -> tuple[set[str], set[str]]:
         return self.get_data_locations_of_cfregion(sdfg, sdfg)
+    
+    # TODO: only add inputs and outputs of map to use set if they are actually used in map (not in nested map)
+    ### copy insertion
+
+    """
+    pseudo code of copy logic
+
+    func main():
+        insert_copies(sdfg, None, set(), set())
+
+    func insert_copies(graph, prev_state, prev_gpu_set, prev_cpu_set):
+        for state in graph:
+        
+            if state is nested: # recurse
+                gpu_set, cpu_set = insert_copies(state, prev_state, prev_gpu_set, prev_cpu_set)
+                # returns sets of last node in nested state -> inputs for next state
+
+            else: # basecase
+                gpu_set,cpu_set = get_data_locations(state)
+
+                # intrastate copy (later)
+                if gpu_set & cpu_set:
+                    gpu_set,cpu_set = intrastate_copy(state, gpu_set, cpu_set) # update sets
+
+                # interstate copy
+                if prev_state:
+                    for gpu_copy in (gpu_set & prev_cpu_set):
+                        create_interstate_copy(sdfg, prev_state, state, gpu_copy, to_gpu = True)
+
+                    for cpu_copy in (cpu_set & prev_gpu_set):
+                        create_interstate_copy(sdfg, prev_state, state, cpu_copy, to_gpu = False)
+            
+            prev_state = state
+            prev_gpu_set = gpu_set
+            prev_cpu_set = cpu_set
+
+        return gpu_set, cpu_set
+    """
+
+    def insert_copies_state(self, sdfg, next_state, prev_state, prev_gpu_set, prev_cpu_set):
+        pass
+
+    def insert_copies_cfr(self, sdfg: SDFG, cfr:ControlFlowRegion, prev_state, prev_gpu_set, prev_cpu_set):
+        """prev_gpu_set : set[str] = set()
+        prev_cpu_set : set[str] = set()
+        prev_state = None"""
+
+        block : ControlFlowBlock
+        for block in cfr.bfs_nodes():
+
+            if isinstance(block, SDFGState): # insert to state
+                prev_gpu_set, prev_cpu_set = self.insert_copies_state(sdfg, block, prev_state, prev_gpu_set, prev_cpu_set)
+                prev_state = block
+    
+            elif isinstance(block, ConditionalBlock): # insert to both branches
+                branch : ControlFlowRegion
+                for _, branch in block.branches:
+                    g,c = self.insert_copies_cfr(sdfg, branch, prev_state, prev_gpu_set, prev_cpu_set)
+                # TODO: merge g,c, determine prev_state
+                
+            elif isinstance(block, LoopRegion):
+                return self.get_data_locations_of_loop(sdfg, block)
+
+            elif isinstance(block, ControlFlowRegion):
+                return self.get_data_locations_of_cfregion(sdfg, block)
+
+            elif isinstance(block, nodes.NestedSDFG):
+                return self.get_data_locations(block)
+
+            elif isinstance(block, (ReturnBlock, ContinueBlock, BreakBlock)):
+                return set(), set() # do nothing
+
+            raise RuntimeError(f"Unknown block type: {block} of type {block.__class__.__name__}")
+            
+
+
+            g,c = self.get_data_locations_of_state(sdfg, state)
+
+            for gpu_copy in (cpu_set & g):
+                self.interstate_copy_to_gpu(gpu_copy, prev_state, state)
+            
+            for cpu_copy in (gpu_set & c):
+                self.interstate_copy_to_gpu(cpu_copy, prev_state, state)
+
+            gpu_set, cpu_set = g, c
+            prev_state = state
+
+
+    
+
+    def _insert_state_on_interstate_edge(self, graph, edge, new_state):
+        """Insert new_state on an interstate edge (between two control-flow blocks)."""
+        graph.add_edge(edge.src, new_state, edge.data)              # src -> new_state (keep condition/assignments)
+        graph.add_edge(new_state, edge.dst, dace.InterstateEdge())  # new_state -> dst (unconditional)
+        graph.remove_edge(edge)                                     # del original edge
+    
+
+    def create_interstate_copy(self, sdfg, state1, state2, array_name, to_gpu:bool):
+        assert state2 is not None, "state2 is None - but there is no use inserting a copy node without a successor state." # precondition
+
+        # get name and storage location of new array based on to_gpu
+        new_name = array_name + "_gpu" if to_gpu else array_name + "_cpu"
+        location = dtypes.StorageType.GPU_Global if to_gpu else dtypes.StorageType.Default
+
+        # create the empty copy state and connect it
+        copy_state = sdfg.add_state(f"copy_{array_name}_to_{new_name}")
+        
+        if state1 is None: # copy state becomes new start block
+            assert state2 is sdfg.start_block
+            sdfg.start_block = sdfg.node_id(copy_state)
+            sdfg.add_edge(copy_state, state2, dace.InterstateEdge())
+        else:
+            outedges = sdfg.out_edges(state1)
+            assert len(outedges) == 1 # assert that it's a line graph
+            assert outedges[0].dst == state2 # assert state1 & state2 are really connected
+            self._insert_state_on_interstate_edge(sdfg, outedges[0], copy_state)
+
+        # build the insides of the copy state
+        sdfg.add_transient(new_name, [1], dace.float64, storage=location)
+        a_copy_in = copy_state.add_access(array_name)
+        a_gpu_copy_out = copy_state.add_access(new_name)
+        copy_state.add_edge(a_copy_in, None, a_gpu_copy_out, None, dace.Memlet(f"{array_name} -> {new_name}"))
+
+        # rename the access of A -> A_gpu in the next state
+        for node in state2.data_nodes(): # nodes
+            if node.data == array_name:
+                node.data = new_name
+
+        for edge in state2.edges(): # edges
+            for e in state2.memlet_tree(edge):
+                memlet = e.data
+                if memlet is not None and not memlet.is_empty() and memlet.data == array_name:
+                    memlet.data = new_name
+            
+        # NOTE: map connector names are purely symbolic and are thus not changed here
+
+
+    # moving forward: 
+    # first, build and IR of the graph where each node stores it's gpu and cpu sets
+    # then, traverse that IR and insert copies everywhere
+
+    # 1) make the IR by hand for some simple examples
+    # 2) write the code that interprets the IR and see if it works
+    # 3) write the code that creates the IR based on an arbitrary graph

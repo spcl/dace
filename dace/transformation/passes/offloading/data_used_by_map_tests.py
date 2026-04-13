@@ -188,7 +188,7 @@ def test_triple_nested_maps_outer_only_array():
 
     sdfg.save('triple_nested_outer_only.sdfg')
     sdfg.validate()
-    #sdfg.view()
+    sdfg.view()
 
     result = data_used_by_map(sdfg, state, outer_entry)
 
