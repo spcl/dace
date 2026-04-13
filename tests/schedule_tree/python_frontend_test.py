@@ -6,6 +6,7 @@ import pytest
 from typing import Optional
 
 import dace
+from dace.frontend.python.common import DaceSyntaxError
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 
 
@@ -954,7 +955,7 @@ def test_match_class_case_forces_callback_for_whole_match():
     assert callbacks[0].reason == 'match/case'
 
 
-def test_class_def_produces_callback():
+def test_class_def_is_rejected():
 
     @dace.program
     def classdef_prog(A: dace.float64[10]):
@@ -965,11 +966,8 @@ def test_class_def_produces_callback():
         A[0] = Foo.x
         return A
 
-    stree = classdef_prog.to_schedule_tree()
-
-    callbacks = [c for c in stree.children if isinstance(c, tn.PythonCallbackNode)]
-    assert len(callbacks) >= 1
-    assert any(c.reason == 'class definition' for c in callbacks)
+    with pytest.raises(DaceSyntaxError, match='Nested class definitions are unsupported'):
+        classdef_prog.to_schedule_tree()
 
 
 def test_global_traces_container():

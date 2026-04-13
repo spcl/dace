@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from dace import data, dtypes, symbolic
 from dace.data.pydata import PythonList, PythonTuple
+from dace.frontend.python.common import DaceSyntaxError
 from dace.frontend.python import astutils, memlet_parser, preprocessing
 from dace.frontend.python.schedule_tree.lambda_support import extract_lambda_ast, inline_lambda_call
 from dace.frontend.python.schedule_tree.static_evaluation import UNRESOLVED, try_resolve_static_value
@@ -264,6 +265,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
                  callable_bindings: Optional[Dict[str, Any]] = None,
                  seed_bindings: Optional[Dict[str, _Binding]] = None) -> None:
         self.name = name
+        self.filename = parsed_ast.filename
         self.parsed_ast = parsed_ast
         self.argtypes = {k: _clone_descriptor(v) for k, v in argtypes.items()}
         self.globals = copy.copy(parsed_ast.program_globals)
@@ -529,7 +531,10 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         visit_TryStar = visit_Try
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
-        self._wrap_as_callback(node, 'class definition')
+        raise DaceSyntaxError(
+            self, node,
+            'Nested class definitions are unsupported in @dace.program schedule-tree lowering because they cannot '
+            'be outlined safely from compiled code')
 
     def visit_Import(self, node: ast.Import) -> None:
         self._wrap_as_callback(node, 'import')
