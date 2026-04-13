@@ -21,25 +21,25 @@ class DefaultSharedMemorySync(ppl.Pass):
     writes to shared memory or after collaborative writes to shared memory (smem).
 
     Important notes:
-    - Calling "__syncthreads()" inside a TB map can lead to deadlocks, 
-      for example when only a subset of threads participates (thread divergence). 
-      Therefore, users must **not** write to shared memory inside a Sequential 
+    - Calling "__syncthreads()" inside a TB map can lead to deadlocks,
+      for example when only a subset of threads participates (thread divergence).
+      Therefore, users must **not** write to shared memory inside a Sequential
       map or LoopRegion that is nested within a TB map.
 
-    - If shared memory is still written sequentially within a TB map, the missing 
-      intermediate synchronizations may lead to race conditions and incorrect results. 
-      Because deadlocks are worse than race conditions, this pass avoids inserting 
+    - If shared memory is still written sequentially within a TB map, the missing
+      intermediate synchronizations may lead to race conditions and incorrect results.
+      Because deadlocks are worse than race conditions, this pass avoids inserting
       synchronization inside TB maps, but it will warn the user about potential risks.
 
-    - When writing to and reading from shared memory within the same TB map, 
-      users must ensure that no synchronization is required, since barriers 
-      are not inserted automatically in this case (again, to avoid deadlocks). 
-      If synchronization is needed, the computation should instead be split 
-      across sequential TB maps. There is no warning for race conditions in this 
+    - When writing to and reading from shared memory within the same TB map,
+      users must ensure that no synchronization is required, since barriers
+      are not inserted automatically in this case (again, to avoid deadlocks).
+      If synchronization is needed, the computation should instead be split
+      across sequential TB maps. There is no warning for race conditions in this
       case for misbehavior.
 
-    - In nested TB maps (e.g., GPU_Device map -> TB map -> TB map ...), 
-      synchronization is only inserted at the outermost TB map's exit, 
+    - In nested TB maps (e.g., GPU_Device map -> TB map -> TB map ...),
+      synchronization is only inserted at the outermost TB map's exit,
       again to avoid deadlocks.
     """
 
@@ -61,7 +61,7 @@ class DefaultSharedMemorySync(ppl.Pass):
            shared-memory writes as needed.
         """
 
-        # 1. Find all GPU_ThreadBlock-scheduled Maps and all collaborative writes to 
+        # 1. Find all GPU_ThreadBlock-scheduled Maps and all collaborative writes to
         #    GPU shared memory, and cache each node's parent state for convenience.
         tb_map_exits: Dict[MapExit, SDFGState] = dict()
         collaborative_smem_copies: Dict[AccessNode, SDFGState] = dict()
@@ -71,7 +71,6 @@ class DefaultSharedMemorySync(ppl.Pass):
                 tb_map_exits[node] = parent_state
             elif isinstance(node, AccessNode) and self.is_collaborative_smem_write(node, parent_state):
                 collaborative_smem_copies[node] = parent_state
-
 
         # 2. Identify TB MapExits requiring a synchronization barrier
         sync_requiring_exits = self.identify_synchronization_tb_exits(tb_map_exits)
@@ -103,23 +102,24 @@ class DefaultSharedMemorySync(ppl.Pass):
         # 1. node is not stored in shared memory - skip
         if node.desc(state).storage != dtypes.StorageType.GPU_Shared:
             return False
-        
+
         # 2. To my knowledge, it is not a collaborative write if the result comes from a ThreadBlock map.
-        if all(isinstance(pred, MapExit) and pred.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock 
-               for pred in state.predecessors(node)):
+        if all(
+                isinstance(pred, MapExit) and pred.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock
+                for pred in state.predecessors(node)):
             return False
-        
+
         # 3. If all in edges are empty, there is no write - and no sync necessary
         if all(edge.data.is_empty() for edge in state.in_edges(node)):
             return False
-        
+
         # 4. It is a collaborative copy if it is within a kernel but not within a GPU_ThreadBlock map
-        if (not gpu_utils.is_within_schedule_types(state, node, [dtypes.ScheduleType.GPU_Device]) 
-            or gpu_utils.is_within_schedule_types(state, node, [dtypes.ScheduleType.GPU_ThreadBlock])):
+        if (not gpu_utils.is_within_schedule_types(state, node, [dtypes.ScheduleType.GPU_Device])
+                or gpu_utils.is_within_schedule_types(state, node, [dtypes.ScheduleType.GPU_ThreadBlock])):
             return False
 
         return True
-        
+
     def identify_synchronization_tb_exits(self, tb_map_exits: Dict[MapExit, SDFGState]) -> Dict[MapExit, SDFGState]:
         """
         Identify ThreadBlock exits after which "__syncthreads()" should be called.

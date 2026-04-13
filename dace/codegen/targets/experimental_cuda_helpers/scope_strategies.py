@@ -499,7 +499,7 @@ class ScopeManager:
         :param function_stream: The CodeIOStream for function-level code.
         :param callsite_stream: The CodeIOStream for callsite-level code.
         :param comment: A descriptive comment explaining the purpose of the code block being opened. Default is None.
-        :param brackets_on_enter: Whether on entering (i.e. when using "with", there should be a bracket opened). Default is True. 
+        :param brackets_on_enter: Whether on entering (i.e. when using "with", there should be a bracket opened). Default is True.
         :param debug: Whether to include debug comments in the output. Defaults to False.
         """
         self.frame_codegen = frame_codegen
