@@ -149,13 +149,9 @@ class CopyContext:
 
         # ---------------------------- helpers ----------------------------
         def _collapse_strides(strides, subset):
-            """Remove size-1 dims; keep tile strides; default to [1] if none remain."""
-            n = len(subset)
+            assert len(strides) == len(subset.size())
             collapsed = [st for st, sz in zip(strides, subset.size()) if sz != 1]
-            collapsed.extend(strides[n:])  # include tiles
-            if len(collapsed) == 0:
-                return [1]
-            return collapsed
+            return collapsed or [1]
 
         def _ptr_name(desc, name):
             if desc.transient and desc.lifetime in (dtypes.AllocationLifetime.Persistent,
@@ -339,7 +335,7 @@ class OutOfKernelCopyStrategy(CopyStrategy):
 
         else:
             # sanity check
-            assert num_dims > 2, f"Expected copy shape with more than 2 dimensions, but got {num_dims}."
+            assert num_dims != 0 and num_dims > 2, f"Expected copy shape with more than 2 dimensions, but got {num_dims}."
             copy_call = self._generate_nd_copy(copy_context)
 
         return copy_call
@@ -452,20 +448,18 @@ class OutOfKernelCopyStrategy(CopyStrategy):
         else:
             raise NotImplementedError(
                 f"Unsupported 2D memory copy: shape={copy_shape}, src_strides={src_strides}, dst_strides={dst_strides}."
-                "Please implement this case if it is valid, or raise a more descriptive error if this path should not be taken."
-            )
+                "Please implement this case if it is valid, or rewrite the copy.")
 
-        # Potentially snychronization required if syncdebug is set to true in configurations
+        # Potentially synchronization required if syncdebug is set to true in configurations
         call = call + generate_sync_debug_call()
         return call
 
     def _generate_nd_copy(self, copy_context: CopyContext) -> None:
         """
-        Generates GPU code for copying N-dimensional arrays using 2D memory copies.
-
-        Uses {backend}Memcpy2DAsync for the last two dimensions, with nested loops
-        for any outer dimensions. Expects the copy to be contiguous and between
-        row-major storage locations.
+        Generates GPU code for N-dimensional copies by mapping the last two
+        dimensions to {backend}Memcpy2DAsync, with nested loops for any outer
+        dimensions. Only handles contiguous/strided cases expressible as 2D
+        copies; non-conforming copies must be lowered to mapped tasklets.
         """
         # ----------- Extract relevant copy parameters --------------
         backend: str = common.get_gpu_backend()
