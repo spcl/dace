@@ -62,8 +62,10 @@ def test_python_frontend_schedule_tree_allocations_and_cache():
 
     assert stree_first is not stree_second
     assert 'tmp' in stree_first.containers
-    assert isinstance(stree_first.children[0], tn.CopyNode)
-    assert isinstance(stree_first.children[1], tn.ReturnNode)
+    assert (isinstance(stree_first.children[0], tn.LibraryCall)
+            and stree_first.children[0].node.name == 'numpy.empty_like')
+    assert isinstance(stree_first.children[1], tn.CopyNode)
+    assert isinstance(stree_first.children[2], tn.ReturnNode)
 
 
 def test_python_frontend_schedule_tree_references():

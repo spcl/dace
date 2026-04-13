@@ -6,13 +6,61 @@ array creation functions for NumPy that reuse the same functionality.
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.common import DaceSyntaxError, StringLiteral
 from dace.frontend.python.replacements.utils import ProgramVisitor, Shape, Size
-from dace import data, dtypes, Memlet, SDFG, SDFGState
+from dace import data, dtypes, symbolic, Memlet, SDFG, SDFGState
 
 from copy import deepcopy as dcpy
 from numbers import Integral
 from typing import Any, Optional
 
 import numpy as np
+
+
+def _normalize_allocator_shape(shape: Shape):
+    if isinstance(shape, Integral) or symbolic.issymbolic(shape):
+        return [shape]
+    if not isinstance(shape, (list, tuple)):
+        return None
+    return list(shape)
+
+
+@oprepo.infers_descriptor('dace.define_local')
+@oprepo.infers_descriptor('dace.ndarray')
+@oprepo.infers_descriptor('numpy.ndarray')
+@oprepo.infers_descriptor('numpy.empty')
+def _infer_local_array_descriptor(input_descs, shape: Shape, dtype: dtypes.typeclass, **_kw):
+    del input_descs
+    out_shape = _normalize_allocator_shape(shape)
+    if out_shape is None or dtype is None:
+        return None
+    if not isinstance(dtype, dtypes.typeclass):
+        try:
+            dtype = dtypes.dtype_to_typeclass(dtype)
+        except (TypeError, ValueError):
+            return None
+    return data.Array(dtype, out_shape, transient=True)
+
+
+@oprepo.infers_descriptor('dace.define_local_scalar')
+def _infer_local_scalar_descriptor(input_descs, dtype: dtypes.typeclass, **_kw):
+    del input_descs
+    if dtype is None:
+        return None
+    if not isinstance(dtype, dtypes.typeclass):
+        try:
+            dtype = dtypes.dtype_to_typeclass(dtype)
+        except (TypeError, ValueError):
+            return None
+    return data.Scalar(dtype, transient=True)
+
+
+@oprepo.infers_descriptor('dace.define_local_structure')
+def _infer_local_structure_descriptor(input_descs, dtype: data.Structure, **_kw):
+    del input_descs
+    if dtype is None:
+        return None
+    descriptor = dcpy(dtype)
+    descriptor.transient = True
+    return descriptor
 
 
 @oprepo.replaces('dace.define_local')

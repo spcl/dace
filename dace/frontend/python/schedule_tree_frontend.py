@@ -20,19 +20,6 @@ from dace.properties import CodeBlock
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.type_inference import infer_expr_type
 
-_ARRAY_ALLOCATORS = {
-    'dace.define_local',
-    'dace.ndarray',
-    'numpy.empty',
-    'numpy.zeros',
-    'numpy.ones',
-    'numpy.ndarray',
-}
-_ARRAY_LIKE_ALLOCATORS = {
-    'numpy.empty_like',
-    'numpy.zeros_like',
-    'numpy.ones_like',
-}
 _INTERNAL_ITERATOR_HELPERS = {
     '__dace_iterator_init',
     '__dace_iterator_next',
@@ -342,22 +329,39 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
                     inputs.add(child.id)
         return inputs, outputs
 
-    def _wrap_as_callback(self, node: ast.AST, reason: str) -> None:
-        """Emit a PythonCallbackNode for constructs that cannot be lowered."""
+    def _callback_code_text(self, node: ast.AST) -> str:
+        """Return parseable source code for a callback-wrapped AST node."""
+        if isinstance(node, ast.stmt):
+            try:
+                return ast.unparse(copy.deepcopy(node))
+            except Exception:
+                try:
+                    return astutils.unparse(copy.deepcopy(node))
+                except Exception:
+                    return 'pass'
+
         try:
-            code_text = self._format_runtime_expression(node)
+            return self._format_runtime_expression(node)
         except Exception:
             try:
-                code_text = astutils.unparse(node)
+                return _unparse(node)
             except Exception:
-                code_text = f'<{type(node).__name__}>'
+                try:
+                    return ast.unparse(copy.deepcopy(node))
+                except Exception:
+                    return 'None'
+
+    def _wrap_as_callback(self, node: ast.AST, reason: str) -> None:
+        """Emit a PythonCallbackNode for constructs that cannot be lowered."""
+        code_text = self._callback_code_text(node)
         inputs, outputs = self._analyze_name_flow(node)
         known_inputs = sorted(inputs & set(self.bindings))
+        try:
+            code = CodeBlock(code_text)
+        except Exception:
+            code = CodeBlock('pass')
         self._append_node(
-            tn.PythonCallbackNode(code=CodeBlock(code_text),
-                                  reason=reason,
-                                  input_names=known_inputs,
-                                  output_names=sorted(outputs)))
+            tn.PythonCallbackNode(code=code, reason=reason, input_names=known_inputs, output_names=sorted(outputs)))
 
     # ------------------------------------------------------------------ #
     #  Category C visitors — always callback                              #
@@ -384,6 +388,9 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
 
     def visit_YieldFrom(self, node: ast.AST) -> None:
         self._wrap_as_callback(node, 'yield from')
+
+    def visit_Await(self, node: ast.AST) -> None:
+        self._wrap_as_callback(node, 'await')
 
     def visit_Match(self, node: ast.AST) -> None:
         # Match/case desugaring deferred to follow-up; wrap as callback for now
@@ -592,10 +599,6 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
                 return
             kind = 'reference' if isinstance(inferred_descriptor, data.Reference) else 'container'
             self._register_binding(name, inferred_descriptor, kind=kind)
-            # For allocators (zeros, ones, etc.) the descriptor IS the result — no computation node needed.
-            # For inferred calls (numpy.sum, etc.) we still need to emit the computation below.
-            if self._is_allocator_call(value):
-                return
 
         scalar_descriptor = self._infer_scalar_descriptor(value, annotated_descriptor)
         if scalar_descriptor is not None:
@@ -889,40 +892,6 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
     def _infer_descriptor(self, node: ast.AST, target_name: str) -> Optional[data.Data]:
         if isinstance(node, ast.Call):
             call_name = astutils.rname(node.func)
-            if call_name in _ARRAY_LIKE_ALLOCATORS and node.args:
-                access = self._resolve_data_access(node.args[0])
-                if access is None:
-                    return None
-                _, _, descriptor, _ = access
-                new_descriptor = _clone_descriptor(descriptor)
-                new_descriptor.transient = True
-                if 'shape' in {kw.arg for kw in node.keywords if kw.arg is not None}:
-                    shape_kw = next(kw.value for kw in node.keywords if kw.arg == 'shape')
-                    if hasattr(new_descriptor, 'set_shape'):
-                        new_descriptor.set_shape(self._parse_shape(shape_kw))
-                return new_descriptor
-
-            if call_name in _ARRAY_ALLOCATORS:
-                dtype = self._parse_dtype(self._call_argument(node, 1, 'dtype'))
-                if dtype is None:
-                    return None
-                shape_arg = self._call_argument(node, 0, 'shape')
-                if shape_arg is None:
-                    return None
-                return data.Array(dtype, self._parse_shape(shape_arg), transient=True)
-
-            if call_name == 'dace.define_local_scalar':
-                dtype = self._parse_dtype(self._call_argument(node, 0, 'dtype'))
-                if dtype is not None:
-                    return data.Scalar(dtype, transient=True)
-
-            if call_name == 'dace.define_local_structure':
-                descriptor = self._evaluate_descriptor(self._call_argument(node, 0, 'dtype'))
-                if descriptor is not None:
-                    descriptor = _clone_descriptor(descriptor)
-                    descriptor.transient = True
-                    return descriptor
-
             if isinstance(node.func, ast.Attribute) and node.func.attr == 'reshape':
                 access = self._resolve_data_access(node)
                 if access is not None:
@@ -1387,21 +1356,11 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         call_name = astutils.rname(node.func)
         if call_name in _INTERNAL_ITERATOR_HELPERS:
             return False
-        if call_name in _ARRAY_ALLOCATORS | _ARRAY_LIKE_ALLOCATORS:
-            return False
-        if call_name in {'dace.define_local_scalar', 'dace.define_local_structure', 'range', 'prange', 'parrange'}:
+        if call_name in {'range', 'prange', 'parrange'}:
             return False
         if isinstance(node.func, ast.Attribute) and node.func.attr == 'reshape':
             return False
         return isinstance(node.func, ast.Attribute)
-
-    def _is_allocator_call(self, node: ast.AST) -> bool:
-        """Return True if *node* is an array/scalar allocation call (no computation to emit)."""
-        if not isinstance(node, ast.Call):
-            return False
-        call_name = astutils.rname(node.func)
-        return call_name in (_ARRAY_ALLOCATORS | _ARRAY_LIKE_ALLOCATORS
-                             | {'dace.define_local_scalar', 'dace.define_local_structure'})
 
     def _is_internal_iterator_helper_call(self, node: ast.AST) -> bool:
         return isinstance(node, ast.Call) and astutils.rname(node.func) in _INTERNAL_ITERATOR_HELPERS

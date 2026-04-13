@@ -16,20 +16,6 @@ from dace.frontend.python import astutils, memlet_parser
 from dace.frontend.python.schedule_tree.static_evaluation import UNRESOLVED, try_resolve_static_value
 from dace.sdfg.type_inference import infer_expr_type
 
-_ARRAY_ALLOCATORS = {
-    'dace.define_local',
-    'dace.ndarray',
-    'numpy.empty',
-    'numpy.zeros',
-    'numpy.ones',
-    'numpy.ndarray',
-}
-_ARRAY_LIKE_ALLOCATORS = {
-    'numpy.empty_like',
-    'numpy.zeros_like',
-    'numpy.ones_like',
-}
-
 
 @dataclass
 class _Binding:
@@ -518,32 +504,6 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
 
     def _infer_descriptor(self, node: ast.AST) -> Optional[data.Data]:
         if isinstance(node, ast.Call):
-            call_name = astutils.rname(node.func)
-            if call_name in _ARRAY_LIKE_ALLOCATORS and node.args:
-                source_binding = self._resolve_binding(node.args[0])
-                if source_binding is None or source_binding.descriptor is None:
-                    return None
-                descriptor = _clone_descriptor(source_binding.descriptor)
-                descriptor.transient = True
-                return descriptor
-            if call_name in _ARRAY_ALLOCATORS:
-                dtype = self._parse_dtype(self._call_argument(node, 1, 'dtype'))
-                if dtype is None:
-                    return None
-                shape_arg = self._call_argument(node, 0, 'shape')
-                if shape_arg is None:
-                    return None
-                return data.Array(dtype, self._parse_shape(shape_arg), transient=True)
-            if call_name == 'dace.define_local_scalar':
-                dtype = self._parse_dtype(self._call_argument(node, 0, 'dtype'))
-                if dtype is not None:
-                    return data.Scalar(dtype, transient=True)
-            if call_name == 'dace.define_local_structure':
-                descriptor = self._evaluate_descriptor(self._call_argument(node, 0, 'dtype'))
-                if descriptor is not None:
-                    descriptor.transient = True
-                    return descriptor
-
             # Try the method descriptor-inference registry first (a.sum(), etc.)
             if isinstance(node.func, ast.Attribute):
                 inferred = self._try_method_descriptor_inference(node)

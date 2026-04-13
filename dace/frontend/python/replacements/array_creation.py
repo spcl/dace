@@ -460,9 +460,10 @@ def _infer_full(input_descs, shape, fill_value=None, dtype=None, **_kw):
     return data.Array(dtype, out_shape, transient=True)
 
 
+@infers_descriptor('numpy.empty')
 @infers_descriptor('numpy.zeros')
 @infers_descriptor('numpy.ones')
-def _infer_zeros_ones(input_descs, shape, dtype=None, **_kw):
+def _infer_empty_zeros_ones(input_descs, shape, dtype=None, **_kw):
     if isinstance(shape, (Number, np.integer)) or symbolic.issymbolic(shape):
         shape = [shape]
     if not isinstance(shape, (tuple, list)):
@@ -484,6 +485,45 @@ def _infer_zeros_ones(input_descs, shape, dtype=None, **_kw):
         except (TypeError, ValueError):
             return None
     return data.Array(dtype, out_shape, transient=True)
+
+
+@infers_descriptor('numpy.empty_like')
+@infers_descriptor('numpy.zeros_like')
+@infers_descriptor('numpy.ones_like')
+def _infer_empty_zeros_ones_like(input_descs, prototype, dtype=None, shape=None, **_kw):
+    descriptor = _get_desc(input_descs, prototype)
+    if descriptor is None:
+        return None
+
+    result = copy.deepcopy(descriptor)
+    result.transient = True
+
+    if shape is not None:
+        if isinstance(shape, (Number, np.integer)) or symbolic.issymbolic(shape):
+            shape = [shape]
+        if not isinstance(shape, (tuple, list)):
+            return None
+        out_shape = []
+        for size in shape:
+            value = _to_int(size)
+            if value is not None:
+                out_shape.append(value)
+            elif symbolic.issymbolic(size):
+                out_shape.append(size)
+            else:
+                return None
+        if hasattr(result, 'set_shape'):
+            result.set_shape(out_shape)
+
+    if dtype is not None:
+        if not isinstance(dtype, dtypes.typeclass):
+            try:
+                dtype = dtypes.dtype_to_typeclass(dtype)
+            except (TypeError, ValueError):
+                return None
+        result.dtype = dtype
+
+    return result
 
 
 @infers_descriptor('numpy.eye')
