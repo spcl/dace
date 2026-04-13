@@ -32,6 +32,11 @@ def _clone_descriptor(descriptor: data.Data) -> data.Data:
     return copy.deepcopy(descriptor)
 
 
+def _clone_binding(binding: _Binding) -> _Binding:
+    descriptor = _clone_descriptor(binding.descriptor) if binding.descriptor is not None else None
+    return _Binding(descriptor=descriptor, kind=binding.kind, structure=copy.deepcopy(binding.structure))
+
+
 def _unparse(node: ast.AST) -> str:
     try:
         working_node = copy.deepcopy(node)
@@ -99,6 +104,108 @@ def _pyobject_scalar_descriptor() -> data.Scalar:
     return data.Scalar(dtypes.pyobject(), transient=True)
 
 
+def _binding_to_descriptor(value: Any) -> data.Data:
+    if isinstance(value, data.Data):
+        descriptor = _clone_descriptor(value)
+    else:
+        descriptor = _clone_descriptor(data.create_datadescriptor(value))
+
+    if isinstance(descriptor, data.View):
+        descriptor = descriptor.as_array()
+    descriptor.transient = False
+    return descriptor
+
+
+def _function_signature_from_ast(node: ast.FunctionDef) -> inspect.Signature:
+    parameters: List[inspect.Parameter] = []
+    positional = list(node.args.posonlyargs) + list(node.args.args)
+    positional_defaults = list(node.args.defaults)
+    positional_default_offset = len(positional) - len(positional_defaults)
+
+    for index, arg in enumerate(node.args.posonlyargs):
+        default = inspect._empty if index < positional_default_offset else object()
+        parameters.append(inspect.Parameter(arg.arg, inspect.Parameter.POSITIONAL_ONLY, default=default))
+
+    for index, arg in enumerate(node.args.args, start=len(node.args.posonlyargs)):
+        default = inspect._empty if index < positional_default_offset else object()
+        parameters.append(inspect.Parameter(arg.arg, inspect.Parameter.POSITIONAL_OR_KEYWORD, default=default))
+
+    if node.args.vararg is not None:
+        parameters.append(inspect.Parameter(node.args.vararg.arg, inspect.Parameter.VAR_POSITIONAL))
+
+    for arg, default_value in zip(node.args.kwonlyargs, node.args.kw_defaults):
+        default = inspect._empty if default_value is None else object()
+        parameters.append(inspect.Parameter(arg.arg, inspect.Parameter.KEYWORD_ONLY, default=default))
+
+    if node.args.kwarg is not None:
+        parameters.append(inspect.Parameter(node.args.kwarg.arg, inspect.Parameter.VAR_KEYWORD))
+
+    return inspect.Signature(parameters)
+
+
+class _NestedFunctionProgram:
+    """AST-backed inline callee used for known nested FunctionDefs."""
+
+    _schedule_tree_inline_callable = True
+
+    def __init__(self, name: str, function_ast: ast.FunctionDef, *, program_globals: Dict[str, Any],
+                 constants: Dict[str, Tuple[data.Data,
+                                            Any]], callback_mapping: Dict[str, str], seed_bindings: Dict[str, _Binding],
+                 lambda_bindings: Dict[str, ast.Lambda], callable_bindings: Dict[str, Any]) -> None:
+        self.name = name
+        self.function_ast = ast.fix_missing_locations(copy.deepcopy(function_ast))
+        self.program_globals = copy.copy(program_globals)
+        self.constants = {key: (_clone_descriptor(desc), value) for key, (desc, value) in constants.items()}
+        self.callback_mapping = dict(callback_mapping)
+        self.seed_bindings = {key: _clone_binding(binding) for key, binding in seed_bindings.items()}
+        self.lambda_bindings = {key: copy.deepcopy(value) for key, value in lambda_bindings.items()}
+        self.callable_bindings = dict(callable_bindings)
+        self.signature = _function_signature_from_ast(function_ast)
+        self.argnames = [parameter.name for parameter in self.signature.parameters.values()]
+
+    def __descriptor__(self) -> data.Data:
+        return data.Scalar(dtypes.callback(None))
+
+    def __deepcopy__(self, memo: Dict[int, Any]) -> '_NestedFunctionProgram':
+        memo[id(self)] = self
+        return self
+
+    def _generate_schedule_tree(self,
+                                args: Tuple[Any],
+                                kwargs: Dict[str, Any],
+                                *,
+                                lambda_bindings: Optional[Dict[str, ast.Lambda]] = None,
+                                callable_bindings: Optional[Dict[str, Any]] = None) -> tn.ScheduleTreeRoot:
+        bound_args = self.signature.bind_partial(*args, **kwargs)
+        argtypes = {name: _binding_to_descriptor(value) for name, value in bound_args.arguments.items()}
+
+        active_lambda_bindings = {key: copy.deepcopy(value) for key, value in self.lambda_bindings.items()}
+        active_lambda_bindings.update({key: copy.deepcopy(value) for key, value in (lambda_bindings or {}).items()})
+
+        active_callable_bindings = dict(self.callable_bindings)
+        active_callable_bindings.update(dict(callable_bindings or {}))
+
+        seed_bindings = {
+            key: _clone_binding(binding)
+            for key, binding in self.seed_bindings.items() if key not in bound_args.arguments
+        }
+
+        parsed_ast = preprocessing.PreprocessedAST('<nested function>', getattr(self.function_ast, 'lineno', 0), '',
+                                                   copy.deepcopy(self.function_ast), copy.copy(self.program_globals))
+        return build_schedule_tree(self.name,
+                                   parsed_ast,
+                                   argtypes,
+                                   constants={
+                                       key: (_clone_descriptor(desc), value)
+                                       for key, (desc, value) in self.constants.items()
+                                   },
+                                   callback_mapping=dict(self.callback_mapping),
+                                   arg_names=[name for name in self.argnames if name in argtypes],
+                                   lambda_bindings=active_lambda_bindings,
+                                   callable_bindings=active_callable_bindings,
+                                   seed_bindings=seed_bindings)
+
+
 def _should_fallback_to_pyobject_scalar(node: ast.AST, value: Any = UNRESOLVED) -> bool:
     if value is None or isinstance(value, (str, bytes, numbers.Number, bool, type(Ellipsis))):
         return False
@@ -115,6 +222,7 @@ def build_schedule_tree(name: str,
                         arg_names: Optional[Sequence[str]] = None,
                         lambda_bindings: Optional[Dict[str, ast.Lambda]] = None,
                         callable_bindings: Optional[Dict[str, Any]] = None,
+                        seed_bindings: Optional[Dict[str, _Binding]] = None,
                         inline_calls: bool = True) -> tn.ScheduleTreeRoot:
     """
     Build a schedule tree directly from a preprocessed Python AST.
@@ -133,7 +241,8 @@ def build_schedule_tree(name: str,
                                         callback_mapping=callback_mapping,
                                         arg_names=arg_names,
                                         lambda_bindings=lambda_bindings,
-                                        callable_bindings=callable_bindings)
+                                        callable_bindings=callable_bindings,
+                                        seed_bindings=seed_bindings)
     root = builder.build()
     if inline_calls:
         resolve_function_calls(root)
@@ -152,7 +261,8 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
                  callback_mapping: Optional[Dict[str, str]] = None,
                  arg_names: Optional[Sequence[str]] = None,
                  lambda_bindings: Optional[Dict[str, ast.Lambda]] = None,
-                 callable_bindings: Optional[Dict[str, Any]] = None) -> None:
+                 callable_bindings: Optional[Dict[str, Any]] = None,
+                 seed_bindings: Optional[Dict[str, _Binding]] = None) -> None:
         self.name = name
         self.parsed_ast = parsed_ast
         self.argtypes = {k: _clone_descriptor(v) for k, v in argtypes.items()}
@@ -172,11 +282,13 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             for key, value in (lambda_bindings or {}).items()
         }
         self.callable_bindings: Dict[str, Any] = dict(callable_bindings or {})
+        self.seed_bindings = {key: _clone_binding(binding) for key, binding in (seed_bindings or {}).items()}
         self._global_lambda_cache: Dict[str, Optional[ast.Lambda]] = {}
         self.expression_support = GenericExpressionSupportLibrary()
         self.numpy_support = NumpySupportLibrary()
 
         self._initialize_root_scope()
+        self._initialize_seed_bindings()
         self.inferred_bindings = ScheduleTreeTypeInference(self.globals, self.argtypes).infer(self._program_node())
         for name, binding in self.inferred_bindings.items():
             if binding.descriptor is not None:
@@ -488,10 +600,16 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         """Handle nested function definitions.
 
-        If the function is only called statically within the parent scope,
-        it could become a FunctionCallRegion (future work). For now, wrap
-        as callback since we need the full inlining infrastructure.
+        Known nested function definitions are lowered as inline call regions.
+        When the target cannot be modeled safely, keep explicit callback
+        fallback.
         """
+        inline_function = self._make_nested_function_program(node)
+        if inline_function is not None:
+            self.callable_bindings[node.name] = inline_function
+            self.lambda_bindings.pop(node.name, None)
+            self._register_binding(node.name, data.Scalar(dtypes.callback(None), transient=True), kind='callback')
+            return
         self._wrap_as_callback(node, 'nested function')
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
@@ -559,6 +677,13 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         for name, value in self.globals.items():
             if isinstance(value, symbolic.symbol):
                 self.root.symbols[name] = value
+
+    def _initialize_seed_bindings(self) -> None:
+        for name, binding in self.seed_bindings.items():
+            self.bindings[name] = _clone_binding(binding)
+            if binding.descriptor is not None:
+                self.root.containers[name] = _clone_descriptor(binding.descriptor)
+                self.globals[name] = _clone_descriptor(binding.descriptor)
 
     def _handle_assignment(self,
                            target: ast.AST,
@@ -1402,19 +1527,34 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
     # ------------------------------------------------------------------ #
 
     def _is_dace_program_call(self, node: ast.AST) -> bool:
-        """Return True when *node* is a call to a ``@dace.program``."""
+        """Return True when *node* is a call to an inlineable callee."""
         if not isinstance(node, ast.Call):
             return False
         value = self._resolve_callable_value(node.func)
         if value is UNRESOLVED:
             return False
+        if getattr(value, '_schedule_tree_inline_callable', False):
+            return True
         from dace import SDFG
         return hasattr(value, '__sdfg__') and not isinstance(value, SDFG)
+
+    def _callable_signature(self, callee: Any) -> inspect.Signature:
+        if hasattr(callee, 'signature'):
+            return callee.signature
+        return inspect.signature(callee.f)
+
+    def _callable_name(self, callee: Any) -> str:
+        function_name = getattr(getattr(callee, 'f', None), '__name__', None)
+        if isinstance(function_name, str) and function_name:
+            return function_name
+        if hasattr(callee, 'name') and isinstance(callee.name, str):
+            return callee.name
+        return '<anonymous>'
 
     def _extract_argument_mapping(self, call_node: ast.Call) -> Dict[str, str]:
         """Build ``{callee_param: caller_expression}`` from a call AST node."""
         callee = self._resolve_callable_value(call_node.func)
-        sig = inspect.signature(callee.f)
+        sig = self._callable_signature(callee)
         params = [p for p in sig.parameters.values() if p.name != 'self']
 
         mapping: Dict[str, str] = {}
@@ -1427,7 +1567,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
 
     def _call_parameter_nodes(self, call_node: ast.Call) -> Dict[str, ast.AST]:
         callee = self._resolve_callable_value(call_node.func)
-        sig = inspect.signature(callee.f)
+        sig = self._callable_signature(callee)
         params = [param for param in sig.parameters.values() if param.name != 'self']
         keywords = {kw.arg: kw.value for kw in call_node.keywords if kw.arg is not None}
         bound = inspect.Signature(params).bind_partial(*call_node.args, **keywords)
@@ -1477,7 +1617,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
     def _emit_function_call(self, call_node: ast.Call, return_targets: Optional[List[str]] = None) -> None:
         """Create a :class:`FunctionCallScope` placeholder and append it."""
         callee = self._resolve_callable_value(call_node.func)
-        callee_name = getattr(callee.f, '__name__', None) or getattr(callee, 'name', '<anonymous>')
+        callee_name = self._callable_name(callee)
         arguments = self._extract_argument_mapping(call_node)
         specialization_args, specialization_kwargs, lambda_bindings, callable_bindings = self._extract_call_specialization(
             call_node)
@@ -1599,12 +1739,46 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
 
     def _resolve_known_callable(self, node: ast.AST) -> Optional[Any]:
         value = self._resolve_callable_value(node)
-        if value is UNRESOLVED or not callable(value):
+        if value is UNRESOLVED:
+            return None
+        if getattr(value, '_schedule_tree_inline_callable', False):
+            return value
+        if not callable(value):
             return None
         from dace import SDFG
         if hasattr(value, '__sdfg__') and not isinstance(value, SDFG):
             return None
         return value
+
+    def _make_nested_function_program(self, node: ast.FunctionDef) -> Optional[_NestedFunctionProgram]:
+        if node.decorator_list:
+            return None
+
+        class _SelfCallDetector(ast.NodeVisitor):
+
+            def __init__(self, name: str) -> None:
+                self.name = name
+                self.recursive = False
+
+            def visit_Call(self, call_node: ast.Call) -> None:
+                if astutils.rname(call_node.func) == self.name:
+                    self.recursive = True
+                    return
+                self.generic_visit(call_node)
+
+        detector = _SelfCallDetector(node.name)
+        detector.visit(node)
+        if detector.recursive:
+            return None
+
+        return _NestedFunctionProgram(node.name,
+                                      node,
+                                      program_globals=self.globals,
+                                      constants=self.root.constants,
+                                      callback_mapping=self.root.callback_mapping,
+                                      seed_bindings=self.bindings,
+                                      lambda_bindings=self.lambda_bindings,
+                                      callable_bindings=self.callable_bindings)
 
     def _update_callable_binding(self, name: str, value: ast.AST) -> None:
         resolved = self._resolve_known_callable(value)

@@ -1002,13 +1002,18 @@ def test_global_untraceable_callback():
     assert callbacks[0].reason == 'global scope'
 
 
-def test_nested_funcdef_produces_callback():
+def test_decorated_nested_funcdef_produces_callback():
+
+    def passthrough(fn):
+        return fn
 
     @dace.program
     def nested_prog(A: dace.float64[10]):
 
+        @passthrough
         def helper(x):
-            return x + 1
+            y = x + 1
+            return y
 
         A[0] = helper(A[0])
         return A
