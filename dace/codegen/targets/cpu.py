@@ -502,7 +502,8 @@ class CPUCodeGen(TargetCodeGenerator):
 
             return
         elif (nodedesc.storage == dtypes.StorageType.Register):
-
+            # The assignment necessary to unify the explicit streams and streams declared through
+            # the state of the SDFG.
             if nodedesc.dtype == dtypes.gpuStream_t:
                 ctype = dtypes.gpuStream_t.ctype
                 allocation_stream.write(f"{ctype}* {name} = __state->gpu_context->streams;")
@@ -1051,8 +1052,6 @@ class CPUCodeGen(TargetCodeGenerator):
             if isinstance(node, nodes.CodeNode) and not edge.data.is_empty():
                 if not uconn:
                     return
-                    raise SyntaxError("Cannot copy memlet without a local connector: {} to {}".format(
-                        str(edge.src), str(edge.dst)))
 
                 conntype = node.out_connectors[uconn]
                 is_scalar = not isinstance(conntype, dtypes.pointer)
@@ -1270,7 +1269,6 @@ class CPUCodeGen(TargetCodeGenerator):
                     # Dynamic WCR memlets start uninitialized
                     result += "{} {};".format(memlet_type, local_name)
                     defined = DefinedType.Scalar
-
             else:
                 if not memlet.dynamic:
                     if is_scalar:
@@ -1305,8 +1303,12 @@ class CPUCodeGen(TargetCodeGenerator):
                 memlet_type = ctypedef
                 result += "{} &{} = {};".format(memlet_type, local_name, expr)
                 defined = DefinedType.Stream
-        else:
-            raise TypeError("Unknown variable type: {}".format(var_type))
+
+        # Set Defined Type for GPU Stream connectors
+        # Shadowing for stream variable needs to be allowed
+        if memlet_type == 'gpuStream_t':
+            var_type = DefinedType.GPUStream
+            defined = DefinedType.GPUStream
 
         if defined is not None:
             self._dispatcher.defined_vars.add(local_name, defined, memlet_type, allow_shadowing=allow_shadowing)

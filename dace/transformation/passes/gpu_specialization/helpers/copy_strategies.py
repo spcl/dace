@@ -1,17 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Tuple, Union
-
+from typing import Any, Dict, Tuple, Union
 from dace import SDFG, SDFGState, data, dtypes, subsets
 from dace import memlet as mm
-from dace import symbolic
 from dace.codegen import common
 from dace.codegen.targets import cpp
 from dace.codegen.targets.cpp import sym2cpp
-from dace.codegen.gpu_specialization_utilities.gpu_utils import generate_sync_debug_call
-from dace.config import Config
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import generate_sync_debug_call
 from dace.dtypes import StorageType
-from dace.frontend import operations
 from dace.sdfg import nodes, scope_contains_scope
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.transformation import helpers
@@ -25,7 +21,7 @@ class CopyContext:
     """
 
     def __init__(self, sdfg: SDFG, state: SDFGState, src_node: nodes.Node, dst_node: nodes.Node,
-                 edge: MultiConnectorEdge[mm.Memlet], gpustream_assignments: Dict[nodes.Node, Union[int, str]]):
+                 edge: MultiConnectorEdge[mm.Memlet]):
 
         # Store the basic context as attributes
         self.sdfg = sdfg
@@ -33,7 +29,6 @@ class CopyContext:
         self.src_node = src_node
         self.dst_node = dst_node
         self.edge = edge
-        self.gpustream_assignments = gpustream_assignments
 
         memlet = edge.data
 
@@ -73,30 +68,11 @@ class CopyContext:
     def get_assigned_gpustream(self) -> str:
         """
         Return the GPU stream expression assigned to both source and destination nodes.
-
-        Ensures that both nodes have a matching stream ID, then constructs the
-        variable name from the configured prefix and stream ID. Raises ValueError
-        if assignments are missing or inconsistent.
-
-        Example:
-            If the configured prefix is 'gpu_stream' and the assigned stream ID is 0,
-            this method returns 'gpu_stream0'.
+        Defaults to `__dace_current_stream` placeholder, which can be changed by the scheduling pass
         """
-        src_stream = self.gpustream_assignments.get(self.src_node)
-        dst_stream = self.gpustream_assignments.get(self.dst_node)
-
-        # 1. Catch unsupported cases
-        if src_stream is None or dst_stream is None:
-            raise ValueError("GPU stream assignment missing for source or destination node.")
-
-        if src_stream != dst_stream:
-            raise ValueError(f"Mismatch in assigned GPU streams: src_node has '{src_stream}', "
-                             f"dst_node has '{dst_stream}'. They must be the same.")
-
         # 2. Generate GPU stream expression
-        gpustream = src_stream
-        # gpustream_var_name_prefix = Config.get('compiler', 'cuda', 'gpu_stream_name').split(',')[1]
-        gpustream_expr = f"{gpustream}"  # {gpustream_var_name_prefix}
+        gpustream = "__dace_current_stream"
+        gpustream_expr = gpustream
 
         return gpustream_expr
 
@@ -173,13 +149,9 @@ class CopyContext:
 
         # ---------------------------- helpers ----------------------------
         def _collapse_strides(strides, subset):
-            """Remove size-1 dims; keep tile strides; default to [1] if none remain."""
-            n = len(subset)
+            assert len(strides) == len(subset.size())
             collapsed = [st for st, sz in zip(strides, subset.size()) if sz != 1]
-            collapsed.extend(strides[n:])  # include tiles
-            if len(collapsed) == 0:
-                return [1]
-            return collapsed
+            return collapsed or [1]
 
         def _ptr_name(desc, name):
             if desc.transient and desc.lifetime in (dtypes.AllocationLifetime.Persistent,
@@ -192,7 +164,7 @@ class CopyContext:
 
             if isinstance(desc, data.Scalar):
                 # GPU scalar special-case
-                if desc.storage in dtypes.GPU_MEMORY_STORAGES_EXPERIMENTAL_CUDACODEGEN:
+                if desc.storage in dtypes.GPU_STORAGES:
                     parent = state.sdfg.parent_nsdfg_node
                     if parent is not None and name in parent.in_connectors:
                         return f"&{ptr}"
@@ -317,7 +289,7 @@ class OutOfKernelCopyStrategy(CopyStrategy):
         parent_map_tuple = helpers.get_parent_map(state, deeper_node)
         while parent_map_tuple is not None:
             parent_map, parent_state = parent_map_tuple
-            if parent_map.map.schedule in dtypes.GPU_SCHEDULES_EXPERIMENTAL_CUDACODEGEN:
+            if parent_map.map.schedule in dtypes.GPU_SCHEDULES + dtypes.EXPERIMENTAL_GPU_SCHEDULES:
                 return False
             else:
                 parent_map_tuple = helpers.get_parent_map(parent_state, parent_map)
@@ -363,7 +335,7 @@ class OutOfKernelCopyStrategy(CopyStrategy):
 
         else:
             # sanity check
-            assert num_dims > 2, f"Expected copy shape with more than 2 dimensions, but got {num_dims}."
+            assert num_dims != 0 and num_dims > 2, f"Expected copy shape with more than 2 dimensions, but got {num_dims}."
             copy_call = self._generate_nd_copy(copy_context)
 
         return copy_call
@@ -406,7 +378,7 @@ class OutOfKernelCopyStrategy(CopyStrategy):
 
             call = f'DACE_GPU_CHECK({backend}Memcpy2DAsync(_out_{dst_expr}, {dpitch}, _in_{src_expr}, {spitch}, {width}, {height}, {kind}, {gpustream}));\n'
 
-        # Potentially snychronization required if syncdebug is set to true in configurations
+        # Potentially synchronization required if syncdebug is set to true in configurations
         call = call + generate_sync_debug_call()
         return call
 
@@ -476,20 +448,18 @@ class OutOfKernelCopyStrategy(CopyStrategy):
         else:
             raise NotImplementedError(
                 f"Unsupported 2D memory copy: shape={copy_shape}, src_strides={src_strides}, dst_strides={dst_strides}."
-                "Please implement this case if it is valid, or raise a more descriptive error if this path should not be taken."
-            )
+                "Please implement this case if it is valid, or rewrite the copy.")
 
-        # Potentially snychronization required if syncdebug is set to true in configurations
+        # Potentially synchronization required if syncdebug is set to true in configurations
         call = call + generate_sync_debug_call()
         return call
 
     def _generate_nd_copy(self, copy_context: CopyContext) -> None:
         """
-        Generates GPU code for copying N-dimensional arrays using 2D memory copies.
-
-        Uses {backend}Memcpy2DAsync for the last two dimensions, with nested loops
-        for any outer dimensions. Expects the copy to be contiguous and between
-        row-major storage locations.
+        Generates GPU code for N-dimensional copies by mapping the last two
+        dimensions to {backend}Memcpy2DAsync, with nested loops for any outer
+        dimensions. Only handles contiguous/strided cases expressible as 2D
+        copies; non-conforming copies must be lowered to mapped tasklets.
         """
         # ----------- Extract relevant copy parameters --------------
         backend: str = common.get_gpu_backend()
@@ -538,7 +508,7 @@ class OutOfKernelCopyStrategy(CopyStrategy):
         # Generate call and write it
         call += f'DACE_GPU_CHECK({backend}Memcpy2DAsync(_out_{dst}, {dpitch}, _in_{src}, {spitch}, {width}, {height}, {kind}, {gpustream}));\n'
 
-        # Potentially snychronization required if syncdebug is set to true in configurations
+        # Potentially synchronization required if syncdebug is set to true in configurations
         call += generate_sync_debug_call()
 
         # Write for-loop footers

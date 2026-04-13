@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 from typing import Any, Dict, List, Set, Tuple, Type, Union
 import copy
 
@@ -10,11 +10,10 @@ from dace.sdfg import nodes
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.helpers import is_within_schedule_types
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import NaiveGPUStreamScheduler
-from dace.transformation.passes.gpu_specialization.insert_gpu_streams_to_sdfgs import InsertGPUStreamsToSDFGs
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import get_gpu_stream_array_name, get_gpu_stream_connector_name
+from dace.transformation.passes.gpu_specialization.insert_gpu_streams import InsertGPUStreams, get_dace_runtime_gpu_stream_name
 from dace.transformation.passes.gpu_specialization.connect_gpu_streams_to_kernels import ConnectGPUStreamsToKernels
 from dace.transformation.passes.gpu_specialization.connect_gpu_streams_to_tasklets import ConnectGPUStreamsToTasklets
-
-STREAM_PLACEHOLDER = "__dace_current_stream"
 
 
 @properties.make_properties
@@ -29,9 +28,7 @@ class InsertGPUStreamSyncTasklets(ppl.Pass):
     """
 
     def depends_on(self) -> Set[Union[Type[ppl.Pass], ppl.Pass]]:
-        return {
-            NaiveGPUStreamScheduler, InsertGPUStreamsToSDFGs, ConnectGPUStreamsToKernels, ConnectGPUStreamsToTasklets
-        }
+        return {NaiveGPUStreamScheduler, InsertGPUStreams, ConnectGPUStreamsToKernels, ConnectGPUStreamsToTasklets}
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Tasklets | ppl.Modifies.Memlets
@@ -86,7 +83,7 @@ class InsertGPUStreamSyncTasklets(ppl.Pass):
 
         def is_nongpu_accessnode(node, state):
             return isinstance(node, nodes.AccessNode) and node.desc(
-                state.parent).storage not in dtypes.GPU_MEMORY_STORAGES_EXPERIMENTAL_CUDACODEGEN
+                state.parent).storage not in dtypes.GPU_KERNEL_ACCESSIBLE_STORAGES
 
         def is_kernel_exit(node):
             return isinstance(node, nodes.ExitNode) and node.schedule == dtypes.ScheduleType.GPU_Device
@@ -95,13 +92,13 @@ class InsertGPUStreamSyncTasklets(ppl.Pass):
             return state.out_degree(node) == 0
 
         def edge_within_kernel(state, src, dst):
-            gpu_schedules = dtypes.GPU_SCHEDULES_EXPERIMENTAL_CUDACODEGEN
+            gpu_schedules = dtypes.GPU_SCHEDULES + dtypes.EXPERIMENTAL_GPU_SCHEDULES
             src_in_kernel = is_within_schedule_types(state, src, gpu_schedules)
             dst_in_kernel = is_within_schedule_types(state, dst, gpu_schedules)
             return src_in_kernel and dst_in_kernel
 
         def is_tasklet_with_stream_use(src):
-            return isinstance(src, nodes.Tasklet) and STREAM_PLACEHOLDER in src.code.as_string
+            return isinstance(src, nodes.Tasklet) and get_dace_runtime_gpu_stream_name() in src.code.as_string
 
         # ------------------ Sync detection logic -----------------------------
 
@@ -176,7 +173,8 @@ class InsertGPUStreamSyncTasklets(ppl.Pass):
             Mapping of nodes to their assigned GPU stream IDs.
         """
         # Prepare GPU stream info and backend
-        stream_array_name, stream_var_name_prefix = Config.get('compiler', 'cuda', 'gpu_stream_name').split(',')
+        stream_array_name = get_gpu_stream_array_name()
+        stream_var_name_prefix = get_gpu_stream_connector_name()
         backend: str = common.get_gpu_backend()
 
         for state, streams in sync_state.items():
@@ -233,9 +231,8 @@ class InsertGPUStreamSyncTasklets(ppl.Pass):
                 conn = f"{stream_var_name_prefix}{stream}"  # Note: Same as "gpu_stream_var_name" from tasklet
 
                 tasklet.add_in_connector(conn, dtypes.gpuStream_t)
-                tasklet.add_out_connector(conn, dtypes.gpuStream_t, force=True)
                 state.add_edge(combined_stream_node, None, tasklet, conn, dace.Memlet(accessed_gpu_stream))
-                state.add_edge(tasklet, conn, output_stream_node, None, dace.Memlet(accessed_gpu_stream))
+                state.add_edge(tasklet, None, output_stream_node, None, dace.Memlet(None))
 
     def _insert_gpu_stream_sync_after_node(self, sdfg: SDFG, sync_node: Dict[nodes.Node, SDFGState],
                                            stream_assignments: Dict[nodes.Node, int]) -> None:
@@ -252,7 +249,8 @@ class InsertGPUStreamSyncTasklets(ppl.Pass):
             Mapping of nodes to their assigned GPU stream IDs.
         """
         # Prepare GPU stream info and backend
-        stream_array_name, stream_var_name_prefix = Config.get('compiler', 'cuda', 'gpu_stream_name').split(',')
+        stream_array_name = get_gpu_stream_array_name()
+        stream_var_name_prefix = get_gpu_stream_connector_name()
         backend: str = common.get_gpu_backend()
 
         for node, state in sync_node.items():
@@ -285,6 +283,5 @@ class InsertGPUStreamSyncTasklets(ppl.Pass):
             out_stream = state.add_access(stream_array_name)
             accessed_stream = f"{stream_array_name}[{stream}]"
             state.add_edge(in_stream, None, tasklet, stream_var_name, dace.Memlet(accessed_stream))
-            state.add_edge(tasklet, stream_var_name, out_stream, None, dace.Memlet(accessed_stream))
+            state.add_edge(tasklet, None, out_stream, None, dace.Memlet(None))
             tasklet.add_in_connector(stream_var_name, dtypes.gpuStream_t, force=True)
-            tasklet.add_out_connector(stream_var_name, dtypes.gpuStream_t, force=True)

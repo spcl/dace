@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 from typing import Any, Dict, List, Set, Tuple, Type, Union
 import copy
 
@@ -8,11 +8,11 @@ from dace.config import Config
 from dace.sdfg import nodes
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import NaiveGPUStreamScheduler
-from dace.transformation.passes.gpu_specialization.insert_gpu_streams_to_sdfgs import InsertGPUStreamsToSDFGs
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import get_gpu_stream_array_name, get_gpu_stream_connector_name
+from dace.transformation.passes.gpu_specialization.insert_gpu_streams import InsertGPUStreams
 from dace.transformation.passes.gpu_specialization.connect_gpu_streams_to_kernels import ConnectGPUStreamsToKernels
 from dace.transformation.passes.gpu_specialization.connect_gpu_streams_to_tasklets import ConnectGPUStreamsToTasklets
 from dace.transformation.passes.gpu_specialization.insert_gpu_stream_sync_tasklets import InsertGPUStreamSyncTasklets
-from dace.transformation.passes.gpu_specialization.insert_gpu_copy_tasklet import InsertGPUCopyTasklets
 
 
 @properties.make_properties
@@ -27,8 +27,11 @@ class GPUStreamTopologySimplification(ppl.Pass):
 
     def depends_on(self) -> Set[Union[Type[ppl.Pass], ppl.Pass]]:
         depending_passes = {
-            NaiveGPUStreamScheduler, InsertGPUStreamsToSDFGs, ConnectGPUStreamsToKernels, ConnectGPUStreamsToTasklets,
-            InsertGPUStreamSyncTasklets, InsertGPUCopyTasklets
+            NaiveGPUStreamScheduler,
+            InsertGPUStreams,
+            ConnectGPUStreamsToKernels,
+            ConnectGPUStreamsToTasklets,
+            InsertGPUStreamSyncTasklets,
         }
 
         return depending_passes
@@ -157,7 +160,7 @@ class GPUStreamTopologySimplification(ppl.Pass):
             sdfg.apply_gpu_transformations()
         """
         # Get the name of the GPU stream arry
-        gpustream_array_name = Config.get('compiler', 'cuda', 'gpu_stream_name').split(',')[0]
+        gpustream_array_name = get_gpu_stream_array_name()
 
         #------------------------- Preprocess: Gather Information ----------------------------
 

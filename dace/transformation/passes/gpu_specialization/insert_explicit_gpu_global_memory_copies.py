@@ -4,11 +4,10 @@ import copy
 
 import dace
 from dace import SDFG, SDFGState, dtypes, properties
-from dace.codegen.gpu_specialization_utilities.copy_strategies import CopyContext, OutOfKernelCopyStrategy
-from dace.config import Config
-from dace.sdfg import nodes, scope_contains_scope
+from dace.transformation.passes.gpu_specialization.helpers.copy_strategies import CopyContext, OutOfKernelCopyStrategy
 from dace.sdfg.graph import Edge, MultiConnectorEdge
 from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import get_gpu_stream_connector_name
 
 
 def create_viewed_copy_kernel(parent_state: dace.SDFGState, src_node: dace.nodes.AccessNode,
@@ -117,9 +116,6 @@ class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
         """
         # Prepare GPU stream
 
-        # gpustream_assignments: Dict[nodes.Node, Union[int, str]] = pipeline_results['NaiveGPUStreamScheduler']
-        gpustream_assignments: Dict[nodes.Node, Union[int, str]] = dict()
-
         # Initialize the strategy for copies that occur outside of kernel execution
         out_of_kernel_copy = OutOfKernelCopyStrategy()
 
@@ -127,12 +123,8 @@ class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
         copy_worklist = self.find_all_data_copies(sdfg)
 
         for copy_sdfg, state, src_node, dst_node, edge in copy_worklist:
-            gpustream_assignments[src_node] = "__dace_current_stream"
-            gpustream_assignments[dst_node] = "__dace_current_stream"
 
-        for copy_sdfg, state, src_node, dst_node, edge in copy_worklist:
-
-            copy_context = CopyContext(copy_sdfg, state, src_node, dst_node, edge, gpustream_assignments)
+            copy_context = CopyContext(copy_sdfg, state, src_node, dst_node, edge)
 
             # Only insert copy tasklets for GPU related copies occuring out of the
             # kernel (i.e. a GPU_device scheduled map)
@@ -190,7 +182,9 @@ class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
                 dst_node_pred, dst_node_conn, _, dst_conn, memlet = edge
 
                 if memlet.other_subset is None:
-                    state.add_edge(dst_node_pred, dst_node_conn, tasklet, "_in_" + src_node.data, copy.deepcopy(memlet))
+                    src_memlet = copy.deepcopy(memlet)
+                    src_memlet.data = src_node.data
+                    state.add_edge(dst_node_pred, dst_node_conn, tasklet, "_in_" + src_node.data, src_memlet)
                     dst_memlet = copy.deepcopy(memlet)
                     dst_memlet.data = dst_node.data
                     state.add_edge(tasklet, "_out_" + dst_node.data, dst_node, dst_conn, dst_memlet)
@@ -207,7 +201,8 @@ class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
         return {}
 
     def find_all_data_copies(
-            self, sdfg: SDFG) -> List[Tuple[SDFG, SDFGState, nodes.Node, nodes.Node, MultiConnectorEdge[dace.Memlet]]]:
+            self, sdfg: SDFG
+    ) -> List[Tuple[SDFG, SDFGState, dace.nodes.Node, dace.nodes.Node, MultiConnectorEdge[dace.Memlet]]]:
         """
         Finds and returns all data copies in the SDFG as tuples containing the SDFG, state, source node,
         destination node, and the first memlet edge of in the memlet path between source and destination node.
@@ -219,7 +214,7 @@ class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
 
         Returns
         -------
-        List[Tuple[SDFG, SDFGState, nodes.Node, nodes.Node, MultiConnectorEdge[dace.Memlet]]]
+        List[Tuple[SDFG, SDFGState, dace.nodes.Node, dace.nodes.Node, MultiConnectorEdge[dace.Memlet]]]
             A list of tuples representing the data copy, each containing:
             - The SDFG containing the copy
             - The state in which the copy occurs
@@ -227,7 +222,8 @@ class InsertExplicitGPUGlobalMemoryCopies(ppl.Pass):
             - The destination node of the copy
             - The first memlet edge representing the data movement
         """
-        copy_worklist: List[Tuple[SDFG, SDFGState, nodes.Node, nodes.Node, MultiConnectorEdge[dace.Memlet]]] = []
+        copy_worklist: List[Tuple[SDFG, SDFGState, dace.nodes.Node, dace.nodes.Node,
+                                  MultiConnectorEdge[dace.Memlet]]] = []
         visited_edges: Set[MultiConnectorEdge[dace.Memlet]] = set()
 
         for sub_sdfg in sdfg.all_sdfgs_recursive():

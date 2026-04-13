@@ -101,6 +101,8 @@ GPU_STORAGES = [
     StorageType.GPU_Shared,
 ]
 
+GPU_KERNEL_ACCESSIBLE_STORAGES = [StorageType.GPU_Global, StorageType.GPU_Shared, StorageType.Register]
+
 
 class ReductionType(Enum):
     """ Reduction types natively supported by the SDFG compiler. """
@@ -1223,8 +1225,7 @@ else:
     complex128 = typeclass(numpy.complex128)
     string = stringtype()
     MPI_Request = opaque('MPI_Request')
-    gpuStream_t = opaque('GPU_Stream_t')
-
+    gpuStream_t = opaque('gpuStream_t')
 _bool = bool
 
 
