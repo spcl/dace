@@ -283,6 +283,28 @@ class PythonCallbackNode(ScheduleTreeNode):
 
 
 @dataclass
+class RaiseNode(ScheduleTreeNode):
+    """
+    Explicit raise statement emitted by source frontends when the exception
+    shape is known well enough to remain compilable.
+    """
+    exception_type: Optional[CodeBlock] = None
+    args: List[CodeBlock] = field(default_factory=list)
+    kwargs: Dict[str, CodeBlock] = field(default_factory=dict)
+
+    def as_string(self, indent: int = 0):
+        if self.exception_type is None:
+            return indent * INDENTATION + 'raise'
+
+        call_args = [argument.as_string for argument in self.args]
+        call_args.extend(f'{name}={value.as_string}' for name, value in self.kwargs.items())
+        rendered = self.exception_type.as_string
+        if call_args:
+            rendered = f'{rendered}({", ".join(call_args)})'
+        return indent * INDENTATION + f'raise {rendered}'
+
+
+@dataclass
 class ReturnNode(ScheduleTreeNode):
     """
     Explicit return node used by source frontends before lowering returns to a

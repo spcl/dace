@@ -49,6 +49,25 @@ def test_nested_function_capture_becomes_call_scope():
     assert any(isinstance(node, tn.MapScope) for node in calls[0].preorder_traversal())
 
 
+def test_nested_function_raise_is_inlined():
+
+    @dace.program
+    def prog(A: dace.float64[4]):
+
+        def helper(x):
+            raise ValueError(x[0])
+
+        helper(A)
+
+    stree = prog.to_schedule_tree()
+
+    raise_nodes = [node for node in stree.preorder_traversal() if isinstance(node, tn.RaiseNode)]
+    assert len(raise_nodes) == 1
+    assert len(raise_nodes[0].args) == 1
+    assert raise_nodes[0].args[0].as_string != 'x[0]'
+    assert raise_nodes[0].args[0].as_string.endswith('[0]')
+
+
 def test_nested_function_body_call_to_dace_program_becomes_call_scope():
 
     @dace.program

@@ -571,6 +571,19 @@ required:
                     Raise all errors out of nested function parsing contexts
                     instead of trying to create a callback implicitly.
 
+            raise_statements:
+                type: str
+                title: Schedule-tree raise handling
+                default: support
+                description: >
+                    Controls how ``raise`` statements are handled by the direct
+                    schedule-tree frontend. ``support`` lowers directly supported
+                    exception classes to ``RaiseNode`` and falls back to Python
+                    callbacks for unsupported dynamic cases. ``ignore_dynamic``
+                    keeps directly supported ``RaiseNode`` cases but skips
+                    dynamic raises that would otherwise require a callback.
+                    ``ignore_all`` skips all ``raise`` statements.
+
             verbose_errors:
                 type: bool
                 title: Show preprocessed AST on parsing errors

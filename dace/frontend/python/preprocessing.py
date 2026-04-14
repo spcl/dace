@@ -160,9 +160,10 @@ class ConditionalCodeResolver(ast.NodeTransformer):
     Replaces if conditions by their bodies if can be evaluated at compile time.
     """
 
-    def __init__(self, globals: Dict[str, Any]):
+    def __init__(self, globals: Dict[str, Any], preserve_raises: bool = False):
         super().__init__()
         self.globals_and_locals = copy.copy(globals)
+        self.preserve_raises = preserve_raises
 
     def visit_Name(self, node: ast.Name):
         if isinstance(node.ctx, ast.Store):
@@ -203,6 +204,11 @@ class ConditionalCodeResolver(ast.NodeTransformer):
     def visit_IfExp(self, node: ast.IfExp) -> Any:
         return self.visit_If(node)
 
+    def visit_Raise(self, node: ast.Raise) -> Any:
+        if self.preserve_raises:
+            return self.generic_visit(node)
+        return node
+
 
 class _FindBreakContinueStmts(ast.NodeVisitor):
     """
@@ -238,7 +244,14 @@ class _FindBreakContinueStmts(ast.NodeVisitor):
 class DeadCodeEliminator(ast.NodeTransformer):
     """ Removes any code within scope after return/break/continue/raise. """
 
+    def __init__(self, preserve_raises: bool = False):
+        super().__init__()
+        self.preserve_raises = preserve_raises
+
     def generic_visit(self, node: ast.AST):
+        terminators = (ast.Return, ast.Break, ast.Continue)
+        if not self.preserve_raises:
+            terminators = terminators + (ast.Raise, )
         for field, old_value in ast.iter_fields(node):
             if isinstance(old_value, list):
                 # Scope fields
@@ -253,7 +266,7 @@ class DeadCodeEliminator(ast.NodeTransformer):
                         elif not isinstance(value, ast.AST):
                             new_values.extend(value)
                             continue
-                        elif (scope_field and isinstance(value, (ast.Return, ast.Break, ast.Continue, ast.Raise))):
+                        elif (scope_field and isinstance(value, terminators)):
                             # Any AST node after this one is unreachable and
                             # not parsed by this transformer
                             new_values.append(value)
@@ -479,11 +492,13 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
                  globals: Dict[str, Any],
                  resolve_functions: bool = False,
                  default_args: Set[str] = None,
-                 preserve_object_attributes: bool = False):
+                 preserve_object_attributes: bool = False,
+                 preserve_raises: bool = False):
         self._globals = globals
         self.resolve_functions = resolve_functions
         self.default_args = default_args or set()
         self.preserve_object_attributes = preserve_object_attributes
+        self.preserve_raises = preserve_raises
         self.current_scope = set()
         self.toplevel_function = True
         self.do_not_detect_callables = False
@@ -1004,6 +1019,8 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
         return None
 
     def visit_Raise(self, node: ast.Raise) -> Any:
+        if self.preserve_raises:
+            return self.generic_visit(node)
         warnings.warn(f'Runtime exception at line {node.lineno} is not supported and will be skipped.')
         return None
 
@@ -2337,7 +2354,8 @@ def preprocess_dace_program(f: Callable[..., Any],
                             default_args: Optional[Set[str]] = None,
                             normalize_generic_for_loops: bool = False,
                             preserve_object_attributes: bool = False,
-                            disallowed_stmts: Optional[Set[str]] = None) -> Tuple[PreprocessedAST, SDFGClosure]:
+                            disallowed_stmts: Optional[Set[str]] = None,
+                            preserve_raises: bool = False) -> Tuple[PreprocessedAST, SDFGClosure]:
     """
     Preprocesses a ``@dace.program`` and all its nested functions, returning
     a preprocessed AST object and the closure of the resulting SDFG.
@@ -2357,6 +2375,9 @@ def preprocess_dace_program(f: Callable[..., Any],
     :param parent_closure: If not None, represents the closure of the parent of
                            the currently processed function.
     :param default_args: If not None, defines a list of unspecified default arguments.
+    :param preserve_raises: If True, keep ``raise`` statements in the
+                            preprocessed AST for downstream frontends to
+                            handle explicitly.
     :return: A 2-tuple of the AST and its reduced (used) closure.
     """
     src_ast, src_file, src_line, src = astutils.function_to_ast(f)
@@ -2389,7 +2410,8 @@ def preprocess_dace_program(f: Callable[..., Any],
     closure_resolver = GlobalResolver(resolved,
                                       resolve_functions,
                                       default_args=default_args,
-                                      preserve_object_attributes=preserve_object_attributes)
+                                      preserve_object_attributes=preserve_object_attributes,
+                                      preserve_raises=preserve_raises)
 
     # Append element to call stack and handle max recursion depth
     if parent_closure is not None:
@@ -2445,10 +2467,10 @@ def preprocess_dace_program(f: Callable[..., Any],
                 src_ast = IteratorForLoopNormalizer(resolved, argtypes, closure_resolver).visit(src_ast)
             src_ast = ExpressionInliner(resolved, src_file, closure_resolver).visit(src_ast)
             src_ast = ContextManagerInliner(resolved, src_file, closure_resolver).visit(src_ast)
-            src_ast = ConditionalCodeResolver(resolved).visit(src_ast)
+            src_ast = ConditionalCodeResolver(resolved, preserve_raises=preserve_raises).visit(src_ast)
             if normalize_generic_for_loops:
                 src_ast = NamedExprDesugarer().visit(src_ast)
-            src_ast = DeadCodeEliminator().visit(src_ast)
+            src_ast = DeadCodeEliminator(preserve_raises=preserve_raises).visit(src_ast)
         except Exception:
             if Config.get_bool('frontend', 'verbose_errors'):
                 print(f'VERBOSE: Failed to preprocess (pass #{pass_num}) the following program:')

@@ -1112,19 +1112,77 @@ def test_delete_noop_for_arrays():
 
 
 def test_raise_produces_callback():
-    """Raise is currently warned and removed in preprocessing. Verify no crash."""
-    import warnings
 
     @dace.program
     def raise_prog(A: dace.float64[10]):
         raise ValueError("test")
 
-    with warnings.catch_warnings(record=True):
-        warnings.simplefilter("always")
+    stree = raise_prog.to_schedule_tree()
+
+    raise_nodes = [node for node in stree.children if isinstance(node, tn.RaiseNode)]
+    assert len(raise_nodes) == 1
+    assert raise_nodes[0].exception_type is not None
+    assert raise_nodes[0].exception_type.as_string == 'ValueError'
+    assert [argument.as_string.strip("\"'") for argument in raise_nodes[0].args] == ['test']
+
+
+def test_dynamic_raise_produces_callback_when_supported():
+
+    @dace.program
+    def raise_prog(A: dace.float64[10]):
+        exc_type = ValueError
+        raise exc_type("test")
+
+    with dace.config.set_temporary('frontend', 'raise_statements', value='support'):
         stree = raise_prog.to_schedule_tree()
 
-    # Raise is removed in preprocessing with a warning; tree should be valid but empty
-    assert isinstance(stree, tn.ScheduleTreeRoot)
+    callbacks = [node for node in stree.preorder_traversal() if isinstance(node, tn.PythonCallbackNode)]
+    assert len(callbacks) == 1
+    assert callbacks[0].reason == 'raise'
+
+
+def test_dynamic_raise_can_be_ignored():
+
+    @dace.program
+    def raise_prog(A: dace.float64[10]):
+        exc_type = ValueError
+        raise exc_type("test")
+        return A
+
+    with dace.config.set_temporary('frontend', 'raise_statements', value='ignore_dynamic'):
+        stree = raise_prog.to_schedule_tree()
+
+    assert not any(isinstance(node, tn.RaiseNode) for node in stree.preorder_traversal())
+    assert not any(
+        isinstance(node, tn.PythonCallbackNode) and node.reason == 'raise' for node in stree.preorder_traversal())
+    assert isinstance(stree.children[-1], tn.ReturnNode)
+
+
+def test_raise_can_be_ignored_entirely():
+
+    @dace.program
+    def raise_prog(A: dace.float64[10]):
+        raise ValueError("test")
+        return A
+
+    with dace.config.set_temporary('frontend', 'raise_statements', value='ignore_all'):
+        stree = raise_prog.to_schedule_tree()
+
+    assert not any(isinstance(node, tn.RaiseNode) for node in stree.preorder_traversal())
+    assert not any(
+        isinstance(node, tn.PythonCallbackNode) and node.reason == 'raise' for node in stree.preorder_traversal())
+    assert isinstance(stree.children[-1], tn.ReturnNode)
+
+
+def test_raise_from_is_rejected_before_policy_fallback():
+
+    @dace.program
+    def raise_prog(A: dace.float64[10]):
+        raise ValueError('outer') from ValueError('inner')
+
+    with dace.config.set_temporary('frontend', 'raise_statements', value='ignore_all'):
+        with pytest.raises(DaceSyntaxError, match='raise from'):
+            raise_prog.to_schedule_tree()
 
 
 def test_named_expr_desugared():

@@ -2,6 +2,7 @@
 """Python frontend entry point for building schedule trees directly from AST."""
 
 import ast
+import builtins as pybuiltins
 import copy
 import inspect
 import numbers
@@ -9,6 +10,7 @@ import re
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from dace import data, dtypes, symbolic
+from dace.config import Config
 from dace.data.pydata import PythonList, PythonTuple
 from dace.frontend.python.common import DaceSyntaxError
 from dace.frontend.python import astutils, memlet_parser, preprocessing
@@ -27,6 +29,15 @@ _INTERNAL_ITERATOR_HELPERS = {
     '__dace_iterator_init',
     '__dace_iterator_next',
 }
+
+_SUPPORTED_RAISE_BEHAVIORS = {'support', 'ignore_dynamic', 'ignore_all'}
+
+
+def _normalize_raise_behavior(value: Any) -> str:
+    normalized = str(value).strip().lower().replace('-', '_').replace(' ', '_')
+    if normalized in _SUPPORTED_RAISE_BEHAVIORS:
+        return normalized
+    return 'support'
 
 
 def _clone_descriptor(descriptor: data.Data) -> data.Data:
@@ -342,10 +353,12 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         self._declared_global_names: set[str] = set()
         self._declared_nonlocal_names: set[str] = set()
         self._callback_mutated_global_names: set[str] = set()
+        self._raise_behavior = _normalize_raise_behavior(Config.get('frontend', 'raise_statements'))
         self._emit_external_reassign_nodes = isinstance(parsed_ast.preprocessed_ast, ast.Module)
         self._global_lambda_cache: Dict[str, Optional[ast.Lambda]] = {}
         self.expression_support = GenericExpressionSupportLibrary()
         self.numpy_support = NumpySupportLibrary()
+        self._terminate_body_stack: List[bool] = []
 
         self._initialize_root_scope()
         self._initialize_seed_bindings()
@@ -717,8 +730,26 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
                 return
 
     def visit_Raise(self, node: ast.Raise) -> None:
-        # May become ThrowNode in the future; wrap as callback for now
+        if node.cause is not None:
+            raise DaceSyntaxError(
+                self, node,
+                'raise from is unsupported in @dace.program schedule-tree lowering because exceptional control flow '
+                'cannot be represented safely')
+
+        if self._raise_behavior == 'ignore_all':
+            return
+
+        raise_node = self._build_direct_raise_node(node)
+        if raise_node is not None:
+            self._append_node(raise_node)
+            self._terminate_current_body()
+            return
+
+        if self._raise_behavior == 'ignore_dynamic':
+            return
+
         self._wrap_as_callback(node, 'raise')
+        self._terminate_current_body()
 
     def _append_node(self, node: tn.ScheduleTreeNode) -> None:
         scope = self.scope_stack[-1]
@@ -727,10 +758,14 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
 
     def _visit_body(self, scope: tn.ScheduleTreeScope, body: Sequence[ast.AST]) -> None:
         self.scope_stack.append(scope)
+        self._terminate_body_stack.append(False)
         try:
             for stmt in body:
                 self.visit(stmt)
+                if self._terminate_body_stack[-1]:
+                    break
         finally:
+            self._terminate_body_stack.pop()
             self.scope_stack.pop()
 
     def _program_node(self) -> ast.FunctionDef:
@@ -773,6 +808,56 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         finder = _LoadUseFinder(names, excluded_end)
         finder.visit(source_program)
         return finder.used
+
+    def _terminate_current_body(self) -> None:
+        if self._terminate_body_stack:
+            self._terminate_body_stack[-1] = True
+
+    def _is_direct_exception_type(self, node: ast.AST) -> bool:
+        value = try_resolve_static_value(node, self._evaluation_context())
+        if value is UNRESOLVED:
+            builtins_env = {
+                **pybuiltins.__dict__,
+                'builtins': pybuiltins,
+                '__builtins__': pybuiltins.__dict__,
+            }
+            value = try_resolve_static_value(node, builtins_env)
+        if value is UNRESOLVED:
+            try:
+                value = astutils.evalnode(node, builtins_env)
+            except Exception:
+                return False
+        if not inspect.isclass(value):
+            return False
+        try:
+            return issubclass(value, BaseException)
+        except TypeError:
+            return False
+
+    def _build_direct_raise_node(self, node: ast.Raise) -> Optional[tn.RaiseNode]:
+        if node.exc is None:
+            return None
+
+        exc_type = node.exc
+        args: List[ast.AST] = []
+        kwargs: Dict[str, ast.AST] = {}
+
+        if isinstance(node.exc, ast.Call):
+            if any(keyword.arg is None for keyword in node.exc.keywords):
+                return None
+            exc_type = node.exc.func
+            args = list(node.exc.args)
+            kwargs = {keyword.arg: keyword.value for keyword in node.exc.keywords if keyword.arg is not None}
+
+        if not self._is_direct_exception_type(exc_type):
+            return None
+
+        return tn.RaiseNode(exception_type=CodeBlock(self._format_runtime_expression(exc_type)),
+                            args=[CodeBlock(self._format_runtime_expression(argument)) for argument in args],
+                            kwargs={
+                                name: CodeBlock(self._format_runtime_expression(value))
+                                for name, value in kwargs.items()
+                            })
 
     def _match_subject_expression(self, subject: ast.AST) -> ast.AST:
         planned = self.expression_support.plan_expression(self._expression_planning_context(),
