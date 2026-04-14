@@ -488,6 +488,8 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
         self.toplevel_function = True
         self.do_not_detect_callables = False
         self.ignore_node_ctx = False
+        self._declared_globals: List[Set[str]] = []
+        self._declared_nonlocals: List[Set[str]] = []
 
         self.closure = SDFGClosure()
 
@@ -741,37 +743,77 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
         else:
             return newnode
 
+    def _current_declared_globals(self) -> Set[str]:
+        if not self._declared_globals:
+            return set()
+        return self._declared_globals[-1]
+
+    def _current_declared_nonlocals(self) -> Set[str]:
+        if not self._declared_nonlocals:
+            return set()
+        return self._declared_nonlocals[-1]
+
+    def _is_declared_global(self, name: str) -> bool:
+        return bool(self._declared_globals) and name in self._declared_globals[-1]
+
+    def _is_declared_nonlocal(self, name: str) -> bool:
+        return bool(self._declared_nonlocals) and name in self._declared_nonlocals[-1]
+
     def visit_FunctionDef(self, node: ast.FunctionDef) -> Any:
         # Skip the top function definition (handled outside of the resolver)
         if self.toplevel_function:
             self.toplevel_function = False
             node.decorator_list = []  # Skip decorators
+            self._declared_globals.append(set())
+            self._declared_nonlocals.append(set())
+            try:
+                return self.generic_visit(node)
+            finally:
+                self._declared_globals.pop()
+                self._declared_nonlocals.pop()
+
+        self._declared_globals.append(set())
+        self._declared_nonlocals.append(set())
+        try:
+            for arg in ast.walk(node.args):
+                if isinstance(arg, ast.arg):
+                    # Skip unspecified default arguments
+                    if arg.arg in self.default_args:
+                        continue
+
+                    # Skip ``dace.compiletime``-annotated arguments
+                    is_constant = False
+                    if arg.annotation is not None:
+                        try:
+                            ann = astutils.evalnode(arg.annotation, self.globals)
+                            if ann is dace.compiletime:
+                                is_constant = True
+                        except SyntaxError:
+                            pass
+                    if not is_constant:
+                        self.current_scope.add(arg.arg)
             return self.generic_visit(node)
-
-        for arg in ast.walk(node.args):
-            if isinstance(arg, ast.arg):
-                # Skip unspecified default arguments
-                if arg.arg in self.default_args:
-                    continue
-
-                # Skip ``dace.compiletime``-annotated arguments
-                is_constant = False
-                if arg.annotation is not None:
-                    try:
-                        ann = astutils.evalnode(arg.annotation, self.globals)
-                        if ann is dace.compiletime:
-                            is_constant = True
-                    except SyntaxError:
-                        pass
-                if not is_constant:
-                    self.current_scope.add(arg.arg)
-        return self.generic_visit(node)
+        finally:
+            self._declared_globals.pop()
+            self._declared_nonlocals.pop()
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> Any:
         return self.visit_FunctionDef(node)
 
     def visit_Lambda(self, node: ast.Lambda) -> Any:
         return self.visit_FunctionDef(node)
+
+    def visit_Global(self, node: ast.Global) -> Any:
+        self._current_declared_globals().update(node.names)
+        for name in node.names:
+            self.current_scope.discard(name)
+        return node
+
+    def visit_Nonlocal(self, node: ast.Nonlocal) -> Any:
+        self._current_declared_nonlocals().update(node.names)
+        for name in node.names:
+            self.current_scope.discard(name)
+        return node
 
     def visit_AugAssign(self, node: ast.AugAssign):
         # Node target in augassign is ast.Store, even though it is updating an existing value
@@ -785,9 +827,10 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
 
     def visit_Name(self, node: ast.Name):
         if not self.ignore_node_ctx and isinstance(node.ctx, ast.Store):
-            self.current_scope.add(node.id)
+            if not self._is_declared_global(node.id) and not self._is_declared_nonlocal(node.id):
+                self.current_scope.add(node.id)
         else:
-            if node.id in self.current_scope:
+            if not self._is_declared_global(node.id) and node.id in self.current_scope:
                 return node
             if node.id in self.globals:
                 global_val = self.globals[node.id]

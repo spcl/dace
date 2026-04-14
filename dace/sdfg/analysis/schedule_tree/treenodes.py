@@ -241,6 +241,20 @@ class AssignNode(ScheduleTreeNode):
 
 
 @dataclass
+class ReassignExternalNode(ScheduleTreeNode):
+    """
+    Explicit reassignment of an external Python binding captured via
+    ``global`` or ``nonlocal``.
+    """
+    name: str
+    value: CodeBlock
+    scope: Literal['global', 'nonlocal']
+
+    def as_string(self, indent: int = 0):
+        return indent * INDENTATION + f'reassign_external {self.scope} {self.name} = {self.value.as_string}'
+
+
+@dataclass
 class StatementNode(ScheduleTreeNode):
     """
     Opaque statement node used by source frontends when a statement has not yet

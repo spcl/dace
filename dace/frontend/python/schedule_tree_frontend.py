@@ -117,6 +117,52 @@ def _binding_to_descriptor(value: Any) -> data.Data:
     return descriptor
 
 
+def _binding_kind_for_descriptor(descriptor: data.Data) -> str:
+    if isinstance(descriptor, data.Reference):
+        return 'reference'
+    if isinstance(descriptor, data.Scalar):
+        if isinstance(descriptor.dtype, dtypes.callback):
+            return 'callback'
+        return 'scalar'
+    return 'container'
+
+
+def _collect_scope_declarations(node: ast.AST) -> Tuple[set[str], set[str]]:
+
+    class _ScopeDeclarationCollector(ast.NodeVisitor):
+
+        def __init__(self) -> None:
+            self.global_names: set[str] = set()
+            self.nonlocal_names: set[str] = set()
+
+        def visit_Global(self, global_node: ast.Global) -> None:
+            self.global_names.update(global_node.names)
+
+        def visit_Nonlocal(self, nonlocal_node: ast.Nonlocal) -> None:
+            self.nonlocal_names.update(nonlocal_node.names)
+
+        def visit_FunctionDef(self, nested_node: ast.FunctionDef) -> None:
+            if nested_node is node:
+                for stmt in nested_node.body:
+                    self.visit(stmt)
+
+        def visit_AsyncFunctionDef(self, nested_node: ast.AsyncFunctionDef) -> None:
+            if nested_node is node:
+                for stmt in nested_node.body:
+                    self.visit(stmt)
+
+        def visit_Lambda(self, lambda_node: ast.Lambda) -> None:
+            if lambda_node is node:
+                self.generic_visit(lambda_node.body)
+
+        def visit_ClassDef(self, _: ast.ClassDef) -> None:
+            return
+
+    collector = _ScopeDeclarationCollector()
+    collector.visit(node)
+    return collector.global_names, collector.nonlocal_names
+
+
 def _function_signature_from_ast(node: ast.FunctionDef) -> inspect.Signature:
     parameters: List[inspect.Parameter] = []
     positional = list(node.args.posonlyargs) + list(node.args.args)
@@ -150,12 +196,15 @@ class _NestedFunctionProgram:
     _schedule_tree_inline_callable = True
 
     def __init__(self, name: str, function_ast: ast.FunctionDef, *, program_globals: Dict[str, Any],
-                 constants: Dict[str, Tuple[data.Data,
-                                            Any]], callback_mapping: Dict[str, str], seed_bindings: Dict[str, _Binding],
+                 external_globals: Dict[str, Any], captured_names: set[str], constants: Dict[str, Tuple[data.Data,
+                                                                                                        Any]],
+                 callback_mapping: Dict[str, str], seed_bindings: Dict[str, _Binding],
                  lambda_bindings: Dict[str, ast.Lambda], callable_bindings: Dict[str, Any]) -> None:
         self.name = name
         self.function_ast = ast.fix_missing_locations(copy.deepcopy(function_ast))
         self.program_globals = copy.copy(program_globals)
+        self.external_globals = copy.copy(external_globals)
+        self.captured_names = set(captured_names)
         self.constants = {key: (_clone_descriptor(desc), value) for key, (desc, value) in constants.items()}
         self.callback_mapping = dict(callback_mapping)
         self.seed_bindings = {key: _clone_binding(binding) for key, binding in seed_bindings.items()}
@@ -204,7 +253,8 @@ class _NestedFunctionProgram:
                                    arg_names=[name for name in self.argnames if name in argtypes],
                                    lambda_bindings=active_lambda_bindings,
                                    callable_bindings=active_callable_bindings,
-                                   seed_bindings=seed_bindings)
+                                   seed_bindings=seed_bindings,
+                                   external_globals=self.external_globals)
 
 
 def _should_fallback_to_pyobject_scalar(node: ast.AST, value: Any = UNRESOLVED) -> bool:
@@ -224,6 +274,7 @@ def build_schedule_tree(name: str,
                         lambda_bindings: Optional[Dict[str, ast.Lambda]] = None,
                         callable_bindings: Optional[Dict[str, Any]] = None,
                         seed_bindings: Optional[Dict[str, _Binding]] = None,
+                        external_globals: Optional[Dict[str, Any]] = None,
                         inline_calls: bool = True) -> tn.ScheduleTreeRoot:
     """
     Build a schedule tree directly from a preprocessed Python AST.
@@ -243,7 +294,8 @@ def build_schedule_tree(name: str,
                                         arg_names=arg_names,
                                         lambda_bindings=lambda_bindings,
                                         callable_bindings=callable_bindings,
-                                        seed_bindings=seed_bindings)
+                                        seed_bindings=seed_bindings,
+                                        external_globals=external_globals)
     root = builder.build()
     if inline_calls:
         resolve_function_calls(root)
@@ -263,12 +315,14 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
                  arg_names: Optional[Sequence[str]] = None,
                  lambda_bindings: Optional[Dict[str, ast.Lambda]] = None,
                  callable_bindings: Optional[Dict[str, Any]] = None,
-                 seed_bindings: Optional[Dict[str, _Binding]] = None) -> None:
+                 seed_bindings: Optional[Dict[str, _Binding]] = None,
+                 external_globals: Optional[Dict[str, Any]] = None) -> None:
         self.name = name
         self.filename = parsed_ast.filename
         self.parsed_ast = parsed_ast
         self.argtypes = {k: _clone_descriptor(v) for k, v in argtypes.items()}
         self.globals = copy.copy(parsed_ast.program_globals)
+        self.external_globals = copy.copy(parsed_ast.program_globals if external_globals is None else external_globals)
         self.root = tn.ScheduleTreeRoot(name=name,
                                         children=[],
                                         containers={},
@@ -285,6 +339,10 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         }
         self.callable_bindings: Dict[str, Any] = dict(callable_bindings or {})
         self.seed_bindings = {key: _clone_binding(binding) for key, binding in (seed_bindings or {}).items()}
+        self._declared_global_names: set[str] = set()
+        self._declared_nonlocal_names: set[str] = set()
+        self._callback_mutated_global_names: set[str] = set()
+        self._emit_external_reassign_nodes = isinstance(parsed_ast.preprocessed_ast, ast.Module)
         self._global_lambda_cache: Dict[str, Optional[ast.Lambda]] = {}
         self.expression_support = GenericExpressionSupportLibrary()
         self.numpy_support = NumpySupportLibrary()
@@ -325,6 +383,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
     def visit_Expr(self, node: ast.Expr) -> None:
         if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
             return
+        self._reject_callback_mutated_global_uses(node.value)
         value = self._inline_known_lambda_calls(node.value)
         if self._is_dace_program_call(value):
             self._materialize_call_args(value)
@@ -341,6 +400,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         if node.value is None:
             values: List[CodeBlock] = []
         else:
+            self._reject_callback_mutated_global_uses(node.value)
             return_value = self._inline_known_lambda_calls(node.value)
             if self._is_dace_program_call(return_value):
                 # Materialize array-valued arguments, emit the function call;
@@ -404,9 +464,11 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         self._append_node(tn.ContinueNode())
 
     def visit_If(self, node: ast.If) -> None:
+        self._reject_callback_mutated_global_uses(node.test)
         self._emit_if_chain(node)
 
     def visit_For(self, node: ast.For) -> None:
+        self._reject_callback_mutated_global_uses(node.iter)
         loop_indices = self._parse_for_indices(node.target)
         iterator_kind, iterator_ranges = self._parse_for_iterator(node.iter)
 
@@ -438,6 +500,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             self._visit_body(else_scope, node.orelse)
 
     def visit_While(self, node: ast.While) -> None:
+        self._reject_callback_mutated_global_uses(node.test)
         loop_scope = tn.LoopScope(
             loop=tn.FrontendLoop(loop_condition=CodeBlock(self._format_runtime_expression(node.test))), children=[])
         self._append_node(loop_scope)
@@ -503,10 +566,25 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
                 except Exception:
                     return 'None'
 
+    def _reject_callback_mutated_global_uses(self, node: Optional[ast.AST]) -> None:
+        if node is None or not self._callback_mutated_global_names:
+            return
+
+        for child in ast.walk(node):
+            if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Load):
+                if child.id in self._callback_mutated_global_names:
+                    raise DaceSyntaxError(
+                        self, child,
+                        f'Nested callback functions cannot reassign global names that are used in the enclosing '
+                        f'program: {child.id}')
+
     def _wrap_as_callback(self, node: ast.AST, reason: str) -> None:
         """Emit a PythonCallbackNode for constructs that cannot be lowered."""
         code_text = self._callback_code_text(node)
         inputs, outputs = self._analyze_name_flow(node)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            global_names, _ = _collect_scope_declarations(node)
+            self._callback_mutated_global_names.update(global_names)
         known_inputs = sorted(inputs & set(self.bindings))
         for output_name in sorted(outputs):
             binding = self.bindings.get(output_name)
@@ -567,40 +645,25 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
     # ------------------------------------------------------------------ #
 
     def visit_Global(self, node: ast.Global) -> None:
-        # Try to trace each name to a known data container or closure entry
+        self._declared_global_names.update(node.names)
         for name in node.names:
-            if name in self.globals and isinstance(self.globals[name], data.Data):
-                descriptor = _clone_descriptor(self.globals[name])
-                self._register_binding(name, descriptor, kind='container')
-            elif name in self.globals:
-                # Known global value but not a data container — bind as symbol if possible
-                value = self.globals[name]
-                if isinstance(value, (int, float)):
-                    self._register_binding(name,
-                                           data.Scalar(dtypes.typeclass(type(value)), transient=False),
-                                           kind='scalar')
-                else:
-                    self._wrap_as_callback(node, 'global scope')
-                    return
-            else:
+            value = self._resolve_external_scope_value(name)
+            if value is UNRESOLVED:
                 self._wrap_as_callback(node, 'global scope')
                 return
+            self._bind_external_scope_value(name, value)
 
     def visit_Nonlocal(self, node: ast.Nonlocal) -> None:
-        # Try to trace each name to a known binding (closure entry)
+        self._declared_nonlocal_names.update(node.names)
         for name in node.names:
             if name in self.bindings:
-                pass  # Already bound — nonlocal just marks scope; binding exists
-            elif name in self.globals:
-                if isinstance(self.globals[name], data.Data):
-                    descriptor = _clone_descriptor(self.globals[name])
-                    self._register_binding(name, descriptor, kind='container')
-                else:
-                    self._wrap_as_callback(node, 'nonlocal scope')
-                    return
-            else:
-                self._wrap_as_callback(node, 'nonlocal scope')
-                return
+                continue
+
+            value = self._resolve_external_scope_value(name)
+            if value is UNRESOLVED:
+                raise DaceSyntaxError(self, node, f'Could not resolve nonlocal name "{name}" in schedule-tree lowering')
+
+            self._bind_external_scope_value(name, value)
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         """Handle nested function definitions.
@@ -609,15 +672,39 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         When the target cannot be modeled safely, keep explicit callback
         fallback.
         """
+        global_names, nonlocal_names = _collect_scope_declarations(node)
         inline_function = self._make_nested_function_program(node)
         if inline_function is not None:
             self.callable_bindings[node.name] = inline_function
             self.lambda_bindings.pop(node.name, None)
             self._register_binding(node.name, data.Scalar(dtypes.callback(None), transient=True), kind='callback')
             return
+        conflicting_globals = self._enclosing_load_uses_outside(node, global_names)
+        if conflicting_globals:
+            conflicts = ', '.join(sorted(conflicting_globals))
+            raise DaceSyntaxError(
+                self, node,
+                f'Nested callback functions cannot reassign global names that are used in the enclosing program: '
+                f'{conflicts}')
+        if nonlocal_names:
+            raise DaceSyntaxError(
+                self, node, 'Nested functions that use nonlocal declarations cannot fall back to callbacks during '
+                'schedule-tree lowering')
         self._wrap_as_callback(node, 'nested function')
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        global_names, nonlocal_names = _collect_scope_declarations(node)
+        conflicting_globals = self._enclosing_load_uses_outside(node, global_names)
+        if conflicting_globals:
+            conflicts = ', '.join(sorted(conflicting_globals))
+            raise DaceSyntaxError(
+                self, node,
+                f'Nested callback functions cannot reassign global names that are used in the enclosing program: '
+                f'{conflicts}')
+        if nonlocal_names:
+            raise DaceSyntaxError(
+                self, node, 'Nested functions that use nonlocal declarations cannot fall back to callbacks during '
+                'schedule-tree lowering')
         self._wrap_as_callback(node, 'async function')
 
     def visit_Delete(self, node: ast.Delete) -> None:
@@ -656,6 +743,37 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             raise TypeError('Expected a preprocessed FunctionDef as schedule-tree frontend input')
         return node
 
+    def _enclosing_load_uses_outside(self, excluded_node: ast.AST, names: set[str]) -> set[str]:
+        if not names or not self.parsed_ast.src:
+            return set()
+
+        source_ast = ast.parse(astutils._remove_outer_indentation(self.parsed_ast.src))
+        ast.increment_lineno(source_ast, self.parsed_ast.src_line)
+
+        source_program = source_ast.body[0] if source_ast.body else None
+        if not isinstance(source_program, ast.FunctionDef):
+            return set()
+
+        excluded_end = (getattr(excluded_node, 'end_lineno', None)
+                        or excluded_node.lineno, getattr(excluded_node, 'end_col_offset', None) or 0)
+
+        class _LoadUseFinder(ast.NodeVisitor):
+
+            def __init__(self, candidates: set[str], excluded_end_location: Tuple[int, int]) -> None:
+                self.candidates = candidates
+                self.excluded_end_location = excluded_end_location
+                self.used: set[str] = set()
+
+            def visit_Name(self, name_node: ast.Name) -> None:
+                location = (getattr(name_node, 'lineno', 0), getattr(name_node, 'col_offset', 0))
+                if (isinstance(name_node.ctx, ast.Load) and name_node.id in self.candidates
+                        and location > self.excluded_end_location):
+                    self.used.add(name_node.id)
+
+        finder = _LoadUseFinder(names, excluded_end)
+        finder.visit(source_program)
+        return finder.used
+
     def _match_subject_expression(self, subject: ast.AST) -> ast.AST:
         planned = self.expression_support.plan_expression(self._expression_planning_context(),
                                                           subject,
@@ -690,10 +808,21 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
                 self.root.containers[name] = _clone_descriptor(binding.descriptor)
                 self.globals[name] = _clone_descriptor(binding.descriptor)
 
+    def _external_scope_kind(self, name: str) -> Optional[str]:
+        if name in self._declared_nonlocal_names:
+            return 'nonlocal'
+        if name in self._declared_global_names:
+            return 'global'
+        return None
+
+    def _should_emit_external_reassign(self, name: str) -> bool:
+        return self._emit_external_reassign_nodes and self._external_scope_kind(name) is not None
+
     def _handle_assignment(self,
                            target: ast.AST,
                            value: ast.AST,
                            annotated_descriptor: Optional[data.Data] = None) -> None:
+        self._reject_callback_mutated_global_uses(value)
         if isinstance(target, ast.Name):
             self._update_callable_binding(target.id, value)
             self._update_lambda_binding(target.id, value)
@@ -746,6 +875,10 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         if self._is_internal_iterator_binding_name(name) or self._is_internal_iterator_helper_call(value):
             self._infer_internal_iterator_binding(name, value, annotated_descriptor)
             self._append_node(tn.AssignNode(name=name, value=CodeBlock(self._format_runtime_expression(value))))
+            return
+
+        if self._should_emit_external_reassign(name):
+            self._handle_external_name_reassignment(name, value, source_access, annotated_descriptor)
             return
 
         existing = self.bindings.get(name)
@@ -815,6 +948,43 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
             return
 
         self._append_node(tn.AssignNode(name=name, value=CodeBlock(self._format_runtime_expression(value))))
+
+    def _handle_external_name_reassignment(self, name: str, value: ast.AST,
+                                           source_access: Optional[Tuple[str, Memlet, data.Data, Optional[data.Data]]],
+                                           annotated_descriptor: Optional[data.Data]) -> None:
+        existing = self.bindings.get(name)
+        target_descriptor = annotated_descriptor or self.annotated_descriptors.get(name)
+
+        if source_access is not None:
+            _, _, source_desc, view_desc = source_access
+
+            if target_descriptor is not None and isinstance(target_descriptor, data.Reference):
+                self._ensure_reference_binding(name, target_descriptor)
+            elif existing is not None and isinstance(existing.descriptor, data.Reference):
+                self._ensure_reference_binding(name, existing.descriptor)
+            elif existing is None and self._should_bind_as_reference(value, source_desc):
+                self._ensure_reference_binding(name, source_desc)
+            elif existing is None and self._is_aliasable_descriptor(source_desc):
+                self._register_binding(name, view_desc or self._make_view_descriptor(source_desc), kind='view')
+            elif existing is not None and existing.descriptor is not None and self._can_promote_to_reference(
+                    existing.descriptor, source_desc):
+                self._ensure_reference_binding(name, existing.descriptor)
+
+        inferred_descriptor = self._infer_descriptor(value, name)
+        if inferred_descriptor is not None:
+            self._register_binding(name, inferred_descriptor, kind=_binding_kind_for_descriptor(inferred_descriptor))
+        else:
+            scalar_descriptor = self._infer_scalar_descriptor(value, annotated_descriptor)
+            if scalar_descriptor is not None:
+                self._register_binding(name, scalar_descriptor, kind=_binding_kind_for_descriptor(scalar_descriptor))
+
+        scope_kind = self._external_scope_kind(name)
+        if scope_kind is None:
+            raise DaceSyntaxError(self, self._program_node(), f'Could not determine external scope kind for "{name}"')
+        self._append_node(
+            tn.ReassignExternalNode(name=name,
+                                    value=CodeBlock(self._format_runtime_expression(value)),
+                                    scope=scope_kind))
 
     def _handle_expression(self, value: ast.AST) -> bool:
         if not isinstance(value, ast.Call) or not self._should_lower_as_library_call(value):
@@ -1638,6 +1808,7 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         scope._call_kwargs = specialization_kwargs
         scope._lambda_bindings = lambda_bindings
         scope._callable_bindings = callable_bindings
+        scope._captured_names = set(getattr(callee, 'captured_names', set()))
         scope._return_targets = return_targets
         self._append_node(scope)
 
@@ -1759,6 +1930,8 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         if node.decorator_list:
             return None
 
+        global_names, nonlocal_names = _collect_scope_declarations(node)
+
         class _SelfCallDetector(ast.NodeVisitor):
 
             def __init__(self, name: str) -> None:
@@ -1779,11 +1952,34 @@ class PythonScheduleTreeBuilder(ast.NodeVisitor):
         return _NestedFunctionProgram(node.name,
                                       node,
                                       program_globals=self.globals,
+                                      external_globals=self.external_globals,
+                                      captured_names=set(global_names) | set(nonlocal_names),
                                       constants=self.root.constants,
                                       callback_mapping=self.root.callback_mapping,
                                       seed_bindings=self.bindings,
                                       lambda_bindings=self.lambda_bindings,
                                       callable_bindings=self.callable_bindings)
+
+    def _resolve_external_scope_value(self, name: str) -> Any:
+        if name in self.external_globals:
+            return self.external_globals[name]
+        return UNRESOLVED
+
+    def _bind_external_scope_value(self, name: str, value: Any) -> None:
+        try:
+            descriptor = _binding_to_descriptor(value)
+        except Exception:
+            descriptor = _pyobject_scalar_descriptor()
+
+        self._store_binding(name, descriptor, kind=_binding_kind_for_descriptor(descriptor))
+        self.globals[name] = value
+
+        if callable(value):
+            self.callable_bindings[name] = value
+
+        lambda_node = self._resolve_global_lambda_node(value)
+        if lambda_node is not None:
+            self.lambda_bindings[name] = lambda_node
 
     def _update_callable_binding(self, name: str, value: ast.AST) -> None:
         resolved = self._resolve_known_callable(value)

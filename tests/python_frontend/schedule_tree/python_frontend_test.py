@@ -1000,6 +1000,49 @@ def test_global_untraceable_callback():
     assert callbacks[0].reason == 'global scope'
 
 
+def test_top_level_global_reassignment_emits_reassign_external():
+    globals()['__schedule_tree_global_reassign'] = np.zeros(10, dtype=np.float64)
+
+    try:
+
+        @dace.program
+        def global_prog(A: dace.float64[10]):
+            global __schedule_tree_global_reassign
+            __schedule_tree_global_reassign = A
+            return A
+
+        stree = global_prog.to_schedule_tree()
+
+    finally:
+        del globals()['__schedule_tree_global_reassign']
+
+    reassigns = [node for node in stree.children if isinstance(node, tn.ReassignExternalNode)]
+    assert len(reassigns) == 1
+    assert reassigns[0].scope == 'global'
+    assert reassigns[0].name == '__schedule_tree_global_reassign'
+
+
+def test_top_level_nonlocal_reassignment_emits_reassign_external():
+
+    def make_prog():
+        captured = np.zeros(10, dtype=np.float64)
+
+        @dace.program
+        def nonlocal_prog(A: dace.float64[10]):
+            nonlocal captured
+            captured = A
+            return A
+
+        return nonlocal_prog
+
+    stree = make_prog().to_schedule_tree()
+
+    reassigns = [node for node in stree.children if isinstance(node, tn.ReassignExternalNode)]
+    assert len(reassigns) == 1
+    assert reassigns[0].scope == 'nonlocal'
+    assert reassigns[0].name == 'captured'
+
+
 def test_decorated_nested_funcdef_produces_callback():
 
     def passthrough(fn):

@@ -158,9 +158,10 @@ def _inline_callee(scope: tn.FunctionCallScope, callee_tree: tn.ScheduleTreeRoot
     """
     arguments = scope.call.arguments  # callee_param -> caller_expr
     callee_arg_names = set(callee_tree.arg_names)
+    captured_names = set(getattr(scope, '_captured_names', set()))
 
     # 1. Build rename map: callee name -> caller name.
-    rename_map = _build_rename_map(arguments, callee_tree, caller_root, callee_arg_names)
+    rename_map = _build_rename_map(arguments, callee_tree, caller_root, callee_arg_names, captured_names)
 
     # 2. Deep-copy callee body.
     body = copy.deepcopy(callee_tree.children)
@@ -200,7 +201,7 @@ def _inline_callee(scope: tn.FunctionCallScope, callee_tree: tn.ScheduleTreeRoot
 
 
 def _build_rename_map(arguments: Dict[str, str], callee_tree: tn.ScheduleTreeRoot, caller_root: tn.ScheduleTreeRoot,
-                      callee_arg_names: Set[str]) -> Dict[str, str]:
+                      callee_arg_names: Set[str], captured_names: Set[str]) -> Dict[str, str]:
     """
     Build ``{callee_name: caller_name}`` for every container in the
     callee's schedule tree.
@@ -214,6 +215,11 @@ def _build_rename_map(arguments: Dict[str, str], callee_tree: tn.ScheduleTreeRoo
     # Map callee parameters to caller arguments.
     for callee_param, caller_expr in arguments.items():
         rename[callee_param] = caller_expr
+
+    # Explicit global/nonlocal captures must keep the caller-visible name.
+    for captured_name in captured_names:
+        rename[captured_name] = captured_name
+        occupied.add(captured_name)
 
     # Handle callee-internal transients (everything not in arg_names).
     for cname in callee_tree.containers:
@@ -318,6 +324,10 @@ class _ContainerRenamer(tn.ScheduleNodeTransformer):
 
     def visit_AssignNode(self, node: tn.AssignNode):
         node.name = self._rename(node.name)
+        node.value = self._rename_code_block(node.value)
+        return node
+
+    def visit_ReassignExternalNode(self, node: tn.ReassignExternalNode):
         node.value = self._rename_code_block(node.value)
         return node
 
