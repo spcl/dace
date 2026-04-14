@@ -75,7 +75,11 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
         }
         self.results: Dict[str, _Binding] = {}
 
-    def infer(self, program: ast.FunctionDef) -> Dict[str, _Binding]:
+    def infer(self, program: ast.AST) -> Dict[str, _Binding]:
+        if isinstance(program, ast.Module):
+            program = program.body[0] if program.body else None
+        if not isinstance(program, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return {}
         for stmt in program.body:
             self.visit(stmt)
         return {name: _clone_binding(binding) for name, binding in self.results.items()}
@@ -125,6 +129,14 @@ class ScheduleTreeTypeInference(ast.NodeVisitor):
             self.visit(stmt)
         for stmt in node.orelse:
             self.visit(stmt)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        # Nested function-local bindings must not leak into the enclosing
+        # schedule-tree type-inference scope.
+        return
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        return
 
     def _visit_branch(self, body: Sequence[ast.AST], initial: Dict[str, _Binding]) -> Dict[str, _Binding]:
         previous = self.bindings

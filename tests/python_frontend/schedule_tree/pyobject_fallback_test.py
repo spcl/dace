@@ -1,6 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
+import ast
+import sys
+
 import dace
+import pytest
 from dace import data, dtypes
 from dace.frontend.python import preprocessing
 from dace.frontend.python.schedule_tree import ScheduleTreeTypeInference
@@ -81,3 +85,28 @@ def test_python_frontend_schedule_tree_callback_outputs_use_pyobject_scalar():
     assert isinstance(stree.children[0], tn.PythonCallbackNode)
     _assert_pyobject_scalar(stree.containers['m'])
     _assert_pyobject_scalar(stree.containers['tmp'])
+
+
+def test_schedule_tree_type_inference_nested_generic_conflicts_do_not_leak():
+    if sys.version_info < (3, 12):
+        pytest.skip('Generic function type parameters require Python 3.12+')
+
+    source = '''
+def prog[T, *Ts](A):
+    tmp = A
+
+    def inner[T, *Ts](x: T, y: tuple[*Ts]):
+        tmp = 1
+        return x
+
+    return tmp
+'''
+
+    module = ast.parse(source)
+    function = module.body[0]
+    bindings = ScheduleTreeTypeInference({'dace': dace}, {'A': dace.float64[4]}).infer(function)
+
+    assert 'tmp' in bindings
+    assert isinstance(bindings['tmp'].descriptor, data.Array)
+    assert bindings['tmp'].descriptor.dtype == dace.float64
+    assert tuple(bindings['tmp'].descriptor.shape) == (4, )

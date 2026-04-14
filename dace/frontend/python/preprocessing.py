@@ -52,6 +52,9 @@ class PreprocessedAST:
     program_globals: Dict[str, Any]
 
 
+TypeAlias = getattr(ast, 'TypeAlias', type(None))
+
+
 def __dace_iterator_init(iterable):
     return iterable.__iter__()
 
@@ -122,6 +125,94 @@ class ModuleResolver(ast.NodeTransformer):
             cnode.value.id = self.modules[cnode.value.id]
 
         return self.generic_visit(node)
+
+
+class TypeAliasResolver(ast.NodeTransformer):
+    """Resolve compile-time-only ``type`` aliases inside function bodies."""
+
+    class _AnnotationRewriter(ast.NodeTransformer):
+
+        def __init__(self, aliases: Dict[str, ast.AST]) -> None:
+            self.aliases = aliases
+
+        def visit_Name(self, node: ast.Name) -> ast.AST:
+            if isinstance(node.ctx, ast.Load) and node.id in self.aliases:
+                return ast.copy_location(astutils.copy_tree(self.aliases[node.id]), node)
+            return node
+
+    def __init__(self, filename: str) -> None:
+        super().__init__()
+        self.filename = filename
+        self._alias_scopes: List[Dict[str, ast.AST]] = [dict()]
+        self._visitor = collections.namedtuple('Visitor', 'filename')
+        self._visitor.filename = filename
+
+    def _current_aliases(self) -> Dict[str, ast.AST]:
+        return self._alias_scopes[-1]
+
+    def _rewrite_annotation(self, node: Optional[ast.AST]) -> Optional[ast.AST]:
+        if node is None:
+            return None
+        rewritten = self._AnnotationRewriter(self._current_aliases()).visit(astutils.copy_tree(node))
+        return ast.fix_missing_locations(ast.copy_location(rewritten, node))
+
+    def _visit_body(self, body: List[ast.AST]) -> List[ast.AST]:
+        new_body: List[ast.AST] = []
+        for stmt in body:
+            if isinstance(stmt, TypeAlias):
+                self._bind_type_alias(stmt)
+                continue
+
+            visited = self.visit(stmt)
+            if visited is None:
+                continue
+            if isinstance(visited, list):
+                new_body.extend(value for value in visited if value is not None)
+            else:
+                new_body.append(visited)
+        return new_body
+
+    def _bind_type_alias(self, node: TypeAlias) -> None:
+        if getattr(node, 'type_params', None):
+            raise DaceSyntaxError(self._visitor, node,
+                                  'Generic type aliases are unsupported in @dace.program preprocessing')
+
+        if not isinstance(getattr(node, 'name', None), ast.Name):
+            return
+
+        self._current_aliases()[node.name.id] = self._rewrite_annotation(node.value)
+
+    def visit_Module(self, node: ast.Module) -> ast.Module:
+        node.body = self._visit_body(node.body)
+        return node
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        node.decorator_list = [self.visit(decorator) for decorator in node.decorator_list]
+        node.args = self.visit(node.args)
+        node.returns = self._rewrite_annotation(node.returns)
+        if hasattr(node, 'type_params'):
+            node.type_params = []
+
+        self._alias_scopes.append(dict(self._current_aliases()))
+        try:
+            node.body = self._visit_body(node.body)
+        finally:
+            self._alias_scopes.pop()
+        return node
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> ast.AsyncFunctionDef:
+        return self.visit_FunctionDef(node)
+
+    def visit_arg(self, node: ast.arg) -> ast.arg:
+        node.annotation = self._rewrite_annotation(node.annotation)
+        return node
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> ast.AnnAssign:
+        node.annotation = self._rewrite_annotation(node.annotation)
+        node.target = self.visit(node.target)
+        if node.value is not None:
+            node.value = self.visit(node.value)
+        return node
 
 
 class RewriteSympyEquality(ast.NodeTransformer):
@@ -2384,6 +2475,7 @@ def preprocess_dace_program(f: Callable[..., Any],
 
     # Resolve data structures
     src_ast = StructTransformer(global_vars).visit(src_ast)
+    src_ast = TypeAliasResolver(src_file).visit(src_ast)
 
     src_ast = ModuleResolver(modules).visit(src_ast)
     # Convert modules after resolution

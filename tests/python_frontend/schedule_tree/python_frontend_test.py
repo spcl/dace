@@ -3,6 +3,7 @@
 import ast
 import numpy as np
 import pytest
+import sys
 from typing import Optional
 
 import dace
@@ -1290,7 +1291,8 @@ def test_comprehensive_coverage():
         'With',
         'AsyncWith',  # ContextManagerInliner
         'Assert',  # Removed/evaluated
-        'AsyncFor',  # Treated as For
+        'AsyncFor',  # Disallowed
+        'TypeAlias',  # TypeAliasResolver
     }
 
     # All explicitly handled types
@@ -1305,12 +1307,67 @@ def test_comprehensive_coverage():
         expected_unhandled.add('Match')
     if sys.version_info < (3, 11):
         expected_unhandled.add('TryStar')
-    if sys.version_info >= (3, 12):
-        # TypeAlias is a statement in 3.12+
-        expected_unhandled.add('TypeAlias')
-
     actual_unhandled = unhandled - expected_unhandled
     assert not actual_unhandled, f'Unhandled AST statement types: {actual_unhandled}'
+
+
+def test_type_alias_is_compile_time_only_in_schedule_tree(temp_python_module):
+    if sys.version_info < (3, 12):
+        pytest.skip('Type alias statements require Python 3.12+')
+
+    with temp_python_module('''
+import dace
+
+@dace.program
+def prog(A: dace.float32[4]):
+    type dtype = dace.float32[4]
+    tmp: dtype = A
+    return tmp
+''',
+                            module_name_prefix='dace_schedule_tree_typealias') as module:
+        stree = module.prog.to_schedule_tree()
+
+    assert 'tmp' in stree.containers
+    assert isinstance(stree.containers['tmp'], dace.data.Array)
+    assert stree.containers['tmp'].dtype == dace.float32
+    assert tuple(stree.containers['tmp'].shape) == (4, )
+    assert not any(
+        isinstance(node, tn.PythonCallbackNode) and node.reason == 'unhandled TypeAlias'
+        for node in stree.preorder_traversal())
+
+
+def test_generic_type_alias_is_rejected_in_schedule_tree(temp_python_module):
+    if sys.version_info < (3, 12):
+        pytest.skip('Type alias statements require Python 3.12+')
+
+    with temp_python_module('''
+import dace
+
+@dace.program
+def prog(A: dace.float32[4]):
+    type dtype[T] = T
+    return A
+''',
+                            module_name_prefix='dace_schedule_tree_typealias') as module:
+        with pytest.raises(DaceSyntaxError, match='Generic type aliases'):
+            module.prog.to_schedule_tree()
+
+
+def test_type_var_tuple_alias_is_rejected_in_schedule_tree(temp_python_module):
+    if sys.version_info < (3, 12):
+        pytest.skip('Type alias statements require Python 3.12+')
+
+    with temp_python_module('''
+import dace
+
+@dace.program
+def prog(A: dace.float32[4]):
+    type dtype[*Ts] = tuple[*Ts]
+    return A
+''',
+                            module_name_prefix='dace_schedule_tree_typealias') as module:
+        with pytest.raises(DaceSyntaxError, match='Generic type aliases'):
+            module.prog.to_schedule_tree()
 
 
 if __name__ == '__main__':
