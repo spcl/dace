@@ -23,13 +23,13 @@ from dace.codegen.target import IllegalCopy, TargetCodeGenerator, make_absolute
 # DaCe transformation imports
 from dace.transformation.passes import analysis as ap
 from dace.transformation.pass_pipeline import Pipeline
-from dace.transformation.passes.gpustream.gpustream_scheduling import NaiveGPUStreamScheduler
-from dace.transformation.passes.gpustream.insert_gpu_streams_to_sdfgs import InsertGPUStreamsToSDFGs
-from dace.transformation.passes.gpustream.insert_gpu_streams_to_kernels import InsertGPUStreamsToKernels
-from dace.transformation.passes.gpustream.insert_gpu_streams_to_tasklets import InsertGPUStreamsToTasklets
+from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import NaiveGPUStreamScheduler
+from dace.transformation.passes.gpu_specialization.insert_gpu_streams import InsertGPUStreams
+from dace.transformation.passes.gpu_specialization.connect_gpu_streams_to_kernels import ConnectGPUStreamsToKernels
+from dace.transformation.passes.gpu_specialization.connect_gpu_streams_to_tasklets import ConnectGPUStreamsToTasklets
 from dace.transformation.passes.insert_gpu_copy_tasklets import InsertGPUCopyTasklets
-from dace.transformation.passes.gpustream.gpu_stream_topology_simplification import GPUStreamTopologySimplification
-from dace.transformation.passes.gpustream.insert_gpu_stream_sync_tasklets import InsertGPUStreamSyncTasklets
+from dace.transformation.passes.gpu_specialization.gpu_stream_topology_simplification import GPUStreamTopologySimplification
+from dace.transformation.passes.gpu_specialization.insert_gpu_stream_sync_tasklets import InsertGPUStreamSyncTasklets
 from dace.transformation.passes.shared_memory_synchronization import DefaultSharedMemorySync
 from dace.transformation.dataflow.add_threadblock_map import AddThreadBlockMap
 from dace.transformation.passes.analysis.infer_gpu_grid_and_block_size import InferGPUGridAndBlockSize
@@ -205,9 +205,9 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         # with GPU stream AccessNodes where used
         stream_pipeline = Pipeline([
             NaiveGPUStreamScheduler(),
-            InsertGPUStreamsToSDFGs(),
-            InsertGPUStreamsToKernels(),
-            InsertGPUStreamsToTasklets(),
+            InsertGPUStreams(),
+            ConnectGPUStreamsToKernels(),
+            ConnectGPUStreamsToTasklets(),
             InsertGPUStreamSyncTasklets(),
             InsertGPUCopyTasklets(),
             GPUStreamTopologySimplification(),

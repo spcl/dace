@@ -10,11 +10,11 @@ from dace.config import Config
 from dace.sdfg import nodes, scope_contains_scope
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.transformation import pass_pipeline as ppl, transformation
-from dace.transformation.passes.gpustream.gpustream_scheduling import NaiveGPUStreamScheduler
-from dace.transformation.passes.gpustream.insert_gpu_streams_to_kernels import InsertGPUStreamsToKernels
-from dace.transformation.passes.gpustream.insert_gpu_streams_to_tasklets import InsertGPUStreamsToTasklets
-from dace.transformation.passes.gpustream.insert_gpu_stream_sync_tasklets import InsertGPUStreamSyncTasklets
-from dace.transformation.passes.gpustream.insert_gpu_streams_to_sdfgs import InsertGPUStreamsToSDFGs
+from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import NaiveGPUStreamScheduler
+from dace.transformation.passes.gpu_specialization.connect_gpu_streams_to_kernels import ConnectGPUStreamsToKernels
+from dace.transformation.passes.gpu_specialization.connect_gpu_streams_to_tasklets import ConnectGPUStreamsToTasklets
+from dace.transformation.passes.gpu_specialization.insert_gpu_stream_sync_tasklets import InsertGPUStreamSyncTasklets
+from dace.transformation.passes.gpu_specialization.insert_gpu_streams import InsertGPUStreams
 
 
 @properties.make_properties
@@ -38,7 +38,7 @@ class InsertGPUCopyTasklets(ppl.Pass):
 
     def depends_on(self) -> Set[Union[Type[ppl.Pass], ppl.Pass]]:
         depending_passes = {
-            NaiveGPUStreamScheduler, InsertGPUStreamsToSDFGs, InsertGPUStreamsToKernels, InsertGPUStreamsToTasklets,
+            NaiveGPUStreamScheduler, InsertGPUStreams, ConnectGPUStreamsToKernels, ConnectGPUStreamsToTasklets,
             InsertGPUStreamSyncTasklets
         }
         return depending_passes
