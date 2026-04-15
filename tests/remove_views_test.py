@@ -9,11 +9,11 @@ from dace import data, nodes, Memlet
 import sys, os
 from dace.transformation.passes.remove_views import RemoveViews
 
+
 def _count_views(sdfg: dace.SDFG) -> int:
     num = 0
     for n, _ in sdfg.all_nodes_recursive():
-        if (isinstance(n, nodes.AccessNode)
-                and isinstance(sdfg.arrays[n.data], data.View)):
+        if (isinstance(n, nodes.AccessNode) and isinstance(sdfg.arrays[n.data], data.View)):
             num += 1
     return num
 
@@ -21,6 +21,7 @@ def _count_views(sdfg: dace.SDFG) -> int:
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 def test_view_array_array():
     """Reshape view (2x10 -> flat 20)"""
@@ -61,11 +62,11 @@ def test_view_slice_detect_simple():
     a = state.add_write('A')
     v = state.add_access('V')
 
-    state.add_edge(v, 'views', a, None,
-                   Memlet(data='A', subset='0, 0:1', other_subset='0:1'))
+    state.add_edge(v, 'views', a, None, Memlet(data='A', subset='0, 0:1', other_subset='0:1'))
 
     state.add_mapped_tasklet(
-        'produce', {'i': '0:1'},
+        'produce',
+        {'i': '0:1'},
         {},
         'out = 42.0',
         {'out': Memlet('V[i]')},
@@ -95,7 +96,6 @@ def test_view_slice_detect_simple():
     assert A_new[0, 0] == 42.0
 
 
-
 @dace.program
 def jacobi1d_half(TMAX: dace.int32, A: dace.float32[12], B: dace.float32[12]):
     for _ in range(TMAX):
@@ -110,7 +110,6 @@ def test_read_slice():
     if num_before != 3:
         warnings.warn("Unexpected number of Views; test may need updating "
                       "for this DaCe version.")
-
 
     A = np.arange(12, dtype=np.float32)
     B_ref = np.zeros(12, dtype=np.float32)
@@ -129,7 +128,6 @@ def test_read_slice():
     np.testing.assert_allclose(B_new, B_ref, rtol=1e-5)
 
 
-
 def test_simple_slice_view():
     """1D contiguous slice: A[10] -> V[6] via A[2:8]."""
     sdfg = dace.SDFG('test_simple_slice')
@@ -141,11 +139,11 @@ def test_simple_slice_view():
     a = state.add_read('A')
     v = state.add_access('V')
 
-    state.add_edge(a, None, v, 'views',
-                   Memlet(data='A', subset='2:8', other_subset='0:6'))
+    state.add_edge(a, None, v, 'views', Memlet(data='A', subset='2:8', other_subset='0:6'))
 
     state.add_mapped_tasklet(
-        'copy', {'i': '0:6'},
+        'copy',
+        {'i': '0:6'},
         {'inp': Memlet('V[i]')},
         'out = inp * 2.0',
         {'out': Memlet('B[i]')},
@@ -177,6 +175,7 @@ def test_simple_slice_view():
 
 def test_reshape_view():
     """Dense reshape via numpy frontend: A[9] -> tmp[3,3]."""
+
     @dace.program
     def reshape_prog(A: dace.float64[9], B: dace.float64[3, 3]):
         tmp = np.reshape(A, (3, 3))
@@ -216,12 +215,11 @@ def test_squeeze_view():
     v = state.add_access('V')
     a = state.add_write('A')
 
-    state.add_edge(v, 'views', a, None,
-                   Memlet(data='A', subset='0, 0:{}'.format(N),
-                          other_subset='0:{}'.format(N)))
+    state.add_edge(v, 'views', a, None, Memlet(data='A', subset='0, 0:{}'.format(N), other_subset='0:{}'.format(N)))
 
     state.add_mapped_tasklet(
-        'produce', {'i': '0:{}'.format(N)},
+        'produce',
+        {'i': '0:{}'.format(N)},
         {},
         'out = double(i)',
         {'out': Memlet('V[i]')},
@@ -262,13 +260,12 @@ def test_view_chain():
     v1 = state.add_access('V1')
     v2 = state.add_access('V2')
 
-    state.add_edge(a, None, v1, 'views',
-                   Memlet(data='A', subset='4:12', other_subset='0:8'))
-    state.add_edge(v1, None, v2, 'views',
-                   Memlet(data='V1', subset='1:7', other_subset='0:6'))
+    state.add_edge(a, None, v1, 'views', Memlet(data='A', subset='4:12', other_subset='0:8'))
+    state.add_edge(v1, None, v2, 'views', Memlet(data='V1', subset='1:7', other_subset='0:6'))
 
     state.add_mapped_tasklet(
-        'copy', {'i': '0:6'},
+        'copy',
+        {'i': '0:6'},
         {'inp': Memlet('V2[i]')},
         'out = inp',
         {'out': Memlet('B[i]')},
@@ -306,14 +303,14 @@ def test_noop_no_views():
     state = sdfg.add_state()
     a = state.add_read('A')
     state.add_mapped_tasklet(
-        'copy', {'i': '0:10'},
+        'copy',
+        {'i': '0:10'},
         {'inp': Memlet('A[i]')},
         'out = inp',
         {'out': Memlet('B[i]')},
         input_nodes={'A': a},
         external_edges=True,
     )
-
 
     p = RemoveViews()
     result = p.apply_pass(sdfg, {})
@@ -331,12 +328,11 @@ def test_unsqueeze_view():
     v = state.add_access('V')
     a = state.add_write('A')
 
-    state.add_edge(v, 'views', a, None,
-                   Memlet(data='A', subset='0:{}'.format(N),
-                          other_subset='0, 0:{}, 0'.format(N)))
+    state.add_edge(v, 'views', a, None, Memlet(data='A', subset='0:{}'.format(N), other_subset='0, 0:{}, 0'.format(N)))
 
     state.add_mapped_tasklet(
-        'produce', {'i': '0:{}'.format(N)},
+        'produce',
+        {'i': '0:{}'.format(N)},
         {},
         'out = double(i) + 1.0',
         {'out': Memlet('V[0, i, 0]')},
@@ -380,13 +376,12 @@ def test_multiple_views_same_state():
     v1 = state.add_access('V1')
     v2 = state.add_access('V2')
 
-    state.add_edge(a1, None, v1, 'views',
-                   Memlet(data='A', subset='0:5', other_subset='0:5'))
-    state.add_edge(a2, None, v2, 'views',
-                   Memlet(data='A', subset='10:15', other_subset='0:5'))
+    state.add_edge(a1, None, v1, 'views', Memlet(data='A', subset='0:5', other_subset='0:5'))
+    state.add_edge(a2, None, v2, 'views', Memlet(data='A', subset='10:15', other_subset='0:5'))
 
     state.add_mapped_tasklet(
-        'map1', {'i': '0:5'},
+        'map1',
+        {'i': '0:5'},
         {'inp': Memlet('V1[i]')},
         'out = inp + 1.0',
         {'out': Memlet('B[i]')},
@@ -394,7 +389,8 @@ def test_multiple_views_same_state():
         external_edges=True,
     )
     state.add_mapped_tasklet(
-        'map2', {'i': '0:5'},
+        'map2',
+        {'i': '0:5'},
         {'inp': Memlet('V2[i]')},
         'out = inp + 2.0',
         {'out': Memlet('C[i]')},
@@ -436,11 +432,11 @@ def test_write_view():
     v = state.add_access('V')
     a = state.add_write('A')
 
-    state.add_edge(v, 'views', a, None,
-                   Memlet(data='A', subset='3:9', other_subset='0:6'))
+    state.add_edge(v, 'views', a, None, Memlet(data='A', subset='3:9', other_subset='0:6'))
 
     state.add_mapped_tasklet(
-        'produce', {'i': '0:6'},
+        'produce',
+        {'i': '0:6'},
         {},
         'out = double(i) * 3.0',
         {'out': Memlet('V[i]')},
@@ -472,6 +468,7 @@ def test_write_view():
 # Column views, strided views, flatten
 # ---------------------------------------------------------------------------
 
+
 def test_column_view():
     """Column extraction: A[M,N] row-major -> V[M] via A[:,COL], stride N."""
     M, N, COL = 6, 8, 2
@@ -484,12 +481,11 @@ def test_column_view():
     a = state.add_read('A')
     v = state.add_access('V')
 
-    state.add_edge(a, None, v, 'views',
-                   Memlet(data='A', subset=f'0:{M}, {COL}',
-                          other_subset=f'0:{M}'))
+    state.add_edge(a, None, v, 'views', Memlet(data='A', subset=f'0:{M}, {COL}', other_subset=f'0:{M}'))
 
     state.add_mapped_tasklet(
-        'add_one', {'i': f'0:{M}'},
+        'add_one',
+        {'i': f'0:{M}'},
         {'inp': Memlet('V[i]')},
         'out = inp + 1.0',
         {'out': Memlet('B[i]')},
@@ -530,12 +526,11 @@ def test_column_view_w_offset():
     a = state.add_read('A')
     v = state.add_access('V')
 
-    state.add_edge(a, None, v, 'views',
-                   Memlet(data='A', subset=f'2:{M}, {COL}',
-                          other_subset=f'0:{M - 2}'))
+    state.add_edge(a, None, v, 'views', Memlet(data='A', subset=f'2:{M}, {COL}', other_subset=f'0:{M - 2}'))
 
     state.add_mapped_tasklet(
-        'add_one', {'i': f'0:{M - 2}'},
+        'add_one',
+        {'i': f'0:{M - 2}'},
         {'inp': Memlet('V[i]')},
         'out = inp + 1.0',
         {'out': Memlet('B[i]')},
@@ -577,12 +572,11 @@ def test_strided_column_view():
     a = state.add_read('A')
     v = state.add_access('V')
 
-    state.add_edge(a, None, v, 'views',
-                   Memlet(data='A', subset=f'0:{M}:2, {COL}',
-                          other_subset=f'0:{HALF}'))
+    state.add_edge(a, None, v, 'views', Memlet(data='A', subset=f'0:{M}:2, {COL}', other_subset=f'0:{HALF}'))
 
     state.add_mapped_tasklet(
-        'add_one', {'i': f'0:{HALF}'},
+        'add_one',
+        {'i': f'0:{HALF}'},
         {'inp': Memlet('V[i]')},
         'out = inp + 1.0',
         {'out': Memlet('B[i]')},
@@ -625,12 +619,11 @@ def test_flatten_view():
     a = state.add_read('A')
     v = state.add_access('V')
 
-    state.add_edge(a, None, v, 'views',
-                   Memlet(data='A', subset=f'0:{M}, 0:{N}',
-                          other_subset=f'0:{MN}'))
+    state.add_edge(a, None, v, 'views', Memlet(data='A', subset=f'0:{M}, 0:{N}', other_subset=f'0:{MN}'))
 
     state.add_mapped_tasklet(
-        'copy', {'i': f'0:{MN}'},
+        'copy',
+        {'i': f'0:{MN}'},
         {'inp': Memlet('V[i]')},
         'out = inp',
         {'out': Memlet('B[i]')},
