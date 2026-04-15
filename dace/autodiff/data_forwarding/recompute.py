@@ -5,7 +5,7 @@ from typing import List
 # DaCe imports
 import dace
 import dace.sdfg.nodes as nodes
-from dace.sdfg import SDFG, SDFGState, graph as dgraph, state as dstate
+from dace.sdfg import SDFG, SDFGState, state as dstate
 from dace.sdfg.state import LoopRegion
 
 # Autodiff imports
@@ -67,7 +67,7 @@ def _connect_recomputation_nsdfg(bwd_generator: 'BackwardPassGenerator', forward
 
     # Write the data to a new access node in the backward state
     # Add a new AccessNode and array to the forward pass
-    # First, check if a recomputated array with this name already exists
+    # First, check if a recomputed array with this name already exists
     if "recomputed_" + target_an.data not in bwd_generator.backward_sdfg.arrays:
         new_recomp_node_name = "recomputed_" + target_an.data
     else:
@@ -84,12 +84,13 @@ def _connect_recomputation_nsdfg(bwd_generator: 'BackwardPassGenerator', forward
 
     # Add the array descriptor and AccessNode to the forward state
     original_desc = target_an.desc(forward_state)
-    new_recomp_node = backward_state.add_array(
+    backward_state.sdfg.add_array(
         name=new_recomp_node_name,
         shape=shape,
         dtype=original_desc.dtype,
         transient=True,
     )
+    new_recomp_node = backward_state.add_access(new_recomp_node_name)
     new_recomp_node.setzero = True
 
     # Create a memlet passing all the data to the nested-SDFG

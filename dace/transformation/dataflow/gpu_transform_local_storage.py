@@ -348,7 +348,7 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
                     newmemlet.data = node.data
 
                     if is_scalar:
-                        newmemlet.subset = sbs.Indices([0])
+                        newmemlet.subset = sbs.Range.from_indices([0])
                     else:
                         offset = []
                         lost_dims = []
@@ -390,7 +390,7 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
                                 else:
                                     continue
                         if is_scalar:
-                            memlet.subset = sbs.Indices([0])
+                            memlet.subset = sbs.Range.from_indices([0])
                         else:
                             newsubset = [None] * len(memlet.subset)
                             for ind, r in enumerate(memlet.subset):
@@ -425,7 +425,7 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
                     newmemlet.data = node.data
 
                     if is_scalar:
-                        newmemlet.subset = sbs.Indices([0])
+                        newmemlet.subset = sbs.Range.from_indices([0])
                     else:
                         offset = []
                         lost_dims = []
@@ -468,7 +468,7 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
                                 else:
                                     continue
                         if is_scalar:
-                            memlet.subset = sbs.Indices([0])
+                            memlet.subset = sbs.Range.from_indices([0])
                         else:
                             newsubset = [None] * len(memlet.subset)
                             for ind, r in enumerate(memlet.subset):

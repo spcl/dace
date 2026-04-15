@@ -17,7 +17,7 @@ import itertools
 from dace.codegen.targets.sve import util as util
 from typing import List, Optional
 import copy
-from six import StringIO
+from io import StringIO
 import dace.codegen.targets.sve.unparse
 from dace import registry, symbolic, dtypes
 from dace.codegen.targets import cpp as cpp

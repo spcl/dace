@@ -1662,27 +1662,39 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
     return counter
 
 
-def load_precompiled_sdfg(folder: str):
+def load_precompiled_sdfg(folder: str) -> csdfg.CompiledSDFG:
     """
     Loads a pre-compiled SDFG from an output folder (e.g. ".dacecache/program").
-    Folder must contain a file called "program.sdfg" and a subfolder called
+    Folder must contain a file called "program.sdfgz" and a subfolder called
     "build" with the shared object.
 
     :param folder: Path to SDFG output folder.
     :return: A callable CompiledSDFG object.
     """
-    sdfg = SDFG.from_file(os.path.join(folder, 'program.sdfg'))
+    sdfg: SDFG | None = None
+    if os.path.exists(os.path.join(folder, 'program.sdfgz')):
+        sdfg = SDFG.from_file(os.path.join(folder, 'program.sdfgz'))
+    elif os.path.exists(os.path.join(folder, 'program.sdfg')):
+        # attempt to load uncompressed sdfg (backwards compatibility)
+        sdfg = SDFG.from_file(os.path.join(folder, 'program.sdfg'))
+    if sdfg is None:
+        raise ValueError(f"Pre-compiled SDFG not found in `{folder}`.")
+
     suffix = config.Config.get('compiler', 'library_extension')
-    return csdfg.CompiledSDFG(sdfg,
-                              csdfg.ReloadableDLL(os.path.join(folder, 'build', f'lib{sdfg.name}.{suffix}'), sdfg.name))
+    return csdfg.CompiledSDFG(
+        sdfg,
+        csdfg.ReloadableDLL(os.path.join(folder, 'build', f'lib{sdfg.name}.{suffix}'), sdfg.name),
+        sdfg.arg_names,
+    )
 
 
-def distributed_compile(sdfg: SDFG, comm, validate: bool = True) -> csdfg.CompiledSDFG:
+def distributed_compile(sdfg: SDFG, comm, *, validate: bool = True) -> csdfg.CompiledSDFG:
     """
     Compiles an SDFG in rank 0 of MPI communicator ``comm``. Then, the compiled SDFG is loaded in all other ranks.
 
     :param sdfg: SDFG to be compiled.
     :param comm: MPI communicator. ``Intracomm`` is the base mpi4py communicator class.
+    :param validate: If True, validates the SDFG prior to generating code.
     :return: Compiled SDFG.
     :note: This method can be used only if the module mpi4py is installed.
     """
@@ -2742,7 +2754,7 @@ def expand_nodes(sdfg: SDFG, predicate: Callable[[nd.Node], bool]):
                 expand_nodes(node.sdfg, predicate=predicate)
             elif isinstance(node, nd.LibraryNode):
                 if predicate(node):
-                    impl_name = node.expand(sdfg, state)
+                    impl_name = node.expand(state)
                     if config.Config.get_bool('debugprint'):
                         print("Automatically expanded library node \"{}\" with implementation \"{}\".".format(
                             str(node), impl_name))

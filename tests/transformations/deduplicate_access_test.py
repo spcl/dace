@@ -72,7 +72,7 @@ def test_dedup_access_simple():
                 inp1 << tmp1
                 inp2 << tmp2
                 out >> B[i, j]
-                B[i, j] = inp1 + inp2
+                out = inp1 + inp2
 
     sdfg: dace.SDFG = datest.to_sdfg(simplify=True)
     nodes_before = sdfg.node(0).number_of_nodes()
@@ -115,7 +115,7 @@ def test_dedup_access_plus():
             with dace.tasklet:
                 inp << tmp
                 out >> B[i, j]
-                B[i, j] = inp[0] + inp[1] + inp[2] + inp[3] + inp[4]
+                out = inp[0] + inp[1] + inp[2] + inp[3] + inp[4]
 
     sdfg: dace.SDFG = datest.to_sdfg(simplify=True)
     ConsolidateEdges().apply_pass(sdfg, {})
@@ -146,7 +146,7 @@ def test_dedup_access_square():
             with dace.tasklet:
                 inp << tmp
                 out >> B[i, j]
-                B[i, j] = (inp[0] + inp[1] + inp[2]) / 12.0
+                out = (inp[0] + inp[1] + inp[2]) / 12.0
 
     sdfg: dace.SDFG = datest.to_sdfg(simplify=True)
     ConsolidateEdges().apply_pass(sdfg, {})
@@ -193,7 +193,7 @@ def test_dedup_access_contiguous():
             with dace.tasklet:
                 inp << tmp
                 out >> B[i, j]
-                B[i, j] = (inp[0] + inp[1] + inp[2]) / 3.0
+                out = (inp[0] + inp[1] + inp[2]) / 3.0
 
     # j contiguous dimension
     sdfg: dace.SDFG = datest.to_sdfg(simplify=True)

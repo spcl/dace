@@ -2,28 +2,35 @@
 import dace
 import numpy as np
 
-sr = dace.SDFG('stiledcopy')
-s0 = sr.add_state('s0')
-
-A = s0.add_array('A', [2, 16, 4], dace.float32)
-B = s0.add_array('B', [4], dace.float32)
-C = s0.add_array('C', [2, 16, 4], dace.float32)
-
-D = s0.add_array('D', [128, 128], dace.float32)
-E = s0.add_array('E', [8, 8], dace.float32)
-F = s0.add_array('F', [128, 128], dace.float32)
-
-# Reading A at [1, 0:8:8:2, 3]
-s0.add_nedge(A, B, dace.Memlet.simple(A, '1, 0:10:8:2, 3'))
-s0.add_nedge(B, C, dace.Memlet.simple(C, '1, 0:10:8:2, 3'))
-
-# Emulate a blocked tiled matrix multiplication pattern
-s0.add_nedge(D, E, dace.Memlet.simple(D, '8:76:64:4,4:72:64:4'))
-s0.add_nedge(E, F, dace.Memlet.simple(F, '8:76:64:4,4:72:64:4'))
-
 
 def test():
-    print('Strided range copy tasklet test')
+    """Strided range copy tasklet test"""
+    sr = dace.SDFG('stiledcopy')
+    sr.add_array('A', [2, 16, 4], dace.float32)
+    sr.add_array('B', [4], dace.float32)
+    sr.add_array('C', [2, 16, 4], dace.float32)
+
+    sr.add_array('D', [128, 128], dace.float32)
+    sr.add_array('E', [8, 8], dace.float32)
+    sr.add_array('F', [128, 128], dace.float32)
+
+    s0 = sr.add_state('s0')
+    A = s0.add_access('A')
+    B = s0.add_access('B')
+    C = s0.add_access('C')
+
+    D = s0.add_access('D')
+    E = s0.add_access('E')
+    F = s0.add_access('F')
+
+    # Reading A at [1, 0:8:8:2, 3]
+    s0.add_nedge(A, B, dace.Memlet.simple(A, '1, 0:10:8:2, 3'))
+    s0.add_nedge(B, C, dace.Memlet.simple(C, '1, 0:10:8:2, 3'))
+
+    # Emulate a blocked tiled matrix multiplication pattern
+    s0.add_nedge(D, E, dace.Memlet.simple(D, '8:76:64:4,4:72:64:4'))
+    s0.add_nedge(E, F, dace.Memlet.simple(F, '8:76:64:4,4:72:64:4'))
+
     A = np.random.rand(2, 16, 4).astype(np.float32)
     B = np.random.rand(4).astype(np.float32)
     C = np.random.rand(2, 16, 4).astype(np.float32)
@@ -48,7 +55,6 @@ def test():
         E[4:8, 4:8] - F[72:76, 68:72],
     ]
     diff_array = [np.linalg.norm(d) for d in diffs]
-    print('Differences:', diff_array)
     assert np.average(np.array(diff_array)) <= 1e-5
 
 

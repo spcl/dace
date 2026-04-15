@@ -43,25 +43,17 @@ def _dependent_indices(itervar: str, subset: subsets.Subset) -> Set[int]:
     """ Finds the indices or ranges of a subset that depend on the iteration
         variable. Returns their index in the subset's indices/ranges list.
     """
-    if isinstance(subset, subsets.Indices):
-        return {
-            i
-            for i, idx in enumerate(subset)
-            if symbolic.issymbolic(idx) and itervar in {str(s)
-                                                        for s in idx.free_symbols}
-        }
-    else:
-        return {
-            i
-            for i, rng in enumerate(subset) if any(
-                symbolic.issymbolic(t) and itervar in {str(s)
-                                                       for s in t.free_symbols} for t in rng)
-        }
+    return {
+        i
+        for i, rng in enumerate(subset.ndrange()) if any(
+            symbolic.issymbolic(t) and itervar in {str(s)
+                                                   for s in t.free_symbols} for t in rng)
+    }
 
 
 def _sanitize_by_index(indices: Set[int], subset: subsets.Subset) -> subsets.Range:
     """ Keeps the indices or ranges of subsets that are in `indices`. """
-    return type(subset)([t for i, t in enumerate(subset) if i in indices])
+    return subsets.Range([t for i, t in enumerate(subset.ndrange()) if i in indices])
 
 
 @properties.make_properties
