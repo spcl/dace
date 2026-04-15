@@ -154,12 +154,31 @@ class InlineSDFG(transformation.SingleStateTransformation):
         rem_inpconns = dc(in_connectors)
         rem_outconns = dc(out_connectors)
         nstate: SDFGState = nested_sdfg.sdfg.nodes()[0]
+        # Verify that all connectors have a corresponding access node that is valid
+        valid_inpconns = set()
+        valid_outconns = set()
         for node in nstate.nodes():
             if isinstance(node, nodes.AccessNode):
+                if node.data not in valid_inpconns and node.data in in_connectors:
+                    if nstate.entry_node(node) is not None:
+                        pass  # Invalid matching node, in scope
+                    elif nstate.in_degree(node) > 0:
+                        pass  # Invalid matching node, has incoming edges
+                    else:
+                        valid_inpconns.add(node.data)
+                if node.data not in valid_outconns and node.data in out_connectors:
+                    if nstate.entry_node(node) is not None:
+                        pass  # Invalid matching node, in scope
+                    elif nstate.out_degree(node) > 0:
+                        pass  # Invalid matching node, has outgoing edges
+                    else:
+                        valid_outconns.add(node.data)
                 if node.data in rem_inpconns:
                     rem_inpconns.remove(node.data)
                 if node.data in rem_outconns:
                     rem_outconns.remove(node.data)
+        if len(valid_inpconns) != len(in_connectors) or len(valid_outconns) != len(out_connectors):
+            return False
         if len(rem_outconns) > 0:
             # Check if remaining outputs would disconnect anything or can be pruned
             for conn in rem_outconns:

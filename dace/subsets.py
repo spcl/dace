@@ -573,14 +573,16 @@ class Range(Subset):
                     result |= symbolic.symlist(d).keys()
         return result
 
-    def reorder(self, order):
+    def reorder(self, order: Sequence[int]) -> None:
         """ Re-orders the dimensions in-place according to a permutation list.
 
             :param order: List or tuple of integers from 0 to self.dims() - 1,
                           indicating the desired order of the dimensions.
         """
         new_ranges = [self.ranges[o] for o in order]
+        new_tile_sizes = [self.tile_sizes[o] for o in order]
         self.ranges = new_ranges
+        self.tile_sizes = new_tile_sizes
 
     @staticmethod
     def dim_to_string(d, t=1):
