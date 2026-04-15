@@ -243,12 +243,7 @@ if(DACE_ENABLE_HIP)
   endif()
 
   # Add flags to compile for local AMD architectures
-  foreach(var ${LOCAL_HIP_ARCHITECTURES})
-    list(APPEND HIP_HIPCC_FLAGS --offload-arch=${var})
-  endforeach()
-
-  # Add flags from dace config
-  list(APPEND HIP_HIPCC_FLAGS ${EXTRA_HIP_FLAGS})
+  set(CMAKE_HIP_ARCHITECTURES "${LOCAL_HIP_ARCHITECTURES}")
 
   # Add include directories for other files
   set(DACE_LIBS ${DACE_LIBS} hip::host)
