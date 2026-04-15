@@ -22,9 +22,7 @@ import dace
 import numpy as np
 import pytest
 from dace.sdfg.state import LoopRegion
-from dace.sdfg.construction_utils import (
-    get_parent_map_and_loop_scopes, get_parent_maps)
-
+from dace.sdfg.construction_utils import (get_parent_map_and_loop_scopes, get_parent_maps)
 
 # ===================================================================
 # Constants
@@ -33,16 +31,13 @@ from dace.sdfg.construction_utils import (
 N, M, K = 4, 4, 5
 COLS = M + 10  # enough room for j + offset + 9
 
-
 # ===================================================================
 # DaCe programs (numpy frontend)
 # ===================================================================
 
 
 @dace.program
-def inner_compute(A: dace.float64[K, N, COLS],
-                  off_row: dace.int64[M],
-                  ii: dace.int64):
+def inner_compute(A: dace.float64[K, N, COLS], off_row: dace.int64[M], ii: dace.int64):
     for j in range(M):
         s = off_row[j]
         for idx in range(10):
@@ -51,8 +46,7 @@ def inner_compute(A: dace.float64[K, N, COLS],
 
 
 @dace.program
-def kernel(A: dace.float64[K, N, COLS],
-           offsets: dace.int64[N, M]):
+def kernel(A: dace.float64[K, N, COLS], offsets: dace.int64[N, M]):
     for i in dace.map[0:N]:
         inner_compute(A, offsets[i, :], i)
 
@@ -117,12 +111,10 @@ def test_inner_map_sees_two_loops_and_outer_map():
     loops = [p for p in parents if isinstance(p, LoopRegion)]
     maps = [p for p in parents if isinstance(p, dace.sdfg.nodes.MapEntry)]
 
-    assert len(loops) == 2, (
-        f"Expected 2 LoopRegions, got {len(loops)}: "
-        f"{[p.label for p in loops]}")
-    assert len(maps) == 1, (
-        f"Expected 1 MapEntry (outer i-map), got {len(maps)}: "
-        f"{[p.label for p in maps]}")
+    assert len(loops) == 2, (f"Expected 2 LoopRegions, got {len(loops)}: "
+                             f"{[p.label for p in loops]}")
+    assert len(maps) == 1, (f"Expected 1 MapEntry (outer i-map), got {len(maps)}: "
+                            f"{[p.label for p in maps]}")
 
 
 def test_inner_tasklet_sees_inner_map_plus_all_scopes():
@@ -166,8 +158,7 @@ def test_get_parent_maps_inner_map_sees_only_outer_map():
     me, st = _find_inner_map(sdfg)
     maps = get_parent_maps(sdfg, me, st)
 
-    assert len(maps) == 1, (
-        f"Expected 1 parent map, got {len(maps)}")
+    assert len(maps) == 1, (f"Expected 1 parent map, got {len(maps)}")
     parent_me, _ = maps[0]
     assert isinstance(parent_me, dace.sdfg.nodes.MapEntry)
 
@@ -178,6 +169,7 @@ def test_get_parent_maps_outer_map_has_no_parents():
     me, st = _find_outer_map(sdfg)
     maps = get_parent_maps(sdfg, me, st)
     assert len(maps) == 0
+
 
 # ===================================================================
 # main
