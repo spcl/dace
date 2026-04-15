@@ -550,7 +550,7 @@ void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
 
             flags = Config.get("compiler", "cuda", "hip_args")
             options.append(f'-DDACE_HIP_ARCHITECTURES_DEFAULT="{hip_arch}"')
-            options.append("-DEXTRA_HIP_FLAGS=\"{}\"".format(flags))
+            options.append("-DCMAKE_HIP_FLAGS=\"{}\"".format(flags))
 
         if Config.get('compiler', 'cpu', 'executable'):
             host_compiler = make_absolute(Config.get("compiler", "cpu", "executable"))
